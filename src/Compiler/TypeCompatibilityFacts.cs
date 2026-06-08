@@ -141,6 +141,7 @@ internal static class TypeCompatibilityFacts
 
         if (!FunctionKindSatisfies(sourceKind, targetKind)
             || source.FunctionPointerAbi != target.FunctionPointerAbi
+            || source.FunctionPointerIsUnsafe != target.FunctionPointerIsUnsafe
             || !Equals(targetReturn, sourceReturn))
         {
             return false;
@@ -227,7 +228,8 @@ internal static class TypeCompatibilityFacts
                     parameter.RawPointerElementCountExpression,
                     parameterNameMap))
                 .ToArray(),
-            function.FfiAbi);
+            function.FfiAbi,
+            function.IsUnsafe);
     }
 
     public static StarkTypeSymbol ClosureTypeForSignature(

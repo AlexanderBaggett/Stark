@@ -779,13 +779,22 @@ public static class DefaultCompilerPipeline
         {
             foreach (var type in types)
             {
-                if (type.TemplateName is not SystemCollectionsDictionaryKeyFacts.DictionaryTypeName
-                    || type.TypeArguments.Count != 2)
+                StarkTypeSymbol keyType;
+                if (type.TemplateName is SystemCollectionsDictionaryKeyFacts.DictionaryTypeName
+                    && type.TypeArguments.Count == 2)
+                {
+                    keyType = SystemCollectionsDictionaryKeyFacts.NormalizeType(type.TypeArguments[0]);
+                }
+                else if (type.TemplateName is SystemCollectionsDictionaryKeyFacts.HashSetTypeName
+                    && type.TypeArguments.Count == 1)
+                {
+                    keyType = SystemCollectionsDictionaryKeyFacts.NormalizeType(type.TypeArguments[0]);
+                }
+                else
                 {
                     continue;
                 }
 
-                var keyType = SystemCollectionsDictionaryKeyFacts.NormalizeType(type.TypeArguments[0]);
                 if (SystemCollectionsDictionaryKeyFacts.TryResolveContract(
                         keyType,
                         typeModel.Overloads,

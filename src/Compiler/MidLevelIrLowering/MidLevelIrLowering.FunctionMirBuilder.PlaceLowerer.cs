@@ -64,7 +64,11 @@ internal sealed partial class MidLevelIrLowerer
                 return true;
             }
 
-            if (!TryInitializePostfixState(postfixExpression.primaryExpression(), out var root, out var currentName))
+            if (!TryInitializePostfixState(
+                    postfixExpression.primaryExpression(),
+                    out var root,
+                    out var currentName,
+                    preserveConstGlobalAddress: true))
             {
                 return false;
             }
@@ -91,7 +95,9 @@ internal sealed partial class MidLevelIrLowerer
                     }
 
                     var qualifiedName = $"{currentName}.{memberName}";
-                    root = TryResolveNamedValueOperand(qualifiedName);
+                    root = TryResolveNamedValueOperand(
+                        qualifiedName,
+                        preserveConstGlobalAddress: true);
                     if (root is null)
                     {
                         currentName = qualifiedName;
@@ -1205,7 +1211,12 @@ internal sealed partial class MidLevelIrLowerer
 
         private MidLevelIrOperand? BuildAddressCore(PlaceTarget target)
         {
-            MidLevelIrOperand? currentValue = target.RootValue ?? (target.RootName is null ? null : ResolveNamedOperand(target.RootName));
+            MidLevelIrOperand? currentValue = target.RootValue
+                ?? (target.RootName is null
+                    ? null
+                    : TryResolveNamedValueOperand(
+                        target.RootName,
+                        preserveConstGlobalAddress: true));
             var currentAddressIsMutable = target.IsAddressMutable;
             MidLevelIrOperand? currentAddress = target.RootAddress
                 ?? currentValue switch

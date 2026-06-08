@@ -5,7 +5,7 @@ foreign calling conventions as an argument to the existing `ffi` modifier:
 
 ```stark
 unsafe ffi(c) fn ...
-fnptr<ffi(c) fn ...>
+fnptr<unsafe ffi(c) fn ...>
 ```
 
 This keeps the foreign boundary explicit and avoids inventing a separate
@@ -15,12 +15,13 @@ Implementation evidence:
 
 - Parser accepts `ffi(abi)` and `ffi(platform(...))` on declarations and function
   pointer types.
-- Type checking stores ABI facts on function signatures and `fnptr` types, and
-  rejects mismatched ABI pointer assignment/promotion.
+- Type checking stores ABI facts on function signatures and ABI/safety facts on
+  `fnptr` types, and rejects mismatched ABI or unsafe pointer assignment/promotion.
 - LLVM emission lowers explicit ABI facts onto declarations, direct calls, and
   indirect calls without changing ordinary Stark `fastcc` calls.
-- Package images serialize ABI facts for functions, methods, function pointer
-  types, compiler facts, and imported template type references.
+- Package images serialize ABI facts for functions and methods, plus ABI/safety
+  facts for function pointer types, compiler facts, and imported template type
+  references.
 - Focused and full host test coverage passed in `compiler.Tests`.
 
 ## 1. Goals
@@ -103,9 +104,9 @@ fnptr<unsafe ffi(c) fn i32[min max](rawmutptr<i8[min max]>)>
 ```
 
 `ffi(c)` says how the call is made. `unsafe` says what proof is required to call it.
-An unsafe foreign function item may not be promoted to a safe function pointer type.
-Erasing the unsafe requirement follows the existing unsafe-erasure rule and requires
-an unsafe context.
+An unsafe function item may promote only to a function pointer type that also carries
+`unsafe`. The unsafe requirement is not erased by an `unsafe` block; calling through
+an unsafe function pointer requires an unsafe context at the call site.
 
 ### 2.4 `varargs`
 
@@ -158,13 +159,15 @@ fnptr<unsafe ffi(win64) fn void(rawmutptr<i8[min max]>)>
 The ABI is part of type identity:
 
 ```stark
-fnptr<ffi(c) fn void()>       // different type
-fnptr<ffi(stdcall) fn void()> // different type
-fnptr<fn void()>              // Stark ordinary function pointer type
+fnptr<ffi(c) fn void()>              // different type
+fnptr<ffi(stdcall) fn void()>        // different type
+fnptr<unsafe ffi(c) fn void()>       // different type
+fnptr<fn void()>                     // Stark ordinary function pointer type
 ```
 
-No implicit conversion exists between different ABI function pointer types. A
-program must call an explicitly unsafe adapter or declare the correct type.
+No implicit conversion exists between different ABI or safety function pointer
+types. A program must declare the correct type, or call an explicitly safe adapter
+that checks the required invariants and exposes an ordinary safe signature.
 
 Function kind remains part of the same signature:
 
@@ -343,15 +346,10 @@ Recommended diagnostics:
 
 | Status | ID | Item |
 |---|---|---|
-| [x] | ABI-01 | Parse `ffi(abi)` and `ffi(platform(...))` on function declarations. |
-| [x] | ABI-02 | Extend function pointer signatures with `ffi(abi)`. |
-| [x] | ABI-03 | Add ABI facts to declared function symbols and function pointer types. |
-| [x] | ABI-04 | Implement target ABI resolution and platform selector diagnostics. |
-| [x] | ABI-05 | Enforce type compatibility and promotion rules. |
-| [x] | ABI-06 | Lower ABI facts into LLVM declarations, definitions, direct calls, and indirect calls. |
-| [x] | ABI-07 | Serialize ABI facts through package images and imported templates. |
-| [x] | ABI-08 | Update `ffi varargs` validation to use resolved ABI. |
-| [x] | ABI-09 | Add parser, type-checking, package, LLVM emission, and stdlib callback smoke coverage. |
+| [x] | ABI-01 | Implement explicit ABI syntax and type model for `ffi(abi)`, `ffi(platform(...))`, and ABI/safety-bearing function pointer signatures. |
+| [x] | ABI-02 | Implement target ABI resolution, platform selector diagnostics, type compatibility, promotion rules, and `ffi varargs` validation against the resolved ABI. |
+| [x] | ABI-03 | Lower ABI facts through declarations, definitions, direct calls, indirect calls, package images, imported templates, and LLVM emission. |
+| [x] | ABI-04 | Add end-to-end parser, type-checking, package, LLVM emission, and stdlib callback smoke coverage for ABI-specific declarations and function pointers. |
 
 ## 10. Book And Reference Work
 

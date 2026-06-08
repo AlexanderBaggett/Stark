@@ -1,6 +1,6 @@
 ---
 name: stark-language
-description: Stark language development guidance for writing, reviewing, explaining, and editing .stark source files, Stark.toml project manifests, and Stark.solution.toml solution manifests. Use for Stark syntax, ownership and borrowing, callable values, modules and visibility, project/test/native-package setup, FFI and assembly boundaries, memory contracts, and Stark source style.
+description: Stark language development guidance for writing, reviewing, explaining, and editing .stark source files, Stark.toml project manifests, and Stark.solution.toml solution manifests. Use for Stark syntax, ownership and borrowing, callable values, modules and visibility, project/test/native-package setup, FFI and assembly boundaries, memory contracts, thread-safety law declarations, and Stark source style.
 ---
 
 # Stark Language
@@ -214,6 +214,463 @@ finite law u8[0 max] Length<T, comptime u8[1 8] N>(borrow T[N] values)
 stack i32[min max][3] values = { 1, 2, 3 };
 stack u8[0 max] size = Length<i32[min max], 3>(values);
 ```
+
+## Compile-Time Evaluation
+
+Use `comptime expr` for compile-time expression evaluation and `comptime { ... }`
+when local compile-time state or bounded loops make the code clearer. Current
+compiler support covers ordinary constants, `law` / `finite law` CTFE calls,
+fixed-array tables, named aggregates, enum aggregates, concrete layout facts,
+ordinary `switch` statements, pattern-condition `if` / `while`, and
+fixed-array traversal loops, nested local/index/field place updates, and
+compile-time structural facts, including method parameter names and method
+generic trait-bound type predicates/metadata, method `where` law predicate type predicates/metadata,
+type/field thread-safety law attribute condition type predicates/metadata, and
+implemented-trait metadata:
+
+```stark
+const PairSize = comptime sizeof(Pair);
+
+finite law i64[min max] LayoutScore()
+{
+    return comptime sizeof(Pair) + comptime alignof(Pair);
+}
+```
+
+`sizeof(T)` and `alignof(T)` fold only when `T` has a concrete runtime layout in
+the current target context.
+
+`willexit` loops inside CTFE have a compiler iteration budget and report
+STK3053 when exhausted. Recursive compile-time `law` / `finite law` calls also
+report STK3053 instead of recursing indefinitely.
+
+`switch` inside CTFE supports the ordinary checked pattern surface: literals,
+inclusive integer ranges, switch-label or-patterns, exact fixed-array list
+patterns, exact aggregate property/positional patterns, enum unit/tuple/named
+field patterns, `default`, `when` guards, `_`, and `var` captures. Failed
+or-pattern alternatives and false guards roll captures back before trying the
+next alternative.
+
+Pattern-condition `if (expr is pattern)` and `while willexit (expr is pattern)`
+also execute inside CTFE over the same pattern subset as CTFE `switch`. Captures
+are scoped to the matched branch or loop iteration; failed `while` matches exit
+the loop.
+
+Explicit `for willexit (... in fixedArray)` traversal executes inside CTFE for
+fixed-array constants. Read-only borrowed elements, mutable borrowed elements
+with writeback to the source fixed-array place, and explicit index bindings are
+supported. CTFE place updates cover locals, fixed-array elements, and named
+aggregate fields. Slice and dynamic-storage traversal remain runtime-only until
+CTFE has slice/dynamic constant values.
+
+Compiler-known structural predicates live under `System.Compiler` and are
+compile-time-only. Use them inside `comptime`; runtime calls are rejected.
+For the complete landed fact list, see
+`references/comptime-structural-facts-reference.md`.
+
+```stark
+finite law i64[min max] Score<T>()
+{
+    if (comptime System.Compiler.IsInteger<T>())
+    {
+        return sizeof(T);
+    }
+
+    if (comptime System.Compiler.IsStruct<T>())
+    {
+        return sizeof(T) + alignof(T);
+    }
+
+    return 0;
+}
+```
+
+Available predicates: `IsBool`, `IsInteger`, `IsFloat`, `IsRawPointer`,
+`IsFixedArray`, `IsSlice`, `IsDynamic`, `IsFunctionPointer`, `IsClosure`,
+`IsNamed`, `IsStruct`, `IsRecord`, `IsEnum`, `IsTrait`, `IsDoctrine`,
+`IsDynTrait`, and `HasConcreteLayout`.
+
+Available type layout facts: `TypeSize<T>()` and `TypeAlign<T>()` return
+`u64` concrete runtime layout facts; `TypeIsZeroSized<T>()` returns `bool`.
+They require concrete layout and are compile-time-only. Use
+`HasConcreteLayout<T>()` before asking these facts in generic branches where
+`T` may not have layout.
+
+Available scalar type metadata facts: `TypeIntegerBitWidth<T>()` and
+`TypeFloatBitWidth<T>()` return `u64`; `TypeIntegerIsSigned<T>()`,
+`TypeIntegerIsUnsigned<T>()`, `TypeIntegerIsFullRange<T>()`,
+`TypeIntegerMinIs<T, Value>()`, and `TypeIntegerMaxIs<T, Value>()` return
+`bool`. Bit-width facts require the matching scalar family. Min/max comparisons
+use signed `i1024` compile-time value arguments; use unsignedness plus
+full-range predicates for full-width `u1024`.
+
+Available raw-pointer metadata facts: `RawPointerElementTypeIs<T, U>()`,
+`RawPointerElementTypeIs*<T>()`,
+`RawPointerElementTypeHasConcreteLayout<T>()`, `RawPointerIsMutable<T>()`, and
+`RawPointerIsReadOnly<T>()`. They require `T` to be `rawptr<...>` or
+`rawmutptr<...>`, inspect the pointee type, and are compile-time-only.
+
+Available element-bearing type metadata facts: `TypeElementTypeIs<T, U>()`,
+`TypeElementTypeIs*<T>()`, and `TypeElementTypeHasConcreteLayout<T>()`. They
+require `T` to be `rawptr<...>`, `rawmutptr<...>`, `Element[N]`, `Element[]`,
+or `dynamic Element`, inspect the element type, and are compile-time-only.
+`TypeFixedArrayLength<T>()` returns the concrete fixed-array length as
+`u64[0 max]`; `TypeFixedArrayLengthIs<T, Value>()` compares it with a typed
+compile-time integer argument. Fixed-array length facts require `T` to be a
+fixed array and fold through range-typed integer `comptime` generic lengths
+such as `T[N]` after specialization.
+
+Available top-level qualifier metadata facts: `TypeHasQualifiers<T>()`,
+`TypeBorrowKindIsNone<T>()`, `TypeBorrowKindIsBorrow<T>()`,
+`TypeBorrowKindIsRetBorrow<T>()`, `TypeBorrowKindIsStoreBorrow<T>()`,
+`TypeAccessKindIsNone<T>()`, `TypeAccessKindIsShared<T>()`,
+`TypeAccessKindIsFrozen<T>()`, `TypeInitializationKindIsNone<T>()`,
+`TypeInitializationKindIsOut<T>()`, `TypeInitializationKindIsInit<T>()`,
+`TypeIsMutableView<T>()`, and `TypeUnqualifiedTypeIs<T, U>()`.
+These facts inspect only the top-level `borrow` / `retborrow` / `storeborrow`,
+`shared` / `frozen`, `out` / `init`, and mutable-view markers. Most other type
+facts normalize those markers away; use these when a generic needs to branch on
+ownership/access/init shape directly.
+
+Available count facts: `FieldCount<T>()` returns the ordered source field count
+for structs/records and `0` for other types; `EnumVariantCount<T>()` returns
+the enum variant count and `0` for other types. Both return `u64` constants.
+
+Named-type generic metadata facts:
+
+- `TypeGenericParameterCount<T>()` returns the ordinary type parameter count for
+  a named type declaration.
+- `TypeGenericParameterName<T, I>()` returns the selected ordinary type
+  parameter name as an `ascii` compile-time text constant.
+- `TypeComptimeGenericParameterCount<T>()` returns the typed `comptime` generic
+  parameter count for a named type declaration.
+- `TypeComptimeGenericParameterName<T, I>()` returns the selected typed
+  `comptime` generic parameter name as an `ascii` compile-time text constant.
+- `TypeComptimeGenericParameterTypeIs<T, U, I>()`,
+  `TypeComptimeGenericParameterTypeIs*<T, I>()`, and
+  `TypeComptimeGenericParameterTypeHasConcreteLayout<T, I>()` inspect the
+  selected typed `comptime` generic parameter type. Metadata facts expose its
+  display/base names and generic-shape counts.
+- `TypeDisplayName<T>()` and `TypeBaseName<T>()` return compile-time `ascii`
+  names for the normalized type spelling and named-type base.
+- `TypeIsGenericInstantiation<T>()` returns `bool` when `T` is a named type
+  with actual type arguments or `comptime` value arguments.
+- `TypeArgumentCount<T>()` and `TypeComptimeArgumentCount<T>()` return actual
+  type/value argument counts for an instantiated named type.
+- `TypeComptimeArgumentName<T, I>()` returns the parameter name for actual
+  `comptime` value argument `I` as `ascii`.
+- `TypeComptimeArgumentTypeIs<T, U, I>()` returns `bool` when actual
+  `comptime` value argument `I` has exact type `U`.
+- `TypeComptimeArgumentTypeIs*<T, I>()`,
+  `TypeComptimeArgumentTypeHasConcreteLayout<T, I>()`, and
+  `TypeComptimeArgumentTypeDisplayName/BaseName/IsGenericInstantiation/ArgumentCount/ComptimeArgumentCount<T, I>()`
+  inspect the type of actual `comptime` value argument `I`.
+- `TypeComptimeArgumentValueIs<T, I, Value>()` returns `bool` when actual
+  `comptime` value argument `I` equals the integer `Value`.
+- `TypeArgumentTypeIs<T, U, I>()`, `TypeArgumentTypeIs*<T, I>()`, and
+  `TypeArgumentTypeHasConcreteLayout<T, I>()` inspect actual type argument `I`
+  and mirror the top-level type predicate vocabulary.
+- `TypeArgumentTypeDisplayName/BaseName/IsGenericInstantiation/ArgumentCount/ComptimeArgumentCount<T, I>()`
+  expose actual type argument metadata.
+
+For instantiated types, these facts inspect the generic template declaration:
+`Buffer<i32[min max], 4>` still reports the declaration parameters from
+`Buffer<T, comptime u8[1 8] N>`.
+
+```stark
+finite law u64[0 max] ShapeScore<T>()
+{
+    if (comptime System.Compiler.FieldCount<T>() == 2)
+    {
+        return 20;
+    }
+
+    if (comptime System.Compiler.EnumVariantCount<T>() == 3)
+    {
+        return 30;
+    }
+
+    return 0;
+}
+```
+
+Available indexed detail facts:
+
+- `FieldOffset<T, I>()`, `FieldSize<T, I>()`, and `FieldAlign<T, I>()` return
+  `u64` layout facts for the `I`th struct/record field.
+- `FieldIsMisaligned<T, I>()` returns `bool` for packed or explicit layout
+  fields whose offset does not satisfy natural alignment.
+- `EnumVariantPayloadOffset<T, VariantIndex, PayloadIndex>()`,
+  `EnumVariantPayloadSize<T, VariantIndex, PayloadIndex>()`, and
+  `EnumVariantPayloadAlign<T, VariantIndex, PayloadIndex>()` return `u64`
+  layout facts for the selected enum payload storage field after enum lowering.
+- `EnumVariantPayloadIsMisaligned<T, VariantIndex, PayloadIndex>()` returns
+  `bool` for enum payload storage fields whose offset does not satisfy natural
+  alignment.
+- `EnumVariantTag<T, I>()` returns the `I`th source variant's concrete direct
+  tag value as `u64`; this may differ from source order when a later unit
+  variant receives tag `0`.
+- `EnumTagOffset<T>()`, `EnumTagSize<T>()`, and `EnumTagAlign<T>()` return
+  `u64` layout facts for the enum tag storage field; `EnumTagIsMisaligned<T>()`
+  returns `bool`.
+- `StructLayoutIsAuto<T>()`, `StructLayoutIsC<T>()`, and
+  `StructLayoutIsExplicit<T>()` return `bool` facts for the declared struct
+  layout kind.
+- `StructHasPack<T>()` / `StructPack<T>()` expose `[Pack(N)]`; `StructHasAlign<T>()`
+  / `StructAlign<T>()` expose `[Align(N)]`.
+- `FieldHasExplicitOffset<T, I>()` / `FieldExplicitOffset<T, I>()` expose
+  field-level `[FieldOffset(N)]` metadata. `StructPack`, `StructAlign`, and
+  `FieldExplicitOffset` return `0` when absent, so branch on the matching
+  `Has*` fact when zero is meaningful.
+- `EnumVariantPayloadCount<T, I>()` returns `u64` for the `I`th enum variant.
+- `EnumVariantIsOk<T, I>()` and `EnumVariantIsErr<T, I>()` return `bool` from
+  the variant's `[Ok]` / `[Err]` role attributes.
+- `EnumVariantIsErrorFunnel<T, I>()` returns `bool` when the `I`th enum variant
+  was declared with the `Name from ErrorType` funnel payload form.
+- `EnumVariantAbsorbsErrorTypeIs<T, U, I>()` returns `bool` when that funnel
+  absorbs exact type `U`, after substituting generic type and `comptime` value
+  arguments from `T`.
+- `FieldTypeIs<T, U, I>()` returns `bool` when the `I`th struct/record field
+  has exact type `U`.
+- `EnumVariantPayloadTypeIs<T, U, VariantIndex, PayloadIndex>()` returns `bool`
+  when the selected enum payload field has exact type `U`.
+- Field type-category facts mirror the top-level predicates for selected
+  fields: `FieldTypeIsBool<T, I>()`, `FieldTypeIsInteger<T, I>()`,
+  `FieldTypeIsFloat<T, I>()`, `FieldTypeIsRawPointer<T, I>()`,
+  `FieldTypeIsFixedArray<T, I>()`, `FieldTypeIsSlice<T, I>()`,
+  `FieldTypeIsDynamic<T, I>()`, `FieldTypeIsFunctionPointer<T, I>()`,
+  `FieldTypeIsClosure<T, I>()`, `FieldTypeIsNamed<T, I>()`,
+  `FieldTypeIsStruct<T, I>()`, `FieldTypeIsRecord<T, I>()`,
+  `FieldTypeIsEnum<T, I>()`, `FieldTypeIsTrait<T, I>()`,
+  `FieldTypeIsDoctrine<T, I>()`, and `FieldTypeHasConcreteLayout<T, I>()`.
+- Field type metadata facts expose selected field type identity and generic
+  shape: `FieldTypeDisplayName<T, I>()`, `FieldTypeBaseName<T, I>()`,
+  `FieldTypeIsGenericInstantiation<T, I>()`, `FieldTypeArgumentCount<T, I>()`,
+  and `FieldTypeComptimeArgumentCount<T, I>()`.
+- Enum payload type-category facts use the same category names with the
+  `EnumVariantPayloadType...<T, VariantIndex, PayloadIndex>()` prefix,
+  including `EnumVariantPayloadTypeHasConcreteLayout<T, VariantIndex,
+  PayloadIndex>()`.
+- Enum payload type metadata facts use the same identity/generic-shape names
+  with the `EnumVariantPayloadType...<T, VariantIndex, PayloadIndex>()` prefix.
+- Function-pointer signature facts include `FunctionPointerParameterCount<T>()`,
+  `FunctionPointerReturnTypeIs<T, U>()`,
+  `FunctionPointerParameterTypeIs<T, U, I>()`, return/parameter type-category
+  predicates, return/parameter nested type metadata facts (`DisplayName`,
+  `BaseName`, `IsGenericInstantiation`, `ArgumentCount`, and
+  `ComptimeArgumentCount`), exact function-kind predicates (`FunctionPointerKindIsFn`,
+  `FunctionPointerKindIsFinite`, `FunctionPointerKindIsLaw`,
+  `FunctionPointerKindIsFiniteLaw`), `FunctionPointerIsUnsafe<T>()`,
+  `FunctionPointerHasFfiAbi<T>()`, and exact ABI predicates such as
+  `FunctionPointerAbiIsC<T>()` and
+  `FunctionPointerAbiIsWin64<T>()`. Bounded raw-pointer parameter count
+  expressions are exposed with
+  `FunctionPointerParameterHasRawPointerElementCountExpression<T, I>()` and
+  `FunctionPointerParameterRawPointerElementCountExpression<T, I>()`; `fnptr`
+  count expressions use synthetic parameter names such as `arg1`.
+- Function-pointer memory-contract facts include
+  `FunctionPointerParametersAreDisjoint<T, LeftIndex, RightIndex>()`,
+  `FunctionPointerParametersOverlap<T, LeftIndex, RightIndex>()`, and
+  `FunctionPointerParametersAreSame<T, LeftIndex, RightIndex>()`. `same`
+  counts as overlap for the broad overlap query.
+- Closure signature facts include `ClosureParameterCount<T>()`,
+  `ClosureReturnTypeIs<T, U>()`, `ClosureParameterTypeIs<T, U, I>()`,
+  return/parameter type-category predicates, return/parameter nested type
+  metadata facts, exact function-kind predicates,
+  storage predicates (`ClosureStorageIsBorrow`, `ClosureStorageIsHeap`,
+  `ClosureStorageIsInline`), and call-capability predicates
+  (`ClosureCallCapabilityIsNormal`, `ClosureCallCapabilityIsMut`,
+  `ClosureCallCapabilityIsOnce`). Bounded raw-pointer parameter count
+  expressions are exposed with
+  `ClosureParameterHasRawPointerElementCountExpression<T, I>()` and
+  `ClosureParameterRawPointerElementCountExpression<T, I>()`; closure count
+  expressions also use synthetic parameter names such as `arg1`.
+- Closure memory-contract facts include
+  `ClosureParametersAreDisjoint<T, LeftIndex, RightIndex>()`,
+  `ClosureParametersOverlap<T, LeftIndex, RightIndex>()`, and
+  `ClosureParametersAreSame<T, LeftIndex, RightIndex>()`. They inspect
+  `closure<...> where overlap/same` type metadata; `same` counts as overlap.
+- Method bounded raw-pointer parameter count expressions are exposed with
+  `MethodParameterHasRawPointerElementCountExpression<T, MethodIndex,
+  ParameterIndex>()` and
+  `MethodParameterRawPointerElementCountExpression<T, MethodIndex,
+  ParameterIndex>()`; method count expressions preserve the source expression,
+  usually a parameter name such as `length`.
+- Dyn-trait metadata facts include `IsDynTrait<T>()`,
+  `DynTraitIsView<T>()`, `DynTraitIsHeap<T>()`, and
+  `DynTraitTargetTypeIs<T, Trait>()`. They inspect `borrow dyn Trait` /
+  `heap dyn Trait` type metadata only inside `comptime`; the target comparison
+  requires a dyn-trait object as its first type argument and a trait as its
+  second type argument.
+- `FieldName<T, I>()` returns the `I`th struct/record field name as an `ascii`
+  compile-time text constant.
+- `EnumVariantName<T, I>()` returns the `I`th enum variant name as an `ascii`
+  compile-time text constant.
+- `EnumVariantUsesNamedFields<T, I>()` returns `bool` when the `I`th enum
+  variant uses named-field payload syntax.
+- `EnumVariantPayloadHasName<T, VariantIndex, PayloadIndex>()` returns `bool`
+  when the selected enum payload field has a source name.
+- `EnumVariantPayloadName<T, VariantIndex, PayloadIndex>()` returns the selected
+  enum payload name as an `ascii` compile-time text constant, or empty `ascii`
+  for positional payload fields.
+- `AssociatedTypeCount<T>()` returns `u64` for associated aliases declared on
+  `T`.
+- `AssociatedTypeName<T, I>()` returns the selected associated alias name as an
+  `ascii` compile-time text constant. Associated aliases are indexed by
+  deterministic ordinal name order, not source order.
+- `AssociatedTypeHasTarget<T, I>()` returns `bool`; it is false for required
+  trait aliases such as `alias Item;`.
+- `AssociatedTypeTargetTypeIs<T, U, I>()` returns `bool` when the selected
+  associated alias target exactly matches `U`, after substituting generic type
+  and `comptime` value arguments from `T`.
+- `AssociatedTypeTargetTypeIs*<T, I>()` and
+  `AssociatedTypeTargetTypeHasConcreteLayout<T, I>()` mirror the field,
+  payload, method, function-pointer, and closure type-category predicates for
+  an associated alias target. Required aliases without a target return false
+  for these predicates.
+- `AssociatedTypeTargetTypeDisplayName<T, I>()`,
+  `AssociatedTypeTargetTypeBaseName<T, I>()`,
+  `AssociatedTypeTargetTypeIsGenericInstantiation<T, I>()`,
+  `AssociatedTypeTargetTypeArgumentCount<T, I>()`, and
+  `AssociatedTypeTargetTypeComptimeArgumentCount<T, I>()` expose associated alias
+  target identity and generic-shape metadata after owner generic substitution.
+  Required aliases without a target return default metadata values (`""`,
+  `false`, `0`).
+
+Indices are typed comptime integer generic arguments. Concrete out-of-range
+indices are compile-time errors; symbolic indices may flow through generic CTFE
+until specialization.
+
+```stark
+finite law u64[0 max] OffsetAt<T, comptime u64[0 max] I>()
+{
+    return comptime System.Compiler.FieldOffset<T, comptime I>();
+}
+
+finite law bool HasExplicitFieldOffset<T, comptime u64[0 max] I>()
+{
+    return comptime System.Compiler.FieldHasExplicitOffset<T, comptime I>();
+}
+
+finite law bool HasI32AssociatedTarget<T, comptime u64[0 max] I>()
+{
+    return comptime System.Compiler.AssociatedTypeHasTarget<T, comptime I>()
+        && comptime System.Compiler.AssociatedTypeTargetTypeIs<T, i32[min max], comptime I>();
+}
+
+finite law bool AssociatedTargetHasConcreteLayout<T, comptime u64[0 max] I>()
+{
+    return comptime System.Compiler.AssociatedTypeTargetTypeHasConcreteLayout<T, comptime I>();
+}
+
+finite law bool FunnelAbsorbs<T, U, comptime u64[0 max] I>()
+{
+    return comptime System.Compiler.EnumVariantIsErrorFunnel<T, comptime I>()
+        && comptime System.Compiler.EnumVariantAbsorbsErrorTypeIs<T, U, comptime I>();
+}
+
+finite law bool FirstComptimeParamIsU8<T>()
+{
+    return comptime (System.Compiler.TypeComptimeGenericParameterName<T, 0>() == "N")
+        && comptime System.Compiler.TypeComptimeGenericParameterTypeIs<T, u8[1 8], 0>()
+        && comptime System.Compiler.TypeComptimeGenericParameterTypeIsInteger<T, 0>();
+}
+
+finite law bool HasPayloadType<T, U, comptime u64[0 max] V, comptime u64[0 max] P>()
+{
+    return comptime System.Compiler.EnumVariantPayloadTypeIs<T, U, comptime V, comptime P>();
+}
+
+finite law u64[0 max] PayloadOffset<T, comptime u64[0 max] V, comptime u64[0 max] P>()
+{
+    return comptime System.Compiler.EnumVariantPayloadOffset<T, comptime V, comptime P>();
+}
+
+finite law u64[0 max] VariantTag<T, comptime u64[0 max] I>()
+{
+    return comptime System.Compiler.EnumVariantTag<T, comptime I>();
+}
+
+finite law bool FieldIsNumber<T, comptime u64[0 max] I>()
+{
+    return comptime System.Compiler.FieldTypeIsInteger<T, comptime I>();
+}
+
+finite law bool PayloadIsRecord<T, comptime u64[0 max] V, comptime u64[0 max] P>()
+{
+    return comptime System.Compiler.EnumVariantPayloadTypeIsRecord<T, comptime V, comptime P>();
+}
+
+finite law bool CallbackIsCFiniteLaw<T>()
+{
+    return comptime System.Compiler.FunctionPointerKindIsFiniteLaw<T>()
+        && comptime System.Compiler.FunctionPointerAbiIsC<T>();
+}
+
+finite law bool CallbackArgsAreDisjoint<T, comptime u64[0 max] L, comptime u64[0 max] R>()
+{
+    return comptime System.Compiler.FunctionPointerParametersAreDisjoint<T, comptime L, comptime R>();
+}
+
+finite law bool ClosureIsHeapUnary<T>()
+{
+    return comptime System.Compiler.ClosureParameterCount<T>() == 1
+        && comptime System.Compiler.ClosureStorageIsHeap<T>()
+        && comptime System.Compiler.ClosureCallCapabilityIsNormal<T>();
+}
+
+finite law bool IsHeapDynTarget<T, Trait>()
+{
+    return comptime System.Compiler.IsDynTrait<T>()
+        && comptime System.Compiler.DynTraitIsHeap<T>()
+        && comptime System.Compiler.DynTraitTargetTypeIs<T, Trait>();
+}
+
+finite law bool FirstMethodReturnsI32<T>()
+{
+    return comptime System.Compiler.MethodCount<T>() > 0
+        && comptime System.Compiler.MethodReturnTypeIs<T, i32[min max], 0>();
+}
+
+finite law bool IsFieldNamed<T, comptime u64[0 max] I>()
+{
+    return comptime (System.Compiler.FieldName<T, comptime I>() == "Value");
+}
+
+finite law bool HasPayloadName<T, comptime u64[0 max] V, comptime u64[0 max] P>()
+{
+    return comptime System.Compiler.EnumVariantPayloadHasName<T, comptime V, comptime P>();
+}
+```
+
+CTFE text equality compares decoded text payloads, so structural name facts can
+be compared with ordinary string literals without creating runtime reflection
+metadata.
+
+Available trait-conformance fact:
+
+- `Implements<T, Trait>()` returns `bool` when `T` statically conforms to the
+  given trait. The second generic argument must resolve to a trait type.
+- `ImplementedTraitCount<T>()`, `ImplementedTraitTypeIs<T, Trait, I>()`,
+  implemented-trait type predicates, and implemented-trait type metadata facts
+  expose the stored trait base-list for a named type inside `comptime`.
+
+```stark
+finite law i32[min max] DrawScore<T>()
+{
+    if (comptime System.Compiler.Implements<T, Drawable>())
+    {
+        return 7;
+    }
+
+    return 0;
+}
+```
+
+`Implements<T, Trait>()` follows Stark's static trait conformance model. It
+does not create trait objects, vtables, hidden dispatch, or runtime reflection.
+Implemented-trait metadata follows the same rule and is erased before runtime
+lowering.
 
 ## Data Declarations
 
@@ -580,6 +1037,30 @@ fn Ascii Label(i32[min max] score)
 
 Use explicit `System.Text` APIs when overflow, allocation failure, formatting failure, or encoding conversion should be returned as data instead of trapping.
 
+## Thread-Safety Laws
+
+Stark has two compiler-known thread-safety laws:
+
+- `Transferable(T)`: ownership of `T` may move to another thread.
+- `Shareable(T)`: a borrow of `T` may be accessed from multiple threads.
+
+Use them in callable `where` clauses. The compiler computes facts structurally at type-check time, including generic propagation and conditional grants:
+
+```stark
+fn T Move<T>(T value) where Transferable(T)
+{
+    return value;
+}
+
+struct Synchronized<T>
+{
+    [Grant(Shareable) where Transferable(T)]
+    T Payload;
+}
+```
+
+Raw pointers and `storeborrow` fields deny both laws by default. `System.Threading.Atomic*` types satisfy both laws by intrinsic compiler grant. Use `[Grant(...)]` only for audited overrides and `[Deny(...)]` for semantic opt-outs that structural derivation cannot see. Call-site and thread-boundary enforcement is still tracked in `docs/Self-host-Prep/14-thread-safety-laws.md`.
+
 ## Standard Library
 
 Import standard-library modules explicitly when it improves readability. The root `System` module re-exports the common public modules, while `System.Text`, `System.Testing`, and `System.Runtime.Buffer` are usually imported directly when needed.
@@ -621,6 +1102,7 @@ For exact public standard-library signatures, read [`references/standard-library
 Use these bundled references when the task needs more detail while staying self-contained:
 
 - [`references/syntax-quick-reference.md`](references/syntax-quick-reference.md): source structure, keywords, operators, ranges, switches, text, and callable syntax.
+- [`references/comptime-structural-facts-reference.md`](references/comptime-structural-facts-reference.md): `System.Compiler` structural facts for comptime type, field, enum, callable, trait, doctrine, and associated-type branching.
 - [`references/borrower-recipes.md`](references/borrower-recipes.md): choosing `borrow`, `mut borrow`, `retborrow`, `storeborrow`, `frozen`, `const`, `out`, `init`, raw pointers, and memory contracts.
 - [`references/callables-closures-reference.md`](references/callables-closures-reference.md): function items, `fnptr`, lambdas, inline closures, borrowed closures, heap closures, once closures, and thread entries.
 - [`references/assembly-functions-reference.md`](references/assembly-functions-reference.md): `unsafe ffi asm(arch) fn`, operands, clobbers, target selection, supported types, and current lowering limits.

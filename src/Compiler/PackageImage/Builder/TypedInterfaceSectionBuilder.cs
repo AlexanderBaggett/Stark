@@ -58,7 +58,13 @@ internal static partial class PackageImageBuilder
             SameParameterGroups: BuildParameterSameGroupManifests(function.SameGroups),
             ComptimeGenericParameters: BuildComptimeGenericParameterManifests(
                 function.ComptimeGenericParams,
-                moduleName: ModuleNameFromQualifiedName(qualifiedName)));
+                moduleName: ModuleNameFromQualifiedName(qualifiedName)),
+            TypeParameterConstraints: BuildTypeParameterConstraintManifests(
+                function.Constraints,
+                ModuleNameFromQualifiedName(qualifiedName)),
+            ThreadSafetyLawPredicates: BuildThreadSafetyLawPredicateManifests(
+                function.ThreadSafetyLaws,
+                ModuleNameFromQualifiedName(qualifiedName)));
         return true;
     }
 
@@ -109,7 +115,9 @@ internal static partial class PackageImageBuilder
             OverlapParameterGroups: BuildParameterOverlapGroupManifests(function.OverlapGroups),
             SameParameterGroups: BuildParameterSameGroupManifests(function.SameGroups),
             HasBody: declarationFunction.HasBody,
-            ComptimeGenericParameters: BuildComptimeGenericParameterManifests(function.ComptimeGenericParams, moduleName));
+            ComptimeGenericParameters: BuildComptimeGenericParameterManifests(function.ComptimeGenericParams, moduleName),
+            TypeParameterConstraints: BuildTypedTypeParameterConstraintManifests(function.Constraints, moduleName),
+            ThreadSafetyLawPredicates: BuildTypedThreadSafetyLawPredicateManifests(function.ThreadSafetyLaws, moduleName));
     }
 
     private static StarkPackageTypeManifest BuildTypeManifest(
@@ -134,7 +142,8 @@ internal static partial class PackageImageBuilder
                         field.Name,
                         RenderManifestTypeText(field.Type, module.SyntaxModel.ModuleName),
                         RenderFieldVisibility(field.Visibility),
-                        field.ExplicitOffsetBytes))
+                        field.ExplicitOffsetBytes,
+                        BuildThreadSafetyLawAttributeManifests(field.ThreadSafetyLaws, module.SyntaxModel.ModuleName)))
                     .ToArray(),
             GenericParameters: namedType.GenericParams.Count == 0 ? null : namedType.GenericParams.ToArray(),
             PrimaryConstructorParameters: BuildTypePrimaryConstructorParameters(module, declaration.Name, namedType),
@@ -168,6 +177,10 @@ internal static partial class PackageImageBuilder
             AssociatedTypes: BuildAssociatedTypeManifests(namedType, module.SyntaxModel.ModuleName),
             ComptimeGenericParameters: BuildComptimeGenericParameterManifests(
                 namedType.ComptimeGenericParams,
+                module.SyntaxModel.ModuleName),
+            IsDynTrait: declaration.Kind == DeclarationKind.Trait && namedType.IsDynTrait,
+            ThreadSafetyLawAttributes: BuildThreadSafetyLawAttributeManifests(
+                namedType.ThreadSafetyLaws,
                 module.SyntaxModel.ModuleName));
     }
 
@@ -194,7 +207,8 @@ internal static partial class PackageImageBuilder
                         field.Name,
                         BuildTypeReference(field.Type, module.SyntaxModel.ModuleName),
                         RenderFieldVisibility(field.Visibility),
-                        field.ExplicitOffsetBytes))
+                        field.ExplicitOffsetBytes,
+                        BuildTypedThreadSafetyLawAttributeManifests(field.ThreadSafetyLaws, module.SyntaxModel.ModuleName)))
                     .ToArray(),
             GenericParameters: namedType.GenericParams.Count == 0 ? null : namedType.GenericParams.ToArray(),
             PrimaryConstructorParameters: BuildTypedTypePrimaryConstructorParameters(module, declaration.Name, namedType),
@@ -231,7 +245,113 @@ internal static partial class PackageImageBuilder
             AssociatedTypes: BuildTypedAssociatedTypeManifests(namedType, module.SyntaxModel.ModuleName),
             ComptimeGenericParameters: BuildComptimeGenericParameterManifests(
                 namedType.ComptimeGenericParams,
+                module.SyntaxModel.ModuleName),
+            IsDynTrait: declaration.Kind == DeclarationKind.Trait && namedType.IsDynTrait,
+            ThreadSafetyLawAttributes: BuildTypedThreadSafetyLawAttributeManifests(
+                namedType.ThreadSafetyLaws,
                 module.SyntaxModel.ModuleName));
+    }
+
+    private static IReadOnlyList<StarkPackageThreadSafetyLawAttributeManifest>? BuildThreadSafetyLawAttributeManifests(
+        IReadOnlyList<ThreadSafetyLawAttributeSymbol> attributes,
+        string moduleName)
+    {
+        return attributes.Count == 0
+            ? null
+            : attributes
+                .Select(attribute => new StarkPackageThreadSafetyLawAttributeManifest(
+                    RenderThreadSafetyLawAttributeKind(attribute.Kind),
+                    attribute.LawName,
+                    attribute.Condition is { } condition
+                        ? new StarkPackageThreadSafetyLawPredicateManifest(
+                            condition.LawName,
+                            RenderManifestTypeText(condition.Type, moduleName))
+                        : null))
+                .ToArray();
+    }
+
+    private static IReadOnlyList<StarkPackageTypedThreadSafetyLawAttributeManifest>? BuildTypedThreadSafetyLawAttributeManifests(
+        IReadOnlyList<ThreadSafetyLawAttributeSymbol> attributes,
+        string moduleName)
+    {
+        return attributes.Count == 0
+            ? null
+            : attributes
+                .Select(attribute => new StarkPackageTypedThreadSafetyLawAttributeManifest(
+                    RenderThreadSafetyLawAttributeKind(attribute.Kind),
+                    attribute.LawName,
+                    attribute.Condition is { } condition
+                        ? new StarkPackageTypedThreadSafetyLawPredicateManifest(
+                            condition.LawName,
+                            BuildTypeReference(condition.Type, moduleName))
+                        : null))
+                .ToArray();
+    }
+
+    private static string RenderThreadSafetyLawAttributeKind(ThreadSafetyLawAttributeKind kind)
+    {
+        return kind switch
+        {
+            ThreadSafetyLawAttributeKind.Grant => "grant",
+            ThreadSafetyLawAttributeKind.Deny => "deny",
+            _ => "unknown"
+        };
+    }
+
+    private static IReadOnlyList<StarkPackageThreadSafetyLawPredicateManifest>? BuildThreadSafetyLawPredicateManifests(
+        IReadOnlyList<ThreadSafetyLawPredicateSymbol> predicates,
+        string moduleName)
+    {
+        return predicates.Count == 0
+            ? null
+            : predicates
+                .Select(predicate => new StarkPackageThreadSafetyLawPredicateManifest(
+                    predicate.LawName,
+                    RenderManifestTypeText(predicate.Type, moduleName)))
+                .ToArray();
+    }
+
+    private static IReadOnlyList<StarkPackageTypeParameterConstraintManifest>? BuildTypeParameterConstraintManifests(
+        IReadOnlyList<TypeParameterConstraint> constraints,
+        string moduleName)
+    {
+        return constraints.Count == 0
+            ? null
+            : constraints
+                .Select(constraint => new StarkPackageTypeParameterConstraintManifest(
+                    constraint.ParameterName,
+                    constraint.BoundTraits
+                        .Select(bound => RenderManifestTypeText(bound, moduleName))
+                        .ToArray()))
+                .ToArray();
+    }
+
+    private static IReadOnlyList<StarkPackageTypedTypeParameterConstraintManifest>? BuildTypedTypeParameterConstraintManifests(
+        IReadOnlyList<TypeParameterConstraint> constraints,
+        string moduleName)
+    {
+        return constraints.Count == 0
+            ? null
+            : constraints
+                .Select(constraint => new StarkPackageTypedTypeParameterConstraintManifest(
+                    constraint.ParameterName,
+                    constraint.BoundTraits
+                        .Select(bound => BuildTypeReference(bound, moduleName))
+                        .ToArray()))
+                .ToArray();
+    }
+
+    private static IReadOnlyList<StarkPackageTypedThreadSafetyLawPredicateManifest>? BuildTypedThreadSafetyLawPredicateManifests(
+        IReadOnlyList<ThreadSafetyLawPredicateSymbol> predicates,
+        string moduleName)
+    {
+        return predicates.Count == 0
+            ? null
+            : predicates
+                .Select(predicate => new StarkPackageTypedThreadSafetyLawPredicateManifest(
+                    predicate.LawName,
+                    BuildTypeReference(predicate.Type, moduleName)))
+                .ToArray();
     }
 
     private static IReadOnlyList<StarkPackageAssociatedTypeManifest>? BuildAssociatedTypeManifests(
@@ -487,6 +607,12 @@ internal static partial class PackageImageBuilder
                     SameParameterGroups: BuildParameterSameGroupManifests(function.SameGroups),
                     ComptimeGenericParameters: BuildComptimeGenericParameterManifests(
                         function.ComptimeGenericParams,
+                        module.SyntaxModel.ModuleName),
+                    TypeParameterConstraints: BuildTypeParameterConstraintManifests(
+                        function.Constraints,
+                        module.SyntaxModel.ModuleName),
+                    ThreadSafetyLawPredicates: BuildThreadSafetyLawPredicateManifests(
+                        function.ThreadSafetyLaws,
                         module.SyntaxModel.ModuleName));
             })
             .Where(static manifest => manifest is not null)
@@ -560,6 +686,12 @@ internal static partial class PackageImageBuilder
                     HasBody: declaration.Function.HasBody,
                     ComptimeGenericParameters: BuildComptimeGenericParameterManifests(
                         function.ComptimeGenericParams,
+                        module.SyntaxModel.ModuleName),
+                    TypeParameterConstraints: BuildTypedTypeParameterConstraintManifests(
+                        function.Constraints,
+                        module.SyntaxModel.ModuleName),
+                    ThreadSafetyLawPredicates: BuildTypedThreadSafetyLawPredicateManifests(
+                        function.ThreadSafetyLaws,
                         module.SyntaxModel.ModuleName));
             })
             .Where(static manifest => manifest is not null)

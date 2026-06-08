@@ -578,7 +578,7 @@ public sealed class SemanticValidationTests
     }
 
     [Fact]
-    public void LawsCannotReadGlobalState()
+    public void LawsCanReadConstGlobalValues()
     {
         var result = Compile(
             """
@@ -592,8 +592,7 @@ public sealed class SemanticValidationTests
             }
             """);
 
-        Assert.False(result.Succeeded);
-        AssertDiagnostic(result, "STK4105");
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
     }
 
     [Fact]
@@ -1282,7 +1281,7 @@ public sealed class SemanticValidationTests
     }
 
     [Fact]
-    public void DoctrineMembersParticipateInLawValidation()
+    public void DoctrineLawMembersCanReadConstGlobalValues()
     {
         var result = Compile(
             """
@@ -1299,8 +1298,7 @@ public sealed class SemanticValidationTests
             }
             """);
 
-        Assert.False(result.Succeeded);
-        AssertDiagnostic(result, "STK4105");
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
     }
 
     [Fact]

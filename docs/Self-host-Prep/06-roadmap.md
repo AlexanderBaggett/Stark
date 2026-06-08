@@ -9,7 +9,7 @@ self-hosted compiler can build itself and pass the ported tests.
 |---|---|---|
 | M0 | Close test-infrastructure blockers | TEST-01 through TEST-12, S09-S12, S18, T12 |
 | M1 | Port tests to Stark, still targeting host compiler | TEST-06, TEST-07, T03 |
-| M2 | Close language blockers | L01, L06, L07, L11, L13, T01 |
+| M2 | Close language blockers | L01, L06, L07, L11, T01 |
 | M3 | Close stdlib blockers | S01, S02, S05, S06, S07, S09-S14, S17 |
 | M4 | Close tooling blockers | T02-T11, T14 |
 | M5 | Port compiler subsystems leaf-first | `05-port-checklist.md` compiler rows |
@@ -41,10 +41,10 @@ self-hosted compiler can build itself and pass the ported tests.
 | Field | Details |
 |---|---|
 | Entry Criteria | M1 has enough tests to guard feature changes; open decisions through OQ-08 are resolved. OQ-02 is resolved as handwritten parser + canonical `Stark.g4`; OQ-08 is resolved as generic collection contracts plus compiler-internal typed interning. |
-| Work | Resolve L01, L06, L07, and L11; implement the specified L03 traversal-loop slice, the specified L05 typed `comptime` generic value parameters, the specified L09 `comptime` CTFE plus program-structure branching model, the specified L13 alias/noalias proof-carrier model, and T01. Decide whether L02, L04, L10, L12 are language work or port conventions. L08 source-literal syntax has landed; S02/S03 still track Stark-side text helpers. Preserve Stark terminology and contracts: finite, law, borrow, retborrow, storeborrow, doctrine, range-typed integers, memory contracts. |
+| Work | Resolve L01, L06, L07, and L11; implement the specified L03 traversal-loop slice, the specified L05 typed `comptime` generic value parameters, the remaining L09 aggregate CTFE beyond the scalar/fixed-array/table/named-aggregate/enum/layout-query slices, structural-fact queries, compile-time branching model, and T01. Decide whether L02, L04, L10, L12 are language work or port conventions. L08 source-literal syntax has landed; the first expression-form `comptime` CTFE slice, fixed-array aggregate CTFE slice, value-position `comptime` block slice, bounded `willexit` CTFE table-generation slice, named struct/record aggregate CTFE slice, enum aggregate CTFE slice, concrete layout-query CTFE slice, and L13 alias/noalias proof-carrier model have landed; S02/S03 still track Stark-side text helpers. Preserve Stark terminology and contracts: finite, law, borrow, retborrow, storeborrow, doctrine, range-typed integers, memory contracts. |
 | Exit Criteria | Stark can express the compiler's data model, error model, invariant failures, alias/noalias proofs, optional values, generic collection constraints, and handwritten parser implementation without relying on C# semantics. |
-| Key Risks | T01 handwritten parser implementation dominates front-end schedule; L09 structural-fact queries must stay explicit and compile-time-only; L13 alias/noalias mistakes must remain compile-time diagnostics; L06/S06 collection work now hinges on complete stdlib contract coverage and deterministic output discipline. |
-| Parallel Workstreams | Handwritten parser prototype and conformance tests T01; traversal-loop syntax/lowering L03; comptime generic parameters and fixed-array use sites L05; error/option convention L01/L11/S01; invariant API L07; `comptime` evaluator and structural-fact queries L09; alias-proof carrier implementation and artifact checks L13; generic collection contracts plus typed interner implementation L06/S06/S07. |
+| Key Risks | T01 handwritten parser implementation dominates front-end schedule; L09 structural-fact queries must stay explicit and compile-time-only; L06/S06 collection work now hinges on complete stdlib contract coverage and deterministic output discipline. |
+| Parallel Workstreams | Handwritten parser prototype and conformance tests T01; traversal-loop syntax/lowering L03; comptime generic parameters and fixed-array use sites L05; error/option convention L01/L11/S01; invariant API L07; remaining aggregate evaluator plus structural-fact queries L09; generic collection contracts plus typed interner implementation L06/S06/S07. |
 
 ## M3 - Close Standard Library Blockers
 

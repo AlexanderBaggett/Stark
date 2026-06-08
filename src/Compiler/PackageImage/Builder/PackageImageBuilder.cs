@@ -290,6 +290,7 @@ internal static partial class PackageImageBuilder
             FloatLiteralText: initializer.FloatLiteralText,
             BoolValue: initializer.BoolValue,
             TextLiteralText: initializer.TextLiteralText,
+            VariantName: initializer.VariantName,
             Elements: initializer.Elements?.Select(element => BuildConstantInitializerManifest(element, moduleName)!).ToArray());
     }
 

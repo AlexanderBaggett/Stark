@@ -129,7 +129,13 @@ internal static partial class PackageImageBuilder
                 functionDeclaration.parameterList(),
                 functionDeclaration.parameterMemoryContractClause()),
             OverlapParameterGroups = BuildParameterOverlapGroupManifests(functionDeclaration.parameterMemoryContractClause()),
-            SameParameterGroups = BuildParameterSameGroupManifests(functionDeclaration.parameterMemoryContractClause())
+            SameParameterGroups = BuildParameterSameGroupManifests(functionDeclaration.parameterMemoryContractClause()),
+            TypeParameterConstraints = BuildSourceSurfaceTypeParameterConstraints(
+                module,
+                functionDeclaration.typeParameterConstraints()),
+            ThreadSafetyLawPredicates = BuildSourceSurfaceThreadSafetyLawPredicates(
+                module,
+                functionDeclaration.parameterMemoryContractClause())
         };
     }
 
@@ -149,6 +155,7 @@ internal static partial class PackageImageBuilder
                     StructLayout = TryGetAttributeArgument(declaration.attributeList(), "StructLayout"),
                     PackBytes = TryGetIntegerAttributeArgument(declaration.attributeList(), "Pack"),
                     AlignBytes = TryGetIntegerAttributeArgument(declaration.attributeList(), "Align"),
+                    ThreadSafetyLawAttributes = BuildSourceSurfaceThreadSafetyLawAttributes(module, declaration.attributeList()),
                     ImplementedTraits = BuildSourceSurfaceImplementedTraits(module, structDeclaration.baseTraitList()),
                     Constructors = BuildSourceSurfaceConstructorManifests(
                         module,
@@ -182,6 +189,7 @@ internal static partial class PackageImageBuilder
                             ParameterHasPrefix(parameter, StarkParser.DISJOINT),
                             ParameterHasPrefix(parameter, StarkParser.CONST)))
                         .ToArray(),
+                    ThreadSafetyLawAttributes = BuildSourceSurfaceThreadSafetyLawAttributes(module, declaration.attributeList()),
                     ImplementedTraits = BuildSourceSurfaceImplementedTraits(module, recordDeclaration.baseTraitList()),
                     Constructors = BuildSourceSurfaceConstructorManifests(
                         module,
@@ -207,6 +215,7 @@ internal static partial class PackageImageBuilder
             {
                 return manifest with
                 {
+                    ThreadSafetyLawAttributes = BuildSourceSurfaceThreadSafetyLawAttributes(module, declaration.attributeList()),
                     Variants = enumDeclaration.enumBody().enumVariantDeclaration()
                         .Select(variant => BuildSourceSurfaceEnumVariantManifest(module, variant))
                         .ToArray()
@@ -272,7 +281,8 @@ internal static partial class PackageImageBuilder
                         variable.Identifier().GetText(),
                         GetContextSourceText(module.ParseResult, fieldDeclaration.fieldDeclaration()!.type_()),
                         fieldDeclaration.fieldDeclaration()!.visibilityModifier()?.GetText(),
-                        TryGetIntegerAttributeArgument(fieldDeclaration.attributeList(), "FieldOffset"))))
+                        TryGetIntegerAttributeArgument(fieldDeclaration.attributeList(), "FieldOffset"),
+                        BuildSourceSurfaceThreadSafetyLawAttributes(module, fieldDeclaration.attributeList()))))
             .ToArray();
     }
 
@@ -288,8 +298,107 @@ internal static partial class PackageImageBuilder
                         variable.Identifier().GetText(),
                         GetContextSourceText(module.ParseResult, fieldDeclaration.fieldDeclaration()!.type_()),
                         fieldDeclaration.fieldDeclaration()!.visibilityModifier()?.GetText(),
-                        TryGetIntegerAttributeArgument(fieldDeclaration.attributeList(), "FieldOffset"))))
+                        TryGetIntegerAttributeArgument(fieldDeclaration.attributeList(), "FieldOffset"),
+                        BuildSourceSurfaceThreadSafetyLawAttributes(module, fieldDeclaration.attributeList()))))
             .ToArray();
+    }
+
+    private static IReadOnlyList<StarkPackageThreadSafetyLawAttributeManifest>? BuildSourceSurfaceThreadSafetyLawAttributes(
+        LoadedModuleDocument module,
+        IEnumerable<StarkParser.AttributeListContext> attributeLists)
+    {
+        List<StarkPackageThreadSafetyLawAttributeManifest>? attributes = null;
+        foreach (var attribute in attributeLists.SelectMany(static list => list.attribute()))
+        {
+            var attributeName = attribute.qualifiedName().GetText();
+            if (!TryRenderThreadSafetyLawAttributeKind(attributeName, out var kind)
+                || attribute.attributeArgument() is not [var lawArgument])
+            {
+                continue;
+            }
+
+            StarkPackageThreadSafetyLawPredicateManifest? condition = null;
+            if (attribute.attributeCondition()?.lawPredicateContract() is { } predicate)
+            {
+                condition = new StarkPackageThreadSafetyLawPredicateManifest(
+                    predicate.Identifier().GetText(),
+                    GetContextSourceText(module.ParseResult, predicate.type_()));
+            }
+
+            attributes ??= [];
+            attributes.Add(new StarkPackageThreadSafetyLawAttributeManifest(
+                kind,
+                lawArgument.GetText(),
+                condition));
+        }
+
+        return attributes;
+    }
+
+    private static bool TryRenderThreadSafetyLawAttributeKind(string attributeName, out string kind)
+    {
+        if (string.Equals(attributeName, "Grant", StringComparison.Ordinal))
+        {
+            kind = "grant";
+            return true;
+        }
+
+        if (string.Equals(attributeName, "Deny", StringComparison.Ordinal))
+        {
+            kind = "deny";
+            return true;
+        }
+
+        kind = string.Empty;
+        return false;
+    }
+
+    private static IReadOnlyList<StarkPackageThreadSafetyLawPredicateManifest>? BuildSourceSurfaceThreadSafetyLawPredicates(
+        LoadedModuleDocument module,
+        IReadOnlyList<StarkParser.ParameterMemoryContractClauseContext> memoryContractClauses)
+    {
+        List<StarkPackageThreadSafetyLawPredicateManifest>? predicates = null;
+        foreach (var clause in memoryContractClauses)
+        {
+            foreach (var contract in clause.parameterMemoryContract())
+            {
+                if (contract.lawPredicateContract() is not { } predicate)
+                {
+                    continue;
+                }
+
+                predicates ??= [];
+                predicates.Add(new StarkPackageThreadSafetyLawPredicateManifest(
+                    predicate.Identifier().GetText(),
+                    GetContextSourceText(module.ParseResult, predicate.type_())));
+            }
+        }
+
+        return predicates;
+    }
+
+    private static IReadOnlyList<StarkPackageTypeParameterConstraintManifest>? BuildSourceSurfaceTypeParameterConstraints(
+        LoadedModuleDocument module,
+        IReadOnlyList<StarkParser.TypeParameterConstraintsContext> constraintContexts)
+    {
+        List<StarkPackageTypeParameterConstraintManifest>? constraints = null;
+        foreach (var constraint in constraintContexts)
+        {
+            var bounds = constraint.type_()
+                .Select(type => GetContextSourceText(module.ParseResult, type))
+                .ToArray();
+            if (bounds.Length == 0)
+            {
+                continue;
+            }
+
+            constraints ??= [];
+            constraints.Add(new StarkPackageTypeParameterConstraintManifest(
+                constraint.Identifier().GetText(),
+                bounds));
+        }
+
+        return constraints;
     }
 
     private static string? TryGetAttributeArgument(
@@ -387,7 +496,13 @@ internal static partial class PackageImageBuilder
                     method.parameterList(),
                     method.parameterMemoryContractClause()),
                 OverlapParameterGroups = BuildParameterOverlapGroupManifests(method.parameterMemoryContractClause()),
-                SameParameterGroups = BuildParameterSameGroupManifests(method.parameterMemoryContractClause())
+                SameParameterGroups = BuildParameterSameGroupManifests(method.parameterMemoryContractClause()),
+                TypeParameterConstraints = BuildSourceSurfaceTypeParameterConstraints(
+                    module,
+                    method.typeParameterConstraints()),
+                ThreadSafetyLawPredicates = BuildSourceSurfaceThreadSafetyLawPredicates(
+                    module,
+                    method.parameterMemoryContractClause())
             });
         }
 
@@ -443,7 +558,13 @@ internal static partial class PackageImageBuilder
                     method.parameterList(),
                     method.parameterMemoryContractClause()),
                 OverlapParameterGroups = BuildParameterOverlapGroupManifests(method.parameterMemoryContractClause()),
-                SameParameterGroups = BuildParameterSameGroupManifests(method.parameterMemoryContractClause())
+                SameParameterGroups = BuildParameterSameGroupManifests(method.parameterMemoryContractClause()),
+                TypeParameterConstraints = BuildSourceSurfaceTypeParameterConstraints(
+                    module,
+                    method.typeParameterConstraints()),
+                ThreadSafetyLawPredicates = BuildSourceSurfaceThreadSafetyLawPredicates(
+                    module,
+                    method.parameterMemoryContractClause())
             });
         }
 
@@ -499,7 +620,13 @@ internal static partial class PackageImageBuilder
                     method.parameterList(),
                     method.parameterMemoryContractClause()),
                 OverlapParameterGroups = BuildParameterOverlapGroupManifests(method.parameterMemoryContractClause()),
-                SameParameterGroups = BuildParameterSameGroupManifests(method.parameterMemoryContractClause())
+                SameParameterGroups = BuildParameterSameGroupManifests(method.parameterMemoryContractClause()),
+                TypeParameterConstraints = BuildSourceSurfaceTypeParameterConstraints(
+                    module,
+                    method.typeParameterConstraints()),
+                ThreadSafetyLawPredicates = BuildSourceSurfaceThreadSafetyLawPredicates(
+                    module,
+                    method.parameterMemoryContractClause())
             });
         }
 

@@ -6,7 +6,14 @@ internal static class EnumLayoutBuilder
 {
     public static EnumLayoutModel Build(TypeCheckModel typeModel)
     {
-        var layouts = typeModel.NamedTypes.Values
+        return Build(typeModel.ModuleName, typeModel.NamedTypes);
+    }
+
+    public static EnumLayoutModel Build(
+        string moduleName,
+        IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes)
+    {
+        var layouts = namedTypes.Values
             .Where(static namedType => namedType.Kind == DeclarationKind.Enum)
             .OrderBy(static namedType => namedType.Name, StringComparer.Ordinal)
             .ToDictionary(
@@ -14,7 +21,7 @@ internal static class EnumLayoutBuilder
                 static namedType => BuildDirectTagLayout(namedType),
                 StringComparer.Ordinal);
 
-        return new EnumLayoutModel(typeModel.ModuleName, layouts);
+        return new EnumLayoutModel(moduleName, layouts);
     }
 
     private static EnumLayoutSymbol BuildDirectTagLayout(NamedTypeSymbol enumType)

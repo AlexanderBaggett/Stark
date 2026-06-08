@@ -23,7 +23,8 @@ public sealed record CompilerOptions(
     CompilerOptimizationLevel OptimizationLevel = CompilerOptimizationLevel.O3,
     bool InternalizeModulePrivate = false,
     bool EnforceIntegerRangeStorageRules = true,
-    IReadOnlySet<string>? ImportedInlineCloneSeedFunctions = null);
+    IReadOnlySet<string>? ImportedInlineCloneSeedFunctions = null,
+    int MaximumCompileTimeLoopIterations = CompileTimeFunctionEvaluator.DefaultMaximumCompileTimeLoopIterations);
 
 public readonly record struct ArtifactKey<T>(string Name);
 

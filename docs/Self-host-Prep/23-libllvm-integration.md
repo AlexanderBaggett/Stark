@@ -120,9 +120,9 @@ Rules:
 
 ### Stage 1 - Direct LLVM Module Construction
 
-The first libLLVM slice constructs LLVM modules directly through the C API. It
-may cover only a narrow codegen subset at first, but it must not parse textual
-LLVM as a bootstrap bridge.
+The initial libLLVM implementation constructs LLVM modules directly through the
+C API. It may cover only a narrow codegen subset at first, but it must not parse
+textual LLVM as a bootstrap bridge.
 
 1. Map Stark/ABI types directly to LLVM types.
 2. Create functions, globals, blocks, and instructions through the C API.
@@ -164,28 +164,28 @@ Add target/pass configuration through the C API:
 
 ### Required FFI Work
 
-- [ ] Implement `System.C` C-string helpers from doc `18`, including owned C
+- [~] Implement `System.C` C-string helpers from doc `18`, including owned C
       strings, borrowed bounded views, mutable buffers, and foreign-owned string
-      wrapper examples.
-- [ ] Add and test LLVM-style out-pointer usage patterns in the binding layer,
-      including `char**` error-message outputs and opaque-ref outputs.
-- [ ] Add typed opaque-handle wrappers for LLVM refs used by the first backend
-      slice.
-- [ ] Add deterministic dispose/drop wrappers for every owning LLVM resource in
-      the first backend slice.
-- [ ] Add C enum/bitflag constants for the LLVM C API values Stark passes.
+      wrapper examples. Core `System.C` helpers have landed; foreign-owned LLVM
+      message wrappers remain.
+- [ ] Implement the LLVM FFI binding support needed by the initial backend
+      integration:
+      out-pointer usage patterns, `char**` error outputs, opaque-ref outputs,
+      typed opaque-handle wrappers, deterministic dispose/drop wrappers for
+      owning LLVM resources, and C enum/bitflag constants Stark passes.
 
 ### Backend Work
 
-- [ ] Add a narrow `System.Llvm` or compiler-internal LLVM C API binding slice.
-- [ ] Add libLLVM discovery through the toolchain resolver and release layout.
-- [ ] Add LLVM version check and diagnostics.
-- [ ] Add the first direct module-construction and object-emission path through
-      the LLVM C API.
-- [ ] Add libLLVM module printing for optional textual LLVM debug/inspection
-      artifacts.
+- [ ] Add a narrow `System.Llvm` or compiler-internal LLVM C API binding layer,
+      including libLLVM discovery through the toolchain resolver/release layout
+      and LLVM version diagnostics.
+- [ ] Add the direct LLVM C API backend path: module construction, object
+      emission, verifier/error handling, and optional module printing for
+      textual LLVM debug/inspection artifacts.
 - [ ] Keep final linking/toolchain execution through the native toolchain resolver.
-- [ ] Add tests listed in §7.
+- [ ] Add the tests listed in §7 for bindings, diagnostics, direct object
+      emission, inspection output, bundled toolchain behavior, and failure
+      cases.
 
 ## 9. Documentation Work
 

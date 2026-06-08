@@ -36,7 +36,7 @@ Design syntax for each of the following C interop features. Each item is a remin
 
 ## 6. libLLVM Binding Patterns
 - [x] Decide primary LLVM integration direction - libLLVM through the LLVM C API, specified in [`23-libllvm-integration.md`](./23-libllvm-integration.md)
-- [ ] Implement C string helpers required by LLVM `const char*` and owned error-message APIs - tracked in [`18-ffi-c-strings.md`](./18-ffi-c-strings.md) and [`23-libllvm-integration.md`](./23-libllvm-integration.md)
+- [~] Implement C string helpers required by LLVM `const char*` and owned error-message APIs - core `System.C` helpers landed; LLVM-owned error-message wrappers remain tracked in [`18-ffi-c-strings.md`](./18-ffi-c-strings.md) and [`23-libllvm-integration.md`](./23-libllvm-integration.md)
 - [ ] Exercise raw out-pointer patterns such as opaque-ref outputs and `char**` error outputs in the binding layer - tracked in [`23-libllvm-integration.md`](./23-libllvm-integration.md)
 - [ ] Use distinct Stark opaque-handle wrapper types for LLVM refs - tracked in [`23-libllvm-integration.md`](./23-libllvm-integration.md)
 - [ ] Add deterministic `drop`/dispose wrappers for owned foreign resources - tracked in [`23-libllvm-integration.md`](./23-libllvm-integration.md)

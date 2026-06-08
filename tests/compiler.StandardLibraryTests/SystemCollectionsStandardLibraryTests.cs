@@ -62,6 +62,14 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
                 && found == 34;
         }
 
+        fn bool ConsumeHashSet(HashSet<u32[0 2 ** 31 - 1]> values, u64[0 2 ** 63 - 1] expected)
+        {
+            stack u32[0 2 ** 31 - 1] key = 17;
+            return values.Count() == expected
+                && IsPowerOfTwo(values.Capacity())
+                && values.Contains(key);
+        }
+
         export unsafe fn i32[min max] main()
         {
             stack mut List<u32[0 2 ** 31 - 1]> list = new();
@@ -149,6 +157,31 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
             if (!ConsumeDictionary(dictionary, 64))
             {
                 return 10;
+            }
+
+            stack mut HashSet<u32[0 2 ** 31 - 1]> set = new();
+            if (!Ok(set.Reserve(3)) || !IsPowerOfTwo(set.Capacity()))
+            {
+                return 11;
+            }
+
+            for willexit (stack mut u8[0 64] i = 0; i < 64; i += 1)
+            {
+                stack u32[0 2 ** 31 - 1] key = i;
+                if (!Ok(set.Add(key)))
+                {
+                    return 11;
+                }
+
+                if (!IsPowerOfTwo(set.Capacity()))
+                {
+                    return 11;
+                }
+            }
+
+            if (!ConsumeHashSet(set, 64))
+            {
+                return 12;
             }
 
             return 0;
@@ -1313,6 +1346,251 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
         }
         """;
 
+    private const string PromotedHashSetProgram = """
+        import System.Collections
+        import System.Memory
+        module App
+
+        fn bool Ok(MemoryStatus status)
+        {
+            switch (status)
+            {
+                case MemoryStatus.Ok:
+                    return true;
+                case MemoryStatus.Err(var error):
+                    return false;
+            }
+        }
+
+        fn bool IsPowerOfTwo(u64[0 2 ** 63 - 1] value)
+        {
+            if (value == 0)
+            {
+                return false;
+            }
+
+            stack u64[0 2 ** 63 - 1] mask = (u64[0 2 ** 63 - 1])(value - 1);
+            return (value & mask) == 0;
+        }
+
+        export unsafe fn i32[min max] main()
+        {
+            stack mut System.Collections.HashSet<u32[0 2 ** 31 - 1]> set = new();
+            if (!Ok(set.Reserve(3)) || !IsPowerOfTwo(set.Capacity()))
+            {
+                return 1;
+            }
+
+            for willexit (stack mut u8[0 128] i = 0; i < 128; i += 1)
+            {
+                stack u32[0 2 ** 31 - 1] key = i;
+                if (!Ok(set.Add(key)) || !IsPowerOfTwo(set.Capacity()))
+                {
+                    return 2;
+                }
+            }
+
+            if (set.Count() != 128 || set.IsEmpty())
+            {
+                return 3;
+            }
+
+            stack mut i64[min max] checksum = 0;
+            for willexit (stack mut u8[0 128] i = 0; i < 128; i += 1)
+            {
+                stack u32[0 2 ** 31 - 1] key = i;
+                if (!set.Contains(key))
+                {
+                    return 4;
+                }
+
+                checksum += (i64[min max])key;
+            }
+
+            if (checksum != 8128)
+            {
+                return 5;
+            }
+
+            stack u32[0 2 ** 31 - 1] duplicateKey = 64;
+            if (!Ok(set.Add(duplicateKey)) || set.Count() != 128 || !set.Contains(duplicateKey))
+            {
+                return 6;
+            }
+
+            for willexit (stack mut u8[0 64] i = 0; i < 64; i += 1)
+            {
+                stack u32[0 2 ** 31 - 1] key = (u32[0 2 ** 31 - 1])(i * 2);
+                if (!set.Remove(key) || set.Contains(key))
+                {
+                    return 7;
+                }
+            }
+
+            if (set.Count() != 64)
+            {
+                return 8;
+            }
+
+            stack u32[0 2 ** 31 - 1] missingKey = 4096;
+            if (set.Remove(missingKey) || set.Contains(missingKey))
+            {
+                return 9;
+            }
+
+            {
+                stack mut System.Collections.HashSet<u32[0 2 ** 31 - 1]> clustered = new();
+                stack u32[0 2 ** 31 - 1] clusterKeyOne = 1;
+                stack u32[0 2 ** 31 - 1] clusterKeyTwo = 9;
+                stack u32[0 2 ** 31 - 1] clusterKeyThree = 17;
+                stack u32[0 2 ** 31 - 1] clusterKeyFour = 25;
+                if (!Ok(clustered.Reserve(4))
+                    || !Ok(clustered.Add(clusterKeyOne))
+                    || !Ok(clustered.Add(clusterKeyTwo))
+                    || !Ok(clustered.Add(clusterKeyThree)))
+                    {
+                        return 10;
+                }
+
+                if (!clustered.Remove(clusterKeyOne)
+                    || clustered.Contains(clusterKeyOne)
+                    || !clustered.Contains(clusterKeyTwo)
+                    || !clustered.Contains(clusterKeyThree)
+                    || clustered.Count() != 2)
+                    {
+                        return 11;
+                }
+
+                if (!Ok(clustered.Add(clusterKeyFour))
+                    || !clustered.Contains(clusterKeyFour)
+                    || clustered.Count() != 3)
+                    {
+                        return 12;
+                }
+            }
+
+            set.Clear();
+            if (!set.IsEmpty() || set.Count() != 0 || set.Contains(duplicateKey))
+            {
+                return 13;
+            }
+
+            return 0;
+        }
+        """;
+
+    private const string TextKeyCollectionsProgram = """
+        import System.Collections
+        import System.Memory
+        import System.Text
+        module App
+
+        fn bool Ok(MemoryStatus status)
+        {
+            switch (status)
+            {
+                case MemoryStatus.Ok:
+                    return true;
+                case MemoryStatus.Err(var error):
+                    return false;
+            }
+        }
+
+        fn bool UseTextKeys()
+        {
+            stack ascii alpha = "alpha";
+            stack ascii alphaAgain = "alpha";
+            stack ascii beta = "beta";
+            stack mut Dictionary<ascii, u32[0 max]> asciiMap = new();
+            if (!Ok(asciiMap.Set(alpha, 11)))
+            {
+                return false;
+            }
+
+            stack mut u32[0 max] found = 0;
+            if (!asciiMap.TryGet(alphaAgain, found)
+                || found != 11
+                || asciiMap.ContainsKey(beta))
+            {
+                return false;
+            }
+
+            stack unicode gamma = (unicode)"gamma";
+            stack unicode gammaAgain = (unicode)"gamma";
+            stack unicode delta = (unicode)"delta";
+            stack mut HashSet<unicode> unicodeSet = new();
+            if (!Ok(unicodeSet.Add(gamma)))
+            {
+                return false;
+            }
+
+            if (!unicodeSet.Contains(gammaAgain)
+                || unicodeSet.Contains(delta))
+            {
+                return false;
+            }
+
+            if (Hash(alpha) != Hash(alphaAgain)
+                || Hash(alpha) == Hash(beta)
+                || !Equals(alpha, alphaAgain)
+                || Compare(alpha, beta) != Ordering.Less)
+            {
+                return false;
+            }
+
+            stack mut OwnedAscii ownedAlpha = new();
+            if (!Ok(ownedAlpha.AppendAscii(alpha)))
+            {
+                return false;
+            }
+
+            stack mut OwnedAscii ownedAlphaAgain = new();
+            if (!Ok(ownedAlphaAgain.AppendAscii(alphaAgain)))
+            {
+                return false;
+            }
+
+            stack mut Dictionary<OwnedAscii, u32[0 max]> ownedAsciiMap = new();
+            if (!Ok(ownedAsciiMap.Set(ownedAlpha, 33))
+                || !ownedAsciiMap.TryGet(ownedAlphaAgain, found)
+                || found != 33)
+            {
+                return false;
+            }
+
+            stack mut OwnedUnicode ownedGamma = new();
+            if (!Ok(ownedGamma.AppendUnicode(gamma)))
+            {
+                return false;
+            }
+
+            stack mut OwnedUnicode ownedGammaAgain = new();
+            if (!Ok(ownedGammaAgain.AppendUnicode(gammaAgain)))
+            {
+                return false;
+            }
+
+            stack mut HashSet<OwnedUnicode> ownedUnicodeSet = new();
+            if (!Ok(ownedUnicodeSet.Add(ownedGamma))
+                || !ownedUnicodeSet.Contains(ownedGammaAgain))
+            {
+                return false;
+            }
+
+            return true;
+        }
+
+        export unsafe fn i32[min max] main()
+        {
+            if (!UseTextKeys())
+            {
+                return 1;
+            }
+
+            return 0;
+        }
+        """;
+
     private const string PromotedCollectionsCrossFamilyParityProgram = """
         import System.Collections
         import System.Collections
@@ -2146,6 +2424,21 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
                         return false;
                     }
 
+                    stack mut HashSet<u32[0 2 ** 31 - 1]> set = new();
+                    stack u32[0 2 ** 31 - 1] setKey = 5;
+                    if (!Ok(set.Add(setKey)))
+                    {
+                        return false;
+                    }
+                    if (!set.Contains(setKey) || set.Count() != 1)
+                    {
+                        return false;
+                    }
+                    if (!set.Remove(setKey) || set.Contains(setKey) || set.Count() != 0)
+                    {
+                        return false;
+                    }
+
                     stack mut List<u32[0 2 ** 31 - 1]> customList = new();
                     if (!Ok(customList.Push(1)) || !Ok(customList.Push(2)) || customList.Count() != 2)
                     {
@@ -2161,6 +2454,13 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
                     stack mut Dictionary<u32[0 2 ** 31 - 1], u32[0 2 ** 31 - 1]> customDictionary = new();
                     stack u32[0 2 ** 31 - 1] customDictionaryKey = 9;
                     if (!Ok(customDictionary.Set(customDictionaryKey, 18)) || !customDictionary.ContainsKey(customDictionaryKey))
+                    {
+                        return false;
+                    }
+
+                    stack mut HashSet<u32[0 2 ** 31 - 1]> customSet = new();
+                    stack u32[0 2 ** 31 - 1] customSetKey = 11;
+                    if (!Ok(customSet.Add(customSetKey)) || !customSet.Contains(customSetKey))
                     {
                         return false;
                     }
@@ -2660,6 +2960,67 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
     }
 
     [Fact]
+    public void StdLibSourceHashSetGrowthLowersThroughDictionaryFastPath()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var appPath = Path.Combine(repositoryRoot, "tests", "tmp", "StdLibHashSetGrowth.stark");
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(
+                """
+                import System.Collections
+                import System.Memory
+                module Demo
+
+                fn bool Ok(MemoryStatus status)
+                {
+                    switch (status)
+                    {
+                        case MemoryStatus.Ok:
+                            return true;
+                        case MemoryStatus.Err(var error):
+                            return false;
+                    }
+                }
+
+                fn bool GrowHashSet()
+                {
+                    stack mut HashSet<u32[0 2 ** 31 - 1]> set = new();
+                    stack mut u32[0 2 ** 31 - 1] index = 0;
+                    while willexit (index < 9)
+                    {
+                        if (!Ok(set.Add(index)))
+                        {
+                            return false;
+                        }
+
+                        index += 1;
+                    }
+
+                    stack u32[0 2 ** 31 - 1] lookupKey = 4;
+                    return set.Capacity() >= 16
+                        && set.Contains(lookupKey);
+                }
+                """,
+                appPath),
+            new CompilerOptions(
+                ModuleResolver: new FileSystemModuleResolver(sourceRoot),
+                StopAfterPassId: "emit-llvm"));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvm));
+        Assert.NotNull(llvm);
+        Assert.Contains("ComputeHashStorageGrowthCapacity", llvm.Text, StringComparison.Ordinal);
+        var findIndexBody = ExtractDefinedFunctionText(
+            llvm.Text,
+            "define linkonce_odr dso_local fastcc noundef range(i64 0, -9223372036854775808) i64 @__stark_mono_fn_System_Collections__System_Collections_HashSet_FindIndex__u32_0_2147483647",
+            "Expected integer HashSet.FindIndex specialization to be emitted.");
+        Assert.DoesNotContain(" srem i64 ", findIndexBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("call fastcc i64 @__stark_mono_fn_System_Collections__System_Collections_DictionaryKey_Hash__", findIndexBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("call fastcc i1 @__stark_mono_fn_System_Collections__System_Collections_DictionaryKey_Equals__", findIndexBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void StdLibSourceDictionaryCustomKeysUseExplicitStaticHashAndEqualsContract()
     {
         var repositoryRoot = FindRepositoryRoot();
@@ -2754,6 +3115,145 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
         Assert.DoesNotContain("DictionaryKey_Equals", tryGetBody, StringComparison.Ordinal);
         Assert.DoesNotContain("DictionaryKey_Hash", findIndexBody, StringComparison.Ordinal);
         Assert.DoesNotContain("DictionaryKey_Equals", findIndexBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void StdLibSourceHashSetCustomKeysUseExplicitStaticHashAndEqualsContract()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var appPath = Path.Combine(repositoryRoot, "tests", "tmp", "StdLibHashSetCustomKey.stark");
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(
+                """
+                import System.Collections
+                import System.Memory
+                module Demo
+
+                struct Symbol
+                {
+                    u32[0 max] Id;
+
+                    static finite law u64[0 max] Hash(borrow Symbol value)
+                    {
+                        return (u64[0 max])value.Id;
+                    }
+
+                    static finite law bool Equals(borrow Symbol left, borrow Symbol right)
+                        where overlap(left, right)
+                    {
+                        return left.Id == right.Id;
+                    }
+                }
+
+                fn bool Ok(MemoryStatus status)
+                {
+                    switch (status)
+                    {
+                        case MemoryStatus.Ok:
+                            return true;
+                        case MemoryStatus.Err(var error):
+                            return false;
+                    }
+                }
+
+                fn bool UseCustomKeyHashSet()
+                {
+                    stack mut HashSet<Symbol> set = new();
+                    stack Symbol first = new()
+                    {
+                        Id = 7
+                    };
+                    stack Symbol sameKey = new()
+                    {
+                        Id = 7
+                    };
+                    stack Symbol missing = new()
+                    {
+                        Id = 9
+                    };
+                    if (!Ok(set.Add(first)))
+                    {
+                        return false;
+                    }
+
+                    return set.Contains(sameKey)
+                        && !set.Contains(missing);
+                }
+                """,
+                appPath),
+            new CompilerOptions(
+                ModuleResolver: new FileSystemModuleResolver(sourceRoot),
+                StopAfterPassId: "emit-llvm",
+                OptimizationLevel: CompilerOptimizationLevel.O0));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvm));
+        Assert.NotNull(llvm);
+        Assert.Contains("@Symbol_Hash", llvm.Text, StringComparison.Ordinal);
+        Assert.Contains("@Symbol_Equals", llvm.Text, StringComparison.Ordinal);
+        Assert.Contains("call fastcc i64 @Symbol_Hash", llvm.Text, StringComparison.Ordinal);
+        Assert.Contains("call fastcc i1 @Symbol_Equals", llvm.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("call fastcc i64 @__stark_mono_fn_System_Collections__System_Collections_DictionaryKey_Hash__Symbol", llvm.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("call fastcc i1 @__stark_mono_fn_System_Collections__System_Collections_DictionaryKey_Equals__Symbol", llvm.Text, StringComparison.Ordinal);
+
+        var containsBody = ExtractDefinedFunctionText(
+            llvm.Text,
+            "define linkonce_odr dso_local fastcc noundef i1 @__stark_mono_fn_System_Collections__System_Collections_HashSet_Contains__Symbol",
+            "Expected custom-key HashSet.Contains specialization to be emitted.");
+        Assert.DoesNotContain("DictionaryKey_Hash", containsBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("DictionaryKey_Equals", containsBody, StringComparison.Ordinal);
+        var findIndexBody = ExtractDefinedFunctionText(
+            llvm.Text,
+            "define linkonce_odr dso_local fastcc noundef range(i64 0, -9223372036854775808) i64 @__stark_mono_fn_System_Collections__System_Collections_HashSet_FindIndex__Symbol",
+            "Expected custom-key HashSet.FindIndex specialization to be emitted.");
+        Assert.Contains("@Symbol_Equals", findIndexBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("DictionaryKey_Hash", findIndexBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("DictionaryKey_Equals", findIndexBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void StdLibSourceTextKeysUseCompilerKnownAndOwnedStaticContracts()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var appPath = Path.Combine(repositoryRoot, "tests", "tmp", "StdLibTextKeys.stark");
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(TextKeyCollectionsProgram, appPath),
+            new CompilerOptions(
+                ModuleResolver: new FileSystemModuleResolver(sourceRoot),
+                StopAfterPassId: "emit-llvm",
+                OptimizationLevel: CompilerOptimizationLevel.O0));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvm));
+        Assert.NotNull(llvm);
+        Assert.Contains("define internal dso_local i64 @__stark_ascii_hash(%stark_ascii %value)", llvm.Text, StringComparison.Ordinal);
+        Assert.Contains("define internal dso_local i64 @__stark_unicode_hash(%stark_unicode %value)", llvm.Text, StringComparison.Ordinal);
+        Assert.Contains("define internal dso_local i1 @__stark_ascii_equal(%stark_ascii %left, %stark_ascii %right)", llvm.Text, StringComparison.Ordinal);
+        Assert.Contains("define internal dso_local i1 @__stark_unicode_equal(%stark_unicode %left, %stark_unicode %right)", llvm.Text, StringComparison.Ordinal);
+        Assert.Contains("OwnedAscii_Hash", llvm.Text, StringComparison.Ordinal);
+        Assert.Contains("OwnedAscii_Equals", llvm.Text, StringComparison.Ordinal);
+        Assert.Contains("OwnedUnicode_Hash", llvm.Text, StringComparison.Ordinal);
+        Assert.Contains("OwnedUnicode_Equals", llvm.Text, StringComparison.Ordinal);
+
+        var asciiFindIndexBody = ExtractDefinedFunctionText(
+            llvm.Text,
+            "define linkonce_odr dso_local fastcc noundef range(i64 0, -9223372036854775808) i64 @__stark_mono_fn_System_Collections__System_Collections_Dictionary_FindIndex__ascii__u32",
+            "Expected ascii Dictionary.FindIndex specialization to be emitted.");
+        Assert.Contains("call i64 @__stark_ascii_hash", asciiFindIndexBody, StringComparison.Ordinal);
+        Assert.Contains("call i1 @__stark_ascii_equal", asciiFindIndexBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("DictionaryKey_Hash", asciiFindIndexBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("DictionaryKey_Equals", asciiFindIndexBody, StringComparison.Ordinal);
+
+        var unicodeFindIndexBody = ExtractDefinedFunctionText(
+            llvm.Text,
+            "define linkonce_odr dso_local fastcc noundef range(i64 0, -9223372036854775808) i64 @__stark_mono_fn_System_Collections__System_Collections_HashSet_FindIndex__unicode",
+            "Expected unicode HashSet.FindIndex specialization to be emitted.");
+        Assert.Contains("call i64 @__stark_unicode_hash", unicodeFindIndexBody, StringComparison.Ordinal);
+        Assert.Contains("call i1 @__stark_unicode_equal", unicodeFindIndexBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("DictionaryKey_Hash", unicodeFindIndexBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("DictionaryKey_Equals", unicodeFindIndexBody, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -3150,6 +3650,106 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
         try
         {
             await File.WriteAllTextAsync(appPath, PromotedDictionaryProgram);
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(
+                [appPath, "--emit-exe", "-I", sourceRoot, "-o", outputPath, "--target", targetInfo.Triple],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.True(
+                exitCode == 0,
+                stdout + Environment.NewLine + stderr);
+            AssertCompilerLogsEmitted(stderr.ToString());
+            Assert.True(File.Exists(outputPath));
+
+            var execution = await RunProcessWithUtf8StdinAsync(outputPath, tempDirectory.FullName, string.Empty);
+            Assert.Equal(0, execution.ExitCode);
+            Assert.Equal(string.Empty, execution.Stdout);
+            Assert.Equal(string.Empty, execution.Stderr);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public async Task SourceStdLibHashSetExecutableRuns()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
+        {
+            return;
+        }
+
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-hash-set-");
+        var appPath = Path.Combine(tempDirectory.FullName, "App.stark");
+        var outputPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "App.exe" : "app");
+
+        try
+        {
+            await File.WriteAllTextAsync(appPath, PromotedHashSetProgram);
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(
+                [appPath, "--emit-exe", "-I", sourceRoot, "-o", outputPath, "--target", targetInfo.Triple],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.True(
+                exitCode == 0,
+                stdout + Environment.NewLine + stderr);
+            AssertCompilerLogsEmitted(stderr.ToString());
+            Assert.True(File.Exists(outputPath));
+
+            var execution = await RunProcessWithUtf8StdinAsync(outputPath, tempDirectory.FullName, string.Empty);
+            Assert.Equal(0, execution.ExitCode);
+            Assert.Equal(string.Empty, execution.Stdout);
+            Assert.Equal(string.Empty, execution.Stderr);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public async Task SourceStdLibTextKeyCollectionsExecutableRuns()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
+        {
+            return;
+        }
+
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-text-key-collections-");
+        var appPath = Path.Combine(tempDirectory.FullName, "App.stark");
+        var outputPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "App.exe" : "app");
+
+        try
+        {
+            await File.WriteAllTextAsync(appPath, TextKeyCollectionsProgram);
 
             var stdout = new StringWriter();
             var stderr = new StringWriter();

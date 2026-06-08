@@ -245,10 +245,10 @@ internal sealed class LlvmModuleSurfaceEmitter
                         continue;
                     }
 
-                    if (!_globalInitializerPlanner.TryPlanVariableInitializer(
+                    if (!TryPlanGlobalInitializerFromTypedOrSource(
+                            global,
                             declarator.variableInitializer(),
-                            global.Type,
-                            true,
+                            isFrozen: true,
                             out var initializerPlan))
                     {
                         builder.AppendLine($"; visibility: {visibility.ToString().ToLowerInvariant()}");
@@ -289,10 +289,10 @@ internal sealed class LlvmModuleSurfaceEmitter
                     continue;
                 }
 
-                if (!_globalInitializerPlanner.TryPlanVariableInitializer(
+                if (!TryPlanGlobalInitializerFromTypedOrSource(
+                        global,
                         declarator.variableInitializer(),
-                        global.Type,
-                        false,
+                        isFrozen: false,
                         out var initializerPlan))
                 {
                     builder.AppendLine($"; visibility: {visibility.ToString().ToLowerInvariant()}");
@@ -310,6 +310,25 @@ internal sealed class LlvmModuleSurfaceEmitter
         }
 
         EmitImportedGlobalDeclarations(builder);
+    }
+
+    private bool TryPlanGlobalInitializerFromTypedOrSource(
+        TypedGlobalSymbol global,
+        StarkParser.VariableInitializerContext initializer,
+        bool isFrozen,
+        out LlvmGlobalInitializerPlan initializerPlan)
+    {
+        if (global.ConstantInitializer is { } typedInitializer
+            && _globalInitializerPlanner.TryPlanTypedConstantInitializer(typedInitializer, global.Type, out initializerPlan!))
+        {
+            return true;
+        }
+
+        return _globalInitializerPlanner.TryPlanVariableInitializer(
+            initializer,
+            global.Type,
+            isFrozen,
+            out initializerPlan!);
     }
 
     private void EmitImportedGlobalDeclarations(StringBuilder builder)

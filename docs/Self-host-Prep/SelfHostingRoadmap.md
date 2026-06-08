@@ -153,18 +153,16 @@ driver in Stark.
       [Math.stark](../../stdlib/src/System/Math.stark) (currently trig + PRNG only).
 
 ### Collections
-- [ ] Generic text-key contracts so `Dictionary<Ascii, T>` /
-      `Dictionary<Unicode, T>` work through the blessed `Hash` + `Eq` surface,
-      with exact ordinal equality/hash/order semantics. Today
-      [Collections.stark:742](../../stdlib/src/System/Collections.stark#L742)
-      requires every key type to satisfy `DictionaryKey`; the self-hosted
-      design treats that as the concrete hook under the canonical contracts.
-      The compiler keys ~20 dictionaries on `string`
+- [x] Generic text-key contracts so primitive `ascii` / `unicode` and owned
+      `OwnedAscii` / `OwnedUnicode` keys work through the blessed `Hash` + `Eq`
+      surface, with exact ordinal equality/hash/order semantics. The compiler
+      now has built-in `ascii`/`unicode` dictionary/set key contracts and owned
+      text uses explicit static `Hash`/`Equals` hooks under the canonical
+      contracts.
+      The host compiler keys ~20 dictionaries on `string`
       ([TypeChecking.cs:72-119](../../src/Compiler/TypeChecking.cs#L72-L119)).
-- [ ] `HashSet<T>`. None exists in
-      [Collections.stark](../../stdlib/src/System/Collections.stark);
-      [DefaultCompilerPipeline.cs:842](../../src/Compiler/DefaultCompilerPipeline.cs#L842)
-      depends on one for generic-instantiation deduplication.
+- [x] `HashSet<T>` using the same explicit static `Hash`/`Equals` key hook and
+      bool/integer scalar fast path as `Dictionary<K,V>`.
 - [ ] Strongly typed compiler interning. The C# compiler relies on .NET string
       equality; the Stark compiler should intern stable names at
       front-end/package boundaries and use typed IDs such as `SymbolId`,

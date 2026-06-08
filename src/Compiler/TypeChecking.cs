@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Diagnostics.CodeAnalysis;
 using System.Numerics;
 using Antlr4.Runtime;
 using Antlr4.Runtime.Tree;
@@ -99,8 +100,10 @@ internal sealed class TypeChecker
     private readonly Dictionary<string, TypeAliasResolutionSource> _typeAliasSources = new(StringComparer.Ordinal);
     private readonly Dictionary<string, List<ConstructorShape>> _constructors = new(StringComparer.Ordinal);
     private readonly Dictionary<string, TypedFunctionSignature> _functions = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, DeclaredFunctionSyntax> _functionSyntaxByQualifiedName = new(StringComparer.Ordinal);
     private readonly Dictionary<string, List<TypedFunctionSignature>> _functionOverloads = new(StringComparer.Ordinal);
     private readonly Dictionary<string, TypedFunctionSignature> _functionInstantiationCache = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, IReadOnlyList<TypedFunctionSignature>> _compileTimeMethodSignatureCache = new(StringComparer.Ordinal);
     private readonly Dictionary<string, VariableSymbol> _globals = new(StringComparer.Ordinal);
     private readonly List<LiteralTypingRecord> _literals = [];
     private readonly List<EnumConstructorTypingRecord> _enumConstructors = [];
@@ -146,7 +149,9 @@ internal sealed class TypeChecker
     private StarkTypeResolver? _typeResolver;
     private ISet<string>? _currentFunctionGenericParameters;
     private IReadOnlyDictionary<string, ComptimeGenericParameterSymbol>? _currentFunctionComptimeGenericParameters;
+    private bool _allowCompileTimeOnlyStructuralFactCalls;
     private IReadOnlyList<TypeParameterConstraint> _currentFunctionConstraints = [];
+    private IReadOnlyList<ThreadSafetyLawPredicateSymbol> _currentFunctionThreadSafetyLaws = [];
     private string? _currentFunctionName;
     private string? _currentFunctionModuleName;
     private StarkTypeSymbol? _currentFunctionReturnType;
@@ -173,6 +178,9 @@ internal sealed class TypeChecker
     private IReadOnlyDictionary<StarkParser.PostfixPartContext, int>? _currentImportedTemplateFieldAccessOrdinals;
     private IReadOnlyDictionary<int, TypedFunctionSignature>? _currentImportedTemplateMemberCalls;
     private IReadOnlyDictionary<StarkParser.ArgumentListContext, int>? _currentImportedTemplateMemberCallOrdinals;
+    private CompileTimeFunctionEvaluator? _compileTimeFunctionEvaluator;
+    private IReadOnlyDictionary<string, EnumLayoutSymbol>? _compileTimeEnumLayouts;
+    private ThreadSafetyLawEvaluator? _threadSafetyLawEvaluator;
 
     public TypeChecker(
         CompilerPassContext context,
@@ -194,8 +202,8 @@ internal sealed class TypeChecker
 
     public TypeCheckModel Check()
     {
-        SeedNamedTypes();
         _typeResolver = new StarkTypeResolver(_context, "type-check", _moduleGraph, _namedTypes, _typeAliases, _typeAliasSources);
+        SeedNamedTypes();
         CollectTypeAliasSources();
         CheckTypeAliasDeclarations();
         PopulateNamedTypeFields();
@@ -205,6 +213,8 @@ internal sealed class TypeChecker
         CheckGlobalDeclarations();
         CheckConstructorBodies();
         CheckFunctionBodies();
+
+        var threadSafetyLawFacts = ComputeThreadSafetyLawFacts();
 
         return new TypeCheckModel(
             _syntaxModel.ModuleName,
@@ -253,7 +263,17 @@ internal sealed class TypeChecker
             _switches,
             _closureFunctionPromotions,
             _boundOperations,
-            _tryPropagations);
+            _tryPropagations,
+            threadSafetyLawFacts);
+    }
+
+    private IReadOnlyDictionary<string, ThreadSafetyLawTypeFacts> ComputeThreadSafetyLawFacts()
+    {
+        var evaluator = new ThreadSafetyLawEvaluator(
+            _namedTypes,
+            _syntaxModel.ModuleName,
+            (code, message) => ReportError(code, message, SourceLocation.Synthetic()));
+        return evaluator.ComputeNamedTypeFacts();
     }
 
     private void CollectTypeAliasSources()
@@ -354,13 +374,101 @@ internal sealed class TypeChecker
                 }
 
                 var name = QualifyName(module, declaration.Name);
+                var seedGenericParameters = GetSeedTypeGenericParameters(module, declaration);
                 _namedTypes[name] = new NamedTypeSymbol(
                     name,
                     declaration.Kind,
                     new Dictionary<string, FieldSymbol>(StringComparer.Ordinal),
-                    []);
+                    [],
+                    GenericParameterNames: seedGenericParameters.GenericParameterNames?.ToList(),
+                    ComptimeGenericParameterNames: seedGenericParameters.ComptimeGenericParameters.Count == 0
+                        ? null
+                        : seedGenericParameters.ComptimeGenericParameters.ToArray(),
+                    IsDynTrait: IsDynTraitDeclaration(module, declaration),
+                    DeclaringModuleName: module.SyntaxModel.ModuleName);
             }
         }
+    }
+
+    private (HashSet<string>? GenericParameterNames, IReadOnlyList<ComptimeGenericParameterSymbol> ComptimeGenericParameters) GetSeedTypeGenericParameters(
+        LoadedModuleDocument module,
+        TopLevelDeclarationModel declaration)
+    {
+        var typeParameterList = FindTypeParameterList(module, declaration);
+        if (typeParameterList is null)
+        {
+            return (null, []);
+        }
+
+        var genericParameterNames = GetGenericParameterNames(typeParameterList);
+        return (
+            genericParameterNames,
+            GetComptimeGenericParameters(typeParameterList, genericParameterNames, module.SyntaxModel.ModuleName));
+    }
+
+    private static StarkParser.TypeParameterListContext? FindTypeParameterList(
+        LoadedModuleDocument module,
+        TopLevelDeclarationModel declaration)
+    {
+        foreach (var topLevel in module.ParseResult.Root.topLevelDeclaration())
+        {
+            if (declaration.Kind == DeclarationKind.Struct
+                && topLevel.structDeclaration() is { } structDeclaration
+                && string.Equals(structDeclaration.Identifier().GetText(), declaration.Name, StringComparison.Ordinal))
+            {
+                return structDeclaration.typeParameterList();
+            }
+
+            if (declaration.Kind == DeclarationKind.Record
+                && topLevel.recordDeclaration() is { } recordDeclaration
+                && string.Equals(recordDeclaration.Identifier().GetText(), declaration.Name, StringComparison.Ordinal))
+            {
+                return recordDeclaration.typeParameterList();
+            }
+
+            if (declaration.Kind == DeclarationKind.Enum
+                && topLevel.enumDeclaration() is { } enumDeclaration
+                && string.Equals(enumDeclaration.Identifier().GetText(), declaration.Name, StringComparison.Ordinal))
+            {
+                return enumDeclaration.typeParameterList();
+            }
+
+            if (declaration.Kind == DeclarationKind.Trait
+                && topLevel.traitDeclaration() is { } traitDeclaration
+                && string.Equals(traitDeclaration.Identifier().GetText(), declaration.Name, StringComparison.Ordinal))
+            {
+                return traitDeclaration.typeParameterList();
+            }
+
+            if (declaration.Kind == DeclarationKind.Doctrine
+                && topLevel.doctrineDeclaration() is { } doctrineDeclaration
+                && string.Equals(doctrineDeclaration.Identifier().GetText(), declaration.Name, StringComparison.Ordinal))
+            {
+                return doctrineDeclaration.typeParameterList();
+            }
+        }
+
+        return null;
+    }
+
+    private bool IsDynTraitDeclaration(LoadedModuleDocument module, TopLevelDeclarationModel declaration)
+    {
+        if (declaration.Kind != DeclarationKind.Trait)
+        {
+            return false;
+        }
+
+        if (!module.Reference.IsRoot
+            && module.PackageImageFacts?.NamedTypes.TryGetValue(QualifyName(module, declaration.Name), out var packagedType) == true)
+        {
+            return packagedType.IsDynTrait;
+        }
+
+        return module.ParseResult.Root.topLevelDeclaration()
+            .Select(static topLevel => topLevel.traitDeclaration())
+            .Any(traitDeclaration => traitDeclaration is not null
+                && string.Equals(traitDeclaration.Identifier().GetText(), declaration.Name, StringComparison.Ordinal)
+                && traitDeclaration.DYN() is not null);
     }
 
     private void PopulateNamedTypeFields()
@@ -418,7 +526,8 @@ internal sealed class TypeChecker
                         structGenericParams,
                         structComptimeParams,
                         ResolveBaseTraitNames(structDeclaration.baseTraitList(), structGenericParams, module.SyntaxModel.ModuleName),
-                        ResolveStructLayoutMetadata(typeName, declaration.attributeList()));
+                        ResolveStructLayoutMetadata(typeName, declaration.attributeList()),
+                        declaration.attributeList());
                     continue;
                 }
 
@@ -492,7 +601,13 @@ internal sealed class TypeChecker
                             recordDeclaration.recordBody().recordMember(),
                             genericParameters,
                             module.SyntaxModel.ModuleName,
-                            requireTargetType: true));
+                            requireTargetType: true),
+                        ThreadSafetyLawAttributes: ResolveThreadSafetyLawAttributes(
+                            declaration.attributeList(),
+                            genericParameters,
+                            module.SyntaxModel.ModuleName,
+                            comptimeParameterMap),
+                        DeclaringModuleName: module.SyntaxModel.ModuleName);
                     continue;
                 }
 
@@ -516,7 +631,8 @@ internal sealed class TypeChecker
                         enumDeclaration.enumBody().enumVariantDeclaration(),
                         genericParameters,
                         comptimeParameters,
-                        module.SyntaxModel.ModuleName);
+                        module.SyntaxModel.ModuleName,
+                        declaration.attributeList());
                     continue;
                 }
 
@@ -547,7 +663,8 @@ internal sealed class TypeChecker
                             traitDeclaration.traitBody().traitMember(),
                             genericParameters,
                             module.SyntaxModel.ModuleName),
-                        IsDynTrait: traitDeclaration.DYN() is not null);
+                        IsDynTrait: traitDeclaration.DYN() is not null,
+                        DeclaringModuleName: module.SyntaxModel.ModuleName);
                     continue;
                 }
 
@@ -577,7 +694,8 @@ internal sealed class TypeChecker
                             doctrineName,
                             doctrineDeclaration.doctrineBody().doctrineMember(),
                             genericParameters,
-                            module.SyntaxModel.ModuleName));
+                            module.SyntaxModel.ModuleName),
+                        DeclaringModuleName: module.SyntaxModel.ModuleName);
                 }
             }
         }
@@ -592,13 +710,19 @@ internal sealed class TypeChecker
         ISet<string>? genericParameters = null,
         IReadOnlyList<ComptimeGenericParameterSymbol>? comptimeGenericParameters = null,
         IReadOnlyList<string>? implementedTraitNames = null,
-        StructLayoutMetadata? layout = null)
+        StructLayoutMetadata? layout = null,
+        IEnumerable<StarkParser.AttributeListContext>? typeAttributeLists = null)
     {
         var fields = new Dictionary<string, FieldSymbol>(StringComparer.Ordinal);
         var orderedFields = new List<FieldSymbol>();
         var genericParameterNames = genericParameters?.ToList();
         var comptimeParameterList = comptimeGenericParameters ?? [];
         var comptimeParameterMap = ToComptimeGenericParameterMap(comptimeParameterList);
+        var threadSafetyLawAttributes = ResolveThreadSafetyLawAttributes(
+            typeAttributeLists ?? [],
+            genericParameters,
+            currentModuleName,
+            comptimeParameterMap);
         var associatedTypes = BuildStructAssociatedTypes(
             name,
             members,
@@ -614,7 +738,9 @@ internal sealed class TypeChecker
             ComptimeGenericParameterNames: comptimeParameterList.Count == 0 ? null : comptimeParameterList.ToArray(),
             ImplementedTraitNames: implementedTraitNames,
             AssociatedTypeMembers: associatedTypes,
-            Layout: layout);
+            Layout: layout,
+            ThreadSafetyLawAttributes: threadSafetyLawAttributes,
+            DeclaringModuleName: currentModuleName);
 
         foreach (var member in members)
         {
@@ -639,7 +765,9 @@ internal sealed class TypeChecker
             ComptimeGenericParameterNames: comptimeParameterList.Count == 0 ? null : comptimeParameterList.ToArray(),
             ImplementedTraitNames: implementedTraitNames,
             AssociatedTypeMembers: associatedTypes,
-            Layout: layout);
+            Layout: layout,
+            ThreadSafetyLawAttributes: threadSafetyLawAttributes,
+            DeclaringModuleName: currentModuleName);
         RefreshConcreteInstantiationsForTemplate(namedType);
         return namedType;
     }
@@ -840,6 +968,33 @@ internal sealed class TypeChecker
         };
     }
 
+    private IReadOnlyList<ThreadSafetyLawPredicateSymbol>? ParseThreadSafetyLawPredicates(
+        DeclaredFunctionSyntax functionSyntax,
+        ISet<string>? genericParameters,
+        string currentModuleName,
+        IReadOnlyDictionary<string, ComptimeGenericParameterSymbol>? comptimeGenericParameters)
+    {
+        List<ThreadSafetyLawPredicateSymbol>? predicates = null;
+        foreach (var clause in GetParameterMemoryContractClauses(functionSyntax.DeclarationContext))
+        {
+            foreach (var contract in clause.parameterMemoryContract())
+            {
+                if (contract.lawPredicateContract() is not { } predicate
+                    || !IsThreadSafetyLawName(predicate.Identifier().GetText()))
+                {
+                    continue;
+                }
+
+                predicates ??= [];
+                predicates.Add(new ThreadSafetyLawPredicateSymbol(
+                    predicate.Identifier().GetText(),
+                    ResolveType(predicate.type_(), genericParameters, currentModuleName, comptimeGenericParameters)));
+            }
+        }
+
+        return predicates;
+    }
+
     // Inside a trait method body `Self` is implicitly bound by the enclosing trait,
     // so trait-method calls on `self` (e.g. a default body calling another trait
     // method) resolve through that bound via the same generic-dispatch path (CG05).
@@ -876,7 +1031,8 @@ internal sealed class TypeChecker
         IEnumerable<StarkParser.EnumVariantDeclarationContext> variantDeclarations,
         ISet<string>? genericParameters,
         IReadOnlyList<ComptimeGenericParameterSymbol>? comptimeGenericParameters,
-        string currentModuleName)
+        string currentModuleName,
+        IEnumerable<StarkParser.AttributeListContext>? typeAttributeLists = null)
     {
         var variants = new List<EnumVariantSymbol>();
         var variantContexts = new List<StarkParser.EnumVariantDeclarationContext>();
@@ -884,6 +1040,11 @@ internal sealed class TypeChecker
         var funnelSourceTypeToVariant = new Dictionary<string, string>(StringComparer.Ordinal);
         var comptimeParameterList = comptimeGenericParameters ?? [];
         var comptimeParameterMap = ToComptimeGenericParameterMap(comptimeParameterList);
+        var threadSafetyLawAttributes = ResolveThreadSafetyLawAttributes(
+            typeAttributeLists ?? [],
+            genericParameters,
+            currentModuleName,
+            comptimeParameterMap);
 
         foreach (var variantDeclaration in variantDeclarations)
         {
@@ -1000,7 +1161,9 @@ internal sealed class TypeChecker
             [],
             EnumVariants: variants,
             GenericParameterNames: genericParameters?.ToList(),
-            ComptimeGenericParameterNames: comptimeParameterList.Count == 0 ? null : comptimeParameterList.ToArray());
+            ComptimeGenericParameterNames: comptimeParameterList.Count == 0 ? null : comptimeParameterList.ToArray(),
+            ThreadSafetyLawAttributes: threadSafetyLawAttributes,
+            DeclaringModuleName: currentModuleName);
     }
 
     /// <summary>
@@ -1253,6 +1416,62 @@ internal sealed class TypeChecker
         return value > BigInteger.Zero && (value & (value - BigInteger.One)) == BigInteger.Zero;
     }
 
+    private IReadOnlyList<ThreadSafetyLawAttributeSymbol>? ResolveThreadSafetyLawAttributes(
+        IEnumerable<StarkParser.AttributeListContext> attributeLists,
+        ISet<string>? genericParameters,
+        string currentModuleName,
+        IReadOnlyDictionary<string, ComptimeGenericParameterSymbol>? comptimeGenericParameters = null)
+    {
+        List<ThreadSafetyLawAttributeSymbol>? attributes = null;
+        foreach (var attribute in attributeLists.SelectMany(static list => list.attribute()))
+        {
+            if (!TryParseThreadSafetyLawAttributeKind(attribute.qualifiedName().GetText(), out var kind)
+                || attribute.attributeArgument() is not [var lawArgument]
+                || !IsThreadSafetyLawName(lawArgument.GetText()))
+            {
+                continue;
+            }
+
+            ThreadSafetyLawPredicateSymbol? condition = null;
+            if (attribute.attributeCondition()?.lawPredicateContract() is { } predicate
+                && IsThreadSafetyLawName(predicate.Identifier().GetText()))
+            {
+                condition = new ThreadSafetyLawPredicateSymbol(
+                    predicate.Identifier().GetText(),
+                    ResolveType(predicate.type_(), genericParameters, currentModuleName, comptimeGenericParameters));
+            }
+
+            attributes ??= [];
+            attributes.Add(new ThreadSafetyLawAttributeSymbol(kind, lawArgument.GetText(), condition));
+        }
+
+        return attributes;
+    }
+
+    private static bool TryParseThreadSafetyLawAttributeKind(string attributeName, out ThreadSafetyLawAttributeKind kind)
+    {
+        if (string.Equals(attributeName, "Grant", StringComparison.Ordinal))
+        {
+            kind = ThreadSafetyLawAttributeKind.Grant;
+            return true;
+        }
+
+        if (string.Equals(attributeName, "Deny", StringComparison.Ordinal))
+        {
+            kind = ThreadSafetyLawAttributeKind.Deny;
+            return true;
+        }
+
+        kind = default;
+        return false;
+    }
+
+    private static bool IsThreadSafetyLawName(string lawName)
+    {
+        return string.Equals(lawName, "Transferable", StringComparison.Ordinal)
+            || string.Equals(lawName, "Shareable", StringComparison.Ordinal);
+    }
+
     private void AddFields(
         Dictionary<string, FieldSymbol> fields,
         List<FieldSymbol> orderedFields,
@@ -1268,6 +1487,11 @@ internal sealed class TypeChecker
         var fieldType = ResolveType(fieldDeclaration.type_(), genericParameters, currentModuleName, comptimeGenericParameters);
         var fieldVisibility = ResolveFieldVisibility(containingVisibility, fieldDeclaration.visibilityModifier());
         var explicitOffsetBytes = ResolveFieldOffsetBytes(containingTypeName, fieldDeclaration, attributeLists, containingLayout);
+        var threadSafetyLawAttributes = ResolveThreadSafetyLawAttributes(
+            attributeLists,
+            genericParameters,
+            currentModuleName,
+            comptimeGenericParameters);
 
         if (fieldDeclaration.visibilityModifier() is not null && IsMoreVisible(fieldVisibility, containingVisibility))
         {
@@ -1306,7 +1530,8 @@ internal sealed class TypeChecker
                     validatedFieldType,
                     fieldVisibility,
                     currentModuleName,
-                    explicitOffsetBytes));
+                    explicitOffsetBytes,
+                    threadSafetyLawAttributes));
         }
     }
 
@@ -1644,8 +1869,14 @@ internal sealed class TypeChecker
                         OverlapParameterGroups: overlapGroups,
                         SameParameterGroups: sameGroups,
                         TypeParameterConstraints: ParseTypeParameterConstraints(functionSyntax, genericParameters, module.SyntaxModel.ModuleName),
-                        HasBody: functionSyntax.HasBody);
+                        HasBody: functionSyntax.HasBody,
+                        ThreadSafetyLawPredicates: ParseThreadSafetyLawPredicates(
+                            functionSyntax,
+                            genericParameters,
+                            module.SyntaxModel.ModuleName,
+                            comptimeGenericParameterMap));
                     RegisterFunctionSignature(signature, seenOverloadKeys, functionSyntax.DeclarationContext);
+                    _functionSyntaxByQualifiedName[signature.Name] = functionSyntax;
                 }
                 finally
                 {
@@ -2928,9 +3159,11 @@ internal sealed class TypeChecker
                         comptimeParameter.Type,
                         IsMutable: false,
                         IsConstant: true,
-                        ConstantValue: concreteValue is not null && !concreteValue.IsSymbolic
-                            ? CompileTimeConstant.Integer(concreteValue.IntegerValue, comptimeParameter.Type)
-                            : null));
+                        ConstantValue: concreteValue is null
+                            ? null
+                            : concreteValue.IsSymbolic
+                                ? CompileTimeConstant.SymbolicInteger(comptimeParameter.Type)
+                                : CompileTimeConstant.Integer(concreteValue.IntegerValue, comptimeParameter.Type)));
                 }
                 AddParameterDisjointFacts(scope, signature.DisjointGroups);
                 AddParameterSameFacts(scope, signature.SameGroups);
@@ -2962,6 +3195,7 @@ internal sealed class TypeChecker
                 var previousImportedTemplateMemberCallOrdinals = _currentImportedTemplateMemberCallOrdinals;
                 var previousUnsafeDepth = _unsafeDepth;
                 var previousFunctionConstraints = _currentFunctionConstraints;
+                var previousFunctionThreadSafetyLaws = _currentFunctionThreadSafetyLaws;
                 _currentFunctionGenericParameters = signature.IsGeneric
                     ? signature.GenericParams.ToHashSet(StringComparer.Ordinal)
                     : null;
@@ -2972,6 +3206,7 @@ internal sealed class TypeChecker
                 _currentFunctionModuleName = module.SyntaxModel.ModuleName;
                 _currentFunctionReturnType = signature.ReturnType;
                 _currentFunctionConstraints = WithImplicitTraitSelfConstraint(signature);
+                _currentFunctionThreadSafetyLaws = signature.ThreadSafetyLaws;
                 if (signature.IsUnsafe)
                 {
                     _unsafeDepth++;
@@ -3071,6 +3306,7 @@ internal sealed class TypeChecker
                     _currentFunctionGenericParameters = previousGenericParameters;
                     _currentFunctionComptimeGenericParameters = previousComptimeGenericParameters;
                     _currentFunctionConstraints = previousFunctionConstraints;
+                    _currentFunctionThreadSafetyLaws = previousFunctionThreadSafetyLaws;
                     _currentFunctionName = previousFunctionName;
                     _currentFunctionModuleName = previousFunctionModuleName;
                     _currentFunctionReturnType = previousFunctionReturnType;
@@ -8337,14 +8573,13 @@ internal sealed class TypeChecker
                 ? ResolveLocalDeclarationType(localDeclarationKind, localDeclarationContext, typeContext)
                 : ResolveType(typeContext, currentModuleName: currentModuleName ?? CurrentFunctionModuleName);
             declaredType = ValidateRuntimeValueType(declaredType, typeContext, usage);
-            ValidateRuntimeTypeDoesNotDependOnEnum(declaredType, typeContext, usage);
 
             if (validateInitializer)
             {
                 CheckVariableInitializer(declarator.variableInitializer(), declaredType, scope);
             }
 
-            if (TryInferCompileTimeConstantStorageType(declarator.variableInitializer(), out var constantType, out var constant))
+            if (TryInferCompileTimeConstantStorageType(declarator.variableInitializer(), scope, out var constantType, out var constant))
             {
                 if (constantType.Kind is StarkTypeKind.Integer or StarkTypeKind.Float)
                 {
@@ -8378,7 +8613,7 @@ internal sealed class TypeChecker
         bool validateInitializer)
     {
         var declaredType = ResolveConstIntegerStorageType(integerTypeToken);
-        if (!TryInferCompileTimeConstantStorageType(declarator.variableInitializer(), out var constantType, out var constant)
+        if (!TryInferCompileTimeConstantStorageType(declarator.variableInitializer(), scope, out var constantType, out var constant)
             || constantType.Kind != StarkTypeKind.Integer)
         {
             if (validateInitializer)
@@ -8514,7 +8749,7 @@ internal sealed class TypeChecker
         string usage)
     {
         var initializer = declarator.variableInitializer();
-        if (TryInferCompileTimeConstantStorageType(initializer, out var constantType))
+        if (TryInferCompileTimeConstantStorageType(initializer, scope, out var constantType))
         {
             return constantType;
         }
@@ -8531,23 +8766,24 @@ internal sealed class TypeChecker
         return StarkTypeSymbols.Error;
     }
 
-    private static bool TryInferCompileTimeConstantStorageType(
+    private bool TryInferCompileTimeConstantStorageType(
         StarkParser.VariableInitializerContext initializer,
+        Scope scope,
         out StarkTypeSymbol type)
     {
-        return TryInferCompileTimeConstantStorageType(initializer, out type, out _);
+        return TryInferCompileTimeConstantStorageType(initializer, scope, out type, out _);
     }
 
-    private static bool TryInferCompileTimeConstantStorageType(
+    private bool TryInferCompileTimeConstantStorageType(
         StarkParser.VariableInitializerContext initializer,
+        Scope scope,
         out StarkTypeSymbol type,
         out CompileTimeConstant constant)
     {
         type = StarkTypeSymbols.Error;
         constant = default;
 
-        if (initializer.expression() is not { } expression
-            || !CompileTimeExpressionEvaluator.TryEvaluate(expression, out constant))
+        if (!TryEvaluateCompileTimeConstant(initializer, scope, targetType: null, out constant))
         {
             return false;
         }
@@ -8558,6 +8794,9 @@ internal sealed class TypeChecker
             CompileTimeConstantKind.Float => constant.Type,
             CompileTimeConstantKind.Bool => StarkTypeSymbols.Bool,
             CompileTimeConstantKind.Text => constant.Type,
+            CompileTimeConstantKind.FixedArray => constant.Type,
+            CompileTimeConstantKind.NamedAggregate => constant.Type,
+            CompileTimeConstantKind.EnumAggregate => constant.Type,
             _ => StarkTypeSymbols.Error
         };
 
@@ -8571,22 +8810,670 @@ internal sealed class TypeChecker
         out CompileTimeConstant constant)
     {
         constant = default;
-        if (initializer.expression() is not { } expression
-            || !CompileTimeExpressionEvaluator.TryEvaluate(
-                expression,
-                out constant,
-                CreateCompileTimeEvaluationServices(scope)))
+        if (initializer.expression() is { } expression)
+        {
+            var resolver = (TryResolveCompileTimeIdentifier)((string name, out CompileTimeConstant value) =>
+                TryResolveCompileTimeConstant(scope, name, out value));
+            var evaluated = IsComptimeBlockExpression(expression, out var block)
+                ? CompileTimeEvaluator.TryEvaluateBlock(
+                    block,
+                    CurrentFunctionModuleName,
+                    targetType,
+                    out constant,
+                    resolver)
+                : CompileTimeEvaluator.TryEvaluateExpression(
+                    expression,
+                    CurrentFunctionModuleName,
+                    state: null,
+                    activeCalls: null,
+                    out constant,
+                    resolver);
+            if (!evaluated)
+            {
+                return false;
+            }
+
+            if (targetType is not null
+                && CompileTimeExpressionEvaluator.TryCoerce(constant, targetType, out var coerced))
+            {
+                constant = coerced;
+            }
+
+            return true;
+        }
+
+        if (targetType is null)
         {
             return false;
         }
 
-        if (targetType is not null
-            && CompileTimeExpressionEvaluator.TryCoerce(constant, targetType, out var coerced))
+        if (initializer.arrayInitializer() is { } arrayInitializer)
         {
-            constant = coerced;
+            return TryEvaluateCompileTimeArrayInitializer(arrayInitializer, scope, targetType, out constant);
         }
 
+        return initializer.objectInitializer() is { } objectInitializer
+            && TryEvaluateCompileTimeObjectInitializer(objectInitializer, scope, targetType, out constant);
+    }
+
+    private bool TryEvaluateCompileTimeArrayInitializer(
+        StarkParser.ArrayInitializerContext arrayInitializer,
+        Scope scope,
+        StarkTypeSymbol targetType,
+        out CompileTimeConstant constant)
+    {
+        constant = default;
+        if (targetType.Kind != StarkTypeKind.FixedArray
+            || targetType.ElementType is not { } elementType
+            || targetType.FixedLength is not int fixedLength
+            || arrayInitializer.variableInitializer().Length > fixedLength)
+        {
+            return false;
+        }
+
+        var elements = new CompileTimeConstant[fixedLength];
+        var initializedCount = arrayInitializer.variableInitializer().Length;
+        for (var index = 0; index < initializedCount; index++)
+        {
+            if (!TryEvaluateCompileTimeConstant(
+                    arrayInitializer.variableInitializer(index),
+                    scope,
+                    elementType,
+                    out var element)
+                || !CompileTimeExpressionEvaluator.TryCoerce(element, elementType, out elements[index]))
+            {
+                return false;
+            }
+        }
+
+        for (var index = initializedCount; index < fixedLength; index++)
+        {
+            if (!TryCreateZeroCompileTimeConstant(elementType, out elements[index]))
+            {
+                return false;
+            }
+        }
+
+        constant = CompileTimeConstant.FixedArray(elements, targetType);
         return true;
+    }
+
+    private bool TryEvaluateCompileTimeObjectInitializer(
+        StarkParser.ObjectInitializerContext objectInitializer,
+        Scope scope,
+        StarkTypeSymbol targetType,
+        out CompileTimeConstant constant)
+    {
+        constant = default;
+        if (targetType.Kind != StarkTypeKind.Named
+            || ResolveNamedTypeSymbol(targetType) is not { } namedType
+            || !TryCreateZeroCompileTimeConstant(targetType, out var current))
+        {
+            return false;
+        }
+
+        var initializedFields = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var initializer in objectInitializer.memberInitializer())
+        {
+            var fieldName = initializer.Identifier().GetText();
+            if (!initializedFields.Add(fieldName)
+                || !namedType.TryGetField(fieldName, out var field, out var fieldIndex))
+            {
+                return false;
+            }
+
+            var fieldType = field.Type;
+            if (!TryEvaluateCompileTimeConstant(
+                    initializer.variableInitializer(),
+                    scope,
+                    fieldType,
+                    out var member)
+                || !CompileTimeExpressionEvaluator.TryCoerce(member, fieldType, out var coercedMember)
+                || !TryWithCompileTimeNamedAggregateField(current, fieldIndex, coercedMember, out current))
+            {
+                return false;
+            }
+        }
+
+        constant = current;
+        return true;
+    }
+
+    private bool TryCreateZeroCompileTimeConstant(
+        StarkTypeSymbol type,
+        out CompileTimeConstant constant)
+    {
+        constant = default;
+        switch (type.Kind)
+        {
+            case StarkTypeKind.Integer:
+                constant = CompileTimeConstant.Integer(BigInteger.Zero, type);
+                return true;
+            case StarkTypeKind.Float:
+                constant = CompileTimeConstant.Float(0, type);
+                return true;
+            case StarkTypeKind.Bool:
+                constant = CompileTimeConstant.Bool(false);
+                return true;
+            case StarkTypeKind.RawPointer:
+                constant = CompileTimeConstant.Null(type);
+                return true;
+            case StarkTypeKind.FixedArray when type.ElementType is { } elementType && type.FixedLength is int fixedLength:
+                var elements = new CompileTimeConstant[fixedLength];
+                for (var index = 0; index < fixedLength; index++)
+                {
+                    if (!TryCreateZeroCompileTimeConstant(elementType, out elements[index]))
+                    {
+                        return false;
+                    }
+                }
+
+                constant = CompileTimeConstant.FixedArray(elements, type);
+                return true;
+            case StarkTypeKind.Named when ResolveNamedTypeSymbol(type) is { Kind: DeclarationKind.Enum }:
+                return false;
+            case StarkTypeKind.Named when ResolveNamedTypeSymbol(type) is { } namedType:
+                var fieldValues = new CompileTimeConstant[namedType.OrderedFields.Count];
+                for (var index = 0; index < namedType.OrderedFields.Count; index++)
+                {
+                    if (!TryCreateZeroCompileTimeConstant(namedType.OrderedFields[index].Type, out fieldValues[index]))
+                    {
+                        return false;
+                    }
+                }
+
+                constant = CompileTimeConstant.NamedAggregate(fieldValues, type);
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private static bool TryWithCompileTimeNamedAggregateField(
+        CompileTimeConstant aggregate,
+        int fieldIndex,
+        CompileTimeConstant fieldValue,
+        out CompileTimeConstant updated)
+    {
+        updated = default;
+        if (aggregate.Kind != CompileTimeConstantKind.NamedAggregate
+            || fieldIndex < 0
+            || fieldIndex >= aggregate.Elements.Count)
+        {
+            return false;
+        }
+
+        var elements = aggregate.Elements.ToArray();
+        elements[fieldIndex] = fieldValue;
+        updated = CompileTimeConstant.NamedAggregate(elements, aggregate.Type);
+        return true;
+    }
+
+    private static bool IsComptimeBlockExpression(
+        StarkParser.ExpressionContext expression,
+        [NotNullWhen(true)] out StarkParser.BlockContext? block)
+    {
+        block = null;
+        var assignment = expression.assignmentExpression();
+        if (assignment.conditionalExpression()?.logicalOrExpression().logicalAndExpression().Length != 1)
+        {
+            return false;
+        }
+
+        if (assignment.assignmentOperator() is not null
+            || assignment.INIT() is not null
+            || assignment.unaryExpression() is not null
+            || assignment.assignmentExpression() is not null)
+        {
+            return false;
+        }
+
+        var postfix = TryGetSimplePostfixExpression(expression);
+        var primary = postfix?.postfixPart().Length == 0
+            ? postfix.primaryExpression()
+            : null;
+        block = primary?.COMPTIME() is not null ? primary.block() : null;
+        return block is not null;
+    }
+
+    private CompileTimeFunctionEvaluator CompileTimeEvaluator =>
+        _compileTimeFunctionEvaluator ??= new CompileTimeFunctionEvaluator(
+            TryGetFunctionOverloads,
+            TryResolveFunctionSignature,
+            TryGetFunctionDeclaration,
+            (StarkParser.Type_Context typeContext, string moduleName, ISet<string>? genericParameters, IReadOnlyDictionary<string, ComptimeGenericParameterSymbol>? comptimeGenericParameters) =>
+                ResolveType(typeContext, genericParameters, moduleName, comptimeGenericParameters),
+            (StarkParser.ConversionTypeContext typeContext, string moduleName, ISet<string>? genericParameters, IReadOnlyDictionary<string, ComptimeGenericParameterSymbol>? comptimeGenericParameters) =>
+                _typeResolver!.ResolveConversionType(typeContext, genericParameters, moduleName, comptimeGenericParameters),
+            tryResolveLocalDeclarationType: null,
+            tryResolveNamedType: TryResolveCompileTimeNamedType,
+            tryResolveTraitConformance: TryResolveCompileTimeTraitConformance,
+            resolveMethodSignatures: ResolveCompileTimeMethodSignatures,
+            tryResolveObjectCreation: TryResolveCompileTimeObjectCreation,
+            tryResolveEnumConstructor: TryResolveCompileTimeEnumConstructor,
+            tryResolveEnumCall: TryResolveCompileTimeEnumCall,
+            tryResolveEnumValue: TryResolveCompileTimeEnumValue,
+            tryEvaluateTypeLayout: TryEvaluateCompileTimeTypeLayout,
+            tryResolveConcreteLayout: TryResolveCompileTimeConcreteLayout,
+            maximumLoopIterations: _context.Options.MaximumCompileTimeLoopIterations);
+
+    private bool TryResolveCompileTimeNamedType(
+        StarkTypeSymbol type,
+        out NamedTypeSymbol namedType)
+    {
+        if (!TryResolveCompileTimeNamedTypeInModule(type, CurrentFunctionModuleName, out namedType))
+        {
+            return false;
+        }
+
+        if (namedType is not null
+            && namedType.ImplementedTraits.Count == 0
+            && TryResolveSourceImplementedTraitNames(type, namedType, out var implementedTraits))
+        {
+            namedType = namedType with { ImplementedTraitNames = implementedTraits };
+        }
+
+        return namedType is not null;
+    }
+
+    private bool TryResolveSourceImplementedTraitNames(
+        StarkTypeSymbol type,
+        NamedTypeSymbol namedType,
+        out IReadOnlyList<string> implementedTraits)
+    {
+        implementedTraits = [];
+        if (namedType.Kind is not (DeclarationKind.Struct or DeclarationKind.Record))
+        {
+            return false;
+        }
+
+        var namedTypeName = StarkTypeSymbols.GetGenericBaseName(namedType.Name);
+        var sourceTypeName = type.NamedType is { } typeName
+            ? StarkTypeSymbols.GetGenericBaseName(typeName)
+            : namedTypeName;
+
+        foreach (var module in _loadedModules.Modules.Values)
+        {
+            foreach (var declaration in module.ParseResult.Root.topLevelDeclaration())
+            {
+                StarkParser.BaseTraitListContext? baseTraitList;
+                StarkParser.TypeParameterListContext? typeParameterList;
+                string localName;
+                if (declaration.structDeclaration() is { } structDeclaration)
+                {
+                    localName = structDeclaration.Identifier().GetText();
+                    baseTraitList = structDeclaration.baseTraitList();
+                    typeParameterList = structDeclaration.typeParameterList();
+                }
+                else if (declaration.recordDeclaration() is { } recordDeclaration)
+                {
+                    localName = recordDeclaration.Identifier().GetText();
+                    baseTraitList = recordDeclaration.baseTraitList();
+                    typeParameterList = recordDeclaration.typeParameterList();
+                }
+                else
+                {
+                    continue;
+                }
+
+                var qualifiedName = QualifyName(module, localName);
+                if (!string.Equals(namedTypeName, qualifiedName, StringComparison.Ordinal)
+                    && !string.Equals(namedTypeName, localName, StringComparison.Ordinal)
+                    && !string.Equals(sourceTypeName, qualifiedName, StringComparison.Ordinal)
+                    && !string.Equals(sourceTypeName, localName, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                var genericParameters = GetGenericParameterNames(typeParameterList);
+                if (ResolveBaseTraitNames(baseTraitList, genericParameters, module.SyntaxModel.ModuleName) is { Count: > 0 } traits)
+                {
+                    implementedTraits = traits;
+                    return true;
+                }
+
+                return false;
+            }
+        }
+
+        return false;
+    }
+
+    private bool TryResolveCompileTimeTraitConformance(
+        StarkTypeSymbol targetType,
+        StarkTypeSymbol traitType,
+        string moduleName,
+        out bool implements)
+    {
+        implements = false;
+        if (!TryResolveCompileTimeNamedTypeInModule(traitType, moduleName, out var traitSymbol)
+            || traitSymbol.Kind != DeclarationKind.Trait)
+        {
+            return false;
+        }
+
+        if (!TryResolveCompileTimeNamedTypeInModule(targetType, moduleName, out var targetSymbol))
+        {
+            implements = false;
+            return true;
+        }
+
+        if (CompileTimeTraitNameMatches(targetSymbol.ImplementedTraits, traitType, traitSymbol))
+        {
+            implements = true;
+            return true;
+        }
+
+        if (TryResolveSourceImplementedTraitNames(targetType, targetSymbol, out var sourceTraits))
+        {
+            implements = CompileTimeTraitNameMatches(sourceTraits, traitType, traitSymbol);
+            return true;
+        }
+
+        implements = false;
+        return true;
+    }
+
+    private IReadOnlyList<TypedFunctionSignature> ResolveCompileTimeMethodSignatures(
+        StarkTypeSymbol ownerType,
+        string moduleName)
+    {
+        var cacheKey = $"{moduleName}|{ownerType.DisplayName}";
+        if (_compileTimeMethodSignatureCache.TryGetValue(cacheKey, out var cached))
+        {
+            return cached;
+        }
+
+        if (!TryResolveCompileTimeNamedTypeInModule(ownerType, moduleName, out var ownerSymbol))
+        {
+            _compileTimeMethodSignatureCache[cacheKey] = [];
+            return [];
+        }
+
+        var methods = CompileTimeStructuralFacts.GetOrderedMethodSignatures(
+            ownerType,
+            ownerSymbol,
+            _functionOverloads.Values.SelectMany(static overloads => overloads));
+        _compileTimeMethodSignatureCache[cacheKey] = methods;
+        return methods;
+    }
+
+    private bool TryResolveCompileTimeNamedTypeInModule(
+        StarkTypeSymbol type,
+        string moduleName,
+        out NamedTypeSymbol namedType)
+    {
+        namedType = null!;
+        if (type.Kind != StarkTypeKind.Named || type.NamedType is not { } typeName)
+        {
+            return false;
+        }
+
+        var baseName = StarkTypeSymbols.GetGenericBaseName(typeName);
+        if (_namedTypes.TryGetValue(baseName, out namedType!))
+        {
+            return true;
+        }
+
+        if (!baseName.Contains('.', StringComparison.Ordinal)
+            && !string.IsNullOrWhiteSpace(moduleName)
+            && _namedTypes.TryGetValue($"{moduleName}.{baseName}", out namedType!))
+        {
+            return true;
+        }
+
+        if (!baseName.Contains('.', StringComparison.Ordinal))
+        {
+            var importedMatches = _moduleGraph.EnumerateAccessibleModuleQualifiedNames(moduleName, baseName)
+                .Where(_namedTypes.ContainsKey)
+                .ToArray();
+            if (importedMatches.Length == 1)
+            {
+                namedType = _namedTypes[importedMatches[0]];
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool CompileTimeTraitNameMatches(
+        IReadOnlyList<string> implementedTraits,
+        StarkTypeSymbol traitType,
+        NamedTypeSymbol traitSymbol)
+    {
+        var sourceName = traitType.NamedType;
+        foreach (var implementedTrait in implementedTraits)
+        {
+            if (string.Equals(implementedTrait, traitSymbol.Name, StringComparison.Ordinal)
+                || (sourceName is not null && string.Equals(implementedTrait, sourceName, StringComparison.Ordinal))
+                || string.Equals(LastNameSegment(implementedTrait), LastNameSegment(traitSymbol.Name), StringComparison.Ordinal)
+                || (sourceName is not null
+                    && string.Equals(LastNameSegment(implementedTrait), LastNameSegment(sourceName), StringComparison.Ordinal)))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static string LastNameSegment(string name)
+    {
+        var baseName = StarkTypeSymbols.GetGenericBaseName(name);
+        var separator = baseName.LastIndexOf('.');
+        return separator < 0 ? baseName : baseName[(separator + 1)..];
+    }
+
+    private bool TryResolveCompileTimeConcreteLayout(
+        StarkTypeSymbol targetType,
+        out ConcreteTypeLayout layout)
+    {
+        layout = null!;
+        if (targetType.Kind == StarkTypeKind.Error)
+        {
+            return false;
+        }
+
+        _compileTimeEnumLayouts ??= EnumLayoutBuilder.Build(_syntaxModel.ModuleName, _namedTypes).Layouts;
+        layout = ConcreteTypeLayoutHelper.TryGetConcreteTypeLayout(targetType, _namedTypes, _compileTimeEnumLayouts)!;
+        return layout is not null;
+    }
+
+    private bool TryResolveCompileTimeObjectCreation(
+        StarkParser.ObjectCreationExpressionContext expression,
+        out CompileTimeObjectCreation objectCreation)
+    {
+        var location = Location(expression);
+        var record = _objectCreations.LastOrDefault(candidate =>
+            SourceLocationStartsAt(candidate.Location, location));
+        if (record is null)
+        {
+            objectCreation = null!;
+            return false;
+        }
+
+        objectCreation = new CompileTimeObjectCreation(
+            record.CreatedType,
+            record.Constructor,
+            record.Members);
+        return true;
+    }
+
+    private bool TryResolveCompileTimeEnumConstructor(
+        StarkParser.EnumConstructorExpressionContext expression,
+        out CompileTimeEnumConstruction enumConstruction)
+    {
+        var location = Location(expression);
+        var record = _enumConstructors.LastOrDefault(candidate =>
+            SourceLocationStartsAt(candidate.Location, location));
+        if (record is not null)
+        {
+            enumConstruction = new CompileTimeEnumConstruction(
+                record.EnumType,
+                record.VariantName,
+                record.Members);
+            return true;
+        }
+
+        if (TryResolveEnumCaseTarget(
+                expression.enumCaseTarget(),
+                out _,
+                out _,
+                out var enumTypeSymbol,
+                out var variant))
+        {
+            enumConstruction = new CompileTimeEnumConstruction(enumTypeSymbol, variant.Name);
+            return true;
+        }
+
+        enumConstruction = null!;
+        return false;
+    }
+
+    private bool TryResolveCompileTimeEnumCall(
+        StarkParser.PostfixExpressionContext expression,
+        string caseName,
+        StarkParser.ArgumentListContext arguments,
+        out CompileTimeEnumConstruction enumConstruction)
+    {
+        var location = Location(arguments);
+        var record = _enumCalls.LastOrDefault(candidate =>
+            SourceLocationStartsAt(candidate.Location, location));
+        if (record is not null)
+        {
+            enumConstruction = new CompileTimeEnumConstruction(
+                record.EnumType,
+                record.VariantName);
+            return true;
+        }
+
+        if (expression.primaryExpression().genericEnumCaseReference() is { } genericEnumCaseReference
+            && TryResolveEnumCaseReference(genericEnumCaseReference, out _, out var genericEnumTypeSymbol, out var genericVariant))
+        {
+            enumConstruction = new CompileTimeEnumConstruction(genericEnumTypeSymbol, genericVariant.Name);
+            return true;
+        }
+
+        if (TryResolveEnumCaseReference(caseName, out _, out var enumTypeSymbol, out var variant))
+        {
+            enumConstruction = new CompileTimeEnumConstruction(enumTypeSymbol, variant.Name);
+            return true;
+        }
+
+        enumConstruction = null!;
+        return false;
+    }
+
+    private bool TryResolveCompileTimeEnumValue(
+        ParserRuleContext expression,
+        string caseName,
+        out CompileTimeEnumConstruction enumConstruction)
+    {
+        var location = Location(expression);
+        var record = _enumValues.LastOrDefault(candidate =>
+            SourceLocationStartsAt(candidate.Location, location));
+        if (record is not null)
+        {
+            enumConstruction = new CompileTimeEnumConstruction(
+                record.EnumType,
+                record.VariantName);
+            return true;
+        }
+
+        if (expression is StarkParser.GenericEnumCaseReferenceContext genericEnumCaseReference
+            && TryResolveEnumCaseReference(genericEnumCaseReference, out _, out var genericEnumTypeSymbol, out var genericVariant)
+            && genericVariant.IsUnit)
+        {
+            enumConstruction = new CompileTimeEnumConstruction(genericEnumTypeSymbol, genericVariant.Name);
+            return true;
+        }
+
+        if (TryResolveEnumCaseReference(caseName, out _, out var enumTypeSymbol, out var variant)
+            && variant.IsUnit)
+        {
+            enumConstruction = new CompileTimeEnumConstruction(enumTypeSymbol, variant.Name);
+            return true;
+        }
+
+        enumConstruction = null!;
+        return false;
+    }
+
+    private bool TryEvaluateCompileTimeTypeLayout(
+        BoundLayoutQueryKind kind,
+        StarkTypeSymbol targetType,
+        out CompileTimeConstant constant)
+    {
+        constant = default;
+        if (targetType.Kind == StarkTypeKind.Error)
+        {
+            return false;
+        }
+
+        _compileTimeEnumLayouts ??= EnumLayoutBuilder.Build(_syntaxModel.ModuleName, _namedTypes).Layouts;
+        if (ConcreteTypeLayoutHelper.TryGetConcreteTypeLayout(targetType, _namedTypes, _compileTimeEnumLayouts) is not { } layout)
+        {
+            return false;
+        }
+
+        var resultType = TypeLayoutQueryFacts.GetResultType(kind);
+        constant = CompileTimeConstant.Integer(
+            TypeLayoutQueryFacts.GetResultValue(kind, layout),
+            resultType);
+        return true;
+    }
+
+    private static bool SourceLocationStartsAt(SourceLocation left, SourceLocation right)
+    {
+        return left.Line == right.Line
+            && left.Column == right.Column
+            && (left.FilePath is null
+                || right.FilePath is null
+                || string.Equals(left.FilePath, right.FilePath, StringComparison.Ordinal));
+    }
+
+    private bool TryGetFunctionDeclaration(TypedFunctionSignature signature, out DeclaredFunctionSyntax declaration)
+    {
+        if (_functionSyntaxByQualifiedName.TryGetValue(signature.Name, out declaration!))
+        {
+            return true;
+        }
+
+        if (signature.TemplateName is not null
+            && _functionSyntaxByQualifiedName.TryGetValue(signature.TemplateName, out declaration!))
+        {
+            return true;
+        }
+
+        declaration = null!;
+        return false;
+    }
+
+    private bool TryResolveFunctionSignature(
+        string name,
+        string currentModuleName,
+        out TypedFunctionSignature signature)
+    {
+        if (!name.Contains('.', StringComparison.Ordinal)
+            && _functions.TryGetValue($"{currentModuleName}.{name}", out signature!))
+        {
+            return true;
+        }
+
+        if (_functions.TryGetValue(name, out signature!))
+        {
+            return true;
+        }
+
+        if (TryGetFunctionOverloads(name, currentModuleName, out var overloads) && overloads.Count == 1)
+        {
+            signature = overloads[0];
+            return true;
+        }
+
+        signature = null!;
+        return false;
     }
 
     private bool TryBuildTypedConstantInitializer(
@@ -8636,12 +9523,12 @@ internal sealed class TypeChecker
         return true;
     }
 
-    private static bool TryBuildTypedConstantInitializer(
+    private bool TryBuildTypedConstantInitializer(
         CompileTimeConstant constant,
         StarkTypeSymbol targetType,
         out TypedConstantInitializer typedInitializer)
     {
-        typedInitializer = constant.Kind switch
+        var candidate = constant.Kind switch
         {
             CompileTimeConstantKind.Integer => new TypedConstantInitializer(
                 TypedConstantInitializerKind.Integer,
@@ -8662,10 +9549,110 @@ internal sealed class TypeChecker
             CompileTimeConstantKind.Null => new TypedConstantInitializer(
                 TypedConstantInitializerKind.Null,
                 targetType),
+            CompileTimeConstantKind.FixedArray => TryBuildTypedFixedArrayConstantInitializer(
+                constant,
+                targetType),
+            CompileTimeConstantKind.NamedAggregate => TryBuildTypedNamedAggregateConstantInitializer(
+                constant,
+                targetType),
+            CompileTimeConstantKind.EnumAggregate => TryBuildTypedEnumAggregateConstantInitializer(
+                constant,
+                targetType),
             _ => default!
         };
 
-        return typedInitializer is not null;
+        typedInitializer = candidate!;
+        return candidate is not null;
+    }
+
+    private TypedConstantInitializer? TryBuildTypedFixedArrayConstantInitializer(
+        CompileTimeConstant constant,
+        StarkTypeSymbol targetType)
+    {
+        if (targetType.Kind != StarkTypeKind.FixedArray
+            || targetType.ElementType is not { } elementType
+            || targetType.FixedLength is not int fixedLength
+            || constant.Elements.Count != fixedLength)
+        {
+            return null;
+        }
+
+        var elements = new TypedConstantInitializer[fixedLength];
+        for (var index = 0; index < fixedLength; index++)
+        {
+            if (!TryBuildTypedConstantInitializer(constant.Elements[index], elementType, out var elementInitializer))
+            {
+                return null;
+            }
+
+            elements[index] = elementInitializer;
+        }
+
+        return new TypedConstantInitializer(
+            TypedConstantInitializerKind.FixedArray,
+            targetType,
+            Elements: elements);
+    }
+
+    private TypedConstantInitializer? TryBuildTypedNamedAggregateConstantInitializer(
+        CompileTimeConstant constant,
+        StarkTypeSymbol targetType)
+    {
+        if (targetType.Kind != StarkTypeKind.Named
+            || ResolveNamedTypeSymbol(targetType) is not { } namedType
+            || constant.Elements.Count != namedType.OrderedFields.Count)
+        {
+            return null;
+        }
+
+        var elements = new TypedConstantInitializer[namedType.OrderedFields.Count];
+        for (var index = 0; index < namedType.OrderedFields.Count; index++)
+        {
+            var fieldType = namedType.OrderedFields[index].Type;
+            if (!TryBuildTypedConstantInitializer(constant.Elements[index], fieldType, out var fieldInitializer))
+            {
+                return null;
+            }
+
+            elements[index] = fieldInitializer;
+        }
+
+        return new TypedConstantInitializer(
+            TypedConstantInitializerKind.NamedAggregate,
+            targetType,
+            Elements: elements);
+    }
+
+    private TypedConstantInitializer? TryBuildTypedEnumAggregateConstantInitializer(
+        CompileTimeConstant constant,
+        StarkTypeSymbol targetType)
+    {
+        if (targetType.Kind != StarkTypeKind.Named
+            || ResolveNamedTypeSymbol(targetType) is not { Kind: DeclarationKind.Enum } namedType
+            || constant.VariantName is not { } variantName
+            || !namedType.TryGetVariant(variantName, out var variant, out _)
+            || constant.Elements.Count != variant.Fields.Count)
+        {
+            return null;
+        }
+
+        var elements = new TypedConstantInitializer[variant.Fields.Count];
+        for (var index = 0; index < variant.Fields.Count; index++)
+        {
+            var fieldType = variant.Fields[index].Type;
+            if (!TryBuildTypedConstantInitializer(constant.Elements[index], fieldType, out var fieldInitializer))
+            {
+                return null;
+            }
+
+            elements[index] = fieldInitializer;
+        }
+
+        return new TypedConstantInitializer(
+            TypedConstantInitializerKind.EnumAggregate,
+            targetType,
+            VariantName: variantName,
+            Elements: elements);
     }
 
     private CompileTimeEvaluationServices CreateCompileTimeEvaluationServices(Scope scope)
@@ -8674,10 +9661,31 @@ internal sealed class TypeChecker
             TryResolveIdentifier: (string name, out CompileTimeConstant constant) =>
                 TryResolveCompileTimeConstant(scope, name, out constant),
             TryEvaluatePostfixExpression: (StarkParser.PostfixExpressionContext expression, CompileTimeEvaluationServices _, out CompileTimeConstant constant) =>
-                TryResolveCompileTimePostfixConstant(scope, expression, out constant));
+                TryResolveCompileTimePostfixConstant(scope, expression, out constant),
+            TryEvaluateTypeLayoutExpression: (StarkParser.PrimaryExpressionContext expression, out CompileTimeConstant constant) =>
+            {
+                var kind = expression.ALIGNOF() is not null
+                    ? BoundLayoutQueryKind.AlignOf
+                    : BoundLayoutQueryKind.SizeOf;
+                var targetType = ResolveType(
+                    expression.type_(),
+                    _currentFunctionGenericParameters,
+                    CurrentFunctionModuleName,
+                    _currentFunctionComptimeGenericParameters);
+                return TryEvaluateCompileTimeTypeLayout(kind, targetType, out constant);
+            },
+            TryResolveConversionType: (StarkParser.ConversionTypeContext type, out StarkTypeSymbol resolved) =>
+            {
+                resolved = _typeResolver!.ResolveConversionType(
+                    type,
+                    _currentFunctionGenericParameters,
+                    CurrentFunctionModuleName,
+                    _currentFunctionComptimeGenericParameters);
+                return resolved.Kind != StarkTypeKind.Error;
+            });
     }
 
-    private static bool TryResolveCompileTimePostfixConstant(
+    private bool TryResolveCompileTimePostfixConstant(
         Scope scope,
         StarkParser.PostfixExpressionContext expression,
         out CompileTimeConstant constant)
@@ -8685,6 +9693,7 @@ internal sealed class TypeChecker
         constant = default;
 
         var parts = new List<string>(expression.postfixPart().Length + 1);
+        CompileTimeConstant? current = null;
         if (expression.primaryExpression().Identifier()?.GetText() is { } identifier)
         {
             parts.Add(identifier);
@@ -8706,10 +9715,55 @@ internal sealed class TypeChecker
                 return false;
             }
 
+            if (current is not null)
+            {
+                if (!TryGetCompileTimeNamedAggregateField(current.Value, memberName, out var fieldValue))
+                {
+                    return false;
+                }
+
+                current = fieldValue;
+                parts.Clear();
+                continue;
+            }
+
+            if (TryResolveCompileTimeConstant(scope, string.Join(".", parts), out var resolved)
+                && TryGetCompileTimeNamedAggregateField(resolved, memberName, out var projected))
+            {
+                current = projected;
+                parts.Clear();
+                continue;
+            }
+
             parts.Add(memberName);
         }
 
+        if (current is not null)
+        {
+            constant = current.Value;
+            return true;
+        }
+
         return TryResolveCompileTimeConstant(scope, string.Join(".", parts), out constant);
+    }
+
+    private bool TryGetCompileTimeNamedAggregateField(
+        CompileTimeConstant aggregate,
+        string fieldName,
+        out CompileTimeConstant fieldValue)
+    {
+        fieldValue = default;
+        if (aggregate.Kind != CompileTimeConstantKind.NamedAggregate
+            || ResolveNamedTypeSymbol(aggregate.Type) is not { } namedType
+            || !namedType.TryGetField(fieldName, out _, out var fieldIndex)
+            || fieldIndex < 0
+            || fieldIndex >= aggregate.Elements.Count)
+        {
+            return false;
+        }
+
+        fieldValue = aggregate.Elements[fieldIndex];
+        return true;
     }
 
     private bool TryEvaluateCompileTimeIntegerExpression(
@@ -8753,6 +9807,39 @@ internal sealed class TypeChecker
 
         constant = default;
         return false;
+    }
+
+    private bool TryResolveOpenComptimeGenericConstant(
+        string name,
+        out CompileTimeConstant constant)
+    {
+        if (_currentFunctionComptimeGenericParameters is { Count: > 0 } parameters
+            && parameters.TryGetValue(name, out var parameter)
+            && parameter.Type.Kind == StarkTypeKind.Integer)
+        {
+            constant = CompileTimeConstant.SymbolicInteger(parameter.Type);
+            return true;
+        }
+
+        constant = default;
+        return false;
+    }
+
+    private CompileTimeFunctionEvaluationState? CreateOpenComptimeGenericEvaluationState()
+    {
+        if (_currentFunctionGenericParameters is not { Count: > 0 }
+            && _currentFunctionComptimeGenericParameters is not { Count: > 0 })
+        {
+            return null;
+        }
+
+        var state = new CompileTimeFunctionEvaluationState();
+        state.SetGenericContext(
+            _currentFunctionGenericParameters,
+            typeSubstitution: null,
+            _currentFunctionComptimeGenericParameters,
+            comptimeValueSubstitution: null);
+        return state;
     }
 
     private static StarkTypeSymbol InferConstIntegerStorageType(BigInteger value)
@@ -10662,6 +11749,11 @@ internal sealed class TypeChecker
             return EvaluateTryExpression(expression, scope, expectedType);
         }
 
+        if (expression.COMPTIME() is not null)
+        {
+            return EvaluateComptimeExpression(expression, scope, expectedType);
+        }
+
         var operand = EvaluateUnaryExpression(expression.unaryExpression(), scope, allowFunctionReference: false);
         var op = expression.unaryOperator()?.GetText() ?? expression.GetChild(0).GetText();
 
@@ -10675,6 +11767,63 @@ internal sealed class TypeChecker
             "*" => EnsureDereferenceUnary(operand, expression),
             _ => new ExpressionBinding(StarkTypeSymbols.Error)
         };
+    }
+
+    private ExpressionBinding EvaluateComptimeExpression(
+        StarkParser.UnaryExpressionContext expression,
+        Scope scope,
+        StarkTypeSymbol? expectedType)
+    {
+        var previousAllowCompileTimeOnlyStructuralFactCalls = _allowCompileTimeOnlyStructuralFactCalls;
+        _allowCompileTimeOnlyStructuralFactCalls = true;
+        ExpressionBinding operandBinding;
+        try
+        {
+            operandBinding = EvaluateUnaryExpression(
+                expression.unaryExpression(),
+                scope,
+                allowFunctionReference: false,
+                expectedType);
+        }
+        finally
+        {
+            _allowCompileTimeOnlyStructuralFactCalls = previousAllowCompileTimeOnlyStructuralFactCalls;
+        }
+
+        if (operandBinding.Type.Kind == StarkTypeKind.Error)
+        {
+            return new ExpressionBinding(StarkTypeSymbols.Error);
+        }
+
+        CompileTimeEvaluator.ClearFailure();
+        if (!CompileTimeEvaluator.TryEvaluateExpressionNode(
+                expression.unaryExpression(),
+                CurrentFunctionModuleName,
+                state: CreateOpenComptimeGenericEvaluationState(),
+                activeCalls: null,
+                out var constant,
+                (string name, out CompileTimeConstant value) =>
+                    TryResolveCompileTimeConstant(scope, name, out value)
+                    || TryResolveOpenComptimeGenericConstant(name, out value)))
+        {
+            ReportError(
+                "STK3053",
+                BuildComptimeEvaluationFailureMessage(
+                    "`comptime` expression must evaluate during compilation. Use literals, const values, comptime generic values, or finite/law calls whose bodies stay within the supported compile-time subset."),
+                expression);
+            return new ExpressionBinding(StarkTypeSymbols.Error);
+        }
+
+        if (expectedType is not null
+            && CompileTimeExpressionEvaluator.TryCoerce(constant, expectedType, out var coerced))
+        {
+            constant = coerced;
+        }
+
+        return new ExpressionBinding(
+            constant.Type,
+            NamedType: ResolveNamedTypeSymbol(constant.Type),
+            HasConstProvenance: true);
     }
 
     private ExpressionBinding EvaluateTryExpression(
@@ -11488,6 +12637,11 @@ internal sealed class TypeChecker
             return EvaluateLiteral(literal);
         }
 
+        if (expression.COMPTIME() is not null && expression.block() is { } block)
+        {
+            return EvaluateComptimeBlockExpression(expression, block, scope, expectedType);
+        }
+
         if (expression.SIZEOF() is not null || expression.ALIGNOF() is not null)
         {
             var kind = expression.SIZEOF() is not null ? "sizeof" : "alignof";
@@ -11502,11 +12656,10 @@ internal sealed class TypeChecker
                 location,
                 _currentFunctionName));
 
-            var resultType = expression.ALIGNOF() is not null
-                ? StarkTypeSymbols.Integer(64, BigInteger.One, new BigInteger(long.MaxValue))
-                : StarkTypeSymbols.Integer(64, BigInteger.Zero, new BigInteger(long.MaxValue));
+            var queryKind = expression.ALIGNOF() is not null ? BoundLayoutQueryKind.AlignOf : BoundLayoutQueryKind.SizeOf;
+            var resultType = TypeLayoutQueryFacts.GetResultType(queryKind);
             _boundOperations.Add(new BoundLayoutQueryOperation(
-                expression.ALIGNOF() is not null ? BoundLayoutQueryKind.AlignOf : BoundLayoutQueryKind.SizeOf,
+                queryKind,
                 targetType,
                 resultType,
                 location,
@@ -11558,6 +12711,58 @@ internal sealed class TypeChecker
         }
 
         return EvaluateExpression(expression.expression(), scope, allowFunctionReference: false, expectedType);
+    }
+
+    private ExpressionBinding EvaluateComptimeBlockExpression(
+        StarkParser.PrimaryExpressionContext expression,
+        StarkParser.BlockContext block,
+        Scope scope,
+        StarkTypeSymbol? expectedType)
+    {
+        var previousInsideConstructorBody = _insideConstructorBody;
+        var previousAllowCompileTimeOnlyStructuralFactCalls = _allowCompileTimeOnlyStructuralFactCalls;
+        _insideConstructorBody = false;
+        _allowCompileTimeOnlyStructuralFactCalls = true;
+        try
+        {
+            CheckBlock(block, scope, expectedType ?? StarkTypeSymbols.Error);
+        }
+        finally
+        {
+            _insideConstructorBody = previousInsideConstructorBody;
+            _allowCompileTimeOnlyStructuralFactCalls = previousAllowCompileTimeOnlyStructuralFactCalls;
+        }
+
+        CompileTimeEvaluator.ClearFailure();
+        if (!CompileTimeEvaluator.TryEvaluateBlock(
+                block,
+                CurrentFunctionModuleName,
+                expectedType,
+                out var constant,
+                (string name, out CompileTimeConstant value) =>
+                    TryResolveCompileTimeConstant(scope, name, out value)
+                    || TryResolveOpenComptimeGenericConstant(name, out value),
+                initialState: CreateOpenComptimeGenericEvaluationState()))
+        {
+            ReportError(
+                "STK3053",
+                BuildComptimeEvaluationFailureMessage(
+                    "`comptime` block must return a value during compilation using literals, const values, comptime generic values, local compile-time state, or finite/law calls whose bodies stay within the supported compile-time subset."),
+                expression);
+            return new ExpressionBinding(StarkTypeSymbols.Error);
+        }
+
+        return new ExpressionBinding(
+            constant.Type,
+            NamedType: ResolveNamedTypeSymbol(constant.Type),
+            HasConstProvenance: true);
+    }
+
+    private string BuildComptimeEvaluationFailureMessage(string fallback)
+    {
+        return CompileTimeEvaluator.LastFailure is { } failure
+            ? failure.Message
+            : fallback;
     }
 
     private ExpressionBinding EvaluateObjectCreation(
@@ -12337,6 +13542,31 @@ internal sealed class TypeChecker
             return new ExpressionBinding(StarkTypeSymbols.Error);
         }
 
+        if (CompileTimeStructuralFacts.IsSignature(target.Function))
+        {
+            if (arguments.argument().Length != 0)
+            {
+                ReportError(
+                    "STK3009",
+                    $"Compile-time structural fact '{target.Function.DisplaySourceName}' expects 0 arguments but received {arguments.argument().Length}.",
+                    arguments);
+                return new ExpressionBinding(StarkTypeSymbols.Error);
+            }
+
+            if (!_allowCompileTimeOnlyStructuralFactCalls)
+            {
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{target.Function.DisplaySourceName}' may only be used inside a `comptime` expression or block.",
+                    arguments);
+                return new ExpressionBinding(StarkTypeSymbols.Error);
+            }
+
+            return new ExpressionBinding(
+                target.Function.ReturnType,
+                DiagnosticName: $"compile-time structural fact '{target.Function.DisplaySourceName}'");
+        }
+
         if (target.Function.IsUnsafe && _unsafeDepth == 0)
         {
             ReportError(
@@ -12409,6 +13639,11 @@ internal sealed class TypeChecker
             target.Function.DisplaySourceName,
             scope);
 
+        ValidateThreadSafetyLawCallPredicates(
+            target.Function,
+            target.Function.DisplaySourceName,
+            arguments);
+
         if (target.Function.IsVarargs)
         {
             for (var index = explicitParameterCount; index < argumentTypes.Length; index++)
@@ -12422,6 +13657,14 @@ internal sealed class TypeChecker
                         arguments.argument(index).expression());
                 }
             }
+
+            ValidateCVarargsFormatStringArguments(
+                target.Function,
+                receiverOffset,
+                explicitParameterCount,
+                arguments,
+                argumentBindings,
+                scope);
         }
 
         var callArgumentRecords = BuildCallArgumentRecords(
@@ -13111,6 +14354,82 @@ internal sealed class TypeChecker
         }
 
         return arguments;
+    }
+
+    private void ValidateThreadSafetyLawCallPredicates(
+        TypedFunctionSignature function,
+        string functionName,
+        ParserRuleContext context)
+    {
+        foreach (var predicate in function.ThreadSafetyLaws)
+        {
+            var predicateType = EnsureMonomorphizedType(predicate.Type, Location(context));
+            if (TypeContainsOpenCurrentFunctionGenericParameter(predicateType)
+                || TypeContainsOpenCurrentFunctionComptimeParameter(predicateType))
+            {
+                if (CurrentFunctionCarriesThreadSafetyLawPredicate(predicate.LawName, predicateType))
+                {
+                    continue;
+                }
+
+                ReportError(
+                    "STK3049",
+                    FormatOpenThreadSafetyLawFailure(functionName, predicate.LawName, predicateType),
+                    context);
+                continue;
+            }
+
+            var fact = GetThreadSafetyLawEvaluator().Evaluate(predicate.LawName, predicateType);
+            if (fact.Holds)
+            {
+                continue;
+            }
+
+            ReportError(
+                "STK3049",
+                FormatThreadSafetyLawFailure(functionName, predicate.LawName, predicateType, fact),
+                context);
+        }
+    }
+
+    private bool CurrentFunctionCarriesThreadSafetyLawPredicate(string lawName, StarkTypeSymbol type)
+    {
+        return _currentFunctionThreadSafetyLaws.Any(predicate =>
+            string.Equals(predicate.LawName, lawName, StringComparison.Ordinal)
+            && StarkTypeSymbolsHaveSameIdentity(predicate.Type, type));
+    }
+
+    private ThreadSafetyLawEvaluator GetThreadSafetyLawEvaluator()
+    {
+        return _threadSafetyLawEvaluator ??= new ThreadSafetyLawEvaluator(
+            _namedTypes,
+            _syntaxModel.ModuleName,
+            (code, message) => ReportError(code, message, SourceLocation.Synthetic()));
+    }
+
+    private static string FormatThreadSafetyLawFailure(
+        string functionName,
+        string lawName,
+        StarkTypeSymbol type,
+        ThreadSafetyLawFact fact)
+    {
+        var failure = fact.FailureReasons.FirstOrDefault();
+        var reason = failure?.Message ?? $"Type '{type.DisplayName}' does not satisfy {lawName}.";
+        var fieldChain = failure?.Path is { Count: > 0 } path
+            ? $" Responsible field chain: {type.DisplayName}.{string.Join(".", path)}."
+            : string.Empty;
+        return $"Function '{functionName}' requires where {lawName}({type.DisplayName}), but the type does not satisfy that law. {reason}{fieldChain}";
+    }
+
+    private string FormatOpenThreadSafetyLawFailure(
+        string functionName,
+        string lawName,
+        StarkTypeSymbol type)
+    {
+        var enclosing = _currentFunctionName is { Length: > 0 } name
+            ? $" Enclosing generic function '{name}' must declare `where {lawName}({type.DisplayName})` or avoid this call for unconstrained '{type.DisplayName}'."
+            : string.Empty;
+        return $"Function '{functionName}' requires where {lawName}({type.DisplayName}), but that open generic law predicate is not available at this call site.{enclosing}";
     }
 
     private static bool TryResolveParameterRegionExpressionRange(
@@ -14121,6 +15440,233 @@ internal sealed class TypeChecker
         };
     }
 
+    private void ValidateCVarargsFormatStringArguments(
+        TypedFunctionSignature function,
+        int receiverOffset,
+        int explicitParameterCount,
+        StarkParser.ArgumentListContext arguments,
+        IReadOnlyList<ExpressionBinding> argumentBindings,
+        Scope scope)
+    {
+        if (explicitParameterCount == 0
+            || argumentBindings.Count == 0
+            || receiverOffset >= function.Parameters.Count
+            || !IsCVarargsFormatParameter(function.Parameters[receiverOffset])
+            || !TryDecodeCVarargsFormatString(arguments.argument(0).expression(), argumentBindings[0], scope, out var format))
+        {
+            return;
+        }
+
+        var consumedExtraArguments = 0;
+        foreach (var expectation in EnumeratePrintfArgumentExpectations(format))
+        {
+            var argumentIndex = explicitParameterCount + consumedExtraArguments;
+            consumedExtraArguments++;
+
+            if (!expectation.RequiresCString)
+            {
+                continue;
+            }
+
+            if (argumentIndex >= argumentBindings.Count)
+            {
+                ReportError(
+                    "STK3009",
+                    $"Format string for '{function.DisplaySourceName}' expects a C string argument for '%s' at argument {argumentIndex + 1}, but the call provides only {argumentBindings.Count} argument(s).",
+                    arguments);
+                continue;
+            }
+
+            var argument = argumentBindings[argumentIndex];
+            if (IsCCharRawPointerType(argument.Type))
+            {
+                continue;
+            }
+
+            ReportError(
+                "STK3009",
+                $"C varargs '%s' argument {argumentIndex + 1} to '{function.DisplaySourceName}' must be rawptr<System.C.c_char> or rawmutptr<System.C.c_char>, but found '{argument.Type.DisplayName}'. Convert Stark text with System.C.FromAscii(...) and pass OwnedCStr.Data().",
+                arguments.argument(argumentIndex).expression());
+        }
+    }
+
+    private bool TryDecodeCVarargsFormatString(
+        StarkParser.ExpressionContext expression,
+        ExpressionBinding binding,
+        Scope scope,
+        out string format)
+    {
+        if (binding.TextLiteral is { } literal
+            && binding.TextLiteralKind is { } literalKind
+            && TextLiteralDecoder.TryDecode(literal, literalKind, out var decoded, out _))
+        {
+            format = decoded.Value;
+            return true;
+        }
+
+        CompileTimeEvaluator.ClearFailure();
+        if (CompileTimeEvaluator.TryEvaluateExpressionNode(
+                expression,
+                CurrentFunctionModuleName,
+                state: null,
+                activeCalls: null,
+                out var constant,
+                (string name, out CompileTimeConstant value) => TryResolveCompileTimeConstant(scope, name, out value))
+            && constant.Kind == CompileTimeConstantKind.Text
+            && constant.TextLiteral is { } constantLiteral
+            && TextLiteralDecoder.TryDecode(
+                constantLiteral,
+                constantLiteral.StartsWith('\'') ? TextLiteralKind.Character : TextLiteralKind.String,
+                out var decodedConstant,
+                out _))
+        {
+            format = decodedConstant.Value;
+            return true;
+        }
+
+        format = string.Empty;
+        return false;
+    }
+
+    private static bool IsCVarargsFormatParameter(TypedParameterSymbol parameter)
+    {
+        return (string.Equals(parameter.Name, "format", StringComparison.Ordinal)
+                || string.Equals(parameter.Name, "fmt", StringComparison.Ordinal))
+            && (parameter.Type.Kind is StarkTypeKind.Ascii or StarkTypeKind.Unicode
+                || IsCCharRawPointerType(parameter.Type));
+    }
+
+    private static IEnumerable<PrintfArgumentExpectation> EnumeratePrintfArgumentExpectations(string format)
+    {
+        for (var index = 0; index < format.Length; index++)
+        {
+            if (format[index] != '%')
+            {
+                continue;
+            }
+
+            index++;
+            if (index >= format.Length)
+            {
+                yield break;
+            }
+
+            if (format[index] == '%')
+            {
+                continue;
+            }
+
+            while (index < format.Length && IsPrintfFlag(format[index]))
+            {
+                index++;
+            }
+
+            if (index < format.Length && format[index] == '*')
+            {
+                yield return new PrintfArgumentExpectation(RequiresCString: false);
+                index++;
+            }
+            else
+            {
+                while (index < format.Length && char.IsDigit(format[index]))
+                {
+                    index++;
+                }
+            }
+
+            if (index < format.Length && format[index] == '.')
+            {
+                index++;
+                if (index < format.Length && format[index] == '*')
+                {
+                    yield return new PrintfArgumentExpectation(RequiresCString: false);
+                    index++;
+                }
+                else
+                {
+                    while (index < format.Length && char.IsDigit(format[index]))
+                    {
+                        index++;
+                    }
+                }
+            }
+
+            var lengthModifierStart = index;
+            index = SkipPrintfLengthModifier(format, index);
+            if (index >= format.Length)
+            {
+                yield break;
+            }
+
+            var conversion = format[index];
+            if (conversion == '%')
+            {
+                continue;
+            }
+
+            if (IsPrintfConversionSpecifier(conversion))
+            {
+                yield return new PrintfArgumentExpectation(
+                    RequiresCString: conversion == 's' && index == lengthModifierStart);
+            }
+        }
+    }
+
+    private static bool IsPrintfFlag(char character)
+    {
+        return character is '-' or '+' or ' ' or '#' or '0' or '\'';
+    }
+
+    private static int SkipPrintfLengthModifier(string format, int index)
+    {
+        if (index >= format.Length)
+        {
+            return index;
+        }
+
+        return format[index] switch
+        {
+            'h' when index + 1 < format.Length && format[index + 1] == 'h' => index + 2,
+            'l' when index + 1 < format.Length && format[index + 1] == 'l' => index + 2,
+            'h' or 'l' or 'j' or 'z' or 't' or 'L' => index + 1,
+            'I' when index + 2 < format.Length
+                     && (format[index + 1], format[index + 2]) is ('3', '2') or ('6', '4') => index + 3,
+            'I' => index + 1,
+            _ => index
+        };
+    }
+
+    private static bool IsPrintfConversionSpecifier(char character)
+    {
+        return character is 'd' or 'i' or 'u' or 'o' or 'x' or 'X'
+            or 'f' or 'F' or 'e' or 'E' or 'g' or 'G' or 'a' or 'A'
+            or 'c' or 's' or 'p' or 'n';
+    }
+
+    private static bool IsCCharRawPointerType(StarkTypeSymbol type)
+    {
+        type = StarkTypeSymbols.WithQualifiers(
+            type,
+            borrowKind: StarkBorrowKind.None,
+            accessKind: StarkAccessKind.None,
+            initializationKind: StarkInitializationKind.None,
+            isMutableView: false);
+
+        return type.Kind == StarkTypeKind.RawPointer
+            && type.ElementType is { } elementType
+            && string.Equals(
+                StarkTypeSymbols.WithQualifiers(
+                    elementType,
+                    borrowKind: StarkBorrowKind.None,
+                    accessKind: StarkAccessKind.None,
+                    initializationKind: StarkInitializationKind.None,
+                    isMutableView: false).CSourceAliasName,
+                StarkCDataModelFacts.QualifyAliasName("c_char"),
+                StringComparison.Ordinal);
+    }
+
+    private readonly record struct PrintfArgumentExpectation(bool RequiresCString);
+
     private ExpressionBinding InvokeIndirectCall(ExpressionBinding target, StarkParser.ArgumentListContext arguments, Scope scope)
     {
         if (target.Type.FunctionPointerReturnType is not { } returnType
@@ -14128,6 +15674,14 @@ internal sealed class TypeChecker
         {
             ReportError("STK3008", $"{DescribeExpressionTarget(target)} is not callable.", arguments);
             return new ExpressionBinding(StarkTypeSymbols.Error);
+        }
+
+        if (target.Type.FunctionPointerIsUnsafe && _unsafeDepth == 0)
+        {
+            ReportError(
+                "STK3024",
+                $"Unsafe function pointer '{target.Type.DisplayName}' requires an unsafe context.",
+                arguments);
         }
 
         var expectedParameters = parameterTypes
@@ -15417,8 +16971,16 @@ internal sealed class TypeChecker
             .Where(function => TypeCompatibilityFacts.AreFunctionPointerTypesAssignable(targetType, FunctionPointerTypeForSignature(function)))
             .ToArray();
         var candidates = matchingCandidates
-            .Where(function => !function.IsUnsafe || _unsafeDepth != 0)
+            .Where(function => !function.IsUnsafe || targetType.FunctionPointerIsUnsafe)
             .ToArray();
+        var unsafeRequirementCandidates = !targetType.FunctionPointerIsUnsafe
+            ? functions
+                .Where(static function => !function.IsGeneric && function.IsUnsafe)
+                .Where(function => TypeCompatibilityFacts.AreFunctionPointerTypesAssignable(
+                    BuildUnsafeFunctionPointerType(targetType),
+                    FunctionPointerTypeForSignature(function)))
+                .ToArray()
+            : [];
 
         if (candidates.Length == 1)
         {
@@ -15436,7 +16998,7 @@ internal sealed class TypeChecker
                 DiagnosticName: $"function item '{function.DisplaySourceName}'");
         }
 
-        if (candidates.Length == 0 && matchingCandidates.Any(static function => function.IsUnsafe))
+        if (candidates.Length == 0 && (matchingCandidates.Any(static function => function.IsUnsafe) || unsafeRequirementCandidates.Length > 0))
         {
             ReportError(
                 "STK3024",
@@ -15459,6 +17021,27 @@ internal sealed class TypeChecker
             $"Function item '{name}' is ambiguous for target '{targetType.DisplayName}'.",
             token);
         return new ExpressionBinding(StarkTypeSymbols.Error);
+    }
+
+    private static StarkTypeSymbol BuildUnsafeFunctionPointerType(StarkTypeSymbol type)
+    {
+        if (type.FunctionPointerKind is not { } functionKind
+            || type.FunctionPointerReturnType is not { } returnType
+            || type.FunctionPointerParameterTypes is not { } parameterTypes)
+        {
+            return type;
+        }
+
+        return StarkTypeSymbols.FunctionPointer(
+            functionKind,
+            returnType,
+            parameterTypes,
+            type.FunctionPointerDisjointParameterGroups,
+            type.FunctionPointerOverlapParameterGroups,
+            type.FunctionPointerSameParameterGroups,
+            type.FunctionPointerParameterRawPointerElementCountExpressions,
+            type.FunctionPointerAbi,
+            isUnsafe: true);
     }
 
     private ExpressionBinding ResolveClosureFunctionPromotion(
@@ -15615,6 +17198,14 @@ internal sealed class TypeChecker
 
     private bool TryGetFunctionOverloads(string sourceName, out IReadOnlyList<TypedFunctionSignature> overloads)
     {
+        return TryGetFunctionOverloads(sourceName, CurrentFunctionModuleName, out overloads);
+    }
+
+    private bool TryGetFunctionOverloads(
+        string sourceName,
+        string currentModuleName,
+        out IReadOnlyList<TypedFunctionSignature> overloads)
+    {
         if (_functionOverloads.TryGetValue(sourceName, out var candidates))
         {
             overloads = candidates;
@@ -15629,7 +17220,7 @@ internal sealed class TypeChecker
         }
 
         if (!sourceName.Contains('.', StringComparison.Ordinal)
-            && _functionOverloads.TryGetValue($"{CurrentFunctionModuleName}.{sourceName}", out candidates))
+            && _functionOverloads.TryGetValue($"{currentModuleName}.{sourceName}", out candidates))
         {
             overloads = candidates;
             return true;
@@ -15638,7 +17229,7 @@ internal sealed class TypeChecker
         if (!sourceName.Contains('.', StringComparison.Ordinal))
         {
             var importedCandidates = new List<TypedFunctionSignature>();
-            foreach (var candidateName in _moduleGraph.EnumerateAccessibleModuleQualifiedNames(CurrentFunctionModuleName, sourceName))
+            foreach (var candidateName in _moduleGraph.EnumerateAccessibleModuleQualifiedNames(currentModuleName, sourceName))
             {
                 if (_functionOverloads.TryGetValue(candidateName, out candidates))
                 {
@@ -15947,6 +17538,20 @@ internal sealed class TypeChecker
         StarkTypeSymbol? expectedType)
     {
         var baseName = genericQualifiedName.qualifiedName().GetText();
+        if (TryResolveCompileTimeStructuralFactReference(genericQualifiedName, baseName, scope, out var structuralFactBinding))
+        {
+            if (!allowFunctionReference)
+            {
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{baseName}' may only be used inside a `comptime` expression or block.",
+                    genericQualifiedName);
+                return new ExpressionBinding(StarkTypeSymbols.Error);
+            }
+
+            return structuralFactBinding;
+        }
+
         if (TryGetFunctionOverloads(baseName, out var overloads))
         {
             if (!allowFunctionReference)
@@ -16025,6 +17630,939 @@ internal sealed class TypeChecker
             NamespaceName: targetType.NamedType,
             NamedType: namedType,
             DiagnosticName: $"type '{targetType.DisplayName}'");
+    }
+
+    private bool TryResolveCompileTimeStructuralFactReference(
+        StarkParser.GenericQualifiedNameContext genericQualifiedName,
+        string baseName,
+        Scope scope,
+        out ExpressionBinding binding)
+    {
+        binding = default!;
+        if (!CompileTimeStructuralFacts.TryGetFactKind(baseName, out _))
+        {
+            return false;
+        }
+
+        if (!CompileTimeStructuralFacts.TryResolveArguments(
+                baseName,
+                genericQualifiedName,
+                typeArgument => ResolveType(
+                    typeArgument,
+                    _currentFunctionGenericParameters,
+                    CurrentFunctionModuleName,
+                    _currentFunctionComptimeGenericParameters),
+                ReportError,
+                CreateCompileTimeEvaluationServices(scope),
+                _currentFunctionComptimeGenericParameters,
+                comptimeValueSubstitution: null,
+                out var structuralArguments))
+        {
+            binding = new ExpressionBinding(StarkTypeSymbols.Error);
+            return true;
+        }
+
+        if (HasErrorStructuralFactTypeArgument(structuralArguments)
+            || !ValidateCompileTimeStructuralFactArguments(baseName, structuralArguments, genericQualifiedName))
+        {
+            binding = new ExpressionBinding(StarkTypeSymbols.Error);
+            return true;
+        }
+
+        CompileTimeStructuralFacts.TryCreateSignature(baseName, structuralArguments, out var signature);
+        binding = new ExpressionBinding(
+            signature.ReturnType,
+            Function: signature,
+            DiagnosticName: $"compile-time structural fact '{baseName}'");
+        return true;
+    }
+
+    private static bool HasErrorStructuralFactTypeArgument(CompileTimeStructuralFactArguments arguments)
+    {
+        return arguments.TargetType.Kind == StarkTypeKind.Error
+            || arguments.AdditionalTypeArguments.Any(static argument => argument.Kind == StarkTypeKind.Error);
+    }
+
+    private bool ValidateCompileTimeStructuralFactArguments(
+        string factName,
+        CompileTimeStructuralFactArguments arguments,
+        ParserRuleContext context)
+    {
+        if (!CompileTimeStructuralFacts.TryGetFactKind(factName, out var kind)
+            || arguments.ComptimeValueArguments.Any(static argument => argument.IsSymbolic)
+            || arguments.TargetType.Kind == StarkTypeKind.Error
+            || arguments.AdditionalTypeArguments.Any(static argument => argument.Kind == StarkTypeKind.Error))
+        {
+            return true;
+        }
+
+        if (kind is CompileTimeStructuralFactKind.Implements
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeIs)
+        {
+            if (arguments.AdditionalTypeArguments.Count != 1)
+            {
+                return true;
+            }
+
+            var traitType = arguments.AdditionalTypeArguments[0];
+            if (ResolveNamedTypeDefinitionSymbol(traitType) is not { } traitSymbol)
+            {
+                return true;
+            }
+
+            if (traitSymbol.Kind != DeclarationKind.Trait)
+            {
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' requires a trait type as its second argument, but found '{traitType.DisplayName}'.",
+                    context);
+                return false;
+            }
+        }
+
+        if (CompileTimeStructuralFacts.IsImplementedTraitIndexedFact(kind))
+        {
+            if (ResolveNamedTypeDefinitionSymbol(arguments.TargetType) is not { } namedType)
+            {
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' requires a named type, but found '{arguments.TargetType.DisplayName}'.",
+                    context);
+                return false;
+            }
+
+            var index = arguments.ComptimeValueArguments[0].IntegerValue;
+            if (index < BigInteger.Zero || index >= namedType.ImplementedTraits.Count)
+            {
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' implemented-trait index '{index}' is out of range for '{arguments.TargetType.DisplayName}' with {namedType.ImplementedTraits.Count} implemented trait(s).",
+                    context);
+                return false;
+            }
+        }
+
+        if (kind is CompileTimeStructuralFactKind.TypeSize
+            or CompileTimeStructuralFactKind.TypeAlign
+            or CompileTimeStructuralFactKind.TypeIsZeroSized)
+        {
+            if (!TryResolveCompileTimeConcreteLayout(arguments.TargetType, out _))
+            {
+                if (arguments.TargetType.Kind is StarkTypeKind.Named or StarkTypeKind.AssociatedType
+                    && ResolveNamedTypeSymbol(arguments.TargetType) is null)
+                {
+                    return true;
+                }
+
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' requires concrete layout for '{arguments.TargetType.DisplayName}'.",
+                    context);
+                return false;
+            }
+        }
+
+        if (CompileTimeStructuralFacts.RequiresIntegerTarget(kind)
+            || CompileTimeStructuralFacts.RequiresFloatTarget(kind))
+        {
+            var targetType = StarkTypeSymbols.WithQualifiers(
+                arguments.TargetType,
+                borrowKind: StarkBorrowKind.None,
+                accessKind: StarkAccessKind.None,
+                initializationKind: StarkInitializationKind.None,
+                isMutableView: false);
+            var expectsInteger = CompileTimeStructuralFacts.RequiresIntegerTarget(kind);
+            var hasExpectedTarget = expectsInteger
+                ? targetType.Kind == StarkTypeKind.Integer && targetType.BitWidth is not null
+                : targetType.Kind == StarkTypeKind.Float && targetType.BitWidth is not null;
+            if (!hasExpectedTarget)
+            {
+                if (targetType.Kind is StarkTypeKind.Named or StarkTypeKind.AssociatedType
+                    && ResolveNamedTypeSymbol(targetType) is null)
+                {
+                    return true;
+                }
+
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' requires {(expectsInteger ? "an integer" : "a float")} type, but found '{arguments.TargetType.DisplayName}'.",
+                    context);
+                return false;
+            }
+        }
+
+        if (CompileTimeStructuralFacts.RequiresRawPointerTarget(kind))
+        {
+            var targetType = StarkTypeSymbols.WithQualifiers(
+                arguments.TargetType,
+                borrowKind: StarkBorrowKind.None,
+                accessKind: StarkAccessKind.None,
+                initializationKind: StarkInitializationKind.None,
+                isMutableView: false);
+            if (targetType.Kind != StarkTypeKind.RawPointer)
+            {
+                if (targetType.Kind is StarkTypeKind.Named or StarkTypeKind.AssociatedType
+                    && ResolveNamedTypeSymbol(targetType) is null)
+                {
+                    return true;
+                }
+
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' requires a raw pointer type, but found '{arguments.TargetType.DisplayName}'.",
+                    context);
+                return false;
+            }
+        }
+
+        if (CompileTimeStructuralFacts.RequiresElementTypeTarget(kind))
+        {
+            var targetType = StarkTypeSymbols.WithQualifiers(
+                arguments.TargetType,
+                borrowKind: StarkBorrowKind.None,
+                accessKind: StarkAccessKind.None,
+                initializationKind: StarkInitializationKind.None,
+                isMutableView: false);
+            if (targetType.ElementType is null)
+            {
+                if (targetType.Kind is StarkTypeKind.Named or StarkTypeKind.AssociatedType
+                    && ResolveNamedTypeSymbol(targetType) is null)
+                {
+                    return true;
+                }
+
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' requires an element-bearing type, but found '{arguments.TargetType.DisplayName}'.",
+                    context);
+                return false;
+            }
+        }
+
+        if (CompileTimeStructuralFacts.RequiresFixedArrayTarget(kind))
+        {
+            var targetType = StarkTypeSymbols.WithQualifiers(
+                arguments.TargetType,
+                borrowKind: StarkBorrowKind.None,
+                accessKind: StarkAccessKind.None,
+                initializationKind: StarkInitializationKind.None,
+                isMutableView: false);
+            if (targetType.Kind != StarkTypeKind.FixedArray)
+            {
+                if (targetType.Kind is StarkTypeKind.Named or StarkTypeKind.AssociatedType
+                    && ResolveNamedTypeSymbol(targetType) is null)
+                {
+                    return true;
+                }
+
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' requires a fixed-array type, but found '{arguments.TargetType.DisplayName}'.",
+                    context);
+                return false;
+            }
+        }
+
+        if (kind == CompileTimeStructuralFactKind.DynTraitTargetTypeIs)
+        {
+            var targetType = StarkTypeSymbols.WithQualifiers(
+                arguments.TargetType,
+                borrowKind: StarkBorrowKind.None,
+                accessKind: StarkAccessKind.None,
+                initializationKind: StarkInitializationKind.None,
+                isMutableView: false);
+            if (targetType.Kind != StarkTypeKind.DynTrait)
+            {
+                if (targetType.Kind is StarkTypeKind.Named or StarkTypeKind.AssociatedType
+                    && ResolveNamedTypeSymbol(targetType) is null)
+                {
+                    return true;
+                }
+
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' requires a dyn trait object type, but found '{arguments.TargetType.DisplayName}'.",
+                    context);
+                return false;
+            }
+
+            if (arguments.AdditionalTypeArguments.Count != 1)
+            {
+                return true;
+            }
+
+            var traitType = arguments.AdditionalTypeArguments[0];
+            if (ResolveNamedTypeDefinitionSymbol(traitType) is not { } traitSymbol)
+            {
+                return true;
+            }
+
+            if (traitSymbol.Kind != DeclarationKind.Trait)
+            {
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' requires a trait type as its second argument, but found '{traitType.DisplayName}'.",
+                    context);
+                return false;
+            }
+        }
+
+        if (kind != CompileTimeStructuralFactKind.MethodCount
+            && CompileTimeStructuralFacts.IsMethodIndexedFact(kind))
+        {
+            var targetType = StarkTypeSymbols.WithQualifiers(
+                arguments.TargetType,
+                borrowKind: StarkBorrowKind.None,
+                accessKind: StarkAccessKind.None,
+                initializationKind: StarkInitializationKind.None,
+                isMutableView: false);
+            if (targetType.Kind != StarkTypeKind.Named)
+            {
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' requires a named type, but found '{arguments.TargetType.DisplayName}'.",
+                    context);
+                return false;
+            }
+
+            if (!TryResolveCompileTimeNamedTypeInModule(targetType, CurrentFunctionModuleName, out _))
+            {
+                return true;
+            }
+
+            var methods = ResolveCompileTimeMethodSignatures(targetType, CurrentFunctionModuleName);
+            var methodIndex = arguments.ComptimeValueArguments[0].IntegerValue;
+            if (methodIndex < BigInteger.Zero || methodIndex >= methods.Count)
+            {
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' method index '{methodIndex}' is out of range for '{arguments.TargetType.DisplayName}' with {methods.Count} method slot(s).",
+                    context);
+                return false;
+            }
+
+            var method = methods[(int)methodIndex];
+            if (kind == CompileTimeStructuralFactKind.MethodParameterName
+                || kind == CompileTimeStructuralFactKind.MethodParameterTypeIs
+                || CompileTimeStructuralFacts.IsMethodParameterTypePredicate(kind)
+                || CompileTimeStructuralFacts.IsMethodParameterTypeMetadataFact(kind)
+                || CompileTimeStructuralFacts.IsMethodParameterRawPointerElementCountExpressionFact(kind))
+            {
+                var parameterIndex = arguments.ComptimeValueArguments[1].IntegerValue;
+                if (parameterIndex < BigInteger.Zero || parameterIndex >= method.Parameters.Count)
+                {
+                    ReportError(
+                        "STK3054",
+                        $"Compile-time structural fact '{factName}' parameter index '{parameterIndex}' is out of range for method slot {methodIndex} of '{arguments.TargetType.DisplayName}' with {method.Parameters.Count} parameter(s).",
+                        context);
+                    return false;
+                }
+            }
+
+            if (CompileTimeStructuralFacts.IsMethodParameterMemoryFact(kind))
+            {
+                for (var position = 1; position <= 2; position++)
+                {
+                    var parameterIndex = arguments.ComptimeValueArguments[position].IntegerValue;
+                    if (parameterIndex < BigInteger.Zero || parameterIndex >= method.Parameters.Count)
+                    {
+                        ReportError(
+                            "STK3054",
+                            $"Compile-time structural fact '{factName}' parameter index '{parameterIndex}' is out of range for method slot {methodIndex} of '{arguments.TargetType.DisplayName}' with {method.Parameters.Count} parameter(s).",
+                            context);
+                        return false;
+                    }
+                }
+            }
+
+            if (kind is CompileTimeStructuralFactKind.MethodGenericParameterName
+                or CompileTimeStructuralFactKind.MethodGenericParameterTraitBoundCount
+                or CompileTimeStructuralFactKind.MethodComptimeGenericParameterName
+                or CompileTimeStructuralFactKind.MethodComptimeGenericParameterTypeIs
+                || CompileTimeStructuralFacts.IsMethodComptimeGenericParameterTypePredicate(kind)
+                || CompileTimeStructuralFacts.IsMethodComptimeGenericParameterTypeMetadataFact(kind))
+            {
+                var genericParameterIndex = arguments.ComptimeValueArguments[1].IntegerValue;
+                var genericParameterCount = kind is CompileTimeStructuralFactKind.MethodComptimeGenericParameterName
+                    or CompileTimeStructuralFactKind.MethodComptimeGenericParameterTypeIs
+                    || CompileTimeStructuralFacts.IsMethodComptimeGenericParameterTypePredicate(kind)
+                    || CompileTimeStructuralFacts.IsMethodComptimeGenericParameterTypeMetadataFact(kind)
+                        ? method.ComptimeGenericParams.Count
+                        : method.GenericParams.Count;
+                var genericParameterKind = kind is CompileTimeStructuralFactKind.MethodComptimeGenericParameterName
+                    or CompileTimeStructuralFactKind.MethodComptimeGenericParameterTypeIs
+                    || CompileTimeStructuralFacts.IsMethodComptimeGenericParameterTypePredicate(kind)
+                    || CompileTimeStructuralFacts.IsMethodComptimeGenericParameterTypeMetadataFact(kind)
+                        ? "comptime generic parameter"
+                        : "generic parameter";
+                if (genericParameterIndex < BigInteger.Zero || genericParameterIndex >= genericParameterCount)
+                {
+                    ReportError(
+                        "STK3054",
+                        $"Compile-time structural fact '{factName}' {genericParameterKind} index '{genericParameterIndex}' is out of range for method slot {methodIndex} of '{arguments.TargetType.DisplayName}' with {genericParameterCount} {genericParameterKind}(s).",
+                        context);
+                    return false;
+                }
+            }
+
+            if (CompileTimeStructuralFacts.IsMethodGenericParameterTraitBoundIndexedFact(kind))
+            {
+                var genericParameterIndex = arguments.ComptimeValueArguments[1].IntegerValue;
+                if (genericParameterIndex < BigInteger.Zero || genericParameterIndex >= method.GenericParams.Count)
+                {
+                    ReportError(
+                        "STK3054",
+                        $"Compile-time structural fact '{factName}' generic parameter index '{genericParameterIndex}' is out of range for method slot {methodIndex} of '{arguments.TargetType.DisplayName}' with {method.GenericParams.Count} generic parameter(s).",
+                        context);
+                    return false;
+                }
+
+                var parameterName = method.GenericParams[(int)genericParameterIndex];
+                var boundCount = 0;
+                foreach (var constraint in method.Constraints)
+                {
+                    if (string.Equals(constraint.ParameterName, parameterName, StringComparison.Ordinal))
+                    {
+                        boundCount = constraint.BoundTraits.Count;
+                        break;
+                    }
+                }
+
+                var boundIndex = arguments.ComptimeValueArguments[2].IntegerValue;
+                if (boundIndex < BigInteger.Zero || boundIndex >= boundCount)
+                {
+                    ReportError(
+                        "STK3054",
+                        $"Compile-time structural fact '{factName}' trait-bound index '{boundIndex}' is out of range for generic parameter '{parameterName}' of method slot {methodIndex} of '{arguments.TargetType.DisplayName}' with {boundCount} trait bound(s).",
+                        context);
+                    return false;
+                }
+            }
+
+            if (CompileTimeStructuralFacts.IsMethodThreadSafetyLawPredicateIndexedFact(kind))
+            {
+                var predicateIndex = arguments.ComptimeValueArguments[1].IntegerValue;
+                if (predicateIndex < BigInteger.Zero || predicateIndex >= method.ThreadSafetyLaws.Count)
+                {
+                    ReportError(
+                        "STK3054",
+                        $"Compile-time structural fact '{factName}' thread-safety law predicate index '{predicateIndex}' is out of range for method slot {methodIndex} of '{arguments.TargetType.DisplayName}' with {method.ThreadSafetyLaws.Count} predicate(s).",
+                        context);
+                    return false;
+                }
+            }
+        }
+
+        if (kind == CompileTimeStructuralFactKind.FunctionPointerReturnTypeIs
+            || kind == CompileTimeStructuralFactKind.FunctionPointerParameterTypeIs
+            || CompileTimeStructuralFacts.IsFunctionPointerReturnTypePredicate(kind)
+            || CompileTimeStructuralFacts.IsFunctionPointerParameterTypePredicate(kind)
+            || CompileTimeStructuralFacts.IsFunctionPointerReturnTypeMetadataFact(kind)
+            || CompileTimeStructuralFacts.IsFunctionPointerParameterTypeMetadataFact(kind)
+            || CompileTimeStructuralFacts.IsFunctionPointerParameterRawPointerElementCountExpressionFact(kind)
+            || CompileTimeStructuralFacts.IsFunctionPointerParameterMemoryFact(kind)
+            || kind == CompileTimeStructuralFactKind.FunctionPointerIsUnsafe)
+        {
+            var targetType = StarkTypeSymbols.WithQualifiers(
+                arguments.TargetType,
+                borrowKind: StarkBorrowKind.None,
+                accessKind: StarkAccessKind.None,
+                initializationKind: StarkInitializationKind.None,
+                isMutableView: false);
+            if (targetType.Kind != StarkTypeKind.FunctionPointer)
+            {
+                if (targetType.Kind is StarkTypeKind.Named or StarkTypeKind.AssociatedType
+                    && ResolveNamedTypeSymbol(targetType) is null)
+                {
+                    return true;
+                }
+
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' requires a function pointer type, but found '{arguments.TargetType.DisplayName}'.",
+                    context);
+                return false;
+            }
+
+            if (kind == CompileTimeStructuralFactKind.FunctionPointerParameterTypeIs
+                || CompileTimeStructuralFacts.IsFunctionPointerParameterTypePredicate(kind)
+                || CompileTimeStructuralFacts.IsFunctionPointerParameterTypeMetadataFact(kind)
+                || CompileTimeStructuralFacts.IsFunctionPointerParameterRawPointerElementCountExpressionFact(kind))
+            {
+                var index = arguments.ComptimeValueArguments[0].IntegerValue;
+                var parameterCount = targetType.FunctionPointerParameterTypes?.Count ?? 0;
+                if (index < BigInteger.Zero || index >= parameterCount)
+                {
+                    ReportError(
+                        "STK3054",
+                        $"Compile-time structural fact '{factName}' parameter index '{index}' is out of range for '{arguments.TargetType.DisplayName}' with {parameterCount} parameter(s).",
+                        context);
+                    return false;
+                }
+            }
+
+            if (CompileTimeStructuralFacts.IsFunctionPointerParameterMemoryFact(kind))
+            {
+                var parameterCount = targetType.FunctionPointerParameterTypes?.Count ?? 0;
+                for (var position = 0; position < 2; position++)
+                {
+                    var index = arguments.ComptimeValueArguments[position].IntegerValue;
+                    if (index < BigInteger.Zero || index >= parameterCount)
+                    {
+                        ReportError(
+                            "STK3054",
+                            $"Compile-time structural fact '{factName}' parameter index '{index}' is out of range for '{arguments.TargetType.DisplayName}' with {parameterCount} parameter(s).",
+                            context);
+                        return false;
+                    }
+                }
+            }
+        }
+
+        if (kind == CompileTimeStructuralFactKind.ClosureReturnTypeIs
+            || kind == CompileTimeStructuralFactKind.ClosureParameterTypeIs
+            || kind is CompileTimeStructuralFactKind.ClosureKindIsFn
+                or CompileTimeStructuralFactKind.ClosureKindIsFinite
+                or CompileTimeStructuralFactKind.ClosureKindIsLaw
+                or CompileTimeStructuralFactKind.ClosureKindIsFiniteLaw
+                or CompileTimeStructuralFactKind.ClosureStorageIsBorrow
+                or CompileTimeStructuralFactKind.ClosureStorageIsHeap
+                or CompileTimeStructuralFactKind.ClosureStorageIsInline
+                or CompileTimeStructuralFactKind.ClosureCallCapabilityIsNormal
+                or CompileTimeStructuralFactKind.ClosureCallCapabilityIsMut
+                or CompileTimeStructuralFactKind.ClosureCallCapabilityIsOnce
+            || CompileTimeStructuralFacts.IsClosureReturnTypePredicate(kind)
+            || CompileTimeStructuralFacts.IsClosureParameterTypePredicate(kind)
+            || CompileTimeStructuralFacts.IsClosureReturnTypeMetadataFact(kind)
+            || CompileTimeStructuralFacts.IsClosureParameterTypeMetadataFact(kind)
+            || CompileTimeStructuralFacts.IsClosureParameterRawPointerElementCountExpressionFact(kind)
+            || CompileTimeStructuralFacts.IsClosureParameterMemoryFact(kind))
+        {
+            var targetType = StarkTypeSymbols.WithQualifiers(
+                arguments.TargetType,
+                borrowKind: StarkBorrowKind.None,
+                accessKind: StarkAccessKind.None,
+                initializationKind: StarkInitializationKind.None,
+                isMutableView: false);
+            if (targetType.Kind != StarkTypeKind.Closure)
+            {
+                if (targetType.Kind is StarkTypeKind.Named or StarkTypeKind.AssociatedType
+                    && ResolveNamedTypeSymbol(targetType) is null)
+                {
+                    return true;
+                }
+
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' requires a closure type, but found '{arguments.TargetType.DisplayName}'.",
+                    context);
+                return false;
+            }
+
+            if (kind == CompileTimeStructuralFactKind.ClosureParameterTypeIs
+                || CompileTimeStructuralFacts.IsClosureParameterTypePredicate(kind)
+                || CompileTimeStructuralFacts.IsClosureParameterTypeMetadataFact(kind)
+                || CompileTimeStructuralFacts.IsClosureParameterRawPointerElementCountExpressionFact(kind))
+            {
+                var index = arguments.ComptimeValueArguments[0].IntegerValue;
+                var parameterCount = targetType.ClosureParameterTypes?.Count ?? 0;
+                if (index < BigInteger.Zero || index >= parameterCount)
+                {
+                    ReportError(
+                        "STK3054",
+                        $"Compile-time structural fact '{factName}' parameter index '{index}' is out of range for '{arguments.TargetType.DisplayName}' with {parameterCount} parameter(s).",
+                        context);
+                    return false;
+                }
+            }
+
+            if (CompileTimeStructuralFacts.IsClosureParameterMemoryFact(kind))
+            {
+                var parameterCount = targetType.ClosureParameterTypes?.Count ?? 0;
+                for (var position = 0; position < 2; position++)
+                {
+                    var index = arguments.ComptimeValueArguments[position].IntegerValue;
+                    if (index < BigInteger.Zero || index >= parameterCount)
+                    {
+                        ReportError(
+                            "STK3054",
+                            $"Compile-time structural fact '{factName}' parameter index '{index}' is out of range for '{arguments.TargetType.DisplayName}' with {parameterCount} parameter(s).",
+                            context);
+                        return false;
+                    }
+                }
+            }
+        }
+
+        if (kind is CompileTimeStructuralFactKind.FieldOffset
+            or CompileTimeStructuralFactKind.FieldSize
+            or CompileTimeStructuralFactKind.FieldAlign
+            or CompileTimeStructuralFactKind.FieldIsMisaligned)
+        {
+            if (ResolveNamedTypeSymbol(arguments.TargetType) is not { } namedType)
+            {
+                return true;
+            }
+
+            if (namedType.Kind is not (DeclarationKind.Struct or DeclarationKind.Record))
+            {
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' requires a struct or record type, but found '{arguments.TargetType.DisplayName}'.",
+                    context);
+                return false;
+            }
+
+            var index = arguments.ComptimeValueArguments[0].IntegerValue;
+            if (index < BigInteger.Zero || index >= namedType.OrderedFields.Count)
+            {
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' field index '{index}' is out of range for '{arguments.TargetType.DisplayName}' with {namedType.OrderedFields.Count} field(s).",
+                    context);
+                return false;
+            }
+
+            if (!TryResolveCompileTimeConcreteLayout(arguments.TargetType, out _))
+            {
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' requires concrete layout for '{arguments.TargetType.DisplayName}'.",
+                    context);
+                return false;
+            }
+        }
+
+        if ((kind is CompileTimeStructuralFactKind.FieldTypeIs
+            or CompileTimeStructuralFactKind.FieldName
+            or CompileTimeStructuralFactKind.FieldHasExplicitOffset
+            or CompileTimeStructuralFactKind.FieldExplicitOffset)
+            || CompileTimeStructuralFacts.IsFieldTypePredicate(kind)
+            || CompileTimeStructuralFacts.IsFieldTypeMetadataFact(kind))
+        {
+            if (ResolveNamedTypeSymbol(arguments.TargetType) is not { } namedType)
+            {
+                return true;
+            }
+
+            if (namedType.Kind is not (DeclarationKind.Struct or DeclarationKind.Record))
+            {
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' requires a struct or record type, but found '{arguments.TargetType.DisplayName}'.",
+                    context);
+                return false;
+            }
+
+            var index = arguments.ComptimeValueArguments[0].IntegerValue;
+            if (index < BigInteger.Zero || index >= namedType.OrderedFields.Count)
+            {
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' field index '{index}' is out of range for '{arguments.TargetType.DisplayName}' with {namedType.OrderedFields.Count} field(s).",
+                    context);
+                return false;
+            }
+        }
+
+        if (CompileTimeStructuralFacts.IsTypeThreadSafetyLawAttributeIndexedFact(kind))
+        {
+            if (ResolveNamedTypeSymbol(arguments.TargetType) is not { } namedType)
+            {
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' requires a named type, but found '{arguments.TargetType.DisplayName}'.",
+                    context);
+                return false;
+            }
+
+            var index = arguments.ComptimeValueArguments[0].IntegerValue;
+            if (index < BigInteger.Zero || index >= namedType.ThreadSafetyLaws.Count)
+            {
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' thread-safety law attribute index '{index}' is out of range for '{arguments.TargetType.DisplayName}' with {namedType.ThreadSafetyLaws.Count} attribute(s).",
+                    context);
+                return false;
+            }
+        }
+
+        if (CompileTimeStructuralFacts.IsFieldThreadSafetyLawAttributeFact(kind))
+        {
+            if (ResolveNamedTypeSymbol(arguments.TargetType) is not { } namedType)
+            {
+                return true;
+            }
+
+            if (namedType.Kind is not (DeclarationKind.Struct or DeclarationKind.Record))
+            {
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' requires a struct or record type, but found '{arguments.TargetType.DisplayName}'.",
+                    context);
+                return false;
+            }
+
+            var fieldIndex = arguments.ComptimeValueArguments[0].IntegerValue;
+            if (fieldIndex < BigInteger.Zero || fieldIndex >= namedType.OrderedFields.Count)
+            {
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' field index '{fieldIndex}' is out of range for '{arguments.TargetType.DisplayName}' with {namedType.OrderedFields.Count} field(s).",
+                    context);
+                return false;
+            }
+
+            if (CompileTimeStructuralFacts.IsFieldThreadSafetyLawAttributeIndexedFact(kind))
+            {
+                var field = namedType.OrderedFields[(int)fieldIndex];
+                var attributeIndex = arguments.ComptimeValueArguments[1].IntegerValue;
+                if (attributeIndex < BigInteger.Zero || attributeIndex >= field.ThreadSafetyLaws.Count)
+                {
+                    ReportError(
+                        "STK3054",
+                        $"Compile-time structural fact '{factName}' thread-safety law attribute index '{attributeIndex}' is out of range for field '{field.Name}' of '{arguments.TargetType.DisplayName}' with {field.ThreadSafetyLaws.Count} attribute(s).",
+                        context);
+                    return false;
+                }
+            }
+        }
+
+        if ((kind is CompileTimeStructuralFactKind.AssociatedTypeName
+            or CompileTimeStructuralFactKind.AssociatedTypeHasTarget
+            or CompileTimeStructuralFactKind.AssociatedTypeTargetTypeIs)
+            || CompileTimeStructuralFacts.IsAssociatedTypeTargetTypePredicate(kind)
+            || CompileTimeStructuralFacts.IsAssociatedTypeTargetTypeMetadataFact(kind))
+        {
+            if (ResolveNamedTypeSymbol(arguments.TargetType) is not { } namedType)
+            {
+                return true;
+            }
+
+            var associatedTypes = namedType.AssociatedTypes.Values
+                .OrderBy(static associatedType => associatedType.Name, StringComparer.Ordinal)
+                .ToArray();
+            var index = arguments.ComptimeValueArguments[0].IntegerValue;
+            if (index < BigInteger.Zero || index >= associatedTypes.Length)
+            {
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' associated type index '{index}' is out of range for '{arguments.TargetType.DisplayName}' with {associatedTypes.Length} associated type(s).",
+                    context);
+                return false;
+            }
+        }
+
+        if (kind is CompileTimeStructuralFactKind.TypeGenericParameterName
+            or CompileTimeStructuralFactKind.TypeComptimeGenericParameterName
+            or CompileTimeStructuralFactKind.TypeComptimeGenericParameterTypeIs
+            || CompileTimeStructuralFacts.IsTypeComptimeGenericParameterTypePredicate(kind)
+            || CompileTimeStructuralFacts.IsTypeComptimeGenericParameterTypeMetadataFact(kind))
+        {
+            if (ResolveNamedTypeDefinitionSymbol(arguments.TargetType) is not { } namedType)
+            {
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' requires a named type, but found '{arguments.TargetType.DisplayName}'.",
+                    context);
+                return false;
+            }
+
+            var index = arguments.ComptimeValueArguments[0].IntegerValue;
+            var parameterCount = kind == CompileTimeStructuralFactKind.TypeGenericParameterName
+                ? namedType.GenericParams.Count
+                : namedType.ComptimeGenericParams.Count;
+            var parameterKind = kind == CompileTimeStructuralFactKind.TypeGenericParameterName
+                ? "generic parameter"
+                : "comptime generic parameter";
+            if (index < BigInteger.Zero || index >= parameterCount)
+            {
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' {parameterKind} index '{index}' is out of range for '{arguments.TargetType.DisplayName}' with {parameterCount} {parameterKind}(s).",
+                    context);
+                return false;
+            }
+        }
+
+        if (kind == CompileTimeStructuralFactKind.TypeArgumentTypeIs
+            || CompileTimeStructuralFacts.IsTypeArgumentTypePredicate(kind)
+            || CompileTimeStructuralFacts.IsTypeArgumentTypeMetadataFact(kind))
+        {
+            var coreType = StarkTypeSymbols.WithQualifiers(
+                arguments.TargetType,
+                borrowKind: StarkBorrowKind.None,
+                accessKind: StarkAccessKind.None,
+                initializationKind: StarkInitializationKind.None,
+                isMutableView: false);
+            if (coreType.Kind != StarkTypeKind.Named)
+            {
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' requires a named type, but found '{arguments.TargetType.DisplayName}'.",
+                    context);
+                return false;
+            }
+
+            var typeArgumentCount = coreType.TypeArguments?.Count ?? 0;
+            var index = arguments.ComptimeValueArguments[0].IntegerValue;
+            if (index < BigInteger.Zero || index >= typeArgumentCount)
+            {
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' type argument index '{index}' is out of range for '{arguments.TargetType.DisplayName}' with {typeArgumentCount} type argument(s).",
+                    context);
+                return false;
+            }
+        }
+
+        if (kind is CompileTimeStructuralFactKind.TypeComptimeArgumentName
+            or CompileTimeStructuralFactKind.TypeComptimeArgumentTypeIs
+            or CompileTimeStructuralFactKind.TypeComptimeArgumentValueIs
+            || CompileTimeStructuralFacts.IsTypeComptimeArgumentTypePredicate(kind)
+            || CompileTimeStructuralFacts.IsTypeComptimeArgumentTypeMetadataFact(kind))
+        {
+            var coreType = StarkTypeSymbols.WithQualifiers(
+                arguments.TargetType,
+                borrowKind: StarkBorrowKind.None,
+                accessKind: StarkAccessKind.None,
+                initializationKind: StarkInitializationKind.None,
+                isMutableView: false);
+            if (coreType.Kind != StarkTypeKind.Named)
+            {
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' requires a named type, but found '{arguments.TargetType.DisplayName}'.",
+                    context);
+                return false;
+            }
+
+            var comptimeArgumentCount = coreType.ComptimeValueArguments?.Count ?? 0;
+            var index = arguments.ComptimeValueArguments[0].IntegerValue;
+            if (index < BigInteger.Zero || index >= comptimeArgumentCount)
+            {
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' comptime argument index '{index}' is out of range for '{arguments.TargetType.DisplayName}' with {comptimeArgumentCount} comptime argument(s).",
+                    context);
+                return false;
+            }
+        }
+
+        if (kind is CompileTimeStructuralFactKind.EnumVariantPayloadCount
+            or CompileTimeStructuralFactKind.EnumVariantTag
+            or CompileTimeStructuralFactKind.EnumVariantIsOk
+            or CompileTimeStructuralFactKind.EnumVariantIsErr
+            or CompileTimeStructuralFactKind.EnumVariantIsErrorFunnel
+            or CompileTimeStructuralFactKind.EnumVariantAbsorbsErrorTypeIs
+            or CompileTimeStructuralFactKind.EnumVariantName
+            or CompileTimeStructuralFactKind.EnumVariantUsesNamedFields)
+        {
+            if (ResolveNamedTypeSymbol(arguments.TargetType) is not { } namedType)
+            {
+                return true;
+            }
+
+            if (namedType.Kind != DeclarationKind.Enum)
+            {
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' requires an enum type, but found '{arguments.TargetType.DisplayName}'.",
+                    context);
+                return false;
+            }
+
+            var index = arguments.ComptimeValueArguments[0].IntegerValue;
+            if (index < BigInteger.Zero || index >= namedType.Variants.Count)
+            {
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' variant index '{index}' is out of range for '{arguments.TargetType.DisplayName}' with {namedType.Variants.Count} variant(s).",
+                    context);
+                return false;
+            }
+        }
+
+        if (CompileTimeStructuralFacts.IsEnumTagLayoutFact(kind))
+        {
+            if (ResolveNamedTypeSymbol(arguments.TargetType) is not { } namedType)
+            {
+                return true;
+            }
+
+            if (namedType.Kind != DeclarationKind.Enum)
+            {
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' requires an enum type, but found '{arguments.TargetType.DisplayName}'.",
+                    context);
+                return false;
+            }
+
+            if (!TryResolveCompileTimeConcreteLayout(arguments.TargetType, out _))
+            {
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' requires concrete layout for '{arguments.TargetType.DisplayName}'.",
+                    context);
+                return false;
+            }
+        }
+
+        if ((kind is CompileTimeStructuralFactKind.EnumVariantPayloadTypeIs
+            or CompileTimeStructuralFactKind.EnumVariantPayloadHasName
+            or CompileTimeStructuralFactKind.EnumVariantPayloadName)
+            || CompileTimeStructuralFacts.IsEnumVariantPayloadLayoutFact(kind)
+            || CompileTimeStructuralFacts.IsEnumVariantPayloadTypePredicate(kind)
+            || CompileTimeStructuralFacts.IsEnumVariantPayloadTypeMetadataFact(kind))
+        {
+            if (ResolveNamedTypeSymbol(arguments.TargetType) is not { } namedType)
+            {
+                return true;
+            }
+
+            if (namedType.Kind != DeclarationKind.Enum)
+            {
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' requires an enum type, but found '{arguments.TargetType.DisplayName}'.",
+                    context);
+                return false;
+            }
+
+            var variantIndex = arguments.ComptimeValueArguments[0].IntegerValue;
+            if (variantIndex < BigInteger.Zero || variantIndex >= namedType.Variants.Count)
+            {
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' variant index '{variantIndex}' is out of range for '{arguments.TargetType.DisplayName}' with {namedType.Variants.Count} variant(s).",
+                    context);
+                return false;
+            }
+
+            var payloadIndex = arguments.ComptimeValueArguments[1].IntegerValue;
+            var variant = namedType.Variants[(int)variantIndex];
+            if (payloadIndex < BigInteger.Zero || payloadIndex >= variant.Fields.Count)
+            {
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' payload index '{payloadIndex}' is out of range for variant '{variant.Name}' of '{arguments.TargetType.DisplayName}' with {variant.Fields.Count} payload field(s).",
+                    context);
+                return false;
+            }
+
+            if (CompileTimeStructuralFacts.IsEnumVariantPayloadLayoutFact(kind)
+                && !TryResolveCompileTimeConcreteLayout(arguments.TargetType, out _))
+            {
+                ReportError(
+                    "STK3054",
+                    $"Compile-time structural fact '{factName}' requires concrete layout for '{arguments.TargetType.DisplayName}'.",
+                    context);
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private StarkTypeSymbol? ResolveAssociatedTypeForSubstitution(StarkTypeSymbol ownerType, string associatedTypeName)
@@ -16177,7 +18715,8 @@ internal sealed class TypeChecker
                     strippedType.FunctionPointerOverlapParameterGroups,
                     strippedType.FunctionPointerSameParameterGroups,
                     strippedType.FunctionPointerParameterRawPointerElementCountExpressions,
-                    strippedType.FunctionPointerAbi),
+                    strippedType.FunctionPointerAbi,
+                    strippedType.FunctionPointerIsUnsafe),
                 borrowKind: type.BorrowKind,
                 accessKind: type.AccessKind,
                 initializationKind: type.InitializationKind,
@@ -16293,7 +18832,9 @@ internal sealed class TypeChecker
             [],
             GenericParameterNames: template.GenericParams.ToArray(),
             ComptimeGenericParameterNames: template.ComptimeGenericParams.ToArray(),
-            Layout: template.Layout);
+            IsDynTrait: template.IsDynTrait,
+            Layout: template.Layout,
+            DeclaringModuleName: template.DeclaringModuleName);
         _namedTypes[key] = template.Kind == DeclarationKind.Enum
             ? CreateConcreteEnum(key, template, substitution, valueSubstitution)
             : CreateConcreteStructLike(key, template, substitution, valueSubstitution);
@@ -16473,7 +19014,12 @@ internal sealed class TypeChecker
             DeclarationKind.Enum,
             new Dictionary<string, FieldSymbol>(StringComparer.Ordinal),
             [],
-            EnumVariants: concreteVariants);
+            EnumVariants: concreteVariants,
+            ThreadSafetyLawAttributes: SubstituteThreadSafetyLawAttributes(
+                template.ThreadSafetyLaws,
+                substitution,
+                valueSubstitution),
+            DeclaringModuleName: template.DeclaringModuleName);
     }
 
     private NamedTypeSymbol CreateConcreteStructLike(
@@ -16487,7 +19033,14 @@ internal sealed class TypeChecker
 
         foreach (var field in template.OrderedFields)
         {
-            var concreteField = field with { Type = SubstituteType(field.Type, substitution, valueSubstitution) };
+            var concreteField = field with
+            {
+                Type = SubstituteType(field.Type, substitution, valueSubstitution),
+                ThreadSafetyLawAttributes = SubstituteThreadSafetyLawAttributes(
+                    field.ThreadSafetyLaws,
+                    substitution,
+                    valueSubstitution)
+            };
             concreteFields[field.Name] = concreteField;
             concreteOrderedFields.Add(concreteField);
         }
@@ -16498,7 +19051,13 @@ internal sealed class TypeChecker
             concreteFields,
             concreteOrderedFields,
             ImplementedTraitNames: template.ImplementedTraits,
-            Layout: template.Layout);
+            IsDynTrait: template.IsDynTrait,
+            Layout: template.Layout,
+            ThreadSafetyLawAttributes: SubstituteThreadSafetyLawAttributes(
+                template.ThreadSafetyLaws,
+                substitution,
+                valueSubstitution),
+            DeclaringModuleName: template.DeclaringModuleName);
     }
 
     private List<ConstructorShape> CreateConcreteConstructors(
@@ -16661,7 +19220,8 @@ internal sealed class TypeChecker
                 coreType.FunctionPointerOverlapParameterGroups,
                 coreType.FunctionPointerSameParameterGroups,
                 coreType.FunctionPointerParameterRawPointerElementCountExpressions,
-                coreType.FunctionPointerAbi);
+                coreType.FunctionPointerAbi,
+                coreType.FunctionPointerIsUnsafe);
         }
         else if (coreType.Kind == StarkTypeKind.Closure
             && coreType.ClosureFunctionKind is { } closureFunctionKind
@@ -16692,6 +19252,29 @@ internal sealed class TypeChecker
             isMutableView: type.IsMutableView);
     }
 
+    private IReadOnlyList<ThreadSafetyLawAttributeSymbol>? SubstituteThreadSafetyLawAttributes(
+        IReadOnlyList<ThreadSafetyLawAttributeSymbol> attributes,
+        IReadOnlyDictionary<string, StarkTypeSymbol> substitution,
+        IReadOnlyDictionary<string, BigInteger>? valueSubstitution = null)
+    {
+        if (attributes.Count == 0)
+        {
+            return null;
+        }
+
+        return attributes
+            .Select(attribute => attribute.Condition is null
+                ? attribute
+                : attribute with
+                {
+                    Condition = attribute.Condition with
+                    {
+                        Type = SubstituteType(attribute.Condition.Type, substitution, valueSubstitution)
+                    }
+                })
+            .ToArray();
+    }
+
     private static IReadOnlyDictionary<string, BigInteger> BuildNamedTypeComptimeValueSubstitution(
         NamedTypeSymbol template,
         IReadOnlyList<ComptimeValueArgumentSymbol> valueArguments)
@@ -16706,6 +19289,11 @@ internal sealed class TypeChecker
         {
             var parameter = template.ComptimeGenericParams[index];
             var argument = valueArguments[index];
+            if (argument.IsSymbolic)
+            {
+                continue;
+            }
+
             substitution[parameter.Name] = argument.IntegerValue;
         }
 
@@ -18970,6 +21558,31 @@ internal sealed class TypeChecker
         return type.NamedType is not null && _namedTypes.TryGetValue(type.NamedType, out var namedType)
             ? namedType
             : null;
+    }
+
+    private NamedTypeSymbol? ResolveNamedTypeDefinitionSymbol(StarkTypeSymbol type)
+    {
+        var coreType = StarkTypeSymbols.WithQualifiers(
+            type,
+            borrowKind: StarkBorrowKind.None,
+            accessKind: StarkAccessKind.None,
+            initializationKind: StarkInitializationKind.None,
+            isMutableView: false);
+        if (coreType.Kind != StarkTypeKind.Named || coreType.NamedType is not { } typeName)
+        {
+            return null;
+        }
+
+        if (StarkTypeSymbols.IsGenericInstantiation(coreType))
+        {
+            var baseName = StarkTypeSymbols.GetGenericBaseName(typeName);
+            if (_namedTypes.TryGetValue(baseName, out var templateType))
+            {
+                return templateType;
+            }
+        }
+
+        return ResolveNamedTypeSymbol(coreType);
     }
 
     private bool IsTraitMethodFunctionName(string functionName)

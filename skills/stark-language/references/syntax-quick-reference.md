@@ -86,6 +86,47 @@ finite law i32[min max] Clamp(i32[min max] value)
 }
 ```
 
+## Thread-Safety Law Declarations
+
+The implemented declaration surface recognizes the compiler-known laws
+`Transferable(T)` and `Shareable(T)`.
+
+Use law predicates in callable `where` clauses:
+
+```stark
+fn T Move<T>(T value) where Transferable(T), Shareable(T)
+{
+    return value;
+}
+```
+
+Use `[Grant(...)]` and `[Deny(...)]` on struct/record fields, or on the limited
+type-level opaque/zero-field case:
+
+```stark
+[Grant(Transferable)]
+public struct OpaqueToken
+{
+}
+
+public struct Guarded<T>
+{
+    [Grant(Shareable) where Transferable(T)]
+    T Payload;
+
+    [Deny(Transferable)]
+    i32[min max] LocalSlot;
+}
+```
+
+The compiler computes thread-safety facts at type-check time: plain fields derive
+structurally, generic templates carry conditional requirements, generic
+instantiations substitute concrete arguments, raw pointers and `storeborrow`
+deny both laws by default, and compiler-known `System.Threading.Atomic*` types
+receive both laws by intrinsic grant. Call-site enforcement and thread-boundary
+diagnostics are tracked in `docs/Self-host-Prep/14-thread-safety-laws.md` and are
+not complete yet.
+
 ## Traits And Associated Types
 
 ```stark
@@ -277,6 +318,21 @@ for willexit (stack u64[0 max] index, borrow Item item in items)
 counted loop. The element binding must be `borrow T` or `borrow mut T`;
 mutable traversal requires mutable element storage.
 
+Inside `comptime`, loops must be `willexit`. Accepted compile-time loops have a
+compiler iteration budget and report STK3053 if exhausted; recursive
+compile-time `law` / `finite law` calls also report STK3053.
+`for willexit (... in fixedArray)` executes inside CTFE for fixed-array
+constants, including read-only borrowed elements, mutable borrowed elements with
+source writeback, and explicit index bindings. CTFE place updates cover locals,
+fixed-array elements, and named aggregate fields. Slice and dynamic-storage
+traversal remain runtime-only in CTFE.
+Inside `comptime`, `switch` supports literals, ranges, or-labels, fixed-array
+list patterns, aggregate property/positional patterns, enum patterns, `default`,
+`when`, `_`, and `var` captures; slice/dynamic list patterns are runtime switch
+lowering only. Pattern-condition `if (expr is pattern)` and `while willexit
+(expr is pattern)` use the same CTFE pattern subset, with captures scoped to the
+matched branch or loop iteration.
+
 ## Switch Shapes
 
 ```stark
@@ -362,6 +418,7 @@ stack Ascii label[64] = $"Score: {score}";
 
 ```stark
 fnptr<finite law i32[min max](i32[min max])>
+fnptr<unsafe ffi(c) fn void(rawmutptr<i8[min max]>)>
 inline closure<fn i32[min max](i32[min max])>
 borrow closure<fn i32[min max](i32[min max])>
 mut borrow closure<mut fn i32[min max](i32[min max])>
@@ -369,5 +426,6 @@ heap closure<fn i32[min max](i32[min max])>
 heap closure<once fn i32[min max]()>
 ```
 
-Use direct calls first. Use `fnptr` for thin non-capturing callbacks. Use
-closures when capture is needed.
+Use direct calls first. Use `fnptr` for thin non-capturing callbacks. `unsafe`
+inside `fnptr<...>` is part of the pointer type and requires an unsafe context at
+the indirect call site. Use closures when capture is needed.

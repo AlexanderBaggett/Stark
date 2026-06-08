@@ -106,7 +106,11 @@ internal sealed class SemanticValidator
                             ? ResolveType(typeContext)
                             : StarkTypeSymbols.Error;
                     ValidateTypeUsage(constantDeclaration.type_() ?? (ParserRuleContext)declarator, declaredType, TypeUsage.Global);
-                    ValidateConstGlobal(declarator.Identifier().GetText(), declaredType, declarator.variableInitializer());
+                    ValidateConstGlobal(
+                        declarator.Identifier().GetText(),
+                        declaredType,
+                        declarator.variableInitializer(),
+                        global?.ConstantInitializer);
                 }
 
                 continue;
@@ -380,7 +384,8 @@ internal sealed class SemanticValidator
     private void ValidateConstGlobal(
         string name,
         StarkTypeSymbol declaredType,
-        StarkParser.VariableInitializerContext initializer)
+        StarkParser.VariableInitializerContext initializer,
+        TypedConstantInitializer? typedInitializer)
     {
         if (declaredType.Kind == StarkTypeKind.Error)
         {
@@ -407,7 +412,7 @@ internal sealed class SemanticValidator
             return;
         }
 
-        if (!CanMaterializeFrozenConstInitializer(initializer, declaredType))
+        if (typedInitializer is null && !CanMaterializeFrozenConstInitializer(initializer, declaredType))
         {
             _context.Diagnostics.Error(
                 "STK4008",
@@ -1048,6 +1053,7 @@ internal sealed class SemanticValidator
             || left.IsMutableView != right.IsMutableView
             || left.FunctionPointerKind != right.FunctionPointerKind
             || left.FunctionPointerAbi != right.FunctionPointerAbi
+            || left.FunctionPointerIsUnsafe != right.FunctionPointerIsUnsafe
             || left.ClosureFunctionKind != right.ClosureFunctionKind
             || left.ClosureStorageKind != right.ClosureStorageKind
             || left.ClosureCallCapability != right.ClosureCallCapability
@@ -2615,6 +2621,11 @@ internal sealed class SemanticValidator
             return new ValidationValue(EvaluateLiteralType(literal));
         }
 
+        if (expression.COMPTIME() is not null && expression.block() is not null)
+        {
+            return new ValidationValue(StarkTypeSymbols.Error);
+        }
+
         if (expression.SIZEOF() is not null || expression.ALIGNOF() is not null)
         {
             ValidateTypeLayoutExpression(expression);
@@ -3066,7 +3077,8 @@ internal sealed class SemanticValidator
 
         if (TryResolveGlobalBySourceName(name, out var globalType))
         {
-            if (observation == ExpressionObservation.Read)
+            var isConstGlobal = globalType.BindingKind == GlobalBindingKind.Const;
+            if (observation == ExpressionObservation.Read && !isConstGlobal)
             {
                 summary.DisqualifyLaw();
 
@@ -3089,10 +3101,10 @@ internal sealed class SemanticValidator
                     isMutable,
                     IsConstant: !isMutable,
                     BindingKind: globalType.BindingKind,
-                    HasConstProvenance: globalType.BindingKind == GlobalBindingKind.Const),
+                    HasConstProvenance: isConstGlobal),
                 NamedType: ResolveNamedTypeSymbol(globalType.Type),
                 IsAddressMutable: isMutable,
-                HasConstProvenance: globalType.BindingKind == GlobalBindingKind.Const);
+                HasConstProvenance: isConstGlobal);
         }
 
         if (TryGetFunctionOverloads(name, out var targetFunctions))
@@ -3605,6 +3617,13 @@ internal sealed class SemanticValidator
 
         var receiverOffset = target.Receiver is null ? 0 : 1;
         var explicitParameterCount = Math.Max(0, target.Function.Parameters.Count - receiverOffset);
+
+        if (CompileTimeStructuralFacts.IsSignature(target.Function))
+        {
+            return new ValidationValue(
+                target.Function.ReturnType,
+                NamedType: ResolveNamedTypeSymbol(target.Function.ReturnType));
+        }
 
         if (_effectModel.Functions.TryGetValue(target.Function.Name, out var calleeEffects))
         {
@@ -4476,6 +4495,35 @@ internal sealed class SemanticValidator
         bool allowFunctionReference)
     {
         var baseName = genericQualifiedName.qualifiedName().GetText();
+        if (CompileTimeStructuralFacts.TryGetFactKind(baseName, out _))
+        {
+            if (!allowFunctionReference
+                || !CompileTimeStructuralFacts.TryResolveArguments(
+                    baseName,
+                    genericQualifiedName,
+                    ResolveType,
+                    static (_, _, _) => { },
+                    default,
+                    _currentFunctionComptimeGenericParameters,
+                    comptimeValueSubstitution: null,
+                    out var structuralArguments))
+            {
+                return new ValidationValue(StarkTypeSymbols.Error);
+            }
+
+            if (structuralArguments.TargetType.Kind == StarkTypeKind.Error
+                || structuralArguments.AdditionalTypeArguments.Any(static argument => argument.Kind == StarkTypeKind.Error))
+            {
+                return new ValidationValue(StarkTypeSymbols.Error);
+            }
+
+            CompileTimeStructuralFacts.TryCreateSignature(baseName, structuralArguments, out var signature);
+            return new ValidationValue(
+                signature.ReturnType,
+                Function: signature,
+                NamedType: ResolveNamedTypeSymbol(signature.ReturnType));
+        }
+
         if (allowFunctionReference && TryGetFunctionOverloads(baseName, out var overloads))
         {
             var syntaxArgumentCount = genericQualifiedName.typeArgumentList().genericArgument().Length;

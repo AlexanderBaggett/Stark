@@ -5,6 +5,82 @@ namespace compiler.FeatureTests;
 public sealed class TraitsAndDoctrinesFeatureTests : FeatureLlvmTestBase
 {
     [Fact]
+    public void ExplicitOpsTableDispatchStaysVisibleAndIndirect()
+    {
+        var llvm = CompileToLlvm(
+            """
+            module Demo
+
+            struct ModuleResolverOps
+            {
+                fnptr<unsafe finite law i32[min max](rawptr<i8[min max]>, ascii)> Resolve;
+                fnptr<unsafe finite law void(rawptr<i8[min max]>)> Reset;
+            }
+
+            struct ModuleResolverHandle
+            {
+                rawptr<i8[min max]> Context;
+                ModuleResolverOps Ops;
+            }
+
+            unsafe finite law i32[min max] ResolveFile(rawptr<i8[min max]> context, ascii moduleName)
+            {
+                return 40;
+            }
+
+            unsafe finite law i32[min max] ResolveMemory(rawptr<i8[min max]> context, ascii moduleName)
+            {
+                return 2;
+            }
+
+            unsafe finite law void ResetMemory(rawptr<i8[min max]> context)
+            {
+                return;
+            }
+
+            finite law i32[min max] Dispatch(borrow ModuleResolverHandle resolver, ascii moduleName)
+            {
+                unsafe
+                {
+                    resolver.Ops.Reset(resolver.Context);
+                    return resolver.Ops.Resolve(resolver.Context, moduleName);
+                }
+            }
+
+            finite law i32[min max] Run()
+            {
+                stack ModuleResolverOps ops = new ModuleResolverOps()
+                {
+                    Resolve = ResolveMemory,
+                    Reset = ResetMemory
+                };
+                stack ModuleResolverHandle resolver = new ModuleResolverHandle()
+                {
+                    Context = null,
+                    Ops = ops
+                };
+                return Dispatch(resolver, "core");
+            }
+            """,
+            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+
+        var dispatchHeader = ExtractDefinitionHeader(llvm, "Dispatch");
+        var dispatchBody = ExtractDefinitionBody(llvm, "Dispatch");
+
+        Assert.Contains("nounwind willreturn mustprogress nosync nofree memory(read)", dispatchHeader);
+        Assert.DoesNotContain("memory(readwrite", dispatchHeader);
+        Assert.Contains("call fastcc i32 %", dispatchBody);
+        Assert.Contains("call fastcc void %", dispatchBody);
+        Assert.Contains("nounwind willreturn mustprogress nosync nofree memory(read)", dispatchBody);
+        Assert.Contains("load ptr", dispatchBody);
+        Assert.DoesNotContain("call fastcc i32 @ResolveFile", dispatchBody);
+        Assert.DoesNotContain("call fastcc i32 @ResolveMemory", dispatchBody);
+        Assert.DoesNotContain("call fastcc void @ResetMemory", dispatchBody);
+        Assert.Contains("@ResolveMemory", llvm);
+        Assert.DoesNotContain("__stark_vtable", llvm);
+    }
+
+    [Fact]
     public void DoctrineLawCallsStayDirectAndPreserveBorrowFacts()
     {
         var llvm = CompileToLlvm(

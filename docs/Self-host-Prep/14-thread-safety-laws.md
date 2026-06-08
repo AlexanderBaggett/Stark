@@ -1,10 +1,19 @@
 # Phase 14 - Thread-Safety Laws (`Transferable` / `Shareable`)
 
-Status: **design proposal — drafted by Alexander; awaiting design lock. No
-implementation.** The original draft's three open questions are resolved into
-specification in this revision (§8 auto-deny, §9 conditional grants, §12
-diagnostics); those resolutions are proposed and need Alexander's confirmation as
-part of the lock. Original draft preserved in git history
+Status: **partial implementation.** TS01 and TS02 have landed:
+`where Transferable(T)` / `where Shareable(T)` predicates and `[Grant]` /
+`[Deny]` attributes parse, flow into syntax/type symbols, survive package
+image/source-surface round trips, and feed cached compile-time law facts with
+structural derivation, generic propagation, unsafe-reference defaults, intrinsic
+atomic grants, conditional grants, and STK3050 conflict diagnostics. The callable
+part of TS03 has landed: direct and member calls now discharge
+`where Transferable(T)` / `where Shareable(T)` predicates at the call site after
+generic substitution and report STK3049 with the responsible field chain. Open
+generic calls must propagate the same law predicate on the enclosing generic
+function instead of deferring an unconstrained obligation to monomorphization.
+Thread-boundary consumer enforcement remains pending for captured thread
+payloads, channels, `Synchronized<T>`, and shareable statics. Original draft
+preserved in git history
 (`stark-thread-safety-laws.md`, commit `b6c2fec`).
 
 Coordination consumer note: doc `22` locks the self-hosting-facing consumers of
@@ -14,9 +23,10 @@ these laws as captured thread payloads, `System.Threading.Synchronized<T>` /
 This phase specifies how Stark guarantees memory safety across thread boundaries:
 two compiler-proven properties — the **`Transferable`** and **`Shareable`** laws —
 that govern whether a value may be moved to, or shared with, another thread. The
-properties are derived structurally by default and adjusted at the **field level**
-through `[Grant(...)]` and `[Deny(...)]` attributes. Functions of any kind consume
-the properties through `where` predicate constraints.
+properties are derived structurally by default and adjusted through `[Grant(...)]`
+and `[Deny(...)]` attributes on fields or the limited type-level opaque/zero-field
+case. Functions of any kind consume the properties through `where` predicate
+constraints.
 
 This is the Stark analogue of Rust's `Send`/`Sync`, with two deliberate
 divergences: the markers are **laws** (predicates the compiler discharges) rather
@@ -38,21 +48,36 @@ instead of bespoke machinery.
 
 ## 2. Current State (verified)
 
-- **No enforcement point exists yet.** Today's `Thread` entry is a non-capturing
-  `fnptr`, so no user value ever crosses a thread boundary; the laws have nothing
-  to check until closure-entry threads, channels, or `Synchronized<T>` exist. This design
-  is deliberately specification-ahead-of-need.
-- **The attribute machinery exists.** Struct/record members already accept
-  attribute lists in the grammar (`structMember : attributeList* (...)`), and the
-  innate attribute registry (doc `11`, `[Ok]`/`[Err]`) is the registration point
-  for `[Grant]`/`[Deny]`.
-- **The predicate-contract grammar shape exists.** `where disjoint(a, b)` /
-  `where overlap(a, b)` are already predicate-style `where` contracts; law
-  predicates (`where Transferable(T)`) join that family rather than the
-  trait-bound family (`where T: Trait`).
+- **Callable law predicates are enforced.** Direct and member calls that target a
+  function/method with `where Transferable(T)` or `where Shareable(T)` now prove
+  the substituted concrete type at the call site. Failures report STK3049 and
+  name the responsible field chain. Open generic obligations are accepted only
+  when the enclosing generic function declares the same law predicate.
+- **No thread-boundary enforcement point exists yet.** Today's `Thread` entry is a non-capturing
+  `fnptr`, so no captured user value crosses a thread boundary; closure-entry
+  threads, channels, `Synchronized<T>`, and shareable static rules still need
+  consumer-specific wiring.
+- **The TS01 declaration surface is implemented.** Struct/record/enum type
+  declarations and struct/record fields accept `[Grant]` / `[Deny]`; callable
+  memory-contract clauses accept `where Transferable(T)` /
+  `where Shareable(T)`. These facts are preserved in syntax models, type symbols,
+  package typed/source surfaces, source bridge output, and loaded package facts.
+- **The TS02 law computation pass is implemented.** The type-check model now
+  exposes `ThreadSafetyLawFacts` for named types. Facts are cached by qualified
+  type identity, derive structurally through fields and enum payloads, propagate
+  generic requirements on templates and concrete instantiations, honor field/type
+  `[Grant]` and `[Deny]`, reject same-target grant/deny conflicts with STK3050,
+  deny raw pointers and `storeborrow` by default, and grant both laws to
+  compiler-known `System.Threading.Atomic*` types.
+- **The compile-time structural fact surface can inspect law declarations.**
+  `System.Compiler` now exposes typed CTFE facts for type/field `[Grant]` /
+  `[Deny]` attribute counts, law names, grant/deny kind, conditional-grant
+  presence, condition law names, and condition target types, plus method
+  `where` law predicate counts, law names, and target types. Runtime use is
+  rejected like the rest of `System.Compiler`.
 - **Atomics (doc `12`) are the first intrinsically `Shareable` types** — they are
-  the primitive that makes shared mutation safe, and receive both laws by
-  intrinsic grant when this design lands.
+  the primitive that makes shared mutation safe, and now receive both laws by
+  intrinsic grant.
 - The `shared T` access qualifier and `capture(unsafe shared x)` exist in the
   grammar with minimal semantics; this design either absorbs or retires them
   (OQ-TS2).
@@ -302,7 +327,8 @@ with the features that consume this design:
 
 Until one of these lands, the laws are still independently useful: library authors
 may write `where Transferable(T)` constraints on their own APIs, and the compiler
-discharges them — the constraint vocabulary precedes its enforcement points.
+now discharges them at ordinary direct/member call sites. Thread-boundary
+consumers reuse the same law facts when their APIs land.
 
 ## 12. Diagnostics (resolved — was Open Question 3)
 
@@ -436,29 +462,29 @@ fn void Demo()
 
 ## 15. Work Breakdown (TS*)
 
-TDD-first, in dependency order. Nothing starts until the design is locked. TS06
-additionally needs a real enforcement point (a consumer feature) to be meaningful
-end-to-end, but TS01–TS05 are independently implementable and testable.
+TDD-first, in dependency order. Callable predicate enforcement is implemented.
+Consumer-boundary enforcement still needs real consumer features to be meaningful
+end-to-end, so the remaining TS03 work is blocked until captured threads,
+channels, `Synchronized`, or shareable statics provide enforcement points. TS04
+and TS05 remain independently implementable and testable around the implemented
+TS01/TS02 surface and callable TS03 slice.
 
 | ID | Item | Status |
 |---|---|---|
-| TS01 | Grammar: law predicates as a `where`-contract alternative (`where Transferable(T)`); `[Grant]`/`[Deny]` registered as innate attributes on fields + type declarations; regen | not started |
-| TS02 | Law registry + structural derivation engine (per-type law computation, cached; generic propagation at instantiation) | not started |
-| TS03 | Field/type-level `[Grant]`/`[Deny]` resolution rules (§7) + conflict diagnostics (STK3050) | not started |
-| TS04 | Built-in defaults (§8): auto-deny for raw pointers and stored borrows; intrinsic grants for atomics | not started |
-| TS05 | Conditional grants (`[Grant(L) where P(T)]`, §9) + instantiation-time discharge | not started |
-| TS06 | `where` law predicates on functions: call-site checking + STK3049 field-chain diagnostics | not started |
-| TS07 | Enforcement wiring at thread boundaries as consumer features land (parked thread model / channels / Synchronized / shareable statics) | blocked on consumers |
-| TS08 | Tests (derivation, overrides, conditional grants, diagnostics) + user-facing docs + doc/roadmap sync | not started |
+| TS01 | Implement the declaration surface for thread-safety laws: `where Transferable(T)` / `where Shareable(T)` predicates, `[Grant]` / `[Deny]` attributes on fields and type declarations, parser support, symbols, and package/source preservation. | done |
+| TS02 | Implement law computation: registry, cached structural derivation, generic propagation at instantiation, field/type-level grant/deny resolution, conflict diagnostics, built-in defaults for raw pointers/stored borrows/atomics, and conditional grants. | done |
+| TS03 | Implement enforcement and diagnostics: function `where` law predicates, call-site checking, STK3049 field-chain diagnostics, STK3050 conflict diagnostics, and consumer wiring at thread boundaries as captured threads, channels, `Synchronized`, and shareable statics land. | partial: callable direct/member call-site enforcement landed; thread-boundary consumers remain blocked on consumers |
+| TS04 | Add end-to-end tests for derivation, overrides, conditional grants, defaults, generic propagation, call-site enforcement, consumer boundaries, and diagnostics. | partial: TS02 computation tests, CTFE law-attribute structural fact tests, and callable TS03 call-site tests landed; consumer-boundary tests remain |
+| TS05 | Update user-facing docs, reference docs, and self-host prep status once the API and enforcement points land. | not started |
 
-## 16. Open Questions (OQ-TS*)
+## 16. Resolved And Open Questions (OQ-TS*)
 
 | ID | Question | Notes / lean |
 |---|---|---|
-| OQ-TS1 | Conditional grant spelling | `[Grant(Shareable) where Transferable(T)]` (proposed, §9) vs `[Grant(Shareable, when: Transferable(T))]`. Lean: the `where` form — it reuses the existing predicate-contract reading. |
+| OQ-TS1 | Conditional grant spelling | **Resolved/implemented:** `[Grant(Shareable) where Transferable(T)]`. It reuses the existing predicate-contract reading. |
 | OQ-TS2 | Fate of `shared T` and `capture(unsafe shared x)` | These predate the laws. Lean: retire `shared T` (no semantics today, superseded by `Shareable`); keep `capture(unsafe shared x)` as the unsafe escape hatch whose safe replacement is a `Shareable`-satisfying type. Carried from doc 12's parked OQ-TH5. |
-| OQ-TS3 | Law extensibility | Are `Transferable`/`Shareable` the only compiler-known laws, or does this become a general law registry (e.g. future `Persistable`, `Relocatable`)? Lean: closed set of two until a third real need exists. |
-| OQ-TS4 | `[Deny]` on generic parameters | Can a generic type deny a law for a specific parameter position (`[Deny(Shareable)] T Payload;`)? Lean: yes — it is just a field attribute; no special rule needed. Confirm during TS03. |
+| OQ-TS3 | Law extensibility | **Resolved for TS02:** closed compiler-known set of `Transferable` and `Shareable` until a third real need exists. |
+| OQ-TS4 | `[Deny]` on generic parameters | **Resolved/implemented:** yes. A generic payload field may carry `[Deny(...)]`; it is just a field attribute and participates in law computation like any other field attribute. |
 
 ## 17. Relationship to Existing Docs
 

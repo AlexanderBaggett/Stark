@@ -284,7 +284,7 @@ internal static class FunctionOverloadFacts
             .ToArray();
         var instantiationParts = (signature.TypeArguments ?? [])
             .Select(static argument => argument.DisplayName)
-            .Concat(signature.ComptimeValues.Select(static argument => argument.IntegerValue.ToString()))
+            .Concat(signature.ComptimeValues.Select(static argument => argument.DisplayName))
             .ToArray();
         var genericSuffix = signature.IsGeneric
             ? $"<{string.Join(", ", genericParts)}>"
@@ -406,6 +406,11 @@ internal static class FunctionOverloadFacts
         {
             var parameter = template.ComptimeGenericParams[index];
             var argument = valueArguments[index];
+            if (argument.IsSymbolic)
+            {
+                continue;
+            }
+
             substitution[parameter.Name] = argument.IntegerValue;
         }
 
@@ -437,7 +442,12 @@ internal static class FunctionOverloadFacts
             ComptimeGenericParameterNames = null,
             TemplateName = template.TemplateName ?? template.Name,
             TypeArguments = typeArguments.ToArray(),
-            ComptimeValueArguments = valueArguments?.ToArray()
+            ComptimeValueArguments = valueArguments?.ToArray(),
+            ThreadSafetyLawPredicates = SubstituteThreadSafetyLawPredicates(
+                template.ThreadSafetyLaws,
+                substitution,
+                associatedTypeResolver,
+                valueSubstitution)
         };
     }
 
@@ -707,9 +717,33 @@ internal static class FunctionOverloadFacts
             ComptimeGenericParameterNames = null,
             TemplateName = candidate.TemplateName ?? candidate.Name,
             TypeArguments = candidate.GenericParams.Select(parameter => substitution[parameter]).ToArray(),
-            ComptimeValueArguments = valueArguments
+            ComptimeValueArguments = valueArguments,
+            ThreadSafetyLawPredicates = SubstituteThreadSafetyLawPredicates(
+                candidate.ThreadSafetyLaws,
+                substitution,
+                associatedTypeResolver,
+                valueSubstitution)
         };
         return true;
+    }
+
+    private static IReadOnlyList<ThreadSafetyLawPredicateSymbol>? SubstituteThreadSafetyLawPredicates(
+        IReadOnlyList<ThreadSafetyLawPredicateSymbol> predicates,
+        IReadOnlyDictionary<string, StarkTypeSymbol> substitution,
+        Func<StarkTypeSymbol, string, StarkTypeSymbol?>? associatedTypeResolver,
+        IReadOnlyDictionary<string, BigInteger>? comptimeValueSubstitution)
+    {
+        if (predicates.Count == 0)
+        {
+            return null;
+        }
+
+        return predicates
+            .Select(predicate => predicate with
+            {
+                Type = SubstituteType(predicate.Type, substitution, associatedTypeResolver, comptimeValueSubstitution)
+            })
+            .ToArray();
     }
 
     private static bool CanBindParameter(
@@ -906,6 +940,7 @@ internal static class FunctionOverloadFacts
         {
             if (strippedParameterType.FunctionPointerKind != strippedArgumentType.FunctionPointerKind
                 || strippedParameterType.FunctionPointerAbi != strippedArgumentType.FunctionPointerAbi
+                || strippedParameterType.FunctionPointerIsUnsafe != strippedArgumentType.FunctionPointerIsUnsafe
                 || strippedParameterType.FunctionPointerReturnType is null
                 || strippedArgumentType.FunctionPointerReturnType is null
                 || strippedParameterType.FunctionPointerParameterTypes is not { } parameterTypes
@@ -1252,7 +1287,8 @@ internal static class FunctionOverloadFacts
                 coreType.FunctionPointerOverlapParameterGroups,
                 coreType.FunctionPointerSameParameterGroups,
                 coreType.FunctionPointerParameterRawPointerElementCountExpressions,
-                coreType.FunctionPointerAbi);
+                coreType.FunctionPointerAbi,
+                coreType.FunctionPointerIsUnsafe);
         }
         else if (coreType.Kind == StarkTypeKind.Closure
             && coreType.ClosureFunctionKind is { } closureFunctionKind

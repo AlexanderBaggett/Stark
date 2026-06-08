@@ -140,9 +140,10 @@ Honesty rules for the wide tier:
   guards against accidental fallback to the CAS-loop or lock tiers.
 - The borrow rules need no changes: `Load` takes `borrow self`, mutating operations
   take `mut borrow self`. Two threads reaching the same atomic through a `static`
-  is exactly the sharing model the operations are designed for. (When the
-  `Transferable`/`Shareable` laws land, atomic types satisfy both by intrinsic
-  grant — they are the primitive that makes shared mutation safe.)
+  is exactly the sharing model the operations are designed for. The
+  `Transferable`/`Shareable` law computation pass grants both laws intrinsically
+  to compiler-known `System.Threading.Atomic*` types — they are the primitive that
+  makes shared mutation safe.
 
 ## 6. Work Breakdown (AT*)
 
@@ -197,7 +198,7 @@ The implementation matches §2-§5 with these refinements discovered during the 
 | Item | Where it lives |
 |---|---|
 | Full thread-ownership model (execution roots, scoped threads, `threadlocal`, `static mut` rules, owning `Thread<T>`) | Git history: doc 12 prior to this revision (commit `1f8ee74`) |
-| `Transferable` / `Shareable` laws + `[Grant]`/`[Deny]` field attributes | `stark-thread-safety-laws.md` (Alexander's draft) |
+| `Transferable` / `Shareable` enforcement at call sites and thread boundaries | Doc `14`; declaration surface and law computation have landed |
 | Captured thread payloads, `Synchronized<T>` / `Locked<T>`, and MPSC channels | Doc `22`; build on these atomics + existing platform wait/wake hooks where needed |
 | Memory orderings beyond seq-cst | S16 follow-up, only with profiling justification |
 | Consuming `Join`/`Detach` + `ThreadStartResult` API fix | Ride along whenever Threading.stark is next opened |

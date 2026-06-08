@@ -39,6 +39,142 @@ internal sealed class LlvmGlobalInitializerPlanner
         return false;
     }
 
+    public bool TryPlanTypedConstantInitializer(
+        TypedConstantInitializer initializer,
+        StarkTypeSymbol targetType,
+        out LlvmGlobalInitializerPlan plan)
+    {
+        plan = null!;
+        switch (initializer.Kind)
+        {
+            case TypedConstantInitializerKind.Integer when initializer.IntegerValue is { } integerValue:
+                plan = new LlvmGlobalInitializerPlan(integerValue.ToString(), []);
+                return true;
+            case TypedConstantInitializerKind.Float when initializer.FloatLiteralText is { } floatLiteralText:
+                plan = new LlvmGlobalInitializerPlan(floatLiteralText, []);
+                return true;
+            case TypedConstantInitializerKind.Bool when initializer.BoolValue is { } boolValue:
+                plan = new LlvmGlobalInitializerPlan(boolValue ? "true" : "false", []);
+                return true;
+            case TypedConstantInitializerKind.Text when initializer.TextLiteralText is { } textLiteralText:
+                plan = new LlvmGlobalInitializerPlan(FormatGlobalStringConstantValue(textLiteralText, targetType), []);
+                return true;
+            case TypedConstantInitializerKind.Null:
+                plan = new LlvmGlobalInitializerPlan("null", []);
+                return true;
+            case TypedConstantInitializerKind.FixedArray:
+                return TryPlanTypedFixedArrayInitializer(initializer, targetType, out plan);
+            case TypedConstantInitializerKind.NamedAggregate:
+                return TryPlanTypedNamedAggregateInitializer(initializer, targetType, out plan);
+            case TypedConstantInitializerKind.EnumAggregate:
+                return TryPlanTypedEnumAggregateInitializer(initializer, targetType, out plan);
+            default:
+                return false;
+        }
+    }
+
+    private bool TryPlanTypedFixedArrayInitializer(
+        TypedConstantInitializer initializer,
+        StarkTypeSymbol targetType,
+        out LlvmGlobalInitializerPlan plan)
+    {
+        plan = null!;
+        if (targetType.Kind != StarkTypeKind.FixedArray
+            || targetType.ElementType is not { } elementType
+            || targetType.FixedLength is not int fixedLength
+            || initializer.Elements is not { } elements
+            || elements.Count != fixedLength)
+        {
+            return false;
+        }
+
+        var preludeDefinitionsForArray = new List<string>();
+        var renderedElements = new List<string>(fixedLength);
+        foreach (var element in elements)
+        {
+            if (!TryPlanTypedConstantInitializer(element, elementType, out var elementPlan))
+            {
+                return false;
+            }
+
+            preludeDefinitionsForArray.AddRange(elementPlan.PreludeDefinitions);
+            renderedElements.Add($"{_context.MapType(elementType)} {elementPlan.Rendered}");
+        }
+
+        plan = new LlvmGlobalInitializerPlan($"[{string.Join(", ", renderedElements)}]", preludeDefinitionsForArray);
+        return true;
+    }
+
+    private bool TryPlanTypedNamedAggregateInitializer(
+        TypedConstantInitializer initializer,
+        StarkTypeSymbol targetType,
+        out LlvmGlobalInitializerPlan plan)
+    {
+        plan = null!;
+        var namedType = _context.ResolveNamedTypeSymbol(targetType);
+        if (namedType is null
+            || initializer.Elements is not { } elements
+            || elements.Count != namedType.OrderedFields.Count)
+        {
+            return false;
+        }
+
+        var preludeDefinitions = new List<string>();
+        var fieldValues = new Dictionary<string, string>(StringComparer.Ordinal);
+        for (var index = 0; index < namedType.OrderedFields.Count; index++)
+        {
+            var field = namedType.OrderedFields[index];
+            if (!TryPlanTypedConstantInitializer(elements[index], field.Type, out var fieldPlan))
+            {
+                return false;
+            }
+
+            preludeDefinitions.AddRange(fieldPlan.PreludeDefinitions);
+            fieldValues[field.Name] = fieldPlan.Rendered;
+        }
+
+        plan = new LlvmGlobalInitializerPlan(FormatNamedAggregateInitializer(namedType, fieldValues), preludeDefinitions);
+        return true;
+    }
+
+    private bool TryPlanTypedEnumAggregateInitializer(
+        TypedConstantInitializer initializer,
+        StarkTypeSymbol targetType,
+        out LlvmGlobalInitializerPlan plan)
+    {
+        plan = null!;
+        if (_context.ResolveNamedTypeSymbol(targetType) is not { Kind: DeclarationKind.Enum } namedType
+            || !_context.EnumLayouts.TryGetValue(namedType.Name, out var layout)
+            || initializer.VariantName is not { } variantName
+            || !layout.TryGetVariant(variantName, out var variant)
+            || initializer.Elements is not { } elements
+            || elements.Count != variant.Fields.Count)
+        {
+            return false;
+        }
+
+        var preludeDefinitions = new List<string>();
+        var fieldValues = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            [layout.TagField.Name] = variant.TagValue.ToString(CultureInfo.InvariantCulture)
+        };
+
+        for (var index = 0; index < variant.Fields.Count; index++)
+        {
+            var field = variant.Fields[index];
+            if (!TryPlanTypedConstantInitializer(elements[index], field.Type, out var fieldPlan))
+            {
+                return false;
+            }
+
+            preludeDefinitions.AddRange(fieldPlan.PreludeDefinitions);
+            fieldValues[field.StorageFieldName] = fieldPlan.Rendered;
+        }
+
+        plan = new LlvmGlobalInitializerPlan(FormatEnumAggregateInitializer(layout, fieldValues), preludeDefinitions);
+        return true;
+    }
+
     public bool ShouldEmitExternalConstPlaceholder(
         TypedGlobalSymbol global,
         StarkParser.VariableInitializerContext initializer)
@@ -570,6 +706,15 @@ internal sealed class LlvmGlobalInitializerPlanner
         }
 
         var fieldInitializers = namedType.OrderedFields
+            .Select(field => $"{_context.MapType(field.Type)} {(fieldValues.TryGetValue(field.Name, out var value) ? value : FormatZeroInitializer(field.Type))}");
+        return $"{{ {string.Join(", ", fieldInitializers)} }}";
+    }
+
+    private string FormatEnumAggregateInitializer(
+        EnumLayoutSymbol layout,
+        IReadOnlyDictionary<string, string> fieldValues)
+    {
+        var fieldInitializers = layout.OrderedFields
             .Select(field => $"{_context.MapType(field.Type)} {(fieldValues.TryGetValue(field.Name, out var value) ? value : FormatZeroInitializer(field.Type))}");
         return $"{{ {string.Join(", ", fieldInitializers)} }}";
     }

@@ -46,6 +46,7 @@ internal sealed partial class MidLevelIrLowerer
     private readonly Dictionary<ObjectCreationKey, TypedConstructorShape?> _objectCreationConstructors;
     private readonly BoundOperationIndex _boundOperations;
     private readonly Dictionary<string, ImportedFunctionTemplateSummary> _importedFunctionTemplates;
+    private readonly int _maximumCompileTimeLoopIterations;
     private readonly OwnershipValidationModel? _ownershipModel;
     private static readonly IReadOnlyDictionary<string, StarkTypeSymbol> EmptyTypeSubstitution =
         new Dictionary<string, StarkTypeSymbol>(StringComparer.Ordinal);
@@ -80,6 +81,7 @@ internal sealed partial class MidLevelIrLowerer
             .GroupBy(static record => new ObjectCreationKey(record.ExpressionText, record.Location.Line, record.Location.Column))
             .ToDictionary(static group => group.Key, static group => group.Last().Constructor);
         _boundOperations = BuildBoundOperationIndex(typeModel.BoundOperations);
+        _maximumCompileTimeLoopIterations = Math.Max(1, context.Options.MaximumCompileTimeLoopIterations);
         _importedFunctionTemplates = loadedModules.ImportedModules
             .Where(static module => module.PackageImageFacts is { FunctionTemplates.Count: > 0 })
             .SelectMany(static module => module.PackageImageFacts!.FunctionTemplates)
@@ -277,10 +279,12 @@ internal sealed partial class MidLevelIrLowerer
             _publishedEnumLayouts,
             _boundOperations,
             importedTemplateSummary,
+            _importedFunctionTemplates,
             _materializedSpecializationSymbols,
             function.GenericTypeSubstitution,
             function.GenericValueSubstitution,
-            useImportedTemplateLocalDeclarationFacts: body is null);
+            useImportedTemplateLocalDeclarationFacts: body is null,
+            _maximumCompileTimeLoopIterations);
 
         _logs.Info(
             "lowering",
@@ -614,10 +618,12 @@ internal sealed partial class MidLevelIrLowerer
             _publishedEnumLayouts,
             _boundOperations,
             importedTemplateSummary: null,
+            _importedFunctionTemplates,
             _materializedSpecializationSymbols,
             genericTypeSubstitution: null,
             genericValueSubstitution: null,
-            useImportedTemplateLocalDeclarationFacts: false);
+            useImportedTemplateLocalDeclarationFacts: false,
+            _maximumCompileTimeLoopIterations);
     }
 
     private static MidLevelIrFunction BuildLoweredFunction(
@@ -1267,7 +1273,8 @@ internal sealed partial class MidLevelIrLowerer
                             qualifiedName,
                             declaration.Kind,
                             new Dictionary<string, FieldSymbol>(StringComparer.Ordinal),
-                            []));
+                            [],
+                            DeclaringModuleName: module.SyntaxModel.ModuleName));
                 }
             }
         }
@@ -1350,7 +1357,8 @@ internal sealed partial class MidLevelIrLowerer
                         fields,
                         orderedFields,
                         GenericParameterNames: genericParameters?.ToList(),
-                        ComptimeGenericParameterNames: comptimeParameters?.Values.ToArray());
+                        ComptimeGenericParameterNames: comptimeParameters?.Values.ToArray(),
+                        DeclaringModuleName: module.SyntaxModel.ModuleName);
                     continue;
                 }
 
@@ -1379,7 +1387,8 @@ internal sealed partial class MidLevelIrLowerer
                         [],
                         EnumVariants: variants,
                         GenericParameterNames: genericParameters?.ToList(),
-                        ComptimeGenericParameterNames: comptimeParameters?.Values.ToArray());
+                        ComptimeGenericParameterNames: comptimeParameters?.Values.ToArray(),
+                        DeclaringModuleName: module.SyntaxModel.ModuleName);
                 }
             }
         }
@@ -1434,7 +1443,8 @@ internal sealed partial class MidLevelIrLowerer
             fields,
             orderedFields,
             GenericParameterNames: genericParameters?.ToList(),
-            ComptimeGenericParameterNames: comptimeGenericParameters?.Values.ToArray());
+            ComptimeGenericParameterNames: comptimeGenericParameters?.Values.ToArray(),
+            DeclaringModuleName: moduleName);
     }
 
     private static void AddFallbackFields(

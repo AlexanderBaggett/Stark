@@ -1,6 +1,10 @@
 # Phase 18 - FFI Null-Terminated C Strings
 
-Status: **design direction locked - no implementation yet.**
+Status: **partially implemented.** The core `System.C` C-string type model,
+owned/buffer storage, bounded scans, explicit text conversions, and targeted
+source/runtime coverage have landed. Literal/const `%s` FFI varargs validation
+has landed. libLLVM-owned foreign string wrappers and user-facing docs remain
+open.
 
 Null-terminated C strings live in `System.C`. They are not ordinary Stark
 `ascii` or `unicode` values. A C `char*` is a foreign byte pointer with a
@@ -59,6 +63,12 @@ public enum CStringError
     Memory from System.Memory.MemoryError,
     Text from System.Text.TextError,
 }
+
+public enum CStringResult<T>
+{
+    [Ok] Ok(T),
+    [Err] Err(CStringError),
+}
 ```
 
 The field list is conceptual and may use an internal allocation record in the
@@ -94,7 +104,7 @@ Raw construction from foreign pointers is unsafe because Stark cannot prove the
 pointer's lifetime or validity:
 
 ```stark
-public unsafe fn System.Result<CStr, CStringError> TryFromRawBounded(
+public unsafe fn CStringResult<CStr> TryFromRawBounded(
     rawptr<c_char> data,
     u64[0 max] maxLength);
 
@@ -117,8 +127,8 @@ that the pointer is non-null, valid for `length + 1` bytes, and terminated at
 to pass Stark text to a C API that expects `const char*`.
 
 ```stark
-public fn System.Result<OwnedCStr, CStringError> FromAscii(ascii text);
-public fn System.Result<OwnedCStr, CStringError> FromUnicodeUtf8(unicode text);
+public fn CStringResult<OwnedCStr> FromAscii(ascii text);
+public fn CStringResult<OwnedCStr> FromUnicodeUtf8(unicode text);
 
 public unsafe finite law rawptr<c_char> Data(borrow OwnedCStr self);
 public finite law u64[0 max] Length(borrow OwnedCStr self);
@@ -144,13 +154,12 @@ Example:
 ```stark
 public unsafe ffi(c) fn System.C.c_int puts(rawptr<System.C.c_char> text);
 
-fn System.Result<System.C.c_int, System.C.CStringError> Puts(ascii text)
+fn System.C.CStringResult<System.C.c_int> Puts(ascii text)
 {
     stack System.C.OwnedCStr cText = try System.C.FromAscii(text);
     unsafe
     {
-        return System.Result<System.C.c_int, System.C.CStringError>.Ok(
-            puts(cText.Data()));
+        return System.C.CStringResult<System.C.c_int>.Ok(puts(cText.Data()));
     }
 }
 ```
@@ -161,10 +170,10 @@ C strings are bytes. They are not automatically UTF-8 and not automatically
 Stark `ascii`.
 
 ```stark
-public fn System.Result<System.Text.OwnedAscii, CStringError> ToAscii(
+public fn CStringResult<System.Text.OwnedAscii> ToAscii(
     borrow CStr text);
 
-public fn System.Result<System.Text.OwnedUnicode, CStringError> ToUnicodeUtf8(
+public fn CStringResult<System.Text.OwnedUnicode> ToUnicodeUtf8(
     borrow CStr text);
 ```
 
@@ -186,13 +195,13 @@ Some C APIs write into caller-provided `char*` buffers. Use `CCharBuffer` for
 that pattern.
 
 ```stark
-public fn System.Result<CCharBuffer, CStringError> NewCCharBuffer(
+public fn CStringResult<CCharBuffer> NewCCharBuffer(
     u64[1 max] capacity);
 
 public unsafe finite law rawmutptr<c_char> Data(mut borrow CCharBuffer self);
 public finite law u64[0 max] Capacity(borrow CCharBuffer self);
 
-public unsafe fn System.Result<CStr, CStringError> TryAsCStr(
+public unsafe fn CStringResult<CStr> TryAsCStr(
     borrow CCharBuffer self);
 ```
 
@@ -207,14 +216,14 @@ public unsafe ffi(c) fn rawmutptr<System.C.c_char> getcwd(
     rawmutptr<System.C.c_char> buffer,
     System.C.c_size_t size);
 
-fn System.Result<System.Text.OwnedAscii, System.C.CStringError> CurrentDirectory()
+fn System.C.CStringResult<System.Text.OwnedAscii> CurrentDirectory()
 {
     stack mut System.C.CCharBuffer buffer = try System.C.NewCCharBuffer(4096);
     unsafe
     {
         if (getcwd(buffer.Data(), (System.C.c_size_t)buffer.Capacity()) == null)
         {
-            return System.Result<System.Text.OwnedAscii, System.C.CStringError>.Err(
+            return System.C.CStringResult<System.Text.OwnedAscii>.Err(
                 System.C.CStringError.NullPointer);
         }
     }
@@ -338,18 +347,24 @@ Recommended diagnostics:
 
 ## 11. Work Items
 
-- [ ] Add `System.C.CStringError`.
-- [ ] Add `System.C.CStr` with hidden fields and checked/unsafe constructors.
-- [ ] Add `System.C.OwnedCStr` with allocator-backed null-terminated storage
-      and destructor.
-- [ ] Add `System.C.CCharBuffer` for mutable output buffers.
-- [ ] Implement `FromAscii` and `FromUnicodeUtf8`.
-- [ ] Implement `ToAscii` and `ToUnicodeUtf8` with UTF-8 validation.
-- [ ] Implement bounded scanning for raw C string validation.
-- [ ] Add diagnostics that reject implicit Stark text / C string conversions.
-- [ ] Update FFI varargs validation and docs so `%s` uses `System.C` C strings.
-- [ ] Add libLLVM-oriented tests for `const char*` inputs, LLVM-owned error
-      message adoption/copying, and correct foreign-message disposal wrappers.
-- [ ] Add tests for interior zeros, missing terminators, bounded scans, invalid
-      UTF-8, allocation failure paths, output buffers, and destructor behavior.
+- [x] Implement the `System.C` C-string type model: `CStringError`, borrowed
+      `CStr`, owned `OwnedCStr`, mutable `CCharBuffer`, checked/unsafe
+      constructors, allocator-backed ownership, destructor behavior, and output
+      buffer invariants.
+- [x] Implement C-string conversions and validation end to end: ASCII/UTF-8
+      creation, `ToAscii` / `ToUnicodeUtf8`, bounded terminator scanning,
+      interior-zero rejection, missing-terminator diagnostics, invalid UTF-8
+      diagnostics, allocation failure reporting, and rejection of implicit Stark
+      text / C string conversions.
+- [~] Integrate C strings with FFI call validation and libLLVM-oriented
+      ownership patterns, including `%s` varargs rules, `const char*` inputs,
+      LLVM-owned error-message adoption/copying, and correct foreign-message
+      disposal wrappers. Literal/const `%s` varargs calls now reject ordinary
+      Stark text and require `rawptr<System.C.c_char>` or
+      `rawmutptr<System.C.c_char>`; libLLVM-owned foreign string wrappers
+      remain.
+- [~] Add coverage for conversions, bounded scans, output buffers, destructor
+      behavior, allocation failures, FFI varargs validation, and libLLVM-style
+      string ownership. Literal/const `%s` varargs validation has compiler test
+      coverage; libLLVM-style string ownership coverage remains.
 - [ ] Update user-facing FFI docs and Stark language skill references.

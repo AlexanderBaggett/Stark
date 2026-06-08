@@ -1,7 +1,6 @@
 # Phase 16 - FFI C Primitive Type Aliases
 
-Status: **compiler implementation mostly landed; source-alias preservation and
-book-facing docs remain open.**
+Status: **compiler implementation landed; book-facing docs remain open.**
 
 Stark will provide compiler-known C primitive aliases for FFI declarations and
 platform ABI aggregates. These names describe C's target-dependent ABI surface,
@@ -244,19 +243,23 @@ Recommended diagnostics:
 
 ## 10. Work Items
 
-- [x] Add target C data-model facts to target descriptors.
-- [x] Add `System.C` aliases and the `c_void` incomplete pointee marker.
-- [x] Resolve C aliases during type resolution and layout.
-- [~] Preserve source alias spelling in diagnostics and package bridge output.
-      `c_void` is preserved structurally; integer aliases currently resolve to
-      canonical Stark primitives in typed package surfaces.
-- [~] Serialize C alias facts through package images. `c_void` has a package
-      type kind; integer aliases serialize as resolved primitives for the
-      target-specific image.
-- [x] Teach ABI lowering and LLVM emission to consume the resolved primitives.
-- [x] Add diagnostics for invalid `c_void` use and missing target mappings.
-- [x] Add tests for ILP32, LP64, LLP64, `c_char` signedness, `c_void`, package
-      images, FFI declarations, and platform ABI aggregates.
+- [x] Implement target-mapped `System.C` primitive aliases and `c_void`:
+      target data-model facts, alias definitions, `c_void` as an incomplete
+      pointee marker, and type/layout resolution to the target-sized primitive.
+- [x] Preserve C alias identity where it matters for diagnostics, source bridge
+      output, and package images. Integer aliases still resolve to canonical
+      Stark primitives for type checking, layout, ABI lowering, and codegen, but
+      typed package surfaces and `System.Compiler.TypeHasCSourceAlias<T>()` /
+      `System.Compiler.TypeCSourceAliasName<T>()`, plus the matching
+      ABI-facing selected-type facts for raw-pointer elements, element-bearing
+      types, callback signatures, fields, enum payloads, and methods, retain
+      the original `System.C.c_*` alias spelling for diagnostics, generated
+      source, and compile-time ABI-facing branching.
+- [x] Integrate C aliases with ABI lowering, LLVM emission, invalid-`c_void`
+      diagnostics, missing-target-mapping diagnostics, and platform ABI
+      aggregate behavior.
+- [x] Add coverage for ILP32, LP64, LLP64, `c_char` signedness, `c_void`,
+      package images, FFI declarations, and platform ABI aggregates.
 - [ ] Update user-facing FFI docs and Stark language skill references.
 
 ## 11. Implementation Evidence
@@ -264,12 +267,15 @@ Recommended diagnostics:
 - Compiler-known target data model: `src/Compiler/StarkCDataModelFacts.cs`.
 - Type resolution and `System.C.c_char_is_signed` compile-time fact:
   `src/Compiler/StarkTypeResolver.cs`, `src/Compiler/TypeChecking.cs`.
+- Compile-time C alias identity facts:
+  `src/Compiler/CompileTimeStructuralFacts.cs`.
 - `c_void` type model and package codec support:
   `src/Compiler/CompilerArtifacts.cs`,
   `src/Compiler/PackageImage/Shared/PackageTypeCodec.cs`.
 - Stdlib namespace surface: `stdlib/src/System/C.stark`,
   re-exported by `stdlib/src/System.stark`.
 - Tests:
+  `tests/compiler.FeatureTests/ComptimeFeatureTests.cs`,
   `tests/compiler.Tests/TypeCheckingTests.cs`,
   `tests/compiler.Tests/LlvmIrEmissionTests.cs`,
   `tests/compiler.Tests/PackageImageArchitectureTests.cs`.

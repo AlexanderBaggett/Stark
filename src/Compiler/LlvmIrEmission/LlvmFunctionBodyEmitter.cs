@@ -11,6 +11,8 @@ internal sealed partial class LlvmFunctionBodyEmitter
     private const string UnicodeEqualityHelperName = "__stark_unicode_equal";
     private const string AsciiCompareHelperName = "__stark_ascii_compare";
     private const string UnicodeCompareHelperName = "__stark_unicode_compare";
+    private const string AsciiHashHelperName = "__stark_ascii_hash";
+    private const string UnicodeHashHelperName = "__stark_unicode_hash";
     private const string FixedArrayCompareHelperNamePrefix = "__stark_fixed_array_compare_";
     private const string ScalarizedAggregateCompareHelperNamePrefix = "__stark_named_compare_";
     private const string IntegerExponentHelperNamePrefix = "__stark_int_pow_i";

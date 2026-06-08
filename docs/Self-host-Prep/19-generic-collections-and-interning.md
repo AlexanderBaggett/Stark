@@ -56,9 +56,9 @@ codegen.
 
 ## 3. Text Keys
 
-`Ascii`, `Unicode`, owned text types, and borrowed text views used by compiler
-APIs need reusable `Hash`, `Eq`, `Ord`, and `Format` implementations where the
-operation is meaningful.
+Primitive `ascii` / `unicode`, owned text types, and borrowed text views used
+by compiler APIs need reusable `Hash`, `Eq`, `Ord`, and `Format`
+implementations where the operation is meaningful.
 
 For language identifiers, module names, package names, and compiler-internal
 symbol keys, equality should be exact and ordinal:
@@ -71,6 +71,11 @@ symbol keys, equality should be exact and ordinal:
 
 Any higher-level normalization policy should happen at the source boundary and
 be documented as a separate language decision.
+
+Current implementation: `ascii` and `unicode` are compiler-known text key
+types for `Dictionary<K,V>` and `HashSet<T>` and lower to direct ordinal
+hash/equality helpers; `OwnedAscii` and `OwnedUnicode` provide explicit static
+`Hash`/`Equals` hooks plus `Compare`/`Format` helpers using the same semantics.
 
 ## 4. Compiler Interning Pattern
 
@@ -158,8 +163,9 @@ The design is speed-first:
 
 - Intern once, compare compact IDs in hot paths.
 - Use scalar dictionary fast paths for bool and integer-like ID keys.
-- Support borrowed lookup so callers can query `Dictionary<Ascii, V>` or an
-  interner without allocating an owned string.
+- Support borrowed lookup so callers can query `Dictionary<OwnedAscii, V>`,
+  `HashSet<OwnedUnicode>`, or an interner from `ascii` / `unicode` input
+  without allocating an owned key.
 - Avoid virtual dispatch, trait objects, boxed keys, and per-call-site adapter
   allocation.
 - Keep generated code for static contracts as direct calls after
@@ -174,15 +180,15 @@ The design is speed-first:
 - [x] Land canonical `Eq`, `Hash`, `Ord`, and `Format` contract names.
 - [x] Land explicit static `Dictionary<K, V>` key `Hash`/`Equals` support for
       non-primitive key types.
-- [ ] Align `Dictionary<K, V>` and future `HashSet<T>` wording/API docs around
+- [ ] Align `Dictionary<K, V>` and `HashSet<T>` wording/API docs around
       the canonical `Hash` + `Eq` contract surface, with the current static
       `Hash`/`Equals` methods treated as the concrete implementation hook.
-- [ ] Implement or verify `Hash`, `Eq`, `Ord`, and `Format` contracts for
-      `Ascii`, `Unicode`, owned text values, and borrowed text views used by
-      compiler lookup APIs.
+- [x] Implement or verify `Hash`, `Eq`, `Ord`, and `Format` contracts for
+      primitive `ascii` / `unicode`, owned text values, and borrowed text views
+      used by compiler lookup APIs.
 - [ ] Add allocation-free borrowed lookup APIs for text-key dictionaries and
       interners.
-- [ ] Add `HashSet<T>` using the same `Hash` + `Eq` key rule.
+- [x] Add `HashSet<T>` using the same `Hash` + `Eq` key rule.
 - [ ] Add deterministic ordered map/set helpers or a documented sorting path for
       compiler artifacts that need stable output.
 - [ ] Add compiler interner types and typed ID wrappers for symbols, types,

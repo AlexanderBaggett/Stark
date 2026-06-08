@@ -114,27 +114,20 @@ often enough that the parser should not be casually wasteful.
 ## 7. Work Items
 
 - [x] Decide TOML strategy: add general reusable `System.Toml`.
-- [ ] Create `System.Toml` namespace/module layout.
-- [ ] Define TOML value, table, array, key, datetime, and diagnostic types.
-- [ ] Implement lexer/tokenizer with source span tracking.
-- [ ] Implement parser for the chosen TOML standard baseline.
-- [ ] Implement duplicate-key/table redefinition validation.
-- [ ] Implement dotted keys, inline tables, arrays, and arrays of tables.
-- [ ] Implement string escape and multiline string rules.
-- [ ] Implement integer, float, boolean, date, time, and datetime parsing.
-- [ ] Implement deterministic TOML emitter/writer.
-- [ ] Add file helpers that compose `System.IO.File` with `System.Toml` without
-      hiding IO failures.
-- [ ] Add typed lookup/projection helpers for required/optional strings,
-      integers, arrays, tables, inline tables, and enums.
-- [ ] Replace host-style `SimpleToml` logic in the self-hosted project driver
-      with `System.Toml` plus typed manifest decoding.
-- [ ] Add manifest decoder tests for `Stark.toml`, `Stark.solution.toml`, and
-      `Stark.user.toml`.
-- [ ] Add TOML parser/emitter conformance tests, malformed-input diagnostics,
-      source-span tests, and deterministic-emission tests.
-- [ ] Add project-driver tests that prove manifest errors point at the right
-      TOML source spans.
+- [ ] Define and implement the `System.Toml` public model: namespace/module
+      layout, value/table/array/key/datetime/diagnostic types, source-span
+      representation, and typed lookup/projection helpers for manifest decoding.
+- [ ] Implement the TOML reader for the chosen standard baseline: lexer,
+      parser, duplicate-key/table validation, dotted keys, inline tables,
+      arrays, arrays of tables, strings/multiline strings, numeric/boolean
+      values, date/time/datetime values, and useful malformed-input diagnostics.
+- [ ] Implement deterministic TOML writing and file helpers that compose
+      `System.IO.File` with `System.Toml` without hiding IO failures.
+- [ ] Replace host-style `SimpleToml` manifest handling in the self-hosted
+      project driver with `System.Toml` plus typed decoding for `Stark.toml`,
+      `Stark.solution.toml`, and `Stark.user.toml`.
+- [ ] Add TOML conformance, emitter, malformed-input, source-span, manifest
+      decoder, and project-driver error-location tests.
 
 ## 8. Documentation Work
 

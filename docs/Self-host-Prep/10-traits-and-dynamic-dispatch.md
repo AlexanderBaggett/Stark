@@ -19,7 +19,10 @@ form (`heap dyn Trait`, which boxes the value on the heap, owns it, and drops + 
     `Dictionary<K,V>` keys may now use explicit static `finite law` `Hash`/`Equals`
     methods on the key type, with bool/integer keys retaining the scalar fast path.
     Remaining: dyn-call devirt + DSE-precision (a perf follow-up);
-    visible vtable (Phase D). This document tracks the work to make traits usable in Stark
+    visible vtable (Phase D). The fully manual ops-table pattern is now tested:
+    ordinary structs may carry kind-bearing `fnptr` fields plus explicit raw
+    context pointers, and field-path calls such as `handle.Ops.Resolve(...)`
+    lower to visible indirect calls without a hidden vtable. This document tracks the work to make traits usable in Stark
 and to add an explicit dynamic-dispatch surface, in service of self-hosting
 (see `08-stark-feature-roadmap.md` and `09-self-hosted-compiler-architecture.md`).
 
@@ -404,7 +407,7 @@ One follow-up remains (tracked below): **dyn-call devirt / DSE-precision** (perf
 |---|---|---|---|
 | TD22 | User-facing docs: `LanguageReference.md` (§6.5 trait bounds, §8.5 impl/`Self`/required+default/static dispatch) + `skills/stark-language/SKILL.md` | **done** | both updated for implemented traits/generics/defaults; examples verified compile+run (`dyn` documented when it lands) |
 | TD23 | Update `01-language-feature-gaps.md` L06 and `09-self-hosted-compiler-architecture.md` to reflect the chosen design | A-D | gap docs consistent |
-| TD24 | Revisit `Dictionary<K,V>` keys: migrate the special-cased bool/integer `DictionaryKey` doctrine toward general compile-time hashing/equality | **partial** | Explicit static key-type `Hash`/`Equals` contracts landed for custom keys; bool/integer scalar fast path preserved. OQ-08/doc `19` lock the blessed model as public `Hash` + `Eq`/`Ord` contracts plus compiler-internal typed interning; remaining collection work is teaching text and compiler key types (`Ascii`, `Unicode`, `SymbolId`, etc.) to provide reusable contracts and adding `HashSet<T>`/deterministic collection paths. |
+| TD24 | Revisit `Dictionary<K,V>` keys: migrate the special-cased bool/integer `DictionaryKey` doctrine toward general compile-time hashing/equality | **partial** | Explicit static key-type `Hash`/`Equals` contracts landed for custom dictionary/set keys; bool/integer plus `ascii`/`unicode` compiler-known fast paths are preserved; owned text has reusable static hooks. OQ-08/doc `19` lock the blessed model as public `Hash` + `Eq`/`Ord` contracts plus compiler-internal typed interning; remaining collection work is teaching compiler ID key types (`SymbolId`, etc.) to provide reusable contracts and adding deterministic collection paths. |
 | TD25 | Associated types for compile-time contracts | **done** | `alias Name;` trait requirements, `alias Name = Type;` defaults/definitions, `Self.Name`/`T.Name` type references, required-associated-type diagnostics (STK3052), conformance substitution, typed package-image/source bridge/facts preservation, and `dyn trait` rejection for associated-type contracts landed. |
 
 ## 7. Open Questions
@@ -428,7 +431,9 @@ One follow-up remains (tracked below): **dyn-call devirt / DSE-precision** (perf
   one coherent gradient, with `dyn` as the safe middle tier.
 - `09-self-hosted-compiler-architecture.md` - the ops-table pattern there is the
   fully-manual end of the gradient; `dyn` is the safe sugar over the same
-  representation.
+  representation. Function-pointer fields on ordinary ops structs now lower
+  directly as indirect calls, so hand-rolled ops tables do not require a
+  temporary local to invoke a slot.
 - `docs/Internals/LanguageInternals.md` section 8 and
   `docs/Internals/CompilerPipeline.md` pass 24 - the `fnptr`-kind indirect-call
   attributes and `devirt-ssa` that `dyn` lowering reuses.

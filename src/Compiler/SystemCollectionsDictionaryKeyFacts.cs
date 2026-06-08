@@ -3,6 +3,7 @@ namespace Stark.Compiler;
 internal enum SystemCollectionsDictionaryKeyContractKind
 {
     CompilerKnownScalar,
+    CompilerKnownText,
     ExplicitStaticMethods
 }
 
@@ -13,11 +14,16 @@ internal sealed record SystemCollectionsDictionaryKeyContract(
     TypedFunctionSignature? EqualsFunction = null)
 {
     public bool UsesExplicitStaticMethods => Kind == SystemCollectionsDictionaryKeyContractKind.ExplicitStaticMethods;
+
+    public bool UsesCompilerKnownScalar => Kind == SystemCollectionsDictionaryKeyContractKind.CompilerKnownScalar;
+
+    public bool UsesCompilerKnownText => Kind == SystemCollectionsDictionaryKeyContractKind.CompilerKnownText;
 }
 
 internal static class SystemCollectionsDictionaryKeyFacts
 {
     public const string DictionaryTypeName = "System.Collections.Dictionary";
+    public const string HashSetTypeName = "System.Collections.HashSet";
     public const string DictionaryKeyDoctrineName = "System.Collections.DictionaryKey";
     public const string HashMemberName = "Hash";
     public const string EqualsMemberName = "Equals";
@@ -29,19 +35,34 @@ internal static class SystemCollectionsDictionaryKeyFacts
 
         if (!StarkTypeSymbols.IsGenericInstantiation(coreType)
             || coreType.NamedType is null
-            || coreType.TypeArguments is not { Count: 2 }
-            || StarkTypeSymbols.GetGenericBaseName(coreType.NamedType) is not DictionaryTypeName)
+            || coreType.TypeArguments is not { } typeArguments)
         {
             return false;
         }
 
-        keyType = NormalizeType(coreType.TypeArguments[0]);
-        return true;
+        var baseName = StarkTypeSymbols.GetGenericBaseName(coreType.NamedType);
+        if (baseName is DictionaryTypeName && typeArguments.Count == 2)
+        {
+            keyType = NormalizeType(typeArguments[0]);
+            return true;
+        }
+
+        if (baseName is HashSetTypeName && typeArguments.Count == 1)
+        {
+            keyType = NormalizeType(typeArguments[0]);
+            return true;
+        }
+
+        return false;
     }
 
     public static bool IsCompilerKnownKey(StarkTypeSymbol keyType)
     {
-        return NormalizeType(keyType).Kind is StarkTypeKind.Bool or StarkTypeKind.Integer;
+        var normalized = NormalizeType(keyType);
+        return normalized.Kind is StarkTypeKind.Bool
+            or StarkTypeKind.Integer
+            or StarkTypeKind.Ascii
+            or StarkTypeKind.Unicode;
     }
 
     public static bool TryResolveContract(
@@ -66,10 +87,18 @@ internal static class SystemCollectionsDictionaryKeyFacts
         keyType = NormalizeType(keyType);
         diagnostic = string.Empty;
 
-        if (IsCompilerKnownKey(keyType))
+        if (IsCompilerKnownScalarKey(keyType))
         {
             contract = new SystemCollectionsDictionaryKeyContract(
                 SystemCollectionsDictionaryKeyContractKind.CompilerKnownScalar,
+                keyType);
+            return true;
+        }
+
+        if (IsCompilerKnownTextKey(keyType))
+        {
+            contract = new SystemCollectionsDictionaryKeyContract(
+                SystemCollectionsDictionaryKeyContractKind.CompilerKnownText,
                 keyType);
             return true;
         }
@@ -144,7 +173,17 @@ internal static class SystemCollectionsDictionaryKeyFacts
 
     public static string FormatMissingContractDiagnostic(StarkTypeSymbol keyType)
     {
-        return $"Dictionary key type '{keyType.DisplayName}' must satisfy '{DictionaryKeyDoctrineName}<{keyType.DisplayName}>'. Built-in dictionary key contracts are available for 'bool' and Stark integer key types; otherwise declare 'static finite law u64[0 max] Hash(borrow {keyType.DisplayName} value)' and 'static finite law bool Equals(borrow {keyType.DisplayName} left, borrow {keyType.DisplayName} right) where overlap(left, right)' on the key type.";
+        return $"Dictionary key type '{keyType.DisplayName}' must satisfy '{DictionaryKeyDoctrineName}<{keyType.DisplayName}>'. Built-in dictionary key contracts are available for 'bool', Stark integer key types, 'ascii', and 'unicode'; otherwise declare 'static finite law u64[0 max] Hash(borrow {keyType.DisplayName} value)' and 'static finite law bool Equals(borrow {keyType.DisplayName} left, borrow {keyType.DisplayName} right) where overlap(left, right)' on the key type.";
+    }
+
+    private static bool IsCompilerKnownScalarKey(StarkTypeSymbol keyType)
+    {
+        return NormalizeType(keyType).Kind is StarkTypeKind.Bool or StarkTypeKind.Integer;
+    }
+
+    private static bool IsCompilerKnownTextKey(StarkTypeSymbol keyType)
+    {
+        return NormalizeType(keyType).Kind is StarkTypeKind.Ascii or StarkTypeKind.Unicode;
     }
 
     private static bool TryResolveStaticMember(

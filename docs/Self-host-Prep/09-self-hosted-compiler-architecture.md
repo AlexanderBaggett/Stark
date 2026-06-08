@@ -548,6 +548,7 @@ Lowered facts:
 
 - scoped noalias groups
 - memory root keys
+- typed alias proof carriers for runtime/trusted disjoint scopes
 - parameter memory summaries
 - call memory summaries
 - loop independence facts
@@ -562,6 +563,17 @@ External alias facts are allowed only through a narrow unsafe construction:
 `unsafe assume disjoint(...)`. That construct may create a proof carrier only
 after explicit memory-root checks. It is for FFI and externally-known
 disjointness, not for bypassing ordinary borrow or memory-contract failures.
+
+Host implementation checkpoint:
+
+- Declaration memory contracts are durable package-image facts.
+- `if disjoint(...)` creates a runtime-checked proof carrier for the true
+  branch only.
+- `assume disjoint(...)` creates a trusted unsafe proof carrier after the same
+  root checks.
+- SSA validation rejects malformed carrier ids, mismatched root sets, duplicate
+  or blank roots, invalid root-key shapes, and roots that do not name parameters
+  of the owning function before LLVM metadata emission.
 
 For self-hosting, "alias class" means a compile-time memory-root/proof category
 used by the borrow checker, memory contracts, lowering, SSA validation, and LLVM

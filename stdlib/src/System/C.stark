@@ -1,2 +1,375 @@
+import System.Memory
+import System.Text
 module System.C
 
+static System.C.c_char[1] EmptyCString =
+{
+    0
+};
+
+public enum CStringError
+{
+    NullPointer,
+    MissingTerminator,
+    InteriorNull,
+    InvalidUtf8,
+    TooLarge,
+    Memory from System.Memory.MemoryError,
+    Text from System.Text.TextError,
+}
+
+public enum CStringResult<T>
+{
+    [Ok] Ok(T),
+    [Err] Err(CStringError),
+}
+
+internal unsafe inline finite law rawptr<System.C.c_char> EmptyCStringData()
+{
+    return &EmptyCString[0];
+}
+
+internal inline finite law bool IsZero(System.C.c_char value)
+{
+    return value == 0;
+}
+
+internal inline finite law CStringError FromMemoryError(System.Memory.MemoryError error)
+{
+    return CStringError.Memory(error);
+}
+
+internal fn CStringResult<System.Text.OwnedAscii> CopyToOwnedAscii(borrow CStr text)
+{
+    unsafe
+    {
+        if (text.ByteLength != 0 && text.Pointer == null)
+        {
+            return CStringResult<System.Text.OwnedAscii>.Err(CStringError.NullPointer);
+        }
+
+        stack System.Memory.MemoryResult<System.Text.OwnedAscii> copied =
+            System.Text.CopyAsciiPointer((rawptr<i8[min max]>)text.Pointer, text.ByteLength);
+        switch (copied)
+        {
+            case System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(var error):
+                return CStringResult<System.Text.OwnedAscii>.Err(FromMemoryError(error));
+            case System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(var value):
+                return CStringResult<System.Text.OwnedAscii>.Ok(value);
+        }
+    }
+}
+
+internal unsafe fn bool IsValidUtf8(rawptr<i8[min max]>[length] data, u64[0 2 ** 63 - 1] length)
+{
+    if (length == 0)
+    {
+        return true;
+    }
+
+    if (data == null)
+    {
+        return false;
+    }
+
+    stack mut i64[min max] readIndex = 0;
+    stack i64[min max] signedLength = (i64[min max])length;
+    while willexit (readIndex < signedLength)
+    {
+        stack i64[min max] start = readIndex;
+        stack mut i32[min max] codePoint = 0;
+        if (!System.Text.TryDecodeUtf8CodePoint(data, length, &readIndex, &codePoint))
+        {
+            return false;
+        }
+
+        if (readIndex <= start)
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+public struct CStr
+{
+    internal rawptr<System.C.c_char> Pointer;
+    internal u64[0 2 ** 63 - 1] ByteLength;
+
+    CStr()
+    {
+        unsafe
+        {
+            self.Pointer = EmptyCStringData();
+        }
+
+        self.ByteLength = 0;
+    }
+
+    inline finite law bool IsEmpty(borrow CStr self)
+    {
+        return self.ByteLength == 0;
+    }
+
+    inline finite law u64[0 2 ** 63 - 1] Length(borrow CStr self)
+    {
+        return self.ByteLength;
+    }
+
+    unsafe inline finite law rawptr<System.C.c_char> Data(borrow CStr self)
+    {
+        return self.Pointer;
+    }
+}
+
+public struct OwnedCStr
+{
+    internal dynamic i8[min max] Storage;
+
+    OwnedCStr()
+    {
+        self.Storage = new();
+    }
+
+    inline finite law bool IsEmpty(borrow OwnedCStr self)
+    {
+        return self.Storage.Length <= 1;
+    }
+
+    inline finite law u64[0 2 ** 63 - 1] Length(borrow OwnedCStr self)
+    {
+        if (self.Storage.Length == 0)
+        {
+            return 0;
+        }
+
+        stack u64[0 2 ** 63 - 1] length = self.Storage.Length;
+        return length - (u64[0 2 ** 63 - 1])1;
+    }
+
+    inline finite law u64[0 2 ** 63 - 1] Capacity(borrow OwnedCStr self)
+    {
+        if (self.Storage.Capacity == 0)
+        {
+            return 0;
+        }
+
+        stack u64[0 2 ** 63 - 1] capacity = self.Storage.Capacity;
+        return capacity - (u64[0 2 ** 63 - 1])1;
+    }
+
+    unsafe finite law rawptr<System.C.c_char> Data(borrow OwnedCStr self)
+    {
+        if (self.Storage.Length == 0)
+        {
+            return EmptyCStringData();
+        }
+
+        return (rawptr<System.C.c_char>)(&self.Storage[0]);
+    }
+
+    unsafe finite law CStr View(borrow OwnedCStr self)
+    {
+        return new CStr()
+        {
+            Pointer = self.Data(),
+            ByteLength = self.Length()
+        };
+    }
+}
+
+public struct CCharBuffer
+{
+    internal dynamic i8[min max] Storage;
+
+    CCharBuffer()
+    {
+        self.Storage = new();
+    }
+
+    inline finite law bool IsEmpty(borrow CCharBuffer self)
+    {
+        return self.Storage.Length == 0;
+    }
+
+    inline finite law u64[0 2 ** 63 - 1] Capacity(borrow CCharBuffer self)
+    {
+        return self.Storage.Length;
+    }
+
+    unsafe finite law rawmutptr<System.C.c_char> Data(mut borrow CCharBuffer self)
+    {
+        if (self.Storage.Length == 0)
+        {
+            return null;
+        }
+
+        return (rawmutptr<System.C.c_char>)(&self.Storage[0]);
+    }
+
+    unsafe fn CStringResult<CStr> TryAsCStr(borrow CCharBuffer self)
+    {
+        if (self.Storage.Length == 0)
+        {
+            return CStringResult<CStr>.Err(CStringError.MissingTerminator);
+        }
+
+        return TryFromRawBounded((rawptr<System.C.c_char>)(&self.Storage[0]), self.Storage.Length);
+    }
+}
+
+public unsafe fn CStringResult<CStr> TryFromRawBounded(
+    rawptr<System.C.c_char> data,
+    u64[0 2 ** 63 - 1] maxLength)
+{
+    if (data == null)
+    {
+        return CStringResult<CStr>.Err(CStringError.NullPointer);
+    }
+
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < maxLength; index += 1)
+    {
+        if (IsZero(*(&data[index])))
+        {
+            return CStringResult<CStr>.Ok(new CStr()
+            {
+                Pointer = data,
+                ByteLength = index
+            });
+        }
+    }
+
+    return CStringResult<CStr>.Err(CStringError.MissingTerminator);
+}
+
+public unsafe fn CStr FromRawUnchecked(
+    rawptr<System.C.c_char> data,
+    u64[0 2 ** 63 - 1] length)
+{
+    return new CStr()
+    {
+        Pointer = data,
+        ByteLength = length
+    };
+}
+
+public fn CStringResult<OwnedCStr> FromAscii(ascii text)
+{
+    unsafe
+    {
+        stack i64[min max] signedLength = System.Text.AsciiLength(text);
+        if (signedLength < 0)
+        {
+            return CStringResult<OwnedCStr>.Err(CStringError.TooLarge);
+        }
+
+        stack u64[0 2 ** 63 - 1] length = (u64[0 2 ** 63 - 1])signedLength;
+        if (length == (u64[0 2 ** 63 - 1])(2 ** 63 - 1))
+        {
+            return CStringResult<OwnedCStr>.Err(CStringError.TooLarge);
+        }
+
+        stack rawptr<i8[min max]> data = System.Text.AsciiData(text);
+        if (length > 0 && data == null)
+        {
+            return CStringResult<OwnedCStr>.Err(CStringError.NullPointer);
+        }
+
+        stack mut OwnedCStr destination = new();
+        stack u64[0 2 ** 63 - 1] requiredLength = length + (u64[0 2 ** 63 - 1])1;
+        if (!destination.Storage.TryReserve(requiredLength))
+        {
+            return CStringResult<OwnedCStr>.Err(CStringError.Memory(System.Memory.MemoryError.OutOfMemory));
+        }
+
+        for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < length; index += 1)
+        {
+            stack i8[min max] unit = *(&data[index]);
+            if (unit == 0)
+            {
+                return CStringResult<OwnedCStr>.Err(CStringError.InteriorNull);
+            }
+
+            init destination.Storage[destination.Storage.Length] = unit;
+        }
+
+        init destination.Storage[destination.Storage.Length] = 0;
+        return CStringResult<OwnedCStr>.Ok(destination);
+    }
+}
+
+public fn CStringResult<OwnedCStr> FromUnicodeUtf8(unicode text)
+{
+    stack System.Memory.MemoryResult<System.Text.OwnedAscii> utf8Result = System.Text.CopyUnicodeToUtf8Ascii(text);
+    switch (utf8Result)
+    {
+        case System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(var error):
+            return CStringResult<OwnedCStr>.Err(FromMemoryError(error));
+        case System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(var value):
+            stack mut System.Text.OwnedAscii utf8 = value;
+            return FromAscii(utf8.View());
+    }
+}
+
+public fn CStringResult<System.Text.OwnedAscii> ToAscii(borrow CStr text)
+{
+    stack CStringResult<System.Text.OwnedAscii> copied = CopyToOwnedAscii(text);
+    switch (copied)
+    {
+        case CStringResult<System.Text.OwnedAscii>.Err(var error):
+            return CStringResult<System.Text.OwnedAscii>.Err(error);
+        case CStringResult<System.Text.OwnedAscii>.Ok(var value):
+            stack mut System.Text.OwnedAscii owned = value;
+            unsafe
+            {
+                stack ascii view = owned.View();
+                stack i64[min max] signedLength = System.Text.AsciiLength(view);
+                stack rawptr<i8[min max]> data = System.Text.AsciiData(view);
+                if (signedLength < 0
+                    || !IsValidUtf8(data, (u64[0 2 ** 63 - 1])signedLength))
+                {
+                    return CStringResult<System.Text.OwnedAscii>.Err(CStringError.InvalidUtf8);
+                }
+            }
+
+            return CStringResult<System.Text.OwnedAscii>.Ok(owned);
+    }
+}
+
+public fn CStringResult<System.Text.OwnedUnicode> ToUnicodeUtf8(borrow CStr text)
+{
+    stack CStringResult<System.Text.OwnedAscii> asciiResult = ToAscii(text);
+    switch (asciiResult)
+    {
+        case CStringResult<System.Text.OwnedAscii>.Err(var error):
+            return CStringResult<System.Text.OwnedUnicode>.Err(error);
+        case CStringResult<System.Text.OwnedAscii>.Ok(var value):
+            stack mut System.Text.OwnedAscii asciiText = value;
+            stack System.Memory.MemoryResult<System.Text.OwnedUnicode> unicodeResult =
+                System.Text.CopyAsciiToUnicode(asciiText.View());
+            switch (unicodeResult)
+            {
+                case System.Memory.MemoryResult<System.Text.OwnedUnicode>.Err(var memoryError):
+                    return CStringResult<System.Text.OwnedUnicode>.Err(FromMemoryError(memoryError));
+                case System.Memory.MemoryResult<System.Text.OwnedUnicode>.Ok(var unicodeText):
+                    return CStringResult<System.Text.OwnedUnicode>.Ok(unicodeText);
+            }
+    }
+}
+
+public fn CStringResult<CCharBuffer> NewCCharBuffer(u64[1 2 ** 63 - 1] capacity)
+{
+    stack mut CCharBuffer buffer = new();
+    if (!buffer.Storage.TryReserve(capacity))
+    {
+        return CStringResult<CCharBuffer>.Err(CStringError.Memory(System.Memory.MemoryError.OutOfMemory));
+    }
+
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < capacity; index += 1)
+    {
+        init buffer.Storage[buffer.Storage.Length] = 0;
+    }
+
+    return CStringResult<CCharBuffer>.Ok(buffer);
+}

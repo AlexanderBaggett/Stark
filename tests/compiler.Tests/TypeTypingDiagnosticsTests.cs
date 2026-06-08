@@ -111,6 +111,58 @@ public sealed class TypeTypingDiagnosticsTests
     }
 
     [Fact]
+    public void FfiVarargsRejectsStarkTextForPercentSFormatArguments()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            public ffi varargs fn i32[min max] printf(ascii format);
+
+            fn i32[min max] Run(ascii name)
+            {
+                return printf("name=%s", name);
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(
+            result,
+            "STK3009",
+            "C varargs '%s' argument 2",
+            "must be rawptr<System.C.c_char> or rawmutptr<System.C.c_char>",
+            "System.C.FromAscii");
+    }
+
+    [Fact]
+    public void FfiVarargsRejectsStarkTextForPercentSConstFormatArguments()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            const ascii Format = "name=%s";
+
+            public ffi varargs fn i32[min max] printf(ascii format);
+
+            fn i32[min max] Run(ascii name)
+            {
+                return printf(Format, name);
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(
+            result,
+            "STK3009",
+            "C varargs '%s' argument 2",
+            "must be rawptr<System.C.c_char> or rawmutptr<System.C.c_char>",
+            "System.C.FromAscii");
+    }
+
+    [Fact]
     public void ConstructorArgumentsAreCheckedAgainstRecordPrimaryShape()
     {
         var result = Compile(
@@ -2579,7 +2631,7 @@ public sealed class TypeTypingDiagnosticsTests
 
                 fn void Run()
                 {
-                    stack mut dynamic i32[min max] values = new();
+                    stack fnptr<fn void()> values = null;
                     switch (values)
                     {
                         default:
@@ -2588,7 +2640,7 @@ public sealed class TypeTypingDiagnosticsTests
                 }
                 """,
                 "STK3008",
-                ["Switch expression type 'dynamic i32'", "not a valid switch domain"]),
+                ["Switch expression type 'fnptr<fn void()>'", "not a valid switch domain"]),
             (
                 "non-concrete type layout expression",
                 """
@@ -2632,7 +2684,7 @@ public sealed class TypeTypingDiagnosticsTests
         {
             var result = Compile(source);
 
-            Assert.False(result.Succeeded);
+            Assert.False(result.Succeeded, name);
             AssertDiagnostic(result, diagnosticCode, messageFragments);
             Assert.DoesNotContain(result.Logs, IsLoweringOrBackendFallbackLog);
         }

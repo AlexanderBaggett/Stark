@@ -285,24 +285,24 @@ Recommended diagnostics:
 
 ## 11. Implementation Work Items
 
-- [x] Add recognized innate attributes for `StructLayout`, `Pack`, `Align`, and
-      `FieldOffset`.
-- [x] Add layout metadata to named type symbols.
-- [x] Use active target layout facts for C aggregate size/alignment decisions.
-- [x] Implement `[StructLayout(C)]` field offset, size, and alignment
-      computation.
-- [x] Implement `Pack(N)` field alignment caps.
-- [x] Implement `Align(N)` aggregate alignment raising.
-- [x] Track packed-field misalignment through type checking, borrow validation,
-      MIR, ABI lowering, and LLVM emission.
-- [x] Reject safe borrows to misaligned packed fields.
-- [x] Serialize layout facts through package images and source bridge output.
-- [x] Add diagnostics for invalid attributes, unsupported target layout facts,
-      and non-FFI-safe fields.
-- [x] Add parser, type-checking, package-image, ABI lowering, and LLVM emission
-      tests.
-- [x] Add runtime layout tests for platform-specific C fixtures.
+- [x] Implement layout-control attributes and symbol metadata for
+      `StructLayout`, `Pack`, `Align`, and `FieldOffset`.
+- [x] Implement target-aware C layout computation, including
+      `[StructLayout(C)]` field offsets/sizes/alignment, `Pack(N)` alignment
+      caps, `Align(N)` aggregate alignment raising, and active target layout
+      facts.
+- [x] Implement packed-field safety end to end: misalignment tracking through
+      type checking, borrow validation, MIR, ABI lowering, LLVM emission, and
+      compile-time rejection of safe borrows to misaligned packed fields.
+- [x] Preserve and expose layout facts through package images, source bridge
+      output, and `System.Compiler` compile-time structural facts, including
+      package-backed typed interfaces.
+- [x] Add diagnostics and coverage for invalid attributes, unsupported target
+      layout facts, non-FFI-safe fields, parser/type-check/package/ABI/LLVM
+      behavior, and platform-specific C runtime layout fixtures.
 
 ## 12. Book And Reference Work
 
-- [ ] Update user-facing FFI docs and Stark language skill references.
+- [x] Update Stark language skill references for layout-control structural facts.
+- [ ] Update user-facing FFI docs for layout-control attributes and packed-field
+      safety.

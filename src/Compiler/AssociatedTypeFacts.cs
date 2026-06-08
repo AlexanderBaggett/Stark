@@ -162,7 +162,8 @@ internal static class AssociatedTypeFacts
                 coreType.FunctionPointerOverlapParameterGroups,
                 coreType.FunctionPointerSameParameterGroups,
                 coreType.FunctionPointerParameterRawPointerElementCountExpressions,
-                coreType.FunctionPointerAbi);
+                coreType.FunctionPointerAbi,
+                coreType.FunctionPointerIsUnsafe);
         }
         else if (coreType.Kind == StarkTypeKind.Closure
             && coreType.ClosureFunctionKind is { } closureFunctionKind
@@ -252,7 +253,8 @@ internal static class AssociatedTypeFacts
                 coreType.FunctionPointerOverlapParameterGroups,
                 coreType.FunctionPointerSameParameterGroups,
                 coreType.FunctionPointerParameterRawPointerElementCountExpressions,
-                coreType.FunctionPointerAbi);
+                coreType.FunctionPointerAbi,
+                coreType.FunctionPointerIsUnsafe);
         }
         else if (coreType.Kind == StarkTypeKind.Closure
             && coreType.ClosureFunctionKind is { } closureFunctionKind
