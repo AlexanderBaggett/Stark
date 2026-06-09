@@ -22,6 +22,11 @@ internal static class LlvmAggregateEmissionSupport
         IReadOnlyDictionary<string, EnumLayoutSymbol> enumLayouts,
         IReadOnlyDictionary<string, ConcreteTypeLayout> publishedConcreteLayouts)
     {
+        if (TryGetTargetAwareTypeLayout(type, targetInfo, namedTypes, enumLayouts, new HashSet<string>(StringComparer.Ordinal)) is { } targetAwareLayout)
+        {
+            return targetAwareLayout;
+        }
+
         var normalizedType = NormalizeTypeForLayout(type);
 
         if (normalizedType.Kind == StarkTypeKind.Named
@@ -30,11 +35,6 @@ internal static class LlvmAggregateEmissionSupport
             && publishedConcreteLayouts.TryGetValue(namedType, out var publishedLayout))
         {
             return publishedLayout;
-        }
-
-        if (TryGetTargetAwareTypeLayout(normalizedType, targetInfo, namedTypes, enumLayouts, new HashSet<string>(StringComparer.Ordinal)) is { } targetAwareLayout)
-        {
-            return targetAwareLayout;
         }
 
         return ConcreteTypeLayoutHelper.TryGetConcreteTypeLayout(type, namedTypes, enumLayouts);
@@ -75,9 +75,7 @@ internal static class LlvmAggregateEmissionSupport
         StarkTypeSymbol type,
         IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes)
     {
-        return type.NamedType is not null && namedTypes.TryGetValue(type.NamedType, out var namedType)
-            ? namedType
-            : null;
+        return ConcreteTypeLayoutHelper.TryGetConcreteNamedTypeSymbol(type, namedTypes);
     }
 
     public static bool TryGetScalarizableNamedAggregateFields(
@@ -109,6 +107,11 @@ internal static class LlvmAggregateEmissionSupport
         IReadOnlyDictionary<string, EnumLayoutSymbol> enumLayouts,
         ISet<string> activeNamedTypes)
     {
+        if (StarkTypeSymbols.IsPointerBackedBorrowType(type))
+        {
+            return TryGetTargetAwarePointerLayout(targetInfo);
+        }
+
         var normalizedType = NormalizeTypeForLayout(type);
 
         return normalizedType.Kind switch

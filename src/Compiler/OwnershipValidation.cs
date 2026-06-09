@@ -2192,6 +2192,10 @@ internal sealed class OwnershipValidator
         {
             binding = rawSliceBinding;
         }
+        else if (TryEvaluateDynTraitFromPartsConstructionPrefix(expression, state, signature, summary, out var dynFromPartsBinding, out firstUnhandledPostfixIndex))
+        {
+            binding = dynFromPartsBinding;
+        }
         else
         {
             var requiresCallableTarget = expression.postfixPart().Any(static part => part.argumentList() is not null);
@@ -2283,6 +2287,112 @@ internal sealed class OwnershipValidator
             : InferBorrowLifetimeFromValue(pointer, arguments.Start);
         binding = new ExpressionInfo(sliceType, BorrowLifetime: borrowLifetime);
         return true;
+    }
+
+    private bool TryEvaluateDynTraitFromPartsConstructionPrefix(
+        StarkParser.PostfixExpressionContext expression,
+        FlowState state,
+        TypedFunctionSignature signature,
+        FunctionOwnershipBuilder summary,
+        out ExpressionInfo binding,
+        out int firstUnhandledPostfixIndex)
+    {
+        binding = null!;
+        firstUnhandledPostfixIndex = 0;
+        if (!TryGetDynTraitFromPartsOperationName(expression, out var operationName)
+            || expression.postfixPart().Length == 0
+            || expression.postfixPart()[0] is not { } callPart
+            || callPart.argumentList() is not { } arguments)
+        {
+            return false;
+        }
+
+        firstUnhandledPostfixIndex = 1;
+        foreach (var argument in arguments.argument())
+        {
+            EvaluateExpression(argument.expression(), state, signature, summary, ValueUse.Read, allowFunctionReference: false);
+        }
+
+        var storageKind = string.Equals(operationName, "dynbox", StringComparison.Ordinal)
+            ? StarkDynTraitStorageKind.Heap
+            : StarkDynTraitStorageKind.View;
+        binding = TryResolveExplicitDynTraitFromPartsTargetType(expression, storageKind, out var targetType)
+            ? new ExpressionInfo(targetType, BorrowLifetime: BorrowLifetime.None)
+            : new ExpressionInfo(StarkTypeSymbols.Error);
+        return true;
+    }
+
+    private bool TryResolveExplicitDynTraitFromPartsTargetType(
+        StarkParser.PostfixExpressionContext expression,
+        StarkDynTraitStorageKind storageKind,
+        out StarkTypeSymbol targetType)
+    {
+        targetType = StarkTypeSymbols.Error;
+        var genericQualifiedName = expression.primaryExpression().genericQualifiedName();
+        if (genericQualifiedName is null)
+        {
+            return false;
+        }
+
+        var genericArguments = GenericArgumentSyntaxFacts.Resolve(
+            genericQualifiedName.typeArgumentList(),
+            ["T"],
+            [],
+            ResolveType,
+            static (_, _, _) => { });
+        if (genericArguments.TypeArguments.Count != 1
+            || genericArguments.TypeArguments[0].Kind == StarkTypeKind.Error)
+        {
+            return false;
+        }
+
+        return TryBuildDynTraitFromPartsTargetType(genericArguments.TypeArguments[0], storageKind, out targetType);
+    }
+
+    private bool TryBuildDynTraitFromPartsTargetType(
+        StarkTypeSymbol declaredType,
+        StarkDynTraitStorageKind storageKind,
+        out StarkTypeSymbol targetType)
+    {
+        targetType = StarkTypeSymbols.Error;
+        if (declaredType.Kind == StarkTypeKind.DynTrait)
+        {
+            if (declaredType.DynTraitStorageKind != storageKind)
+            {
+                return false;
+            }
+
+            targetType = storageKind == StarkDynTraitStorageKind.View && declaredType.BorrowKind == StarkBorrowKind.None
+                ? StarkTypeSymbols.ApplyQualifiers(declaredType, borrowKind: StarkBorrowKind.Borrow, isMutableView: declaredType.IsMutableView)
+                : declaredType;
+            return true;
+        }
+
+        if (declaredType.Kind != StarkTypeKind.Named
+            || declaredType.NamedType is not { } traitName
+            || !_typeModel.NamedTypes.TryGetValue(traitName, out var traitSymbol)
+            || traitSymbol.Kind != DeclarationKind.Trait
+            || !traitSymbol.IsDynTrait)
+        {
+            return false;
+        }
+
+        var dynType = StarkTypeSymbols.DynTrait(traitName, storageKind, declaredType.TypeArguments);
+        targetType = storageKind == StarkDynTraitStorageKind.View
+            ? StarkTypeSymbols.ApplyQualifiers(dynType, borrowKind: StarkBorrowKind.Borrow)
+            : dynType;
+        return true;
+    }
+
+    private static bool TryGetDynTraitFromPartsOperationName(
+        StarkParser.PostfixExpressionContext expression,
+        out string operationName)
+    {
+        operationName = expression.primaryExpression().genericQualifiedName()?.qualifiedName().GetText()
+            ?? expression.primaryExpression().Identifier()?.GetText()
+            ?? string.Empty;
+        return string.Equals(operationName, "dynview", StringComparison.Ordinal)
+            || string.Equals(operationName, "dynbox", StringComparison.Ordinal);
     }
 
     private bool TryApplyDynamicStorageMemberCall(

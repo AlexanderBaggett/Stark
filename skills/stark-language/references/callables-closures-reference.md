@@ -254,7 +254,47 @@ fn i32[min max] RunThread()
 }
 ```
 
-Do not hide shared mutable state inside an unmarked callback.
+Use `ThreadPayloadEntry<T>` and `Thread.Start<T>` when a thread needs owned
+input data. The payload type must satisfy `Transferable`, so thread ownership
+crossings remain checked at compile time.
+
+```stark
+import System.Threading
+module Demo.PayloadThreads
+
+struct WorkerPayload
+{
+    i32[min max] Value;
+}
+
+fn i32[min max] Worker(WorkerPayload payload)
+{
+    return payload.Value;
+}
+
+fn i32[min max] RunPayloadThread()
+{
+    stack WorkerPayload payload = new WorkerPayload() { Value = 7 };
+    stack mut Thread worker =
+        Thread.Start<WorkerPayload>(Worker, payload);
+
+    stack ThreadJoinResult joined = worker.Join();
+
+    switch (joined)
+    {
+        case ThreadJoinResult.Ok(var value):
+            return value;
+        case ThreadJoinResult.Err(var error):
+            return 1;
+    }
+}
+```
+
+Do not hide shared mutable state inside an unmarked callback. Hidden captured
+thread closures are not the pre-self-host thread-start surface. A function
+reachable from `ThreadEntry` or `ThreadPayloadEntry<T>` may touch `static mut`
+state only when the static is backed by `System.Threading.Atomic*` or
+`System.Threading.Synchronized<T>`.
 
 ## Selection Guide
 

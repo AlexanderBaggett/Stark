@@ -2434,6 +2434,7 @@ public sealed class TypeCheckingTests
         Assert.Contains(
             result.Diagnostics,
             static diagnostic => diagnostic.Code == "STK3023"
+                && diagnostic.Message.Contains("Dictionary<Box, V> collection use", StringComparison.Ordinal)
                 && diagnostic.Message.Contains("Dictionary key type 'Box'", StringComparison.Ordinal)
                 && diagnostic.Message.Contains("System.Collections.DictionaryKey<Box>", StringComparison.Ordinal));
     }
@@ -2528,6 +2529,7 @@ public sealed class TypeCheckingTests
         Assert.Contains(
             result.Diagnostics,
             static diagnostic => diagnostic.Code == "STK3023"
+                && diagnostic.Message.Contains("HashSet<Box> collection use", StringComparison.Ordinal)
                 && diagnostic.Message.Contains("Dictionary key type 'Box'", StringComparison.Ordinal)
                 && diagnostic.Message.Contains("System.Collections.DictionaryKey<Box>", StringComparison.Ordinal));
     }
@@ -2632,6 +2634,7 @@ public sealed class TypeCheckingTests
         Assert.Contains(
             result.Diagnostics,
             static diagnostic => diagnostic.Code == "STK3023"
+                && diagnostic.Message.Contains("Incompatible Equals contract method", StringComparison.Ordinal)
                 && diagnostic.Message.Contains("where overlap(left, right)", StringComparison.Ordinal));
     }
 
@@ -2686,7 +2689,113 @@ public sealed class TypeCheckingTests
         Assert.Contains(
             result.Diagnostics,
             static diagnostic => diagnostic.Code == "STK3023"
+                && diagnostic.Message.Contains("Incompatible Hash contract method", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("must return 'u64[0 max]'", StringComparison.Ordinal)
                 && diagnostic.Message.Contains("u64[0 max] Hash", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void DictionaryRejectsStaticHashEqualsContractMissingEquals()
+    {
+        var result = Compile(
+            """
+            import System.Collections
+            module Demo
+
+            struct Symbol
+            {
+                u32[0 max] Id;
+
+                static finite law u64[0 max] Hash(borrow Symbol value)
+                {
+                    return (u64[0 max])value.Id;
+                }
+            }
+
+            fn void Use(Dictionary<Symbol, i32[0 max]> symbols)
+            {
+                return;
+            }
+            """,
+            new CompilerOptions(
+                StopAfterPassId: "type-check",
+                ModuleResolver: new InMemoryModuleResolver(
+                [
+                    (
+                        new ResolvedModuleReference("System.Collections", "System/Collections.stark"),
+                        """
+                        module System.Collections
+
+                        public struct Dictionary<K, V>
+                        {
+                            K Key;
+                            V Value;
+                        }
+                        """,
+                        "System/Collections.stark")
+                ])));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3023"
+                && diagnostic.Message.Contains("Missing required Equals contract method", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("bool Equals(borrow Symbol left, borrow Symbol right)", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void HashSetRejectsStaticHashEqualsContractWithWrongEqualsReturn()
+    {
+        var result = Compile(
+            """
+            import System.Collections
+            module Demo
+
+            struct Symbol
+            {
+                u32[0 max] Id;
+
+                static finite law u64[0 max] Hash(borrow Symbol value)
+                {
+                    return (u64[0 max])value.Id;
+                }
+
+                static finite law u64[0 max] Equals(borrow Symbol left, borrow Symbol right)
+                    where overlap(left, right)
+                {
+                    return (u64[0 max])left.Id;
+                }
+            }
+
+            fn void Use(HashSet<Symbol> symbols)
+            {
+                return;
+            }
+            """,
+            new CompilerOptions(
+                StopAfterPassId: "type-check",
+                ModuleResolver: new InMemoryModuleResolver(
+                [
+                    (
+                        new ResolvedModuleReference("System.Collections", "System/Collections.stark"),
+                        """
+                        module System.Collections
+
+                        public struct HashSet<T>
+                        {
+                            T Key;
+                        }
+                        """,
+                        "System/Collections.stark")
+                ])));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3023"
+                && diagnostic.Message.Contains("HashSet<Symbol> collection use", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("Incompatible Equals contract method", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("must return 'bool'", StringComparison.Ordinal));
     }
 
     [Fact]

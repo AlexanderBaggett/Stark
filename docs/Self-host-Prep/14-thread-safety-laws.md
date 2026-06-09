@@ -1,23 +1,23 @@
 # Phase 14 - Thread-Safety Laws (`Transferable` / `Shareable`)
 
-Status: **partial implementation.** TS01 and TS02 have landed:
+Status: **implemented for the pre-self-host consumer surface.**
 `where Transferable(T)` / `where Shareable(T)` predicates and `[Grant]` /
 `[Deny]` attributes parse, flow into syntax/type symbols, survive package
 image/source-surface round trips, and feed cached compile-time law facts with
 structural derivation, generic propagation, unsafe-reference defaults, intrinsic
-atomic grants, conditional grants, and STK3050 conflict diagnostics. The callable
-part of TS03 has landed: direct and member calls now discharge
+atomic grants, conditional grants, and STK3050 conflict diagnostics. Direct and
+member calls now discharge
 `where Transferable(T)` / `where Shareable(T)` predicates at the call site after
 generic substitution and report STK3049 with the responsible field chain. Open
 generic calls must propagate the same law predicate on the enclosing generic
 function instead of deferring an unconstrained obligation to monomorphization.
-Thread-boundary consumer enforcement remains pending for captured thread
-payloads, channels, `Synchronized<T>`, and shareable statics. Original draft
-preserved in git history
+Thread-boundary consumer enforcement has landed for explicit payload thread
+starts, channels, `Synchronized<T>`, and thread-entry reachable mutable statics.
+Original draft preserved in git history
 (`stark-thread-safety-laws.md`, commit `b6c2fec`).
 
 Coordination consumer note: doc `22` locks the self-hosting-facing consumers of
-these laws as captured thread payloads, `System.Threading.Synchronized<T>` /
+these laws as explicit payload thread starts, `System.Threading.Synchronized<T>` /
 `Locked<T>`, and MPSC channels. That does not imply a broader thread framework.
 
 This phase specifies how Stark guarantees memory safety across thread boundaries:
@@ -42,9 +42,9 @@ Give Stark the type-level vocabulary that every future concurrency feature consu
    concurrently,
 3. structural derivation + field-level overrides + `where`-predicate consumption,
 
-so that when the parked thread-ownership model (doc `12` pre-atomics revision),
-`Synchronized<T>`, or channels land, their safety rules are one-line `where` constraints
-instead of bespoke machinery.
+so that the parked thread-ownership model (doc `12` pre-atomics revision),
+`Synchronized<T>`, channels, and future thread-boundary APIs express their safety
+rules as one-line `where` constraints instead of bespoke machinery.
 
 ## 2. Current State (verified)
 
@@ -53,10 +53,14 @@ instead of bespoke machinery.
   the substituted concrete type at the call site. Failures report STK3049 and
   name the responsible field chain. Open generic obligations are accepted only
   when the enclosing generic function declares the same law predicate.
-- **No thread-boundary enforcement point exists yet.** Today's `Thread` entry is a non-capturing
-  `fnptr`, so no captured user value crosses a thread boundary; closure-entry
-  threads, channels, `Synchronized<T>`, and shareable static rules still need
-  consumer-specific wiring.
+- **Thread-boundary enforcement is wired for the pre-self-host surface.**
+  No-payload `ThreadEntry` starts remain available, and explicit
+  `Thread.Start<T>(entry, payload)` requires `Transferable(T)` for values moved
+  into a new thread. `Synchronized<T>` conditional grants and channel `Send`
+  payload constraints consume these laws. Functions reachable from a thread
+  entry may touch mutable statics only when the static is synchronization-backed
+  by `System.Threading.Atomic*` or `System.Threading.Synchronized<T>`. Hidden
+  captured thread closures are not part of the pre-self-host surface.
 - **The TS01 declaration surface is implemented.** Struct/record/enum type
   declarations and struct/record fields accept `[Grant]` / `[Deny]`; callable
   memory-contract clauses accept `where Transferable(T)` /
@@ -243,7 +247,7 @@ not verify; all other paths are mechanically checked.
 | `fnptr<...>` | structural (holds) | structural (holds) | Code addresses carry no state. |
 | Closures | structural over the **captured environment** | structural over captures | A closure is as safe as what it captured. |
 | Atomics (doc `12`) | **grant** (intrinsic) | **grant** (intrinsic) | Their operations are the definition of safe shared mutation. |
-| `Synchronized<T>` / sync containers (future) | structural | **conditional grant** (§9) | The canonical conditional case. |
+| `Synchronized<T>` / sync containers | structural | **conditional grant** (§9) | The canonical conditional case. |
 
 The practical effect: the worked example's `Connection` (§14) needs **no
 attributes** to be correctly non-transferable — the raw pointer field already
@@ -313,22 +317,22 @@ error **at the call site**, naming the responsible field (§12).
 
 ## 11. Enforcement at Thread Boundaries
 
-The laws are checked wherever data crosses a thread boundary. No such boundary
-exists in today's `fnptr`-entry threads; the concrete enforcement points arrive
-with the features that consume this design:
+The laws are checked wherever data crosses a thread boundary. Today's
+`fnptr`-entry threads still cannot capture user values, but guarded shared state
+and channel sends already consume this design:
 
-| Future feature (parked / planned) | Required law |
+| Consumer boundary | Required law |
 |---|---|
 | Closure-entry owning threads (`Thread<T>.Start(heap capture(move x) ...)`) | every moved capture: `Transferable` |
 | Scoped threads (borrowing) | borrowed captures: `Shareable` for shared borrows; exclusive mutable borrows rely on the borrow checker's existing exclusivity, lifetimes bounded by the scope |
 | Channels (`Send(value)`) | `Transferable(T)` |
 | `Synchronized<T>` / sync containers as statics | container itself `Shareable` (via §9) |
-| `static` declarations reachable by multiple threads | `Shareable` of the static's type |
+| `static mut` declarations reachable from thread entries | synchronization-backed static type: `System.Threading.Atomic*` for scalar state or `System.Threading.Synchronized<T>` for guarded aggregate state |
 
-Until one of these lands, the laws are still independently useful: library authors
+For future consumers, the laws are still independently useful: library authors
 may write `where Transferable(T)` constraints on their own APIs, and the compiler
-now discharges them at ordinary direct/member call sites. Thread-boundary
-consumers reuse the same law facts when their APIs land.
+now discharges them at ordinary direct/member call sites. Remaining
+thread-boundary consumers reuse the same law facts when their APIs land.
 
 ## 12. Diagnostics (resolved — was Open Question 3)
 
@@ -463,19 +467,17 @@ fn void Demo()
 ## 15. Work Breakdown (TS*)
 
 TDD-first, in dependency order. Callable predicate enforcement is implemented.
-Consumer-boundary enforcement still needs real consumer features to be meaningful
-end-to-end, so the remaining TS03 work is blocked until captured threads,
-channels, `Synchronized`, or shareable statics provide enforcement points. TS04
-and TS05 remain independently implementable and testable around the implemented
-TS01/TS02 surface and callable TS03 slice.
+Consumer-boundary enforcement now has explicit payload thread starts,
+`Synchronized<T>` / `Locked<T>` guarded state, channel payload sends, and
+thread-entry reachable mutable static checks as concrete consumers.
 
 | ID | Item | Status |
 |---|---|---|
 | TS01 | Implement the declaration surface for thread-safety laws: `where Transferable(T)` / `where Shareable(T)` predicates, `[Grant]` / `[Deny]` attributes on fields and type declarations, parser support, symbols, and package/source preservation. | done |
 | TS02 | Implement law computation: registry, cached structural derivation, generic propagation at instantiation, field/type-level grant/deny resolution, conflict diagnostics, built-in defaults for raw pointers/stored borrows/atomics, and conditional grants. | done |
-| TS03 | Implement enforcement and diagnostics: function `where` law predicates, call-site checking, STK3049 field-chain diagnostics, STK3050 conflict diagnostics, and consumer wiring at thread boundaries as captured threads, channels, `Synchronized`, and shareable statics land. | partial: callable direct/member call-site enforcement landed; thread-boundary consumers remain blocked on consumers |
-| TS04 | Add end-to-end tests for derivation, overrides, conditional grants, defaults, generic propagation, call-site enforcement, consumer boundaries, and diagnostics. | partial: TS02 computation tests, CTFE law-attribute structural fact tests, and callable TS03 call-site tests landed; consumer-boundary tests remain |
-| TS05 | Update user-facing docs, reference docs, and self-host prep status once the API and enforcement points land. | not started |
+| TS03 | Implement enforcement and diagnostics: function `where` law predicates, call-site checking, STK3049 field-chain diagnostics, STK3050 conflict diagnostics, and consumer wiring at thread boundaries as payload threads, channels, `Synchronized`, and thread-entry reachable mutable statics land. | done |
+| TS04 | Add end-to-end tests for derivation, overrides, conditional grants, defaults, generic propagation, call-site enforcement, consumer boundaries, and diagnostics. | done |
+| TS05 | Update user-facing docs, reference docs, and self-host prep status once the API and enforcement points land. | done |
 
 ## 16. Resolved And Open Questions (OQ-TS*)
 

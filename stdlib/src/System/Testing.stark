@@ -1,11 +1,559 @@
 import System.Console
+import System.FileSystem
+import System.IO
+import System.IO.File
+import System.IO.Path
+import System.Memory
 import System.Process
+import System.Text
+import System.Collections
 module System.Testing
 
 public enum TestStatus
 {
     Passed,
     Failed,
+}
+
+public struct SnapshotDifference
+{
+    u64[0 2 ** 63 - 1] ExpectedLength;
+    u64[0 2 ** 63 - 1] ActualLength;
+    u64[0 2 ** 63 - 1] FirstDifference;
+    u64[1 2 ** 63 - 1] Line;
+    u64[1 2 ** 63 - 1] Column;
+}
+
+public enum SnapshotResult
+{
+    Matched,
+    Updated,
+    Missing,
+    Different(SnapshotDifference),
+    Err(System.IO.IOError),
+}
+
+public struct TempDirectory
+{
+    internal System.Text.OwnedAscii Path;
+    internal bool Active;
+
+    TempDirectory()
+    {
+        self.Path = new();
+        self.Active = false;
+    }
+
+    finite ascii View(mut borrow TempDirectory self)
+    {
+        return self.Path.View();
+    }
+
+    finite law bool IsActive(borrow TempDirectory self)
+    {
+        return self.Active;
+    }
+
+    fn System.IO.IOResult<System.Text.OwnedAscii> PathFor(mut borrow TempDirectory self, ascii relativePath)
+        where overlap(self, relativePath)
+    {
+        if (!self.Active || !IsSafeFixtureRelativePath(relativePath))
+        {
+            return System.IO.IOResult<System.Text.OwnedAscii>.Err(System.IO.IOError.InvalidPath);
+        }
+
+        stack mut System.Text.OwnedAscii destination = new();
+        stack System.Memory.MemoryStatus joinStatus =
+            System.IO.Path.TryJoin(destination, self.Path.View(), relativePath);
+        switch (joinStatus)
+        {
+            case System.Memory.MemoryStatus.Err(var error):
+                return System.IO.IOResult<System.Text.OwnedAscii>.Err(IOErrorFromMemoryError(error));
+            case System.Memory.MemoryStatus.Ok:
+                return System.IO.IOResult<System.Text.OwnedAscii>.Ok(destination);
+        }
+    }
+
+    fn System.IO.IOStatus CreateDirectory(mut borrow TempDirectory self, ascii relativePath)
+        where overlap(self, relativePath)
+    {
+        stack mut System.Text.OwnedAscii path = new();
+        switch (self.PathFor(relativePath))
+        {
+            case System.IO.IOResult<System.Text.OwnedAscii>.Err(var error):
+                return System.IO.IOStatus.Err(error);
+            case System.IO.IOResult<System.Text.OwnedAscii>.Ok(var value):
+                path = value;
+        }
+
+        return System.FileSystem.CreateDirectory(path.View());
+    }
+
+    fn System.IO.IOStatus DeleteDirectory(mut borrow TempDirectory self, ascii relativePath)
+        where overlap(self, relativePath)
+    {
+        stack mut System.Text.OwnedAscii path = new();
+        switch (self.PathFor(relativePath))
+        {
+            case System.IO.IOResult<System.Text.OwnedAscii>.Err(var error):
+                return System.IO.IOStatus.Err(error);
+            case System.IO.IOResult<System.Text.OwnedAscii>.Ok(var value):
+                path = value;
+        }
+
+        return System.FileSystem.DeleteDirectory(path.View());
+    }
+
+    fn System.IO.IOStatus WriteText(mut borrow TempDirectory self, ascii relativePath, ascii text)
+        where overlap(self, relativePath),
+              overlap(self, text),
+              overlap(relativePath, text)
+    {
+        stack mut System.Text.OwnedAscii path = new();
+        switch (self.PathFor(relativePath))
+        {
+            case System.IO.IOResult<System.Text.OwnedAscii>.Err(var error):
+                return System.IO.IOStatus.Err(error);
+            case System.IO.IOResult<System.Text.OwnedAscii>.Ok(var value):
+                path = value;
+        }
+
+        return System.IO.File.WriteAllText(path.View(), text);
+    }
+
+    fn System.IO.IOStatus WriteText(mut borrow TempDirectory self, ascii relativePath, unicode text)
+        where overlap(self, relativePath),
+              overlap(self, text),
+              overlap(relativePath, text)
+    {
+        stack mut System.Text.OwnedAscii path = new();
+        switch (self.PathFor(relativePath))
+        {
+            case System.IO.IOResult<System.Text.OwnedAscii>.Err(var error):
+                return System.IO.IOStatus.Err(error);
+            case System.IO.IOResult<System.Text.OwnedAscii>.Ok(var value):
+                path = value;
+        }
+
+        return System.IO.File.WriteAllText(path.View(), text);
+    }
+
+    fn System.IO.IOStatus WriteTextAtomic(mut borrow TempDirectory self, ascii relativePath, ascii text)
+        where overlap(self, relativePath),
+              overlap(self, text),
+              overlap(relativePath, text)
+    {
+        stack mut System.Text.OwnedAscii path = new();
+        switch (self.PathFor(relativePath))
+        {
+            case System.IO.IOResult<System.Text.OwnedAscii>.Err(var error):
+                return System.IO.IOStatus.Err(error);
+            case System.IO.IOResult<System.Text.OwnedAscii>.Ok(var value):
+                path = value;
+        }
+
+        return System.IO.File.WriteAllTextAtomic(path.View(), text);
+    }
+
+    fn System.IO.IOStatus WriteTextAtomic(mut borrow TempDirectory self, ascii relativePath, unicode text)
+        where overlap(self, relativePath),
+              overlap(self, text),
+              overlap(relativePath, text)
+    {
+        stack mut System.Text.OwnedAscii path = new();
+        switch (self.PathFor(relativePath))
+        {
+            case System.IO.IOResult<System.Text.OwnedAscii>.Err(var error):
+                return System.IO.IOStatus.Err(error);
+            case System.IO.IOResult<System.Text.OwnedAscii>.Ok(var value):
+                path = value;
+        }
+
+        return System.IO.File.WriteAllTextAtomic(path.View(), text);
+    }
+
+    fn System.IO.IOResult<System.Text.OwnedAscii> ReadText(mut borrow TempDirectory self, ascii relativePath)
+        where overlap(self, relativePath)
+    {
+        stack mut System.Text.OwnedAscii path = new();
+        switch (self.PathFor(relativePath))
+        {
+            case System.IO.IOResult<System.Text.OwnedAscii>.Err(var error):
+                return System.IO.IOResult<System.Text.OwnedAscii>.Err(error);
+            case System.IO.IOResult<System.Text.OwnedAscii>.Ok(var value):
+                path = value;
+        }
+
+        return System.IO.File.ReadAllText(path.View());
+    }
+
+    fn System.IO.IOStatus DeleteFile(mut borrow TempDirectory self, ascii relativePath)
+        where overlap(self, relativePath)
+    {
+        stack mut System.Text.OwnedAscii path = new();
+        switch (self.PathFor(relativePath))
+        {
+            case System.IO.IOResult<System.Text.OwnedAscii>.Err(var error):
+                return System.IO.IOStatus.Err(error);
+            case System.IO.IOResult<System.Text.OwnedAscii>.Ok(var value):
+                path = value;
+        }
+
+        return System.IO.File.Delete(path.View());
+    }
+
+    fn System.IO.IOStatus Cleanup(mut borrow TempDirectory self)
+    {
+        if (!self.Active)
+        {
+            return System.IO.IOStatus.Ok;
+        }
+
+        stack System.IO.IOStatus status = System.FileSystem.DeleteTreeIfExists(self.Path.View());
+        switch (status)
+        {
+            case System.IO.IOStatus.Err(var error):
+                return System.IO.IOStatus.Err(error);
+            case System.IO.IOStatus.Ok:
+                self.Active = false;
+                self.Path.Clear();
+                return System.IO.IOStatus.Ok;
+        }
+    }
+
+    mut drop
+    {
+        self.Cleanup();
+    }
+}
+
+inline finite law System.IO.IOError IOErrorFromMemoryError(System.Memory.MemoryError error)
+{
+    switch (error)
+    {
+        case System.Memory.MemoryError.OutOfMemory:
+            return System.IO.IOError.Unknown(-12);
+        case System.Memory.MemoryError.UnsupportedAlignment:
+            return System.IO.IOError.Unknown(-22);
+        case System.Memory.MemoryError.TooLarge:
+            return System.IO.IOError.Unknown(-27);
+        case System.Memory.MemoryError.InvalidLayout:
+            return System.IO.IOError.Unknown(-22);
+    }
+}
+
+finite law bool IsSafeFixtureRelativePath(ascii path)
+{
+    if (System.Text.AsciiLength(path) <= 0)
+    {
+        return false;
+    }
+
+    if (System.IO.Path.IsRooted(path))
+    {
+        return false;
+    }
+
+    if (System.Text.Contains(path, System.IO.Path.ParentDirectory()))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+public fn System.IO.IOResult<TempDirectory> CreateTempDirectory(ascii prefix)
+{
+    stack mut TempDirectory fixture = new();
+    switch (System.FileSystem.CreateTempDirectory(prefix))
+    {
+        case System.IO.IOResult<System.Text.OwnedAscii>.Err(var error):
+            return System.IO.IOResult<TempDirectory>.Err(error);
+        case System.IO.IOResult<System.Text.OwnedAscii>.Ok(var path):
+            fixture.Path = path;
+            fixture.Active = true;
+            return System.IO.IOResult<TempDirectory>.Ok(fixture);
+    }
+}
+
+internal finite law bool IsSnapshotLineBreakUnit(i8[min max] value)
+{
+    return value == (i8[min max])10 || value == (i8[min max])13;
+}
+
+internal finite law bool IsActualUnit(ascii actual, u64[0 2 ** 63 - 1] index, ascii unit)
+    where overlap(actual, unit)
+{
+    return actual[(i64[min max])index, 1] == unit;
+}
+
+internal finite law bool IsActualLineBreak(ascii actual, u64[0 2 ** 63 - 1] index)
+{
+    return IsActualUnit(actual, index, "\n") || IsActualUnit(actual, index, "\r");
+}
+
+internal finite law u64[0 2 ** 63 - 1] AdvanceExpectedLineBreak(
+    borrow i8[min max][] expectedBytes,
+    u64[0 2 ** 63 - 1] index,
+    u64[0 2 ** 63 - 1] length)
+{
+    if (index + (u64[0 2 ** 63 - 1])1 < length
+        && expectedBytes[index] == (i8[min max])13
+        && expectedBytes[index + (u64[0 2 ** 63 - 1])1] == (i8[min max])10)
+    {
+        return index + (u64[0 2 ** 63 - 1])2;
+    }
+
+    return index + (u64[0 2 ** 63 - 1])1;
+}
+
+internal finite law u64[0 2 ** 63 - 1] AdvanceActualLineBreak(
+    ascii actual,
+    u64[0 2 ** 63 - 1] index,
+    u64[0 2 ** 63 - 1] length)
+{
+    if (index + (u64[0 2 ** 63 - 1])1 < length
+        && IsActualUnit(actual, index, "\r")
+        && IsActualUnit(actual, index + (u64[0 2 ** 63 - 1])1, "\n"))
+    {
+        return index + (u64[0 2 ** 63 - 1])2;
+    }
+
+    return index + (u64[0 2 ** 63 - 1])1;
+}
+
+internal finite law SnapshotResult SnapshotDifferent(
+    u64[0 2 ** 63 - 1] expectedLength,
+    u64[0 2 ** 63 - 1] actualLength,
+    u64[0 2 ** 63 - 1] firstDifference,
+    u64[1 2 ** 63 - 1] line,
+    u64[1 2 ** 63 - 1] column)
+{
+    stack SnapshotDifference difference = new SnapshotDifference()
+    {
+        ExpectedLength = expectedLength,
+        ActualLength = actualLength,
+        FirstDifference = firstDifference,
+        Line = line,
+        Column = column
+    };
+    return SnapshotResult.Different(difference);
+}
+
+public fn SnapshotResult CompareSnapshotText(borrow System.Text.OwnedAscii expected, ascii actual)
+    where overlap(expected, actual)
+{
+    if (System.Text.OwnedAsciiEqualsAscii(expected, actual))
+    {
+        return SnapshotResult.Matched;
+    }
+
+    stack i64[min max] signedActualLength = System.Text.AsciiLength(actual);
+    if (signedActualLength < 0)
+    {
+        return SnapshotResult.Err(System.IO.IOError.InvalidPath);
+    }
+
+    stack u64[0 2 ** 63 - 1] expectedLength = expected.Length();
+    stack u64[0 2 ** 63 - 1] actualLength = (u64[0 2 ** 63 - 1])signedActualLength;
+    stack i8[min max][] expectedBytes = expected.AsSlice();
+    stack mut u64[0 2 ** 63 - 1] expectedIndex = 0;
+    stack mut u64[0 2 ** 63 - 1] actualIndex = 0;
+    stack mut u64[0 2 ** 63 - 1] logicalIndex = 0;
+    stack mut u64[1 2 ** 63 - 1] line = 1;
+    stack mut u64[1 2 ** 63 - 1] column = 1;
+
+    while willexit (expectedIndex < expectedLength && actualIndex < actualLength)
+    {
+        stack bool expectedBreak = IsSnapshotLineBreakUnit(expectedBytes[expectedIndex]);
+        stack bool actualBreak = IsActualLineBreak(actual, actualIndex);
+        if (expectedBreak || actualBreak)
+        {
+            if (!expectedBreak || !actualBreak)
+            {
+                return SnapshotDifferent(expectedLength, actualLength, logicalIndex, line, column);
+            }
+
+            expectedIndex = AdvanceExpectedLineBreak(expectedBytes, expectedIndex, expectedLength);
+            actualIndex = AdvanceActualLineBreak(actual, actualIndex, actualLength);
+            logicalIndex += 1;
+            line += 1;
+            column = 1;
+            continue;
+        }
+
+        if (!System.Text.OwnedAsciiRangeEqualsAscii(
+            expected,
+            expectedIndex,
+            1,
+            actual[(i64[min max])actualIndex, 1]))
+        {
+            return SnapshotDifferent(expectedLength, actualLength, logicalIndex, line, column);
+        }
+
+        expectedIndex += 1;
+        actualIndex += 1;
+        logicalIndex += 1;
+        column += 1;
+    }
+
+    if (expectedIndex == expectedLength && actualIndex == actualLength)
+    {
+        return SnapshotResult.Matched;
+    }
+
+    return SnapshotDifferent(expectedLength, actualLength, logicalIndex, line, column);
+}
+
+internal fn SnapshotResult WriteSnapshot(ascii path, ascii actual)
+{
+    switch (System.IO.File.WriteAllTextAtomic(path, actual))
+    {
+        case System.IO.IOStatus.Err(var error):
+            return SnapshotResult.Err(error);
+        case System.IO.IOStatus.Ok:
+            return SnapshotResult.Updated;
+    }
+}
+
+public fn SnapshotResult VerifySnapshot(ascii path, ascii actual)
+{
+    switch (System.IO.File.ReadAllText(path))
+    {
+        case System.IO.IOResult<System.Text.OwnedAscii>.Err(var error):
+            switch (error)
+            {
+                case System.IO.IOError.NotFound:
+                    return SnapshotResult.Missing;
+                case System.IO.IOError.PermissionDenied:
+                    return SnapshotResult.Err(error);
+                case System.IO.IOError.AlreadyExists:
+                    return SnapshotResult.Err(error);
+                case System.IO.IOError.InvalidPath:
+                    return SnapshotResult.Err(error);
+                case System.IO.IOError.BrokenPipe:
+                    return SnapshotResult.Err(error);
+                case System.IO.IOError.DiskFull:
+                    return SnapshotResult.Err(error);
+                case System.IO.IOError.Unknown(var code):
+                    return SnapshotResult.Err(error);
+            }
+        case System.IO.IOResult<System.Text.OwnedAscii>.Ok(var expected):
+            return CompareSnapshotText(expected, actual);
+    }
+}
+
+public fn SnapshotResult UpdateSnapshot(ascii path, ascii actual)
+{
+    return WriteSnapshot(path, actual);
+}
+
+public fn SnapshotResult VerifyOrUpdateSnapshot(ascii path, ascii actual, bool update)
+{
+    stack SnapshotResult result = VerifySnapshot(path, actual);
+    switch (result)
+    {
+        case SnapshotResult.Matched:
+            return SnapshotResult.Matched;
+        case SnapshotResult.Updated:
+            return SnapshotResult.Updated;
+        case SnapshotResult.Missing:
+            if (update)
+            {
+                return WriteSnapshot(path, actual);
+            }
+
+            return SnapshotResult.Missing;
+        case SnapshotResult.Different(var difference):
+            if (update)
+            {
+                return WriteSnapshot(path, actual);
+            }
+
+            return SnapshotResult.Different(difference);
+        case SnapshotResult.Err(var error):
+            return SnapshotResult.Err(error);
+    }
+}
+
+public finite law bool SnapshotSucceeded(SnapshotResult result)
+{
+    switch (result)
+    {
+        case SnapshotResult.Matched:
+            return true;
+        case SnapshotResult.Updated:
+            return true;
+        case SnapshotResult.Missing:
+            return false;
+        case SnapshotResult.Different(var difference):
+            return false;
+        case SnapshotResult.Err(var error):
+            return false;
+    }
+}
+
+public fn System.Memory.MemoryStatus AppendSnapshotDifference(
+    mut borrow System.Text.OwnedAscii writer,
+    borrow SnapshotDifference difference)
+{
+    switch (writer.AppendAscii("snapshot differs at line "))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryStatus.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    switch (writer.AppendU64(difference.Line))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryStatus.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    switch (writer.AppendAscii(", column "))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryStatus.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    switch (writer.AppendU64(difference.Column))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryStatus.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    switch (writer.AppendAscii(" (expected bytes "))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryStatus.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    switch (writer.AppendU64(difference.ExpectedLength))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryStatus.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    switch (writer.AppendAscii(", actual bytes "))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryStatus.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    switch (writer.AppendU64(difference.ActualLength))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryStatus.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    return writer.AppendAscii(")");
 }
 
 public fn bool True(bool condition)
@@ -30,9 +578,19 @@ public fn bool Equal(bool expected, bool actual)
     return expected == actual;
 }
 
+public fn bool NotEqual(bool expected, bool actual)
+{
+    return expected != actual;
+}
+
 public fn bool Equal(i32[min max] expected, i32[min max] actual)
 {
     return expected == actual;
+}
+
+public fn bool NotEqual(i32[min max] expected, i32[min max] actual)
+{
+    return expected != actual;
 }
 
 public fn bool Equal(i64[min max] expected, i64[min max] actual)
@@ -40,9 +598,19 @@ public fn bool Equal(i64[min max] expected, i64[min max] actual)
     return expected == actual;
 }
 
+public fn bool NotEqual(i64[min max] expected, i64[min max] actual)
+{
+    return expected != actual;
+}
+
 public fn bool Equal(u32[0 max] expected, u32[0 max] actual)
 {
     return expected == actual;
+}
+
+public fn bool NotEqual(u32[0 max] expected, u32[0 max] actual)
+{
+    return expected != actual;
 }
 
 public fn bool Equal(u64[0 max] expected, u64[0 max] actual)
@@ -50,14 +618,177 @@ public fn bool Equal(u64[0 max] expected, u64[0 max] actual)
     return expected == actual;
 }
 
+public fn bool NotEqual(u64[0 max] expected, u64[0 max] actual)
+{
+    return expected != actual;
+}
+
 public fn bool Equal(ascii expected, ascii actual)
 {
     return expected == actual;
 }
 
+public fn bool NotEqual(ascii expected, ascii actual)
+{
+    return expected != actual;
+}
+
 public fn bool Equal(unicode expected, unicode actual)
 {
     return expected == actual;
+}
+
+public fn bool NotEqual(unicode expected, unicode actual)
+{
+    return expected != actual;
+}
+
+public fn bool InRange(i32[min max] min, i32[min max] max, i32[min max] actual)
+{
+    return min <= actual && actual <= max;
+}
+
+public fn bool InRange(i64[min max] min, i64[min max] max, i64[min max] actual)
+{
+    return min <= actual && actual <= max;
+}
+
+public fn bool InRange(u32[0 max] min, u32[0 max] max, u32[0 max] actual)
+{
+    return min <= actual && actual <= max;
+}
+
+public fn bool InRange(u64[0 max] min, u64[0 max] max, u64[0 max] actual)
+{
+    return min <= actual && actual <= max;
+}
+
+public fn bool NotInRange(i32[min max] min, i32[min max] max, i32[min max] actual)
+{
+    return actual < min || actual > max;
+}
+
+public fn bool NotInRange(i64[min max] min, i64[min max] max, i64[min max] actual)
+{
+    return actual < min || actual > max;
+}
+
+public fn bool NotInRange(u32[0 max] min, u32[0 max] max, u32[0 max] actual)
+{
+    return actual < min || actual > max;
+}
+
+public fn bool NotInRange(u64[0 max] min, u64[0 max] max, u64[0 max] actual)
+{
+    return actual < min || actual > max;
+}
+
+public fn bool Empty(ascii value)
+{
+    return System.Text.AsciiLength(value) == 0;
+}
+
+public fn bool Empty(unicode value)
+{
+    return System.Text.UnicodeLength(value) == 0;
+}
+
+public fn bool Empty<T>(borrow T[] values)
+{
+    return values.Length == 0;
+}
+
+public fn bool Empty<T>(borrow System.Collections.List<T> values)
+{
+    return values.IsEmpty();
+}
+
+public fn bool NotEmpty(ascii value)
+{
+    return System.Text.AsciiLength(value) != 0;
+}
+
+public fn bool NotEmpty(unicode value)
+{
+    return System.Text.UnicodeLength(value) != 0;
+}
+
+public fn bool NotEmpty<T>(borrow T[] values)
+{
+    return values.Length != 0;
+}
+
+public fn bool NotEmpty<T>(borrow System.Collections.List<T> values)
+{
+    return !values.IsEmpty();
+}
+
+public fn bool Single<T>(borrow T[] values)
+{
+    return values.Length == 1;
+}
+
+public fn bool Single<T>(borrow System.Collections.List<T> values)
+{
+    return values.Count() == 1;
+}
+
+public fn bool Count<T>(u64[0 2 ** 63 - 1] expected, borrow T[] values)
+{
+    return values.Length == expected;
+}
+
+public fn bool Count<T>(u64[0 2 ** 63 - 1] expected, borrow System.Collections.List<T> values)
+{
+    return values.Count() == expected;
+}
+
+public fn bool Contains(ascii value, ascii expected)
+    where overlap(value, expected)
+{
+    return System.Text.Contains(value, expected);
+}
+
+public fn bool Contains(unicode value, unicode expected)
+    where overlap(value, expected)
+{
+    return System.Text.Contains(value, expected);
+}
+
+public fn bool DoesNotContain(ascii value, ascii expected)
+    where overlap(value, expected)
+{
+    return !System.Text.Contains(value, expected);
+}
+
+public fn bool DoesNotContain(unicode value, unicode expected)
+    where overlap(value, expected)
+{
+    return !System.Text.Contains(value, expected);
+}
+
+public fn bool StartsWith(ascii value, ascii expected)
+    where overlap(value, expected)
+{
+    return System.Text.StartsWith(value, expected);
+}
+
+public fn bool StartsWith(unicode value, unicode expected)
+    where overlap(value, expected)
+{
+    return System.Text.StartsWith(value, expected);
+}
+
+public fn bool EndsWith(ascii value, ascii expected)
+    where overlap(value, expected)
+{
+    return System.Text.EndsWith(value, expected);
+}
+
+public fn bool EndsWith(unicode value, unicode expected)
+    where overlap(value, expected)
+{
+    return System.Text.EndsWith(value, expected);
 }
 
 public fn TestStatus Status(bool assertion)

@@ -883,7 +883,9 @@ unsafe fn void Fill(
 FFI rules:
 
 - Declare imported FFI as `unsafe ffi fn`.
-- Preserve foreign symbol spelling exactly.
+- An `ffi` function uses the target C ABI by default; spell a different convention as `ffi(abi)` (e.g. `unsafe ffi(stdcall) fn`), or `ffi(platform(...))` for per-target selection. The ABI is part of `fnptr<ffi(c) fn ...>` type identity. Supported names: `c`, `cdecl`, `stdcall`, `fastcall`, `thiscall`, `vectorcall`, `sysv`, `win64`, `aapcs`, `aapcs64`.
+- C-facing aggregates use layout attributes: `[StructLayout(C)]` / `[StructLayout(Explicit)]`, `[Pack(N)]`, `[Align(N)]`, and `[FieldOffset(N)]`. Default Stark layout is not a stable ABI.
+- Preserve foreign symbol spelling exactly. Underscore-leading identifiers are valid for FFI symbols such as `__error`; bare `_` remains discard.
 - Use safe wrappers only when they hide raw handles, combine calls, narrow a foreign surface, or define a real Stark-level abstraction.
 - Do not let foreign code unwind through Stark frames.
 - Stark enums do not cross `ffi` or `export` boundaries.
@@ -952,6 +954,8 @@ for willexit independent (stack mut i64[0 max] index = 0; index < length; index 
     output[index] = input[index] + 1;
 }
 ```
+
+A loop or `switch` may be labeled (`outer: for willexit (...)`) so an inner `break outer;` / `continue outer;` targets it directly; `continue` targets labeled loops only.
 
 `switch` supports literal cases, `default`, `when` guards, `case var capture`, `_`, enum case patterns, exact aggregate patterns, aggregate property patterns (`case Box { Field: pattern }:`), exact-length list patterns over fixed arrays/slices/dynamic storage (`case [first, second]:`), switch-label or-patterns (`case A | B:`), and inclusive integer range patterns (`case 0..10:`). Property patterns must name every aggregate field exactly once. List patterns are exact-length only: fixed-array length mismatches are compile-time errors; slice/dynamic list patterns lower to a length check plus direct element tests, with no iterator protocol or hidden allocation. Range patterns are integer-only, work at top level and inside enum/aggregate/list field patterns, and are checked as intervals rather than expanded into individual values. Every `switch` must be **exhaustive**: cover all enum variants / both bools / every value of a ranged integer (e.g. `u8[0 3]` with cases `0..3`), or include a `default`. `when`-guarded arms never count toward coverage. Relatedly, a non-`void` function must **return on every path** (end paths with `return`, an `if`/`else` that returns on both sides, an exhaustive `switch` whose sections all return, or a break-free `infinite` loop) — falling off the end is a compile error, not a runtime trap.
 
@@ -1025,6 +1029,8 @@ text[index]
 text[start, length]
 ```
 
+Raw string literals skip escape processing: `raw"\d+"` is verbatim and `raw"""..."""` is a verbatim multiline literal. Both compose with interpolation as `$raw"..."` / `$raw"""..."""`.
+
 C#-style interpolated text is supported. Fully compile-time interpolation folds to a text constant. Runtime interpolation needs caller-selected fixed storage:
 
 ```stark
@@ -1059,7 +1065,7 @@ struct Synchronized<T>
 }
 ```
 
-Raw pointers and `storeborrow` fields deny both laws by default. `System.Threading.Atomic*` types satisfy both laws by intrinsic compiler grant. Use `[Grant(...)]` only for audited overrides and `[Deny(...)]` for semantic opt-outs that structural derivation cannot see. Call-site and thread-boundary enforcement is still tracked in `docs/Self-host-Prep/14-thread-safety-laws.md`.
+Raw pointers and `storeborrow` fields deny both laws by default. `System.Threading.Atomic*` types satisfy both laws by intrinsic compiler grant. Use `[Grant(...)]` only for audited overrides and `[Deny(...)]` for semantic opt-outs that structural derivation cannot see. Direct/member calls, explicit payload thread starts, channels, `Synchronized<T>`, and thread-entry reachable mutable statics consume these laws.
 
 ## Standard Library
 
@@ -1068,20 +1074,22 @@ Import standard-library modules explicitly when it improves readability. The roo
 Public modules:
 
 - `System.BitOperations`: bit counting, zero counts, rotations, byte swaps, powers of two
-- `System.Collections`: `List`, `Stack`, `Queue`, `RingQueue`, `Dictionary`, `LinkedList`
+- `System.C`: C primitive aliases, null-terminated C string views/owners/buffers, and foreign-owned C string copy/dispose helpers
+- `System.Collections`: `List`, `Stack`, `Queue`, `RingQueue`, `Dictionary`, `HashSet`, `LinkedList`, `Lookup`, `SortBy<T>`, `Sort<T>`, and canonical `Eq`/`Hash`/`Ord`/`Format` contracts
 - `System.Console`: console reads/writes for text, slices, and byte buffers
-- `System.FileSystem`: directories, entry information, existence/type checks, move/delete
-- `System.IO` / `System.IO.File` / `System.IO.Path`: IO result types, owned files, path helpers
-- `System.Math`: float math, `SinCos`, min/max/rounding, `XorShift32`
+- `System.FileSystem`: directories, entry information, existence/type checks, move/delete, cross-platform metadata, temp directories, recursive walk, and streaming glob traversal
+- `System.IO` / `System.IO.File` / `System.IO.Path`: IO result types, owned files, whole-file text/byte helpers, atomic whole-file replacement helpers, line-oriented file reading, current/temp directory queries, glob matching, multi-part path joins, explicit temp name/path candidate helpers, path facts, full/lexical path shaping, and extension rewriting
+- `System.Compiler.IntegerFacts`: bounded `i1024`/`u1024` compiler integer-fact helpers for range, storage, tag, checked arithmetic, known-bit, and two's-complement reasoning
+- `System.Math`: float math including trig, `SinCos`, `Exp`/`Log`/`Pow`, min/max/rounding, fused multiply-add, reciprocal estimates, `XorShift32`
 - `System.Memory`: dynamic-storage reserve/append/copy/move/fill helpers
 - `System.Net` / `System.Net.Tcp`: network result types, IPv4 endpoints, TCP clients/listeners
-- `System.Process`: process id and exit
+- `System.Process`: process id/exit, Linux-backed command spawn with stdout/stderr/exit-code capture, inherited environment reads, child environment mutation, cwd get/set, and argv/argc access
 - `System.Runtime.Buffer`: fixed and dynamic byte buffers
-- `System.Testing`: simple assertion/status helpers
+- `System.Testing`: explicit test helpers with boolean/equality, text contains/starts/ends, range, slice/List shape, temp fixture helpers, snapshot/golden text helpers, status, and `RunFact`/exit-code helpers used by generated `[Fact]` runners
 - `System.Text`: owned text, encoding conversion, parsing, formatting
-- `System.Threading`: threads, joins, detach, yield, sleep; atomic types (`AtomicBool`, `AtomicI8`…`AtomicI1024`, `AtomicU8`…`AtomicU1024`) for safe seq-cst shared state between threads
+- `System.Threading`: no-payload and explicit payload thread starts, joins, detach, yield, sleep; atomic types (`AtomicBool`, `AtomicI8`…`AtomicI1024`, `AtomicU8`…`AtomicU1024`) for safe seq-cst counters/flags; `Synchronized<T>` / `Locked<T>` for explicit guarded shared mutable state
 
-**Sharing state between threads**: a `static mut` touched by more than one thread is a data race unless every access goes through an atomic type — atomics are the only safe sharing surface (there is no atomic qualifier keyword and no mutex yet). One atomic struct exists per integer width plus `AtomicBool`; every operation is one indivisible seq-cst action. RMW operations (`Add`/`Sub`/`And`/`Or`/`Xor`/`Exchange`) return the **previous** value; `Add`/`Sub` wrap at the value width; `CompareExchange(expected, desired)` returns whether it swapped. Module-level declarations spell the qualified type name (unqualified imported types only resolve inside function bodies):
+**Sharing state between threads**: functions reachable from a `ThreadEntry` or `ThreadPayloadEntry<T>` may touch a `static mut` only when the static is synchronization-backed: use an atomic type for scalar state or `Synchronized<T>` for guarded aggregate state. There is no atomic qualifier keyword and no hidden synchronized assignment/member access. One atomic struct exists per integer width plus `AtomicBool`; every operation is one indivisible seq-cst action. RMW operations (`Add`/`Sub`/`And`/`Or`/`Xor`/`Exchange`) return the **previous** value; `Add`/`Sub` wrap at the value width; `CompareExchange(expected, desired)` returns whether it swapped. Module-level declarations spell the qualified type name (unqualified imported types only resolve inside function bodies):
 
 ```stark
 static mut System.Threading.AtomicI64 Counter = new System.Threading.AtomicI64(0);
@@ -1090,6 +1098,19 @@ fn i32[min max] Worker()
 {
     Counter.Add(1);              // one atomic instruction; two threads never lose an increment
     return 0;
+}
+```
+
+Use `System.Threading.Synchronized<T>` for guarded mutable aggregates:
+
+```stark
+static mut System.Threading.Synchronized<Counter> Shared =
+    new System.Threading.Synchronized<Counter>(new Counter() { Value = 0 });
+
+fn void Bump()
+{
+    stack mut System.Threading.Locked<Counter> guard = Shared.Lock();
+    guard.Value().Value += 1;
 }
 ```
 
@@ -1137,7 +1158,7 @@ opt = 0
 opt = 3
 ```
 
-Project kinds are `executable`, `library`, and `test`. A test project compiles to an executable and should return `0` for success.
+Project kinds are `executable`, `library`, and `test`. A test project compiles to an executable. Test roots that contain `[Fact]` metadata use a build-time generated explicit `main`; do not write a manual `main` in those roots. A `[Fact]` is a non-generic, no-argument `bool` function with a body, either top-level or a `static` method on a struct/record. Manual `main` runners are only for no-`[Fact]` bootstrap tests.
 
 Use `Stark.solution.toml` for multi-project repos:
 
@@ -1162,6 +1183,7 @@ Everyday commands:
 stark build
 stark run
 stark test
+stark test --filter Parser
 stark build app --release
 ```
 

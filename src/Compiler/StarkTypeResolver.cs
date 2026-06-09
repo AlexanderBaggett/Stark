@@ -280,6 +280,18 @@ internal sealed class StarkTypeResolver
             return aliasType;
         }
 
+        if (TryResolveDynTraitVtableType(
+                qualifiedName,
+                typeArgumentList: null,
+                genericParameters,
+                currentModuleName,
+                comptimeGenericParameters: null,
+                token,
+                out var dynTraitVtableType))
+        {
+            return dynTraitVtableType;
+        }
+
         if (TryResolveAssociatedTypeName(qualifiedName, genericParameters, currentModuleName, out var associatedType))
         {
             return associatedType;
@@ -1113,6 +1125,18 @@ internal sealed class StarkTypeResolver
                 return aliasType;
             }
 
+            if (TryResolveDynTraitVtableType(
+                    qualifiedName,
+                    typeArgList,
+                    genericParameters,
+                    currentModuleName,
+                    comptimeGenericParameters,
+                    simpleType.Start,
+                    out var dynTraitVtableType))
+            {
+                return dynTraitVtableType;
+            }
+
             if (TryResolveAssociatedTypeName(qualifiedName, genericParameters, currentModuleName, out _))
             {
                 ReportError("STK3019", $"Associated type '{qualifiedName}' is not generic and does not accept type arguments.", simpleType.Start);
@@ -1151,6 +1175,86 @@ internal sealed class StarkTypeResolver
         }
 
         return ResolveQualifiedType(qualifiedName, genericParameters, simpleType.Start, currentModuleName);
+    }
+
+    private bool TryResolveDynTraitVtableType(
+        string qualifiedName,
+        StarkParser.TypeArgumentListContext? typeArgumentList,
+        ISet<string>? genericParameters,
+        string? currentModuleName,
+        IReadOnlyDictionary<string, ComptimeGenericParameterSymbol>? comptimeGenericParameters,
+        IToken token,
+        out StarkTypeSymbol vtableType)
+    {
+        vtableType = StarkTypeSymbols.Error;
+        var dot = qualifiedName.LastIndexOf('.');
+        if (dot <= 0 || dot == qualifiedName.Length - 1)
+        {
+            return false;
+        }
+
+        var memberName = qualifiedName[(dot + 1)..];
+        if (!string.Equals(memberName, StarkTypeSymbols.DynTraitVtableMemberName, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var ownerName = qualifiedName[..dot];
+        if (!TryResolveAssociatedTypeOwner(ownerName, genericParameters, currentModuleName, out var ownerType)
+            || ownerType.Kind != StarkTypeKind.Named
+            || ownerType.NamedType is not { } ownerNamedType)
+        {
+            return false;
+        }
+
+        var ownerBaseName = StarkTypeSymbols.GetGenericBaseName(ownerNamedType);
+        if (!_namedTypes.TryGetValue(ownerBaseName, out var ownerSymbol)
+            || ownerSymbol.Kind != DeclarationKind.Trait)
+        {
+            return false;
+        }
+
+        if (!ownerSymbol.IsDynTrait)
+        {
+            ReportError(
+                "STK3035",
+                $"Trait '{ownerBaseName}' is static-only and has no vtable type. Declare it as 'dyn trait {LastSegment(ownerBaseName)}' before using '{qualifiedName}'.",
+                token);
+            return true;
+        }
+
+        if (typeArgumentList is null)
+        {
+            if (ownerSymbol.GenericParams.Count != 0 || ownerSymbol.ComptimeGenericParams.Count != 0)
+            {
+                ReportError(
+                    "STK3019",
+                    $"Vtable type '{qualifiedName}' requires {ownerSymbol.GenericParams.Count} type argument(s) and {ownerSymbol.ComptimeGenericParams.Count} comptime value argument(s).",
+                    token);
+                return true;
+            }
+
+            vtableType = StarkTypeSymbols.DynTraitVtable(ownerBaseName);
+            return true;
+        }
+
+        var genericArguments = GenericArgumentSyntaxFacts.Resolve(
+            typeArgumentList,
+            ownerSymbol.GenericParams,
+            ownerSymbol.ComptimeGenericParams,
+            typeArg => ResolveType(typeArg, genericParameters, currentModuleName, comptimeGenericParameters),
+            ReportError,
+            visibleComptimeParameters: comptimeGenericParameters);
+        if (genericArguments.TypeArguments.Any(static type => type.Kind == StarkTypeKind.Error))
+        {
+            return true;
+        }
+
+        vtableType = StarkTypeSymbols.DynTraitVtable(
+            ownerBaseName,
+            genericArguments.TypeArguments,
+            genericArguments.ComptimeValueArguments);
+        return true;
     }
 
     private bool TryResolveAssociatedTypeName(
@@ -1240,6 +1344,12 @@ internal sealed class StarkTypeResolver
 
         ownerType = StarkTypeSymbols.Error;
         return false;
+    }
+
+    private static string LastSegment(string name)
+    {
+        var dot = name.LastIndexOf('.');
+        return dot < 0 ? name : name[(dot + 1)..];
     }
 
     private StarkTypeSymbol ResolveIntegerType(StarkParser.IntegerTypeContext integerType)

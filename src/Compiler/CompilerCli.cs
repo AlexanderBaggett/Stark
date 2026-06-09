@@ -16,6 +16,7 @@ internal static class CompilerCli
 {
     private const string Usage = "Usage: compiler [path-to-stark-file] [--check|--emit-mir|--emit-ssa|--emit-llvm|--emit-obj|--compile-only|--emit-lib|--emit-exe|--link-only|--emit-pkg|--emit-package|--inspect-pkg|--inspect-package] [-I dir|--search-dir dir]* [-L dir|--library-dir dir]* [--link-arg arg]* [--native-source path]* [--native-include-dir dir]* [--native-library-dir dir]* [--native-library name]* [--native-pkg-config name]* [--native-link-arg arg]* [--package-library-file name] [-o output] [--target triple] [--target-data-layout layout] [--target-cpu cpu] [--target-feature feature]* [--relocation-model mode] [--code-model model] [-O0|-Og|-O1|-O2|-O3|--optimize level] [--strict-integer-ranges] [--linker tool] [--archiver tool] [--save-temps dir] [--toolchain-metrics path] [--diagnostic-format format] [--log-level level] [--log-verbosity mode] [--log-category name]* [--log-stage pass]* [--log-kind kind]*";
     private const int DiagnosticTabWidth = 4;
+    private static readonly IReadOnlySet<string> EmptyImportedInlineCloneSeedFunctions = new HashSet<string>(StringComparer.Ordinal);
 
     public static async Task<int> RunAsync(string[] args, TextReader stdin, TextWriter stdout, TextWriter stderr)
     {
@@ -2095,22 +2096,17 @@ internal static class CompilerCli
 
         var rootSymbols = SummarizeLlvmSymbols(rootLlvmText);
         var unresolvedSymbols = new HashSet<string>(rootSymbols.ReferencedSymbols, StringComparer.Ordinal);
-        var forceEmittedModuleIndexes = new HashSet<int>(
-            compiledModules
-                .Select(static (module, index) => new { Module = module, Index = index })
-                .Where(static item => item.Module.LlvmText is not null && ContainsMonomorphizedStarkSymbols(item.Module.LlvmText))
-                .Select(static item => item.Index));
         var emittedModuleIndexes = new HashSet<int>();
+        var broadenedModuleIndexes = new HashSet<int>();
         var objectPaths = new List<string>();
         var requiresMathLibrary = false;
         var requiresWinsockLibrary = false;
         var requiresWindowsSynchronizationLibrary = false;
         var requiresNtDllLibrary = false;
-        var madeProgress = true;
 
-        while (madeProgress)
+        while (true)
         {
-            madeProgress = false;
+            var madeProgress = false;
             for (var index = 0; index < compiledModules.Count; index++)
             {
                 if (emittedModuleIndexes.Contains(index))
@@ -2119,8 +2115,7 @@ internal static class CompilerCli
                 }
 
                 var dependencyResult = compiledModules[index];
-                if (!forceEmittedModuleIndexes.Contains(index)
-                    && !dependencyResult.Symbols.DefinedSymbols.Overlaps(unresolvedSymbols))
+                if (!dependencyResult.Symbols.DefinedSymbols.Overlaps(unresolvedSymbols))
                 {
                     continue;
                 }
@@ -2166,6 +2161,51 @@ internal static class CompilerCli
 
                 madeProgress = true;
             }
+
+            if (madeProgress)
+            {
+                continue;
+            }
+
+            var broadenedDependency = false;
+            for (var index = 0; index < compiledModules.Count; index++)
+            {
+                if (emittedModuleIndexes.Contains(index)
+                    || broadenedModuleIndexes.Contains(index)
+                    || !compiledModules[index].UsesFilteredOwnedFunctionEmission
+                    || !UnresolvedSymbolsMayBelongToModule(unresolvedSymbols, compiledModules[index].Module))
+                {
+                    continue;
+                }
+
+                var dependencyResult = CompileDependencyLlvm(
+                    compiledModules[index].Module,
+                    rootOptions,
+                    importedInlineCloneSeedFunctions: null);
+                if (!dependencyResult.Success)
+                {
+                    return new SourceDependencyLinkResult(
+                        false,
+                        objectPaths,
+                        dependencyResult.Diagnostics,
+                        dependencyResult.Logs,
+                        null,
+                        requiresMathLibrary,
+                        requiresWinsockLibrary,
+                        requiresWindowsSynchronizationLibrary,
+                        requiresNtDllLibrary);
+                }
+
+                compiledModules[index] = dependencyResult;
+                broadenedModuleIndexes.Add(index);
+                broadenedDependency = true;
+                break;
+            }
+
+            if (!broadenedDependency)
+            {
+                break;
+            }
         }
 
         return new SourceDependencyLinkResult(
@@ -2180,9 +2220,61 @@ internal static class CompilerCli
             requiresNtDllLibrary);
     }
 
-    private static bool ContainsMonomorphizedStarkSymbols(string llvmText)
+    private static bool UnresolvedSymbolsMayBelongToModule(
+        IReadOnlySet<string> unresolvedSymbols,
+        LoadedModuleDocument module)
     {
-        return llvmText.Contains("__stark_mono_", StringComparison.Ordinal);
+        var moduleName = module.SyntaxModel.ModuleName;
+        if (string.IsNullOrWhiteSpace(moduleName))
+        {
+            return false;
+        }
+
+        var sanitizedModuleName = SanitizeSymbolComponentForMatch(moduleName);
+        foreach (var symbol in unresolvedSymbols)
+        {
+            if (symbol.StartsWith($"{moduleName}.", StringComparison.Ordinal)
+                || symbol.StartsWith($"{sanitizedModuleName}_", StringComparison.Ordinal)
+                || symbol.Contains($"_{sanitizedModuleName}_", StringComparison.Ordinal)
+                || symbol.Contains($"_{sanitizedModuleName}__", StringComparison.Ordinal)
+                || symbol.Contains($"__{sanitizedModuleName}__", StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static string SanitizeSymbolComponentForMatch(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return "_";
+        }
+
+        var builder = new StringBuilder(text.Length);
+        var previousWasUnderscore = false;
+        foreach (var ch in text)
+        {
+            var normalized = char.IsLetterOrDigit(ch) ? ch : '_';
+            if (normalized == '_')
+            {
+                if (previousWasUnderscore)
+                {
+                    continue;
+                }
+
+                previousWasUnderscore = true;
+                builder.Append('_');
+                continue;
+            }
+
+            previousWasUnderscore = false;
+            builder.Append(normalized);
+        }
+
+        return builder.ToString().Trim('_');
     }
 
     private static IReadOnlyDictionary<string, IReadOnlySet<string>>? BuildImportedInlineCloneSeedsByModule(
@@ -2394,7 +2486,7 @@ internal static class CompilerCli
 
         return importedInlineCloneSeedsByModule.TryGetValue(module.SyntaxModel.ModuleName, out var seeds)
             ? seeds
-            : new HashSet<string>(StringComparer.Ordinal);
+            : EmptyImportedInlineCloneSeedFunctions;
     }
 
     private static IReadOnlySet<string> CollectRootHotPathEntryFunctions(
@@ -2511,7 +2603,7 @@ internal static class CompilerCli
         {
             if (module.Reference.FilePath is null || !File.Exists(module.Reference.FilePath))
             {
-                return new DependencyLlvmCompileResult(false, module, null, EmptyLlvmSymbolSummary(), [], [], RequiresMathLibrary: false, RequiresWinsockLibrary: false, RequiresWindowsSynchronizationLibrary: false, RequiresNtDllLibrary: false);
+                return new DependencyLlvmCompileResult(false, module, null, EmptyLlvmSymbolSummary(), [], [], UsesFilteredOwnedFunctionEmission: importedInlineCloneSeedFunctions is not null, RequiresMathLibrary: false, RequiresWinsockLibrary: false, RequiresWindowsSynchronizationLibrary: false, RequiresNtDllLibrary: false);
             }
 
             sourceText = File.ReadAllText(module.Reference.FilePath);
@@ -2533,12 +2625,12 @@ internal static class CompilerCli
 
         if (!dependencyResult.Succeeded)
         {
-            return new DependencyLlvmCompileResult(false, module, null, EmptyLlvmSymbolSummary(), dependencyResult.Diagnostics, dependencyResult.Logs, RequiresMathLibrary: false, RequiresWinsockLibrary: false, RequiresWindowsSynchronizationLibrary: false, RequiresNtDllLibrary: false);
+            return new DependencyLlvmCompileResult(false, module, null, EmptyLlvmSymbolSummary(), dependencyResult.Diagnostics, dependencyResult.Logs, UsesFilteredOwnedFunctionEmission: importedInlineCloneSeedFunctions is not null, RequiresMathLibrary: false, RequiresWinsockLibrary: false, RequiresWindowsSynchronizationLibrary: false, RequiresNtDllLibrary: false);
         }
 
         if (!dependencyResult.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule) || llvmModule is null)
         {
-            return new DependencyLlvmCompileResult(false, module, null, EmptyLlvmSymbolSummary(), [], dependencyResult.Logs, RequiresMathLibrary: false, RequiresWinsockLibrary: false, RequiresWindowsSynchronizationLibrary: false, RequiresNtDllLibrary: false);
+            return new DependencyLlvmCompileResult(false, module, null, EmptyLlvmSymbolSummary(), [], dependencyResult.Logs, UsesFilteredOwnedFunctionEmission: importedInlineCloneSeedFunctions is not null, RequiresMathLibrary: false, RequiresWinsockLibrary: false, RequiresWindowsSynchronizationLibrary: false, RequiresNtDllLibrary: false);
         }
 
         var requiresMathLibrary = TargetRequiresExplicitMathLibrary(rootOptions.TargetInfo)
@@ -2556,6 +2648,7 @@ internal static class CompilerCli
             SummarizeLlvmSymbols(llvmModule.Text),
             [],
             dependencyResult.Logs,
+            importedInlineCloneSeedFunctions is not null,
             requiresMathLibrary,
             requiresWinsockLibrary,
             requiresWindowsSynchronizationLibrary,
@@ -2630,21 +2723,24 @@ internal static class CompilerCli
         bool toolchainCanUseThinLto)
     {
         var isBackendOpaque = IsBackendOpaque(module);
+        var containsStoredBorrow = ModuleContainsStoreBorrowSyntax(module);
         var exposesHotInlineCandidates = ModuleExposesHotInlineCandidates(module);
-        var canEmitThinLtoBitcode = toolchainCanUseThinLto && !isBackendOpaque;
+        var canEmitThinLtoBitcode = toolchainCanUseThinLto && !isBackendOpaque && !containsStoredBorrow;
         var reason = canEmitThinLtoBitcode
             ? exposesHotInlineCandidates
                 ? "thinlto-enabled-hot-inline-candidates"
                 : "thinlto-enabled"
             : !toolchainCanUseThinLto
                 ? "thinlto-unavailable"
-                : "backend-opaque";
+                : isBackendOpaque
+                    ? "backend-opaque"
+                    : "stored-borrow-aliasing";
 
         return new ModuleOptimizationSafetyFacts(
             module.SyntaxModel.ModuleName,
             CanEmitThinLtoBitcode: canEmitThinLtoBitcode,
             CanRunNormalLlvmPasses: canEmitThinLtoBitcode,
-            ContainsKnownFragileConstructs: isBackendOpaque,
+            ContainsKnownFragileConstructs: isBackendOpaque || containsStoredBorrow,
             ExposesHotInlineCandidates: exposesHotInlineCandidates,
             reason);
     }
@@ -2660,8 +2756,132 @@ internal static class CompilerCli
 
     internal static bool ShouldEnableRootModuleLto(CompilationResult result)
     {
-        return !result.Artifacts.TryGet(CompilerArtifactKeys.SyntaxModel, out SyntaxModel? syntaxModel)
-            || syntaxModel?.BackendOptimizationMode != ModuleBackendOptimizationMode.Opaque;
+        if (result.Artifacts.TryGet(CompilerArtifactKeys.SyntaxModel, out SyntaxModel? syntaxModel)
+            && syntaxModel?.BackendOptimizationMode == ModuleBackendOptimizationMode.Opaque)
+        {
+            return false;
+        }
+
+        return !result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeModel)
+            || typeModel is null
+            || syntaxModel is null
+            || !RootTypeCheckModelContainsStoredBorrow(syntaxModel, typeModel);
+    }
+
+    private static bool ModuleContainsStoreBorrowSyntax(LoadedModuleDocument module)
+    {
+        return module.ParseResult.SourceText.Contains("storeborrow", StringComparison.Ordinal);
+    }
+
+    private static bool TypeCheckModelContainsStoredBorrow(TypeCheckModel typeModel)
+    {
+        foreach (var namedType in typeModel.NamedTypes.Values)
+        {
+            foreach (var field in namedType.OrderedFields)
+            {
+                if (TypeCanReachStoredBorrow(field.Type, typeModel.NamedTypes, new HashSet<string>(StringComparer.Ordinal)))
+                {
+                    return true;
+                }
+            }
+        }
+
+        foreach (var function in typeModel.Functions.Values)
+        {
+            if (TypeCanReachStoredBorrow(function.ReturnType, typeModel.NamedTypes, new HashSet<string>(StringComparer.Ordinal)))
+            {
+                return true;
+            }
+
+            foreach (var parameter in function.Parameters)
+            {
+                if (TypeCanReachStoredBorrow(parameter.Type, typeModel.NamedTypes, new HashSet<string>(StringComparer.Ordinal)))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static bool RootTypeCheckModelContainsStoredBorrow(
+        SyntaxModel syntaxModel,
+        TypeCheckModel typeModel)
+    {
+        foreach (var declaration in syntaxModel.Declarations)
+        {
+            if (declaration.Function is not null)
+            {
+                var functionName = FunctionOverloadFacts.GetResolvedLocalName(syntaxModel, declaration);
+                if (typeModel.Functions.TryGetValue(functionName, out var function)
+                    || typeModel.Functions.TryGetValue($"{syntaxModel.ModuleName}.{functionName}", out function))
+                {
+                    if (TypeCanReachStoredBorrow(function.ReturnType, typeModel.NamedTypes, new HashSet<string>(StringComparer.Ordinal)))
+                    {
+                        return true;
+                    }
+
+                    foreach (var parameter in function.Parameters)
+                    {
+                        if (TypeCanReachStoredBorrow(parameter.Type, typeModel.NamedTypes, new HashSet<string>(StringComparer.Ordinal)))
+                        {
+                            return true;
+                        }
+                    }
+                }
+            }
+
+            if (declaration.Kind is DeclarationKind.Struct or DeclarationKind.Enum
+                && (typeModel.NamedTypes.TryGetValue(declaration.Name, out var namedType)
+                    || typeModel.NamedTypes.TryGetValue($"{syntaxModel.ModuleName}.{declaration.Name}", out namedType)))
+            {
+                foreach (var field in namedType.OrderedFields)
+                {
+                    if (TypeCanReachStoredBorrow(field.Type, typeModel.NamedTypes, new HashSet<string>(StringComparer.Ordinal)))
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static bool TypeCanReachStoredBorrow(
+        StarkTypeSymbol type,
+        IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
+        HashSet<string> visitedNamedTypes)
+    {
+        if (type.BorrowKind == StarkBorrowKind.StoreBorrow)
+        {
+            return true;
+        }
+
+        var valueType = StarkTypeSymbols.BorrowReturnValueType(type);
+        if (valueType.Kind == StarkTypeKind.FixedArray && valueType.ElementType is not null)
+        {
+            return TypeCanReachStoredBorrow(valueType.ElementType, namedTypes, visitedNamedTypes);
+        }
+
+        if (valueType.Kind != StarkTypeKind.Named
+            || valueType.NamedType is not { } namedTypeName
+            || !visitedNamedTypes.Add(namedTypeName)
+            || !namedTypes.TryGetValue(namedTypeName, out var namedType))
+        {
+            return false;
+        }
+
+        foreach (var field in namedType.OrderedFields)
+        {
+            if (TypeCanReachStoredBorrow(field.Type, namedTypes, visitedNamedTypes))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static bool IsBackendOpaque(LoadedModuleDocument module)
@@ -2689,7 +2909,8 @@ internal static class CompilerCli
 
     private static LlvmSymbolSummary SummarizeLlvmSymbols(string llvmText)
     {
-        var definedSymbols = new HashSet<string>(StringComparer.Ordinal);
+        var allDefinedSymbols = new HashSet<string>(StringComparer.Ordinal);
+        var linkerVisibleDefinedSymbols = new HashSet<string>(StringComparer.Ordinal);
         var referencedSymbols = new HashSet<string>(StringComparer.Ordinal);
 
         foreach (var rawLine in llvmText.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n').Split('\n'))
@@ -2699,9 +2920,13 @@ internal static class CompilerCli
                 continue;
             }
 
-            if (TryReadDefinedLlvmSymbol(rawLine, out var definedSymbol))
+            if (TryReadDefinedLlvmSymbol(rawLine, out var definedSymbol, out var isLinkerVisible))
             {
-                definedSymbols.Add(definedSymbol);
+                allDefinedSymbols.Add(definedSymbol);
+                if (isLinkerVisible)
+                {
+                    linkerVisibleDefinedSymbols.Add(definedSymbol);
+                }
             }
 
             for (var index = 0; index < rawLine.Length; index++)
@@ -2714,8 +2939,8 @@ internal static class CompilerCli
             }
         }
 
-        referencedSymbols.ExceptWith(definedSymbols);
-        return new LlvmSymbolSummary(definedSymbols, referencedSymbols);
+        referencedSymbols.ExceptWith(allDefinedSymbols);
+        return new LlvmSymbolSummary(linkerVisibleDefinedSymbols, referencedSymbols);
     }
 
     private static bool IsPureLlvmDeclarationLine(string line)
@@ -2749,14 +2974,21 @@ internal static class CompilerCli
             new HashSet<string>(StringComparer.Ordinal));
     }
 
-    private static bool TryReadDefinedLlvmSymbol(string line, out string symbol)
+    private static bool TryReadDefinedLlvmSymbol(string line, out string symbol, out bool isLinkerVisible)
     {
         symbol = string.Empty;
+        isLinkerVisible = false;
         var trimmed = line.TrimStart();
         if (trimmed.StartsWith("define ", StringComparison.Ordinal))
         {
             var atIndex = trimmed.IndexOf('@');
-            return atIndex >= 0 && TryReadLlvmSymbolAt(trimmed, atIndex, out symbol, out _);
+            if (atIndex < 0 || !TryReadLlvmSymbolAt(trimmed, atIndex, out symbol, out _))
+            {
+                return false;
+            }
+
+            isLinkerVisible = IsLinkerVisibleFunctionDefinition(trimmed[..atIndex]);
+            return true;
         }
 
         if (!trimmed.StartsWith("@", StringComparison.Ordinal))
@@ -2777,7 +3009,32 @@ internal static class CompilerCli
             return false;
         }
 
-        return TryReadLlvmSymbolAt(trimmed, 0, out symbol, out _);
+        if (!TryReadLlvmSymbolAt(trimmed, 0, out symbol, out _))
+        {
+            return false;
+        }
+
+        isLinkerVisible = IsLinkerVisibleGlobalInitializer(initializer);
+        return true;
+    }
+
+    private static bool IsLinkerVisibleFunctionDefinition(string definitionPrefix)
+    {
+        foreach (var token in definitionPrefix.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (token is "internal" or "private" or "available_externally")
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool IsLinkerVisibleGlobalInitializer(string initializer)
+    {
+        var firstToken = initializer.Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
+        return firstToken is not ("internal" or "private" or "available_externally");
     }
 
     private static bool TryReadLlvmSymbolAt(string text, int atIndex, out string symbol, out int endIndex)
@@ -3389,6 +3646,7 @@ internal static class CompilerCli
         LlvmSymbolSummary Symbols,
         IReadOnlyList<CompilerDiagnostic> Diagnostics,
         IReadOnlyList<CompilerLogEntry> Logs,
+        bool UsesFilteredOwnedFunctionEmission,
         bool RequiresMathLibrary,
         bool RequiresWinsockLibrary,
         bool RequiresWindowsSynchronizationLibrary,

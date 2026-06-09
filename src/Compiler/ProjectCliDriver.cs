@@ -24,7 +24,7 @@ internal static class ProjectCliDriver
                 return 1;
             }
 
-            var options = ProjectCommandOptions.Parse(args[1..], stderr);
+            var options = ProjectCommandOptions.Parse(command, args[1..], stderr);
             if (options is null)
             {
                 return 1;
@@ -74,6 +74,7 @@ internal static class ProjectCliDriver
                 BuildRootDirectory: discovery.RootDirectory,
                 UserConfig: userConfig,
                 DefaultProfiles: EmptyProfiles,
+                TestFilters: options.TestFilters,
                 Stdout: stdout,
                 Stderr: stderr);
             var project = LoadProjectManifest(discovery.Project);
@@ -87,6 +88,7 @@ internal static class ProjectCliDriver
             BuildRootDirectory: discovery.RootDirectory,
             UserConfig: userConfig,
             DefaultProfiles: solution.Profiles,
+            TestFilters: options.TestFilters,
             Stdout: stdout,
             Stderr: stderr);
         var targets = ResolveBuildTargets(solution, options.TargetName, session.ManifestCache, stderr);
@@ -139,6 +141,7 @@ internal static class ProjectCliDriver
             BuildRootDirectory: discovery.RootDirectory,
             UserConfig: userConfig,
             DefaultProfiles: defaultProfiles,
+            TestFilters: options.TestFilters,
             Stdout: stdout,
             Stderr: stderr);
 
@@ -210,6 +213,7 @@ internal static class ProjectCliDriver
             BuildRootDirectory: discovery.RootDirectory,
             UserConfig: userConfig,
             DefaultProfiles: defaultProfiles,
+            TestFilters: options.TestFilters,
             Stdout: stdout,
             Stderr: stderr);
 
@@ -262,6 +266,7 @@ internal static class ProjectCliDriver
                 await stdout.WriteLineAsync("Build and run Stark test projects.");
                 await stdout.WriteLineAsync("- In a test project directory, `stark test` runs that project.");
                 await stdout.WriteLineAsync("- In a solution directory, `stark test` runs the default test set or every test project.");
+                await stdout.WriteLineAsync("- `--filter <text>` may be repeated; matching is ordinal substring over generated [Fact] names.");
                 return;
         }
     }
@@ -344,13 +349,37 @@ internal static class ProjectCliDriver
         var outputDirectory = GetOutputDirectory(project, session);
         Directory.CreateDirectory(outputDirectory);
 
+        var rootSourcePath = Path.GetFullPath(Path.Combine(project.DirectoryPath, project.RootFile));
+        var rootInputPath = rootSourcePath;
+        var generatedTestRunner = false;
+        if (project.Kind == ProjectKind.Test)
+        {
+            var runnerResult = await GenerateTestRunnerIfNeededAsync(project, outputDirectory, session);
+            if (!runnerResult.Success)
+            {
+                return RememberFailure(project, session);
+            }
+
+            if (runnerResult.GeneratedRunner)
+            {
+                rootInputPath = runnerResult.GeneratedPath!;
+                generatedTestRunner = true;
+            }
+        }
+
         var compileArgs = new List<string>
         {
-            Path.GetFullPath(Path.Combine(project.DirectoryPath, project.RootFile)),
+            rootInputPath,
             project.Kind == ProjectKind.Library ? "--emit-lib" : "--emit-exe",
             "-o",
             GetOutputPath(project, outputDirectory)
         };
+
+        if (generatedTestRunner)
+        {
+            compileArgs.Add("-I");
+            compileArgs.Add(Path.GetDirectoryName(rootSourcePath) ?? project.DirectoryPath);
+        }
 
         foreach (var searchDirectory in session.BuildResults.Values
                      .Where(result => result.Success && result.Project.Kind == ProjectKind.Library)
@@ -389,6 +418,44 @@ internal static class ProjectCliDriver
             compileArgs[3]);
         session.BuildResults[project.ManifestPath] = success;
         return success;
+    }
+
+    private static async Task<TestRunnerBuildResult> GenerateTestRunnerIfNeededAsync(
+        ProjectManifest project,
+        string outputDirectory,
+        BuildSession session)
+    {
+        var rootSourcePath = Path.GetFullPath(Path.Combine(project.DirectoryPath, project.RootFile));
+        if (!File.Exists(rootSourcePath))
+        {
+            await session.Stderr.WriteLineAsync(
+                $"Project '{project.Name}' test root '{rootSourcePath}' was not found.");
+            return TestRunnerBuildResult.Fail();
+        }
+
+        var sourceText = await File.ReadAllTextAsync(rootSourcePath);
+        var generation = StarkTestRunnerGenerator.Generate(sourceText, session.TestFilters);
+        if (!generation.Success)
+        {
+            foreach (var diagnostic in generation.Diagnostics)
+            {
+                await session.Stderr.WriteLineAsync(
+                    $"{rootSourcePath}({diagnostic.Line},{diagnostic.Column}): test runner: {diagnostic.Message}");
+            }
+
+            return TestRunnerBuildResult.Fail();
+        }
+
+        if (!generation.GeneratedRunner)
+        {
+            return TestRunnerBuildResult.NotGenerated();
+        }
+
+        var generatedDirectory = Path.Combine(outputDirectory, "tests");
+        Directory.CreateDirectory(generatedDirectory);
+        var generatedPath = Path.Combine(generatedDirectory, $"{project.OutputName}.generated.stark");
+        await File.WriteAllTextAsync(generatedPath, generation.SourceText);
+        return TestRunnerBuildResult.Generated(generatedPath);
     }
 
     private static string GetOptimizationArgument(ProjectManifest project, BuildSession session)
@@ -1033,6 +1100,7 @@ internal static class ProjectCliDriver
         string BuildRootDirectory,
         UserConfig UserConfig,
         IReadOnlyDictionary<BuildProfile, ProfileManifest> DefaultProfiles,
+        IReadOnlyList<string> TestFilters,
         TextWriter Stdout,
         TextWriter Stderr)
     {
@@ -1129,16 +1197,19 @@ internal static class ProjectCliDriver
     private sealed record ProjectCommandOptions(
         BuildProfile Profile,
         string? TargetName,
-        bool ShowHelp)
+        bool ShowHelp,
+        IReadOnlyList<string> TestFilters)
     {
-        public static ProjectCommandOptions? Parse(string[] args, TextWriter stderr)
+        public static ProjectCommandOptions? Parse(ProjectCommand command, string[] args, TextWriter stderr)
         {
             var profile = BuildProfile.Dev;
             string? targetName = null;
             var showHelp = false;
+            var testFilters = new List<string>();
 
-            foreach (var argument in args)
+            for (var index = 0; index < args.Length; index++)
             {
+                var argument = args[index];
                 switch (argument)
                 {
                     case "--dev":
@@ -1151,7 +1222,41 @@ internal static class ProjectCliDriver
                     case "--help":
                         showHelp = true;
                         break;
+                    case "--filter":
+                        if (command != ProjectCommand.Test)
+                        {
+                            stderr.WriteLine("--filter is only valid for `stark test`.");
+                            return null;
+                        }
+
+                        if (index + 1 >= args.Length || string.IsNullOrWhiteSpace(args[index + 1]))
+                        {
+                            stderr.WriteLine("--filter requires a non-empty test name fragment.");
+                            return null;
+                        }
+
+                        testFilters.Add(args[++index]);
+                        break;
                     default:
+                        if (argument.StartsWith("--filter=", StringComparison.Ordinal))
+                        {
+                            if (command != ProjectCommand.Test)
+                            {
+                                stderr.WriteLine("--filter is only valid for `stark test`.");
+                                return null;
+                            }
+
+                            var filter = argument["--filter=".Length..];
+                            if (string.IsNullOrWhiteSpace(filter))
+                            {
+                                stderr.WriteLine("--filter requires a non-empty test name fragment.");
+                                return null;
+                            }
+
+                            testFilters.Add(filter);
+                            break;
+                        }
+
                         if (argument.StartsWith("-", StringComparison.Ordinal))
                         {
                             stderr.WriteLine($"Unknown project command option '{argument}'.");
@@ -1169,8 +1274,18 @@ internal static class ProjectCliDriver
                 }
             }
 
-            return new ProjectCommandOptions(profile, targetName, showHelp);
+            return new ProjectCommandOptions(profile, targetName, showHelp, testFilters);
         }
+    }
+
+    private sealed record TestRunnerBuildResult(
+        bool Success,
+        bool GeneratedRunner,
+        string? GeneratedPath)
+    {
+        public static TestRunnerBuildResult NotGenerated() => new(true, false, null);
+        public static TestRunnerBuildResult Generated(string path) => new(true, true, path);
+        public static TestRunnerBuildResult Fail() => new(false, false, null);
     }
 
     private enum ProjectCommand

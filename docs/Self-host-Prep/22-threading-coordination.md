@@ -11,7 +11,7 @@ the build/test driver eventually wants parallel workers.
 
 The blessed pre-bootstrap threading expansion is:
 
-1. captured/payload thread starts,
+1. explicit payload thread starts,
 2. an easy guard-based shared-state primitive, and
 3. channels for progress and result publication.
 
@@ -34,7 +34,7 @@ surface is still small:
 - publish progress, diagnostics, and per-job results without shared mutable
   result arrays or direct worker printing.
 
-## 3. Captured Thread Payloads
+## 3. Payload Thread Starts
 
 Today's `ThreadEntry` is:
 
@@ -46,8 +46,9 @@ That is enough for simple global-state demos, but not for build workers that nee
 an owned job descriptor, configuration, output channel, or per-worker scratch
 state.
 
-The intended shape is an owning thread start over a heap closure or equivalent
-captured callable:
+The implemented pre-self-host shape is an explicit owning payload entry. Hidden
+capturing thread closures are not part of the pre-self-host surface; they may be
+added later as sugar over the explicit payload form.
 
 ```stark
 import System.Threading
@@ -69,17 +70,24 @@ fn i32[min max] Worker(WorkerPayload payload)
 fn System.Threading.ThreadStatus StartWorker(WorkerPayload payload)
 {
     stack mut System.Threading.Thread worker =
-        System.Threading.Thread.Start(capture(move payload) () => Worker(payload));
+        System.Threading.Thread.Start<WorkerPayload>(Worker, payload);
 
     worker.Detach();
     return System.Threading.ThreadStatus.Ok;
 }
 ```
 
-Exact API spelling is implementation work, but the semantic contract is locked:
+The public API spelling is:
 
-- captured values moved into a new thread must satisfy `Transferable`,
-- shared borrows captured by a scoped thread must satisfy `Shareable`,
+```stark
+public alias ThreadPayloadEntry<T> = fnptr<fn i32[min max](T)>;
+static fn Thread Start<T>(ThreadPayloadEntry<T> entry, T payload)
+    where Transferable(T);
+```
+
+The semantic contract is:
+
+- payload values moved into a new thread must satisfy `Transferable`,
 - the existing no-payload `Thread(ThreadEntry)` constructor remains valid,
 - unsafe raw pointer publication remains explicit and fenced by `unsafe`.
 
@@ -168,7 +176,7 @@ Enforcement points required by this scope:
 
 | Operation | Required law |
 |---|---|
-| Moving a captured payload into a thread | `Transferable(T)` |
+| Moving a payload into a thread | `Transferable(T)` |
 | Sending a value through a channel | `Transferable(T)` |
 | Sharing a `Synchronized<T>` handle across threads | `Shareable(Synchronized<T>)`, granted when `Transferable(T)` holds |
 | Borrowing through a `Locked<T>` guard | Existing borrow/lifetime rules; borrowed access cannot outlive the guard |
@@ -190,25 +198,33 @@ These are not part of the locked self-hosting coordination scope:
 
 ## 8. Work Items
 
-- [ ] Implement captured thread starts end to end: owned payload capture,
+- [x] Implement payload thread starts end to end: owned payload handoff through
+      `ThreadPayloadEntry<T>` / `Thread.Start<T>(entry, payload)`,
       compatibility with the existing no-payload `ThreadEntry` constructor, and
       `Transferable` enforcement for moved payloads.
-- [ ] Implement easy guarded shared state: `System.Threading.Synchronized<T>`,
+- [x] Implement easy guarded shared state: `System.Threading.Synchronized<T>`,
       `Locked<T>` guard lifetime, `drop`-based unlock, borrow rules that prevent
       protected borrows from outliving the guard, and an implementation over
       atomics plus platform wait/wake hooks where useful.
-- [ ] Implement MPSC channels: `System.Threading.Channel<T>` sender/receiver
-      handles, send/receive/close behavior, contention behavior, and
-      `Transferable(T)` enforcement for channel payloads.
-- [ ] Add tests for captured thread payloads, `Transferable` failures, guard
+- [x] Implement MPSC channels: `System.Threading.Channel<T>` sender/receiver
+      handles, send/receive/close behavior, sender-drop completion,
+      receiver-drop close, contention behavior, and `Transferable(T)`
+      enforcement for channel payloads.
+- [x] Add tests for payload thread starts, `Transferable` failures, guard
       lifetime/release behavior, protected-borrow diagnostics, channel
       send/receive/close behavior, and contention.
+      Current coverage includes payload thread-start surface typing, package and
+      native payload-thread lifecycle, payload `Transferable` diagnostics,
+      channel surface typing, channel handle `Shareable`/`Transferable` facts,
+      negative non-transferable channel payload diagnostics, and native
+      send/receive/close, receiver-drop behavior, and contended multi-producer
+      publication.
 - [ ] Add build/test-driver integration tasks only after the synchronous driver
       path works.
 
 ## 9. Documentation Work
 
-- [ ] Update `docs/StandardLibrary/System.Threading.md` after the public API
+- [x] Update `docs/StandardLibrary/System.Threading.md` after the public API
       spelling lands.
 - [ ] Update the book's threading chapter after the API is implemented and tested.
 - [ ] Add examples showing build/test workers publishing events through channels

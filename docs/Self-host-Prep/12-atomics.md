@@ -7,13 +7,13 @@ family, as data types (not a keyword qualifier), seq-cst only in v1.
 
 This phase delivers the **minimal safe-sharing primitive for the threads Stark
 already ships**. The broader thread-ownership redesign (execution roots, scoped
-threads, `threadlocal`, the `static mut` rules) is **parked until after
+threads, `threadlocal`, owning `Thread<T>`) is **parked until after
 self-hosting** — the host compiler is functionally single-threaded (zero uses of
 parallelism; its `async` is sequential I/O idiom), so a synchronous port is
 behaviorally identical and none of that machinery is needed for self-hosting. The
 parked model is preserved in git history (`docs/Self-host-Prep/12-thread-ownership.md`
-prior to this revision, commit `1f8ee74`) and the evolving `Transferable`/`Shareable`
-law design lives in `stark-thread-safety-laws.md` (draft).
+prior to this revision, commit `1f8ee74`). The `Transferable`/`Shareable` law
+design and thread-entry reachable mutable-static rules live in doc `14`.
 
 ## 1. Why Atomics Now
 
@@ -26,7 +26,7 @@ smallest possible scope:
 - The LLVM emitter already produces atomic instructions (the heap allocator's
   spinlock uses `atomicrmw`/`store atomic` in every Stark executable today).
 - They are the foundation the doc `22` coordination layer
-  (`Synchronized<T>`, captured thread payloads, and channels) builds on — nothing
+  (`Synchronized<T>`, explicit payload thread starts, and channels) builds on — nothing
   here is throwaway.
 
 ## 2. Locked Design Decisions
@@ -197,16 +197,16 @@ The implementation matches §2-§5 with these refinements discovered during the 
 
 | Item | Where it lives |
 |---|---|
-| Full thread-ownership model (execution roots, scoped threads, `threadlocal`, `static mut` rules, owning `Thread<T>`) | Git history: doc 12 prior to this revision (commit `1f8ee74`) |
-| `Transferable` / `Shareable` enforcement at call sites and thread boundaries | Doc `14`; declaration surface and law computation have landed |
-| Captured thread payloads, `Synchronized<T>` / `Locked<T>`, and MPSC channels | Doc `22`; build on these atomics + existing platform wait/wake hooks where needed |
+| Full thread-ownership model (execution roots, scoped threads, `threadlocal`, owning `Thread<T>`) | Git history: doc 12 prior to this revision (commit `1f8ee74`) |
+| `Transferable` / `Shareable` enforcement at call sites and thread boundaries | Doc `14`; pre-self-host consumer surface has landed, including thread-entry reachable mutable-static checks |
+| Explicit payload thread starts, `Synchronized<T>` / `Locked<T>`, and MPSC channels | Doc `22`; build on these atomics + existing platform wait/wake hooks where needed |
 | Memory orderings beyond seq-cst | S16 follow-up, only with profiling justification |
 | Consuming `Join`/`Detach` + `ThreadStartResult` API fix | Ride along whenever Threading.stark is next opened |
 
 ## 8. Relationship to the Roadmap
 
 - **S16** (threading coordination): atomics are the first delivered slice; doc
-  `22` limits the follow-up to captured thread payloads, `Synchronized<T>` /
+  `22` limits the follow-up to explicit payload thread starts, `Synchronized<T>` /
   `Locked<T>`, and MPSC channels.
 - **L10** (concurrency replacement): unaffected — confirmed that self-hosting needs
   no concurrency (the host compiler is single-threaded; its `async` is I/O idiom).

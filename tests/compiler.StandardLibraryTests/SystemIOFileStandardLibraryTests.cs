@@ -33,6 +33,95 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
     }
 
     [Fact]
+    public void StdLibSourceWholeFileHelpersUseExplicitStatusAndChunkedBuffers()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var filePath = Path.Combine(sourceRoot, "System", "IO", "File.stark");
+        var source = File.ReadAllText(filePath);
+
+        Assert.Contains("public fn System.IO.IOStatus ReadAllBytesInto(ascii path, mut borrow System.Runtime.Buffer.DynamicByteBuffer destination)", source, StringComparison.Ordinal);
+        Assert.Contains("public fn System.IO.IOResult<System.Runtime.Buffer.DynamicByteBuffer> ReadAllBytes(ascii path)", source, StringComparison.Ordinal);
+        Assert.Contains("public fn System.IO.IOStatus ReadAllTextInto(ascii path, mut borrow System.Text.OwnedAscii destination)", source, StringComparison.Ordinal);
+        Assert.Contains("public fn System.IO.IOResult<System.Text.OwnedAscii> ReadAllText(ascii path)", source, StringComparison.Ordinal);
+        Assert.Contains("public fn System.IO.IOStatus WriteAllBytes(ascii path, borrow i8[min max][] source)", source, StringComparison.Ordinal);
+        Assert.Contains("public fn System.IO.IOStatus WriteAllText(ascii path, ascii text)", source, StringComparison.Ordinal);
+        Assert.Contains("stack mut i8[min max][8192] storage;", source, StringComparison.Ordinal);
+        Assert.Contains("destination.WriteSlice(chunk, count)", source, StringComparison.Ordinal);
+        Assert.Contains("destination.AppendSlice(chunk, count)", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("ReadAllText(ascii path, mut borrow", source, StringComparison.Ordinal);
+
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(
+                source,
+                filePath),
+            new CompilerOptions(
+                EmitLlvmIr: true,
+                ModuleResolver: new FileSystemModuleResolver(sourceRoot)));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+
+    [Fact]
+    public void StdLibSourceAtomicWholeFileHelpersUseExclusiveCreateSyncAndMove()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var filePath = Path.Combine(sourceRoot, "System", "IO", "File.stark");
+        var linuxPath = Path.Combine(sourceRoot, "System", "Runtime", "Platform", "Linux.stark");
+        var macOSPath = Path.Combine(sourceRoot, "System", "Runtime", "Platform", "MacOS.stark");
+        var windowsPath = Path.Combine(sourceRoot, "System", "Runtime", "Platform", "Windows.stark");
+        var source = File.ReadAllText(filePath);
+        var linuxSource = File.ReadAllText(linuxPath);
+        var macOSSource = File.ReadAllText(macOSPath);
+        var windowsSource = File.ReadAllText(windowsPath);
+
+        Assert.Contains("CreateNew,", source, StringComparison.Ordinal);
+        Assert.Contains("public fn System.IO.IOStatus WriteAllBytesAtomic(ascii path, borrow i8[min max][] source)", source, StringComparison.Ordinal);
+        Assert.Contains("public fn System.IO.IOStatus WriteAllTextAtomic(ascii path, ascii text)", source, StringComparison.Ordinal);
+        Assert.Contains("public fn System.IO.IOStatus WriteAllTextAtomic(ascii path, unicode text)", source, StringComparison.Ordinal);
+        Assert.Contains("Open(tempPath.View(), FileMode.CreateNew", source, StringComparison.Ordinal);
+        Assert.Contains("file.SyncAll()", source, StringComparison.Ordinal);
+        Assert.Contains("Move(tempPath, targetPath)", source, StringComparison.Ordinal);
+        Assert.Contains("Delete(tempPath)", source, StringComparison.Ordinal);
+        Assert.Contains("internal enum OpenHandleResult", source, StringComparison.Ordinal);
+        Assert.Contains("System.Runtime.Platform.OpenFileCreateNewResult(path)", source, StringComparison.Ordinal);
+        Assert.Contains("case System.Runtime.Platform.FileOpenResult.Err(var error):", source, StringComparison.Ordinal);
+        Assert.Contains("return OpenHandleResult.Err(IOErrorFromPlatformResult(error));", source, StringComparison.Ordinal);
+
+        Assert.Contains("const LinuxFsyncSyscallNumber = 74;", linuxSource, StringComparison.Ordinal);
+        Assert.Contains("const LinuxOpenExclusiveFlag = 128;", linuxSource, StringComparison.Ordinal);
+        Assert.Contains("internal enum FileOpenResult", linuxSource, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe fn FileOpenResult OpenFileCreateNewResult(ascii path)", linuxSource, StringComparison.Ordinal);
+        Assert.Contains("return FileOpenResult.Err((i32[min max])syscallResult);", linuxSource, StringComparison.Ordinal);
+        Assert.Contains("LinuxOpenExclusiveFlag | LinuxOpenCloseOnExecFlag", linuxSource, StringComparison.Ordinal);
+        Assert.Contains("LinuxSyscall1Handle(LinuxFsyncSyscallNumber, handle)", linuxSource, StringComparison.Ordinal);
+
+        Assert.Contains("const MacOSOpenExclusiveFlag = 2048;", macOSSource, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe ffi fn rawmutptr<i32[min max]> __error();", macOSSource, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe fn FileOpenResult OpenFileCreateNewResult(ascii path)", macOSSource, StringComparison.Ordinal);
+        Assert.Contains("return FileOpenResult.Err(NegativeErrno());", macOSSource, StringComparison.Ordinal);
+        Assert.Contains("MacOSOpenExclusiveFlag | MacOSOpenCloseOnExecFlag", macOSSource, StringComparison.Ordinal);
+        Assert.Contains("fsync(HandleToFd(handle))", macOSSource, StringComparison.Ordinal);
+
+        Assert.Contains("const WinCreateNew = 1;", windowsSource, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe fn FileOpenResult OpenFileCreateNewResult(ascii path)", windowsSource, StringComparison.Ordinal);
+        Assert.Contains("OpenFileWithDispositionResult(path, WinGenericWrite, WinCreateNew)", windowsSource, StringComparison.Ordinal);
+        Assert.Contains("return FileOpenResult.Err(NegativeLastError());", windowsSource, StringComparison.Ordinal);
+        Assert.Contains("FlushFileBuffers(handle)", windowsSource, StringComparison.Ordinal);
+
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(
+                source,
+                filePath),
+            new CompilerOptions(
+                EmitLlvmIr: true,
+                ModuleResolver: new FileSystemModuleResolver(sourceRoot)));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+
+    [Fact]
     public void StdLibSourceOwnedFileHandlesSupportAsciiAndUnicodeWriteOverloads()
     {
         var repositoryRoot = FindRepositoryRoot();
@@ -283,6 +372,29 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
     }
 
     [Fact]
+    public void StdLibSourceLinuxFileSyncUsesFsyncSyscallPath()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var linuxPath = Path.Combine(sourceRoot, "System", "Runtime", "Platform", "Linux.stark");
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(
+                File.ReadAllText(linuxPath),
+                linuxPath),
+            new CompilerOptions(
+                EmitLlvmIr: true,
+                TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null),
+                ModuleResolver: new FileSystemModuleResolver(sourceRoot)));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
+
+        Assert.Contains("define fastcc noundef i32 @FlushFile(", llvm, StringComparison.Ordinal);
+        Assert.Contains("@LinuxFsyncSyscallNumber", llvm, StringComparison.Ordinal);
+        Assert.Contains("call i64 @LinuxSyscall1Handle(", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task SourceStdLibFileSeekRoundTripsOnLinux()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo)
@@ -436,7 +548,7 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                 stdout,
                 stderr);
 
-            Assert.True(exitCode == 0, stderr.ToString());
+            Assert.Equal(0, exitCode);
             Assert.Contains("Emitted executable:", stdout.ToString());
             AssertCompilerLogsEmitted(stderr.ToString());
             Assert.True(File.Exists(outputPath));
@@ -463,6 +575,418 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
             Assert.Equal(string.Empty, processStderr);
             Assert.Equal("abcde", await File.ReadAllTextAsync(Path.Combine(tempDirectory.FullName, "seek.txt")));
             Assert.Equal("cce", await File.ReadAllTextAsync(Path.Combine(tempDirectory.FullName, "seek-result.txt")));
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public async Task SourceStdLibWholeFileHelpersRoundTripOnLinux()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo)
+            || OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-file-whole-");
+        var appPath = Path.Combine(tempDirectory.FullName, "App.stark");
+        var outputPath = Path.Combine(tempDirectory.FullName, "app");
+
+        try
+        {
+            await File.WriteAllTextAsync(
+                appPath,
+                """
+                import System
+                import System.Text
+                import System.Runtime.Buffer
+                module App
+
+                fn bool StatusOk(System.IO.IOStatus status)
+                {
+                    switch (status)
+                    {
+                        case System.IO.IOStatus.Ok:
+                            return true;
+                        case System.IO.IOStatus.Err(var error):
+                            return false;
+                    }
+                }
+
+                fn bool MemoryStatusOk(System.Memory.MemoryStatus status)
+                {
+                    switch (status)
+                    {
+                        case System.Memory.MemoryStatus.Ok:
+                            return true;
+                        case System.Memory.MemoryStatus.Err(var error):
+                            return false;
+                    }
+                }
+
+                fn i32[min max] CheckText(System.IO.IOResult<System.Text.OwnedAscii> result)
+                {
+                    switch (result)
+                    {
+                        case System.IO.IOResult<System.Text.OwnedAscii>.Err(var error):
+                            return 10;
+                        case System.IO.IOResult<System.Text.OwnedAscii>.Ok(var text):
+                            if (text.Length() != 8)
+                            {
+                                return 11;
+                            }
+
+                            stack i8[min max][] bytes = text.AsSlice();
+                            if (bytes[0] != (i8[min max])97 || bytes[7] != (i8[min max])116)
+                            {
+                                return 12;
+                            }
+
+                            return 0;
+                    }
+                }
+
+                fn i32[min max] CheckBytes(System.IO.IOResult<System.Runtime.Buffer.DynamicByteBuffer> result)
+                {
+                    switch (result)
+                    {
+                        case System.IO.IOResult<System.Runtime.Buffer.DynamicByteBuffer>.Err(var error):
+                            return 20;
+                        case System.IO.IOResult<System.Runtime.Buffer.DynamicByteBuffer>.Ok(var bytes):
+                            if (bytes.Length() != 4 || bytes.Readable() != 4)
+                            {
+                                return 21;
+                            }
+
+                            stack i8[min max][] view = bytes.ReadSlice();
+                            if (view[0] != (i8[min max])65 || view[1] != (i8[min max])66 || view[2] != (i8[min max])67 || view[3] != (i8[min max])68)
+                            {
+                                return 22;
+                            }
+
+                            return 0;
+                    }
+                }
+
+                export unsafe fn i32[min max] main()
+                {
+                    if (!StatusOk(System.IO.File.WriteAllText("text.txt", "alphabet")))
+                    {
+                        return 1;
+                    }
+
+                    stack i32[min max] textResult = CheckText(System.IO.File.ReadAllText("text.txt"));
+                    if (textResult != 0)
+                    {
+                        return textResult;
+                    }
+
+                    stack mut System.Text.OwnedAscii appended = new();
+                    if (!MemoryStatusOk(appended.AppendAscii("pre:")))
+                    {
+                        return 2;
+                    }
+
+                    if (!StatusOk(System.IO.File.ReadAllTextInto("text.txt", appended)))
+                    {
+                        return 3;
+                    }
+
+                    if (appended.Length() != 12)
+                    {
+                        return 4;
+                    }
+
+                    stack i8[min max][] appendedView = appended.AsSlice();
+                    if (appendedView[0] != (i8[min max])112 || appendedView[3] != (i8[min max])58 || appendedView[4] != (i8[min max])97 || appendedView[11] != (i8[min max])116)
+                    {
+                        return 5;
+                    }
+
+                    stack mut i8[min max][4] raw =
+                    {
+                        65, 66, 67, 68
+                    };
+                    stack i8[min max][] rawSlice = slice(&raw[0], 4);
+                    if (!StatusOk(System.IO.File.WriteAllBytes("bytes.bin", rawSlice)))
+                    {
+                        return 6;
+                    }
+
+                    stack i32[min max] byteResult = CheckBytes(System.IO.File.ReadAllBytes("bytes.bin"));
+                    if (byteResult != 0)
+                    {
+                        return byteResult;
+                    }
+
+                    stack mut System.Runtime.Buffer.DynamicByteBuffer byteDestination = new();
+                    if (!StatusOk(System.IO.File.ReadAllBytesInto("bytes.bin", byteDestination)))
+                    {
+                        return 7;
+                    }
+
+                    if (byteDestination.Length() != 4 || byteDestination.Readable() != 4)
+                    {
+                        return 8;
+                    }
+
+                    stack i8[min max][] byteDestinationView = byteDestination.ReadSlice();
+                    if (byteDestinationView[0] != (i8[min max])65 || byteDestinationView[3] != (i8[min max])68)
+                    {
+                        return 9;
+                    }
+
+                    return 0;
+                }
+                """);
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+
+            var exitCode = await CompilerCli.RunAsync(
+                [appPath, "--emit-exe", "-I", sourceRoot, "-o", outputPath, "--target", targetInfo.Triple],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.True(exitCode == 0, stderr.ToString());
+            Assert.Contains("Emitted executable:", stdout.ToString());
+            AssertCompilerLogsEmitted(stderr.ToString());
+            Assert.True(File.Exists(outputPath));
+
+            using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = outputPath,
+                WorkingDirectory = tempDirectory.FullName,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            });
+
+            Assert.NotNull(process);
+            var processStdout = await process!.StandardOutput.ReadToEndAsync();
+            var processStderr = await process.StandardError.ReadToEndAsync();
+            await process.WaitForExitAsync();
+
+            Assert.Equal(0, process.ExitCode);
+            Assert.Equal(string.Empty, processStdout);
+            Assert.Equal(string.Empty, processStderr);
+            Assert.Equal("alphabet", await File.ReadAllTextAsync(Path.Combine(tempDirectory.FullName, "text.txt")));
+            Assert.Equal(new byte[] { 65, 66, 67, 68 }, await File.ReadAllBytesAsync(Path.Combine(tempDirectory.FullName, "bytes.bin")));
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public async Task SourceStdLibAtomicWholeFileHelpersReplaceOnLinux()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo)
+            || OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-file-atomic-");
+        var appPath = Path.Combine(tempDirectory.FullName, "App.stark");
+        var outputPath = Path.Combine(tempDirectory.FullName, "app");
+
+        try
+        {
+            await File.WriteAllTextAsync(
+                appPath,
+                """
+                import System
+                import System.Text
+                import System.Runtime.Buffer
+                module App
+
+                fn bool StatusOk(System.IO.IOStatus status)
+                {
+                    switch (status)
+                    {
+                        case System.IO.IOStatus.Ok:
+                            return true;
+                        case System.IO.IOStatus.Err(var error):
+                            return false;
+                    }
+                }
+
+                fn i32[min max] CheckText(System.IO.IOResult<System.Text.OwnedAscii> result)
+                {
+                    switch (result)
+                    {
+                        case System.IO.IOResult<System.Text.OwnedAscii>.Err(var error):
+                            return 10;
+                        case System.IO.IOResult<System.Text.OwnedAscii>.Ok(var text):
+                            if (text.Length() != 9)
+                            {
+                                return 11;
+                            }
+
+                            stack i8[min max][] bytes = text.AsSlice();
+                            if (bytes[0] != (i8[min max])110 || bytes[8] != (i8[min max])101)
+                            {
+                                return 12;
+                            }
+
+                            return 0;
+                    }
+                }
+
+                fn i32[min max] CheckBytes(System.IO.IOResult<System.Runtime.Buffer.DynamicByteBuffer> result)
+                {
+                    switch (result)
+                    {
+                        case System.IO.IOResult<System.Runtime.Buffer.DynamicByteBuffer>.Err(var error):
+                            return 20;
+                        case System.IO.IOResult<System.Runtime.Buffer.DynamicByteBuffer>.Ok(var bytes):
+                            if (bytes.Length() != 3 || bytes.Readable() != 3)
+                            {
+                                return 21;
+                            }
+
+                            stack i8[min max][] view = bytes.ReadSlice();
+                            if (view[0] != (i8[min max])80 || view[1] != (i8[min max])81 || view[2] != (i8[min max])82)
+                            {
+                                return 22;
+                            }
+
+                            return 0;
+                    }
+                }
+
+                fn bool CreateNewFailsWhenTargetExists()
+                {
+                    stack mut System.IO.File.File file = new();
+                    switch (System.IO.File.Open("atomic.txt", System.IO.File.FileMode.CreateNew))
+                    {
+                        case System.IO.IOResult<System.IO.File.File>.Ok(var opened):
+                            file = opened;
+                            file.Close();
+                            return false;
+                        case System.IO.IOResult<System.IO.File.File>.Err(var error):
+                            switch (error)
+                            {
+                                case System.IO.IOError.AlreadyExists:
+                                    return true;
+                                case System.IO.IOError.NotFound:
+                                    return false;
+                                case System.IO.IOError.PermissionDenied:
+                                    return false;
+                                case System.IO.IOError.InvalidPath:
+                                    return false;
+                                case System.IO.IOError.BrokenPipe:
+                                    return false;
+                                case System.IO.IOError.DiskFull:
+                                    return false;
+                                case System.IO.IOError.Unknown(var code):
+                                    return false;
+                            }
+                    }
+                }
+
+                export unsafe fn i32[min max] main()
+                {
+                    if (!StatusOk(System.IO.File.WriteAllText("atomic.txt", "old")))
+                    {
+                        return 1;
+                    }
+
+                    if (!StatusOk(System.IO.File.WriteAllTextAtomic("atomic.txt", "new-value")))
+                    {
+                        return 2;
+                    }
+
+                    stack i32[min max] textResult = CheckText(System.IO.File.ReadAllText("atomic.txt"));
+                    if (textResult != 0)
+                    {
+                        return textResult;
+                    }
+
+                    if (!CreateNewFailsWhenTargetExists())
+                    {
+                        return 3;
+                    }
+
+                    stack mut i8[min max][3] raw =
+                    {
+                        80, 81, 82
+                    };
+                    stack i8[min max][] rawSlice = slice(&raw[0], 3);
+                    if (!StatusOk(System.IO.File.WriteAllBytesAtomic("bytes.bin", rawSlice)))
+                    {
+                        return 4;
+                    }
+
+                    stack i32[min max] byteResult = CheckBytes(System.IO.File.ReadAllBytes("bytes.bin"));
+                    if (byteResult != 0)
+                    {
+                        return byteResult;
+                    }
+
+                    return 0;
+                }
+                """);
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+
+            var exitCode = await CompilerCli.RunAsync(
+                [appPath, "--emit-exe", "-I", sourceRoot, "-o", outputPath, "--target", targetInfo.Triple],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.True(exitCode == 0, stderr.ToString());
+            Assert.Contains("Emitted executable:", stdout.ToString());
+            AssertCompilerLogsEmitted(stderr.ToString());
+            Assert.True(File.Exists(outputPath));
+
+            using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = outputPath,
+                WorkingDirectory = tempDirectory.FullName,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            });
+
+            Assert.NotNull(process);
+            var processStdout = await process!.StandardOutput.ReadToEndAsync();
+            var processStderr = await process.StandardError.ReadToEndAsync();
+            await process.WaitForExitAsync();
+
+            Assert.Equal(0, process.ExitCode);
+            Assert.Equal(string.Empty, processStdout);
+            Assert.Equal(string.Empty, processStderr);
+            Assert.Equal("new-value", await File.ReadAllTextAsync(Path.Combine(tempDirectory.FullName, "atomic.txt")));
+            Assert.Equal(new byte[] { 80, 81, 82 }, await File.ReadAllBytesAsync(Path.Combine(tempDirectory.FullName, "bytes.bin")));
         }
         finally
         {

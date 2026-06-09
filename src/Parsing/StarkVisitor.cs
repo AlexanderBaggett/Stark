@@ -633,6 +633,12 @@ public interface IStarkVisitor<Result> : IParseTreeVisitor<Result> {
 	/// <return>The visitor result.</return>
 	Result VisitStatement([NotNull] StarkParser.StatementContext context);
 	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.labeledStatement"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitLabeledStatement([NotNull] StarkParser.LabeledStatementContext context);
+	/// <summary>
 	/// Visit a parse tree produced by <see cref="StarkParser.unsafeStatement"/>.
 	/// </summary>
 	/// <param name="context">The parse tree.</param>

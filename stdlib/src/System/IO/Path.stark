@@ -36,6 +36,126 @@ internal finite law bool IsDotUnit(i8[min max] value)
     return value == (i8[min max])46;
 }
 
+internal finite law bool IsColonUnit(i8[min max] value)
+{
+    return value == (i8[min max])58;
+}
+
+internal finite law i32[min max] AsciiUnitCode(i8[min max] value)
+{
+    if (value < 0)
+    {
+        return ((i32[min max])value) + 256;
+    }
+
+    return (i32[min max])value;
+}
+
+internal finite law bool IsAsciiDriveLetterUnit(i8[min max] value)
+{
+    stack i32[min max] unit = AsciiUnitCode(value);
+    if (unit >= 65)
+    {
+        if (unit < 91)
+        {
+            return true;
+        }
+    }
+
+    if (unit >= 97)
+    {
+        if (unit < 123)
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+internal finite law bool HasWindowsRootRules()
+{
+    return System.Text.AsciiLength(AlternateDirectorySeparator()) > 0;
+}
+
+internal finite law bool IsAbsoluteFromRootLength(u64[0 2 ** 63 - 1] rootLength)
+{
+    if (rootLength == 0)
+    {
+        return false;
+    }
+
+    if (!HasWindowsRootRules())
+    {
+        return true;
+    }
+
+    return rootLength > 2;
+}
+
+internal unsafe finite law bool SegmentIsDot(
+    rawptr<i8[min max]> data,
+    u64[0 2 ** 63 - 1] start,
+    u64[0 2 ** 63 - 1] end)
+{
+    if (end - start != 1)
+    {
+        return false;
+    }
+
+    return IsDotUnit(*(&data[start]));
+}
+
+internal unsafe finite law bool SegmentIsDotDot(
+    rawptr<i8[min max]> data,
+    u64[0 2 ** 63 - 1] start,
+    u64[0 2 ** 63 - 1] end)
+{
+    if (end - start != 2)
+    {
+        return false;
+    }
+
+    if (!IsDotUnit(*(&data[start])))
+    {
+        return false;
+    }
+
+    return IsDotUnit(*(&data[start + 1]));
+}
+
+internal fn bool OwnedAsciiEndsWithDotDot(
+    borrow System.Text.OwnedAscii value,
+    u64[0 2 ** 63 - 1] rootLength)
+{
+    if (value.Bytes.Length < rootLength + 2)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] last =
+        (u64[0 2 ** 63 - 1])(value.Bytes.Length - 1);
+    stack u64[0 2 ** 63 - 1] previous =
+        (u64[0 2 ** 63 - 1])(value.Bytes.Length - 2);
+    stack i8[min max][] bytes = value.AsSlice();
+    if (!IsDotUnit(bytes[previous]))
+    {
+        return false;
+    }
+
+    if (!IsDotUnit(bytes[last]))
+    {
+        return false;
+    }
+
+    if (previous == rootLength)
+    {
+        return true;
+    }
+
+    return IsDirectorySeparatorUnit(bytes[previous - (u64[0 2 ** 63 - 1])1]);
+}
+
 internal fn System.Memory.MemoryStatus AppendNormalizedSeparatorsCore(
     mut borrow System.Text.OwnedAscii destination,
     ascii source)
@@ -48,8 +168,8 @@ internal fn System.Memory.MemoryStatus AppendNormalizedSeparatorsCore(
             return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
         }
 
-        stack u64[0 2 ** 63 - 1] length = (u64[0 2 ** 63 - 1])signedLength;
-        if (length == 0)
+        stack u64[0 2 ** 63 - 1] pathLength = (u64[0 2 ** 63 - 1])signedLength;
+        if (pathLength == 0)
         {
             return System.Memory.MemoryStatus.Ok;
         }
@@ -60,7 +180,7 @@ internal fn System.Memory.MemoryStatus AppendNormalizedSeparatorsCore(
             return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
         }
 
-        stack System.Memory.MemoryStatus reserveStatus = destination.Reserve(length);
+        stack System.Memory.MemoryStatus reserveStatus = destination.Reserve(pathLength);
         switch (reserveStatus)
         {
             case System.Memory.MemoryStatus.Err(var error):
@@ -70,7 +190,7 @@ internal fn System.Memory.MemoryStatus AppendNormalizedSeparatorsCore(
 
         stack mut bool previousWasSeparator = false;
         stack mut u64[0 2 ** 63 - 1] index = 0;
-        while willexit (index < length)
+        while willexit (index < pathLength)
         {
             stack i8[min max] unit = *(&data[index]);
             if (IsDirectorySeparatorUnit(unit))
@@ -100,10 +220,12 @@ public struct PathFacts
     internal ascii Path;
     internal i64[min max] Length;
     internal i64[min max] End;
+    internal i64[min max] RootLength;
     internal i64[min max] SegmentStart;
     internal i64[min max] ExtensionStart;
     internal i64[min max] DirectoryLength;
     internal bool HasExtension;
+    internal bool Absolute;
 
     inline finite law i64[min max] PathLength(borrow PathFacts self)
     {
@@ -128,6 +250,36 @@ public struct PathFacts
         }
 
         return self.Path[self.ExtensionStart, self.End - self.ExtensionStart];
+    }
+
+    inline finite law i64[min max] RootNameLength(borrow PathFacts self)
+    {
+        return self.RootLength;
+    }
+
+    inline finite law ascii RootName(borrow PathFacts self)
+    {
+        if (self.RootLength <= 0)
+        {
+            return "";
+        }
+
+        return self.Path[0, self.RootLength];
+    }
+
+    inline finite law bool IsRooted(borrow PathFacts self)
+    {
+        return self.RootLength > 0;
+    }
+
+    inline finite law bool IsAbsolute(borrow PathFacts self)
+    {
+        return self.Absolute;
+    }
+
+    inline finite law bool IsRelative(borrow PathFacts self)
+    {
+        return self.RootLength <= 0;
     }
 
     inline finite law i64[min max] BaseNameLength(borrow PathFacts self)
@@ -183,10 +335,12 @@ internal finite law PathFacts EmptyPathFacts()
         Path = "",
         Length = 0,
         End = 0,
+        RootLength = 0,
         SegmentStart = 0,
         ExtensionStart = 0,
         DirectoryLength = 0,
-        HasExtension = false
+        HasExtension = false,
+        Absolute = false
     };
 }
 
@@ -239,9 +393,496 @@ public fn System.Memory.MemoryResult<System.Text.OwnedAscii> CurrentDirectory()
     }
 }
 
+public fn System.Memory.MemoryStatus TempDirectory(mut borrow System.Text.OwnedAscii destination)
+{
+    unsafe
+    {
+        stack mut i8[min max][4096] storage;
+        stack mut Ascii path = new Ascii()
+        {
+            Data = &storage[0],
+            Length = 0,
+            Capacity = 4096
+        };
+
+        if (!System.Runtime.Platform.TryTempDirectory(&path))
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
+        }
+
+        return destination.AppendAscii(System.Text.AsciiView(path));
+    }
+}
+
+public fn System.Memory.MemoryResult<System.Text.OwnedAscii> TempDirectory()
+{
+    stack mut System.Text.OwnedAscii destination = new();
+    stack System.Memory.MemoryStatus status = TempDirectory(destination);
+    switch (status)
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+            return System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(destination);
+    }
+}
+
 public finite law ascii ParentDirectory()
 {
     return "..";
+}
+
+internal finite law bool IsGlobStarUnit(i8[min max] value)
+{
+    return value == (i8[min max])42;
+}
+
+internal finite law bool IsGlobQuestionUnit(i8[min max] value)
+{
+    return value == (i8[min max])63;
+}
+
+internal unsafe finite law i64[min max] SkipGlobSeparators(
+    rawptr<i8[min max]> data,
+    i64[min max] start,
+    i64[min max] length)
+{
+    stack mut i64[min max] index = start;
+    while willexit (index < length)
+    {
+        if (!IsDirectorySeparatorUnit(*(&data[index])))
+        {
+            return index;
+        }
+
+        index += 1;
+    }
+
+    return index;
+}
+
+internal unsafe finite law i64[min max] NextGlobSegmentEnd(
+    rawptr<i8[min max]> data,
+    i64[min max] start,
+    i64[min max] length)
+{
+    stack mut i64[min max] index = start;
+    while willexit (index < length)
+    {
+        if (IsDirectorySeparatorUnit(*(&data[index])))
+        {
+            return index;
+        }
+
+        index += 1;
+    }
+
+    return index;
+}
+
+internal unsafe finite law i64[min max] AdvanceGlobPathSegment(
+    rawptr<i8[min max]> data,
+    i64[min max] start,
+    i64[min max] length)
+{
+    if (start >= length)
+    {
+        return length;
+    }
+
+    stack i64[min max] segmentEnd = NextGlobSegmentEnd(data, start, length);
+    return SkipGlobSeparators(data, segmentEnd, length);
+}
+
+internal unsafe finite law bool GlobSegmentIsDoubleStar(
+    rawptr<i8[min max]> data,
+    i64[min max] start,
+    i64[min max] end)
+{
+    if (end - start != 2)
+    {
+        return false;
+    }
+
+    if (!IsGlobStarUnit(*(&data[start])))
+    {
+        return false;
+    }
+
+    return IsGlobStarUnit(*(&data[start + 1]));
+}
+
+internal unsafe finite law bool GlobSegmentsMatch(
+    rawptr<i8[min max]> patternData,
+    i64[min max] patternStart,
+    i64[min max] patternEnd,
+    rawptr<i8[min max]> pathData,
+    i64[min max] pathStart,
+    i64[min max] pathEnd)
+    where overlap(patternData, pathData)
+{
+    stack mut i64[min max] patternIndex = patternStart;
+    stack mut i64[min max] pathIndex = pathStart;
+    stack mut i64[min max] starIndex = -1;
+    stack mut i64[min max] starPathIndex = pathStart;
+
+    while willexit (pathIndex < pathEnd)
+    {
+        if (patternIndex < patternEnd)
+        {
+            stack i8[min max] patternUnit = *(&patternData[patternIndex]);
+            stack i8[min max] pathUnit = *(&pathData[pathIndex]);
+            if (IsGlobQuestionUnit(patternUnit) || patternUnit == pathUnit)
+            {
+                patternIndex += 1;
+                pathIndex += 1;
+                continue;
+            }
+
+            if (IsGlobStarUnit(patternUnit))
+            {
+                starIndex = patternIndex;
+                starPathIndex = pathIndex;
+                patternIndex += 1;
+                continue;
+            }
+        }
+
+        if (starIndex >= 0)
+        {
+            starPathIndex += 1;
+            pathIndex = starPathIndex;
+            patternIndex = starIndex + 1;
+            continue;
+        }
+
+        return false;
+    }
+
+    while willexit (patternIndex < patternEnd)
+    {
+        if (!IsGlobStarUnit(*(&patternData[patternIndex])))
+        {
+            return false;
+        }
+
+        patternIndex += 1;
+    }
+
+    return true;
+}
+
+public finite law bool GlobMatches(ascii pattern, ascii path)
+    where overlap(pattern, path)
+{
+    unsafe
+    {
+        stack i64[min max] patternLength = System.Text.AsciiLength(pattern);
+        stack i64[min max] pathLength = System.Text.AsciiLength(path);
+        if (patternLength < 0 || pathLength < 0)
+        {
+            return false;
+        }
+
+        stack rawptr<i8[min max]> patternData = System.Text.AsciiData(pattern);
+        stack rawptr<i8[min max]> pathData = System.Text.AsciiData(path);
+        if ((patternLength > 0 && patternData == null) || (pathLength > 0 && pathData == null))
+        {
+            return false;
+        }
+
+        stack mut i64[min max] patternIndex = 0;
+        stack mut i64[min max] pathIndex = 0;
+        stack mut i64[min max] globstarPatternIndex = -1;
+        stack mut i64[min max] globstarPathIndex = -1;
+
+        while willexit (true)
+        {
+            patternIndex = SkipGlobSeparators(patternData, patternIndex, patternLength);
+            pathIndex = SkipGlobSeparators(pathData, pathIndex, pathLength);
+
+            if (patternIndex >= patternLength)
+            {
+                if (pathIndex >= pathLength)
+                {
+                    return true;
+                }
+
+                if (globstarPatternIndex >= 0 && globstarPathIndex < pathLength)
+                {
+                    stack i64[min max] nextPathIndex =
+                        AdvanceGlobPathSegment(pathData, globstarPathIndex, pathLength);
+                    if (nextPathIndex == globstarPathIndex)
+                    {
+                        return false;
+                    }
+
+                    globstarPathIndex = nextPathIndex;
+                    patternIndex = globstarPatternIndex;
+                    pathIndex = globstarPathIndex;
+                    continue;
+                }
+
+                return false;
+            }
+
+            stack i64[min max] patternSegmentEnd =
+                NextGlobSegmentEnd(patternData, patternIndex, patternLength);
+            if (GlobSegmentIsDoubleStar(patternData, patternIndex, patternSegmentEnd))
+            {
+                stack i64[min max] nextPatternIndex =
+                    SkipGlobSeparators(patternData, patternSegmentEnd, patternLength);
+                if (nextPatternIndex >= patternLength)
+                {
+                    return true;
+                }
+
+                globstarPatternIndex = nextPatternIndex;
+                globstarPathIndex = pathIndex;
+                patternIndex = nextPatternIndex;
+                continue;
+            }
+
+            stack mut i64[min max] pathSegmentEnd = pathIndex;
+            if (pathIndex < pathLength)
+            {
+                pathSegmentEnd = NextGlobSegmentEnd(pathData, pathIndex, pathLength);
+            }
+
+            if (GlobSegmentsMatch(
+                patternData,
+                patternIndex,
+                patternSegmentEnd,
+                pathData,
+                pathIndex,
+                pathSegmentEnd))
+            {
+                patternIndex = patternSegmentEnd;
+                pathIndex = pathSegmentEnd;
+                continue;
+            }
+
+            if (globstarPatternIndex >= 0 && globstarPathIndex < pathLength)
+            {
+                stack i64[min max] nextGlobstarPathIndex =
+                    AdvanceGlobPathSegment(pathData, globstarPathIndex, pathLength);
+                if (nextGlobstarPathIndex == globstarPathIndex)
+                {
+                    return false;
+                }
+
+                globstarPathIndex = nextGlobstarPathIndex;
+                patternIndex = globstarPatternIndex;
+                pathIndex = globstarPathIndex;
+                continue;
+            }
+
+            return false;
+        }
+
+        return false;
+    }
+}
+
+public fn System.Memory.MemoryStatus TryTempName(
+    mut borrow System.Text.OwnedAscii destination,
+    ascii prefix,
+    u64[0 max] attempt,
+    ascii suffix)
+    where overlap(destination, prefix),
+          overlap(destination, suffix),
+          overlap(prefix, suffix)
+{
+    stack mut ascii effectivePrefix = prefix;
+    if (System.Text.AsciiLength(effectivePrefix) == 0)
+    {
+        effectivePrefix = "stark-";
+    }
+
+    stack mut ascii sourcePrefix = effectivePrefix;
+    stack mut ascii sourceSuffix = suffix;
+    stack mut System.Text.OwnedAscii prefixSnapshot = new();
+    stack mut System.Text.OwnedAscii suffixSnapshot = new();
+
+    unsafe
+    {
+        if (destination.Bytes.Length > 0)
+        {
+            if disjoint(effectivePrefix, destination.Bytes[0, destination.Bytes.Length])
+            {
+            }
+            else
+            {
+                stack System.Memory.MemoryStatus prefixSnapshotStatus = prefixSnapshot.AppendAscii(effectivePrefix);
+                switch (prefixSnapshotStatus)
+                {
+                    case System.Memory.MemoryStatus.Err(var prefixSnapshotError):
+                        return System.Memory.MemoryStatus.Err(prefixSnapshotError);
+                    case System.Memory.MemoryStatus.Ok:
+                        sourcePrefix = prefixSnapshot.View();
+                }
+            }
+
+            if disjoint(suffix, destination.Bytes[0, destination.Bytes.Length])
+            {
+            }
+            else
+            {
+                stack System.Memory.MemoryStatus suffixSnapshotStatus = suffixSnapshot.AppendAscii(suffix);
+                switch (suffixSnapshotStatus)
+                {
+                    case System.Memory.MemoryStatus.Err(var suffixSnapshotError):
+                        return System.Memory.MemoryStatus.Err(suffixSnapshotError);
+                    case System.Memory.MemoryStatus.Ok:
+                        sourceSuffix = suffixSnapshot.View();
+                }
+            }
+        }
+    }
+
+    stack i64[min max] prefixLength = System.Text.AsciiLength(sourcePrefix);
+    stack i64[min max] suffixLength = System.Text.AsciiLength(sourceSuffix);
+    if (prefixLength < 0 || suffixLength < 0)
+    {
+        destination.Clear();
+        return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
+    }
+
+    stack mut u64[0 2 ** 63 - 1] required = (u64[0 2 ** 63 - 1])prefixLength;
+    if (required > (u64[0 2 ** 63 - 1])(2 ** 63 - 1) - 32)
+    {
+        destination.Clear();
+        return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.TooLarge);
+    }
+
+    required += 32;
+    stack u64[0 2 ** 63 - 1] suffixCount = (u64[0 2 ** 63 - 1])suffixLength;
+    if (suffixCount > (u64[0 2 ** 63 - 1])(2 ** 63 - 1) - required)
+    {
+        destination.Clear();
+        return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.TooLarge);
+    }
+
+    required += suffixCount;
+    destination.Clear();
+    stack System.Memory.MemoryStatus reserveStatus = destination.Reserve(required);
+    switch (reserveStatus)
+    {
+        case System.Memory.MemoryStatus.Err(var reserveError):
+            destination.Clear();
+            return System.Memory.MemoryStatus.Err(reserveError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    stack System.Memory.MemoryStatus prefixStatus = destination.AppendAscii(sourcePrefix);
+    switch (prefixStatus)
+    {
+        case System.Memory.MemoryStatus.Err(var prefixError):
+            destination.Clear();
+            return System.Memory.MemoryStatus.Err(prefixError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    stack System.Memory.MemoryStatus processStatus =
+        destination.AppendI64((i64[min max])System.Runtime.Platform.ProcessId());
+    switch (processStatus)
+    {
+        case System.Memory.MemoryStatus.Err(var processError):
+            destination.Clear();
+            return System.Memory.MemoryStatus.Err(processError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    stack System.Memory.MemoryStatus separatorStatus = destination.AppendByte((i8[min max])45);
+    switch (separatorStatus)
+    {
+        case System.Memory.MemoryStatus.Err(var separatorError):
+            destination.Clear();
+            return System.Memory.MemoryStatus.Err(separatorError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    stack System.Memory.MemoryStatus attemptStatus = destination.AppendU64(attempt);
+    switch (attemptStatus)
+    {
+        case System.Memory.MemoryStatus.Err(var attemptError):
+            destination.Clear();
+            return System.Memory.MemoryStatus.Err(attemptError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    stack System.Memory.MemoryStatus suffixStatus = destination.AppendAscii(sourceSuffix);
+    switch (suffixStatus)
+    {
+        case System.Memory.MemoryStatus.Err(var suffixError):
+            destination.Clear();
+            return System.Memory.MemoryStatus.Err(suffixError);
+        case System.Memory.MemoryStatus.Ok:
+            return System.Memory.MemoryStatus.Ok;
+    }
+}
+
+public fn System.Memory.MemoryResult<System.Text.OwnedAscii> TempName(
+    ascii prefix,
+    u64[0 max] attempt,
+    ascii suffix)
+    where overlap(prefix, suffix)
+{
+    stack mut System.Text.OwnedAscii destination = new();
+    stack System.Memory.MemoryStatus status = TryTempName(destination, prefix, attempt, suffix);
+    switch (status)
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+            return System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(destination);
+    }
+}
+
+public fn System.Memory.MemoryStatus TryTempPathIn(
+    mut borrow System.Text.OwnedAscii destination,
+    ascii parent,
+    ascii prefix,
+    u64[0 max] attempt,
+    ascii suffix)
+    where overlap(destination, parent),
+          overlap(destination, prefix),
+          overlap(destination, suffix),
+          overlap(parent, prefix),
+          overlap(parent, suffix),
+          overlap(prefix, suffix)
+{
+    stack mut System.Text.OwnedAscii name = new();
+    stack System.Memory.MemoryStatus nameStatus = TryTempName(name, prefix, attempt, suffix);
+    switch (nameStatus)
+    {
+        case System.Memory.MemoryStatus.Err(var nameError):
+            destination.Clear();
+            return System.Memory.MemoryStatus.Err(nameError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    return TryJoin(destination, parent, name.View());
+}
+
+public fn System.Memory.MemoryResult<System.Text.OwnedAscii> TempPathIn(
+    ascii parent,
+    ascii prefix,
+    u64[0 max] attempt,
+    ascii suffix)
+    where overlap(parent, prefix),
+          overlap(parent, suffix),
+          overlap(prefix, suffix)
+{
+    stack mut System.Text.OwnedAscii destination = new();
+    stack System.Memory.MemoryStatus status = TryTempPathIn(destination, parent, prefix, attempt, suffix);
+    switch (status)
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+            return System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(destination);
+    }
 }
 
 internal unsafe fn System.Memory.MemoryStatus TryJoinPointerRanges(
@@ -347,6 +988,260 @@ internal unsafe fn System.Memory.MemoryStatus TryJoinPointerRanges(
                 case System.Memory.MemoryStatus.Ok:
             }
         }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal unsafe inline fn System.Memory.MemoryStatus AppendPointerRangeDisjoint(
+    mut borrow System.Text.OwnedAscii destination,
+    u64[0 2 ** 63 - 1] count,
+    rawptr<i8[min max]> data)
+{
+    if (count == 0)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    if (data == null)
+    {
+        return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
+    }
+
+    stack System.Memory.MemoryStatus reserveStatus = destination.Reserve(count);
+    switch (reserveStatus)
+    {
+        case System.Memory.MemoryStatus.Err(var reserveError):
+            return System.Memory.MemoryStatus.Err(reserveError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    stack init i8[min max][] tail = init destination.Bytes[destination.Bytes.Length, count];
+    unsafe
+    {
+        return System.Memory.InitializeBytesFromPointerDisjoint(count, data, tail);
+    }
+}
+
+internal unsafe inline fn System.Memory.MemoryStatus AppendJoinedPointerRangeDisjoint(
+    mut borrow System.Text.OwnedAscii destination,
+    u64[0 2 ** 63 - 1] count,
+    rawptr<i8[min max]> data)
+{
+    if (count == 0)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    if (data == null)
+    {
+        return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
+    }
+
+    stack mut u64[0 2 ** 63 - 1] start = 0;
+    stack mut u64[0 2 ** 63 - 1] copyLength = count;
+    if (destination.Bytes.Length > 0)
+    {
+        stack i8[min max][] bytes = destination.AsSlice();
+        stack bool leftEndsWithSeparator =
+            IsDirectorySeparatorUnit(bytes[(u64[0 2 ** 63 - 1])(destination.Bytes.Length - 1)]);
+        stack bool rightStartsWithSeparator = IsDirectorySeparatorUnit(*data);
+        if (leftEndsWithSeparator && rightStartsWithSeparator)
+        {
+            start = 1;
+            copyLength -= 1;
+        }
+        else
+        {
+            if (!leftEndsWithSeparator && !rightStartsWithSeparator)
+            {
+                init destination.Bytes[destination.Bytes.Length] = DirectorySeparatorUnit();
+            }
+        }
+    }
+
+    if (copyLength == 0)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    return AppendPointerRangeDisjoint(destination, copyLength, &data[start]);
+}
+
+internal unsafe fn System.Memory.MemoryStatus TryJoinPointerRanges3(
+    mut borrow System.Text.OwnedAscii destination,
+    u64[0 2 ** 63 - 1] firstCount,
+    rawptr<i8[min max]> firstData,
+    u64[0 2 ** 63 - 1] secondCount,
+    rawptr<i8[min max]> secondData,
+    u64[0 2 ** 63 - 1] thirdCount,
+    rawptr<i8[min max]> thirdData)
+    where overlap(firstData, secondData),
+          overlap(firstData, thirdData),
+          overlap(secondData, thirdData)
+{
+    stack mut u64[0 2 ** 63 - 1] required = firstCount;
+    if (secondCount > (u64[0 2 ** 63 - 1])(2 ** 63 - 1) - required)
+    {
+        return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.TooLarge);
+    }
+
+    required += secondCount;
+    if (thirdCount > (u64[0 2 ** 63 - 1])(2 ** 63 - 1) - required)
+    {
+        return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.TooLarge);
+    }
+
+    required += thirdCount;
+    if (required > (u64[0 2 ** 63 - 1])(2 ** 63 - 1) - 2)
+    {
+        return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.TooLarge);
+    }
+
+    required += 2;
+    if ((firstCount > 0 && firstData == null)
+        || (secondCount > 0 && secondData == null)
+        || (thirdCount > 0 && thirdData == null))
+        {
+        return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
+    }
+
+    destination.Clear();
+
+    stack System.Memory.MemoryStatus reserveStatus = destination.Reserve(required);
+    switch (reserveStatus)
+    {
+        case System.Memory.MemoryStatus.Err(var reserveError):
+            destination.Clear();
+            return System.Memory.MemoryStatus.Err(reserveError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    stack System.Memory.MemoryStatus firstStatus = AppendJoinedPointerRangeDisjoint(destination, firstCount, firstData);
+    switch (firstStatus)
+    {
+        case System.Memory.MemoryStatus.Err(var firstError):
+            destination.Clear();
+            return System.Memory.MemoryStatus.Err(firstError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    stack System.Memory.MemoryStatus secondStatus = AppendJoinedPointerRangeDisjoint(destination, secondCount, secondData);
+    switch (secondStatus)
+    {
+        case System.Memory.MemoryStatus.Err(var secondError):
+            destination.Clear();
+            return System.Memory.MemoryStatus.Err(secondError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    stack System.Memory.MemoryStatus thirdStatus = AppendJoinedPointerRangeDisjoint(destination, thirdCount, thirdData);
+    switch (thirdStatus)
+    {
+        case System.Memory.MemoryStatus.Err(var thirdError):
+            destination.Clear();
+            return System.Memory.MemoryStatus.Err(thirdError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal unsafe fn System.Memory.MemoryStatus TryJoinPointerRanges4(
+    mut borrow System.Text.OwnedAscii destination,
+    u64[0 2 ** 63 - 1] firstCount,
+    rawptr<i8[min max]> firstData,
+    u64[0 2 ** 63 - 1] secondCount,
+    rawptr<i8[min max]> secondData,
+    u64[0 2 ** 63 - 1] thirdCount,
+    rawptr<i8[min max]> thirdData,
+    u64[0 2 ** 63 - 1] fourthCount,
+    rawptr<i8[min max]> fourthData)
+    where overlap(firstData, secondData),
+          overlap(firstData, thirdData),
+          overlap(firstData, fourthData),
+          overlap(secondData, thirdData),
+          overlap(secondData, fourthData),
+          overlap(thirdData, fourthData)
+{
+    stack mut u64[0 2 ** 63 - 1] required = firstCount;
+    if (secondCount > (u64[0 2 ** 63 - 1])(2 ** 63 - 1) - required)
+    {
+        return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.TooLarge);
+    }
+
+    required += secondCount;
+    if (thirdCount > (u64[0 2 ** 63 - 1])(2 ** 63 - 1) - required)
+    {
+        return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.TooLarge);
+    }
+
+    required += thirdCount;
+    if (fourthCount > (u64[0 2 ** 63 - 1])(2 ** 63 - 1) - required)
+    {
+        return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.TooLarge);
+    }
+
+    required += fourthCount;
+    if (required > (u64[0 2 ** 63 - 1])(2 ** 63 - 1) - 3)
+    {
+        return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.TooLarge);
+    }
+
+    required += 3;
+    if ((firstCount > 0 && firstData == null)
+        || (secondCount > 0 && secondData == null)
+        || (thirdCount > 0 && thirdData == null)
+        || (fourthCount > 0 && fourthData == null))
+        {
+        return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
+    }
+
+    destination.Clear();
+
+    stack System.Memory.MemoryStatus reserveStatus = destination.Reserve(required);
+    switch (reserveStatus)
+    {
+        case System.Memory.MemoryStatus.Err(var reserveError):
+            destination.Clear();
+            return System.Memory.MemoryStatus.Err(reserveError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    stack System.Memory.MemoryStatus firstStatus = AppendJoinedPointerRangeDisjoint(destination, firstCount, firstData);
+    switch (firstStatus)
+    {
+        case System.Memory.MemoryStatus.Err(var firstError):
+            destination.Clear();
+            return System.Memory.MemoryStatus.Err(firstError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    stack System.Memory.MemoryStatus secondStatus = AppendJoinedPointerRangeDisjoint(destination, secondCount, secondData);
+    switch (secondStatus)
+    {
+        case System.Memory.MemoryStatus.Err(var secondError):
+            destination.Clear();
+            return System.Memory.MemoryStatus.Err(secondError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    stack System.Memory.MemoryStatus thirdStatus = AppendJoinedPointerRangeDisjoint(destination, thirdCount, thirdData);
+    switch (thirdStatus)
+    {
+        case System.Memory.MemoryStatus.Err(var thirdError):
+            destination.Clear();
+            return System.Memory.MemoryStatus.Err(thirdError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    stack System.Memory.MemoryStatus fourthStatus = AppendJoinedPointerRangeDisjoint(destination, fourthCount, fourthData);
+    switch (fourthStatus)
+    {
+        case System.Memory.MemoryStatus.Err(var fourthError):
+            destination.Clear();
+            return System.Memory.MemoryStatus.Err(fourthError);
+        case System.Memory.MemoryStatus.Ok:
     }
 
     return System.Memory.MemoryStatus.Ok;
@@ -459,6 +1354,372 @@ public fn System.Memory.MemoryStatus TryJoinConst(
         }
 }
 
+public fn System.Memory.MemoryStatus TryJoin(
+    mut borrow System.Text.OwnedAscii destination,
+    ascii first,
+    ascii second,
+    ascii third)
+    where overlap(destination, first),
+          overlap(destination, second),
+          overlap(destination, third),
+          overlap(first, second),
+          overlap(first, third),
+          overlap(second, third)
+{
+        unsafe
+        {
+        stack i64[min max] firstLength = System.Text.AsciiLength(first);
+        stack i64[min max] secondLength = System.Text.AsciiLength(second);
+        stack i64[min max] thirdLength = System.Text.AsciiLength(third);
+        if (firstLength < 0 || secondLength < 0 || thirdLength < 0)
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
+        }
+
+        stack u64[0 2 ** 63 - 1] firstCount = (u64[0 2 ** 63 - 1])firstLength;
+        stack u64[0 2 ** 63 - 1] secondCount = (u64[0 2 ** 63 - 1])secondLength;
+        stack u64[0 2 ** 63 - 1] thirdCount = (u64[0 2 ** 63 - 1])thirdLength;
+        stack mut rawptr<i8[min max]> firstData = System.Text.AsciiData(first);
+        stack mut rawptr<i8[min max]> secondData = System.Text.AsciiData(second);
+        stack mut rawptr<i8[min max]> thirdData = System.Text.AsciiData(third);
+        if ((firstCount > 0 && firstData == null)
+            || (secondCount > 0 && secondData == null)
+            || (thirdCount > 0 && thirdData == null))
+            {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
+        }
+
+        stack mut System.Text.OwnedAscii firstSnapshot = new();
+        stack mut System.Text.OwnedAscii secondSnapshot = new();
+        stack mut System.Text.OwnedAscii thirdSnapshot = new();
+        if (destination.Bytes.Length > 0)
+        {
+            if disjoint(first, destination.Bytes[0, destination.Bytes.Length])
+            {
+            }
+            else
+            {
+                stack System.Memory.MemoryStatus firstSnapshotStatus = firstSnapshot.AppendAscii(first);
+                switch (firstSnapshotStatus)
+                {
+                    case System.Memory.MemoryStatus.Err(var firstSnapshotError):
+                        return System.Memory.MemoryStatus.Err(firstSnapshotError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+
+                firstData = System.Text.AsciiData(firstSnapshot.View());
+            }
+
+            if disjoint(second, destination.Bytes[0, destination.Bytes.Length])
+            {
+            }
+            else
+            {
+                stack System.Memory.MemoryStatus secondSnapshotStatus = secondSnapshot.AppendAscii(second);
+                switch (secondSnapshotStatus)
+                {
+                    case System.Memory.MemoryStatus.Err(var secondSnapshotError):
+                        return System.Memory.MemoryStatus.Err(secondSnapshotError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+
+                secondData = System.Text.AsciiData(secondSnapshot.View());
+            }
+
+            if disjoint(third, destination.Bytes[0, destination.Bytes.Length])
+            {
+            }
+            else
+            {
+                stack System.Memory.MemoryStatus thirdSnapshotStatus = thirdSnapshot.AppendAscii(third);
+                switch (thirdSnapshotStatus)
+                {
+                    case System.Memory.MemoryStatus.Err(var thirdSnapshotError):
+                        return System.Memory.MemoryStatus.Err(thirdSnapshotError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+
+                thirdData = System.Text.AsciiData(thirdSnapshot.View());
+            }
+        }
+
+        assume disjoint(destination, firstData)
+        {
+            assume disjoint(destination, secondData)
+            {
+                assume disjoint(destination, thirdData)
+                {
+                    return TryJoinPointerRanges3(
+                        destination,
+                        firstCount,
+                        firstData,
+                        secondCount,
+                        secondData,
+                        thirdCount,
+                        thirdData);
+                }
+            }
+        }
+        }
+}
+
+public fn System.Memory.MemoryStatus TryJoinConst(
+    mut borrow System.Text.OwnedAscii destination,
+    const ascii first,
+    const ascii second,
+    const ascii third)
+    where overlap(first, second),
+          overlap(first, third),
+          overlap(second, third)
+{
+        unsafe
+        {
+        stack i64[min max] firstLength = System.Text.AsciiLength(first);
+        stack i64[min max] secondLength = System.Text.AsciiLength(second);
+        stack i64[min max] thirdLength = System.Text.AsciiLength(third);
+        if (firstLength < 0 || secondLength < 0 || thirdLength < 0)
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
+        }
+
+        stack u64[0 2 ** 63 - 1] firstCount = (u64[0 2 ** 63 - 1])firstLength;
+        stack u64[0 2 ** 63 - 1] secondCount = (u64[0 2 ** 63 - 1])secondLength;
+        stack u64[0 2 ** 63 - 1] thirdCount = (u64[0 2 ** 63 - 1])thirdLength;
+        stack rawptr<i8[min max]> firstData = System.Text.AsciiData(first);
+        stack rawptr<i8[min max]> secondData = System.Text.AsciiData(second);
+        stack rawptr<i8[min max]> thirdData = System.Text.AsciiData(third);
+        if ((firstCount > 0 && firstData == null)
+            || (secondCount > 0 && secondData == null)
+            || (thirdCount > 0 && thirdData == null))
+            {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
+        }
+
+        assume disjoint(destination, firstData)
+        {
+            assume disjoint(destination, secondData)
+            {
+                assume disjoint(destination, thirdData)
+                {
+                    return TryJoinPointerRanges3(
+                        destination,
+                        firstCount,
+                        firstData,
+                        secondCount,
+                        secondData,
+                        thirdCount,
+                        thirdData);
+                }
+            }
+        }
+        }
+}
+
+public fn System.Memory.MemoryStatus TryJoin(
+    mut borrow System.Text.OwnedAscii destination,
+    ascii first,
+    ascii second,
+    ascii third,
+    ascii fourth)
+    where overlap(destination, first),
+          overlap(destination, second),
+          overlap(destination, third),
+          overlap(destination, fourth),
+          overlap(first, second),
+          overlap(first, third),
+          overlap(first, fourth),
+          overlap(second, third),
+          overlap(second, fourth),
+          overlap(third, fourth)
+{
+        unsafe
+        {
+        stack i64[min max] firstLength = System.Text.AsciiLength(first);
+        stack i64[min max] secondLength = System.Text.AsciiLength(second);
+        stack i64[min max] thirdLength = System.Text.AsciiLength(third);
+        stack i64[min max] fourthLength = System.Text.AsciiLength(fourth);
+        if (firstLength < 0 || secondLength < 0 || thirdLength < 0 || fourthLength < 0)
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
+        }
+
+        stack u64[0 2 ** 63 - 1] firstCount = (u64[0 2 ** 63 - 1])firstLength;
+        stack u64[0 2 ** 63 - 1] secondCount = (u64[0 2 ** 63 - 1])secondLength;
+        stack u64[0 2 ** 63 - 1] thirdCount = (u64[0 2 ** 63 - 1])thirdLength;
+        stack u64[0 2 ** 63 - 1] fourthCount = (u64[0 2 ** 63 - 1])fourthLength;
+        stack mut rawptr<i8[min max]> firstData = System.Text.AsciiData(first);
+        stack mut rawptr<i8[min max]> secondData = System.Text.AsciiData(second);
+        stack mut rawptr<i8[min max]> thirdData = System.Text.AsciiData(third);
+        stack mut rawptr<i8[min max]> fourthData = System.Text.AsciiData(fourth);
+        if ((firstCount > 0 && firstData == null)
+            || (secondCount > 0 && secondData == null)
+            || (thirdCount > 0 && thirdData == null)
+            || (fourthCount > 0 && fourthData == null))
+            {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
+        }
+
+        stack mut System.Text.OwnedAscii firstSnapshot = new();
+        stack mut System.Text.OwnedAscii secondSnapshot = new();
+        stack mut System.Text.OwnedAscii thirdSnapshot = new();
+        stack mut System.Text.OwnedAscii fourthSnapshot = new();
+        if (destination.Bytes.Length > 0)
+        {
+            if disjoint(first, destination.Bytes[0, destination.Bytes.Length])
+            {
+            }
+            else
+            {
+                stack System.Memory.MemoryStatus firstSnapshotStatus = firstSnapshot.AppendAscii(first);
+                switch (firstSnapshotStatus)
+                {
+                    case System.Memory.MemoryStatus.Err(var firstSnapshotError):
+                        return System.Memory.MemoryStatus.Err(firstSnapshotError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+
+                firstData = System.Text.AsciiData(firstSnapshot.View());
+            }
+
+            if disjoint(second, destination.Bytes[0, destination.Bytes.Length])
+            {
+            }
+            else
+            {
+                stack System.Memory.MemoryStatus secondSnapshotStatus = secondSnapshot.AppendAscii(second);
+                switch (secondSnapshotStatus)
+                {
+                    case System.Memory.MemoryStatus.Err(var secondSnapshotError):
+                        return System.Memory.MemoryStatus.Err(secondSnapshotError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+
+                secondData = System.Text.AsciiData(secondSnapshot.View());
+            }
+
+            if disjoint(third, destination.Bytes[0, destination.Bytes.Length])
+            {
+            }
+            else
+            {
+                stack System.Memory.MemoryStatus thirdSnapshotStatus = thirdSnapshot.AppendAscii(third);
+                switch (thirdSnapshotStatus)
+                {
+                    case System.Memory.MemoryStatus.Err(var thirdSnapshotError):
+                        return System.Memory.MemoryStatus.Err(thirdSnapshotError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+
+                thirdData = System.Text.AsciiData(thirdSnapshot.View());
+            }
+
+            if disjoint(fourth, destination.Bytes[0, destination.Bytes.Length])
+            {
+            }
+            else
+            {
+                stack System.Memory.MemoryStatus fourthSnapshotStatus = fourthSnapshot.AppendAscii(fourth);
+                switch (fourthSnapshotStatus)
+                {
+                    case System.Memory.MemoryStatus.Err(var fourthSnapshotError):
+                        return System.Memory.MemoryStatus.Err(fourthSnapshotError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+
+                fourthData = System.Text.AsciiData(fourthSnapshot.View());
+            }
+        }
+
+        assume disjoint(destination, firstData)
+        {
+            assume disjoint(destination, secondData)
+            {
+                assume disjoint(destination, thirdData)
+                {
+                    assume disjoint(destination, fourthData)
+                    {
+                        return TryJoinPointerRanges4(
+                            destination,
+                            firstCount,
+                            firstData,
+                            secondCount,
+                            secondData,
+                            thirdCount,
+                            thirdData,
+                            fourthCount,
+                            fourthData);
+                    }
+                }
+            }
+        }
+        }
+}
+
+public fn System.Memory.MemoryStatus TryJoinConst(
+    mut borrow System.Text.OwnedAscii destination,
+    const ascii first,
+    const ascii second,
+    const ascii third,
+    const ascii fourth)
+    where overlap(first, second),
+          overlap(first, third),
+          overlap(first, fourth),
+          overlap(second, third),
+          overlap(second, fourth),
+          overlap(third, fourth)
+{
+        unsafe
+        {
+        stack i64[min max] firstLength = System.Text.AsciiLength(first);
+        stack i64[min max] secondLength = System.Text.AsciiLength(second);
+        stack i64[min max] thirdLength = System.Text.AsciiLength(third);
+        stack i64[min max] fourthLength = System.Text.AsciiLength(fourth);
+        if (firstLength < 0 || secondLength < 0 || thirdLength < 0 || fourthLength < 0)
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
+        }
+
+        stack u64[0 2 ** 63 - 1] firstCount = (u64[0 2 ** 63 - 1])firstLength;
+        stack u64[0 2 ** 63 - 1] secondCount = (u64[0 2 ** 63 - 1])secondLength;
+        stack u64[0 2 ** 63 - 1] thirdCount = (u64[0 2 ** 63 - 1])thirdLength;
+        stack u64[0 2 ** 63 - 1] fourthCount = (u64[0 2 ** 63 - 1])fourthLength;
+        stack rawptr<i8[min max]> firstData = System.Text.AsciiData(first);
+        stack rawptr<i8[min max]> secondData = System.Text.AsciiData(second);
+        stack rawptr<i8[min max]> thirdData = System.Text.AsciiData(third);
+        stack rawptr<i8[min max]> fourthData = System.Text.AsciiData(fourth);
+        if ((firstCount > 0 && firstData == null)
+            || (secondCount > 0 && secondData == null)
+            || (thirdCount > 0 && thirdData == null)
+            || (fourthCount > 0 && fourthData == null))
+            {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
+        }
+
+        assume disjoint(destination, firstData)
+        {
+            assume disjoint(destination, secondData)
+            {
+                assume disjoint(destination, thirdData)
+                {
+                    assume disjoint(destination, fourthData)
+                    {
+                        return TryJoinPointerRanges4(
+                            destination,
+                            firstCount,
+                            firstData,
+                            secondCount,
+                            secondData,
+                            thirdCount,
+                            thirdData,
+                            fourthCount,
+                            fourthData);
+                    }
+                }
+            }
+        }
+        }
+}
+
 public fn System.Memory.MemoryResult<System.Text.OwnedAscii> Join(ascii left, ascii right)
     where overlap(left, right)
 {
@@ -478,6 +1739,87 @@ public fn System.Memory.MemoryResult<System.Text.OwnedAscii> JoinConst(const asc
 {
     stack mut System.Text.OwnedAscii destination = new();
     stack System.Memory.MemoryStatus status = TryJoinConst(destination, left, right);
+    switch (status)
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+            return System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(destination);
+    }
+}
+
+public fn System.Memory.MemoryResult<System.Text.OwnedAscii> Join(ascii first, ascii second, ascii third)
+    where overlap(first, second),
+          overlap(first, third),
+          overlap(second, third)
+{
+    stack mut System.Text.OwnedAscii destination = new();
+    stack System.Memory.MemoryStatus status = TryJoin(destination, first, second, third);
+    switch (status)
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+            return System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(destination);
+    }
+}
+
+public fn System.Memory.MemoryResult<System.Text.OwnedAscii> JoinConst(
+    const ascii first,
+    const ascii second,
+    const ascii third)
+    where overlap(first, second),
+          overlap(first, third),
+          overlap(second, third)
+{
+    stack mut System.Text.OwnedAscii destination = new();
+    stack System.Memory.MemoryStatus status = TryJoinConst(destination, first, second, third);
+    switch (status)
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+            return System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(destination);
+    }
+}
+
+public fn System.Memory.MemoryResult<System.Text.OwnedAscii> Join(
+    ascii first,
+    ascii second,
+    ascii third,
+    ascii fourth)
+    where overlap(first, second),
+          overlap(first, third),
+          overlap(first, fourth),
+          overlap(second, third),
+          overlap(second, fourth),
+          overlap(third, fourth)
+{
+    stack mut System.Text.OwnedAscii destination = new();
+    stack System.Memory.MemoryStatus status = TryJoin(destination, first, second, third, fourth);
+    switch (status)
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+            return System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(destination);
+    }
+}
+
+public fn System.Memory.MemoryResult<System.Text.OwnedAscii> JoinConst(
+    const ascii first,
+    const ascii second,
+    const ascii third,
+    const ascii fourth)
+    where overlap(first, second),
+          overlap(first, third),
+          overlap(first, fourth),
+          overlap(second, third),
+          overlap(second, fourth),
+          overlap(third, fourth)
+{
+    stack mut System.Text.OwnedAscii destination = new();
+    stack System.Memory.MemoryStatus status = TryJoinConst(destination, first, second, third, fourth);
     switch (status)
     {
         case System.Memory.MemoryStatus.Err(var error):
@@ -562,7 +1904,42 @@ public finite law PathFacts GetFacts(ascii path)
             return EmptyPathFacts();
         }
 
-        stack i64[min max] length = end;
+        stack i64[min max] pathLength = end;
+        stack mut u64[0 2 ** 63 - 1] unsignedRootLength = 0;
+        if (pathLength > 0)
+        {
+            if (HasWindowsRootRules())
+            {
+                if (pathLength >= 2)
+                {
+                    if (IsAsciiDriveLetterUnit(*data))
+                    {
+                        if (IsColonUnit(*(&data[1])))
+                        {
+                            unsignedRootLength = 2;
+                            if (pathLength >= 3)
+                            {
+                                if (IsDirectorySeparatorUnit(*(&data[2])))
+                                {
+                                    unsignedRootLength = 3;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (unsignedRootLength == 0)
+            {
+                if (IsDirectorySeparatorUnit(*data))
+                {
+                    unsignedRootLength = 1;
+                }
+            }
+        }
+
+        stack i64[min max] rootLength = (i64[min max])unsignedRootLength;
+        stack bool absolute = IsAbsoluteFromRootLength(unsignedRootLength);
 
         while willexit (end > 1)
         {
@@ -590,17 +1967,49 @@ public finite law PathFacts GetFacts(ascii path)
             separator -= 1;
         }
 
-        stack i64[min max] segmentStart = separator + 1;
-        stack mut i64[min max] directoryLength = 0;
-        if (separator == 0)
+        stack mut i64[min max] segmentStart = separator + 1;
+        if (separator < 0)
         {
-            directoryLength = 1;
+            segmentStart = rootLength;
+        }
+
+        if (segmentStart < rootLength)
+        {
+            segmentStart = rootLength;
+        }
+
+        stack mut i64[min max] directoryLength = 0;
+        if (end <= rootLength && rootLength > 0)
+        {
+            directoryLength = rootLength;
+            segmentStart = end;
         }
         else
         {
-            if (separator > 0)
+            if (separator >= 0)
             {
-                directoryLength = separator;
+                if (separator < rootLength)
+                {
+                    directoryLength = rootLength;
+                }
+                else
+                {
+                    if (separator == 0)
+                    {
+                        directoryLength = 1;
+                    }
+                    else
+                    {
+                        directoryLength = separator;
+                    }
+                }
+            }
+            else
+            {
+                if (rootLength > 0)
+                {
+                    directoryLength = rootLength;
+                }
             }
         }
 
@@ -620,12 +2029,14 @@ public finite law PathFacts GetFacts(ascii path)
         return new PathFacts()
         {
             Path = path,
-            Length = length,
+            Length = pathLength,
             End = end,
+            RootLength = rootLength,
             SegmentStart = segmentStart,
             ExtensionStart = extensionStart,
             DirectoryLength = directoryLength,
-            HasExtension = hasExtension
+            HasExtension = hasExtension,
+            Absolute = absolute
         };
     }
 }
@@ -641,7 +2052,42 @@ public finite law PathFacts GetConstFacts(const ascii path)
             return EmptyPathFacts();
         }
 
-        stack i64[min max] length = end;
+        stack i64[min max] pathLength = end;
+        stack mut u64[0 2 ** 63 - 1] unsignedRootLength = 0;
+        if (pathLength > 0)
+        {
+            if (HasWindowsRootRules())
+            {
+                if (pathLength >= 2)
+                {
+                    if (IsAsciiDriveLetterUnit(*data))
+                    {
+                        if (IsColonUnit(*(&data[1])))
+                        {
+                            unsignedRootLength = 2;
+                            if (pathLength >= 3)
+                            {
+                                if (IsDirectorySeparatorUnit(*(&data[2])))
+                                {
+                                    unsignedRootLength = 3;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (unsignedRootLength == 0)
+            {
+                if (IsDirectorySeparatorUnit(*data))
+                {
+                    unsignedRootLength = 1;
+                }
+            }
+        }
+
+        stack i64[min max] rootLength = (i64[min max])unsignedRootLength;
+        stack bool absolute = IsAbsoluteFromRootLength(unsignedRootLength);
 
         while willexit (end > 1)
         {
@@ -669,17 +2115,49 @@ public finite law PathFacts GetConstFacts(const ascii path)
             separator -= 1;
         }
 
-        stack i64[min max] segmentStart = separator + 1;
-        stack mut i64[min max] directoryLength = 0;
-        if (separator == 0)
+        stack mut i64[min max] segmentStart = separator + 1;
+        if (separator < 0)
         {
-            directoryLength = 1;
+            segmentStart = rootLength;
+        }
+
+        if (segmentStart < rootLength)
+        {
+            segmentStart = rootLength;
+        }
+
+        stack mut i64[min max] directoryLength = 0;
+        if (end <= rootLength && rootLength > 0)
+        {
+            directoryLength = rootLength;
+            segmentStart = end;
         }
         else
         {
-            if (separator > 0)
+            if (separator >= 0)
             {
-                directoryLength = separator;
+                if (separator < rootLength)
+                {
+                    directoryLength = rootLength;
+                }
+                else
+                {
+                    if (separator == 0)
+                    {
+                        directoryLength = 1;
+                    }
+                    else
+                    {
+                        directoryLength = separator;
+                    }
+                }
+            }
+            else
+            {
+                if (rootLength > 0)
+                {
+                    directoryLength = rootLength;
+                }
             }
         }
 
@@ -699,12 +2177,14 @@ public finite law PathFacts GetConstFacts(const ascii path)
         return new PathFacts()
         {
             Path = path,
-            Length = length,
+            Length = pathLength,
             End = end,
+            RootLength = rootLength,
             SegmentStart = segmentStart,
             ExtensionStart = extensionStart,
             DirectoryLength = directoryLength,
-            HasExtension = hasExtension
+            HasExtension = hasExtension,
+            Absolute = absolute
         };
     }
 }
@@ -743,4 +2223,772 @@ public finite law ascii DirectoryNameConst(const ascii path)
 {
     stack PathFacts facts = GetConstFacts(path);
     return facts.DirectoryName();
+}
+
+public finite law ascii RootName(ascii path)
+{
+    stack PathFacts facts = GetFacts(path);
+    return facts.RootName();
+}
+
+public finite law ascii RootNameConst(const ascii path)
+{
+    stack PathFacts facts = GetConstFacts(path);
+    return facts.RootName();
+}
+
+public finite law bool IsRooted(ascii path)
+{
+    stack PathFacts facts = GetFacts(path);
+    return facts.IsRooted();
+}
+
+public finite law bool IsRootedConst(const ascii path)
+{
+    stack PathFacts facts = GetConstFacts(path);
+    return facts.IsRooted();
+}
+
+public finite law bool IsAbsolute(ascii path)
+{
+    stack PathFacts facts = GetFacts(path);
+    return facts.IsAbsolute();
+}
+
+public finite law bool IsAbsoluteConst(const ascii path)
+{
+    stack PathFacts facts = GetConstFacts(path);
+    return facts.IsAbsolute();
+}
+
+public finite law bool IsRelative(ascii path)
+{
+    stack PathFacts facts = GetFacts(path);
+    return facts.IsRelative();
+}
+
+public finite law bool IsRelativeConst(const ascii path)
+{
+    stack PathFacts facts = GetConstFacts(path);
+    return facts.IsRelative();
+}
+
+internal unsafe fn System.Memory.MemoryStatus TryChangeExtensionPointerRanges(
+    mut borrow System.Text.OwnedAscii destination,
+    u64[0 2 ** 63 - 1] prefixCount,
+    rawptr<i8[min max]> pathData,
+    u64[0 2 ** 63 - 1] extensionCount,
+    rawptr<i8[min max]> extensionData)
+    where overlap(pathData, extensionData)
+{
+    if (prefixCount > 0)
+    {
+        if (pathData == null)
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
+        }
+    }
+
+    if (extensionCount > 0)
+    {
+        if (extensionData == null)
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
+        }
+    }
+
+    stack mut u64[0 2 ** 63 - 1] required = prefixCount;
+    if (extensionCount > (u64[0 2 ** 63 - 1])(2 ** 63 - 1) - required)
+    {
+        return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.TooLarge);
+    }
+
+    required += extensionCount;
+    stack mut bool needsDot = false;
+    if (extensionCount > 0)
+    {
+        if (!IsDotUnit(*extensionData))
+        {
+            needsDot = true;
+        }
+    }
+    if (needsDot)
+    {
+        if (required == (u64[0 2 ** 63 - 1])(2 ** 63 - 1))
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.TooLarge);
+        }
+
+        required += 1;
+    }
+
+    destination.Clear();
+    stack System.Memory.MemoryStatus reserveStatus = destination.Reserve(required);
+    switch (reserveStatus)
+    {
+        case System.Memory.MemoryStatus.Err(var reserveError):
+            destination.Clear();
+            return System.Memory.MemoryStatus.Err(reserveError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    stack System.Memory.MemoryStatus prefixStatus = AppendPointerRangeDisjoint(destination, prefixCount, pathData);
+    switch (prefixStatus)
+    {
+        case System.Memory.MemoryStatus.Err(var prefixError):
+            destination.Clear();
+            return System.Memory.MemoryStatus.Err(prefixError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    if (needsDot)
+    {
+        init destination.Bytes[destination.Bytes.Length] = (i8[min max])46;
+    }
+
+    stack System.Memory.MemoryStatus extensionStatus =
+        AppendPointerRangeDisjoint(destination, extensionCount, extensionData);
+    switch (extensionStatus)
+    {
+        case System.Memory.MemoryStatus.Err(var extensionError):
+            destination.Clear();
+            return System.Memory.MemoryStatus.Err(extensionError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+public fn System.Memory.MemoryStatus TryChangeExtension(
+    mut borrow System.Text.OwnedAscii destination,
+    ascii path,
+    ascii extension)
+    where overlap(destination, path),
+          overlap(destination, extension),
+          overlap(path, extension)
+{
+        unsafe
+        {
+        stack PathFacts facts = GetFacts(path);
+        stack i64[min max] extensionLength = System.Text.AsciiLength(extension);
+        if (facts.Length < 0 || extensionLength < 0)
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
+        }
+
+        stack mut u64[0 2 ** 63 - 1] prefixCount = (u64[0 2 ** 63 - 1])facts.End;
+        if (facts.HasExtension)
+        {
+            prefixCount = (u64[0 2 ** 63 - 1])facts.ExtensionStart;
+        }
+
+        stack u64[0 2 ** 63 - 1] extensionCount = (u64[0 2 ** 63 - 1])extensionLength;
+        stack mut rawptr<i8[min max]> pathData = System.Text.AsciiData(path);
+        stack mut rawptr<i8[min max]> extensionData = System.Text.AsciiData(extension);
+        if (prefixCount > 0)
+        {
+            if (pathData == null)
+            {
+                return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
+            }
+        }
+
+        if (extensionCount > 0)
+        {
+            if (extensionData == null)
+            {
+                return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
+            }
+        }
+
+        stack mut System.Text.OwnedAscii pathSnapshot = new();
+        stack mut System.Text.OwnedAscii extensionSnapshot = new();
+        if (destination.Bytes.Length > 0)
+        {
+            if disjoint(path, destination.Bytes[0, destination.Bytes.Length])
+            {
+            }
+            else
+            {
+                stack System.Memory.MemoryStatus pathSnapshotStatus = pathSnapshot.AppendAscii(path);
+                switch (pathSnapshotStatus)
+                {
+                    case System.Memory.MemoryStatus.Err(var pathSnapshotError):
+                        return System.Memory.MemoryStatus.Err(pathSnapshotError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+
+                pathData = System.Text.AsciiData(pathSnapshot.View());
+            }
+
+            if disjoint(extension, destination.Bytes[0, destination.Bytes.Length])
+            {
+            }
+            else
+            {
+                stack System.Memory.MemoryStatus extensionSnapshotStatus = extensionSnapshot.AppendAscii(extension);
+                switch (extensionSnapshotStatus)
+                {
+                    case System.Memory.MemoryStatus.Err(var extensionSnapshotError):
+                        return System.Memory.MemoryStatus.Err(extensionSnapshotError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+
+                extensionData = System.Text.AsciiData(extensionSnapshot.View());
+            }
+        }
+
+        assume disjoint(destination, pathData)
+        {
+            assume disjoint(destination, extensionData)
+            {
+                return TryChangeExtensionPointerRanges(
+                    destination,
+                    prefixCount,
+                    pathData,
+                    extensionCount,
+                    extensionData);
+            }
+        }
+        }
+}
+
+public fn System.Memory.MemoryStatus TryChangeExtensionConst(
+    mut borrow System.Text.OwnedAscii destination,
+    const ascii path,
+    const ascii extension)
+    where overlap(path, extension)
+{
+        unsafe
+        {
+        stack PathFacts facts = GetConstFacts(path);
+        stack i64[min max] extensionLength = System.Text.AsciiLength(extension);
+        if (facts.Length < 0 || extensionLength < 0)
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
+        }
+
+        stack mut u64[0 2 ** 63 - 1] prefixCount = (u64[0 2 ** 63 - 1])facts.End;
+        if (facts.HasExtension)
+        {
+            prefixCount = (u64[0 2 ** 63 - 1])facts.ExtensionStart;
+        }
+
+        stack u64[0 2 ** 63 - 1] extensionCount = (u64[0 2 ** 63 - 1])extensionLength;
+        stack rawptr<i8[min max]> pathData = System.Text.AsciiData(path);
+        stack rawptr<i8[min max]> extensionData = System.Text.AsciiData(extension);
+        if (prefixCount > 0)
+        {
+            if (pathData == null)
+            {
+                return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
+            }
+        }
+
+        if (extensionCount > 0)
+        {
+            if (extensionData == null)
+            {
+                return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
+            }
+        }
+
+        assume disjoint(destination, pathData)
+        {
+            assume disjoint(destination, extensionData)
+            {
+                return TryChangeExtensionPointerRanges(
+                    destination,
+                    prefixCount,
+                    pathData,
+                    extensionCount,
+                    extensionData);
+            }
+        }
+        }
+}
+
+public fn System.Memory.MemoryResult<System.Text.OwnedAscii> ChangeExtension(ascii path, ascii extension)
+    where overlap(path, extension)
+{
+    stack mut System.Text.OwnedAscii destination = new();
+    stack System.Memory.MemoryStatus status = TryChangeExtension(destination, path, extension);
+    switch (status)
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+            return System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(destination);
+    }
+}
+
+public fn System.Memory.MemoryResult<System.Text.OwnedAscii> ChangeExtensionConst(
+    const ascii path,
+    const ascii extension)
+    where overlap(path, extension)
+{
+    stack mut System.Text.OwnedAscii destination = new();
+    stack System.Memory.MemoryStatus status = TryChangeExtensionConst(destination, path, extension);
+    switch (status)
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+            return System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(destination);
+    }
+}
+
+internal unsafe fn System.Memory.MemoryStatus AppendLexicalRoot(
+    mut borrow System.Text.OwnedAscii destination,
+    rawptr<i8[min max]> data,
+    u64[0 2 ** 63 - 1] rootLength)
+{
+    if (rootLength < 1)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    if (data == null)
+    {
+        return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
+    }
+
+    stack bool windowsRoots = HasWindowsRootRules();
+    if (windowsRoots)
+    {
+        if (rootLength >= 2)
+        {
+            if (IsAsciiDriveLetterUnit(*data))
+            {
+                if (IsColonUnit(*(&data[1])))
+                {
+                    stack System.Memory.MemoryStatus driveStatus =
+                        AppendPointerRangeDisjoint(destination, 2, data);
+                    switch (driveStatus)
+                    {
+                        case System.Memory.MemoryStatus.Err(var driveError):
+                            return System.Memory.MemoryStatus.Err(driveError);
+                        case System.Memory.MemoryStatus.Ok:
+                    }
+
+                    if (rootLength > 2)
+                    {
+                        init destination.Bytes[destination.Bytes.Length] = DirectorySeparatorUnit();
+                    }
+
+                    return System.Memory.MemoryStatus.Ok;
+                }
+            }
+        }
+    }
+
+    stack mut bool isUncRoot = false;
+    if (windowsRoots)
+    {
+        if (rootLength > 1)
+        {
+            if (IsDirectorySeparatorUnit(*data))
+            {
+                if (IsDirectorySeparatorUnit(*(&data[1])))
+                {
+                    isUncRoot = true;
+                }
+            }
+        }
+    }
+
+    if (isUncRoot)
+    {
+        init destination.Bytes[destination.Bytes.Length] = DirectorySeparatorUnit();
+        init destination.Bytes[destination.Bytes.Length] = DirectorySeparatorUnit();
+        stack mut bool previousWasSeparator = true;
+        stack mut u64[0 2 ** 63 - 1] index = 2;
+        while willexit (index < rootLength)
+        {
+            stack i8[min max] unit = *(&data[index]);
+            if (IsDirectorySeparatorUnit(unit))
+            {
+                if (!previousWasSeparator)
+                {
+                    init destination.Bytes[destination.Bytes.Length] = DirectorySeparatorUnit();
+                }
+
+                previousWasSeparator = true;
+            }
+            else
+            {
+                init destination.Bytes[destination.Bytes.Length] = unit;
+                previousWasSeparator = false;
+            }
+
+            index += 1;
+        }
+
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    init destination.Bytes[destination.Bytes.Length] = DirectorySeparatorUnit();
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn bool TryPopLastLexicalSegment(
+    mut borrow System.Text.OwnedAscii destination,
+    u64[0 2 ** 63 - 1] rootLength)
+{
+    if (destination.Bytes.Length < rootLength + (u64[0 2 ** 63 - 1])1)
+    {
+        return false;
+    }
+
+    if (rootLength == 0)
+    {
+        if (OwnedAsciiEndsWithDotDot(destination, rootLength))
+        {
+            return false;
+        }
+    }
+
+    stack mut u64[0 2 ** 63 - 1] start = destination.Bytes.Length;
+    stack i8[min max][] bytes = destination.AsSlice();
+    while willexit (start > rootLength)
+    {
+        if (IsDirectorySeparatorUnit(bytes[start - (u64[0 2 ** 63 - 1])1]))
+        {
+            break;
+        }
+
+        start -= 1;
+    }
+
+    if (start > rootLength)
+    {
+        destination.Truncate(start - (u64[0 2 ** 63 - 1])1);
+    }
+    else
+    {
+        destination.Truncate(rootLength);
+    }
+
+    return true;
+}
+
+internal unsafe fn System.Memory.MemoryStatus TryNormalizeLexicallyPointerRange(
+    mut borrow System.Text.OwnedAscii destination,
+    u64[0 2 ** 63 - 1] count,
+    rawptr<i8[min max]> data,
+    u64[0 2 ** 63 - 1] rootLength)
+{
+    if (count > 0)
+    {
+        if (data == null)
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
+        }
+    }
+
+    destination.Clear();
+    if (count == 0)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack System.Memory.MemoryStatus reserveStatus = destination.Reserve(count);
+    switch (reserveStatus)
+    {
+        case System.Memory.MemoryStatus.Err(var reserveError):
+            destination.Clear();
+            return System.Memory.MemoryStatus.Err(reserveError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    stack System.Memory.MemoryStatus rootStatus = AppendLexicalRoot(destination, data, rootLength);
+    switch (rootStatus)
+    {
+        case System.Memory.MemoryStatus.Err(var rootError):
+            destination.Clear();
+            return System.Memory.MemoryStatus.Err(rootError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    stack u64[0 2 ** 63 - 1] normalizedRootLength = destination.Bytes.Length;
+    stack mut u64[0 2 ** 63 - 1] index = (u64[0 2 ** 63 - 1])rootLength;
+    while willexit (index < count)
+    {
+        while willexit (index < count)
+        {
+            if (!IsDirectorySeparatorUnit(*(&data[index])))
+            {
+                break;
+            }
+
+            index += 1;
+        }
+
+        stack u64[0 2 ** 63 - 1] segmentStart = index;
+        while willexit (index < count)
+        {
+            if (IsDirectorySeparatorUnit(*(&data[index])))
+            {
+                break;
+            }
+
+            index += 1;
+        }
+
+        stack u64[0 2 ** 63 - 1] segmentEnd = index;
+        stack mut bool skipSegment = false;
+        if (segmentEnd == segmentStart)
+        {
+            skipSegment = true;
+        }
+        else
+        {
+            if (SegmentIsDot(data, segmentStart, segmentEnd))
+            {
+                skipSegment = true;
+            }
+        }
+
+        if (skipSegment)
+        {
+        }
+        else
+        {
+            if (SegmentIsDotDot(data, segmentStart, segmentEnd))
+            {
+                if (!TryPopLastLexicalSegment(destination, normalizedRootLength))
+                {
+                    if (normalizedRootLength == 0)
+                    {
+                        stack System.Memory.MemoryStatus parentStatus =
+                            AppendJoinedPointerRangeDisjoint(destination, 2, &data[segmentStart]);
+                        switch (parentStatus)
+                        {
+                            case System.Memory.MemoryStatus.Err(var parentError):
+                                destination.Clear();
+                                return System.Memory.MemoryStatus.Err(parentError);
+                            case System.Memory.MemoryStatus.Ok:
+                        }
+                    }
+                }
+            }
+            else
+            {
+                stack u64[0 2 ** 63 - 1] segmentLength = segmentEnd - segmentStart;
+                stack System.Memory.MemoryStatus segmentStatus =
+                    AppendJoinedPointerRangeDisjoint(destination, segmentLength, &data[segmentStart]);
+                switch (segmentStatus)
+                {
+                    case System.Memory.MemoryStatus.Err(var segmentError):
+                        destination.Clear();
+                        return System.Memory.MemoryStatus.Err(segmentError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+public fn System.Memory.MemoryStatus TryNormalizeLexically(
+    mut borrow System.Text.OwnedAscii destination,
+    ascii path)
+    where overlap(destination, path)
+{
+        unsafe
+        {
+        stack i64[min max] pathLength = System.Text.AsciiLength(path);
+        if (pathLength < 0)
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
+        }
+
+        stack u64[0 2 ** 63 - 1] count = (u64[0 2 ** 63 - 1])pathLength;
+        stack mut rawptr<i8[min max]> data = System.Text.AsciiData(path);
+        if (count > 0)
+        {
+            if (data == null)
+            {
+                return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
+            }
+        }
+
+        stack mut System.Text.OwnedAscii snapshot = new();
+        if (destination.Bytes.Length > 0)
+        {
+            if disjoint(path, destination.Bytes[0, destination.Bytes.Length])
+            {
+            }
+            else
+            {
+                stack System.Memory.MemoryStatus snapshotStatus = snapshot.AppendAscii(path);
+                switch (snapshotStatus)
+                {
+                    case System.Memory.MemoryStatus.Err(var snapshotError):
+                        return System.Memory.MemoryStatus.Err(snapshotError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+
+                data = System.Text.AsciiData(snapshot.View());
+            }
+        }
+
+        assume disjoint(destination, data)
+        {
+            stack PathFacts facts = GetFacts(path);
+            return TryNormalizeLexicallyPointerRange(
+                destination,
+                count,
+                data,
+                (u64[0 2 ** 63 - 1])facts.RootLength);
+        }
+        }
+}
+
+public fn System.Memory.MemoryStatus TryNormalizeLexicallyConst(
+    mut borrow System.Text.OwnedAscii destination,
+    const ascii path)
+{
+        unsafe
+        {
+        stack i64[min max] pathLength = System.Text.AsciiLength(path);
+        if (pathLength < 0)
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
+        }
+
+        stack u64[0 2 ** 63 - 1] count = (u64[0 2 ** 63 - 1])pathLength;
+        stack rawptr<i8[min max]> data = System.Text.AsciiData(path);
+        if (count > 0)
+        {
+            if (data == null)
+            {
+                return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
+            }
+        }
+
+        assume disjoint(destination, data)
+        {
+            stack PathFacts facts = GetConstFacts(path);
+            return TryNormalizeLexicallyPointerRange(
+                destination,
+                count,
+                data,
+                (u64[0 2 ** 63 - 1])facts.RootLength);
+        }
+        }
+}
+
+public fn System.Memory.MemoryResult<System.Text.OwnedAscii> NormalizeLexically(ascii path)
+{
+    stack mut System.Text.OwnedAscii destination = new();
+    stack System.Memory.MemoryStatus status = TryNormalizeLexically(destination, path);
+    switch (status)
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+            return System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(destination);
+    }
+}
+
+public fn System.Memory.MemoryResult<System.Text.OwnedAscii> NormalizeLexicallyConst(const ascii path)
+{
+    stack mut System.Text.OwnedAscii destination = new();
+    stack System.Memory.MemoryStatus status = TryNormalizeLexicallyConst(destination, path);
+    switch (status)
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+            return System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(destination);
+    }
+}
+
+public fn System.Memory.MemoryStatus TryFullPath(
+    mut borrow System.Text.OwnedAscii destination,
+    ascii path)
+    where overlap(destination, path)
+{
+    if (IsAbsolute(path))
+    {
+        return TryNormalizeLexically(destination, path);
+    }
+
+    stack mut System.Text.OwnedAscii current = new();
+    stack System.Memory.MemoryStatus currentStatus = CurrentDirectory(current);
+    switch (currentStatus)
+    {
+        case System.Memory.MemoryStatus.Err(var currentError):
+            return System.Memory.MemoryStatus.Err(currentError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    stack mut System.Text.OwnedAscii joined = new();
+    stack System.Memory.MemoryStatus joinStatus = TryJoin(joined, current.View(), path);
+    switch (joinStatus)
+    {
+        case System.Memory.MemoryStatus.Err(var joinError):
+            return System.Memory.MemoryStatus.Err(joinError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    return TryNormalizeLexically(destination, joined.View());
+}
+
+public fn System.Memory.MemoryStatus TryFullPathConst(
+    mut borrow System.Text.OwnedAscii destination,
+    const ascii path)
+{
+    if (IsAbsoluteConst(path))
+    {
+        return TryNormalizeLexicallyConst(destination, path);
+    }
+
+    stack mut System.Text.OwnedAscii current = new();
+    stack System.Memory.MemoryStatus currentStatus = CurrentDirectory(current);
+    switch (currentStatus)
+    {
+        case System.Memory.MemoryStatus.Err(var currentError):
+            return System.Memory.MemoryStatus.Err(currentError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    stack mut System.Text.OwnedAscii joined = new();
+    stack System.Memory.MemoryStatus joinStatus = TryJoin(joined, current.View(), path);
+    switch (joinStatus)
+    {
+        case System.Memory.MemoryStatus.Err(var joinError):
+            return System.Memory.MemoryStatus.Err(joinError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    return TryNormalizeLexically(destination, joined.View());
+}
+
+public fn System.Memory.MemoryResult<System.Text.OwnedAscii> FullPath(ascii path)
+{
+    stack mut System.Text.OwnedAscii destination = new();
+    stack System.Memory.MemoryStatus status = TryFullPath(destination, path);
+    switch (status)
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+            return System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(destination);
+    }
+}
+
+public fn System.Memory.MemoryResult<System.Text.OwnedAscii> FullPathConst(const ascii path)
+{
+    stack mut System.Text.OwnedAscii destination = new();
+    stack System.Memory.MemoryStatus status = TryFullPathConst(destination, path);
+    switch (status)
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+            return System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(destination);
+    }
 }

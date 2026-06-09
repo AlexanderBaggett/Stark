@@ -97,6 +97,18 @@ internal sealed partial class LlvmFunctionBodyEmitter
                 : null;
             if (indirectArgumentAddress is not null)
             {
+                if (TryRenderForwardedPointerBackedBorrowAddress(
+                        abiCallee,
+                        parameter,
+                        argument,
+                        indirectArgumentAddress,
+                        calleeParameterEffects,
+                        out var forwardedBorrowAddressArgument))
+                {
+                    arguments.Add(forwardedBorrowAddressArgument);
+                    continue;
+                }
+
                 arguments.Add(RenderIndirectArgumentPointer(abiCallee, parameter, FormatValue(indirectArgumentAddress), calleeParameterEffects, includeContractAttributes: true));
                 continue;
             }
@@ -106,6 +118,18 @@ internal sealed partial class LlvmFunctionBodyEmitter
                 : null;
             if (!string.IsNullOrWhiteSpace(promotedLocal))
             {
+                if (TryRenderForwardedPointerBackedBorrowArgument(
+                        abiCallee,
+                        parameter,
+                        argument,
+                        promotedLocal!,
+                        calleeParameterEffects,
+                        out var forwardedBorrowArgument))
+                {
+                    arguments.Add(forwardedBorrowArgument);
+                    continue;
+                }
+
                 var promotedParameter = _abiFunction.UserParameters.FirstOrDefault(
                     candidate => string.Equals(candidate.SourceName, promotedLocal, StringComparison.Ordinal));
                 if (promotedParameter is not null)
@@ -128,7 +152,8 @@ internal sealed partial class LlvmFunctionBodyEmitter
                 continue;
             }
 
-            if (AbiLoweringHeuristics.IsByValueIndirectParameter(parameter)
+            if ((StarkTypeSymbols.IsPointerBackedBorrowType(parameter.SourceType)
+                    || AbiLoweringHeuristics.IsByValueIndirectParameter(parameter))
                 && TryResolveAggregateSourceAddress(argument, parameter.SourceType, out var forwardedSourceAddress))
             {
                 arguments.Add(RenderIndirectArgumentPointer(abiCallee, parameter, forwardedSourceAddress, calleeParameterEffects, includeContractAttributes: true));
@@ -1123,6 +1148,18 @@ internal sealed partial class LlvmFunctionBodyEmitter
                 : null;
             if (indirectArgumentAddress is not null)
             {
+                if (TryRenderForwardedPointerBackedBorrowAddress(
+                        abiCallee,
+                        parameter,
+                        argument,
+                        indirectArgumentAddress,
+                        parameterEffects,
+                        out var forwardedBorrowAddressArgument))
+                {
+                    arguments.Add(forwardedBorrowAddressArgument);
+                    continue;
+                }
+
                 arguments.Add(RenderIndirectArgumentPointer(abiCallee, parameter, FormatValue(indirectArgumentAddress), parameterEffects, includeContractAttributes: true));
                 continue;
             }
@@ -1132,6 +1169,18 @@ internal sealed partial class LlvmFunctionBodyEmitter
                 : null;
             if (!string.IsNullOrWhiteSpace(promotedLocal))
             {
+                if (TryRenderForwardedPointerBackedBorrowArgument(
+                        abiCallee,
+                        parameter,
+                        argument,
+                        promotedLocal!,
+                        parameterEffects,
+                        out var forwardedBorrowArgument))
+                {
+                    arguments.Add(forwardedBorrowArgument);
+                    continue;
+                }
+
                 var promotedParameter = _abiFunction.UserParameters.FirstOrDefault(
                     candidate => string.Equals(candidate.SourceName, promotedLocal, StringComparison.Ordinal));
                 if (promotedParameter is not null)
@@ -1154,7 +1203,8 @@ internal sealed partial class LlvmFunctionBodyEmitter
                 continue;
             }
 
-            if (AbiLoweringHeuristics.IsByValueIndirectParameter(parameter)
+            if ((StarkTypeSymbols.IsPointerBackedBorrowType(parameter.SourceType)
+                    || AbiLoweringHeuristics.IsByValueIndirectParameter(parameter))
                 && TryResolveAggregateSourceAddress(argument, parameter.SourceType, out var forwardedSourceAddress))
             {
                 arguments.Add(RenderIndirectArgumentPointer(abiCallee, parameter, forwardedSourceAddress, parameterEffects, includeContractAttributes: true));
@@ -1255,7 +1305,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
         var targets = new SortedSet<string>(StringComparer.Ordinal);
         return TryCollectKnownFunctionPointerTargets(target, targets, new HashSet<string>(StringComparer.Ordinal))
             && targets.Count > 1
-            ? $", !callees {_context.GetMetadataTupleRef(targets.Select(static name => $"ptr @{EscapeIdentifier(name)}").ToArray())}"
+            ? $", !callees {_context.GetMetadataTupleRef(targets.Select(name => $"ptr @{EscapeIdentifier(ResolveFunctionAddressSymbolName(name))}").ToArray())}"
             : string.Empty;
     }
 
@@ -1742,6 +1792,92 @@ internal sealed partial class LlvmFunctionBodyEmitter
                 }
             }
         }
+    }
+
+    private bool TryRenderForwardedPointerBackedBorrowArgument(
+        AbiFunctionSignature abiCallee,
+        AbiParameterSymbol parameter,
+        SsaValue argument,
+        string? promotedLocalName,
+        IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? parameterEffects,
+        out string renderedArgument)
+    {
+        renderedArgument = string.Empty;
+        if (promotedLocalName is { Length: > 0 }
+            && TryResolveSingleStoreLocalValue(promotedLocalName, out var storedValue)
+            && StarkTypeSymbols.IsPointerBackedBorrowType(storedValue.Type)
+            && TryResolveAggregateSourceAddress(storedValue, storedValue.Type, out var promotedSourceAddress))
+        {
+            renderedArgument = RenderIndirectArgumentPointer(
+                abiCallee,
+                parameter,
+                promotedSourceAddress,
+                parameterEffects,
+                includeContractAttributes: true);
+            return true;
+        }
+
+        if (!TryGetPointerBackedBorrowArgumentType(parameter, argument, out var borrowType))
+        {
+            return false;
+        }
+
+        if (!TryResolveAggregateSourceAddress(argument, borrowType, out var forwardedSourceAddress))
+        {
+            return false;
+        }
+
+        renderedArgument = RenderIndirectArgumentPointer(
+            abiCallee,
+            parameter,
+            forwardedSourceAddress,
+            parameterEffects,
+            includeContractAttributes: true);
+        return true;
+    }
+
+    private bool TryRenderForwardedPointerBackedBorrowAddress(
+        AbiFunctionSignature abiCallee,
+        AbiParameterSymbol parameter,
+        SsaValue argument,
+        SsaValue indirectArgumentAddress,
+        IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? parameterEffects,
+        out string renderedArgument)
+    {
+        renderedArgument = string.Empty;
+        if (!TryResolveLocalAddressRoot(indirectArgumentAddress, out var localName))
+        {
+            return false;
+        }
+
+        return TryRenderForwardedPointerBackedBorrowArgument(
+            abiCallee,
+            parameter,
+            argument,
+            localName,
+            parameterEffects,
+            out renderedArgument);
+    }
+
+    private static bool TryGetPointerBackedBorrowArgumentType(
+        AbiParameterSymbol parameter,
+        SsaValue argument,
+        out StarkTypeSymbol borrowType)
+    {
+        if (StarkTypeSymbols.IsPointerBackedBorrowType(parameter.SourceType))
+        {
+            borrowType = parameter.SourceType;
+            return true;
+        }
+
+        if (StarkTypeSymbols.IsPointerBackedBorrowType(argument.Type))
+        {
+            borrowType = argument.Type;
+            return true;
+        }
+
+        borrowType = StarkTypeSymbols.Error;
+        return false;
     }
 
     private AbiFunctionSignature BuildIndirectCallAbi(ISsaIndirectCallOperation call)

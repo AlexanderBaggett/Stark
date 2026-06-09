@@ -496,7 +496,7 @@ internal sealed partial class MidLevelIrLowerer
             }
 
             var erasedDataType = StarkTypeSymbols.RawPointer(StarkTypeSymbols.Integer(8), isMutable: true);
-            var erasedVtableType = StarkTypeSymbols.RawPointer(StarkTypeSymbols.Integer(8), isMutable: false);
+            var vtablePointerType = StarkTypeSymbols.DynTraitVtablePointerForTraitObject(type);
             var dropSlotFunctionPointerType = CallableValueFacts.BuildClosureDropFunctionPointerType();
             var dropSlotIndex = DynTraitFacts.GetVtableLayout(traitName, _typeModel.Functions).Count;
 
@@ -513,7 +513,7 @@ internal sealed partial class MidLevelIrLowerer
                     operand,
                     ElementIndex: 1,
                     OperationFamily: IndexedElementOperationFamily.DynTraitComponent,
-                    erasedVtableType,
+                    vtablePointerType,
                     $"{operand.Text}.vtable"),
                 "dyn_drop_vtable");
             var dropPointer = EmitRequiredTemporary(

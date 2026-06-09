@@ -318,7 +318,7 @@ That command produces the archive and a sidecar `libFacade.starkpkg.json` manife
 ## `standard-library-tests/`
 
 Small `kind = "test"` project that uses `System.Testing` facts and the project
-driver's `test` command.
+driver's generated `[Fact]` runner.
 
 Run it from the examples solution:
 

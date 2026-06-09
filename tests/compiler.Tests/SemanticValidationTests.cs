@@ -1066,6 +1066,124 @@ public sealed class SemanticValidationTests
     }
 
     [Fact]
+    public void BreakToSwitchLabelIsAllowed()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Run(i32[min max] value)
+            {
+                target: switch (value)
+                {
+                    default:
+                        break target;
+                }
+
+                return;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "semantic-validate"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+
+    [Fact]
+    public void BreakToMissingLabelIsRejected()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Run()
+            {
+                while willexit (true)
+                {
+                    break missing;
+                }
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "semantic-validate"));
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK4113");
+    }
+
+    [Fact]
+    public void ContinueToSwitchLabelIsRejected()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Run(i32[min max] value)
+            {
+                while willexit (true)
+                {
+                    target: switch (value)
+                    {
+                        default:
+                            continue target;
+                    }
+
+                    break;
+                }
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "semantic-validate"));
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK4114");
+    }
+
+    [Fact]
+    public void DuplicateActiveControlFlowLabelsAreRejected()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Run()
+            {
+                target: while willexit (true)
+                {
+                    target: while willexit (true)
+                    {
+                        break target;
+                    }
+                }
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "semantic-validate"));
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK4120");
+    }
+
+    [Fact]
+    public void LabeledBreakSatisfiesOuterWillexitLoopContract()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Run()
+            {
+                outer: while willexit (true)
+                {
+                    while non-deterministic (true)
+                    {
+                        break outer;
+                    }
+                }
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "semantic-validate"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+
+    [Fact]
     public void WillexitLoopDoesNotTreatSwitchBreakAsALoopExit()
     {
         var result = Compile(

@@ -16,16 +16,39 @@ unsafe ffi fn void native_draw(rawptr<NativeRectangle> rectangle);
 Use C varargs only through an unsafe varargs declaration:
 
 ```stark
-unsafe ffi varargs fn i32[min max] printf(ascii format);
+unsafe ffi(c) varargs fn System.C.c_int printf(rawptr<System.C.c_char> format);
 
 unsafe fn i32[min max] PrintScore(i32[min max] score)
 {
-    return printf("score: %d\n", score);
+    stack System.C.CStringResult<System.C.OwnedCStr> created =
+        System.C.FromAscii("score: %d\n");
+    switch (created)
+    {
+        case System.C.CStringResult<System.C.OwnedCStr>.Err(var error):
+            return -1;
+        case System.C.CStringResult<System.C.OwnedCStr>.Ok(var value):
+            stack mut System.C.OwnedCStr format = value;
+            return printf(format.Data(), score);
+    }
 }
 ```
 
 Pass ABI-ready values explicitly. Do not rely on hidden conversions at C
 vararg boundaries.
+
+## C Strings
+
+Use `System.C` for null-terminated C strings. Stark `ascii` and `unicode` are
+not implicitly convertible to `char*`.
+
+- Pass `rawptr<System.C.c_char>` for C `const char*`.
+- Pass `rawmutptr<System.C.c_char>` for mutable C `char*` or C-owned messages.
+- Use `System.C.FromAscii` / `System.C.FromUnicodeUtf8` to create Stark-owned
+  `OwnedCStr` values before calling C.
+- Use `System.C.TryFromRawBounded` before viewing a raw C string returned by C.
+- Use `System.C.ForeignOwnedCStr` plus a `System.C.CStringDisposer` for
+  C-owned message strings that must be copied into Stark text and then released
+  by the matching C dispose function.
 
 ## Exported Stark Functions
 
@@ -223,6 +246,8 @@ Consumers should depend on the package, not repeat its linker settings.
 ## Boundary Checklist
 
 - Preserve foreign symbol spellings exactly.
+- Declare underscore-leading C symbols directly, such as `__error`; bare `_`
+  is still the discard token and pattern.
 - Keep unsafe blocks as small as the raw or foreign operation.
 - Convert raw failures into Stark status/result values quickly.
 - Do not let foreign unwinding cross Stark frames.

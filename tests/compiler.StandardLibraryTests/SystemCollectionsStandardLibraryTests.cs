@@ -1558,6 +1558,27 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
                 return false;
             }
 
+            if (!TryGetAsciiKey(ownedAsciiMap, alphaAgain, found)
+                || found != 33
+                || ContainsAsciiKey(ownedAsciiMap, beta))
+            {
+                return false;
+            }
+
+            stack mut OwnedAscii ownedBeta = new();
+            if (!Ok(ownedBeta.AppendAscii(beta)))
+            {
+                return false;
+            }
+
+            stack mut HashSet<OwnedAscii> ownedAsciiSet = new();
+            if (!Ok(ownedAsciiSet.Add(ownedBeta))
+                || !ContainsAsciiKey(ownedAsciiSet, beta)
+                || ContainsAsciiKey(ownedAsciiSet, alpha))
+            {
+                return false;
+            }
+
             stack mut OwnedUnicode ownedGamma = new();
             if (!Ok(ownedGamma.AppendUnicode(gamma)))
             {
@@ -1577,6 +1598,27 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
                 return false;
             }
 
+            if (!ContainsUnicodeKey(ownedUnicodeSet, gammaAgain)
+                || ContainsUnicodeKey(ownedUnicodeSet, delta))
+            {
+                return false;
+            }
+
+            stack mut OwnedUnicode ownedMapGamma = new();
+            if (!Ok(ownedMapGamma.AppendUnicode(gamma)))
+            {
+                return false;
+            }
+
+            stack mut Dictionary<OwnedUnicode, u32[0 max]> ownedUnicodeMap = new();
+            if (!Ok(ownedUnicodeMap.Set(ownedMapGamma, 44))
+                || !TryGetUnicodeKey(ownedUnicodeMap, gammaAgain, found)
+                || found != 44
+                || ContainsUnicodeKey(ownedUnicodeMap, delta))
+            {
+                return false;
+            }
+
             return true;
         }
 
@@ -1585,6 +1627,154 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
             if (!UseTextKeys())
             {
                 return 1;
+            }
+
+            return 0;
+        }
+        """;
+
+    private const string DeterministicSortingProgram = """
+        import System.Collections
+        import System.Memory
+        module App
+
+        fn bool Ok(MemoryStatus status)
+        {
+            switch (status)
+            {
+                case MemoryStatus.Ok:
+                    return true;
+                case MemoryStatus.Err(var error):
+                    return false;
+            }
+        }
+
+        finite law Ordering CompareU32(borrow u32[0 max] left, borrow u32[0 max] right)
+            where overlap(left, right)
+        {
+            if (left < right)
+            {
+                return Ordering.Less;
+            }
+
+            if (left > right)
+            {
+                return Ordering.Greater;
+            }
+
+            return Ordering.Equal;
+        }
+
+        struct Item : Ord
+        {
+            u32[0 max] Key;
+            u32[0 max] Value;
+
+            finite law Ordering Compare(borrow Item left, borrow Item right)
+                where overlap(left, right)
+            {
+                return CompareU32(left.Key, right.Key);
+            }
+        }
+
+        finite law Ordering CompareItemByKey(borrow Item left, borrow Item right)
+            where overlap(left, right)
+        {
+            return CompareU32(left.Key, right.Key);
+        }
+
+        fn bool CheckFixedArraySort()
+        {
+            stack mut u32[0 max][8] values = { 9, 1, 5, 3, 5, 2, 8, 0 };
+            SortBy<u32[0 max]>(values, CompareU32);
+            return values[0] == 0
+                && values[1] == 1
+                && values[2] == 2
+                && values[3] == 3
+                && values[4] == 5
+                && values[5] == 5
+                && values[6] == 8
+                && values[7] == 9;
+        }
+
+        fn bool CheckListSliceSort()
+        {
+            stack mut List<u32[0 max]> values = new();
+            if (!Ok(values.Push(42))
+                || !Ok(values.Push(7))
+                || !Ok(values.Push(19))
+                || !Ok(values.Push(7))
+                || !Ok(values.Push(31)))
+            {
+                return false;
+            }
+
+            SortBy<u32[0 max]>(values.AsMutableSlice(), CompareU32);
+            return values.AsSlice()[0] == 7
+                && values.AsSlice()[1] == 7
+                && values.AsSlice()[2] == 19
+                && values.AsSlice()[3] == 31
+                && values.AsSlice()[4] == 42;
+        }
+
+        fn bool CheckAggregateSort()
+        {
+            stack mut Item[5] items =
+            {
+                new Item() { Key = 30, Value = 1 },
+                new Item() { Key = 10, Value = 2 },
+                new Item() { Key = 40, Value = 3 },
+                new Item() { Key = 20, Value = 4 },
+                new Item() { Key = 20, Value = 5 }
+            };
+
+            SortBy<Item>(items, CompareItemByKey);
+            return items[0].Key == 10
+                && items[1].Key == 20
+                && items[2].Key == 20
+                && items[3].Key == 30
+                && items[4].Key == 40;
+        }
+
+        fn bool CheckAggregateOrdSort()
+        {
+            stack mut Item[5] items =
+            {
+                new Item() { Key = 5, Value = 1 },
+                new Item() { Key = 4, Value = 2 },
+                new Item() { Key = 3, Value = 3 },
+                new Item() { Key = 2, Value = 4 },
+                new Item() { Key = 1, Value = 5 }
+            };
+
+            Sort<Item>(items);
+            return items[0].Key == 1
+                && items[1].Key == 2
+                && items[2].Key == 3
+                && items[3].Key == 4
+                && items[4].Key == 5;
+        }
+
+        export unsafe fn i32[min max] main()
+        {
+            if (!CheckFixedArraySort())
+            {
+                return 1;
+            }
+
+            if (!CheckListSliceSort())
+            {
+                return 2;
+            }
+
+            if (!CheckAggregateSort())
+            {
+                return 3;
+            }
+
+            if (!CheckAggregateOrdSort())
+            {
+                return 4;
             }
 
             return 0;
@@ -2692,6 +2882,208 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
     }
 
     [Fact]
+    public void StdLibSourceSortByUsesInlineComparatorWithoutRuntimeClosureOrAllocation()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var appPath = Path.Combine(repositoryRoot, "tests", "tmp", "StdLibSortByLowering.stark");
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(
+                """
+                import System.Collections
+                module Demo
+
+                finite law Ordering CompareU32(borrow u32[0 max] left, borrow u32[0 max] right)
+                    where overlap(left, right)
+                {
+                    if (left < right)
+                    {
+                        return Ordering.Less;
+                    }
+
+                    if (left > right)
+                    {
+                        return Ordering.Greater;
+                    }
+
+                    return Ordering.Equal;
+                }
+
+                fn u32[0 max] SortFixed()
+                {
+                    stack mut u32[0 max][8] values = { 9, 1, 5, 3, 5, 2, 8, 0 };
+                    SortBy<u32[0 max]>(values, CompareU32);
+                    return values[0] + values[7];
+                }
+                """,
+                appPath),
+            new CompilerOptions(
+                ModuleResolver: new FileSystemModuleResolver(sourceRoot),
+                StopAfterPassId: "emit-llvm",
+                OptimizationLevel: CompilerOptimizationLevel.O3));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvm));
+        Assert.NotNull(llvm);
+        var sortFixedBody = ExtractDefinedFunctionText(llvm.Text, "@SortFixed(");
+        Assert.DoesNotContain("; LLVM body emission fallback", llvm.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("@malloc(", sortFixedBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@realloc(", sortFixedBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@free(", sortFixedBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@__stark_runtime_alloc", sortFixedBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@__stark_runtime_realloc", sortFixedBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@__stark_runtime_free", sortFixedBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("insertvalue { ptr, ptr }", sortFixedBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("extractvalue { ptr, ptr }", sortFixedBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("call fastcc %", sortFixedBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("call fastcc void %", sortFixedBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void StdLibSourceSortUsesOrdContractWithoutRuntimeClosureOrAllocation()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var appPath = Path.Combine(repositoryRoot, "tests", "tmp", "StdLibSortOrdLowering.stark");
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(
+                """
+                import System.Collections
+                module Demo
+
+                struct Item : Ord
+                {
+                    u32[0 max] Key;
+
+                    finite law Ordering Compare(borrow Item left, borrow Item right)
+                        where overlap(left, right)
+                    {
+                        if (left.Key < right.Key)
+                        {
+                            return Ordering.Less;
+                        }
+
+                        if (left.Key > right.Key)
+                        {
+                            return Ordering.Greater;
+                        }
+
+                        return Ordering.Equal;
+                    }
+                }
+
+                fn u32[0 max] SortFixed()
+                {
+                    stack mut Item[8] values =
+                    {
+                        new Item() { Key = 9 },
+                        new Item() { Key = 1 },
+                        new Item() { Key = 5 },
+                        new Item() { Key = 3 },
+                        new Item() { Key = 5 },
+                        new Item() { Key = 2 },
+                        new Item() { Key = 8 },
+                        new Item() { Key = 0 }
+                    };
+
+                    Sort<Item>(values);
+                    return values[0].Key + values[7].Key;
+                }
+                """,
+                appPath),
+            new CompilerOptions(
+                ModuleResolver: new FileSystemModuleResolver(sourceRoot),
+                StopAfterPassId: "emit-llvm",
+                OptimizationLevel: CompilerOptimizationLevel.O3));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvm));
+        Assert.NotNull(llvm);
+        var sortFixedBody = ExtractDefinedFunctionText(llvm.Text, "@SortFixed(");
+        Assert.DoesNotContain("; LLVM body emission fallback", llvm.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("@malloc(", sortFixedBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@realloc(", sortFixedBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@free(", sortFixedBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@__stark_runtime_alloc", sortFixedBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@__stark_runtime_realloc", sortFixedBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@__stark_runtime_free", sortFixedBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("insertvalue { ptr, ptr }", sortFixedBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("extractvalue { ptr, ptr }", sortFixedBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("call fastcc %", sortFixedBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("call fastcc void %", sortFixedBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void StdLibSourceSortRequiresOrdConformance()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var appPath = Path.Combine(repositoryRoot, "tests", "tmp", "StdLibSortOrdDiagnostics.stark");
+        var missingResult = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(
+                """
+                import System.Collections
+                module Demo
+
+                struct Box
+                {
+                    u32[0 max] Key;
+                }
+
+                fn void SortBoxes(mut borrow Box[] boxes)
+                {
+                    Sort<Box>(boxes);
+                    return;
+                }
+                """,
+                appPath),
+            new CompilerOptions(
+                ModuleResolver: new FileSystemModuleResolver(sourceRoot),
+                StopAfterPassId: "instantiation-ownership"));
+
+        Assert.False(missingResult.Succeeded);
+        Assert.Contains(
+            missingResult.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3034"
+                && diagnostic.Message.Contains("does not satisfy the 'System.Collections.Ord' bound", StringComparison.Ordinal));
+
+        var incompatibleResult = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(
+                """
+                import System.Collections
+                module Demo
+
+                struct Box : Ord
+                {
+                    u32[0 max] Key;
+
+                    finite law i32[min max] Compare(borrow Box left, borrow Box right)
+                        where overlap(left, right)
+                    {
+                        return 0;
+                    }
+                }
+
+                fn void SortBoxes(mut borrow Box[] boxes)
+                {
+                    Sort<Box>(boxes);
+                    return;
+                }
+                """,
+                appPath),
+            new CompilerOptions(
+                ModuleResolver: new FileSystemModuleResolver(sourceRoot),
+                StopAfterPassId: "semantic-validate"));
+
+        Assert.False(incompatibleResult.Succeeded);
+        Assert.Contains(
+            incompatibleResult.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3033"
+                && diagnostic.Message.Contains("Box.Compare", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("System.Collections.Ord.Compare", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void StdLibSourceDictionaryRawSparseStorageStaysInternalAndJustified()
     {
         var repositoryRoot = FindRepositoryRoot();
@@ -3254,6 +3646,29 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
         Assert.Contains("call i1 @__stark_unicode_equal", unicodeFindIndexBody, StringComparison.Ordinal);
         Assert.DoesNotContain("DictionaryKey_Hash", unicodeFindIndexBody, StringComparison.Ordinal);
         Assert.DoesNotContain("DictionaryKey_Equals", unicodeFindIndexBody, StringComparison.Ordinal);
+
+        var asciiDictionaryBorrowedLookupBody =
+            ExtractDefinedFunctionTextContaining(llvm.Text, "FindOwnedAsciiDictionaryIndex");
+        var unicodeDictionaryBorrowedLookupBody =
+            ExtractDefinedFunctionTextContaining(llvm.Text, "FindOwnedUnicodeDictionaryIndex");
+        var asciiSetBorrowedLookupBody =
+            ExtractDefinedFunctionTextContaining(llvm.Text, "FindOwnedAsciiHashSetIndex");
+        var unicodeSetBorrowedLookupBody =
+            ExtractDefinedFunctionTextContaining(llvm.Text, "FindOwnedUnicodeHashSetIndex");
+        foreach (var borrowedLookupBody in new[]
+        {
+            asciiDictionaryBorrowedLookupBody,
+            unicodeDictionaryBorrowedLookupBody,
+            asciiSetBorrowedLookupBody,
+            unicodeSetBorrowedLookupBody
+        })
+        {
+            Assert.DoesNotContain("@System_Memory_Allocate(", borrowedLookupBody, StringComparison.Ordinal);
+            Assert.DoesNotContain("@__stark_runtime_alloc", borrowedLookupBody, StringComparison.Ordinal);
+            Assert.DoesNotContain("AppendAscii", borrowedLookupBody, StringComparison.Ordinal);
+            Assert.DoesNotContain("AppendUnicode", borrowedLookupBody, StringComparison.Ordinal);
+            Assert.DoesNotContain("TryReserve", borrowedLookupBody, StringComparison.Ordinal);
+        }
     }
 
     [Fact]
@@ -3784,6 +4199,56 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
     }
 
     [Fact]
+    public async Task SourceStdLibDeterministicSortingExecutableRuns()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
+        {
+            return;
+        }
+
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-deterministic-sorting-");
+        var appPath = Path.Combine(tempDirectory.FullName, "App.stark");
+        var outputPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "App.exe" : "app");
+
+        try
+        {
+            await File.WriteAllTextAsync(appPath, DeterministicSortingProgram);
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(
+                [appPath, "--emit-exe", "-I", sourceRoot, "-o", outputPath, "--target", targetInfo.Triple],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.True(
+                exitCode == 0,
+                stdout + Environment.NewLine + stderr);
+            AssertCompilerLogsEmitted(stderr.ToString());
+            Assert.True(File.Exists(outputPath));
+
+            var execution = await RunProcessWithUtf8StdinAsync(outputPath, tempDirectory.FullName, string.Empty);
+            Assert.Equal(0, execution.ExitCode);
+            Assert.Equal(string.Empty, execution.Stdout);
+            Assert.Equal(string.Empty, execution.Stderr);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
     public async Task SourceStdLibPromotedCollectionsCrossFamilyParityExecutableRuns()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
@@ -3930,5 +4395,47 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
         }
 
         throw new Xunit.Sdk.XunitException($"Expected '{signaturePrefix}' body to terminate in emitted LLVM.");
+    }
+
+    private static string ExtractDefinedFunctionTextContaining(string llvm, string headerNeedle)
+    {
+        var searchIndex = 0;
+        while (searchIndex < llvm.Length)
+        {
+            var functionStart = llvm.IndexOf("define ", searchIndex, StringComparison.Ordinal);
+            Assert.True(functionStart >= 0, $"Expected a defined LLVM function containing '{headerNeedle}' to be emitted.");
+
+            var bodyStart = llvm.IndexOf('{', functionStart);
+            Assert.True(bodyStart > functionStart, $"Expected LLVM function containing '{headerNeedle}' to include a body.");
+
+            var header = llvm.Substring(functionStart, bodyStart - functionStart);
+            if (header.Contains(headerNeedle, StringComparison.Ordinal))
+            {
+                var depth = 0;
+                for (var index = bodyStart; index < llvm.Length; index++)
+                {
+                    var current = llvm[index];
+                    if (current == '{')
+                    {
+                        depth++;
+                    }
+                    else if (current == '}')
+                    {
+                        depth--;
+                        if (depth == 0)
+                        {
+                            return llvm.Substring(functionStart, index - functionStart + 1);
+                        }
+                    }
+                }
+
+                throw new Xunit.Sdk.XunitException(
+                    $"Expected LLVM function containing '{headerNeedle}' body to terminate.");
+            }
+
+            searchIndex = bodyStart + 1;
+        }
+
+        throw new Xunit.Sdk.XunitException($"Expected a defined LLVM function containing '{headerNeedle}' to be emitted.");
     }
 }

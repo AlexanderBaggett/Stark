@@ -42,12 +42,13 @@ trait object, vtable, or dynamic dispatch.
 
 ### 1.5 Compile-time Structure Branching
 
-Use `comptime` when the compiler needs generated constants, tables, range facts,
-layout facts, package metadata, or specialization based on known program
-structure.
+Before self-hosting, use only the frozen `comptime` baseline for generated
+constants, tables, range facts, concrete layout facts, and typed integer
+`comptime` generics. Prefer ordinary runtime compiler data structures for
+package metadata and declaration traversal.
 
-The self-hosted compiler may branch at compile time over explicit structural
-facts:
+The broad post-self-host direction may branch at compile time over explicit
+structural facts:
 
 - types and type categories
 - fields and enum variants
@@ -56,9 +57,10 @@ facts:
 - trait/doctrine conformance and associated type bindings
 - package metadata and imported typed interfaces
 
-Those facts are compile-time-only and erase before backend lowering. If a pass
-needs runtime data derived from them, the `comptime` code must materialize
-ordinary Stark values explicitly.
+Those facts are compile-time-only and erase before backend lowering. This broad
+surface is deferred until after bootstrap; if a pre-self-host pass needs runtime
+data derived from program structure, it should materialize ordinary Stark values
+through normal compiler phases instead of expanding broad `comptime`.
 
 Use typed `comptime` generic value parameters for reusable fixed-size compiler
 abstractions:
@@ -236,7 +238,7 @@ If build or test execution is parallelized before or after bootstrap, the
 architecture should use the narrow coordination surface from
 `22-threading-coordination.md`:
 
-- captured/payload thread starts for owned worker inputs,
+- explicit payload thread starts for owned worker inputs,
 - `System.Threading.Synchronized<T>` / `Locked<T>` for shared mutable compiler or
   build state,
 - MPSC channels for worker progress, diagnostics, and result publication.
@@ -358,6 +360,9 @@ Stable names are interned at source/package boundaries:
 After interning, compiler data structures use distinct ID types such as
 `SymbolId`, `TypeId`, `ModuleId`, and `PackageId`. These IDs may lower to compact
 integer storage, but they are not interchangeable at the type level.
+The current stdlib surface for this model lives in `System.Text.Interning` and
+includes nominal compiler ID wrappers, borrowed `ascii` lookup, and reverse
+lookup for diagnostics/debug rendering.
 
 Text remains ordinary text outside those boundaries. Diagnostics, file
 contents, FFI strings, user strings, and `System.Text` APIs must not depend on
@@ -437,6 +442,13 @@ Use bounded compiler-internal helpers for:
 - CTFE integer folding
 - SSA integer range facts
 - known-bit masks and shift/mask reasoning
+
+The pre-self-host standard-library surface for this domain is
+`System.Compiler.IntegerFacts`. It is ordinary library code, not arbitrary
+precision numerics and not runtime reflection. Compiler-known structural facts
+under `System.Compiler.<FactName>` remain compile-time-only predicates; the
+`System.Compiler.IntegerFacts` module is a reusable bounded arithmetic/fact
+helper namespace.
 
 If a literal, range endpoint, enum tag computation, CTFE result, or SSA fold
 requires a value outside the `i1024`/`u1024` domain, the compiler emits a

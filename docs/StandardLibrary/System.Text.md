@@ -36,6 +36,7 @@ public struct OwnedAscii
 {
     finite ascii View(borrow OwnedAscii self);
     finite law i64 Length(borrow OwnedAscii self);
+    fn void Truncate(mut borrow OwnedAscii self, u64[0 2 ** 63 - 1] length);
 }
 
 public struct OwnedUnicode
@@ -54,6 +55,12 @@ public finite law ascii AsciiView(Ascii source);
 public finite law unicode UnicodeView(Unicode source);
 public finite law i64 AsciiLength(ascii source);
 public finite law i64 UnicodeLength(unicode source);
+public finite law bool StartsWith(ascii source, ascii prefix) where overlap(source, prefix);
+public finite law bool StartsWith(unicode source, unicode prefix) where overlap(source, prefix);
+public finite law bool EndsWith(ascii source, ascii suffix) where overlap(source, suffix);
+public finite law bool EndsWith(unicode source, unicode suffix) where overlap(source, suffix);
+public finite law bool Contains(ascii source, ascii needle) where overlap(source, needle);
+public finite law bool Contains(unicode source, unicode needle) where overlap(source, needle);
 public fn System.Memory.MemoryStatus FromAscii(out OwnedAscii destination, ascii source);
 public fn System.Memory.MemoryStatus FromConstAscii(out OwnedAscii destination, const ascii source);
 public fn System.Memory.MemoryStatus FromUnicode(out OwnedUnicode destination, unicode source);
@@ -270,6 +277,7 @@ public fn System.Memory.MemoryResult<OwnedUnicode> ToUnicode(TextError value);
 - `UnicodeView` projects an immutable `unicode` view from an owned `Unicode` buffer.
 - `OwnedAscii` and `OwnedUnicode` are allocation-backed owned text wrappers returned by convenience APIs. Dropping the wrapper releases the backing allocation.
 - `OwnedAscii.View`, `OwnedUnicode.View`, and their `Length` helpers expose read-only text without transferring ownership.
+- `OwnedAscii.Truncate` shortens an owned ASCII buffer in place without allocation; it is useful for reusable path and line buffers.
 - `AsciiLength` and `UnicodeLength` expose immutable view lengths without exposing raw data pointers to user code.
 - `ParseBoolAscii` and `ParseBoolUnicode` parse exact lowercase `true` or `false` and return `TextResult<bool>` instead of throwing.
 - `ParseEncodingAscii`, `ParseEncodingUnicode`, `ParseTextErrorAscii`, and `ParseTextErrorUnicode` parse exact enum case names for the `System.Text` enum types.

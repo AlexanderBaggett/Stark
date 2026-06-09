@@ -1459,6 +1459,7 @@ internal static partial class PackageImageLoader
                 }
 
                 AppendIndent(builder, indentLevel);
+                AppendStatementLabel(builder, statement.Name);
                 builder.Append("while ");
                 builder.Append(statement.LoopBehavior);
                 AppendLoopContracts(builder, statement.LoopContractNames);
@@ -1518,6 +1519,7 @@ internal static partial class PackageImageLoader
                 }
 
                 AppendIndent(builder, indentLevel);
+                AppendStatementLabel(builder, statement.Name);
                 builder.Append("for ");
                 builder.Append(statement.LoopBehavior);
                 AppendLoopContracts(builder, statement.LoopContractNames);
@@ -1596,6 +1598,7 @@ internal static partial class PackageImageLoader
                 }
 
                 AppendIndent(builder, indentLevel);
+                AppendStatementLabel(builder, statement.Name);
                 builder.Append("for ");
                 builder.Append(statement.LoopBehavior);
                 AppendLoopContracts(builder, statement.LoopContractNames);
@@ -1825,11 +1828,15 @@ internal static partial class PackageImageLoader
                 return true;
 
             case ImportedTemplateTypedBodyStatementKind.Break:
-                text = "break";
+                text = string.IsNullOrWhiteSpace(statement.Name)
+                    ? "break"
+                    : $"break {statement.Name}";
                 return true;
 
             case ImportedTemplateTypedBodyStatementKind.Continue:
-                text = "continue";
+                text = string.IsNullOrWhiteSpace(statement.Name)
+                    ? "continue"
+                    : $"continue {statement.Name}";
                 return true;
 
             default:
@@ -2188,6 +2195,9 @@ internal static partial class PackageImageLoader
             ImportedTemplateTypedBodyExpressionKind.MemberCall => expression.Ordinal is { } memberCallOrdinal && memberCallsByOrdinal.TryGetValue(memberCallOrdinal, out var memberCall)
                 ? $"{RenderImportedTypedTemplateExpression(expression.Args[0], objectCreationsByOrdinal, enumConstructorsByOrdinal, enumCallsByOrdinal, enumValuesByOrdinal, directCallsByOrdinal, fieldAccessesByOrdinal, memberCallsByOrdinal)}.{GetMemberCallName(memberCall)}({string.Join(", ", expression.Args.Skip(1).Select(argument => RenderImportedTypedTemplateExpression(argument, objectCreationsByOrdinal, enumConstructorsByOrdinal, enumCallsByOrdinal, enumValuesByOrdinal, directCallsByOrdinal, fieldAccessesByOrdinal, memberCallsByOrdinal)))})"
                 : string.Empty,
+            ImportedTemplateTypedBodyExpressionKind.DynTraitFromParts => expression.Name is { } dynTraitFromPartsName && expression.Args.Count == 2
+                ? $"{dynTraitFromPartsName}({string.Join(", ", expression.Args.Select(argument => RenderImportedTypedTemplateExpression(argument, objectCreationsByOrdinal, enumConstructorsByOrdinal, enumCallsByOrdinal, enumValuesByOrdinal, directCallsByOrdinal, fieldAccessesByOrdinal, memberCallsByOrdinal)))})"
+                : string.Empty,
             _ => string.Empty
         };
 
@@ -2430,6 +2440,17 @@ internal static partial class PackageImageLoader
         {
             builder.Append("    ");
         }
+    }
+
+    private static void AppendStatementLabel(StringBuilder builder, string? labelName)
+    {
+        if (string.IsNullOrWhiteSpace(labelName))
+        {
+            return;
+        }
+
+        builder.Append(labelName);
+        builder.Append(": ");
     }
 
     private static string GetMemberCallName(StarkPackageTemplateMemberCallManifest memberCall)

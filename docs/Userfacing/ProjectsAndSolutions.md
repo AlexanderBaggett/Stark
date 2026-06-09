@@ -96,11 +96,14 @@ stark run --release
 * in a test project directory: builds and runs that project's test executable
 * in a solution directory: runs the declared test set, or every member with `kind = "test"` if none is declared
 * a target name can be a solution alias, member path, or project name
-* assertions are ordinary Stark functions from `System.Testing`; discovery is explicit and static today
+* `[Fact]` tests use a generated explicit `main` runner; there is no runtime reflection
+* assertions are ordinary Stark functions from `System.Testing`
+* `--filter <text>` can be repeated to run only generated fact names containing the filter text
 
 ```bash
 stark test
 stark test standard-library-tests
+stark test standard-library-tests --filter Integer
 ```
 
 ## `Stark.toml`
@@ -155,9 +158,11 @@ output = "standard-library-tests"
 stdlib = { path = "../../stdlib" }
 ```
 
-The test root is compiled as an executable. It returns `0` for success and a
-non-zero exit code for failure. `System.Testing` provides the first assertion
-helpers and a small explicit fact runner:
+The test root is compiled as an executable. If it contains `[Fact]` metadata,
+`stark test` generates the executable `main` at build time and returns `0` for
+success or a non-zero exit code for failure. Manual `main` runners are still
+available for no-`[Fact]` bootstrap test executables. `System.Testing` provides
+the assertion helpers used by generated runners:
 
 ```stark
 import System.Testing
@@ -167,17 +172,6 @@ module DemoTests
 fn bool AddsNumbers()
 {
     return System.Testing.Equal(4, 2 + 2);
-}
-
-export fn i32[min max] main()
-{
-    stack mut u8[0 1] failed = 0;
-    if (System.Testing.RunFact("AddsNumbers", AddsNumbers()) != 0)
-    {
-        failed = 1;
-    }
-
-    return System.Testing.ExitCode(failed);
 }
 ```
 

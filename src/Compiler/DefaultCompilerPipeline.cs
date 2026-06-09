@@ -493,7 +493,8 @@ public static class DefaultCompilerPipeline
                 [syntaxModel.ModuleName] = new LoadedModuleDocument(
                     new ResolvedModuleReference(syntaxModel.ModuleName, context.Input.FilePath, IsExternal: false, IsRoot: true),
                     parseResult,
-                    syntaxModel)
+                    syntaxModel,
+                    TargetInfo: context.Options.TargetInfo)
             };
 
             if (resolver is not null)
@@ -564,7 +565,8 @@ public static class DefaultCompilerPipeline
             modules[reference.ModuleName] = new LoadedModuleDocument(
                 reference,
                 cachedParse.ParseResult,
-                cachedParse.SyntaxModel);
+                cachedParse.SyntaxModel,
+                TargetInfo: context.Options.TargetInfo);
         }
 
         private void AddParsedSourceModule(
@@ -588,7 +590,8 @@ public static class DefaultCompilerPipeline
             modules[reference.ModuleName] = new LoadedModuleDocument(
                 reference,
                 importedParse,
-                importedBuildResult.Model);
+                importedBuildResult.Model,
+                TargetInfo: context.Options.TargetInfo);
         }
 
         private void AddParseDiagnostics(
@@ -780,15 +783,18 @@ public static class DefaultCompilerPipeline
             foreach (var type in types)
             {
                 StarkTypeSymbol keyType;
+                string collectionUseText;
                 if (type.TemplateName is SystemCollectionsDictionaryKeyFacts.DictionaryTypeName
                     && type.TypeArguments.Count == 2)
                 {
                     keyType = SystemCollectionsDictionaryKeyFacts.NormalizeType(type.TypeArguments[0]);
+                    collectionUseText = $"Dictionary<{keyType.DisplayName}, V>";
                 }
                 else if (type.TemplateName is SystemCollectionsDictionaryKeyFacts.HashSetTypeName
                     && type.TypeArguments.Count == 1)
                 {
                     keyType = SystemCollectionsDictionaryKeyFacts.NormalizeType(type.TypeArguments[0]);
+                    collectionUseText = $"HashSet<{keyType.DisplayName}>";
                 }
                 else
                 {
@@ -806,7 +812,7 @@ public static class DefaultCompilerPipeline
 
                 context.Diagnostics.Error(
                     "STK3023",
-                    diagnostic,
+                    $"{collectionUseText} collection use requires a compile-time DictionaryKey contract for key type '{keyType.DisplayName}'. {diagnostic}",
                     "instantiation-ownership",
                     type.FirstUseLocation);
             }
@@ -1533,13 +1539,19 @@ public static class DefaultCompilerPipeline
                 .Where(static signature => signature is not null)
                 .Cast<TypedFunctionSignature>()
                 .ToArray();
+            var functionAddressSignatures = importedTemplate.FunctionAddresses
+                .Select(static functionAddress => functionAddress.Signature)
+                .ToArray();
             if (boundCalls.Length != 0)
             {
-                return boundCalls;
+                return boundCalls
+                    .Concat(functionAddressSignatures)
+                    .ToArray();
             }
 
             return importedTemplate.DirectCalls.Select(static call => call.Signature)
                 .Concat(importedTemplate.MemberCalls.Select(static call => call.Signature))
+                .Concat(functionAddressSignatures)
                 .ToArray();
         }
 
@@ -4184,15 +4196,9 @@ public static class DefaultCompilerPipeline
             {
                 if (module.PackageImageFacts is { FunctionSignatures.Count: > 0 } packageImageFacts)
                 {
-                    foreach (var declaration in module.SyntaxModel.Declarations.Where(static declaration => declaration.Function is not null))
+                    foreach (var (qualifiedName, signature) in packageImageFacts.FunctionSignatures)
                     {
-                        var qualifiedName = FunctionOverloadFacts.QualifyResolvedName(
-                            module,
-                            FunctionOverloadFacts.GetResolvedLocalName(module.SyntaxModel, declaration));
-                        if (packageImageFacts.FunctionSignatures.TryGetValue(qualifiedName, out var signature))
-                        {
-                            functions[qualifiedName] = signature;
-                        }
+                        functions[qualifiedName] = signature;
                     }
 
                     continue;
@@ -4494,7 +4500,7 @@ public static class DefaultCompilerPipeline
                 optimized = inliner.Optimize(optimized);
                 optimized = cleanup.Optimize(optimized);
                 optimized = constants.Optimize(optimized);
-                optimized = new SsaDirectCallDevirtualizer().Optimize(optimized);
+                optimized = new SsaDirectCallDevirtualizer(typeModel).Optimize(optimized);
             }
 
             optimized = cleanup.Optimize(optimized);
@@ -4868,7 +4874,7 @@ public static class DefaultCompilerPipeline
             var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.OptimizedSsaIr);
             var optimized = context.Options.OptimizationLevel is CompilerOptimizationLevel.O0 or CompilerOptimizationLevel.Og
                 ? ssa
-                : new SsaDirectCallDevirtualizer().Optimize(ssa);
+                : new SsaDirectCallDevirtualizer(context.Artifacts.GetRequired(CompilerArtifactKeys.TypeCheckModel)).Optimize(ssa);
             context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, optimized);
         }
     }

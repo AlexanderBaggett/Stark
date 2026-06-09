@@ -1067,6 +1067,12 @@ internal sealed class SsaAliasAwareMemoryOptimizer
                 case SsaValueInstruction valueInstruction:
                     AddEscapedLocalNames(valueInstruction.Value, escaped);
                     break;
+                case SsaCallInstruction call:
+                    AddEscapedIndirectArgumentLocalNames(call.IndirectArgumentLocalNames, escaped);
+                    break;
+                case SsaIndirectCallInstruction call:
+                    AddEscapedIndirectArgumentLocalNames(call.IndirectArgumentLocalNames, escaped);
+                    break;
             }
         }
 
@@ -1085,16 +1091,26 @@ internal sealed class SsaAliasAwareMemoryOptimizer
                 escaped.Add(makeSlice.LocalName);
                 break;
 
-            case SsaCallRValue { IndirectArgumentLocalNames: { } indirectLocals }:
-                foreach (var localName in indirectLocals)
-                {
-                    if (localName is not null)
-                    {
-                        escaped.Add(localName);
-                    }
-                }
-
+            case SsaCallRValue call:
+                AddEscapedIndirectArgumentLocalNames(call.IndirectArgumentLocalNames, escaped);
                 break;
+
+            case SsaIndirectCallRValue call:
+                AddEscapedIndirectArgumentLocalNames(call.IndirectArgumentLocalNames, escaped);
+                break;
+        }
+    }
+
+    private static void AddEscapedIndirectArgumentLocalNames(
+        IReadOnlyList<string?>? indirectLocals,
+        ISet<string> escaped)
+    {
+        foreach (var localName in indirectLocals ?? [])
+        {
+            if (localName is not null)
+            {
+                escaped.Add(localName);
+            }
         }
     }
 

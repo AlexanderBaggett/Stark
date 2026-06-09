@@ -115,6 +115,7 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
         var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
 
         Assert.Contains("declare i32 @GetFileAttributesW(", llvm, StringComparison.Ordinal);
+        Assert.Contains("declare i32 @GetFileAttributesExW(", llvm, StringComparison.Ordinal);
         Assert.Contains("declare i32 @CreateDirectoryW(", llvm, StringComparison.Ordinal);
         Assert.Contains("declare i32 @RemoveDirectoryW(", llvm, StringComparison.Ordinal);
         Assert.Contains("declare ptr @FindFirstFileExW(", llvm, StringComparison.Ordinal);
@@ -125,6 +126,7 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
         Assert.Contains("define fastcc noundef i1 @FileExists(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef i1 @IsFile(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef i1 @IsDirectory(", llvm, StringComparison.Ordinal);
+        Assert.Contains("define fastcc noundef i32 @ReadPathMetadata(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef i32 @CreateDirectory(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef i32 @DeleteDirectory(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef ptr @OpenDirectoryWithFlags(", llvm, StringComparison.Ordinal);
@@ -136,7 +138,10 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
         Assert.Contains("define fastcc noundef i32 @ReadDirectoryEntry(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef i32 @ReadDirectoryEntryInfo(", llvm, StringComparison.Ordinal);
         Assert.Contains("@DirectoryEntryKindFromWindowsAttributes(", llvm, StringComparison.Ordinal);
+        Assert.Contains("@WindowsFileTimeToUnixSeconds(", llvm, StringComparison.Ordinal);
+        Assert.Contains("@WindowsFileTimeToUnixNanoseconds(", llvm, StringComparison.Ordinal);
         Assert.Contains("call i32 @GetFileAttributesW(", llvm, StringComparison.Ordinal);
+        Assert.Contains("call i32 @GetFileAttributesExW(", llvm, StringComparison.Ordinal);
         Assert.Contains("call i32 @CreateDirectoryW(", llvm, StringComparison.Ordinal);
         Assert.Contains("call i32 @RemoveDirectoryW(", llvm, StringComparison.Ordinal);
         Assert.Contains("call ptr @FindFirstFileExW(", llvm, StringComparison.Ordinal);
@@ -161,6 +166,7 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
         Assert.Contains("c\"/\\00\"", llvm, StringComparison.Ordinal);
         Assert.Contains("c\";\\00\"", llvm, StringComparison.Ordinal);
         Assert.Contains("declare i32 @GetCurrentDirectoryW(", llvm, StringComparison.Ordinal);
+        Assert.Contains("declare i32 @GetTempPathW(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef i1 @HasLongPathPrefix(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef i1 @IsDriveAbsoluteWidePath(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef i1 @IsUncWidePath(", llvm, StringComparison.Ordinal);
@@ -174,7 +180,9 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
         Assert.Contains("define fastcc noundef %stark_ascii @PathSeparator()", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef i1 @IsDirectorySeparator(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef i1 @TryCurrentDirectory(", llvm, StringComparison.Ordinal);
+        Assert.Contains("define fastcc noundef i1 @TryTempDirectory(", llvm, StringComparison.Ordinal);
         Assert.Contains("call i32 @GetCurrentDirectoryW(", llvm, StringComparison.Ordinal);
+        Assert.Contains("call i32 @GetTempPathW(", llvm, StringComparison.Ordinal);
         Assert.Contains("call fastcc i32 @TryCopyWideAscii(", llvm, StringComparison.Ordinal);
         Assert.Contains("call fastcc i1 @TryDecodeUtf8PathToWide(", llvm, StringComparison.Ordinal);
         Assert.Contains("call fastcc i1 @TryBuildLongWindowsWidePath(", llvm, StringComparison.Ordinal);
@@ -899,4 +907,3 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
         return text.Replace("\r\n", "\n", StringComparison.Ordinal);
     }
 }
-

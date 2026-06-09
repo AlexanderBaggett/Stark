@@ -7,9 +7,9 @@ internal sealed partial class MidLevelIrLowerer
 {
     private sealed partial class FunctionMirBuilder
     {
-        private void LowerSwitch(StarkParser.SwitchStatementContext switchStatement)
+        private void LowerSwitch(StarkParser.SwitchStatementContext switchStatement, string? labelName = null)
         {
-            _switchPatternLowerer.LowerSwitch(switchStatement);
+            _switchPatternLowerer.LowerSwitch(switchStatement, labelName);
         }
 
         private bool TryRegisterSwitchCaptureLocals(
@@ -37,7 +37,7 @@ internal sealed partial class MidLevelIrLowerer
                 sectionIndex);
         }
 
-        private void LowerSwitchCore(StarkParser.SwitchStatementContext switchStatement)
+        private void LowerSwitchCore(StarkParser.SwitchStatementContext switchStatement, string? labelName = null)
         {
             var switchValue = LowerExpressionToOperand(switchStatement.expression());
             if (switchValue is null)
@@ -59,9 +59,9 @@ internal sealed partial class MidLevelIrLowerer
             var lowered = hasBoundSwitch
                 ? boundSwitch.Family switch
                 {
-                    SwitchLoweringFamilies.Native => TryLowerNativeSwitch(switchStatement, switchValue),
-                    SwitchLoweringFamilies.PartitionedText => TryLowerPartitionedTextSwitch(switchStatement, switchValue),
-                    SwitchLoweringFamilies.Guarded => TryLowerGuardedSwitch(switchStatement, switchValue),
+                    SwitchLoweringFamilies.Native => TryLowerNativeSwitch(switchStatement, switchValue, labelName),
+                    SwitchLoweringFamilies.PartitionedText => TryLowerPartitionedTextSwitch(switchStatement, switchValue, labelName),
+                    SwitchLoweringFamilies.Guarded => TryLowerGuardedSwitch(switchStatement, switchValue, labelName),
                     _ => throw LoweringInvariantViolation(
                         switchStatement,
                         $"Bound switch dispatch family '{boundSwitch.Family}' has no MIR lowering case.")
@@ -69,12 +69,12 @@ internal sealed partial class MidLevelIrLowerer
                 : switchValue.Type.Kind switch
                 {
                     StarkTypeKind.Integer or StarkTypeKind.Bool =>
-                        TryLowerNativeSwitch(switchStatement, switchValue)
-                        || TryLowerGuardedSwitch(switchStatement, switchValue),
+                        TryLowerNativeSwitch(switchStatement, switchValue, labelName)
+                        || TryLowerGuardedSwitch(switchStatement, switchValue, labelName),
                     StarkTypeKind.Ascii or StarkTypeKind.Unicode =>
-                        TryLowerPartitionedTextSwitch(switchStatement, switchValue)
-                        || TryLowerGuardedSwitch(switchStatement, switchValue),
-                    _ => TryLowerGuardedSwitch(switchStatement, switchValue)
+                        TryLowerPartitionedTextSwitch(switchStatement, switchValue, labelName)
+                        || TryLowerGuardedSwitch(switchStatement, switchValue, labelName),
+                    _ => TryLowerGuardedSwitch(switchStatement, switchValue, labelName)
                 };
 
             if (lowered)
@@ -89,7 +89,8 @@ internal sealed partial class MidLevelIrLowerer
 
         private bool TryLowerNativeSwitch(
             StarkParser.SwitchStatementContext switchStatement,
-            MidLevelIrOperand switchValue)
+            MidLevelIrOperand switchValue,
+            string? labelName = null)
         {
             if (!TryParseLowerableSwitchSections(switchStatement, switchValue.Type, out var parsedSections, out var defaultSectionCount))
             {
@@ -180,7 +181,7 @@ internal sealed partial class MidLevelIrLowerer
                 exitDropStates.Add(switchEntryDropStates);
             }
 
-            _breakTargets.Push(new BreakTargets(exitBlock.Id, _scopes.Count));
+            _breakTargets.Push(new BreakTargets(labelName, exitBlock.Id, _scopes.Count));
             try
             {
                 foreach (var section in sections)
@@ -210,7 +211,8 @@ internal sealed partial class MidLevelIrLowerer
 
         private bool TryLowerPartitionedTextSwitch(
             StarkParser.SwitchStatementContext switchStatement,
-            MidLevelIrOperand switchValue)
+            MidLevelIrOperand switchValue,
+            string? labelName = null)
         {
             if (!TryParseLowerableSwitchSections(switchStatement, switchValue.Type, out var parsedSections, out var defaultSectionCount))
             {
@@ -324,7 +326,7 @@ internal sealed partial class MidLevelIrLowerer
                 exitDropStates.Add(switchEntryDropStates);
             }
 
-            _breakTargets.Push(new BreakTargets(exitBlock.Id, _scopes.Count));
+            _breakTargets.Push(new BreakTargets(labelName, exitBlock.Id, _scopes.Count));
             try
             {
                 foreach (var section in sections)
@@ -354,7 +356,8 @@ internal sealed partial class MidLevelIrLowerer
 
         private bool TryLowerGuardedSwitch(
             StarkParser.SwitchStatementContext switchStatement,
-            MidLevelIrOperand switchValue)
+            MidLevelIrOperand switchValue,
+            string? labelName = null)
         {
             if (!TryParseLowerableSwitchSections(switchStatement, switchValue.Type, out var parsedSections, out var defaultSectionCount))
             {
@@ -423,7 +426,7 @@ internal sealed partial class MidLevelIrLowerer
                 exitDropStates.Add(switchEntryDropStates);
             }
 
-            _breakTargets.Push(new BreakTargets(exitBlock.Id, _scopes.Count));
+            _breakTargets.Push(new BreakTargets(labelName, exitBlock.Id, _scopes.Count));
             try
             {
                 foreach (var section in sections)
@@ -2621,9 +2624,9 @@ internal sealed partial class MidLevelIrLowerer
                 _builder = builder;
             }
 
-            public void LowerSwitch(StarkParser.SwitchStatementContext switchStatement)
+            public void LowerSwitch(StarkParser.SwitchStatementContext switchStatement, string? labelName = null)
             {
-                _builder.LowerSwitchCore(switchStatement);
+                _builder.LowerSwitchCore(switchStatement, labelName);
             }
 
             public bool TryRegisterSwitchCaptureLocals(

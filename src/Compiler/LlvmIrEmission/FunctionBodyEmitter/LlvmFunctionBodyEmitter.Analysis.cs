@@ -305,6 +305,11 @@ internal sealed partial class LlvmFunctionBodyEmitter
 
     private static bool IsNoOpConversion(StarkTypeSymbol sourceType, StarkTypeSymbol targetType)
     {
+        if (IsPointerBackedBorrowRuntimePointerConversion(sourceType, targetType))
+        {
+            return true;
+        }
+
         var source = NormalizeAggregateType(sourceType);
         var target = NormalizeAggregateType(targetType);
         if (HaveSameNoOpValueShape(source, target))
@@ -320,6 +325,27 @@ internal sealed partial class LlvmFunctionBodyEmitter
             (StarkTypeKind.FunctionPointer, StarkTypeKind.FunctionPointer) => true,
             _ => false
         };
+    }
+
+    private static bool IsPointerBackedBorrowRuntimePointerConversion(
+        StarkTypeSymbol sourceType,
+        StarkTypeSymbol targetType)
+    {
+        if (StarkTypeSymbols.IsPointerBackedBorrowType(sourceType)
+            && targetType.Kind == StarkTypeKind.RawPointer
+            && targetType.ElementType is { } targetElementType)
+        {
+            return HaveSameNoOpValueShape(StarkTypeSymbols.BorrowReturnValueType(sourceType), targetElementType);
+        }
+
+        if (sourceType.Kind == StarkTypeKind.RawPointer
+            && sourceType.ElementType is { } sourceElementType
+            && StarkTypeSymbols.IsPointerBackedBorrowType(targetType))
+        {
+            return HaveSameNoOpValueShape(sourceElementType, StarkTypeSymbols.BorrowReturnValueType(targetType));
+        }
+
+        return false;
     }
 
     private static bool HaveSameNoOpValueShape(StarkTypeSymbol sourceType, StarkTypeSymbol targetType)

@@ -1,10 +1,10 @@
 # Phase 18 - FFI Null-Terminated C Strings
 
 Status: **partially implemented.** The core `System.C` C-string type model,
-owned/buffer storage, bounded scans, explicit text conversions, and targeted
-source/runtime coverage have landed. Literal/const `%s` FFI varargs validation
-has landed. libLLVM-owned foreign string wrappers and user-facing docs remain
-open.
+owned/buffer storage, bounded scans, explicit text conversions, generic
+foreign-owned string copy/dispose helpers, and targeted source/runtime coverage
+have landed. Literal/const `%s` FFI varargs validation has landed. LLVM-specific
+binding wrappers and user-facing docs remain open.
 
 Null-terminated C strings live in `System.C`. They are not ordinary Stark
 `ascii` or `unicode` values. A C `char*` is a foreign byte pointer with a
@@ -53,6 +53,14 @@ public struct CCharBuffer
     internal System.Memory.Allocator Allocator;
 }
 
+public alias CStringDisposer =
+    fnptr<unsafe ffi(c) fn void(rawmutptr<System.C.c_char>)>;
+
+public struct ForeignOwnedCStr
+{
+    internal rawmutptr<System.C.c_char> Data;
+}
+
 public enum CStringError
 {
     NullPointer,
@@ -78,6 +86,10 @@ implementation. The required public contract is:
 - `OwnedCStr` is Stark-owned storage that is always null-terminated.
 - `CCharBuffer` is mutable caller-owned storage for C APIs that write into a
   provided buffer.
+- `ForeignOwnedCStr` is a non-Stark-owned pointer wrapper used while copying
+  and releasing strings returned by a foreign allocator.
+- `CStringDisposer` is the C-ABI callback shape for APIs such as
+  `LLVMDisposeMessage(char*)`.
 - `CStringError` represents validation, encoding, size, and allocation failure.
 
 The public fields should remain hidden. Construction must go through checked
@@ -267,6 +279,39 @@ public struct LibcOwnedCStr
 This keeps ownership explicit: the type name and destructor say which allocator
 will release the memory.
 
+For C APIs that return one-shot owned message strings, `System.C` also exposes a
+generic explicit wrapper path:
+
+```stark
+public unsafe ffi(c) fn rawmutptr<System.C.c_char> get_message();
+public unsafe ffi(c) fn void dispose_message(rawmutptr<System.C.c_char> text);
+
+fn System.C.CStringResult<System.Text.OwnedAscii> ReadMessage()
+{
+    unsafe
+    {
+        stack System.C.CStringResult<System.C.ForeignOwnedCStr> created =
+            System.C.TryFromForeignOwnedRaw(get_message());
+        switch (created)
+        {
+            case System.C.CStringResult<System.C.ForeignOwnedCStr>.Err(var error):
+                return System.C.CStringResult<System.Text.OwnedAscii>.Err(error);
+            case System.C.CStringResult<System.C.ForeignOwnedCStr>.Ok(var value):
+                stack mut System.C.ForeignOwnedCStr message = value;
+                return System.C.CopyForeignOwnedAsciiAndDispose(
+                    message,
+                    dispose_message,
+                    4096);
+        }
+    }
+}
+```
+
+The helper validates the null terminator within the caller's bound, copies into
+Stark-owned text, disposes the foreign message exactly once, and nulls the
+wrapper pointer before returning. Library-specific wrappers may still wrap this
+surface when they need richer error/status handling.
+
 ## 8. FFI And Varargs
 
 FFI declarations continue to use raw pointers:
@@ -313,7 +358,9 @@ Verified libLLVM uses:
   converted to Stark text.
 
 No implicit Stark text to C string conversion is added for libLLVM. Backend code
-must explicitly create `OwnedCStr` or use a validated `CStr`.
+must explicitly create `OwnedCStr`, use a validated `CStr`, or copy and release
+LLVM-owned messages through `ForeignOwnedCStr` plus the matching LLVM dispose
+function.
 
 ## 9. Relationship To `c_char`
 
@@ -361,10 +408,16 @@ Recommended diagnostics:
       LLVM-owned error-message adoption/copying, and correct foreign-message
       disposal wrappers. Literal/const `%s` varargs calls now reject ordinary
       Stark text and require `rawptr<System.C.c_char>` or
-      `rawmutptr<System.C.c_char>`; libLLVM-owned foreign string wrappers
-      remain.
+      `rawmutptr<System.C.c_char>`; generic `ForeignOwnedCStr` copy/dispose
+      helpers for LLVM-style owned messages have landed. LLVM-specific binding
+      owner types remain with doc `23`.
 - [~] Add coverage for conversions, bounded scans, output buffers, destructor
       behavior, allocation failures, FFI varargs validation, and libLLVM-style
       string ownership. Literal/const `%s` varargs validation has compiler test
-      coverage; libLLVM-style string ownership coverage remains.
-- [ ] Update user-facing FFI docs and Stark language skill references.
+      coverage; generic foreign-owned copy/dispose coverage has targeted
+      source/runtime tests. LLVM binding-specific string ownership coverage
+      remains with doc `23`.
+- [~] Update user-facing FFI docs and Stark language skill references. Stark
+      language skill references now cover `System.C` C strings, varargs C string
+      use, and foreign-owned copy/dispose helpers; user-facing FFI/book docs
+      remain.

@@ -241,6 +241,161 @@ public sealed class ProjectCliTests
     }
 
     [Fact]
+    public async Task TestGeneratesFactRunnerFromMetadataAndAppliesFilter()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
+        {
+            return;
+        }
+
+        var originalDirectory = Environment.CurrentDirectory;
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-project-cli-generated-test-filter-");
+
+        try
+        {
+            var testDirectory = await CreateGeneratedRunnerFixtureAsync(tempDirectory.FullName);
+            Environment.CurrentDirectory = testDirectory;
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(["test", "--filter=Adds"], new StringReader(string.Empty), stdout, stderr);
+
+            Assert.Equal(0, exitCode);
+            Assert.Contains("Passed test project 'generated-tests'.", stdout.ToString(), StringComparison.Ordinal);
+            Assert.Equal(string.Empty, stderr.ToString());
+
+            var generatedRunnerPath = Path.Combine(
+                testDirectory,
+                ".stark",
+                "build",
+                "dev",
+                "generated-tests",
+                "tests",
+                "generated-tests.generated.stark");
+            Assert.True(File.Exists(generatedRunnerPath));
+
+            var generatedRunner = await File.ReadAllTextAsync(generatedRunnerPath);
+            Assert.Contains("import System.Testing", generatedRunner, StringComparison.Ordinal);
+            Assert.Contains("System.Testing.RunFact(\"AddsNumbers\", AddsNumbers())", generatedRunner, StringComparison.Ordinal);
+            Assert.DoesNotContain("System.Testing.RunFact(\"FailsByDesign\", FailsByDesign())", generatedRunner, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Environment.CurrentDirectory = originalDirectory;
+            Cleanup(tempDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task TestGeneratedFactRunnerReportsFailingFactThroughExitCode()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
+        {
+            return;
+        }
+
+        var originalDirectory = Environment.CurrentDirectory;
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-project-cli-generated-test-fail-");
+
+        try
+        {
+            var testDirectory = await CreateGeneratedRunnerFixtureAsync(tempDirectory.FullName);
+            Environment.CurrentDirectory = testDirectory;
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(["test"], new StringReader(string.Empty), stdout, stderr);
+
+            Assert.Equal(1, exitCode);
+            Assert.Contains("Running test project 'generated-tests'...", stdout.ToString(), StringComparison.Ordinal);
+            Assert.Contains("Failed test project 'generated-tests' with exit code 1.", stderr.ToString(), StringComparison.Ordinal);
+        }
+        finally
+        {
+            Environment.CurrentDirectory = originalDirectory;
+            Cleanup(tempDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task TestRejectsFilterWhenNoGeneratedFactsExist()
+    {
+        var originalDirectory = Environment.CurrentDirectory;
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-project-cli-filter-no-facts-");
+
+        try
+        {
+            await CreateSimpleTestProjectAsync(
+                tempDirectory.FullName,
+                """
+                module Tests
+
+                export fn i32[min max] main()
+                {
+                    return 0;
+                }
+                """);
+
+            Environment.CurrentDirectory = tempDirectory.FullName;
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(["test", "--filter", "Anything"], new StringReader(string.Empty), stdout, stderr);
+
+            Assert.Equal(1, exitCode);
+            Assert.Equal(string.Empty, stdout.ToString());
+            Assert.Contains("No [Fact] tests were found, so --filter cannot be applied.", stderr.ToString(), StringComparison.Ordinal);
+        }
+        finally
+        {
+            Environment.CurrentDirectory = originalDirectory;
+            Cleanup(tempDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task TestRejectsExplicitMainWhenFactRunnerIsGenerated()
+    {
+        var originalDirectory = Environment.CurrentDirectory;
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-project-cli-fact-main-conflict-");
+
+        try
+        {
+            await CreateSimpleTestProjectAsync(
+                tempDirectory.FullName,
+                """
+                module Tests
+
+                [Fact]
+                fn bool AddsNumbers()
+                {
+                    return 2 + 2 == 4;
+                }
+
+                export fn i32[min max] main()
+                {
+                    return 0;
+                }
+                """);
+
+            Environment.CurrentDirectory = tempDirectory.FullName;
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(["test"], new StringReader(string.Empty), stdout, stderr);
+
+            Assert.Equal(1, exitCode);
+            Assert.Equal(string.Empty, stdout.ToString());
+            Assert.Contains("Remove the explicit 'main' function from the test root.", stderr.ToString(), StringComparison.Ordinal);
+        }
+        finally
+        {
+            Environment.CurrentDirectory = originalDirectory;
+            Cleanup(tempDirectory);
+        }
+    }
+
+    [Fact]
     public async Task TestReturnsFailureWhenTestExecutableFails()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
@@ -506,6 +661,118 @@ public sealed class ProjectCliTests
                 return 1;
             }
             """);
+    }
+
+    private static async Task<string> CreateGeneratedRunnerFixtureAsync(string rootDirectory)
+    {
+        var testingDirectory = Path.Combine(rootDirectory, "testing");
+        var testDirectory = Path.Combine(rootDirectory, "generated-tests");
+        Directory.CreateDirectory(testingDirectory);
+        Directory.CreateDirectory(testDirectory);
+
+        await File.WriteAllTextAsync(
+            Path.Combine(testingDirectory, "Stark.toml"),
+            """
+            [project]
+            name = "testing"
+            version = "0.1.0"
+            kind = "library"
+
+            [library]
+            root = "Testing.stark"
+            output = "TestSupport"
+
+            [profiles.dev]
+            opt = 0
+            """);
+
+        await File.WriteAllTextAsync(
+            Path.Combine(testingDirectory, "Testing.stark"),
+            """
+            module System.Testing
+
+            public fn u8[0 1] RunFact(ascii name, bool assertion)
+            {
+                if (assertion)
+                {
+                    return 0;
+                }
+
+                return 1;
+            }
+
+            public fn i32[min max] ExitCode(u32[0 2 ** 31 - 1] failureCount)
+            {
+                if (failureCount == 0)
+                {
+                    return 0;
+                }
+
+                return 1;
+            }
+            """);
+
+        await File.WriteAllTextAsync(
+            Path.Combine(testDirectory, "Stark.toml"),
+            """
+            [project]
+            name = "generated-tests"
+            version = "0.1.0"
+            kind = "test"
+
+            [test]
+            root = "GeneratedTests.stark"
+            output = "generated-tests"
+
+            [dependencies]
+            testing = { path = "../testing" }
+
+            [profiles.dev]
+            opt = 0
+            """);
+
+        await File.WriteAllTextAsync(
+            Path.Combine(testDirectory, "GeneratedTests.stark"),
+            """
+            module GeneratedTests
+
+            [Fact]
+            fn bool AddsNumbers()
+            {
+                return 2 + 2 == 4;
+            }
+
+            [Fact]
+            fn bool FailsByDesign()
+            {
+                return false;
+            }
+            """);
+
+        return testDirectory;
+    }
+
+    private static async Task CreateSimpleTestProjectAsync(string rootDirectory, string sourceText)
+    {
+        await File.WriteAllTextAsync(
+            Path.Combine(rootDirectory, "Stark.toml"),
+            """
+            [project]
+            name = "simple-tests"
+            version = "0.1.0"
+            kind = "test"
+
+            [test]
+            root = "Tests.stark"
+            output = "simple-tests"
+
+            [profiles.dev]
+            opt = 0
+            """);
+
+        await File.WriteAllTextAsync(
+            Path.Combine(rootDirectory, "Tests.stark"),
+            sourceText);
     }
 
     private static string ExecutableFileName(string name)

@@ -1921,6 +1921,55 @@ public sealed class SsaOptimizationTests
     }
 
     [Fact]
+    public void DevirtualizerTurnsKnownDynTraitCallIntoDirectCallBeforeInlining()
+    {
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(
+                """
+                module Demo
+
+                dyn trait Speaker
+                {
+                    finite law i32[min max] Speak(borrow Self self);
+                }
+
+                struct Dog : Speaker
+                {
+                    i32[min max] Volume;
+
+                    finite law i32[min max] Speak(borrow Dog self)
+                    {
+                        return self.Volume;
+                    }
+                }
+
+                fn i32[min max] Run()
+                {
+                    stack Dog d = new Dog() { Volume = 7 };
+                    stack borrow dyn Speaker s = d;
+                    return s.Speak();
+                }
+                """),
+            new CompilerOptions(StopAfterPassId: "devirt-ssa"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+        var function = Assert.Single(GetOptimizedSsa(result).Functions, static candidate => candidate.Name == "Run");
+        var instructions = function.Blocks.SelectMany(static block => block.Instructions).ToArray();
+        var valueInstructions = instructions.OfType<SsaValueInstruction>().ToArray();
+
+        Assert.Contains(
+            valueInstructions,
+            static instruction => instruction.Value is SsaCallRValue { FunctionName: "Dog.Speak" });
+        Assert.DoesNotContain(
+            valueInstructions,
+            static instruction => instruction.Value is SsaIndirectCallRValue);
+        Assert.DoesNotContain(
+            instructions,
+            static instruction => instruction is SsaIndirectCallInstruction);
+    }
+
+    [Fact]
     public void OptimizedSsaNormalizesSmallSparseSwitchToCompareChainBeforeLlvmEmission()
     {
         var result = Compile(

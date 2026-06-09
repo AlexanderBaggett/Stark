@@ -79,15 +79,35 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
         var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
         var tryJoinBody = ExtractDefinedFunctionText(
             llvm,
-            "define fastcc noundef %System_Memory_MemoryStatus @TryJoin(",
+            "define fastcc noundef %System_Memory_MemoryStatus @TryJoin__mutborrowSystem_Text_OwnedAscii_ascii_ascii_(",
             "Expected promoted TryJoin definition in path module.");
         var tryJoinPointerRangesBody = ExtractDefinedFunctionText(
             llvm,
             "define fastcc noundef %System_Memory_MemoryStatus @TryJoinPointerRanges(",
             "Expected promoted TryJoinPointerRanges definition in path module.");
+        var appendPointerRangeBody = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef %System_Memory_MemoryStatus @AppendPointerRangeDisjoint(",
+            "Expected promoted path pointer append helper definition in path module.");
+        var tryJoin3Body = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef %System_Memory_MemoryStatus @TryJoin__mutborrowSystem_Text_OwnedAscii_ascii_ascii_ascii_(",
+            "Expected promoted three-part TryJoin definition in path module.");
+        var tryJoinPointerRanges3Body = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef %System_Memory_MemoryStatus @TryJoinPointerRanges3(",
+            "Expected promoted three-part TryJoin pointer core definition in path module.");
+        var tryJoin4Body = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef %System_Memory_MemoryStatus @TryJoin__mutborrowSystem_Text_OwnedAscii_ascii_ascii_ascii_ascii_(",
+            "Expected promoted four-part TryJoin definition in path module.");
+        var tryJoinPointerRanges4Body = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef %System_Memory_MemoryStatus @TryJoinPointerRanges4(",
+            "Expected promoted four-part TryJoin pointer core definition in path module.");
         var tryJoinConstBody = ExtractDefinedFunctionText(
             llvm,
-            "define fastcc noundef %System_Memory_MemoryStatus @TryJoinConst(",
+            "define fastcc noundef %System_Memory_MemoryStatus @TryJoinConst__mutborrowSystem_Text_OwnedAscii_ascii_ascii_(",
             "Expected promoted TryJoinConst definition in path module.");
         var tryNormalizeBody = ExtractDefinedFunctionText(
             llvm,
@@ -104,9 +124,18 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
 
         Assert.Contains("@TryJoinPointerRanges", tryJoinBody, StringComparison.Ordinal);
         Assert.Contains("@TryJoinPointerRanges", tryJoinConstBody, StringComparison.Ordinal);
+        Assert.Contains("@TryJoinPointerRanges3", tryJoin3Body, StringComparison.Ordinal);
+        Assert.Contains("@TryJoinPointerRanges4", tryJoin4Body, StringComparison.Ordinal);
         Assert.True(
             CountOccurrences(tryJoinPointerRangesBody, "@llvm.memcpy.p0.p0.i64") >= 2,
             "Expected TryJoin pointer core to copy left and right path ranges through direct tail-region memcpy operations.");
+        Assert.True(
+            CountOccurrences(tryJoinPointerRanges3Body, "@AppendJoinedPointerRangeDisjoint") >= 3,
+            "Expected three-part TryJoin pointer core to append each path range through the joined tail-region helper.");
+        Assert.True(
+            CountOccurrences(tryJoinPointerRanges4Body, "@AppendJoinedPointerRangeDisjoint") >= 4,
+            "Expected four-part TryJoin pointer core to append each path range through the joined tail-region helper.");
+        Assert.Contains("@llvm.memcpy.p0.p0.i64", appendPointerRangeBody, StringComparison.Ordinal);
         Assert.DoesNotContain("@System_Text_OwnedAscii_AppendAscii", tryJoinConstBody, StringComparison.Ordinal);
         Assert.DoesNotContain("@System_Text_OwnedAscii_AppendAscii", tryNormalizeConstBody, StringComparison.Ordinal);
         Assert.Contains("@AppendNormalizedSeparatorsCore", tryNormalizeBody, StringComparison.Ordinal);
@@ -162,6 +191,47 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                     switch (value)
                     {
                         case "alpha/beta/gamma.txt":
+                            return true;
+                        case "alpha\\beta\\gamma.txt":
+                            return true;
+                        default:
+                            return false;
+                    }
+                }
+
+                fn bool IsLexicallyNormalizedPath(ascii value)
+                {
+                    switch (value)
+                    {
+                        case "alpha/gamma.txt":
+                            return true;
+                        case "alpha\\gamma.txt":
+                            return true;
+                        default:
+                            return false;
+                    }
+                }
+
+                fn bool IsChangedExtensionPath(ascii value)
+                {
+                    switch (value)
+                    {
+                        case "alpha/beta.stark":
+                            return true;
+                        case "alpha\\beta.stark":
+                            return true;
+                        default:
+                            return false;
+                    }
+                }
+
+                fn bool IsMultiJoinedPath(ascii value)
+                {
+                    switch (value)
+                    {
+                        case "alpha/beta/gamma.txt":
+                            return true;
+                        case "alpha\\beta\\gamma.txt":
                             return true;
                         default:
                             return false;
@@ -223,6 +293,17 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
+                fn bool IsOwnedChangedExtensionPath(System.Memory.MemoryResult<System.Text.OwnedAscii> result)
+                {
+                    switch (result)
+                    {
+                        case System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(var value):
+                            return IsChangedExtensionPath(value.View());
+                        case System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(var error):
+                            return false;
+                    }
+                }
+
                 fn bool Probe()
                 {
                     stack mut System.Text.OwnedAscii joined = new();
@@ -274,10 +355,40 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                         return false;
                     }
 
+                    stack mut System.Text.OwnedAscii multiJoined = new();
+                    if (!Ok(System.IO.Path.TryJoin(multiJoined, "alpha", "beta", "gamma.txt"))
+                        || !IsMultiJoinedPath(multiJoined.View()))
+                        {
+                            return false;
+                    }
+
+                    stack mut System.Text.OwnedAscii changed = new();
+                    if (!Ok(System.IO.Path.TryChangeExtension(changed, "alpha/beta.txt", "stark"))
+                        || !IsChangedExtensionPath(changed.View()))
+                        {
+                            return false;
+                    }
+
+                    stack mut System.Text.OwnedAscii lexical = new();
+                    if (!Ok(System.IO.Path.TryNormalizeLexically(lexical, "alpha/./beta/../gamma.txt"))
+                        || !IsLexicallyNormalizedPath(lexical.View()))
+                        {
+                            return false;
+                    }
+
+                    if (!System.IO.Path.IsRooted(System.IO.Path.DirectorySeparator())
+                        || !System.IO.Path.IsRelative("alpha/beta.txt")
+                        || System.IO.Path.GetFacts(System.IO.Path.DirectorySeparator()).RootNameLength() != 1)
+                        {
+                            return false;
+                    }
+
                     return IsNormalizedPath(normalized.View())
                         && IsOwnedJoinedPath(System.IO.Path.Join("alpha", "beta.txt"))
                         && IsOwnedJoinedPath(System.IO.Path.JoinConst(ConstLeft, ConstRight))
                         && IsOwnedJoinedPath(System.IO.Path.Join("alpha/", "/beta.txt"))
+                        && IsOwnedChangedExtensionPath(System.IO.Path.ChangeExtension("alpha/beta.txt", ".stark"))
+                        && IsOwnedChangedExtensionPath(System.IO.Path.ChangeExtensionConst("alpha/beta.txt", "stark"))
                         && IsOwnedNormalizedPath(System.IO.Path.NormalizeSeparators("alpha//beta///gamma.txt"))
                         && IsOwnedNormalizedPath(System.IO.Path.NormalizeSeparatorsConst(ConstNormalizedSource));
                 }
@@ -347,6 +458,45 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                 }
 
                 fn bool IsNormalizedPath(ascii value)
+                {
+                    switch (value)
+                    {
+                        case "alpha/beta/gamma.txt":
+                            return true;
+                        case "alpha\\beta\\gamma.txt":
+                            return true;
+                        default:
+                            return false;
+                    }
+                }
+
+                fn bool IsLexicallyNormalizedPath(ascii value)
+                {
+                    switch (value)
+                    {
+                        case "alpha/gamma.txt":
+                            return true;
+                        case "alpha\\gamma.txt":
+                            return true;
+                        default:
+                            return false;
+                    }
+                }
+
+                fn bool IsChangedExtensionPath(ascii value)
+                {
+                    switch (value)
+                    {
+                        case "alpha/beta.stark":
+                            return true;
+                        case "alpha\\beta.stark":
+                            return true;
+                        default:
+                            return false;
+                    }
+                }
+
+                fn bool IsMultiJoinedPath(ascii value)
                 {
                     switch (value)
                     {
@@ -481,10 +631,13 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                         return false;
                     }
 
-                    stack System.IO.Path.PathFacts root = System.IO.Path.GetFacts("/");
+                    stack System.IO.Path.PathFacts root = System.IO.Path.GetFacts(System.IO.Path.DirectorySeparator());
                     return root.PathLength() == 1
                         && root.DirectoryNameLength() == 1
+                        && root.RootNameLength() == 1
                         && root.BaseNameLength() == 0
+                        && root.IsRooted()
+                        && System.IO.Path.IsRelative("alpha/beta.txt")
                         && IsEmpty(System.IO.Path.GetFacts("").BaseName())
                         && IsEmpty(System.IO.Path.Extension(".gitignore"))
                         && IsHiddenBaseName(System.IO.Path.BaseName("alpha/.hidden"));
@@ -524,6 +677,66 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                     if (!Ok(System.IO.Path.TryNormalizeSeparatorsConst(constNormalized, ConstNormalizedSource)) || !IsNormalizedPath(constNormalized.View()))
                     {
                         return 11;
+                    }
+
+                    stack mut System.Text.OwnedAscii multiJoined = new();
+                    if (!Ok(System.IO.Path.TryJoin(multiJoined, "alpha", "beta", "gamma.txt")) || !IsMultiJoinedPath(multiJoined.View()))
+                    {
+                        return 16;
+                    }
+
+                    stack mut System.Text.OwnedAscii constMultiJoined = new();
+                    if (!Ok(System.IO.Path.TryJoinConst(constMultiJoined, "alpha", "beta", "gamma.txt")) || !IsMultiJoinedPath(constMultiJoined.View()))
+                    {
+                        return 17;
+                    }
+
+                    stack mut System.Text.OwnedAscii changed = new();
+                    if (!Ok(System.IO.Path.TryChangeExtension(changed, "alpha/beta.txt", "stark")) || !IsChangedExtensionPath(changed.View()))
+                    {
+                        return 18;
+                    }
+
+                    stack mut System.Text.OwnedAscii constChanged = new();
+                    if (!Ok(System.IO.Path.TryChangeExtensionConst(constChanged, "alpha/beta.txt", ".stark")) || !IsChangedExtensionPath(constChanged.View()))
+                    {
+                        return 19;
+                    }
+
+                    stack mut System.Text.OwnedAscii lexical = new();
+                    if (!Ok(System.IO.Path.TryNormalizeLexically(lexical, "alpha/./beta/../gamma.txt")) || !IsLexicallyNormalizedPath(lexical.View()))
+                    {
+                        return 21;
+                    }
+
+                    stack mut System.Text.OwnedAscii constLexical = new();
+                    if (!Ok(System.IO.Path.TryNormalizeLexicallyConst(constLexical, "alpha/./beta/../gamma.txt")) || !IsLexicallyNormalizedPath(constLexical.View()))
+                    {
+                        return 22;
+                    }
+
+                    stack mut System.Text.OwnedAscii current = new();
+                    if (!Ok(System.IO.Path.CurrentDirectory(current)))
+                    {
+                        return 27;
+                    }
+
+                    stack mut System.Text.OwnedAscii expectedFull = new();
+                    if (!Ok(System.IO.Path.TryJoin(expectedFull, current.View(), "beta.txt")))
+                    {
+                        return 28;
+                    }
+
+                    stack mut System.Text.OwnedAscii full = new();
+                    if (!Ok(System.IO.Path.TryFullPath(full, "alpha/../beta.txt")) || full.View() != expectedFull.View())
+                    {
+                        return 29;
+                    }
+
+                    stack mut System.Text.OwnedAscii constFull = new();
+                    if (!Ok(System.IO.Path.TryFullPathConst(constFull, "alpha/../beta.txt")) || constFull.View() != expectedFull.View())
+                    {
+                        return 30;
                     }
 
                     stack System.Memory.MemoryResult<System.Text.OwnedAscii> ownedJoin = System.IO.Path.Join("alpha", "beta.txt");
@@ -574,6 +787,30 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                             return 15;
                     }
 
+                    stack System.Memory.MemoryResult<System.Text.OwnedAscii> ownedChanged = System.IO.Path.ChangeExtension("alpha/beta.txt", ".stark");
+                    switch (ownedChanged)
+                    {
+                        case System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(var ownedChangedValue):
+                            if (!IsChangedExtensionPath(ownedChangedValue.View()))
+                            {
+                                return 23;
+                            }
+                        case System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(var ownedChangedError):
+                            return 24;
+                    }
+
+                    stack System.Memory.MemoryResult<System.Text.OwnedAscii> ownedLexical = System.IO.Path.NormalizeLexically("alpha/./beta/../gamma.txt");
+                    switch (ownedLexical)
+                    {
+                        case System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(var ownedLexicalValue):
+                            if (!IsLexicallyNormalizedPath(ownedLexicalValue.View()))
+                            {
+                                return 25;
+                            }
+                        case System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(var ownedLexicalError):
+                            return 26;
+                    }
+
                     return 0;
                 }
 
@@ -616,8 +853,21 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                     }
 
                     stack ascii normalizeView = normalizeAlias.View();
-                    return Ok(System.IO.Path.TryNormalizeSeparators(normalizeAlias, normalizeView))
-                        && IsNormalizedPath(normalizeAlias.View());
+                    if (!Ok(System.IO.Path.TryNormalizeSeparators(normalizeAlias, normalizeView))
+                        || !IsNormalizedPath(normalizeAlias.View()))
+                        {
+                            return false;
+                    }
+
+                    stack mut System.Text.OwnedAscii extensionAlias = new();
+                    if (!Ok(extensionAlias.AppendAscii("alpha/beta.txt")))
+                    {
+                        return false;
+                    }
+
+                    stack ascii extensionView = extensionAlias.View();
+                    return Ok(System.IO.Path.TryChangeExtension(extensionAlias, extensionView, "stark"))
+                        && IsChangedExtensionPath(extensionAlias.View());
                 }
 
                 unsafe fn i32[min max] CheckTooLargeNormalization()
@@ -675,6 +925,332 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                     if (tooLarge != 0)
                     {
                         return 40 + tooLarge;
+                    }
+
+                    return 0;
+                }
+                """);
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(
+                [appPath, "--emit-exe", "-I", sourceRoot, "-o", outputPath, "--target", targetInfo.Triple],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.True(
+                exitCode == 0,
+                stdout + Environment.NewLine + stderr);
+            AssertCompilerLogsEmitted(stderr.ToString());
+            Assert.True(File.Exists(outputPath));
+
+            var execution = await RunProcessWithUtf8StdinAsync(outputPath, tempDirectory.FullName, string.Empty);
+            Assert.Equal(0, execution.ExitCode);
+            Assert.Equal(string.Empty, execution.Stdout);
+            Assert.Equal(string.Empty, execution.Stderr);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public async Task SourceStdLibPathTempNameAndPathHelpersUseExplicitAttempts()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
+        {
+            return;
+        }
+
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-path-temp-");
+        var appPath = Path.Combine(tempDirectory.FullName, "App.stark");
+        var outputPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "App.exe" : "app");
+
+        try
+        {
+            await File.WriteAllTextAsync(
+                appPath,
+                """
+                import System.IO.Path
+                import System.Text
+                import System.Memory
+                module App
+
+                fn bool Ok(System.Memory.MemoryStatus status)
+                {
+                    switch (status)
+                    {
+                        case System.Memory.MemoryStatus.Ok:
+                            return true;
+                        case System.Memory.MemoryStatus.Err(var error):
+                            return false;
+                    }
+                }
+
+                fn bool StartsWith(borrow System.Text.OwnedAscii value, ascii prefix)
+                {
+                    stack i64[min max] signedLength = System.Text.AsciiLength(prefix);
+                    if (signedLength < 0)
+                    {
+                        return false;
+                    }
+
+                    stack u64[0 2 ** 63 - 1] count = (u64[0 2 ** 63 - 1])signedLength;
+                    if (value.Length() < count)
+                    {
+                        return false;
+                    }
+
+                    return System.Text.OwnedAsciiRangeEqualsAscii(value, 0, count, prefix);
+                }
+
+                fn bool EndsWith(borrow System.Text.OwnedAscii value, ascii suffix)
+                {
+                    stack i64[min max] signedLength = System.Text.AsciiLength(suffix);
+                    if (signedLength < 0)
+                    {
+                        return false;
+                    }
+
+                    stack u64[0 2 ** 63 - 1] count = (u64[0 2 ** 63 - 1])signedLength;
+                    if (value.Length() < count)
+                    {
+                        return false;
+                    }
+
+                    return System.Text.OwnedAsciiRangeEqualsAscii(value, value.Length() - count, count, suffix);
+                }
+
+                fn bool IsRootDirectory(ascii value)
+                {
+                    switch (value)
+                    {
+                        case "root":
+                            return true;
+                        default:
+                            return false;
+                    }
+                }
+
+                fn bool TempNameResultMatches(
+                    System.Memory.MemoryResult<System.Text.OwnedAscii> result,
+                    ascii prefix,
+                    ascii suffix)
+                {
+                    switch (result)
+                    {
+                        case System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(var value):
+                            return StartsWith(value, prefix) && EndsWith(value, suffix);
+                        case System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(var error):
+                            return false;
+                    }
+                }
+
+                fn bool TempPathResultMatches(
+                    System.Memory.MemoryResult<System.Text.OwnedAscii> result,
+                    ascii suffix)
+                {
+                    switch (result)
+                    {
+                        case System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(var value):
+                            stack mut System.Text.OwnedAscii mutableValue = value;
+                            stack System.IO.Path.PathFacts facts = System.IO.Path.GetFacts(mutableValue.View());
+                            return IsRootDirectory(facts.DirectoryName()) && EndsWith(mutableValue, suffix);
+                        case System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(var error):
+                            return false;
+                    }
+                }
+
+                fn bool TempDirectoryResultMatches(System.Memory.MemoryResult<System.Text.OwnedAscii> result)
+                {
+                    switch (result)
+                    {
+                        case System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(var value):
+                            return value.Length() > 0;
+                        case System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(var error):
+                            return false;
+                    }
+                }
+
+                export unsafe fn i32[min max] main()
+                {
+                    stack mut System.Text.OwnedAscii name = new();
+                    if (!Ok(System.IO.Path.TryTempName(name, "artifact-", 7, ".tmp")))
+                    {
+                        return 1;
+                    }
+
+                    if (!StartsWith(name, "artifact-") || !EndsWith(name, "-7.tmp"))
+                    {
+                        return 2;
+                    }
+
+                    if (!TempNameResultMatches(System.IO.Path.TempName("", 2, ".tmp"), "stark-", "-2.tmp"))
+                    {
+                        return 3;
+                    }
+
+                    stack mut System.Text.OwnedAscii aliasedName = new();
+                    if (!Ok(aliasedName.AppendAscii("alias-")))
+                    {
+                        return 4;
+                    }
+
+                    stack ascii aliasView = aliasedName.View();
+                    if (!Ok(System.IO.Path.TryTempName(aliasedName, aliasView, 3, ".dat")))
+                    {
+                        return 5;
+                    }
+
+                    if (!StartsWith(aliasedName, "alias-") || !EndsWith(aliasedName, "-3.dat"))
+                    {
+                        return 6;
+                    }
+
+                    stack mut System.Text.OwnedAscii path = new();
+                    if (!Ok(System.IO.Path.TryTempPathIn(path, "root", "artifact-", 9, ".bin")))
+                    {
+                        return 7;
+                    }
+
+                    stack System.IO.Path.PathFacts facts = System.IO.Path.GetFacts(path.View());
+                    if (!IsRootDirectory(facts.DirectoryName()) || !EndsWith(path, "-9.bin"))
+                    {
+                        return 8;
+                    }
+
+                    if (!TempPathResultMatches(System.IO.Path.TempPathIn("root", "", 10, ".obj"), "-10.obj"))
+                    {
+                        return 9;
+                    }
+
+                    stack mut System.Text.OwnedAscii tempRoot = new();
+                    if (!Ok(System.IO.Path.TempDirectory(tempRoot)) || tempRoot.Length() == 0)
+                    {
+                        return 10;
+                    }
+
+                    if (!TempDirectoryResultMatches(System.IO.Path.TempDirectory()))
+                    {
+                        return 11;
+                    }
+
+                    stack mut System.Text.OwnedAscii tempPath = new();
+                    if (!Ok(System.IO.Path.TryTempPathIn(tempPath, tempRoot.View(), "artifact-", 11, ".tmp"))
+                        || !EndsWith(tempPath, "-11.tmp"))
+                        {
+                            return 12;
+                    }
+
+                    return 0;
+                }
+                """);
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(
+                [appPath, "--emit-exe", "-I", sourceRoot, "-o", outputPath, "--target", targetInfo.Triple],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.True(
+                exitCode == 0,
+                stdout + Environment.NewLine + stderr);
+            AssertCompilerLogsEmitted(stderr.ToString());
+            Assert.True(File.Exists(outputPath));
+
+            var execution = await RunProcessWithUtf8StdinAsync(outputPath, tempDirectory.FullName, string.Empty);
+            Assert.Equal(0, execution.ExitCode);
+            Assert.Equal(string.Empty, execution.Stdout);
+            Assert.Equal(string.Empty, execution.Stderr);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public async Task SourceStdLibPathGlobMatcherHandlesSegmentsAndRecursiveStars()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
+        {
+            return;
+        }
+
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-path-glob-");
+        var appPath = Path.Combine(tempDirectory.FullName, "App.stark");
+        var outputPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "App.exe" : "app");
+
+        try
+        {
+            await File.WriteAllTextAsync(
+                appPath,
+                """
+                import System.IO.Path
+                module App
+
+                export unsafe fn i32[min max] main()
+                {
+                    if (!System.IO.Path.GlobMatches("src/**/*.stark", "src/App.stark"))
+                    {
+                        return 1;
+                    }
+
+                    if (!System.IO.Path.GlobMatches("src/**/*.stark", "src/System/App.stark"))
+                    {
+                        return 2;
+                    }
+
+                    if (System.IO.Path.GlobMatches("src/*.stark", "src/System/App.stark"))
+                    {
+                        return 3;
+                    }
+
+                    if (!System.IO.Path.GlobMatches("src/System/?.stark", "src/System/a.stark"))
+                    {
+                        return 4;
+                    }
+
+                    if (System.IO.Path.GlobMatches("src/System/?.stark", "src/System/ab.stark"))
+                    {
+                        return 5;
+                    }
+
+                    if (!System.IO.Path.GlobMatches("**/*.stark", "module.stark"))
+                    {
+                        return 6;
+                    }
+
+                    if (!System.IO.Path.GlobMatches("root/**", "root/a/b/c.txt"))
+                    {
+                        return 7;
+                    }
+
+                    if (System.IO.Path.GlobMatches("root/**/*.stark", "root/a/b/c.txt"))
+                    {
+                        return 8;
                     }
 
                     return 0;
@@ -1407,9 +1983,14 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                 isDirectorySeparatorBody);
             Assert.Contains("@.str.1", isDirectorySeparatorBody, StringComparison.Ordinal);
 
+            var tryJoinSignature = llvm.Contains(
+                "define fastcc noundef %System_Memory_MemoryStatus @TryJoin(",
+                StringComparison.Ordinal)
+                    ? "define fastcc noundef %System_Memory_MemoryStatus @TryJoin("
+                    : "define fastcc noundef %System_Memory_MemoryStatus @TryJoin__mutborrowSystem_Text_OwnedAscii_ascii_ascii_(";
             var tryJoinBody = ExtractDefinedFunctionText(
                 llvm,
-                "define fastcc noundef %System_Memory_MemoryStatus @TryJoin(",
+                tryJoinSignature,
                 "Expected TryJoin definition in staged Windows path module.");
             Assert.Contains("icmp eq i8", tryJoinBody, StringComparison.Ordinal);
             Assert.DoesNotContain("@System_Runtime_Platform_Windows_IsDirectorySeparator(", tryJoinBody, StringComparison.Ordinal);

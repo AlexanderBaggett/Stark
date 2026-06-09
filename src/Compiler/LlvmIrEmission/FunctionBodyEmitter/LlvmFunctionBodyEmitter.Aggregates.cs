@@ -14,6 +14,20 @@ internal sealed partial class LlvmFunctionBodyEmitter
             return;
         }
 
+        if (StarkTypeSymbols.IsPointerBackedBorrowType(storeLocal.LocalType))
+        {
+            EnsureLocalSlotExists(storeLocal.LocalName, storeLocal.LocalType);
+            var borrowSlot = GetLocalSlotPointer(storeLocal.LocalName);
+            EmitValueToAddress(
+                borrowSlot,
+                storeLocal.LocalType,
+                storeLocal.Value,
+                GetLocalSlotAlignmentBytes(storeLocal.LocalName, storeLocal.LocalType),
+                GetDirectTbaaMetadataSuffix(CreateTbaaLocalRootKey(storeLocal.LocalName), storeLocal.LocalType));
+            EmitInvariantStartForLocalIfNeeded(storeLocal.LocalName, storeLocal.LocalType);
+            return;
+        }
+
         if (TryEmitDirectAggregateAliasStoreLocal(storeLocal))
         {
             return;
@@ -142,6 +156,11 @@ internal sealed partial class LlvmFunctionBodyEmitter
         string scopedNoAliasMetadataSuffix = "",
         bool includeByteAlignment = false)
     {
+        if (TryEmitPointerBackedBorrowStore(destinationAddress, valueType, value, alignmentBytes, tbaaMetadataSuffix, scopedNoAliasMetadataSuffix))
+        {
+            return;
+        }
+
         if (TryEmitInlineAggregateZeroFill(destinationAddress, valueType, value, alignmentBytes))
         {
             return;
@@ -166,6 +185,30 @@ internal sealed partial class LlvmFunctionBodyEmitter
         }
 
         AppendLine($"  store {MapType(valueType)} {FormatValue(value)}, ptr {destinationAddress}{GetAlignmentSuffix(alignmentBytes, includeByteAlignment)}{tbaaMetadataSuffix}{scopedNoAliasMetadataSuffix}");
+    }
+
+    private bool TryEmitPointerBackedBorrowStore(
+        string destinationAddress,
+        StarkTypeSymbol valueType,
+        SsaValue value,
+        int? alignmentBytes,
+        string tbaaMetadataSuffix,
+        string scopedNoAliasMetadataSuffix)
+    {
+        if (!StarkTypeSymbols.IsPointerBackedBorrowType(valueType))
+        {
+            return false;
+        }
+
+        var pointerValue = value switch
+        {
+            SsaNullConstant or SsaZeroInitializerValue => "null",
+            _ => TryResolveAggregateSourceAddress(value, valueType, out var sourceAddress, out _)
+                ? sourceAddress
+                : FormatValue(value)
+        };
+        AppendLine($"  store ptr {pointerValue}, ptr {destinationAddress}{GetAlignmentSuffix(alignmentBytes)}{tbaaMetadataSuffix}{scopedNoAliasMetadataSuffix}");
+        return true;
     }
 
     private bool TryEmitInlineAggregateZeroFill(string destinationAddress, StarkTypeSymbol valueType, SsaValue value, int? alignmentBytes)
@@ -343,6 +386,17 @@ internal sealed partial class LlvmFunctionBodyEmitter
         out string sourceAddress,
         out int? sourceAlignmentBytes)
     {
+        if (StarkTypeSymbols.IsPointerBackedBorrowType(expectedType)
+            && TryResolvePointerBackedBorrowSourceAddress(
+                value,
+                expectedType,
+                visitedValueNames,
+                out sourceAddress,
+                out sourceAlignmentBytes))
+        {
+            return true;
+        }
+
         var normalizedExpectedType = NormalizeAggregateType(expectedType);
 
         switch (value)
@@ -454,6 +508,224 @@ internal sealed partial class LlvmFunctionBodyEmitter
                 sourceAlignmentBytes = null;
                 return false;
         }
+    }
+
+    private bool TryResolvePointerBackedBorrowSourceAddress(
+        SsaValue value,
+        StarkTypeSymbol borrowType,
+        ISet<string> visitedValueNames,
+        out string sourceAddress,
+        out int? sourceAlignmentBytes)
+    {
+        if (value is not SsaValueReference reference
+            || !visitedValueNames.Add(reference.Name))
+        {
+            sourceAddress = string.Empty;
+            sourceAlignmentBytes = null;
+            return false;
+        }
+
+        var borrowedValueType = StarkTypeSymbols.BorrowReturnValueType(borrowType);
+        if (TryResolvePointerBackedBorrowParameterValue(reference, borrowedValueType, out sourceAddress, out sourceAlignmentBytes))
+        {
+            return true;
+        }
+
+        if (_trivialValueAliases.TryGetValue(reference.Name, out var alias))
+        {
+            return TryResolvePointerBackedBorrowSourceAddress(
+                alias,
+                borrowType,
+                visitedValueNames,
+                out sourceAddress,
+                out sourceAlignmentBytes);
+        }
+
+        if (!_valueDefinitions.TryGetValue(reference.Name, out var definition))
+        {
+            sourceAddress = string.Empty;
+            sourceAlignmentBytes = null;
+            return false;
+        }
+
+        switch (definition)
+        {
+            case SsaUseRValue use:
+                return TryResolvePointerBackedBorrowSourceAddress(
+                    use.Value,
+                    borrowType,
+                    visitedValueNames,
+                    out sourceAddress,
+                    out sourceAlignmentBytes);
+            case SsaConvertRValue convert
+                when StarkTypeSymbols.IsPointerBackedBorrowType(convert.TargetType)
+                     && convert.Operand.Type.Kind == StarkTypeKind.RawPointer:
+                sourceAddress = FormatValue(convert.Operand);
+                sourceAlignmentBytes = GetTypeAlignmentBytes(borrowedValueType);
+                return true;
+            case SsaLoadIndirectRValue loadIndirect
+                when StarkTypeSymbols.IsPointerBackedBorrowType(loadIndirect.Type):
+                if (TryResolveDirectPointerBackedBorrowPointeeAddress(
+                        loadIndirect.Address,
+                        borrowType,
+                        out sourceAddress,
+                        out sourceAlignmentBytes,
+                        out _))
+                {
+                    return true;
+                }
+
+                if (IsAddressOfPointerBackedBorrowParameter(loadIndirect.Address))
+                {
+                    sourceAddress = FormatValue(loadIndirect.Address);
+                    sourceAlignmentBytes = GetTypeAlignmentBytes(borrowedValueType);
+                    return true;
+                }
+
+                sourceAddress = EmitPointerBackedBorrowSlotLoad(
+                    FormatValue(loadIndirect.Address),
+                    GetKnownPointerAlignmentBytes(loadIndirect.Address, loadIndirect.Type));
+                sourceAlignmentBytes = GetTypeAlignmentBytes(borrowedValueType);
+                return true;
+            case SsaLoadLocalRValue loadLocal
+                when StarkTypeSymbols.IsPointerBackedBorrowType(loadLocal.Type):
+                if (TryResolveSingleStoreLocalValue(loadLocal.LocalName, out var storedValue)
+                    && StarkTypeSymbols.IsPointerBackedBorrowType(storedValue.Type)
+                    && TryResolvePointerBackedBorrowSourceAddress(
+                        storedValue,
+                        borrowType,
+                        visitedValueNames,
+                        out sourceAddress,
+                        out sourceAlignmentBytes))
+                {
+                    return true;
+                }
+
+                EnsureLocalSlotExists(loadLocal.LocalName, loadLocal.Type);
+                sourceAddress = EmitPointerBackedBorrowSlotLoad(
+                    GetLocalSlotPointer(loadLocal.LocalName),
+                    GetLocalSlotAlignmentBytes(loadLocal.LocalName, loadLocal.Type));
+                sourceAlignmentBytes = GetTypeAlignmentBytes(borrowedValueType);
+                return true;
+            case SsaExtractFieldRValue extractField
+                when StarkTypeSymbols.IsPointerBackedBorrowType(extractField.Type)
+                     && TryResolveAggregateSourceAddress(
+                         extractField.Target,
+                         extractField.Target.Type,
+                         visitedValueNames,
+                         out var aggregateSourceAddress,
+                         out var aggregateAlignmentBytes):
+                var fieldType = GetAggregateElementType(extractField.Target.Type, extractField.FieldIndex);
+                var slotAddress = EmitScalarizedAggregateLeafAddress(
+                    aggregateSourceAddress,
+                    extractField.Target.Type,
+                    [extractField.FieldIndex],
+                    "borrow_source_field");
+                sourceAddress = EmitPointerBackedBorrowSlotLoad(
+                    slotAddress,
+                    GetLeafAlignmentBytes(aggregateAlignmentBytes, fieldType ?? extractField.Type));
+                sourceAlignmentBytes = GetTypeAlignmentBytes(borrowedValueType);
+                return true;
+            default:
+                sourceAddress = string.Empty;
+                sourceAlignmentBytes = null;
+                return false;
+        }
+    }
+
+    private bool TryResolveDirectPointerBackedBorrowPointeeAddress(
+        SsaValue address,
+        StarkTypeSymbol borrowType,
+        out string sourceAddress,
+        out int? sourceAlignmentBytes,
+        out StarkTypeSymbol pointeeType)
+    {
+        sourceAddress = string.Empty;
+        sourceAlignmentBytes = null;
+        pointeeType = StarkTypeSymbols.Error;
+
+        if (!TryGetDirectPointerBackedBorrowPointeeType(address.Type, borrowType, out pointeeType))
+        {
+            return false;
+        }
+
+        sourceAddress = FormatValue(address);
+        sourceAlignmentBytes = GetKnownPointerAlignmentBytes(address, pointeeType)
+            ?? GetTypeAlignmentBytes(pointeeType);
+        return true;
+    }
+
+    private static bool TryGetDirectPointerBackedBorrowPointeeType(
+        StarkTypeSymbol addressType,
+        StarkTypeSymbol borrowType,
+        out StarkTypeSymbol pointeeType)
+    {
+        pointeeType = StarkTypeSymbols.Error;
+        if (!StarkTypeSymbols.IsPointerBackedBorrowType(borrowType)
+            || addressType.Kind != StarkTypeKind.RawPointer
+            || addressType.ElementType is not { } addressPointeeType
+            || StarkTypeSymbols.IsPointerBackedBorrowType(addressPointeeType))
+        {
+            return false;
+        }
+
+        var borrowedValueType = StarkTypeSymbols.WithQualifiers(
+            StarkTypeSymbols.BorrowReturnValueType(borrowType),
+            borrowKind: StarkBorrowKind.None,
+            accessKind: StarkAccessKind.None,
+            initializationKind: StarkInitializationKind.None,
+            isMutableView: false);
+        if (NormalizeAggregateType(addressPointeeType) != NormalizeAggregateType(borrowedValueType))
+        {
+            return false;
+        }
+
+        pointeeType = addressPointeeType;
+        return true;
+    }
+
+    private bool TryResolvePointerBackedBorrowParameterValue(
+        SsaValueReference reference,
+        StarkTypeSymbol borrowedValueType,
+        out string sourceAddress,
+        out int? sourceAlignmentBytes)
+    {
+        var parameter = _abiFunction.UserParameters.FirstOrDefault(parameter =>
+            StarkTypeSymbols.IsPointerBackedBorrowType(parameter.SourceType)
+            && (string.Equals(parameter.LlvmName, reference.Name, StringComparison.Ordinal)
+                || string.Equals(parameter.SourceName, reference.Name, StringComparison.Ordinal)));
+        if (parameter is null)
+        {
+            sourceAddress = string.Empty;
+            sourceAlignmentBytes = null;
+            return false;
+        }
+
+        sourceAddress = $"%{EscapeIdentifier(parameter.LlvmName)}";
+        sourceAlignmentBytes = GetTypeAlignmentBytes(borrowedValueType);
+        return true;
+    }
+
+    private bool IsAddressOfPointerBackedBorrowParameter(SsaValue address)
+    {
+        if (address is not SsaValueReference reference
+            || !_valueDefinitions.TryGetValue(reference.Name, out var definition)
+            || definition is not SsaAddressOfParameterRValue addressOfParameter
+            || !StarkTypeSymbols.IsPointerBackedBorrowType(addressOfParameter.PointeeType))
+        {
+            return false;
+        }
+
+        return _abiFunction.UserParameters.Any(parameter =>
+            string.Equals(parameter.SourceName, addressOfParameter.ParameterName, StringComparison.Ordinal)
+            && StarkTypeSymbols.IsPointerBackedBorrowType(parameter.SourceType));
+    }
+
+    private string EmitPointerBackedBorrowSlotLoad(string slotAddress, int? slotAlignmentBytes)
+    {
+        var loadedPointer = $"%{EscapeIdentifier(CreateAbiTempName("borrow_ptr_load"))}";
+        AppendLine($"  {loadedPointer} = load ptr, ptr {slotAddress}{GetAlignmentSuffix(slotAlignmentBytes)}");
+        return loadedPointer;
     }
 
     private bool IsLocalLifetimeEndedBeforeCurrentInstruction(string localName)
@@ -815,10 +1087,19 @@ internal sealed partial class LlvmFunctionBodyEmitter
         StarkTypeSymbol elementType,
         string purpose)
     {
-        if (!CanExtractAggregateElementFromAddress(target.Type, elementIndex, elementType)
-            || !TryResolveAggregateSourceAddress(target, target.Type, out var sourceAddress))
+        if (!CanExtractAggregateElementFromAddress(target.Type, elementIndex, elementType))
         {
             return false;
+        }
+
+        if (!TryResolveAggregateSourceAddress(target, target.Type, out var sourceAddress))
+        {
+            if (!StarkTypeSymbols.IsPointerBackedBorrowType(target.Type))
+            {
+                return false;
+            }
+
+            sourceAddress = FormatValue(target);
         }
 
         var elementAddress = EmitScalarizedAggregateLeafAddress(sourceAddress, target.Type, [elementIndex], purpose);
@@ -1443,6 +1724,12 @@ internal sealed partial class LlvmFunctionBodyEmitter
         List<int> path,
         List<AggregateScalarLeaf> leaves)
     {
+        if (StarkTypeSymbols.IsPointerBackedBorrowType(type))
+        {
+            leaves.Add(new AggregateScalarLeaf([.. path], type));
+            return true;
+        }
+
         var normalizedType = NormalizeAggregateType(type);
         switch (normalizedType.Kind)
         {
@@ -1498,7 +1785,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
                 for (var index = 0; index < orderedFields.Count; index++)
                 {
                     var field = orderedFields[index];
-                    var fieldLayout = TryGetConcreteTypeLayout(NormalizeAggregateType(field.Type));
+                    var fieldLayout = TryGetConcreteTypeLayout(field.Type);
                     if (fieldLayout is null)
                     {
                         return false;
@@ -1622,8 +1909,13 @@ internal sealed partial class LlvmFunctionBodyEmitter
             return baseAddress;
         }
 
+        var aggregateRootType = NormalizeAggregateType(
+            StarkTypeSymbols.IsPointerBackedBorrowType(rootType)
+                ? StarkTypeSymbols.BorrowReturnValueType(rootType)
+                : rootType);
+
         if (indices.Count == 1
-            && TryGetLayoutControlledFieldOffsetBytes(rootType, indices[0], out var fieldOffsetBytes))
+            && TryGetLayoutControlledFieldOffsetBytes(aggregateRootType, indices[0], out var fieldOffsetBytes))
         {
             var fieldAddress = $"%{EscapeIdentifier(CreateAbiTempName(purpose))}";
             AppendLine($"  {fieldAddress} = getelementptr{GetProvenInObjectGepFlags()} i8, ptr {baseAddress}, i64 {fieldOffsetBytes}");
@@ -1632,7 +1924,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
 
         var leafAddress = $"%{EscapeIdentifier(CreateAbiTempName(purpose))}";
         var gepIndices = string.Join(", ", indices.Select(static index => $"i32 {index}"));
-        AppendLine($"  {leafAddress} = getelementptr{GetProvenInObjectGepFlags()} {MapType(rootType)}, ptr {baseAddress}, i32 0, {gepIndices}");
+        AppendLine($"  {leafAddress} = getelementptr{GetProvenInObjectGepFlags()} {MapType(aggregateRootType)}, ptr {baseAddress}, i32 0, {gepIndices}");
         return leafAddress;
     }
 
@@ -1645,9 +1937,9 @@ internal sealed partial class LlvmFunctionBodyEmitter
             StarkTypeKind.Dynamic when normalizedType.ElementType is not null && index == 0
                 => StarkTypeSymbols.RawPointer(normalizedType.ElementType, isMutable: true),
             StarkTypeKind.Dynamic when index == 1
-                => StarkTypeSymbols.Integer(64),
+                => StarkTypeSymbols.Integer(64, BigInteger.Zero, new BigInteger(long.MaxValue)),
             StarkTypeKind.Dynamic when index == 2
-                => StarkTypeSymbols.Integer(64),
+                => StarkTypeSymbols.Integer(64, BigInteger.Zero, new BigInteger(long.MaxValue)),
             StarkTypeKind.Closure when index == 0
                 => CallableValueFacts.BuildClosureInvokeFunctionPointerType(normalizedType),
             StarkTypeKind.Closure when index == 1
@@ -1714,6 +2006,11 @@ internal sealed partial class LlvmFunctionBodyEmitter
 
     private static string FormatZeroInitializer(StarkTypeSymbol type)
     {
+        if (StarkTypeSymbols.IsPointerBackedBorrowType(type))
+        {
+            return "null";
+        }
+
         var normalizedType = NormalizeAggregateType(type);
         return normalizedType.Kind switch
         {

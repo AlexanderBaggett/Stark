@@ -498,6 +498,7 @@ block
 
 statement
     : block
+    | labeledStatement
     | unsafeStatement
     | assumeStatement
     | localConstantDeclaration
@@ -511,6 +512,10 @@ statement
     | continueStatement
     | expressionStatement
     | emptyStatement
+    ;
+
+labeledStatement
+    : Identifier COLON (whileStatement | forStatement | switchStatement)
     ;
 
 unsafeStatement
@@ -613,11 +618,11 @@ returnStatement
     ;
 
 breakStatement
-    : BREAK SEMI
+    : BREAK Identifier? SEMI
     ;
 
 continueStatement
-    : CONTINUE SEMI
+    : CONTINUE Identifier? SEMI
     ;
 
 expressionStatement
@@ -798,10 +803,10 @@ primaryExpression
     | COMPTIME block
     | SIZEOF LPAREN type_ RPAREN
     | ALIGNOF LPAREN type_ RPAREN
-    | Identifier
     | enumConstructorExpression
     | genericEnumCaseReference
     | genericQualifiedName
+    | Identifier
     | qualifiedName
     | objectCreationExpression
     | LPAREN expression RPAREN
@@ -1145,7 +1150,7 @@ fragment LiteralEscapeSequence
     ;
 
 fragment IdentifierStart
-    : [a-zA-Z]
+    : [a-zA-Z_]
     ;
 
 fragment IdentifierPart

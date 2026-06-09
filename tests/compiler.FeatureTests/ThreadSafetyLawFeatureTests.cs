@@ -367,6 +367,108 @@ public sealed class ThreadSafetyLawFeatureTests : FeatureLlvmTestBase
             && diagnostic.Message.Contains("Responsible field chain: RawHolder.Pointer", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public void ThreadEntryReachabilityRejectsPlainMutableStatics()
+    {
+        var result = Compile(
+            """
+            import System.Threading
+            module Demo
+
+            static mut i32[min max] Counter = 0;
+
+            fn i32[min max] Bump()
+            {
+                Counter += 1;
+                return Counter;
+            }
+
+            fn i32[min max] Worker()
+            {
+                return Bump();
+            }
+
+            fn void Run()
+            {
+                stack System.Threading.ThreadEntry entry = Worker;
+                return;
+            }
+            """,
+            new CompilerOptions(
+                StopAfterPassId: "type-check",
+                ModuleResolver: new InMemoryModuleResolver(
+                [
+                    (
+                        new ResolvedModuleReference("System.Threading", "/virtual/System/Threading.stark", IsExternal: false),
+                        """
+                        module System.Threading
+
+                        public alias ThreadEntry = fnptr<fn i32[min max]()>;
+                        """,
+                        "/virtual/System/Threading.stark")
+                ])));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(result.Diagnostics, static diagnostic =>
+            diagnostic.Code == "STK3049"
+            && diagnostic.Message.Contains("Thread-reachable function 'Bump'", StringComparison.Ordinal)
+            && diagnostic.Message.Contains("mutable global 'Counter'", StringComparison.Ordinal)
+            && diagnostic.Message.Contains("System.Threading.Atomic*", StringComparison.Ordinal)
+            && diagnostic.Message.Contains("System.Threading.Synchronized<T>", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ThreadEntryReachabilityAllowsAtomicMutableStatics()
+    {
+        var result = Compile(
+            """
+            import System.Threading
+            module Demo
+
+            static mut System.Threading.AtomicI64 Counter = new System.Threading.AtomicI64()
+            {
+                Value = 0
+            };
+
+            fn void Touch(borrow System.Threading.AtomicI64 value)
+            {
+                return;
+            }
+
+            fn i32[min max] Worker()
+            {
+                Touch(Counter);
+                return 0;
+            }
+
+            fn void Run()
+            {
+                stack System.Threading.ThreadEntry entry = Worker;
+                return;
+            }
+            """,
+            new CompilerOptions(
+                StopAfterPassId: "type-check",
+                ModuleResolver: new InMemoryModuleResolver(
+                [
+                    (
+                        new ResolvedModuleReference("System.Threading", "/virtual/System/Threading.stark", IsExternal: false),
+                        """
+                        module System.Threading
+
+                        public alias ThreadEntry = fnptr<fn i32[min max]()>;
+
+                        public struct AtomicI64
+                        {
+                            i64[min max] Value;
+                        }
+                        """,
+                        "/virtual/System/Threading.stark")
+                ])));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+
     private static TypeCheckModel GetTypeModel(CompilationResult result)
     {
         Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? model));

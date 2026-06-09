@@ -1,4 +1,5 @@
 import System.Runtime.Buffer
+import System.Memory
 module System.Runtime.Platform.Windows
 
 internal finite law ascii AsciiView(Ascii source);
@@ -31,6 +32,10 @@ internal unsafe ffi fn i32[min max] SetFilePointerEx(rawptr<i8[min max]> handle,
 internal unsafe ffi fn i32[min max] DeleteFileW(rawptr<i16[min max]> path);
 internal unsafe ffi fn i32[min max] MoveFileExW(rawptr<i16[min max]> existingPath, rawptr<i16[min max]> newPath, i32[min max] flags);
 internal unsafe ffi fn i32[min max] GetFileAttributesW(rawptr<i16[min max]> path);
+internal unsafe ffi fn i32[min max] GetFileAttributesExW(
+    rawptr<i16[min max]> path,
+    i32[min max] infoLevel,
+    rawmutptr<i8[min max]> fileInformation);
 internal unsafe ffi fn i32[min max] CreateDirectoryW(rawptr<i16[min max]> path, rawptr<i8[min max]> securityAttributes);
 internal unsafe ffi fn i32[min max] RemoveDirectoryW(rawptr<i16[min max]> path);
 internal unsafe ffi fn rawmutptr<i8[min max]> FindFirstFileExW(
@@ -43,6 +48,7 @@ internal unsafe ffi fn rawmutptr<i8[min max]> FindFirstFileExW(
 internal unsafe ffi fn i32[min max] FindNextFileW(rawptr<i8[min max]> findHandle, rawmutptr<i8[min max]> findData);
 internal unsafe ffi fn i32[min max] FindClose(rawptr<i8[min max]> findHandle);
 internal unsafe ffi fn i32[min max] GetCurrentDirectoryW(i32[min max] bufferLength, rawmutptr<i16[min max]> buffer);
+internal unsafe ffi fn i32[min max] GetTempPathW(i32[min max] bufferLength, rawmutptr<i16[min max]> buffer);
 internal unsafe ffi fn i32[min max] GetConsoleMode(rawptr<i8[min max]> handle, rawmutptr<i32[min max]> mode);
 internal unsafe ffi fn i32[min max] GetLastError();
 internal unsafe ffi fn void ExitProcess(i32[min max] exitCode);
@@ -52,8 +58,8 @@ internal unsafe ffi fn void Sleep(i32[min max] milliseconds);
 internal unsafe ffi(platform(windows.x86: stdcall, windows.x64: win64, default: c)) fn rawmutptr<i8[min max]> CreateThread(
     rawptr<i8[min max]> threadAttributes,
     u64[0 2 ** 63 - 1] stackSize,
-    fnptr<ffi(platform(windows.x86: stdcall, windows.x64: win64, default: c)) fn i32[min max](fnptr<fn i32[min max]()>)> startAddress,
-    fnptr<fn i32[min max]()> parameter,
+    fnptr<unsafe ffi(platform(windows.x86: stdcall, windows.x64: win64, default: c)) fn i32[min max](rawmutptr<i8[min max]>)> startAddress,
+    rawmutptr<i8[min max]> parameter,
     i32[min max] creationFlags,
     rawmutptr<i32[min max]> threadId);
 internal unsafe ffi fn i32[min max] WaitForSingleObject(rawptr<i8[min max]> handle, i32[min max] milliseconds);
@@ -87,7 +93,7 @@ internal unsafe ffi fn void WakeByAddressSingle(rawmutptr<i32[min max]> address)
 internal unsafe ffi fn void WakeByAddressAll(rawmutptr<i32[min max]> address);
 internal unsafe ffi(platform(windows.x86: stdcall, windows.x64: win64, default: c)) fn i32[min max] InitOnceExecuteOnce(
     rawmutptr<WinInitOnce> initOnce,
-    fnptr<ffi(platform(windows.x86: stdcall, windows.x64: win64, default: c)) fn i32[min max](rawmutptr<WinInitOnce>, rawptr<i8[min max]>, rawmutptr<rawptr<i8[min max]>>) where overlap(arg0, arg1, arg2)> callback,
+    fnptr<unsafe ffi(platform(windows.x86: stdcall, windows.x64: win64, default: c)) fn i32[min max](rawmutptr<WinInitOnce>, rawptr<i8[min max]>, rawmutptr<rawptr<i8[min max]>>) where overlap(arg0, arg1, arg2)> callback,
     rawptr<i8[min max]> parameter,
     rawmutptr<rawptr<i8[min max]>> context);
 internal unsafe ffi fn i32[min max] WSAStartup(u16[0 max] versionRequested, rawmutptr<i8[min max]> data);
@@ -132,14 +138,30 @@ const WinGenericWrite = 1073741824;
 const WinFileAppendData = 4;
 const WinFileShareRead = 1;
 const WinFileShareWrite = 2;
+const WinCreateNew = 1;
 const WinCreateAlways = 2;
 const WinOpenExisting = 3;
 const WinOpenAlways = 4;
+const WinFileAttributeReadOnly = 1;
 const WinFileAttributeNormal = 128;
 const WinFileAttributeDirectory = 16;
 const WinFileAttributeReparsePoint = 1024;
 const WinMoveFileReplaceExisting = 1;
 const WinInvalidFileAttributes = -1;
+const WinGetFileExInfoStandard = 0;
+const WinFileAttributeDataMinBytes = 36;
+const WinFileAttributeDataAttributesOffset = 0;
+const WinFileAttributeDataLastWriteTimeOffset = 20;
+const WinFileAttributeDataFileSizeHighOffset = 28;
+const WinFileAttributeDataFileSizeLowOffset = 32;
+const WinFileTimeUnixEpochIntervals = 116444736000000000;
+const WinFileTimeIntervalsPerSecond = 10000000;
+const WinFileTimeNanosecondsPerInterval = 100;
+const WinPathMetadataKindOffset = 0;
+const WinPathMetadataPermissionsOffset = 4;
+const WinPathMetadataSizeOffset = 8;
+const WinPathMetadataModifiedSecondsOffset = 16;
+const WinPathMetadataModifiedNanosecondsOffset = 24;
 const WinFindDataFileNameOffset = 44;
 const WinFindDataMaxFileNameLength = 260;
 const WinFindDataMinBytes = 592;
@@ -163,6 +185,12 @@ const WinSocketNoHandleInheritFlag = 128;
 const WinSockaddrInLength = 16;
 const WinDefaultTcpListenBacklog = 128;
 
+internal enum FileOpenResult
+{
+    Ok(rawptr<i8[min max]>),
+    Err(i32[min max]),
+}
+
 static mut WinInitOnce WinSockInitOnce = new WinInitOnce()
 {
     State = null
@@ -184,6 +212,13 @@ internal struct WinIoStatusBlock
     i32[min max] Status;
     i32[min max] Padding;
     i64[min max] Information;
+}
+
+internal struct WinThreadContext
+{
+    fnptr<unsafe fn i32[min max](rawmutptr<i8[min max]>)> Entry;
+    rawmutptr<i8[min max]> Context;
+    fnptr<fn i32[min max]()> ThreadEntry;
 }
 
 internal unsafe fn rawptr<i8[min max]> CachedStdout()
@@ -284,16 +319,97 @@ internal fn i32[min max] ProcessId()
     }
 }
 
-internal unsafe ffi(platform(windows.x86: stdcall, windows.x64: win64, default: c)) fn i32[min max] ThreadEntryThunk(fnptr<fn i32[min max]()> entry)
+internal fn i32[min max] ThreadNullEntry()
 {
-    return entry();
+    return -1;
+}
+
+internal unsafe fn i32[min max] ThreadNoPayloadContextEntry(rawmutptr<i8[min max]> context)
+{
+    if (context == null)
+    {
+        return -1;
+    }
+
+    stack rawmutptr<WinThreadContext> typedContext = (rawmutptr<WinThreadContext>)context;
+    return (*typedContext).ThreadEntry();
+}
+
+internal unsafe ffi(platform(windows.x86: stdcall, windows.x64: win64, default: c)) fn i32[min max] ThreadEntryThunk(rawmutptr<i8[min max]> context)
+{
+    if (context == null)
+    {
+        return -1;
+    }
+
+    stack rawmutptr<WinThreadContext> typedContext = (rawmutptr<WinThreadContext>)context;
+    stack rawmutptr<i8[min max]> entryContext = (*typedContext).Context;
+    stack i32[min max] exitCode = (*typedContext).Entry(entryContext);
+    stack System.Memory.Allocation allocation = new System.Memory.Allocation()
+    {
+        Pointer = context,
+        ByteLength = (u64[0 2 ** 63 - 1])sizeof(WinThreadContext),
+        Alignment = alignof(WinThreadContext),
+        Allocator = System.Memory.Allocator.Default()
+    };
+    System.Memory.Free(allocation);
+    return exitCode;
 }
 
 internal unsafe fn rawmutptr<i8[min max]> StartThread(fnptr<fn i32[min max]()> entry)
 {
-    stack rawmutptr<i8[min max]> handle = CreateThread(null, 0, ThreadEntryThunk, entry, 0, null);
+    stack System.Memory.Allocation allocation = System.Memory.Allocate(
+        System.Memory.Allocator.Default(),
+        (u64[0 2 ** 63 - 1])sizeof(WinThreadContext),
+        alignof(WinThreadContext));
+    if (allocation.Pointer == null)
+    {
+        return null;
+    }
+
+    stack rawmutptr<WinThreadContext> context = (rawmutptr<WinThreadContext>)allocation.Pointer;
+    *context = new WinThreadContext()
+    {
+        Entry = ThreadNoPayloadContextEntry,
+        Context = allocation.Pointer,
+        ThreadEntry = entry
+    };
+
+    stack rawmutptr<i8[min max]> handle = CreateThread(null, 0, ThreadEntryThunk, allocation.Pointer, 0, null);
     if (IsInvalidHandle(handle))
     {
+        System.Memory.Free(allocation);
+        return null;
+    }
+
+    return handle;
+}
+
+internal unsafe fn rawmutptr<i8[min max]> StartThreadWithContext(
+    fnptr<unsafe fn i32[min max](rawmutptr<i8[min max]>)> entry,
+    rawmutptr<i8[min max]> context)
+{
+    stack System.Memory.Allocation allocation = System.Memory.Allocate(
+        System.Memory.Allocator.Default(),
+        (u64[0 2 ** 63 - 1])sizeof(WinThreadContext),
+        alignof(WinThreadContext));
+    if (allocation.Pointer == null)
+    {
+        return null;
+    }
+
+    stack rawmutptr<WinThreadContext> threadContext = (rawmutptr<WinThreadContext>)allocation.Pointer;
+    *threadContext = new WinThreadContext()
+    {
+        Entry = entry,
+        Context = context,
+        ThreadEntry = ThreadNullEntry
+    };
+
+    stack rawmutptr<i8[min max]> handle = CreateThread(null, 0, ThreadEntryThunk, allocation.Pointer, 0, null);
+    if (IsInvalidHandle(handle))
+    {
+        System.Memory.Free(allocation);
         return null;
     }
 
@@ -976,6 +1092,70 @@ internal fn i32[min max] UnsignedWide(i16[min max] value)
     }
 
     return (i32[min max])value;
+}
+
+internal inline finite law u64[0 max] UnsignedInt(i32[min max] value)
+{
+    if (value < 0)
+    {
+        return (u64[0 max])(((i64[min max])value) + (i64[min max])(2 ** 32));
+    }
+
+    return (u64[0 max])value;
+}
+
+internal inline finite law u64[0 max] CombineUnsignedInts(i32[min max] high, i32[min max] low)
+{
+    return (UnsignedInt(high) << 32) + UnsignedInt(low);
+}
+
+internal inline finite law i64[min max] ClampUnsignedToNonNegativeI64(u64[0 max] value)
+{
+    if (value > (u64[0 max])(2 ** 63 - 1))
+    {
+        return (i64[min max])(2 ** 63 - 1);
+    }
+
+    return (i64[min max])value;
+}
+
+internal inline finite law i64[min max] WindowsFileTimeToUnixSeconds(u64[0 max] fileTime)
+{
+    if (fileTime <= (u64[0 max])WinFileTimeUnixEpochIntervals)
+    {
+        return 0;
+    }
+
+    stack u64[0 max] unixIntervals = fileTime - (u64[0 max])WinFileTimeUnixEpochIntervals;
+    return ClampUnsignedToNonNegativeI64(unixIntervals / (u64[0 max])WinFileTimeIntervalsPerSecond);
+}
+
+internal inline finite law i64[min max] WindowsFileTimeToUnixNanoseconds(u64[0 max] fileTime)
+{
+    if (fileTime <= (u64[0 max])WinFileTimeUnixEpochIntervals)
+    {
+        return 0;
+    }
+
+    stack u64[0 max] unixIntervals = fileTime - (u64[0 max])WinFileTimeUnixEpochIntervals;
+    return (i64[min max])((unixIntervals % (u64[0 max])WinFileTimeIntervalsPerSecond)
+        * (u64[0 max])WinFileTimeNanosecondsPerInterval);
+}
+
+internal inline finite law i32[min max] WindowsPermissionsFromAttributes(i32[min max] attributes)
+{
+    stack mut i32[min max] permissions = 292;
+    if ((attributes & WinFileAttributeReadOnly) == 0)
+    {
+        permissions = 438;
+    }
+
+    if ((attributes & WinFileAttributeDirectory) != 0)
+    {
+        permissions = permissions | 73;
+    }
+
+    return permissions;
 }
 
 internal fn bool IsWideDirectorySeparatorUnit(i32[min max] value)
@@ -2276,12 +2456,12 @@ internal unsafe fn i32[min max] WriteUnicodeConsoleToHandle(rawptr<i8[min max]> 
     return FlushWideConsoleBuffer(handle, &wideBuffer[0], &writeIndex);
 }
 
-internal unsafe fn rawptr<i8[min max]> OpenFileWithDisposition(ascii path, i32[min max] desiredAccess, i32[min max] creationDisposition)
+internal unsafe fn FileOpenResult OpenFileWithDispositionResult(ascii path, i32[min max] desiredAccess, i32[min max] creationDisposition)
 {
     stack mut i16[min max][4096] pathBuffer;
     if (!TryBuildWindowsWidePath(&pathBuffer[0], 4096, path))
     {
-        return null;
+        return FileOpenResult.Err(-206);
     }
 
     stack rawmutptr<i8[min max]> handle = CreateFileW(
@@ -2295,10 +2475,21 @@ internal unsafe fn rawptr<i8[min max]> OpenFileWithDisposition(ascii path, i32[m
 
     if (IsInvalidHandle(handle))
     {
-        return null;
+        return FileOpenResult.Err(NegativeLastError());
     }
 
-    return (rawptr<i8[min max]>)handle;
+    return FileOpenResult.Ok((rawptr<i8[min max]>)handle);
+}
+
+internal unsafe fn rawptr<i8[min max]> OpenFileWithDisposition(ascii path, i32[min max] desiredAccess, i32[min max] creationDisposition)
+{
+    switch (OpenFileWithDispositionResult(path, desiredAccess, creationDisposition))
+    {
+        case FileOpenResult.Ok(var handle):
+            return handle;
+        case FileOpenResult.Err(var error):
+            return null;
+    }
 }
 
 internal fn i32[min max] WriteStdoutAscii(ascii text)
@@ -2567,9 +2758,29 @@ internal unsafe fn rawptr<i8[min max]> OpenFileRead(ascii path)
     return OpenFileWithDisposition(path, WinGenericRead, WinOpenExisting);
 }
 
+internal unsafe fn FileOpenResult OpenFileReadResult(ascii path)
+{
+    return OpenFileWithDispositionResult(path, WinGenericRead, WinOpenExisting);
+}
+
 internal unsafe fn rawptr<i8[min max]> OpenFileWrite(ascii path)
 {
     return OpenFileWithDisposition(path, WinGenericWrite, WinCreateAlways);
+}
+
+internal unsafe fn FileOpenResult OpenFileWriteResult(ascii path)
+{
+    return OpenFileWithDispositionResult(path, WinGenericWrite, WinCreateAlways);
+}
+
+internal unsafe fn rawptr<i8[min max]> OpenFileCreateNew(ascii path)
+{
+    return OpenFileWithDisposition(path, WinGenericWrite, WinCreateNew);
+}
+
+internal unsafe fn FileOpenResult OpenFileCreateNewResult(ascii path)
+{
+    return OpenFileWithDispositionResult(path, WinGenericWrite, WinCreateNew);
 }
 
 internal unsafe fn rawptr<i8[min max]> OpenFileAppend(ascii path)
@@ -2577,9 +2788,19 @@ internal unsafe fn rawptr<i8[min max]> OpenFileAppend(ascii path)
     return OpenFileWithDisposition(path, WinFileAppendData, WinOpenAlways);
 }
 
+internal unsafe fn FileOpenResult OpenFileAppendResult(ascii path)
+{
+    return OpenFileWithDispositionResult(path, WinFileAppendData, WinOpenAlways);
+}
+
 internal unsafe fn rawptr<i8[min max]> OpenFileReadWrite(ascii path)
 {
     return OpenFileWithDisposition(path, WinGenericRead | WinGenericWrite, WinOpenExisting);
+}
+
+internal unsafe fn FileOpenResult OpenFileReadWriteResult(ascii path)
+{
+    return OpenFileWithDispositionResult(path, WinGenericRead | WinGenericWrite, WinOpenExisting);
 }
 
 internal unsafe inline fn i32[min max] CloseFile(rawptr<i8[min max]> handle)
@@ -2912,6 +3133,65 @@ internal fn bool IsDirectory(ascii path)
 
         return (attributes & WinFileAttributeDirectory) != 0;
     }
+}
+
+internal unsafe fn i32[min max] ReadPathMetadata(ascii path, rawmutptr<i8[min max]> metadataData)
+{
+    if (metadataData == null)
+    {
+        return -1;
+    }
+
+    stack mut i16[min max][4096] pathBuffer;
+    if (!TryBuildWindowsWidePath(&pathBuffer[0], 4096, path))
+    {
+        return -1;
+    }
+
+    stack mut System.Runtime.Buffer.FixedByteBuffer512 attributeBuffer = new System.Runtime.Buffer.FixedByteBuffer512();
+    stack rawmutptr<i8[min max]> attributeData = attributeBuffer.WritePointer();
+    if (attributeData == null || attributeBuffer.Writable() < (u64[0 2 ** 63 - 1])WinFileAttributeDataMinBytes)
+    {
+        return -1;
+    }
+
+    if (GetFileAttributesExW(&pathBuffer[0], WinGetFileExInfoStandard, attributeData) == 0)
+    {
+        return NegativeLastError();
+    }
+
+    stack rawptr<i32[min max]> attributesPointer =
+        (rawptr<i32[min max]>)(&attributeData[WinFileAttributeDataAttributesOffset]);
+    stack rawptr<i32[min max]> modifiedLowPointer =
+        (rawptr<i32[min max]>)(&attributeData[WinFileAttributeDataLastWriteTimeOffset]);
+    stack rawptr<i32[min max]> modifiedHighPointer =
+        (rawptr<i32[min max]>)(&attributeData[WinFileAttributeDataLastWriteTimeOffset + 4]);
+    stack rawptr<i32[min max]> sizeHighPointer =
+        (rawptr<i32[min max]>)(&attributeData[WinFileAttributeDataFileSizeHighOffset]);
+    stack rawptr<i32[min max]> sizeLowPointer =
+        (rawptr<i32[min max]>)(&attributeData[WinFileAttributeDataFileSizeLowOffset]);
+
+    stack i32[min max] attributes = *attributesPointer;
+    stack u64[0 max] fileSize = CombineUnsignedInts(*sizeHighPointer, *sizeLowPointer);
+    stack u64[0 max] modifiedFileTime = CombineUnsignedInts(*modifiedHighPointer, *modifiedLowPointer);
+
+    stack rawmutptr<i32[min max]> kindPointer =
+        (rawmutptr<i32[min max]>)(&metadataData[WinPathMetadataKindOffset]);
+    stack rawmutptr<i32[min max]> permissionsPointer =
+        (rawmutptr<i32[min max]>)(&metadataData[WinPathMetadataPermissionsOffset]);
+    stack rawmutptr<i64[min max]> sizeDestination =
+        (rawmutptr<i64[min max]>)(&metadataData[WinPathMetadataSizeOffset]);
+    stack rawmutptr<i64[min max]> modifiedSecondsDestination =
+        (rawmutptr<i64[min max]>)(&metadataData[WinPathMetadataModifiedSecondsOffset]);
+    stack rawmutptr<i64[min max]> modifiedNanosecondsDestination =
+        (rawmutptr<i64[min max]>)(&metadataData[WinPathMetadataModifiedNanosecondsOffset]);
+
+    *kindPointer = DirectoryEntryKindFromWindowsAttributes(attributes);
+    *permissionsPointer = WindowsPermissionsFromAttributes(attributes);
+    *sizeDestination = ClampUnsignedToNonNegativeI64(fileSize);
+    *modifiedSecondsDestination = WindowsFileTimeToUnixSeconds(modifiedFileTime);
+    *modifiedNanosecondsDestination = WindowsFileTimeToUnixNanoseconds(modifiedFileTime);
+    return 0;
 }
 
 internal fn i32[min max] CreateDirectory(ascii path)
@@ -3347,6 +3627,37 @@ internal unsafe fn bool TryCurrentDirectory(rawmutptr<Ascii> destination)
     {
         ResetAsciiDestination(destination);
         return false;
+    }
+
+    return TryCopyWideUtf8(destination, &pathBuffer[0], written);
+}
+
+internal unsafe fn bool TryTempDirectory(rawmutptr<Ascii> destination)
+{
+    if (destination == null)
+    {
+        return false;
+    }
+
+    stack rawmutptr<i8[min max]> data = (*destination).Data;
+    stack i64[min max] capacity = (*destination).Capacity;
+    if (data == null || capacity <= 0)
+    {
+        ResetAsciiDestination(destination);
+        return false;
+    }
+
+    stack mut i16[min max][4096] pathBuffer;
+    stack mut i32[min max] written = GetTempPathW(4096, &pathBuffer[0]);
+    if (written <= 0 || written >= 4096)
+    {
+        ResetAsciiDestination(destination);
+        return false;
+    }
+
+    if (written > 3 && IsWideDirectorySeparatorUnit(UnsignedWide(*(&pathBuffer[written - 1]))))
+    {
+        written -= 1;
     }
 
     return TryCopyWideUtf8(destination, &pathBuffer[0], written);

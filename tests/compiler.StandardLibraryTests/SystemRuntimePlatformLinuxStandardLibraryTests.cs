@@ -86,7 +86,23 @@ public sealed class SystemRuntimePlatformLinuxStandardLibraryTests
         Assert.Contains("@LinuxEpollWritableEvent", llvm, StringComparison.Ordinal);
         Assert.Contains("call i64 @LinuxSyscall1Integer(", llvm, StringComparison.Ordinal);
         Assert.Contains("call i64 @LinuxSyscall4HandlePointersInteger(", llvm, StringComparison.Ordinal);
-        Assert.DoesNotContain("@poll(", llvm, StringComparison.Ordinal);
+
+        var waitForEventsBody = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef i32 @WaitForEvents(",
+            "Expected WaitForEvents definition in emitted LLVM.");
+        var waitReadableBody = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef i32 @WaitReadable(",
+            "Expected WaitReadable definition in emitted LLVM.");
+        var waitWritableBody = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef i32 @WaitWritable(",
+            "Expected WaitWritable definition in emitted LLVM.");
+
+        Assert.DoesNotContain("@poll(", waitForEventsBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@poll(", waitReadableBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@poll(", waitWritableBody, StringComparison.Ordinal);
         Assert.DoesNotContain("@epoll_wait(", llvm, StringComparison.Ordinal);
     }
 
@@ -385,5 +401,33 @@ public sealed class SystemRuntimePlatformLinuxStandardLibraryTests
     {
         Assert.Equal(string.Empty, text);
     }
-}
 
+    private static string ExtractDefinedFunctionText(string llvm, string signaturePrefix, string missingMessage)
+    {
+        var functionStart = llvm.IndexOf(signaturePrefix, StringComparison.Ordinal);
+        Assert.True(functionStart >= 0, missingMessage);
+
+        var bodyStart = llvm.IndexOf('{', functionStart);
+        Assert.True(bodyStart > functionStart, $"Expected '{signaturePrefix}' to include a function body.");
+
+        var depth = 0;
+        for (var index = bodyStart; index < llvm.Length; index++)
+        {
+            var current = llvm[index];
+            if (current == '{')
+            {
+                depth++;
+            }
+            else if (current == '}')
+            {
+                depth--;
+                if (depth == 0)
+                {
+                    return llvm.Substring(functionStart, index - functionStart + 1);
+                }
+            }
+        }
+
+        throw new Xunit.Sdk.XunitException($"Expected '{signaturePrefix}' body to terminate in emitted LLVM.");
+    }
+}

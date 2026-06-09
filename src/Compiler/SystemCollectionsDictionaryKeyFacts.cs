@@ -122,6 +122,7 @@ internal static class SystemCollectionsDictionaryKeyFacts
                 HashMemberName,
                 [borrowedKeyType],
                 resolveFunctionOverloads,
+                FormatExpectedHashSignature(keyType),
                 out var hashFunction,
                 out diagnostic))
         {
@@ -140,6 +141,7 @@ internal static class SystemCollectionsDictionaryKeyFacts
                 EqualsMemberName,
                 [borrowedKeyType, borrowedKeyType],
                 resolveFunctionOverloads,
+                FormatExpectedEqualsSignature(keyType),
                 out var equalsFunction,
                 out diagnostic))
         {
@@ -173,7 +175,7 @@ internal static class SystemCollectionsDictionaryKeyFacts
 
     public static string FormatMissingContractDiagnostic(StarkTypeSymbol keyType)
     {
-        return $"Dictionary key type '{keyType.DisplayName}' must satisfy '{DictionaryKeyDoctrineName}<{keyType.DisplayName}>'. Built-in dictionary key contracts are available for 'bool', Stark integer key types, 'ascii', and 'unicode'; otherwise declare 'static finite law u64[0 max] Hash(borrow {keyType.DisplayName} value)' and 'static finite law bool Equals(borrow {keyType.DisplayName} left, borrow {keyType.DisplayName} right) where overlap(left, right)' on the key type.";
+        return $"{FormatContractIntro(keyType)} Built-in dictionary key contracts are available for 'bool', Stark integer key types, 'ascii', and 'unicode'; otherwise declare '{FormatExpectedHashSignature(keyType)}' and '{FormatExpectedEqualsSignature(keyType)}' on the key type.";
     }
 
     private static bool IsCompilerKnownScalarKey(StarkTypeSymbol keyType)
@@ -191,6 +193,7 @@ internal static class SystemCollectionsDictionaryKeyFacts
         string memberName,
         IReadOnlyList<StarkTypeSymbol> argumentTypes,
         Func<string, IReadOnlyList<TypedFunctionSignature>?> resolveFunctionOverloads,
+        string expectedSignature,
         out TypedFunctionSignature function,
         out string diagnostic)
     {
@@ -198,7 +201,7 @@ internal static class SystemCollectionsDictionaryKeyFacts
         if (candidates.Length == 0)
         {
             function = default!;
-            diagnostic = FormatMissingContractDiagnostic(keyType);
+            diagnostic = FormatMissingContractMethodDiagnostic(keyType, memberName, expectedSignature);
             return false;
         }
 
@@ -210,7 +213,12 @@ internal static class SystemCollectionsDictionaryKeyFacts
         if (!resolution.Succeeded || resolution.Match is null)
         {
             function = default!;
-            diagnostic = FormatMissingContractDiagnostic(keyType);
+            diagnostic = FormatIncompatibleContractOverloadDiagnostic(
+                keyType,
+                memberName,
+                expectedSignature,
+                resolution.Candidates.Count == 0 ? candidates : resolution.Candidates,
+                resolution.Failure);
             return false;
         }
 
@@ -255,7 +263,7 @@ internal static class SystemCollectionsDictionaryKeyFacts
             || function.Parameters.Count != 1
             || !IsBorrowedKeyParameter(function.Parameters[0], keyType))
         {
-            diagnostic = FormatMissingContractDiagnostic(keyType);
+            diagnostic = FormatInvalidHashFunctionDiagnostic(keyType, function);
             return false;
         }
 
@@ -275,7 +283,7 @@ internal static class SystemCollectionsDictionaryKeyFacts
             || !IsBorrowedKeyParameter(function.Parameters[1], keyType)
             || !AllowsParameterOverlap(function, function.Parameters[0].Name, function.Parameters[1].Name))
         {
-            diagnostic = FormatMissingContractDiagnostic(keyType);
+            diagnostic = FormatInvalidEqualsFunctionDiagnostic(keyType, function);
             return false;
         }
 
@@ -305,5 +313,106 @@ internal static class SystemCollectionsDictionaryKeyFacts
         return function.OverlapGroups.Any(group =>
             group.ParameterNames.Contains(leftParameterName, StringComparer.Ordinal)
             && group.ParameterNames.Contains(rightParameterName, StringComparer.Ordinal));
+    }
+
+    private static string FormatContractIntro(StarkTypeSymbol keyType)
+    {
+        return $"Dictionary key type '{keyType.DisplayName}' must satisfy '{DictionaryKeyDoctrineName}<{keyType.DisplayName}>'.";
+    }
+
+    private static string FormatExpectedHashSignature(StarkTypeSymbol keyType)
+    {
+        return $"static finite law u64[0 max] Hash(borrow {keyType.DisplayName} value)";
+    }
+
+    private static string FormatExpectedEqualsSignature(StarkTypeSymbol keyType)
+    {
+        return $"static finite law bool Equals(borrow {keyType.DisplayName} left, borrow {keyType.DisplayName} right) where overlap(left, right)";
+    }
+
+    private static string FormatMissingContractMethodDiagnostic(
+        StarkTypeSymbol keyType,
+        string memberName,
+        string expectedSignature)
+    {
+        return $"{FormatContractIntro(keyType)} Missing required {memberName} contract method. Declare '{expectedSignature}' on the key type.";
+    }
+
+    private static string FormatIncompatibleContractOverloadDiagnostic(
+        StarkTypeSymbol keyType,
+        string memberName,
+        string expectedSignature,
+        IReadOnlyList<TypedFunctionSignature> candidates,
+        OverloadResolutionFailureKind failureKind)
+    {
+        var failureText = failureKind == OverloadResolutionFailureKind.Ambiguous
+            ? "the matching overloads are ambiguous"
+            : "no overload accepts the required borrowed key parameter shape";
+        return $"{FormatContractIntro(keyType)} Incompatible {memberName} contract method: expected '{expectedSignature}', but {failureText}. Candidate(s): {FormatCandidateList(candidates)}.";
+    }
+
+    private static string FormatInvalidHashFunctionDiagnostic(
+        StarkTypeSymbol keyType,
+        TypedFunctionSignature function)
+    {
+        var reason = !TypeCompatibilityFacts.FunctionKindSatisfies(function.Kind, StarkFunctionKind.FiniteLaw)
+            ? "must be a 'finite law'"
+            : !IsU64(function.ReturnType)
+                ? "must return 'u64[0 max]'"
+                : function.Parameters.Count != 1
+                    ? "must take exactly one key parameter"
+                    : !IsBorrowedKeyParameter(function.Parameters[0], keyType)
+                        ? $"parameter 1 must be 'borrow {keyType.DisplayName}'"
+                        : "does not match the required Hash contract shape";
+
+        return FormatInvalidContractFunctionDiagnostic(
+            keyType,
+            HashMemberName,
+            FormatExpectedHashSignature(keyType),
+            function,
+            reason);
+    }
+
+    private static string FormatInvalidEqualsFunctionDiagnostic(
+        StarkTypeSymbol keyType,
+        TypedFunctionSignature function)
+    {
+        var reason = !TypeCompatibilityFacts.FunctionKindSatisfies(function.Kind, StarkFunctionKind.FiniteLaw)
+            ? "must be a 'finite law'"
+            : function.ReturnType.Kind != StarkTypeKind.Bool
+                ? "must return 'bool'"
+                : function.Parameters.Count != 2
+                    ? "must take exactly two key parameters"
+                    : !IsBorrowedKeyParameter(function.Parameters[0], keyType)
+                        ? $"parameter 1 must be 'borrow {keyType.DisplayName}'"
+                        : !IsBorrowedKeyParameter(function.Parameters[1], keyType)
+                            ? $"parameter 2 must be 'borrow {keyType.DisplayName}'"
+                            : !AllowsParameterOverlap(function, function.Parameters[0].Name, function.Parameters[1].Name)
+                                ? "must include 'where overlap(left, right)' for the two borrowed key parameters"
+                                : "does not match the required Equals contract shape";
+
+        return FormatInvalidContractFunctionDiagnostic(
+            keyType,
+            EqualsMemberName,
+            FormatExpectedEqualsSignature(keyType),
+            function,
+            reason);
+    }
+
+    private static string FormatInvalidContractFunctionDiagnostic(
+        StarkTypeSymbol keyType,
+        string memberName,
+        string expectedSignature,
+        TypedFunctionSignature function,
+        string reason)
+    {
+        return $"{FormatContractIntro(keyType)} Incompatible {memberName} contract method: expected '{expectedSignature}', but '{FunctionOverloadFacts.FormatSignature(function)}' {reason}.";
+    }
+
+    private static string FormatCandidateList(IReadOnlyList<TypedFunctionSignature> candidates)
+    {
+        return candidates.Count == 0
+            ? "<none>"
+            : string.Join(", ", candidates.Select(FunctionOverloadFacts.FormatSignature));
     }
 }

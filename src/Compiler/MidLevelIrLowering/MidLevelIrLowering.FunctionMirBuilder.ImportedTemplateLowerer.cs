@@ -35,6 +35,88 @@ internal sealed partial class MidLevelIrLowerer
             return ImportedTemplateLowerer.RenderExpression(expression);
         }
 
+        private sealed record ImportedTemplateEvaluationContext(
+            ImportedFunctionTemplateSummary Summary,
+            IReadOnlyDictionary<int, ImportedTemplateEnumConstructorSummary> EnumConstructors,
+            IReadOnlyDictionary<int, ImportedTemplateEnumCallSummary> EnumCalls,
+            IReadOnlyDictionary<int, ImportedTemplateEnumValueSummary> EnumValues,
+            IReadOnlyDictionary<int, ImportedTemplateEnumPatternSummary> EnumPatterns,
+            IReadOnlyDictionary<int, ImportedTemplateAggregatePatternSummary> AggregatePatterns,
+            IReadOnlyDictionary<int, TypedFunctionSignature> DirectCalls,
+            IReadOnlyDictionary<int, TypedFunctionSignature> MemberCalls,
+            IReadOnlyDictionary<int, ImportedTemplateFieldAccessSummary> FieldAccesses);
+
+        private readonly Dictionary<string, ImportedTemplateEvaluationContext> _importedTemplateEvaluationContextCache =
+            new(StringComparer.Ordinal);
+
+        private ImportedTemplateEvaluationContext? _activeImportedTemplateEvaluationContext;
+
+        private ImportedFunctionTemplateSummary? CurrentImportedTemplateEvaluationSummary =>
+            _activeImportedTemplateEvaluationContext?.Summary ?? _importedTemplateSummary;
+
+        private IReadOnlyDictionary<int, ImportedTemplateEnumConstructorSummary> CurrentImportedTemplateEnumConstructors =>
+            _activeImportedTemplateEvaluationContext?.EnumConstructors ?? _importedTemplateEnumConstructors;
+
+        private IReadOnlyDictionary<int, ImportedTemplateEnumCallSummary> CurrentImportedTemplateEnumCalls =>
+            _activeImportedTemplateEvaluationContext?.EnumCalls ?? _importedTemplateEnumCalls;
+
+        private IReadOnlyDictionary<int, ImportedTemplateEnumValueSummary> CurrentImportedTemplateEnumValues =>
+            _activeImportedTemplateEvaluationContext?.EnumValues ?? _importedTemplateEnumValues;
+
+        private IReadOnlyDictionary<int, ImportedTemplateEnumPatternSummary> CurrentImportedTemplateEnumPatterns =>
+            _activeImportedTemplateEvaluationContext?.EnumPatterns ?? _importedTemplateEnumPatterns;
+
+        private IReadOnlyDictionary<int, ImportedTemplateAggregatePatternSummary> CurrentImportedTemplateAggregatePatterns =>
+            _activeImportedTemplateEvaluationContext?.AggregatePatterns ?? _importedTemplateAggregatePatterns;
+
+        private IReadOnlyDictionary<int, TypedFunctionSignature> CurrentImportedTemplateDirectCalls =>
+            _activeImportedTemplateEvaluationContext?.DirectCalls ?? _importedTemplateDirectCalls;
+
+        private IReadOnlyDictionary<int, TypedFunctionSignature> CurrentImportedTemplateMemberCalls =>
+            _activeImportedTemplateEvaluationContext?.MemberCalls ?? _importedTemplateMemberCalls;
+
+        private IReadOnlyDictionary<int, ImportedTemplateFieldAccessSummary> CurrentImportedTemplateFieldAccesses =>
+            _activeImportedTemplateEvaluationContext?.FieldAccesses ?? _importedTemplateFieldAccesses;
+
+        private ImportedTemplateEvaluationContext GetImportedTemplateEvaluationContext(
+            string templateName,
+            ImportedFunctionTemplateSummary summary)
+        {
+            if (_importedTemplateEvaluationContextCache.TryGetValue(templateName, out var cached))
+            {
+                return cached;
+            }
+
+            var context = new ImportedTemplateEvaluationContext(
+                summary,
+                summary.EnumConstructors.ToDictionary(
+                    static enumConstructor => enumConstructor.Ordinal,
+                    static enumConstructor => enumConstructor),
+                summary.EnumCalls.ToDictionary(
+                    static enumCall => enumCall.Ordinal,
+                    static enumCall => enumCall),
+                summary.EnumValues.ToDictionary(
+                    static enumValue => enumValue.Ordinal,
+                    static enumValue => enumValue),
+                summary.EnumPatterns.ToDictionary(
+                    static enumPattern => enumPattern.Ordinal,
+                    static enumPattern => enumPattern),
+                summary.AggregatePatterns.ToDictionary(
+                    static aggregatePattern => aggregatePattern.Ordinal,
+                    static aggregatePattern => aggregatePattern),
+                summary.DirectCalls.ToDictionary(
+                    static directCall => directCall.Ordinal,
+                    static directCall => directCall.Signature),
+                summary.MemberCalls.ToDictionary(
+                    static memberCall => memberCall.Ordinal,
+                    static memberCall => memberCall.Signature),
+                summary.FieldAccesses.ToDictionary(
+                    static fieldAccess => fieldAccess.Ordinal,
+                    static fieldAccess => fieldAccess));
+            _importedTemplateEvaluationContextCache[templateName] = context;
+            return context;
+        }
+
         private bool TryLowerImportedTypedTemplateLocalVariable(ImportedTemplateTypedBodyStatementSummary statement)
         {
             if (statement.Name is null
@@ -321,6 +403,12 @@ internal sealed partial class MidLevelIrLowerer
 
             if (expression.Kind == ImportedTemplateTypedBodyExpressionKind.MemberCall)
             {
+                if (TryBuildImportedTypedTemplateDynTraitMemberCallStatement(expression, out var dynTraitCall))
+                {
+                    EmitEvaluateCallStatement(RenderImportedTypedTemplateExpressionCore(expression), dynTraitCall);
+                    return true;
+                }
+
                 if (!TryBuildImportedTypedTemplateMemberCallStatement(expression, out var memberCall))
                 {
                     throw LoweringInvariantViolation(
@@ -587,6 +675,12 @@ internal sealed partial class MidLevelIrLowerer
 
             if (expression.Kind == ImportedTemplateTypedBodyExpressionKind.MemberCall)
             {
+                if (TryBuildImportedTypedTemplateDynTraitMemberCallStatement(expression, out var dynTraitCall))
+                {
+                    EmitEvaluateCallStatement(RenderImportedTypedTemplateExpressionCore(expression), dynTraitCall);
+                    return true;
+                }
+
                 if (!TryBuildImportedTypedTemplateMemberCallStatement(expression, out var memberCall))
                 {
                     throw LoweringInvariantViolation(
@@ -1126,7 +1220,7 @@ internal sealed partial class MidLevelIrLowerer
                 }
             }
 
-            _breakTargets.Push(new BreakTargets(exitBlock.Id, _scopes.Count));
+            _breakTargets.Push(new BreakTargets(statement.Name, exitBlock.Id, _scopes.Count));
             try
             {
                 foreach (var section in sections)
@@ -2030,27 +2124,25 @@ internal sealed partial class MidLevelIrLowerer
             return true;
         }
 
-        private bool TryLowerImportedTypedTemplateBreak()
+        private bool TryLowerImportedTypedTemplateBreak(string? labelName = null)
         {
-            if (_breakTargets.Count == 0)
+            if (!TryResolveBreakTarget(labelName, out var breakTarget))
             {
                 return false;
             }
 
-            var breakTarget = _breakTargets.Peek();
             EmitStorageDeadBeyondDepth(breakTarget.ScopeDepth);
             CurrentBlock.Terminator = new MidLevelIrTerminator(MidLevelIrTerminatorKind.Goto, [breakTarget.Target]);
             return true;
         }
 
-        private bool TryLowerImportedTypedTemplateContinue()
+        private bool TryLowerImportedTypedTemplateContinue(string? labelName = null)
         {
-            if (_loops.Count == 0)
+            if (!TryResolveContinueTarget(labelName, out var loop))
             {
                 return false;
             }
 
-            var loop = _loops.Peek();
             EmitStorageDeadBeyondDepth(loop.ScopeDepth);
             CurrentBlock.Terminator = new MidLevelIrTerminator(
                 MidLevelIrTerminatorKind.Goto,
@@ -2096,13 +2188,14 @@ internal sealed partial class MidLevelIrLowerer
                 Condition: condition);
 
             _loops.Push(new LoopTargets(
+                statement.Name,
                 conditionBlock.Id,
                 exitBlock.Id,
                 _scopes.Count,
                 loopBehavior,
                 loopContracts,
                 loopAccessGroups));
-            _breakTargets.Push(new BreakTargets(exitBlock.Id, _scopes.Count));
+            _breakTargets.Push(new BreakTargets(statement.Name, exitBlock.Id, _scopes.Count));
             CurrentBlock = bodyBlock;
             try
             {
@@ -2183,13 +2276,14 @@ internal sealed partial class MidLevelIrLowerer
             }
 
             _loops.Push(new LoopTargets(
+                statement.Name,
                 conditionBlock.Id,
                 exitBlock.Id,
                 _scopes.Count,
                 loopBehavior,
                 loopContracts,
                 loopAccessGroups));
-            _breakTargets.Push(new BreakTargets(exitBlock.Id, _scopes.Count));
+            _breakTargets.Push(new BreakTargets(statement.Name, exitBlock.Id, _scopes.Count));
             CurrentBlock = bodyBlock;
             try
             {
@@ -2280,8 +2374,8 @@ internal sealed partial class MidLevelIrLowerer
                         Condition: condition);
                 }
 
-                _loops.Push(new LoopTargets(iteratorBlock.Id, exitBlock.Id, _scopes.Count, null, null, null));
-                _breakTargets.Push(new BreakTargets(exitBlock.Id, _scopes.Count));
+                _loops.Push(new LoopTargets(statement.Name, iteratorBlock.Id, exitBlock.Id, _scopes.Count, null, null, null));
+                _breakTargets.Push(new BreakTargets(statement.Name, exitBlock.Id, _scopes.Count));
                 CurrentBlock = bodyBlock;
                 var loopAccessGroupsPushed = false;
                 try
@@ -2450,8 +2544,8 @@ internal sealed partial class MidLevelIrLowerer
                     ConditionText: $"{hiddenIndex.Text} < {length.Text}",
                     Condition: hasElement);
 
-                _loops.Push(new LoopTargets(iteratorBlock.Id, exitBlock.Id, _scopes.Count, null, null, null));
-                _breakTargets.Push(new BreakTargets(exitBlock.Id, _scopes.Count));
+                _loops.Push(new LoopTargets(statement.Name, iteratorBlock.Id, exitBlock.Id, _scopes.Count, null, null, null));
+                _breakTargets.Push(new BreakTargets(statement.Name, exitBlock.Id, _scopes.Count));
                 CurrentBlock = bodyBlock;
                 var loopAccessGroupsPushed = false;
                 try
@@ -2818,17 +2912,35 @@ internal sealed partial class MidLevelIrLowerer
                                 $"Imported typed-template field access ordinal {ordinal} has no serialized field fact.");
                         }
 
-                        var result = LowerKnownFieldAccess(
-                            receiver,
-                            publishedFieldAccess.FieldName,
-                            publishedFieldAccess.FieldIndex,
-                            ApplyGenericSubstitution(publishedFieldAccess.FieldType),
-                            publishedFieldAccess.FieldName);
+                        var result = TryLowerKnownViewFieldAccess(receiver, publishedFieldAccess.FieldName, out var knownViewField)
+                            ? knownViewField
+                            : LowerKnownFieldAccess(
+                                receiver,
+                                publishedFieldAccess.FieldName,
+                                publishedFieldAccess.FieldIndex,
+                                ApplyGenericSubstitution(publishedFieldAccess.FieldType),
+                                publishedFieldAccess.FieldName);
                         return RequireImportedTypedTemplateExpressionResult(expression, result, expectedType);
                     }
 
                 case ImportedTemplateTypedBodyExpressionKind.MemberCall:
                     {
+                        if (TryBuildImportedTypedTemplateDynTraitMemberCall(expression, out var dynTraitCall))
+                        {
+                            if (dynTraitCall.Type.Kind == StarkTypeKind.Void)
+                            {
+                                throw LoweringInvariantViolation(
+                                    null,
+                                    "Imported typed-template void dyn trait member call cannot be lowered as a value expression.");
+                            }
+
+                            var dynTraitResult = EmitRequiredTemporary(dynTraitCall, "call");
+                            return RequireImportedTypedTemplateExpressionResult(
+                                expression,
+                                CoerceImportedTypedTemplateCallResult(dynTraitCall.SourceReturnType, dynTraitResult, expectedType),
+                                expectedType: null);
+                        }
+
                         if (!TryBuildImportedTypedTemplateMemberCall(expression, out var memberCall))
                         {
                             throw LoweringInvariantViolation(
@@ -2873,6 +2985,12 @@ internal sealed partial class MidLevelIrLowerer
                         }
 
                         var result = EmitRequiredTemporary(dynamicStorageOperation, "dynamic");
+                        return RequireImportedTypedTemplateExpressionResult(expression, result, expectedType);
+                    }
+
+                case ImportedTemplateTypedBodyExpressionKind.DynTraitFromParts:
+                    {
+                        var result = LowerImportedTypedTemplateDynTraitFromParts(expression);
                         return RequireImportedTypedTemplateExpressionResult(expression, result, expectedType);
                     }
 
@@ -3121,6 +3239,9 @@ internal sealed partial class MidLevelIrLowerer
                 case ImportedTemplateTypedBodyExpressionKind.ArrayInitializer:
                     return TryEvaluateImportedTypedTemplateArrayConstant(expression, out constant);
 
+                case ImportedTemplateTypedBodyExpressionKind.ObjectInitializer:
+                    return TryEvaluateImportedTypedTemplateObjectInitializerConstant(expression, out constant);
+
                 case ImportedTemplateTypedBodyExpressionKind.ObjectCreation:
                     return TryEvaluateImportedTypedTemplateObjectCreationConstant(expression, out constant);
 
@@ -3136,11 +3257,20 @@ internal sealed partial class MidLevelIrLowerer
                 case ImportedTemplateTypedBodyExpressionKind.DirectCall:
                     return TryEvaluateImportedTypedTemplateDirectCallConstant(expression, out constant);
 
+                case ImportedTemplateTypedBodyExpressionKind.MemberCall:
+                    return TryEvaluateImportedTypedTemplateMemberCallConstant(expression, out constant);
+
                 case ImportedTemplateTypedBodyExpressionKind.IndexAccess:
                     return TryEvaluateImportedTypedTemplateIndexConstant(expression, out constant);
 
                 case ImportedTemplateTypedBodyExpressionKind.FieldAccess:
                     return TryEvaluateImportedTypedTemplateFieldConstant(expression, out constant);
+
+                case ImportedTemplateTypedBodyExpressionKind.TextInterpolation:
+                    return TryEvaluateImportedTypedTemplateTextInterpolationConstant(expression, out constant);
+
+                case ImportedTemplateTypedBodyExpressionKind.TextBuild:
+                    return TryEvaluateImportedTypedTemplateTextBuildConstant(expression, out constant);
 
                 default:
                     return false;
@@ -3153,7 +3283,7 @@ internal sealed partial class MidLevelIrLowerer
         {
             constant = default;
             if (expression.Ordinal is not { } ordinal
-                || !_importedTemplateDirectCalls.TryGetValue(ordinal, out var publishedSignature))
+                || !CurrentImportedTemplateDirectCalls.TryGetValue(ordinal, out var publishedSignature))
             {
                 return false;
             }
@@ -3171,7 +3301,7 @@ internal sealed partial class MidLevelIrLowerer
             for (var index = 0; index < expression.Args.Count; index++)
             {
                 if (!TryEvaluateImportedTypedTemplateConstant(expression.Args[index], out var argument)
-                    || !CompileTimeExpressionEvaluator.TryCoerce(argument, signature.Parameters[index].Type, out arguments[index]))
+                    || !TryCoerceImportedTypedTemplateArgument(argument, signature.Parameters[index].Type, out arguments[index]))
                 {
                     return false;
                 }
@@ -3180,10 +3310,114 @@ internal sealed partial class MidLevelIrLowerer
             return TryEvaluateImportedTypedTemplateFunctionBodyConstant(
                 templateName,
                 templateSignature,
+                templateSummary,
                 signature,
                 typedBody,
                 arguments,
                 out constant);
+        }
+
+        private bool TryEvaluateImportedTypedTemplateMemberCallConstant(
+            ImportedTemplateTypedBodyExpressionSummary expression,
+            out CompileTimeConstant constant)
+        {
+            constant = default;
+            if (expression.Ordinal is not { } ordinal
+                || expression.Args.Count == 0
+                || !CurrentImportedTemplateMemberCalls.TryGetValue(ordinal, out var publishedSignature))
+            {
+                return false;
+            }
+
+            var signature = ApplyGenericSubstitution(publishedSignature);
+            if (!TryResolveImportedTemplateSummary(signature, out var templateName, out var templateSignature, out var templateSummary)
+                || templateSummary.TypedBody is not { } typedBody
+                || !FunctionKindFacts.IsCompileTimeCallable(templateSignature.Kind)
+                || expression.Args.Count != signature.Parameters.Count)
+            {
+                return false;
+            }
+
+            var arguments = new CompileTimeConstant[expression.Args.Count];
+            for (var index = 0; index < expression.Args.Count; index++)
+            {
+                if (!TryEvaluateImportedTypedTemplateConstant(expression.Args[index], out var argument)
+                    || !TryCoerceImportedTypedTemplateArgument(argument, signature.Parameters[index].Type, out arguments[index]))
+                {
+                    return false;
+                }
+            }
+
+            return TryEvaluateImportedTypedTemplateFunctionBodyConstant(
+                templateName,
+                templateSignature,
+                templateSummary,
+                signature,
+                typedBody,
+                arguments,
+                out constant);
+        }
+
+        private static bool TryCoerceImportedTypedTemplateArgument(
+            CompileTimeConstant argument,
+            StarkTypeSymbol parameterType,
+            out CompileTimeConstant coerced)
+        {
+            if (CompileTimeExpressionEvaluator.TryCoerce(argument, parameterType, out coerced))
+            {
+                return true;
+            }
+
+            var unqualifiedParameterType = StarkTypeSymbols.WithQualifiers(
+                parameterType,
+                borrowKind: StarkBorrowKind.None,
+                accessKind: StarkAccessKind.None,
+                initializationKind: StarkInitializationKind.None,
+                isMutableView: false);
+            if (unqualifiedParameterType == parameterType
+                || !CompileTimeExpressionEvaluator.TryCoerce(argument, unqualifiedParameterType, out var unqualifiedCoerced))
+            {
+                return false;
+            }
+
+            return TryRetypeImportedTypedTemplateConstant(unqualifiedCoerced, parameterType, out coerced);
+        }
+
+        private static bool TryRetypeImportedTypedTemplateConstant(
+            CompileTimeConstant constant,
+            StarkTypeSymbol targetType,
+            out CompileTimeConstant retyped)
+        {
+            switch (constant.Kind)
+            {
+                case CompileTimeConstantKind.Integer:
+                    retyped = CompileTimeConstant.Integer(constant.IntegerValue, targetType);
+                    return true;
+                case CompileTimeConstantKind.Float:
+                    retyped = CompileTimeConstant.Float(constant.FloatValue, targetType);
+                    return true;
+                case CompileTimeConstantKind.Bool:
+                    retyped = CompileTimeConstant.Bool(constant.BoolValue);
+                    return true;
+                case CompileTimeConstantKind.Text when constant.TextLiteral is { } text:
+                    retyped = CompileTimeConstant.Text(text, targetType);
+                    return true;
+                case CompileTimeConstantKind.Null:
+                    retyped = CompileTimeConstant.Null(targetType);
+                    return true;
+                case CompileTimeConstantKind.FixedArray:
+                    retyped = CompileTimeConstant.FixedArray(constant.Elements, targetType);
+                    return true;
+                case CompileTimeConstantKind.NamedAggregate:
+                    retyped = CompileTimeConstant.NamedAggregate(constant.Elements, targetType);
+                    return true;
+                case CompileTimeConstantKind.EnumAggregate when constant.VariantName is { } variantName:
+                    retyped = CompileTimeConstant.EnumAggregate(variantName, constant.Elements, targetType);
+                    return true;
+                default:
+                    retyped = default;
+                    return false;
+            }
         }
 
         private bool TryResolveImportedTemplateSummary(
@@ -3217,20 +3451,17 @@ internal sealed partial class MidLevelIrLowerer
         private bool TryEvaluateImportedTypedTemplateFunctionBodyConstant(
             string templateName,
             TypedFunctionSignature templateSignature,
+            ImportedFunctionTemplateSummary templateSummary,
             TypedFunctionSignature concreteSignature,
             ImportedTemplateTypedBodySummary typedBody,
             IReadOnlyList<CompileTimeConstant> arguments,
             out CompileTimeConstant constant)
         {
             constant = default;
-            if (!TryGetSingleImportedTypedTemplateReturnExpression(typedBody.Statements, out var returnExpression))
-            {
-                return false;
-            }
-
             var previousTypeSubstitution = _activeGenericTypeSubstitution;
             var previousValueSubstitution = _activeGenericValueSubstitution;
             var previousComptimeParameters = _activeComptimeGenericParameters;
+            var previousImportedTemplateEvaluationContext = _activeImportedTemplateEvaluationContext;
             var typeSubstitution = previousTypeSubstitution is { Count: > 0 }
                 ? new Dictionary<string, StarkTypeSymbol>(previousTypeSubstitution, StringComparer.Ordinal)
                 : new Dictionary<string, StarkTypeSymbol>(StringComparer.Ordinal);
@@ -3252,6 +3483,7 @@ internal sealed partial class MidLevelIrLowerer
                 _activeComptimeGenericParameters = templateSignature.ComptimeGenericParams.Count == 0
                     ? null
                     : templateSignature.ComptimeGenericParams.ToDictionary(static parameter => parameter.Name, StringComparer.Ordinal);
+                _activeImportedTemplateEvaluationContext = GetImportedTemplateEvaluationContext(templateName, templateSummary);
 
                 DeclareImportedTypedTemplateComptimeConstants(templateSignature, valueSubstitution);
                 for (var index = 0; index < templateSignature.Parameters.Count && index < arguments.Count; index++)
@@ -3262,7 +3494,12 @@ internal sealed partial class MidLevelIrLowerer
                         isMutable: false);
                 }
 
-                if (!TryEvaluateImportedTypedTemplateConstant(returnExpression, out var result)
+                if (!TryExecuteImportedTypedTemplateStatementListConstant(
+                        typedBody.Statements,
+                        createScope: true,
+                        out var flow,
+                        out var result)
+                    || flow != CompileTimeStatementFlow.Return
                     || !CompileTimeExpressionEvaluator.TryCoerce(result, concreteSignature.ReturnType, out constant))
                 {
                     return false;
@@ -3276,29 +3513,1373 @@ internal sealed partial class MidLevelIrLowerer
                 _activeGenericTypeSubstitution = previousTypeSubstitution;
                 _activeGenericValueSubstitution = previousValueSubstitution;
                 _activeComptimeGenericParameters = previousComptimeParameters;
+                _activeImportedTemplateEvaluationContext = previousImportedTemplateEvaluationContext;
             }
         }
 
-        private static bool TryGetSingleImportedTypedTemplateReturnExpression(
+        private bool TryExecuteImportedTypedTemplateStatementListConstant(
             IReadOnlyList<ImportedTemplateTypedBodyStatementSummary> statements,
-            out ImportedTemplateTypedBodyExpressionSummary expression)
+            bool createScope,
+            out CompileTimeStatementFlow flow,
+            out CompileTimeConstant returnValue)
         {
-            expression = default!;
-            if (statements.Count != 1)
+            flow = CompileTimeStatementFlow.None;
+            returnValue = default;
+
+            if (createScope)
+            {
+                _compileTimeConstantState.PushScope();
+            }
+
+            try
+            {
+                foreach (var statement in statements)
+                {
+                    if (!TryExecuteImportedTypedTemplateStatementConstant(statement, out flow, out returnValue))
+                    {
+                        return false;
+                    }
+
+                    if (flow != CompileTimeStatementFlow.None)
+                    {
+                        return true;
+                    }
+                }
+
+                return true;
+            }
+            finally
+            {
+                if (createScope)
+                {
+                    _compileTimeConstantState.PopScope();
+                }
+            }
+        }
+
+        private bool TryExecuteImportedTypedTemplateStatementConstant(
+            ImportedTemplateTypedBodyStatementSummary statement,
+            out CompileTimeStatementFlow flow,
+            out CompileTimeConstant returnValue)
+        {
+            flow = CompileTimeStatementFlow.None;
+            returnValue = default;
+
+            switch (statement.Kind)
+            {
+                case ImportedTemplateTypedBodyStatementKind.Block:
+                    return TryExecuteImportedTypedTemplateStatementListConstant(
+                        statement.Body,
+                        createScope: true,
+                        out flow,
+                        out returnValue);
+
+                case ImportedTemplateTypedBodyStatementKind.Empty:
+                    return true;
+
+                case ImportedTemplateTypedBodyStatementKind.LocalVariableDeclaration:
+                    return TryExecuteImportedTypedTemplateLocalDeclarationConstant(statement);
+
+                case ImportedTemplateTypedBodyStatementKind.ExpressionStatement:
+                    return statement.Expression is not null
+                        && TryEvaluateImportedTypedTemplateConstant(statement.Expression, out _);
+
+                case ImportedTemplateTypedBodyStatementKind.Assignment:
+                    return TryExecuteImportedTypedTemplateAssignmentConstant(statement);
+
+                case ImportedTemplateTypedBodyStatementKind.If:
+                    return TryExecuteImportedTypedTemplateIfConstant(statement, out flow, out returnValue);
+
+                case ImportedTemplateTypedBodyStatementKind.While:
+                    return TryExecuteImportedTypedTemplateWhileConstant(statement, out flow, out returnValue);
+
+                case ImportedTemplateTypedBodyStatementKind.For:
+                    return TryExecuteImportedTypedTemplateForConstant(statement, out flow, out returnValue);
+
+                case ImportedTemplateTypedBodyStatementKind.ForTraversal:
+                    return TryExecuteImportedTypedTemplateForTraversalConstant(statement, out flow, out returnValue);
+
+                case ImportedTemplateTypedBodyStatementKind.Switch:
+                    return TryExecuteImportedTypedTemplateSwitchConstant(statement, out flow, out returnValue);
+
+                case ImportedTemplateTypedBodyStatementKind.Break:
+                    flow = CompileTimeStatementFlow.Break;
+                    _compileTimeConstantState.SetPendingControlFlowLabel(statement.Name);
+                    return true;
+
+                case ImportedTemplateTypedBodyStatementKind.Continue:
+                    flow = CompileTimeStatementFlow.Continue;
+                    _compileTimeConstantState.SetPendingControlFlowLabel(statement.Name);
+                    return true;
+
+                case ImportedTemplateTypedBodyStatementKind.Return:
+                    flow = CompileTimeStatementFlow.Return;
+                    if (statement.Expression is null)
+                    {
+                        returnValue = CompileTimeConstant.Void();
+                        return true;
+                    }
+
+                    return TryEvaluateImportedTypedTemplateConstant(statement.Expression, out returnValue);
+
+                default:
+                    return false;
+            }
+        }
+
+        private bool TryExecuteImportedTypedTemplateLocalDeclarationConstant(
+            ImportedTemplateTypedBodyStatementSummary statement)
+        {
+            if (statement.Name is null
+                || statement.Type is not { } declaredSourceType)
             {
                 return false;
             }
 
-            var statement = statements[0];
-            if (statement.Kind == ImportedTemplateTypedBodyStatementKind.Return
-                && statement.Expression is { } returnExpression)
+            var declaredType = ApplyGenericSubstitution(declaredSourceType);
+            CompileTimeConstant value;
+            if (statement.Expression is { } initializer)
             {
-                expression = returnExpression;
+                if (!TryEvaluateImportedTypedTemplateConstant(initializer, out var initialized)
+                    || !CompileTimeExpressionEvaluator.TryCoerce(initialized, declaredType, out value))
+                {
+                    return false;
+                }
+            }
+            else if (!TryCreateZeroCompileTimeConstant(declaredType, out value))
+            {
+                return false;
+            }
+
+            _compileTimeConstantState.Declare(statement.Name, value, statement.IsMutable && !statement.IsConstant);
+            return true;
+        }
+
+        private bool TryExecuteImportedTypedTemplateAssignmentConstant(
+            ImportedTemplateTypedBodyStatementSummary statement)
+        {
+            if (statement.Expression is null
+                || !TryEvaluateImportedTypedTemplateConstant(statement.Expression, out var right))
+            {
+                return false;
+            }
+
+            var assignmentOperator = string.IsNullOrWhiteSpace(statement.AssignmentOperator)
+                ? "="
+                : statement.AssignmentOperator!;
+            if (string.Equals(assignmentOperator, "init =", StringComparison.Ordinal))
+            {
+                assignmentOperator = "=";
+            }
+
+            if (statement.TargetExpression is { } targetExpression)
+            {
+                return TryResolveImportedTypedTemplateConstantPlace(targetExpression, out var rootName, out var segments)
+                    && TryAssignImportedTypedTemplateConstantPlace(rootName, segments, assignmentOperator, right);
+            }
+
+            return statement.Name is not null
+                && TryAssignImportedTypedTemplateConstantPlace(statement.Name, [], assignmentOperator, right);
+        }
+
+        private bool TryAssignImportedTypedTemplateConstantPlace(
+            string rootName,
+            IReadOnlyList<ImportedTemplateCompileTimePlaceSegment> segments,
+            string assignmentOperator,
+            CompileTimeConstant right)
+        {
+            if (!_compileTimeConstantState.TryResolve(rootName, out var root))
+            {
+                return false;
+            }
+
+            var assignedValue = right;
+            if (!string.Equals(assignmentOperator, "=", StringComparison.Ordinal))
+            {
+                if (!TryGetImportedTypedTemplateAssignmentBinaryOperator(
+                        assignmentOperator,
+                        out var binaryOperator,
+                        out var requireInteger)
+                    || !TryReadImportedTypedTemplateConstantPlace(root, segments, out var current)
+                    || !CompileTimeExpressionEvaluator.TryCoerce(right, current.Type, out var coercedRight)
+                    || !CompileTimeExpressionEvaluator.TryEvaluateBinaryOperator(
+                        binaryOperator,
+                        current,
+                        coercedRight,
+                        requireInteger,
+                        out assignedValue))
+                {
+                    return false;
+                }
+            }
+
+            if (!TryUpdateImportedTypedTemplateConstantPlace(root, segments, assignedValue, out var updatedRoot))
+            {
+                return false;
+            }
+
+            return _compileTimeConstantState.TryAssign(rootName, updatedRoot);
+        }
+
+        private static bool TryGetImportedTypedTemplateAssignmentBinaryOperator(
+            string assignmentOperator,
+            out string binaryOperator,
+            out bool requireInteger)
+        {
+            binaryOperator = assignmentOperator switch
+            {
+                "+=" => "+",
+                "-=" => "-",
+                "*=" => "*",
+                "/=" => "/",
+                "%=" => "%",
+                "+%=" => "+%",
+                "-%=" => "-%",
+                "*%=" => "*%",
+                "+|=" => "+|",
+                "-|=" => "-|",
+                "*|=" => "*|",
+                "&=" => "&",
+                "|=" => "|",
+                "^=" => "^",
+                _ => string.Empty
+            };
+            requireInteger = assignmentOperator is "+%=" or "-%=" or "*%=" or "+|=" or "-|=" or "*|=" or "&=" or "|=" or "^=";
+            return binaryOperator.Length > 0;
+        }
+
+        private bool TryResolveImportedTypedTemplateConstantPlace(
+            ImportedTemplateTypedBodyExpressionSummary expression,
+            out string rootName,
+            out IReadOnlyList<ImportedTemplateCompileTimePlaceSegment> segments)
+        {
+            rootName = string.Empty;
+            segments = [];
+
+            if (expression.Kind == ImportedTemplateTypedBodyExpressionKind.NameReference
+                && !string.IsNullOrWhiteSpace(expression.Name))
+            {
+                rootName = expression.Name!;
                 return true;
             }
 
-            return statement.Kind == ImportedTemplateTypedBodyStatementKind.Block
-                && TryGetSingleImportedTypedTemplateReturnExpression(statement.Body, out expression);
+            if (expression.Kind == ImportedTemplateTypedBodyExpressionKind.FieldAccess
+                && expression.Args.Count == 1
+                && expression.Ordinal is { } fieldOrdinal
+                && CurrentImportedTemplateFieldAccesses.TryGetValue(fieldOrdinal, out var fieldAccess)
+                && TryResolveImportedTypedTemplateConstantPlace(expression.Args[0], out rootName, out var receiverSegments))
+            {
+                segments = receiverSegments
+                    .Append(ImportedTemplateCompileTimePlaceSegment.Field(fieldAccess.FieldIndex))
+                    .ToArray();
+                return true;
+            }
+
+            if (expression.Kind == ImportedTemplateTypedBodyExpressionKind.IndexAccess
+                && expression.Args.Count == 2
+                && TryResolveImportedTypedTemplateConstantPlace(expression.Args[0], out rootName, out var indexedSegments)
+                && TryEvaluateImportedTypedTemplateConstant(expression.Args[1], out var indexConstant)
+                && indexConstant.Kind == CompileTimeConstantKind.Integer
+                && indexConstant.IntegerValue >= 0
+                && indexConstant.IntegerValue <= int.MaxValue)
+            {
+                segments = indexedSegments
+                    .Append(ImportedTemplateCompileTimePlaceSegment.Index((int)indexConstant.IntegerValue))
+                    .ToArray();
+                return true;
+            }
+
+            return false;
+        }
+
+        private static bool TryReadImportedTypedTemplateConstantPlace(
+            CompileTimeConstant root,
+            IReadOnlyList<ImportedTemplateCompileTimePlaceSegment> segments,
+            out CompileTimeConstant value)
+        {
+            value = root;
+            foreach (var segment in segments)
+            {
+                switch (segment.Kind)
+                {
+                    case ImportedTemplateCompileTimePlaceSegmentKind.Field:
+                        if (value.Kind != CompileTimeConstantKind.NamedAggregate
+                            || segment.Ordinal < 0
+                            || segment.Ordinal >= value.Elements.Count)
+                        {
+                            value = default;
+                            return false;
+                        }
+
+                        value = value.Elements[segment.Ordinal];
+                        break;
+
+                    case ImportedTemplateCompileTimePlaceSegmentKind.Index:
+                        if (value.Kind != CompileTimeConstantKind.FixedArray
+                            || segment.Ordinal < 0
+                            || segment.Ordinal >= value.Elements.Count)
+                        {
+                            value = default;
+                            return false;
+                        }
+
+                        value = value.Elements[segment.Ordinal];
+                        break;
+
+                    default:
+                        value = default;
+                        return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static bool TryUpdateImportedTypedTemplateConstantPlace(
+            CompileTimeConstant root,
+            IReadOnlyList<ImportedTemplateCompileTimePlaceSegment> segments,
+            CompileTimeConstant assignedValue,
+            out CompileTimeConstant updated)
+        {
+            if (segments.Count == 0)
+            {
+                return CompileTimeExpressionEvaluator.TryCoerce(assignedValue, root.Type, out updated);
+            }
+
+            var segment = segments[0];
+            var remaining = segments.Skip(1).ToArray();
+            switch (segment.Kind)
+            {
+                case ImportedTemplateCompileTimePlaceSegmentKind.Field:
+                    {
+                        if (root.Kind != CompileTimeConstantKind.NamedAggregate
+                            || segment.Ordinal < 0
+                            || segment.Ordinal >= root.Elements.Count
+                            || !TryUpdateImportedTypedTemplateConstantPlace(
+                                root.Elements[segment.Ordinal],
+                                remaining,
+                                assignedValue,
+                                out var updatedField)
+                            || !TryWithCompileTimeNamedAggregateField(root, segment.Ordinal, updatedField, out updated))
+                        {
+                            updated = default;
+                            return false;
+                        }
+
+                        return true;
+                    }
+
+                case ImportedTemplateCompileTimePlaceSegmentKind.Index:
+                    {
+                        if (root.Kind != CompileTimeConstantKind.FixedArray
+                            || segment.Ordinal < 0
+                            || segment.Ordinal >= root.Elements.Count
+                            || !TryUpdateImportedTypedTemplateConstantPlace(
+                                root.Elements[segment.Ordinal],
+                                remaining,
+                                assignedValue,
+                                out var updatedElement))
+                        {
+                            updated = default;
+                            return false;
+                        }
+
+                        var elements = root.Elements.ToArray();
+                        elements[segment.Ordinal] = updatedElement;
+                        updated = CompileTimeConstant.FixedArray(elements, root.Type);
+                        return true;
+                    }
+
+                default:
+                    updated = default;
+                    return false;
+            }
+        }
+
+        private bool TryExecuteImportedTypedTemplateIfConstant(
+            ImportedTemplateTypedBodyStatementSummary statement,
+            out CompileTimeStatementFlow flow,
+            out CompileTimeConstant returnValue)
+        {
+            flow = CompileTimeStatementFlow.None;
+            returnValue = default;
+
+            if (statement.Expression is null
+                || !TryEvaluateImportedTypedTemplateConstant(statement.Expression, out var condition))
+            {
+                return false;
+            }
+
+            if (statement.ConditionPattern is { } conditionPattern)
+            {
+                _compileTimeConstantState.PushScope();
+                try
+                {
+                    if (!TryImportedTypedTemplateFieldPatternMatchesConstant(conditionPattern, condition, out var matched))
+                    {
+                        return false;
+                    }
+
+                    if (matched)
+                    {
+                        return TryExecuteImportedTypedTemplateStatementListConstant(
+                            statement.ThenBranch,
+                            createScope: true,
+                            out flow,
+                            out returnValue);
+                    }
+                }
+                finally
+                {
+                    _compileTimeConstantState.PopScope();
+                }
+
+                return TryExecuteImportedTypedTemplateStatementListConstant(
+                    statement.ElseBranch,
+                    createScope: true,
+                    out flow,
+                    out returnValue);
+            }
+
+            if (condition.Kind != CompileTimeConstantKind.Bool)
+            {
+                return false;
+            }
+
+            return TryExecuteImportedTypedTemplateStatementListConstant(
+                condition.BoolValue ? statement.ThenBranch : statement.ElseBranch,
+                createScope: true,
+                out flow,
+                out returnValue);
+        }
+
+        private bool TryExecuteImportedTypedTemplateWhileConstant(
+            ImportedTemplateTypedBodyStatementSummary statement,
+            out CompileTimeStatementFlow flow,
+            out CompileTimeConstant returnValue)
+        {
+            flow = CompileTimeStatementFlow.None;
+            returnValue = default;
+            if (statement.Expression is null)
+            {
+                return false;
+            }
+
+            var iterations = 0;
+            while (true)
+            {
+                if (!TryEvaluateImportedTypedTemplateConstant(statement.Expression, out var condition))
+                {
+                    return false;
+                }
+
+                if (statement.ConditionPattern is { } conditionPattern)
+                {
+                    _compileTimeConstantState.PushScope();
+                    try
+                    {
+                        if (!TryImportedTypedTemplateFieldPatternMatchesConstant(conditionPattern, condition, out var matched))
+                        {
+                            return false;
+                        }
+
+                        if (!matched)
+                        {
+                            flow = CompileTimeStatementFlow.None;
+                            return true;
+                        }
+
+                        if (++iterations > _maximumCompileTimeLoopIterations)
+                        {
+                            return false;
+                        }
+
+                        if (!TryExecuteImportedTypedTemplateStatementListConstant(
+                                statement.Body,
+                                createScope: true,
+                                out flow,
+                                out returnValue))
+                        {
+                            return false;
+                        }
+                    }
+                    finally
+                    {
+                        _compileTimeConstantState.PopScope();
+                    }
+                }
+                else
+                {
+                    if (condition.Kind != CompileTimeConstantKind.Bool)
+                    {
+                        return false;
+                    }
+
+                    if (!condition.BoolValue)
+                    {
+                        flow = CompileTimeStatementFlow.None;
+                        return true;
+                    }
+
+                    if (++iterations > _maximumCompileTimeLoopIterations)
+                    {
+                        return false;
+                    }
+
+                    if (!TryExecuteImportedTypedTemplateStatementListConstant(
+                            statement.Body,
+                            createScope: true,
+                            out flow,
+                            out returnValue))
+                    {
+                        return false;
+                    }
+                }
+
+                if (flow == CompileTimeStatementFlow.Return)
+                {
+                    return true;
+                }
+
+                if (flow == CompileTimeStatementFlow.Break)
+                {
+                    if (_compileTimeConstantState.ShouldConsumeControlFlow(statement.Name))
+                    {
+                        _compileTimeConstantState.ClearPendingControlFlowLabel();
+                        flow = CompileTimeStatementFlow.None;
+                        return true;
+                    }
+
+                    return true;
+                }
+
+                if (flow == CompileTimeStatementFlow.Continue)
+                {
+                    if (_compileTimeConstantState.ShouldConsumeControlFlow(statement.Name))
+                    {
+                        _compileTimeConstantState.ClearPendingControlFlowLabel();
+                        flow = CompileTimeStatementFlow.None;
+                    }
+                    else
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        private bool TryExecuteImportedTypedTemplateForConstant(
+            ImportedTemplateTypedBodyStatementSummary statement,
+            out CompileTimeStatementFlow flow,
+            out CompileTimeConstant returnValue)
+        {
+            flow = CompileTimeStatementFlow.None;
+            returnValue = default;
+            _compileTimeConstantState.PushScope();
+            try
+            {
+                if (!TryExecuteImportedTypedTemplateStatementListConstant(
+                        statement.Initializer,
+                        createScope: false,
+                        out flow,
+                        out returnValue)
+                    || flow != CompileTimeStatementFlow.None)
+                {
+                    return flow != CompileTimeStatementFlow.None;
+                }
+
+                var iterations = 0;
+                while (true)
+                {
+                    if (statement.Expression is not null)
+                    {
+                        if (!TryEvaluateImportedTypedTemplateConstant(statement.Expression, out var condition)
+                            || condition.Kind != CompileTimeConstantKind.Bool)
+                        {
+                            return false;
+                        }
+
+                        if (!condition.BoolValue)
+                        {
+                            flow = CompileTimeStatementFlow.None;
+                            return true;
+                        }
+                    }
+
+                    if (++iterations > _maximumCompileTimeLoopIterations)
+                    {
+                        return false;
+                    }
+
+                    if (!TryExecuteImportedTypedTemplateStatementListConstant(
+                            statement.Body,
+                            createScope: true,
+                            out flow,
+                            out returnValue))
+                    {
+                        return false;
+                    }
+
+                    if (flow == CompileTimeStatementFlow.Return)
+                    {
+                        return true;
+                    }
+
+                    if (flow == CompileTimeStatementFlow.Break)
+                    {
+                        if (_compileTimeConstantState.ShouldConsumeControlFlow(statement.Name))
+                        {
+                            _compileTimeConstantState.ClearPendingControlFlowLabel();
+                            flow = CompileTimeStatementFlow.None;
+                            return true;
+                        }
+
+                        return true;
+                    }
+
+                    if (flow == CompileTimeStatementFlow.Continue)
+                    {
+                        if (_compileTimeConstantState.ShouldConsumeControlFlow(statement.Name))
+                        {
+                            _compileTimeConstantState.ClearPendingControlFlowLabel();
+                            flow = CompileTimeStatementFlow.None;
+                        }
+                        else
+                        {
+                            return true;
+                        }
+                    }
+
+                    if (!TryExecuteImportedTypedTemplateStatementListConstant(
+                            statement.Iterator,
+                            createScope: false,
+                            out var iteratorFlow,
+                            out returnValue))
+                    {
+                        return false;
+                    }
+
+                    if (iteratorFlow == CompileTimeStatementFlow.Return)
+                    {
+                        flow = CompileTimeStatementFlow.Return;
+                        return true;
+                    }
+
+                    if (iteratorFlow == CompileTimeStatementFlow.Break)
+                    {
+                        if (_compileTimeConstantState.ShouldConsumeControlFlow(statement.Name))
+                        {
+                            _compileTimeConstantState.ClearPendingControlFlowLabel();
+                            flow = CompileTimeStatementFlow.None;
+                            return true;
+                        }
+
+                        flow = CompileTimeStatementFlow.Break;
+                        return true;
+                    }
+
+                    if (iteratorFlow == CompileTimeStatementFlow.Continue)
+                    {
+                        if (_compileTimeConstantState.ShouldConsumeControlFlow(statement.Name))
+                        {
+                            _compileTimeConstantState.ClearPendingControlFlowLabel();
+                            flow = CompileTimeStatementFlow.None;
+                        }
+                        else
+                        {
+                            flow = CompileTimeStatementFlow.Continue;
+                            return true;
+                        }
+                    }
+
+                    flow = CompileTimeStatementFlow.None;
+                }
+            }
+            finally
+            {
+                _compileTimeConstantState.PopScope();
+            }
+        }
+
+        private bool TryExecuteImportedTypedTemplateForTraversalConstant(
+            ImportedTemplateTypedBodyStatementSummary statement,
+            out CompileTimeStatementFlow flow,
+            out CompileTimeConstant returnValue)
+        {
+            flow = CompileTimeStatementFlow.None;
+            returnValue = default;
+            if (statement.TraversalSourceExpression is null
+                || string.IsNullOrWhiteSpace(statement.TraversalElementName)
+                || statement.TraversalElementType is null
+                || !TryEvaluateImportedTypedTemplateConstant(statement.TraversalSourceExpression, out var source)
+                || source.Kind != CompileTimeConstantKind.FixedArray)
+            {
+                return false;
+            }
+
+            var elementType = ApplyGenericSubstitution(statement.TraversalElementType);
+            var indexType = statement.TraversalIndexType is null
+                ? StarkTypeSymbols.Integer(64)
+                : ApplyGenericSubstitution(statement.TraversalIndexType);
+            var iterations = 0;
+            for (var index = 0; index < source.Elements.Count; index++)
+            {
+                if (++iterations > _maximumCompileTimeLoopIterations)
+                {
+                    return false;
+                }
+
+                _compileTimeConstantState.PushScope();
+                try
+                {
+                    if (statement.TraversalIndexName is { } indexName)
+                    {
+                        _compileTimeConstantState.Declare(
+                            indexName,
+                            CompileTimeConstant.Integer(new BigInteger(index), indexType),
+                            isMutable: false);
+                    }
+
+                    if (!CompileTimeExpressionEvaluator.TryCoerce(source.Elements[index], elementType, out var element))
+                    {
+                        return false;
+                    }
+
+                    _compileTimeConstantState.Declare(statement.TraversalElementName!, element, isMutable: false);
+
+                    if (!TryExecuteImportedTypedTemplateStatementListConstant(
+                            statement.Body,
+                            createScope: false,
+                            out flow,
+                            out returnValue))
+                    {
+                        return false;
+                    }
+                }
+                finally
+                {
+                    _compileTimeConstantState.PopScope();
+                }
+
+                if (flow == CompileTimeStatementFlow.Return)
+                {
+                    return true;
+                }
+
+                if (flow == CompileTimeStatementFlow.Break)
+                {
+                    if (_compileTimeConstantState.ShouldConsumeControlFlow(statement.Name))
+                    {
+                        _compileTimeConstantState.ClearPendingControlFlowLabel();
+                        flow = CompileTimeStatementFlow.None;
+                        return true;
+                    }
+
+                    return true;
+                }
+
+                if (flow == CompileTimeStatementFlow.Continue)
+                {
+                    if (_compileTimeConstantState.ShouldConsumeControlFlow(statement.Name))
+                    {
+                        _compileTimeConstantState.ClearPendingControlFlowLabel();
+                        flow = CompileTimeStatementFlow.None;
+                    }
+                    else
+                    {
+                        return true;
+                    }
+                }
+
+                flow = CompileTimeStatementFlow.None;
+            }
+
+            return true;
+        }
+
+        private bool TryExecuteImportedTypedTemplateSwitchConstant(
+            ImportedTemplateTypedBodyStatementSummary statement,
+            out CompileTimeStatementFlow flow,
+            out CompileTimeConstant returnValue)
+        {
+            flow = CompileTimeStatementFlow.None;
+            returnValue = default;
+            if (statement.Expression is null
+                || !TryEvaluateImportedTypedTemplateConstant(statement.Expression, out var switchValue))
+            {
+                return false;
+            }
+
+            ImportedTemplateTypedSwitchCaseSummary? defaultCase = null;
+            foreach (var switchCase in statement.SwitchCases)
+            {
+                if (switchCase.Kind == ImportedTemplateTypedSwitchCaseKind.Default)
+                {
+                    defaultCase ??= switchCase;
+                    continue;
+                }
+
+                if (!TryExecuteImportedTypedTemplateSwitchCaseIfMatchedConstant(
+                        switchCase,
+                        switchValue,
+                        statement.Name,
+                        out var matched,
+                        out flow,
+                        out returnValue))
+                {
+                    return false;
+                }
+
+                if (!matched)
+                {
+                    continue;
+                }
+
+                return true;
+            }
+
+            return defaultCase is null
+                || TryExecuteImportedTypedTemplateSwitchCaseIfMatchedConstant(
+                    defaultCase,
+                    switchValue,
+                    statement.Name,
+                    out _,
+                    out flow,
+                    out returnValue);
+        }
+
+        private bool TryExecuteImportedTypedTemplateSwitchCaseIfMatchedConstant(
+            ImportedTemplateTypedSwitchCaseSummary switchCase,
+            CompileTimeConstant switchValue,
+            string? labelName,
+            out bool matched,
+            out CompileTimeStatementFlow flow,
+            out CompileTimeConstant returnValue)
+        {
+            matched = false;
+            flow = CompileTimeStatementFlow.None;
+            returnValue = default;
+
+            _compileTimeConstantState.PushScope();
+            try
+            {
+                if (!TryImportedTypedTemplateSwitchCaseMatchesConstant(switchCase, switchValue, out matched))
+                {
+                    return false;
+                }
+
+                if (!matched)
+                {
+                    return true;
+                }
+
+                if (switchCase.GuardExpression is { } guardExpression)
+                {
+                    if (!TryEvaluateImportedTypedTemplateConstant(guardExpression, out var guard)
+                        || guard.Kind != CompileTimeConstantKind.Bool)
+                    {
+                        return false;
+                    }
+
+                    if (!guard.BoolValue)
+                    {
+                        matched = false;
+                        return true;
+                    }
+                }
+
+                if (!TryExecuteImportedTypedTemplateStatementListConstant(
+                        switchCase.Statements,
+                        createScope: false,
+                        out flow,
+                        out returnValue))
+                {
+                    return false;
+                }
+
+                if (flow == CompileTimeStatementFlow.Break)
+                {
+                    if (_compileTimeConstantState.ShouldConsumeControlFlow(labelName))
+                    {
+                        _compileTimeConstantState.ClearPendingControlFlowLabel();
+                        flow = CompileTimeStatementFlow.None;
+                    }
+                }
+
+                return true;
+            }
+            finally
+            {
+                _compileTimeConstantState.PopScope();
+            }
+        }
+
+        private bool TryImportedTypedTemplateSwitchCaseMatchesConstant(
+            ImportedTemplateTypedSwitchCaseSummary switchCase,
+            CompileTimeConstant switchValue,
+            out bool matched)
+        {
+            matched = false;
+            switch (switchCase.Kind)
+            {
+                case ImportedTemplateTypedSwitchCaseKind.MatchAll:
+                    if (!TryDeclareImportedTypedTemplatePatternCapture(switchCase.Name, switchValue))
+                    {
+                        return false;
+                    }
+
+                    matched = true;
+                    return true;
+
+                case ImportedTemplateTypedSwitchCaseKind.Literal:
+                    return switchCase.Expression is not null
+                        && TryEvaluateImportedTypedTemplateConstant(switchCase.Expression, out var literal)
+                        && TryCompileTimeConstantsEqual(switchValue, literal, out matched);
+
+                case ImportedTemplateTypedSwitchCaseKind.Range:
+                    return switchCase.Expression is not null
+                        && switchCase.EndExpression is not null
+                        && switchValue.Kind == CompileTimeConstantKind.Integer
+                        && TryEvaluateImportedTypedTemplateConstant(switchCase.Expression, out var start)
+                        && TryEvaluateImportedTypedTemplateConstant(switchCase.EndExpression, out var end)
+                        && start.Kind == CompileTimeConstantKind.Integer
+                        && end.Kind == CompileTimeConstantKind.Integer
+                        && SetMatched(
+                            switchValue.IntegerValue >= start.IntegerValue
+                            && switchValue.IntegerValue <= end.IntegerValue,
+                            out matched);
+
+                case ImportedTemplateTypedSwitchCaseKind.EnumPattern:
+                    return switchCase.Ordinal is { } enumOrdinal
+                        && TryImportedTypedTemplateEnumPatternMatchesConstant(
+                            enumOrdinal,
+                            switchCase.Name,
+                            switchCase.Members,
+                            switchValue,
+                            out matched);
+
+                case ImportedTemplateTypedSwitchCaseKind.AggregatePattern:
+                    return switchCase.Ordinal is { } aggregateOrdinal
+                        && TryImportedTypedTemplateAggregatePatternMatchesConstant(
+                            aggregateOrdinal,
+                            switchCase.Name,
+                            switchCase.Members,
+                            switchValue,
+                            out matched);
+
+                case ImportedTemplateTypedSwitchCaseKind.ListPattern:
+                    return TryImportedTypedTemplateListPatternMatchesConstant(
+                        switchCase.Members,
+                        switchValue,
+                        out matched);
+
+                case ImportedTemplateTypedSwitchCaseKind.Default:
+                    matched = true;
+                    return true;
+
+                default:
+                    return false;
+            }
+
+            static bool SetMatched(bool value, out bool matched)
+            {
+                matched = value;
+                return true;
+            }
+        }
+
+        private bool TryImportedTypedTemplateFieldPatternMatchesConstant(
+            ImportedTemplateTypedSwitchFieldPatternSummary pattern,
+            CompileTimeConstant value,
+            out bool matched)
+        {
+            matched = false;
+            switch (pattern.Kind)
+            {
+                case ImportedTemplateTypedSwitchFieldPatternKind.Discard:
+                    matched = true;
+                    return true;
+
+                case ImportedTemplateTypedSwitchFieldPatternKind.Capture:
+                    if (!TryDeclareImportedTypedTemplatePatternCapture(pattern.Name, value))
+                    {
+                        return false;
+                    }
+
+                    matched = true;
+                    return true;
+
+                case ImportedTemplateTypedSwitchFieldPatternKind.Literal:
+                    return pattern.Expression is not null
+                        && TryEvaluateImportedTypedTemplateConstant(pattern.Expression, out var literal)
+                        && TryCompileTimeConstantsEqual(value, literal, out matched);
+
+                case ImportedTemplateTypedSwitchFieldPatternKind.Range:
+                    return pattern.Expression is not null
+                        && pattern.EndExpression is not null
+                        && value.Kind == CompileTimeConstantKind.Integer
+                        && TryEvaluateImportedTypedTemplateConstant(pattern.Expression, out var start)
+                        && TryEvaluateImportedTypedTemplateConstant(pattern.EndExpression, out var end)
+                        && start.Kind == CompileTimeConstantKind.Integer
+                        && end.Kind == CompileTimeConstantKind.Integer
+                        && SetMatched(
+                            value.IntegerValue >= start.IntegerValue
+                            && value.IntegerValue <= end.IntegerValue,
+                            out matched);
+
+                case ImportedTemplateTypedSwitchFieldPatternKind.EnumPattern:
+                    return pattern.Ordinal is { } enumOrdinal
+                        && TryImportedTypedTemplateEnumPatternMatchesConstant(
+                            enumOrdinal,
+                            pattern.Name,
+                            pattern.Members,
+                            value,
+                            out matched);
+
+                case ImportedTemplateTypedSwitchFieldPatternKind.AggregatePattern:
+                    return pattern.Ordinal is { } aggregateOrdinal
+                        && TryImportedTypedTemplateAggregatePatternMatchesConstant(
+                            aggregateOrdinal,
+                            pattern.Name,
+                            pattern.Members,
+                            value,
+                            out matched);
+
+                case ImportedTemplateTypedSwitchFieldPatternKind.ListPattern:
+                    return TryImportedTypedTemplateListPatternMatchesConstant(pattern.Members, value, out matched);
+
+                default:
+                    return false;
+            }
+
+            static bool SetMatched(bool value, out bool matched)
+            {
+                matched = value;
+                return true;
+            }
+        }
+
+        private bool TryImportedTypedTemplateEnumPatternMatchesConstant(
+            int ordinal,
+            string? wholeCaptureName,
+            IReadOnlyList<ImportedTemplateTypedSwitchFieldPatternSummary> memberPatterns,
+            CompileTimeConstant value,
+            out bool matched)
+        {
+            matched = false;
+            if (!CurrentImportedTemplateEnumPatterns.TryGetValue(ordinal, out var publishedPattern))
+            {
+                return false;
+            }
+
+            var enumType = ApplyGenericSubstitution(publishedPattern.EnumType);
+            if (value.Kind != CompileTimeConstantKind.EnumAggregate
+                || value.VariantName is not { } variantName
+                || !string.Equals(variantName, publishedPattern.VariantName, StringComparison.Ordinal)
+                || !ImportedTypedTemplateConstantTypeMatches(value.Type, enumType))
+            {
+                return true;
+            }
+
+            if (wholeCaptureName is not null)
+            {
+                if (memberPatterns.Count != 0
+                    || !TryDeclareImportedTypedTemplatePatternCapture(wholeCaptureName, value))
+                {
+                    return false;
+                }
+
+                matched = true;
+                return true;
+            }
+
+            if (publishedPattern.Members.Count > 0)
+            {
+                if (memberPatterns.Count != publishedPattern.Members.Count)
+                {
+                    return false;
+                }
+
+                for (var memberIndex = 0; memberIndex < memberPatterns.Count; memberIndex++)
+                {
+                    var publishedMember = publishedPattern.Members[memberIndex];
+                    if (publishedMember.FieldIndex < 0
+                        || publishedMember.FieldIndex >= value.Elements.Count
+                        || !TryImportedTypedTemplateFieldPatternMatchesConstant(
+                            memberPatterns[memberIndex],
+                            value.Elements[publishedMember.FieldIndex],
+                            out var memberMatched))
+                    {
+                        return false;
+                    }
+
+                    if (!memberMatched)
+                    {
+                        return true;
+                    }
+                }
+
+                matched = true;
+                return true;
+            }
+
+            if (memberPatterns.Count != value.Elements.Count)
+            {
+                return true;
+            }
+
+            for (var memberIndex = 0; memberIndex < memberPatterns.Count; memberIndex++)
+            {
+                if (!TryImportedTypedTemplateFieldPatternMatchesConstant(
+                        memberPatterns[memberIndex],
+                        value.Elements[memberIndex],
+                        out var memberMatched))
+                {
+                    return false;
+                }
+
+                if (!memberMatched)
+                {
+                    return true;
+                }
+            }
+
+            matched = true;
+            return true;
+        }
+
+        private bool TryImportedTypedTemplateAggregatePatternMatchesConstant(
+            int ordinal,
+            string? wholeCaptureName,
+            IReadOnlyList<ImportedTemplateTypedSwitchFieldPatternSummary> memberPatterns,
+            CompileTimeConstant value,
+            out bool matched)
+        {
+            matched = false;
+            if (!CurrentImportedTemplateAggregatePatterns.TryGetValue(ordinal, out var publishedPattern))
+            {
+                return false;
+            }
+
+            var aggregateType = ApplyGenericSubstitution(publishedPattern.Type);
+            if (value.Kind != CompileTimeConstantKind.NamedAggregate
+                || !ImportedTypedTemplateConstantTypeMatches(value.Type, aggregateType))
+            {
+                return true;
+            }
+
+            if (wholeCaptureName is not null)
+            {
+                if (memberPatterns.Count != 0
+                    || !TryDeclareImportedTypedTemplatePatternCapture(wholeCaptureName, value))
+                {
+                    return false;
+                }
+
+                matched = true;
+                return true;
+            }
+
+            if (publishedPattern.Members.Count > 0)
+            {
+                if (memberPatterns.Count != publishedPattern.Members.Count)
+                {
+                    return false;
+                }
+
+                for (var memberIndex = 0; memberIndex < memberPatterns.Count; memberIndex++)
+                {
+                    var publishedMember = publishedPattern.Members[memberIndex];
+                    if (publishedMember.FieldIndex < 0
+                        || publishedMember.FieldIndex >= value.Elements.Count
+                        || !TryImportedTypedTemplateFieldPatternMatchesConstant(
+                            memberPatterns[memberIndex],
+                            value.Elements[publishedMember.FieldIndex],
+                            out var memberMatched))
+                    {
+                        return false;
+                    }
+
+                    if (!memberMatched)
+                    {
+                        return true;
+                    }
+                }
+
+                matched = true;
+                return true;
+            }
+
+            if (memberPatterns.Count != value.Elements.Count)
+            {
+                return true;
+            }
+
+            for (var memberIndex = 0; memberIndex < memberPatterns.Count; memberIndex++)
+            {
+                if (!TryImportedTypedTemplateFieldPatternMatchesConstant(
+                        memberPatterns[memberIndex],
+                        value.Elements[memberIndex],
+                        out var memberMatched))
+                {
+                    return false;
+                }
+
+                if (!memberMatched)
+                {
+                    return true;
+                }
+            }
+
+            matched = true;
+            return true;
+        }
+
+        private bool TryImportedTypedTemplateListPatternMatchesConstant(
+            IReadOnlyList<ImportedTemplateTypedSwitchFieldPatternSummary> memberPatterns,
+            CompileTimeConstant value,
+            out bool matched)
+        {
+            matched = false;
+            if (value.Kind != CompileTimeConstantKind.FixedArray
+                || value.Elements.Count != memberPatterns.Count)
+            {
+                return true;
+            }
+
+            for (var memberIndex = 0; memberIndex < memberPatterns.Count; memberIndex++)
+            {
+                if (!TryImportedTypedTemplateFieldPatternMatchesConstant(
+                        memberPatterns[memberIndex],
+                        value.Elements[memberIndex],
+                        out var memberMatched))
+                {
+                    return false;
+                }
+
+                if (!memberMatched)
+                {
+                    return true;
+                }
+            }
+
+            matched = true;
+            return true;
+        }
+
+        private bool TryDeclareImportedTypedTemplatePatternCapture(string? name, CompileTimeConstant value)
+        {
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                return true;
+            }
+
+            _compileTimeConstantState.Declare(name!, value, isMutable: false);
+            return true;
+        }
+
+        private static bool ImportedTypedTemplateConstantTypeMatches(
+            StarkTypeSymbol actualType,
+            StarkTypeSymbol expectedType)
+        {
+            var actual = UnqualifiedImportedTypedTemplatePatternType(actualType);
+            var expected = UnqualifiedImportedTypedTemplatePatternType(expectedType);
+
+            if (actual.Kind != expected.Kind)
+            {
+                return false;
+            }
+
+            return actual.Kind switch
+            {
+                StarkTypeKind.Named =>
+                    string.Equals(actual.NamedType, expected.NamedType, StringComparison.Ordinal)
+                    || string.Equals(actual.DisplayName, expected.DisplayName, StringComparison.Ordinal),
+                StarkTypeKind.FixedArray =>
+                    actual.FixedLength == expected.FixedLength
+                    && actual.ElementType is not null
+                    && expected.ElementType is not null
+                    && ImportedTypedTemplateConstantTypeMatches(actual.ElementType, expected.ElementType),
+                _ => string.Equals(actual.DisplayName, expected.DisplayName, StringComparison.Ordinal)
+            };
+        }
+
+        private static StarkTypeSymbol UnqualifiedImportedTypedTemplatePatternType(StarkTypeSymbol type) =>
+            StarkTypeSymbols.WithQualifiers(
+                type,
+                borrowKind: StarkBorrowKind.None,
+                accessKind: StarkAccessKind.None,
+                initializationKind: StarkInitializationKind.None,
+                isMutableView: false);
+
+        private static bool TryCompileTimeConstantsEqual(
+            CompileTimeConstant left,
+            CompileTimeConstant right,
+            out bool equal)
+        {
+            equal = false;
+            if (left.Kind != right.Kind)
+            {
+                return true;
+            }
+
+            switch (left.Kind)
+            {
+                case CompileTimeConstantKind.Integer:
+                    equal = left.IntegerValue == right.IntegerValue;
+                    return true;
+                case CompileTimeConstantKind.Float:
+                    equal = left.FloatValue.Equals(right.FloatValue);
+                    return true;
+                case CompileTimeConstantKind.Bool:
+                    equal = left.BoolValue == right.BoolValue;
+                    return true;
+                case CompileTimeConstantKind.Text:
+                    equal = string.Equals(left.TextLiteral, right.TextLiteral, StringComparison.Ordinal);
+                    return true;
+                case CompileTimeConstantKind.Null:
+                case CompileTimeConstantKind.Void:
+                    equal = true;
+                    return true;
+                case CompileTimeConstantKind.EnumAggregate:
+                    equal = string.Equals(left.VariantName, right.VariantName, StringComparison.Ordinal)
+                        && left.Elements.Count == right.Elements.Count;
+                    if (!equal)
+                    {
+                        return true;
+                    }
+
+                    for (var index = 0; index < left.Elements.Count; index++)
+                    {
+                        if (!TryCompileTimeConstantsEqual(left.Elements[index], right.Elements[index], out var elementEqual)
+                            || !elementEqual)
+                        {
+                            equal = false;
+                            return true;
+                        }
+                    }
+
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        private enum ImportedTemplateCompileTimePlaceSegmentKind
+        {
+            Field,
+            Index
+        }
+
+        private readonly record struct ImportedTemplateCompileTimePlaceSegment(
+            ImportedTemplateCompileTimePlaceSegmentKind Kind,
+            int Ordinal)
+        {
+            public static ImportedTemplateCompileTimePlaceSegment Field(int fieldIndex) =>
+                new(ImportedTemplateCompileTimePlaceSegmentKind.Field, fieldIndex);
+
+            public static ImportedTemplateCompileTimePlaceSegment Index(int elementIndex) =>
+                new(ImportedTemplateCompileTimePlaceSegmentKind.Index, elementIndex);
         }
 
         private bool BindImportedTypedTemplateTypeArguments(
@@ -3416,16 +4997,60 @@ internal sealed partial class MidLevelIrLowerer
 
             if (type.Kind is StarkTypeKind.Ascii or StarkTypeKind.Unicode)
             {
+                if (TryFoldImportedTypedTemplateInterpolatedTextLiteral(literalText, type, out var foldedLiteral))
+                {
+                    constant = CompileTimeConstant.Text(foldedLiteral, type);
+                    return true;
+                }
+
                 constant = CompileTimeConstant.Text(literalText, type);
                 return true;
             }
 
             if (type.Kind == StarkTypeKind.Integer)
             {
-                constant = CompileTimeConstant.Integer(ParseIntegerLiteralText(literalText), type);
+                if (BigInteger.TryParse(literalText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var value))
+                {
+                    constant = CompileTimeConstant.Integer(value, type);
+                    return true;
+                }
+
+                return false;
+            }
+
+            return false;
+        }
+
+        private bool TryFoldImportedTypedTemplateInterpolatedTextLiteral(
+            string literalText,
+            StarkTypeSymbol type,
+            out string foldedLiteral)
+        {
+            foldedLiteral = string.Empty;
+            if (type.Kind is not (StarkTypeKind.Ascii or StarkTypeKind.Unicode)
+                || !TryGetImportedTypedTemplateInterpolatedStringLiteralText(literalText, out var stringLiteralText))
+            {
+                return false;
+            }
+
+            return InterpolatedText.TryFold(
+                stringLiteralText,
+                CreateCompileTimeEvaluationServices(),
+                out foldedLiteral,
+                out _);
+        }
+
+        private static bool TryGetImportedTypedTemplateInterpolatedStringLiteralText(
+            string literalText,
+            out string stringLiteralText)
+        {
+            if (literalText.Length > 1 && literalText[0] == '$')
+            {
+                stringLiteralText = literalText[1..];
                 return true;
             }
 
+            stringLiteralText = string.Empty;
             return false;
         }
 
@@ -3625,7 +5250,7 @@ internal sealed partial class MidLevelIrLowerer
             for (var index = 0; index < expression.Args.Count; index++)
             {
                 if (!TryEvaluateImportedTypedTemplateConstant(expression.Args[index], out var element)
-                    || !CompileTimeExpressionEvaluator.TryCoerce(element, elementType, out elements[index]))
+                    || !TryCoerceImportedTypedTemplateArgument(element, elementType, out elements[index]))
                 {
                     return false;
                 }
@@ -3643,13 +5268,38 @@ internal sealed partial class MidLevelIrLowerer
             return true;
         }
 
+        private bool TryEvaluateImportedTypedTemplateObjectInitializerConstant(
+            ImportedTemplateTypedBodyExpressionSummary expression,
+            out CompileTimeConstant constant)
+        {
+            constant = default;
+            if (expression.Type is not { } publishedType
+                || expression.Members.Count != expression.Args.Count)
+            {
+                return false;
+            }
+
+            var targetType = ApplyGenericSubstitution(publishedType);
+            if (!TryBuildImportedTypedTemplateObjectInitializerMembers(targetType, expression, out var initializerMembers)
+                || !TryCreateZeroCompileTimeConstant(targetType, out var seed))
+            {
+                return false;
+            }
+
+            return TryEvaluateImportedTypedTemplateObjectInitializerConstant(
+                seed,
+                initializerMembers,
+                expression.Args,
+                out constant);
+        }
+
         private bool TryEvaluateImportedTypedTemplateObjectCreationConstant(
             ImportedTemplateTypedBodyExpressionSummary expression,
             out CompileTimeConstant constant)
         {
             constant = default;
             if (expression.Ordinal is not { } ordinal
-                || _importedTemplateSummary is not { ObjectCreations.Count: > 0 } importedTemplateSummary
+                || CurrentImportedTemplateEvaluationSummary is not { ObjectCreations.Count: > 0 } importedTemplateSummary
                 || ordinal < 0
                 || ordinal >= importedTemplateSummary.ObjectCreations.Count)
             {
@@ -3689,7 +5339,7 @@ internal sealed partial class MidLevelIrLowerer
                 var member = initializerMembers[index];
                 var fieldType = ApplyGenericSubstitution(member.FieldType);
                 if (!TryEvaluateImportedTypedTemplateConstant(arguments[index], out var memberValue)
-                    || !CompileTimeExpressionEvaluator.TryCoerce(memberValue, fieldType, out var coerced)
+                    || !TryCoerceImportedTypedTemplateArgument(memberValue, fieldType, out var coerced)
                     || !TryWithCompileTimeNamedAggregateField(current, member.FieldIndex, coerced, out current))
                 {
                     return false;
@@ -3706,7 +5356,7 @@ internal sealed partial class MidLevelIrLowerer
         {
             constant = default;
             return expression.Ordinal is { } ordinal
-                && _importedTemplateEnumConstructors.TryGetValue(ordinal, out var publishedEnumConstructor)
+                && CurrentImportedTemplateEnumConstructors.TryGetValue(ordinal, out var publishedEnumConstructor)
                 && TryEvaluateImportedTypedTemplateEnumAggregateConstant(
                     ApplyGenericSubstitution(publishedEnumConstructor.EnumType),
                     publishedEnumConstructor.VariantName,
@@ -3721,7 +5371,7 @@ internal sealed partial class MidLevelIrLowerer
         {
             constant = default;
             if (expression.Ordinal is not { } ordinal
-                || !_importedTemplateEnumCalls.TryGetValue(ordinal, out var publishedEnumCall)
+                || !CurrentImportedTemplateEnumCalls.TryGetValue(ordinal, out var publishedEnumCall)
                 || !TryGetEnumLayout(ApplyGenericSubstitution(publishedEnumCall.EnumType), out var layout)
                 || !layout.TryGetVariant(publishedEnumCall.VariantName, out var variant))
             {
@@ -3761,7 +5411,7 @@ internal sealed partial class MidLevelIrLowerer
                 var member = members[index];
                 var fieldType = ApplyGenericSubstitution(member.FieldType);
                 if (!TryEvaluateImportedTypedTemplateConstant(arguments[index], out var argument)
-                    || !CompileTimeExpressionEvaluator.TryCoerce(argument, fieldType, out ordered[member.FieldIndex]))
+                    || !TryCoerceImportedTypedTemplateArgument(argument, fieldType, out ordered[member.FieldIndex]))
                 {
                     return false;
                 }
@@ -3777,7 +5427,7 @@ internal sealed partial class MidLevelIrLowerer
         {
             constant = default;
             if (expression.Ordinal is not { } ordinal
-                || !_importedTemplateEnumValues.TryGetValue(ordinal, out var publishedEnumValue))
+                || !CurrentImportedTemplateEnumValues.TryGetValue(ordinal, out var publishedEnumValue))
             {
                 return false;
             }
@@ -3817,7 +5467,7 @@ internal sealed partial class MidLevelIrLowerer
             constant = default;
             if (expression.Ordinal is not { } ordinal
                 || expression.Args.Count != 1
-                || !_importedTemplateFieldAccesses.TryGetValue(ordinal, out var publishedFieldAccess)
+                || !CurrentImportedTemplateFieldAccesses.TryGetValue(ordinal, out var publishedFieldAccess)
                 || !TryEvaluateImportedTypedTemplateConstant(expression.Args[0], out var receiver)
                 || receiver.Kind != CompileTimeConstantKind.NamedAggregate
                 || publishedFieldAccess.FieldIndex < 0
@@ -3828,6 +5478,78 @@ internal sealed partial class MidLevelIrLowerer
 
             constant = receiver.Elements[publishedFieldAccess.FieldIndex];
             return true;
+        }
+
+        private bool TryEvaluateImportedTypedTemplateTextInterpolationConstant(
+            ImportedTemplateTypedBodyExpressionSummary expression,
+            out CompileTimeConstant constant)
+        {
+            constant = default;
+            if (expression.LiteralText is not { } literalText
+                || !InterpolatedText.TryParse(literalText, out var segments, out _)
+                || segments.OfType<InterpolatedTextHoleSegment>().Count() != expression.Args.Count)
+            {
+                return false;
+            }
+
+            var builder = new StringBuilder();
+            var argumentIndex = 0;
+            foreach (var segment in segments)
+            {
+                if (segment is InterpolatedTextRawSegment raw)
+                {
+                    builder.Append(raw.Value);
+                    continue;
+                }
+
+                if (!TryEvaluateImportedTypedTemplateConstant(expression.Args[argumentIndex], out var argument)
+                    || !InterpolatedText.TryAppendFormattedConstant(builder, argument))
+                {
+                    return false;
+                }
+
+                argumentIndex++;
+            }
+
+            var foldedLiteral = TextLiteralDecoder.EncodeStringLiteral(builder.ToString());
+            constant = CompileTimeConstant.Text(foldedLiteral, InferImportedTypedTemplateTextLiteralType(foldedLiteral));
+            return true;
+        }
+
+        private bool TryEvaluateImportedTypedTemplateTextBuildConstant(
+            ImportedTemplateTypedBodyExpressionSummary expression,
+            out CompileTimeConstant constant)
+        {
+            constant = default;
+            if (expression.Args.Count == 0
+                || !TryEvaluateImportedTypedTemplateConstant(expression.Args[0], out var current))
+            {
+                return false;
+            }
+
+            for (var index = 1; index < expression.Args.Count; index++)
+            {
+                if (!TryEvaluateImportedTypedTemplateConstant(expression.Args[index], out var next)
+                    || !CompileTimeExpressionEvaluator.TryEvaluateBinaryOperator(
+                        "+",
+                        current,
+                        next,
+                        requireInteger: false,
+                        out current))
+                {
+                    return false;
+                }
+            }
+
+            constant = current;
+            return constant.Kind == CompileTimeConstantKind.Text;
+        }
+
+        private static StarkTypeSymbol InferImportedTypedTemplateTextLiteralType(string literalText)
+        {
+            return TextLiteralDecoder.CanUseUtf8Storage(literalText, TextLiteralKind.String)
+                ? StarkTypeSymbols.Ascii
+                : StarkTypeSymbols.Unicode;
         }
 
         private MidLevelIrOperand? LowerImportedTypedTemplateIndexAccess(
@@ -4152,7 +5874,13 @@ internal sealed partial class MidLevelIrLowerer
                 return null;
             }
 
-            return CreateLiteralOperand(expression.LiteralText, ApplyGenericSubstitution(expression.Type));
+            var type = ApplyGenericSubstitution(expression.Type);
+            if (TryFoldImportedTypedTemplateInterpolatedTextLiteral(expression.LiteralText, type, out var foldedLiteral))
+            {
+                return new MidLevelIrStringConstantOperand(foldedLiteral, type);
+            }
+
+            return CreateLiteralOperand(expression.LiteralText, type);
         }
 
         private MidLevelIrOperand? LowerImportedTypedTemplateConversion(
@@ -4347,14 +6075,22 @@ internal sealed partial class MidLevelIrLowerer
                     return null;
                 }
 
-                result = EmitTemporary(
-                    new MidLevelIrBinaryRValue(
-                        MapBinaryOperator(operatorText),
-                        coercedLeft,
-                        coercedRight,
-                        resultType,
-                        text),
-                    "bin");
+                if (operatorText == "+"
+                    && TryFoldTextConstantConcatenation(coercedLeft, coercedRight, resultType, out var foldedText))
+                {
+                    result = foldedText;
+                }
+                else
+                {
+                    result = EmitTemporary(
+                        new MidLevelIrBinaryRValue(
+                            MapBinaryOperator(operatorText),
+                            coercedLeft,
+                            coercedRight,
+                            resultType,
+                            text),
+                        "bin");
+                }
             }
 
             return expectedType is null ? result : CoerceOperand(result, expectedType);
@@ -4876,6 +6612,172 @@ internal sealed partial class MidLevelIrLowerer
             return true;
         }
 
+        private bool TryBuildImportedTypedTemplateDynTraitMemberCall(
+            ImportedTemplateTypedBodyExpressionSummary expression,
+            out MidLevelIrIndirectCallRValue call)
+        {
+            call = default!;
+            if (!TryBuildImportedTypedTemplateDynTraitMemberCallParts(expression, out var parts))
+            {
+                return false;
+            }
+
+            return TryCreateValueCall(parts, out call);
+        }
+
+        private bool TryBuildImportedTypedTemplateDynTraitMemberCallStatement(
+            ImportedTemplateTypedBodyExpressionSummary expression,
+            out MidLevelIrIndirectCallStatementOperation call)
+        {
+            call = default!;
+            if (!TryBuildImportedTypedTemplateDynTraitMemberCallParts(expression, out var parts))
+            {
+                return false;
+            }
+
+            call = ToStatementCall(parts);
+            return true;
+        }
+
+        private bool TryBuildImportedTypedTemplateDynTraitMemberCallParts(
+            ImportedTemplateTypedBodyExpressionSummary expression,
+            out LoweredIndirectCallParts call)
+        {
+            call = default!;
+            if (expression.Ordinal is not { } ordinal
+                || expression.Args.Count == 0
+                || !_importedTemplateMemberCalls.TryGetValue(ordinal, out var publishedSignature))
+            {
+                return false;
+            }
+
+            MidLevelIrOperand? receiver;
+            if (TryResolveImportedTypedTemplateAssignmentTarget(expression.Args[0], out var resolvedReceiverPlace))
+            {
+                receiver = ReadPlace(resolvedReceiverPlace);
+            }
+            else
+            {
+                receiver = LowerImportedTypedTemplateExpressionCore(expression.Args[0], expectedType: null);
+            }
+
+            if (receiver is null || receiver.Type.Kind != StarkTypeKind.DynTrait)
+            {
+                return false;
+            }
+
+            var signature = ApplyGenericSubstitution(publishedSignature);
+            var memberName = GetLastNameSegment(signature.SourceName ?? signature.Name);
+            if (receiver.Type.DynTraitName is not { } traitName)
+            {
+                return false;
+            }
+
+            if (!TryGetDynTraitSlot(traitName, memberName, out var slot))
+            {
+                throw LoweringInvariantViolation(
+                    null,
+                    $"Imported dyn trait slot lookup failed for trait '{traitName}', member '{memberName}', signature '{signature.Name}'.");
+            }
+
+            var methodParameters = signature.Parameters;
+            if (methodParameters.Count == 0 || methodParameters.Count - 1 != expression.Args.Count - 1)
+            {
+                return false;
+            }
+
+            var erasedReceiverType = StarkTypeSymbols.RawPointer(StarkTypeSymbols.Integer(8), isMutable: true);
+            var vtablePointerType = StarkTypeSymbols.DynTraitVtablePointerForTraitObject(receiver.Type);
+            var slotParameterTypes = new List<StarkTypeSymbol>(methodParameters.Count) { erasedReceiverType };
+            for (var index = 1; index < methodParameters.Count; index++)
+            {
+                slotParameterTypes.Add(methodParameters[index].Type);
+            }
+
+            var slotFunctionPointerType = StarkTypeSymbols.FunctionPointer(signature.Kind, signature.ReturnType, slotParameterTypes);
+            var vtablePointer = EmitTemporary(
+                new MidLevelIrExtractIndexRValue(
+                    receiver,
+                    ElementIndex: 1,
+                    OperationFamily: IndexedElementOperationFamily.DynTraitComponent,
+                    vtablePointerType,
+                    $"{receiver.Text}.vtable"),
+                "dyn_vtable");
+            var dataPointer = EmitTemporary(
+                new MidLevelIrExtractIndexRValue(
+                    receiver,
+                    ElementIndex: 0,
+                    OperationFamily: IndexedElementOperationFamily.DynTraitComponent,
+                    erasedReceiverType,
+                    $"{receiver.Text}.data"),
+                "dyn_data");
+            if (vtablePointer is null || dataPointer is null)
+            {
+                return false;
+            }
+
+            var methodPointer = EmitTemporary(
+                new MidLevelIrDynVTableSlotRValue(
+                    vtablePointer,
+                    slot.Index,
+                    slotFunctionPointerType,
+                    $"{receiver.Text}.{memberName}#slot{slot.Index}"),
+                "dyn_method");
+            if (methodPointer is null)
+            {
+                return false;
+            }
+
+            var loweredArguments = new List<MidLevelIrOperand>(methodParameters.Count) { dataPointer };
+            var indirectArgumentLocals = new List<string?>(methodParameters.Count) { null };
+            var indirectArgumentAddresses = new List<MidLevelIrOperand?>(methodParameters.Count) { null };
+
+            for (var index = 1; index < expression.Args.Count; index++)
+            {
+                var parameterType = methodParameters[index].Type;
+                var argumentExpression = expression.Args[index];
+                var lowered = LowerImportedTypedTemplateExpressionCore(argumentExpression, parameterType);
+                if (lowered is null)
+                {
+                    return false;
+                }
+
+                var argument = CoerceCallArgument(lowered, parameterType);
+                if (argument is null)
+                {
+                    return false;
+                }
+
+                loweredArguments.Add(argument);
+                var indirectArgumentAddress = TryResolveImportedTypedTemplateAssignmentTarget(argumentExpression, out var argumentTarget)
+                    ? ResolveIndirectArgumentAddress(parameterType, argumentTarget)
+                    : null;
+                indirectArgumentLocals.Add(indirectArgumentAddress is null
+                    ? ResolveIndirectArgumentLocal(parameterType, lowered)
+                        ?? ResolveIndirectArgumentLocal(parameterType, argument)
+                    : null);
+                indirectArgumentAddresses.Add(indirectArgumentAddress);
+                RecordMoveFromOperand(argument, parameterType);
+            }
+
+            call = new LoweredIndirectCallParts(
+                methodPointer,
+                loweredArguments,
+                StarkTypeSymbols.BorrowReturnRuntimeType(signature.ReturnType),
+                RenderImportedTypedTemplateExpressionCore(expression),
+                signature.ReturnType,
+                indirectArgumentLocals,
+                indirectArgumentAddresses,
+                MayFree: false);
+            return true;
+        }
+
+        private static string GetLastNameSegment(string name)
+        {
+            var index = name.LastIndexOf('.');
+            return index >= 0 ? name[(index + 1)..] : name;
+        }
+
         private bool TryBuildImportedTypedTemplateMemberCall(
             ImportedTemplateTypedBodyExpressionSummary expression,
             out MidLevelIrCallRValue call)
@@ -4907,6 +6809,13 @@ internal sealed partial class MidLevelIrLowerer
             }
 
             var signature = ApplyGenericSubstitution(publishedSignature);
+            if (receiver.Type.Kind == StarkTypeKind.DynTrait)
+            {
+                throw LoweringInvariantViolation(
+                    null,
+                    $"Imported typed-template dyn trait member call '{signature.Name}' on receiver '{receiver.Type.DisplayName}' did not lower through the dyn dispatch path.");
+            }
+
             var loweredArguments = new List<MidLevelIrOperand>(expression.Args.Count - 1);
             for (var index = 1; index < expression.Args.Count; index++)
             {
@@ -4963,6 +6872,13 @@ internal sealed partial class MidLevelIrLowerer
             }
 
             var signature = ApplyGenericSubstitution(publishedSignature);
+            if (receiver.Type.Kind == StarkTypeKind.DynTrait)
+            {
+                throw LoweringInvariantViolation(
+                    null,
+                    $"Imported typed-template dyn trait member call '{signature.Name}' on receiver '{receiver.Type.DisplayName}' did not lower through the dyn dispatch path.");
+            }
+
             var loweredArguments = new List<MidLevelIrOperand>(expression.Args.Count - 1);
             for (var index = 1; index < expression.Args.Count; index++)
             {
@@ -5160,8 +7076,91 @@ internal sealed partial class MidLevelIrLowerer
             {
                 throw LoweringInvariantViolation(
                     null,
-                    $"Imported dynamic-storage operation '{operationName}' result type '{operation.Type.DisplayName}' does not match bound result type '{expectedResultType.DisplayName}'.");
+                $"Imported dynamic-storage operation '{operationName}' result type '{operation.Type.DisplayName}' does not match bound result type '{expectedResultType.DisplayName}'.");
             }
+        }
+
+        private MidLevelIrOperand? LowerImportedTypedTemplateDynTraitFromParts(
+            ImportedTemplateTypedBodyExpressionSummary expression)
+        {
+            if (expression.Ordinal is not { } ordinal
+                || expression.Args.Count != 2
+                || !_importedTemplateDynTraitFromPartsOperations.TryGetValue(ordinal, out var boundOperation))
+            {
+                throw LoweringInvariantViolation(
+                    null,
+                    "Imported typed-template dyn-trait-from-parts expression did not bind to serialized operation facts.");
+            }
+
+            var operationName = boundOperation.OperationName;
+            if (operationName is not "dynview" and not "dynbox")
+            {
+                throw LoweringInvariantViolation(
+                    null,
+                    $"Imported dyn-trait-from-parts operation '{operationName}' is not supported.");
+            }
+
+            if (expression.Name is { } expressionName
+                && !string.Equals(expressionName, operationName, StringComparison.Ordinal))
+            {
+                throw LoweringInvariantViolation(
+                    null,
+                    $"Imported dyn-trait-from-parts expression name '{expressionName}' does not match bound operation '{operationName}'.");
+            }
+
+            var targetType = ApplyGenericSubstitution(boundOperation.TargetType);
+            var contextType = ApplyGenericSubstitution(boundOperation.ContextType);
+            var vtableType = ApplyGenericSubstitution(boundOperation.VtableType);
+            if (targetType.Kind != StarkTypeKind.DynTrait
+                || contextType.Kind != StarkTypeKind.RawPointer
+                || vtableType.Kind != StarkTypeKind.RawPointer)
+            {
+                throw LoweringInvariantViolation(
+                    null,
+                    $"Imported dyn-trait-from-parts operation '{operationName}' has invalid representation types.");
+            }
+
+            var context = LowerImportedTypedTemplateExpressionCore(expression.Args[0], contextType);
+            var vtable = LowerImportedTypedTemplateExpressionCore(expression.Args[1], vtableType);
+            if (context is null || vtable is null)
+            {
+                throw LoweringInvariantViolation(
+                    null,
+                    $"Imported dyn-trait-from-parts operation '{operationName}' could not lower its operands.");
+            }
+
+            context = CoerceOperand(context, contextType);
+            vtable = CoerceOperand(vtable, vtableType);
+            if (context is null || vtable is null)
+            {
+                throw LoweringInvariantViolation(
+                    null,
+                    $"Imported dyn-trait-from-parts operation '{operationName}' operands could not coerce to serialized representation types.");
+            }
+
+            var withContext = EmitTemporary(
+                new MidLevelIrInsertIndexRValue(
+                    new MidLevelIrZeroInitializerOperand(targetType),
+                    ElementIndex: 0,
+                    OperationFamily: IndexedElementOperationFamily.DynTraitComponent,
+                    context,
+                    targetType,
+                    $"{operationName}.context"),
+                "dyn");
+            if (withContext is null)
+            {
+                return null;
+            }
+
+            return EmitTemporary(
+                new MidLevelIrInsertIndexRValue(
+                    withContext,
+                    ElementIndex: 1,
+                    OperationFamily: IndexedElementOperationFamily.DynTraitComponent,
+                    vtable,
+                    targetType,
+                    $"{operationName}.vtable"),
+                "dyn");
         }
 
         private MidLevelIrOperand? LowerImportedTypedTemplateObjectCreation(
@@ -5613,6 +7612,9 @@ internal sealed partial class MidLevelIrLowerer
                 ImportedTemplateTypedBodyExpressionKind.DynamicStorageOperation => expression.Args.Count >= 1
                     ? $"{RenderImportedTypedTemplateExpressionCore(expression.Args[0])}.dynamic#{expression.Ordinal}({string.Join(", ", expression.Args.Skip(1).Select(RenderImportedTypedTemplateExpressionCore))})"
                     : $"dynamic#{expression.Ordinal}",
+                ImportedTemplateTypedBodyExpressionKind.DynTraitFromParts => expression.Args.Count == 2
+                    ? $"{expression.Name ?? "dyn"}#{expression.Ordinal}({string.Join(", ", expression.Args.Select(RenderImportedTypedTemplateExpressionCore))})"
+                    : $"{expression.Name ?? "dyn"}#{expression.Ordinal}",
                 ImportedTemplateTypedBodyExpressionKind.TextInterpolation => expression.LiteralText ?? "$\"\"",
                 ImportedTemplateTypedBodyExpressionKind.TextBuild => string.Join(" + ", expression.Args.Select(RenderImportedTypedTemplateExpressionCore)),
                 ImportedTemplateTypedBodyExpressionKind.StructuralFact => RenderImportedTypedTemplateStructuralFact(expression),
@@ -5803,9 +7805,9 @@ internal sealed partial class MidLevelIrLowerer
                         case ImportedTemplateTypedBodyStatementKind.If:
                             return _builder.TryLowerImportedTypedTemplateIf(statement);
                         case ImportedTemplateTypedBodyStatementKind.Break:
-                            return _builder.TryLowerImportedTypedTemplateBreak();
+                            return _builder.TryLowerImportedTypedTemplateBreak(statement.Name);
                         case ImportedTemplateTypedBodyStatementKind.Continue:
-                            return _builder.TryLowerImportedTypedTemplateContinue();
+                            return _builder.TryLowerImportedTypedTemplateContinue(statement.Name);
                         case ImportedTemplateTypedBodyStatementKind.Return:
                             return _builder.TryLowerImportedTypedTemplateReturn(statement);
                         default:

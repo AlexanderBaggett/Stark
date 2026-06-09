@@ -138,7 +138,7 @@ internal static class InterpolatedText
                 return false;
             }
 
-            if (!TryAppendConstant(value, constant))
+            if (!TryAppendFormattedConstant(value, constant))
             {
                 literalText = string.Empty;
                 diagnostic = new InterpolatedTextDiagnostic(
@@ -171,7 +171,7 @@ internal static class InterpolatedText
         return TryFold(segments, services, out literalText, out diagnostic);
     }
 
-    private static bool TryAppendConstant(StringBuilder builder, CompileTimeConstant constant)
+    internal static bool TryAppendFormattedConstant(StringBuilder builder, CompileTimeConstant constant)
     {
         switch (constant.Kind)
         {

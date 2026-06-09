@@ -47,10 +47,13 @@ public sealed class SystemRuntimePlatformMacOSStandardLibraryTests
         Assert.Contains("@malloc(", llvm, StringComparison.Ordinal);
         Assert.Contains("@free(", llvm, StringComparison.Ordinal);
         Assert.Contains("declare void @exit(", llvm, StringComparison.Ordinal);
+        Assert.Contains("declare ptr @__error()", llvm, StringComparison.Ordinal);
         Assert.Contains("declare i32 @os_sync_wait_on_address(", llvm, StringComparison.Ordinal);
         Assert.Contains("declare i32 @os_sync_wake_by_address_any(", llvm, StringComparison.Ordinal);
         Assert.Contains("declare i32 @os_sync_wake_by_address_all(", llvm, StringComparison.Ordinal);
         Assert.Contains("call void @exit(", llvm, StringComparison.Ordinal);
+        Assert.Contains("call ptr @__error()", llvm, StringComparison.Ordinal);
+        Assert.Contains("define fastcc noundef i1 @TryTempDirectory(", llvm, StringComparison.Ordinal);
         Assert.Contains("define internal dso_local void @__stark_oom_trap(", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("coldcc void @__stark_oom_trap(", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain(" comdat", llvm, StringComparison.Ordinal);
@@ -87,13 +90,27 @@ public sealed class SystemRuntimePlatformMacOSStandardLibraryTests
             llvm,
             "define fastcc noundef i1 @IsFile(",
             "Expected IsFile definition in emitted LLVM.");
+        var metadataBody = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef i32 @ReadPathMetadata(",
+            "Expected ReadPathMetadata definition in emitted LLVM.");
 
         Assert.Contains("call i32 @stat(", tryReadPathModeBody, StringComparison.Ordinal);
-        Assert.Contains("@MacOSStatModeOffset", tryReadPathModeBody, StringComparison.Ordinal);
+        Assert.Contains("getelementptr i8, ptr", tryReadPathModeBody, StringComparison.Ordinal);
+        Assert.Contains("load i16", tryReadPathModeBody, StringComparison.Ordinal);
         Assert.Contains("call fastcc i32 @UnsignedShort(", tryReadPathModeBody, StringComparison.Ordinal);
         Assert.Contains("call fastcc i1 @TryReadPathMode(", pathExistsBody, StringComparison.Ordinal);
-        Assert.Contains("@MacOSStatDirectoryType", isDirectoryBody, StringComparison.Ordinal);
-        Assert.Contains("@MacOSStatRegularType", isFileBody, StringComparison.Ordinal);
+        Assert.Contains("and i32", isDirectoryBody, StringComparison.Ordinal);
+        Assert.Contains("61440", isDirectoryBody, StringComparison.Ordinal);
+        Assert.Contains("16384", isDirectoryBody, StringComparison.Ordinal);
+        Assert.Contains("and i32", isFileBody, StringComparison.Ordinal);
+        Assert.Contains("61440", isFileBody, StringComparison.Ordinal);
+        Assert.Contains("32768", isFileBody, StringComparison.Ordinal);
+        Assert.Contains("call i32 @stat(", metadataBody, StringComparison.Ordinal);
+        Assert.Contains("61440", metadataBody, StringComparison.Ordinal);
+        Assert.Contains("4095", metadataBody, StringComparison.Ordinal);
+        Assert.Contains("load i64", metadataBody, StringComparison.Ordinal);
+        Assert.Contains("store i64", metadataBody, StringComparison.Ordinal);
         Assert.DoesNotContain("@opendir(", tryReadPathModeBody, StringComparison.Ordinal);
         Assert.DoesNotContain("@access(", llvm, StringComparison.Ordinal);
     }

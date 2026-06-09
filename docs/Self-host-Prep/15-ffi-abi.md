@@ -73,6 +73,11 @@ The ABI name is a lowercase identifier. The initial ABI set:
 
 Unsupported ABI/target combinations are compile-time errors.
 
+Foreign function names are imported by their Stark declaration name. Stark
+therefore permits underscore-leading identifiers so exact C spellings such as
+`__error` can be represented without a symbol-alias attribute. A single `_`
+continues to tokenize as discard and cannot be used as a declaration name.
+
 ### 2.2 Default ABI
 
 An `ffi` declaration without an explicit ABI means `ffi(c)`:

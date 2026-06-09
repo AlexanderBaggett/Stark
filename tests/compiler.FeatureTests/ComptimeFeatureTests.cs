@@ -1549,6 +1549,158 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
     }
 
     [Fact]
+    public void ComptimeVisibilityStructuralFactsFoldToBoolConstants()
+    {
+        var llvm = CompileToLlvm(
+            """
+            module Demo
+
+            struct ModuleType
+            {
+                i32[min max] Value;
+            }
+
+            internal struct InternalType
+            {
+                i32[min max] Value;
+            }
+
+            public struct PublicType
+            {
+                internal i32[min max] Hidden;
+                public i32[min max] Visible;
+
+                internal finite law i32[min max] HiddenMethod(borrow PublicType self)
+                {
+                    return self.Hidden;
+                }
+
+                public finite law i32[min max] VisibleMethod(borrow PublicType self)
+                {
+                    return self.Visible;
+                }
+            }
+
+            export struct ExportType
+            {
+                public i32[min max] Value;
+            }
+
+            struct ModuleMethods
+            {
+                finite law i32[min max] Local(borrow ModuleMethods self)
+                {
+                    return 1;
+                }
+            }
+
+            finite law i32[min max] Run()
+            {
+                if (comptime System.Compiler.TypeVisibilityIsModule<ModuleType>()
+                    && comptime System.Compiler.TypeVisibilityIsInternal<InternalType>()
+                    && comptime System.Compiler.TypeVisibilityIsPublic<PublicType>()
+                    && comptime System.Compiler.TypeVisibilityIsExport<ExportType>()
+                    && comptime !System.Compiler.TypeVisibilityIsPublic<ModuleType>()
+                    && comptime System.Compiler.FieldVisibilityIsModule<ModuleType, 0>()
+                    && comptime System.Compiler.FieldVisibilityIsInternal<PublicType, 0>()
+                    && comptime System.Compiler.FieldVisibilityIsPublic<PublicType, 1>()
+                    && comptime !System.Compiler.FieldVisibilityIsExport<ExportType, 0>()
+                    && comptime (System.Compiler.MethodName<ModuleMethods, 0>() == "Local")
+                    && comptime System.Compiler.MethodVisibilityIsModule<ModuleMethods, 0>()
+                    && comptime (System.Compiler.MethodName<PublicType, 0>() == "HiddenMethod")
+                    && comptime System.Compiler.MethodVisibilityIsInternal<PublicType, 0>()
+                    && comptime (System.Compiler.MethodName<PublicType, 1>() == "VisibleMethod")
+                    && comptime System.Compiler.MethodVisibilityIsPublic<PublicType, 1>()
+                    && comptime !System.Compiler.MethodVisibilityIsExport<PublicType, 1>())
+                {
+                    return 42;
+                }
+
+                return 0;
+            }
+            """,
+            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+
+        var runBody = ExtractDefinitionBody(llvm, "Run");
+        Assert.Contains("ret i32 42", runBody);
+        Assert.DoesNotContain("call", runBody);
+    }
+
+    [Fact]
+    public void ComptimeVisibilityStructuralFactsRejectOutOfRangeIndices()
+    {
+        var fieldResult = Compile(
+            """
+            module Demo
+
+            struct Header
+            {
+                i32[min max] Tag;
+            }
+
+            finite law bool Run()
+            {
+                return comptime System.Compiler.FieldVisibilityIsModule<Header, 1>();
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(fieldResult.Succeeded);
+        Assert.Contains(fieldResult.Diagnostics, static diagnostic =>
+            diagnostic.Code == "STK3054"
+            && diagnostic.Message.Contains("field index '1' is out of range", StringComparison.Ordinal));
+
+        var methodResult = Compile(
+            """
+            module Demo
+
+            struct Header
+            {
+                finite law i32[min max] Tag(borrow Header self)
+                {
+                    return 0;
+                }
+            }
+
+            finite law bool Run()
+            {
+                return comptime System.Compiler.MethodVisibilityIsModule<Header, 1>();
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(methodResult.Succeeded);
+        Assert.Contains(methodResult.Diagnostics, static diagnostic =>
+            diagnostic.Code == "STK3054"
+            && diagnostic.Message.Contains("method index '1' is out of range", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ComptimeVisibilityStructuralFactsAreRejectedAtRuntime()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Header
+            {
+                i32[min max] Tag;
+            }
+
+            finite law bool Run()
+            {
+                return System.Compiler.TypeVisibilityIsModule<Header>();
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(result.Diagnostics, static diagnostic =>
+            diagnostic.Code == "STK3054"
+            && diagnostic.Message.Contains("may only be used inside a `comptime` expression or block", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void ComptimeTypeQualifierMetadataFactsFoldToBoolConstants()
     {
         var llvm = CompileToLlvm(
@@ -2740,6 +2892,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                                                 {
                                                     if (comptime (System.Compiler.TypeThreadSafetyLawAttributeConditionTypeDisplayName<Shared<RawHolder>, 0>() == "Box<RawHolder, 4>")
                                                         && comptime (System.Compiler.TypeThreadSafetyLawAttributeConditionTypeBaseName<Shared<RawHolder>, 0>() == "Box")
+                                                        && comptime (System.Compiler.TypeThreadSafetyLawAttributeConditionTypeModuleName<Shared<RawHolder>, 0>() == "Demo")
                                                         && comptime System.Compiler.TypeThreadSafetyLawAttributeConditionTypeIsNamed<Shared<RawHolder>, 0>()
                                                         && comptime System.Compiler.TypeThreadSafetyLawAttributeConditionTypeIsStruct<Shared<RawHolder>, 0>()
                                                         && comptime System.Compiler.TypeThreadSafetyLawAttributeConditionTypeHasConcreteLayout<Shared<RawHolder>, 0>()
@@ -2763,6 +2916,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                                                                                 {
                                                                                     if (comptime (System.Compiler.FieldThreadSafetyLawAttributeConditionTypeDisplayName<Sync<RawHolder>, 0, 0>() == "Box<RawHolder, 4>")
                                                                                         && comptime (System.Compiler.FieldThreadSafetyLawAttributeConditionTypeBaseName<Sync<RawHolder>, 0, 0>() == "Box")
+                                                                                        && comptime (System.Compiler.FieldThreadSafetyLawAttributeConditionTypeModuleName<Sync<RawHolder>, 0, 0>() == "Demo")
                                                                                         && comptime System.Compiler.FieldThreadSafetyLawAttributeConditionTypeIsNamed<Sync<RawHolder>, 0, 0>()
                                                                                         && comptime System.Compiler.FieldThreadSafetyLawAttributeConditionTypeIsStruct<Sync<RawHolder>, 0, 0>()
                                                                                         && comptime System.Compiler.FieldThreadSafetyLawAttributeConditionTypeHasConcreteLayout<Sync<RawHolder>, 0, 0>()
@@ -2847,7 +3001,8 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                                 {
                                     if (comptime (System.Compiler.MethodThreadSafetyLawPredicateTypeBaseName<Gate<RawHolder>, 0, 0>() == "Box"))
                                     {
-                                        if (comptime System.Compiler.MethodThreadSafetyLawPredicateTypeIsNamed<Gate<RawHolder>, 0, 0>()
+                                        if (comptime (System.Compiler.MethodThreadSafetyLawPredicateTypeModuleName<Gate<RawHolder>, 0, 0>() == "Demo")
+                                            && comptime System.Compiler.MethodThreadSafetyLawPredicateTypeIsNamed<Gate<RawHolder>, 0, 0>()
                                             && comptime System.Compiler.MethodThreadSafetyLawPredicateTypeIsStruct<Gate<RawHolder>, 0, 0>()
                                             && comptime System.Compiler.MethodThreadSafetyLawPredicateTypeHasConcreteLayout<Gate<RawHolder>, 0, 0>()
                                             && comptime System.Compiler.MethodThreadSafetyLawPredicateTypeIsGenericInstantiation<Gate<RawHolder>, 0, 0>())
@@ -3280,6 +3435,103 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                             }
                         }
                     }
+                }
+
+                return 0;
+            }
+            """,
+            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+
+        var runBody = ExtractDefinitionBody(llvm, "Run");
+        Assert.Contains("ret i32 42", runBody);
+        Assert.DoesNotContain("call", runBody);
+    }
+
+    [Fact]
+    public void ComptimeCallableNestedTypeArgumentStructuralFactsFoldToConstants()
+    {
+        var llvm = CompileToLlvm(
+            """
+            module Demo
+
+            struct Inner<T, comptime u8[1 8] N>
+            {
+                T Value;
+            }
+
+            struct Holder<T, comptime u8[1 8] N>
+            {
+                T Value;
+            }
+
+            struct Box<T>
+            {
+                T Value;
+
+                fn Holder<T, 4> Echo(borrow Box<T> self, Holder<T, 4> fallback)
+                {
+                    return fallback;
+                }
+            }
+
+            alias Callback = fnptr<fn Holder<Inner<i32[min max], 3>, 4>(Holder<Inner<bool, 2>, 4>)>;
+            alias Handler = borrow closure<fn Holder<Inner<i32[min max], 3>, 4>(Holder<Inner<bool, 2>, 4>)>;
+
+            finite law bool FunctionPointerFacts()
+            {
+                return comptime System.Compiler.FunctionPointerReturnTypeArgumentTypeIs<Callback, Inner<i32[min max], 3>, 0>()
+                    && comptime System.Compiler.FunctionPointerReturnTypeArgumentTypeIsStruct<Callback, 0>()
+                    && comptime System.Compiler.FunctionPointerReturnTypeArgumentTypeHasConcreteLayout<Callback, 0>()
+                    && comptime (System.Compiler.FunctionPointerReturnTypeArgumentTypeDisplayName<Callback, 0>() == "Inner<i32, 3>")
+                    && comptime (System.Compiler.FunctionPointerReturnTypeArgumentTypeBaseName<Callback, 0>() == "Inner")
+                    && comptime (System.Compiler.FunctionPointerReturnTypeArgumentTypeModuleName<Callback, 0>() == "Demo")
+                    && comptime System.Compiler.FunctionPointerReturnTypeArgumentTypeIsGenericInstantiation<Callback, 0>()
+                    && comptime System.Compiler.FunctionPointerReturnTypeArgumentTypeArgumentCount<Callback, 0>() == 1
+                    && comptime System.Compiler.FunctionPointerReturnTypeArgumentTypeComptimeArgumentCount<Callback, 0>() == 1
+                    && comptime System.Compiler.FunctionPointerParameterTypeArgumentTypeIs<Callback, Inner<bool, 2>, 0, 0>()
+                    && comptime System.Compiler.FunctionPointerParameterTypeArgumentTypeIsStruct<Callback, 0, 0>()
+                    && comptime (System.Compiler.FunctionPointerParameterTypeArgumentTypeBaseName<Callback, 0, 0>() == "Inner");
+            }
+
+            finite law bool ClosureFacts()
+            {
+                return comptime System.Compiler.ClosureReturnTypeArgumentTypeIs<Handler, Inner<i32[min max], 3>, 0>()
+                    && comptime System.Compiler.ClosureReturnTypeArgumentTypeIsStruct<Handler, 0>()
+                    && comptime System.Compiler.ClosureReturnTypeArgumentTypeHasConcreteLayout<Handler, 0>()
+                    && comptime (System.Compiler.ClosureReturnTypeArgumentTypeDisplayName<Handler, 0>() == "Inner<i32, 3>")
+                    && comptime (System.Compiler.ClosureReturnTypeArgumentTypeBaseName<Handler, 0>() == "Inner")
+                    && comptime (System.Compiler.ClosureReturnTypeArgumentTypeModuleName<Handler, 0>() == "Demo")
+                    && comptime System.Compiler.ClosureReturnTypeArgumentTypeIsGenericInstantiation<Handler, 0>()
+                    && comptime System.Compiler.ClosureReturnTypeArgumentTypeArgumentCount<Handler, 0>() == 1
+                    && comptime System.Compiler.ClosureReturnTypeArgumentTypeComptimeArgumentCount<Handler, 0>() == 1
+                    && comptime System.Compiler.ClosureParameterTypeArgumentTypeIs<Handler, Inner<bool, 2>, 0, 0>()
+                    && comptime System.Compiler.ClosureParameterTypeArgumentTypeIsStruct<Handler, 0, 0>()
+                    && comptime (System.Compiler.ClosureParameterTypeArgumentTypeBaseName<Handler, 0, 0>() == "Inner");
+            }
+
+            finite law bool MethodFacts()
+            {
+                return comptime System.Compiler.MethodReturnTypeArgumentTypeIs<Box<i32[min max]>, i32[min max], 0, 0>()
+                    && comptime System.Compiler.MethodReturnTypeArgumentTypeIsInteger<Box<i32[min max]>, 0, 0>()
+                    && comptime System.Compiler.MethodReturnTypeArgumentTypeHasConcreteLayout<Box<i32[min max]>, 0, 0>()
+                    && comptime (System.Compiler.MethodReturnTypeArgumentTypeDisplayName<Box<i32[min max]>, 0, 0>() == "i32")
+                    && comptime (System.Compiler.MethodReturnTypeArgumentTypeBaseName<Box<i32[min max]>, 0, 0>() == "")
+                    && comptime (System.Compiler.MethodReturnTypeArgumentTypeModuleName<Box<i32[min max]>, 0, 0>() == "")
+                    && comptime !System.Compiler.MethodReturnTypeArgumentTypeIsGenericInstantiation<Box<i32[min max]>, 0, 0>()
+                    && comptime System.Compiler.MethodReturnTypeArgumentTypeArgumentCount<Box<i32[min max]>, 0, 0>() == 0
+                    && comptime System.Compiler.MethodReturnTypeArgumentTypeComptimeArgumentCount<Box<i32[min max]>, 0, 0>() == 0
+                    && comptime System.Compiler.MethodParameterTypeArgumentTypeIs<Box<i32[min max]>, i32[min max], 0, 1, 0>()
+                    && comptime System.Compiler.MethodParameterTypeArgumentTypeIsInteger<Box<i32[min max]>, 0, 1, 0>()
+                    && comptime (System.Compiler.MethodParameterTypeArgumentTypeBaseName<Box<i32[min max]>, 0, 1, 0>() == "");
+            }
+
+            finite law i32[min max] Run()
+            {
+                if (comptime FunctionPointerFacts()
+                    && comptime ClosureFacts()
+                    && comptime MethodFacts())
+                {
+                    return 42;
                 }
 
                 return 0;
@@ -4674,6 +4926,93 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
         Assert.Contains(memoryIndexResult.Diagnostics, static diagnostic =>
             diagnostic.Code == "STK3054"
             && diagnostic.Message.Contains("parameter index '1' is out of range", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ComptimeCallableNestedTypeArgumentStructuralFactsRejectWrongTargetsAndOutOfRangeIndices()
+    {
+        var targetResult = Compile(
+            """
+            module Demo
+
+            finite law bool Run()
+            {
+                return comptime System.Compiler.FunctionPointerReturnTypeArgumentTypeIsInteger<i32[min max], 0>();
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(targetResult.Succeeded);
+        Assert.Contains(targetResult.Diagnostics, static diagnostic =>
+            diagnostic.Code == "STK3054"
+            && diagnostic.Message.Contains("requires a function pointer type", StringComparison.Ordinal));
+
+        var returnArgumentIndexResult = Compile(
+            """
+            module Demo
+
+            alias Callback = fnptr<fn i32[min max]()>;
+
+            finite law bool Run()
+            {
+                return comptime System.Compiler.FunctionPointerReturnTypeArgumentTypeIsInteger<Callback, 0>();
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(returnArgumentIndexResult.Succeeded);
+        Assert.Contains(returnArgumentIndexResult.Diagnostics, static diagnostic =>
+            diagnostic.Code == "STK3054"
+            && diagnostic.Message.Contains("type argument index '0' is out of range for return type", StringComparison.Ordinal));
+
+        var closureParameterArgumentIndexResult = Compile(
+            """
+            module Demo
+
+            struct Box<T>
+            {
+                T Value;
+            }
+
+            alias Handler = borrow closure<fn void(Box<i32[min max]>)>;
+
+            finite law bool Run()
+            {
+                return comptime System.Compiler.ClosureParameterTypeArgumentTypeIsInteger<Handler, 0, 1>();
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(closureParameterArgumentIndexResult.Succeeded);
+        Assert.Contains(closureParameterArgumentIndexResult.Diagnostics, static diagnostic =>
+            diagnostic.Code == "STK3054"
+            && diagnostic.Message.Contains("type argument index '1' is out of range for parameter slot 0", StringComparison.Ordinal));
+
+        var methodParameterArgumentIndexResult = Compile(
+            """
+            module Demo
+
+            struct Box<T>
+            {
+                T Value;
+
+                fn Box<T> Echo(borrow Box<T> self, Box<T> fallback)
+                {
+                    return fallback;
+                }
+            }
+
+            finite law bool Run()
+            {
+                return comptime System.Compiler.MethodParameterTypeArgumentTypeIsInteger<Box<i32[min max]>, 0, 1, 1>();
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(methodParameterArgumentIndexResult.Succeeded);
+        Assert.Contains(methodParameterArgumentIndexResult.Diagnostics, static diagnostic =>
+            diagnostic.Code == "STK3054"
+            && diagnostic.Message.Contains("type argument index '1' is out of range for parameter slot 1", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -6145,7 +6484,29 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                                                             {
                                                                 if (comptime System.Compiler.ImplementedTraitTypeComptimeArgumentCount<Widget, 1>() == 1)
                                                                 {
-                                                                    return 42;
+                                                                    if (comptime System.Compiler.ImplementedTraitTypeArgumentTypeIs<Widget, i32[min max], 1, 0>()
+                                                                        && comptime System.Compiler.ImplementedTraitTypeArgumentTypeIsInteger<Widget, 1, 0>()
+                                                                        && comptime System.Compiler.ImplementedTraitTypeArgumentTypeHasConcreteLayout<Widget, 1, 0>()
+                                                                        && comptime (System.Compiler.ImplementedTraitTypeArgumentTypeDisplayName<Widget, 1, 0>() == "i32")
+                                                                        && comptime (System.Compiler.ImplementedTraitTypeArgumentTypeBaseName<Widget, 1, 0>() == "")
+                                                                        && comptime (System.Compiler.ImplementedTraitTypeArgumentTypeModuleName<Widget, 1, 0>() == "")
+                                                                        && comptime !System.Compiler.ImplementedTraitTypeArgumentTypeIsGenericInstantiation<Widget, 1, 0>()
+                                                                        && comptime System.Compiler.ImplementedTraitTypeArgumentTypeArgumentCount<Widget, 1, 0>() == 0
+                                                                        && comptime System.Compiler.ImplementedTraitTypeArgumentTypeComptimeArgumentCount<Widget, 1, 0>() == 0
+                                                                        && comptime (System.Compiler.ImplementedTraitTypeComptimeArgumentName<Widget, 1, 0>() == "N")
+                                                                        && comptime System.Compiler.ImplementedTraitTypeComptimeArgumentTypeIs<Widget, u8[1 8], 1, 0>()
+                                                                        && comptime System.Compiler.ImplementedTraitTypeComptimeArgumentTypeIsInteger<Widget, 1, 0>()
+                                                                        && comptime System.Compiler.ImplementedTraitTypeComptimeArgumentTypeHasConcreteLayout<Widget, 1, 0>()
+                                                                        && comptime (System.Compiler.ImplementedTraitTypeComptimeArgumentTypeDisplayName<Widget, 1, 0>() == "u8[1 8]")
+                                                                        && comptime (System.Compiler.ImplementedTraitTypeComptimeArgumentTypeBaseName<Widget, 1, 0>() == "")
+                                                                        && comptime (System.Compiler.ImplementedTraitTypeComptimeArgumentTypeModuleName<Widget, 1, 0>() == "")
+                                                                        && comptime !System.Compiler.ImplementedTraitTypeComptimeArgumentTypeIsGenericInstantiation<Widget, 1, 0>()
+                                                                        && comptime System.Compiler.ImplementedTraitTypeComptimeArgumentTypeArgumentCount<Widget, 1, 0>() == 0
+                                                                        && comptime System.Compiler.ImplementedTraitTypeComptimeArgumentTypeComptimeArgumentCount<Widget, 1, 0>() == 0
+                                                                        && comptime System.Compiler.ImplementedTraitTypeComptimeArgumentValueIs<Widget, 1, 0, 4>())
+                                                                    {
+                                                                        return 42;
+                                                                    }
                                                                 }
                                                             }
                                                         }
@@ -6217,6 +6578,124 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                                                         if (comptime !System.Compiler.DynTraitTargetTypeIs<heap dyn Listener, Speaker>())
                                                         {
                                                             return 42;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                return 0;
+            }
+            """,
+            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+
+        var runBody = ExtractDefinitionBody(llvm, "Run");
+        Assert.Contains("ret i32 42", runBody);
+        Assert.DoesNotContain("call", runBody);
+    }
+
+    [Fact]
+    public void ComptimeDynTraitNestedTypePredicateFactsFoldToBoolConstants()
+    {
+        var llvm = CompileToLlvm(
+            """
+            module Demo
+
+            dyn trait Speaker
+            {
+                finite law i32[min max] Speak(borrow Self self);
+            }
+
+            struct Holder<T>
+            {
+                T Value;
+            }
+
+            struct Carrier
+            {
+                heap dyn Speaker Owned;
+            }
+
+            enum Packet
+            {
+                Owned(heap dyn Speaker),
+                Count(i32[min max])
+            }
+
+            trait Contract
+            {
+                alias View = heap dyn Speaker;
+            }
+
+            struct Service
+            {
+                finite law heap dyn Speaker Current(borrow Service self);
+
+                finite law void Observe(borrow Service self, borrow dyn Speaker value);
+
+                finite law Holder<heap dyn Speaker> Wrap(borrow Service self, Holder<heap dyn Speaker> input);
+            }
+
+            alias Callback = fnptr<fn heap dyn Speaker(borrow dyn Speaker)>;
+            alias Handler = borrow closure<fn heap dyn Speaker(borrow dyn Speaker)>;
+            alias Boxed = Holder<heap dyn Speaker>;
+            alias NestedCallback = fnptr<fn Holder<heap dyn Speaker>(Holder<heap dyn Speaker>)>;
+            alias NestedHandler = borrow closure<fn Holder<heap dyn Speaker>(Holder<heap dyn Speaker>)>;
+            alias DynArray = heap dyn Speaker[2];
+            alias DynPointer = rawptr<heap dyn Speaker>;
+
+            finite law i32[min max] Run()
+            {
+                if (comptime System.Compiler.FieldTypeIsDynTrait<Carrier, 0>())
+                {
+                    if (comptime System.Compiler.EnumVariantPayloadTypeIsDynTrait<Packet, 0, 0>())
+                    {
+                        if (comptime System.Compiler.AssociatedTypeTargetTypeIsDynTrait<Contract, 0>())
+                        {
+                            if (comptime System.Compiler.MethodReturnTypeIsDynTrait<Service, 0>())
+                            {
+                                if (comptime System.Compiler.MethodParameterTypeIsDynTrait<Service, 1, 1>())
+                                {
+                                    if (comptime System.Compiler.FunctionPointerReturnTypeIsDynTrait<Callback>())
+                                    {
+                                        if (comptime System.Compiler.FunctionPointerParameterTypeIsDynTrait<Callback, 0>())
+                                        {
+                                            if (comptime System.Compiler.ClosureReturnTypeIsDynTrait<Handler>())
+                                            {
+                                                if (comptime System.Compiler.ClosureParameterTypeIsDynTrait<Handler, 0>())
+                                                {
+                                                    if (comptime System.Compiler.TypeArgumentTypeIsDynTrait<Boxed, 0>())
+                                                    {
+                                                        if (comptime System.Compiler.TypeElementTypeIsDynTrait<DynArray>())
+                                                        {
+                                                            if (comptime System.Compiler.RawPointerElementTypeIsDynTrait<DynPointer>())
+                                                            {
+                                                                if (comptime System.Compiler.FunctionPointerReturnTypeArgumentTypeIsDynTrait<NestedCallback, 0>())
+                                                                {
+                                                                    if (comptime System.Compiler.FunctionPointerParameterTypeArgumentTypeIsDynTrait<NestedCallback, 0, 0>())
+                                                                    {
+                                                                        if (comptime System.Compiler.ClosureReturnTypeArgumentTypeIsDynTrait<NestedHandler, 0>())
+                                                                        {
+                                                                            if (comptime System.Compiler.ClosureParameterTypeArgumentTypeIsDynTrait<NestedHandler, 0, 0>())
+                                                                            {
+                                                                                if (comptime System.Compiler.MethodReturnTypeArgumentTypeIsDynTrait<Service, 2, 0>())
+                                                                                {
+                                                                                    if (comptime System.Compiler.MethodParameterTypeArgumentTypeIsDynTrait<Service, 2, 1, 0>())
+                                                                                    {
+                                                                                        return 42;
+                                                                                    }
+                                                                                }
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
                                                         }
                                                     }
                                                 }
@@ -6360,6 +6839,56 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
             diagnostic.Code == "STK3054"
             && diagnostic.Message.Contains("implemented-trait index '1' is out of range", StringComparison.Ordinal));
 
+        var typeArgumentIndexResult = Compile(
+            """
+            module Demo
+
+            trait Tagged<T, comptime u8[1 8] N>
+            {
+            }
+
+            struct Widget : Tagged<i32[min max], 4>
+            {
+                i32[min max] W;
+            }
+
+            finite law bool Run()
+            {
+                return comptime System.Compiler.ImplementedTraitTypeArgumentTypeIsInteger<Widget, 0, 1>();
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(typeArgumentIndexResult.Succeeded);
+        Assert.Contains(typeArgumentIndexResult.Diagnostics, static diagnostic =>
+            diagnostic.Code == "STK3054"
+            && diagnostic.Message.Contains("implemented-trait type argument index '1' is out of range", StringComparison.Ordinal));
+
+        var comptimeArgumentIndexResult = Compile(
+            """
+            module Demo
+
+            trait Tagged<T, comptime u8[1 8] N>
+            {
+            }
+
+            struct Widget : Tagged<i32[min max], 4>
+            {
+                i32[min max] W;
+            }
+
+            finite law bool Run()
+            {
+                return comptime System.Compiler.ImplementedTraitTypeComptimeArgumentTypeIsInteger<Widget, 0, 1>();
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(comptimeArgumentIndexResult.Succeeded);
+        Assert.Contains(comptimeArgumentIndexResult.Diagnostics, static diagnostic =>
+            diagnostic.Code == "STK3054"
+            && diagnostic.Message.Contains("implemented-trait comptime argument index '1' is out of range", StringComparison.Ordinal));
+
         var traitArgumentResult = Compile(
             """
             module Demo
@@ -6479,18 +7008,18 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
             """
             module Demo
 
-            trait Drawable
+            trait Tagged<T, comptime u8[1 8] N>
             {
             }
 
-            struct Widget : Drawable
+            struct Widget : Tagged<i32[min max], 4>
             {
                 i32[min max] W;
             }
 
             finite law bool Run()
             {
-                return System.Compiler.ImplementedTraitTypeIsTrait<Widget, 0>();
+                return System.Compiler.ImplementedTraitTypeArgumentTypeIsInteger<Widget, 0, 0>();
             }
             """,
             new CompilerOptions(StopAfterPassId: "type-check"));
@@ -6800,6 +7329,71 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
     }
 
     [Fact]
+    public void ComptimeBlockCanExecuteLabeledBreakAndContinue()
+    {
+        var llvm = CompileToLlvm(
+            """
+            module Demo
+
+            finite law i32[min max] Run()
+            {
+                return comptime
+                {
+                    stack mut i32[min max] total = 0;
+                    stack mut i32[min max] outer = 0;
+                    outerLoop: while willexit (outer < 4)
+                    {
+                        outer += 1;
+                        stack mut i32[min max] inner = 0;
+                        while willexit (inner < 4)
+                        {
+                            inner += 1;
+                            if (inner == 1)
+                            {
+                                continue;
+                            }
+
+                            gate: switch (inner)
+                            {
+                                default:
+                                    if (inner == 2)
+                                    {
+                                        break gate;
+                                    }
+
+                                    total += 0;
+                            }
+
+                            if (outer == 2)
+                            {
+                                if (inner == 2)
+                                {
+                                    continue outerLoop;
+                                }
+                            }
+
+                            if (outer == 4)
+                            {
+                                break outerLoop;
+                            }
+
+                            total += outer * 10 + inner;
+                        }
+                    }
+
+                    return total;
+                };
+            }
+            """,
+            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+
+        var runBody = ExtractDefinitionBody(llvm, "Run");
+        Assert.Contains("ret i32 138", runBody);
+        Assert.DoesNotContain(" br ", runBody);
+        Assert.DoesNotContain("call fastcc", runBody);
+    }
+
+    [Fact]
     public void ComptimeWillexitWhileReportsIterationBudgetExhaustion()
     {
         var result = Compile(
@@ -7058,11 +7652,38 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 T[N] Items;
             }
 
+            struct Container
+            {
+                Box<Header, 4> Value;
+            }
+
+            enum Envelope
+            {
+                Item(Box<Header, 4>)
+            }
+
+            alias Callback = fnptr<fn Box<Header, 4>(Box<Header, 4>)>;
+            alias Handler = borrow closure<fn Box<Header, 4>(Box<Header, 4>)>;
+
+            trait Contract
+            {
+                alias Item = Box<Header, 4>;
+            }
+
+            trait Drawable
+            {
+            }
+
+            struct Widget : Drawable
+            {
+                i32[min max] Width;
+            }
+
             struct Service
             {
-                finite law i32[min max] Read(borrow Service self)
+                finite law Box<Header, 4> Read(borrow Service self, Box<Header, 4> fallback)
                 {
-                    return 1;
+                    return fallback;
                 }
 
                 static finite law i32[min max] Reset()
@@ -7080,7 +7701,21 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                     && comptime (System.Compiler.TypeModuleName<Box<i32[min max], 4>>() == "Demo.Core")
                     && comptime (System.Compiler.TypeModuleName<i32[min max]>() == "")
                     && comptime (System.Compiler.MethodModuleName<Service, 0>() == "Demo.Core")
-                    && comptime (System.Compiler.MethodModuleName<Service, 1>() == "Demo.Core"))
+                    && comptime (System.Compiler.MethodModuleName<Service, 1>() == "Demo.Core")
+                    && comptime (System.Compiler.FieldTypeModuleName<Container, 0>() == "Demo.Core")
+                    && comptime (System.Compiler.FieldTypeModuleName<Header, 0>() == "")
+                    && comptime (System.Compiler.EnumVariantPayloadTypeModuleName<Envelope, 0, 0>() == "Demo.Core")
+                    && comptime (System.Compiler.FunctionPointerReturnTypeModuleName<Callback>() == "Demo.Core")
+                    && comptime (System.Compiler.FunctionPointerParameterTypeModuleName<Callback, 0>() == "Demo.Core")
+                    && comptime (System.Compiler.ClosureReturnTypeModuleName<Handler>() == "Demo.Core")
+                    && comptime (System.Compiler.ClosureParameterTypeModuleName<Handler, 0>() == "Demo.Core")
+                    && comptime (System.Compiler.MethodReturnTypeModuleName<Service, 0>() == "Demo.Core")
+                    && comptime (System.Compiler.MethodParameterTypeModuleName<Service, 0, 1>() == "Demo.Core")
+                    && comptime (System.Compiler.AssociatedTypeTargetTypeModuleName<Contract, 0>() == "Demo.Core")
+                    && comptime (System.Compiler.ImplementedTraitTypeModuleName<Widget, 0>() == "Demo.Core")
+                    && comptime (System.Compiler.TypeArgumentTypeModuleName<Box<Header, 4>, 0>() == "Demo.Core")
+                    && comptime (System.Compiler.TypeComptimeGenericParameterTypeModuleName<Box<Header, 4>, 0>() == "")
+                    && comptime (System.Compiler.TypeComptimeArgumentTypeModuleName<Box<Header, 4>, 0>() == ""))
                 {
                     return 42;
                 }

@@ -9,6 +9,14 @@ public sealed class SystemCStandardLibraryTests : StandardLibraryTestSuite
         import System.Text
         module App
 
+        static mut bool ForeignReleased = false;
+
+        unsafe ffi(c) fn void ReleaseForeign(rawmutptr<System.C.c_char> data)
+        {
+            ForeignReleased = data != null;
+            return;
+        }
+
         fn bool OwnedRoundTripWorks()
         {
             stack System.C.CStringResult<System.C.OwnedCStr> created = System.C.FromAscii("hello");
@@ -125,6 +133,50 @@ public sealed class SystemCStandardLibraryTests : StandardLibraryTestSuite
             }
         }
 
+        fn bool ForeignOwnedCopyAndDisposeWorks()
+        {
+            stack mut System.C.c_char[6] storage =
+            {
+                104, 101, 108, 108, 111, 0
+            };
+
+            unsafe
+            {
+                ForeignReleased = false;
+
+                stack System.C.CStringResult<System.C.ForeignOwnedCStr> created =
+                    System.C.TryFromForeignOwnedRaw(&storage[0]);
+                switch (created)
+                {
+                    case System.C.CStringResult<System.C.ForeignOwnedCStr>.Err(var error):
+                        return false;
+                    case System.C.CStringResult<System.C.ForeignOwnedCStr>.Ok(var value):
+                        stack mut System.C.ForeignOwnedCStr foreign = value;
+                        if (foreign.IsNull() || foreign.Data() == null)
+                        {
+                            return false;
+                        }
+
+                        stack System.C.CStringResult<System.Text.OwnedAscii> copied =
+                            System.C.CopyForeignOwnedAsciiAndDispose(foreign, ReleaseForeign, 6);
+                        if (!foreign.IsNull() || !ForeignReleased)
+                        {
+                            return false;
+                        }
+
+                        switch (copied)
+                        {
+                            case System.C.CStringResult<System.Text.OwnedAscii>.Err(var copyError):
+                                return false;
+                            case System.C.CStringResult<System.Text.OwnedAscii>.Ok(var asciiValue):
+                                stack mut System.Text.OwnedAscii asciiText = asciiValue;
+                                stack i8[min max][] bytes = asciiText.AsSlice();
+                                return asciiText.Length() == 5 && bytes[0] == 104 && bytes[4] == 111;
+                        }
+                }
+            }
+        }
+
         fn bool BoundedRawScanReportsMissingTerminator()
         {
             stack mut System.C.c_char[3] storage =
@@ -177,6 +229,11 @@ public sealed class SystemCStandardLibraryTests : StandardLibraryTestSuite
             if (!BoundedRawScanReportsMissingTerminator())
             {
                 return 3;
+            }
+
+            if (!ForeignOwnedCopyAndDisposeWorks())
+            {
+                return 4;
             }
 
             return 0;

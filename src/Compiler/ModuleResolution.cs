@@ -151,8 +151,6 @@ public sealed class FileSystemModuleResolver : IModuleSourceResolver, IModuleDoc
 
     public bool TryLoadModuleDocument(ResolvedModuleReference module, LlvmTargetInfo? targetInfo, out LoadedModuleDocument document)
     {
-        _ = targetInfo;
-
         if (module.ManifestPath is not null
             && TryResolveManifestModule(module.ModuleName) is { } manifestModule
             && (PackageImageLoader.TryBuildStructuredModuleDocument(manifestModule, out var manifestDocument)
@@ -160,7 +158,8 @@ public sealed class FileSystemModuleResolver : IModuleSourceResolver, IModuleDoc
         {
             document = manifestDocument with
             {
-                Reference = module with { FilePath = manifestModule.ManifestPath }
+                Reference = module with { FilePath = manifestModule.ManifestPath },
+                TargetInfo = targetInfo
             };
             return true;
         }

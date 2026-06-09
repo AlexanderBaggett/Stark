@@ -15,7 +15,7 @@ and editor/tooling parity.
 | Package image | Current host emits `.starkpkg.json` with source-surface, typed-interface, compiler-facts, generic-templates, native dependency metadata; self-hosting decision OQ-09/doc `20` moves normal loading to binary package images with JSON/text inspection rendered by `stark inspect-pkg` | `docs/Internals/PackageImage.md`, `src/Compiler/PackageImage/*`, `docs/Self-host-Prep/20-package-image-format.md` |
 | Build artifacts | Project driver uses `.stark/build/` by convention in tests/source; self-host prep now specifies the bootstrap layout in doc `25`, but implementation is still open | `ProjectCliDriver`, integration tests, `docs/Self-host-Prep/25-build-artifact-layout.md` |
 | Native toolchain | Host shells out to `clang`, linker, archiver, `pkg-config`; self-hosting decision T10/doc `23` moves primary object emission to bundled libLLVM, with linker/native tools still resolved through the toolchain resolver | `src/Compiler/NativeToolchain.cs`, `docs/Self-host-Prep/ToolchainPackagingRoadmap.md`, `docs/Self-host-Prep/23-libllvm-integration.md` |
-| Tests | `stark test` runs test projects; the accepted self-hosting direction is a build-time generated explicit `main` runner from `[Fact]` metadata, but that generator is not implemented yet | `docs/Userfacing/ProjectsAndSolutions.md`, `docs/StandardLibrary/System.Testing.md`, `docs/Self-host-Prep/04-test-infrastructure-audit.md` |
+| Tests | `stark test` runs test projects and now generates an explicit `main` runner from `[Fact]` metadata at build time, with selected-test filters and stable `System.Testing.RunFact` reporting; manual `main` remains available for no-`[Fact]` bootstrap tests | `src/Compiler/ProjectCliDriver.cs`, `src/Compiler/StarkTestRunnerGenerator.cs`, `docs/Userfacing/ProjectsAndSolutions.md`, `docs/StandardLibrary/System.Testing.md`, `docs/Self-host-Prep/04-test-infrastructure-audit.md` |
 
 ## Tooling Gap Table
 
@@ -32,7 +32,7 @@ and editor/tooling parity.
 | T09 | Cross-compilation target info and SDK discovery | `--target`, target data layout, target CPU/features, macOS SDK args, Windows/Linux toolchains | Host can pass options and query `clang`; self-host needs process/path/platform APIs | blocker for parity |
 | T10 | libLLVM-primary backend integration | Codegen backend and packaging | Decision specified: construct LLVM modules directly through the LLVM C API; textual LLVM is printed only as a debug/inspection artifact | blocker |
 | T11 | Stdlib package build/discovery for self-host | Compiler needs `System` package artifacts and source/package resolution | Discovery policy is specified: explicit override, then stage/build-local artifacts, then repo source/`stdlib/dist`, then installed bundled stdlib next to the compiler; implementation remains open | blocker |
-| T12 | Stark-native generated test runner/harness integration | TDD-first port and `stark test` parity | Decision specified: generate explicit `main` runners from `[Fact]` metadata; minimal explicit `System.Testing` and project test execution exist, generator still missing | blocker |
+| T12 | Stark-native generated test runner/harness integration | TDD-first port and `stark test` parity | Generated `[Fact]` runner is implemented for project tests, including fact enumeration, repeatable selected-test filters, and stable `System.Testing.RunFact` output; host-compiler target mode, staged runner selection, process harness integration, theories, and platform/serial controls remain | blocker |
 | T13 | VS Code extension and editor tooling parity | Language changes during self-host prep must stay visible to users | Decision specified: track editor/tooling updates, but do not block bootstrap on full editor parity; update syntax/completions when source syntax changes land | nice-to-have unless syntax changes land |
 | T14 | Release packaging/doctor/clean-machine verification | Drop host compiler from the normal path, distribute the compiler, bundled toolchain, and stdlib | Roadmap exists but unchecked | blocker before dropping host |
 | T15 | Fast diagnostic and artifact access for tests | Ported tests, stage comparisons, package inspection | Decision specified: typed in-process compiler test API is the fast path, persistent/batched compiler runner returns structured results for host/cross-stage tests, and full CLI artifact export is selective; broad logs/metrics are added only when a concrete test/debug workflow needs them | workaround-exists |
@@ -43,7 +43,7 @@ and editor/tooling parity.
 |---|---|---|---|
 | `stark build` | Build current project or solution default/all members | Select compiler stage, rebuild stdlib package, use staged `.stark/build`, cache package image, handle native deps through self-hosted driver | T02, T03, T05, T07, T08, T11 |
 | `stark run` | Build executable then spawn it | Process spawn/capture/exit propagation from Stark; stage-aware executable paths | T03, S12 |
-| `stark test` | Build test executable(s) and run them; discovery is explicit in test `main` | Test discovery/runner, host-compiler target mode for ported tests, snapshots/temp dirs/process capture, platform gating | T03, T12, Phase 4 TEST-* |
+| `stark test` | Build test executable(s), generate an explicit `[Fact]` runner when facts are present, support selected-test filters, and run the executable | Host-compiler target mode for ported tests, snapshots/temp dirs/process capture, platform gating, staged runner selection | T03, T12, Phase 4 TEST-* |
 
 ## Manifest and Native Metadata Gaps
 
@@ -70,7 +70,7 @@ risks:
 
 ## Tooling Priority
 
-1. T12 and T03 for TDD-first porting.
+1. T03 plus the remaining T12 harness work for TDD-first porting; the generated `[Fact]` runner slice is landed.
 2. T01 handwritten parser implementation, because it determines the largest front-end port shape.
 3. T02/T05/T11 for bootstrap staging, the formal build layout from doc `25`,
    and stdlib discovery.
