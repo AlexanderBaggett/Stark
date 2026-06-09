@@ -21,10 +21,10 @@ self-hosted compiler can build itself and pass the ported tests.
 | Field | Details |
 |---|---|
 | Entry Criteria | Current host compiler builds and tests can still run from C#; Phase 4 gap IDs accepted as the test-infrastructure backlog. |
-| Work | Expand `System.Testing` and the test harness to cover TEST-01 through TEST-12. Build-time `[Fact]` discovery and explicit generated `main` runners have landed; continue with process capture, text diff/snapshot coverage, rich assertions, platform gating, parameterized tests, and host-compiler execution support. |
-| Exit Criteria | A Stark test executable can run selected tests against the current host compiler, capture stdout/stderr/exit code, compare text/golden output, and report failures clearly. |
+| Work | Expand `System.Testing` and the test harness to cover TEST-01 through TEST-12. Build-time `[Fact]` / `[Theory]` discovery, inline-data rows, typed indexed member-data providers, explicit generated `main` runners, target-triple platform gates, serial collection grouping, process capture/timeout assertions, snapshots, and core rich assertions have landed; continue with rich diagnostic adapters and host-compiler execution wrappers. |
+| Exit Criteria | A Stark test executable can run selected tests against the current host compiler, feed stdin when needed, capture stdout/stderr/exit code, compare text/golden output, and report failures clearly. |
 | Key Risks | TEST-07 must avoid slow per-test process/JSON overhead while still supporting host and cross-stage inspection; TEST-05 depends on process APIs S12; TEST-04 depends on file/path/temp APIs S09-S11. |
-| Parallel Workstreams | Rich assertions TEST-02; process/temp fixtures TEST-04/TEST-05; snapshot/diff helpers TEST-03; parameterized/platform/serial runner support TEST-08/TEST-09; fast in-process artifact/diagnostic API plus batched runner TEST-07/TEST-12/T15. |
+| Parallel Workstreams | Rich assertions TEST-02; process/temp fixtures TEST-04/TEST-05; snapshot/diff helpers TEST-03; fast in-process artifact/diagnostic API plus batched runner TEST-07/TEST-12/T15. |
 
 ## M1 - Port Test Suite To Stark Against Host Compiler
 

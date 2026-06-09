@@ -836,6 +836,9 @@ public sealed class SystemTextStandardLibraryTests
         Assert.Contains("rawptr<i16[min max]>[sourceLength] source", source, StringComparison.Ordinal);
         Assert.Contains("where disjoint(source, destination[0, capacity])", source, StringComparison.Ordinal);
         Assert.Contains("decoded = TryDecodeUtf8CodePoint", source, StringComparison.Ordinal);
+        Assert.Contains("finite law retborrow i8[min max][] AsSlice(borrow OwnedAscii self)", source, StringComparison.Ordinal);
+        Assert.Contains("finite law retborrow i32[min max][] AsSlice(borrow OwnedUnicode self)", source, StringComparison.Ordinal);
+        Assert.Contains("finite law retborrow i16[min max][] AsSlice(borrow OwnedUtf16 self)", source, StringComparison.Ordinal);
     }
 
     [Fact]

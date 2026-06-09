@@ -4820,6 +4820,18 @@ internal sealed class OwnershipValidator
     private StarkTypeSymbol ResolveGenericQualifiedName(StarkParser.GenericQualifiedNameContext genericQualifiedName)
     {
         var baseName = genericQualifiedName.qualifiedName().GetText();
+        if (_typeResolver.TryResolveGenericTypeAlias(
+                baseName,
+                _syntaxModel.ModuleName,
+                genericQualifiedName.qualifiedName().Start,
+                genericQualifiedName.typeArgumentList(),
+                _currentFunctionGenericParameters,
+                _currentFunctionComptimeGenericParameters,
+                out var aliasType))
+        {
+            return aliasType;
+        }
+
         var baseType = _typeResolver.ResolveQualifiedType(
             baseName,
             _currentFunctionGenericParameters,

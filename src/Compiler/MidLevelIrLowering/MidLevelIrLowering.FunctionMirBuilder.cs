@@ -2254,6 +2254,12 @@ internal sealed partial class MidLevelIrLowerer
                 return true;
             }
 
+            if (TryLowerExpressionAsDynamicStorageOperationStatement(expression, out var dynamicStorageOperation))
+            {
+                EmitEvaluateExpressionStatement(expression, dynamicStorageOperation);
+                return true;
+            }
+
             if (TryLowerExpressionAsCallStatement(expression, out var call))
             {
                 EmitEvaluateCallStatement(expression, call);
@@ -2328,6 +2334,12 @@ internal sealed partial class MidLevelIrLowerer
 
         private bool TryLowerConditionalCallStatementBranch(StarkParser.ExpressionContext expression)
         {
+            if (TryLowerExpressionAsDynamicStorageOperationStatement(expression, out var dynamicStorageOperation))
+            {
+                EmitEvaluateExpressionStatement(expression, dynamicStorageOperation);
+                return true;
+            }
+
             if (TryLowerExpressionAsCallStatement(expression, out var call))
             {
                 EmitEvaluateCallStatement(expression, call);
@@ -2350,6 +2362,37 @@ internal sealed partial class MidLevelIrLowerer
                 throw LoweringInvariantViolation(
                     expression,
                     "Conditional call statement branch was classified as lowerable but produced no MIR operation.");
+            }
+
+            return false;
+        }
+
+        private bool TryLowerExpressionAsDynamicStorageOperationStatement(
+            StarkParser.ExpressionContext expression,
+            out MidLevelIrRValue operation)
+        {
+            operation = default!;
+            if (TryGetSimplePostfixExpression(expression) is not { } postfix)
+            {
+                return false;
+            }
+
+            if (TryLowerDynamicStorageReserveExpression(postfix, out var reserve))
+            {
+                operation = reserve;
+                return true;
+            }
+
+            if (TryLowerDynamicStorageMoveLastExpression(postfix, out var moveLast))
+            {
+                operation = moveLast;
+                return true;
+            }
+
+            if (TryLowerDynamicStorageMoveAtExpression(postfix, out var moveAt))
+            {
+                operation = moveAt;
+                return true;
             }
 
             return false;
@@ -5558,7 +5601,9 @@ internal sealed partial class MidLevelIrLowerer
 
                     if (!TryBuildCall(currentName, argumentList, text, out var directCall))
                     {
-                        return false;
+                        throw LoweringInvariantViolation(
+                            argumentList,
+                            $"Call '{currentName}' was accepted but no MIR direct call could be built. {_lastCallBuildFailureReason ?? "No direct-call resolution detail was recorded."}");
                     }
 
                     if (directCall.Type.Kind == StarkTypeKind.Void)
@@ -9046,6 +9091,7 @@ internal sealed partial class MidLevelIrLowerer
             {
                 if (!TryResolvePublishedDirectCallSignature(functionName, arguments, out signature))
                 {
+                    _lastCallBuildFailureReason = $"No function signature resolved for '{functionName}'.";
                     return false;
                 }
             }
@@ -11476,9 +11522,9 @@ internal sealed partial class MidLevelIrLowerer
             }
 
             var locationMatches = _typeModel.DirectCalls
+                .Where(call => IsCurrentFunctionRecord(call.EnclosingFunctionName))
                 .Where(call => SourceLocationStartsAt(call.Location, location))
                 .Select(call => ApplyGenericSubstitution(call.Signature))
-                .Take(2)
                 .ToArray();
             var matches = locationMatches.Length == 1
                 ? locationMatches
@@ -11514,9 +11560,9 @@ internal sealed partial class MidLevelIrLowerer
             }
 
             var locationMatches = _typeModel.MemberCalls
+                .Where(call => IsCurrentFunctionRecord(call.EnclosingFunctionName))
                 .Where(call => SourceLocationStartsAt(call.Location, location))
                 .Select(call => ApplyGenericSubstitution(call.Signature))
-                .Take(2)
                 .ToArray();
             var matches = locationMatches.Length == 1
                 ? locationMatches
@@ -12087,6 +12133,18 @@ internal sealed partial class MidLevelIrLowerer
         private StarkTypeSymbol ResolveGenericQualifiedName(StarkParser.GenericQualifiedNameContext genericQualifiedName)
         {
             var baseName = genericQualifiedName.qualifiedName().GetText();
+            if (_typeResolver.TryResolveGenericTypeAlias(
+                    baseName,
+                    CurrentModuleName,
+                    genericQualifiedName.qualifiedName().Start,
+                    genericQualifiedName.typeArgumentList(),
+                    ActiveGenericParameterNames(),
+                    ActiveComptimeGenericParameters(),
+                    out var aliasType))
+            {
+                return ApplyGenericSubstitution(aliasType);
+            }
+
             var baseType = ApplyGenericSubstitution(
                 _typeResolver.ResolveQualifiedType(baseName, ActiveGenericParameterNames(), genericQualifiedName.qualifiedName().Start, CurrentModuleName));
             if (baseType.Kind == StarkTypeKind.Error)

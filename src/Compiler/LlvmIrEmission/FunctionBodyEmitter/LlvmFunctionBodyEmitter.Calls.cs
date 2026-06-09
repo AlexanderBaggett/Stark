@@ -160,9 +160,10 @@ internal sealed partial class LlvmFunctionBodyEmitter
                 continue;
             }
 
+            var tempSlotType = GetIndirectArgumentTemporaryStorageType(parameter.SourceType);
             var tempSlot = $"%{EscapeIdentifier(CreateAbiTempName($"callarg_{parameter.SourceName}"))}";
-            QueueStaticAlloca(tempSlot, parameter.SourceType);
-            EmitValueToAddress(tempSlot, parameter.SourceType, argument, GetStackObjectAlignmentBytes(parameter.SourceType));
+            QueueStaticAlloca(tempSlot, tempSlotType);
+            EmitValueToAddress(tempSlot, tempSlotType, argument, GetStackObjectAlignmentBytes(tempSlotType));
 
             arguments.Add(RenderIndirectArgumentPointer(abiCallee, parameter, tempSlot, calleeParameterEffects, includeContractAttributes: true));
         }
@@ -1211,9 +1212,10 @@ internal sealed partial class LlvmFunctionBodyEmitter
                 continue;
             }
 
+            var tempSlotType = GetIndirectArgumentTemporaryStorageType(parameter.SourceType);
             var tempSlot = $"%{EscapeIdentifier(CreateAbiTempName($"indirect_callarg_{parameter.SourceName}"))}";
-            QueueStaticAlloca(tempSlot, parameter.SourceType);
-            EmitValueToAddress(tempSlot, parameter.SourceType, argument, GetStackObjectAlignmentBytes(parameter.SourceType));
+            QueueStaticAlloca(tempSlot, tempSlotType);
+            EmitValueToAddress(tempSlot, tempSlotType, argument, GetStackObjectAlignmentBytes(tempSlotType));
 
             arguments.Add(RenderIndirectArgumentPointer(abiCallee, parameter, tempSlot, parameterEffects, includeContractAttributes: true));
         }
@@ -1836,6 +1838,13 @@ internal sealed partial class LlvmFunctionBodyEmitter
         return true;
     }
 
+    private static StarkTypeSymbol GetIndirectArgumentTemporaryStorageType(StarkTypeSymbol parameterSourceType)
+    {
+        return StarkTypeSymbols.IsPointerBackedBorrowType(parameterSourceType)
+            ? StarkTypeSymbols.BorrowReturnValueType(parameterSourceType)
+            : parameterSourceType;
+    }
+
     private bool TryRenderForwardedPointerBackedBorrowAddress(
         AbiFunctionSignature abiCallee,
         AbiParameterSymbol parameter,
@@ -1845,6 +1854,22 @@ internal sealed partial class LlvmFunctionBodyEmitter
         out string renderedArgument)
     {
         renderedArgument = string.Empty;
+        if (TryGetPointerBackedBorrowArgumentType(parameter, argument, out var borrowType)
+            && TryResolvePointerBackedBorrowIndirectAddress(
+                indirectArgumentAddress,
+                borrowType,
+                new HashSet<string>(StringComparer.Ordinal),
+                out var forwardedSourceAddress))
+        {
+            renderedArgument = RenderIndirectArgumentPointer(
+                abiCallee,
+                parameter,
+                forwardedSourceAddress,
+                parameterEffects,
+                includeContractAttributes: true);
+            return true;
+        }
+
         if (!TryResolveLocalAddressRoot(indirectArgumentAddress, out var localName))
         {
             return false;
@@ -1857,6 +1882,97 @@ internal sealed partial class LlvmFunctionBodyEmitter
             localName,
             parameterEffects,
             out renderedArgument);
+    }
+
+    private bool TryResolvePointerBackedBorrowIndirectAddress(
+        SsaValue address,
+        StarkTypeSymbol borrowType,
+        ISet<string> visitedValueNames,
+        out string sourceAddress)
+    {
+        sourceAddress = string.Empty;
+        if (address is not SsaValueReference reference
+            || !visitedValueNames.Add(reference.Name)
+            || !_valueDefinitions.TryGetValue(reference.Name, out var definition))
+        {
+            return false;
+        }
+
+        switch (definition)
+        {
+            case SsaUseRValue use:
+                return TryResolvePointerBackedBorrowIndirectAddress(
+                    use.Value,
+                    borrowType,
+                    visitedValueNames,
+                    out sourceAddress);
+            case SsaAddressOfParameterRValue addressOfParameter
+                when StarkTypeSymbols.IsPointerBackedBorrowType(addressOfParameter.PointeeType)
+                     && _abiFunction.UserParameters.Any(parameter =>
+                         string.Equals(parameter.SourceName, addressOfParameter.ParameterName, StringComparison.Ordinal)
+                         && StarkTypeSymbols.IsPointerBackedBorrowType(parameter.SourceType)):
+                sourceAddress = FormatValue(reference);
+                return true;
+            case SsaAddressOfLocalRValue addressOfLocal
+                when StarkTypeSymbols.IsPointerBackedBorrowType(addressOfLocal.PointeeType):
+                if ((TryResolveSingleStoreLocalValue(addressOfLocal.LocalName, out var storedValue)
+                        || TryResolveCurrentStoredLocalValue(addressOfLocal.LocalName, out storedValue))
+                    && TryResolveStoredPointerBackedBorrowSource(storedValue, borrowType, out var storedSourceAddress))
+                {
+                    sourceAddress = storedSourceAddress;
+                    return true;
+                }
+
+                EnsureLocalSlotExists(addressOfLocal.LocalName, addressOfLocal.PointeeType);
+                sourceAddress = EmitPointerBackedBorrowSlotLoad(
+                    GetLocalSlotPointer(addressOfLocal.LocalName),
+                    GetLocalSlotAlignmentBytes(addressOfLocal.LocalName, addressOfLocal.PointeeType));
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private bool TryResolveCurrentStoredLocalValue(string localName, out SsaValue value)
+    {
+        value = null!;
+        if (_currentBlock is null || _currentInstructionIndex <= 0)
+        {
+            return false;
+        }
+
+        for (var index = _currentInstructionIndex - 1; index >= 0; index--)
+        {
+            var instruction = _currentBlock.Instructions[index];
+            if (instruction is SsaStoreLocalInstruction storeLocal
+                && string.Equals(storeLocal.LocalName, localName, StringComparison.Ordinal))
+            {
+                value = storeLocal.Value;
+                return true;
+            }
+
+            if (InstructionMayOverwriteLocalStorage(instruction, localName, index))
+            {
+                return false;
+            }
+        }
+
+        return false;
+    }
+
+    private bool TryResolveStoredPointerBackedBorrowSource(
+        SsaValue storedValue,
+        StarkTypeSymbol borrowType,
+        out string sourceAddress)
+    {
+        if (storedValue is SsaValueReference storedReference
+            && _valueAliases.TryGetValue(storedReference.Name, out var alias))
+        {
+            sourceAddress = alias;
+            return true;
+        }
+
+        return TryResolveAggregateSourceAddress(storedValue, borrowType, out sourceAddress);
     }
 
     private static bool TryGetPointerBackedBorrowArgumentType(

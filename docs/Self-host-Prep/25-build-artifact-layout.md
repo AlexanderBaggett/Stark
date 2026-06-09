@@ -83,17 +83,19 @@ belong under `.stark/build/`.
 
 ## 4. Clean Semantics
 
-The stable layout should support simple cleanup:
+The stable layout supports simple cleanup through `stark clean`:
 
 | Command shape | Deletes |
 |---|---|
-| clean profile | `.stark/build/<profile>/` |
-| clean target | `.stark/build/<profile>/<target-triple>/` |
-| clean stage | `.stark/build/<profile>/<target-triple>/<stage>/` |
-| clean diagnostics/artifacts | selected `diagnostics/` or `artifacts/` subtrees |
+| `stark clean profile` | `.stark/build/<profile>/` |
+| `stark clean target --target <triple>` | `.stark/build/<profile>/<target-triple>/` |
+| `stark clean` or `stark clean stage --target <triple>` | `.stark/build/<profile>/<target-triple>/<stage>/` |
+| `stark clean diagnostics --target <triple>` | `.stark/build/<profile>/<target-triple>/<stage>/diagnostics/` |
+| `stark clean artifacts --target <triple>` | `.stark/build/<profile>/<target-triple>/<stage>/artifacts/` |
 
-Exact command spelling can be finalized with `stark build/run/test` work. The
-important point is that the directory shape makes safe cleanup obvious.
+`target`, `stage`, `diagnostics`, and `artifacts` scopes use the explicit
+`--target <triple>` value or the detected default target. `profile` cleanup does
+not require target discovery.
 
 ## 5. Stdlib And Package Discovery
 
@@ -103,6 +105,14 @@ lookup tier. This layout defines where that tier lives:
 ```text
 .stark/build/<profile>/<target-triple>/<stage>/stdlib/
 ```
+
+Project builds add this directory to module/package search for the active
+profile, target, and stage. After this stage-local tier, source-tree
+development builds search the nearest repo `stdlib/dist` package image
+directory and then `stdlib/src` source directory; installed builds then search
+bundled stdlib artifacts next to the active compiler distribution. Producing the
+stdlib package/source artifacts that live in the stage-local tier remains part
+of the stdlib packaging work.
 
 The package image decision uses binary package images as the normal compiler
 load path. Project/package images produced by the active build live under:
@@ -132,16 +142,18 @@ source folders or rely on ad hoc temp paths.
 ## 7. Work Items
 
 - [x] Decide OQ-18/T05: formalize `.stark/build/<profile>/<target-triple>/<stage>/`.
-- [ ] Define the build-layout command contract: target-triple normalization,
+- [x] Define the build-layout command contract: target-triple normalization,
       accepted stage selectors for `stark build`, `stark run`, and `stark test`,
       and build-root selection for project, solution, and compiler bootstrap
       commands.
-- [ ] Implement artifact routing for the formal layout: package images in
-      `pkg/`, stage-local stdlib artifacts in `stdlib/`, native intermediates
-      in `obj/`, final native outputs in `bin/`, generated test runners and
-      executables in `tests/`, diagnostics in `diagnostics/`, and requested
-      compiler artifacts in `artifacts/`.
-- [ ] Implement clean/discovery behavior for the formal layout, including
+- [~] Implement artifact routing for the formal layout: final executable/library
+      outputs route to `bin/<project>/`, test executables and generated runners
+      route to `tests/<project>/`, saved native intermediates route to
+      `obj/<project>/`, and project library package images route to
+      `pkg/<project>/` under `.stark/build/<profile>/<target-triple>/stage0/`.
+      Stdlib artifact generation/routing, diagnostics, requested compiler
+      artifacts, and actual Stage1/Stage2 execution remain open.
+- [x] Implement clean/discovery behavior for the formal layout, including
       profile/target/stage/artifact cleanup and stdlib discovery from the
       stage-local `stdlib/` path.
 - [ ] Update package-image tests, stage-comparison tests, and artifact

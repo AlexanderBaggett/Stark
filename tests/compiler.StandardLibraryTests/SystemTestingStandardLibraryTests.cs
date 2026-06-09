@@ -11,7 +11,22 @@ public sealed class SystemTestingStandardLibraryTests : StandardLibraryTestSuite
         import System.Text
         module DemoTests
 
-        fn bool IsOk(System.IO.IOStatus status)
+        struct AssertionBox
+        {
+            i32[min max] Value;
+        }
+
+        struct EmptyMarker
+        {
+        }
+
+        enum AssertionToken
+        {
+            End,
+            Number(i32[min max]),
+        }
+
+        finite law bool IsOk(System.IO.IOStatus status)
         {
             switch (status)
             {
@@ -22,7 +37,7 @@ public sealed class SystemTestingStandardLibraryTests : StandardLibraryTestSuite
             }
         }
 
-        fn bool IsInvalidPath(System.IO.IOStatus status)
+        finite law bool IsInvalidPath(System.IO.IOStatus status)
         {
             switch (status)
             {
@@ -60,7 +75,7 @@ public sealed class SystemTestingStandardLibraryTests : StandardLibraryTestSuite
             }
         }
 
-        fn bool PathMissing(System.IO.IOResult<bool> result)
+        finite law bool PathMissing(System.IO.IOResult<bool> result)
         {
             switch (result)
             {
@@ -71,7 +86,7 @@ public sealed class SystemTestingStandardLibraryTests : StandardLibraryTestSuite
             }
         }
 
-        fn bool SnapshotMatched(System.Testing.SnapshotResult result)
+        finite law bool SnapshotMatched(System.Testing.SnapshotResult result)
         {
             switch (result)
             {
@@ -88,7 +103,7 @@ public sealed class SystemTestingStandardLibraryTests : StandardLibraryTestSuite
             }
         }
 
-        fn bool SnapshotUpdated(System.Testing.SnapshotResult result)
+        finite law bool SnapshotUpdated(System.Testing.SnapshotResult result)
         {
             switch (result)
             {
@@ -105,7 +120,7 @@ public sealed class SystemTestingStandardLibraryTests : StandardLibraryTestSuite
             }
         }
 
-        fn bool SnapshotMissing(System.Testing.SnapshotResult result)
+        finite law bool SnapshotMissing(System.Testing.SnapshotResult result)
         {
             switch (result)
             {
@@ -122,7 +137,7 @@ public sealed class SystemTestingStandardLibraryTests : StandardLibraryTestSuite
             }
         }
 
-        fn bool SnapshotDifferentAt(System.Testing.SnapshotResult result, u64[1 2 ** 63 - 1] line, u64[1 2 ** 63 - 1] column)
+        finite law bool SnapshotDifferentAt(System.Testing.SnapshotResult result, u64[1 2 ** 63 - 1] line, u64[1 2 ** 63 - 1] column)
         {
             switch (result)
             {
@@ -140,7 +155,7 @@ public sealed class SystemTestingStandardLibraryTests : StandardLibraryTestSuite
         }
 
         [Fact]
-        fn bool AdditionWorks()
+        finite law bool AdditionWorks()
         {
             return System.Testing.Equal(4, 2 + 2);
         }
@@ -154,6 +169,10 @@ public sealed class SystemTestingStandardLibraryTests : StandardLibraryTestSuite
             stack System.Collections.List<i32[min max]> pair = new();
             stack System.Memory.MemoryStatus firstStatus = pair.Push(10);
             stack System.Memory.MemoryStatus secondStatus = pair.Push(20);
+            stack System.Option<i32[min max]> someValue = System.Option<i32[min max]>.Some(7);
+            stack System.Option<i32[min max]> noneValue = System.Option<i32[min max]>.None;
+            stack System.Result<i32[min max], i32[min max]> okValue = System.Result<i32[min max], i32[min max]>.Ok(11);
+            stack System.Result<i32[min max], i32[min max]> errValue = System.Result<i32[min max], i32[min max]>.Err(13);
 
             return System.Testing.NotEqual(4, 5)
                 && oneStatus == System.Memory.MemoryStatus.Ok
@@ -171,7 +190,174 @@ public sealed class SystemTestingStandardLibraryTests : StandardLibraryTestSuite
                 && System.Testing.DoesNotContain("self-host prep", "legacy")
                 && System.Testing.StartsWith("self-host prep", "self")
                 && System.Testing.EndsWith("self-host prep", "prep")
-                && System.Testing.Contains((unicode)"pipeline", (unicode)"line");
+                && System.Testing.CountOccurrences("abababa", "aba") == 2
+                && System.Testing.Occurrences(3, "self-host self-test self-check", "self")
+                && System.Testing.Occurrences(0, "compiler", "")
+                && System.Testing.Contains((unicode)"pipeline", (unicode)"line")
+                && System.Testing.CountOccurrences((unicode)"na-na-na", (unicode)"na") == 3
+                && System.Testing.Occurrences(2, (unicode)"stage0 stage1", (unicode)"stage")
+                && System.Testing.OptionSome(someValue)
+                && !System.Testing.OptionNone(someValue)
+                && System.Testing.OptionNone(noneValue)
+                && !System.Testing.OptionSome(noneValue)
+                && System.Testing.ResultOk(okValue)
+                && !System.Testing.ResultErr(okValue)
+                && System.Testing.ResultErr(errValue)
+                && !System.Testing.ResultOk(errValue);
+        }
+
+        finite law bool DiagnosticCountAssertionsWork(borrow System.Testing.Diagnostic[] diagnosticSlice)
+        {
+            return System.Testing.DiagnosticsCount(2, diagnosticSlice)
+                && System.Testing.DiagnosticsNotEmpty(diagnosticSlice)
+                && System.Testing.DiagnosticsErrorCount(diagnosticSlice) == 1
+                && System.Testing.DiagnosticsWarningCount(diagnosticSlice) == 1
+                && System.Testing.DiagnosticsInfoCount(diagnosticSlice) == 0
+                && System.Testing.DiagnosticsHaveErrors(diagnosticSlice)
+                && !System.Testing.DiagnosticsHaveNoErrors(diagnosticSlice);
+        }
+
+        finite law bool DiagnosticContainAssertionsWork(borrow System.Testing.Diagnostic[] diagnosticSlice)
+        {
+            return System.Testing.DiagnosticsContainCode(diagnosticSlice, "STK3004")
+                && System.Testing.DiagnosticsContainMessage(diagnosticSlice, "Unknown type")
+                && System.Testing.DiagnosticsContain(
+                    diagnosticSlice,
+                    "STK3004",
+                    System.Testing.DiagnosticSeverity.Error,
+                    "type-check",
+                    "Missing")
+                && System.Testing.DiagnosticsContainAt(
+                    diagnosticSlice,
+                    "STK3004",
+                    System.Testing.DiagnosticSeverity.Error,
+                    "type-check",
+                    "Unknown type",
+                    7,
+                    13);
+        }
+
+        finite law bool DiagnosticDirectBoolAssertionsWork(borrow System.Testing.Diagnostic[] diagnostics)
+        {
+            return System.Testing.DiagnosticHasLocation(diagnostics[0])
+                && System.Testing.DiagnosticHasEndLocation(diagnostics[0]);
+        }
+
+        finite law bool DiagnosticDirectLocationAssertionsWork(borrow System.Testing.Diagnostic[] diagnostics)
+        {
+            return System.Testing.DiagnosticFilePath("Demo.stark", diagnostics[0])
+                && System.Testing.DiagnosticAt(diagnostics[0], 7, 13)
+                && System.Testing.DiagnosticEndsAt(diagnostics[0], 7, 20);
+        }
+
+        finite law bool DiagnosticDirectMessageAssertionsWork(borrow System.Testing.Diagnostic[] diagnostics)
+        {
+            return System.Testing.DiagnosticMessageEqual("Unknown type 'Missing'.", diagnostics[0])
+                && !System.Testing.DiagnosticHasLocation(diagnostics[1]);
+        }
+
+        finite law bool DiagnosticDirectChainAssertionsWork(borrow System.Testing.Diagnostic[] diagnostics)
+        {
+            return System.Testing.DiagnosticHasLocation(diagnostics[0])
+                && System.Testing.DiagnosticHasEndLocation(diagnostics[0])
+                && System.Testing.DiagnosticFilePath("Demo.stark", diagnostics[0])
+                && System.Testing.DiagnosticAt(diagnostics[0], 7, 13)
+                && System.Testing.DiagnosticEndsAt(diagnostics[0], 7, 20)
+                && System.Testing.DiagnosticMessageEqual("Unknown type 'Missing'.", diagnostics[0])
+                && !System.Testing.DiagnosticHasLocation(diagnostics[1]);
+        }
+
+        finite law bool TypeAssertionsWork()
+        {
+            return System.Testing.TypeIs<System.Option<i32[min max]>, System.Core.Option<i32[min max]>>()
+                && System.Testing.TypeIsInteger<i32[min max]>()
+                && System.Testing.TypeIsStruct<AssertionBox>()
+                && System.Testing.TypeIsEnum<AssertionToken>()
+                && System.Testing.TypeDisplayName<AssertionBox>("AssertionBox")
+                && System.Testing.TypeBaseName<AssertionBox>("AssertionBox")
+                && System.Testing.TypeModuleName<AssertionBox>("DemoTests")
+                && System.Testing.TypeHasConcreteLayout<AssertionBox>()
+                && System.Testing.TypeIsZeroSized<EmptyMarker>()
+                && System.Testing.TypeSizeIs<i32[min max]>(4)
+                && System.Testing.TypeAlignIs<i32[min max]>(4)
+                && System.Testing.TypeIsGenericInstantiation<System.Collections.List<i32[min max]>>()
+                && System.Testing.TypeArgumentCount<System.Collections.List<i32[min max]>>(1)
+                && System.Testing.TypeComptimeArgumentCount<System.Collections.List<i32[min max]>>(0);
+        }
+
+        [Fact]
+        finite law bool DiagnosticsAndTypesWork()
+        {
+            stack System.Testing.Diagnostic[2] diagnostics =
+            {
+                new System.Testing.Diagnostic()
+                {
+                    Code = "STK3004",
+                    Severity = System.Testing.DiagnosticSeverity.Error,
+                    Message = "Unknown type 'Missing'.",
+                    Stage = "type-check",
+                    Location = new System.Testing.DiagnosticLocation()
+                    {
+                        HasValue = true,
+                        FilePath = "Demo.stark",
+                        Line = 7,
+                        Column = 13,
+                        HasEndValue = true,
+                        EndLine = 7,
+                        EndColumn = 20
+                    }
+                },
+                new System.Testing.Diagnostic()
+                {
+                    Code = "STK9000",
+                    Severity = System.Testing.DiagnosticSeverity.Warning,
+                    Message = "Skipping pass after diagnostics.",
+                    Stage = "pipeline",
+                    Location = new System.Testing.DiagnosticLocation()
+                    {
+                        HasValue = false,
+                        FilePath = "",
+                        Line = 0,
+                        Column = 0,
+                        HasEndValue = false,
+                        EndLine = 0,
+                        EndColumn = 0
+                    }
+                }
+            };
+            stack System.Testing.Diagnostic[] diagnosticSlice = diagnostics;
+
+            if (!DiagnosticCountAssertionsWork(diagnosticSlice))
+            {
+                return false;
+            }
+
+            if (!DiagnosticContainAssertionsWork(diagnosticSlice))
+            {
+                return false;
+            }
+
+            if (!DiagnosticDirectChainAssertionsWork(diagnosticSlice))
+            {
+                return false;
+            }
+
+            if (!DiagnosticDirectBoolAssertionsWork(diagnosticSlice))
+            {
+                return false;
+            }
+
+            if (!DiagnosticDirectLocationAssertionsWork(diagnosticSlice))
+            {
+                return false;
+            }
+
+            if (!DiagnosticDirectMessageAssertionsWork(diagnosticSlice))
+            {
+                return false;
+            }
+
+            return TypeAssertionsWork();
         }
 
         [Fact]
@@ -335,6 +521,122 @@ public sealed class SystemTestingStandardLibraryTests : StandardLibraryTestSuite
             return IsOk(fixture.Cleanup());
         }
 
+        [Fact]
+        fn bool ProcessHarnessWorks()
+        {
+            unsafe
+            {
+                stack System.Process.ProcessResult<System.Process.ProcessCommand> commandResult =
+                    System.Process.Command("/bin/sh");
+                switch (commandResult)
+                {
+                    case System.Process.ProcessResult<System.Process.ProcessCommand>.Err(var error):
+                        return false;
+                    case System.Process.ProcessResult<System.Process.ProcessCommand>.Ok(var command):
+                        stack mut System.Process.ProcessCommand child = command;
+                        switch (child.AddArgument("-c"))
+                        {
+                            case System.Process.ProcessStatus.Err(var error):
+                                return false;
+                            case System.Process.ProcessStatus.Ok:
+                        }
+
+                        switch (child.AddArgument("cat; printf err 1>&2; exit 9"))
+                        {
+                            case System.Process.ProcessStatus.Err(var error):
+                                return false;
+                            case System.Process.ProcessStatus.Ok:
+                        }
+
+                        if (!System.Testing.RunProcessMatchesWithInput(child, "input-ok\n", 9, "input-ok\n", "err"))
+                        {
+                            return false;
+                        }
+
+                        switch (System.Process.RunCaptureWithInput(child, "input-ok\n"))
+                        {
+                            case System.Process.ProcessResult<System.Process.ProcessOutput>.Err(var error):
+                                return false;
+                            case System.Process.ProcessResult<System.Process.ProcessOutput>.Ok(var output):
+                                if (!(System.Testing.ProcessOutputEqual(9, "input-ok\n", "err", output)
+                                    && System.Testing.ProcessExitCode(9, output)
+                                    && System.Testing.ProcessStdoutEqual("input-ok\n", output)
+                                    && System.Testing.ProcessStderrEqual("err", output)
+                                    && System.Testing.ProcessStdoutStartsWith(output, "input")
+                                    && System.Testing.ProcessStdoutEndsWith(output, "\n")
+                                    && System.Testing.ProcessStdoutContains(output, "ok")
+                                    && System.Testing.ProcessStderrContains(output, "rr")
+                                    && System.Testing.ProcessStdoutCountOccurrences(output, "input") == 1
+                                    && System.Testing.ProcessStdoutOccurrences(1, output, "ok")
+                                    && System.Testing.ProcessStdoutOccurrences(0, output, "")
+                                    && System.Testing.ProcessStderrCountOccurrences(output, "r") == 2
+                                    && System.Testing.ProcessStderrOccurrences(1, output, "rr")
+                                    && !System.Testing.ProcessStdoutEmpty(output)
+                                    && !System.Testing.ProcessStderrEmpty(output)
+                                    && System.Testing.ProcessCompleted(output)
+                                    && !System.Testing.ProcessTimedOut(output)))
+                                {
+                                    return false;
+                                }
+                        }
+
+                        switch (System.Process.Command("/bin/sh"))
+                        {
+                            case System.Process.ProcessResult<System.Process.ProcessCommand>.Err(var error):
+                                return false;
+                            case System.Process.ProcessResult<System.Process.ProcessCommand>.Ok(var timeoutCommand):
+                                stack mut System.Process.ProcessCommand timeoutChild = timeoutCommand;
+                                switch (timeoutChild.AddArgument("-c"))
+                                {
+                                    case System.Process.ProcessStatus.Err(var error):
+                                        return false;
+                                    case System.Process.ProcessStatus.Ok:
+                                }
+
+                                switch (timeoutChild.AddArgument("exec sleep 5"))
+                                {
+                                    case System.Process.ProcessStatus.Err(var error):
+                                        return false;
+                                    case System.Process.ProcessStatus.Ok:
+                                }
+
+                                if (!System.Testing.RunProcessTimesOut(timeoutChild, 500))
+                                {
+                                    return false;
+                                }
+                        }
+
+                        switch (System.Process.Command("/bin/sh"))
+                        {
+                            case System.Process.ProcessResult<System.Process.ProcessCommand>.Err(var error):
+                                return false;
+                            case System.Process.ProcessResult<System.Process.ProcessCommand>.Ok(var timeoutCommand):
+                                stack mut System.Process.ProcessCommand timeoutChild = timeoutCommand;
+                                switch (timeoutChild.AddArgument("-c"))
+                                {
+                                    case System.Process.ProcessStatus.Err(var error):
+                                        return false;
+                                    case System.Process.ProcessStatus.Ok:
+                                }
+
+                                switch (timeoutChild.AddArgument("cat; exec sleep 5"))
+                                {
+                                    case System.Process.ProcessStatus.Err(var error):
+                                        return false;
+                                    case System.Process.ProcessStatus.Ok:
+                                }
+
+                                if (!System.Testing.RunProcessTimesOutWithInput(timeoutChild, "input-ok\n", 500))
+                                {
+                                    return false;
+                                }
+                        }
+
+                        return true;
+                }
+            }
+        }
+
         export fn i32[min max] main()
         {
             stack mut u8[0 1] failed = 0;
@@ -348,6 +650,11 @@ public sealed class SystemTestingStandardLibraryTests : StandardLibraryTestSuite
                 failed = 1;
             }
 
+            if (System.Testing.RunFact("DiagnosticsAndTypesWork", DiagnosticsAndTypesWork()) != 0)
+            {
+                failed = 1;
+            }
+
             if (System.Testing.RunFact("TempFixturesWork", TempFixturesWork()) != 0)
             {
                 failed = 1;
@@ -357,6 +664,13 @@ public sealed class SystemTestingStandardLibraryTests : StandardLibraryTestSuite
             {
                 failed = 1;
             }
+
+            if (System.Testing.RunFact("ProcessHarnessWorks", ProcessHarnessWorks()) != 0)
+            {
+                failed = 1;
+            }
+
+            System.Testing.SkipFact("SkippedByDesign", "platform gate");
 
             return System.Testing.ExitCode(failed);
         }
@@ -416,6 +730,9 @@ public sealed class SystemTestingStandardLibraryTests : StandardLibraryTestSuite
             Assert.Contains("ok RichAssertionsWork", execution.Stdout, StringComparison.Ordinal);
             Assert.Contains("ok TempFixturesWork", execution.Stdout, StringComparison.Ordinal);
             Assert.Contains("ok SnapshotsWork", execution.Stdout, StringComparison.Ordinal);
+            Assert.Contains("ok ProcessHarnessWorks", execution.Stdout, StringComparison.Ordinal);
+            Assert.Contains("ok DiagnosticsAndTypesWork", execution.Stdout, StringComparison.Ordinal);
+            Assert.Contains("skipped SkippedByDesign: platform gate", execution.Stdout, StringComparison.Ordinal);
             Assert.Equal(string.Empty, execution.Stderr);
         }
         finally
@@ -440,7 +757,29 @@ public sealed class SystemTestingStandardLibraryTests : StandardLibraryTestSuite
 
         Assert.DoesNotContain("rawptr<", testingSource, StringComparison.Ordinal);
         Assert.DoesNotContain("rawmutptr<", testingSource, StringComparison.Ordinal);
+        Assert.Contains("public finite law bool Equal(bool expected, bool actual)", testingSource, StringComparison.Ordinal);
+        Assert.Contains("public finite law bool Contains(ascii value, ascii expected)", testingSource, StringComparison.Ordinal);
+        Assert.Contains("public finite law u64[0 2 ** 63 - 1] CountOccurrences(ascii value, ascii needle)", testingSource, StringComparison.Ordinal);
+        Assert.Contains("public finite law bool Occurrences(u64[0 2 ** 63 - 1] expected, ascii value, ascii needle)", testingSource, StringComparison.Ordinal);
+        Assert.Contains("public finite law bool OptionSome<T>(borrow System.Core.Option<T> value)", testingSource, StringComparison.Ordinal);
+        Assert.Contains("public enum DiagnosticSeverity", testingSource, StringComparison.Ordinal);
+        Assert.Contains("public struct Diagnostic", testingSource, StringComparison.Ordinal);
+        Assert.Contains("public finite law bool DiagnosticsContain(", testingSource, StringComparison.Ordinal);
+        Assert.Contains("public finite law bool TypeIs<TActual, TExpected>()", testingSource, StringComparison.Ordinal);
+        Assert.Contains("public finite law bool ProcessOutputEqual(", testingSource, StringComparison.Ordinal);
+        Assert.Contains("public finite law u64[0 2 ** 63 - 1] ProcessStdoutCountOccurrences(", testingSource, StringComparison.Ordinal);
+        Assert.Contains("public finite law bool ProcessStderrOccurrences(", testingSource, StringComparison.Ordinal);
+        Assert.Contains("public finite law SnapshotResult CompareSnapshotText(", testingSource, StringComparison.Ordinal);
+        Assert.Contains("public fn bool Fail(ascii message)", testingSource, StringComparison.Ordinal);
+        Assert.Contains("public fn u8[0 1] RunFact(ascii name, bool assertion)", testingSource, StringComparison.Ordinal);
+        Assert.Contains("public fn u8[0 1] SkipFact(ascii name, ascii reason)", testingSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("public fn bool Equal", testingSource, StringComparison.Ordinal);
         Assert.Contains("import System.Testing", systemSource, StringComparison.Ordinal);
         Assert.DoesNotContain("export import System.Testing", systemSource, StringComparison.Ordinal);
+        Assert.Contains("finite law bool AdditionWorks()", TestingAssertionsProgram, StringComparison.Ordinal);
+        Assert.Contains("finite law bool DiagnosticCountAssertionsWork(", TestingAssertionsProgram, StringComparison.Ordinal);
+        Assert.Contains("finite law bool DiagnosticsAndTypesWork()", TestingAssertionsProgram, StringComparison.Ordinal);
+        Assert.DoesNotContain("fn bool DiagnosticCountAssertionsWork", TestingAssertionsProgram, StringComparison.Ordinal);
+        Assert.Contains("fn bool RichAssertionsWork()", TestingAssertionsProgram, StringComparison.Ordinal);
     }
 }

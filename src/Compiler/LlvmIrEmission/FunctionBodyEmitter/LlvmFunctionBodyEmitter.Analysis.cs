@@ -1334,18 +1334,6 @@ internal sealed partial class LlvmFunctionBodyEmitter
         return _singleStoreLocalValues.TryGetValue(localName, out value!);
     }
 
-    private HashSet<string> CollectConstProvenanceLocalNames()
-    {
-        return _ssaFunction.Blocks
-            .SelectMany(static block => block.Instructions)
-            .OfType<SsaAllocateLocalInstruction>()
-            .Where(static allocateLocal =>
-                allocateLocal.HasConstProvenance
-                || ConstProvenanceFacts.HasPermanentConstProvenance(allocateLocal.ConstProvenance))
-            .Select(static allocateLocal => allocateLocal.LocalName)
-            .ToHashSet(StringComparer.Ordinal);
-    }
-
     private HashSet<string> CollectInvariantLocalNames()
     {
         var candidates = new Dictionary<string, StarkTypeSymbol>(StringComparer.Ordinal);

@@ -227,7 +227,7 @@ outermost layers. Without them, a Stark-hosted compiler cannot drive a build.
       `main` only needs `unsafe`/`ffi` if it touches raw `argc`/`argv`, so
       a safe wrapper API is the natural place.
 - [x] Environment variable read/write on the current Linux backend.
-- [x] Process spawn with stdout/stderr capture + exit code on the current Linux backend.
+- [x] Process spawn with stdin/stdout/stderr capture + exit code on the current Linux backend.
       [NativeToolchain.cs:30-507](../../src/Compiler/NativeToolchain.cs#L30-L507)
       shells out to `clang` and the linker repeatedly.
 

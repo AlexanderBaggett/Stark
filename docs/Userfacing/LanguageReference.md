@@ -119,6 +119,7 @@ The current package author surface is CLI metadata:
 ```bash
 compiler Raylib.stark --emit-lib \
   -o dist/libRaylibStark.a \
+  --package-image-output dist/pkg/libRaylibStark.starkpkg.json \
   --native-source RaylibNative.c \
   --native-pkg-config raylib
 ```
@@ -130,6 +131,7 @@ When the native dependency is not available through `pkg-config`, the package ca
 ```bash
 compiler Raylib.stark --emit-lib \
   -o dist/libRaylibStark.a \
+  --package-image-output dist/pkg/libRaylibStark.starkpkg.json \
   --native-source RaylibNative.c \
   --native-include-dir /path/to/raylib/src \
   --native-library-dir /path/to/raylib/src \

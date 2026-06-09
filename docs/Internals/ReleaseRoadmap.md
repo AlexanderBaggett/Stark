@@ -2068,9 +2068,9 @@ Completion rules:
 
 - [x] Define the Stark test-project model.
   - [x] Model keywords and syntax after Xunit, such as `[Fact]`.
-    - Done: `[Fact]` attributes are valid source metadata on test functions;
-      test discovery remains explicit in `main`, and `[Theory]` is reserved for
-      the later data-driven runner rather than implied today.
+    - Done: `[Fact]` and `[Theory]` attributes are valid source metadata on
+      test functions; `stark test` generates an explicit `main` with inline and
+      typed indexed member-data expansion instead of using runtime reflection.
   - [x] decide whether test projects are a separate `kind = "test"` manifest kind or executable projects with test metadata
     - Done: test projects use separate `kind = "test"` manifests with a
       `[test]` root/output table.

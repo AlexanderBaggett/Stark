@@ -306,6 +306,7 @@ public class StandardLibraryTestSuite
                 Assert.DoesNotContain(modules, module => module.ModuleName == "System.Runtime.Platform.Windows");
             }
             Assert.Contains(modules, module => module.ModuleName == "System.Syscall");
+            Assert.Contains(modules, module => module.ModuleName == "System.Core");
             Assert.Contains(modules, module => module.ModuleName == "System.Text");
             Assert.Contains(modules, module => module.ModuleName == "System.Testing");
             Assert.Contains(modules, module => module.ModuleName == "System.Threading");
@@ -327,9 +328,14 @@ public class StandardLibraryTestSuite
             Assert.Contains("System.Net.Tcp", reExports);
             Assert.Contains("System.Process", reExports);
             Assert.Contains("System.Threading", reExports);
+            Assert.DoesNotContain("System.Core", reExports);
             Assert.DoesNotContain("System.Text", reExports);
             Assert.DoesNotContain("System.Testing", reExports);
             Assert.DoesNotContain(reExports, static moduleName => moduleName.StartsWith("System.Experimental", StringComparison.Ordinal));
+
+            var rootAliases = rootModule.EffectiveSourceSurface.TypeAliases?.Select(static item => item.Name).ToArray() ?? [];
+            Assert.Contains("Option", rootAliases);
+            Assert.Contains("Result", rootAliases);
 
             var fileSystemModule = modules.Single(module => module.ModuleName == "System.FileSystem");
             var fileSystemTypes = fileSystemModule.EffectiveSourceSurface.Types?.Select(static item => item.Name).ToArray() ?? [];

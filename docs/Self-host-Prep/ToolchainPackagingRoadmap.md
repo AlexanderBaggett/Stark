@@ -189,12 +189,12 @@ working and the need is concrete.
 - [ ] Make ordinary builds discover bundled stdlib artifacts.
   - [ ] Add a dedicated stdlib discovery resolver with explicit inputs for target triple, profile, compiler stage, current project root, repo root, build root, compiler distribution root, and user config.
   - [ ] Implement explicit overrides first: CLI flags, project manifest fields, solution manifest fields, user config, and existing `-I`, `-L`, package library override behavior.
-  - [ ] Implement stage/build-local lookup for bootstrap artifacts under `.stark/build/<profile>/<target-triple>/<stage>/stdlib/` from [25-build-artifact-layout.md](25-build-artifact-layout.md).
-  - [ ] Implement source-tree development lookup through repo `stdlib/Stark.toml` and `stdlib/dist` artifacts without requiring release layout.
-  - [ ] Implement installed bundled lookup relative to the active compiler distribution.
+  - [x] Implement stage/build-local lookup for bootstrap artifacts under `.stark/build/<profile>/<target-triple>/<stage>/stdlib/` from [25-build-artifact-layout.md](25-build-artifact-layout.md).
+  - [x] Implement source-tree development lookup through repo `stdlib/Stark.toml` and `stdlib/dist` artifacts without requiring release layout.
+  - [x] Implement installed bundled lookup relative to the active compiler distribution.
   - [ ] Validate discovered stdlib binary package image, native library, target triple, data layout, profile, and compiler/package compatibility before use.
-  - [ ] Keep ordinary discovery free of hidden global package search and network access.
-  - [ ] When discovery fails, report every searched stdlib path and the active target/profile/stage.
+  - [x] Keep ordinary discovery free of hidden global package search and network access.
+  - [x] When discovery fails, report every searched stdlib path and the active target/profile/stage.
 
 - [ ] Add stdlib package generation to release scripts.
   - [ ] Build with the same bundled toolchain selected for the release.
@@ -204,11 +204,11 @@ working and the need is concrete.
 - [ ] Add compatibility tests.
   - [ ] Explicit stdlib override wins over all discovered candidates.
   - [ ] Stage/build-local stdlib artifacts are selected during bootstrap builds.
-  - [ ] Source-tree development builds work from repo `stdlib/` and `stdlib/dist` without release layout.
-  - [ ] Installed release builds find bundled stdlib artifacts next to the compiler without source-tree paths.
+  - [x] Source-tree development builds work from repo `stdlib/` and `stdlib/dist` without release layout.
+  - [x] Installed release builds find bundled stdlib artifacts next to the compiler without source-tree paths.
   - [ ] Discovery rejects target/profile/package-metadata mismatches with clear diagnostics.
-  - [ ] Discovery failure reports every searched path and active target/profile/stage.
-  - [ ] Discovery does not silently use global or network package locations.
+  - [x] Discovery failure reports every searched path and active target/profile/stage.
+  - [x] Discovery does not silently use global or network package locations.
   - [ ] Fresh release archive can compile a hello-world executable using `System.Console`.
   - [ ] Fresh release archive can compile a library package.
   - [ ] Fresh release archive can consume a compiled standard library package without source-tree paths.

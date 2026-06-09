@@ -58,6 +58,8 @@ public sealed class CompilerCliTests
         Assert.Contains("--native-pkg-config <name>", text);
         Assert.Contains("--save-temps <dir>", text);
         Assert.Contains("--toolchain-metrics <path>", text);
+        Assert.Contains("--package-image-output <path>", text);
+        Assert.Contains("--no-stark-path", text);
         Assert.Contains("--diagnostic-format <text|json>", text);
         Assert.Contains("--log-level <info|warning|error>     Set the minimum compiler log severity printed to stderr (default: warning)", text);
         Assert.Contains("--log-verbosity <normal|verbose>", text);
@@ -217,6 +219,124 @@ public sealed class CompilerCliTests
             Assert.Equal(string.Empty, stderr.ToString());
             Assert.True(File.Exists(outputPath));
             Assert.True(File.Exists(manifestPath));
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public async Task EmitLibraryCanRoutePackageImageAwayFromStaticLibrary()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
+        {
+            return;
+        }
+
+        var archiverPath = FindFirstAvailableTool("llvm-ar", "ar");
+        if (archiverPath is null)
+        {
+            return;
+        }
+
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-cli-lib-package-route-");
+        var rootPath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+        var binDirectory = Path.Combine(tempDirectory.FullName, "bin");
+        var packageDirectory = Path.Combine(tempDirectory.FullName, "pkg");
+        Directory.CreateDirectory(binDirectory);
+        Directory.CreateDirectory(packageDirectory);
+
+        var extension = OperatingSystem.IsWindows() ? ".lib" : ".a";
+        var outputPath = Path.Combine(binDirectory, $"libFacade{extension}");
+        var manifestPath = Path.Combine(packageDirectory, "libFacade.starkpkg.json");
+
+        try
+        {
+            await File.WriteAllTextAsync(
+                rootPath,
+                """
+                module Facade
+
+                public finite law i32[min max] Double(i32[min max] value)
+                {
+                    return value + value;
+                }
+                """);
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+
+            var exitCode = await CompilerCli.RunAsync(
+                [rootPath, "--emit-lib", "-o", outputPath, "--package-image-output", manifestPath, "--archiver", archiverPath],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.Equal(0, exitCode);
+            Assert.Contains("Emitted static library:", stdout.ToString(), StringComparison.Ordinal);
+            Assert.Contains("Emitted package image:", stdout.ToString(), StringComparison.Ordinal);
+            Assert.Equal(string.Empty, stderr.ToString());
+            Assert.True(File.Exists(outputPath));
+            Assert.True(File.Exists(manifestPath));
+            Assert.False(File.Exists(Path.Combine(binDirectory, "libFacade.starkpkg.json")));
+
+            var manifest = StarkPackageManifest.FromJson(await File.ReadAllTextAsync(manifestPath));
+            Assert.NotNull(manifest);
+            Assert.Equal(Path.Combine("..", "bin", $"libFacade{extension}"), manifest!.LibraryFileName);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public async Task PackageImageOutputRejectsExecutableEmission()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-cli-package-output-exe-");
+        var rootPath = Path.Combine(tempDirectory.FullName, "App.stark");
+        var packagePath = Path.Combine(tempDirectory.FullName, "App.starkpkg.json");
+
+        try
+        {
+            await File.WriteAllTextAsync(
+                rootPath,
+                """
+                module App
+
+                export fn i32[min max] main()
+                {
+                    return 0;
+                }
+                """);
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+
+            var exitCode = await CompilerCli.RunAsync(
+                [rootPath, "--check", "--package-image-output", packagePath],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.Equal(1, exitCode);
+            Assert.Equal(string.Empty, stdout.ToString());
+            Assert.Contains("--package-image-output is only valid for library emission.", stderr.ToString(), StringComparison.Ordinal);
         }
         finally
         {
@@ -1345,6 +1465,86 @@ public sealed class CompilerCliTests
         }
         finally
         {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public async Task CheckModeCanUseStarkPathAndCanDisableIt()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-cli-stark-path-");
+        var appDirectory = Path.Combine(tempDirectory.FullName, "app");
+        var packageDirectory = Path.Combine(tempDirectory.FullName, "packages");
+        Directory.CreateDirectory(appDirectory);
+        Directory.CreateDirectory(packageDirectory);
+
+        var appPath = Path.Combine(appDirectory, "App.stark");
+        var supportPath = Path.Combine(packageDirectory, "EnvSupport.stark");
+        var originalStarkPath = Environment.GetEnvironmentVariable("STARK_PATH");
+
+        try
+        {
+            await File.WriteAllTextAsync(
+                supportPath,
+                """
+                module EnvSupport
+
+                public finite law i32[min max] Value()
+                {
+                    return 9;
+                }
+                """);
+
+            await File.WriteAllTextAsync(
+                appPath,
+                """
+                import EnvSupport
+                module App
+
+                fn i32[min max] Run()
+                {
+                    return EnvSupport.Value();
+                }
+                """);
+
+            Environment.SetEnvironmentVariable("STARK_PATH", packageDirectory);
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+
+            var exitCode = await CompilerCli.RunAsync(
+                [appPath, "--check"],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.Equal(0, exitCode);
+            Assert.Contains("Check succeeded.", stdout.ToString(), StringComparison.Ordinal);
+            Assert.Equal(string.Empty, stderr.ToString());
+
+            var disabledStdout = new StringWriter();
+            var disabledStderr = new StringWriter();
+            var disabledExitCode = await CompilerCli.RunAsync(
+                [appPath, "--check", "--no-stark-path"],
+                new StringReader(string.Empty),
+                disabledStdout,
+                disabledStderr);
+
+            Assert.Equal(1, disabledExitCode);
+            Assert.Equal(string.Empty, disabledStdout.ToString());
+            Assert.Contains("Unable to resolve imported module 'EnvSupport'.", disabledStderr.ToString(), StringComparison.Ordinal);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("STARK_PATH", originalStarkPath);
+
             try
             {
                 tempDirectory.Delete(recursive: true);

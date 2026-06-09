@@ -17,12 +17,21 @@ internal struct LinuxPollFd
     i16[min max] Revents;
 }
 
+[StructLayout(C)]
+internal struct LinuxTimespec
+{
+    i64[min max] Seconds;
+    i64[min max] Nanoseconds;
+}
+
 internal unsafe ffi(c) fn i32[min max] chdir(rawptr<System.C.c_char> path);
+internal unsafe ffi(c) fn i32[min max] clock_gettime(i32[min max] clockId, rawmutptr<LinuxTimespec> time);
 internal unsafe ffi(c) fn i32[min max] close(i32[min max] fileDescriptor);
 internal unsafe ffi(c) fn i32[min max] dup2(i32[min max] oldFileDescriptor, i32[min max] newFileDescriptor);
 internal unsafe ffi(c) fn i32[min max] execvp(rawptr<System.C.c_char> file, rawptr<rawptr<System.C.c_char>> argv)
     where overlap(file, argv);
 internal unsafe ffi(c) fn i32[min max] fork();
+internal unsafe ffi(c) fn i32[min max] kill(i32[min max] processId, i32[min max] signal);
 internal unsafe ffi(c) fn i32[min max] pipe(rawmutptr<i32[min max]> fileDescriptors);
 internal unsafe ffi(c) fn i32[min max] poll(rawmutptr<LinuxPollFd> fileDescriptors, u64[0 2 ** 63 - 1] count, i32[min max] timeoutMilliseconds);
 internal unsafe ffi(c) fn i64[min max] read(i32[min max] fileDescriptor, rawmutptr<i8[min max]> buffer, u64[0 2 ** 63 - 1] count);
@@ -931,7 +940,11 @@ const LinuxThreadInitialReferences = 2;
 const LinuxStandardInputDescriptor = 0;
 const LinuxStandardOutputDescriptor = 1;
 const LinuxStandardErrorDescriptor = 2;
+const LinuxClockMonotonic = 1;
+const LinuxWaitNoHangOption = 1;
+const LinuxSignalKill = 9;
 const LinuxPollReadableEvent = 1;
+const LinuxPollWritableEvent = 4;
 const LinuxPollErrorEvent = 8;
 const LinuxPollHangupEvent = 16;
 
@@ -939,12 +952,6 @@ internal enum FileOpenResult
 {
     Ok(rawptr<i8[min max]>),
     Err(i32[min max]),
-}
-
-internal struct LinuxTimespec
-{
-    i64[min max] Seconds;
-    i64[min max] Nanoseconds;
 }
 
 internal struct LinuxIovec
@@ -1053,11 +1060,52 @@ internal unsafe fn i32[min max] WaitProcess(i32[min max] processId, rawmutptr<i3
     return waitpid(processId, status, 0);
 }
 
+internal unsafe fn i32[min max] WaitProcessNoHang(i32[min max] processId, rawmutptr<i32[min max]> status)
+{
+    if (status == null)
+    {
+        return -1;
+    }
+
+    return waitpid(processId, status, LinuxWaitNoHangOption);
+}
+
+internal unsafe fn i32[min max] KillProcess(i32[min max] processId)
+{
+    return kill(processId, LinuxSignalKill);
+}
+
+internal unsafe fn i64[min max] MonotonicMilliseconds()
+{
+    stack mut LinuxTimespec time = new LinuxTimespec()
+    {
+        Seconds = 0,
+        Nanoseconds = 0
+    };
+    stack i32[min max] result = clock_gettime(LinuxClockMonotonic, &time);
+    if (result != 0)
+    {
+        return (i64[min max])result;
+    }
+
+    return (time.Seconds * 1000) + (time.Nanoseconds / 1000000);
+}
+
 internal unsafe fn i32[min max] PollProcessPipes(
     i32[min max] stdoutDescriptor,
     i32[min max] stderrDescriptor,
     rawmutptr<i16[min max]> stdoutEvents,
     rawmutptr<i16[min max]> stderrEvents)
+{
+    return PollProcessPipesTimed(stdoutDescriptor, stderrDescriptor, stdoutEvents, stderrEvents, -1);
+}
+
+internal unsafe fn i32[min max] PollProcessPipesTimed(
+    i32[min max] stdoutDescriptor,
+    i32[min max] stderrDescriptor,
+    rawmutptr<i16[min max]> stdoutEvents,
+    rawmutptr<i16[min max]> stderrEvents,
+    i32[min max] timeoutMilliseconds)
 {
     if (stdoutEvents == null || stderrEvents == null)
     {
@@ -1078,15 +1126,79 @@ internal unsafe fn i32[min max] PollProcessPipes(
         Revents = 0
     };
 
-    stack i32[min max] result = poll(&descriptors[0], 2, -1);
+    stack i32[min max] result = poll(&descriptors[0], 2, timeoutMilliseconds);
     *stdoutEvents = descriptors[0].Revents;
     *stderrEvents = descriptors[1].Revents;
+    return result;
+}
+
+internal unsafe fn i32[min max] PollProcessIo(
+    i32[min max] stdinDescriptor,
+    i32[min max] stdoutDescriptor,
+    i32[min max] stderrDescriptor,
+    rawmutptr<i16[min max]> stdinEvents,
+    rawmutptr<i16[min max]> stdoutEvents,
+    rawmutptr<i16[min max]> stderrEvents)
+{
+    return PollProcessIoTimed(
+        stdinDescriptor,
+        stdoutDescriptor,
+        stderrDescriptor,
+        stdinEvents,
+        stdoutEvents,
+        stderrEvents,
+        -1);
+}
+
+internal unsafe fn i32[min max] PollProcessIoTimed(
+    i32[min max] stdinDescriptor,
+    i32[min max] stdoutDescriptor,
+    i32[min max] stderrDescriptor,
+    rawmutptr<i16[min max]> stdinEvents,
+    rawmutptr<i16[min max]> stdoutEvents,
+    rawmutptr<i16[min max]> stderrEvents,
+    i32[min max] timeoutMilliseconds)
+{
+    if (stdinEvents == null || stdoutEvents == null || stderrEvents == null)
+    {
+        return -1;
+    }
+
+    stack mut LinuxPollFd[3] descriptors;
+    descriptors[0] = new LinuxPollFd()
+    {
+        Fd = stdinDescriptor,
+        Events = (i16[min max])LinuxPollWritableEvent,
+        Revents = 0
+    };
+    descriptors[1] = new LinuxPollFd()
+    {
+        Fd = stdoutDescriptor,
+        Events = (i16[min max])LinuxPollReadableEvent,
+        Revents = 0
+    };
+    descriptors[2] = new LinuxPollFd()
+    {
+        Fd = stderrDescriptor,
+        Events = (i16[min max])LinuxPollReadableEvent,
+        Revents = 0
+    };
+
+    stack i32[min max] result = poll(&descriptors[0], 3, timeoutMilliseconds);
+    *stdinEvents = descriptors[0].Revents;
+    *stdoutEvents = descriptors[1].Revents;
+    *stderrEvents = descriptors[2].Revents;
     return result;
 }
 
 internal inline finite law bool ProcessPipeReadable(i16[min max] events)
 {
     return ((i32[min max])events & LinuxPollReadableEvent) != 0;
+}
+
+internal inline finite law bool ProcessPipeWritable(i16[min max] events)
+{
+    return ((i32[min max])events & LinuxPollWritableEvent) != 0;
 }
 
 internal inline finite law bool ProcessPipeClosed(i16[min max] events)

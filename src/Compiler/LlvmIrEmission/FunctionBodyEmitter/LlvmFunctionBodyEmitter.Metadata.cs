@@ -59,23 +59,21 @@ internal sealed partial class LlvmFunctionBodyEmitter
 
     private string GetInvariantLoadMetadataSuffixForAggregateSource(SsaValue value)
     {
-        return IsImmutableAggregateSource(value, new HashSet<string>(StringComparer.Ordinal))
+        return IsPermanentInvariantAggregateSource(value, new HashSet<string>(StringComparer.Ordinal))
             ? $", !invariant.load {EmptyMetadataRef}"
             : string.Empty;
     }
 
     private string GetInvariantLoadMetadataSuffix(SsaValue address)
     {
-        return IsImmutableMemoryReference(address, new HashSet<string>(StringComparer.Ordinal))
+        return IsPermanentInvariantMemoryReference(address, new HashSet<string>(StringComparer.Ordinal))
             ? $", !invariant.load {EmptyMetadataRef}"
             : string.Empty;
     }
 
     private string GetInvariantLocalLoadMetadataSuffix(string localName)
     {
-        return _invariantLocalNames.Contains(localName)
-            ? $", !invariant.load {EmptyMetadataRef}"
-            : string.Empty;
+        return string.Empty;
     }
 
     private string GetValueRangeMetadataSuffix(StarkTypeSymbol type)
@@ -1321,7 +1319,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
             case SsaAddressOfParameterRValue addressOfParameter:
                 return TryCreateTbaaRootAccess(
                     CreateTbaaParameterRootKey(addressOfParameter.ParameterName),
-                    addressOfParameter.PointeeType,
+                    GetTbaaParameterAddressRootType(addressOfParameter.PointeeType),
                     out access);
             case SsaFieldAddressRValue fieldAddress:
                 return TryResolveTbaaAggregateElementAccess(
@@ -1412,8 +1410,15 @@ internal sealed partial class LlvmFunctionBodyEmitter
 
         return TryCreateTbaaRootAccess(
             CreateTbaaParameterRootKey(parameter.SourceName),
-            parameter.SourceType,
+            GetTbaaParameterAddressRootType(parameter.SourceType),
             out access);
+    }
+
+    private static StarkTypeSymbol GetTbaaParameterAddressRootType(StarkTypeSymbol parameterType)
+    {
+        return StarkTypeSymbols.IsPointerBackedBorrowType(parameterType)
+            ? StarkTypeSymbols.BorrowReturnValueType(parameterType)
+            : parameterType;
     }
 
     private bool TryCreateTbaaRootAccess(string rootKey, StarkTypeSymbol rootType, out TbaaAddressAccess access)
@@ -1623,23 +1628,18 @@ internal sealed partial class LlvmFunctionBodyEmitter
 
     private static string CreateScopedAliasDynamicLocalRootKey(string localName) => $"dynamic-local:{localName}";
 
-    private bool IsImmutableMemoryReference(SsaValue value, ISet<string> visitedValueNames)
+    private bool IsPermanentInvariantMemoryReference(SsaValue value, ISet<string> visitedValueNames)
     {
-        if (HasConstMemoryProvenance(value, new HashSet<string>(StringComparer.Ordinal)))
-        {
-            return true;
-        }
-
         return value switch
         {
             SsaTextDataAddressValue => true,
             SsaGlobalAddressValue globalAddress => IsImmutableGlobalName(globalAddress.GlobalName),
-            SsaValueReference reference => ResolveImmutableMemoryReference(reference, visitedValueNames),
+            SsaValueReference reference => ResolvePermanentInvariantMemoryReference(reference, visitedValueNames),
             _ => false
         };
     }
 
-    private bool ResolveImmutableMemoryReference(SsaValueReference reference, ISet<string> visitedValueNames)
+    private bool ResolvePermanentInvariantMemoryReference(SsaValueReference reference, ISet<string> visitedValueNames)
     {
         if (!visitedValueNames.Add(reference.Name))
         {
@@ -1648,98 +1648,27 @@ internal sealed partial class LlvmFunctionBodyEmitter
 
         if (!_valueDefinitions.TryGetValue(reference.Name, out var definition))
         {
-            return IsConstParameterValueReference(reference);
+            return false;
         }
 
         return definition switch
         {
-            SsaUseRValue use => IsImmutableMemoryReference(use.Value, visitedValueNames),
-            SsaAddressOfLocalRValue addressOfLocal => _constProvenanceLocalNames.Contains(addressOfLocal.LocalName)
-                || _invariantLocalNames.Contains(addressOfLocal.LocalName),
-            SsaAddressOfParameterRValue addressOfParameter => IsConstParameter(addressOfParameter.ParameterName),
-            SsaFieldAddressRValue fieldAddress => IsImmutableMemoryReference(fieldAddress.Address, visitedValueNames),
-            SsaElementAddressRValue elementAddress => IsImmutableMemoryReference(elementAddress.Address, visitedValueNames),
-            SsaSliceElementAddressRValue sliceElementAddress => IsImmutableMemoryReference(sliceElementAddress.Slice, visitedValueNames),
-            SsaMakeSliceFromLocalRValue makeSlice => _constProvenanceLocalNames.Contains(makeSlice.LocalName)
-                || _invariantLocalNames.Contains(makeSlice.LocalName),
-            SsaMakeSliceFromPointerRValue makeSlice => IsImmutableMemoryReference(makeSlice.Pointer, visitedValueNames),
+            SsaUseRValue use => IsPermanentInvariantMemoryReference(use.Value, visitedValueNames),
+            SsaFieldAddressRValue fieldAddress => IsPermanentInvariantMemoryReference(fieldAddress.Address, visitedValueNames),
+            SsaElementAddressRValue elementAddress => IsPermanentInvariantMemoryReference(elementAddress.Address, visitedValueNames),
+            SsaSliceElementAddressRValue sliceElementAddress => IsPermanentInvariantMemoryReference(sliceElementAddress.Slice, visitedValueNames),
+            SsaMakeSliceFromPointerRValue makeSlice => IsPermanentInvariantMemoryReference(makeSlice.Pointer, visitedValueNames),
             SsaLoadLocalRValue loadLocal when TryResolveSingleStoreLocalValue(loadLocal.LocalName, out var storedValue)
-                => IsImmutableMemoryReference(storedValue, visitedValueNames),
-            SsaTextSliceRValue textSlice => IsImmutableMemoryReference(textSlice.TextValue, visitedValueNames),
+                => IsPermanentInvariantMemoryReference(storedValue, visitedValueNames),
+            SsaTextSliceRValue textSlice => IsPermanentInvariantMemoryReference(textSlice.TextValue, visitedValueNames),
             SsaConvertRValue convert when convert.Operand.Type.Kind == StarkTypeKind.RawPointer
                                         && convert.TargetType.Kind == StarkTypeKind.RawPointer
-                => IsImmutableMemoryReference(convert.Operand, visitedValueNames),
+                => IsPermanentInvariantMemoryReference(convert.Operand, visitedValueNames),
             _ => false
         };
     }
 
-    private bool HasConstMemoryProvenance(SsaValue value, ISet<string> visitedValueNames)
-    {
-        return value switch
-        {
-            SsaGlobalAddressValue globalAddress => IsPermanentConstGlobalName(globalAddress.GlobalName),
-            SsaValueReference reference => HasConstMemoryProvenance(reference, visitedValueNames),
-            _ => false
-        };
-    }
-
-    private bool HasConstMemoryProvenance(SsaValueReference reference, ISet<string> visitedValueNames)
-    {
-        if (IsConstParameterValueReference(reference))
-        {
-            return true;
-        }
-
-        if (!visitedValueNames.Add(reference.Name))
-        {
-            return false;
-        }
-
-        if (!_valueDefinitions.TryGetValue(reference.Name, out var definition))
-        {
-            return false;
-        }
-
-        return definition switch
-        {
-            SsaUseRValue use => HasConstMemoryProvenance(use.Value, visitedValueNames),
-            SsaConvertRValue convert when convert.Operand.Type.Kind == StarkTypeKind.RawPointer
-                                        && convert.TargetType.Kind == StarkTypeKind.RawPointer
-                => HasConstMemoryProvenance(convert.Operand, visitedValueNames),
-            SsaAddressOfParameterRValue addressOfParameter => IsConstParameter(addressOfParameter.ParameterName),
-            SsaAddressOfLocalRValue addressOfLocal => _constProvenanceLocalNames.Contains(addressOfLocal.LocalName),
-            SsaFieldAddressRValue fieldAddress => HasConstMemoryProvenance(fieldAddress.Address, visitedValueNames),
-            SsaElementAddressRValue elementAddress => HasConstMemoryProvenance(elementAddress.Address, visitedValueNames),
-            SsaSliceElementAddressRValue sliceElementAddress => HasConstMemoryProvenance(sliceElementAddress.Slice, visitedValueNames),
-            SsaMakeSliceFromPointerRValue makeSlice => HasConstMemoryProvenance(makeSlice.Pointer, visitedValueNames),
-            SsaMakeSliceFromLocalRValue makeSlice => _constProvenanceLocalNames.Contains(makeSlice.LocalName),
-            SsaTextSliceRValue textSlice => HasConstMemoryProvenance(textSlice.TextValue, visitedValueNames),
-            SsaExtractFieldRValue extractField => HasConstMemoryProvenance(extractField.Target, visitedValueNames),
-            SsaExtractIndexRValue extractIndex => HasConstMemoryProvenance(extractIndex.Target, visitedValueNames),
-            SsaLoadGlobalRValue loadGlobal => IsPermanentConstGlobalName(loadGlobal.GlobalName),
-            SsaLoadLocalRValue loadLocal => _constProvenanceLocalNames.Contains(loadLocal.LocalName)
-                || (TryResolveSingleStoreLocalValue(loadLocal.LocalName, out var storedValue)
-                    && HasConstMemoryProvenance(storedValue, visitedValueNames)),
-            SsaLoadIndirectRValue loadIndirect => HasConstMemoryProvenance(loadIndirect.Address, visitedValueNames),
-            _ => false
-        };
-    }
-
-    private bool IsConstParameterValueReference(SsaValueReference reference)
-    {
-        const string prefix = "arg_";
-        return reference.Name.StartsWith(prefix, StringComparison.Ordinal)
-            && IsConstParameter(reference.Name[prefix.Length..]);
-    }
-
-    private bool IsConstParameter(string parameterName)
-    {
-        return _function.Parameters.Any(parameter =>
-            string.Equals(parameter.Name, parameterName, StringComparison.Ordinal)
-            && parameter.IsConst);
-    }
-
-    private bool IsImmutableAggregateSource(SsaValue value, ISet<string> visitedValueNames)
+    private bool IsPermanentInvariantAggregateSource(SsaValue value, ISet<string> visitedValueNames)
     {
         return value switch
         {
@@ -1748,13 +1677,12 @@ internal sealed partial class LlvmFunctionBodyEmitter
                                            && _valueDefinitions.TryGetValue(reference.Name, out var definition)
                 => definition switch
                 {
-                    SsaUseRValue use => IsImmutableAggregateSource(use.Value, visitedValueNames),
+                    SsaUseRValue use => IsPermanentInvariantAggregateSource(use.Value, visitedValueNames),
                     SsaLoadGlobalRValue loadGlobal => IsImmutableGlobalName(loadGlobal.GlobalName),
-                    SsaLoadLocalRValue loadLocal => _invariantLocalNames.Contains(loadLocal.LocalName),
-                    SsaLoadIndirectRValue loadIndirect => IsImmutableMemoryReference(loadIndirect.Address, visitedValueNames),
+                    SsaLoadIndirectRValue loadIndirect => IsPermanentInvariantMemoryReference(loadIndirect.Address, visitedValueNames),
                     _ => false
                 },
-            _ => IsImmutableMemoryReference(value, visitedValueNames)
+            _ => IsPermanentInvariantMemoryReference(value, visitedValueNames)
         };
     }
 
