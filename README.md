@@ -6,7 +6,7 @@ Stark is a performance-focused programming language targeting LLVM. It's about i
 - Borrows don't escape by default, must opt-in to escaping with retborrow or storeborrow
 - Disjoint pointer memory by default, must opt-in to aliasing with where overlap(...) or where same(...)
 - Integer ranges, be clear about what values you expect
-- String types for differenet uses Ascii and Unicode, pick the right one for the job instead of paying for one size fits all.
+- String types for differenet uses Ascii and Unicode, pick the right one for the job instead of paying for one size fits all
 - Opt in to deep interior immutability via const
 
 The result is clear intentions and blazing fast code. In fact, in our benchmark suite, Stark beats Rust on most scenarios, see Benchmarks.
