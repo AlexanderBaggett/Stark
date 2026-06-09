@@ -60,6 +60,189 @@ public inline finite law retborrow frozen T Lookup<T>(
     return table[index];
 }
 
+internal unsafe inline fn void SwapSliceElements<T>(
+    mut borrow T[] values,
+    u64[0 2 ** 63 - 1] left,
+    u64[0 2 ** 63 - 1] right)
+{
+    if (left == right)
+    {
+        return;
+    }
+
+    stack T temporary = *(&values[left]);
+    *(&values[left]) = *(&values[right]);
+    *(&values[right]) = temporary;
+    return;
+}
+
+internal inline fn void SiftDownBy<T>(
+    mut borrow T[] values,
+    u64[0 2 ** 63 - 1] start,
+    u64[0 2 ** 63 - 1] end,
+    inline closure<finite law Ordering(borrow T, borrow T) where overlap(arg0, arg1)> compare)
+{
+    stack mut u64[0 2 ** 63 - 1] root = start;
+    while willexit (root < end)
+    {
+        if (root > (u64[0 2 ** 63 - 1])((end - 1) / 2))
+        {
+            return;
+        }
+
+        stack u64[0 2 ** 63 - 1] leftChild = (u64[0 2 ** 63 - 1])(root * 2 + 1);
+        stack mut u64[0 2 ** 63 - 1] swapIndex = root;
+        if (compare(values[swapIndex], values[leftChild]) == Ordering.Less)
+        {
+            swapIndex = leftChild;
+        }
+
+        if (leftChild < end)
+        {
+            stack u64[0 2 ** 63 - 1] rightChild = (u64[0 2 ** 63 - 1])(leftChild + 1);
+            if (compare(values[swapIndex], values[rightChild]) == Ordering.Less)
+            {
+                swapIndex = rightChild;
+            }
+        }
+
+        if (swapIndex == root)
+        {
+            return;
+        }
+
+        unsafe
+        {
+            SwapSliceElements(values, root, swapIndex);
+        }
+
+        root = swapIndex;
+    }
+
+    return;
+}
+
+public inline fn void SortBy<T>(
+    mut borrow T[] values,
+    inline closure<finite law Ordering(borrow T, borrow T) where overlap(arg0, arg1)> compare)
+{
+    stack u64[0 2 ** 63 - 1] count = values.Length;
+    if (count < 2)
+    {
+        return;
+    }
+
+    stack u64[0 2 ** 63 - 1] last = (u64[0 2 ** 63 - 1])(count - 1);
+    stack mut u64[0 2 ** 63 - 1] start = (u64[0 2 ** 63 - 1])((count - 2) / 2);
+    while willexit (true)
+    {
+        SiftDownBy(values, start, last, compare);
+        if (start == 0)
+        {
+            break;
+        }
+
+        start -= 1;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] end = last;
+    while willexit (end > 0)
+    {
+        unsafe
+        {
+            SwapSliceElements(values, 0, end);
+        }
+
+        end -= 1;
+        SiftDownBy(values, 0, end, compare);
+    }
+
+    return;
+}
+
+internal inline fn void SiftDown<T>(
+    mut borrow T[] values,
+    u64[0 2 ** 63 - 1] start,
+    u64[0 2 ** 63 - 1] end)
+    where T: Ord
+{
+    stack mut u64[0 2 ** 63 - 1] root = start;
+    while willexit (root < end)
+    {
+        if (root > (u64[0 2 ** 63 - 1])((end - 1) / 2))
+        {
+            return;
+        }
+
+        stack u64[0 2 ** 63 - 1] leftChild = (u64[0 2 ** 63 - 1])(root * 2 + 1);
+        stack mut u64[0 2 ** 63 - 1] swapIndex = root;
+        if (values[swapIndex].Compare(values[leftChild]) == Ordering.Less)
+        {
+            swapIndex = leftChild;
+        }
+
+        if (leftChild < end)
+        {
+            stack u64[0 2 ** 63 - 1] rightChild = (u64[0 2 ** 63 - 1])(leftChild + 1);
+            if (values[swapIndex].Compare(values[rightChild]) == Ordering.Less)
+            {
+                swapIndex = rightChild;
+            }
+        }
+
+        if (swapIndex == root)
+        {
+            return;
+        }
+
+        unsafe
+        {
+            SwapSliceElements(values, root, swapIndex);
+        }
+
+        root = swapIndex;
+    }
+
+    return;
+}
+
+public inline fn void Sort<T>(mut borrow T[] values)
+    where T: Ord
+{
+    stack u64[0 2 ** 63 - 1] count = values.Length;
+    if (count < 2)
+    {
+        return;
+    }
+
+    stack u64[0 2 ** 63 - 1] last = (u64[0 2 ** 63 - 1])(count - 1);
+    stack mut u64[0 2 ** 63 - 1] start = (u64[0 2 ** 63 - 1])((count - 2) / 2);
+    while willexit (true)
+    {
+        SiftDown<T>(values, start, last);
+        if (start == 0)
+        {
+            break;
+        }
+
+        start -= 1;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] end = last;
+    while willexit (end > 0)
+    {
+        unsafe
+        {
+            SwapSliceElements(values, 0, end);
+        }
+
+        end -= 1;
+        SiftDown<T>(values, 0, end);
+    }
+
+    return;
+}
+
 internal fn System.Memory.MemoryStatus ComputeContiguousGrowthCapacity(
     u64[0 2 ** 63 - 1] length,
     u64[0 2 ** 63 - 1] currentCapacity,

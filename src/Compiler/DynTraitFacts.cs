@@ -11,7 +11,8 @@ namespace Stark.Compiler;
 // consistent across the call site and the table.
 //
 // A `dyn Trait` value is a two-word fat pointer { data_ptr, vtable_ptr }. The
-// vtable is a read-only table laid out as:
+// data pointer is erased to rawmutptr<i8>; the vtable pointer is typed as
+// rawptr<Trait.Vtable>. The vtable is a read-only table laid out as:
 //   { <slot 0 method ptr>, ..., <slot N-1 method ptr>, <drop ptr>, i64 size, i64 align }
 // All slots before the size/align tail are pointers, so a slot is reached with a
 // `getelementptr ptr, ptr <vtable>, i32 <slot>` — no struct layout is needed at

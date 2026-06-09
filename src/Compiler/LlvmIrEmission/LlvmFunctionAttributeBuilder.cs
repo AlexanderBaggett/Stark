@@ -238,7 +238,11 @@ internal sealed class LlvmFunctionAttributeBuilder
 
         if (parameter.Kind == AbiParameterKind.SRet)
         {
-            attributes.Add("noalias");
+            if (!CanReachStoredBorrow(parameter.SourceType))
+            {
+                attributes.Add("noalias");
+            }
+
             attributes.Add($"sret({MapType(parameter.SourceType)})");
             attributes.Add("nonnull");
             AppendDereferenceableAttributes(attributes, parameter.SourceType);
@@ -254,7 +258,11 @@ internal sealed class LlvmFunctionAttributeBuilder
                 attributes.Add($"byval({MapType(parameter.SourceType)})");
             }
 
-            attributes.Add("noalias");
+            if (!CanReachStoredBorrow(parameter.SourceType))
+            {
+                attributes.Add("noalias");
+            }
+
             AppendPointerMemoryAccessAttributes(attributes, parameter, parameterEffects);
             AppendCaptureAttribute(attributes, parameterEffects);
             AppendDereferenceableAttributes(attributes, parameter.SourceType);
@@ -287,7 +295,10 @@ internal sealed class LlvmFunctionAttributeBuilder
         if (parameter.SourceType.InitializationKind != StarkInitializationKind.None
             || parameterEffects?.GuaranteedNoAlias == true)
         {
-            attributes.Add("noalias");
+            if (!CanReachStoredBorrow(parameter.SourceType))
+            {
+                attributes.Add("noalias");
+            }
         }
 
         AppendPointerMemoryAccessAttributes(attributes, parameter, parameterEffects);
@@ -420,7 +431,16 @@ internal sealed class LlvmFunctionAttributeBuilder
 
     private void AppendDereferenceableAttributes(List<string> attributes, StarkTypeSymbol type)
     {
-        if (TryGetConcreteTypeLayout(type) is not { } layout)
+        var storageType = type.BorrowKind != StarkBorrowKind.None
+                          || type.InitializationKind != StarkInitializationKind.None
+            ? StarkTypeSymbols.WithQualifiers(
+                type,
+                borrowKind: StarkBorrowKind.None,
+                accessKind: StarkAccessKind.None,
+                initializationKind: StarkInitializationKind.None,
+                isMutableView: false)
+            : type;
+        if (TryGetConcreteTypeLayout(storageType) is not { } layout)
         {
             return;
         }
@@ -496,6 +516,49 @@ internal sealed class LlvmFunctionAttributeBuilder
         }
 
         attributes.Add(replacement);
+    }
+
+    private bool CanReachStoredBorrow(StarkTypeSymbol type)
+    {
+        return CanReachStoredBorrow(type, new HashSet<string>(StringComparer.Ordinal));
+    }
+
+    private bool CanReachStoredBorrow(StarkTypeSymbol type, HashSet<string> visitedNamedTypes)
+    {
+        if (type.BorrowKind == StarkBorrowKind.StoreBorrow)
+        {
+            return true;
+        }
+
+        var valueType = StarkTypeSymbols.BorrowReturnValueType(type);
+        if (valueType.Kind == StarkTypeKind.FixedArray && valueType.ElementType is not null)
+        {
+            return CanReachStoredBorrow(valueType.ElementType, visitedNamedTypes);
+        }
+
+        if (valueType.Kind != StarkTypeKind.Named
+            || valueType.NamedType is not { } namedTypeName
+            || !visitedNamedTypes.Add(namedTypeName))
+        {
+            return false;
+        }
+
+        var namedType = _context.ResolveNamedTypeSymbol(valueType);
+        if (namedType is null
+            && !_context.TypeModel.NamedTypes.TryGetValue(namedTypeName, out namedType))
+        {
+            return false;
+        }
+
+        foreach (var field in namedType.OrderedFields)
+        {
+            if (CanReachStoredBorrow(field.Type, visitedNamedTypes))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static ParameterMemoryEffectSummary? ResolveParameterEffects(

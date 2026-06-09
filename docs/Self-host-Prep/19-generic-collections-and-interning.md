@@ -54,6 +54,17 @@ compiler should report the collection operation, the key type, and the missing
 contract method or associated type rather than failing later during lowering or
 codegen.
 
+Current implementation: `Dictionary<K,V>` and `HashSet<T>` expose the canonical
+`Hash` + `Eq` rule, with `static finite law Hash` / `Equals` methods as the
+concrete implementation hook for user-defined key types. Source-backed and
+package-backed collection use sites report `STK3023` at compile time when a key
+type is unsupported, missing `Hash` / `Equals`, or has an incompatible
+signature, return type, or overlap contract. `SortBy<T>` sorts slices in place
+with an explicit inline `Ordering` comparator and no runtime closure allocation.
+`Sort<T>` sorts slices in place through `T: Ord`, lowers to direct static
+`Compare` calls after monomorphization, and reports missing or incompatible
+`Ord.Compare` at compile time. Ordered map/set helpers remain future work.
+
 ## 3. Text Keys
 
 Primitive `ascii` / `unicode`, owned text types, and borrowed text views used
@@ -76,6 +87,8 @@ Current implementation: `ascii` and `unicode` are compiler-known text key
 types for `Dictionary<K,V>` and `HashSet<T>` and lower to direct ordinal
 hash/equality helpers; `OwnedAscii` and `OwnedUnicode` provide explicit static
 `Hash`/`Equals` hooks plus `Compare`/`Format` helpers using the same semantics.
+`System.Text.Interning` provides ASCII-backed compiler interner types that
+accept borrowed `ascii` lookup keys without allocating owned text.
 
 ## 4. Compiler Interning Pattern
 
@@ -180,28 +193,41 @@ The design is speed-first:
 - [x] Land canonical `Eq`, `Hash`, `Ord`, and `Format` contract names.
 - [x] Land explicit static `Dictionary<K, V>` key `Hash`/`Equals` support for
       non-primitive key types.
-- [ ] Align `Dictionary<K, V>` and `HashSet<T>` wording/API docs around
+- [x] Align `Dictionary<K, V>` and `HashSet<T>` wording/API docs around
       the canonical `Hash` + `Eq` contract surface, with the current static
       `Hash`/`Equals` methods treated as the concrete implementation hook.
 - [x] Implement or verify `Hash`, `Eq`, `Ord`, and `Format` contracts for
       primitive `ascii` / `unicode`, owned text values, and borrowed text views
       used by compiler lookup APIs.
-- [ ] Add allocation-free borrowed lookup APIs for text-key dictionaries and
-      interners.
+- [x] Add allocation-free borrowed lookup APIs for text-key dictionaries and
+      interners. `System.Text` now exposes allocation-free borrowed
+      `ContainsAsciiKey` / `TryGetAsciiKey` for `Dictionary<OwnedAscii,V>`,
+      `ContainsUnicodeKey` / `TryGetUnicodeKey` for
+      `Dictionary<OwnedUnicode,V>`, and borrowed `Contains*Key` wrappers for
+      `HashSet<OwnedAscii>` / `HashSet<OwnedUnicode>`. `System.Text.Interning`
+      exposes `Contains` / `TryGet` borrowed `ascii` lookup on each compiler
+      interner without allocating owned text.
 - [x] Add `HashSet<T>` using the same `Hash` + `Eq` key rule.
-- [ ] Add deterministic ordered map/set helpers or a documented sorting path for
+- [x] Add deterministic ordered map/set helpers or a documented sorting path for
       compiler artifacts that need stable output.
-- [ ] Add compiler interner types and typed ID wrappers for symbols, types,
+- [x] Add compiler interner types and typed ID wrappers for symbols, types,
       modules, packages, fields, members, and artifact keys.
 - [ ] Port compiler symbol tables so front-end text is interned once and later
       phases use typed IDs.
 - [ ] Ensure package image writing, diagnostics, generated source bridges, and
       golden artifacts never depend on hash table iteration order.
-- [ ] Add compile-time diagnostics for missing or incompatible `Hash`/`Eq`/`Ord`
-      contracts at collection use sites.
-- [ ] Add tests for text-key dictionaries, custom key types, missing-contract
+- [x] Add compile-time diagnostics for missing or incompatible `Hash`/`Eq`/`Ord`
+      contracts at collection use sites. `Dictionary<K,V>` and `HashSet<T>`
+      now diagnose missing or incompatible `Hash` / `Equals` contracts for
+      source-backed and package-backed use sites; `Sort<T>` diagnoses missing
+      or incompatible `Ord.Compare` contracts for sorting use sites.
+- [~] Add tests for text-key dictionaries, custom key types, missing-contract
       diagnostics, `HashSet<T>`, deterministic output ordering, typed interner
-      IDs, and borrowed lookups.
+      IDs, and borrowed lookups. Deterministic `SortBy<T>` runtime/lowering
+      tests, `Sort<T>` runtime/lowering/diagnostic tests, borrowed owned-text
+      dictionary/set lookup tests, typed interner ID nominal-mismatch tests,
+      interner borrowed lookup tests, and reverse-copy runtime tests have
+      landed; deterministic artifact-output coverage remains.
 
 ## 9. Book And Reference Work
 

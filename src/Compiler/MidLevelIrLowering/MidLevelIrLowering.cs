@@ -24,6 +24,7 @@ internal sealed partial class MidLevelIrLowerer
         IReadOnlyDictionary<BoundOperationKey, BoundEnumCallOperation> EnumCalls,
         IReadOnlyDictionary<BoundOperationKey, BoundEnumValueOperation> EnumValues,
         IReadOnlyDictionary<BoundOperationKey, BoundDynamicStorageOperation> DynamicStorageOperations,
+        IReadOnlyDictionary<BoundOperationKey, BoundDynTraitFromPartsOperation> DynTraitFromParts,
         IReadOnlyDictionary<BoundOperationKey, BoundTextInterpolationOperation> TextInterpolations,
         IReadOnlyDictionary<BoundOperationKey, BoundTextBuildOperation> TextBuilds,
         IReadOnlyDictionary<BoundOperationKey, BoundLayoutQueryOperation> LayoutQueries,
@@ -102,6 +103,7 @@ internal sealed partial class MidLevelIrLowerer
             BuildBoundOperationMap<BoundEnumCallOperation>(materialized),
             BuildBoundOperationMap<BoundEnumValueOperation>(materialized),
             BuildBoundOperationMap<BoundDynamicStorageOperation>(materialized),
+            BuildBoundOperationMap<BoundDynTraitFromPartsOperation>(materialized),
             BuildBoundOperationMap<BoundTextInterpolationOperation>(materialized),
             BuildBoundOperationMap<BoundTextBuildOperation>(materialized),
             BuildBoundOperationMap<BoundLayoutQueryOperation>(materialized),
@@ -1544,15 +1546,9 @@ internal sealed partial class MidLevelIrLowerer
             if (!module.Reference.IsRoot
                 && module.PackageImageFacts is { FunctionSignatures.Count: > 0 } packageImageFacts)
             {
-                foreach (var declaration in module.SyntaxModel.Declarations.Where(static declaration => declaration.Function is not null))
+                foreach (var (qualifiedName, signature) in packageImageFacts.FunctionSignatures)
                 {
-                    var qualifiedName = FunctionOverloadFacts.QualifyResolvedName(
-                        module,
-                        FunctionOverloadFacts.GetResolvedLocalName(module.SyntaxModel, declaration));
-                    if (packageImageFacts.FunctionSignatures.TryGetValue(qualifiedName, out var signature))
-                    {
-                        functions[qualifiedName] = signature;
-                    }
+                    functions[qualifiedName] = signature;
                 }
 
                 continue;

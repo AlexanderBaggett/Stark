@@ -1361,6 +1361,249 @@ public sealed class SystemTextStandardLibraryTests
     }
 
     [Fact]
+    public async Task SourceStdLibTextLiteralEscapingExecutableRuns()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
+        {
+            return;
+        }
+
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-text-literals-");
+        var appPath = Path.Combine(tempDirectory.FullName, "App.stark");
+        var outputPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "app.exe" : "app");
+
+        try
+        {
+            await File.WriteAllTextAsync(
+                appPath,
+                """
+                import System.Text
+                module Demo
+
+                fn bool IsInvalidTextBuildError(System.Text.TextBuildError error)
+                {
+                    switch (error)
+                    {
+                        case System.Text.TextBuildError.Text(var textError):
+                            switch (textError)
+                            {
+                                case System.Text.TextError.InvalidFormat:
+                                    return true;
+                                case System.Text.TextError.Overflow:
+                                    return false;
+                            }
+                        case System.Text.TextBuildError.Memory(var memoryError):
+                            return false;
+                    }
+                }
+
+                fn bool EscapedAsciiMatches()
+                {
+                    stack System.Text.TextBuildResult<System.Text.OwnedAscii> result =
+                        System.Text.EscapeAsciiForStringLiteral("A\n\"\\");
+                    switch (result)
+                    {
+                        case System.Text.TextBuildResult<System.Text.OwnedAscii>.Err(var error):
+                            return false;
+                        case System.Text.TextBuildResult<System.Text.OwnedAscii>.Ok(var value):
+                            stack mut System.Text.OwnedAscii text = value;
+                            stack i8[min max][] bytes = text.AsSlice();
+                            return text.Length() == 9
+                                && bytes[0] == 34
+                                && bytes[1] == 65
+                                && bytes[2] == 92
+                                && bytes[3] == 110
+                                && bytes[4] == 92
+                                && bytes[5] == 34
+                                && bytes[6] == 92
+                                && bytes[7] == 92
+                                && bytes[8] == 34;
+                    }
+                }
+
+                fn bool EscapedUnicodeMatches()
+                {
+                    stack System.Text.TextBuildResult<System.Text.OwnedAscii> result =
+                        System.Text.EscapeUnicodeForStringLiteral((unicode)"\u03A9");
+                    switch (result)
+                    {
+                        case System.Text.TextBuildResult<System.Text.OwnedAscii>.Err(var error):
+                            return false;
+                        case System.Text.TextBuildResult<System.Text.OwnedAscii>.Ok(var value):
+                            stack mut System.Text.OwnedAscii text = value;
+                            stack i8[min max][] bytes = text.AsSlice();
+                            return text.Length() == 8
+                                && bytes[0] == 34
+                                && bytes[1] == 92
+                                && bytes[2] == 117
+                                && bytes[3] == 48
+                                && bytes[4] == 51
+                                && bytes[5] == 65
+                                && bytes[6] == 57
+                                && bytes[7] == 34;
+                    }
+                }
+
+                fn bool DecodedUnicodeMatches()
+                {
+                    stack System.Text.TextBuildResult<System.Text.OwnedUnicode> result =
+                        System.Text.DecodeStringLiteralToUnicode("\"A\\n\\u03B1\"");
+                    switch (result)
+                    {
+                        case System.Text.TextBuildResult<System.Text.OwnedUnicode>.Err(var error):
+                            return false;
+                        case System.Text.TextBuildResult<System.Text.OwnedUnicode>.Ok(var value):
+                            stack mut System.Text.OwnedUnicode text = value;
+                            stack i32[min max][] codePoints = text.AsSlice();
+                            return text.Length() == 3
+                                && codePoints[0] == 65
+                                && codePoints[1] == 10
+                                && codePoints[2] == 945;
+                    }
+                }
+
+                fn bool DecodedRawUtf8Matches()
+                {
+                    stack System.Text.TextBuildResult<System.Text.OwnedAscii> result =
+                        System.Text.DecodeStringLiteralToUtf8("raw\"plain\\n\"");
+                    switch (result)
+                    {
+                        case System.Text.TextBuildResult<System.Text.OwnedAscii>.Err(var error):
+                            return false;
+                        case System.Text.TextBuildResult<System.Text.OwnedAscii>.Ok(var value):
+                            stack mut System.Text.OwnedAscii text = value;
+                            stack i8[min max][] bytes = text.AsSlice();
+                            return text.Length() == 7
+                                && bytes[0] == 112
+                                && bytes[5] == 92
+                                && bytes[6] == 110;
+                    }
+                }
+
+                fn bool CharacterLiteralMatches()
+                {
+                    stack System.Text.TextBuildResult<i32[min max]> result =
+                        System.Text.DecodeCharacterLiteralCodePoint("'\\n'");
+                    switch (result)
+                    {
+                        case System.Text.TextBuildResult<i32[min max]>.Err(var error):
+                            return false;
+                        case System.Text.TextBuildResult<i32[min max]>.Ok(var value):
+                            return value == 10;
+                    }
+                }
+
+                fn bool InvalidStringReportsTextError()
+                {
+                    stack System.Text.TextBuildResult<System.Text.OwnedUnicode> result =
+                        System.Text.DecodeStringLiteralToUnicode("\"\\q\"");
+                    switch (result)
+                    {
+                        case System.Text.TextBuildResult<System.Text.OwnedUnicode>.Ok(var value):
+                            return false;
+                        case System.Text.TextBuildResult<System.Text.OwnedUnicode>.Err(var error):
+                            return IsInvalidTextBuildError(error);
+                    }
+                }
+
+                fn bool InvalidCharacterReportsTextError()
+                {
+                    stack System.Text.TextBuildResult<i32[min max]> result =
+                        System.Text.DecodeCharacterLiteralCodePoint("'ab'");
+                    switch (result)
+                    {
+                        case System.Text.TextBuildResult<i32[min max]>.Ok(var value):
+                            return false;
+                        case System.Text.TextBuildResult<i32[min max]>.Err(var error):
+                            return IsInvalidTextBuildError(error);
+                    }
+                }
+
+                export fn i32[min max] main()
+                {
+                    if (!EscapedAsciiMatches())
+                    {
+                        return 1;
+                    }
+
+                    if (!EscapedUnicodeMatches())
+                    {
+                        return 2;
+                    }
+
+                    if (!DecodedUnicodeMatches())
+                    {
+                        return 3;
+                    }
+
+                    if (!DecodedRawUtf8Matches())
+                    {
+                        return 4;
+                    }
+
+                    if (!CharacterLiteralMatches())
+                    {
+                        return 5;
+                    }
+
+                    if (!InvalidStringReportsTextError())
+                    {
+                        return 6;
+                    }
+
+                    if (!InvalidCharacterReportsTextError())
+                    {
+                        return 7;
+                    }
+
+                    return 0;
+                }
+                """);
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(
+                [appPath, "--emit-exe", "-I", sourceRoot, "-o", outputPath, "--target", targetInfo.Triple],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.True(exitCode == 0, stdout + Environment.NewLine + stderr);
+            Assert.True(File.Exists(outputPath));
+
+            using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = outputPath,
+                WorkingDirectory = tempDirectory.FullName,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            });
+
+            Assert.NotNull(process);
+            await process!.WaitForExitAsync();
+
+            Assert.Equal(0, process.ExitCode);
+            Assert.Equal(string.Empty, await process.StandardOutput.ReadToEndAsync());
+            Assert.Equal(string.Empty, await process.StandardError.ReadToEndAsync());
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
     public async Task SourceImportedStdLibTryFormatExecutableWritesText()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))

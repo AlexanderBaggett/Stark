@@ -17,23 +17,25 @@ internal sealed class LlvmGlobalInitializerPlanner
         StarkParser.VariableInitializerContext initializer,
         StarkTypeSymbol targetType,
         bool isFrozen,
-        out LlvmGlobalInitializerPlan plan)
+        out LlvmGlobalInitializerPlan plan,
+        CompileTimeEvaluationServices services = default,
+        IReadOnlyDictionary<string, LlvmGlobalInitializerPlan>? initializerBindings = null)
     {
         plan = null!;
 
         if (initializer.expression() is { } expression)
         {
-            return TryPlanGlobalExpression(expression, targetType, isFrozen, out plan);
+            return TryPlanGlobalExpression(expression, targetType, isFrozen, out plan, services, initializerBindings);
         }
 
         if (initializer.objectInitializer() is { } objectInitializer)
         {
-            return TryPlanObjectInitializer(objectInitializer, targetType, isFrozen, out plan);
+            return TryPlanObjectInitializer(objectInitializer, targetType, isFrozen, out plan, services, initializerBindings);
         }
 
         if (initializer.arrayInitializer() is { } arrayInitializer)
         {
-            return TryPlanArrayInitializer(arrayInitializer, targetType, isFrozen, out plan);
+            return TryPlanArrayInitializer(arrayInitializer, targetType, isFrozen, out plan, services, initializerBindings);
         }
 
         return false;
@@ -190,11 +192,13 @@ internal sealed class LlvmGlobalInitializerPlanner
         StarkParser.ExpressionContext expression,
         StarkTypeSymbol targetType,
         bool isFrozen,
-        out LlvmGlobalInitializerPlan plan)
+        out LlvmGlobalInitializerPlan plan,
+        CompileTimeEvaluationServices services = default,
+        IReadOnlyDictionary<string, LlvmGlobalInitializerPlan>? initializerBindings = null)
     {
         plan = null!;
 
-        if (CompileTimeExpressionEvaluator.TryEvaluate(expression, out var constant)
+        if (CompileTimeExpressionEvaluator.TryEvaluate(expression, out var constant, services)
             && CompileTimeExpressionEvaluator.TryCoerce(constant, targetType, out var coerced)
             && TryPlanCompileTimeConstant(coerced, targetType, out plan))
         {
@@ -212,14 +216,57 @@ internal sealed class LlvmGlobalInitializerPlanner
             return TryPlanLiteralInitializer(literal, targetType, out plan);
         }
 
+        if (TryPlanBoundInitializer(primaryExpression, initializerBindings, out plan))
+        {
+            return true;
+        }
+
         if (primaryExpression.objectCreationExpression() is { } objectCreation)
         {
-            return TryPlanObjectCreationInitializer(objectCreation, targetType, isFrozen, out plan);
+            return TryPlanObjectCreationInitializer(
+                objectCreation,
+                targetType,
+                isFrozen,
+                out plan,
+                services,
+                initializerBindings);
         }
 
         if (primaryExpression.expression() is { } groupedExpression)
         {
-            return TryPlanGlobalExpression(groupedExpression, targetType, isFrozen, out plan);
+            return TryPlanGlobalExpression(
+                groupedExpression,
+                targetType,
+                isFrozen,
+                out plan,
+                services,
+                initializerBindings);
+        }
+
+        return false;
+    }
+
+    private static bool TryPlanBoundInitializer(
+        StarkParser.PrimaryExpressionContext primaryExpression,
+        IReadOnlyDictionary<string, LlvmGlobalInitializerPlan>? initializerBindings,
+        out LlvmGlobalInitializerPlan plan)
+    {
+        plan = null!;
+        if (initializerBindings is null)
+        {
+            return false;
+        }
+
+        if (primaryExpression.Identifier() is { } identifier
+            && initializerBindings.TryGetValue(identifier.GetText(), out plan!))
+        {
+            return true;
+        }
+
+        if (primaryExpression.qualifiedName() is { } qualifiedName
+            && initializerBindings.TryGetValue(qualifiedName.GetText(), out plan!))
+        {
+            return true;
         }
 
         return false;
@@ -307,7 +354,9 @@ internal sealed class LlvmGlobalInitializerPlanner
         StarkParser.ObjectCreationExpressionContext objectCreation,
         StarkTypeSymbol targetType,
         bool isFrozen,
-        out LlvmGlobalInitializerPlan plan)
+        out LlvmGlobalInitializerPlan plan,
+        CompileTimeEvaluationServices services = default,
+        IReadOnlyDictionary<string, LlvmGlobalInitializerPlan>? initializerBindings = null)
     {
         plan = null!;
 
@@ -338,7 +387,13 @@ internal sealed class LlvmGlobalInitializerPlanner
                     return false;
                 }
 
-                if (!TryPlanGlobalExpression(arguments[index].expression(), field.Type, isFrozen, out var argumentPlan))
+                if (!TryPlanGlobalExpression(
+                        arguments[index].expression(),
+                        field.Type,
+                        isFrozen,
+                        out var argumentPlan,
+                        services,
+                        initializerBindings))
                 {
                     return false;
                 }
@@ -348,7 +403,15 @@ internal sealed class LlvmGlobalInitializerPlanner
             }
         }
         else if (constructor is not null
-            && !TryPlanExplicitConstructorInitializer(constructor, arguments, namedType, fieldValues))
+            && !TryPlanExplicitConstructorInitializer(
+                constructor,
+                arguments,
+                namedType,
+                isFrozen,
+                fieldValues,
+                preludeDefinitions,
+                services,
+                initializerBindings))
         {
             // Explicit (bodied) constructors are traced at compile time; a constructor
             // that cannot be evaluated this way cannot initialize a static.
@@ -360,7 +423,14 @@ internal sealed class LlvmGlobalInitializerPlanner
         }
 
         if (objectCreation.objectInitializer() is { } objectInitializer
-            && !TryCollectObjectInitializerMembers(objectInitializer, namedType, isFrozen, fieldValues, preludeDefinitions))
+            && !TryCollectObjectInitializerMembers(
+                objectInitializer,
+                namedType,
+                isFrozen,
+                fieldValues,
+                preludeDefinitions,
+                services,
+                initializerBindings))
         {
             return false;
         }
@@ -381,7 +451,11 @@ internal sealed class LlvmGlobalInitializerPlanner
         TypedConstructorShape constructor,
         StarkParser.ArgumentContext[] arguments,
         NamedTypeSymbol namedType,
-        IDictionary<string, string> fieldValues)
+        bool isFrozen,
+        IDictionary<string, string> fieldValues,
+        ICollection<string> preludeDefinitions,
+        CompileTimeEvaluationServices outerServices,
+        IReadOnlyDictionary<string, LlvmGlobalInitializerPlan>? outerInitializerBindings)
     {
         if (constructor.BodyKey is null
             || TryFindConstructorBody(constructor.BodyKey) is not { } constructorBody)
@@ -393,24 +467,64 @@ internal sealed class LlvmGlobalInitializerPlanner
         // its parameter name; the body trace resolves parameter references through
         // these bindings.
         var parameterConstants = new Dictionary<string, CompileTimeConstant>(StringComparer.Ordinal);
+        var parameterInitializers = outerInitializerBindings is null
+            ? new Dictionary<string, LlvmGlobalInitializerPlan>(StringComparer.Ordinal)
+            : new Dictionary<string, LlvmGlobalInitializerPlan>(outerInitializerBindings, StringComparer.Ordinal);
         for (var index = 0; index < arguments.Length; index++)
         {
             var parameter = constructor.Parameters[index];
-            if (!CompileTimeExpressionEvaluator.TryEvaluate(arguments[index].expression(), out var argumentConstant)
-                || !CompileTimeExpressionEvaluator.TryCoerce(argumentConstant, parameter.Type, out var coercedArgument))
+            if (!TryPlanGlobalExpression(
+                    arguments[index].expression(),
+                    parameter.Type,
+                    isFrozen,
+                    out var argumentPlan,
+                    outerServices,
+                    outerInitializerBindings))
             {
                 return false;
             }
 
-            parameterConstants[parameter.Name] = coercedArgument;
+            parameterInitializers[parameter.Name] = argumentPlan;
+            foreach (var prelude in argumentPlan.PreludeDefinitions)
+            {
+                preludeDefinitions.Add(prelude);
+            }
+
+            if (CompileTimeExpressionEvaluator.TryEvaluate(arguments[index].expression(), out var argumentConstant, outerServices)
+                && CompileTimeExpressionEvaluator.TryCoerce(argumentConstant, parameter.Type, out var coercedArgument))
+            {
+                parameterConstants[parameter.Name] = coercedArgument;
+            }
         }
 
         var services = new CompileTimeEvaluationServices(
             TryResolveIdentifier: (string name, out CompileTimeConstant constant) =>
-                parameterConstants.TryGetValue(name, out constant));
+            {
+                if (parameterConstants.TryGetValue(name, out constant))
+                {
+                    return true;
+                }
+
+                if (outerServices.TryResolveIdentifier is not null
+                    && outerServices.TryResolveIdentifier(name, out constant))
+                {
+                    return true;
+                }
+
+                constant = default;
+                return false;
+            });
 
         var constructionComplete = false;
-        return TryTraceConstructorStatements(constructorBody.statement(), services, namedType, fieldValues, ref constructionComplete);
+        return TryTraceConstructorStatements(
+            constructorBody.statement(),
+            services,
+            parameterInitializers,
+            namedType,
+            isFrozen,
+            fieldValues,
+            preludeDefinitions,
+            ref constructionComplete);
     }
 
     /// <summary>
@@ -469,8 +583,11 @@ internal sealed class LlvmGlobalInitializerPlanner
     private bool TryTraceConstructorStatements(
         IEnumerable<StarkParser.StatementContext> statements,
         CompileTimeEvaluationServices services,
+        IReadOnlyDictionary<string, LlvmGlobalInitializerPlan> initializerBindings,
         NamedTypeSymbol namedType,
+        bool isFrozen,
         IDictionary<string, string> fieldValues,
+        ICollection<string> preludeDefinitions,
         ref bool constructionComplete)
     {
         foreach (var statement in statements)
@@ -481,7 +598,15 @@ internal sealed class LlvmGlobalInitializerPlanner
                 return true;
             }
 
-            if (!TryTraceConstructorStatement(statement, services, namedType, fieldValues, ref constructionComplete))
+            if (!TryTraceConstructorStatement(
+                    statement,
+                    services,
+                    initializerBindings,
+                    namedType,
+                    isFrozen,
+                    fieldValues,
+                    preludeDefinitions,
+                    ref constructionComplete))
             {
                 return false;
             }
@@ -493,13 +618,24 @@ internal sealed class LlvmGlobalInitializerPlanner
     private bool TryTraceConstructorStatement(
         StarkParser.StatementContext statement,
         CompileTimeEvaluationServices services,
+        IReadOnlyDictionary<string, LlvmGlobalInitializerPlan> initializerBindings,
         NamedTypeSymbol namedType,
+        bool isFrozen,
         IDictionary<string, string> fieldValues,
+        ICollection<string> preludeDefinitions,
         ref bool constructionComplete)
     {
         if (statement.block() is { } block)
         {
-            return TryTraceConstructorStatements(block.statement(), services, namedType, fieldValues, ref constructionComplete);
+            return TryTraceConstructorStatements(
+                block.statement(),
+                services,
+                initializerBindings,
+                namedType,
+                isFrozen,
+                fieldValues,
+                preludeDefinitions,
+                ref constructionComplete);
         }
 
         if (statement.emptyStatement() is not null)
@@ -521,7 +657,14 @@ internal sealed class LlvmGlobalInitializerPlanner
 
         if (statement.expressionStatement() is { } expressionStatement)
         {
-            return TryTraceConstructorFieldAssignment(expressionStatement.expression(), services, namedType, fieldValues);
+            return TryTraceConstructorFieldAssignment(
+                expressionStatement.expression(),
+                services,
+                initializerBindings,
+                namedType,
+                isFrozen,
+                fieldValues,
+                preludeDefinitions);
         }
 
         // if/else is only traceable when the condition folds to a compile-time constant
@@ -540,11 +683,27 @@ internal sealed class LlvmGlobalInitializerPlanner
             var branches = ifStatement.statement();
             if (conditionConstant.BoolValue)
             {
-                return TryTraceConstructorStatement(branches[0], services, namedType, fieldValues, ref constructionComplete);
+                return TryTraceConstructorStatement(
+                    branches[0],
+                    services,
+                    initializerBindings,
+                    namedType,
+                    isFrozen,
+                    fieldValues,
+                    preludeDefinitions,
+                    ref constructionComplete);
             }
 
             return branches.Length < 2
-                || TryTraceConstructorStatement(branches[1], services, namedType, fieldValues, ref constructionComplete);
+                || TryTraceConstructorStatement(
+                    branches[1],
+                    services,
+                    initializerBindings,
+                    namedType,
+                    isFrozen,
+                    fieldValues,
+                    preludeDefinitions,
+                    ref constructionComplete);
         }
 
         return false;
@@ -553,8 +712,11 @@ internal sealed class LlvmGlobalInitializerPlanner
     private bool TryTraceConstructorFieldAssignment(
         StarkParser.ExpressionContext expression,
         CompileTimeEvaluationServices services,
+        IReadOnlyDictionary<string, LlvmGlobalInitializerPlan> initializerBindings,
         NamedTypeSymbol namedType,
-        IDictionary<string, string> fieldValues)
+        bool isFrozen,
+        IDictionary<string, string> fieldValues,
+        ICollection<string> preludeDefinitions)
     {
         // Must be a plain `self.<Field> = <expression>` assignment (no `init`, no
         // compound operators).
@@ -574,17 +736,82 @@ internal sealed class LlvmGlobalInitializerPlanner
             return false;
         }
 
-        // The assigned value must fold to a compile-time constant; parameter references
-        // resolve through the bound call-site arguments.
-        if (!CompileTimeExpressionEvaluator.TryEvaluate(assignedValue, out var valueConstant, services)
-            || !CompileTimeExpressionEvaluator.TryCoerce(valueConstant, field.Type, out var coercedValue)
-            || !TryPlanCompileTimeConstant(coercedValue, field.Type, out var valuePlan))
+        // The assigned value must be statically plannable. Scalar values fold through
+        // CTFE; aggregate constructor parameters carry their rendered initializer plans.
+        if (!TryPlanConstructorAssignedValue(
+                assignedValue,
+                field.Type,
+                isFrozen,
+                services,
+                initializerBindings,
+                out var valuePlan))
         {
             return false;
         }
 
+        foreach (var prelude in valuePlan.PreludeDefinitions)
+        {
+            preludeDefinitions.Add(prelude);
+        }
+
         fieldValues[fieldName] = valuePlan.Rendered;
         return true;
+    }
+
+    private bool TryPlanConstructorAssignedValue(
+        StarkParser.AssignmentExpressionContext assignedValue,
+        StarkTypeSymbol targetType,
+        bool isFrozen,
+        CompileTimeEvaluationServices services,
+        IReadOnlyDictionary<string, LlvmGlobalInitializerPlan> initializerBindings,
+        out LlvmGlobalInitializerPlan plan)
+    {
+        plan = null!;
+        if (CompileTimeExpressionEvaluator.TryEvaluate(assignedValue, out var valueConstant, services)
+            && CompileTimeExpressionEvaluator.TryCoerce(valueConstant, targetType, out var coercedValue)
+            && TryPlanCompileTimeConstant(coercedValue, targetType, out plan))
+        {
+            return true;
+        }
+
+        if (!TryUnwrapSimplePrimaryExpression(assignedValue, out var primaryExpression))
+        {
+            return false;
+        }
+
+        if (primaryExpression.literal() is { } literal)
+        {
+            return TryPlanLiteralInitializer(literal, targetType, out plan);
+        }
+
+        if (TryPlanBoundInitializer(primaryExpression, initializerBindings, out plan))
+        {
+            return true;
+        }
+
+        if (primaryExpression.objectCreationExpression() is { } objectCreation)
+        {
+            return TryPlanObjectCreationInitializer(
+                objectCreation,
+                targetType,
+                isFrozen,
+                out plan,
+                services,
+                initializerBindings);
+        }
+
+        if (primaryExpression.expression() is { } groupedExpression)
+        {
+            return TryPlanGlobalExpression(
+                groupedExpression,
+                targetType,
+                isFrozen,
+                out plan,
+                services,
+                initializerBindings);
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -621,7 +848,9 @@ internal sealed class LlvmGlobalInitializerPlanner
         StarkParser.ObjectInitializerContext objectInitializer,
         StarkTypeSymbol targetType,
         bool isFrozen,
-        out LlvmGlobalInitializerPlan plan)
+        out LlvmGlobalInitializerPlan plan,
+        CompileTimeEvaluationServices services = default,
+        IReadOnlyDictionary<string, LlvmGlobalInitializerPlan>? initializerBindings = null)
     {
         plan = null!;
 
@@ -633,7 +862,14 @@ internal sealed class LlvmGlobalInitializerPlanner
 
         var preludeDefinitions = new List<string>();
         var fieldValues = new Dictionary<string, string>(StringComparer.Ordinal);
-        if (!TryCollectObjectInitializerMembers(objectInitializer, namedType, isFrozen, fieldValues, preludeDefinitions))
+        if (!TryCollectObjectInitializerMembers(
+                objectInitializer,
+                namedType,
+                isFrozen,
+                fieldValues,
+                preludeDefinitions,
+                services,
+                initializerBindings))
         {
             return false;
         }
@@ -647,7 +883,9 @@ internal sealed class LlvmGlobalInitializerPlanner
         NamedTypeSymbol namedType,
         bool isFrozen,
         IDictionary<string, string> fieldValues,
-        ICollection<string> preludeDefinitions)
+        ICollection<string> preludeDefinitions,
+        CompileTimeEvaluationServices services = default,
+        IReadOnlyDictionary<string, LlvmGlobalInitializerPlan>? initializerBindings = null)
     {
         foreach (var memberInitializer in objectInitializer.memberInitializer())
         {
@@ -657,7 +895,13 @@ internal sealed class LlvmGlobalInitializerPlanner
                 return false;
             }
 
-            if (!TryPlanVariableInitializer(memberInitializer.variableInitializer(), field.Type, isFrozen, out var memberPlan))
+            if (!TryPlanVariableInitializer(
+                    memberInitializer.variableInitializer(),
+                    field.Type,
+                    isFrozen,
+                    out var memberPlan,
+                    services,
+                    initializerBindings))
             {
                 return false;
             }
@@ -723,7 +967,9 @@ internal sealed class LlvmGlobalInitializerPlanner
         StarkParser.ArrayInitializerContext arrayInitializer,
         StarkTypeSymbol targetType,
         bool isFrozen,
-        out LlvmGlobalInitializerPlan plan)
+        out LlvmGlobalInitializerPlan plan,
+        CompileTimeEvaluationServices services = default,
+        IReadOnlyDictionary<string, LlvmGlobalInitializerPlan>? initializerBindings = null)
     {
         plan = null!;
 
@@ -739,7 +985,13 @@ internal sealed class LlvmGlobalInitializerPlanner
         var elements = new List<string>(fixedLength);
         foreach (var initializer in arrayInitializer.variableInitializer())
         {
-            if (!TryPlanVariableInitializer(initializer, targetType.ElementType, isFrozen, out var elementPlan))
+            if (!TryPlanVariableInitializer(
+                    initializer,
+                    targetType.ElementType,
+                    isFrozen,
+                    out var elementPlan,
+                    services,
+                    initializerBindings))
             {
                 return false;
             }
@@ -754,6 +1006,11 @@ internal sealed class LlvmGlobalInitializerPlanner
 
     private static string FormatZeroInitializer(StarkTypeSymbol type)
     {
+        if (StarkTypeSymbols.IsPointerBackedBorrowType(type))
+        {
+            return "null";
+        }
+
         return type.Kind switch
         {
             StarkTypeKind.Integer => "0",
@@ -775,6 +1032,92 @@ internal sealed class LlvmGlobalInitializerPlanner
     private static string FormatStringDataPointer(EmittedStringConstant constant)
     {
         return $"getelementptr inbounds nuw ({constant.ArrayType}, ptr @{constant.SymbolName}, i32 0, i32 0)";
+    }
+
+    private static bool TryUnwrapSimplePrimaryExpression(
+        StarkParser.AssignmentExpressionContext expression,
+        out StarkParser.PrimaryExpressionContext primaryExpression)
+    {
+        primaryExpression = null!;
+
+        if (expression.conditionalExpression() is not { } conditionalExpression
+            || conditionalExpression.QUESTION() is not null)
+        {
+            return false;
+        }
+
+        var logicalOr = conditionalExpression.logicalOrExpression();
+        if (logicalOr.logicalAndExpression().Length != 1)
+        {
+            return false;
+        }
+
+        var logicalAnd = logicalOr.logicalAndExpression(0);
+        if (logicalAnd.bitwiseOrExpression().Length != 1)
+        {
+            return false;
+        }
+
+        var bitwiseOr = logicalAnd.bitwiseOrExpression(0);
+        if (bitwiseOr.bitwiseXorExpression().Length != 1)
+        {
+            return false;
+        }
+
+        var bitwiseXor = bitwiseOr.bitwiseXorExpression(0);
+        if (bitwiseXor.bitwiseAndExpression().Length != 1)
+        {
+            return false;
+        }
+
+        var bitwiseAnd = bitwiseXor.bitwiseAndExpression(0);
+        if (bitwiseAnd.equalityExpression().Length != 1)
+        {
+            return false;
+        }
+
+        var equality = bitwiseAnd.equalityExpression(0);
+        if (equality.relationalExpression().Length != 1)
+        {
+            return false;
+        }
+
+        var relational = equality.relationalExpression(0);
+        if (relational.shiftExpression().Length != 1)
+        {
+            return false;
+        }
+
+        var shift = relational.shiftExpression(0);
+        if (shift.additiveExpression().Length != 1)
+        {
+            return false;
+        }
+
+        var additive = shift.additiveExpression(0);
+        if (additive.multiplicativeExpression().Length != 1)
+        {
+            return false;
+        }
+
+        var multiplicative = additive.multiplicativeExpression(0);
+        if (multiplicative.unaryExpression().Length != 1)
+        {
+            return false;
+        }
+
+        var unary = multiplicative.unaryExpression(0);
+        if (unary.powerExpression() is not { } powerExpression
+            || powerExpression.unaryExpression() is not null
+            || powerExpression.postfixExpression() is not { } postfixExpression
+            || postfixExpression.postfixPart().Length != 0
+            || postfixExpression.primaryExpression() is not { } primary)
+        {
+            return false;
+        }
+
+        primaryExpression = primary;
+        return true;
     }
 
     private static BigInteger ParseSignedIntegerLiteral(StarkParser.SignedIntegerLiteralContext literal)

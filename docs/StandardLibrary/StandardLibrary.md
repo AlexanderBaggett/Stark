@@ -35,7 +35,7 @@ The standard library provides:
 - owned heap-backed collections
 - minimal thread management
 - minimal blocking TCP
-- public process id and exit helpers
+- public process id/exit plus Linux-backed process spawn/capture/env/argv helpers
 - explicit test-project assertion helpers
 - text encoding support
 - a small dynamic-memory contract for owned standard-library containers
@@ -53,8 +53,10 @@ The current public module references live here:
 
 - [System](./System.md)
 - [System.BitOperations](./System.BitOperations.md)
+- [System.C](./System.C.md)
 - [System.Console](./System.Console.md)
 - [System.Collections](./System.Collections.md)
+- [System.Compiler.IntegerFacts](./System.Compiler.IntegerFacts.md)
 - [System.FileSystem](./System.FileSystem.md)
 - [System.IO](./System.IO.md)
 - [System.IO.File](./System.IO.File.md)
@@ -77,6 +79,8 @@ Repository source layout:
 
 - `stdlib/src/System.stark`
 - `stdlib/src/System/BitOperations.stark`
+- `stdlib/src/System/C.stark`
+- `stdlib/src/System/Compiler/IntegerFacts.stark`
 - `stdlib/src/System/Console.stark`
 - `stdlib/src/System/Collections.stark`
 - `stdlib/src/System/FileSystem.stark`
@@ -104,6 +108,8 @@ Current public module surface:
 
 - `System`
 - `System.BitOperations`
+- `System.C`
+- `System.Compiler.IntegerFacts`
 - `System.Console`
 - `System.Collections`
 - `System.FileSystem`
@@ -159,7 +165,8 @@ module System
 
 The repository `System` root now re-exports the implemented source slices for
 `System.Memory`, `System.Collections`, `System.FileSystem`, `System.Threading`,
-`System.Process`, the foundational `System.Net` value/result surface, and the
+`System.Process` process id/exit and Linux-backed spawn/capture/env/argv surface,
+the foundational `System.Net` value/result surface, and the
 initial `System.Net.Tcp` owned lifecycle, `TcpClient.Connect`,
 `TcpClient.Read`, `TcpClient.Write`, `TcpClient.Shutdown`,
 `TcpListener.Listen`, `TcpListener.Accept`, and socket-close surface with Linux
@@ -604,6 +611,25 @@ public fn System.IO.IOResult<File> Open(ascii path, FileMode mode, FileBuffering
 public fn System.IO.IOResult<File> Open(ascii path, FileMode mode, System.Text.Encoding encoding);
 public fn System.IO.IOResult<File> Open(ascii path, FileMode mode, System.Text.Encoding encoding, FileBuffering buffering);
 
+public fn System.IO.IOStatus ReadAllBytesInto(ascii path, mut borrow System.Runtime.Buffer.DynamicByteBuffer destination);
+public fn System.IO.IOResult<System.Runtime.Buffer.DynamicByteBuffer> ReadAllBytes(ascii path);
+public fn System.IO.IOStatus ReadAllTextInto(ascii path, mut borrow System.Text.OwnedAscii destination);
+public fn System.IO.IOResult<System.Text.OwnedAscii> ReadAllText(ascii path);
+public fn System.IO.IOStatus WriteAllBytes(ascii path, borrow i8[min max][] source);
+public fn System.IO.IOStatus WriteAllBytes(ascii path, borrow System.Runtime.Buffer.DynamicByteBuffer source);
+public fn System.IO.IOStatus WriteAllBytes(ascii path, borrow System.Runtime.Buffer.FixedByteBuffer512 source);
+public fn System.IO.IOStatus WriteAllBytes(ascii path, borrow System.Runtime.Buffer.FixedByteBuffer4096 source);
+public fn System.IO.IOStatus WriteAllBytes(ascii path, borrow System.Runtime.Buffer.FixedByteBuffer8192 source);
+public fn System.IO.IOStatus WriteAllBytesAtomic(ascii path, borrow i8[min max][] source);
+public fn System.IO.IOStatus WriteAllBytesAtomic(ascii path, borrow System.Runtime.Buffer.DynamicByteBuffer source);
+public fn System.IO.IOStatus WriteAllBytesAtomic(ascii path, borrow System.Runtime.Buffer.FixedByteBuffer512 source);
+public fn System.IO.IOStatus WriteAllBytesAtomic(ascii path, borrow System.Runtime.Buffer.FixedByteBuffer4096 source);
+public fn System.IO.IOStatus WriteAllBytesAtomic(ascii path, borrow System.Runtime.Buffer.FixedByteBuffer8192 source);
+public fn System.IO.IOStatus WriteAllText(ascii path, ascii text);
+public fn System.IO.IOStatus WriteAllText(ascii path, unicode text);
+public fn System.IO.IOStatus WriteAllTextAtomic(ascii path, ascii text);
+public fn System.IO.IOStatus WriteAllTextAtomic(ascii path, unicode text);
+
 public fn System.IO.IOStatus Delete(ascii path);
 public fn System.IO.IOStatus Move(ascii oldPath, ascii newPath);
 public fn System.IO.IOResult<bool> Exists(ascii path);
@@ -624,6 +650,7 @@ public enum FileMode
 {
     Read,
     Write,
+    CreateNew,
     Append,
     ReadWrite,
 }
@@ -641,6 +668,12 @@ public enum FileBuffering
 ```
 
 Files default to `Full` buffering with an 8192-byte internal buffer. On Linux, the default `Open(...)` overload now checks the opened handle with `ioctl(TCGETS)` and switches to `Line` buffering for terminal-connected handles. `None` means every write goes directly to the OS.
+
+`FileMode.CreateNew` uses exclusive create and returns `IOError.AlreadyExists`
+if the target already exists. The `WriteAll*Atomic` helpers use same-directory
+exclusive temporary files, write and `SyncAll` the full payload, close the file,
+then publish with `Move`; failed attempts best-effort delete their temporary
+path.
 
 ### File Ownership and Drop
 
@@ -665,8 +698,8 @@ The `encoding` field and `System.Text.Encoding` enum are in place, but the curre
 - on Linux, the current `unicode` write path converts UTF-32 to UTF-8 before issuing the write syscall
 - owned-file `UTF8`, `UTF16`, and `UTF32` writes now honor the selected encoding for both `ascii` and `unicode`
 - owned-file `UTF16` and `UTF32` writes flush any pending buffered ascii data before writing encoded bytes directly
-- byte-level file reads and writes are implemented; higher-level text-reading
-  helpers for `File` remain future work
+- byte-level file reads and writes are implemented; whole-file text/byte helpers
+  and line-oriented `File.ReadLine` / `ReadLines` helpers are available
 
 `Read` and `Write` always ignore encoding and operate on raw bytes regardless.
 
@@ -674,7 +707,7 @@ The `encoding` field and `System.Text.Encoding` enum are in place, but the curre
 
 Internal implementation:
 
-- On Linux, `Open` calls the internal platform open boundary backed by `openat(2)`. `Close` calls the internal close boundary backed by `close(2)`. `Read` calls the internal read boundary backed by `read(2)`. `Write` calls the internal write boundary backed by `write(2)`. `Flush` drains Stark userspace buffers. `Delete` calls the internal delete boundary backed by `unlinkat(2)`. `Move` calls the internal rename boundary backed by `renameat2(2)`. `Exists` uses `newfstatat(2)`.
+- On Linux, `Open` calls the internal platform open boundary backed by `openat(2)`. `CreateNew` uses `O_CREAT | O_EXCL`. `Close` calls the internal close boundary backed by `close(2)`. `Read` calls the internal read boundary backed by `read(2)`. `Write` calls the internal write boundary backed by `write(2)`. `Flush` drains Stark userspace buffers. `SyncAll` calls `fsync`. `Delete` calls the internal delete boundary backed by `unlinkat(2)`. `Move` calls the internal rename boundary backed by `renameat2(2)`. `Exists` uses `newfstatat(2)`.
 - On Windows, `Open` calls `CreateFileW`. `Close` calls `CloseHandle`. `Read` calls `ReadFile`. `Write` calls `WriteFile`. `Flush` drains Stark userspace buffers. `SyncAll` calls `FlushFileBuffers`. `Delete` calls `DeleteFileW`. `Move` calls `MoveFileExW`. `Exists` uses `GetFileAttributesW`.
 - On macOS, `Open` calls `open`. `Close` calls `close`. `Read` calls `read`. `Write` calls `write`. `Flush` drains Stark userspace buffers. `SyncAll` calls `fsync`. `Delete` calls `unlink`. `Move` calls `rename`. `Exists` and file kind checks use `stat`.
 - Path strings are converted at the platform boundary. On Linux and macOS, `ascii` paths pass through as-is. On Windows, `ascii` paths are converted from UTF-8 to UTF-16LE before calling the `W` APIs, and `GetCurrentDirectoryW` results are converted back to UTF-8 for `System.IO.Path.CurrentDirectory`.
@@ -690,30 +723,61 @@ module System.IO.Path
 public finite law ascii DirectorySeparator();
 public finite law ascii AlternateDirectorySeparator();
 public finite law ascii PathSeparator();
-public fn System.Memory.MemoryStatus TryJoin(mut borrow System.Text.OwnedAscii destination, ascii left, ascii right)
-    where overlap(destination, left), overlap(destination, right), overlap(left, right);
-public fn System.Memory.MemoryResult<System.Text.OwnedAscii> Join(ascii left, ascii right);
-public struct PathFacts;
-public finite law PathFacts GetFacts(ascii path);
-public finite law ascii Extension(borrow ascii path);
-public finite law ascii BaseName(borrow ascii path);
-public finite law ascii DirectoryName(borrow ascii path);
-
+public finite law bool GlobMatches(ascii pattern, ascii path);
 public fn System.Memory.MemoryStatus CurrentDirectory(mut borrow System.Text.OwnedAscii destination);
 public fn System.Memory.MemoryResult<System.Text.OwnedAscii> CurrentDirectory();
+public fn System.Memory.MemoryStatus TempDirectory(mut borrow System.Text.OwnedAscii destination);
+public fn System.Memory.MemoryResult<System.Text.OwnedAscii> TempDirectory();
+public fn System.Memory.MemoryStatus TryJoin(mut borrow System.Text.OwnedAscii destination, ascii left, ascii right)
+    where overlap(destination, left), overlap(destination, right), overlap(left, right);
+public fn System.Memory.MemoryStatus TryJoin(mut borrow System.Text.OwnedAscii destination, ascii first, ascii second, ascii third);
+public fn System.Memory.MemoryStatus TryJoin(mut borrow System.Text.OwnedAscii destination, ascii first, ascii second, ascii third, ascii fourth);
+public fn System.Memory.MemoryResult<System.Text.OwnedAscii> Join(ascii left, ascii right);
+public fn System.Memory.MemoryStatus TryTempName(mut borrow System.Text.OwnedAscii destination, ascii prefix, u64[0 max] attempt, ascii suffix);
+public fn System.Memory.MemoryResult<System.Text.OwnedAscii> TempName(ascii prefix, u64[0 max] attempt, ascii suffix);
+public fn System.Memory.MemoryStatus TryTempPathIn(mut borrow System.Text.OwnedAscii destination, ascii parent, ascii prefix, u64[0 max] attempt, ascii suffix);
+public fn System.Memory.MemoryResult<System.Text.OwnedAscii> TempPathIn(ascii parent, ascii prefix, u64[0 max] attempt, ascii suffix);
+public fn System.Memory.MemoryStatus TryNormalizeLexically(mut borrow System.Text.OwnedAscii destination, ascii path);
+public fn System.Memory.MemoryStatus TryFullPath(mut borrow System.Text.OwnedAscii destination, ascii path);
+public fn System.Memory.MemoryStatus TryChangeExtension(mut borrow System.Text.OwnedAscii destination, ascii path, ascii extension);
+public struct PathFacts;
+public finite law PathFacts GetFacts(ascii path);
+public finite law ascii Extension(ascii path);
+public finite law ascii BaseName(ascii path);
+public finite law ascii DirectoryName(ascii path);
+public finite law ascii RootName(ascii path);
+public finite law bool IsRooted(ascii path);
+public finite law bool IsAbsolute(ascii path);
+public finite law bool IsRelative(ascii path);
 ```
 
 `DirectorySeparator` returns `"/"` on Linux and macOS and `"\\"` on Windows. `AlternateDirectorySeparator` returns `"/"` on Windows and `""` on Linux and macOS. `PathSeparator` returns `":"` on Linux and macOS and `";"` on Windows.
 
 `Extension`, `BaseName`, and `DirectoryName` are `finite law` because they are pure, have no side effects, and always return.
 
-`GetFacts` computes the reusable component ranges for callers that need several pieces of the same path. `PathFacts` exposes view and length helpers for the full path, extension, base name, and directory name without rescanning.
+`GetFacts` computes the reusable component ranges for callers that need several pieces of the same path. `PathFacts` exposes view and length helpers for the full path, root name, extension, base name, and directory name without rescanning, plus rooted/absolute/relative checks.
 
-`TryJoin` uses caller-owned `System.Text.OwnedAscii` storage rather than allocating hidden storage. It explicitly permits overlap among the destination and input views, snapshots when necessary, and returns `MemoryStatus` so allocation and layout failures remain explicit.
+`GlobMatches` is allocation-free and path-segment aware. `*` matches within one
+segment, `?` matches one unit within one segment, and `**` as a full segment
+matches zero or more path segments.
+
+`TryJoin` uses caller-owned `System.Text.OwnedAscii` storage rather than allocating hidden storage. It supports two, three, and four path parts, explicitly permits overlap among the destination and input views, snapshots when necessary, and returns `MemoryStatus` so allocation and layout failures remain explicit.
 
 `Join` allocates an owned `System.Text.OwnedAscii` result through `System.Memory` and returns `System.Memory.MemoryResult<T>`, so allocation failure remains visible. It uses the same separator normalization rules as `TryJoin`.
 
-`CurrentDirectory` is `fn` because it issues an OS call. It appends into caller-owned `System.Text.OwnedAscii` storage or returns an owned-text `MemoryResult`; raw platform buffers stay internal.
+`TempDirectory` appends the current platform temp root into caller-owned
+storage or returns an owned-text `MemoryResult`. `TryTempName` / `TempName`
+build explicit temp candidate names from a caller-supplied prefix, attempt, and
+suffix plus the current process id. Empty prefixes default to `"stark-"`.
+`TryTempPathIn` / `TempPathIn` join that candidate under an explicit parent
+directory. These helpers do not create files or maintain hidden counters;
+collision retries belong to the filesystem operation that observes collisions.
+
+`TryNormalizeLexically` folds empty, `.`, and `..` segments without filesystem access. `TryFullPath` combines relative paths with `CurrentDirectory` before lexical normalization. `TryChangeExtension` replaces/removes the final extension and inserts a leading `.` when the extension argument omits it.
+
+`CurrentDirectory` and `TempDirectory` are `fn` because they issue OS/platform
+queries. They append into caller-owned `System.Text.OwnedAscii` storage or
+return owned-text `MemoryResult` values; raw platform buffers stay internal.
 
 ## Platform Abstraction Layer
 
@@ -812,10 +876,11 @@ kind checks use Darwin `stat` mode bits. Thread joins preserve the `i32` returne
 by the Stark entry function through `pthread_join` without heap-allocating a
 return-code box.
 
-The public macOS metadata surface currently stops at existence, file/directory
-kind checks, and directory-entry kind during enumeration. Rich metadata such as
-timestamps, permissions, owners, symlink target reads, and a public monotonic
-clock API are not exposed yet; benchmark timing is currently host-harness driven.
+The public metadata surface now includes size, modified time, permissions, and
+entry kind on Linux, macOS, and Windows through `System.FileSystem.Metadata`.
+Windows permissions are POSIX-like bits synthesized from file attributes.
+Owner/group facts, symlink target reads, and a public monotonic clock API are not
+exposed yet; benchmark timing is currently host-harness driven.
 
 ### Windows Implementation
 
@@ -854,25 +919,42 @@ The internal platform module exposes roughly this surface to the rest of the std
 import System.IO
 module System.Runtime.Platform
 
-internal fn IOResult<i64> PlatformWrite(i64 handle, borrow i8[] data);
-internal fn IOResult<i64> PlatformRead(i64 handle, mut i8[] buffer);
-internal fn IOResult<i64> PlatformOpen(borrow ascii path, i32 flags, i32 mode);
-internal fn IOStatus PlatformClose(i64 handle);
-internal fn IOStatus PlatformFlush(i64 handle);
-internal fn IOStatus PlatformDelete(borrow ascii path);
-internal fn IOStatus PlatformRename(borrow ascii oldPath, borrow ascii newPath);
-internal fn IOResult<bool> PlatformExists(borrow ascii path);
-internal fn bool TryCurrentDirectory(rawmutptr<Ascii> destination);
-internal fn bool PlatformIsTerminal(i64 handle);
-internal fn i64 PlatformGetStdout();
-internal fn i64 PlatformGetStderr();
-internal fn i32 ProcessId();
-internal fn void ExitProcess(i32 code);
-internal fn rawptr<i8> StartThread(fnptr<fn i32()> entry);
-internal fn i32 JoinThread(rawptr<i8> handle, rawmutptr<i32> exitCode);
-internal fn i32 DetachThread(rawptr<i8> handle);
+internal enum FileOpenResult
+{
+    Ok(rawptr<i8[min max]>),
+    Err(i32[min max]),
+}
+
+internal unsafe fn FileOpenResult OpenFileReadResult(ascii path);
+internal unsafe fn FileOpenResult OpenFileWriteResult(ascii path);
+internal unsafe fn FileOpenResult OpenFileCreateNewResult(ascii path);
+internal unsafe fn FileOpenResult OpenFileAppendResult(ascii path);
+internal unsafe fn FileOpenResult OpenFileReadWriteResult(ascii path);
+internal unsafe fn rawptr<i8[min max]> OpenFileRead(ascii path);
+internal unsafe fn rawptr<i8[min max]> OpenFileWrite(ascii path);
+internal unsafe fn rawptr<i8[min max]> OpenFileCreateNew(ascii path);
+internal unsafe fn rawptr<i8[min max]> OpenFileAppend(ascii path);
+internal unsafe fn rawptr<i8[min max]> OpenFileReadWrite(ascii path);
+internal unsafe fn i64[min max] ReadFileBytes(rawmutptr<i8[min max]>[length] buffer, u64[0 2 ** 63 - 1] length, rawptr<i8[min max]> handle);
+internal unsafe fn i64[min max] WriteFileBytes(rawptr<i8[min max]>[length] buffer, u64[0 2 ** 63 - 1] length, rawptr<i8[min max]> handle);
+internal unsafe fn i32[min max] CloseFile(rawptr<i8[min max]> handle);
+internal unsafe fn i32[min max] FlushFile(rawptr<i8[min max]> handle);
+internal fn i32[min max] DeleteFile(ascii path);
+internal fn i32[min max] MoveFile(ascii oldPath, ascii newPath);
+internal fn bool FileExists(ascii path);
+internal fn bool PathExists(ascii path);
+internal unsafe fn bool TryCurrentDirectory(rawmutptr<Ascii> destination);
+internal unsafe fn bool TryTempDirectory(rawmutptr<Ascii> destination);
+internal unsafe fn bool IsTerminal(rawptr<i8[min max]> handle);
+internal unsafe fn rawptr<i8[min max]> OpenStdout();
+internal unsafe fn rawptr<i8[min max]> OpenStderr();
+internal fn i32[min max] ProcessId();
+internal fn void ExitProcess(i32[min max] code);
+internal unsafe fn rawmutptr<i8[min max]> StartThread(fnptr<fn i32[min max]()> entry);
+internal unsafe fn i32[min max] JoinThread(rawmutptr<i8[min max]> handle, rawmutptr<i32[min max]> exitCode);
+internal unsafe fn i32[min max] DetachThread(rawmutptr<i8[min max]> handle);
 internal fn void YieldThread();
-internal fn void SleepThreadMilliseconds(i64 milliseconds);
+internal fn void SleepThreadMilliseconds(i64[min max] milliseconds);
 internal fn i32 WaitReadable(rawptr<i8> handle, i32 timeoutMilliseconds);
 internal fn i32 WaitWritable(rawptr<i8> handle, i32 timeoutMilliseconds);
 internal fn i32 FutexWait(rawptr<i32> address, i32 expected);

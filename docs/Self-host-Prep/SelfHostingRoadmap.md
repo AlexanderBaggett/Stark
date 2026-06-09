@@ -65,9 +65,9 @@ contracts; `dyn trait` is explicit runtime dispatch.
       This avoids overloading Stark's `const`, which means deep interior
       immutability, while still giving fixed-size stdlib/compiler abstractions
       a reusable compile-time value parameter.
-- [ ] Implement comptime generic parameters, including monomorphization
-      identity, diagnostics, package-image preservation, and fixed-array use
-      sites.
+- [x] Implement the pre-self-host typed integer `comptime` generic slice,
+      including monomorphization identity, diagnostics, package-image
+      preservation, and fixed-array use sites.
 - [ ] User-definable variadics for ordinary Stark functions. `VARARGS`
       ([Stark.g4:831](../../Stark.g4#L831)) is currently FFI-only
       ([LanguageReference.md §13.1](../Userfacing/LanguageReference.md));
@@ -84,7 +84,11 @@ contracts; `dyn trait` is explicit runtime dispatch.
       self-hosted compiler port.
 
 ### Control flow & literals
-- [ ] Labeled `break` / `continue` ([Stark.g4:530-539](../../Stark.g4#L530-L539)).
+- [x] Labeled `break` / `continue`. Labels attach to loops and switches;
+      `break label;` targets labeled loops or switches, and `continue label;`
+      targets labeled loops only. Parser, semantic diagnostics, MIR lowering,
+      CTFE, runtime lowering, and package-image typed-template preservation
+      are covered by targeted host tests.
 - [x] Multiline / raw string literals in
       [StarkLexer.cs](../../src/Parsing/StarkLexer.cs). LLVM IR templates
       and diagnostic messages currently use C#'s `@"..."` and `$$"""..."""`
@@ -97,12 +101,13 @@ contracts; `dyn trait` is explicit runtime dispatch.
       tables, etc. needs an ergonomic story.
 
 ### Compile-time evaluation
-- [ ] General `const fn` (or `finite law`-driven CTFE) to fold compiler-side
-      table generation. Today
-      [CompileTimeExpressionEvaluator.cs](../../src/Compiler/CompileTimeExpressionEvaluator.cs)
-      (1265 lines) handles a fixed operator set, not arbitrary function
-      execution. Several SSA passes hard-code recognized stdlib helpers by
-      symbol name as a workaround.
+- [x] Freeze the pre-self-host `comptime` baseline at the current host
+      implementation. Broad Zig-like CTFE, complete evaluator parity, and
+      expanded structural facts are deferred until after bootstrap; see
+      [13-comptime.md](13-comptime.md),
+      [26-comptime-pre-self-host-scope.md](26-comptime-pre-self-host-scope.md),
+      and
+      [27-comptime-post-self-host-scope.md](27-comptime-post-self-host-scope.md).
 
 ### Build-driver concurrency
 Stark has no async/await. This is consistent with the rest of the design
@@ -111,8 +116,8 @@ Stark has no async/await. This is consistent with the rest of the design
 - [x] **Decision:** port [ProjectCliDriver.cs](../../src/Compiler/ProjectCliDriver.cs)
       (260+ `async Task<T>` use sites) synchronously first. Do **not** add an
       `async` keyword for self-hosting. If build/test execution later becomes
-      parallel, use the narrow doc `22` coordination surface: captured thread
-      payloads, `Synchronized<T>` / `Locked<T>`, and MPSC channels.
+      parallel, use the narrow doc `22` coordination surface: explicit payload
+      thread starts, `Synchronized<T>` / `Locked<T>`, and MPSC channels.
 
 ### Syntactic-burden items (no language change required — but big translation cost)
 These are not gaps; they are deliberate features that make the C# → Stark
@@ -138,7 +143,7 @@ These unblock writing data structures, text manipulation, and the build
 driver in Stark.
 
 ### Numerics
-- [ ] Build bounded compiler integer-fact helpers over the existing
+- [x] Build bounded compiler integer-fact helpers over the existing
       `i1024`/`u1024` ceiling, not a public `BigInt` or arbitrary-precision
       type. Include the operations the compiler needs (`Max`, shift-and-mask
       for bit-width range checks, signed/unsigned conversion) and diagnostics
@@ -148,9 +153,11 @@ driver in Stark.
       the helpers used in
       [IntegerRangeStorageFacts.cs:40-46](../../src/Compiler/IntegerRangeStorageFacts.cs#L40-L46)
       and [EnumLayoutBuilder.cs:63](../../src/Compiler/EnumLayoutBuilder.cs#L63)
-      do not.
-- [ ] `log`, `log2`, `log10`, `pow`, `exp` in
-      [Math.stark](../../stdlib/src/System/Math.stark) (currently trig + PRNG only).
+      are covered by `System.Compiler.IntegerFacts`.
+- [x] `log`, `log2`, `log10`, `pow`, `exp` in
+      [Math.stark](../../stdlib/src/System/Math.stark). `System.Math` now
+      exposes these scalar floating-point intrinsics, and the packaged stdlib
+      math tests exercise them.
 
 ### Collections
 - [x] Generic text-key contracts so primitive `ascii` / `unicode` and owned
@@ -198,10 +205,10 @@ driver in Stark.
 
 ### Concurrency
 - [x] Atomic integer types are implemented as the first safe-sharing primitive.
-- [ ] Captured/payload thread starts checked by `Transferable`.
-- [ ] `System.Threading.Synchronized<T>` / `Locked<T>` as the easy guarded
+- [x] Payload thread starts checked by `Transferable`.
+- [x] `System.Threading.Synchronized<T>` / `Locked<T>` as the easy guarded
       shared-state primitive.
-- [ ] MPSC channels for build/test progress and result publication.
+- [x] MPSC channels for build/test progress and result publication.
 - [ ] Accept single-threaded compiler/build-driver v1 unless the doc `22`
       coordination surface is explicitly scheduled.
 
@@ -213,24 +220,27 @@ These cover what the C# compiler reaches into the .NET BCL for in its
 outermost layers. Without them, a Stark-hosted compiler cannot drive a build.
 
 ### Process & environment
-- [ ] `argv` / `argc` access. [Process.stark](../../stdlib/src/System/Process.stark)
-      is currently 16 lines and exposes only `CurrentId()` and `Exit(code)`.
+- [x] `argv` / `argc` access. [Process.stark](../../stdlib/src/System/Process.stark)
+      exposes copied argument access through `Arguments()` and `ArgumentCount()`
+      on the current Linux backend.
       [LanguageReference.md §14](../Userfacing/LanguageReference.md) notes
       `main` only needs `unsafe`/`ffi` if it touches raw `argc`/`argv`, so
       a safe wrapper API is the natural place.
-- [ ] Environment variable read/write.
-- [ ] Process spawn with stdout/stderr capture + exit code.
+- [x] Environment variable read/write on the current Linux backend.
+- [x] Process spawn with stdout/stderr capture + exit code on the current Linux backend.
       [NativeToolchain.cs:30-507](../../src/Compiler/NativeToolchain.cs#L30-L507)
       shells out to `clang` and the linker repeatedly.
 
 ### Filesystem
-- [ ] File metadata: size, mtime, permissions. Required for any incremental
-      build.
-- [ ] Recursive directory walk + glob. The C# driver uses
+- [x] File metadata: size, mtime, permissions. Cross-platform Linux/macOS/Windows
+      support has landed; Windows permissions are synthesized from file attributes.
+      Required for any incremental build.
+- [x] Recursive directory walk + glob. Recursive walk and streaming glob have landed.
+      The C# driver uses
       `Directory.EnumerateFiles`
       ([NativeToolchain.cs:344](../../src/Compiler/NativeToolchain.cs#L344))
       for source discovery.
-- [ ] Temp directory creation.
+- [x] Temp directory creation. Platform-backed temp-root creation has landed.
 - [ ] Symlink read/create (lower priority).
 
 ### Serialization

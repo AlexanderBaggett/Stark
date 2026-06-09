@@ -890,7 +890,8 @@ public sealed record LoadedModuleDocument(
     ResolvedModuleReference Reference,
     ParseResult ParseResult,
     SyntaxModel SyntaxModel,
-    LoadedPackageImageFacts? PackageImageFacts = null)
+    LoadedPackageImageFacts? PackageImageFacts = null,
+    LlvmTargetInfo? TargetInfo = null)
 {
     public bool IsPackageImageImport => !Reference.IsRoot && PackageImageFacts is not null;
 
@@ -1052,6 +1053,7 @@ public enum ImportedTemplateTypedBodyExpressionKind
     MemberCall,
     FunctionAddress,
     DynamicStorageOperation,
+    DynTraitFromParts,
     TextInterpolation,
     TextBuild,
     TypeLayout,
@@ -1527,6 +1529,7 @@ public static class StarkTypeSymbols
 {
     public const string OwnedAsciiName = "Ascii";
     public const string OwnedUnicodeName = "Unicode";
+    public const string DynTraitVtableMemberName = "Vtable";
 
     public static readonly StarkTypeSymbol Error = new(StarkTypeKind.Error, "<error>");
     public static readonly StarkTypeSymbol Void = new(StarkTypeKind.Void, "void");
@@ -1795,6 +1798,44 @@ public static class StarkTypeSymbols
             DynTraitName: traitName,
             DynTraitStorageKind: storageKind,
             TypeArguments: typeArguments);
+    }
+
+    public static StarkTypeSymbol DynTraitVtable(
+        string traitName,
+        IReadOnlyList<StarkTypeSymbol>? typeArguments = null,
+        IReadOnlyList<ComptimeValueArgumentSymbol>? valueArguments = null)
+    {
+        var templateName = $"{traitName}.{DynTraitVtableMemberName}";
+        return typeArguments is { Count: > 0 } || valueArguments is { Count: > 0 }
+            ? GenericInstantiation(templateName, typeArguments, valueArguments)
+            : Named(templateName);
+    }
+
+    public static StarkTypeSymbol DynTraitVtableForTraitObject(StarkTypeSymbol dynTraitType)
+    {
+        return dynTraitType.DynTraitName is { } traitName
+            ? DynTraitVtable(traitName, dynTraitType.TypeArguments, dynTraitType.ComptimeValueArguments)
+            : Named($"<error>.{DynTraitVtableMemberName}");
+    }
+
+    public static StarkTypeSymbol DynTraitVtablePointerForTraitObject(StarkTypeSymbol dynTraitType) =>
+        RawPointer(DynTraitVtableForTraitObject(dynTraitType), isMutable: false);
+
+    public static bool IsDynTraitVtableType(StarkTypeSymbol type)
+    {
+        var coreType = WithQualifiers(
+            type,
+            borrowKind: StarkBorrowKind.None,
+            accessKind: StarkAccessKind.None,
+            initializationKind: StarkInitializationKind.None,
+            isMutableView: false);
+        if (coreType.Kind != StarkTypeKind.Named || coreType.NamedType is not { } namedType)
+        {
+            return false;
+        }
+
+        var baseName = GetGenericBaseName(namedType);
+        return baseName.EndsWith($".{DynTraitVtableMemberName}", StringComparison.Ordinal);
     }
 
     private static string FormatCallableFunctionKind(StarkFunctionKind functionKind)
@@ -2077,6 +2118,11 @@ public static class StarkTypeSymbols
     }
 
     public static bool IsPointerBackedBorrowReturn(StarkTypeSymbol type)
+    {
+        return IsPointerBackedBorrowType(type);
+    }
+
+    public static bool IsPointerBackedBorrowType(StarkTypeSymbol type)
     {
         return type.BorrowKind != StarkBorrowKind.None && !IsDirectBorrowViewType(type);
     }
@@ -2375,11 +2421,13 @@ public sealed record NamedTypeSymbol(
     IReadOnlyList<string>? GenericParameterNames = null,
     IReadOnlyList<ComptimeGenericParameterSymbol>? ComptimeGenericParameterNames = null,
     IReadOnlyList<string>? ImplementedTraitNames = null,
+    IReadOnlyList<StarkTypeSymbol>? ImplementedTraitTypeSymbols = null,
     IReadOnlyDictionary<string, AssociatedTypeSymbol>? AssociatedTypeMembers = null,
     bool IsDynTrait = false,
     StructLayoutMetadata? Layout = null,
     IReadOnlyList<ThreadSafetyLawAttributeSymbol>? ThreadSafetyLawAttributes = null,
-    string? DeclaringModuleName = null)
+    string? DeclaringModuleName = null,
+    StarkVisibility Visibility = StarkVisibility.Module)
 {
     public bool TryGetField(string name, out FieldSymbol field, out int index)
     {
@@ -2407,6 +2455,7 @@ public sealed record NamedTypeSymbol(
     public bool IsGeneric => GenericParameterNames is { Count: > 0 } || ComptimeGenericParameterNames is { Count: > 0 };
 
     public IReadOnlyList<string> ImplementedTraits => ImplementedTraitNames ?? [];
+    public IReadOnlyList<StarkTypeSymbol> ImplementedTraitTypes => ImplementedTraitTypeSymbols ?? [];
 
     public IReadOnlyDictionary<string, AssociatedTypeSymbol> AssociatedTypes =>
         AssociatedTypeMembers ?? EmptyAssociatedTypes;
@@ -2514,7 +2563,8 @@ public sealed record TypedFunctionSignature(
     IReadOnlyList<ParameterSameGroup>? SameParameterGroups = null,
     IReadOnlyList<TypeParameterConstraint>? TypeParameterConstraints = null,
     bool HasBody = true,
-    IReadOnlyList<ThreadSafetyLawPredicateSymbol>? ThreadSafetyLawPredicates = null)
+    IReadOnlyList<ThreadSafetyLawPredicateSymbol>? ThreadSafetyLawPredicates = null,
+    StarkVisibility Visibility = StarkVisibility.Module)
 {
     public string DisplaySourceName => SourceName ?? Name;
     public IReadOnlyList<string> GenericParams => GenericParameterNames ?? [];
@@ -2704,6 +2754,7 @@ public enum BoundOperationKind
     EnumCall,
     EnumValue,
     DynamicStorageOperation,
+    DynTraitFromParts,
     TextInterpolation,
     TextBuild,
     LayoutQuery,
@@ -2834,6 +2885,15 @@ public sealed record BoundDynamicStorageOperation(
     SourceLocation Location,
     string? EnclosingFunctionName = null)
     : BoundOperation(BoundOperationKind.DynamicStorageOperation, ResultType, Location, EnclosingFunctionName);
+
+public sealed record BoundDynTraitFromPartsOperation(
+    string OperationName,
+    StarkTypeSymbol TargetType,
+    StarkTypeSymbol ContextType,
+    StarkTypeSymbol VtableType,
+    SourceLocation Location,
+    string? EnclosingFunctionName = null)
+    : BoundOperation(BoundOperationKind.DynTraitFromParts, TargetType, Location, EnclosingFunctionName);
 
 public sealed record BoundObjectCreationOperation(
     string ExpressionText,
@@ -3146,6 +3206,7 @@ public sealed record LoweringContractValidationModel(
     int CheckedLambdaCount,
     int CheckedTypeLayoutExpressionCount,
     int CheckedDynamicStorageOperationCount,
+    int CheckedDynTraitFromPartsCount,
     int CheckedSwitchCount);
 
 public sealed record TypeCheckModel(
@@ -3567,6 +3628,69 @@ public sealed record ConcreteTypeLayout(
 
 internal static class ConcreteTypeLayoutHelper
 {
+    public static NamedTypeSymbol? TryGetConcreteNamedTypeSymbol(
+        StarkTypeSymbol type,
+        IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes)
+    {
+        var concreteType = type with
+        {
+            BorrowKind = StarkBorrowKind.None,
+            AccessKind = StarkAccessKind.None,
+            InitializationKind = StarkInitializationKind.None,
+            IsMutableView = false
+        };
+        if (concreteType.Kind != StarkTypeKind.Named
+            || concreteType.NamedType is not { } concreteName)
+        {
+            return null;
+        }
+
+        if (namedTypes.TryGetValue(concreteName, out var exactType)
+            && !ShouldUseGenericTemplateFallback(concreteType, exactType, namedTypes))
+        {
+            return exactType;
+        }
+
+        if (!StarkTypeSymbols.IsGenericInstantiation(concreteType))
+        {
+            return null;
+        }
+
+        var baseName = StarkTypeSymbols.GetGenericBaseName(concreteName);
+        if (!namedTypes.TryGetValue(baseName, out var template)
+            || !TryBuildGenericLayoutSubstitutions(
+                template,
+                concreteType.TypeArguments ?? [],
+                concreteType.ComptimeValueArguments ?? [],
+                out var typeSubstitution,
+                out var valueSubstitution))
+        {
+            return null;
+        }
+
+        return SubstituteNamedTypeForLayout(concreteName, template, typeSubstitution, valueSubstitution);
+    }
+
+    private static bool ShouldUseGenericTemplateFallback(
+        StarkTypeSymbol concreteType,
+        NamedTypeSymbol exactType,
+        IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes)
+    {
+        if (!StarkTypeSymbols.IsGenericInstantiation(concreteType)
+            || concreteType.NamedType is not { } concreteName
+            || exactType.Kind is not (DeclarationKind.Struct or DeclarationKind.Record)
+            || exactType.OrderedFields.Count != 0)
+        {
+            return false;
+        }
+
+        var baseName = StarkTypeSymbols.GetGenericBaseName(concreteName);
+        return namedTypes.TryGetValue(baseName, out var template)
+            && !ReferenceEquals(template, exactType)
+            && template.Kind == exactType.Kind
+            && template.OrderedFields.Count > 0;
+    }
+
     public static ConcreteTypeLayout? TryGetConcreteTypeLayout(
         StarkTypeSymbol type,
         IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
@@ -3601,6 +3725,11 @@ internal static class ConcreteTypeLayoutHelper
         IReadOnlyDictionary<string, ConcreteTypeLayout>? publishedConcreteLayouts,
         ISet<string> activeNamedTypes)
     {
+        if (StarkTypeSymbols.IsPointerBackedBorrowType(type))
+        {
+            return TryGetPointerLayout();
+        }
+
         var concreteType = type with
         {
             BorrowKind = StarkBorrowKind.None,
@@ -3608,13 +3737,6 @@ internal static class ConcreteTypeLayoutHelper
             InitializationKind = StarkInitializationKind.None,
             IsMutableView = false
         };
-
-        if (concreteType.Kind == StarkTypeKind.Named
-            && concreteType.NamedType is not null
-            && concreteType.TypeArguments is { Count: > 0 })
-        {
-            concreteType = concreteType with { TypeArguments = null };
-        }
 
         return concreteType.Kind switch
         {
@@ -3633,22 +3755,176 @@ internal static class ConcreteTypeLayoutHelper
                 TryGetDynamicStorageLayout(),
             StarkTypeKind.FixedArray when concreteType.ElementType is not null && concreteType.FixedLength is int fixedLength =>
                 TryGetFixedArrayLayout(concreteType.ElementType, fixedLength, namedTypes, enumLayouts, publishedConcreteLayouts, activeNamedTypes),
-            StarkTypeKind.Named when concreteType.NamedType is not null
-                                     && concreteType.TypeArguments is not { Count: > 0 }
-                                     && publishedConcreteLayouts is not null
-                                     && publishedConcreteLayouts.TryGetValue(concreteType.NamedType, out var publishedLayout) =>
-                publishedLayout,
-            StarkTypeKind.Named when concreteType.NamedType is not null
-                                     && namedTypes.TryGetValue(concreteType.NamedType, out var namedType)
-                                     && namedType.Kind is DeclarationKind.Struct or DeclarationKind.Record =>
-                TryGetNamedTypeLayout(namedType, namedTypes, enumLayouts, publishedConcreteLayouts, activeNamedTypes),
-            StarkTypeKind.Named when concreteType.NamedType is not null
-                                     && namedTypes.TryGetValue(concreteType.NamedType, out var enumType)
-                                     && enumType.Kind == DeclarationKind.Enum
-                                     && enumLayouts is not null
-                                     && enumLayouts.TryGetValue(concreteType.NamedType, out var enumLayout) =>
-                TryGetEnumTypeLayout(enumLayout, namedTypes, enumLayouts, publishedConcreteLayouts, activeNamedTypes),
+            StarkTypeKind.Named when concreteType.NamedType is not null =>
+                TryGetConcreteNamedTypeLayout(concreteType, namedTypes, enumLayouts, publishedConcreteLayouts, activeNamedTypes),
             _ => null
+        };
+    }
+
+    private static ConcreteTypeLayout? TryGetConcreteNamedTypeLayout(
+        StarkTypeSymbol concreteType,
+        IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
+        IReadOnlyDictionary<string, EnumLayoutSymbol>? enumLayouts,
+        IReadOnlyDictionary<string, ConcreteTypeLayout>? publishedConcreteLayouts,
+        ISet<string> activeNamedTypes)
+    {
+        var concreteName = concreteType.NamedType!;
+        if (publishedConcreteLayouts is not null
+            && publishedConcreteLayouts.TryGetValue(concreteName, out var publishedLayout))
+        {
+            return publishedLayout;
+        }
+
+        if (namedTypes.TryGetValue(concreteName, out var exactType))
+        {
+            return exactType.Kind switch
+            {
+                DeclarationKind.Struct or DeclarationKind.Record =>
+                    TryGetNamedTypeLayout(exactType, namedTypes, enumLayouts, publishedConcreteLayouts, activeNamedTypes),
+                DeclarationKind.Enum when enumLayouts is not null
+                                          && enumLayouts.TryGetValue(concreteName, out var exactEnumLayout) =>
+                    TryGetEnumTypeLayout(exactEnumLayout, namedTypes, enumLayouts, publishedConcreteLayouts, activeNamedTypes),
+                _ => null
+            };
+        }
+
+        if (!StarkTypeSymbols.IsGenericInstantiation(concreteType))
+        {
+            return null;
+        }
+
+        var baseName = StarkTypeSymbols.GetGenericBaseName(concreteName);
+        if (!namedTypes.TryGetValue(baseName, out var template))
+        {
+            return null;
+        }
+
+        if (!TryBuildGenericLayoutSubstitutions(
+                template,
+                concreteType.TypeArguments ?? [],
+                concreteType.ComptimeValueArguments ?? [],
+                out var typeSubstitution,
+                out var valueSubstitution))
+        {
+            return null;
+        }
+
+        return template.Kind switch
+        {
+            DeclarationKind.Struct or DeclarationKind.Record =>
+                TryGetNamedTypeLayout(
+                    SubstituteNamedTypeForLayout(concreteName, template, typeSubstitution, valueSubstitution),
+                    namedTypes,
+                    enumLayouts,
+                    publishedConcreteLayouts,
+                    activeNamedTypes),
+            DeclarationKind.Enum when enumLayouts is not null
+                                      && enumLayouts.TryGetValue(baseName, out var templateEnumLayout) =>
+                TryGetEnumTypeLayout(
+                    SubstituteEnumLayoutForLayout(concreteName, templateEnumLayout, typeSubstitution, valueSubstitution),
+                    namedTypes,
+                    enumLayouts,
+                    publishedConcreteLayouts,
+                    activeNamedTypes),
+            _ => null
+        };
+    }
+
+    private static bool TryBuildGenericLayoutSubstitutions(
+        NamedTypeSymbol template,
+        IReadOnlyList<StarkTypeSymbol> typeArguments,
+        IReadOnlyList<ComptimeValueArgumentSymbol> valueArguments,
+        out IReadOnlyDictionary<string, StarkTypeSymbol> typeSubstitution,
+        out IReadOnlyDictionary<string, BigInteger> valueSubstitution)
+    {
+        typeSubstitution = new Dictionary<string, StarkTypeSymbol>(StringComparer.Ordinal);
+        valueSubstitution = new Dictionary<string, BigInteger>(StringComparer.Ordinal);
+
+        if (template.GenericParams.Count != typeArguments.Count
+            || template.ComptimeGenericParams.Count != valueArguments.Count)
+        {
+            return false;
+        }
+
+        var types = new Dictionary<string, StarkTypeSymbol>(StringComparer.Ordinal);
+        for (var index = 0; index < template.GenericParams.Count; index++)
+        {
+            types[template.GenericParams[index]] = typeArguments[index];
+        }
+
+        var values = new Dictionary<string, BigInteger>(StringComparer.Ordinal);
+        for (var index = 0; index < template.ComptimeGenericParams.Count; index++)
+        {
+            var argument = valueArguments[index];
+            if (argument.IsSymbolic)
+            {
+                return false;
+            }
+
+            values[template.ComptimeGenericParams[index].Name] = argument.IntegerValue;
+        }
+
+        typeSubstitution = types;
+        valueSubstitution = values;
+        return true;
+    }
+
+    private static NamedTypeSymbol SubstituteNamedTypeForLayout(
+        string concreteName,
+        NamedTypeSymbol template,
+        IReadOnlyDictionary<string, StarkTypeSymbol> typeSubstitution,
+        IReadOnlyDictionary<string, BigInteger> valueSubstitution)
+    {
+        var orderedFields = template.OrderedFields
+            .Select(field => SubstituteFieldForLayout(field, typeSubstitution, valueSubstitution))
+            .ToArray();
+        var fields = orderedFields.ToDictionary(static field => field.Name, StringComparer.Ordinal);
+        return template with
+        {
+            Name = concreteName,
+            Fields = fields,
+            OrderedFields = orderedFields,
+            GenericParameterNames = null,
+            ComptimeGenericParameterNames = null
+        };
+    }
+
+    private static EnumLayoutSymbol SubstituteEnumLayoutForLayout(
+        string concreteName,
+        EnumLayoutSymbol template,
+        IReadOnlyDictionary<string, StarkTypeSymbol> typeSubstitution,
+        IReadOnlyDictionary<string, BigInteger> valueSubstitution)
+    {
+        return template with
+        {
+            EnumName = concreteName,
+            TagField = SubstituteFieldForLayout(template.TagField, typeSubstitution, valueSubstitution),
+            OrderedFields = template.OrderedFields
+                .Select(field => SubstituteFieldForLayout(field, typeSubstitution, valueSubstitution))
+                .ToArray(),
+            Variants = template.Variants.ToDictionary(
+                static item => item.Key,
+                item => item.Value with
+                {
+                    Fields = item.Value.Fields
+                        .Select(field => field with
+                        {
+                            Type = FunctionOverloadFacts.SubstituteType(field.Type, typeSubstitution, comptimeValueSubstitution: valueSubstitution)
+                        })
+                        .ToArray()
+                },
+                StringComparer.Ordinal)
+        };
+    }
+
+    private static FieldSymbol SubstituteFieldForLayout(
+        FieldSymbol field,
+        IReadOnlyDictionary<string, StarkTypeSymbol> typeSubstitution,
+        IReadOnlyDictionary<string, BigInteger> valueSubstitution)
+    {
+        return field with
+        {
+            Type = FunctionOverloadFacts.SubstituteType(field.Type, typeSubstitution, comptimeValueSubstitution: valueSubstitution)
         };
     }
 
@@ -4223,7 +4499,8 @@ public enum IndexedElementOperationFamily
     ViewComponent,
     ClosureComponent,
     // Components of a `dyn Trait` fat pointer: slot 0 is the erased data pointer
-    // (rawmutptr<i8>), slot 1 is the read-only vtable pointer (rawptr<i8>).
+    // (rawmutptr<i8>), slot 1 is the read-only typed vtable pointer
+    // (rawptr<Trait.Vtable>).
     DynTraitComponent
 }
 
@@ -4627,7 +4904,8 @@ internal static class MidLevelIrArtifactValidation
     }
 
     // The component types of a `dyn Trait` fat pointer: slot 0 is the erased data
-    // pointer (rawmutptr<i8>), slot 1 is the read-only vtable pointer (rawptr<i8>).
+    // pointer (rawmutptr<i8>), slot 1 is the read-only typed vtable pointer
+    // (rawptr<Trait.Vtable>).
     // Shared by MIR and SSA index validation so both agree on the fat-pointer layout.
     internal static StarkTypeSymbol GetDynTraitIndexElementType(
         StarkTypeSymbol targetType,
@@ -4645,7 +4923,7 @@ internal static class MidLevelIrArtifactValidation
         return elementIndex switch
         {
             0 => StarkTypeSymbols.RawPointer(StarkTypeSymbols.Integer(8), isMutable: true),
-            1 => StarkTypeSymbols.RawPointer(StarkTypeSymbols.Integer(8), isMutable: false),
+            1 => StarkTypeSymbols.DynTraitVtablePointerForTraitObject(targetType),
             _ => throw new ArgumentOutOfRangeException(
                 nameof(elementIndex),
                 $"{artifactName} dyn-trait index operation '{text}' index '{elementIndex}' is out of range for '{targetType.DisplayName}' with 2 component(s).")

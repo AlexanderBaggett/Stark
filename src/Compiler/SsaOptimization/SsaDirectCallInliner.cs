@@ -757,6 +757,19 @@ internal sealed class SsaDirectCallInliner
                 {
                     parameterAddressReplacements[parameter.Name] = argumentReferenceAddress;
                 }
+                else if (TryCreatePointerBackedBorrowAddressReplacement(
+                             candidate,
+                             argument,
+                             parameter.Type,
+                             $"arg_{parameter.Name}_value_inl{inlineSiteIndex}",
+                             $"arg_{parameter.Name}_addr_inl{inlineSiteIndex}",
+                             usedValueNames,
+                             prologueInstructions,
+                             callLocation,
+                             out var borrowedArgumentAddress))
+                {
+                    parameterAddressReplacements[parameter.Name] = borrowedArgumentAddress;
+                }
                 else if (parameter.Type.Kind == StarkTypeKind.Closure
                          && CanReplaceParameterAddressLoadsWithValue(candidate, parameter.Name))
                 {
@@ -851,6 +864,12 @@ internal sealed class SsaDirectCallInliner
             return false;
         }
 
+        if (StarkTypeSymbols.IsPointerBackedBorrowType(parameterType)
+            && StarkTypeSymbols.IsPointerBackedBorrowType(callerParameter.Type))
+        {
+            return false;
+        }
+
         var pointerType = CreateIndirectArgumentAddressType(parameterType);
         var addressName = CreateFreshName(addressBaseName, usedValueNames);
         prologueInstructions.Add(new SsaValueInstruction(
@@ -917,6 +936,55 @@ internal sealed class SsaDirectCallInliner
         }
 
         return false;
+    }
+
+    private static bool TryCreatePointerBackedBorrowAddressReplacement(
+        InlineCandidate candidate,
+        SsaValue argument,
+        StarkTypeSymbol parameterType,
+        string valueBaseName,
+        string addressBaseName,
+        ISet<string> usedValueNames,
+        ICollection<SsaInstruction> prologueInstructions,
+        SourceLocation? callLocation,
+        out SsaValue address)
+    {
+        address = default!;
+        if (!StarkTypeSymbols.IsPointerBackedBorrowType(parameterType)
+            || !StarkTypeSymbols.IsPointerBackedBorrowType(argument.Type)
+            || NormalizePointerBackedBorrowPointee(parameterType) != NormalizePointerBackedBorrowPointee(argument.Type))
+        {
+            return false;
+        }
+
+        var pointerType = CreateIndirectArgumentAddressType(parameterType);
+        var protectedArgument = ProtectInlineReplacementValue(
+            candidate,
+            argument,
+            valueBaseName,
+            usedValueNames,
+            prologueInstructions,
+            callLocation);
+        var addressName = CreateFreshName(addressBaseName, usedValueNames);
+        prologueInstructions.Add(new SsaValueInstruction(
+            addressName,
+            new SsaConvertRValue(
+                protectedArgument,
+                pointerType,
+                $"{protectedArgument.Text}:{pointerType.DisplayName}"),
+            callLocation));
+        address = new SsaValueReference(addressName, pointerType);
+        return true;
+    }
+
+    private static StarkTypeSymbol NormalizePointerBackedBorrowPointee(StarkTypeSymbol type)
+    {
+        return StarkTypeSymbols.WithQualifiers(
+            StarkTypeSymbols.BorrowReturnValueType(type),
+            borrowKind: StarkBorrowKind.None,
+            accessKind: StarkAccessKind.None,
+            initializationKind: StarkInitializationKind.None,
+            isMutableView: false);
     }
 
     private static bool CanReplaceParameterAddressLoadsWithValue(InlineCandidate candidate, string parameterName)

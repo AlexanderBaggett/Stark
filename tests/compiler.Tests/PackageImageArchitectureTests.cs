@@ -192,9 +192,11 @@ public sealed class PackageImageArchitectureTests
                                 && comptime System.Compiler.AssociatedTypeTargetTypeIsInteger<HasHashType, 0>()
                                 && comptime System.Compiler.AssociatedTypeTargetTypeHasConcreteLayout<CounterType, 0>()
                                 && comptime (System.Compiler.AssociatedTypeTargetTypeDisplayName<ReaderType, 0>() == "")
+                                && comptime (System.Compiler.AssociatedTypeTargetTypeModuleName<ReaderType, 0>() == "")
                                 && comptime !System.Compiler.AssociatedTypeTargetTypeIsGenericInstantiation<ReaderType, 0>()
                                 && comptime (System.Compiler.AssociatedTypeTargetTypeDisplayName<BufferType, 0>() == "Facade.Holder<u8, 4>")
                                 && comptime (System.Compiler.AssociatedTypeTargetTypeBaseName<BufferType, 0>() == "Facade.Holder")
+                                && comptime (System.Compiler.AssociatedTypeTargetTypeModuleName<BufferType, 0>() == "Facade")
                                 && comptime System.Compiler.AssociatedTypeTargetTypeIsGenericInstantiation<BufferType, 0>()
                                 && comptime System.Compiler.AssociatedTypeTargetTypeArgumentCount<BufferType, 0>() == 1
                                 && comptime System.Compiler.AssociatedTypeTargetTypeComptimeArgumentCount<BufferType, 0>() == 1)
@@ -500,15 +502,35 @@ public sealed class PackageImageArchitectureTests
                                         {
                                             if (comptime (System.Compiler.MethodReturnTypeDisplayName<Facade.Box, 0>() == "Facade.Holder<i32, 4>")
                                                 && comptime (System.Compiler.MethodReturnTypeBaseName<Facade.Box, 0>() == "Facade.Holder")
+                                                && comptime (System.Compiler.MethodReturnTypeModuleName<Facade.Box, 0>() == "Facade")
                                                 && comptime System.Compiler.MethodReturnTypeIsGenericInstantiation<Facade.Box, 0>()
                                                 && comptime System.Compiler.MethodReturnTypeArgumentCount<Facade.Box, 0>() == 1
-                                                && comptime System.Compiler.MethodReturnTypeComptimeArgumentCount<Facade.Box, 0>() == 1)
+                                                && comptime System.Compiler.MethodReturnTypeComptimeArgumentCount<Facade.Box, 0>() == 1
+                                                && comptime System.Compiler.MethodReturnTypeArgumentTypeIs<Facade.Box, i32[min max], 0, 0>()
+                                                && comptime System.Compiler.MethodReturnTypeArgumentTypeIsInteger<Facade.Box, 0, 0>()
+                                                && comptime System.Compiler.MethodReturnTypeArgumentTypeHasConcreteLayout<Facade.Box, 0, 0>()
+                                                && comptime (System.Compiler.MethodReturnTypeArgumentTypeDisplayName<Facade.Box, 0, 0>() == "i32")
+                                                && comptime (System.Compiler.MethodReturnTypeArgumentTypeBaseName<Facade.Box, 0, 0>() == "")
+                                                && comptime (System.Compiler.MethodReturnTypeArgumentTypeModuleName<Facade.Box, 0, 0>() == "")
+                                                && comptime !System.Compiler.MethodReturnTypeArgumentTypeIsGenericInstantiation<Facade.Box, 0, 0>()
+                                                && comptime System.Compiler.MethodReturnTypeArgumentTypeArgumentCount<Facade.Box, 0, 0>() == 0
+                                                && comptime System.Compiler.MethodReturnTypeArgumentTypeComptimeArgumentCount<Facade.Box, 0, 0>() == 0)
                                             {
                                                 if (comptime (System.Compiler.MethodParameterTypeDisplayName<Facade.Box, 0, 1>() == "Facade.Holder<i32, 4>")
                                                     && comptime (System.Compiler.MethodParameterTypeBaseName<Facade.Box, 0, 1>() == "Facade.Holder")
+                                                    && comptime (System.Compiler.MethodParameterTypeModuleName<Facade.Box, 0, 1>() == "Facade")
                                                     && comptime System.Compiler.MethodParameterTypeIsGenericInstantiation<Facade.Box, 0, 1>()
                                                     && comptime System.Compiler.MethodParameterTypeArgumentCount<Facade.Box, 0, 1>() == 1
-                                                    && comptime System.Compiler.MethodParameterTypeComptimeArgumentCount<Facade.Box, 0, 1>() == 1)
+                                                    && comptime System.Compiler.MethodParameterTypeComptimeArgumentCount<Facade.Box, 0, 1>() == 1
+                                                    && comptime System.Compiler.MethodParameterTypeArgumentTypeIs<Facade.Box, i32[min max], 0, 1, 0>()
+                                                    && comptime System.Compiler.MethodParameterTypeArgumentTypeIsInteger<Facade.Box, 0, 1, 0>()
+                                                    && comptime System.Compiler.MethodParameterTypeArgumentTypeHasConcreteLayout<Facade.Box, 0, 1, 0>()
+                                                    && comptime (System.Compiler.MethodParameterTypeArgumentTypeDisplayName<Facade.Box, 0, 1, 0>() == "i32")
+                                                    && comptime (System.Compiler.MethodParameterTypeArgumentTypeBaseName<Facade.Box, 0, 1, 0>() == "")
+                                                    && comptime (System.Compiler.MethodParameterTypeArgumentTypeModuleName<Facade.Box, 0, 1, 0>() == "")
+                                                    && comptime !System.Compiler.MethodParameterTypeArgumentTypeIsGenericInstantiation<Facade.Box, 0, 1, 0>()
+                                                    && comptime System.Compiler.MethodParameterTypeArgumentTypeArgumentCount<Facade.Box, 0, 1, 0>() == 0
+                                                    && comptime System.Compiler.MethodParameterTypeArgumentTypeComptimeArgumentCount<Facade.Box, 0, 1, 0>() == 0)
                                                 {
                                                     if (comptime (System.Compiler.MethodName<Facade.Box, 1>() == "Pick")
                                                         && comptime (System.Compiler.MethodModuleName<Facade.Box, 1>() == "Facade")
@@ -520,6 +542,7 @@ public sealed class PackageImageArchitectureTests
                                                         && comptime System.Compiler.MethodComptimeGenericParameterTypeHasConcreteLayout<Facade.Box, 1, 0>()
                                                         && comptime (System.Compiler.MethodComptimeGenericParameterTypeDisplayName<Facade.Box, 1, 0>() == "u8[1 8]")
                                                         && comptime (System.Compiler.MethodComptimeGenericParameterTypeBaseName<Facade.Box, 1, 0>() == "")
+                                                        && comptime (System.Compiler.MethodComptimeGenericParameterTypeModuleName<Facade.Box, 1, 0>() == "")
                                                         && comptime !System.Compiler.MethodComptimeGenericParameterTypeIsGenericInstantiation<Facade.Box, 1, 0>()
                                                         && comptime System.Compiler.MethodComptimeGenericParameterTypeArgumentCount<Facade.Box, 1, 0>() == 0
                                                         && comptime System.Compiler.MethodComptimeGenericParameterTypeComptimeArgumentCount<Facade.Box, 1, 0>() == 0
@@ -527,8 +550,10 @@ public sealed class PackageImageArchitectureTests
                                                         && comptime System.Compiler.MethodGenericParameterTraitBoundTypeIs<Facade.Box, Facade.Drawable, 1, 0, 0>()
                                                         && comptime System.Compiler.MethodGenericParameterTraitBoundTypeIsNamed<Facade.Box, 1, 0, 0>()
                                                         && comptime System.Compiler.MethodGenericParameterTraitBoundTypeIsTrait<Facade.Box, 1, 0, 0>()
+                                                        && comptime (System.Compiler.MethodGenericParameterTraitBoundTypeModuleName<Facade.Box, 1, 0, 0>() == "Facade")
                                                         && comptime !System.Compiler.MethodGenericParameterTraitBoundTypeHasConcreteLayout<Facade.Box, 1, 0, 0>()
                                                         && comptime (System.Compiler.MethodGenericParameterTraitBoundTypeBaseName<Facade.Box, 1, 0, 1>() == "Facade.Bound")
+                                                        && comptime (System.Compiler.MethodGenericParameterTraitBoundTypeModuleName<Facade.Box, 1, 0, 1>() == "Facade")
                                                         && comptime System.Compiler.MethodGenericParameterTraitBoundTypeIsNamed<Facade.Box, 1, 0, 1>()
                                                         && comptime System.Compiler.MethodGenericParameterTraitBoundTypeIsTrait<Facade.Box, 1, 0, 1>()
                                                         && comptime !System.Compiler.MethodGenericParameterTraitBoundTypeHasConcreteLayout<Facade.Box, 1, 0, 1>()
@@ -552,6 +577,116 @@ public sealed class PackageImageArchitectureTests
                                     }
                                 }
                             }
+                        }
+
+                        return 0;
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    EmitLlvmIr: true,
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName),
+                    OptimizationLevel: CompilerOptimizationLevel.O0));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule));
+            Assert.NotNull(llvmModule);
+            var runBody = ExtractDefinitionBody(llvmModule.Text, "Run");
+            Assert.Contains("ret i32 42", runBody);
+            Assert.DoesNotContain("call", runBody);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup.
+            }
+        }
+    }
+
+    [Fact]
+    public void PackageImagePreservesVisibilityStructuralFactsAcrossTypedInterfaceSourceBridgeAndFacts()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-visibility-facts-");
+
+        try
+        {
+            var sourcePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+            var manifestPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.starkpkg.json" : "libFacade.starkpkg.json");
+            var libraryPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a");
+            var libraryResult = DefaultCompilerPipeline.Create().Run(
+                new CompilationInput(
+                    """
+                    module Facade
+
+                    internal struct InternalType
+                    {
+                        internal i32[min max] Value;
+                    }
+
+                    public struct PublicType
+                    {
+                        internal i32[min max] Hidden;
+                        public i32[min max] Visible;
+
+                        internal finite law i32[min max] HiddenMethod(borrow PublicType self)
+                        {
+                            return self.Hidden;
+                        }
+
+                        public finite law i32[min max] VisibleMethod(borrow PublicType self)
+                        {
+                            return self.Visible;
+                        }
+                    }
+
+                    export struct ExportType
+                    {
+                        public i32[min max] Value;
+                    }
+                    """,
+                    sourcePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(libraryResult, libraryPath);
+            File.WriteAllText(manifestPath, manifest.ToJson());
+            var resolvedModule = CreateResolvedPackageModule(Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade"));
+            Assert.True(PackageImageLoader.TryBuildLoadedPackageImageFacts(resolvedModule, out var facts));
+            Assert.Equal(StarkVisibility.Internal, facts.NamedTypes["Facade.InternalType"].Visibility);
+            Assert.Equal(StarkVisibility.Public, facts.NamedTypes["Facade.PublicType"].Visibility);
+            Assert.Equal(StarkVisibility.Export, facts.NamedTypes["Facade.ExportType"].Visibility);
+            Assert.Equal(StarkVisibility.Internal, facts.NamedTypes["Facade.PublicType"].OrderedFields[0].Visibility);
+            Assert.Equal(StarkVisibility.Public, facts.NamedTypes["Facade.PublicType"].OrderedFields[1].Visibility);
+            Assert.Equal(StarkVisibility.Internal, facts.FunctionSignatures["Facade.PublicType.HiddenMethod"].Visibility);
+            Assert.Equal(StarkVisibility.Public, facts.FunctionSignatures["Facade.PublicType.VisibleMethod"].Visibility);
+            Assert.True(PackageImageLoader.TryBuildModuleSource(resolvedModule, out var sourceText));
+            Assert.Contains("internal i32[min max] Hidden;", sourceText, StringComparison.Ordinal);
+            Assert.Contains("public finite law i32[min max] VisibleMethod", sourceText, StringComparison.Ordinal);
+
+            File.Delete(sourcePath);
+            var consumerResult = DefaultCompilerPipeline.Create().Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    finite law i32[min max] Run()
+                    {
+                        if (comptime System.Compiler.TypeVisibilityIsPublic<Facade.PublicType>()
+                            && comptime System.Compiler.TypeVisibilityIsExport<Facade.ExportType>()
+                            && comptime System.Compiler.FieldVisibilityIsInternal<Facade.PublicType, 0>()
+                            && comptime System.Compiler.FieldVisibilityIsPublic<Facade.PublicType, 1>()
+                            && comptime (System.Compiler.MethodName<Facade.PublicType, 0>() == "HiddenMethod")
+                            && comptime System.Compiler.MethodVisibilityIsInternal<Facade.PublicType, 0>()
+                            && comptime (System.Compiler.MethodName<Facade.PublicType, 1>() == "VisibleMethod")
+                            && comptime System.Compiler.MethodVisibilityIsPublic<Facade.PublicType, 1>())
+                        {
+                            return 42;
                         }
 
                         return 0;
@@ -796,7 +931,17 @@ public sealed class PackageImageArchitectureTests
                                             {
                                                 if (comptime System.Compiler.EnumVariantPayloadTypeIsFixedArray<Facade.Token, 2, 0>())
                                                 {
-                                                    return 7;
+                                                    if (comptime (System.Compiler.FieldTypeModuleName<Facade.Header, 0>() == ""))
+                                                    {
+                                                        if (comptime (System.Compiler.FieldTypeModuleName<Facade.Header, 1>() == "Facade"))
+                                                        {
+                                                            if (comptime (System.Compiler.EnumVariantPayloadTypeModuleName<Facade.Token, 0, 0>() == "Facade")
+                                                                && comptime (System.Compiler.EnumVariantPayloadTypeModuleName<Facade.Token, 2, 0>() == ""))
+                                                            {
+                                                                return 7;
+                                                            }
+                                                        }
+                                                    }
                                                 }
                                             }
                                         }
@@ -1406,6 +1551,177 @@ public sealed class PackageImageArchitectureTests
     }
 
     [Fact]
+    public void PackageImagePreservesLabeledLoopControlInImportedGenericTypedBody()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-labeled-loop-control-");
+
+        try
+        {
+            var sourcePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+            var manifestPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.starkpkg.json" : "libFacade.starkpkg.json");
+            var libraryPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a");
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    module Facade
+
+                    public fn i32[min max] Score<T>(i32[min max] limit, T tag)
+                    {
+                        stack mut i32[min max] total = 0;
+                        stack mut i32[min max] outer = 0;
+                        outerLoop: while willexit (outer < limit)
+                        {
+                            outer += 1;
+                            stack mut i32[min max] inner = 0;
+                            while willexit (inner < 4)
+                            {
+                                inner += 1;
+                                if (outer == 2)
+                                {
+                                    continue outerLoop;
+                                }
+
+                                if (inner == 3)
+                                {
+                                    break outerLoop;
+                                }
+
+                                total += inner;
+                            }
+                        }
+
+                        selector: switch (limit)
+                        {
+                            case 0:
+                                break selector;
+                            default:
+                                total += 0;
+                        }
+
+                        return total + outer;
+                    }
+                    """,
+                    sourcePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(libraryResult, libraryPath);
+            var facadeModule = Assert.Single(manifest.Modules, static item => item.ModuleName == "Facade");
+            var template = Assert.Single(
+                facadeModule.EffectiveGenericTemplates!.Functions,
+                static item => item.QualifiedResolvedName == "Facade.Score");
+            Assert.NotNull(template.TypedBody);
+            var outerWhile = Assert.Single(
+                template.TypedBody!.Statements,
+                static statement => statement.Kind == "while" && statement.Name == "outerLoop");
+            var innerWhile = Assert.Single(
+                outerWhile.BodyStatements!,
+                static statement => statement.Kind == "while");
+            Assert.Contains(
+                innerWhile.BodyStatements!,
+                static statement => statement.Kind == "if"
+                    && statement.ThenStatements is not null
+                    && statement.ThenStatements.Any(static inner => inner.Kind == "continue" && inner.Name == "outerLoop"));
+            Assert.Contains(
+                innerWhile.BodyStatements!,
+                static statement => statement.Kind == "if"
+                    && statement.ThenStatements is not null
+                    && statement.ThenStatements.Any(static inner => inner.Kind == "break" && inner.Name == "outerLoop"));
+            Assert.Contains(
+                template.TypedBody.Statements,
+                static statement => statement.Kind == "switch"
+                    && statement.Name == "selector"
+                    && statement.SwitchCases is not null
+                    && statement.SwitchCases.Any(static switchCase =>
+                        switchCase.Statements is not null
+                        && switchCase.Statements.Any(static inner => inner.Kind == "break" && inner.Name == "selector")));
+
+            Assert.True(PackageImageLoader.TryBuildLoadedPackageImageFacts(CreateResolvedPackageModule(facadeModule), out var facts));
+            var importedTemplate = facts.FunctionTemplates["Facade.Score"];
+            Assert.NotNull(importedTemplate.TypedBody);
+            var importedOuterWhile = Assert.Single(
+                importedTemplate.TypedBody!.Statements,
+                static statement => statement.Kind == ImportedTemplateTypedBodyStatementKind.While && statement.Name == "outerLoop");
+            var importedInnerWhile = Assert.Single(
+                importedOuterWhile.Body,
+                static statement => statement.Kind == ImportedTemplateTypedBodyStatementKind.While);
+            Assert.Contains(
+                importedInnerWhile.Body,
+                static statement => statement.Kind == ImportedTemplateTypedBodyStatementKind.If
+                    && statement.ThenBranch.Any(static inner => inner.Kind == ImportedTemplateTypedBodyStatementKind.Continue && inner.Name == "outerLoop"));
+            Assert.Contains(
+                importedInnerWhile.Body,
+                static statement => statement.Kind == ImportedTemplateTypedBodyStatementKind.If
+                    && statement.ThenBranch.Any(static inner => inner.Kind == ImportedTemplateTypedBodyStatementKind.Break && inner.Name == "outerLoop"));
+            Assert.Contains(
+                importedTemplate.TypedBody.Statements,
+                static statement => statement.Kind == ImportedTemplateTypedBodyStatementKind.Switch
+                    && statement.Name == "selector"
+                    && statement.SwitchCases.Any(static switchCase =>
+                        switchCase.Statements.Any(static inner => inner.Kind == ImportedTemplateTypedBodyStatementKind.Break && inner.Name == "selector")));
+
+            var corruptedTemplates = new StarkPackageGenericTemplateSection(
+                facadeModule.EffectiveGenericTemplates!.Functions
+                    .Select(static item => item.QualifiedResolvedName == "Facade.Score"
+                        ? item with { BodyText = "{ return this is not valid Stark; }" }
+                        : item)
+                    .ToArray());
+            var corruptedModule = facadeModule with
+            {
+                GenericTemplates = corruptedTemplates,
+                CompilerSections = facadeModule.CompilerSections is null
+                    ? null
+                    : facadeModule.CompilerSections with { GenericTemplates = corruptedTemplates }
+            };
+            var corruptedManifest = manifest with
+            {
+                Modules = manifest.Modules
+                    .Select(item => item.ModuleName == "Facade" ? corruptedModule : item)
+                    .ToArray()
+            };
+            File.WriteAllText(manifestPath, corruptedManifest.ToJson());
+            File.Delete(sourcePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    fn i32[min max] Run()
+                    {
+                        return Facade.Score<i32[min max]>(4, 0);
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName),
+                    StopAfterPassId: "lower-mir"));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            FallbackLogAssertions.AssertNoFallbackLogs(consumerResult, "Imported labeled loop generic typed body builds");
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.MidLevelIr, out MidLevelIrModule? mir));
+            Assert.NotNull(mir);
+            MidLevelIrLoweringTests.AssertMirHasNoNullLoweringArtifacts(mir);
+            Assert.Contains(
+                mir!.Functions,
+                static function => function.Name == "__stark_mono_fn_Demo__Facade_Score__i32");
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup.
+            }
+        }
+    }
+
+    [Fact]
     public void PackageImagePreservesFunctionPointerStructuralFactsAcrossTypedInterfaceSourceBridgeAndFacts()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-function-pointer-facts-");
@@ -1592,6 +1908,11 @@ public sealed class PackageImageArchitectureTests
                             return 0;
                         }
 
+                        if (!(comptime (System.Compiler.FunctionPointerReturnTypeModuleName<Facade.GenericCallback>() == "Facade")))
+                        {
+                            return 0;
+                        }
+
                         if (!(comptime System.Compiler.FunctionPointerReturnTypeIsGenericInstantiation<Facade.GenericCallback>()))
                         {
                             return 0;
@@ -1607,7 +1928,25 @@ public sealed class PackageImageArchitectureTests
                             return 0;
                         }
 
+                        if (!(comptime System.Compiler.FunctionPointerReturnTypeArgumentTypeIs<Facade.GenericCallback, i32[min max], 0>()
+                            && comptime System.Compiler.FunctionPointerReturnTypeArgumentTypeIsInteger<Facade.GenericCallback, 0>()
+                            && comptime System.Compiler.FunctionPointerReturnTypeArgumentTypeHasConcreteLayout<Facade.GenericCallback, 0>()
+                            && comptime (System.Compiler.FunctionPointerReturnTypeArgumentTypeDisplayName<Facade.GenericCallback, 0>() == "i32")
+                            && comptime (System.Compiler.FunctionPointerReturnTypeArgumentTypeBaseName<Facade.GenericCallback, 0>() == "")
+                            && comptime (System.Compiler.FunctionPointerReturnTypeArgumentTypeModuleName<Facade.GenericCallback, 0>() == "")
+                            && comptime !System.Compiler.FunctionPointerReturnTypeArgumentTypeIsGenericInstantiation<Facade.GenericCallback, 0>()
+                            && comptime System.Compiler.FunctionPointerReturnTypeArgumentTypeArgumentCount<Facade.GenericCallback, 0>() == 0
+                            && comptime System.Compiler.FunctionPointerReturnTypeArgumentTypeComptimeArgumentCount<Facade.GenericCallback, 0>() == 0))
+                        {
+                            return 0;
+                        }
+
                         if (!(comptime (System.Compiler.FunctionPointerParameterTypeDisplayName<Facade.GenericCallback, 0>() == "Facade.Holder<bool, 2>")))
+                        {
+                            return 0;
+                        }
+
+                        if (!(comptime (System.Compiler.FunctionPointerParameterTypeModuleName<Facade.GenericCallback, 0>() == "Facade")))
                         {
                             return 0;
                         }
@@ -1627,7 +1966,25 @@ public sealed class PackageImageArchitectureTests
                             return 0;
                         }
 
+                        if (!(comptime System.Compiler.FunctionPointerParameterTypeArgumentTypeIs<Facade.GenericCallback, bool, 0, 0>()
+                            && comptime System.Compiler.FunctionPointerParameterTypeArgumentTypeIsBool<Facade.GenericCallback, 0, 0>()
+                            && comptime System.Compiler.FunctionPointerParameterTypeArgumentTypeHasConcreteLayout<Facade.GenericCallback, 0, 0>()
+                            && comptime (System.Compiler.FunctionPointerParameterTypeArgumentTypeDisplayName<Facade.GenericCallback, 0, 0>() == "bool")
+                            && comptime (System.Compiler.FunctionPointerParameterTypeArgumentTypeBaseName<Facade.GenericCallback, 0, 0>() == "")
+                            && comptime (System.Compiler.FunctionPointerParameterTypeArgumentTypeModuleName<Facade.GenericCallback, 0, 0>() == "")
+                            && comptime !System.Compiler.FunctionPointerParameterTypeArgumentTypeIsGenericInstantiation<Facade.GenericCallback, 0, 0>()
+                            && comptime System.Compiler.FunctionPointerParameterTypeArgumentTypeArgumentCount<Facade.GenericCallback, 0, 0>() == 0
+                            && comptime System.Compiler.FunctionPointerParameterTypeArgumentTypeComptimeArgumentCount<Facade.GenericCallback, 0, 0>() == 0))
+                        {
+                            return 0;
+                        }
+
                         if (!(comptime (System.Compiler.FunctionPointerParameterTypeBaseName<Facade.GenericCallback, 1>() == "")))
+                        {
+                            return 0;
+                        }
+
+                        if (!(comptime (System.Compiler.FunctionPointerParameterTypeModuleName<Facade.GenericCallback, 1>() == "")))
                         {
                             return 0;
                         }
@@ -1727,6 +2084,11 @@ public sealed class PackageImageArchitectureTests
                             return 0;
                         }
 
+                        if (!(comptime (System.Compiler.ClosureReturnTypeModuleName<Facade.ClosureGenericCallback>() == "Facade")))
+                        {
+                            return 0;
+                        }
+
                         if (!(comptime System.Compiler.ClosureReturnTypeIsGenericInstantiation<Facade.ClosureGenericCallback>()))
                         {
                             return 0;
@@ -1742,7 +2104,25 @@ public sealed class PackageImageArchitectureTests
                             return 0;
                         }
 
+                        if (!(comptime System.Compiler.ClosureReturnTypeArgumentTypeIs<Facade.ClosureGenericCallback, i32[min max], 0>()
+                            && comptime System.Compiler.ClosureReturnTypeArgumentTypeIsInteger<Facade.ClosureGenericCallback, 0>()
+                            && comptime System.Compiler.ClosureReturnTypeArgumentTypeHasConcreteLayout<Facade.ClosureGenericCallback, 0>()
+                            && comptime (System.Compiler.ClosureReturnTypeArgumentTypeDisplayName<Facade.ClosureGenericCallback, 0>() == "i32")
+                            && comptime (System.Compiler.ClosureReturnTypeArgumentTypeBaseName<Facade.ClosureGenericCallback, 0>() == "")
+                            && comptime (System.Compiler.ClosureReturnTypeArgumentTypeModuleName<Facade.ClosureGenericCallback, 0>() == "")
+                            && comptime !System.Compiler.ClosureReturnTypeArgumentTypeIsGenericInstantiation<Facade.ClosureGenericCallback, 0>()
+                            && comptime System.Compiler.ClosureReturnTypeArgumentTypeArgumentCount<Facade.ClosureGenericCallback, 0>() == 0
+                            && comptime System.Compiler.ClosureReturnTypeArgumentTypeComptimeArgumentCount<Facade.ClosureGenericCallback, 0>() == 0))
+                        {
+                            return 0;
+                        }
+
                         if (!(comptime (System.Compiler.ClosureParameterTypeDisplayName<Facade.ClosureGenericCallback, 0>() == "Facade.Holder<bool, 2>")))
+                        {
+                            return 0;
+                        }
+
+                        if (!(comptime (System.Compiler.ClosureParameterTypeModuleName<Facade.ClosureGenericCallback, 0>() == "Facade")))
                         {
                             return 0;
                         }
@@ -1762,7 +2142,25 @@ public sealed class PackageImageArchitectureTests
                             return 0;
                         }
 
+                        if (!(comptime System.Compiler.ClosureParameterTypeArgumentTypeIs<Facade.ClosureGenericCallback, bool, 0, 0>()
+                            && comptime System.Compiler.ClosureParameterTypeArgumentTypeIsBool<Facade.ClosureGenericCallback, 0, 0>()
+                            && comptime System.Compiler.ClosureParameterTypeArgumentTypeHasConcreteLayout<Facade.ClosureGenericCallback, 0, 0>()
+                            && comptime (System.Compiler.ClosureParameterTypeArgumentTypeDisplayName<Facade.ClosureGenericCallback, 0, 0>() == "bool")
+                            && comptime (System.Compiler.ClosureParameterTypeArgumentTypeBaseName<Facade.ClosureGenericCallback, 0, 0>() == "")
+                            && comptime (System.Compiler.ClosureParameterTypeArgumentTypeModuleName<Facade.ClosureGenericCallback, 0, 0>() == "")
+                            && comptime !System.Compiler.ClosureParameterTypeArgumentTypeIsGenericInstantiation<Facade.ClosureGenericCallback, 0, 0>()
+                            && comptime System.Compiler.ClosureParameterTypeArgumentTypeArgumentCount<Facade.ClosureGenericCallback, 0, 0>() == 0
+                            && comptime System.Compiler.ClosureParameterTypeArgumentTypeComptimeArgumentCount<Facade.ClosureGenericCallback, 0, 0>() == 0))
+                        {
+                            return 0;
+                        }
+
                         if (!(comptime (System.Compiler.ClosureParameterTypeBaseName<Facade.ClosureGenericCallback, 1>() == "")))
+                        {
+                            return 0;
+                        }
+
+                        if (!(comptime (System.Compiler.ClosureParameterTypeModuleName<Facade.ClosureGenericCallback, 1>() == "")))
                         {
                             return 0;
                         }
@@ -1940,6 +2338,44 @@ public sealed class PackageImageArchitectureTests
                     public alias SpeakerView = borrow dyn Speaker;
                     public alias SpeakerOwner = heap dyn Speaker;
                     public alias ListenerView = borrow dyn Listener;
+
+                    public struct Holder<T>
+                    {
+                        T Value;
+                    }
+
+                    public struct Carrier
+                    {
+                        heap dyn Speaker Owned;
+                    }
+
+                    public enum Packet
+                    {
+                        Owned(heap dyn Speaker),
+                        Count(i32[min max])
+                    }
+
+                    public trait Contract
+                    {
+                        alias View = heap dyn Speaker;
+                    }
+
+                    public struct Service
+                    {
+                        public finite law heap dyn Speaker Current(borrow Service self);
+
+                        public finite law void Observe(borrow Service self, borrow dyn Speaker value);
+
+                        public finite law Holder<heap dyn Speaker> Wrap(borrow Service self, Holder<heap dyn Speaker> input);
+                    }
+
+                    public alias Callback = fnptr<fn heap dyn Speaker(borrow dyn Speaker)>;
+                    public alias Handler = borrow closure<fn heap dyn Speaker(borrow dyn Speaker)>;
+                    public alias Boxed = Holder<heap dyn Speaker>;
+                    public alias NestedCallback = fnptr<fn Holder<heap dyn Speaker>(Holder<heap dyn Speaker>)>;
+                    public alias NestedHandler = borrow closure<fn Holder<heap dyn Speaker>(Holder<heap dyn Speaker>)>;
+                    public alias DynArray = heap dyn Speaker[2];
+                    public alias DynPointer = rawptr<heap dyn Speaker>;
                     """,
                     sourcePath),
                 new CompilerOptions(StopAfterPassId: "lower-abi"));
@@ -1956,6 +2392,12 @@ public sealed class PackageImageArchitectureTests
             Assert.Contains("public alias SpeakerView = borrow dyn Speaker;", sourceText, StringComparison.Ordinal);
             Assert.Contains("public alias SpeakerOwner = heap dyn Speaker;", sourceText, StringComparison.Ordinal);
             Assert.Contains("public alias ListenerView = borrow dyn Listener;", sourceText, StringComparison.Ordinal);
+            Assert.Contains("public alias Callback = fnptr<fn heap dyn Speaker(borrow dyn Speaker)>;", sourceText, StringComparison.Ordinal);
+            Assert.Contains("public alias Handler = borrow closure<fn heap dyn Speaker(borrow dyn Speaker)>;", sourceText, StringComparison.Ordinal);
+            Assert.Contains("public alias Boxed = Holder<heap dyn Speaker>;", sourceText, StringComparison.Ordinal);
+            Assert.Contains("public alias NestedCallback = fnptr<fn Holder<heap dyn Speaker>(Holder<heap dyn Speaker>)>;", sourceText, StringComparison.Ordinal);
+            Assert.Contains("public alias NestedHandler = borrow closure<fn Holder<heap dyn Speaker>(Holder<heap dyn Speaker>)>;", sourceText, StringComparison.Ordinal);
+            Assert.Contains("public finite law Holder<heap dyn Speaker> Wrap(borrow Service self, Holder<heap dyn Speaker> input);", sourceText, StringComparison.Ordinal);
 
             Assert.True(PackageImageLoader.TryBuildLoadedPackageImageFacts(resolvedModule, out var facts));
             var speakerViewAlias = facts.TypeAliases["Facade.SpeakerView"];
@@ -1967,6 +2409,16 @@ public sealed class PackageImageArchitectureTests
             var listenerAlias = facts.TypeAliases["Facade.ListenerView"];
             Assert.Equal("Facade.Listener", listenerAlias.TargetType.DynTraitName);
             Assert.Empty(listenerAlias.TargetType.TypeArguments ?? []);
+            var carrierType = facts.NamedTypes["Facade.Carrier"];
+            Assert.Equal(StarkTypeKind.DynTrait, carrierType.OrderedFields[0].Type.Kind);
+            Assert.Equal(StarkDynTraitStorageKind.Heap, carrierType.OrderedFields[0].Type.DynTraitStorageKind);
+            Assert.Equal("Facade.Speaker", carrierType.OrderedFields[0].Type.DynTraitName);
+            var packetType = facts.NamedTypes["Facade.Packet"];
+            Assert.Equal(StarkTypeKind.DynTrait, packetType.Variants[0].Fields[0].Type.Kind);
+            Assert.Equal(StarkDynTraitStorageKind.Heap, packetType.Variants[0].Fields[0].Type.DynTraitStorageKind);
+            var contractType = facts.NamedTypes["Facade.Contract"];
+            Assert.Equal(StarkTypeKind.DynTrait, contractType.AssociatedTypes["View"].TargetType?.Kind);
+            Assert.Equal(StarkDynTraitStorageKind.Heap, contractType.AssociatedTypes["View"].TargetType?.DynTraitStorageKind);
 
             File.Delete(sourcePath);
             var consumerResult = DefaultCompilerPipeline.Create().Run(
@@ -1977,27 +2429,32 @@ public sealed class PackageImageArchitectureTests
 
                     finite law i64[min max] MetadataScore()
                     {
-                        if (comptime System.Compiler.IsDynTrait<Facade.SpeakerView>())
-                        {
-                            if (comptime System.Compiler.DynTraitIsView<Facade.SpeakerView>())
-                            {
-                                if (comptime System.Compiler.DynTraitIsHeap<Facade.SpeakerOwner>())
-                                {
-                                    if (comptime System.Compiler.DynTraitTargetTypeIs<Facade.SpeakerView, Facade.Speaker>())
-                                    {
-                                        if (comptime System.Compiler.DynTraitTargetTypeIs<Facade.ListenerView, Facade.Listener>())
-                                        {
-                                            if (comptime !System.Compiler.DynTraitTargetTypeIs<Facade.ListenerView, Facade.Speaker>())
-                                            {
-                                                return 7;
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                        if (comptime !System.Compiler.IsDynTrait<Facade.SpeakerView>()) { return 101; }
+                        if (comptime !System.Compiler.DynTraitIsView<Facade.SpeakerView>()) { return 102; }
+                        if (comptime !System.Compiler.DynTraitIsHeap<Facade.SpeakerOwner>()) { return 103; }
+                        if (comptime !System.Compiler.DynTraitTargetTypeIs<Facade.SpeakerView, Facade.Speaker>()) { return 104; }
+                        if (comptime !System.Compiler.DynTraitTargetTypeIs<Facade.ListenerView, Facade.Listener>()) { return 105; }
+                        if (comptime System.Compiler.DynTraitTargetTypeIs<Facade.ListenerView, Facade.Speaker>()) { return 106; }
+                        if (comptime !System.Compiler.FieldTypeIsDynTrait<Facade.Carrier, 0>()) { return 107; }
+                        if (comptime !System.Compiler.EnumVariantPayloadTypeIsDynTrait<Facade.Packet, 0, 0>()) { return 108; }
+                        if (comptime !System.Compiler.AssociatedTypeTargetTypeIsDynTrait<Facade.Contract, 0>()) { return 109; }
+                        if (comptime !System.Compiler.MethodReturnTypeIsDynTrait<Facade.Service, 0>()) { return 110; }
+                        if (comptime !System.Compiler.MethodParameterTypeIsDynTrait<Facade.Service, 1, 1>()) { return 111; }
+                        if (comptime !System.Compiler.FunctionPointerReturnTypeIsDynTrait<Facade.Callback>()) { return 112; }
+                        if (comptime !System.Compiler.FunctionPointerParameterTypeIsDynTrait<Facade.Callback, 0>()) { return 113; }
+                        if (comptime !System.Compiler.ClosureReturnTypeIsDynTrait<Facade.Handler>()) { return 114; }
+                        if (comptime !System.Compiler.ClosureParameterTypeIsDynTrait<Facade.Handler, 0>()) { return 115; }
+                        if (comptime !System.Compiler.TypeArgumentTypeIsDynTrait<Facade.Boxed, 0>()) { return 116; }
+                        if (comptime !System.Compiler.TypeElementTypeIsDynTrait<Facade.DynArray>()) { return 117; }
+                        if (comptime !System.Compiler.RawPointerElementTypeIsDynTrait<Facade.DynPointer>()) { return 118; }
+                        if (comptime !System.Compiler.FunctionPointerReturnTypeArgumentTypeIsDynTrait<Facade.NestedCallback, 0>()) { return 119; }
+                        if (comptime !System.Compiler.FunctionPointerParameterTypeArgumentTypeIsDynTrait<Facade.NestedCallback, 0, 0>()) { return 120; }
+                        if (comptime !System.Compiler.ClosureReturnTypeArgumentTypeIsDynTrait<Facade.NestedHandler, 0>()) { return 121; }
+                        if (comptime !System.Compiler.ClosureParameterTypeArgumentTypeIsDynTrait<Facade.NestedHandler, 0, 0>()) { return 122; }
+                        if (comptime !System.Compiler.MethodReturnTypeArgumentTypeIsDynTrait<Facade.Service, 2, 0>()) { return 123; }
+                        if (comptime !System.Compiler.MethodParameterTypeArgumentTypeIsDynTrait<Facade.Service, 2, 1, 0>()) { return 124; }
 
-                        return 0;
+                        return 7;
                     }
 
                     finite law i64[min max] Run()
@@ -2719,6 +3176,659 @@ public sealed class PackageImageArchitectureTests
             Assert.Contains("ret i8 7", ExtractDefinitionBody(llvm!.Text, "__stark_mono_fn_Demo__Facade_Fold__i32__N_5"));
             Assert.Contains("ret i8 7", ExtractDefinitionBody(llvm.Text, "__stark_mono_fn_Demo__Facade_Forward__i32__M_5"));
             Assert.Contains("ret i8 7", ExtractDefinitionBody(llvm.Text, "Run"));
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup.
+            }
+        }
+    }
+
+    [Fact]
+    public void PackageImageConsumerFoldsImportedComptimeTemplateCallWithStatementBody()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-comptime-statement-template-consumer-");
+
+        try
+        {
+            var sourcePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+            var manifestPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.starkpkg.json" : "libFacade.starkpkg.json");
+            var libraryPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a");
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    module Facade
+
+                    public finite law i32[min max] Build<T, comptime u8[1 8] N>()
+                    {
+                        stack mut i32[min max] value = (i32[min max])N;
+                        value = value + 1;
+                        if (value == 6)
+                        {
+                            return value * 7;
+                        }
+
+                        return 0;
+                    }
+
+                    public finite law i32[min max] Fold<T, comptime u8[1 8] M>()
+                    {
+                        return comptime Build<T, comptime M>();
+                    }
+                    """,
+                    sourcePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(libraryResult, libraryPath);
+            var facadeModule = Assert.Single(manifest.Modules, static item => item.ModuleName == "Facade");
+            var buildTemplate = Assert.Single(
+                facadeModule.EffectiveGenericTemplates!.Functions,
+                static item => item.QualifiedResolvedName == "Facade.Build");
+            Assert.NotNull(buildTemplate.TypedBody);
+            Assert.True(buildTemplate.TypedBody!.Statements.Count > 1);
+
+            var corruptedTemplates = new StarkPackageGenericTemplateSection(
+                facadeModule.EffectiveGenericTemplates.Functions
+                    .Select(static item => item with { BodyText = "{ return this is not valid Stark; }" })
+                    .ToArray());
+            var corruptedModule = facadeModule with
+            {
+                GenericTemplates = corruptedTemplates,
+                CompilerSections = facadeModule.CompilerSections is null
+                    ? null
+                    : facadeModule.CompilerSections with { GenericTemplates = corruptedTemplates }
+            };
+            var corruptedManifest = manifest with
+            {
+                Modules = manifest.Modules
+                    .Select(item => item.ModuleName == "Facade" ? corruptedModule : item)
+                    .ToArray()
+            };
+            File.WriteAllText(manifestPath, corruptedManifest.ToJson());
+            File.Delete(sourcePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    finite law i32[min max] Run()
+                    {
+                        return Facade.Fold<i32[min max], 5>();
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName),
+                    StopAfterPassId: "emit-llvm"));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            FallbackLogAssertions.AssertNoFallbackLogs(consumerResult, "Imported statement-bodied comptime template call builds");
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvm));
+            Assert.NotNull(llvm);
+            Assert.Contains("ret i32 42", ExtractDefinitionBody(llvm!.Text, "__stark_mono_fn_Demo__Facade_Build__i32__N_5"));
+            Assert.Contains("ret i32 42", ExtractDefinitionBody(llvm.Text, "__stark_mono_fn_Demo__Facade_Fold__i32__M_5"));
+            Assert.Contains("ret i32 42", ExtractDefinitionBody(llvm.Text, "Run"));
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup.
+            }
+        }
+    }
+
+    [Fact]
+    public void PackageImageConsumerFoldsImportedComptimeTemplateCallWithMemberCalls()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-comptime-member-template-consumer-");
+
+        try
+        {
+            var sourcePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+            var manifestPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.starkpkg.json" : "libFacade.starkpkg.json");
+            var libraryPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a");
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    module Facade
+
+                    public struct Box<T>
+                    {
+                        public i32[min max] Value;
+
+                        public finite law Box<T> Add(borrow Box<T> self, i32[min max] delta)
+                        {
+                            return new Box<T>()
+                            {
+                                Value = self.Value + delta
+                            };
+                        }
+
+                        public finite law i32[min max] Read(borrow Box<T> self)
+                        {
+                            return self.Value;
+                        }
+                    }
+
+                    public finite law Box<T> BuildBox<T, comptime u8[0 64] N>()
+                    {
+                        return new Box<T>()
+                        {
+                            Value = (i32[min max])N
+                        };
+                    }
+
+                    public finite law i32[min max] MemberScore<T, comptime u8[0 64] N>()
+                    {
+                        return comptime BuildBox<T, comptime N>().Add(5).Read();
+                    }
+                    """,
+                    sourcePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(libraryResult, libraryPath);
+            var facadeModule = Assert.Single(manifest.Modules, static item => item.ModuleName == "Facade");
+            var scoreTemplate = Assert.Single(
+                facadeModule.EffectiveGenericTemplates!.Functions,
+                static item => item.QualifiedResolvedName == "Facade.MemberScore");
+            Assert.NotNull(scoreTemplate.TypedBody);
+            Assert.True(scoreTemplate.MemberCalls is { Count: >= 2 });
+
+            var corruptedTemplates = new StarkPackageGenericTemplateSection(
+                facadeModule.EffectiveGenericTemplates.Functions
+                    .Select(static item => item with { BodyText = "{ return this is not valid Stark; }" })
+                    .ToArray());
+            var corruptedModule = facadeModule with
+            {
+                GenericTemplates = corruptedTemplates,
+                CompilerSections = facadeModule.CompilerSections is null
+                    ? null
+                    : facadeModule.CompilerSections with { GenericTemplates = corruptedTemplates }
+            };
+            var corruptedManifest = manifest with
+            {
+                Modules = manifest.Modules
+                    .Select(item => item.ModuleName == "Facade" ? corruptedModule : item)
+                    .ToArray()
+            };
+            File.WriteAllText(manifestPath, corruptedManifest.ToJson());
+            File.Delete(sourcePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    finite law i32[min max] Run()
+                    {
+                        return Facade.MemberScore<i32[min max], 37>();
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName),
+                    StopAfterPassId: "lower-mir"));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            FallbackLogAssertions.AssertNoFallbackLogs(consumerResult, "Imported member-call comptime template call builds");
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.MidLevelIr, out MidLevelIrModule? mir));
+            Assert.NotNull(mir);
+
+            var memberScore = Assert.Single(
+                mir!.Functions,
+                static function => function.Name == "__stark_mono_fn_Demo__Facade_MemberScore__i32__N_37");
+            var returnValue = Assert.IsType<MidLevelIrIntegerConstantOperand>(
+                memberScore.Blocks[memberScore.EntryBlockId].Terminator.Value);
+            Assert.Equal("42", returnValue.Value.ToString());
+            Assert.DoesNotContain(
+                memberScore.Blocks.SelectMany(static block => block.Statements).Select(static statement => statement.Value),
+                static value => value is MidLevelIrCallRValue);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup.
+            }
+        }
+    }
+
+    [Fact]
+    public void PackageImageConsumerFoldsImportedComptimeTemplateCallWithObjectInitializers()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-comptime-object-initializer-template-consumer-");
+
+        try
+        {
+            var sourcePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+            var manifestPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.starkpkg.json" : "libFacade.starkpkg.json");
+            var libraryPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a");
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    module Facade
+
+                    public struct Pair
+                    {
+                        public i32[min max] Left;
+                        public i32[min max] Right;
+                    }
+
+                    public struct Holder
+                    {
+                        public Pair Item;
+                        public i32[min max][2] Values;
+                    }
+
+                    public finite law i32[min max] AggregateScore<T>()
+                    {
+                        stack Holder holder =
+                        {
+                            Item =
+                            {
+                                Left = 10,
+                                Right = 20
+                            },
+                            Values =
+                            {
+                                5,
+                                7
+                            }
+                        };
+
+                        return holder.Item.Left + holder.Item.Right + holder.Values[0] + holder.Values[1];
+                    }
+
+                    public finite law i32[min max] FoldAggregate<T>()
+                    {
+                        return comptime AggregateScore<T>();
+                    }
+                    """,
+                    sourcePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(libraryResult, libraryPath);
+            var facadeModule = Assert.Single(manifest.Modules, static item => item.ModuleName == "Facade");
+            var aggregateTemplate = Assert.Single(
+                facadeModule.EffectiveGenericTemplates!.Functions,
+                static item => item.QualifiedResolvedName == "Facade.AggregateScore");
+            var foldTemplate = Assert.Single(
+                facadeModule.EffectiveGenericTemplates.Functions,
+                static item => item.QualifiedResolvedName == "Facade.FoldAggregate");
+            Assert.NotNull(aggregateTemplate.TypedBody);
+            Assert.NotNull(foldTemplate.TypedBody);
+            Assert.Contains("\"Kind\": \"object-initializer\"", manifest.ToJson(), StringComparison.Ordinal);
+
+            var corruptedTemplates = new StarkPackageGenericTemplateSection(
+                facadeModule.EffectiveGenericTemplates.Functions
+                    .Select(static item => item with { BodyText = "{ return this is not valid Stark; }" })
+                    .ToArray());
+            var corruptedModule = facadeModule with
+            {
+                GenericTemplates = corruptedTemplates,
+                CompilerSections = facadeModule.CompilerSections is null
+                    ? null
+                    : facadeModule.CompilerSections with { GenericTemplates = corruptedTemplates }
+            };
+            var corruptedManifest = manifest with
+            {
+                Modules = manifest.Modules
+                    .Select(item => item.ModuleName == "Facade" ? corruptedModule : item)
+                    .ToArray()
+            };
+            File.WriteAllText(manifestPath, corruptedManifest.ToJson());
+            File.Delete(sourcePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    finite law i32[min max] Run()
+                    {
+                        return Facade.FoldAggregate<i32[min max]>();
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName),
+                    StopAfterPassId: "lower-mir"));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            FallbackLogAssertions.AssertNoFallbackLogs(consumerResult, "Imported object-initializer comptime template call builds");
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.MidLevelIr, out MidLevelIrModule? mir));
+            Assert.NotNull(mir);
+
+            var foldAggregate = Assert.Single(
+                mir!.Functions,
+                static function => function.Name.Contains("Facade_FoldAggregate", StringComparison.Ordinal));
+            var returnValue = Assert.IsType<MidLevelIrIntegerConstantOperand>(
+                foldAggregate.Blocks[foldAggregate.EntryBlockId].Terminator.Value);
+            Assert.Equal("42", returnValue.Value.ToString());
+            Assert.DoesNotContain(
+                foldAggregate.Blocks.SelectMany(static block => block.Statements).Select(static statement => statement.Value),
+                static value => value is MidLevelIrCallRValue);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup.
+            }
+        }
+    }
+
+    [Fact]
+    public void PackageImageConsumerFoldsImportedComptimeTemplateCallWithTextConstants()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-comptime-text-template-consumer-");
+
+        try
+        {
+            var sourcePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+            var manifestPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.starkpkg.json" : "libFacade.starkpkg.json");
+            var libraryPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a");
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    module Facade
+
+                    public finite law ascii Interpolated<T>()
+                    {
+                        return $"Score: {100}";
+                    }
+
+                    public finite law ascii Concatenated<T>()
+                    {
+                        return "Score: " + "100";
+                    }
+
+                    public finite law i32[min max] TextScore<T>()
+                    {
+                        if (comptime Interpolated<T>() == "Score: 100")
+                        {
+                            if (comptime Concatenated<T>() == "Score: 100")
+                            {
+                                return 42;
+                            }
+                        }
+
+                        return 0;
+                    }
+                    """,
+                    sourcePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(libraryResult, libraryPath);
+            var facadeModule = Assert.Single(manifest.Modules, static item => item.ModuleName == "Facade");
+            var interpolatedTemplate = Assert.Single(
+                facadeModule.EffectiveGenericTemplates!.Functions,
+                static item => item.QualifiedResolvedName == "Facade.Interpolated");
+            var concatenatedTemplate = Assert.Single(
+                facadeModule.EffectiveGenericTemplates.Functions,
+                static item => item.QualifiedResolvedName == "Facade.Concatenated");
+            var scoreTemplate = Assert.Single(
+                facadeModule.EffectiveGenericTemplates.Functions,
+                static item => item.QualifiedResolvedName == "Facade.TextScore");
+            Assert.NotNull(interpolatedTemplate.TypedBody);
+            Assert.NotNull(concatenatedTemplate.TypedBody);
+            Assert.NotNull(scoreTemplate.TypedBody);
+            Assert.Contains("\"Kind\": \"text-interpolation\"", manifest.ToJson(), StringComparison.Ordinal);
+
+            var corruptedTemplates = new StarkPackageGenericTemplateSection(
+                facadeModule.EffectiveGenericTemplates.Functions
+                    .Select(static item => item with { BodyText = "{ return this is not valid Stark; }" })
+                    .ToArray());
+            var corruptedModule = facadeModule with
+            {
+                GenericTemplates = corruptedTemplates,
+                CompilerSections = facadeModule.CompilerSections is null
+                    ? null
+                    : facadeModule.CompilerSections with { GenericTemplates = corruptedTemplates }
+            };
+            var corruptedManifest = manifest with
+            {
+                Modules = manifest.Modules
+                    .Select(item => item.ModuleName == "Facade" ? corruptedModule : item)
+                    .ToArray()
+            };
+            File.WriteAllText(manifestPath, corruptedManifest.ToJson());
+            File.Delete(sourcePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    finite law i32[min max] Run()
+                    {
+                        return Facade.TextScore<i32[min max]>();
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName),
+                    StopAfterPassId: "emit-llvm"));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            FallbackLogAssertions.AssertNoFallbackLogs(consumerResult, "Imported text comptime template call builds");
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvm));
+            Assert.NotNull(llvm);
+            Assert.Contains("ret i32 42", ExtractDefinitionBody(llvm!.Text, "__stark_mono_fn_Demo__Facade_TextScore__i32"));
+            Assert.Contains("ret i32 42", ExtractDefinitionBody(llvm.Text, "Run"));
+            Assert.DoesNotContain("Score: {100}", llvm.Text, StringComparison.Ordinal);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup.
+            }
+        }
+    }
+
+    [Fact]
+    public void PackageImageConsumerFoldsImportedComptimeTemplateCallWithPatterns()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-comptime-pattern-template-consumer-");
+
+        try
+        {
+            var sourcePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+            var manifestPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.starkpkg.json" : "libFacade.starkpkg.json");
+            var libraryPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a");
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    module Facade
+
+                    enum Step
+                    {
+                        More(i32[min max]),
+                        Done
+                    }
+
+                    struct Point
+                    {
+                        i32[min max] X;
+                        i32[min max] Y;
+                    }
+
+                    public finite law Step Next<T, comptime u8[0 8] N>(i32[min max] value)
+                    {
+                        if (value < (i32[min max])N)
+                        {
+                            return Step.More(value + 1);
+                        }
+
+                        return Step.Done;
+                    }
+
+                    public finite law i32[min max] PatternScore<T, comptime u8[0 8] N>()
+                    {
+                        stack mut i32[min max] total = 0;
+
+                        if (Next<T, comptime N>(0) is Step.More(var first))
+                        {
+                            total += first;
+                        }
+                        else
+                        {
+                            total += 1000;
+                        }
+
+                        stack Point point = new Point()
+                        {
+                            X = 3,
+                            Y = 26
+                        };
+
+                        switch (point)
+                        {
+                            case Point { X: 1..4, Y: var y }:
+                                total += y;
+                            default:
+                                total += 1000;
+                        }
+
+                        const i32[min max][3] values =
+                        {
+                            1,
+                            2,
+                            3
+                        };
+
+                        switch (values)
+                        {
+                            case [1, 2, var last]:
+                                total += last;
+                            default:
+                                total += 1000;
+                        }
+
+                        switch (Next<T, comptime N>(3))
+                        {
+                            case Step.More(var last) when last == 4:
+                                total += last;
+                            case Step.More(var other):
+                                total += other + 1000;
+                            default:
+                                total += 1000;
+                        }
+
+                        stack mut i32[min max] value = 0;
+                        while willexit (Next<T, comptime N>(value) is Step.More(var next))
+                        {
+                            value = next;
+                            if (value == 2)
+                            {
+                                continue;
+                            }
+
+                            total += value;
+                        }
+
+                        return total;
+                    }
+
+                    public finite law i32[min max] Fold<T, comptime u8[0 8] M>()
+                    {
+                        return comptime PatternScore<T, comptime M>();
+                    }
+                    """,
+                    sourcePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(libraryResult, libraryPath);
+            var facadeModule = Assert.Single(manifest.Modules, static item => item.ModuleName == "Facade");
+            var patternTemplate = Assert.Single(
+                facadeModule.EffectiveGenericTemplates!.Functions,
+                static item => item.QualifiedResolvedName == "Facade.PatternScore");
+            Assert.NotNull(patternTemplate.TypedBody);
+            Assert.Contains(patternTemplate.TypedBody!.Statements, static statement => statement.ConditionPattern is not null);
+            Assert.Contains(patternTemplate.TypedBody.Statements, static statement => statement.SwitchCases is { Count: > 0 });
+
+            var corruptedTemplates = new StarkPackageGenericTemplateSection(
+                facadeModule.EffectiveGenericTemplates.Functions
+                    .Select(static item => item with { BodyText = "{ return this is not valid Stark; }" })
+                    .ToArray());
+            var corruptedModule = facadeModule with
+            {
+                GenericTemplates = corruptedTemplates,
+                CompilerSections = facadeModule.CompilerSections is null
+                    ? null
+                    : facadeModule.CompilerSections with { GenericTemplates = corruptedTemplates }
+            };
+            var corruptedManifest = manifest with
+            {
+                Modules = manifest.Modules
+                    .Select(item => item.ModuleName == "Facade" ? corruptedModule : item)
+                    .ToArray()
+            };
+            File.WriteAllText(manifestPath, corruptedManifest.ToJson());
+            File.Delete(sourcePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    finite law i32[min max] Run()
+                    {
+                        return Facade.Fold<i32[min max], 4>();
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName),
+                    StopAfterPassId: "emit-llvm"));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            FallbackLogAssertions.AssertNoFallbackLogs(consumerResult, "Imported pattern-heavy comptime template call builds");
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvm));
+            Assert.NotNull(llvm);
+            Assert.Contains("__stark_mono_fn_Demo__Facade_PatternScore__i32__N_4", llvm!.Text);
+            Assert.Contains("ret i32 42", ExtractDefinitionBody(llvm.Text, "__stark_mono_fn_Demo__Facade_Fold__i32__M_4"));
+            Assert.Contains("ret i32 42", ExtractDefinitionBody(llvm.Text, "Run"));
         }
         finally
         {
@@ -3846,6 +4956,11 @@ public sealed class PackageImageArchitectureTests
                     public finite law ascii AsciiView(Ascii source);
                     public unsafe finite bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
 
+                    public dyn trait Speaker
+                    {
+                        finite law i32[min max] Speak(borrow Self self);
+                    }
+
                     enum Status
                     {
                         Ok,
@@ -3869,6 +4984,16 @@ public sealed class PackageImageArchitectureTests
                         {
                             value = self.Value;
                             return true;
+                        }
+                    }
+
+                    public struct Dog : Speaker
+                    {
+                        public i32[min max] Volume;
+
+                        public finite law i32[min max] Speak(borrow Dog self)
+                        {
+                            return self.Volume;
                         }
                     }
 
@@ -3925,7 +5050,15 @@ public sealed class PackageImageArchitectureTests
                         fnptr<fn i32[min max](i32[min max])> pointerOp,
                         closure<fn i32[min max](i32[min max])> closureOp)
                         {
-                            stack mut Box box = new Box()
+                            stack Dog dog = new Dog()
+                        {
+                            Volume = 8
+                        };
+                        stack borrow dyn Speaker natural = dog;
+                        stack rawmutptr<i8[min max]> dynContext = natural.Context;
+                        stack rawptr<Speaker.Vtable> dynTable = natural.Vtable;
+                        stack borrow dyn Speaker dynView = dynview<Speaker>(dynContext, dynTable);
+                        stack mut Box box = new Box()
                         {
                             Value = 3
                         };
@@ -3966,7 +5099,7 @@ public sealed class PackageImageArchitectureTests
                             return input;
                         }
                         true ? pointerOp(1) : closureOp(2);
-                        stack i32[min max] total = values[0] + values[1] + Apply(Inc, 2) + pointerOp(3) + closureOp(6) + Choose(true) + Score(Status.Ok) + Score(Status.Err(4));
+                        stack i32[min max] total = values[0] + values[1] + Apply(Inc, 2) + pointerOp(3) + closureOp(6) + Choose(true) + Score(Status.Ok) + Score(Status.Err(4)) + dynView.Speak();
                         return input;
                     }
                     """,
@@ -4004,7 +5137,8 @@ public sealed class PackageImageArchitectureTests
                     "text-interpolation",
                     "text-build",
                     "layout-query",
-                    "switch-dispatch"
+                    "switch-dispatch",
+                    "dyn-trait-from-parts"
                 ],
                 StringComparer.Ordinal);
             foreach (var requiredKind in requiredKinds)
@@ -4027,6 +5161,7 @@ public sealed class PackageImageArchitectureTests
             Assert.Contains(importedTemplate.BoundOperations, static operation => operation.Operation is BoundFunctionPointerCallOperation);
             Assert.Contains(importedTemplate.BoundOperations, static operation => operation.Operation is BoundDynamicStorageOperation);
             Assert.Contains(importedTemplate.BoundOperations, static operation => operation.Operation is BoundSwitchDispatchOperation);
+            Assert.Contains(importedTemplate.BoundOperations, static operation => operation.Operation is BoundDynTraitFromPartsOperation);
 
             var corruptedTemplates = new StarkPackageGenericTemplateSection(
                 module.EffectiveGenericTemplates!.Functions
@@ -4500,7 +5635,11 @@ public sealed class PackageImageArchitectureTests
                         }
                     }
 
-                    public struct Widget : Drawable
+                    public trait Tagged<T, comptime u8[1 8] N>
+                    {
+                    }
+
+                    public struct Widget : Drawable, Tagged<i32[min max], 4>
                     {
                         public i32[min max] W;
 
@@ -4521,16 +5660,27 @@ public sealed class PackageImageArchitectureTests
 
             var typedWidget = Assert.Single(module.EffectiveTypedInterface?.Types ?? [], static type => type.Name == "Widget");
             Assert.Contains("Drawable", typedWidget.ImplementedTraits ?? []);
+            Assert.Contains("Tagged<i32,N=4>", typedWidget.ImplementedTraits ?? []);
+            var typedTaggedTrait = Assert.Single(typedWidget.ImplementedTraitTypes ?? [], static type => type.Name == "Tagged");
+            Assert.Single(typedTaggedTrait.TypeArguments ?? []);
+            var typedTaggedComptimeArgument = Assert.Single(typedTaggedTrait.ComptimeValueArguments ?? []);
+            Assert.Equal("N", typedTaggedComptimeArgument.ParameterName);
+            Assert.Equal("4", typedTaggedComptimeArgument.IntegerValue);
 
             var typedDrawable = Assert.Single(module.EffectiveTypedInterface?.Types ?? [], static type => type.Name == "Drawable");
             Assert.False(Assert.Single(typedDrawable.Methods ?? [], static method => method.Name == "Width").HasBody);
             Assert.True(Assert.Single(typedDrawable.Methods ?? [], static method => method.Name == "Twice").HasBody);
 
             Assert.True(PackageImageLoader.TryBuildModuleSource(CreateResolvedPackageModule(module), out var sourceText));
-            Assert.Contains("public struct Widget : Drawable", sourceText, StringComparison.Ordinal);
+            Assert.Contains("public struct Widget : Drawable, Tagged<i32[min max], 4>", sourceText, StringComparison.Ordinal);
 
             Assert.True(PackageImageLoader.TryBuildLoadedPackageImageFacts(CreateResolvedPackageModule(module), out var facts));
             Assert.Contains("Facade.Drawable", facts.NamedTypes["Facade.Widget"].ImplementedTraits);
+            Assert.Contains("Facade.Tagged<i32,N=4>", facts.NamedTypes["Facade.Widget"].ImplementedTraits);
+            Assert.Contains(facts.NamedTypes["Facade.Widget"].ImplementedTraitTypes, static type =>
+                string.Equals(type.NamedType, "Facade.Tagged<i32,N=4>", StringComparison.Ordinal)
+                && type.TypeArguments is { Count: 1 }
+                && type.ComptimeValueArguments is { Count: 1 });
             Assert.False(facts.FunctionSignatures["Facade.Drawable.Width"].HasBody);
             Assert.True(facts.FunctionSignatures["Facade.Drawable.Twice"].HasBody);
 
@@ -4543,7 +5693,7 @@ public sealed class PackageImageArchitectureTests
 
                     finite law i32[min max] Run()
                     {
-                        if (comptime System.Compiler.ImplementedTraitCount<Facade.Widget>() == 1)
+                        if (comptime System.Compiler.ImplementedTraitCount<Facade.Widget>() == 2)
                         {
                             if (comptime System.Compiler.ImplementedTraitTypeIs<Facade.Widget, Facade.Drawable, 0>())
                             {
@@ -4551,9 +5701,20 @@ public sealed class PackageImageArchitectureTests
                                     && comptime System.Compiler.ImplementedTraitTypeIsTrait<Facade.Widget, 0>()
                                     && comptime !System.Compiler.ImplementedTraitTypeHasConcreteLayout<Facade.Widget, 0>())
                                 {
-                                    if (comptime (System.Compiler.ImplementedTraitTypeBaseName<Facade.Widget, 0>() == "Facade.Drawable"))
+                                    if (comptime (System.Compiler.ImplementedTraitTypeBaseName<Facade.Widget, 0>() == "Facade.Drawable")
+                                        && comptime (System.Compiler.ImplementedTraitTypeModuleName<Facade.Widget, 0>() == "Facade"))
                                     {
-                                        return 42;
+                                        if (comptime System.Compiler.ImplementedTraitTypeIs<Facade.Widget, Facade.Tagged<i32[min max], 4>, 1>()
+                                            && comptime System.Compiler.ImplementedTraitTypeArgumentTypeIs<Facade.Widget, i32[min max], 1, 0>()
+                                            && comptime System.Compiler.ImplementedTraitTypeArgumentTypeIsInteger<Facade.Widget, 1, 0>()
+                                            && comptime (System.Compiler.ImplementedTraitTypeArgumentTypeDisplayName<Facade.Widget, 1, 0>() == "i32")
+                                            && comptime (System.Compiler.ImplementedTraitTypeComptimeArgumentName<Facade.Widget, 1, 0>() == "N")
+                                            && comptime System.Compiler.ImplementedTraitTypeComptimeArgumentTypeIs<Facade.Widget, u8[1 8], 1, 0>()
+                                            && comptime (System.Compiler.ImplementedTraitTypeComptimeArgumentTypeDisplayName<Facade.Widget, 1, 0>() == "u8[1 8]")
+                                            && comptime System.Compiler.ImplementedTraitTypeComptimeArgumentValueIs<Facade.Widget, 1, 0, 4>())
+                                        {
+                                            return 42;
+                                        }
                                     }
                                 }
                             }

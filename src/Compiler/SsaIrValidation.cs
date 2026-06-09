@@ -1842,7 +1842,8 @@ internal sealed class SsaIrValidator
     }
 
     // The fat-pointer components of a `dyn Trait` value: slot 0 is the erased data
-    // pointer (rawmutptr<i8>), slot 1 is the read-only vtable pointer (rawptr<i8>).
+    // pointer (rawmutptr<i8>), slot 1 is the read-only typed vtable pointer
+    // (rawptr<Trait.Vtable>).
     private bool TryGetDynTraitElementType(
         SsaFunction function,
         StarkTypeSymbol aggregateType,
@@ -1854,7 +1855,7 @@ internal sealed class SsaIrValidator
         elementType = index switch
         {
             0 => StarkTypeSymbols.RawPointer(StarkTypeSymbols.Integer(8), isMutable: true),
-            1 => StarkTypeSymbols.RawPointer(StarkTypeSymbols.Integer(8), isMutable: false),
+            1 => StarkTypeSymbols.DynTraitVtablePointerForTraitObject(aggregateType),
             _ => StarkTypeSymbols.Error
         };
 
@@ -3453,6 +3454,11 @@ internal sealed class SsaIrValidator
 
     private void ValidateConversion(SsaFunction function, SsaConvertRValue convert, SourceLocation? location)
     {
+        if (IsPointerBackedBorrowRuntimePointerConversion(convert.Operand.Type, convert.TargetType))
+        {
+            return;
+        }
+
         var sourceType = NormalizeType(convert.Operand.Type);
         var targetType = NormalizeType(convert.TargetType);
         if (HaveSameLlvmValueShape(sourceType, targetType))
@@ -3490,6 +3496,27 @@ internal sealed class SsaIrValidator
                 Report(function, location, $"conversion from '{convert.Operand.Type.DisplayName}' to '{convert.TargetType.DisplayName}' is not supported by SSA LLVM emission.");
                 return;
         }
+    }
+
+    private static bool IsPointerBackedBorrowRuntimePointerConversion(
+        StarkTypeSymbol sourceType,
+        StarkTypeSymbol targetType)
+    {
+        if (StarkTypeSymbols.IsPointerBackedBorrowType(sourceType)
+            && targetType.Kind == StarkTypeKind.RawPointer
+            && targetType.ElementType is { } targetElementType)
+        {
+            return HaveSameLlvmValueShape(StarkTypeSymbols.BorrowReturnValueType(sourceType), targetElementType);
+        }
+
+        if (sourceType.Kind == StarkTypeKind.RawPointer
+            && sourceType.ElementType is { } sourceElementType
+            && StarkTypeSymbols.IsPointerBackedBorrowType(targetType))
+        {
+            return HaveSameLlvmValueShape(sourceElementType, StarkTypeSymbols.BorrowReturnValueType(targetType));
+        }
+
+        return false;
     }
 
     private void ValidateConcreteIntegerType(

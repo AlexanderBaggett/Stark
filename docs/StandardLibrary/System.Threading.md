@@ -1,12 +1,14 @@
 # `System.Threading`
 
 `System.Threading` provides the minimal thread-management surface for Stark,
-plus the atomic types that make sharing state between those threads safe.
+plus atomic, guarded-state, and channel types that make sharing state and
+publishing results between those threads safe.
 
 This module is deliberately not a thread-pool, async, or synchronization
 framework. The first version should be enough to create a thread, wait for it,
-detach it, let owned cleanup happen predictably, and share counters/flags/values
-between threads through atomics.
+detach it, let owned cleanup happen predictably, share counters/flags/values
+through atomics or an explicit guard, and publish worker results through an
+explicit MPSC channel.
 
 ## Public Surface
 
@@ -14,6 +16,7 @@ between threads through atomics.
 module System.Threading
 
 public alias ThreadEntry = fnptr<fn i32[min max]()>;
+public alias ThreadPayloadEntry<T> = fnptr<fn i32[min max](T)>;
 
 public enum ThreadError
 {
@@ -36,19 +39,88 @@ public enum ThreadJoinResult
     Err(ThreadError),
 }
 
+public enum ChannelError
+{
+    Closed,
+    Empty,
+    ReceiverAlreadyTaken,
+    OutOfMemory,
+}
+
+public enum ChannelStatus
+{
+    Ok,
+    Err(ChannelError),
+}
+
+public enum ChannelSenderResult<T>
+{
+    Ok(Sender<T>),
+    Err(ChannelError),
+}
+
+public enum ChannelReceiverResult<T>
+{
+    Ok(Receiver<T>),
+    Err(ChannelError),
+}
+
+public enum ChannelReceiveResult<T>
+{
+    Item(T),
+    Err(ChannelError),
+}
+
 public struct Thread
 {
     Thread(ThreadEntry entry);
     finite law bool IsJoinable(borrow Thread self);
     fn ThreadJoinResult Join(mut borrow Thread self);
     fn ThreadStatus Detach(mut borrow Thread self);
+    static fn Thread Start<T>(ThreadPayloadEntry<T> entry, T payload)
+        where Transferable(T);
     static fn void Yield();
-    static fn void SleepMilliseconds(i64[0 max] milliseconds);
+    static fn void SleepMilliseconds(u64[0 2 ** 63 - 1] milliseconds);
+}
+
+public struct Synchronized<T>
+{
+    Synchronized(T initial);
+    fn Locked<T> Lock(storeborrow mut Synchronized<T> self);
+}
+
+public struct Locked<T>
+{
+    fn retborrow mut T Value(mut borrow Locked<T> self);
+    mut drop;
+}
+
+public struct Channel<T>
+{
+    Channel();
+    fn ChannelSenderResult<T> CreateSender(storeborrow mut Channel<T> self);
+    fn ChannelReceiverResult<T> CreateReceiver(storeborrow mut Channel<T> self);
+    fn u64[0 2 ** 63 - 1] PendingCount(storeborrow mut Channel<T> self);
+}
+
+public struct Sender<T>
+{
+    fn ChannelStatus Send(mut borrow Sender<T> self, T value)
+        where Transferable(T);
+    fn ChannelStatus Close(mut borrow Sender<T> self);
+    mut drop;
+}
+
+public struct Receiver<T>
+{
+    fn ChannelReceiveResult<T> Receive(mut borrow Receiver<T> self);
+    fn ChannelStatus Close(mut borrow Receiver<T> self);
+    mut drop;
 }
 ```
 
-Small enums such as `ThreadError`, `ThreadStatus`, and `ThreadJoinResult` use
-appropriately small tags.
+Small enums such as `ThreadError`, `ThreadStatus`, `ThreadJoinResult`, and the
+channel result/status enums use appropriately small tags.
 
 ## Atomic Types
 
@@ -154,6 +226,102 @@ export fn i32[min max] main()
 and then stores `true`; consumers spin (or check periodically) until they observe
 the flag.
 
+The compiler enforces this at thread-entry boundaries. A function reachable from
+`ThreadEntry` or `ThreadPayloadEntry<T>` may touch a `static mut` only when that
+static is synchronization-backed: `System.Threading.Atomic*` for scalar state or
+`System.Threading.Synchronized<T>` for guarded aggregate state. A plain
+`static mut i32` can still exist for single-threaded code, but it is a compile-time
+error once it is reachable from a thread entry.
+
+## Guarded Shared State
+
+`Synchronized<T>` is the blessed easy shared-state primitive. It owns a `T` and
+exposes mutation only while a `Locked<T>` guard is alive. The guard unlocks in
+`drop`, and `Value` returns a protected `retborrow mut T` that cannot outlive the
+guard.
+
+```stark
+import System.Threading
+module Demo
+
+struct Counter
+{
+    i32[min max] Value;
+}
+
+static mut System.Threading.Synchronized<Counter> Shared =
+    new System.Threading.Synchronized<Counter>(new Counter()
+    {
+        Value = 0
+    });
+
+fn i32[min max] Worker()
+{
+    stack mut System.Threading.Locked<Counter> guard = Shared.Lock();
+    guard.Value().Value += 1;
+    return 0;
+}
+```
+
+`Synchronized<T>` grants `Shareable` when `Transferable(T)` holds. The protected
+payload field is audited with that conditional grant, so non-transferable
+payloads are rejected with the normal thread-safety-law field-chain diagnostics.
+The implementation uses `AtomicBool` as the lock word and yields while contended;
+it does not introduce hidden locking on assignment or member access.
+
+## Channels
+
+`Channel<T>` is the blessed MPSC result-publication primitive. It is deliberately
+small: a channel owns its queue, producers hold `Sender<T>` handles, and the
+single consumer holds one `Receiver<T>`.
+
+```stark
+import System.Threading
+module Demo
+
+fn System.Threading.ChannelStatus Run()
+{
+    stack mut System.Threading.Channel<i32[min max]> channel =
+        new System.Threading.Channel<i32[min max]>();
+    stack mut System.Threading.Sender<i32[min max]> first =
+        try channel.CreateSender();
+    stack mut System.Threading.Sender<i32[min max]> second =
+        try channel.CreateSender();
+    stack mut System.Threading.Receiver<i32[min max]> receiver =
+        try channel.CreateReceiver();
+
+    first.Send(31);
+    second.Send(11);
+
+    stack i32[min max] a = try receiver.Receive();
+    stack i32[min max] b = try receiver.Receive();
+
+    first.Close();
+    second.Close();
+    return System.Threading.ChannelStatus.Ok;
+}
+```
+
+Semantics:
+
+- `Channel<T>` grants `Shareable` and `Transferable` when `Transferable(T)` holds.
+- `Sender<T>.Send` requires `Transferable(T)` and moves the payload into the
+  channel queue.
+- `Channel<T>` allows multiple senders and exactly one receiver. A second receiver
+  returns `ChannelError.ReceiverAlreadyTaken`.
+- Sender handles are tracked individually. Closing or dropping the same sender
+  twice does not decrement the active-sender count twice, and closing the
+  receiver invalidates all remaining sender handles.
+- `Receiver<T>.Receive` returns `Item(T)` when a queued value exists,
+  `Err(ChannelError.Empty)` when the queue is empty but at least one sender is
+  still open, and `Err(ChannelError.Closed)` when the queue is empty and no sender
+  remains open.
+- `Sender<T>.Close` is idempotent. Dropping an open sender closes that producer
+  handle, so the receiver can observe completion after all senders close or drop.
+- `Receiver<T>.Close` rejects later sends, clears pending values, and is
+  idempotent. Dropping an open receiver closes the receive side.
+- The implementation uses an `AtomicBool` gate and an owned `Queue<T>`.
+
 ## Construction Pattern
 
 Thread creation should use constructors on `Thread`, not a free-standing
@@ -167,9 +335,35 @@ stack System.Threading.ThreadJoinResult result = worker.Join();
 The current source surface defines `ThreadEntry` as a no-state function pointer
 returning an `i32` thread exit code. Named functions and non-capturing lambdas
 can be used as entries, including through packaged `System.Threading`
-consumption. Capturing thread entries remain out of scope until captured-lambda
-lowering is implemented. Raw platform entry thunks remain inside
-`System.Runtime.Platform`.
+consumption.
+
+Owned worker data is passed with the explicit payload-entry overload:
+
+```stark
+struct WorkerPayload
+{
+    i32[min max] ExitCode;
+}
+
+fn i32[min max] Worker(WorkerPayload payload)
+{
+    return payload.ExitCode;
+}
+
+stack WorkerPayload payload = new WorkerPayload()
+{
+    ExitCode = 17
+};
+stack mut System.Threading.Thread worker =
+    System.Threading.Thread.Start<WorkerPayload>(Worker, payload);
+```
+
+`Thread.Start<T>` requires `Transferable(T)`, so raw pointers, stored borrows, or
+other non-transferable payload fields are rejected with the normal
+thread-safety-law diagnostics. Hidden capturing thread entries remain out of
+scope for the current pre-self-host surface; the supported form is the explicit
+payload struct plus `ThreadPayloadEntry<T>`. Raw platform entry thunks remain
+inside `System.Runtime.Platform`.
 
 `Yield` and `SleepMilliseconds` are modeled as static functions on `Thread` so
 the public surface stays C#-like.
@@ -201,21 +395,20 @@ surface:
 
 - thread pools
 - async/await
-- mutexes
+- broad mutex/RwLock/condition-variable APIs
 - semaphores
-- condition variables
-- channels
 - memory orderings weaker than seq-cst on the atomic types
 
-Higher-level synchronization primitives build on the atomic types and the
-internal platform futex hooks when they are added.
+Broader synchronization primitives build on the atomic types and the internal
+platform futex hooks when they are added.
 
 ## Current Status
 
 - `System.Threading` is re-exported by the repository `System` root.
 - `ThreadEntry`, `ThreadError`, `ThreadStatus`, `ThreadJoinResult`, `Thread`,
-  `Thread` construction, `Thread.Join`, `Thread.Detach`, `Thread.Yield`, and
-  `Thread.SleepMilliseconds` are implemented in source.
+  `ThreadPayloadEntry<T>`, `Thread` construction, `Thread.Start<T>`,
+  `Thread.Join`, `Thread.Detach`, `Thread.Yield`, and `Thread.SleepMilliseconds`
+  are implemented in source.
 - Linux `Yield` and `SleepMilliseconds` use internal syscall-backed platform
   hooks. On x86_64 Linux, thread lifecycle uses raw `clone`,
   `mmap`/`munmap`, futex wait/wake, and an internal reference count instead of
@@ -224,10 +417,19 @@ internal platform futex hooks when they are added.
   `GetExitCodeThread`, `CloseHandle`, `SwitchToThread`, and `Sleep` hooks through
   the platform dispatch layer. The internal futex-shaped wait/wake hooks use
   `WaitOnAddress`, `WakeByAddressSingle`, and `WakeByAddressAll`.
-- Packaged consumption covers `ThreadEntry`, scheduler helpers, thread
-  construction, `Join`, and `Detach`; Linux package archive coverage also
-  guards against pthread symbol regressions.
+- Packaged consumption covers `ThreadEntry`, payload thread starts, scheduler
+  helpers, thread construction, `Join`, and `Detach`; Linux package archive
+  coverage also guards against pthread symbol regressions.
 - All 29 atomic types (`AtomicBool`, `AtomicI8`…`AtomicI1024`,
   `AtomicU8`…`AtomicU1024`) are implemented with seq-cst semantics across all
   three lowering tiers, covered by runtime exact-count tests under real thread
   contention, LLVM emission shape tests, and packaged-stdlib consumption tests.
+- `Synchronized<T>` and `Locked<T>` are implemented as the easy guarded
+  shared-state primitive, including conditional `Shareable` law enforcement,
+  protected-borrow lifetime diagnostics, drop-based unlock, and runtime
+  contention coverage.
+- `Channel<T>`, `Sender<T>`, and `Receiver<T>` are implemented as the MPSC
+  progress/result publication primitive, including `Transferable(T)` payload
+  enforcement, handle law facts, send/receive/close behavior, sender-drop
+  completion, receiver-drop close, per-sender identity tracking, and native
+  runtime coverage under multiple producers.

@@ -2771,9 +2771,9 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             StarkTypeKind.Dynamic when normalizedType.ElementType is not null && index == 0
                 => StarkTypeSymbols.RawPointer(normalizedType.ElementType, isMutable: true),
             StarkTypeKind.Dynamic when index == 1
-                => StarkTypeSymbols.Integer(64),
+                => StarkTypeSymbols.Integer(64, BigInteger.Zero, new BigInteger(long.MaxValue)),
             StarkTypeKind.Dynamic when index == 2
-                => StarkTypeSymbols.Integer(64),
+                => StarkTypeSymbols.Integer(64, BigInteger.Zero, new BigInteger(long.MaxValue)),
             StarkTypeKind.Named when ResolveNamedTypeSymbol(normalizedType) is { } namedType
                                        && TryGetScalarizableNamedAggregateFields(namedType, out var orderedFields)
                                        && index >= 0
@@ -3508,14 +3508,22 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         SystemThreadingAtomicBuiltin builtin)
     {
         var receiverPointer = $"%{EscapeIdentifier(abiFunction.UserParameters[0].LlvmName)}";
-        var structType = MapType(function.Parameters[0].Type);
+        var receiverType = NormalizeAggregateType(function.Parameters[0].Type);
+        if (TryGetConcreteTypeLayout(receiverType) is not { } receiverLayout
+            || !receiverLayout.TryGetField("Value", out var valueFieldLayout)
+            || valueFieldLayout.OffsetBytes != 0
+            || !receiverLayout.TryGetField("Lock", out var lockFieldLayout))
+        {
+            throw new InvalidOperationException(SystemThreadingAtomicFacts.DescribeRequiredAtomicFieldLayout(builtin));
+        }
+
         var valueType = $"i{builtin.ValueBitWidth}";
 
-        // The value sits at offset 0 (the receiver pointer); the lock word is field 1.
-        // Stark guarantees at least 8-byte alignment for these structs; the wide value
-        // accesses use that conservative alignment.
+        // The value sits at offset 0 (the receiver pointer). Address the lock through
+        // the concrete layout so opaque LLVM pointers and future layout tweaks stay in
+        // agreement with Stark's field model.
         builder.AppendLine("entry:");
-        builder.AppendLine($"  %atomic_lock_addr = getelementptr{GetProvenInObjectGepFlags()} {structType}, ptr {receiverPointer}, i32 0, i32 1");
+        builder.AppendLine($"  %atomic_lock_addr = getelementptr{GetProvenInObjectGepFlags()} i8, ptr {receiverPointer}, i64 {lockFieldLayout.OffsetBytes}");
         builder.AppendLine("  br label %acquire");
         builder.AppendLine();
         builder.AppendLine("acquire:");

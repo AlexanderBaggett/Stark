@@ -136,10 +136,19 @@ stark test
 stark build app --release
 stark run hello
 stark test stdlib-tests
+stark test stdlib-tests --filter Integer
 ```
 
 Manifest discovery searches upward. The nearest `Stark.toml` runs in project
 mode. The nearest `Stark.solution.toml` runs in solution mode.
+
+For `kind = "test"` projects, `stark test` generates an explicit `main` runner
+when the root contains `[Fact]` metadata. `[Fact]` functions must be
+non-generic, no-argument `bool` functions with a body. The generated runner
+enumerates facts at build time, applies repeatable `--filter <text>` selections
+against fact display names, calls `System.Testing.RunFact`, and returns a stable
+process exit code. Do not declare a manual `main` in a `[Fact]` test root;
+manual runners are reserved for no-`[Fact]` bootstrap tests.
 
 ## Source And Package Shape
 

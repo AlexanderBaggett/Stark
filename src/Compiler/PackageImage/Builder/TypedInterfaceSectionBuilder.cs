@@ -242,6 +242,11 @@ internal static partial class PackageImageBuilder
             PackBytes: namedType.Layout?.PackBytes,
             AlignBytes: namedType.Layout?.AlignBytes,
             ImplementedTraits: BuildImplementedTraitManifestNames(namedType),
+            ImplementedTraitTypes: namedType.ImplementedTraitTypes.Count == 0
+                ? null
+                : namedType.ImplementedTraitTypes
+                    .Select(type => BuildTypeReference(type, module.SyntaxModel.ModuleName))
+                    .ToArray(),
             AssociatedTypes: BuildTypedAssociatedTypeManifests(namedType, module.SyntaxModel.ModuleName),
             ComptimeGenericParameters: BuildComptimeGenericParameterManifests(
                 namedType.ComptimeGenericParams,
@@ -388,7 +393,6 @@ internal static partial class PackageImageBuilder
             ? null
             : namedType.ImplementedTraits
                 .Distinct(StringComparer.Ordinal)
-                .OrderBy(static traitName => traitName, StringComparer.Ordinal)
                 .ToArray();
     }
 
@@ -474,7 +478,7 @@ internal static partial class PackageImageBuilder
         var genericParameters = namedType.GenericParams.Count == 0
             ? null
             : namedType.GenericParams.ToHashSet(StringComparer.Ordinal);
-        var resolver = CreatePackageImageTypeResolver(moduleGraph, typeModel);
+        var resolver = CreatePackageImageTypeResolver(moduleGraph, typeModel, module.TargetInfo);
 
         return constructors
             .Select(constructor => new StarkPackageTypedConstructorManifest(
@@ -521,10 +525,13 @@ internal static partial class PackageImageBuilder
 
     private static StarkTypeResolver CreatePackageImageTypeResolver(
         ModuleGraph moduleGraph,
-        TypeCheckModel typeModel)
+        TypeCheckModel typeModel,
+        LlvmTargetInfo? targetInfo)
     {
         return new StarkTypeResolver(
-            new CompilerPassContext(new CompilationState(new CompilationInput(string.Empty), new CompilerOptions())),
+            new CompilerPassContext(new CompilationState(
+                new CompilationInput(string.Empty),
+                new CompilerOptions(TargetInfo: targetInfo))),
             "package-image-build",
             moduleGraph,
             typeModel.NamedTypes,

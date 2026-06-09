@@ -70,6 +70,7 @@ argument. For full-width `u1024`, use `TypeIntegerIsUnsigned<T>()` plus
 - `RawPointerElementTypeIsDynamic<T>() -> bool`
 - `RawPointerElementTypeIsFunctionPointer<T>() -> bool`
 - `RawPointerElementTypeIsClosure<T>() -> bool`
+- `RawPointerElementTypeIsDynTrait<T>() -> bool`
 - `RawPointerElementTypeIsNamed<T>() -> bool`
 - `RawPointerElementTypeIsStruct<T>() -> bool`
 - `RawPointerElementTypeIsRecord<T>() -> bool`
@@ -99,6 +100,7 @@ diagnostics.
 - `TypeElementTypeIsDynamic<T>() -> bool`
 - `TypeElementTypeIsFunctionPointer<T>() -> bool`
 - `TypeElementTypeIsClosure<T>() -> bool`
+- `TypeElementTypeIsDynTrait<T>() -> bool`
 - `TypeElementTypeIsNamed<T>() -> bool`
 - `TypeElementTypeIsStruct<T>() -> bool`
 - `TypeElementTypeIsRecord<T>() -> bool`
@@ -175,6 +177,7 @@ arguments.
 - `FunctionPointerReturnTypeIsDynamic<T>() -> bool`
 - `FunctionPointerReturnTypeIsFunctionPointer<T>() -> bool`
 - `FunctionPointerReturnTypeIsClosure<T>() -> bool`
+- `FunctionPointerReturnTypeIsDynTrait<T>() -> bool`
 - `FunctionPointerReturnTypeIsNamed<T>() -> bool`
 - `FunctionPointerReturnTypeIsStruct<T>() -> bool`
 - `FunctionPointerReturnTypeIsRecord<T>() -> bool`
@@ -184,9 +187,12 @@ arguments.
 - `FunctionPointerReturnTypeHasConcreteLayout<T>() -> bool`
 - `FunctionPointerReturnTypeDisplayName<T>() -> ascii`
 - `FunctionPointerReturnTypeBaseName<T>() -> ascii`
+- `FunctionPointerReturnTypeModuleName<T>() -> ascii`
 - `FunctionPointerReturnTypeIsGenericInstantiation<T>() -> bool`
 - `FunctionPointerReturnTypeArgumentCount<T>() -> u64[0 max]`
 - `FunctionPointerReturnTypeComptimeArgumentCount<T>() -> u64[0 max]`
+- `FunctionPointerReturnTypeArgumentTypeIs<T, U, ArgumentIndex>() -> bool`
+- `FunctionPointerReturnTypeArgumentTypeIsDynTrait<T, ArgumentIndex>() -> bool`
 - `FunctionPointerParameterTypeIsBool<T, I>() -> bool`
 - `FunctionPointerParameterTypeIsInteger<T, I>() -> bool`
 - `FunctionPointerParameterTypeIsFloat<T, I>() -> bool`
@@ -196,6 +202,7 @@ arguments.
 - `FunctionPointerParameterTypeIsDynamic<T, I>() -> bool`
 - `FunctionPointerParameterTypeIsFunctionPointer<T, I>() -> bool`
 - `FunctionPointerParameterTypeIsClosure<T, I>() -> bool`
+- `FunctionPointerParameterTypeIsDynTrait<T, I>() -> bool`
 - `FunctionPointerParameterTypeIsNamed<T, I>() -> bool`
 - `FunctionPointerParameterTypeIsStruct<T, I>() -> bool`
 - `FunctionPointerParameterTypeIsRecord<T, I>() -> bool`
@@ -205,9 +212,12 @@ arguments.
 - `FunctionPointerParameterTypeHasConcreteLayout<T, I>() -> bool`
 - `FunctionPointerParameterTypeDisplayName<T, I>() -> ascii`
 - `FunctionPointerParameterTypeBaseName<T, I>() -> ascii`
+- `FunctionPointerParameterTypeModuleName<T, I>() -> ascii`
 - `FunctionPointerParameterTypeIsGenericInstantiation<T, I>() -> bool`
 - `FunctionPointerParameterTypeArgumentCount<T, I>() -> u64[0 max]`
 - `FunctionPointerParameterTypeComptimeArgumentCount<T, I>() -> u64[0 max]`
+- `FunctionPointerParameterTypeArgumentTypeIs<T, U, ParameterIndex, ArgumentIndex>() -> bool`
+- `FunctionPointerParameterTypeArgumentTypeIsDynTrait<T, ParameterIndex, ArgumentIndex>() -> bool`
 - Return-type qualifier facts use the `FunctionPointerReturnType...<T>()`
   prefix; parameter qualifier facts use the
   `FunctionPointerParameterType...<T, I>()` prefix. Supported suffixes are
@@ -242,9 +252,13 @@ Function-pointer facts inspect `fnptr<...>` type metadata. `FunctionPointerIsUns
 is true only for `fnptr<unsafe ...>` signatures; ABI facts stay independent of the
 safety bit. Return/parameter
 category facts mirror the top-level `Is*` / `HasConcreteLayout` predicates.
-Nested type metadata facts mirror the field/method/enum payload metadata facts:
-display name, unqualified base name for named generic types, generic-instantiation
-status, runtime type-argument count, and `comptime` value-argument count.
+Nested type argument facts inspect ordinary type arguments on the callable return
+or parameter type, so a `fnptr<fn Box<heap dyn Trait>(Box<heap dyn Trait>)>`
+can branch on the dyn trait inside `Box`. Nested type metadata facts mirror the
+field/method/enum payload metadata facts:
+display name, unqualified base name for named generic types, declaration module
+name for named types, generic-instantiation status, runtime type-argument count,
+and `comptime` value-argument count.
 Qualifier metadata facts inspect the selected nested return or parameter type
 before qualifier normalization, so `retborrow`, `borrow`, `storeborrow`,
 `shared`, `frozen`, `out`, `init`, and mutable-view information remains visible
@@ -272,6 +286,7 @@ empty `ascii` when the selected parameter has no bounded raw-pointer count.
 - `ClosureReturnTypeIsDynamic<T>() -> bool`
 - `ClosureReturnTypeIsFunctionPointer<T>() -> bool`
 - `ClosureReturnTypeIsClosure<T>() -> bool`
+- `ClosureReturnTypeIsDynTrait<T>() -> bool`
 - `ClosureReturnTypeIsNamed<T>() -> bool`
 - `ClosureReturnTypeIsStruct<T>() -> bool`
 - `ClosureReturnTypeIsRecord<T>() -> bool`
@@ -281,9 +296,12 @@ empty `ascii` when the selected parameter has no bounded raw-pointer count.
 - `ClosureReturnTypeHasConcreteLayout<T>() -> bool`
 - `ClosureReturnTypeDisplayName<T>() -> ascii`
 - `ClosureReturnTypeBaseName<T>() -> ascii`
+- `ClosureReturnTypeModuleName<T>() -> ascii`
 - `ClosureReturnTypeIsGenericInstantiation<T>() -> bool`
 - `ClosureReturnTypeArgumentCount<T>() -> u64[0 max]`
 - `ClosureReturnTypeComptimeArgumentCount<T>() -> u64[0 max]`
+- `ClosureReturnTypeArgumentTypeIs<T, U, ArgumentIndex>() -> bool`
+- `ClosureReturnTypeArgumentTypeIsDynTrait<T, ArgumentIndex>() -> bool`
 - `ClosureReturnTypeHasCSourceAlias<T>() -> bool`
 - `ClosureReturnTypeCSourceAliasName<T>() -> ascii`
 - `ClosureParameterTypeIsBool<T, I>() -> bool`
@@ -295,6 +313,7 @@ empty `ascii` when the selected parameter has no bounded raw-pointer count.
 - `ClosureParameterTypeIsDynamic<T, I>() -> bool`
 - `ClosureParameterTypeIsFunctionPointer<T, I>() -> bool`
 - `ClosureParameterTypeIsClosure<T, I>() -> bool`
+- `ClosureParameterTypeIsDynTrait<T, I>() -> bool`
 - `ClosureParameterTypeIsNamed<T, I>() -> bool`
 - `ClosureParameterTypeIsStruct<T, I>() -> bool`
 - `ClosureParameterTypeIsRecord<T, I>() -> bool`
@@ -304,9 +323,12 @@ empty `ascii` when the selected parameter has no bounded raw-pointer count.
 - `ClosureParameterTypeHasConcreteLayout<T, I>() -> bool`
 - `ClosureParameterTypeDisplayName<T, I>() -> ascii`
 - `ClosureParameterTypeBaseName<T, I>() -> ascii`
+- `ClosureParameterTypeModuleName<T, I>() -> ascii`
 - `ClosureParameterTypeIsGenericInstantiation<T, I>() -> bool`
 - `ClosureParameterTypeArgumentCount<T, I>() -> u64[0 max]`
 - `ClosureParameterTypeComptimeArgumentCount<T, I>() -> u64[0 max]`
+- `ClosureParameterTypeArgumentTypeIs<T, U, ParameterIndex, ArgumentIndex>() -> bool`
+- `ClosureParameterTypeArgumentTypeIsDynTrait<T, ParameterIndex, ArgumentIndex>() -> bool`
 - `ClosureParameterTypeHasCSourceAlias<T, I>() -> bool`
 - `ClosureParameterTypeCSourceAliasName<T, I>() -> ascii`
 - Return-type qualifier facts use the `ClosureReturnType...<T>()` prefix;
@@ -338,8 +360,9 @@ matches the ordinary borrowed closure form after qualifiers are normalized;
 capability marker, while `ClosureCallCapabilityIsMut` and
 `ClosureCallCapabilityIsOnce` match `mut` and `once`. Return/parameter category
 facts mirror the top-level `Is*` / `HasConcreteLayout` predicates, and nested
-type metadata facts mirror the function-pointer metadata surface, including C
-source alias identity for ABI-facing return and parameter types. Alias-name
+type argument facts mirror the function-pointer argument surface. Nested type
+metadata facts mirror the function-pointer metadata surface, including C source
+alias identity for ABI-facing return and parameter types. Alias-name
 facts return empty `ascii` when the selected nested type has no C source alias.
 Nested qualifier facts inspect the selected return or parameter type before
 qualifier normalization, matching the function-pointer qualifier semantics.
@@ -355,20 +378,74 @@ empty `ascii` when absent.
 - `MethodCount<T>() -> u64[0 max]`
 - `MethodName<T, MethodIndex>() -> ascii`
 - `MethodModuleName<T, MethodIndex>() -> ascii`
+- `MethodVisibilityIsModule<T, MethodIndex>() -> bool`
+- `MethodVisibilityIsInternal<T, MethodIndex>() -> bool`
+- `MethodVisibilityIsPublic<T, MethodIndex>() -> bool`
+- `MethodVisibilityIsExport<T, MethodIndex>() -> bool`
 - `MethodParameterCount<T, MethodIndex>() -> u64[0 max]`
 - `MethodParameterName<T, MethodIndex, ParameterIndex>() -> ascii`
 - `MethodReturnTypeIs<T, U, MethodIndex>() -> bool`
 - `MethodParameterTypeIs<T, U, MethodIndex, ParameterIndex>() -> bool`
 - `MethodReturnTypeDisplayName<T, MethodIndex>() -> ascii`
 - `MethodReturnTypeBaseName<T, MethodIndex>() -> ascii`
+- `MethodReturnTypeModuleName<T, MethodIndex>() -> ascii`
 - `MethodReturnTypeIsGenericInstantiation<T, MethodIndex>() -> bool`
 - `MethodReturnTypeArgumentCount<T, MethodIndex>() -> u64[0 max]`
 - `MethodReturnTypeComptimeArgumentCount<T, MethodIndex>() -> u64[0 max]`
+- `MethodReturnTypeArgumentTypeIs<T, U, MethodIndex, ArgumentIndex>() -> bool`
+- `MethodReturnTypeArgumentTypeIsBool<T, MethodIndex, ArgumentIndex>() -> bool`
+- `MethodReturnTypeArgumentTypeIsInteger<T, MethodIndex, ArgumentIndex>() -> bool`
+- `MethodReturnTypeArgumentTypeIsFloat<T, MethodIndex, ArgumentIndex>() -> bool`
+- `MethodReturnTypeArgumentTypeIsRawPointer<T, MethodIndex, ArgumentIndex>() -> bool`
+- `MethodReturnTypeArgumentTypeIsFixedArray<T, MethodIndex, ArgumentIndex>() -> bool`
+- `MethodReturnTypeArgumentTypeIsSlice<T, MethodIndex, ArgumentIndex>() -> bool`
+- `MethodReturnTypeArgumentTypeIsDynamic<T, MethodIndex, ArgumentIndex>() -> bool`
+- `MethodReturnTypeArgumentTypeIsFunctionPointer<T, MethodIndex, ArgumentIndex>() -> bool`
+- `MethodReturnTypeArgumentTypeIsClosure<T, MethodIndex, ArgumentIndex>() -> bool`
+- `MethodReturnTypeArgumentTypeIsDynTrait<T, MethodIndex, ArgumentIndex>() -> bool`
+- `MethodReturnTypeArgumentTypeIsNamed<T, MethodIndex, ArgumentIndex>() -> bool`
+- `MethodReturnTypeArgumentTypeIsStruct<T, MethodIndex, ArgumentIndex>() -> bool`
+- `MethodReturnTypeArgumentTypeIsRecord<T, MethodIndex, ArgumentIndex>() -> bool`
+- `MethodReturnTypeArgumentTypeIsEnum<T, MethodIndex, ArgumentIndex>() -> bool`
+- `MethodReturnTypeArgumentTypeIsTrait<T, MethodIndex, ArgumentIndex>() -> bool`
+- `MethodReturnTypeArgumentTypeIsDoctrine<T, MethodIndex, ArgumentIndex>() -> bool`
+- `MethodReturnTypeArgumentTypeHasConcreteLayout<T, MethodIndex, ArgumentIndex>() -> bool`
+- `MethodReturnTypeArgumentTypeDisplayName<T, MethodIndex, ArgumentIndex>() -> ascii`
+- `MethodReturnTypeArgumentTypeBaseName<T, MethodIndex, ArgumentIndex>() -> ascii`
+- `MethodReturnTypeArgumentTypeModuleName<T, MethodIndex, ArgumentIndex>() -> ascii`
+- `MethodReturnTypeArgumentTypeIsGenericInstantiation<T, MethodIndex, ArgumentIndex>() -> bool`
+- `MethodReturnTypeArgumentTypeArgumentCount<T, MethodIndex, ArgumentIndex>() -> u64[0 max]`
+- `MethodReturnTypeArgumentTypeComptimeArgumentCount<T, MethodIndex, ArgumentIndex>() -> u64[0 max]`
 - `MethodParameterTypeDisplayName<T, MethodIndex, ParameterIndex>() -> ascii`
 - `MethodParameterTypeBaseName<T, MethodIndex, ParameterIndex>() -> ascii`
+- `MethodParameterTypeModuleName<T, MethodIndex, ParameterIndex>() -> ascii`
 - `MethodParameterTypeIsGenericInstantiation<T, MethodIndex, ParameterIndex>() -> bool`
 - `MethodParameterTypeArgumentCount<T, MethodIndex, ParameterIndex>() -> u64[0 max]`
 - `MethodParameterTypeComptimeArgumentCount<T, MethodIndex, ParameterIndex>() -> u64[0 max]`
+- `MethodParameterTypeArgumentTypeIs<T, U, MethodIndex, ParameterIndex, ArgumentIndex>() -> bool`
+- `MethodParameterTypeArgumentTypeIsBool<T, MethodIndex, ParameterIndex, ArgumentIndex>() -> bool`
+- `MethodParameterTypeArgumentTypeIsInteger<T, MethodIndex, ParameterIndex, ArgumentIndex>() -> bool`
+- `MethodParameterTypeArgumentTypeIsFloat<T, MethodIndex, ParameterIndex, ArgumentIndex>() -> bool`
+- `MethodParameterTypeArgumentTypeIsRawPointer<T, MethodIndex, ParameterIndex, ArgumentIndex>() -> bool`
+- `MethodParameterTypeArgumentTypeIsFixedArray<T, MethodIndex, ParameterIndex, ArgumentIndex>() -> bool`
+- `MethodParameterTypeArgumentTypeIsSlice<T, MethodIndex, ParameterIndex, ArgumentIndex>() -> bool`
+- `MethodParameterTypeArgumentTypeIsDynamic<T, MethodIndex, ParameterIndex, ArgumentIndex>() -> bool`
+- `MethodParameterTypeArgumentTypeIsFunctionPointer<T, MethodIndex, ParameterIndex, ArgumentIndex>() -> bool`
+- `MethodParameterTypeArgumentTypeIsClosure<T, MethodIndex, ParameterIndex, ArgumentIndex>() -> bool`
+- `MethodParameterTypeArgumentTypeIsDynTrait<T, MethodIndex, ParameterIndex, ArgumentIndex>() -> bool`
+- `MethodParameterTypeArgumentTypeIsNamed<T, MethodIndex, ParameterIndex, ArgumentIndex>() -> bool`
+- `MethodParameterTypeArgumentTypeIsStruct<T, MethodIndex, ParameterIndex, ArgumentIndex>() -> bool`
+- `MethodParameterTypeArgumentTypeIsRecord<T, MethodIndex, ParameterIndex, ArgumentIndex>() -> bool`
+- `MethodParameterTypeArgumentTypeIsEnum<T, MethodIndex, ParameterIndex, ArgumentIndex>() -> bool`
+- `MethodParameterTypeArgumentTypeIsTrait<T, MethodIndex, ParameterIndex, ArgumentIndex>() -> bool`
+- `MethodParameterTypeArgumentTypeIsDoctrine<T, MethodIndex, ParameterIndex, ArgumentIndex>() -> bool`
+- `MethodParameterTypeArgumentTypeHasConcreteLayout<T, MethodIndex, ParameterIndex, ArgumentIndex>() -> bool`
+- `MethodParameterTypeArgumentTypeDisplayName<T, MethodIndex, ParameterIndex, ArgumentIndex>() -> ascii`
+- `MethodParameterTypeArgumentTypeBaseName<T, MethodIndex, ParameterIndex, ArgumentIndex>() -> ascii`
+- `MethodParameterTypeArgumentTypeModuleName<T, MethodIndex, ParameterIndex, ArgumentIndex>() -> ascii`
+- `MethodParameterTypeArgumentTypeIsGenericInstantiation<T, MethodIndex, ParameterIndex, ArgumentIndex>() -> bool`
+- `MethodParameterTypeArgumentTypeArgumentCount<T, MethodIndex, ParameterIndex, ArgumentIndex>() -> u64[0 max]`
+- `MethodParameterTypeArgumentTypeComptimeArgumentCount<T, MethodIndex, ParameterIndex, ArgumentIndex>() -> u64[0 max]`
 - Return-type qualifier facts use the `MethodReturnType...<T, MethodIndex>()`
   prefix; parameter qualifier facts use the
   `MethodParameterType...<T, MethodIndex, ParameterIndex>()` prefix. Supported
@@ -387,6 +464,7 @@ empty `ascii` when absent.
 - `MethodReturnTypeIsDynamic<T, MethodIndex>() -> bool`
 - `MethodReturnTypeIsFunctionPointer<T, MethodIndex>() -> bool`
 - `MethodReturnTypeIsClosure<T, MethodIndex>() -> bool`
+- `MethodReturnTypeIsDynTrait<T, MethodIndex>() -> bool`
 - `MethodReturnTypeIsNamed<T, MethodIndex>() -> bool`
 - `MethodReturnTypeIsStruct<T, MethodIndex>() -> bool`
 - `MethodReturnTypeIsRecord<T, MethodIndex>() -> bool`
@@ -403,6 +481,7 @@ empty `ascii` when absent.
 - `MethodParameterTypeIsDynamic<T, MethodIndex, ParameterIndex>() -> bool`
 - `MethodParameterTypeIsFunctionPointer<T, MethodIndex, ParameterIndex>() -> bool`
 - `MethodParameterTypeIsClosure<T, MethodIndex, ParameterIndex>() -> bool`
+- `MethodParameterTypeIsDynTrait<T, MethodIndex, ParameterIndex>() -> bool`
 - `MethodParameterTypeIsNamed<T, MethodIndex, ParameterIndex>() -> bool`
 - `MethodParameterTypeIsStruct<T, MethodIndex, ParameterIndex>() -> bool`
 - `MethodParameterTypeIsRecord<T, MethodIndex, ParameterIndex>() -> bool`
@@ -445,6 +524,7 @@ empty `ascii` when absent.
 - `MethodGenericParameterTraitBoundTypeIsDynamic<T, MethodIndex, GenericParameterIndex, BoundIndex>() -> bool`
 - `MethodGenericParameterTraitBoundTypeIsFunctionPointer<T, MethodIndex, GenericParameterIndex, BoundIndex>() -> bool`
 - `MethodGenericParameterTraitBoundTypeIsClosure<T, MethodIndex, GenericParameterIndex, BoundIndex>() -> bool`
+- `MethodGenericParameterTraitBoundTypeIsDynTrait<T, MethodIndex, GenericParameterIndex, BoundIndex>() -> bool`
 - `MethodGenericParameterTraitBoundTypeIsNamed<T, MethodIndex, GenericParameterIndex, BoundIndex>() -> bool`
 - `MethodGenericParameterTraitBoundTypeIsStruct<T, MethodIndex, GenericParameterIndex, BoundIndex>() -> bool`
 - `MethodGenericParameterTraitBoundTypeIsRecord<T, MethodIndex, GenericParameterIndex, BoundIndex>() -> bool`
@@ -454,6 +534,7 @@ empty `ascii` when absent.
 - `MethodGenericParameterTraitBoundTypeHasConcreteLayout<T, MethodIndex, GenericParameterIndex, BoundIndex>() -> bool`
 - `MethodGenericParameterTraitBoundTypeDisplayName<T, MethodIndex, GenericParameterIndex, BoundIndex>() -> ascii`
 - `MethodGenericParameterTraitBoundTypeBaseName<T, MethodIndex, GenericParameterIndex, BoundIndex>() -> ascii`
+- `MethodGenericParameterTraitBoundTypeModuleName<T, MethodIndex, GenericParameterIndex, BoundIndex>() -> ascii`
 - `MethodGenericParameterTraitBoundTypeIsGenericInstantiation<T, MethodIndex, GenericParameterIndex, BoundIndex>() -> bool`
 - `MethodGenericParameterTraitBoundTypeArgumentCount<T, MethodIndex, GenericParameterIndex, BoundIndex>() -> u64[0 max]`
 - `MethodGenericParameterTraitBoundTypeComptimeArgumentCount<T, MethodIndex, GenericParameterIndex, BoundIndex>() -> u64[0 max]`
@@ -469,6 +550,7 @@ empty `ascii` when absent.
 - `MethodComptimeGenericParameterTypeIsDynamic<T, MethodIndex, GenericParameterIndex>() -> bool`
 - `MethodComptimeGenericParameterTypeIsFunctionPointer<T, MethodIndex, GenericParameterIndex>() -> bool`
 - `MethodComptimeGenericParameterTypeIsClosure<T, MethodIndex, GenericParameterIndex>() -> bool`
+- `MethodComptimeGenericParameterTypeIsDynTrait<T, MethodIndex, GenericParameterIndex>() -> bool`
 - `MethodComptimeGenericParameterTypeIsNamed<T, MethodIndex, GenericParameterIndex>() -> bool`
 - `MethodComptimeGenericParameterTypeIsStruct<T, MethodIndex, GenericParameterIndex>() -> bool`
 - `MethodComptimeGenericParameterTypeIsRecord<T, MethodIndex, GenericParameterIndex>() -> bool`
@@ -478,6 +560,7 @@ empty `ascii` when absent.
 - `MethodComptimeGenericParameterTypeHasConcreteLayout<T, MethodIndex, GenericParameterIndex>() -> bool`
 - `MethodComptimeGenericParameterTypeDisplayName<T, MethodIndex, GenericParameterIndex>() -> ascii`
 - `MethodComptimeGenericParameterTypeBaseName<T, MethodIndex, GenericParameterIndex>() -> ascii`
+- `MethodComptimeGenericParameterTypeModuleName<T, MethodIndex, GenericParameterIndex>() -> ascii`
 - `MethodComptimeGenericParameterTypeIsGenericInstantiation<T, MethodIndex, GenericParameterIndex>() -> bool`
 - `MethodComptimeGenericParameterTypeArgumentCount<T, MethodIndex, GenericParameterIndex>() -> u64[0 max]`
 - `MethodComptimeGenericParameterTypeComptimeArgumentCount<T, MethodIndex, GenericParameterIndex>() -> u64[0 max]`
@@ -493,6 +576,7 @@ empty `ascii` when absent.
 - `MethodThreadSafetyLawPredicateTypeIsDynamic<T, MethodIndex, PredicateIndex>() -> bool`
 - `MethodThreadSafetyLawPredicateTypeIsFunctionPointer<T, MethodIndex, PredicateIndex>() -> bool`
 - `MethodThreadSafetyLawPredicateTypeIsClosure<T, MethodIndex, PredicateIndex>() -> bool`
+- `MethodThreadSafetyLawPredicateTypeIsDynTrait<T, MethodIndex, PredicateIndex>() -> bool`
 - `MethodThreadSafetyLawPredicateTypeIsNamed<T, MethodIndex, PredicateIndex>() -> bool`
 - `MethodThreadSafetyLawPredicateTypeIsStruct<T, MethodIndex, PredicateIndex>() -> bool`
 - `MethodThreadSafetyLawPredicateTypeIsRecord<T, MethodIndex, PredicateIndex>() -> bool`
@@ -502,6 +586,7 @@ empty `ascii` when absent.
 - `MethodThreadSafetyLawPredicateTypeHasConcreteLayout<T, MethodIndex, PredicateIndex>() -> bool`
 - `MethodThreadSafetyLawPredicateTypeDisplayName<T, MethodIndex, PredicateIndex>() -> ascii`
 - `MethodThreadSafetyLawPredicateTypeBaseName<T, MethodIndex, PredicateIndex>() -> ascii`
+- `MethodThreadSafetyLawPredicateTypeModuleName<T, MethodIndex, PredicateIndex>() -> ascii`
 - `MethodThreadSafetyLawPredicateTypeIsGenericInstantiation<T, MethodIndex, PredicateIndex>() -> bool`
 - `MethodThreadSafetyLawPredicateTypeArgumentCount<T, MethodIndex, PredicateIndex>() -> u64[0 max]`
 - `MethodThreadSafetyLawPredicateTypeComptimeArgumentCount<T, MethodIndex, PredicateIndex>() -> u64[0 max]`
@@ -511,8 +596,14 @@ member name, parameter signature, return type, source name, and resolved symbol
 name. For generic owner types, return/parameter/comptime-parameter type facts
 and `where` law predicate type facts substitute the owner type arguments before
 comparing, checking type categories/concrete layout, or reporting display/base
-names and type/comptime argument counts. Return/parameter qualifier facts
+names, declaration module names, and type/comptime argument counts.
+Method return/parameter actual type-argument facts inspect ordinary type
+arguments on the substituted method return or parameter type, so a method
+returning `Box<heap dyn Trait>` can branch on the dyn trait inside `Box`.
+Return/parameter qualifier facts
 inspect the substituted nested type before qualifier normalization.
+Method visibility facts expose the selected method's declared or inherited
+visibility and use the same method index validation as `MethodName`.
 Concrete out-of-range method, parameter, generic-parameter, and law-predicate
 indices are compile-time errors. Package-backed typed interfaces preserve the
 method metadata needed by these facts.
@@ -541,6 +632,7 @@ Type-level law attribute facts:
 - `TypeThreadSafetyLawAttributeConditionTypeIsDynamic<T, AttributeIndex>() -> bool`
 - `TypeThreadSafetyLawAttributeConditionTypeIsFunctionPointer<T, AttributeIndex>() -> bool`
 - `TypeThreadSafetyLawAttributeConditionTypeIsClosure<T, AttributeIndex>() -> bool`
+- `TypeThreadSafetyLawAttributeConditionTypeIsDynTrait<T, AttributeIndex>() -> bool`
 - `TypeThreadSafetyLawAttributeConditionTypeIsNamed<T, AttributeIndex>() -> bool`
 - `TypeThreadSafetyLawAttributeConditionTypeIsStruct<T, AttributeIndex>() -> bool`
 - `TypeThreadSafetyLawAttributeConditionTypeIsRecord<T, AttributeIndex>() -> bool`
@@ -550,6 +642,7 @@ Type-level law attribute facts:
 - `TypeThreadSafetyLawAttributeConditionTypeHasConcreteLayout<T, AttributeIndex>() -> bool`
 - `TypeThreadSafetyLawAttributeConditionTypeDisplayName<T, AttributeIndex>() -> ascii`
 - `TypeThreadSafetyLawAttributeConditionTypeBaseName<T, AttributeIndex>() -> ascii`
+- `TypeThreadSafetyLawAttributeConditionTypeModuleName<T, AttributeIndex>() -> ascii`
 - `TypeThreadSafetyLawAttributeConditionTypeIsGenericInstantiation<T, AttributeIndex>() -> bool`
 - `TypeThreadSafetyLawAttributeConditionTypeArgumentCount<T, AttributeIndex>() -> u64[0 max]`
 - `TypeThreadSafetyLawAttributeConditionTypeComptimeArgumentCount<T, AttributeIndex>() -> u64[0 max]`
@@ -572,6 +665,7 @@ Field-level law attribute facts:
 - `FieldThreadSafetyLawAttributeConditionTypeIsDynamic<T, FieldIndex, AttributeIndex>() -> bool`
 - `FieldThreadSafetyLawAttributeConditionTypeIsFunctionPointer<T, FieldIndex, AttributeIndex>() -> bool`
 - `FieldThreadSafetyLawAttributeConditionTypeIsClosure<T, FieldIndex, AttributeIndex>() -> bool`
+- `FieldThreadSafetyLawAttributeConditionTypeIsDynTrait<T, FieldIndex, AttributeIndex>() -> bool`
 - `FieldThreadSafetyLawAttributeConditionTypeIsNamed<T, FieldIndex, AttributeIndex>() -> bool`
 - `FieldThreadSafetyLawAttributeConditionTypeIsStruct<T, FieldIndex, AttributeIndex>() -> bool`
 - `FieldThreadSafetyLawAttributeConditionTypeIsRecord<T, FieldIndex, AttributeIndex>() -> bool`
@@ -581,6 +675,7 @@ Field-level law attribute facts:
 - `FieldThreadSafetyLawAttributeConditionTypeHasConcreteLayout<T, FieldIndex, AttributeIndex>() -> bool`
 - `FieldThreadSafetyLawAttributeConditionTypeDisplayName<T, FieldIndex, AttributeIndex>() -> ascii`
 - `FieldThreadSafetyLawAttributeConditionTypeBaseName<T, FieldIndex, AttributeIndex>() -> ascii`
+- `FieldThreadSafetyLawAttributeConditionTypeModuleName<T, FieldIndex, AttributeIndex>() -> ascii`
 - `FieldThreadSafetyLawAttributeConditionTypeIsGenericInstantiation<T, FieldIndex, AttributeIndex>() -> bool`
 - `FieldThreadSafetyLawAttributeConditionTypeArgumentCount<T, FieldIndex, AttributeIndex>() -> u64[0 max]`
 - `FieldThreadSafetyLawAttributeConditionTypeComptimeArgumentCount<T, FieldIndex, AttributeIndex>() -> u64[0 max]`
@@ -589,7 +684,8 @@ These facts inspect `[Grant(...)]` / `[Deny(...)]` declarations on named types
 and struct/record fields. For generic owner types, condition type facts
 substitute the owner type and `comptime` value arguments before comparing,
 checking type categories/concrete layout, or reporting display/base names and
-type/comptime argument counts. Attributes without a `where` condition report an
+module names and type/comptime argument counts. Attributes without a `where`
+condition report an
 empty condition law/name, false condition-type predicates, and zero condition
 type argument counts. Concrete out-of-range type, field, and law-attribute
 indices are compile-time errors. Package-backed typed interfaces preserve the
@@ -625,6 +721,7 @@ trait declarations, alias targets, and storage/target metadata.
 - `FieldTypeIsDynamic<T, I>() -> bool`
 - `FieldTypeIsFunctionPointer<T, I>() -> bool`
 - `FieldTypeIsClosure<T, I>() -> bool`
+- `FieldTypeIsDynTrait<T, I>() -> bool`
 - `FieldTypeIsNamed<T, I>() -> bool`
 - `FieldTypeIsStruct<T, I>() -> bool`
 - `FieldTypeIsRecord<T, I>() -> bool`
@@ -634,6 +731,7 @@ trait declarations, alias targets, and storage/target metadata.
 - `FieldTypeHasConcreteLayout<T, I>() -> bool`
 - `FieldTypeDisplayName<T, I>() -> ascii`
 - `FieldTypeBaseName<T, I>() -> ascii`
+- `FieldTypeModuleName<T, I>() -> ascii`
 - `FieldTypeIsGenericInstantiation<T, I>() -> bool`
 - `FieldTypeArgumentCount<T, I>() -> u64[0 max]`
 - `FieldTypeComptimeArgumentCount<T, I>() -> u64[0 max]`
@@ -651,16 +749,23 @@ trait declarations, alias targets, and storage/target metadata.
 - `FieldTypeIsMutableView<T, I>() -> bool`
 - `FieldTypeUnqualifiedTypeIs<T, U, I>() -> bool`
 - `FieldName<T, I>() -> ascii`
+- `FieldVisibilityIsModule<T, I>() -> bool`
+- `FieldVisibilityIsInternal<T, I>() -> bool`
+- `FieldVisibilityIsPublic<T, I>() -> bool`
+- `FieldVisibilityIsExport<T, I>() -> bool`
 
 Concrete out-of-range field indices are compile-time errors. Symbolic indices
 may flow through generic CTFE until specialization.
 
 Field type metadata facts inspect the selected field type after generic
-substitution. `FieldTypeBaseName` returns an empty `ascii` value for non-named
-field types. Generic-argument counts return `0` for non-generic field types.
+substitution. `FieldTypeBaseName` and `FieldTypeModuleName` return an empty
+`ascii` value for non-named field types. Generic-argument counts return `0` for
+non-generic field types.
 Qualifier metadata facts inspect the selected field type before qualifier
 normalization and mirror the top-level `Type*` qualifier facts. Package-backed
-typed interfaces preserve field qualifier metadata.
+typed interfaces preserve field qualifier metadata. Field visibility facts expose
+the selected field's declared or inherited visibility and use the same field
+index validation as `FieldName`.
 
 ## Layout-Control Attribute Facts
 
@@ -709,6 +814,7 @@ interfaces preserve the layout metadata needed by these facts.
 - `EnumVariantPayloadTypeIsDynamic<T, VariantIndex, PayloadIndex>() -> bool`
 - `EnumVariantPayloadTypeIsFunctionPointer<T, VariantIndex, PayloadIndex>() -> bool`
 - `EnumVariantPayloadTypeIsClosure<T, VariantIndex, PayloadIndex>() -> bool`
+- `EnumVariantPayloadTypeIsDynTrait<T, VariantIndex, PayloadIndex>() -> bool`
 - `EnumVariantPayloadTypeIsNamed<T, VariantIndex, PayloadIndex>() -> bool`
 - `EnumVariantPayloadTypeIsStruct<T, VariantIndex, PayloadIndex>() -> bool`
 - `EnumVariantPayloadTypeIsRecord<T, VariantIndex, PayloadIndex>() -> bool`
@@ -718,6 +824,7 @@ interfaces preserve the layout metadata needed by these facts.
 - `EnumVariantPayloadTypeHasConcreteLayout<T, VariantIndex, PayloadIndex>() -> bool`
 - `EnumVariantPayloadTypeDisplayName<T, VariantIndex, PayloadIndex>() -> ascii`
 - `EnumVariantPayloadTypeBaseName<T, VariantIndex, PayloadIndex>() -> ascii`
+- `EnumVariantPayloadTypeModuleName<T, VariantIndex, PayloadIndex>() -> ascii`
 - `EnumVariantPayloadTypeIsGenericInstantiation<T, VariantIndex, PayloadIndex>() -> bool`
 - `EnumVariantPayloadTypeArgumentCount<T, VariantIndex, PayloadIndex>() -> u64[0 max]`
 - `EnumVariantPayloadTypeComptimeArgumentCount<T, VariantIndex, PayloadIndex>() -> u64[0 max]`
@@ -741,9 +848,10 @@ Concrete out-of-range variant or payload indices are compile-time errors.
 Symbolic indices may flow through generic CTFE until specialization.
 
 Payload type metadata facts inspect the selected payload type after generic
-substitution. `EnumVariantPayloadTypeBaseName` returns an empty `ascii` value
-for non-named payload types. Generic-argument counts return `0` for non-generic
-payload types.
+substitution. `EnumVariantPayloadTypeBaseName` and
+`EnumVariantPayloadTypeModuleName` return an empty `ascii` value for non-named
+payload types. Generic-argument counts return `0` for non-generic payload
+types.
 Qualifier metadata facts inspect the selected payload type before qualifier
 normalization and mirror the top-level `Type*` qualifier facts. Package-backed
 typed interfaces preserve enum payload qualifier metadata.
@@ -785,6 +893,7 @@ these facts.
 - `TypeComptimeGenericParameterTypeIsDynamic<T, I>() -> bool`
 - `TypeComptimeGenericParameterTypeIsFunctionPointer<T, I>() -> bool`
 - `TypeComptimeGenericParameterTypeIsClosure<T, I>() -> bool`
+- `TypeComptimeGenericParameterTypeIsDynTrait<T, I>() -> bool`
 - `TypeComptimeGenericParameterTypeIsNamed<T, I>() -> bool`
 - `TypeComptimeGenericParameterTypeIsStruct<T, I>() -> bool`
 - `TypeComptimeGenericParameterTypeIsRecord<T, I>() -> bool`
@@ -794,11 +903,17 @@ these facts.
 - `TypeComptimeGenericParameterTypeHasConcreteLayout<T, I>() -> bool`
 - `TypeComptimeGenericParameterTypeDisplayName<T, I>() -> ascii`
 - `TypeComptimeGenericParameterTypeBaseName<T, I>() -> ascii`
+- `TypeComptimeGenericParameterTypeModuleName<T, I>() -> ascii`
 - `TypeComptimeGenericParameterTypeIsGenericInstantiation<T, I>() -> bool`
 - `TypeComptimeGenericParameterTypeArgumentCount<T, I>() -> u64[0 max]`
 - `TypeComptimeGenericParameterTypeComptimeArgumentCount<T, I>() -> u64[0 max]`
 - `TypeDisplayName<T>() -> ascii`
 - `TypeBaseName<T>() -> ascii`
+- `TypeModuleName<T>() -> ascii`
+- `TypeVisibilityIsModule<T>() -> bool`
+- `TypeVisibilityIsInternal<T>() -> bool`
+- `TypeVisibilityIsPublic<T>() -> bool`
+- `TypeVisibilityIsExport<T>() -> bool`
 - `TypeIsGenericInstantiation<T>() -> bool`
 - `TypeArgumentCount<T>() -> u64[0 max]`
 - `TypeComptimeArgumentCount<T>() -> u64[0 max]`
@@ -813,6 +928,7 @@ these facts.
 - `TypeComptimeArgumentTypeIsDynamic<T, I>() -> bool`
 - `TypeComptimeArgumentTypeIsFunctionPointer<T, I>() -> bool`
 - `TypeComptimeArgumentTypeIsClosure<T, I>() -> bool`
+- `TypeComptimeArgumentTypeIsDynTrait<T, I>() -> bool`
 - `TypeComptimeArgumentTypeIsNamed<T, I>() -> bool`
 - `TypeComptimeArgumentTypeIsStruct<T, I>() -> bool`
 - `TypeComptimeArgumentTypeIsRecord<T, I>() -> bool`
@@ -822,6 +938,7 @@ these facts.
 - `TypeComptimeArgumentTypeHasConcreteLayout<T, I>() -> bool`
 - `TypeComptimeArgumentTypeDisplayName<T, I>() -> ascii`
 - `TypeComptimeArgumentTypeBaseName<T, I>() -> ascii`
+- `TypeComptimeArgumentTypeModuleName<T, I>() -> ascii`
 - `TypeComptimeArgumentTypeIsGenericInstantiation<T, I>() -> bool`
 - `TypeComptimeArgumentTypeArgumentCount<T, I>() -> u64[0 max]`
 - `TypeComptimeArgumentTypeComptimeArgumentCount<T, I>() -> u64[0 max]`
@@ -836,6 +953,7 @@ these facts.
 - `TypeArgumentTypeIsDynamic<T, I>() -> bool`
 - `TypeArgumentTypeIsFunctionPointer<T, I>() -> bool`
 - `TypeArgumentTypeIsClosure<T, I>() -> bool`
+- `TypeArgumentTypeIsDynTrait<T, I>() -> bool`
 - `TypeArgumentTypeIsNamed<T, I>() -> bool`
 - `TypeArgumentTypeIsStruct<T, I>() -> bool`
 - `TypeArgumentTypeIsRecord<T, I>() -> bool`
@@ -845,6 +963,7 @@ these facts.
 - `TypeArgumentTypeHasConcreteLayout<T, I>() -> bool`
 - `TypeArgumentTypeDisplayName<T, I>() -> ascii`
 - `TypeArgumentTypeBaseName<T, I>() -> ascii`
+- `TypeArgumentTypeModuleName<T, I>() -> ascii`
 - `TypeArgumentTypeIsGenericInstantiation<T, I>() -> bool`
 - `TypeArgumentTypeArgumentCount<T, I>() -> u64[0 max]`
 - `TypeArgumentTypeComptimeArgumentCount<T, I>() -> u64[0 max]`
@@ -861,7 +980,13 @@ these facts.
 
 `TypeDisplayName` returns the normalized type display spelling.
 `TypeBaseName` returns the named type base, with generic arguments stripped, or
-empty `ascii` for non-named types. Actual type-argument and `comptime`
+empty `ascii` for non-named types. `TypeModuleName` and the nested
+`...ModuleName` facts return the declaring module for named types and empty
+`ascii` for primitives, pointers, arrays, structural callable forms, and other
+non-named types. `TypeVisibilityIsModule`, `TypeVisibilityIsInternal`,
+`TypeVisibilityIsPublic`, and `TypeVisibilityIsExport` expose named type
+declaration visibility and return `false` for non-named types. Actual
+type-argument and `comptime`
 argument predicates inspect the instantiated type itself, not the generic
 template declaration. Actual `comptime` argument facts expose the parameter
 name, exact argument type, and integer value carried by concrete typed
@@ -882,6 +1007,7 @@ compile-time errors.
 - `ImplementedTraitTypeIsDynamic<T, I>() -> bool`
 - `ImplementedTraitTypeIsFunctionPointer<T, I>() -> bool`
 - `ImplementedTraitTypeIsClosure<T, I>() -> bool`
+- `ImplementedTraitTypeIsDynTrait<T, I>() -> bool`
 - `ImplementedTraitTypeIsNamed<T, I>() -> bool`
 - `ImplementedTraitTypeIsStruct<T, I>() -> bool`
 - `ImplementedTraitTypeIsRecord<T, I>() -> bool`
@@ -891,15 +1017,67 @@ compile-time errors.
 - `ImplementedTraitTypeHasConcreteLayout<T, I>() -> bool`
 - `ImplementedTraitTypeDisplayName<T, I>() -> ascii`
 - `ImplementedTraitTypeBaseName<T, I>() -> ascii`
+- `ImplementedTraitTypeModuleName<T, I>() -> ascii`
 - `ImplementedTraitTypeIsGenericInstantiation<T, I>() -> bool`
 - `ImplementedTraitTypeArgumentCount<T, I>() -> u64[0 max]`
 - `ImplementedTraitTypeComptimeArgumentCount<T, I>() -> u64[0 max]`
+- `ImplementedTraitTypeArgumentTypeIs<T, U, I, J>() -> bool`
+- `ImplementedTraitTypeArgumentTypeIsBool<T, I, J>() -> bool`
+- `ImplementedTraitTypeArgumentTypeIsInteger<T, I, J>() -> bool`
+- `ImplementedTraitTypeArgumentTypeIsFloat<T, I, J>() -> bool`
+- `ImplementedTraitTypeArgumentTypeIsRawPointer<T, I, J>() -> bool`
+- `ImplementedTraitTypeArgumentTypeIsFixedArray<T, I, J>() -> bool`
+- `ImplementedTraitTypeArgumentTypeIsSlice<T, I, J>() -> bool`
+- `ImplementedTraitTypeArgumentTypeIsDynamic<T, I, J>() -> bool`
+- `ImplementedTraitTypeArgumentTypeIsFunctionPointer<T, I, J>() -> bool`
+- `ImplementedTraitTypeArgumentTypeIsClosure<T, I, J>() -> bool`
+- `ImplementedTraitTypeArgumentTypeIsDynTrait<T, I, J>() -> bool`
+- `ImplementedTraitTypeArgumentTypeIsNamed<T, I, J>() -> bool`
+- `ImplementedTraitTypeArgumentTypeIsStruct<T, I, J>() -> bool`
+- `ImplementedTraitTypeArgumentTypeIsRecord<T, I, J>() -> bool`
+- `ImplementedTraitTypeArgumentTypeIsEnum<T, I, J>() -> bool`
+- `ImplementedTraitTypeArgumentTypeIsTrait<T, I, J>() -> bool`
+- `ImplementedTraitTypeArgumentTypeIsDoctrine<T, I, J>() -> bool`
+- `ImplementedTraitTypeArgumentTypeHasConcreteLayout<T, I, J>() -> bool`
+- `ImplementedTraitTypeArgumentTypeDisplayName<T, I, J>() -> ascii`
+- `ImplementedTraitTypeArgumentTypeBaseName<T, I, J>() -> ascii`
+- `ImplementedTraitTypeArgumentTypeModuleName<T, I, J>() -> ascii`
+- `ImplementedTraitTypeArgumentTypeIsGenericInstantiation<T, I, J>() -> bool`
+- `ImplementedTraitTypeArgumentTypeArgumentCount<T, I, J>() -> u64[0 max]`
+- `ImplementedTraitTypeArgumentTypeComptimeArgumentCount<T, I, J>() -> u64[0 max]`
+- `ImplementedTraitTypeComptimeArgumentName<T, I, J>() -> ascii`
+- `ImplementedTraitTypeComptimeArgumentTypeIs<T, U, I, J>() -> bool`
+- `ImplementedTraitTypeComptimeArgumentTypeIsBool<T, I, J>() -> bool`
+- `ImplementedTraitTypeComptimeArgumentTypeIsInteger<T, I, J>() -> bool`
+- `ImplementedTraitTypeComptimeArgumentTypeIsFloat<T, I, J>() -> bool`
+- `ImplementedTraitTypeComptimeArgumentTypeIsRawPointer<T, I, J>() -> bool`
+- `ImplementedTraitTypeComptimeArgumentTypeIsFixedArray<T, I, J>() -> bool`
+- `ImplementedTraitTypeComptimeArgumentTypeIsSlice<T, I, J>() -> bool`
+- `ImplementedTraitTypeComptimeArgumentTypeIsDynamic<T, I, J>() -> bool`
+- `ImplementedTraitTypeComptimeArgumentTypeIsFunctionPointer<T, I, J>() -> bool`
+- `ImplementedTraitTypeComptimeArgumentTypeIsClosure<T, I, J>() -> bool`
+- `ImplementedTraitTypeComptimeArgumentTypeIsDynTrait<T, I, J>() -> bool`
+- `ImplementedTraitTypeComptimeArgumentTypeIsNamed<T, I, J>() -> bool`
+- `ImplementedTraitTypeComptimeArgumentTypeIsStruct<T, I, J>() -> bool`
+- `ImplementedTraitTypeComptimeArgumentTypeIsRecord<T, I, J>() -> bool`
+- `ImplementedTraitTypeComptimeArgumentTypeIsEnum<T, I, J>() -> bool`
+- `ImplementedTraitTypeComptimeArgumentTypeIsTrait<T, I, J>() -> bool`
+- `ImplementedTraitTypeComptimeArgumentTypeIsDoctrine<T, I, J>() -> bool`
+- `ImplementedTraitTypeComptimeArgumentTypeHasConcreteLayout<T, I, J>() -> bool`
+- `ImplementedTraitTypeComptimeArgumentTypeDisplayName<T, I, J>() -> ascii`
+- `ImplementedTraitTypeComptimeArgumentTypeBaseName<T, I, J>() -> ascii`
+- `ImplementedTraitTypeComptimeArgumentTypeModuleName<T, I, J>() -> ascii`
+- `ImplementedTraitTypeComptimeArgumentTypeIsGenericInstantiation<T, I, J>() -> bool`
+- `ImplementedTraitTypeComptimeArgumentTypeArgumentCount<T, I, J>() -> u64[0 max]`
+- `ImplementedTraitTypeComptimeArgumentTypeComptimeArgumentCount<T, I, J>() -> u64[0 max]`
+- `ImplementedTraitTypeComptimeArgumentValueIs<T, I, J, Value>() -> bool`
 
 The second argument must resolve to a trait. The fact follows Stark's static
 trait conformance model and does not create trait objects, vtables, hidden
 dispatch, or runtime reflection. Indexed implemented-trait facts expose the
-stored trait base-list for a named type, reject concrete out-of-range indices,
-and work from package-backed trait metadata for imported types.
+stored trait base-list for a named type, reject concrete out-of-range trait and
+argument indices, and work from package-backed trait metadata for imported
+types.
 
 ## Associated-Type Facts
 
@@ -916,6 +1094,7 @@ and work from package-backed trait metadata for imported types.
 - `AssociatedTypeTargetTypeIsDynamic<T, I>() -> bool`
 - `AssociatedTypeTargetTypeIsFunctionPointer<T, I>() -> bool`
 - `AssociatedTypeTargetTypeIsClosure<T, I>() -> bool`
+- `AssociatedTypeTargetTypeIsDynTrait<T, I>() -> bool`
 - `AssociatedTypeTargetTypeIsNamed<T, I>() -> bool`
 - `AssociatedTypeTargetTypeIsStruct<T, I>() -> bool`
 - `AssociatedTypeTargetTypeIsRecord<T, I>() -> bool`
@@ -925,6 +1104,7 @@ and work from package-backed trait metadata for imported types.
 - `AssociatedTypeTargetTypeHasConcreteLayout<T, I>() -> bool`
 - `AssociatedTypeTargetTypeDisplayName<T, I>() -> ascii`
 - `AssociatedTypeTargetTypeBaseName<T, I>() -> ascii`
+- `AssociatedTypeTargetTypeModuleName<T, I>() -> ascii`
 - `AssociatedTypeTargetTypeIsGenericInstantiation<T, I>() -> bool`
 - `AssociatedTypeTargetTypeArgumentCount<T, I>() -> u64[0 max]`
 - `AssociatedTypeTargetTypeComptimeArgumentCount<T, I>() -> u64[0 max]`
@@ -939,8 +1119,9 @@ function-pointer, and closure type-category predicates for the selected
 associated alias target. Required aliases without targets return false for
 target category predicates.
 Target identity/generic-shape facts expose the selected target type's display
-name, base name, generic-instantiation state, ordinary type-argument count, and
-`comptime` value-argument count after the same owner substitution. Required
+name, base name, declaration module name, generic-instantiation state, ordinary
+type-argument count, and `comptime` value-argument count after the same owner
+substitution. Required
 aliases without targets return default metadata values: empty `ascii`, `false`,
 or `0`.
 

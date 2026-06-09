@@ -15,25 +15,34 @@ The root module is:
 
 Initial public declarations:
 
+- `System.Collections.Ordering`
+- `System.Collections.Eq`
+- `System.Collections.Hash`
+- `System.Collections.Ord`
+- `System.Collections.Format`
 - `System.Collections.List<T>`
 - `System.Collections.Stack<T>`
 - `System.Collections.Queue<T>`
+- `System.Collections.RingQueue<T>`
 - `System.Collections.LinkedList<T>`
 - `System.Collections.Dictionary<K, V>`
+- `System.Collections.HashSet<T>`
 - `System.Collections.Equatable<T>`
 - `System.Collections.Hashable<T>`
 - `System.Collections.DictionaryKey<T>`
 - `System.Collections.Lookup<T>`
+- `System.Collections.SortBy<T>`
+- `System.Collections.Sort<T>`
 
 The implementation may split these into source files such as
 `System/Collections/List.stark`, but the public package should make the common
 types available from `System.Collections`.
 
-`Dictionary<K, V>` is exposed only for key types with supported
-`DictionaryKey<K>` behavior. The first implementation supports that behavior
-for `bool` and Stark integer key types. Struct, record, text, pointer, and
-other key types remain rejected until Stark has full user-defined hash/equality
-support.
+`Dictionary<K, V>` and `HashSet<T>` are contract-driven. The public model is
+canonical `Hash` + `Eq` support, with scalar fast paths for `bool`, integer
+keys, and compiler-known text keys. User-defined key types provide the current
+concrete hook with explicit static `finite law Hash` and `Equals` methods.
+Unsupported or incompatible key contracts are compile-time diagnostics.
 
 ## Const Lookup Tables
 
@@ -49,6 +58,28 @@ public inline finite law retborrow frozen T Lookup<T>(
 Const fixed-array globals can be passed directly as `const T[]` views. When the
 table payload and index are compile-time constants, the SSA const lookup-table
 pass folds scalar reads to constants from typed initializer/package facts.
+
+## Sorting
+
+`SortBy<T>` sorts a mutable slice in place through an explicit inline comparator:
+
+```stark
+public inline fn void SortBy<T>(
+    mut borrow T[] values,
+    inline closure<finite law Ordering(borrow T, borrow T) where overlap(arg0, arg1)> compare);
+```
+
+`Sort<T>` sorts a mutable slice in place through the canonical `Ord` contract:
+
+```stark
+public inline fn void Sort<T>(mut borrow T[] values)
+    where T: Ord;
+```
+
+Both paths use the same heap-sort shape and allocate no runtime closure or
+scratch collection. `Sort<T>` lowers to direct `Compare` calls after
+monomorphization; a missing or incompatible `Ord.Compare` is a compile-time
+error.
 
 ## Allocation Pattern
 
@@ -169,34 +200,37 @@ public struct LinkedList<T>
 The first public surface should avoid exposing node pointers. Node-handle APIs
 can come later once the borrow and iterator story is deliberate.
 
-## Dictionary Key Requirements
+## Collection Contract Requirements
 
-Dictionary key requirements live in the source module:
+The canonical generic collection contracts live in the source module:
 
 ```stark
-public trait Equatable<T>
+public trait Eq
 {
-    finite law bool Equals(borrow T left, borrow T right);
+    finite law bool Equals(borrow Self left, borrow Self right)
+        where overlap(left, right);
 }
 
-public trait Hashable<T>
+public trait Hash
 {
-    finite law u64[0 max] Hash(borrow T value);
+    alias Code = u64[0 max];
+
+    finite law Self.Code Hash(borrow Self value);
 }
 
-public doctrine DictionaryKey<T>
+public trait Ord
 {
-    finite law bool Equals(borrow T left, borrow T right);
-    finite law u64[0 max] Hash(borrow T value);
+    finite law Ordering Compare(borrow Self left, borrow Self right)
+        where overlap(left, right);
 }
 ```
 
-`Equals` and `Hash` are `finite law` because dictionary lookup needs both
-operations to be pure, read-only, and guaranteed to return for valid keys.
+`Equals`, `Hash`, and `Compare` are `finite law` because collection lookup and
+sorting need pure, read-only behavior that returns for valid inputs.
 
-The first dictionary implementation is conservative: `bool` and Stark integer
-types are accepted, while key types without supported hash/equality behavior
-are rejected at generic use sites.
+`Equatable<T>`, `Hashable<T>`, and `DictionaryKey<T>` still exist as the
+implementation vocabulary used by dictionary and set internals. New generic
+surface area should use the canonical `Eq`, `Hash`, and `Ord` names.
 
 ## `Dictionary<K, V>`
 
@@ -219,8 +253,31 @@ public struct Dictionary<K, V>
 
 `ContainsKey` is valid as a `law` method only for key types whose hash and
 equality behavior is supported by the current standard-library surface.
-User-defined key support needs a later design pass before structs, records,
-text, or other richer values can become dictionary keys.
+User-defined key support currently uses explicit static `finite law Hash` and
+`Equals` methods on the key type. Missing or incompatible hooks are diagnosed at
+generic collection use sites.
+
+## `HashSet<T>`
+
+`HashSet<T>` is an owned open-addressed set using the same key-contract and
+storage strategy as `Dictionary<K, V>`.
+
+```stark
+public struct HashSet<T>
+{
+    HashSet();
+    HashSet(System.Memory.Allocator allocator);
+    inline finite law u64[0 2 ** 63 - 1] Count(borrow HashSet<T> self);
+    inline finite law u64[0 2 ** 63 - 1] Capacity(borrow HashSet<T> self);
+    inline finite law bool IsEmpty(borrow HashSet<T> self);
+    inline finite law u64[0 2 ** 63 - 1] FindIndex(borrow HashSet<T> self, borrow T value) where overlap(self, value);
+    fn System.Memory.MemoryStatus Reserve(mut borrow HashSet<T> self, u64[0 2 ** 63 - 1] additional);
+    inline fn System.Memory.MemoryStatus Add(mut borrow HashSet<T> self, T value);
+    inline finite law bool Contains(borrow HashSet<T> self, borrow T value) where overlap(self, value);
+    inline fn bool Remove(mut borrow HashSet<T> self, borrow T value) where overlap(self, value);
+    fn void Clear(mut borrow HashSet<T> self);
+}
+```
 
 ## Design Rules
 
@@ -268,12 +325,18 @@ text, or other richer values can become dictionary keys.
   storage.
 - `LinkedList<T>` now uses one allocation per internal node. Each node stores
   next/previous links and the element value together.
-- `Equatable<T>`, `Hashable<T>`, and `DictionaryKey<T>` are present as the
-  first dictionary key requirement vocabulary.
-- `Dictionary<K, V>` is implemented as an owned open-addressed hash table for
-  supported `bool` and Stark integer key types.
-- Dictionary key diagnostics reject unsupported key types before the dictionary
-  is used, including through package-image-backed `System.Collections` imports.
+- `Eq`, `Hash`, `Ord`, and `Format` are present as the canonical generic
+  contract names; `Equatable<T>`, `Hashable<T>`, and `DictionaryKey<T>` remain as
+  implementation compatibility vocabulary for dictionary/set internals.
+- `Dictionary<K, V>` and `HashSet<T>` are implemented as owned open-addressed
+  hash tables for supported scalar, text, and explicit static `Hash`/`Equals`
+  key types.
+- Dictionary/set key diagnostics reject unsupported key types before the
+  collection is used, including through package-image-backed
+  `System.Collections` imports.
+- `SortBy<T>` and `Sort<T>` provide deterministic in-place slice sorting without
+  runtime allocation; `Sort<T>` uses the canonical `Ord` contract and reports
+  missing or incompatible `Compare` implementations at compile time.
 - Collection growth, move/drop, and package-consumption coverage now exists as
   checked coverage: source imports compile the full collection growth program,
   and package-image imports validate the same surface through `--check`.

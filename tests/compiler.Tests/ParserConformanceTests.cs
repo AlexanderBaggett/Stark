@@ -192,6 +192,28 @@ public sealed class ParserConformanceTests
             """
         },
         {
+            "underscore-leading ffi symbols parse while bare discard remains a pattern",
+            """
+            module Native
+
+            internal unsafe ffi fn rawmutptr<i32[min max]> __error();
+
+            enum Token
+            {
+                Number(i32[min max]),
+            }
+
+            fn bool MatchesAny(Token token)
+            {
+                switch (token)
+                {
+                    case Token.Number(_):
+                        return true;
+                }
+            }
+            """
+        },
+        {
             "ffi struct layout attributes parse on structs and fields",
             """
             module Native
@@ -319,6 +341,36 @@ public sealed class ParserConformanceTests
                 for willexit (stack mut i32[min max] i = 0; i < 4; i += 1, i += 2)
                 {
                     continue;
+                }
+            }
+            """
+        },
+        {
+            "labeled control-flow statements parse",
+            """
+            module Flow
+
+            fn void Run(i32[min max] value)
+            {
+                outer: while willexit (value > 0)
+                {
+                    inner: for willexit (stack mut i32[min max] i = 0; i < value; i += 1)
+                    {
+                        if (i == 2)
+                        {
+                            continue outer;
+                        }
+
+                        break inner;
+                    }
+
+                    selector: switch (value)
+                    {
+                        case 1:
+                            break selector;
+                        default:
+                            break outer;
+                    }
                 }
             }
             """
@@ -753,6 +805,17 @@ public sealed class ParserConformanceTests
                 {
                     ;
                 }
+            }
+            """
+        },
+        {
+            "labels only attach to loops and switches",
+            """
+            module Demo
+
+            fn void Run()
+            {
+                done: return;
             }
             """
         },

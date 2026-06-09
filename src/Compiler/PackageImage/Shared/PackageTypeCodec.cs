@@ -369,6 +369,11 @@ internal static partial class PackageImageBuilder
             ? StarkTypeSymbols.GetGenericBaseName(type.NamedType!)
             : type.NamedType!;
 
+        if (TryQualifyModuleLocalDynTraitVtableTypeName(name, moduleName, localNamedTypes, out var qualifiedVtableTypeName))
+        {
+            return qualifiedVtableTypeName;
+        }
+
         if (string.IsNullOrEmpty(moduleName)
             || name.Contains('.', StringComparison.Ordinal)
             || !localNamedTypes.Contains(name))
@@ -377,6 +382,30 @@ internal static partial class PackageImageBuilder
         }
 
         return $"{moduleName}.{name}";
+    }
+
+    private static bool TryQualifyModuleLocalDynTraitVtableTypeName(
+        string name,
+        string moduleName,
+        ISet<string> localNamedTypes,
+        out string qualifiedName)
+    {
+        qualifiedName = name;
+        if (string.IsNullOrEmpty(moduleName)
+            || !name.EndsWith($".{StarkTypeSymbols.DynTraitVtableMemberName}", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var ownerName = name[..^(StarkTypeSymbols.DynTraitVtableMemberName.Length + 1)];
+        if (ownerName.Contains('.', StringComparison.Ordinal)
+            || !localNamedTypes.Contains(ownerName))
+        {
+            return false;
+        }
+
+        qualifiedName = $"{moduleName}.{name}";
+        return true;
     }
 
     private static string StripCurrentModulePrefix(string name, string moduleName)
@@ -685,15 +714,47 @@ internal static partial class PackageImageLoader
         string? currentModuleName,
         ISet<string>? localNamedTypes)
     {
+        var baseName = StarkTypeSymbols.GetGenericBaseName(name);
+        if (currentModuleName is not null
+            && localNamedTypes is not null
+            && TryQualifyModuleLocalDynTraitVtableTypeName(baseName, currentModuleName, localNamedTypes, out var qualifiedVtableTypeName))
+        {
+            return $"{qualifiedVtableTypeName}{name[baseName.Length..]}";
+        }
+
         if (string.IsNullOrWhiteSpace(currentModuleName)
             || localNamedTypes is null
-            || name.Contains('.', StringComparison.Ordinal)
-            || !localNamedTypes.Contains(name))
+            || baseName.Contains('.', StringComparison.Ordinal)
+            || !localNamedTypes.Contains(baseName))
         {
             return name;
         }
 
-        return $"{currentModuleName}.{name}";
+        return $"{currentModuleName}.{baseName}{name[baseName.Length..]}";
+    }
+
+    private static bool TryQualifyModuleLocalDynTraitVtableTypeName(
+        string name,
+        string moduleName,
+        ISet<string> localNamedTypes,
+        out string qualifiedName)
+    {
+        qualifiedName = name;
+        if (string.IsNullOrEmpty(moduleName)
+            || !name.EndsWith($".{StarkTypeSymbols.DynTraitVtableMemberName}", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var ownerName = name[..^(StarkTypeSymbols.DynTraitVtableMemberName.Length + 1)];
+        if (ownerName.Contains('.', StringComparison.Ordinal)
+            || !localNamedTypes.Contains(ownerName))
+        {
+            return false;
+        }
+
+        qualifiedName = $"{moduleName}.{name}";
+        return true;
     }
 
     private static string RenderTypeReference(StarkPackageTypeReference type)

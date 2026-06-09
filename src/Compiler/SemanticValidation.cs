@@ -1499,137 +1499,27 @@ internal sealed class SemanticValidator
             return;
         }
 
+        if (statement.labeledStatement() is { } labeledStatement)
+        {
+            CheckLabeledStatement(labeledStatement, scope, function, effects, summary, controlFlow);
+            return;
+        }
+
         if (statement.switchStatement() is { } switchStatement)
         {
-            var switchValue = EvaluateExpression(switchStatement.expression(), scope, function, effects, summary, allowFunctionReference: false, ExpressionObservation.Read);
-            var switchControlFlow = controlFlow.EnterSwitch();
-
-            foreach (var section in switchStatement.switchSection())
-            {
-                var sectionScope = new ValidationScope(scope);
-                foreach (var label in section.switchLabel())
-                {
-                    foreach (var pattern in label.pattern())
-                    {
-                        BindSwitchPattern(pattern, switchValue.Type, sectionScope, summary);
-                    }
-
-                    if (label.whenClause() is { } whenClause)
-                    {
-                        EvaluateExpression(whenClause.expression(), sectionScope, function, effects, summary, allowFunctionReference: false, ExpressionObservation.Read);
-                    }
-                }
-
-                foreach (var nestedStatement in section.statement())
-                {
-                    CheckStatement(nestedStatement, sectionScope, function, effects, summary, switchControlFlow);
-                }
-            }
-
+            CheckSwitchStatement(switchStatement, scope, function, effects, summary, controlFlow, labelName: null);
             return;
         }
 
         if (statement.whileStatement() is { } whileStatement)
         {
-            ValidateLoopContract(function.Name, whileStatement.loopBehavior().GetText(), whileStatement.expression(), whileStatement.statement(), whileStatement.loopBehavior(), summary);
-
-            if (whileStatement.loopBehavior().GetText() != "willexit")
-            {
-                summary.DisqualifyFinite();
-
-                if (effects.WillReturn)
-                {
-                    EffectError(summary, "STK4103", $"Finite function '{function.Name}' may only use 'willexit' loops.", whileStatement.loopBehavior());
-                }
-            }
-
-            EvaluateExpression(whileStatement.expression(), scope, function, effects, summary, allowFunctionReference: false, ExpressionObservation.Read);
-            CheckStatement(whileStatement.statement(), new ValidationScope(scope), function, effects, summary, controlFlow.EnterLoop());
+            CheckWhileStatement(whileStatement, scope, function, effects, summary, controlFlow, labelName: null);
             return;
         }
 
         if (statement.forStatement() is { } forStatement)
         {
-            var forTraversal = forStatement.forTraversal();
-            ValidateLoopContract(function.Name, forStatement.loopBehavior().GetText(), forTraversal?.expression() ?? forStatement.forCondition()?.expression(), forStatement.statement(), forStatement.loopBehavior(), summary);
-
-            if (forStatement.loopBehavior().GetText() != "willexit")
-            {
-                summary.DisqualifyFinite();
-
-                if (effects.WillReturn)
-                {
-                    EffectError(summary, "STK4103", $"Finite function '{function.Name}' may only use 'willexit' loops.", forStatement.loopBehavior());
-                }
-            }
-
-            var loopScope = new ValidationScope(scope);
-
-            if (forTraversal is not null)
-            {
-                CheckForTraversal(forTraversal, loopScope, function, effects, summary);
-            }
-            else if (forStatement.forInitializer()?.localForVariableDeclaration() is { } localForDeclaration)
-            {
-                var storageClass = ParseStorageClass(localForDeclaration.storageClass());
-                ValidateLocalVariableStorageClass(storageClass, localForDeclaration.storageClass());
-                var declaredType = ResolveType(localForDeclaration.type_());
-                ValidateTypeUsage(localForDeclaration.type_(), declaredType, TypeUsage.Local);
-
-                if (storageClass is LocalStorageClass.Heap or LocalStorageClass.Arena or LocalStorageClass.Static)
-                {
-                    summary.DisqualifyLaw();
-
-                    if (effects.IsPure)
-                    {
-                        EffectError(summary, "STK4102", $"Law '{function.Name}' cannot allocate or publish local '{storageClass.ToString().ToLowerInvariant()}' storage.", localForDeclaration.storageClass());
-                    }
-                }
-
-                foreach (var declarator in localForDeclaration.variableDeclarators().variableDeclarator())
-                {
-                    var hasConstProvenance = false;
-                    if (declarator.variableInitializer() is { } initializer)
-                    {
-                        hasConstProvenance = CheckVariableInitializer(initializer, loopScope, function, effects, summary, declaredType);
-                    }
-
-                    DeclareVariable(
-                        loopScope,
-                        new VariableSymbol(
-                            declarator.Identifier().GetText(),
-                            declaredType,
-                            SymbolOrigin.Local,
-                            storageClass,
-                            IsMutable: localForDeclaration.MUT() is not null,
-                            IsConstant: false,
-                            HasConstProvenance: localForDeclaration.MUT() is null && hasConstProvenance),
-                        summary,
-                        declarator.Identifier().Symbol);
-                }
-            }
-            else if (forStatement.forInitializer()?.expressionList() is { } initializerExpressions)
-            {
-                foreach (var expression in initializerExpressions.expression())
-                {
-                    EvaluateExpression(expression, loopScope, function, effects, summary, allowFunctionReference: false, ExpressionObservation.Read);
-                }
-            }
-
-            if (forTraversal is null && forStatement.forCondition() is { } condition)
-            {
-                EvaluateExpression(condition.expression(), loopScope, function, effects, summary, allowFunctionReference: false, ExpressionObservation.Read);
-            }
-
-            if (forTraversal is null && forStatement.forIterator() is { } iterator)
-            {
-                foreach (var expression in iterator.expressionList().expression())
-                {
-                    EvaluateExpression(expression, loopScope, function, effects, summary, allowFunctionReference: false, ExpressionObservation.Read);
-                }
-            }
-
-            CheckStatement(forStatement.statement(), loopScope, function, effects, summary, controlFlow.EnterLoop());
+            CheckForStatement(forStatement, scope, function, effects, summary, controlFlow, labelName: null);
             return;
         }
 
@@ -1653,9 +1543,17 @@ internal sealed class SemanticValidator
 
         if (statement.breakStatement() is { } breakStatement)
         {
-            if (!controlFlow.CanBreak)
+            var labelName = breakStatement.Identifier()?.GetText();
+            if (labelName is null)
             {
-                EffectError(summary, "STK4113", "'break' requires an enclosing loop or switch.", breakStatement);
+                if (!controlFlow.CanBreak)
+                {
+                    EffectError(summary, "STK4113", "'break' requires an enclosing loop or switch.", breakStatement);
+                }
+            }
+            else if (!controlFlow.CanBreakToLabel(labelName))
+            {
+                EffectError(summary, "STK4113", $"'break {labelName}' requires an enclosing loop or switch labeled '{labelName}'.", breakStatement);
             }
 
             return;
@@ -1663,9 +1561,17 @@ internal sealed class SemanticValidator
 
         if (statement.continueStatement() is { } continueStatement)
         {
-            if (!controlFlow.CanContinue)
+            var labelName = continueStatement.Identifier()?.GetText();
+            if (labelName is null)
             {
-                EffectError(summary, "STK4114", "'continue' requires an enclosing loop.", continueStatement);
+                if (!controlFlow.CanContinue)
+                {
+                    EffectError(summary, "STK4114", "'continue' requires an enclosing loop.", continueStatement);
+                }
+            }
+            else if (!controlFlow.CanContinueToLabel(labelName))
+            {
+                EffectError(summary, "STK4114", $"'continue {labelName}' requires an enclosing loop labeled '{labelName}'.", continueStatement);
             }
 
             return;
@@ -1682,6 +1588,189 @@ internal sealed class SemanticValidator
                 allowFunctionReference: false,
                 ExpressionObservation.Read);
         }
+    }
+
+    private void CheckLabeledStatement(
+        StarkParser.LabeledStatementContext labeledStatement,
+        ValidationScope scope,
+        FunctionDeclarationModel function,
+        FunctionEffectProfile effects,
+        FunctionValidationBuilder summary,
+        ControlFlowContext controlFlow)
+    {
+        var labelName = labeledStatement.Identifier().GetText();
+        if (controlFlow.HasLabel(labelName))
+        {
+            EffectError(summary, "STK4120", $"Control-flow label '{labelName}' is already active in this scope.", labeledStatement.Identifier().Symbol);
+        }
+
+        if (labeledStatement.switchStatement() is { } switchStatement)
+        {
+            CheckSwitchStatement(switchStatement, scope, function, effects, summary, controlFlow, labelName);
+            return;
+        }
+
+        if (labeledStatement.whileStatement() is { } whileStatement)
+        {
+            CheckWhileStatement(whileStatement, scope, function, effects, summary, controlFlow, labelName);
+            return;
+        }
+
+        if (labeledStatement.forStatement() is { } forStatement)
+        {
+            CheckForStatement(forStatement, scope, function, effects, summary, controlFlow, labelName);
+        }
+    }
+
+    private void CheckSwitchStatement(
+        StarkParser.SwitchStatementContext switchStatement,
+        ValidationScope scope,
+        FunctionDeclarationModel function,
+        FunctionEffectProfile effects,
+        FunctionValidationBuilder summary,
+        ControlFlowContext controlFlow,
+        string? labelName)
+    {
+        var switchValue = EvaluateExpression(switchStatement.expression(), scope, function, effects, summary, allowFunctionReference: false, ExpressionObservation.Read);
+        var switchControlFlow = controlFlow.EnterSwitch(labelName);
+
+        foreach (var section in switchStatement.switchSection())
+        {
+            var sectionScope = new ValidationScope(scope);
+            foreach (var label in section.switchLabel())
+            {
+                foreach (var pattern in label.pattern())
+                {
+                    BindSwitchPattern(pattern, switchValue.Type, sectionScope, summary);
+                }
+
+                if (label.whenClause() is { } whenClause)
+                {
+                    EvaluateExpression(whenClause.expression(), sectionScope, function, effects, summary, allowFunctionReference: false, ExpressionObservation.Read);
+                }
+            }
+
+            foreach (var nestedStatement in section.statement())
+            {
+                CheckStatement(nestedStatement, sectionScope, function, effects, summary, switchControlFlow);
+            }
+        }
+    }
+
+    private void CheckWhileStatement(
+        StarkParser.WhileStatementContext whileStatement,
+        ValidationScope scope,
+        FunctionDeclarationModel function,
+        FunctionEffectProfile effects,
+        FunctionValidationBuilder summary,
+        ControlFlowContext controlFlow,
+        string? labelName)
+    {
+        ValidateLoopContract(function.Name, whileStatement.loopBehavior().GetText(), whileStatement.expression(), whileStatement.statement(), whileStatement.loopBehavior(), summary, labelName);
+
+        if (whileStatement.loopBehavior().GetText() != "willexit")
+        {
+            summary.DisqualifyFinite();
+
+            if (effects.WillReturn)
+            {
+                EffectError(summary, "STK4103", $"Finite function '{function.Name}' may only use 'willexit' loops.", whileStatement.loopBehavior());
+            }
+        }
+
+        EvaluateExpression(whileStatement.expression(), scope, function, effects, summary, allowFunctionReference: false, ExpressionObservation.Read);
+        CheckStatement(whileStatement.statement(), new ValidationScope(scope), function, effects, summary, controlFlow.EnterLoop(labelName));
+    }
+
+    private void CheckForStatement(
+        StarkParser.ForStatementContext forStatement,
+        ValidationScope scope,
+        FunctionDeclarationModel function,
+        FunctionEffectProfile effects,
+        FunctionValidationBuilder summary,
+        ControlFlowContext controlFlow,
+        string? labelName)
+    {
+        var forTraversal = forStatement.forTraversal();
+        ValidateLoopContract(function.Name, forStatement.loopBehavior().GetText(), forTraversal?.expression() ?? forStatement.forCondition()?.expression(), forStatement.statement(), forStatement.loopBehavior(), summary, labelName);
+
+        if (forStatement.loopBehavior().GetText() != "willexit")
+        {
+            summary.DisqualifyFinite();
+
+            if (effects.WillReturn)
+            {
+                EffectError(summary, "STK4103", $"Finite function '{function.Name}' may only use 'willexit' loops.", forStatement.loopBehavior());
+            }
+        }
+
+        var loopScope = new ValidationScope(scope);
+
+        if (forTraversal is not null)
+        {
+            CheckForTraversal(forTraversal, loopScope, function, effects, summary);
+        }
+        else if (forStatement.forInitializer()?.localForVariableDeclaration() is { } localForDeclaration)
+        {
+            var storageClass = ParseStorageClass(localForDeclaration.storageClass());
+            ValidateLocalVariableStorageClass(storageClass, localForDeclaration.storageClass());
+            var declaredType = ResolveType(localForDeclaration.type_());
+            ValidateTypeUsage(localForDeclaration.type_(), declaredType, TypeUsage.Local);
+
+            if (storageClass is LocalStorageClass.Heap or LocalStorageClass.Arena or LocalStorageClass.Static)
+            {
+                summary.DisqualifyLaw();
+
+                if (effects.IsPure)
+                {
+                    EffectError(summary, "STK4102", $"Law '{function.Name}' cannot allocate or publish local '{storageClass.ToString().ToLowerInvariant()}' storage.", localForDeclaration.storageClass());
+                }
+            }
+
+            foreach (var declarator in localForDeclaration.variableDeclarators().variableDeclarator())
+            {
+                var hasConstProvenance = false;
+                if (declarator.variableInitializer() is { } initializer)
+                {
+                    hasConstProvenance = CheckVariableInitializer(initializer, loopScope, function, effects, summary, declaredType);
+                }
+
+                DeclareVariable(
+                    loopScope,
+                    new VariableSymbol(
+                        declarator.Identifier().GetText(),
+                        declaredType,
+                        SymbolOrigin.Local,
+                        storageClass,
+                        IsMutable: localForDeclaration.MUT() is not null,
+                        IsConstant: false,
+                        HasConstProvenance: localForDeclaration.MUT() is null && hasConstProvenance),
+                    summary,
+                    declarator.Identifier().Symbol);
+            }
+        }
+        else if (forStatement.forInitializer()?.expressionList() is { } initializerExpressions)
+        {
+            foreach (var expression in initializerExpressions.expression())
+            {
+                EvaluateExpression(expression, loopScope, function, effects, summary, allowFunctionReference: false, ExpressionObservation.Read);
+            }
+        }
+
+        if (forTraversal is null && forStatement.forCondition() is { } condition)
+        {
+            EvaluateExpression(condition.expression(), loopScope, function, effects, summary, allowFunctionReference: false, ExpressionObservation.Read);
+        }
+
+        if (forTraversal is null && forStatement.forIterator() is { } iterator)
+        {
+            foreach (var expression in iterator.expressionList().expression())
+            {
+                EvaluateExpression(expression, loopScope, function, effects, summary, allowFunctionReference: false, ExpressionObservation.Read);
+            }
+        }
+
+        CheckStatement(forStatement.statement(), loopScope, function, effects, summary, controlFlow.EnterLoop(labelName));
     }
 
     private void CheckForTraversal(
@@ -2481,11 +2570,26 @@ internal sealed class SemanticValidator
         bool allowFunctionReference,
         ExpressionObservation observation)
     {
-        var requiresCallableTarget = expression.postfixPart().Any(static part => part.argumentList() is not null);
-        var binding = EvaluatePrimaryExpression(expression.primaryExpression(), scope, function, effects, summary, allowFunctionReference || requiresCallableTarget, observation);
-
         var postfixParts = expression.postfixPart();
-        for (var index = 0; index < postfixParts.Length; index++)
+        var firstUnhandledPostfixIndex = 0;
+        ValidationValue binding;
+        if (TryEvaluateDynTraitFromPartsConstructionPrefix(
+                expression,
+                scope,
+                function,
+                effects,
+                summary,
+                out binding,
+                out firstUnhandledPostfixIndex))
+        {
+        }
+        else
+        {
+            var requiresCallableTarget = postfixParts.Any(static part => part.argumentList() is not null);
+            binding = EvaluatePrimaryExpression(expression.primaryExpression(), scope, function, effects, summary, allowFunctionReference || requiresCallableTarget, observation);
+        }
+
+        for (var index = firstUnhandledPostfixIndex; index < postfixParts.Length; index++)
         {
             var postfixPart = postfixParts[index];
             if (postfixPart.argumentList() is { } argumentList)
@@ -2522,6 +2626,114 @@ internal sealed class SemanticValidator
         }
 
         return binding;
+    }
+
+    private bool TryEvaluateDynTraitFromPartsConstructionPrefix(
+        StarkParser.PostfixExpressionContext expression,
+        ValidationScope scope,
+        FunctionDeclarationModel function,
+        FunctionEffectProfile effects,
+        FunctionValidationBuilder summary,
+        out ValidationValue binding,
+        out int firstUnhandledPostfixIndex)
+    {
+        binding = default!;
+        firstUnhandledPostfixIndex = 0;
+        if (!TryGetDynTraitFromPartsOperationName(expression, out var operationName)
+            || expression.postfixPart().Length == 0
+            || expression.postfixPart()[0] is not { } callPart
+            || callPart.argumentList() is not { } argumentList)
+        {
+            return false;
+        }
+
+        firstUnhandledPostfixIndex = 1;
+        foreach (var argument in argumentList.argument())
+        {
+            EvaluateExpression(argument.expression(), scope, function, effects, summary, allowFunctionReference: false, ExpressionObservation.Read);
+        }
+
+        var storageKind = string.Equals(operationName, "dynbox", StringComparison.Ordinal)
+            ? StarkDynTraitStorageKind.Heap
+            : StarkDynTraitStorageKind.View;
+        binding = TryResolveExplicitDynTraitFromPartsTargetType(expression, storageKind, out var targetType)
+            ? new ValidationValue(targetType, NamedType: ResolveNamedTypeSymbol(targetType))
+            : new ValidationValue(StarkTypeSymbols.Error);
+        return true;
+    }
+
+    private bool TryResolveExplicitDynTraitFromPartsTargetType(
+        StarkParser.PostfixExpressionContext expression,
+        StarkDynTraitStorageKind storageKind,
+        out StarkTypeSymbol targetType)
+    {
+        targetType = StarkTypeSymbols.Error;
+        var genericQualifiedName = expression.primaryExpression().genericQualifiedName();
+        if (genericQualifiedName is null)
+        {
+            return false;
+        }
+
+        var genericArguments = GenericArgumentSyntaxFacts.Resolve(
+            genericQualifiedName.typeArgumentList(),
+            ["T"],
+            [],
+            ResolveType,
+            static (_, _, _) => { },
+            visibleComptimeParameters: _currentFunctionComptimeGenericParameters);
+        if (genericArguments.TypeArguments.Count != 1
+            || genericArguments.TypeArguments[0].Kind == StarkTypeKind.Error)
+        {
+            return false;
+        }
+
+        return TryBuildDynTraitFromPartsTargetType(genericArguments.TypeArguments[0], storageKind, out targetType);
+    }
+
+    private bool TryBuildDynTraitFromPartsTargetType(
+        StarkTypeSymbol declaredType,
+        StarkDynTraitStorageKind storageKind,
+        out StarkTypeSymbol targetType)
+    {
+        targetType = StarkTypeSymbols.Error;
+        if (declaredType.Kind == StarkTypeKind.DynTrait)
+        {
+            if (declaredType.DynTraitStorageKind != storageKind)
+            {
+                return false;
+            }
+
+            targetType = storageKind == StarkDynTraitStorageKind.View && declaredType.BorrowKind == StarkBorrowKind.None
+                ? StarkTypeSymbols.ApplyQualifiers(declaredType, borrowKind: StarkBorrowKind.Borrow, isMutableView: declaredType.IsMutableView)
+                : declaredType;
+            return true;
+        }
+
+        if (declaredType.Kind != StarkTypeKind.Named
+            || declaredType.NamedType is not { } traitName
+            || !_typeModel.NamedTypes.TryGetValue(traitName, out var traitSymbol)
+            || traitSymbol.Kind != DeclarationKind.Trait
+            || !traitSymbol.IsDynTrait)
+        {
+            return false;
+        }
+
+        var dynType = StarkTypeSymbols.DynTrait(traitName, storageKind, declaredType.TypeArguments);
+        targetType = storageKind == StarkDynTraitStorageKind.View
+            ? StarkTypeSymbols.ApplyQualifiers(dynType, borrowKind: StarkBorrowKind.Borrow)
+            : dynType;
+        return true;
+    }
+
+    private static bool TryGetDynTraitFromPartsOperationName(
+        StarkParser.PostfixExpressionContext expression,
+        out string operationName)
+    {
+        operationName = expression.primaryExpression().genericQualifiedName()?.qualifiedName().GetText()
+            ?? expression.primaryExpression().Identifier()?.GetText()
+            ?? string.Empty;
+        return string.Equals(operationName, "dynview", StringComparison.Ordinal)
+            || string.Equals(operationName, "dynbox", StringComparison.Ordinal);
     }
 
     private bool TryEvaluateDynamicStorageMemberCall(
@@ -3949,6 +4161,8 @@ internal sealed class SemanticValidator
                 IsAddressMutable: isAddressMutable,
                 UsesFrozenProjectionSemantics: UsesFrozenProjectionSemantics(target)
                     || elementType.AccessKind == StarkAccessKind.Frozen,
+                ReadsIndirectStorageForAddress: target.ReadsIndirectStorageForAddress
+                    || target.Type.BorrowKind == StarkBorrowKind.StoreBorrow,
                 HasConstProvenance: HasConstProvenance(target));
         }
 
@@ -3995,6 +4209,8 @@ internal sealed class SemanticValidator
             IsIndirectStorageAccess: true,
             IsAddressMutable: currentIsAddressMutable,
             UsesFrozenProjectionSemantics: currentUsesFrozenProjectionSemantics,
+            ReadsIndirectStorageForAddress: target.ReadsIndirectStorageForAddress
+                || target.Type.BorrowKind == StarkBorrowKind.StoreBorrow,
             HasConstProvenance: HasConstProvenance(target));
     }
 
@@ -4131,6 +4347,8 @@ internal sealed class SemanticValidator
                 IsIndirectStorageAccess: true,
                 IsAddressMutable: CanMutateAddressProjection(target, projectedType),
                 UsesFrozenProjectionSemantics: UsesFrozenProjectionSemantics(target),
+                ReadsIndirectStorageForAddress: target.ReadsIndirectStorageForAddress
+                    || target.Type.BorrowKind == StarkBorrowKind.StoreBorrow,
                 HasConstProvenance: HasConstProvenance(target));
         }
 
@@ -4179,6 +4397,11 @@ internal sealed class SemanticValidator
             return new ValidationValue(StarkTypeSymbols.Error);
         }
 
+        if (TryApplyDynTraitRepresentationMemberAccess(target, memberName, out var representationMember))
+        {
+            return representationMember;
+        }
+
         var methodSourceName = $"{StarkTypeSymbols.GetGenericBaseName(traitName)}.{memberName}";
         if (!TryGetFunctionOverloads(methodSourceName, out var methods)
             || methods.Where(static method => !method.IsStatic).ToArray() is not { Length: 1 } instanceMethods)
@@ -4214,6 +4437,32 @@ internal sealed class SemanticValidator
             Function: resolvedMethod,
             NamedType: ResolveNamedTypeSymbol(resolvedMethod.ReturnType),
             Receiver: target);
+    }
+
+    private bool TryApplyDynTraitRepresentationMemberAccess(
+        ValidationValue target,
+        string memberName,
+        out ValidationValue binding)
+    {
+        binding = default!;
+        var fieldType = memberName switch
+        {
+            "Context" => StarkTypeSymbols.RawPointer(StarkTypeSymbols.Integer(8), isMutable: true),
+            "Vtable" => StarkTypeSymbols.DynTraitVtablePointerForTraitObject(target.Type),
+            _ => StarkTypeSymbols.Error
+        };
+        if (fieldType.Kind == StarkTypeKind.Error)
+        {
+            return false;
+        }
+
+        binding = new ValidationValue(
+            fieldType,
+            NamedType: ResolveNamedTypeSymbol(fieldType),
+            IsIndirectStorageAccess: true,
+            IsAddressMutable: false,
+            HasConstProvenance: target.HasConstProvenance);
+        return true;
     }
 
     private StarkTypeSymbol? ResolveAssociatedTypeForSubstitution(StarkTypeSymbol ownerType, string associatedTypeName)
@@ -4524,7 +4773,7 @@ internal sealed class SemanticValidator
                 NamedType: ResolveNamedTypeSymbol(signature.ReturnType));
         }
 
-        if (allowFunctionReference && TryGetFunctionOverloads(baseName, out var overloads))
+        if (TryGetFunctionOverloads(baseName, out var overloads))
         {
             var syntaxArgumentCount = genericQualifiedName.typeArgumentList().genericArgument().Length;
             var instantiatedCandidates = new List<TypedFunctionSignature>(overloads.Count);
@@ -4557,6 +4806,11 @@ internal sealed class SemanticValidator
                     arguments.ComptimeValueArguments));
             }
 
+            if (instantiatedCandidates.Count > 0 && !allowFunctionReference)
+            {
+                return new ValidationValue(StarkTypeSymbols.Error);
+            }
+
             if (instantiatedCandidates.Count == 1)
             {
                 var signature = instantiatedCandidates[0];
@@ -4573,8 +4827,6 @@ internal sealed class SemanticValidator
                     OverloadSourceName: baseName,
                     OverloadCandidates: instantiatedCandidates);
             }
-
-            return new ValidationValue(StarkTypeSymbols.Error, OverloadSourceName: baseName);
         }
 
         var targetType = ResolveGenericQualifiedName(genericQualifiedName);
@@ -4748,6 +5000,11 @@ internal sealed class SemanticValidator
         if (value.RootSymbol.Origin == SymbolOrigin.Parameter
             && (value.IsIndirectStorageAccess || value.Type.Kind == StarkTypeKind.Dynamic))
         {
+            if (value.ReadsIndirectStorageForAddress)
+            {
+                summary.MarkParameterRead(value.RootSymbol.Name);
+            }
+
             summary.MarkParameterWrite(value.RootSymbol.Name);
             return;
         }
@@ -6158,7 +6415,7 @@ internal sealed class SemanticValidator
             || type.ElementType is not null && ContainsRawPointer(type.ElementType);
     }
 
-    private static bool IsVisibleMemoryWrite(ValidationValue target)
+    private bool IsVisibleMemoryWrite(ValidationValue target)
     {
         if (target.RootSymbol is null)
         {
@@ -6173,7 +6430,7 @@ internal sealed class SemanticValidator
         return target.IsIndirectStorageAccess && IsExternallyVisibleMemory(target.RootSymbol);
     }
 
-    private static bool TouchesOtherMemory(ValidationValue value)
+    private bool TouchesOtherMemory(ValidationValue value)
     {
         if (value.RootSymbol is null)
         {
@@ -6193,7 +6450,7 @@ internal sealed class SemanticValidator
         return AliasedArgumentTouchesOtherMemory(value.RootSymbol);
     }
 
-    private static bool AliasedArgumentTouchesOtherMemory(VariableSymbol symbol)
+    private bool AliasedArgumentTouchesOtherMemory(VariableSymbol symbol)
     {
         if (symbol.Origin == SymbolOrigin.Global)
         {
@@ -6212,7 +6469,8 @@ internal sealed class SemanticValidator
 
         return symbol.Type.Kind is StarkTypeKind.RawPointer or StarkTypeKind.Slice
             || symbol.Type.BorrowKind != StarkBorrowKind.None
-            || symbol.Type.InitializationKind != StarkInitializationKind.None;
+            || symbol.Type.InitializationKind != StarkInitializationKind.None
+            || CanReachStoredBorrow(symbol.Type);
     }
 
     private static bool PreservesStorageView(StarkTypeSymbol target, StarkTypeSymbol source)
@@ -6230,7 +6488,7 @@ internal sealed class SemanticValidator
         return false;
     }
 
-    private static bool IsExternallyVisibleMemory(VariableSymbol symbol)
+    private bool IsExternallyVisibleMemory(VariableSymbol symbol)
     {
         if (symbol.Origin == SymbolOrigin.Global)
         {
@@ -6240,7 +6498,45 @@ internal sealed class SemanticValidator
         return symbol.Type.Kind is StarkTypeKind.RawPointer or StarkTypeKind.Slice
             || symbol.Type.BorrowKind != StarkBorrowKind.None
             || symbol.Type.InitializationKind != StarkInitializationKind.None
-            || symbol.StorageClass is LocalStorageClass.Heap or LocalStorageClass.Arena or LocalStorageClass.Static;
+            || symbol.StorageClass is LocalStorageClass.Heap or LocalStorageClass.Arena or LocalStorageClass.Static
+            || CanReachStoredBorrow(symbol.Type);
+    }
+
+    private bool CanReachStoredBorrow(StarkTypeSymbol type)
+    {
+        return CanReachStoredBorrow(type, new HashSet<string>(StringComparer.Ordinal));
+    }
+
+    private bool CanReachStoredBorrow(StarkTypeSymbol type, HashSet<string> visitedNamedTypes)
+    {
+        if (type.BorrowKind == StarkBorrowKind.StoreBorrow)
+        {
+            return true;
+        }
+
+        var valueType = StarkTypeSymbols.BorrowReturnValueType(type);
+        if (valueType.Kind == StarkTypeKind.FixedArray && valueType.ElementType is not null)
+        {
+            return CanReachStoredBorrow(valueType.ElementType, visitedNamedTypes);
+        }
+
+        if (valueType.Kind != StarkTypeKind.Named
+            || valueType.NamedType is not { } namedTypeName
+            || !visitedNamedTypes.Add(namedTypeName)
+            || !_typeModel.NamedTypes.TryGetValue(namedTypeName, out var namedType))
+        {
+            return false;
+        }
+
+        foreach (var field in namedType.OrderedFields)
+        {
+            if (CanReachStoredBorrow(field.Type, visitedNamedTypes))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private StarkTypeSymbol EvaluateLiteralType(StarkParser.LiteralContext literal)
@@ -6765,7 +7061,8 @@ internal sealed class SemanticValidator
         StarkParser.ExpressionContext? condition,
         StarkParser.StatementContext body,
         ParserRuleContext loopBehaviorContext,
-        FunctionValidationBuilder summary)
+        FunctionValidationBuilder summary,
+        string? labelName = null)
     {
         switch (loopBehavior)
         {
@@ -6779,7 +7076,7 @@ internal sealed class SemanticValidator
                         loopBehaviorContext);
                 }
 
-                if (ContainsForbiddenInfiniteLoopExit(body))
+                if (ContainsForbiddenInfiniteLoopExit(body, labelName))
                 {
                     EffectError(
                         summary,
@@ -6792,7 +7089,7 @@ internal sealed class SemanticValidator
 
             case "willexit":
                 if (IsStaticallyUnconditionalLoopCondition(condition)
-                    && !ContainsStructuralLoopExit(body))
+                    && !ContainsStructuralLoopExit(body, labelName))
                 {
                     EffectError(
                         summary,
@@ -6812,6 +7109,7 @@ internal sealed class SemanticValidator
 
     private static bool ContainsStructuralLoopExit(
         StarkParser.StatementContext statement,
+        string? targetLabel,
         int nestedLoopDepth = 0,
         int nestedSwitchDepth = 0)
     {
@@ -6820,38 +7118,67 @@ internal sealed class SemanticValidator
             return true;
         }
 
-        if (nestedLoopDepth == 0
-            && nestedSwitchDepth == 0
-            && statement.breakStatement() is not null)
+        if (statement.breakStatement() is { } breakStatement)
         {
-            return true;
+            var breakLabel = breakStatement.Identifier()?.GetText();
+            if (targetLabel is not null && string.Equals(breakLabel, targetLabel, StringComparison.Ordinal))
+            {
+                return true;
+            }
+
+            if (breakLabel is null
+                && nestedLoopDepth == 0
+                && nestedSwitchDepth == 0)
+            {
+                return true;
+            }
         }
 
         if (statement.block() is { } block)
         {
-            return block.statement().Any(child => ContainsStructuralLoopExit(child, nestedLoopDepth, nestedSwitchDepth));
+            return block.statement().Any(child => ContainsStructuralLoopExit(child, targetLabel, nestedLoopDepth, nestedSwitchDepth));
         }
 
         if (statement.ifStatement() is { } ifStatement)
         {
-            return ifStatement.statement().Any(child => ContainsStructuralLoopExit(child, nestedLoopDepth, nestedSwitchDepth));
+            return ifStatement.statement().Any(child => ContainsStructuralLoopExit(child, targetLabel, nestedLoopDepth, nestedSwitchDepth));
+        }
+
+        if (statement.labeledStatement() is { } labeledStatement)
+        {
+            if (labeledStatement.switchStatement() is { } labeledSwitch)
+            {
+                return labeledSwitch.switchSection()
+                    .SelectMany(static section => section.statement())
+                    .Any(child => ContainsStructuralLoopExit(child, targetLabel, nestedLoopDepth, nestedSwitchDepth + 1));
+            }
+
+            if (labeledStatement.whileStatement() is { } labeledWhile)
+            {
+                return ContainsStructuralLoopExit(labeledWhile.statement(), targetLabel, nestedLoopDepth + 1, nestedSwitchDepth);
+            }
+
+            if (labeledStatement.forStatement() is { } labeledFor)
+            {
+                return ContainsStructuralLoopExit(labeledFor.statement(), targetLabel, nestedLoopDepth + 1, nestedSwitchDepth);
+            }
         }
 
         if (statement.switchStatement() is { } switchStatement)
         {
             return switchStatement.switchSection()
                 .SelectMany(static section => section.statement())
-                .Any(child => ContainsStructuralLoopExit(child, nestedLoopDepth, nestedSwitchDepth + 1));
+                .Any(child => ContainsStructuralLoopExit(child, targetLabel, nestedLoopDepth, nestedSwitchDepth + 1));
         }
 
         if (statement.whileStatement() is { } nestedWhile)
         {
-            return ContainsStructuralLoopExit(nestedWhile.statement(), nestedLoopDepth + 1, nestedSwitchDepth);
+            return ContainsStructuralLoopExit(nestedWhile.statement(), targetLabel, nestedLoopDepth + 1, nestedSwitchDepth);
         }
 
         if (statement.forStatement() is { } nestedFor)
         {
-            return ContainsStructuralLoopExit(nestedFor.statement(), nestedLoopDepth + 1, nestedSwitchDepth);
+            return ContainsStructuralLoopExit(nestedFor.statement(), targetLabel, nestedLoopDepth + 1, nestedSwitchDepth);
         }
 
         return false;
@@ -6859,6 +7186,7 @@ internal sealed class SemanticValidator
 
     private static bool ContainsForbiddenInfiniteLoopExit(
         StarkParser.StatementContext statement,
+        string? targetLabel,
         int nestedLoopDepth = 0,
         int nestedSwitchDepth = 0)
     {
@@ -6867,38 +7195,67 @@ internal sealed class SemanticValidator
             return true;
         }
 
-        if (nestedLoopDepth == 0
-            && nestedSwitchDepth == 0
-            && statement.breakStatement() is not null)
+        if (statement.breakStatement() is { } breakStatement)
         {
-            return true;
+            var breakLabel = breakStatement.Identifier()?.GetText();
+            if (targetLabel is not null && string.Equals(breakLabel, targetLabel, StringComparison.Ordinal))
+            {
+                return true;
+            }
+
+            if (breakLabel is null
+                && nestedLoopDepth == 0
+                && nestedSwitchDepth == 0)
+            {
+                return true;
+            }
         }
 
         if (statement.block() is { } block)
         {
-            return block.statement().Any(child => ContainsForbiddenInfiniteLoopExit(child, nestedLoopDepth, nestedSwitchDepth));
+            return block.statement().Any(child => ContainsForbiddenInfiniteLoopExit(child, targetLabel, nestedLoopDepth, nestedSwitchDepth));
         }
 
         if (statement.ifStatement() is { } ifStatement)
         {
-            return ifStatement.statement().Any(child => ContainsForbiddenInfiniteLoopExit(child, nestedLoopDepth, nestedSwitchDepth));
+            return ifStatement.statement().Any(child => ContainsForbiddenInfiniteLoopExit(child, targetLabel, nestedLoopDepth, nestedSwitchDepth));
+        }
+
+        if (statement.labeledStatement() is { } labeledStatement)
+        {
+            if (labeledStatement.switchStatement() is { } labeledSwitch)
+            {
+                return labeledSwitch.switchSection()
+                    .SelectMany(static section => section.statement())
+                    .Any(child => ContainsForbiddenInfiniteLoopExit(child, targetLabel, nestedLoopDepth, nestedSwitchDepth + 1));
+            }
+
+            if (labeledStatement.whileStatement() is { } labeledWhile)
+            {
+                return ContainsForbiddenInfiniteLoopExit(labeledWhile.statement(), targetLabel, nestedLoopDepth + 1, nestedSwitchDepth);
+            }
+
+            if (labeledStatement.forStatement() is { } labeledFor)
+            {
+                return ContainsForbiddenInfiniteLoopExit(labeledFor.statement(), targetLabel, nestedLoopDepth + 1, nestedSwitchDepth);
+            }
         }
 
         if (statement.switchStatement() is { } switchStatement)
         {
             return switchStatement.switchSection()
                 .SelectMany(static section => section.statement())
-                .Any(child => ContainsForbiddenInfiniteLoopExit(child, nestedLoopDepth, nestedSwitchDepth + 1));
+                .Any(child => ContainsForbiddenInfiniteLoopExit(child, targetLabel, nestedLoopDepth, nestedSwitchDepth + 1));
         }
 
         if (statement.whileStatement() is { } nestedWhile)
         {
-            return ContainsForbiddenInfiniteLoopExit(nestedWhile.statement(), nestedLoopDepth + 1, nestedSwitchDepth);
+            return ContainsForbiddenInfiniteLoopExit(nestedWhile.statement(), targetLabel, nestedLoopDepth + 1, nestedSwitchDepth);
         }
 
         if (statement.forStatement() is { } nestedFor)
         {
-            return ContainsForbiddenInfiniteLoopExit(nestedFor.statement(), nestedLoopDepth + 1, nestedSwitchDepth);
+            return ContainsForbiddenInfiniteLoopExit(nestedFor.statement(), targetLabel, nestedLoopDepth + 1, nestedSwitchDepth);
         }
 
         return false;
@@ -7041,6 +7398,7 @@ internal sealed class SemanticValidator
         EnumConstructorBinding? EnumConstructor = null,
         bool IsAddressMutable = false,
         bool UsesFrozenProjectionSemantics = false,
+        bool ReadsIndirectStorageForAddress = false,
         bool HasConstProvenance = false);
 
     private sealed record EnumConstructorBinding(
@@ -7088,17 +7446,72 @@ internal sealed class SemanticValidator
         }
     }
 
-    private readonly record struct ControlFlowContext(int LoopDepth, int SwitchDepth)
+    private readonly record struct ControlFlowContext(
+        int LoopDepth,
+        int SwitchDepth,
+        IReadOnlyList<ControlFlowLabel> Labels)
     {
-        public static ControlFlowContext Root => new(0, 0);
+        public static ControlFlowContext Root => new(0, 0, []);
 
         public bool CanBreak => LoopDepth > 0 || SwitchDepth > 0;
 
         public bool CanContinue => LoopDepth > 0;
 
-        public ControlFlowContext EnterLoop() => new(LoopDepth + 1, SwitchDepth);
+        public bool HasLabel(string labelName) =>
+            Labels.Any(label => string.Equals(label.Name, labelName, StringComparison.Ordinal));
 
-        public ControlFlowContext EnterSwitch() => new(LoopDepth, SwitchDepth + 1);
+        public bool CanBreakToLabel(string labelName) =>
+            TryFindLabel(labelName, out _);
+
+        public bool CanContinueToLabel(string labelName) =>
+            TryFindLabel(labelName, out var label) && label.Kind == ControlFlowLabelKind.Loop;
+
+        public ControlFlowContext EnterLoop(string? labelName = null) =>
+            new(LoopDepth + 1, SwitchDepth, AddLabel(labelName, ControlFlowLabelKind.Loop));
+
+        public ControlFlowContext EnterSwitch(string? labelName = null) =>
+            new(LoopDepth, SwitchDepth + 1, AddLabel(labelName, ControlFlowLabelKind.Switch));
+
+        private bool TryFindLabel(string labelName, out ControlFlowLabel found)
+        {
+            for (var index = Labels.Count - 1; index >= 0; index--)
+            {
+                var label = Labels[index];
+                if (string.Equals(label.Name, labelName, StringComparison.Ordinal))
+                {
+                    found = label;
+                    return true;
+                }
+            }
+
+            found = default;
+            return false;
+        }
+
+        private IReadOnlyList<ControlFlowLabel> AddLabel(string? labelName, ControlFlowLabelKind kind)
+        {
+            if (labelName is null)
+            {
+                return Labels;
+            }
+
+            var labels = new ControlFlowLabel[Labels.Count + 1];
+            for (var index = 0; index < Labels.Count; index++)
+            {
+                labels[index] = Labels[index];
+            }
+
+            labels[^1] = new ControlFlowLabel(labelName, kind);
+            return labels;
+        }
+    }
+
+    private readonly record struct ControlFlowLabel(string Name, ControlFlowLabelKind Kind);
+
+    private enum ControlFlowLabelKind
+    {
+        Loop,
+        Switch
     }
 
     private sealed record ArgumentEffects(
@@ -7176,11 +7589,14 @@ internal sealed class SemanticValidator
                 || (!hasBody && IsMemoryBacked && !GuaranteedReadOnly);
             var captureKind = CaptureKind;
 
-            if (!hasBody && captureKind == ParameterCaptureKind.None)
+            if (captureKind == ParameterCaptureKind.None && Type.BorrowKind == StarkBorrowKind.StoreBorrow)
+            {
+                captureKind = ParameterCaptureKind.Escape;
+            }
+            else if (!hasBody && captureKind == ParameterCaptureKind.None)
             {
                 captureKind = Type.BorrowKind switch
                 {
-                    StarkBorrowKind.StoreBorrow => ParameterCaptureKind.Escape,
                     StarkBorrowKind.RetBorrow => ParameterCaptureKind.Return,
                     _ => ParameterCaptureKind.None
                 };

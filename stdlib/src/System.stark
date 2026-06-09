@@ -1,10 +1,13 @@
 import System.Runtime
 import System.Syscall
 import System.Testing
+import System.Compiler.IntegerFacts
+import System.Text.Interning
 export import System.Console
 export import System.BitOperations
 export import System.Collections
 export import System.C
+export import System.Compiler.IntegerFacts
 export import System.FileSystem
 export import System.IO
 export import System.IO.File

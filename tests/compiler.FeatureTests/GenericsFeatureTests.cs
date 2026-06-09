@@ -428,6 +428,30 @@ public sealed class GenericsFeatureTests : FeatureLlvmTestBase
     }
 
     [Fact]
+    public void ExplicitGenericFunctionCallWithOneRuntimeArgumentParsesAsGenericCall()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            finite law T Identity<T>(T value)
+            {
+                return value;
+            }
+
+            finite law i32[min max] Run(i32[min max] value)
+            {
+                return Identity<i32[min max]>(value);
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.DoesNotContain(result.Diagnostics, static diagnostic => diagnostic.Code == "STK3012");
+        Assert.DoesNotContain(result.Diagnostics, static diagnostic => diagnostic.Code == "STK3002");
+    }
+
+    [Fact]
     public void LargeByValueGenericSpecializationsPreserveObservableMemoryFacts()
     {
         var llvm = CompileToLlvm(

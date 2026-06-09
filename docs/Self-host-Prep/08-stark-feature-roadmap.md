@@ -66,28 +66,19 @@ Useful self-hosting targets:
 ## Compile-Time Structural Facts
 
 - [x] Keep structural facts compile-time-only and erased before MIR/codegen.
-- [~] Provide the self-hosting structural-fact surface under `System.Compiler`.
-      The host compiler has broad partial support across type, field, enum,
-      callable, layout, associated-type, trait/doctrine, and package-visible
-      metadata, including typed thread-safety law attribute condition type
-      predicate/metadata facts for type/field `[Grant]` / `[Deny]`
-      declarations, implemented-trait type predicate/metadata facts, method
-      `where` law predicate type predicate/metadata facts, method parameter name facts,
-      method generic trait-bound type predicate/metadata facts, and
-      function-pointer/closure return and parameter nested-type metadata facts,
-      C source alias identity facts for ABI-facing type queries including
-      closure return and parameter types, and named type module identity facts
-      for package-visible declarations,
-      but this remains in-progress until the compiler port audits and verifies
-      the exact required surface
-      end-to-end.
+- [x] Freeze the current `System.Compiler` structural-fact surface as part of
+      the pre-self-host `comptime` baseline. The host compiler has broad
+      partial support across type, field, enum, callable, layout,
+      associated-type, trait/doctrine, ABI-facing alias, visibility, and
+      package-visible metadata; this surface is maintained before bootstrap but
+      not expanded as a self-hosting blocker.
 - [x] Reject runtime use of structural facts as a compile-time diagnostic.
 - [x] Allow instantiated generic `law` / `finite law` CTFE bodies to branch on
       substituted type parameters and range-typed integer `comptime` parameters.
-- [ ] Complete structural-fact gap closure for the self-hosted compiler:
-      identify required missing facts, implement them completely, preserve them
-      through package images/imported typed interfaces when needed, and verify
-      runtime erasure.
+- [ ] Revisit structural-fact gap closure after self-hosting: identify useful
+      missing facts from real Stark compiler code, implement them in the
+      self-hosted compiler architecture, preserve them through package images
+      when needed, and verify runtime erasure.
 
 Reference: current type-predicate surface:
 
@@ -316,7 +307,8 @@ Field category facts are `FieldTypeIsBool<T, I>()`,
 `FieldTypeIsRawPointer<T, I>()`, `FieldTypeIsFixedArray<T, I>()`,
 `FieldTypeIsSlice<T, I>()`, `FieldTypeIsDynamic<T, I>()`,
 `FieldTypeIsFunctionPointer<T, I>()`, `FieldTypeIsClosure<T, I>()`,
-`FieldTypeIsNamed<T, I>()`, `FieldTypeIsStruct<T, I>()`,
+`FieldTypeIsDynTrait<T, I>()`, `FieldTypeIsNamed<T, I>()`,
+`FieldTypeIsStruct<T, I>()`,
 `FieldTypeIsRecord<T, I>()`, `FieldTypeIsEnum<T, I>()`,
 `FieldTypeIsTrait<T, I>()`, `FieldTypeIsDoctrine<T, I>()`, and
 `FieldTypeHasConcreteLayout<T, I>()`.
@@ -404,6 +396,12 @@ return-type metadata facts `FunctionPointerReturnTypeDisplayName<T>()`,
 `FunctionPointerParameterTypeIsGenericInstantiation<T, I>()`,
 `FunctionPointerParameterTypeArgumentCount<T, I>()`, and
 `FunctionPointerParameterTypeComptimeArgumentCount<T, I>()`,
+return/parameter actual type-argument facts
+`FunctionPointerReturnTypeArgumentTypeIs<T, U, ArgumentIndex>()`,
+`FunctionPointerParameterTypeArgumentTypeIs<T, U, ParameterIndex, ArgumentIndex>()`,
+matching category predicates such as
+`FunctionPointerReturnTypeArgumentTypeIsInteger<T, ArgumentIndex>()`, and
+matching display/base/module/generic-shape metadata facts,
 return/parameter qualifier metadata facts for borrow kind, access kind,
 initialization kind, mutable view, qualifier presence, and unqualified type
 comparison,
@@ -467,6 +465,12 @@ parameter category facts with the `ClosureParameterTypeIs...<T, I>()` prefix,
 `ClosureParameterTypeComptimeArgumentCount<T, I>()`,
 `ClosureParameterTypeHasCSourceAlias<T, I>()`, and
 `ClosureParameterTypeCSourceAliasName<T, I>()`,
+return/parameter actual type-argument facts
+`ClosureReturnTypeArgumentTypeIs<T, U, ArgumentIndex>()`,
+`ClosureParameterTypeArgumentTypeIs<T, U, ParameterIndex, ArgumentIndex>()`,
+matching category predicates such as
+`ClosureReturnTypeArgumentTypeIsInteger<T, ArgumentIndex>()`, and matching
+display/base/module/generic-shape metadata facts,
 return/parameter qualifier metadata facts for borrow kind, access kind,
 initialization kind, mutable view, qualifier presence, and unqualified type
 comparison,
@@ -510,13 +514,20 @@ finite law bool FirstMethodReturnsI32()
 Method facts treat each overload signature as a deterministic method slot,
 ordered by member name, parameter signature, return type, source name, and
 resolved symbol name. The current surface includes `MethodCount<T>()`,
-`MethodName<T, MethodIndex>()`, `MethodParameterCount<T, MethodIndex>()`,
+`MethodName<T, MethodIndex>()`, `MethodModuleName<T, MethodIndex>()`,
+`MethodVisibilityIsModule<T, MethodIndex>()`,
+`MethodVisibilityIsInternal<T, MethodIndex>()`,
+`MethodVisibilityIsPublic<T, MethodIndex>()`,
+`MethodVisibilityIsExport<T, MethodIndex>()`,
+`MethodParameterCount<T, MethodIndex>()`,
 `MethodParameterName<T, MethodIndex, ParameterIndex>()`,
 `MethodReturnTypeIs<T, U, MethodIndex>()`,
 `MethodParameterTypeIs<T, U, MethodIndex, ParameterIndex>()`, return/parameter
 type identity/generic-shape metadata facts, return/parameter type-category
 predicates with the `MethodReturnTypeIs...` and
-`MethodParameterTypeIs...` prefixes, return/parameter qualifier metadata facts
+`MethodParameterTypeIs...` prefixes, return/parameter actual type-argument
+facts with the `MethodReturnTypeArgumentType...` and
+`MethodParameterTypeArgumentType...` prefixes, return/parameter qualifier metadata facts
 for borrow kind, access kind, initialization kind, mutable view, qualifier
 presence, and unqualified type comparison, `MethodKindIsFn`, `MethodKindIsFinite`,
 `MethodKindIsLaw`, `MethodKindIsFiniteLaw`, `MethodIsStatic`, `MethodHasBody`,
@@ -566,7 +577,11 @@ Dyn-trait facts are `IsDynTrait<T>()`, `DynTraitIsView<T>()`,
 `borrow dyn Trait` / `heap dyn Trait` type metadata, reject runtime use with
 STK3054, reject non-dyn first arguments and non-trait second arguments for the
 target comparison, erase before MIR/codegen, and survive typed package-image
-round trips, source bridge rendering, and imported typed aliases.
+round trips, source bridge rendering, and imported typed aliases. Nested
+category predicates such as `FieldTypeIsDynTrait`, `MethodReturnTypeIsDynTrait`,
+`FunctionPointerParameterTypeIsDynTrait`, `TypeArgumentTypeIsDynTrait`,
+`EnumVariantPayloadTypeIsDynTrait`, and `AssociatedTypeTargetTypeIsDynTrait`
+use the same dyn-trait predicate.
 
 Current indexed name facts:
 
@@ -583,8 +598,11 @@ finite law bool IsOkName<T, comptime u64[0 max] I>()
 ```
 
 `FieldName<T, I>()` returns the `I`th struct/record field name as an `ascii`
-compile-time text constant. `EnumVariantName<T, I>()` returns the `I`th enum
-variant name as an `ascii` compile-time text constant. Both reject runtime use
+compile-time text constant. `FieldVisibilityIsModule<T, I>()`,
+`FieldVisibilityIsInternal<T, I>()`, `FieldVisibilityIsPublic<T, I>()`, and
+`FieldVisibilityIsExport<T, I>()` expose the selected field's declared or
+inherited visibility. `EnumVariantName<T, I>()` returns the `I`th enum variant
+name as an `ascii` compile-time text constant. These facts reject runtime use
 and concrete out-of-range indices with STK3054, support symbolic indices through
 generic CTFE until specialization, and erase before MIR/codegen. CTFE text
 equality compares decoded text payloads, so generated names can be compared with
@@ -673,6 +691,10 @@ Current named/generic type metadata facts:
 - `TypeModuleName<T>()` returns the declaring module name for named Stark
   declarations as `ascii`, including package-imported declarations and concrete
   generic instantiations, or empty `ascii` for non-named types.
+- `TypeVisibilityIsModule<T>()`, `TypeVisibilityIsInternal<T>()`,
+  `TypeVisibilityIsPublic<T>()`, and `TypeVisibilityIsExport<T>()` expose the
+  declaration visibility of named Stark types and fold through package-backed
+  typed interfaces.
 - `TypeIsGenericInstantiation<T>()` returns whether `T` is a named type with
   actual type arguments or `comptime` value arguments.
 - `TypeArgumentCount<T>()` returns the number of actual type arguments on `T`.
@@ -732,6 +754,7 @@ type:
 - `ImplementedTraitTypeIsDynamic<T, I>() -> bool`
 - `ImplementedTraitTypeIsFunctionPointer<T, I>() -> bool`
 - `ImplementedTraitTypeIsClosure<T, I>() -> bool`
+- `ImplementedTraitTypeIsDynTrait<T, I>() -> bool`
 - `ImplementedTraitTypeIsNamed<T, I>() -> bool`
 - `ImplementedTraitTypeIsStruct<T, I>() -> bool`
 - `ImplementedTraitTypeIsRecord<T, I>() -> bool`
@@ -741,12 +764,63 @@ type:
 - `ImplementedTraitTypeHasConcreteLayout<T, I>() -> bool`
 - `ImplementedTraitTypeDisplayName<T, I>() -> ascii`
 - `ImplementedTraitTypeBaseName<T, I>() -> ascii`
+- `ImplementedTraitTypeModuleName<T, I>() -> ascii`
 - `ImplementedTraitTypeIsGenericInstantiation<T, I>() -> bool`
 - `ImplementedTraitTypeArgumentCount<T, I>() -> u64[0 max]`
 - `ImplementedTraitTypeComptimeArgumentCount<T, I>() -> u64[0 max]`
+- `ImplementedTraitTypeArgumentTypeIs<T, U, I, J>() -> bool`
+- `ImplementedTraitTypeArgumentTypeIsBool<T, I, J>() -> bool`
+- `ImplementedTraitTypeArgumentTypeIsInteger<T, I, J>() -> bool`
+- `ImplementedTraitTypeArgumentTypeIsFloat<T, I, J>() -> bool`
+- `ImplementedTraitTypeArgumentTypeIsRawPointer<T, I, J>() -> bool`
+- `ImplementedTraitTypeArgumentTypeIsFixedArray<T, I, J>() -> bool`
+- `ImplementedTraitTypeArgumentTypeIsSlice<T, I, J>() -> bool`
+- `ImplementedTraitTypeArgumentTypeIsDynamic<T, I, J>() -> bool`
+- `ImplementedTraitTypeArgumentTypeIsFunctionPointer<T, I, J>() -> bool`
+- `ImplementedTraitTypeArgumentTypeIsClosure<T, I, J>() -> bool`
+- `ImplementedTraitTypeArgumentTypeIsDynTrait<T, I, J>() -> bool`
+- `ImplementedTraitTypeArgumentTypeIsNamed<T, I, J>() -> bool`
+- `ImplementedTraitTypeArgumentTypeIsStruct<T, I, J>() -> bool`
+- `ImplementedTraitTypeArgumentTypeIsRecord<T, I, J>() -> bool`
+- `ImplementedTraitTypeArgumentTypeIsEnum<T, I, J>() -> bool`
+- `ImplementedTraitTypeArgumentTypeIsTrait<T, I, J>() -> bool`
+- `ImplementedTraitTypeArgumentTypeIsDoctrine<T, I, J>() -> bool`
+- `ImplementedTraitTypeArgumentTypeHasConcreteLayout<T, I, J>() -> bool`
+- `ImplementedTraitTypeArgumentTypeDisplayName<T, I, J>() -> ascii`
+- `ImplementedTraitTypeArgumentTypeBaseName<T, I, J>() -> ascii`
+- `ImplementedTraitTypeArgumentTypeModuleName<T, I, J>() -> ascii`
+- `ImplementedTraitTypeArgumentTypeIsGenericInstantiation<T, I, J>() -> bool`
+- `ImplementedTraitTypeArgumentTypeArgumentCount<T, I, J>() -> u64[0 max]`
+- `ImplementedTraitTypeArgumentTypeComptimeArgumentCount<T, I, J>() -> u64[0 max]`
+- `ImplementedTraitTypeComptimeArgumentName<T, I, J>() -> ascii`
+- `ImplementedTraitTypeComptimeArgumentTypeIs<T, U, I, J>() -> bool`
+- `ImplementedTraitTypeComptimeArgumentTypeIsBool<T, I, J>() -> bool`
+- `ImplementedTraitTypeComptimeArgumentTypeIsInteger<T, I, J>() -> bool`
+- `ImplementedTraitTypeComptimeArgumentTypeIsFloat<T, I, J>() -> bool`
+- `ImplementedTraitTypeComptimeArgumentTypeIsRawPointer<T, I, J>() -> bool`
+- `ImplementedTraitTypeComptimeArgumentTypeIsFixedArray<T, I, J>() -> bool`
+- `ImplementedTraitTypeComptimeArgumentTypeIsSlice<T, I, J>() -> bool`
+- `ImplementedTraitTypeComptimeArgumentTypeIsDynamic<T, I, J>() -> bool`
+- `ImplementedTraitTypeComptimeArgumentTypeIsFunctionPointer<T, I, J>() -> bool`
+- `ImplementedTraitTypeComptimeArgumentTypeIsClosure<T, I, J>() -> bool`
+- `ImplementedTraitTypeComptimeArgumentTypeIsDynTrait<T, I, J>() -> bool`
+- `ImplementedTraitTypeComptimeArgumentTypeIsNamed<T, I, J>() -> bool`
+- `ImplementedTraitTypeComptimeArgumentTypeIsStruct<T, I, J>() -> bool`
+- `ImplementedTraitTypeComptimeArgumentTypeIsRecord<T, I, J>() -> bool`
+- `ImplementedTraitTypeComptimeArgumentTypeIsEnum<T, I, J>() -> bool`
+- `ImplementedTraitTypeComptimeArgumentTypeIsTrait<T, I, J>() -> bool`
+- `ImplementedTraitTypeComptimeArgumentTypeIsDoctrine<T, I, J>() -> bool`
+- `ImplementedTraitTypeComptimeArgumentTypeHasConcreteLayout<T, I, J>() -> bool`
+- `ImplementedTraitTypeComptimeArgumentTypeDisplayName<T, I, J>() -> ascii`
+- `ImplementedTraitTypeComptimeArgumentTypeBaseName<T, I, J>() -> ascii`
+- `ImplementedTraitTypeComptimeArgumentTypeModuleName<T, I, J>() -> ascii`
+- `ImplementedTraitTypeComptimeArgumentTypeIsGenericInstantiation<T, I, J>() -> bool`
+- `ImplementedTraitTypeComptimeArgumentTypeArgumentCount<T, I, J>() -> u64[0 max]`
+- `ImplementedTraitTypeComptimeArgumentTypeComptimeArgumentCount<T, I, J>() -> u64[0 max]`
+- `ImplementedTraitTypeComptimeArgumentValueIs<T, I, J, Value>() -> bool`
 
-The indexed facts are compile-time-only, reject out-of-range trait indices, and
-work from package-backed trait metadata for imported types.
+The indexed facts are compile-time-only, reject out-of-range trait and argument
+indices, and work from package-backed trait metadata for imported types.
 
 Current associated-type facts:
 
@@ -828,12 +902,12 @@ Implementation status:
 
 - [x] Decide build-driver concurrency scope: synchronous self-hosting driver
       first, no `async`/`await`.
-- [x] Limit future parallel build/test support to captured thread payloads,
+- [x] Limit future parallel build/test support to explicit payload thread starts,
       ergonomic guarded shared state, and channels.
-- [ ] Add captured/payload thread starts checked by `Transferable`.
-- [ ] Add `System.Threading.Synchronized<T>` and `Locked<T>` as the blessed easy
+- [x] Add payload thread starts checked by `Transferable`.
+- [x] Add `System.Threading.Synchronized<T>` and `Locked<T>` as the blessed easy
       shared-state primitive.
-- [ ] Add MPSC channels for progress, diagnostics, and result publication.
+- [x] Add MPSC channels for progress, diagnostics, and result publication.
 - [ ] Keep thread pools, work stealing, `RwLock`, `Once`, condition variables,
       semaphores, thread locals, and parallel compiler passes out of the
       self-hosting scope unless a later decision reopens them.
@@ -1076,41 +1150,31 @@ requires them.
 
 ## Comptime
 
-- [x] Decide `comptime` scope: CTFE plus broad compile-time branching over
-      explicit program-structure facts.
+- [x] Decide `comptime` scope split: preserve the current pre-self-host
+      baseline and defer broad compile-time branching over program structure
+      until after bootstrap.
 - [x] Keep program-structure facts compile-time-only and erased before backend
       lowering; do not add runtime reflection as part of this feature.
-- [~] Implement the self-hosting `comptime` capability as a complete language
-      feature. The host compiler currently has broad partial support for
-      expression/block CTFE, typed `comptime` generics, deterministic local
-      mutation, bounded CTFE loops/traversal, aggregate constants, layout
-      queries, switch/pattern execution, explicit conversion/cast evaluation,
-      CTFE `try` propagation over role-marked enums, generic CTFE substitution,
-      symbolic `comptime` value preservation through nested finite/law calls
-      until specialization, declared `finite`/`law` function and method calls
-      including chained receiver calls and trait-default receiver calls,
-      diagnostics, runtime-boundary rejection for structural fact calls and bare fact references,
-      package-image/source-bridge preservation for many cases including CTFE
-      `try`, source-free imported unary `comptime` expressions over
-      deterministic manifest-backed constants or specialized integer
-      `comptime` generic expressions, source-free imported typed-template
-      direct finite/law calls with concrete `comptime` substitutions, and
-      explicit `System.Compiler` structural facts. The current-host
-      compiler-port audit is complete
-      ([../internal/ctfe-self-host-compiler-audit.md](../internal/ctfe-self-host-compiler-audit.md));
-      the feature remains in-progress until the remaining parity, package
-      preservation, and port-driven fact gaps are closed.
-- [ ] Complete the self-hosting CTFE gap-closure pass. Treat this as one
-      complete task: audit the compiler port, identify missing CTFE cases,
-      implement the missing cases end-to-end, verify required package-image and
-      source-bridge preservation, and verify runtime erasure.
+- [x] Freeze the pre-self-host `comptime` baseline at the currently landed host
+      capability: expression/block CTFE, typed integer `comptime` generics,
+      deterministic local mutation, bounded CTFE loops/traversal, aggregate
+      constants, layout queries, switch/pattern execution, supported
+      finite/law calls, existing compile-time-only `System.Compiler` facts,
+      diagnostics for unsupported compile-time execution, and erasure before
+      runtime lowering.
+- [ ] Revisit broad `comptime` after self-hosting. That phase owns evaluator
+      parity, the stable structural-fact surface, complete package/source
+      preservation for broad CTFE helper bodies, and self-hosted compiler
+      conformance tests.
 
 Notes:
 
 `comptime` is still ordinary Stark code selected to run during compilation.
-Compile-time branching over program structure should use visible structural
-facts and ordinary `if` / `switch`, not hidden runtime reflection or a separate
-macro sublanguage.
+Before self-hosting, this is a maintained baseline rather than an expanding
+feature area. Broad compile-time branching over program structure should use
+visible structural facts and ordinary `if` / `switch`, not hidden runtime
+reflection or a separate macro sublanguage, and is deferred until the
+self-hosted compiler architecture can own it.
 
 ## Error And Optional Values
 
@@ -1139,9 +1203,12 @@ Internal compiler bugs use the error model documented in
 - [x] Keep raw literals in the existing `StringLiteral` token family so
       parser, typing, lowering, and package-image code continue to use the
       ordinary text-literal pipeline.
-- [ ] Add Stark-side text escaping/decoding helpers in `System.Text` for
-      diagnostics, LLVM text, golden files, and source snippets. Track this
-      as stdlib gap S03.
+- [x] Add Stark-side text escaping/decoding helpers in `System.Text` for
+      diagnostics, LLVM text, golden files, and source snippets. `System.Text`
+      now exposes allocation-aware string-literal escaping plus ordinary/raw
+      string literal and character literal decoding. Track remaining
+      compiler-grade text rendering under stdlib gap S02 and test golden-file
+      machinery under S18.
 
 Rules landed in the host compiler:
 
@@ -1156,16 +1223,22 @@ Rules landed in the host compiler:
 - [x] String-key dictionaries for `ascii`, `unicode`, `OwnedAscii`, and
       `OwnedUnicode` through canonical `Hash` + `Eq` contracts.
 - [x] `HashSet<T>`.
-- [ ] Strongly typed compiler symbol/name interning.
-- [ ] Deterministic sorting and ordered set/map helpers.
+- [x] Strongly typed compiler symbol/name interning.
+- [~] Deterministic sorting and ordered set/map helpers. `SortBy<T>` has
+      landed as an in-place comparator-based slice sort, and `Sort<T>` has
+      landed as the direct `T: Ord` slice-sort path; ordered set/map helpers
+      remain.
 - [ ] Text builder and formatting APIs.
 - [ ] JSON support for `.starkpkg.json`, unless the package image format changes.
 - [ ] Reusable `System.Toml` parser/emitter for `Stark.toml`,
       `Stark.solution.toml`, `Stark.user.toml`, tests, tools, and user code.
-- [ ] File read-all/write-all helpers.
-- [ ] Temp directory helpers.
-- [ ] Process spawn with stdout/stderr capture.
-- [ ] Environment and argv APIs.
+- [x] File read-all/write-all and line-oriented file reading helpers.
+- [~] Temp directory helpers, filesystem metadata, recursive walk, and streaming
+      glob traversal. Platform-backed temp roots and cross-platform
+      Linux/macOS/Windows metadata support have landed; cross-platform walk
+      parity remains.
+- [~] Process spawn with stdout/stderr capture: Linux-backed `System.Process.RunCapture` has landed; cross-platform backend parity remains.
+- [~] Environment and argv APIs: Linux-backed `System.Process` environment and argv APIs have landed; cross-platform backend parity remains.
 
 ## Memory Model Work
 

@@ -408,6 +408,280 @@ public sealed class TraitsAndDoctrinesFeatureTests : FeatureLlvmTestBase
     }
 
     [Fact]
+    public void DynTraitVtableTypeIsNameableAsReadonlyRawPointer()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            dyn trait Speaker
+            {
+                finite law i32[min max] Speak(borrow Self self);
+            }
+
+            dyn trait Reader<T>
+            {
+                finite law T Read(borrow Self self);
+            }
+
+            unsafe finite law i32[min max] Use(
+                rawptr<Speaker.Vtable> speakerTable,
+                rawptr<Reader.Vtable<i32[min max]>> readerTable)
+            {
+                return 1;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static d => d.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? model));
+        Assert.NotNull(model);
+        Assert.True(model.Functions.TryGetValue("Use", out var signature));
+        Assert.Collection(
+            signature.Parameters,
+            static parameter => Assert.Equal("rawptr<Speaker.Vtable>", parameter.Type.DisplayName),
+            static parameter => Assert.Equal("rawptr<Reader.Vtable<i32>>", parameter.Type.DisplayName));
+    }
+
+    [Fact]
+    public void DynTraitFatPointerCarriesTypedVtablePointerInMir()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            dyn trait Speaker
+            {
+                finite law i32[min max] Speak(borrow Self self);
+            }
+
+            struct Dog : Speaker
+            {
+                i32[min max] Volume;
+
+                finite law i32[min max] Speak(borrow Dog self)
+                {
+                    return self.Volume;
+                }
+            }
+
+            export fn i32[min max] main()
+            {
+                stack Dog d = new Dog() { Volume = 7 };
+                stack borrow dyn Speaker s = d;
+                return s.Speak();
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "lower-mir"));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static d => d.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.MidLevelIr, out MidLevelIrModule? mir));
+        Assert.NotNull(mir);
+
+        var vtableExtract = Assert.Single(
+            mir.Functions
+                .SelectMany(static function => function.Blocks)
+                .SelectMany(static block => block.Statements)
+                .Select(static statement => statement.Value)
+                .OfType<MidLevelIrExtractIndexRValue>(),
+            static value => value.OperationFamily == IndexedElementOperationFamily.DynTraitComponent
+                && value.ElementIndex == 1);
+        Assert.Equal("rawptr<Speaker.Vtable>", vtableExtract.Type.DisplayName);
+    }
+
+    [Fact]
+    public void DynTraitVtableTypeRejectsByValueAndMutablePointerUse()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            dyn trait Speaker
+            {
+                finite law i32[min max] Speak(borrow Self self);
+            }
+
+            struct BadHolder
+            {
+                Speaker.Vtable Table;
+            }
+
+            unsafe finite law i32[min max] Bad(rawmutptr<Speaker.Vtable> table)
+            {
+                return 1;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        Assert.True(
+            result.Diagnostics.Count(static diagnostic =>
+                diagnostic.Code == "STK3035"
+                && diagnostic.Message.Contains("compiler-owned dyn-trait vtable", StringComparison.Ordinal)) >= 2,
+            string.Join(Environment.NewLine, result.Diagnostics.Select(static d => d.ToString())));
+    }
+
+    [Fact]
+    public void UnsafeDynTraitFromPartsCanRoundTripContextAndVtable()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            dyn trait Speaker
+            {
+                finite law i32[min max] Speak(borrow Self self);
+            }
+
+            struct Dog : Speaker
+            {
+                i32[min max] Volume;
+
+                finite law i32[min max] Speak(borrow Dog self)
+                {
+                    return self.Volume;
+                }
+            }
+
+            unsafe finite law i32[min max] RoundTrip()
+            {
+                stack Dog d = new Dog() { Volume = 9 };
+                stack borrow dyn Speaker natural = d;
+                stack rawmutptr<i8[min max]> context = natural.Context;
+                stack rawptr<Speaker.Vtable> table = natural.Vtable;
+                stack borrow dyn Speaker explicitView = dynview<Speaker>(context, table);
+                stack borrow dyn Speaker inferredView = dynview(context, table);
+                return explicitView.Speak() + inferredView.Speak();
+            }
+
+            export fn i32[min max] main()
+            {
+                unsafe
+                {
+                    return RoundTrip();
+                }
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "lower-mir"));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static d => d.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? model));
+        Assert.NotNull(model);
+        Assert.Contains(
+            model.BoundOperations,
+            static operation => operation is BoundDynTraitFromPartsOperation { OperationName: "dynview", TargetType.DisplayName: "borrow dyn Speaker" });
+
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.MidLevelIr, out MidLevelIrModule? mir));
+        Assert.NotNull(mir);
+        var statements = mir.Functions
+            .SelectMany(static function => function.Blocks)
+            .SelectMany(static block => block.Statements)
+            .Select(static statement => statement.Value)
+            .ToArray();
+
+        Assert.Contains(
+            statements.OfType<MidLevelIrExtractIndexRValue>(),
+            static value => value.OperationFamily == IndexedElementOperationFamily.DynTraitComponent
+                && value.ElementIndex == 0
+                && value.Type.DisplayName == "rawmutptr<i8>");
+        Assert.Contains(
+            statements.OfType<MidLevelIrExtractIndexRValue>(),
+            static value => value.OperationFamily == IndexedElementOperationFamily.DynTraitComponent
+                && value.ElementIndex == 1
+                && value.Type.DisplayName == "rawptr<Speaker.Vtable>");
+        Assert.Contains(
+            statements.OfType<MidLevelIrInsertIndexRValue>(),
+            static value => value.OperationFamily == IndexedElementOperationFamily.DynTraitComponent
+                && value.ElementIndex == 0
+                && value.Type.DisplayName == "borrow dyn Speaker");
+        Assert.Contains(
+            statements.OfType<MidLevelIrInsertIndexRValue>(),
+            static value => value.OperationFamily == IndexedElementOperationFamily.DynTraitComponent
+                && value.ElementIndex == 1
+                && value.Type.DisplayName == "borrow dyn Speaker");
+    }
+
+    [Fact]
+    public void UnsafeDynTraitFromPartsRejectsSafeUseAndWrongVtable()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            dyn trait Speaker
+            {
+                finite law i32[min max] Speak(borrow Self self);
+            }
+
+            dyn trait Reader
+            {
+                finite law i32[min max] Read(borrow Self self);
+            }
+
+            finite law i32[min max] SafeConstruction(rawmutptr<i8[min max]> context, rawptr<Speaker.Vtable> table)
+            {
+                stack borrow dyn Speaker value = dynview<Speaker>(context, table);
+                return 1;
+            }
+
+            finite law i32[min max] SafeDecompose(borrow dyn Speaker value)
+            {
+                stack rawmutptr<i8[min max]> context = value.Context;
+                return 1;
+            }
+
+            unsafe finite law i32[min max] WrongTable(rawmutptr<i8[min max]> context, rawptr<Reader.Vtable> table)
+            {
+                stack borrow dyn Speaker value = dynview<Speaker>(context, table);
+                return 1;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3024"
+                && diagnostic.Message.Contains("dynview(context, vtable)", StringComparison.Ordinal));
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3024"
+                && diagnostic.Message.Contains("representation member '.Context'", StringComparison.Ordinal));
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3002"
+                && diagnostic.Message.Contains("rawptr<Speaker.Vtable>", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("rawptr<Reader.Vtable>", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void UnsafeDynBoxFromPartsConstructsOwnedDynTraitObject()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            dyn trait Speaker
+            {
+                finite law i32[min max] Speak(borrow Self self);
+            }
+
+            unsafe finite law heap dyn Speaker Adopt(rawmutptr<i8[min max]> context, rawptr<Speaker.Vtable> table)
+            {
+                return dynbox<Speaker>(context, table);
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "lower-mir"));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static d => d.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? model));
+        Assert.NotNull(model);
+        Assert.Contains(
+            model.BoundOperations,
+            static operation => operation is BoundDynTraitFromPartsOperation { OperationName: "dynbox", TargetType.DisplayName: "heap dyn Speaker" });
+    }
+
+    [Fact]
     public void TraitAssociatedTypeRequirementSubstitutesIntoConcreteImplementation()
     {
         var llvm = CompileToLlvm(

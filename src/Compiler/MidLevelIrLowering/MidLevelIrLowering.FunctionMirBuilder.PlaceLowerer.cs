@@ -1228,8 +1228,10 @@ internal sealed partial class MidLevelIrLowerer
                 };
             var currentType = target.RootType;
 
-            foreach (var segment in target.Path)
+            for (var segmentIndex = 0; segmentIndex < target.Path.Count; segmentIndex++)
             {
+                var segment = target.Path[segmentIndex];
+                var isLastSegment = segmentIndex == target.Path.Count - 1;
                 switch (segment.Kind)
                 {
                     case PlacePathKind.Field:
@@ -1369,6 +1371,25 @@ internal sealed partial class MidLevelIrLowerer
                 {
                     return null;
                 }
+
+                if (!isLastSegment && StarkTypeSymbols.IsPointerBackedBorrowType(currentType))
+                {
+                    var borrowedValueType = StarkTypeSymbols.BorrowReturnValueType(currentType);
+                    var canMutateBorrowedAddress = currentAddressIsMutable && currentType.IsMutableView;
+                    var borrowedAddressType = AddressType(borrowedValueType, currentType.IsMutableView);
+                    var borrowedValue = EmitTemporary(
+                        new MidLevelIrLoadIndirectRValue(currentAddress, currentType, $"{currentAddress.Text}:load"),
+                        "load");
+                    currentAddress = CoerceOperand(borrowedValue, borrowedAddressType);
+                    if (currentAddress is null)
+                    {
+                        return null;
+                    }
+
+                    currentType = borrowedValueType;
+                    currentAddressIsMutable = canMutateBorrowedAddress;
+                    currentValue = null;
+                }
             }
 
             return currentAddress;
@@ -1381,7 +1402,7 @@ internal sealed partial class MidLevelIrLowerer
 
             if (targetType.Kind != StarkTypeKind.Named
                 || targetType.NamedType is null
-                || !_namedTypes.TryGetValue(targetType.NamedType, out var namedType))
+                || !TryGetConcreteNamedTypeForLowering(targetType, out var namedType))
             {
                 return false;
             }

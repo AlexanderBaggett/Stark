@@ -362,8 +362,12 @@ internal sealed partial class LlvmFunctionBodyEmitter
                 {
                     var baseAddress = EmitOptimizedRawPointerLoopAddress(fieldAddress.Address, $"{purpose}_base");
                     var fieldPointer = $"%{EscapeIdentifier(CreateAbiTempName($"{purpose}_field"))}";
+                    var aggregateType = NormalizeAggregateType(
+                        StarkTypeSymbols.IsPointerBackedBorrowType(fieldAddress.AggregateType)
+                            ? StarkTypeSymbols.BorrowReturnValueType(fieldAddress.AggregateType)
+                            : fieldAddress.AggregateType);
                     if (TryGetLayoutControlledFieldOffsetBytes(
-                            fieldAddress.AggregateType,
+                            aggregateType,
                             fieldAddress.FieldIndex,
                             out var fieldOffsetBytes))
                     {
@@ -371,7 +375,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
                     }
                     else
                     {
-                        AppendLine($"  {fieldPointer} = getelementptr{GetProvenInObjectGepFlags()} {MapType(fieldAddress.AggregateType)}, ptr {baseAddress}, i32 0, i32 {fieldAddress.FieldIndex}");
+                        AppendLine($"  {fieldPointer} = getelementptr{GetProvenInObjectGepFlags()} {MapType(aggregateType)}, ptr {baseAddress}, i32 0, i32 {fieldAddress.FieldIndex}");
                     }
 
                     return fieldPointer;
@@ -497,13 +501,13 @@ internal sealed partial class LlvmFunctionBodyEmitter
         if (parameter.Kind == AbiParameterKind.IndirectIn)
         {
             AppendLine(
-                $"  {result} = getelementptr{GetZeroOffsetGepFlags()} {MapType(addressOfParameter.PointeeType)}, ptr %{EscapeIdentifier(parameter.LlvmName)}, i32 0");
+                $"  {result} = getelementptr{GetZeroOffsetGepFlags()} {MapType(NormalizeAggregateType(addressOfParameter.PointeeType))}, ptr %{EscapeIdentifier(parameter.LlvmName)}, i32 0");
             return result;
         }
 
         EnsureParameterSlotExists(parameter, addressOfParameter.PointeeType);
         AppendLine(
-            $"  {result} = getelementptr{GetZeroOffsetGepFlags()} {MapType(addressOfParameter.PointeeType)}, ptr %{EscapeIdentifier($"slot_param_{parameter.SourceName}")}, i32 0");
+            $"  {result} = getelementptr{GetZeroOffsetGepFlags()} {MapType(NormalizeAggregateType(addressOfParameter.PointeeType))}, ptr %{EscapeIdentifier($"slot_param_{parameter.SourceName}")}, i32 0");
         return result;
     }
 
@@ -511,7 +515,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
     {
         EnsureLocalSlotExists(addressOfLocal.LocalName, addressOfLocal.PointeeType);
         var result = $"%{EscapeIdentifier(CreateAbiTempName($"{purpose}_addr"))}";
-        AppendLine($"  {result} = getelementptr{GetZeroOffsetGepFlags()} {MapType(addressOfLocal.PointeeType)}, ptr {GetLocalSlotPointer(addressOfLocal.LocalName)}, i32 0");
+        AppendLine($"  {result} = getelementptr{GetZeroOffsetGepFlags()} {MapType(NormalizeAggregateType(addressOfLocal.PointeeType))}, ptr {GetLocalSlotPointer(addressOfLocal.LocalName)}, i32 0");
         return result;
     }
 

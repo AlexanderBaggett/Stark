@@ -179,7 +179,7 @@ Rules:
 
 * `inline`, `noinline`, and `inlinehint` are mutually exclusive
 * `hot` and `cold` are mutually exclusive
-* `ffi` marks a foreign facing function boundary
+* `ffi` marks a foreign facing function boundary, and may carry an explicit calling convention as `ffi(abi)` (see 13)
 * `strictfp` selects strict IEEE style floating point semantics for the function
 * `static` is only valid on member functions inside `struct` or `record` declarations
 
@@ -469,6 +469,17 @@ form. `fnptr<finite ...>` may only hold callbacks that guarantee progress and
 return. `fnptr<law ...>` may only hold callbacks that are pure/read-only and
 have no visible side effects. `fnptr<finite law ...>` requires both sets of
 guarantees.
+
+A function pointer type may also carry an explicit FFI calling convention,
+written as `ffi(abi)` immediately inside the angle brackets (after an optional
+`unsafe`, before the function kind). The ABI is part of the function-pointer type
+identity, so `fnptr<ffi(c) fn void()>` and `fnptr<ffi(stdcall) fn void()>` are
+distinct, incompatible types (see 13). Closures do not carry an FFI ABI.
+
+```stark
+fnptr<ffi(c) fn i32[min max](rawptr<i8[min max]>)>
+fnptr<unsafe ffi(win64) fn void(rawmutptr<i8[min max]>)>
+```
 
 Stronger function items can be used where a weaker function pointer is expected:
 
@@ -917,6 +928,37 @@ A type alias does not by itself create a distinct runtime type or ABI identity. 
 
 Implementation details are described in [LanguageInternals.md](../Internals/LanguageInternals.md).
 
+### 6.6 Compile-Time Value Parameters
+
+A generic parameter list may contain ordinary type parameters and typed
+compile-time value parameters. Stark spells const generics with `comptime`
+because `const` already means deep interior immutability:
+
+```stark
+finite law u8[0 max] Length<T, comptime u8[1 8] N>(borrow T[N] values)
+{
+    return N;
+}
+```
+
+A `comptime` parameter is written `comptime Type Name`, where `Type` is a ranged
+integer type. Current compiler support covers range-typed integer `comptime`
+parameters used as fixed-array lengths (`T[N]`) and inferred from concrete
+fixed-array arguments. The parameter participates in generic identity, so two
+instantiations with different `comptime` values are different specializations.
+
+Explicit `comptime` value arguments are written as literal integers in the
+argument list, after any type arguments. Use `comptime N` to forward an enclosing
+`comptime` value parameter:
+
+```stark
+stack i32[min max][3] values = { 1, 2, 3 };
+stack u8[0 max] size = Length<i32[min max], 3>(values);
+```
+
+`comptime` value parameters, their symbolic values, and imported generic template
+substitutions are preserved in package images.
+
 ## 7. Ownership, Borrowing, and Lifetimes
 
 Safe Stark is ownership based. There is no garbage collection.
@@ -1153,6 +1195,33 @@ Every such call is resolved statically and monomorphized to a **direct call** â€
 
 A plain `trait` is compile-time-only: it has no trait-object values, its name is rejected in value positions, and a trait method cannot be invoked through the trait name (`Drawable.Width(x)` is an error). Runtime dispatch is opt-in per trait, with `dyn trait` (below).
 
+#### Associated types
+
+A trait, doctrine, `struct`, or `record` body may declare associated type aliases. `alias Item;` is a *required* associated type each implementer must define; `alias Item = i32[min max];` provides a concrete or default associated type. Signatures refer to one through `Self.Item` in a trait, or `T.Item` through a bounded generic:
+
+```stark
+trait Container
+{
+    alias Item;
+
+    finite law Self.Item First(borrow Self self);
+}
+
+struct IntBox : Container
+{
+    alias Item = i32[min max];
+
+    i32[min max] Value;
+
+    finite law i32[min max] First(borrow IntBox self)
+    {
+        return self.Value;
+    }
+}
+```
+
+Conformance requires every required associated alias to be defined and every signature to match after `Self`, trait type arguments, and associated types are substituted. A `dyn trait` currently may not declare associated types.
+
 #### Dynamic dispatch with `dyn` trait objects
 
 Sometimes the concrete type genuinely is not known until run time. A trait opts into runtime dispatch by being declared `dyn trait`; the cost is disclosed at every use by spelling `dyn` in the type.
@@ -1207,6 +1276,44 @@ Doctrines have these properties:
 * no environment capture
 * members may be referenced directly through their qualified doctrine name
 * members are called directly by name
+
+Doctrine members may carry default `law` / `finite law` bodies, and doctrine bodies may declare associated type aliases the same way traits do (see 8.5).
+
+### 8.7 Layout Control Attributes
+
+By default Stark chooses field order and padding for best layout. An FFI-facing `struct` or `record` that must match a C ABI opts into C-compatible layout with attributes:
+
+* `[StructLayout(C)]`: lay fields out in declaration order with C padding rules
+* `[StructLayout(Explicit)]`: place every field at an explicit byte offset
+* `[Pack(N)]`: cap each field's effective alignment at `N` bytes
+* `[Align(N)]`: raise the aggregate's alignment to at least `N` bytes
+* `[FieldOffset(N)]`: the explicit byte offset of a field under `Explicit` layout
+
+```stark
+[StructLayout(C)]
+struct Timespec
+{
+    System.C.c_long Seconds;
+    System.C.c_long Nanoseconds;
+}
+
+[StructLayout(C), Pack(1)]
+struct WireHeader
+{
+    u8[0 max] Tag;
+    u32[0 max] Length;
+}
+
+[StructLayout(Explicit)]
+struct WordParts
+{
+    [FieldOffset(0)] u32[0 max] Whole;
+    [FieldOffset(0)] u16[0 max] Low;
+    [FieldOffset(2)] u16[0 max] High;
+}
+```
+
+A field whose offset does not satisfy its natural alignment (under `Pack` or `Explicit` layout) is a packed field: access goes through unaligned reads and writes, and taking a safe borrow of such a field is restricted. `N` for `Pack`, `Align`, and `FieldOffset` is a byte count, a power of two where alignment applies. Default Stark layout is not a stable ABI; these attributes are the opt-in for predictable C-compatible layout.
 
 ## 9. Globals and Storage Classes
 
@@ -1292,6 +1399,50 @@ There is no atomic qualifier keyword and no way to make plain assignment atomic:
 atomic types are the sharing surface. See the `System.Threading` standard library
 reference for the full operation set and the per-width cost model.
 
+For guarded mutable aggregates rather than single scalars, `System.Threading`
+provides `Synchronized<T>` (a lock-backed owner) and the `Locked<T>` guard it
+hands out, so a shared aggregate global stays correct without spelling raw locks.
+
+### 9.2 Thread-Safety Laws
+
+Stark has two compiler-known thread-safety laws that describe how a value may
+cross threads:
+
+* `Transferable(T)`: ownership of a `T` may move to another thread
+* `Shareable(T)`: a borrow of a `T` may be accessed from several threads at once
+
+The compiler computes these facts structurally at type-check time, including
+propagation through generic type arguments and fields. Use a law in a callable
+`where` clause to require the fact at the call site:
+
+```stark
+fn T MoveToThread<T>(T value) where Transferable(T)
+{
+    return value;
+}
+```
+
+Raw pointers and `storeborrow` fields deny both laws by default; the
+`System.Threading.Atomic*` types satisfy both by intrinsic compiler grant. Two
+attributes audit the structural result on a type or field:
+
+* `[Grant(Law)]` asserts a law the structural derivation cannot see, optionally
+  conditioned on another law with `[Grant(Law) where OtherLaw(T)]`
+* `[Deny(Law)]` opts a type out of a law it would otherwise satisfy
+
+```stark
+struct Synchronized<T>
+{
+    [Grant(Shareable) where Transferable(T)]
+    T Payload;
+}
+```
+
+These laws are consumed by direct and member calls, explicit payload thread
+starts, channels, `Synchronized<T>`, and thread-entry reachable mutable statics.
+`[Grant(...)]` is for audited overrides only; `[Deny(...)]` is for semantic
+opt-outs that structural derivation cannot infer.
+
 ## 10. Control Flow
 
 The statement forms:
@@ -1365,6 +1516,37 @@ fn i32[0 10] CountFour()
 
 Accepted `willexit` loops state that the loop is expected to make progress and finish. Accepted `independent` loops additionally state that iterations have no loop-carried memory dependence. Raw pointer accesses in this subset may use the normal raw pointer spelling `*(&root[index])` when `root` has a bounded raw pointer region. Unbounded pointer dereferences, address-of expressions that create new unbounded regions, member access that is not rooted at `root[index]`, non-induction indexes, memory-backed local declarations, nested loops, early exits, and calls with unproven memory effects produce `STK3027`.
 
+**Traversal loops.** A `for` loop may iterate the elements of a fixed array,
+slice, or `dynamic` value directly with the `in` form. It lowers to a counted
+loop with no iterator object and no hidden runtime dispatch. The element binding
+must be `borrow T` or `borrow mut T`; mutable traversal requires mutable element
+storage:
+
+```stark
+for willexit (borrow Token token in tokens)
+{
+    Process(token);
+}
+
+for willexit (borrow mut Token token in tokens)
+{
+    Normalize(token);
+}
+```
+
+An optional leading index binding uses `stack` or `register` storage and an
+integer range wide enough for every source index:
+
+```stark
+for willexit (stack u64[0 max] index, borrow Token token in tokens)
+{
+    Record(index, token);
+}
+```
+
+Traversal loops still require a loop-behavior keyword, and `independent` applies
+to them as it does to counted loops.
+
 ### 10.3 Disjoint Branch Conditions
 
 `if disjoint(...)` tests memory-region overlap and introduces a branch-scoped fact:
@@ -1395,6 +1577,30 @@ The switch surface includes:
 * discard `_`
 * dot qualified enum case patterns for unit, tuple, and named field enum cases
 * exact type named aggregate patterns with nested aggregate subpatterns
+* aggregate property patterns that match named fields: `case Box { Width: var w }:`
+* exact-length list patterns over fixed arrays, slices, and dynamic storage: `case [first, second]:`
+* switch-label or-patterns that share one body: `case A | B:`
+* inclusive integer range patterns: `case 0..9:`
+
+Property patterns must name every aggregate field exactly once. List patterns are
+exact-length: a fixed-array length mismatch is a compile-time error, and
+slice/dynamic list patterns lower to a length check plus direct element tests with
+no iterator protocol or hidden allocation. Or-pattern alternatives must bind the
+same captures with the same types. Range patterns are integer-only, are checked as
+intervals rather than expanded into individual values, and may appear at top level
+or nested inside enum, aggregate, and list field patterns.
+
+```stark
+switch (token)
+{
+    case Token.Integer(0..9) | Token.Integer(10..19):
+        return 1;
+    case Token.Integer(_):
+        return 2;
+    case Token.End:
+        return 0;
+}
+```
 
 **Exhaustiveness.** Every `switch` must cover its scrutinee's whole domain. A value
 that matches no arm has nowhere to go, so the gap is a compile error rather than a
@@ -1509,6 +1715,36 @@ Capturing a move-only payload with `var` moves it out of the matched value, exac
 
 `expr is pattern` lowers to the same discriminant-test-and-bind machinery as `switch`, so it carries no extra cost over the equivalent single-case `switch`.
 
+### 10.7 Labeled `break` and `continue`
+
+A loop or `switch` may carry a label, written as `name:` before the statement. A
+`break name;` exits the labeled loop or switch, and a `continue name;` continues
+the labeled loop. This is how an inner loop targets an enclosing loop without a
+flag variable:
+
+```stark
+fn i32[min max] Find(borrow i32[min max][] rows, i32[min max] needle)
+{
+    outer: for willexit (stack u64[0 max] r, borrow i32[min max] row in rows)
+    {
+        if (row == needle)
+        {
+            break outer;
+        }
+
+        if (row < 0)
+        {
+            continue outer;
+        }
+    }
+
+    return 0;
+}
+```
+
+`break name;` targets a labeled loop or `switch`; `continue name;` targets a
+labeled loop only.
+
 ## 11. Expressions
 
 The expression surface includes:
@@ -1527,6 +1763,7 @@ The expression surface includes:
 * ternary conditional `?:`
 * assignments and compound assignments
 * error propagation `try` (see 10.5)
+* compile-time evaluation `comptime` and the layout queries `sizeof` / `alignof` (see 11.7)
 
 Object creation supports both explicit and target typed forms:
 
@@ -1699,6 +1936,54 @@ Ordinary integer arithmetic in Stark is performance first and intentionally stri
 * wrapping arithmetic uses the Zig style spellings `+%`, `-%`, `*%` and the corresponding compound assignments
 * saturating arithmetic uses the Zig style spellings `+|`, `-|`, `*|` and the corresponding compound assignments
 
+### 11.7 Compile-Time Evaluation
+
+`comptime expr` forces an expression to be evaluated during compilation, and
+`comptime { ... }` runs a compile-time block when local compile-time state or a
+bounded loop makes the code clearer. The two layout queries `sizeof(T)` and
+`alignof(T)` fold to `u64` constants when `T` has a concrete runtime layout in the
+current target:
+
+```stark
+const PairSize = comptime sizeof(Pair);
+
+finite law i64[min max] LayoutScore()
+{
+    return comptime sizeof(Pair) + comptime alignof(Pair);
+}
+```
+
+Compile-time evaluation supports ordinary constants, `law` / `finite law` calls,
+fixed-array tables, named and enum aggregates, layout queries, `switch` and
+pattern-condition execution, and fixed-array traversal. A `willexit` loop inside
+compile-time evaluation has an iteration budget and reports a diagnostic when it is
+exhausted; recursive compile-time `law` calls are likewise bounded rather than
+allowed to recurse forever.
+
+Compile-time-only structural predicates live under `System.Compiler`. They answer
+questions about types, fields, enum variants, layout, callables, traits, and
+associated types â€” for example `IsStruct<T>()`, `FieldCount<T>()`,
+`Implements<T, Trait>()`, and `TypeSize<T>()`. They may be called only inside
+`comptime`; a runtime call is rejected, and the facts are erased before runtime
+lowering, so they create no reflection metadata:
+
+```stark
+finite law i64[min max] Score<T>()
+{
+    if (comptime System.Compiler.IsInteger<T>())
+    {
+        return sizeof(T);
+    }
+
+    if (comptime System.Compiler.IsStruct<T>())
+    {
+        return sizeof(T) + alignof(T);
+    }
+
+    return 0;
+}
+```
+
 ## 12. Strings and Characters
 
 Stark distinguishes two text forms:
@@ -1723,6 +2008,21 @@ Supported escapes in string and character literals:
 * unicode escapes: `\uNNNN`
 
 Character literals follow the same inference path instead of using a dedicated standalone `char` type.
+
+Raw string literals do not process escape sequences; the characters between the delimiters are taken verbatim, which suits regexes, Windows paths, and embedded source text:
+
+* `raw"..."` is a single-line raw literal: no escapes, no embedded newlines
+* `raw"""..."""` is a multiline raw literal: newlines and content are preserved exactly
+
+```stark
+stack ascii pattern = raw"\d+\.\d+";
+stack ascii usage = raw"""
+usage: stark build [--release]
+       stark run
+""";
+```
+
+Raw literals compose with interpolation as `$raw"..."` and `$raw"""..."""`: the verbatim escape rules still hold while `{ ... }` holes are evaluated. Raw literals infer to `ascii` when the contents fit UTF-8, like ordinary string literals.
 
 The text runtime contract:
 
@@ -1896,6 +2196,32 @@ Outside that boundary:
 * safe values may not be assigned `null`
 * pointers to pointers are not part of ordinary safe Stark code
 * conversions from raw pointers into safe borrows must be explicit
+
+**Calling conventions.** An `ffi` function uses the target's C ABI by default. Write an explicit convention as `ffi(abi)` when a foreign symbol uses a different one:
+
+```stark
+public unsafe ffi(c) fn i32[min max] puts(rawptr<i8[min max]> text);
+public unsafe ffi(stdcall) fn i32[min max] LegacyCall(i32[min max] value);
+```
+
+Supported ABI names are `c` (the default), `cdecl`, `stdcall`, `fastcall`, `thiscall`, `vectorcall`, `sysv`, `win64`, `aapcs`, and `aapcs64`; each is honored only on targets that support it. A bare `unsafe ffi fn` (no parentheses) means `ffi(c)`.
+
+Imported FFI declarations preserve the foreign symbol spelling. Identifiers may
+start with `_` so C symbols such as `__error` can be declared directly; bare
+`_` remains the discard token/pattern, not a bindable name.
+
+One declaration can select a different ABI per target with `ffi(platform(...))`. Keys are `os.arch` (such as `windows.x64`), a bare `os`, or `default`; the most specific matching key wins, and a missing match with no `default` is a compile-time error:
+
+```stark
+public unsafe ffi(platform(
+    windows.x86: stdcall,
+    windows.x64: win64,
+    linux.x64: sysv,
+    default: c
+)) fn i32[min max] HostCall(rawptr<i8[min max]> context);
+```
+
+The resolved ABI is part of the function and function-pointer type, so it is preserved through package images and indirect calls. `ffi(abi)` does not combine with `asm(...)` declarations.
 
 ### 13.1 C Style Varargs
 

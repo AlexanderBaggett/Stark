@@ -43,6 +43,7 @@ internal enum CompileTimeStructuralFactKind
     RawPointerElementTypeIsDynamic,
     RawPointerElementTypeIsFunctionPointer,
     RawPointerElementTypeIsClosure,
+    RawPointerElementTypeIsDynTrait,
     RawPointerElementTypeIsNamed,
     RawPointerElementTypeIsStruct,
     RawPointerElementTypeIsRecord,
@@ -64,6 +65,7 @@ internal enum CompileTimeStructuralFactKind
     TypeElementTypeIsDynamic,
     TypeElementTypeIsFunctionPointer,
     TypeElementTypeIsClosure,
+    TypeElementTypeIsDynTrait,
     TypeElementTypeIsNamed,
     TypeElementTypeIsStruct,
     TypeElementTypeIsRecord,
@@ -100,6 +102,7 @@ internal enum CompileTimeStructuralFactKind
     FunctionPointerReturnTypeIsDynamic,
     FunctionPointerReturnTypeIsFunctionPointer,
     FunctionPointerReturnTypeIsClosure,
+    FunctionPointerReturnTypeIsDynTrait,
     FunctionPointerReturnTypeIsNamed,
     FunctionPointerReturnTypeIsStruct,
     FunctionPointerReturnTypeIsRecord,
@@ -116,6 +119,7 @@ internal enum CompileTimeStructuralFactKind
     FunctionPointerParameterTypeIsDynamic,
     FunctionPointerParameterTypeIsFunctionPointer,
     FunctionPointerParameterTypeIsClosure,
+    FunctionPointerParameterTypeIsDynTrait,
     FunctionPointerParameterTypeIsNamed,
     FunctionPointerParameterTypeIsStruct,
     FunctionPointerParameterTypeIsRecord,
@@ -165,6 +169,54 @@ internal enum CompileTimeStructuralFactKind
     FunctionPointerParameterTypeInitializationKindIsInit,
     FunctionPointerParameterTypeIsMutableView,
     FunctionPointerParameterTypeUnqualifiedTypeIs,
+    FunctionPointerReturnTypeArgumentTypeIs,
+    FunctionPointerReturnTypeArgumentTypeIsBool,
+    FunctionPointerReturnTypeArgumentTypeIsInteger,
+    FunctionPointerReturnTypeArgumentTypeIsFloat,
+    FunctionPointerReturnTypeArgumentTypeIsRawPointer,
+    FunctionPointerReturnTypeArgumentTypeIsFixedArray,
+    FunctionPointerReturnTypeArgumentTypeIsSlice,
+    FunctionPointerReturnTypeArgumentTypeIsDynamic,
+    FunctionPointerReturnTypeArgumentTypeIsFunctionPointer,
+    FunctionPointerReturnTypeArgumentTypeIsClosure,
+    FunctionPointerReturnTypeArgumentTypeIsDynTrait,
+    FunctionPointerReturnTypeArgumentTypeIsNamed,
+    FunctionPointerReturnTypeArgumentTypeIsStruct,
+    FunctionPointerReturnTypeArgumentTypeIsRecord,
+    FunctionPointerReturnTypeArgumentTypeIsEnum,
+    FunctionPointerReturnTypeArgumentTypeIsTrait,
+    FunctionPointerReturnTypeArgumentTypeIsDoctrine,
+    FunctionPointerReturnTypeArgumentTypeHasConcreteLayout,
+    FunctionPointerReturnTypeArgumentTypeDisplayName,
+    FunctionPointerReturnTypeArgumentTypeBaseName,
+    FunctionPointerReturnTypeArgumentTypeModuleName,
+    FunctionPointerReturnTypeArgumentTypeIsGenericInstantiation,
+    FunctionPointerReturnTypeArgumentTypeArgumentCount,
+    FunctionPointerReturnTypeArgumentTypeComptimeArgumentCount,
+    FunctionPointerParameterTypeArgumentTypeIs,
+    FunctionPointerParameterTypeArgumentTypeIsBool,
+    FunctionPointerParameterTypeArgumentTypeIsInteger,
+    FunctionPointerParameterTypeArgumentTypeIsFloat,
+    FunctionPointerParameterTypeArgumentTypeIsRawPointer,
+    FunctionPointerParameterTypeArgumentTypeIsFixedArray,
+    FunctionPointerParameterTypeArgumentTypeIsSlice,
+    FunctionPointerParameterTypeArgumentTypeIsDynamic,
+    FunctionPointerParameterTypeArgumentTypeIsFunctionPointer,
+    FunctionPointerParameterTypeArgumentTypeIsClosure,
+    FunctionPointerParameterTypeArgumentTypeIsDynTrait,
+    FunctionPointerParameterTypeArgumentTypeIsNamed,
+    FunctionPointerParameterTypeArgumentTypeIsStruct,
+    FunctionPointerParameterTypeArgumentTypeIsRecord,
+    FunctionPointerParameterTypeArgumentTypeIsEnum,
+    FunctionPointerParameterTypeArgumentTypeIsTrait,
+    FunctionPointerParameterTypeArgumentTypeIsDoctrine,
+    FunctionPointerParameterTypeArgumentTypeHasConcreteLayout,
+    FunctionPointerParameterTypeArgumentTypeDisplayName,
+    FunctionPointerParameterTypeArgumentTypeBaseName,
+    FunctionPointerParameterTypeArgumentTypeModuleName,
+    FunctionPointerParameterTypeArgumentTypeIsGenericInstantiation,
+    FunctionPointerParameterTypeArgumentTypeArgumentCount,
+    FunctionPointerParameterTypeArgumentTypeComptimeArgumentCount,
     FunctionPointerParameterHasRawPointerElementCountExpression,
     FunctionPointerParameterRawPointerElementCountExpression,
     FunctionPointerKindIsFn,
@@ -198,6 +250,7 @@ internal enum CompileTimeStructuralFactKind
     ClosureReturnTypeIsDynamic,
     ClosureReturnTypeIsFunctionPointer,
     ClosureReturnTypeIsClosure,
+    ClosureReturnTypeIsDynTrait,
     ClosureReturnTypeIsNamed,
     ClosureReturnTypeIsStruct,
     ClosureReturnTypeIsRecord,
@@ -214,6 +267,7 @@ internal enum CompileTimeStructuralFactKind
     ClosureParameterTypeIsDynamic,
     ClosureParameterTypeIsFunctionPointer,
     ClosureParameterTypeIsClosure,
+    ClosureParameterTypeIsDynTrait,
     ClosureParameterTypeIsNamed,
     ClosureParameterTypeIsStruct,
     ClosureParameterTypeIsRecord,
@@ -263,6 +317,54 @@ internal enum CompileTimeStructuralFactKind
     ClosureParameterTypeInitializationKindIsInit,
     ClosureParameterTypeIsMutableView,
     ClosureParameterTypeUnqualifiedTypeIs,
+    ClosureReturnTypeArgumentTypeIs,
+    ClosureReturnTypeArgumentTypeIsBool,
+    ClosureReturnTypeArgumentTypeIsInteger,
+    ClosureReturnTypeArgumentTypeIsFloat,
+    ClosureReturnTypeArgumentTypeIsRawPointer,
+    ClosureReturnTypeArgumentTypeIsFixedArray,
+    ClosureReturnTypeArgumentTypeIsSlice,
+    ClosureReturnTypeArgumentTypeIsDynamic,
+    ClosureReturnTypeArgumentTypeIsFunctionPointer,
+    ClosureReturnTypeArgumentTypeIsClosure,
+    ClosureReturnTypeArgumentTypeIsDynTrait,
+    ClosureReturnTypeArgumentTypeIsNamed,
+    ClosureReturnTypeArgumentTypeIsStruct,
+    ClosureReturnTypeArgumentTypeIsRecord,
+    ClosureReturnTypeArgumentTypeIsEnum,
+    ClosureReturnTypeArgumentTypeIsTrait,
+    ClosureReturnTypeArgumentTypeIsDoctrine,
+    ClosureReturnTypeArgumentTypeHasConcreteLayout,
+    ClosureReturnTypeArgumentTypeDisplayName,
+    ClosureReturnTypeArgumentTypeBaseName,
+    ClosureReturnTypeArgumentTypeModuleName,
+    ClosureReturnTypeArgumentTypeIsGenericInstantiation,
+    ClosureReturnTypeArgumentTypeArgumentCount,
+    ClosureReturnTypeArgumentTypeComptimeArgumentCount,
+    ClosureParameterTypeArgumentTypeIs,
+    ClosureParameterTypeArgumentTypeIsBool,
+    ClosureParameterTypeArgumentTypeIsInteger,
+    ClosureParameterTypeArgumentTypeIsFloat,
+    ClosureParameterTypeArgumentTypeIsRawPointer,
+    ClosureParameterTypeArgumentTypeIsFixedArray,
+    ClosureParameterTypeArgumentTypeIsSlice,
+    ClosureParameterTypeArgumentTypeIsDynamic,
+    ClosureParameterTypeArgumentTypeIsFunctionPointer,
+    ClosureParameterTypeArgumentTypeIsClosure,
+    ClosureParameterTypeArgumentTypeIsDynTrait,
+    ClosureParameterTypeArgumentTypeIsNamed,
+    ClosureParameterTypeArgumentTypeIsStruct,
+    ClosureParameterTypeArgumentTypeIsRecord,
+    ClosureParameterTypeArgumentTypeIsEnum,
+    ClosureParameterTypeArgumentTypeIsTrait,
+    ClosureParameterTypeArgumentTypeIsDoctrine,
+    ClosureParameterTypeArgumentTypeHasConcreteLayout,
+    ClosureParameterTypeArgumentTypeDisplayName,
+    ClosureParameterTypeArgumentTypeBaseName,
+    ClosureParameterTypeArgumentTypeModuleName,
+    ClosureParameterTypeArgumentTypeIsGenericInstantiation,
+    ClosureParameterTypeArgumentTypeArgumentCount,
+    ClosureParameterTypeArgumentTypeComptimeArgumentCount,
     ClosureParameterHasRawPointerElementCountExpression,
     ClosureParameterRawPointerElementCountExpression,
     ClosureKindIsFn,
@@ -284,6 +386,10 @@ internal enum CompileTimeStructuralFactKind
     MethodCount,
     MethodName,
     MethodModuleName,
+    MethodVisibilityIsModule,
+    MethodVisibilityIsInternal,
+    MethodVisibilityIsPublic,
+    MethodVisibilityIsExport,
     MethodParameterCount,
     MethodParameterName,
     MethodReturnTypeIs,
@@ -297,6 +403,7 @@ internal enum CompileTimeStructuralFactKind
     MethodReturnTypeIsDynamic,
     MethodReturnTypeIsFunctionPointer,
     MethodReturnTypeIsClosure,
+    MethodReturnTypeIsDynTrait,
     MethodReturnTypeIsNamed,
     MethodReturnTypeIsStruct,
     MethodReturnTypeIsRecord,
@@ -313,6 +420,7 @@ internal enum CompileTimeStructuralFactKind
     MethodParameterTypeIsDynamic,
     MethodParameterTypeIsFunctionPointer,
     MethodParameterTypeIsClosure,
+    MethodParameterTypeIsDynTrait,
     MethodParameterTypeIsNamed,
     MethodParameterTypeIsStruct,
     MethodParameterTypeIsRecord,
@@ -355,6 +463,7 @@ internal enum CompileTimeStructuralFactKind
     MethodGenericParameterTraitBoundTypeIsDynamic,
     MethodGenericParameterTraitBoundTypeIsFunctionPointer,
     MethodGenericParameterTraitBoundTypeIsClosure,
+    MethodGenericParameterTraitBoundTypeIsDynTrait,
     MethodGenericParameterTraitBoundTypeIsNamed,
     MethodGenericParameterTraitBoundTypeIsStruct,
     MethodGenericParameterTraitBoundTypeIsRecord,
@@ -380,6 +489,7 @@ internal enum CompileTimeStructuralFactKind
     MethodComptimeGenericParameterTypeIsDynamic,
     MethodComptimeGenericParameterTypeIsFunctionPointer,
     MethodComptimeGenericParameterTypeIsClosure,
+    MethodComptimeGenericParameterTypeIsDynTrait,
     MethodComptimeGenericParameterTypeIsNamed,
     MethodComptimeGenericParameterTypeIsStruct,
     MethodComptimeGenericParameterTypeIsRecord,
@@ -405,6 +515,7 @@ internal enum CompileTimeStructuralFactKind
     MethodThreadSafetyLawPredicateTypeIsDynamic,
     MethodThreadSafetyLawPredicateTypeIsFunctionPointer,
     MethodThreadSafetyLawPredicateTypeIsClosure,
+    MethodThreadSafetyLawPredicateTypeIsDynTrait,
     MethodThreadSafetyLawPredicateTypeIsNamed,
     MethodThreadSafetyLawPredicateTypeIsStruct,
     MethodThreadSafetyLawPredicateTypeIsRecord,
@@ -460,6 +571,54 @@ internal enum CompileTimeStructuralFactKind
     MethodParameterTypeInitializationKindIsInit,
     MethodParameterTypeIsMutableView,
     MethodParameterTypeUnqualifiedTypeIs,
+    MethodReturnTypeArgumentTypeIs,
+    MethodReturnTypeArgumentTypeIsBool,
+    MethodReturnTypeArgumentTypeIsInteger,
+    MethodReturnTypeArgumentTypeIsFloat,
+    MethodReturnTypeArgumentTypeIsRawPointer,
+    MethodReturnTypeArgumentTypeIsFixedArray,
+    MethodReturnTypeArgumentTypeIsSlice,
+    MethodReturnTypeArgumentTypeIsDynamic,
+    MethodReturnTypeArgumentTypeIsFunctionPointer,
+    MethodReturnTypeArgumentTypeIsClosure,
+    MethodReturnTypeArgumentTypeIsDynTrait,
+    MethodReturnTypeArgumentTypeIsNamed,
+    MethodReturnTypeArgumentTypeIsStruct,
+    MethodReturnTypeArgumentTypeIsRecord,
+    MethodReturnTypeArgumentTypeIsEnum,
+    MethodReturnTypeArgumentTypeIsTrait,
+    MethodReturnTypeArgumentTypeIsDoctrine,
+    MethodReturnTypeArgumentTypeHasConcreteLayout,
+    MethodReturnTypeArgumentTypeDisplayName,
+    MethodReturnTypeArgumentTypeBaseName,
+    MethodReturnTypeArgumentTypeModuleName,
+    MethodReturnTypeArgumentTypeIsGenericInstantiation,
+    MethodReturnTypeArgumentTypeArgumentCount,
+    MethodReturnTypeArgumentTypeComptimeArgumentCount,
+    MethodParameterTypeArgumentTypeIs,
+    MethodParameterTypeArgumentTypeIsBool,
+    MethodParameterTypeArgumentTypeIsInteger,
+    MethodParameterTypeArgumentTypeIsFloat,
+    MethodParameterTypeArgumentTypeIsRawPointer,
+    MethodParameterTypeArgumentTypeIsFixedArray,
+    MethodParameterTypeArgumentTypeIsSlice,
+    MethodParameterTypeArgumentTypeIsDynamic,
+    MethodParameterTypeArgumentTypeIsFunctionPointer,
+    MethodParameterTypeArgumentTypeIsClosure,
+    MethodParameterTypeArgumentTypeIsDynTrait,
+    MethodParameterTypeArgumentTypeIsNamed,
+    MethodParameterTypeArgumentTypeIsStruct,
+    MethodParameterTypeArgumentTypeIsRecord,
+    MethodParameterTypeArgumentTypeIsEnum,
+    MethodParameterTypeArgumentTypeIsTrait,
+    MethodParameterTypeArgumentTypeIsDoctrine,
+    MethodParameterTypeArgumentTypeHasConcreteLayout,
+    MethodParameterTypeArgumentTypeDisplayName,
+    MethodParameterTypeArgumentTypeBaseName,
+    MethodParameterTypeArgumentTypeModuleName,
+    MethodParameterTypeArgumentTypeIsGenericInstantiation,
+    MethodParameterTypeArgumentTypeArgumentCount,
+    MethodParameterTypeArgumentTypeComptimeArgumentCount,
     MethodParameterHasRawPointerElementCountExpression,
     MethodParameterRawPointerElementCountExpression,
     FieldCount,
@@ -486,6 +645,7 @@ internal enum CompileTimeStructuralFactKind
     FieldTypeIsDynamic,
     FieldTypeIsFunctionPointer,
     FieldTypeIsClosure,
+    FieldTypeIsDynTrait,
     FieldTypeIsNamed,
     FieldTypeIsStruct,
     FieldTypeIsRecord,
@@ -528,6 +688,7 @@ internal enum CompileTimeStructuralFactKind
     TypeComptimeGenericParameterTypeIsDynamic,
     TypeComptimeGenericParameterTypeIsFunctionPointer,
     TypeComptimeGenericParameterTypeIsClosure,
+    TypeComptimeGenericParameterTypeIsDynTrait,
     TypeComptimeGenericParameterTypeIsNamed,
     TypeComptimeGenericParameterTypeIsStruct,
     TypeComptimeGenericParameterTypeIsRecord,
@@ -544,6 +705,10 @@ internal enum CompileTimeStructuralFactKind
     TypeDisplayName,
     TypeBaseName,
     TypeModuleName,
+    TypeVisibilityIsModule,
+    TypeVisibilityIsInternal,
+    TypeVisibilityIsPublic,
+    TypeVisibilityIsExport,
     TypeHasCSourceAlias,
     TypeCSourceAliasName,
     TypeIsGenericInstantiation,
@@ -558,6 +723,7 @@ internal enum CompileTimeStructuralFactKind
     TypeArgumentTypeIsDynamic,
     TypeArgumentTypeIsFunctionPointer,
     TypeArgumentTypeIsClosure,
+    TypeArgumentTypeIsDynTrait,
     TypeArgumentTypeIsNamed,
     TypeArgumentTypeIsStruct,
     TypeArgumentTypeIsRecord,
@@ -583,6 +749,7 @@ internal enum CompileTimeStructuralFactKind
     TypeComptimeArgumentTypeIsDynamic,
     TypeComptimeArgumentTypeIsFunctionPointer,
     TypeComptimeArgumentTypeIsClosure,
+    TypeComptimeArgumentTypeIsDynTrait,
     TypeComptimeArgumentTypeIsNamed,
     TypeComptimeArgumentTypeIsStruct,
     TypeComptimeArgumentTypeIsRecord,
@@ -622,6 +789,7 @@ internal enum CompileTimeStructuralFactKind
     ImplementedTraitTypeIsDynamic,
     ImplementedTraitTypeIsFunctionPointer,
     ImplementedTraitTypeIsClosure,
+    ImplementedTraitTypeIsDynTrait,
     ImplementedTraitTypeIsNamed,
     ImplementedTraitTypeIsStruct,
     ImplementedTraitTypeIsRecord,
@@ -635,6 +803,56 @@ internal enum CompileTimeStructuralFactKind
     ImplementedTraitTypeIsGenericInstantiation,
     ImplementedTraitTypeArgumentCount,
     ImplementedTraitTypeComptimeArgumentCount,
+    ImplementedTraitTypeArgumentTypeIs,
+    ImplementedTraitTypeArgumentTypeIsBool,
+    ImplementedTraitTypeArgumentTypeIsInteger,
+    ImplementedTraitTypeArgumentTypeIsFloat,
+    ImplementedTraitTypeArgumentTypeIsRawPointer,
+    ImplementedTraitTypeArgumentTypeIsFixedArray,
+    ImplementedTraitTypeArgumentTypeIsSlice,
+    ImplementedTraitTypeArgumentTypeIsDynamic,
+    ImplementedTraitTypeArgumentTypeIsFunctionPointer,
+    ImplementedTraitTypeArgumentTypeIsClosure,
+    ImplementedTraitTypeArgumentTypeIsDynTrait,
+    ImplementedTraitTypeArgumentTypeIsNamed,
+    ImplementedTraitTypeArgumentTypeIsStruct,
+    ImplementedTraitTypeArgumentTypeIsRecord,
+    ImplementedTraitTypeArgumentTypeIsEnum,
+    ImplementedTraitTypeArgumentTypeIsTrait,
+    ImplementedTraitTypeArgumentTypeIsDoctrine,
+    ImplementedTraitTypeArgumentTypeHasConcreteLayout,
+    ImplementedTraitTypeArgumentTypeDisplayName,
+    ImplementedTraitTypeArgumentTypeBaseName,
+    ImplementedTraitTypeArgumentTypeModuleName,
+    ImplementedTraitTypeArgumentTypeIsGenericInstantiation,
+    ImplementedTraitTypeArgumentTypeArgumentCount,
+    ImplementedTraitTypeArgumentTypeComptimeArgumentCount,
+    ImplementedTraitTypeComptimeArgumentName,
+    ImplementedTraitTypeComptimeArgumentTypeIs,
+    ImplementedTraitTypeComptimeArgumentTypeIsBool,
+    ImplementedTraitTypeComptimeArgumentTypeIsInteger,
+    ImplementedTraitTypeComptimeArgumentTypeIsFloat,
+    ImplementedTraitTypeComptimeArgumentTypeIsRawPointer,
+    ImplementedTraitTypeComptimeArgumentTypeIsFixedArray,
+    ImplementedTraitTypeComptimeArgumentTypeIsSlice,
+    ImplementedTraitTypeComptimeArgumentTypeIsDynamic,
+    ImplementedTraitTypeComptimeArgumentTypeIsFunctionPointer,
+    ImplementedTraitTypeComptimeArgumentTypeIsClosure,
+    ImplementedTraitTypeComptimeArgumentTypeIsDynTrait,
+    ImplementedTraitTypeComptimeArgumentTypeIsNamed,
+    ImplementedTraitTypeComptimeArgumentTypeIsStruct,
+    ImplementedTraitTypeComptimeArgumentTypeIsRecord,
+    ImplementedTraitTypeComptimeArgumentTypeIsEnum,
+    ImplementedTraitTypeComptimeArgumentTypeIsTrait,
+    ImplementedTraitTypeComptimeArgumentTypeIsDoctrine,
+    ImplementedTraitTypeComptimeArgumentTypeHasConcreteLayout,
+    ImplementedTraitTypeComptimeArgumentTypeDisplayName,
+    ImplementedTraitTypeComptimeArgumentTypeBaseName,
+    ImplementedTraitTypeComptimeArgumentTypeModuleName,
+    ImplementedTraitTypeComptimeArgumentTypeIsGenericInstantiation,
+    ImplementedTraitTypeComptimeArgumentTypeArgumentCount,
+    ImplementedTraitTypeComptimeArgumentTypeComptimeArgumentCount,
+    ImplementedTraitTypeComptimeArgumentValueIs,
     AssociatedTypeCount,
     AssociatedTypeName,
     AssociatedTypeHasTarget,
@@ -648,6 +866,7 @@ internal enum CompileTimeStructuralFactKind
     AssociatedTypeTargetTypeIsDynamic,
     AssociatedTypeTargetTypeIsFunctionPointer,
     AssociatedTypeTargetTypeIsClosure,
+    AssociatedTypeTargetTypeIsDynTrait,
     AssociatedTypeTargetTypeIsNamed,
     AssociatedTypeTargetTypeIsStruct,
     AssociatedTypeTargetTypeIsRecord,
@@ -673,6 +892,7 @@ internal enum CompileTimeStructuralFactKind
     EnumVariantPayloadTypeIsDynamic,
     EnumVariantPayloadTypeIsFunctionPointer,
     EnumVariantPayloadTypeIsClosure,
+    EnumVariantPayloadTypeIsDynTrait,
     EnumVariantPayloadTypeIsNamed,
     EnumVariantPayloadTypeIsStruct,
     EnumVariantPayloadTypeIsRecord,
@@ -702,6 +922,10 @@ internal enum CompileTimeStructuralFactKind
     EnumVariantPayloadTypeIsMutableView,
     EnumVariantPayloadTypeUnqualifiedTypeIs,
     FieldName,
+    FieldVisibilityIsModule,
+    FieldVisibilityIsInternal,
+    FieldVisibilityIsPublic,
+    FieldVisibilityIsExport,
     EnumVariantName,
     EnumVariantUsesNamedFields,
     EnumVariantPayloadHasName,
@@ -722,6 +946,7 @@ internal enum CompileTimeStructuralFactKind
     TypeThreadSafetyLawAttributeConditionTypeIsDynamic,
     TypeThreadSafetyLawAttributeConditionTypeIsFunctionPointer,
     TypeThreadSafetyLawAttributeConditionTypeIsClosure,
+    TypeThreadSafetyLawAttributeConditionTypeIsDynTrait,
     TypeThreadSafetyLawAttributeConditionTypeIsNamed,
     TypeThreadSafetyLawAttributeConditionTypeIsStruct,
     TypeThreadSafetyLawAttributeConditionTypeIsRecord,
@@ -751,6 +976,7 @@ internal enum CompileTimeStructuralFactKind
     FieldThreadSafetyLawAttributeConditionTypeIsDynamic,
     FieldThreadSafetyLawAttributeConditionTypeIsFunctionPointer,
     FieldThreadSafetyLawAttributeConditionTypeIsClosure,
+    FieldThreadSafetyLawAttributeConditionTypeIsDynTrait,
     FieldThreadSafetyLawAttributeConditionTypeIsNamed,
     FieldThreadSafetyLawAttributeConditionTypeIsStruct,
     FieldThreadSafetyLawAttributeConditionTypeIsRecord,
@@ -813,6 +1039,11 @@ internal static class CompileTimeStructuralFacts
         }
 
         var localName = name[NamespacePrefix.Length..];
+        if (TryGetCallableNestedTypeArgumentFactKind(localName, out kind))
+        {
+            return true;
+        }
+
         kind = localName switch
         {
             "IsBool" => CompileTimeStructuralFactKind.IsBool,
@@ -852,6 +1083,7 @@ internal static class CompileTimeStructuralFacts
             "RawPointerElementTypeIsDynamic" => CompileTimeStructuralFactKind.RawPointerElementTypeIsDynamic,
             "RawPointerElementTypeIsFunctionPointer" => CompileTimeStructuralFactKind.RawPointerElementTypeIsFunctionPointer,
             "RawPointerElementTypeIsClosure" => CompileTimeStructuralFactKind.RawPointerElementTypeIsClosure,
+            "RawPointerElementTypeIsDynTrait" => CompileTimeStructuralFactKind.RawPointerElementTypeIsDynTrait,
             "RawPointerElementTypeIsNamed" => CompileTimeStructuralFactKind.RawPointerElementTypeIsNamed,
             "RawPointerElementTypeIsStruct" => CompileTimeStructuralFactKind.RawPointerElementTypeIsStruct,
             "RawPointerElementTypeIsRecord" => CompileTimeStructuralFactKind.RawPointerElementTypeIsRecord,
@@ -873,6 +1105,7 @@ internal static class CompileTimeStructuralFacts
             "TypeElementTypeIsDynamic" => CompileTimeStructuralFactKind.TypeElementTypeIsDynamic,
             "TypeElementTypeIsFunctionPointer" => CompileTimeStructuralFactKind.TypeElementTypeIsFunctionPointer,
             "TypeElementTypeIsClosure" => CompileTimeStructuralFactKind.TypeElementTypeIsClosure,
+            "TypeElementTypeIsDynTrait" => CompileTimeStructuralFactKind.TypeElementTypeIsDynTrait,
             "TypeElementTypeIsNamed" => CompileTimeStructuralFactKind.TypeElementTypeIsNamed,
             "TypeElementTypeIsStruct" => CompileTimeStructuralFactKind.TypeElementTypeIsStruct,
             "TypeElementTypeIsRecord" => CompileTimeStructuralFactKind.TypeElementTypeIsRecord,
@@ -909,6 +1142,7 @@ internal static class CompileTimeStructuralFacts
             "FunctionPointerReturnTypeIsDynamic" => CompileTimeStructuralFactKind.FunctionPointerReturnTypeIsDynamic,
             "FunctionPointerReturnTypeIsFunctionPointer" => CompileTimeStructuralFactKind.FunctionPointerReturnTypeIsFunctionPointer,
             "FunctionPointerReturnTypeIsClosure" => CompileTimeStructuralFactKind.FunctionPointerReturnTypeIsClosure,
+            "FunctionPointerReturnTypeIsDynTrait" => CompileTimeStructuralFactKind.FunctionPointerReturnTypeIsDynTrait,
             "FunctionPointerReturnTypeIsNamed" => CompileTimeStructuralFactKind.FunctionPointerReturnTypeIsNamed,
             "FunctionPointerReturnTypeIsStruct" => CompileTimeStructuralFactKind.FunctionPointerReturnTypeIsStruct,
             "FunctionPointerReturnTypeIsRecord" => CompileTimeStructuralFactKind.FunctionPointerReturnTypeIsRecord,
@@ -925,6 +1159,7 @@ internal static class CompileTimeStructuralFacts
             "FunctionPointerParameterTypeIsDynamic" => CompileTimeStructuralFactKind.FunctionPointerParameterTypeIsDynamic,
             "FunctionPointerParameterTypeIsFunctionPointer" => CompileTimeStructuralFactKind.FunctionPointerParameterTypeIsFunctionPointer,
             "FunctionPointerParameterTypeIsClosure" => CompileTimeStructuralFactKind.FunctionPointerParameterTypeIsClosure,
+            "FunctionPointerParameterTypeIsDynTrait" => CompileTimeStructuralFactKind.FunctionPointerParameterTypeIsDynTrait,
             "FunctionPointerParameterTypeIsNamed" => CompileTimeStructuralFactKind.FunctionPointerParameterTypeIsNamed,
             "FunctionPointerParameterTypeIsStruct" => CompileTimeStructuralFactKind.FunctionPointerParameterTypeIsStruct,
             "FunctionPointerParameterTypeIsRecord" => CompileTimeStructuralFactKind.FunctionPointerParameterTypeIsRecord,
@@ -934,6 +1169,7 @@ internal static class CompileTimeStructuralFacts
             "FunctionPointerParameterTypeHasConcreteLayout" => CompileTimeStructuralFactKind.FunctionPointerParameterTypeHasConcreteLayout,
             "FunctionPointerReturnTypeDisplayName" => CompileTimeStructuralFactKind.FunctionPointerReturnTypeDisplayName,
             "FunctionPointerReturnTypeBaseName" => CompileTimeStructuralFactKind.FunctionPointerReturnTypeBaseName,
+            "FunctionPointerReturnTypeModuleName" => CompileTimeStructuralFactKind.FunctionPointerReturnTypeModuleName,
             "FunctionPointerReturnTypeIsGenericInstantiation" => CompileTimeStructuralFactKind.FunctionPointerReturnTypeIsGenericInstantiation,
             "FunctionPointerReturnTypeArgumentCount" => CompileTimeStructuralFactKind.FunctionPointerReturnTypeArgumentCount,
             "FunctionPointerReturnTypeComptimeArgumentCount" => CompileTimeStructuralFactKind.FunctionPointerReturnTypeComptimeArgumentCount,
@@ -954,6 +1190,7 @@ internal static class CompileTimeStructuralFacts
             "FunctionPointerReturnTypeUnqualifiedTypeIs" => CompileTimeStructuralFactKind.FunctionPointerReturnTypeUnqualifiedTypeIs,
             "FunctionPointerParameterTypeDisplayName" => CompileTimeStructuralFactKind.FunctionPointerParameterTypeDisplayName,
             "FunctionPointerParameterTypeBaseName" => CompileTimeStructuralFactKind.FunctionPointerParameterTypeBaseName,
+            "FunctionPointerParameterTypeModuleName" => CompileTimeStructuralFactKind.FunctionPointerParameterTypeModuleName,
             "FunctionPointerParameterTypeIsGenericInstantiation" => CompileTimeStructuralFactKind.FunctionPointerParameterTypeIsGenericInstantiation,
             "FunctionPointerParameterTypeArgumentCount" => CompileTimeStructuralFactKind.FunctionPointerParameterTypeArgumentCount,
             "FunctionPointerParameterTypeComptimeArgumentCount" => CompileTimeStructuralFactKind.FunctionPointerParameterTypeComptimeArgumentCount,
@@ -1005,6 +1242,7 @@ internal static class CompileTimeStructuralFacts
             "ClosureReturnTypeIsDynamic" => CompileTimeStructuralFactKind.ClosureReturnTypeIsDynamic,
             "ClosureReturnTypeIsFunctionPointer" => CompileTimeStructuralFactKind.ClosureReturnTypeIsFunctionPointer,
             "ClosureReturnTypeIsClosure" => CompileTimeStructuralFactKind.ClosureReturnTypeIsClosure,
+            "ClosureReturnTypeIsDynTrait" => CompileTimeStructuralFactKind.ClosureReturnTypeIsDynTrait,
             "ClosureReturnTypeIsNamed" => CompileTimeStructuralFactKind.ClosureReturnTypeIsNamed,
             "ClosureReturnTypeIsStruct" => CompileTimeStructuralFactKind.ClosureReturnTypeIsStruct,
             "ClosureReturnTypeIsRecord" => CompileTimeStructuralFactKind.ClosureReturnTypeIsRecord,
@@ -1021,6 +1259,7 @@ internal static class CompileTimeStructuralFacts
             "ClosureParameterTypeIsDynamic" => CompileTimeStructuralFactKind.ClosureParameterTypeIsDynamic,
             "ClosureParameterTypeIsFunctionPointer" => CompileTimeStructuralFactKind.ClosureParameterTypeIsFunctionPointer,
             "ClosureParameterTypeIsClosure" => CompileTimeStructuralFactKind.ClosureParameterTypeIsClosure,
+            "ClosureParameterTypeIsDynTrait" => CompileTimeStructuralFactKind.ClosureParameterTypeIsDynTrait,
             "ClosureParameterTypeIsNamed" => CompileTimeStructuralFactKind.ClosureParameterTypeIsNamed,
             "ClosureParameterTypeIsStruct" => CompileTimeStructuralFactKind.ClosureParameterTypeIsStruct,
             "ClosureParameterTypeIsRecord" => CompileTimeStructuralFactKind.ClosureParameterTypeIsRecord,
@@ -1030,6 +1269,7 @@ internal static class CompileTimeStructuralFacts
             "ClosureParameterTypeHasConcreteLayout" => CompileTimeStructuralFactKind.ClosureParameterTypeHasConcreteLayout,
             "ClosureReturnTypeDisplayName" => CompileTimeStructuralFactKind.ClosureReturnTypeDisplayName,
             "ClosureReturnTypeBaseName" => CompileTimeStructuralFactKind.ClosureReturnTypeBaseName,
+            "ClosureReturnTypeModuleName" => CompileTimeStructuralFactKind.ClosureReturnTypeModuleName,
             "ClosureReturnTypeIsGenericInstantiation" => CompileTimeStructuralFactKind.ClosureReturnTypeIsGenericInstantiation,
             "ClosureReturnTypeArgumentCount" => CompileTimeStructuralFactKind.ClosureReturnTypeArgumentCount,
             "ClosureReturnTypeComptimeArgumentCount" => CompileTimeStructuralFactKind.ClosureReturnTypeComptimeArgumentCount,
@@ -1050,6 +1290,7 @@ internal static class CompileTimeStructuralFacts
             "ClosureReturnTypeUnqualifiedTypeIs" => CompileTimeStructuralFactKind.ClosureReturnTypeUnqualifiedTypeIs,
             "ClosureParameterTypeDisplayName" => CompileTimeStructuralFactKind.ClosureParameterTypeDisplayName,
             "ClosureParameterTypeBaseName" => CompileTimeStructuralFactKind.ClosureParameterTypeBaseName,
+            "ClosureParameterTypeModuleName" => CompileTimeStructuralFactKind.ClosureParameterTypeModuleName,
             "ClosureParameterTypeIsGenericInstantiation" => CompileTimeStructuralFactKind.ClosureParameterTypeIsGenericInstantiation,
             "ClosureParameterTypeArgumentCount" => CompileTimeStructuralFactKind.ClosureParameterTypeArgumentCount,
             "ClosureParameterTypeComptimeArgumentCount" => CompileTimeStructuralFactKind.ClosureParameterTypeComptimeArgumentCount,
@@ -1089,6 +1330,10 @@ internal static class CompileTimeStructuralFacts
             "MethodCount" => CompileTimeStructuralFactKind.MethodCount,
             "MethodName" => CompileTimeStructuralFactKind.MethodName,
             "MethodModuleName" => CompileTimeStructuralFactKind.MethodModuleName,
+            "MethodVisibilityIsModule" => CompileTimeStructuralFactKind.MethodVisibilityIsModule,
+            "MethodVisibilityIsInternal" => CompileTimeStructuralFactKind.MethodVisibilityIsInternal,
+            "MethodVisibilityIsPublic" => CompileTimeStructuralFactKind.MethodVisibilityIsPublic,
+            "MethodVisibilityIsExport" => CompileTimeStructuralFactKind.MethodVisibilityIsExport,
             "MethodParameterCount" => CompileTimeStructuralFactKind.MethodParameterCount,
             "MethodParameterName" => CompileTimeStructuralFactKind.MethodParameterName,
             "MethodReturnTypeIs" => CompileTimeStructuralFactKind.MethodReturnTypeIs,
@@ -1102,6 +1347,7 @@ internal static class CompileTimeStructuralFacts
             "MethodReturnTypeIsDynamic" => CompileTimeStructuralFactKind.MethodReturnTypeIsDynamic,
             "MethodReturnTypeIsFunctionPointer" => CompileTimeStructuralFactKind.MethodReturnTypeIsFunctionPointer,
             "MethodReturnTypeIsClosure" => CompileTimeStructuralFactKind.MethodReturnTypeIsClosure,
+            "MethodReturnTypeIsDynTrait" => CompileTimeStructuralFactKind.MethodReturnTypeIsDynTrait,
             "MethodReturnTypeIsNamed" => CompileTimeStructuralFactKind.MethodReturnTypeIsNamed,
             "MethodReturnTypeIsStruct" => CompileTimeStructuralFactKind.MethodReturnTypeIsStruct,
             "MethodReturnTypeIsRecord" => CompileTimeStructuralFactKind.MethodReturnTypeIsRecord,
@@ -1118,6 +1364,7 @@ internal static class CompileTimeStructuralFacts
             "MethodParameterTypeIsDynamic" => CompileTimeStructuralFactKind.MethodParameterTypeIsDynamic,
             "MethodParameterTypeIsFunctionPointer" => CompileTimeStructuralFactKind.MethodParameterTypeIsFunctionPointer,
             "MethodParameterTypeIsClosure" => CompileTimeStructuralFactKind.MethodParameterTypeIsClosure,
+            "MethodParameterTypeIsDynTrait" => CompileTimeStructuralFactKind.MethodParameterTypeIsDynTrait,
             "MethodParameterTypeIsNamed" => CompileTimeStructuralFactKind.MethodParameterTypeIsNamed,
             "MethodParameterTypeIsStruct" => CompileTimeStructuralFactKind.MethodParameterTypeIsStruct,
             "MethodParameterTypeIsRecord" => CompileTimeStructuralFactKind.MethodParameterTypeIsRecord,
@@ -1160,6 +1407,7 @@ internal static class CompileTimeStructuralFacts
             "MethodGenericParameterTraitBoundTypeIsDynamic" => CompileTimeStructuralFactKind.MethodGenericParameterTraitBoundTypeIsDynamic,
             "MethodGenericParameterTraitBoundTypeIsFunctionPointer" => CompileTimeStructuralFactKind.MethodGenericParameterTraitBoundTypeIsFunctionPointer,
             "MethodGenericParameterTraitBoundTypeIsClosure" => CompileTimeStructuralFactKind.MethodGenericParameterTraitBoundTypeIsClosure,
+            "MethodGenericParameterTraitBoundTypeIsDynTrait" => CompileTimeStructuralFactKind.MethodGenericParameterTraitBoundTypeIsDynTrait,
             "MethodGenericParameterTraitBoundTypeIsNamed" => CompileTimeStructuralFactKind.MethodGenericParameterTraitBoundTypeIsNamed,
             "MethodGenericParameterTraitBoundTypeIsStruct" => CompileTimeStructuralFactKind.MethodGenericParameterTraitBoundTypeIsStruct,
             "MethodGenericParameterTraitBoundTypeIsRecord" => CompileTimeStructuralFactKind.MethodGenericParameterTraitBoundTypeIsRecord,
@@ -1169,6 +1417,7 @@ internal static class CompileTimeStructuralFacts
             "MethodGenericParameterTraitBoundTypeHasConcreteLayout" => CompileTimeStructuralFactKind.MethodGenericParameterTraitBoundTypeHasConcreteLayout,
             "MethodGenericParameterTraitBoundTypeDisplayName" => CompileTimeStructuralFactKind.MethodGenericParameterTraitBoundTypeDisplayName,
             "MethodGenericParameterTraitBoundTypeBaseName" => CompileTimeStructuralFactKind.MethodGenericParameterTraitBoundTypeBaseName,
+            "MethodGenericParameterTraitBoundTypeModuleName" => CompileTimeStructuralFactKind.MethodGenericParameterTraitBoundTypeModuleName,
             "MethodGenericParameterTraitBoundTypeIsGenericInstantiation" => CompileTimeStructuralFactKind.MethodGenericParameterTraitBoundTypeIsGenericInstantiation,
             "MethodGenericParameterTraitBoundTypeArgumentCount" => CompileTimeStructuralFactKind.MethodGenericParameterTraitBoundTypeArgumentCount,
             "MethodGenericParameterTraitBoundTypeComptimeArgumentCount" => CompileTimeStructuralFactKind.MethodGenericParameterTraitBoundTypeComptimeArgumentCount,
@@ -1184,6 +1433,7 @@ internal static class CompileTimeStructuralFacts
             "MethodComptimeGenericParameterTypeIsDynamic" => CompileTimeStructuralFactKind.MethodComptimeGenericParameterTypeIsDynamic,
             "MethodComptimeGenericParameterTypeIsFunctionPointer" => CompileTimeStructuralFactKind.MethodComptimeGenericParameterTypeIsFunctionPointer,
             "MethodComptimeGenericParameterTypeIsClosure" => CompileTimeStructuralFactKind.MethodComptimeGenericParameterTypeIsClosure,
+            "MethodComptimeGenericParameterTypeIsDynTrait" => CompileTimeStructuralFactKind.MethodComptimeGenericParameterTypeIsDynTrait,
             "MethodComptimeGenericParameterTypeIsNamed" => CompileTimeStructuralFactKind.MethodComptimeGenericParameterTypeIsNamed,
             "MethodComptimeGenericParameterTypeIsStruct" => CompileTimeStructuralFactKind.MethodComptimeGenericParameterTypeIsStruct,
             "MethodComptimeGenericParameterTypeIsRecord" => CompileTimeStructuralFactKind.MethodComptimeGenericParameterTypeIsRecord,
@@ -1193,6 +1443,7 @@ internal static class CompileTimeStructuralFacts
             "MethodComptimeGenericParameterTypeHasConcreteLayout" => CompileTimeStructuralFactKind.MethodComptimeGenericParameterTypeHasConcreteLayout,
             "MethodComptimeGenericParameterTypeDisplayName" => CompileTimeStructuralFactKind.MethodComptimeGenericParameterTypeDisplayName,
             "MethodComptimeGenericParameterTypeBaseName" => CompileTimeStructuralFactKind.MethodComptimeGenericParameterTypeBaseName,
+            "MethodComptimeGenericParameterTypeModuleName" => CompileTimeStructuralFactKind.MethodComptimeGenericParameterTypeModuleName,
             "MethodComptimeGenericParameterTypeIsGenericInstantiation" => CompileTimeStructuralFactKind.MethodComptimeGenericParameterTypeIsGenericInstantiation,
             "MethodComptimeGenericParameterTypeArgumentCount" => CompileTimeStructuralFactKind.MethodComptimeGenericParameterTypeArgumentCount,
             "MethodComptimeGenericParameterTypeComptimeArgumentCount" => CompileTimeStructuralFactKind.MethodComptimeGenericParameterTypeComptimeArgumentCount,
@@ -1208,6 +1459,7 @@ internal static class CompileTimeStructuralFacts
             "MethodThreadSafetyLawPredicateTypeIsDynamic" => CompileTimeStructuralFactKind.MethodThreadSafetyLawPredicateTypeIsDynamic,
             "MethodThreadSafetyLawPredicateTypeIsFunctionPointer" => CompileTimeStructuralFactKind.MethodThreadSafetyLawPredicateTypeIsFunctionPointer,
             "MethodThreadSafetyLawPredicateTypeIsClosure" => CompileTimeStructuralFactKind.MethodThreadSafetyLawPredicateTypeIsClosure,
+            "MethodThreadSafetyLawPredicateTypeIsDynTrait" => CompileTimeStructuralFactKind.MethodThreadSafetyLawPredicateTypeIsDynTrait,
             "MethodThreadSafetyLawPredicateTypeIsNamed" => CompileTimeStructuralFactKind.MethodThreadSafetyLawPredicateTypeIsNamed,
             "MethodThreadSafetyLawPredicateTypeIsStruct" => CompileTimeStructuralFactKind.MethodThreadSafetyLawPredicateTypeIsStruct,
             "MethodThreadSafetyLawPredicateTypeIsRecord" => CompileTimeStructuralFactKind.MethodThreadSafetyLawPredicateTypeIsRecord,
@@ -1217,11 +1469,13 @@ internal static class CompileTimeStructuralFacts
             "MethodThreadSafetyLawPredicateTypeHasConcreteLayout" => CompileTimeStructuralFactKind.MethodThreadSafetyLawPredicateTypeHasConcreteLayout,
             "MethodThreadSafetyLawPredicateTypeDisplayName" => CompileTimeStructuralFactKind.MethodThreadSafetyLawPredicateTypeDisplayName,
             "MethodThreadSafetyLawPredicateTypeBaseName" => CompileTimeStructuralFactKind.MethodThreadSafetyLawPredicateTypeBaseName,
+            "MethodThreadSafetyLawPredicateTypeModuleName" => CompileTimeStructuralFactKind.MethodThreadSafetyLawPredicateTypeModuleName,
             "MethodThreadSafetyLawPredicateTypeIsGenericInstantiation" => CompileTimeStructuralFactKind.MethodThreadSafetyLawPredicateTypeIsGenericInstantiation,
             "MethodThreadSafetyLawPredicateTypeArgumentCount" => CompileTimeStructuralFactKind.MethodThreadSafetyLawPredicateTypeArgumentCount,
             "MethodThreadSafetyLawPredicateTypeComptimeArgumentCount" => CompileTimeStructuralFactKind.MethodThreadSafetyLawPredicateTypeComptimeArgumentCount,
             "MethodReturnTypeDisplayName" => CompileTimeStructuralFactKind.MethodReturnTypeDisplayName,
             "MethodReturnTypeBaseName" => CompileTimeStructuralFactKind.MethodReturnTypeBaseName,
+            "MethodReturnTypeModuleName" => CompileTimeStructuralFactKind.MethodReturnTypeModuleName,
             "MethodReturnTypeIsGenericInstantiation" => CompileTimeStructuralFactKind.MethodReturnTypeIsGenericInstantiation,
             "MethodReturnTypeArgumentCount" => CompileTimeStructuralFactKind.MethodReturnTypeArgumentCount,
             "MethodReturnTypeComptimeArgumentCount" => CompileTimeStructuralFactKind.MethodReturnTypeComptimeArgumentCount,
@@ -1242,6 +1496,7 @@ internal static class CompileTimeStructuralFacts
             "MethodReturnTypeUnqualifiedTypeIs" => CompileTimeStructuralFactKind.MethodReturnTypeUnqualifiedTypeIs,
             "MethodParameterTypeDisplayName" => CompileTimeStructuralFactKind.MethodParameterTypeDisplayName,
             "MethodParameterTypeBaseName" => CompileTimeStructuralFactKind.MethodParameterTypeBaseName,
+            "MethodParameterTypeModuleName" => CompileTimeStructuralFactKind.MethodParameterTypeModuleName,
             "MethodParameterTypeIsGenericInstantiation" => CompileTimeStructuralFactKind.MethodParameterTypeIsGenericInstantiation,
             "MethodParameterTypeArgumentCount" => CompileTimeStructuralFactKind.MethodParameterTypeArgumentCount,
             "MethodParameterTypeComptimeArgumentCount" => CompileTimeStructuralFactKind.MethodParameterTypeComptimeArgumentCount,
@@ -1286,6 +1541,7 @@ internal static class CompileTimeStructuralFacts
             "FieldTypeIsDynamic" => CompileTimeStructuralFactKind.FieldTypeIsDynamic,
             "FieldTypeIsFunctionPointer" => CompileTimeStructuralFactKind.FieldTypeIsFunctionPointer,
             "FieldTypeIsClosure" => CompileTimeStructuralFactKind.FieldTypeIsClosure,
+            "FieldTypeIsDynTrait" => CompileTimeStructuralFactKind.FieldTypeIsDynTrait,
             "FieldTypeIsNamed" => CompileTimeStructuralFactKind.FieldTypeIsNamed,
             "FieldTypeIsStruct" => CompileTimeStructuralFactKind.FieldTypeIsStruct,
             "FieldTypeIsRecord" => CompileTimeStructuralFactKind.FieldTypeIsRecord,
@@ -1295,6 +1551,7 @@ internal static class CompileTimeStructuralFacts
             "FieldTypeHasConcreteLayout" => CompileTimeStructuralFactKind.FieldTypeHasConcreteLayout,
             "FieldTypeDisplayName" => CompileTimeStructuralFactKind.FieldTypeDisplayName,
             "FieldTypeBaseName" => CompileTimeStructuralFactKind.FieldTypeBaseName,
+            "FieldTypeModuleName" => CompileTimeStructuralFactKind.FieldTypeModuleName,
             "FieldTypeIsGenericInstantiation" => CompileTimeStructuralFactKind.FieldTypeIsGenericInstantiation,
             "FieldTypeArgumentCount" => CompileTimeStructuralFactKind.FieldTypeArgumentCount,
             "FieldTypeComptimeArgumentCount" => CompileTimeStructuralFactKind.FieldTypeComptimeArgumentCount,
@@ -1327,6 +1584,7 @@ internal static class CompileTimeStructuralFacts
             "TypeComptimeGenericParameterTypeIsDynamic" => CompileTimeStructuralFactKind.TypeComptimeGenericParameterTypeIsDynamic,
             "TypeComptimeGenericParameterTypeIsFunctionPointer" => CompileTimeStructuralFactKind.TypeComptimeGenericParameterTypeIsFunctionPointer,
             "TypeComptimeGenericParameterTypeIsClosure" => CompileTimeStructuralFactKind.TypeComptimeGenericParameterTypeIsClosure,
+            "TypeComptimeGenericParameterTypeIsDynTrait" => CompileTimeStructuralFactKind.TypeComptimeGenericParameterTypeIsDynTrait,
             "TypeComptimeGenericParameterTypeIsNamed" => CompileTimeStructuralFactKind.TypeComptimeGenericParameterTypeIsNamed,
             "TypeComptimeGenericParameterTypeIsStruct" => CompileTimeStructuralFactKind.TypeComptimeGenericParameterTypeIsStruct,
             "TypeComptimeGenericParameterTypeIsRecord" => CompileTimeStructuralFactKind.TypeComptimeGenericParameterTypeIsRecord,
@@ -1336,12 +1594,17 @@ internal static class CompileTimeStructuralFacts
             "TypeComptimeGenericParameterTypeHasConcreteLayout" => CompileTimeStructuralFactKind.TypeComptimeGenericParameterTypeHasConcreteLayout,
             "TypeComptimeGenericParameterTypeDisplayName" => CompileTimeStructuralFactKind.TypeComptimeGenericParameterTypeDisplayName,
             "TypeComptimeGenericParameterTypeBaseName" => CompileTimeStructuralFactKind.TypeComptimeGenericParameterTypeBaseName,
+            "TypeComptimeGenericParameterTypeModuleName" => CompileTimeStructuralFactKind.TypeComptimeGenericParameterTypeModuleName,
             "TypeComptimeGenericParameterTypeIsGenericInstantiation" => CompileTimeStructuralFactKind.TypeComptimeGenericParameterTypeIsGenericInstantiation,
             "TypeComptimeGenericParameterTypeArgumentCount" => CompileTimeStructuralFactKind.TypeComptimeGenericParameterTypeArgumentCount,
             "TypeComptimeGenericParameterTypeComptimeArgumentCount" => CompileTimeStructuralFactKind.TypeComptimeGenericParameterTypeComptimeArgumentCount,
             "TypeDisplayName" => CompileTimeStructuralFactKind.TypeDisplayName,
             "TypeBaseName" => CompileTimeStructuralFactKind.TypeBaseName,
             "TypeModuleName" => CompileTimeStructuralFactKind.TypeModuleName,
+            "TypeVisibilityIsModule" => CompileTimeStructuralFactKind.TypeVisibilityIsModule,
+            "TypeVisibilityIsInternal" => CompileTimeStructuralFactKind.TypeVisibilityIsInternal,
+            "TypeVisibilityIsPublic" => CompileTimeStructuralFactKind.TypeVisibilityIsPublic,
+            "TypeVisibilityIsExport" => CompileTimeStructuralFactKind.TypeVisibilityIsExport,
             "TypeHasCSourceAlias" => CompileTimeStructuralFactKind.TypeHasCSourceAlias,
             "TypeCSourceAliasName" => CompileTimeStructuralFactKind.TypeCSourceAliasName,
             "TypeIsGenericInstantiation" => CompileTimeStructuralFactKind.TypeIsGenericInstantiation,
@@ -1356,6 +1619,7 @@ internal static class CompileTimeStructuralFacts
             "TypeArgumentTypeIsDynamic" => CompileTimeStructuralFactKind.TypeArgumentTypeIsDynamic,
             "TypeArgumentTypeIsFunctionPointer" => CompileTimeStructuralFactKind.TypeArgumentTypeIsFunctionPointer,
             "TypeArgumentTypeIsClosure" => CompileTimeStructuralFactKind.TypeArgumentTypeIsClosure,
+            "TypeArgumentTypeIsDynTrait" => CompileTimeStructuralFactKind.TypeArgumentTypeIsDynTrait,
             "TypeArgumentTypeIsNamed" => CompileTimeStructuralFactKind.TypeArgumentTypeIsNamed,
             "TypeArgumentTypeIsStruct" => CompileTimeStructuralFactKind.TypeArgumentTypeIsStruct,
             "TypeArgumentTypeIsRecord" => CompileTimeStructuralFactKind.TypeArgumentTypeIsRecord,
@@ -1365,6 +1629,7 @@ internal static class CompileTimeStructuralFacts
             "TypeArgumentTypeHasConcreteLayout" => CompileTimeStructuralFactKind.TypeArgumentTypeHasConcreteLayout,
             "TypeArgumentTypeDisplayName" => CompileTimeStructuralFactKind.TypeArgumentTypeDisplayName,
             "TypeArgumentTypeBaseName" => CompileTimeStructuralFactKind.TypeArgumentTypeBaseName,
+            "TypeArgumentTypeModuleName" => CompileTimeStructuralFactKind.TypeArgumentTypeModuleName,
             "TypeArgumentTypeIsGenericInstantiation" => CompileTimeStructuralFactKind.TypeArgumentTypeIsGenericInstantiation,
             "TypeArgumentTypeArgumentCount" => CompileTimeStructuralFactKind.TypeArgumentTypeArgumentCount,
             "TypeArgumentTypeComptimeArgumentCount" => CompileTimeStructuralFactKind.TypeArgumentTypeComptimeArgumentCount,
@@ -1380,6 +1645,7 @@ internal static class CompileTimeStructuralFacts
             "TypeComptimeArgumentTypeIsDynamic" => CompileTimeStructuralFactKind.TypeComptimeArgumentTypeIsDynamic,
             "TypeComptimeArgumentTypeIsFunctionPointer" => CompileTimeStructuralFactKind.TypeComptimeArgumentTypeIsFunctionPointer,
             "TypeComptimeArgumentTypeIsClosure" => CompileTimeStructuralFactKind.TypeComptimeArgumentTypeIsClosure,
+            "TypeComptimeArgumentTypeIsDynTrait" => CompileTimeStructuralFactKind.TypeComptimeArgumentTypeIsDynTrait,
             "TypeComptimeArgumentTypeIsNamed" => CompileTimeStructuralFactKind.TypeComptimeArgumentTypeIsNamed,
             "TypeComptimeArgumentTypeIsStruct" => CompileTimeStructuralFactKind.TypeComptimeArgumentTypeIsStruct,
             "TypeComptimeArgumentTypeIsRecord" => CompileTimeStructuralFactKind.TypeComptimeArgumentTypeIsRecord,
@@ -1389,6 +1655,7 @@ internal static class CompileTimeStructuralFacts
             "TypeComptimeArgumentTypeHasConcreteLayout" => CompileTimeStructuralFactKind.TypeComptimeArgumentTypeHasConcreteLayout,
             "TypeComptimeArgumentTypeDisplayName" => CompileTimeStructuralFactKind.TypeComptimeArgumentTypeDisplayName,
             "TypeComptimeArgumentTypeBaseName" => CompileTimeStructuralFactKind.TypeComptimeArgumentTypeBaseName,
+            "TypeComptimeArgumentTypeModuleName" => CompileTimeStructuralFactKind.TypeComptimeArgumentTypeModuleName,
             "TypeComptimeArgumentTypeIsGenericInstantiation" => CompileTimeStructuralFactKind.TypeComptimeArgumentTypeIsGenericInstantiation,
             "TypeComptimeArgumentTypeArgumentCount" => CompileTimeStructuralFactKind.TypeComptimeArgumentTypeArgumentCount,
             "TypeComptimeArgumentTypeComptimeArgumentCount" => CompileTimeStructuralFactKind.TypeComptimeArgumentTypeComptimeArgumentCount,
@@ -1418,6 +1685,7 @@ internal static class CompileTimeStructuralFacts
             "ImplementedTraitTypeIsDynamic" => CompileTimeStructuralFactKind.ImplementedTraitTypeIsDynamic,
             "ImplementedTraitTypeIsFunctionPointer" => CompileTimeStructuralFactKind.ImplementedTraitTypeIsFunctionPointer,
             "ImplementedTraitTypeIsClosure" => CompileTimeStructuralFactKind.ImplementedTraitTypeIsClosure,
+            "ImplementedTraitTypeIsDynTrait" => CompileTimeStructuralFactKind.ImplementedTraitTypeIsDynTrait,
             "ImplementedTraitTypeIsNamed" => CompileTimeStructuralFactKind.ImplementedTraitTypeIsNamed,
             "ImplementedTraitTypeIsStruct" => CompileTimeStructuralFactKind.ImplementedTraitTypeIsStruct,
             "ImplementedTraitTypeIsRecord" => CompileTimeStructuralFactKind.ImplementedTraitTypeIsRecord,
@@ -1427,9 +1695,60 @@ internal static class CompileTimeStructuralFacts
             "ImplementedTraitTypeHasConcreteLayout" => CompileTimeStructuralFactKind.ImplementedTraitTypeHasConcreteLayout,
             "ImplementedTraitTypeDisplayName" => CompileTimeStructuralFactKind.ImplementedTraitTypeDisplayName,
             "ImplementedTraitTypeBaseName" => CompileTimeStructuralFactKind.ImplementedTraitTypeBaseName,
+            "ImplementedTraitTypeModuleName" => CompileTimeStructuralFactKind.ImplementedTraitTypeModuleName,
             "ImplementedTraitTypeIsGenericInstantiation" => CompileTimeStructuralFactKind.ImplementedTraitTypeIsGenericInstantiation,
             "ImplementedTraitTypeArgumentCount" => CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentCount,
             "ImplementedTraitTypeComptimeArgumentCount" => CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentCount,
+            "ImplementedTraitTypeArgumentTypeIs" => CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIs,
+            "ImplementedTraitTypeArgumentTypeIsBool" => CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIsBool,
+            "ImplementedTraitTypeArgumentTypeIsInteger" => CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIsInteger,
+            "ImplementedTraitTypeArgumentTypeIsFloat" => CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIsFloat,
+            "ImplementedTraitTypeArgumentTypeIsRawPointer" => CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIsRawPointer,
+            "ImplementedTraitTypeArgumentTypeIsFixedArray" => CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIsFixedArray,
+            "ImplementedTraitTypeArgumentTypeIsSlice" => CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIsSlice,
+            "ImplementedTraitTypeArgumentTypeIsDynamic" => CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIsDynamic,
+            "ImplementedTraitTypeArgumentTypeIsFunctionPointer" => CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIsFunctionPointer,
+            "ImplementedTraitTypeArgumentTypeIsClosure" => CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIsClosure,
+            "ImplementedTraitTypeArgumentTypeIsDynTrait" => CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIsDynTrait,
+            "ImplementedTraitTypeArgumentTypeIsNamed" => CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIsNamed,
+            "ImplementedTraitTypeArgumentTypeIsStruct" => CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIsStruct,
+            "ImplementedTraitTypeArgumentTypeIsRecord" => CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIsRecord,
+            "ImplementedTraitTypeArgumentTypeIsEnum" => CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIsEnum,
+            "ImplementedTraitTypeArgumentTypeIsTrait" => CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIsTrait,
+            "ImplementedTraitTypeArgumentTypeIsDoctrine" => CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIsDoctrine,
+            "ImplementedTraitTypeArgumentTypeHasConcreteLayout" => CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeHasConcreteLayout,
+            "ImplementedTraitTypeArgumentTypeDisplayName" => CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeDisplayName,
+            "ImplementedTraitTypeArgumentTypeBaseName" => CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeBaseName,
+            "ImplementedTraitTypeArgumentTypeModuleName" => CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeModuleName,
+            "ImplementedTraitTypeArgumentTypeIsGenericInstantiation" => CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIsGenericInstantiation,
+            "ImplementedTraitTypeArgumentTypeArgumentCount" => CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeArgumentCount,
+            "ImplementedTraitTypeArgumentTypeComptimeArgumentCount" => CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeComptimeArgumentCount,
+            "ImplementedTraitTypeComptimeArgumentName" => CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentName,
+            "ImplementedTraitTypeComptimeArgumentTypeIs" => CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIs,
+            "ImplementedTraitTypeComptimeArgumentTypeIsBool" => CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIsBool,
+            "ImplementedTraitTypeComptimeArgumentTypeIsInteger" => CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIsInteger,
+            "ImplementedTraitTypeComptimeArgumentTypeIsFloat" => CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIsFloat,
+            "ImplementedTraitTypeComptimeArgumentTypeIsRawPointer" => CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIsRawPointer,
+            "ImplementedTraitTypeComptimeArgumentTypeIsFixedArray" => CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIsFixedArray,
+            "ImplementedTraitTypeComptimeArgumentTypeIsSlice" => CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIsSlice,
+            "ImplementedTraitTypeComptimeArgumentTypeIsDynamic" => CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIsDynamic,
+            "ImplementedTraitTypeComptimeArgumentTypeIsFunctionPointer" => CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIsFunctionPointer,
+            "ImplementedTraitTypeComptimeArgumentTypeIsClosure" => CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIsClosure,
+            "ImplementedTraitTypeComptimeArgumentTypeIsDynTrait" => CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIsDynTrait,
+            "ImplementedTraitTypeComptimeArgumentTypeIsNamed" => CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIsNamed,
+            "ImplementedTraitTypeComptimeArgumentTypeIsStruct" => CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIsStruct,
+            "ImplementedTraitTypeComptimeArgumentTypeIsRecord" => CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIsRecord,
+            "ImplementedTraitTypeComptimeArgumentTypeIsEnum" => CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIsEnum,
+            "ImplementedTraitTypeComptimeArgumentTypeIsTrait" => CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIsTrait,
+            "ImplementedTraitTypeComptimeArgumentTypeIsDoctrine" => CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIsDoctrine,
+            "ImplementedTraitTypeComptimeArgumentTypeHasConcreteLayout" => CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeHasConcreteLayout,
+            "ImplementedTraitTypeComptimeArgumentTypeDisplayName" => CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeDisplayName,
+            "ImplementedTraitTypeComptimeArgumentTypeBaseName" => CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeBaseName,
+            "ImplementedTraitTypeComptimeArgumentTypeModuleName" => CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeModuleName,
+            "ImplementedTraitTypeComptimeArgumentTypeIsGenericInstantiation" => CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIsGenericInstantiation,
+            "ImplementedTraitTypeComptimeArgumentTypeArgumentCount" => CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeArgumentCount,
+            "ImplementedTraitTypeComptimeArgumentTypeComptimeArgumentCount" => CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeComptimeArgumentCount,
+            "ImplementedTraitTypeComptimeArgumentValueIs" => CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentValueIs,
             "AssociatedTypeCount" => CompileTimeStructuralFactKind.AssociatedTypeCount,
             "AssociatedTypeName" => CompileTimeStructuralFactKind.AssociatedTypeName,
             "AssociatedTypeHasTarget" => CompileTimeStructuralFactKind.AssociatedTypeHasTarget,
@@ -1443,6 +1762,7 @@ internal static class CompileTimeStructuralFacts
             "AssociatedTypeTargetTypeIsDynamic" => CompileTimeStructuralFactKind.AssociatedTypeTargetTypeIsDynamic,
             "AssociatedTypeTargetTypeIsFunctionPointer" => CompileTimeStructuralFactKind.AssociatedTypeTargetTypeIsFunctionPointer,
             "AssociatedTypeTargetTypeIsClosure" => CompileTimeStructuralFactKind.AssociatedTypeTargetTypeIsClosure,
+            "AssociatedTypeTargetTypeIsDynTrait" => CompileTimeStructuralFactKind.AssociatedTypeTargetTypeIsDynTrait,
             "AssociatedTypeTargetTypeIsNamed" => CompileTimeStructuralFactKind.AssociatedTypeTargetTypeIsNamed,
             "AssociatedTypeTargetTypeIsStruct" => CompileTimeStructuralFactKind.AssociatedTypeTargetTypeIsStruct,
             "AssociatedTypeTargetTypeIsRecord" => CompileTimeStructuralFactKind.AssociatedTypeTargetTypeIsRecord,
@@ -1452,6 +1772,7 @@ internal static class CompileTimeStructuralFacts
             "AssociatedTypeTargetTypeHasConcreteLayout" => CompileTimeStructuralFactKind.AssociatedTypeTargetTypeHasConcreteLayout,
             "AssociatedTypeTargetTypeDisplayName" => CompileTimeStructuralFactKind.AssociatedTypeTargetTypeDisplayName,
             "AssociatedTypeTargetTypeBaseName" => CompileTimeStructuralFactKind.AssociatedTypeTargetTypeBaseName,
+            "AssociatedTypeTargetTypeModuleName" => CompileTimeStructuralFactKind.AssociatedTypeTargetTypeModuleName,
             "AssociatedTypeTargetTypeIsGenericInstantiation" => CompileTimeStructuralFactKind.AssociatedTypeTargetTypeIsGenericInstantiation,
             "AssociatedTypeTargetTypeArgumentCount" => CompileTimeStructuralFactKind.AssociatedTypeTargetTypeArgumentCount,
             "AssociatedTypeTargetTypeComptimeArgumentCount" => CompileTimeStructuralFactKind.AssociatedTypeTargetTypeComptimeArgumentCount,
@@ -1467,6 +1788,7 @@ internal static class CompileTimeStructuralFacts
             "EnumVariantPayloadTypeIsDynamic" => CompileTimeStructuralFactKind.EnumVariantPayloadTypeIsDynamic,
             "EnumVariantPayloadTypeIsFunctionPointer" => CompileTimeStructuralFactKind.EnumVariantPayloadTypeIsFunctionPointer,
             "EnumVariantPayloadTypeIsClosure" => CompileTimeStructuralFactKind.EnumVariantPayloadTypeIsClosure,
+            "EnumVariantPayloadTypeIsDynTrait" => CompileTimeStructuralFactKind.EnumVariantPayloadTypeIsDynTrait,
             "EnumVariantPayloadTypeIsNamed" => CompileTimeStructuralFactKind.EnumVariantPayloadTypeIsNamed,
             "EnumVariantPayloadTypeIsStruct" => CompileTimeStructuralFactKind.EnumVariantPayloadTypeIsStruct,
             "EnumVariantPayloadTypeIsRecord" => CompileTimeStructuralFactKind.EnumVariantPayloadTypeIsRecord,
@@ -1476,6 +1798,7 @@ internal static class CompileTimeStructuralFacts
             "EnumVariantPayloadTypeHasConcreteLayout" => CompileTimeStructuralFactKind.EnumVariantPayloadTypeHasConcreteLayout,
             "EnumVariantPayloadTypeDisplayName" => CompileTimeStructuralFactKind.EnumVariantPayloadTypeDisplayName,
             "EnumVariantPayloadTypeBaseName" => CompileTimeStructuralFactKind.EnumVariantPayloadTypeBaseName,
+            "EnumVariantPayloadTypeModuleName" => CompileTimeStructuralFactKind.EnumVariantPayloadTypeModuleName,
             "EnumVariantPayloadTypeIsGenericInstantiation" => CompileTimeStructuralFactKind.EnumVariantPayloadTypeIsGenericInstantiation,
             "EnumVariantPayloadTypeArgumentCount" => CompileTimeStructuralFactKind.EnumVariantPayloadTypeArgumentCount,
             "EnumVariantPayloadTypeComptimeArgumentCount" => CompileTimeStructuralFactKind.EnumVariantPayloadTypeComptimeArgumentCount,
@@ -1495,6 +1818,10 @@ internal static class CompileTimeStructuralFacts
             "EnumVariantPayloadTypeIsMutableView" => CompileTimeStructuralFactKind.EnumVariantPayloadTypeIsMutableView,
             "EnumVariantPayloadTypeUnqualifiedTypeIs" => CompileTimeStructuralFactKind.EnumVariantPayloadTypeUnqualifiedTypeIs,
             "FieldName" => CompileTimeStructuralFactKind.FieldName,
+            "FieldVisibilityIsModule" => CompileTimeStructuralFactKind.FieldVisibilityIsModule,
+            "FieldVisibilityIsInternal" => CompileTimeStructuralFactKind.FieldVisibilityIsInternal,
+            "FieldVisibilityIsPublic" => CompileTimeStructuralFactKind.FieldVisibilityIsPublic,
+            "FieldVisibilityIsExport" => CompileTimeStructuralFactKind.FieldVisibilityIsExport,
             "EnumVariantName" => CompileTimeStructuralFactKind.EnumVariantName,
             "EnumVariantUsesNamedFields" => CompileTimeStructuralFactKind.EnumVariantUsesNamedFields,
             "EnumVariantPayloadHasName" => CompileTimeStructuralFactKind.EnumVariantPayloadHasName,
@@ -1515,6 +1842,7 @@ internal static class CompileTimeStructuralFacts
             "TypeThreadSafetyLawAttributeConditionTypeIsDynamic" => CompileTimeStructuralFactKind.TypeThreadSafetyLawAttributeConditionTypeIsDynamic,
             "TypeThreadSafetyLawAttributeConditionTypeIsFunctionPointer" => CompileTimeStructuralFactKind.TypeThreadSafetyLawAttributeConditionTypeIsFunctionPointer,
             "TypeThreadSafetyLawAttributeConditionTypeIsClosure" => CompileTimeStructuralFactKind.TypeThreadSafetyLawAttributeConditionTypeIsClosure,
+            "TypeThreadSafetyLawAttributeConditionTypeIsDynTrait" => CompileTimeStructuralFactKind.TypeThreadSafetyLawAttributeConditionTypeIsDynTrait,
             "TypeThreadSafetyLawAttributeConditionTypeIsNamed" => CompileTimeStructuralFactKind.TypeThreadSafetyLawAttributeConditionTypeIsNamed,
             "TypeThreadSafetyLawAttributeConditionTypeIsStruct" => CompileTimeStructuralFactKind.TypeThreadSafetyLawAttributeConditionTypeIsStruct,
             "TypeThreadSafetyLawAttributeConditionTypeIsRecord" => CompileTimeStructuralFactKind.TypeThreadSafetyLawAttributeConditionTypeIsRecord,
@@ -1524,6 +1852,7 @@ internal static class CompileTimeStructuralFacts
             "TypeThreadSafetyLawAttributeConditionTypeHasConcreteLayout" => CompileTimeStructuralFactKind.TypeThreadSafetyLawAttributeConditionTypeHasConcreteLayout,
             "TypeThreadSafetyLawAttributeConditionTypeDisplayName" => CompileTimeStructuralFactKind.TypeThreadSafetyLawAttributeConditionTypeDisplayName,
             "TypeThreadSafetyLawAttributeConditionTypeBaseName" => CompileTimeStructuralFactKind.TypeThreadSafetyLawAttributeConditionTypeBaseName,
+            "TypeThreadSafetyLawAttributeConditionTypeModuleName" => CompileTimeStructuralFactKind.TypeThreadSafetyLawAttributeConditionTypeModuleName,
             "TypeThreadSafetyLawAttributeConditionTypeIsGenericInstantiation" => CompileTimeStructuralFactKind.TypeThreadSafetyLawAttributeConditionTypeIsGenericInstantiation,
             "TypeThreadSafetyLawAttributeConditionTypeArgumentCount" => CompileTimeStructuralFactKind.TypeThreadSafetyLawAttributeConditionTypeArgumentCount,
             "TypeThreadSafetyLawAttributeConditionTypeComptimeArgumentCount" => CompileTimeStructuralFactKind.TypeThreadSafetyLawAttributeConditionTypeComptimeArgumentCount,
@@ -1543,6 +1872,7 @@ internal static class CompileTimeStructuralFacts
             "FieldThreadSafetyLawAttributeConditionTypeIsDynamic" => CompileTimeStructuralFactKind.FieldThreadSafetyLawAttributeConditionTypeIsDynamic,
             "FieldThreadSafetyLawAttributeConditionTypeIsFunctionPointer" => CompileTimeStructuralFactKind.FieldThreadSafetyLawAttributeConditionTypeIsFunctionPointer,
             "FieldThreadSafetyLawAttributeConditionTypeIsClosure" => CompileTimeStructuralFactKind.FieldThreadSafetyLawAttributeConditionTypeIsClosure,
+            "FieldThreadSafetyLawAttributeConditionTypeIsDynTrait" => CompileTimeStructuralFactKind.FieldThreadSafetyLawAttributeConditionTypeIsDynTrait,
             "FieldThreadSafetyLawAttributeConditionTypeIsNamed" => CompileTimeStructuralFactKind.FieldThreadSafetyLawAttributeConditionTypeIsNamed,
             "FieldThreadSafetyLawAttributeConditionTypeIsStruct" => CompileTimeStructuralFactKind.FieldThreadSafetyLawAttributeConditionTypeIsStruct,
             "FieldThreadSafetyLawAttributeConditionTypeIsRecord" => CompileTimeStructuralFactKind.FieldThreadSafetyLawAttributeConditionTypeIsRecord,
@@ -1552,12 +1882,15 @@ internal static class CompileTimeStructuralFacts
             "FieldThreadSafetyLawAttributeConditionTypeHasConcreteLayout" => CompileTimeStructuralFactKind.FieldThreadSafetyLawAttributeConditionTypeHasConcreteLayout,
             "FieldThreadSafetyLawAttributeConditionTypeDisplayName" => CompileTimeStructuralFactKind.FieldThreadSafetyLawAttributeConditionTypeDisplayName,
             "FieldThreadSafetyLawAttributeConditionTypeBaseName" => CompileTimeStructuralFactKind.FieldThreadSafetyLawAttributeConditionTypeBaseName,
+            "FieldThreadSafetyLawAttributeConditionTypeModuleName" => CompileTimeStructuralFactKind.FieldThreadSafetyLawAttributeConditionTypeModuleName,
             "FieldThreadSafetyLawAttributeConditionTypeIsGenericInstantiation" => CompileTimeStructuralFactKind.FieldThreadSafetyLawAttributeConditionTypeIsGenericInstantiation,
             "FieldThreadSafetyLawAttributeConditionTypeArgumentCount" => CompileTimeStructuralFactKind.FieldThreadSafetyLawAttributeConditionTypeArgumentCount,
             "FieldThreadSafetyLawAttributeConditionTypeComptimeArgumentCount" => CompileTimeStructuralFactKind.FieldThreadSafetyLawAttributeConditionTypeComptimeArgumentCount,
             _ => default
         };
-        return localName is
+        return kind != default
+            || string.Equals(localName, "IsBool", StringComparison.Ordinal)
+            || localName is
             "IsBool"
             or "IsInteger"
             or "IsFloat"
@@ -1677,6 +2010,7 @@ internal static class CompileTimeStructuralFacts
             or "FunctionPointerParameterTypeHasConcreteLayout"
             or "FunctionPointerReturnTypeDisplayName"
             or "FunctionPointerReturnTypeBaseName"
+            or "FunctionPointerReturnTypeModuleName"
             or "FunctionPointerReturnTypeIsGenericInstantiation"
             or "FunctionPointerReturnTypeArgumentCount"
             or "FunctionPointerReturnTypeComptimeArgumentCount"
@@ -1697,6 +2031,7 @@ internal static class CompileTimeStructuralFacts
             or "FunctionPointerReturnTypeUnqualifiedTypeIs"
             or "FunctionPointerParameterTypeDisplayName"
             or "FunctionPointerParameterTypeBaseName"
+            or "FunctionPointerParameterTypeModuleName"
             or "FunctionPointerParameterTypeIsGenericInstantiation"
             or "FunctionPointerParameterTypeArgumentCount"
             or "FunctionPointerParameterTypeComptimeArgumentCount"
@@ -1773,6 +2108,7 @@ internal static class CompileTimeStructuralFacts
             or "ClosureParameterTypeHasConcreteLayout"
             or "ClosureReturnTypeDisplayName"
             or "ClosureReturnTypeBaseName"
+            or "ClosureReturnTypeModuleName"
             or "ClosureReturnTypeIsGenericInstantiation"
             or "ClosureReturnTypeArgumentCount"
             or "ClosureReturnTypeComptimeArgumentCount"
@@ -1793,6 +2129,7 @@ internal static class CompileTimeStructuralFacts
             or "ClosureReturnTypeUnqualifiedTypeIs"
             or "ClosureParameterTypeDisplayName"
             or "ClosureParameterTypeBaseName"
+            or "ClosureParameterTypeModuleName"
             or "ClosureParameterTypeIsGenericInstantiation"
             or "ClosureParameterTypeArgumentCount"
             or "ClosureParameterTypeComptimeArgumentCount"
@@ -1832,6 +2169,10 @@ internal static class CompileTimeStructuralFacts
             or "MethodCount"
             or "MethodName"
             or "MethodModuleName"
+            or "MethodVisibilityIsModule"
+            or "MethodVisibilityIsInternal"
+            or "MethodVisibilityIsPublic"
+            or "MethodVisibilityIsExport"
             or "MethodParameterCount"
             or "MethodParameterName"
             or "MethodReturnTypeIs"
@@ -1912,6 +2253,7 @@ internal static class CompileTimeStructuralFacts
             or "MethodGenericParameterTraitBoundTypeHasConcreteLayout"
             or "MethodGenericParameterTraitBoundTypeDisplayName"
             or "MethodGenericParameterTraitBoundTypeBaseName"
+            or "MethodGenericParameterTraitBoundTypeModuleName"
             or "MethodGenericParameterTraitBoundTypeIsGenericInstantiation"
             or "MethodGenericParameterTraitBoundTypeArgumentCount"
             or "MethodGenericParameterTraitBoundTypeComptimeArgumentCount"
@@ -1936,6 +2278,7 @@ internal static class CompileTimeStructuralFacts
             or "MethodComptimeGenericParameterTypeHasConcreteLayout"
             or "MethodComptimeGenericParameterTypeDisplayName"
             or "MethodComptimeGenericParameterTypeBaseName"
+            or "MethodComptimeGenericParameterTypeModuleName"
             or "MethodComptimeGenericParameterTypeIsGenericInstantiation"
             or "MethodComptimeGenericParameterTypeArgumentCount"
             or "MethodComptimeGenericParameterTypeComptimeArgumentCount"
@@ -1960,11 +2303,13 @@ internal static class CompileTimeStructuralFacts
             or "MethodThreadSafetyLawPredicateTypeHasConcreteLayout"
             or "MethodThreadSafetyLawPredicateTypeDisplayName"
             or "MethodThreadSafetyLawPredicateTypeBaseName"
+            or "MethodThreadSafetyLawPredicateTypeModuleName"
             or "MethodThreadSafetyLawPredicateTypeIsGenericInstantiation"
             or "MethodThreadSafetyLawPredicateTypeArgumentCount"
             or "MethodThreadSafetyLawPredicateTypeComptimeArgumentCount"
             or "MethodReturnTypeDisplayName"
             or "MethodReturnTypeBaseName"
+            or "MethodReturnTypeModuleName"
             or "MethodReturnTypeIsGenericInstantiation"
             or "MethodReturnTypeArgumentCount"
             or "MethodReturnTypeComptimeArgumentCount"
@@ -1985,6 +2330,7 @@ internal static class CompileTimeStructuralFacts
             or "MethodReturnTypeUnqualifiedTypeIs"
             or "MethodParameterTypeDisplayName"
             or "MethodParameterTypeBaseName"
+            or "MethodParameterTypeModuleName"
             or "MethodParameterTypeIsGenericInstantiation"
             or "MethodParameterTypeArgumentCount"
             or "MethodParameterTypeComptimeArgumentCount"
@@ -2038,6 +2384,7 @@ internal static class CompileTimeStructuralFacts
             or "FieldTypeHasConcreteLayout"
             or "FieldTypeDisplayName"
             or "FieldTypeBaseName"
+            or "FieldTypeModuleName"
             or "FieldTypeIsGenericInstantiation"
             or "FieldTypeArgumentCount"
             or "FieldTypeComptimeArgumentCount"
@@ -2079,12 +2426,17 @@ internal static class CompileTimeStructuralFacts
             or "TypeComptimeGenericParameterTypeHasConcreteLayout"
             or "TypeComptimeGenericParameterTypeDisplayName"
             or "TypeComptimeGenericParameterTypeBaseName"
+            or "TypeComptimeGenericParameterTypeModuleName"
             or "TypeComptimeGenericParameterTypeIsGenericInstantiation"
             or "TypeComptimeGenericParameterTypeArgumentCount"
             or "TypeComptimeGenericParameterTypeComptimeArgumentCount"
             or "TypeDisplayName"
             or "TypeBaseName"
             or "TypeModuleName"
+            or "TypeVisibilityIsModule"
+            or "TypeVisibilityIsInternal"
+            or "TypeVisibilityIsPublic"
+            or "TypeVisibilityIsExport"
             or "TypeHasCSourceAlias"
             or "TypeCSourceAliasName"
             or "TypeIsGenericInstantiation"
@@ -2108,6 +2460,7 @@ internal static class CompileTimeStructuralFacts
             or "TypeArgumentTypeHasConcreteLayout"
             or "TypeArgumentTypeDisplayName"
             or "TypeArgumentTypeBaseName"
+            or "TypeArgumentTypeModuleName"
             or "TypeArgumentTypeIsGenericInstantiation"
             or "TypeArgumentTypeArgumentCount"
             or "TypeArgumentTypeComptimeArgumentCount"
@@ -2132,6 +2485,7 @@ internal static class CompileTimeStructuralFacts
             or "TypeComptimeArgumentTypeHasConcreteLayout"
             or "TypeComptimeArgumentTypeDisplayName"
             or "TypeComptimeArgumentTypeBaseName"
+            or "TypeComptimeArgumentTypeModuleName"
             or "TypeComptimeArgumentTypeIsGenericInstantiation"
             or "TypeComptimeArgumentTypeArgumentCount"
             or "TypeComptimeArgumentTypeComptimeArgumentCount"
@@ -2170,9 +2524,58 @@ internal static class CompileTimeStructuralFacts
             or "ImplementedTraitTypeHasConcreteLayout"
             or "ImplementedTraitTypeDisplayName"
             or "ImplementedTraitTypeBaseName"
+            or "ImplementedTraitTypeModuleName"
             or "ImplementedTraitTypeIsGenericInstantiation"
             or "ImplementedTraitTypeArgumentCount"
             or "ImplementedTraitTypeComptimeArgumentCount"
+            or "ImplementedTraitTypeArgumentTypeIs"
+            or "ImplementedTraitTypeArgumentTypeIsBool"
+            or "ImplementedTraitTypeArgumentTypeIsInteger"
+            or "ImplementedTraitTypeArgumentTypeIsFloat"
+            or "ImplementedTraitTypeArgumentTypeIsRawPointer"
+            or "ImplementedTraitTypeArgumentTypeIsFixedArray"
+            or "ImplementedTraitTypeArgumentTypeIsSlice"
+            or "ImplementedTraitTypeArgumentTypeIsDynamic"
+            or "ImplementedTraitTypeArgumentTypeIsFunctionPointer"
+            or "ImplementedTraitTypeArgumentTypeIsClosure"
+            or "ImplementedTraitTypeArgumentTypeIsNamed"
+            or "ImplementedTraitTypeArgumentTypeIsStruct"
+            or "ImplementedTraitTypeArgumentTypeIsRecord"
+            or "ImplementedTraitTypeArgumentTypeIsEnum"
+            or "ImplementedTraitTypeArgumentTypeIsTrait"
+            or "ImplementedTraitTypeArgumentTypeIsDoctrine"
+            or "ImplementedTraitTypeArgumentTypeHasConcreteLayout"
+            or "ImplementedTraitTypeArgumentTypeDisplayName"
+            or "ImplementedTraitTypeArgumentTypeBaseName"
+            or "ImplementedTraitTypeArgumentTypeModuleName"
+            or "ImplementedTraitTypeArgumentTypeIsGenericInstantiation"
+            or "ImplementedTraitTypeArgumentTypeArgumentCount"
+            or "ImplementedTraitTypeArgumentTypeComptimeArgumentCount"
+            or "ImplementedTraitTypeComptimeArgumentName"
+            or "ImplementedTraitTypeComptimeArgumentTypeIs"
+            or "ImplementedTraitTypeComptimeArgumentTypeIsBool"
+            or "ImplementedTraitTypeComptimeArgumentTypeIsInteger"
+            or "ImplementedTraitTypeComptimeArgumentTypeIsFloat"
+            or "ImplementedTraitTypeComptimeArgumentTypeIsRawPointer"
+            or "ImplementedTraitTypeComptimeArgumentTypeIsFixedArray"
+            or "ImplementedTraitTypeComptimeArgumentTypeIsSlice"
+            or "ImplementedTraitTypeComptimeArgumentTypeIsDynamic"
+            or "ImplementedTraitTypeComptimeArgumentTypeIsFunctionPointer"
+            or "ImplementedTraitTypeComptimeArgumentTypeIsClosure"
+            or "ImplementedTraitTypeComptimeArgumentTypeIsNamed"
+            or "ImplementedTraitTypeComptimeArgumentTypeIsStruct"
+            or "ImplementedTraitTypeComptimeArgumentTypeIsRecord"
+            or "ImplementedTraitTypeComptimeArgumentTypeIsEnum"
+            or "ImplementedTraitTypeComptimeArgumentTypeIsTrait"
+            or "ImplementedTraitTypeComptimeArgumentTypeIsDoctrine"
+            or "ImplementedTraitTypeComptimeArgumentTypeHasConcreteLayout"
+            or "ImplementedTraitTypeComptimeArgumentTypeDisplayName"
+            or "ImplementedTraitTypeComptimeArgumentTypeBaseName"
+            or "ImplementedTraitTypeComptimeArgumentTypeModuleName"
+            or "ImplementedTraitTypeComptimeArgumentTypeIsGenericInstantiation"
+            or "ImplementedTraitTypeComptimeArgumentTypeArgumentCount"
+            or "ImplementedTraitTypeComptimeArgumentTypeComptimeArgumentCount"
+            or "ImplementedTraitTypeComptimeArgumentValueIs"
             or "AssociatedTypeCount"
             or "AssociatedTypeName"
             or "AssociatedTypeHasTarget"
@@ -2195,6 +2598,7 @@ internal static class CompileTimeStructuralFacts
             or "AssociatedTypeTargetTypeHasConcreteLayout"
             or "AssociatedTypeTargetTypeDisplayName"
             or "AssociatedTypeTargetTypeBaseName"
+            or "AssociatedTypeTargetTypeModuleName"
             or "AssociatedTypeTargetTypeIsGenericInstantiation"
             or "AssociatedTypeTargetTypeArgumentCount"
             or "AssociatedTypeTargetTypeComptimeArgumentCount"
@@ -2219,6 +2623,7 @@ internal static class CompileTimeStructuralFacts
             or "EnumVariantPayloadTypeHasConcreteLayout"
             or "EnumVariantPayloadTypeDisplayName"
             or "EnumVariantPayloadTypeBaseName"
+            or "EnumVariantPayloadTypeModuleName"
             or "EnumVariantPayloadTypeIsGenericInstantiation"
             or "EnumVariantPayloadTypeArgumentCount"
             or "EnumVariantPayloadTypeComptimeArgumentCount"
@@ -2238,6 +2643,10 @@ internal static class CompileTimeStructuralFacts
             or "EnumVariantPayloadTypeIsMutableView"
             or "EnumVariantPayloadTypeUnqualifiedTypeIs"
             or "FieldName"
+            or "FieldVisibilityIsModule"
+            or "FieldVisibilityIsInternal"
+            or "FieldVisibilityIsPublic"
+            or "FieldVisibilityIsExport"
             or "EnumVariantName"
             or "EnumVariantUsesNamedFields"
             or "EnumVariantPayloadHasName"
@@ -2267,6 +2676,7 @@ internal static class CompileTimeStructuralFacts
             or "TypeThreadSafetyLawAttributeConditionTypeHasConcreteLayout"
             or "TypeThreadSafetyLawAttributeConditionTypeDisplayName"
             or "TypeThreadSafetyLawAttributeConditionTypeBaseName"
+            or "TypeThreadSafetyLawAttributeConditionTypeModuleName"
             or "TypeThreadSafetyLawAttributeConditionTypeIsGenericInstantiation"
             or "TypeThreadSafetyLawAttributeConditionTypeArgumentCount"
             or "TypeThreadSafetyLawAttributeConditionTypeComptimeArgumentCount"
@@ -2295,9 +2705,105 @@ internal static class CompileTimeStructuralFacts
             or "FieldThreadSafetyLawAttributeConditionTypeHasConcreteLayout"
             or "FieldThreadSafetyLawAttributeConditionTypeDisplayName"
             or "FieldThreadSafetyLawAttributeConditionTypeBaseName"
+            or "FieldThreadSafetyLawAttributeConditionTypeModuleName"
             or "FieldThreadSafetyLawAttributeConditionTypeIsGenericInstantiation"
             or "FieldThreadSafetyLawAttributeConditionTypeArgumentCount"
             or "FieldThreadSafetyLawAttributeConditionTypeComptimeArgumentCount";
+    }
+
+    private const int CallableNestedTypeArgumentFactFamilySize = 24;
+    private const int CallableNestedTypeArgumentPredicateStartOffset = 1;
+    private const int CallableNestedTypeArgumentPredicateEndOffset = 17;
+    private const int CallableNestedTypeArgumentDisplayNameOffset = 18;
+    private const int CallableNestedTypeArgumentBaseNameOffset = 19;
+    private const int CallableNestedTypeArgumentModuleNameOffset = 20;
+    private const int CallableNestedTypeArgumentIsGenericInstantiationOffset = 21;
+    private const int CallableNestedTypeArgumentArgumentCountOffset = 22;
+    private const int CallableNestedTypeArgumentComptimeArgumentCountOffset = 23;
+
+    private static bool TryGetCallableNestedTypeArgumentFactKind(
+        string localName,
+        out CompileTimeStructuralFactKind kind)
+    {
+        return TryGetCallableNestedTypeArgumentFactKind(
+                localName,
+                "FunctionPointerReturnTypeArgumentType",
+                CompileTimeStructuralFactKind.FunctionPointerReturnTypeArgumentTypeIs,
+                out kind)
+            || TryGetCallableNestedTypeArgumentFactKind(
+                localName,
+                "FunctionPointerParameterTypeArgumentType",
+                CompileTimeStructuralFactKind.FunctionPointerParameterTypeArgumentTypeIs,
+                out kind)
+            || TryGetCallableNestedTypeArgumentFactKind(
+                localName,
+                "ClosureReturnTypeArgumentType",
+                CompileTimeStructuralFactKind.ClosureReturnTypeArgumentTypeIs,
+                out kind)
+            || TryGetCallableNestedTypeArgumentFactKind(
+                localName,
+                "ClosureParameterTypeArgumentType",
+                CompileTimeStructuralFactKind.ClosureParameterTypeArgumentTypeIs,
+                out kind)
+            || TryGetCallableNestedTypeArgumentFactKind(
+                localName,
+                "MethodReturnTypeArgumentType",
+                CompileTimeStructuralFactKind.MethodReturnTypeArgumentTypeIs,
+                out kind)
+            || TryGetCallableNestedTypeArgumentFactKind(
+                localName,
+                "MethodParameterTypeArgumentType",
+                CompileTimeStructuralFactKind.MethodParameterTypeArgumentTypeIs,
+                out kind);
+    }
+
+    private static bool TryGetCallableNestedTypeArgumentFactKind(
+        string localName,
+        string prefix,
+        CompileTimeStructuralFactKind familyStart,
+        out CompileTimeStructuralFactKind kind)
+    {
+        kind = default;
+        if (!localName.StartsWith(prefix, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var offset = localName[prefix.Length..] switch
+        {
+            "Is" => 0,
+            "IsBool" => 1,
+            "IsInteger" => 2,
+            "IsFloat" => 3,
+            "IsRawPointer" => 4,
+            "IsFixedArray" => 5,
+            "IsSlice" => 6,
+            "IsDynamic" => 7,
+            "IsFunctionPointer" => 8,
+            "IsClosure" => 9,
+            "IsDynTrait" => 10,
+            "IsNamed" => 11,
+            "IsStruct" => 12,
+            "IsRecord" => 13,
+            "IsEnum" => 14,
+            "IsTrait" => 15,
+            "IsDoctrine" => 16,
+            "HasConcreteLayout" => 17,
+            "DisplayName" => CallableNestedTypeArgumentDisplayNameOffset,
+            "BaseName" => CallableNestedTypeArgumentBaseNameOffset,
+            "ModuleName" => CallableNestedTypeArgumentModuleNameOffset,
+            "IsGenericInstantiation" => CallableNestedTypeArgumentIsGenericInstantiationOffset,
+            "ArgumentCount" => CallableNestedTypeArgumentArgumentCountOffset,
+            "ComptimeArgumentCount" => CallableNestedTypeArgumentComptimeArgumentCountOffset,
+            _ => -1
+        };
+        if (offset < 0)
+        {
+            return false;
+        }
+
+        kind = (CompileTimeStructuralFactKind)((int)familyStart + offset);
+        return true;
     }
 
     public static bool HasValidGenericArgumentShape(StarkParser.GenericQualifiedNameContext genericQualifiedName)
@@ -2450,6 +2956,8 @@ internal static class CompileTimeStructuralFacts
     {
         returnType = kind switch
         {
+            _ when IsCallableNestedTypeArgumentCountFact(kind) => CountType,
+            _ when IsCallableNestedTypeArgumentTextFact(kind) => StarkTypeSymbols.Ascii,
             CompileTimeStructuralFactKind.FieldCount
                 or CompileTimeStructuralFactKind.MethodCount
                 or CompileTimeStructuralFactKind.MethodParameterCount
@@ -2498,6 +3006,10 @@ internal static class CompileTimeStructuralFacts
                 or CompileTimeStructuralFactKind.TypeComptimeArgumentCount
                 or CompileTimeStructuralFactKind.TypeComptimeArgumentTypeArgumentCount
                 or CompileTimeStructuralFactKind.TypeComptimeArgumentTypeComptimeArgumentCount
+                or CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeArgumentCount
+                or CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeComptimeArgumentCount
+                or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeArgumentCount
+                or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeComptimeArgumentCount
                 or CompileTimeStructuralFactKind.TypeSize
                 or CompileTimeStructuralFactKind.TypeAlign
                 or CompileTimeStructuralFactKind.TypeFixedArrayLength
@@ -2525,21 +3037,26 @@ internal static class CompileTimeStructuralFacts
             CompileTimeStructuralFactKind.FieldName
                 or CompileTimeStructuralFactKind.FieldTypeDisplayName
                 or CompileTimeStructuralFactKind.FieldTypeBaseName
+                or CompileTimeStructuralFactKind.FieldTypeModuleName
                 or CompileTimeStructuralFactKind.FieldTypeCSourceAliasName
                 or CompileTimeStructuralFactKind.FunctionPointerReturnTypeDisplayName
                 or CompileTimeStructuralFactKind.FunctionPointerReturnTypeBaseName
+                or CompileTimeStructuralFactKind.FunctionPointerReturnTypeModuleName
                 or CompileTimeStructuralFactKind.FunctionPointerReturnTypeCSourceAliasName
                 or CompileTimeStructuralFactKind.FunctionPointerParameterTypeDisplayName
                 or CompileTimeStructuralFactKind.FunctionPointerParameterTypeBaseName
+                or CompileTimeStructuralFactKind.FunctionPointerParameterTypeModuleName
                 or CompileTimeStructuralFactKind.FunctionPointerParameterTypeCSourceAliasName
                 or CompileTimeStructuralFactKind.RawPointerElementTypeCSourceAliasName
                 or CompileTimeStructuralFactKind.TypeElementTypeCSourceAliasName
                 or CompileTimeStructuralFactKind.FunctionPointerParameterRawPointerElementCountExpression
                 or CompileTimeStructuralFactKind.ClosureReturnTypeDisplayName
                 or CompileTimeStructuralFactKind.ClosureReturnTypeBaseName
+                or CompileTimeStructuralFactKind.ClosureReturnTypeModuleName
                 or CompileTimeStructuralFactKind.ClosureReturnTypeCSourceAliasName
                 or CompileTimeStructuralFactKind.ClosureParameterTypeDisplayName
                 or CompileTimeStructuralFactKind.ClosureParameterTypeBaseName
+                or CompileTimeStructuralFactKind.ClosureParameterTypeModuleName
                 or CompileTimeStructuralFactKind.ClosureParameterTypeCSourceAliasName
                 or CompileTimeStructuralFactKind.ClosureParameterRawPointerElementCountExpression
                 or CompileTimeStructuralFactKind.MethodName
@@ -2548,50 +3065,70 @@ internal static class CompileTimeStructuralFacts
                 or CompileTimeStructuralFactKind.MethodGenericParameterName
                 or CompileTimeStructuralFactKind.MethodGenericParameterTraitBoundTypeDisplayName
                 or CompileTimeStructuralFactKind.MethodGenericParameterTraitBoundTypeBaseName
+                or CompileTimeStructuralFactKind.MethodGenericParameterTraitBoundTypeModuleName
                 or CompileTimeStructuralFactKind.MethodComptimeGenericParameterName
                 or CompileTimeStructuralFactKind.MethodComptimeGenericParameterTypeDisplayName
                 or CompileTimeStructuralFactKind.MethodComptimeGenericParameterTypeBaseName
+                or CompileTimeStructuralFactKind.MethodComptimeGenericParameterTypeModuleName
                 or CompileTimeStructuralFactKind.MethodThreadSafetyLawPredicateLawName
                 or CompileTimeStructuralFactKind.MethodThreadSafetyLawPredicateTypeDisplayName
                 or CompileTimeStructuralFactKind.MethodThreadSafetyLawPredicateTypeBaseName
+                or CompileTimeStructuralFactKind.MethodThreadSafetyLawPredicateTypeModuleName
                 or CompileTimeStructuralFactKind.MethodReturnTypeDisplayName
                 or CompileTimeStructuralFactKind.MethodReturnTypeBaseName
+                or CompileTimeStructuralFactKind.MethodReturnTypeModuleName
                 or CompileTimeStructuralFactKind.MethodReturnTypeCSourceAliasName
                 or CompileTimeStructuralFactKind.MethodParameterTypeDisplayName
                 or CompileTimeStructuralFactKind.MethodParameterTypeBaseName
+                or CompileTimeStructuralFactKind.MethodParameterTypeModuleName
                 or CompileTimeStructuralFactKind.MethodParameterTypeCSourceAliasName
                 or CompileTimeStructuralFactKind.MethodParameterRawPointerElementCountExpression
                 or CompileTimeStructuralFactKind.AssociatedTypeName
                 or CompileTimeStructuralFactKind.AssociatedTypeTargetTypeDisplayName
                 or CompileTimeStructuralFactKind.AssociatedTypeTargetTypeBaseName
+                or CompileTimeStructuralFactKind.AssociatedTypeTargetTypeModuleName
                 or CompileTimeStructuralFactKind.TypeGenericParameterName
                 or CompileTimeStructuralFactKind.TypeComptimeGenericParameterName
                 or CompileTimeStructuralFactKind.TypeComptimeGenericParameterTypeDisplayName
                 or CompileTimeStructuralFactKind.TypeComptimeGenericParameterTypeBaseName
+                or CompileTimeStructuralFactKind.TypeComptimeGenericParameterTypeModuleName
                 or CompileTimeStructuralFactKind.TypeArgumentTypeDisplayName
                 or CompileTimeStructuralFactKind.TypeArgumentTypeBaseName
+                or CompileTimeStructuralFactKind.TypeArgumentTypeModuleName
                 or CompileTimeStructuralFactKind.TypeComptimeArgumentName
                 or CompileTimeStructuralFactKind.TypeComptimeArgumentTypeDisplayName
                 or CompileTimeStructuralFactKind.TypeComptimeArgumentTypeBaseName
+                or CompileTimeStructuralFactKind.TypeComptimeArgumentTypeModuleName
                 or CompileTimeStructuralFactKind.TypeDisplayName
                 or CompileTimeStructuralFactKind.TypeBaseName
                 or CompileTimeStructuralFactKind.TypeModuleName
                 or CompileTimeStructuralFactKind.TypeCSourceAliasName
                 or CompileTimeStructuralFactKind.ImplementedTraitTypeDisplayName
                 or CompileTimeStructuralFactKind.ImplementedTraitTypeBaseName
+                or CompileTimeStructuralFactKind.ImplementedTraitTypeModuleName
+                or CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeDisplayName
+                or CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeBaseName
+                or CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeModuleName
+                or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentName
+                or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeDisplayName
+                or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeBaseName
+                or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeModuleName
                 or CompileTimeStructuralFactKind.EnumVariantName
                 or CompileTimeStructuralFactKind.EnumVariantPayloadTypeDisplayName
                 or CompileTimeStructuralFactKind.EnumVariantPayloadTypeBaseName
+                or CompileTimeStructuralFactKind.EnumVariantPayloadTypeModuleName
                 or CompileTimeStructuralFactKind.EnumVariantPayloadTypeCSourceAliasName
                 or CompileTimeStructuralFactKind.EnumVariantPayloadName
                 or CompileTimeStructuralFactKind.TypeThreadSafetyLawAttributeLawName
                 or CompileTimeStructuralFactKind.TypeThreadSafetyLawAttributeConditionLawName
                 or CompileTimeStructuralFactKind.TypeThreadSafetyLawAttributeConditionTypeDisplayName
                 or CompileTimeStructuralFactKind.TypeThreadSafetyLawAttributeConditionTypeBaseName
+                or CompileTimeStructuralFactKind.TypeThreadSafetyLawAttributeConditionTypeModuleName
                 or CompileTimeStructuralFactKind.FieldThreadSafetyLawAttributeLawName
                 or CompileTimeStructuralFactKind.FieldThreadSafetyLawAttributeConditionLawName
                 or CompileTimeStructuralFactKind.FieldThreadSafetyLawAttributeConditionTypeDisplayName
-                or CompileTimeStructuralFactKind.FieldThreadSafetyLawAttributeConditionTypeBaseName => StarkTypeSymbols.Ascii,
+                or CompileTimeStructuralFactKind.FieldThreadSafetyLawAttributeConditionTypeBaseName
+                or CompileTimeStructuralFactKind.FieldThreadSafetyLawAttributeConditionTypeModuleName => StarkTypeSymbols.Ascii,
             _ => StarkTypeSymbols.Bool
         };
         return true;
@@ -2611,6 +3148,7 @@ internal static class CompileTimeStructuralFacts
             or CompileTimeStructuralFactKind.FieldTypeIsDynamic
             or CompileTimeStructuralFactKind.FieldTypeIsFunctionPointer
             or CompileTimeStructuralFactKind.FieldTypeIsClosure
+            or CompileTimeStructuralFactKind.FieldTypeIsDynTrait
             or CompileTimeStructuralFactKind.FieldTypeIsNamed
             or CompileTimeStructuralFactKind.FieldTypeIsStruct
             or CompileTimeStructuralFactKind.FieldTypeIsRecord
@@ -2624,6 +3162,7 @@ internal static class CompileTimeStructuralFacts
     {
         return kind is CompileTimeStructuralFactKind.FieldTypeDisplayName
             or CompileTimeStructuralFactKind.FieldTypeBaseName
+            or CompileTimeStructuralFactKind.FieldTypeModuleName
             or CompileTimeStructuralFactKind.FieldTypeIsGenericInstantiation
             or CompileTimeStructuralFactKind.FieldTypeArgumentCount
             or CompileTimeStructuralFactKind.FieldTypeComptimeArgumentCount
@@ -2644,6 +3183,30 @@ internal static class CompileTimeStructuralFacts
             or CompileTimeStructuralFactKind.FieldTypeUnqualifiedTypeIs;
     }
 
+    public static bool IsTypeVisibilityFact(CompileTimeStructuralFactKind kind)
+    {
+        return kind is CompileTimeStructuralFactKind.TypeVisibilityIsModule
+            or CompileTimeStructuralFactKind.TypeVisibilityIsInternal
+            or CompileTimeStructuralFactKind.TypeVisibilityIsPublic
+            or CompileTimeStructuralFactKind.TypeVisibilityIsExport;
+    }
+
+    public static bool IsFieldVisibilityFact(CompileTimeStructuralFactKind kind)
+    {
+        return kind is CompileTimeStructuralFactKind.FieldVisibilityIsModule
+            or CompileTimeStructuralFactKind.FieldVisibilityIsInternal
+            or CompileTimeStructuralFactKind.FieldVisibilityIsPublic
+            or CompileTimeStructuralFactKind.FieldVisibilityIsExport;
+    }
+
+    public static bool IsMethodVisibilityFact(CompileTimeStructuralFactKind kind)
+    {
+        return kind is CompileTimeStructuralFactKind.MethodVisibilityIsModule
+            or CompileTimeStructuralFactKind.MethodVisibilityIsInternal
+            or CompileTimeStructuralFactKind.MethodVisibilityIsPublic
+            or CompileTimeStructuralFactKind.MethodVisibilityIsExport;
+    }
+
     public static bool IsTypeThreadSafetyLawAttributeIndexedFact(CompileTimeStructuralFactKind kind)
     {
         return kind is CompileTimeStructuralFactKind.TypeThreadSafetyLawAttributeLawName
@@ -2661,6 +3224,7 @@ internal static class CompileTimeStructuralFacts
             or CompileTimeStructuralFactKind.TypeThreadSafetyLawAttributeConditionTypeIsDynamic
             or CompileTimeStructuralFactKind.TypeThreadSafetyLawAttributeConditionTypeIsFunctionPointer
             or CompileTimeStructuralFactKind.TypeThreadSafetyLawAttributeConditionTypeIsClosure
+            or CompileTimeStructuralFactKind.TypeThreadSafetyLawAttributeConditionTypeIsDynTrait
             or CompileTimeStructuralFactKind.TypeThreadSafetyLawAttributeConditionTypeIsNamed
             or CompileTimeStructuralFactKind.TypeThreadSafetyLawAttributeConditionTypeIsStruct
             or CompileTimeStructuralFactKind.TypeThreadSafetyLawAttributeConditionTypeIsRecord
@@ -2670,6 +3234,7 @@ internal static class CompileTimeStructuralFacts
             or CompileTimeStructuralFactKind.TypeThreadSafetyLawAttributeConditionTypeHasConcreteLayout
             or CompileTimeStructuralFactKind.TypeThreadSafetyLawAttributeConditionTypeDisplayName
             or CompileTimeStructuralFactKind.TypeThreadSafetyLawAttributeConditionTypeBaseName
+            or CompileTimeStructuralFactKind.TypeThreadSafetyLawAttributeConditionTypeModuleName
             or CompileTimeStructuralFactKind.TypeThreadSafetyLawAttributeConditionTypeIsGenericInstantiation
             or CompileTimeStructuralFactKind.TypeThreadSafetyLawAttributeConditionTypeArgumentCount
             or CompileTimeStructuralFactKind.TypeThreadSafetyLawAttributeConditionTypeComptimeArgumentCount;
@@ -2693,6 +3258,7 @@ internal static class CompileTimeStructuralFacts
             or CompileTimeStructuralFactKind.FieldThreadSafetyLawAttributeConditionTypeIsDynamic
             or CompileTimeStructuralFactKind.FieldThreadSafetyLawAttributeConditionTypeIsFunctionPointer
             or CompileTimeStructuralFactKind.FieldThreadSafetyLawAttributeConditionTypeIsClosure
+            or CompileTimeStructuralFactKind.FieldThreadSafetyLawAttributeConditionTypeIsDynTrait
             or CompileTimeStructuralFactKind.FieldThreadSafetyLawAttributeConditionTypeIsNamed
             or CompileTimeStructuralFactKind.FieldThreadSafetyLawAttributeConditionTypeIsStruct
             or CompileTimeStructuralFactKind.FieldThreadSafetyLawAttributeConditionTypeIsRecord
@@ -2702,6 +3268,7 @@ internal static class CompileTimeStructuralFacts
             or CompileTimeStructuralFactKind.FieldThreadSafetyLawAttributeConditionTypeHasConcreteLayout
             or CompileTimeStructuralFactKind.FieldThreadSafetyLawAttributeConditionTypeDisplayName
             or CompileTimeStructuralFactKind.FieldThreadSafetyLawAttributeConditionTypeBaseName
+            or CompileTimeStructuralFactKind.FieldThreadSafetyLawAttributeConditionTypeModuleName
             or CompileTimeStructuralFactKind.FieldThreadSafetyLawAttributeConditionTypeIsGenericInstantiation
             or CompileTimeStructuralFactKind.FieldThreadSafetyLawAttributeConditionTypeArgumentCount
             or CompileTimeStructuralFactKind.FieldThreadSafetyLawAttributeConditionTypeComptimeArgumentCount;
@@ -2724,6 +3291,7 @@ internal static class CompileTimeStructuralFacts
             or CompileTimeStructuralFactKind.FieldThreadSafetyLawAttributeConditionTypeIsDynamic
             or CompileTimeStructuralFactKind.FieldThreadSafetyLawAttributeConditionTypeIsFunctionPointer
             or CompileTimeStructuralFactKind.FieldThreadSafetyLawAttributeConditionTypeIsClosure
+            or CompileTimeStructuralFactKind.FieldThreadSafetyLawAttributeConditionTypeIsDynTrait
             or CompileTimeStructuralFactKind.FieldThreadSafetyLawAttributeConditionTypeIsNamed
             or CompileTimeStructuralFactKind.FieldThreadSafetyLawAttributeConditionTypeIsStruct
             or CompileTimeStructuralFactKind.FieldThreadSafetyLawAttributeConditionTypeIsRecord
@@ -2733,6 +3301,7 @@ internal static class CompileTimeStructuralFacts
             or CompileTimeStructuralFactKind.FieldThreadSafetyLawAttributeConditionTypeHasConcreteLayout
             or CompileTimeStructuralFactKind.FieldThreadSafetyLawAttributeConditionTypeDisplayName
             or CompileTimeStructuralFactKind.FieldThreadSafetyLawAttributeConditionTypeBaseName
+            or CompileTimeStructuralFactKind.FieldThreadSafetyLawAttributeConditionTypeModuleName
             or CompileTimeStructuralFactKind.FieldThreadSafetyLawAttributeConditionTypeIsGenericInstantiation
             or CompileTimeStructuralFactKind.FieldThreadSafetyLawAttributeConditionTypeArgumentCount
             or CompileTimeStructuralFactKind.FieldThreadSafetyLawAttributeConditionTypeComptimeArgumentCount;
@@ -2742,11 +3311,13 @@ internal static class CompileTimeStructuralFacts
     {
         return kind is CompileTimeStructuralFactKind.TypeThreadSafetyLawAttributeConditionTypeDisplayName
             or CompileTimeStructuralFactKind.TypeThreadSafetyLawAttributeConditionTypeBaseName
+            or CompileTimeStructuralFactKind.TypeThreadSafetyLawAttributeConditionTypeModuleName
             or CompileTimeStructuralFactKind.TypeThreadSafetyLawAttributeConditionTypeIsGenericInstantiation
             or CompileTimeStructuralFactKind.TypeThreadSafetyLawAttributeConditionTypeArgumentCount
             or CompileTimeStructuralFactKind.TypeThreadSafetyLawAttributeConditionTypeComptimeArgumentCount
             or CompileTimeStructuralFactKind.FieldThreadSafetyLawAttributeConditionTypeDisplayName
             or CompileTimeStructuralFactKind.FieldThreadSafetyLawAttributeConditionTypeBaseName
+            or CompileTimeStructuralFactKind.FieldThreadSafetyLawAttributeConditionTypeModuleName
             or CompileTimeStructuralFactKind.FieldThreadSafetyLawAttributeConditionTypeIsGenericInstantiation
             or CompileTimeStructuralFactKind.FieldThreadSafetyLawAttributeConditionTypeArgumentCount
             or CompileTimeStructuralFactKind.FieldThreadSafetyLawAttributeConditionTypeComptimeArgumentCount;
@@ -2763,6 +3334,7 @@ internal static class CompileTimeStructuralFacts
             or CompileTimeStructuralFactKind.TypeThreadSafetyLawAttributeConditionTypeIsDynamic
             or CompileTimeStructuralFactKind.TypeThreadSafetyLawAttributeConditionTypeIsFunctionPointer
             or CompileTimeStructuralFactKind.TypeThreadSafetyLawAttributeConditionTypeIsClosure
+            or CompileTimeStructuralFactKind.TypeThreadSafetyLawAttributeConditionTypeIsDynTrait
             or CompileTimeStructuralFactKind.TypeThreadSafetyLawAttributeConditionTypeIsNamed
             or CompileTimeStructuralFactKind.TypeThreadSafetyLawAttributeConditionTypeIsStruct
             or CompileTimeStructuralFactKind.TypeThreadSafetyLawAttributeConditionTypeIsRecord
@@ -2779,6 +3351,7 @@ internal static class CompileTimeStructuralFacts
             or CompileTimeStructuralFactKind.FieldThreadSafetyLawAttributeConditionTypeIsDynamic
             or CompileTimeStructuralFactKind.FieldThreadSafetyLawAttributeConditionTypeIsFunctionPointer
             or CompileTimeStructuralFactKind.FieldThreadSafetyLawAttributeConditionTypeIsClosure
+            or CompileTimeStructuralFactKind.FieldThreadSafetyLawAttributeConditionTypeIsDynTrait
             or CompileTimeStructuralFactKind.FieldThreadSafetyLawAttributeConditionTypeIsNamed
             or CompileTimeStructuralFactKind.FieldThreadSafetyLawAttributeConditionTypeIsStruct
             or CompileTimeStructuralFactKind.FieldThreadSafetyLawAttributeConditionTypeIsRecord
@@ -2799,6 +3372,7 @@ internal static class CompileTimeStructuralFacts
             or CompileTimeStructuralFactKind.FunctionPointerReturnTypeIsDynamic
             or CompileTimeStructuralFactKind.FunctionPointerReturnTypeIsFunctionPointer
             or CompileTimeStructuralFactKind.FunctionPointerReturnTypeIsClosure
+            or CompileTimeStructuralFactKind.FunctionPointerReturnTypeIsDynTrait
             or CompileTimeStructuralFactKind.FunctionPointerReturnTypeIsNamed
             or CompileTimeStructuralFactKind.FunctionPointerReturnTypeIsStruct
             or CompileTimeStructuralFactKind.FunctionPointerReturnTypeIsRecord
@@ -2812,6 +3386,7 @@ internal static class CompileTimeStructuralFacts
     {
         return kind is CompileTimeStructuralFactKind.FunctionPointerReturnTypeDisplayName
             or CompileTimeStructuralFactKind.FunctionPointerReturnTypeBaseName
+            or CompileTimeStructuralFactKind.FunctionPointerReturnTypeModuleName
             or CompileTimeStructuralFactKind.FunctionPointerReturnTypeIsGenericInstantiation
             or CompileTimeStructuralFactKind.FunctionPointerReturnTypeArgumentCount
             or CompileTimeStructuralFactKind.FunctionPointerReturnTypeComptimeArgumentCount
@@ -2843,6 +3418,7 @@ internal static class CompileTimeStructuralFacts
             or CompileTimeStructuralFactKind.FunctionPointerParameterTypeIsDynamic
             or CompileTimeStructuralFactKind.FunctionPointerParameterTypeIsFunctionPointer
             or CompileTimeStructuralFactKind.FunctionPointerParameterTypeIsClosure
+            or CompileTimeStructuralFactKind.FunctionPointerParameterTypeIsDynTrait
             or CompileTimeStructuralFactKind.FunctionPointerParameterTypeIsNamed
             or CompileTimeStructuralFactKind.FunctionPointerParameterTypeIsStruct
             or CompileTimeStructuralFactKind.FunctionPointerParameterTypeIsRecord
@@ -2856,6 +3432,7 @@ internal static class CompileTimeStructuralFacts
     {
         return kind is CompileTimeStructuralFactKind.FunctionPointerParameterTypeDisplayName
             or CompileTimeStructuralFactKind.FunctionPointerParameterTypeBaseName
+            or CompileTimeStructuralFactKind.FunctionPointerParameterTypeModuleName
             or CompileTimeStructuralFactKind.FunctionPointerParameterTypeIsGenericInstantiation
             or CompileTimeStructuralFactKind.FunctionPointerParameterTypeArgumentCount
             or CompileTimeStructuralFactKind.FunctionPointerParameterTypeComptimeArgumentCount
@@ -2901,6 +3478,7 @@ internal static class CompileTimeStructuralFacts
             or CompileTimeStructuralFactKind.ClosureReturnTypeIsDynamic
             or CompileTimeStructuralFactKind.ClosureReturnTypeIsFunctionPointer
             or CompileTimeStructuralFactKind.ClosureReturnTypeIsClosure
+            or CompileTimeStructuralFactKind.ClosureReturnTypeIsDynTrait
             or CompileTimeStructuralFactKind.ClosureReturnTypeIsNamed
             or CompileTimeStructuralFactKind.ClosureReturnTypeIsStruct
             or CompileTimeStructuralFactKind.ClosureReturnTypeIsRecord
@@ -2914,6 +3492,7 @@ internal static class CompileTimeStructuralFacts
     {
         return kind is CompileTimeStructuralFactKind.ClosureReturnTypeDisplayName
             or CompileTimeStructuralFactKind.ClosureReturnTypeBaseName
+            or CompileTimeStructuralFactKind.ClosureReturnTypeModuleName
             or CompileTimeStructuralFactKind.ClosureReturnTypeIsGenericInstantiation
             or CompileTimeStructuralFactKind.ClosureReturnTypeArgumentCount
             or CompileTimeStructuralFactKind.ClosureReturnTypeComptimeArgumentCount
@@ -2945,6 +3524,7 @@ internal static class CompileTimeStructuralFacts
             or CompileTimeStructuralFactKind.ClosureParameterTypeIsDynamic
             or CompileTimeStructuralFactKind.ClosureParameterTypeIsFunctionPointer
             or CompileTimeStructuralFactKind.ClosureParameterTypeIsClosure
+            or CompileTimeStructuralFactKind.ClosureParameterTypeIsDynTrait
             or CompileTimeStructuralFactKind.ClosureParameterTypeIsNamed
             or CompileTimeStructuralFactKind.ClosureParameterTypeIsStruct
             or CompileTimeStructuralFactKind.ClosureParameterTypeIsRecord
@@ -2958,6 +3538,7 @@ internal static class CompileTimeStructuralFacts
     {
         return kind is CompileTimeStructuralFactKind.ClosureParameterTypeDisplayName
             or CompileTimeStructuralFactKind.ClosureParameterTypeBaseName
+            or CompileTimeStructuralFactKind.ClosureParameterTypeModuleName
             or CompileTimeStructuralFactKind.ClosureParameterTypeIsGenericInstantiation
             or CompileTimeStructuralFactKind.ClosureParameterTypeArgumentCount
             or CompileTimeStructuralFactKind.ClosureParameterTypeComptimeArgumentCount
@@ -3003,6 +3584,7 @@ internal static class CompileTimeStructuralFacts
             or CompileTimeStructuralFactKind.MethodReturnTypeIsDynamic
             or CompileTimeStructuralFactKind.MethodReturnTypeIsFunctionPointer
             or CompileTimeStructuralFactKind.MethodReturnTypeIsClosure
+            or CompileTimeStructuralFactKind.MethodReturnTypeIsDynTrait
             or CompileTimeStructuralFactKind.MethodReturnTypeIsNamed
             or CompileTimeStructuralFactKind.MethodReturnTypeIsStruct
             or CompileTimeStructuralFactKind.MethodReturnTypeIsRecord
@@ -3023,6 +3605,7 @@ internal static class CompileTimeStructuralFacts
             or CompileTimeStructuralFactKind.MethodParameterTypeIsDynamic
             or CompileTimeStructuralFactKind.MethodParameterTypeIsFunctionPointer
             or CompileTimeStructuralFactKind.MethodParameterTypeIsClosure
+            or CompileTimeStructuralFactKind.MethodParameterTypeIsDynTrait
             or CompileTimeStructuralFactKind.MethodParameterTypeIsNamed
             or CompileTimeStructuralFactKind.MethodParameterTypeIsStruct
             or CompileTimeStructuralFactKind.MethodParameterTypeIsRecord
@@ -3050,6 +3633,7 @@ internal static class CompileTimeStructuralFacts
     {
         return kind is CompileTimeStructuralFactKind.MethodReturnTypeDisplayName
             or CompileTimeStructuralFactKind.MethodReturnTypeBaseName
+            or CompileTimeStructuralFactKind.MethodReturnTypeModuleName
             or CompileTimeStructuralFactKind.MethodReturnTypeIsGenericInstantiation
             or CompileTimeStructuralFactKind.MethodReturnTypeArgumentCount
             or CompileTimeStructuralFactKind.MethodReturnTypeComptimeArgumentCount
@@ -3074,6 +3658,7 @@ internal static class CompileTimeStructuralFacts
     {
         return kind is CompileTimeStructuralFactKind.MethodParameterTypeDisplayName
             or CompileTimeStructuralFactKind.MethodParameterTypeBaseName
+            or CompileTimeStructuralFactKind.MethodParameterTypeModuleName
             or CompileTimeStructuralFactKind.MethodParameterTypeIsGenericInstantiation
             or CompileTimeStructuralFactKind.MethodParameterTypeArgumentCount
             or CompileTimeStructuralFactKind.MethodParameterTypeComptimeArgumentCount
@@ -3092,6 +3677,145 @@ internal static class CompileTimeStructuralFacts
             or CompileTimeStructuralFactKind.MethodParameterTypeInitializationKindIsInit
             or CompileTimeStructuralFactKind.MethodParameterTypeIsMutableView
             or CompileTimeStructuralFactKind.MethodParameterTypeUnqualifiedTypeIs;
+    }
+
+    public static bool IsFunctionPointerReturnTypeArgumentFact(CompileTimeStructuralFactKind kind)
+    {
+        return IsCallableNestedTypeArgumentFamilyFact(
+            kind,
+            CompileTimeStructuralFactKind.FunctionPointerReturnTypeArgumentTypeIs);
+    }
+
+    public static bool IsFunctionPointerParameterTypeArgumentFact(CompileTimeStructuralFactKind kind)
+    {
+        return IsCallableNestedTypeArgumentFamilyFact(
+            kind,
+            CompileTimeStructuralFactKind.FunctionPointerParameterTypeArgumentTypeIs);
+    }
+
+    public static bool IsClosureReturnTypeArgumentFact(CompileTimeStructuralFactKind kind)
+    {
+        return IsCallableNestedTypeArgumentFamilyFact(
+            kind,
+            CompileTimeStructuralFactKind.ClosureReturnTypeArgumentTypeIs);
+    }
+
+    public static bool IsClosureParameterTypeArgumentFact(CompileTimeStructuralFactKind kind)
+    {
+        return IsCallableNestedTypeArgumentFamilyFact(
+            kind,
+            CompileTimeStructuralFactKind.ClosureParameterTypeArgumentTypeIs);
+    }
+
+    public static bool IsMethodReturnTypeArgumentFact(CompileTimeStructuralFactKind kind)
+    {
+        return IsCallableNestedTypeArgumentFamilyFact(
+            kind,
+            CompileTimeStructuralFactKind.MethodReturnTypeArgumentTypeIs);
+    }
+
+    public static bool IsMethodParameterTypeArgumentFact(CompileTimeStructuralFactKind kind)
+    {
+        return IsCallableNestedTypeArgumentFamilyFact(
+            kind,
+            CompileTimeStructuralFactKind.MethodParameterTypeArgumentTypeIs);
+    }
+
+    public static bool IsCallableNestedTypeArgumentExactFact(CompileTimeStructuralFactKind kind)
+    {
+        return GetCallableNestedTypeArgumentOffset(kind) == 0;
+    }
+
+    public static bool IsCallableNestedTypeArgumentTypePredicate(CompileTimeStructuralFactKind kind)
+    {
+        var offset = GetCallableNestedTypeArgumentOffset(kind);
+        return offset is >= CallableNestedTypeArgumentPredicateStartOffset
+            and <= CallableNestedTypeArgumentPredicateEndOffset;
+    }
+
+    public static bool IsCallableNestedTypeArgumentMetadataFact(CompileTimeStructuralFactKind kind)
+    {
+        var offset = GetCallableNestedTypeArgumentOffset(kind);
+        return offset is >= CallableNestedTypeArgumentDisplayNameOffset
+            and <= CallableNestedTypeArgumentComptimeArgumentCountOffset;
+    }
+
+    private static bool IsCallableNestedTypeArgumentFamilyFact(
+        CompileTimeStructuralFactKind kind,
+        CompileTimeStructuralFactKind familyStart)
+    {
+        var offset = (int)kind - (int)familyStart;
+        return offset is >= 0 and < CallableNestedTypeArgumentFactFamilySize;
+    }
+
+    private static int GetCallableNestedTypeArgumentOffset(CompileTimeStructuralFactKind kind)
+    {
+        if (IsFunctionPointerReturnTypeArgumentFact(kind))
+        {
+            return (int)kind - (int)CompileTimeStructuralFactKind.FunctionPointerReturnTypeArgumentTypeIs;
+        }
+
+        if (IsFunctionPointerParameterTypeArgumentFact(kind))
+        {
+            return (int)kind - (int)CompileTimeStructuralFactKind.FunctionPointerParameterTypeArgumentTypeIs;
+        }
+
+        if (IsClosureReturnTypeArgumentFact(kind))
+        {
+            return (int)kind - (int)CompileTimeStructuralFactKind.ClosureReturnTypeArgumentTypeIs;
+        }
+
+        if (IsClosureParameterTypeArgumentFact(kind))
+        {
+            return (int)kind - (int)CompileTimeStructuralFactKind.ClosureParameterTypeArgumentTypeIs;
+        }
+
+        if (IsMethodReturnTypeArgumentFact(kind))
+        {
+            return (int)kind - (int)CompileTimeStructuralFactKind.MethodReturnTypeArgumentTypeIs;
+        }
+
+        if (IsMethodParameterTypeArgumentFact(kind))
+        {
+            return (int)kind - (int)CompileTimeStructuralFactKind.MethodParameterTypeArgumentTypeIs;
+        }
+
+        return -1;
+    }
+
+    private static bool IsCallableNestedTypeArgumentDisplayNameFact(CompileTimeStructuralFactKind kind)
+    {
+        return GetCallableNestedTypeArgumentOffset(kind) == CallableNestedTypeArgumentDisplayNameOffset;
+    }
+
+    private static bool IsCallableNestedTypeArgumentBaseNameFact(CompileTimeStructuralFactKind kind)
+    {
+        return GetCallableNestedTypeArgumentOffset(kind) == CallableNestedTypeArgumentBaseNameOffset;
+    }
+
+    private static bool IsCallableNestedTypeArgumentModuleNameFact(CompileTimeStructuralFactKind kind)
+    {
+        return GetCallableNestedTypeArgumentOffset(kind) == CallableNestedTypeArgumentModuleNameOffset;
+    }
+
+    private static bool IsCallableNestedTypeArgumentIsGenericInstantiationFact(CompileTimeStructuralFactKind kind)
+    {
+        return GetCallableNestedTypeArgumentOffset(kind) == CallableNestedTypeArgumentIsGenericInstantiationOffset;
+    }
+
+    private static bool IsCallableNestedTypeArgumentCountFact(CompileTimeStructuralFactKind kind)
+    {
+        var offset = GetCallableNestedTypeArgumentOffset(kind);
+        return offset is CallableNestedTypeArgumentArgumentCountOffset
+            or CallableNestedTypeArgumentComptimeArgumentCountOffset;
+    }
+
+    private static bool IsCallableNestedTypeArgumentTextFact(CompileTimeStructuralFactKind kind)
+    {
+        var offset = GetCallableNestedTypeArgumentOffset(kind);
+        return offset is CallableNestedTypeArgumentDisplayNameOffset
+            or CallableNestedTypeArgumentBaseNameOffset
+            or CallableNestedTypeArgumentModuleNameOffset;
     }
 
     private static bool IsNestedTypeQualifierMetadataFact(CompileTimeStructuralFactKind kind)
@@ -3215,6 +3939,7 @@ internal static class CompileTimeStructuralFacts
             or CompileTimeStructuralFactKind.MethodThreadSafetyLawPredicateTypeIsDynamic
             or CompileTimeStructuralFactKind.MethodThreadSafetyLawPredicateTypeIsFunctionPointer
             or CompileTimeStructuralFactKind.MethodThreadSafetyLawPredicateTypeIsClosure
+            or CompileTimeStructuralFactKind.MethodThreadSafetyLawPredicateTypeIsDynTrait
             or CompileTimeStructuralFactKind.MethodThreadSafetyLawPredicateTypeIsNamed
             or CompileTimeStructuralFactKind.MethodThreadSafetyLawPredicateTypeIsStruct
             or CompileTimeStructuralFactKind.MethodThreadSafetyLawPredicateTypeIsRecord
@@ -3224,6 +3949,7 @@ internal static class CompileTimeStructuralFacts
             or CompileTimeStructuralFactKind.MethodThreadSafetyLawPredicateTypeHasConcreteLayout
             or CompileTimeStructuralFactKind.MethodThreadSafetyLawPredicateTypeDisplayName
             or CompileTimeStructuralFactKind.MethodThreadSafetyLawPredicateTypeBaseName
+            or CompileTimeStructuralFactKind.MethodThreadSafetyLawPredicateTypeModuleName
             or CompileTimeStructuralFactKind.MethodThreadSafetyLawPredicateTypeIsGenericInstantiation
             or CompileTimeStructuralFactKind.MethodThreadSafetyLawPredicateTypeArgumentCount
             or CompileTimeStructuralFactKind.MethodThreadSafetyLawPredicateTypeComptimeArgumentCount;
@@ -3240,6 +3966,7 @@ internal static class CompileTimeStructuralFacts
             or CompileTimeStructuralFactKind.MethodThreadSafetyLawPredicateTypeIsDynamic
             or CompileTimeStructuralFactKind.MethodThreadSafetyLawPredicateTypeIsFunctionPointer
             or CompileTimeStructuralFactKind.MethodThreadSafetyLawPredicateTypeIsClosure
+            or CompileTimeStructuralFactKind.MethodThreadSafetyLawPredicateTypeIsDynTrait
             or CompileTimeStructuralFactKind.MethodThreadSafetyLawPredicateTypeIsNamed
             or CompileTimeStructuralFactKind.MethodThreadSafetyLawPredicateTypeIsStruct
             or CompileTimeStructuralFactKind.MethodThreadSafetyLawPredicateTypeIsRecord
@@ -3253,6 +3980,7 @@ internal static class CompileTimeStructuralFacts
     {
         return kind is CompileTimeStructuralFactKind.MethodThreadSafetyLawPredicateTypeDisplayName
             or CompileTimeStructuralFactKind.MethodThreadSafetyLawPredicateTypeBaseName
+            or CompileTimeStructuralFactKind.MethodThreadSafetyLawPredicateTypeModuleName
             or CompileTimeStructuralFactKind.MethodThreadSafetyLawPredicateTypeIsGenericInstantiation
             or CompileTimeStructuralFactKind.MethodThreadSafetyLawPredicateTypeArgumentCount
             or CompileTimeStructuralFactKind.MethodThreadSafetyLawPredicateTypeComptimeArgumentCount;
@@ -3270,6 +3998,7 @@ internal static class CompileTimeStructuralFacts
             or CompileTimeStructuralFactKind.MethodGenericParameterTraitBoundTypeIsDynamic
             or CompileTimeStructuralFactKind.MethodGenericParameterTraitBoundTypeIsFunctionPointer
             or CompileTimeStructuralFactKind.MethodGenericParameterTraitBoundTypeIsClosure
+            or CompileTimeStructuralFactKind.MethodGenericParameterTraitBoundTypeIsDynTrait
             or CompileTimeStructuralFactKind.MethodGenericParameterTraitBoundTypeIsNamed
             or CompileTimeStructuralFactKind.MethodGenericParameterTraitBoundTypeIsStruct
             or CompileTimeStructuralFactKind.MethodGenericParameterTraitBoundTypeIsRecord
@@ -3279,6 +4008,7 @@ internal static class CompileTimeStructuralFacts
             or CompileTimeStructuralFactKind.MethodGenericParameterTraitBoundTypeHasConcreteLayout
             or CompileTimeStructuralFactKind.MethodGenericParameterTraitBoundTypeDisplayName
             or CompileTimeStructuralFactKind.MethodGenericParameterTraitBoundTypeBaseName
+            or CompileTimeStructuralFactKind.MethodGenericParameterTraitBoundTypeModuleName
             or CompileTimeStructuralFactKind.MethodGenericParameterTraitBoundTypeIsGenericInstantiation
             or CompileTimeStructuralFactKind.MethodGenericParameterTraitBoundTypeArgumentCount
             or CompileTimeStructuralFactKind.MethodGenericParameterTraitBoundTypeComptimeArgumentCount;
@@ -3295,6 +4025,7 @@ internal static class CompileTimeStructuralFacts
             or CompileTimeStructuralFactKind.MethodGenericParameterTraitBoundTypeIsDynamic
             or CompileTimeStructuralFactKind.MethodGenericParameterTraitBoundTypeIsFunctionPointer
             or CompileTimeStructuralFactKind.MethodGenericParameterTraitBoundTypeIsClosure
+            or CompileTimeStructuralFactKind.MethodGenericParameterTraitBoundTypeIsDynTrait
             or CompileTimeStructuralFactKind.MethodGenericParameterTraitBoundTypeIsNamed
             or CompileTimeStructuralFactKind.MethodGenericParameterTraitBoundTypeIsStruct
             or CompileTimeStructuralFactKind.MethodGenericParameterTraitBoundTypeIsRecord
@@ -3308,6 +4039,7 @@ internal static class CompileTimeStructuralFacts
     {
         return kind is CompileTimeStructuralFactKind.MethodGenericParameterTraitBoundTypeDisplayName
             or CompileTimeStructuralFactKind.MethodGenericParameterTraitBoundTypeBaseName
+            or CompileTimeStructuralFactKind.MethodGenericParameterTraitBoundTypeModuleName
             or CompileTimeStructuralFactKind.MethodGenericParameterTraitBoundTypeIsGenericInstantiation
             or CompileTimeStructuralFactKind.MethodGenericParameterTraitBoundTypeArgumentCount
             or CompileTimeStructuralFactKind.MethodGenericParameterTraitBoundTypeComptimeArgumentCount;
@@ -3325,6 +4057,7 @@ internal static class CompileTimeStructuralFacts
             or CompileTimeStructuralFactKind.ImplementedTraitTypeIsDynamic
             or CompileTimeStructuralFactKind.ImplementedTraitTypeIsFunctionPointer
             or CompileTimeStructuralFactKind.ImplementedTraitTypeIsClosure
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeIsDynTrait
             or CompileTimeStructuralFactKind.ImplementedTraitTypeIsNamed
             or CompileTimeStructuralFactKind.ImplementedTraitTypeIsStruct
             or CompileTimeStructuralFactKind.ImplementedTraitTypeIsRecord
@@ -3334,9 +4067,60 @@ internal static class CompileTimeStructuralFacts
             or CompileTimeStructuralFactKind.ImplementedTraitTypeHasConcreteLayout
             or CompileTimeStructuralFactKind.ImplementedTraitTypeDisplayName
             or CompileTimeStructuralFactKind.ImplementedTraitTypeBaseName
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeModuleName
             or CompileTimeStructuralFactKind.ImplementedTraitTypeIsGenericInstantiation
             or CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentCount
-            or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentCount;
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentCount
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIs
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIsBool
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIsInteger
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIsFloat
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIsRawPointer
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIsFixedArray
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIsSlice
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIsDynamic
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIsFunctionPointer
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIsClosure
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIsDynTrait
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIsNamed
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIsStruct
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIsRecord
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIsEnum
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIsTrait
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIsDoctrine
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeHasConcreteLayout
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeDisplayName
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeBaseName
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeModuleName
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIsGenericInstantiation
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeArgumentCount
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeComptimeArgumentCount
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentName
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIs
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIsBool
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIsInteger
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIsFloat
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIsRawPointer
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIsFixedArray
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIsSlice
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIsDynamic
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIsFunctionPointer
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIsClosure
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIsDynTrait
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIsNamed
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIsStruct
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIsRecord
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIsEnum
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIsTrait
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIsDoctrine
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeHasConcreteLayout
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeDisplayName
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeBaseName
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeModuleName
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIsGenericInstantiation
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeArgumentCount
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeComptimeArgumentCount
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentValueIs;
     }
 
     public static bool IsImplementedTraitTypePredicate(CompileTimeStructuralFactKind kind)
@@ -3350,6 +4134,7 @@ internal static class CompileTimeStructuralFacts
             or CompileTimeStructuralFactKind.ImplementedTraitTypeIsDynamic
             or CompileTimeStructuralFactKind.ImplementedTraitTypeIsFunctionPointer
             or CompileTimeStructuralFactKind.ImplementedTraitTypeIsClosure
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeIsDynTrait
             or CompileTimeStructuralFactKind.ImplementedTraitTypeIsNamed
             or CompileTimeStructuralFactKind.ImplementedTraitTypeIsStruct
             or CompileTimeStructuralFactKind.ImplementedTraitTypeIsRecord
@@ -3363,9 +4148,88 @@ internal static class CompileTimeStructuralFacts
     {
         return kind is CompileTimeStructuralFactKind.ImplementedTraitTypeDisplayName
             or CompileTimeStructuralFactKind.ImplementedTraitTypeBaseName
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeModuleName
             or CompileTimeStructuralFactKind.ImplementedTraitTypeIsGenericInstantiation
             or CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentCount
             or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentCount;
+    }
+
+    public static bool IsImplementedTraitTypeArgumentIndexedFact(CompileTimeStructuralFactKind kind)
+    {
+        return kind == CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIs
+            || IsImplementedTraitTypeArgumentTypePredicate(kind)
+            || IsImplementedTraitTypeArgumentTypeMetadataFact(kind);
+    }
+
+    public static bool IsImplementedTraitTypeArgumentTypePredicate(CompileTimeStructuralFactKind kind)
+    {
+        return kind is CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIsBool
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIsInteger
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIsFloat
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIsRawPointer
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIsFixedArray
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIsSlice
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIsDynamic
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIsFunctionPointer
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIsClosure
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIsDynTrait
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIsNamed
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIsStruct
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIsRecord
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIsEnum
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIsTrait
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIsDoctrine
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeHasConcreteLayout;
+    }
+
+    public static bool IsImplementedTraitTypeArgumentTypeMetadataFact(CompileTimeStructuralFactKind kind)
+    {
+        return kind is CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeDisplayName
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeBaseName
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeModuleName
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIsGenericInstantiation
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeArgumentCount
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeComptimeArgumentCount;
+    }
+
+    public static bool IsImplementedTraitComptimeArgumentIndexedFact(CompileTimeStructuralFactKind kind)
+    {
+        return kind is CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentName
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIs
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentValueIs
+            || IsImplementedTraitComptimeArgumentTypePredicate(kind)
+            || IsImplementedTraitComptimeArgumentTypeMetadataFact(kind);
+    }
+
+    public static bool IsImplementedTraitComptimeArgumentTypePredicate(CompileTimeStructuralFactKind kind)
+    {
+        return kind is CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIsBool
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIsInteger
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIsFloat
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIsRawPointer
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIsFixedArray
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIsSlice
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIsDynamic
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIsFunctionPointer
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIsClosure
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIsDynTrait
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIsNamed
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIsStruct
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIsRecord
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIsEnum
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIsTrait
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIsDoctrine
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeHasConcreteLayout;
+    }
+
+    public static bool IsImplementedTraitComptimeArgumentTypeMetadataFact(CompileTimeStructuralFactKind kind)
+    {
+        return kind is CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeDisplayName
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeBaseName
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeModuleName
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIsGenericInstantiation
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeArgumentCount
+            or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeComptimeArgumentCount;
     }
 
     public static bool IsMethodComptimeGenericParameterTypePredicate(CompileTimeStructuralFactKind kind)
@@ -3379,6 +4243,7 @@ internal static class CompileTimeStructuralFacts
             or CompileTimeStructuralFactKind.MethodComptimeGenericParameterTypeIsDynamic
             or CompileTimeStructuralFactKind.MethodComptimeGenericParameterTypeIsFunctionPointer
             or CompileTimeStructuralFactKind.MethodComptimeGenericParameterTypeIsClosure
+            or CompileTimeStructuralFactKind.MethodComptimeGenericParameterTypeIsDynTrait
             or CompileTimeStructuralFactKind.MethodComptimeGenericParameterTypeIsNamed
             or CompileTimeStructuralFactKind.MethodComptimeGenericParameterTypeIsStruct
             or CompileTimeStructuralFactKind.MethodComptimeGenericParameterTypeIsRecord
@@ -3392,6 +4257,7 @@ internal static class CompileTimeStructuralFacts
     {
         return kind is CompileTimeStructuralFactKind.MethodComptimeGenericParameterTypeDisplayName
             or CompileTimeStructuralFactKind.MethodComptimeGenericParameterTypeBaseName
+            or CompileTimeStructuralFactKind.MethodComptimeGenericParameterTypeModuleName
             or CompileTimeStructuralFactKind.MethodComptimeGenericParameterTypeIsGenericInstantiation
             or CompileTimeStructuralFactKind.MethodComptimeGenericParameterTypeArgumentCount
             or CompileTimeStructuralFactKind.MethodComptimeGenericParameterTypeComptimeArgumentCount;
@@ -3401,6 +4267,10 @@ internal static class CompileTimeStructuralFacts
     {
         return (kind is CompileTimeStructuralFactKind.MethodName
             or CompileTimeStructuralFactKind.MethodModuleName
+            or CompileTimeStructuralFactKind.MethodVisibilityIsModule
+            or CompileTimeStructuralFactKind.MethodVisibilityIsInternal
+            or CompileTimeStructuralFactKind.MethodVisibilityIsPublic
+            or CompileTimeStructuralFactKind.MethodVisibilityIsExport
             or CompileTimeStructuralFactKind.MethodParameterCount
             or CompileTimeStructuralFactKind.MethodParameterName
             or CompileTimeStructuralFactKind.MethodReturnTypeIs
@@ -3437,6 +4307,8 @@ internal static class CompileTimeStructuralFacts
             || IsMethodParameterRawPointerElementCountExpressionFact(kind)
             || IsMethodReturnTypeMetadataFact(kind)
             || IsMethodParameterTypeMetadataFact(kind)
+            || IsMethodReturnTypeArgumentFact(kind)
+            || IsMethodParameterTypeArgumentFact(kind)
             || IsMethodGenericParameterTraitBoundIndexedFact(kind)
             || IsMethodComptimeGenericParameterTypePredicate(kind)
             || IsMethodComptimeGenericParameterTypeMetadataFact(kind)
@@ -3454,6 +4326,7 @@ internal static class CompileTimeStructuralFacts
             or CompileTimeStructuralFactKind.EnumVariantPayloadTypeIsDynamic
             or CompileTimeStructuralFactKind.EnumVariantPayloadTypeIsFunctionPointer
             or CompileTimeStructuralFactKind.EnumVariantPayloadTypeIsClosure
+            or CompileTimeStructuralFactKind.EnumVariantPayloadTypeIsDynTrait
             or CompileTimeStructuralFactKind.EnumVariantPayloadTypeIsNamed
             or CompileTimeStructuralFactKind.EnumVariantPayloadTypeIsStruct
             or CompileTimeStructuralFactKind.EnumVariantPayloadTypeIsRecord
@@ -3467,6 +4340,7 @@ internal static class CompileTimeStructuralFacts
     {
         return kind is CompileTimeStructuralFactKind.EnumVariantPayloadTypeDisplayName
             or CompileTimeStructuralFactKind.EnumVariantPayloadTypeBaseName
+            or CompileTimeStructuralFactKind.EnumVariantPayloadTypeModuleName
             or CompileTimeStructuralFactKind.EnumVariantPayloadTypeIsGenericInstantiation
             or CompileTimeStructuralFactKind.EnumVariantPayloadTypeArgumentCount
             or CompileTimeStructuralFactKind.EnumVariantPayloadTypeComptimeArgumentCount
@@ -3514,6 +4388,7 @@ internal static class CompileTimeStructuralFacts
             or CompileTimeStructuralFactKind.AssociatedTypeTargetTypeIsDynamic
             or CompileTimeStructuralFactKind.AssociatedTypeTargetTypeIsFunctionPointer
             or CompileTimeStructuralFactKind.AssociatedTypeTargetTypeIsClosure
+            or CompileTimeStructuralFactKind.AssociatedTypeTargetTypeIsDynTrait
             or CompileTimeStructuralFactKind.AssociatedTypeTargetTypeIsNamed
             or CompileTimeStructuralFactKind.AssociatedTypeTargetTypeIsStruct
             or CompileTimeStructuralFactKind.AssociatedTypeTargetTypeIsRecord
@@ -3527,6 +4402,7 @@ internal static class CompileTimeStructuralFacts
     {
         return kind is CompileTimeStructuralFactKind.AssociatedTypeTargetTypeDisplayName
             or CompileTimeStructuralFactKind.AssociatedTypeTargetTypeBaseName
+            or CompileTimeStructuralFactKind.AssociatedTypeTargetTypeModuleName
             or CompileTimeStructuralFactKind.AssociatedTypeTargetTypeIsGenericInstantiation
             or CompileTimeStructuralFactKind.AssociatedTypeTargetTypeArgumentCount
             or CompileTimeStructuralFactKind.AssociatedTypeTargetTypeComptimeArgumentCount;
@@ -3543,6 +4419,7 @@ internal static class CompileTimeStructuralFacts
             or CompileTimeStructuralFactKind.TypeArgumentTypeIsDynamic
             or CompileTimeStructuralFactKind.TypeArgumentTypeIsFunctionPointer
             or CompileTimeStructuralFactKind.TypeArgumentTypeIsClosure
+            or CompileTimeStructuralFactKind.TypeArgumentTypeIsDynTrait
             or CompileTimeStructuralFactKind.TypeArgumentTypeIsNamed
             or CompileTimeStructuralFactKind.TypeArgumentTypeIsStruct
             or CompileTimeStructuralFactKind.TypeArgumentTypeIsRecord
@@ -3556,6 +4433,7 @@ internal static class CompileTimeStructuralFacts
     {
         return kind is CompileTimeStructuralFactKind.TypeArgumentTypeDisplayName
             or CompileTimeStructuralFactKind.TypeArgumentTypeBaseName
+            or CompileTimeStructuralFactKind.TypeArgumentTypeModuleName
             or CompileTimeStructuralFactKind.TypeArgumentTypeIsGenericInstantiation
             or CompileTimeStructuralFactKind.TypeArgumentTypeArgumentCount
             or CompileTimeStructuralFactKind.TypeArgumentTypeComptimeArgumentCount;
@@ -3572,6 +4450,7 @@ internal static class CompileTimeStructuralFacts
             or CompileTimeStructuralFactKind.TypeComptimeGenericParameterTypeIsDynamic
             or CompileTimeStructuralFactKind.TypeComptimeGenericParameterTypeIsFunctionPointer
             or CompileTimeStructuralFactKind.TypeComptimeGenericParameterTypeIsClosure
+            or CompileTimeStructuralFactKind.TypeComptimeGenericParameterTypeIsDynTrait
             or CompileTimeStructuralFactKind.TypeComptimeGenericParameterTypeIsNamed
             or CompileTimeStructuralFactKind.TypeComptimeGenericParameterTypeIsStruct
             or CompileTimeStructuralFactKind.TypeComptimeGenericParameterTypeIsRecord
@@ -3585,6 +4464,7 @@ internal static class CompileTimeStructuralFacts
     {
         return kind is CompileTimeStructuralFactKind.TypeComptimeGenericParameterTypeDisplayName
             or CompileTimeStructuralFactKind.TypeComptimeGenericParameterTypeBaseName
+            or CompileTimeStructuralFactKind.TypeComptimeGenericParameterTypeModuleName
             or CompileTimeStructuralFactKind.TypeComptimeGenericParameterTypeIsGenericInstantiation
             or CompileTimeStructuralFactKind.TypeComptimeGenericParameterTypeArgumentCount
             or CompileTimeStructuralFactKind.TypeComptimeGenericParameterTypeComptimeArgumentCount;
@@ -3601,6 +4481,7 @@ internal static class CompileTimeStructuralFacts
             or CompileTimeStructuralFactKind.TypeComptimeArgumentTypeIsDynamic
             or CompileTimeStructuralFactKind.TypeComptimeArgumentTypeIsFunctionPointer
             or CompileTimeStructuralFactKind.TypeComptimeArgumentTypeIsClosure
+            or CompileTimeStructuralFactKind.TypeComptimeArgumentTypeIsDynTrait
             or CompileTimeStructuralFactKind.TypeComptimeArgumentTypeIsNamed
             or CompileTimeStructuralFactKind.TypeComptimeArgumentTypeIsStruct
             or CompileTimeStructuralFactKind.TypeComptimeArgumentTypeIsRecord
@@ -3614,6 +4495,7 @@ internal static class CompileTimeStructuralFacts
     {
         return kind is CompileTimeStructuralFactKind.TypeComptimeArgumentTypeDisplayName
             or CompileTimeStructuralFactKind.TypeComptimeArgumentTypeBaseName
+            or CompileTimeStructuralFactKind.TypeComptimeArgumentTypeModuleName
             or CompileTimeStructuralFactKind.TypeComptimeArgumentTypeIsGenericInstantiation
             or CompileTimeStructuralFactKind.TypeComptimeArgumentTypeArgumentCount
             or CompileTimeStructuralFactKind.TypeComptimeArgumentTypeComptimeArgumentCount;
@@ -3630,6 +4512,7 @@ internal static class CompileTimeStructuralFacts
             or CompileTimeStructuralFactKind.RawPointerElementTypeIsDynamic
             or CompileTimeStructuralFactKind.RawPointerElementTypeIsFunctionPointer
             or CompileTimeStructuralFactKind.RawPointerElementTypeIsClosure
+            or CompileTimeStructuralFactKind.RawPointerElementTypeIsDynTrait
             or CompileTimeStructuralFactKind.RawPointerElementTypeIsNamed
             or CompileTimeStructuralFactKind.RawPointerElementTypeIsStruct
             or CompileTimeStructuralFactKind.RawPointerElementTypeIsRecord
@@ -3650,6 +4533,7 @@ internal static class CompileTimeStructuralFacts
             or CompileTimeStructuralFactKind.TypeElementTypeIsDynamic
             or CompileTimeStructuralFactKind.TypeElementTypeIsFunctionPointer
             or CompileTimeStructuralFactKind.TypeElementTypeIsClosure
+            or CompileTimeStructuralFactKind.TypeElementTypeIsDynTrait
             or CompileTimeStructuralFactKind.TypeElementTypeIsNamed
             or CompileTimeStructuralFactKind.TypeElementTypeIsStruct
             or CompileTimeStructuralFactKind.TypeElementTypeIsRecord
@@ -3859,6 +4743,10 @@ internal static class CompileTimeStructuralFacts
             }
 
             var implementedTrait = implementedTraits[implementedTraitIndex];
+            var implementedTraitTypes = GetImplementedTraitTypes(namedType, namedTypeDefinition);
+            var implementedTraitType = implementedTraitIndex < implementedTraitTypes.Count
+                ? implementedTraitTypes[implementedTraitIndex]
+                : null;
             var implementedTraitSymbol = ResolveImplementedTraitSymbol(implementedTrait, resolveNamedType);
             if (kind == CompileTimeStructuralFactKind.ImplementedTraitTypeIs)
             {
@@ -3879,9 +4767,83 @@ internal static class CompileTimeStructuralFacts
                 return true;
             }
 
+            if (kind == CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIs
+                || IsImplementedTraitTypeArgumentTypePredicate(kind)
+                || IsImplementedTraitTypeArgumentTypeMetadataFact(kind))
+            {
+                if (implementedTraitType?.TypeArguments is not { } traitTypeArguments
+                    || !TryGetConcreteIndex(arguments, position: 1, out var typeArgumentIndex)
+                    || typeArgumentIndex >= traitTypeArguments.Count)
+                {
+                    return false;
+                }
+
+                var typeArgument = traitTypeArguments[typeArgumentIndex];
+                constant = kind switch
+                {
+                    CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIs =>
+                        CompileTimeConstant.Bool(
+                            arguments.AdditionalTypeArguments.Count == 1
+                            && TypesEquivalent(typeArgument, arguments.AdditionalTypeArguments[0])),
+                    _ when IsImplementedTraitTypeArgumentTypePredicate(kind) =>
+                        CompileTimeConstant.Bool(
+                            EvaluateTypePredicate(
+                                GetTypePredicate(kind),
+                                typeArgument,
+                                resolveNamedType,
+                                resolveConcreteLayout)),
+                    _ when IsImplementedTraitTypeArgumentTypeMetadataFact(kind) =>
+                        EvaluateNestedTypeMetadataFact(kind, typeArgument),
+                    _ => constant
+                };
+                return true;
+            }
+
+            if (kind is CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentName
+                or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIs
+                or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentValueIs
+                || IsImplementedTraitComptimeArgumentTypePredicate(kind)
+                || IsImplementedTraitComptimeArgumentTypeMetadataFact(kind))
+            {
+                if (implementedTraitType?.ComptimeValueArguments is not { } valueArguments
+                    || !TryGetConcreteIndex(arguments, position: 1, out var comptimeArgumentIndex)
+                    || comptimeArgumentIndex >= valueArguments.Count)
+                {
+                    return false;
+                }
+
+                var valueArgument = valueArguments[comptimeArgumentIndex];
+                constant = kind switch
+                {
+                    CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentName =>
+                        TextConstant(valueArgument.ParameterName),
+                    CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIs =>
+                        CompileTimeConstant.Bool(
+                            arguments.AdditionalTypeArguments.Count == 1
+                            && TypesEquivalent(valueArgument.Type, arguments.AdditionalTypeArguments[0])),
+                    _ when IsImplementedTraitComptimeArgumentTypePredicate(kind) =>
+                        CompileTimeConstant.Bool(
+                            EvaluateTypePredicate(
+                                GetTypePredicate(kind),
+                                valueArgument.Type,
+                                resolveNamedType,
+                                resolveConcreteLayout)),
+                    _ when IsImplementedTraitComptimeArgumentTypeMetadataFact(kind) =>
+                        EvaluateNestedTypeMetadataFact(kind, valueArgument.Type),
+                    CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentValueIs =>
+                        CompileTimeConstant.Bool(
+                            !valueArgument.IsSymbolic
+                            && arguments.ComptimeValueArguments.Count == 3
+                            && !arguments.ComptimeValueArguments[2].IsSymbolic
+                            && valueArgument.IntegerValue == arguments.ComptimeValueArguments[2].IntegerValue),
+                    _ => constant
+                };
+                return true;
+            }
+
             if (IsImplementedTraitTypePredicate(kind))
             {
-                var predicateType = StarkTypeSymbols.Named(StarkTypeSymbols.GetGenericBaseName(implementedTrait));
+                var predicateType = implementedTraitType ?? StarkTypeSymbols.Named(StarkTypeSymbols.GetGenericBaseName(implementedTrait));
                 constant = CompileTimeConstant.Bool(
                     EvaluateTypePredicate(
                         GetTypePredicate(kind),
@@ -3981,6 +4943,14 @@ internal static class CompileTimeStructuralFacts
                 _ => string.Empty
             };
             constant = TextConstant(text);
+            return true;
+        }
+
+        if (IsTypeVisibilityFact(kind))
+        {
+            constant = CompileTimeConstant.Bool(
+                (namedTypeDefinition ?? namedType) is { } symbol
+                && VisibilityMatchesFact(kind, symbol.Visibility));
             return true;
         }
 
@@ -4205,6 +5175,25 @@ internal static class CompileTimeStructuralFacts
             return true;
         }
 
+        if (IsFunctionPointerReturnTypeArgumentFact(kind))
+        {
+            if (coreType.Kind != StarkTypeKind.FunctionPointer
+                || coreType.FunctionPointerReturnType is not { } returnType
+                || !TryGetConcreteIndex(arguments, position: 0, out var argumentIndex))
+            {
+                return false;
+            }
+
+            return TryEvaluateCallableNestedTypeArgumentFact(
+                kind,
+                returnType,
+                argumentIndex,
+                arguments,
+                resolveNamedType,
+                resolveConcreteLayout,
+                out constant);
+        }
+
         if (kind == CompileTimeStructuralFactKind.FunctionPointerParameterTypeIs)
         {
             if (coreType.Kind != StarkTypeKind.FunctionPointer
@@ -4252,6 +5241,27 @@ internal static class CompileTimeStructuralFacts
 
             constant = EvaluateNestedTypeMetadataFact(kind, parameterTypes[parameterIndex], arguments);
             return true;
+        }
+
+        if (IsFunctionPointerParameterTypeArgumentFact(kind))
+        {
+            if (coreType.Kind != StarkTypeKind.FunctionPointer
+                || coreType.FunctionPointerParameterTypes is not { } parameterTypes
+                || !TryGetConcreteIndex(arguments, position: 0, out var parameterIndex)
+                || !TryGetConcreteIndex(arguments, position: 1, out var argumentIndex)
+                || parameterIndex >= parameterTypes.Count)
+            {
+                return false;
+            }
+
+            return TryEvaluateCallableNestedTypeArgumentFact(
+                kind,
+                parameterTypes[parameterIndex],
+                argumentIndex,
+                arguments,
+                resolveNamedType,
+                resolveConcreteLayout,
+                out constant);
         }
 
         if (IsFunctionPointerParameterRawPointerElementCountExpressionFact(kind))
@@ -4334,6 +5344,25 @@ internal static class CompileTimeStructuralFacts
             return true;
         }
 
+        if (IsClosureReturnTypeArgumentFact(kind))
+        {
+            if (coreType.Kind != StarkTypeKind.Closure
+                || coreType.ClosureReturnType is not { } returnType
+                || !TryGetConcreteIndex(arguments, position: 0, out var argumentIndex))
+            {
+                return false;
+            }
+
+            return TryEvaluateCallableNestedTypeArgumentFact(
+                kind,
+                returnType,
+                argumentIndex,
+                arguments,
+                resolveNamedType,
+                resolveConcreteLayout,
+                out constant);
+        }
+
         if (kind == CompileTimeStructuralFactKind.ClosureParameterTypeIs)
         {
             if (coreType.Kind != StarkTypeKind.Closure
@@ -4381,6 +5410,27 @@ internal static class CompileTimeStructuralFacts
 
             constant = EvaluateNestedTypeMetadataFact(kind, parameterTypes[parameterIndex], arguments);
             return true;
+        }
+
+        if (IsClosureParameterTypeArgumentFact(kind))
+        {
+            if (coreType.Kind != StarkTypeKind.Closure
+                || coreType.ClosureParameterTypes is not { } parameterTypes
+                || !TryGetConcreteIndex(arguments, position: 0, out var parameterIndex)
+                || !TryGetConcreteIndex(arguments, position: 1, out var argumentIndex)
+                || parameterIndex >= parameterTypes.Count)
+            {
+                return false;
+            }
+
+            return TryEvaluateCallableNestedTypeArgumentFact(
+                kind,
+                parameterTypes[parameterIndex],
+                argumentIndex,
+                arguments,
+                resolveNamedType,
+                resolveConcreteLayout,
+                out constant);
         }
 
         if (IsClosureParameterRawPointerElementCountExpressionFact(kind))
@@ -4550,6 +5600,12 @@ internal static class CompileTimeStructuralFacts
                 return true;
             }
 
+            if (IsMethodVisibilityFact(kind))
+            {
+                constant = CompileTimeConstant.Bool(VisibilityMatchesFact(kind, method.Visibility));
+                return true;
+            }
+
             if (kind == CompileTimeStructuralFactKind.MethodParameterCount)
             {
                 constant = CompileTimeConstant.Integer(method.Parameters.Count, CountType);
@@ -4598,6 +5654,23 @@ internal static class CompileTimeStructuralFacts
                 return true;
             }
 
+            if (IsMethodReturnTypeArgumentFact(kind))
+            {
+                if (!TryGetConcreteIndex(arguments, position: 1, out var argumentIndex))
+                {
+                    return false;
+                }
+
+                return TryEvaluateCallableNestedTypeArgumentFact(
+                    kind,
+                    SubstituteOwnerGenericType(namedTypeDefinition, coreType, method.ReturnType),
+                    argumentIndex,
+                    arguments,
+                    resolveNamedType,
+                    resolveConcreteLayout,
+                    out constant);
+            }
+
             if (kind == CompileTimeStructuralFactKind.MethodParameterTypeIs
                 || IsMethodParameterTypePredicate(kind))
             {
@@ -4637,6 +5710,25 @@ internal static class CompileTimeStructuralFacts
                     SubstituteOwnerGenericType(namedTypeDefinition, coreType, method.Parameters[parameterIndex].Type),
                     arguments);
                 return true;
+            }
+
+            if (IsMethodParameterTypeArgumentFact(kind))
+            {
+                if (!TryGetConcreteIndex(arguments, position: 1, out var parameterIndex)
+                    || !TryGetConcreteIndex(arguments, position: 2, out var argumentIndex)
+                    || parameterIndex >= method.Parameters.Count)
+                {
+                    return false;
+                }
+
+                return TryEvaluateCallableNestedTypeArgumentFact(
+                    kind,
+                    SubstituteOwnerGenericType(namedTypeDefinition, coreType, method.Parameters[parameterIndex].Type),
+                    argumentIndex,
+                    arguments,
+                    resolveNamedType,
+                    resolveConcreteLayout,
+                    out constant);
             }
 
             if (IsMethodParameterRawPointerElementCountExpressionFact(kind))
@@ -5128,6 +6220,19 @@ internal static class CompileTimeStructuralFacts
             return true;
         }
 
+        if (IsFieldVisibilityFact(kind))
+        {
+            if (namedType?.Kind is not (DeclarationKind.Struct or DeclarationKind.Record)
+                || !TryGetConcreteIndex(arguments, out var fieldIndex)
+                || fieldIndex >= namedType.OrderedFields.Count)
+            {
+                return false;
+            }
+
+            constant = CompileTimeConstant.Bool(VisibilityMatchesFact(kind, namedType.OrderedFields[fieldIndex].Visibility));
+            return true;
+        }
+
         if (kind is CompileTimeStructuralFactKind.FieldHasExplicitOffset
             or CompileTimeStructuralFactKind.FieldExplicitOffset)
         {
@@ -5401,6 +6506,53 @@ internal static class CompileTimeStructuralFacts
         return true;
     }
 
+    private static bool TryEvaluateCallableNestedTypeArgumentFact(
+        CompileTimeStructuralFactKind kind,
+        StarkTypeSymbol parentType,
+        int argumentIndex,
+        CompileTimeStructuralFactArguments arguments,
+        Func<StarkTypeSymbol, NamedTypeSymbol?> resolveNamedType,
+        Func<StarkTypeSymbol, ConcreteTypeLayout?>? resolveConcreteLayout,
+        out CompileTimeConstant constant)
+    {
+        constant = default;
+        var coreParentType = NormalizeTypeForComparison(parentType);
+        if (coreParentType.TypeArguments is not { } typeArguments
+            || argumentIndex < 0
+            || argumentIndex >= typeArguments.Count)
+        {
+            return false;
+        }
+
+        var typeArgument = typeArguments[argumentIndex];
+        if (IsCallableNestedTypeArgumentExactFact(kind))
+        {
+            constant = CompileTimeConstant.Bool(
+                arguments.AdditionalTypeArguments.Count == 1
+                && TypesEquivalent(typeArgument, arguments.AdditionalTypeArguments[0]));
+            return true;
+        }
+
+        if (IsCallableNestedTypeArgumentTypePredicate(kind))
+        {
+            constant = CompileTimeConstant.Bool(
+                EvaluateTypePredicate(
+                    GetTypePredicate(kind),
+                    typeArgument,
+                    resolveNamedType,
+                    resolveConcreteLayout));
+            return true;
+        }
+
+        if (IsCallableNestedTypeArgumentMetadataFact(kind))
+        {
+            constant = EvaluateNestedTypeMetadataFact(kind, typeArgument);
+            return true;
+        }
+
+        return false;
+    }
+
     private static IReadOnlyList<string> StructuralTypeParameters { get; } = ["T"];
 
     private static IReadOnlyList<string> ImplementsTypeParameters { get; } = ["T", "Trait"];
@@ -5426,6 +6578,19 @@ internal static class CompileTimeStructuralFacts
     private static IReadOnlyList<ComptimeGenericParameterSymbol> IndexComptimeValueParameters { get; } =
         [new ComptimeGenericParameterSymbol("Index", CountType)];
 
+    private static IReadOnlyList<ComptimeGenericParameterSymbol> ImplementedTraitArgumentComptimeValueParameters { get; } =
+    [
+        new ComptimeGenericParameterSymbol("TraitIndex", CountType),
+        new ComptimeGenericParameterSymbol("ArgumentIndex", CountType)
+    ];
+
+    private static IReadOnlyList<ComptimeGenericParameterSymbol> ImplementedTraitComptimeArgumentValueComparisonParameters { get; } =
+    [
+        new ComptimeGenericParameterSymbol("TraitIndex", CountType),
+        new ComptimeGenericParameterSymbol("ArgumentIndex", CountType),
+        new ComptimeGenericParameterSymbol("Value", SignedIntegerFactValueType)
+    ];
+
     private static IReadOnlyList<ComptimeGenericParameterSymbol> MethodIndexComptimeValueParameters { get; } =
         [new ComptimeGenericParameterSymbol("MethodIndex", CountType)];
 
@@ -5433,6 +6598,25 @@ internal static class CompileTimeStructuralFacts
     [
         new ComptimeGenericParameterSymbol("MethodIndex", CountType),
         new ComptimeGenericParameterSymbol("ParameterIndex", CountType)
+    ];
+
+    private static IReadOnlyList<ComptimeGenericParameterSymbol> ParameterTypeArgumentComptimeValueParameters { get; } =
+    [
+        new ComptimeGenericParameterSymbol("ParameterIndex", CountType),
+        new ComptimeGenericParameterSymbol("ArgumentIndex", CountType)
+    ];
+
+    private static IReadOnlyList<ComptimeGenericParameterSymbol> MethodReturnTypeArgumentComptimeValueParameters { get; } =
+    [
+        new ComptimeGenericParameterSymbol("MethodIndex", CountType),
+        new ComptimeGenericParameterSymbol("ArgumentIndex", CountType)
+    ];
+
+    private static IReadOnlyList<ComptimeGenericParameterSymbol> MethodParameterTypeArgumentComptimeValueParameters { get; } =
+    [
+        new ComptimeGenericParameterSymbol("MethodIndex", CountType),
+        new ComptimeGenericParameterSymbol("ParameterIndex", CountType),
+        new ComptimeGenericParameterSymbol("ArgumentIndex", CountType)
     ];
 
     private static IReadOnlyList<ComptimeGenericParameterSymbol> MethodParameterPairComptimeValueParameters { get; } =
@@ -5484,6 +6668,7 @@ internal static class CompileTimeStructuralFacts
         return kind switch
         {
             CompileTimeStructuralFactKind.Implements => ImplementsTypeParameters,
+            _ when IsCallableNestedTypeArgumentExactFact(kind) => TypeComparisonTypeParameters,
             CompileTimeStructuralFactKind.FieldTypeIs
                 or CompileTimeStructuralFactKind.ImplementedTraitTypeIs
                 or CompileTimeStructuralFactKind.FunctionPointerReturnTypeIs
@@ -5499,6 +6684,8 @@ internal static class CompileTimeStructuralFacts
                 or CompileTimeStructuralFactKind.AssociatedTypeTargetTypeIs
                 or CompileTimeStructuralFactKind.TypeArgumentTypeIs
                 or CompileTimeStructuralFactKind.TypeComptimeArgumentTypeIs
+                or CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIs
+                or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIs
                 or CompileTimeStructuralFactKind.RawPointerElementTypeIs
                 or CompileTimeStructuralFactKind.TypeElementTypeIs
                 or CompileTimeStructuralFactKind.TypeUnqualifiedTypeIs
@@ -5538,6 +6725,17 @@ internal static class CompileTimeStructuralFacts
             return ComptimeArgumentValueComparisonParameters;
         }
 
+        if (kind == CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentValueIs)
+        {
+            return ImplementedTraitComptimeArgumentValueComparisonParameters;
+        }
+
+        if (IsImplementedTraitTypeArgumentIndexedFact(kind)
+            || IsImplementedTraitComptimeArgumentIndexedFact(kind))
+        {
+            return ImplementedTraitArgumentComptimeValueParameters;
+        }
+
         if (IsTypeThreadSafetyLawAttributeIndexedFact(kind))
         {
             return IndexComptimeValueParameters;
@@ -5556,6 +6754,16 @@ internal static class CompileTimeStructuralFacts
         if (IsFieldThreadSafetyLawAttributeIndexedFact(kind))
         {
             return FieldThreadSafetyLawAttributeComptimeValueParameters;
+        }
+
+        if (IsMethodParameterTypeArgumentFact(kind))
+        {
+            return MethodParameterTypeArgumentComptimeValueParameters;
+        }
+
+        if (IsMethodReturnTypeArgumentFact(kind))
+        {
+            return MethodReturnTypeArgumentComptimeValueParameters;
         }
 
         if (IsMethodParameterTypePredicate(kind)
@@ -5607,6 +6815,18 @@ internal static class CompileTimeStructuralFacts
             return VariantPayloadComptimeValueParameters;
         }
 
+        if (IsFunctionPointerParameterTypeArgumentFact(kind)
+            || IsClosureParameterTypeArgumentFact(kind))
+        {
+            return ParameterTypeArgumentComptimeValueParameters;
+        }
+
+        if (IsFunctionPointerReturnTypeArgumentFact(kind)
+            || IsClosureReturnTypeArgumentFact(kind))
+        {
+            return IndexComptimeValueParameters;
+        }
+
         if (IsFunctionPointerParameterTypePredicate(kind)
             || IsFunctionPointerParameterTypeMetadataFact(kind)
             || IsFunctionPointerParameterRawPointerElementCountExpressionFact(kind))
@@ -5639,7 +6859,26 @@ internal static class CompileTimeStructuralFacts
             return IndexComptimeValueParameters;
         }
 
-        if (IsFieldTypeMetadataFact(kind))
+        if (kind is CompileTimeStructuralFactKind.TypeGenericParameterName
+            or CompileTimeStructuralFactKind.TypeComptimeGenericParameterName
+            or CompileTimeStructuralFactKind.TypeComptimeGenericParameterTypeIs
+            || IsTypeComptimeGenericParameterTypePredicate(kind)
+            || IsTypeComptimeGenericParameterTypeMetadataFact(kind))
+        {
+            return IndexComptimeValueParameters;
+        }
+
+        if (kind is CompileTimeStructuralFactKind.AssociatedTypeName
+            or CompileTimeStructuralFactKind.AssociatedTypeHasTarget
+            or CompileTimeStructuralFactKind.AssociatedTypeTargetTypeIs
+            || IsAssociatedTypeTargetTypePredicate(kind)
+            || IsAssociatedTypeTargetTypeMetadataFact(kind))
+        {
+            return IndexComptimeValueParameters;
+        }
+
+        if (IsFieldTypeMetadataFact(kind)
+            || IsFieldVisibilityFact(kind))
         {
             return IndexComptimeValueParameters;
         }
@@ -5659,6 +6898,7 @@ internal static class CompileTimeStructuralFacts
             or CompileTimeStructuralFactKind.FieldTypeIsDynamic
             or CompileTimeStructuralFactKind.FieldTypeIsFunctionPointer
             or CompileTimeStructuralFactKind.FieldTypeIsClosure
+            or CompileTimeStructuralFactKind.FieldTypeIsDynTrait
             or CompileTimeStructuralFactKind.FieldTypeIsNamed
             or CompileTimeStructuralFactKind.FieldTypeIsStruct
             or CompileTimeStructuralFactKind.FieldTypeIsRecord
@@ -5678,6 +6918,7 @@ internal static class CompileTimeStructuralFacts
             or CompileTimeStructuralFactKind.TypeComptimeGenericParameterTypeIsDynamic
             or CompileTimeStructuralFactKind.TypeComptimeGenericParameterTypeIsFunctionPointer
             or CompileTimeStructuralFactKind.TypeComptimeGenericParameterTypeIsClosure
+            or CompileTimeStructuralFactKind.TypeComptimeGenericParameterTypeIsDynTrait
             or CompileTimeStructuralFactKind.TypeComptimeGenericParameterTypeIsNamed
             or CompileTimeStructuralFactKind.TypeComptimeGenericParameterTypeIsStruct
             or CompileTimeStructuralFactKind.TypeComptimeGenericParameterTypeIsRecord
@@ -5705,6 +6946,7 @@ internal static class CompileTimeStructuralFacts
             or CompileTimeStructuralFactKind.AssociatedTypeTargetTypeIsDynamic
             or CompileTimeStructuralFactKind.AssociatedTypeTargetTypeIsFunctionPointer
             or CompileTimeStructuralFactKind.AssociatedTypeTargetTypeIsClosure
+            or CompileTimeStructuralFactKind.AssociatedTypeTargetTypeIsDynTrait
             or CompileTimeStructuralFactKind.AssociatedTypeTargetTypeIsNamed
             or CompileTimeStructuralFactKind.AssociatedTypeTargetTypeIsStruct
             or CompileTimeStructuralFactKind.AssociatedTypeTargetTypeIsRecord
@@ -6227,6 +7469,20 @@ internal static class CompileTimeStructuralFacts
         var coreType = NormalizeTypeForComparison(type);
         return kind switch
         {
+            _ when IsCallableNestedTypeArgumentDisplayNameFact(kind) =>
+                TextConstant(coreType.DisplayName),
+            _ when IsCallableNestedTypeArgumentBaseNameFact(kind) =>
+                TextConstant(coreType.Kind == StarkTypeKind.Named && coreType.NamedType is { } namedTypeName
+                    ? StarkTypeSymbols.GetGenericBaseName(namedTypeName)
+                    : string.Empty),
+            _ when IsCallableNestedTypeArgumentModuleNameFact(kind) =>
+                TextConstant(GetNestedTypeModuleName(coreType)),
+            _ when IsCallableNestedTypeArgumentIsGenericInstantiationFact(kind) =>
+                CompileTimeConstant.Bool(StarkTypeSymbols.IsGenericInstantiation(coreType)),
+            _ when GetCallableNestedTypeArgumentOffset(kind) == CallableNestedTypeArgumentArgumentCountOffset =>
+                CompileTimeConstant.Integer(coreType.TypeArguments?.Count ?? 0, CountType),
+            _ when GetCallableNestedTypeArgumentOffset(kind) == CallableNestedTypeArgumentComptimeArgumentCountOffset =>
+                CompileTimeConstant.Integer(coreType.ComptimeValueArguments?.Count ?? 0, CountType),
             CompileTimeStructuralFactKind.FieldTypeDisplayName
                 or CompileTimeStructuralFactKind.EnumVariantPayloadTypeDisplayName
                 or CompileTimeStructuralFactKind.AssociatedTypeTargetTypeDisplayName
@@ -6242,6 +7498,8 @@ internal static class CompileTimeStructuralFacts
                 or CompileTimeStructuralFactKind.TypeComptimeGenericParameterTypeDisplayName
                 or CompileTimeStructuralFactKind.TypeArgumentTypeDisplayName
                 or CompileTimeStructuralFactKind.TypeComptimeArgumentTypeDisplayName
+                or CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeDisplayName
+                or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeDisplayName
                 or CompileTimeStructuralFactKind.TypeThreadSafetyLawAttributeConditionTypeDisplayName
                 or CompileTimeStructuralFactKind.FieldThreadSafetyLawAttributeConditionTypeDisplayName =>
                 TextConstant(coreType.DisplayName),
@@ -6260,11 +7518,33 @@ internal static class CompileTimeStructuralFacts
                 or CompileTimeStructuralFactKind.TypeComptimeGenericParameterTypeBaseName
                 or CompileTimeStructuralFactKind.TypeArgumentTypeBaseName
                 or CompileTimeStructuralFactKind.TypeComptimeArgumentTypeBaseName
+                or CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeBaseName
+                or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeBaseName
                 or CompileTimeStructuralFactKind.TypeThreadSafetyLawAttributeConditionTypeBaseName
                 or CompileTimeStructuralFactKind.FieldThreadSafetyLawAttributeConditionTypeBaseName =>
                 TextConstant(coreType.Kind == StarkTypeKind.Named && coreType.NamedType is { } namedTypeName
                     ? StarkTypeSymbols.GetGenericBaseName(namedTypeName)
                     : string.Empty),
+            CompileTimeStructuralFactKind.FieldTypeModuleName
+                or CompileTimeStructuralFactKind.EnumVariantPayloadTypeModuleName
+                or CompileTimeStructuralFactKind.AssociatedTypeTargetTypeModuleName
+                or CompileTimeStructuralFactKind.FunctionPointerReturnTypeModuleName
+                or CompileTimeStructuralFactKind.FunctionPointerParameterTypeModuleName
+                or CompileTimeStructuralFactKind.ClosureReturnTypeModuleName
+                or CompileTimeStructuralFactKind.ClosureParameterTypeModuleName
+                or CompileTimeStructuralFactKind.MethodReturnTypeModuleName
+                or CompileTimeStructuralFactKind.MethodParameterTypeModuleName
+                or CompileTimeStructuralFactKind.MethodGenericParameterTraitBoundTypeModuleName
+                or CompileTimeStructuralFactKind.MethodComptimeGenericParameterTypeModuleName
+                or CompileTimeStructuralFactKind.MethodThreadSafetyLawPredicateTypeModuleName
+                or CompileTimeStructuralFactKind.TypeComptimeGenericParameterTypeModuleName
+                or CompileTimeStructuralFactKind.TypeArgumentTypeModuleName
+                or CompileTimeStructuralFactKind.TypeComptimeArgumentTypeModuleName
+                or CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeModuleName
+                or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeModuleName
+                or CompileTimeStructuralFactKind.TypeThreadSafetyLawAttributeConditionTypeModuleName
+                or CompileTimeStructuralFactKind.FieldThreadSafetyLawAttributeConditionTypeModuleName =>
+                TextConstant(GetNestedTypeModuleName(coreType)),
             CompileTimeStructuralFactKind.FieldTypeHasCSourceAlias
                 or CompileTimeStructuralFactKind.EnumVariantPayloadTypeHasCSourceAlias
                 or CompileTimeStructuralFactKind.FunctionPointerReturnTypeHasCSourceAlias
@@ -6298,6 +7578,8 @@ internal static class CompileTimeStructuralFacts
                 or CompileTimeStructuralFactKind.TypeComptimeGenericParameterTypeIsGenericInstantiation
                 or CompileTimeStructuralFactKind.TypeArgumentTypeIsGenericInstantiation
                 or CompileTimeStructuralFactKind.TypeComptimeArgumentTypeIsGenericInstantiation
+                or CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIsGenericInstantiation
+                or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIsGenericInstantiation
                 or CompileTimeStructuralFactKind.TypeThreadSafetyLawAttributeConditionTypeIsGenericInstantiation
                 or CompileTimeStructuralFactKind.FieldThreadSafetyLawAttributeConditionTypeIsGenericInstantiation =>
                 CompileTimeConstant.Bool(StarkTypeSymbols.IsGenericInstantiation(coreType)),
@@ -6316,6 +7598,8 @@ internal static class CompileTimeStructuralFacts
                 or CompileTimeStructuralFactKind.TypeComptimeGenericParameterTypeArgumentCount
                 or CompileTimeStructuralFactKind.TypeArgumentTypeArgumentCount
                 or CompileTimeStructuralFactKind.TypeComptimeArgumentTypeArgumentCount
+                or CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeArgumentCount
+                or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeArgumentCount
                 or CompileTimeStructuralFactKind.TypeThreadSafetyLawAttributeConditionTypeArgumentCount
                 or CompileTimeStructuralFactKind.FieldThreadSafetyLawAttributeConditionTypeArgumentCount =>
                 CompileTimeConstant.Integer(coreType.TypeArguments?.Count ?? 0, CountType),
@@ -6334,6 +7618,8 @@ internal static class CompileTimeStructuralFacts
                 or CompileTimeStructuralFactKind.TypeComptimeGenericParameterTypeComptimeArgumentCount
                 or CompileTimeStructuralFactKind.TypeArgumentTypeComptimeArgumentCount
                 or CompileTimeStructuralFactKind.TypeComptimeArgumentTypeComptimeArgumentCount
+                or CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeComptimeArgumentCount
+                or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeComptimeArgumentCount
                 or CompileTimeStructuralFactKind.TypeThreadSafetyLawAttributeConditionTypeComptimeArgumentCount
                 or CompileTimeStructuralFactKind.FieldThreadSafetyLawAttributeConditionTypeComptimeArgumentCount =>
                 CompileTimeConstant.Integer(coreType.ComptimeValueArguments?.Count ?? 0, CountType),
@@ -6483,6 +7769,14 @@ internal static class CompileTimeStructuralFacts
         return separator > 0 ? baseName[..separator] : string.Empty;
     }
 
+    private static string GetNestedTypeModuleName(StarkTypeSymbol type)
+    {
+        var coreType = NormalizeTypeForComparison(type);
+        return coreType.Kind == StarkTypeKind.Named && coreType.NamedType is { } namedTypeName
+            ? GetModuleName(namedTypeName)
+            : string.Empty;
+    }
+
     private static CompileTimeStructuralTypePredicate GetNestedTypePredicate(
         CompileTimeStructuralFactKind kind)
     {
@@ -6574,6 +7868,69 @@ internal static class CompileTimeStructuralFacts
 
     private static CompileTimeStructuralTypePredicate GetTypePredicate(CompileTimeStructuralFactKind kind)
     {
+        var callableNestedArgumentPredicate = GetCallableNestedTypeArgumentPredicate(kind);
+        if (callableNestedArgumentPredicate != CompileTimeStructuralTypePredicate.None)
+        {
+            return callableNestedArgumentPredicate;
+        }
+
+        var implementedTraitArgumentPredicate = kind switch
+        {
+            CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIsBool
+                or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIsBool =>
+                CompileTimeStructuralTypePredicate.Bool,
+            CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIsInteger
+                or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIsInteger =>
+                CompileTimeStructuralTypePredicate.Integer,
+            CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIsFloat
+                or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIsFloat =>
+                CompileTimeStructuralTypePredicate.Float,
+            CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIsRawPointer
+                or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIsRawPointer =>
+                CompileTimeStructuralTypePredicate.RawPointer,
+            CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIsFixedArray
+                or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIsFixedArray =>
+                CompileTimeStructuralTypePredicate.FixedArray,
+            CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIsSlice
+                or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIsSlice =>
+                CompileTimeStructuralTypePredicate.Slice,
+            CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIsDynamic
+                or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIsDynamic =>
+                CompileTimeStructuralTypePredicate.Dynamic,
+            CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIsFunctionPointer
+                or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIsFunctionPointer =>
+                CompileTimeStructuralTypePredicate.FunctionPointer,
+            CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIsClosure
+                or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIsClosure =>
+                CompileTimeStructuralTypePredicate.Closure,
+            CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIsNamed
+                or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIsNamed =>
+                CompileTimeStructuralTypePredicate.Named,
+            CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIsStruct
+                or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIsStruct =>
+                CompileTimeStructuralTypePredicate.Struct,
+            CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIsRecord
+                or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIsRecord =>
+                CompileTimeStructuralTypePredicate.Record,
+            CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIsEnum
+                or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIsEnum =>
+                CompileTimeStructuralTypePredicate.Enum,
+            CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIsTrait
+                or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIsTrait =>
+                CompileTimeStructuralTypePredicate.Trait,
+            CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeIsDoctrine
+                or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeIsDoctrine =>
+                CompileTimeStructuralTypePredicate.Doctrine,
+            CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentTypeHasConcreteLayout
+                or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeHasConcreteLayout =>
+                CompileTimeStructuralTypePredicate.ConcreteLayout,
+            _ => CompileTimeStructuralTypePredicate.None
+        };
+        if (implementedTraitArgumentPredicate != CompileTimeStructuralTypePredicate.None)
+        {
+            return implementedTraitArgumentPredicate;
+        }
+
         return kind switch
         {
             CompileTimeStructuralFactKind.IsBool
@@ -6739,6 +8096,26 @@ internal static class CompileTimeStructuralFacts
                 or CompileTimeStructuralFactKind.TypeElementTypeIsClosure
                     => CompileTimeStructuralTypePredicate.Closure,
             CompileTimeStructuralFactKind.IsDynTrait
+                or CompileTimeStructuralFactKind.FieldTypeIsDynTrait
+                or CompileTimeStructuralFactKind.ImplementedTraitTypeIsDynTrait
+                or CompileTimeStructuralFactKind.FunctionPointerReturnTypeIsDynTrait
+                or CompileTimeStructuralFactKind.FunctionPointerParameterTypeIsDynTrait
+                or CompileTimeStructuralFactKind.ClosureReturnTypeIsDynTrait
+                or CompileTimeStructuralFactKind.ClosureParameterTypeIsDynTrait
+                or CompileTimeStructuralFactKind.MethodReturnTypeIsDynTrait
+                or CompileTimeStructuralFactKind.MethodParameterTypeIsDynTrait
+                or CompileTimeStructuralFactKind.MethodGenericParameterTraitBoundTypeIsDynTrait
+                or CompileTimeStructuralFactKind.MethodComptimeGenericParameterTypeIsDynTrait
+                or CompileTimeStructuralFactKind.MethodThreadSafetyLawPredicateTypeIsDynTrait
+                or CompileTimeStructuralFactKind.EnumVariantPayloadTypeIsDynTrait
+                or CompileTimeStructuralFactKind.AssociatedTypeTargetTypeIsDynTrait
+                or CompileTimeStructuralFactKind.TypeComptimeGenericParameterTypeIsDynTrait
+                or CompileTimeStructuralFactKind.TypeArgumentTypeIsDynTrait
+                or CompileTimeStructuralFactKind.TypeComptimeArgumentTypeIsDynTrait
+                or CompileTimeStructuralFactKind.RawPointerElementTypeIsDynTrait
+                or CompileTimeStructuralFactKind.TypeElementTypeIsDynTrait
+                or CompileTimeStructuralFactKind.TypeThreadSafetyLawAttributeConditionTypeIsDynTrait
+                or CompileTimeStructuralFactKind.FieldThreadSafetyLawAttributeConditionTypeIsDynTrait
                     => CompileTimeStructuralTypePredicate.DynTrait,
             CompileTimeStructuralFactKind.IsNamed
                 or CompileTimeStructuralFactKind.FieldTypeIsNamed
@@ -6866,6 +8243,32 @@ internal static class CompileTimeStructuralFacts
                 or CompileTimeStructuralFactKind.RawPointerElementTypeHasConcreteLayout
                 or CompileTimeStructuralFactKind.TypeElementTypeHasConcreteLayout
                     => CompileTimeStructuralTypePredicate.ConcreteLayout,
+            _ => CompileTimeStructuralTypePredicate.None
+        };
+    }
+
+    private static CompileTimeStructuralTypePredicate GetCallableNestedTypeArgumentPredicate(
+        CompileTimeStructuralFactKind kind)
+    {
+        return GetCallableNestedTypeArgumentOffset(kind) switch
+        {
+            1 => CompileTimeStructuralTypePredicate.Bool,
+            2 => CompileTimeStructuralTypePredicate.Integer,
+            3 => CompileTimeStructuralTypePredicate.Float,
+            4 => CompileTimeStructuralTypePredicate.RawPointer,
+            5 => CompileTimeStructuralTypePredicate.FixedArray,
+            6 => CompileTimeStructuralTypePredicate.Slice,
+            7 => CompileTimeStructuralTypePredicate.Dynamic,
+            8 => CompileTimeStructuralTypePredicate.FunctionPointer,
+            9 => CompileTimeStructuralTypePredicate.Closure,
+            10 => CompileTimeStructuralTypePredicate.DynTrait,
+            11 => CompileTimeStructuralTypePredicate.Named,
+            12 => CompileTimeStructuralTypePredicate.Struct,
+            13 => CompileTimeStructuralTypePredicate.Record,
+            14 => CompileTimeStructuralTypePredicate.Enum,
+            15 => CompileTimeStructuralTypePredicate.Trait,
+            16 => CompileTimeStructuralTypePredicate.Doctrine,
+            17 => CompileTimeStructuralTypePredicate.ConcreteLayout,
             _ => CompileTimeStructuralTypePredicate.None
         };
     }
@@ -7489,6 +8892,18 @@ internal static class CompileTimeStructuralFacts
         return resolvedType?.ImplementedTraits ?? [];
     }
 
+    private static IReadOnlyList<StarkTypeSymbol> GetImplementedTraitTypes(
+        NamedTypeSymbol? resolvedType,
+        NamedTypeSymbol? resolvedTypeDefinition)
+    {
+        if (resolvedType?.ImplementedTraitTypes is { Count: > 0 } resolvedTraits)
+        {
+            return resolvedTraits;
+        }
+
+        return resolvedTypeDefinition?.ImplementedTraitTypes ?? [];
+    }
+
     private static CompileTimeConstant EvaluateImplementedTraitMetadataFact(
         CompileTimeStructuralFactKind kind,
         string implementedTrait,
@@ -7508,6 +8923,8 @@ internal static class CompileTimeStructuralFacts
                 TextConstant(FormatImplementedTraitDisplayName(implementedTrait, arguments)),
             CompileTimeStructuralFactKind.ImplementedTraitTypeBaseName =>
                 TextConstant(StarkTypeSymbols.GetGenericBaseName(implementedTrait)),
+            CompileTimeStructuralFactKind.ImplementedTraitTypeModuleName =>
+                TextConstant(GetModuleName(implementedTrait)),
             CompileTimeStructuralFactKind.ImplementedTraitTypeIsGenericInstantiation =>
                 CompileTimeConstant.Bool(hasInstantiation),
             CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentCount =>
@@ -7753,6 +9170,26 @@ internal static class CompileTimeStructuralFacts
         return CompileTimeConstant.Text(
             TextLiteralDecoder.EncodeStringLiteral(value),
             StarkTypeSymbols.Ascii);
+    }
+
+    private static bool VisibilityMatchesFact(CompileTimeStructuralFactKind kind, StarkVisibility visibility)
+    {
+        return kind switch
+        {
+            CompileTimeStructuralFactKind.TypeVisibilityIsModule
+                or CompileTimeStructuralFactKind.FieldVisibilityIsModule
+                or CompileTimeStructuralFactKind.MethodVisibilityIsModule => visibility == StarkVisibility.Module,
+            CompileTimeStructuralFactKind.TypeVisibilityIsInternal
+                or CompileTimeStructuralFactKind.FieldVisibilityIsInternal
+                or CompileTimeStructuralFactKind.MethodVisibilityIsInternal => visibility == StarkVisibility.Internal,
+            CompileTimeStructuralFactKind.TypeVisibilityIsPublic
+                or CompileTimeStructuralFactKind.FieldVisibilityIsPublic
+                or CompileTimeStructuralFactKind.MethodVisibilityIsPublic => visibility == StarkVisibility.Public,
+            CompileTimeStructuralFactKind.TypeVisibilityIsExport
+                or CompileTimeStructuralFactKind.FieldVisibilityIsExport
+                or CompileTimeStructuralFactKind.MethodVisibilityIsExport => visibility == StarkVisibility.Export,
+            _ => false
+        };
     }
 
     private static bool ImplementsTrait(

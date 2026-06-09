@@ -1,7 +1,19 @@
 import System.Runtime.Platform
+import System.Collections
+import System.Memory
 module System.Threading
 
 public alias ThreadEntry = fnptr<fn i32[min max]()>;
+public alias ThreadPayloadEntry<T> = fnptr<fn i32[min max](T)>;
+
+internal alias ThreadContextEntry = fnptr<unsafe fn i32[min max](rawmutptr<i8[min max]>)>;
+
+internal struct ThreadPayloadControl<T>
+{
+    ThreadPayloadEntry<T> Entry;
+    T Payload;
+    System.Memory.Allocation Allocation;
+}
 
 public enum ThreadError
 {
@@ -24,6 +36,38 @@ public enum ThreadJoinResult
     [Err] Err(ThreadError),
 }
 
+public enum ChannelError
+{
+    Closed,
+    Empty,
+    ReceiverAlreadyTaken,
+    OutOfMemory,
+}
+
+public enum ChannelStatus
+{
+    [Ok] Ok,
+    [Err] Err(ChannelError),
+}
+
+public enum ChannelSenderResult<T>
+{
+    [Ok] Ok(Sender<T>),
+    [Err] Err(ChannelError),
+}
+
+public enum ChannelReceiverResult<T>
+{
+    [Ok] Ok(Receiver<T>),
+    [Err] Err(ChannelError),
+}
+
+public enum ChannelReceiveResult<T>
+{
+    [Ok] Item(T),
+    [Err] Err(ChannelError),
+}
+
 public struct Thread
 {
     internal rawmutptr<i8[min max]> Handle;
@@ -41,6 +85,21 @@ public struct Thread
         self.Joined = false;
         self.Detached = false;
         self.StartFailed = self.Handle == null;
+    }
+
+    static fn Thread Start<T>(ThreadPayloadEntry<T> entry, T payload)
+        where Transferable(T)
+    {
+        stack mut Thread thread;
+        unsafe
+        {
+            thread.Handle = StartThreadPayload<T>(entry, payload);
+        }
+
+        thread.Joined = false;
+        thread.Detached = false;
+        thread.StartFailed = thread.Handle == null;
+        return thread;
     }
 
     finite law bool IsJoinable(borrow Thread self)
@@ -151,6 +210,52 @@ public struct Thread
             self.Detach();
         }
     }
+}
+
+internal unsafe fn i32[min max] ThreadPayloadThunk<T>(rawmutptr<i8[min max]> context)
+{
+    if (context == null)
+    {
+        return -1;
+    }
+
+    stack rawmutptr<ThreadPayloadControl<T>> control = (rawmutptr<ThreadPayloadControl<T>>)context;
+    stack ThreadPayloadEntry<T> entry = (*control).Entry;
+    stack T payload = (*control).Payload;
+    stack System.Memory.Allocation allocation = (*control).Allocation;
+    System.Memory.Free(allocation);
+    return entry(payload);
+}
+
+internal unsafe fn rawmutptr<i8[min max]> StartThreadPayload<T>(ThreadPayloadEntry<T> entry, T payload)
+    where Transferable(T)
+{
+    stack System.Memory.Allocation allocation = System.Memory.Allocate(
+        System.Memory.Allocator.Default(),
+        (u64[0 2 ** 63 - 1])sizeof(ThreadPayloadControl<T>),
+        alignof(ThreadPayloadControl<T>));
+    if (allocation.Pointer == null)
+    {
+        return null;
+    }
+
+    stack rawmutptr<ThreadPayloadControl<T>> control = (rawmutptr<ThreadPayloadControl<T>>)allocation.Pointer;
+    *control = new ThreadPayloadControl<T>()
+    {
+        Entry = entry,
+        Payload = payload,
+        Allocation = allocation
+    };
+
+    stack ThreadContextEntry thunk = ThreadPayloadThunk<T>;
+    stack rawmutptr<i8[min max]> handle = System.Runtime.Platform.StartThreadWithContext(thunk, allocation.Pointer);
+    if (handle == null)
+    {
+        stack T failedPayload = (*control).Payload;
+        System.Memory.Free(allocation);
+    }
+
+    return handle;
 }
 
 // Atomic types (docs/Self-host-Prep/12-atomics.md): the safe-sharing primitive for
@@ -345,6 +450,322 @@ public struct AtomicBool
     fn void Store(mut borrow AtomicBool self, bool value);
     fn bool Exchange(mut borrow AtomicBool self, bool value);
     fn bool CompareExchange(mut borrow AtomicBool self, bool expected, bool desired);
+}
+
+public struct Synchronized<T>
+{
+    internal AtomicBool Gate;
+
+    [Grant(Shareable) where Transferable(T)]
+    internal T Value;
+
+    Synchronized(T initial)
+    {
+        self.Gate = new AtomicBool(false);
+        self.Value = initial;
+    }
+
+    fn Locked<T> Lock(storeborrow mut Synchronized<T> self)
+    {
+        while willexit (!self.Gate.CompareExchange(false, true))
+        {
+            Thread.Yield();
+        }
+
+        return new Locked<T>(self);
+    }
+}
+
+public struct Locked<T>
+{
+    internal storeborrow mut Synchronized<T> Owner;
+    internal bool Held;
+
+    Locked(storeborrow mut Synchronized<T> owner)
+    {
+        self.Owner = owner;
+        self.Held = true;
+    }
+
+    fn retborrow mut T Value(mut borrow Locked<T> self)
+    {
+        return self.Owner.Value;
+    }
+
+    mut drop
+    {
+        if (self.Held)
+        {
+            self.Owner.Gate.Store(false);
+            self.Held = false;
+        }
+    }
+}
+
+internal struct ChannelState<T>
+{
+    [Grant(Transferable) where Transferable(T)]
+    System.Collections.Queue<T> Items;
+
+    [Grant(Transferable)]
+    [Grant(Shareable)]
+    System.Collections.HashSet<u64[0 2 ** 63 - 1]> OpenSenders;
+
+    u64[0 2 ** 63 - 1] SenderCount;
+    u64[0 2 ** 63 - 1] NextSenderId;
+    bool ReceiverTaken;
+    bool ReceiverClosed;
+}
+
+public struct Channel<T>
+{
+    internal AtomicBool Gate;
+
+    [Grant(Transferable) where Transferable(T)]
+    [Grant(Shareable) where Transferable(T)]
+    internal ChannelState<T> State;
+
+    Channel()
+    {
+        self.Gate = new AtomicBool(false);
+        self.State = new ChannelState<T>()
+        {
+            Items = new System.Collections.Queue<T>(),
+            OpenSenders = new System.Collections.HashSet<u64[0 2 ** 63 - 1]>(),
+            SenderCount = 0,
+            NextSenderId = 0,
+            ReceiverTaken = false,
+            ReceiverClosed = false
+        };
+    }
+
+    fn ChannelSenderResult<T> CreateSender(storeborrow mut Channel<T> self)
+    {
+        while willexit (!self.Gate.CompareExchange(false, true))
+        {
+            Thread.Yield();
+        }
+
+        if (self.State.ReceiverClosed)
+        {
+            self.Gate.Store(false);
+            return ChannelSenderResult<T>.Err(ChannelError.Closed);
+        }
+
+        if (self.State.SenderCount == (u64[0 2 ** 63 - 1])(2 ** 63 - 1))
+        {
+            self.Gate.Store(false);
+            return ChannelSenderResult<T>.Err(ChannelError.OutOfMemory);
+        }
+
+        if (self.State.NextSenderId == (u64[0 2 ** 63 - 1])(2 ** 63 - 1))
+        {
+            self.Gate.Store(false);
+            return ChannelSenderResult<T>.Err(ChannelError.OutOfMemory);
+        }
+
+        stack u64[0 2 ** 63 - 1] senderId = self.State.NextSenderId;
+        stack System.Memory.MemoryStatus status = self.State.OpenSenders.Add(senderId);
+        switch (status)
+        {
+            case System.Memory.MemoryStatus.Err(var error):
+                self.Gate.Store(false);
+                return ChannelSenderResult<T>.Err(ChannelError.OutOfMemory);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        self.State.NextSenderId += 1;
+        self.State.SenderCount += 1;
+        self.Gate.Store(false);
+        return ChannelSenderResult<T>.Ok(new Sender<T>(self, senderId));
+    }
+
+    fn ChannelReceiverResult<T> CreateReceiver(storeborrow mut Channel<T> self)
+    {
+        while willexit (!self.Gate.CompareExchange(false, true))
+        {
+            Thread.Yield();
+        }
+
+        if (self.State.ReceiverTaken)
+        {
+            self.Gate.Store(false);
+            return ChannelReceiverResult<T>.Err(ChannelError.ReceiverAlreadyTaken);
+        }
+
+        self.State.ReceiverTaken = true;
+        self.State.ReceiverClosed = false;
+        self.Gate.Store(false);
+        return ChannelReceiverResult<T>.Ok(new Receiver<T>(self));
+    }
+
+    fn u64[0 2 ** 63 - 1] PendingCount(storeborrow mut Channel<T> self)
+    {
+        while willexit (!self.Gate.CompareExchange(false, true))
+        {
+            Thread.Yield();
+        }
+
+        stack u64[0 2 ** 63 - 1] count = self.State.Items.Count();
+        self.Gate.Store(false);
+        return count;
+    }
+}
+
+public struct Sender<T>
+{
+    [Grant(Transferable) where Shareable(Channel<T>)]
+    [Grant(Shareable) where Shareable(Channel<T>)]
+    internal storeborrow mut Channel<T> Owner;
+
+    internal u64[0 2 ** 63 - 1] Id;
+    internal bool Open;
+
+    Sender(storeborrow mut Channel<T> owner, u64[0 2 ** 63 - 1] id)
+    {
+        self.Owner = owner;
+        self.Id = id;
+        self.Open = true;
+    }
+
+    fn ChannelStatus Send(mut borrow Sender<T> self, T value)
+        where Transferable(T)
+    {
+        if (!self.Open)
+        {
+            return ChannelStatus.Err(ChannelError.Closed);
+        }
+
+        while willexit (!self.Owner.Gate.CompareExchange(false, true))
+        {
+            Thread.Yield();
+        }
+
+        if (self.Owner.State.ReceiverClosed)
+        {
+            self.Owner.Gate.Store(false);
+            return ChannelStatus.Err(ChannelError.Closed);
+        }
+
+        if (!self.Owner.State.OpenSenders.Contains(self.Id))
+        {
+            self.Owner.Gate.Store(false);
+            self.Open = false;
+            return ChannelStatus.Err(ChannelError.Closed);
+        }
+
+        stack System.Memory.MemoryStatus status = self.Owner.State.Items.Enqueue(value);
+        self.Owner.Gate.Store(false);
+        switch (status)
+        {
+            case System.Memory.MemoryStatus.Err(var error):
+                return ChannelStatus.Err(ChannelError.OutOfMemory);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        return ChannelStatus.Ok;
+    }
+
+    fn ChannelStatus Close(mut borrow Sender<T> self)
+    {
+        if (!self.Open)
+        {
+            return ChannelStatus.Ok;
+        }
+
+        while willexit (!self.Owner.Gate.CompareExchange(false, true))
+        {
+            Thread.Yield();
+        }
+
+        if (self.Owner.State.OpenSenders.Remove(self.Id))
+        {
+            if (self.Owner.State.SenderCount > 0)
+            {
+                self.Owner.State.SenderCount -= 1;
+            }
+        }
+
+        self.Owner.Gate.Store(false);
+        self.Open = false;
+        return ChannelStatus.Ok;
+    }
+
+    mut drop
+    {
+        self.Close();
+    }
+}
+
+public struct Receiver<T>
+{
+    [Grant(Transferable) where Shareable(Channel<T>)]
+    [Grant(Shareable) where Shareable(Channel<T>)]
+    internal storeborrow mut Channel<T> Owner;
+
+    internal bool Open;
+
+    Receiver(storeborrow mut Channel<T> owner)
+    {
+        self.Owner = owner;
+        self.Open = true;
+    }
+
+    fn ChannelReceiveResult<T> Receive(mut borrow Receiver<T> self)
+    {
+        if (!self.Open)
+        {
+            return ChannelReceiveResult<T>.Err(ChannelError.Closed);
+        }
+
+        while willexit (!self.Owner.Gate.CompareExchange(false, true))
+        {
+            Thread.Yield();
+        }
+
+        stack mut T value;
+        if (self.Owner.State.Items.TryDequeue(value))
+        {
+            self.Owner.Gate.Store(false);
+            return ChannelReceiveResult<T>.Item(value);
+        }
+
+        if (self.Owner.State.SenderCount == 0)
+        {
+            self.Owner.Gate.Store(false);
+            return ChannelReceiveResult<T>.Err(ChannelError.Closed);
+        }
+
+        self.Owner.Gate.Store(false);
+        return ChannelReceiveResult<T>.Err(ChannelError.Empty);
+    }
+
+    fn ChannelStatus Close(mut borrow Receiver<T> self)
+    {
+        if (!self.Open)
+        {
+            return ChannelStatus.Ok;
+        }
+
+        while willexit (!self.Owner.Gate.CompareExchange(false, true))
+        {
+            Thread.Yield();
+        }
+
+        self.Owner.State.ReceiverClosed = true;
+        self.Owner.State.Items.Clear();
+        self.Owner.State.OpenSenders.Clear();
+        self.Owner.State.SenderCount = 0;
+        self.Owner.Gate.Store(false);
+        self.Open = false;
+        return ChannelStatus.Ok;
+    }
+
+    mut drop
+    {
+        self.Close();
+    }
+
 }
 
 // 24/48/96/128-bit atomics: the value lives sign/zero-extended inside a power-of-2

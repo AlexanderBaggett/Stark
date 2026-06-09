@@ -1,6 +1,7 @@
 # CTFE Self-Host Compiler Audit
 
-Status: complete for the current C# host compiler snapshot.
+Status: complete for the current C# host compiler snapshot; superseded for
+scheduling by the pre/post self-host scope split.
 
 This audit records what the self-hosted Stark compiler must be able to do at
 compile time. It is deliberately scoped to compiler-port needs found in the host
@@ -32,8 +33,8 @@ implementation, not to a general compile-time runtime.
 | Layout queries | Type checking and MIR CTFE use `sizeof` / `alignof` and concrete layout facts through `ConcreteTypeLayoutHelper`. | Query concrete runtime layout at compile time for ABI, package, and backend decisions. | Covered for concrete layouts. |
 | Result-like propagation | CTFE has `try` propagation over role-marked two-variant enums and no-payload status forms. | Reuse the normal Stark error-flow surface in compile-time compiler helpers. | Covered. |
 | Finite/law calls | Type-check and MIR evaluators call declared `finite` / `law` functions and methods, including static calls, receiver calls, chained receiver calls, generic substitution, and trait-default receiver fallback. | Reuse ordinary pure compiler helpers at compile time without trait objects. | Covered for the supported deterministic subset. |
-| Structural facts | `CompileTimeStructuralFacts` provides explicit `System.Compiler` facts for type categories, layout, field/enum metadata, callable metadata, traits/doctrines, associated types, `comptime` generics, FFI ABI, C aliases, qualifiers, memory contracts, and thread-safety laws. | Let generic compiler helpers branch over program structure without runtime reflection. | Broadly covered; remaining fact additions should be driven by real port queries. |
-| Cross-package generic CTFE | Package builders publish typed template bodies and structural fact expressions; imported-template lowering folds them after type and `comptime` value substitution. | Imported generic compiler helpers must behave like local generic helpers. | Covered for the current typed-template surface; preserve future required forms as they appear. |
+| Structural facts | `CompileTimeStructuralFacts` provides explicit `System.Compiler` facts for type categories, layout, field/enum metadata, callable metadata including actual return/parameter type-argument facts, traits/doctrines, associated types, `comptime` generics, FFI ABI, C aliases, qualifiers, memory contracts, and thread-safety laws. | Let generic compiler helpers branch over program structure without runtime reflection. | Broadly covered; remaining fact additions should be driven by real port queries. |
+| Cross-package generic CTFE | Package builders publish typed template bodies and structural fact expressions; imported-template lowering folds them after type and `comptime` value substitution. Source-free imported direct and receiver-member CTFE calls execute preserved typed statement bodies with local state, object/array initializer constants, scalar text interpolation and constant concatenation, control flow, pattern conditions, pattern switches, guards, and callee-specific typed metadata instead of relying on stale source text. | Imported generic compiler helpers must behave like local generic helpers. | Covered for the current typed-template surface; preserve future required forms as they appear. |
 | Runtime erasure | Type checking rejects structural fact calls outside `comptime`; MIR/codegen tests assert no CTFE calls leak into runtime lowering. | Compile-time-only facts must have zero runtime cost. | Covered by targeted regressions. |
 
 ## Audit Findings
@@ -43,9 +44,9 @@ implementation, not to a general compile-time runtime.
 | CTFE is a deterministic subset of ordinary Stark, not a separate language. | The self-hosted compiler can use the same finite/law helper style for generated constants, tables, layout branches, and generic specializations. |
 | Program-structure branching is explicit through `System.Compiler` facts. | Stark does not need runtime reflection or hidden metadata dispatch for self-hosting. New facts should be added only when the compiler port has a concrete query. |
 | Host package-image generation is ordinary compiler runtime work. | Module/package/top-level declaration enumeration does not need to become CTFE unless a future compiler helper intentionally moves that work into `comptime`. |
-| The current implementation already covers the large CTFE surface needed by the compiler port. | Remaining comptime work is closure and parity, not a new design pass. |
-| The main risk is evaluator drift. | `CompileTimeFunctionEvaluator`, MIR CTFE, and imported-template CTFE must accept/reject the same subset and preserve the same diagnostics. |
-| The second risk is package-image preservation drift. | Any new CTFE form or structural fact required by the port needs matching typed-template, source-bridge, loader, imported-lowering, and regression coverage. |
+| The current implementation already covers more than the narrow pre-self-host baseline. | Preserve it as regression-protected host behavior, but do not expand it as a bootstrap blocker. |
+| The main risk is evaluator drift. | Before self-hosting, fix drift only when it breaks the frozen baseline or an active compiler-port requirement. Broad parity is post-self-host work. |
+| The second risk is package-image preservation drift. | Before self-hosting, preserve currently tested cases. New broad preservation work belongs to post-self-host unless the port proves it is required. |
 
 ## Not Required For Initial Self-Hosting CTFE
 
@@ -57,26 +58,25 @@ implementation, not to a general compile-time runtime.
 | Hidden trait objects or hidden dispatch | Reuse stays compile-time-only by default; explicit runtime dispatch belongs to explicit ops tables. |
 | CTFE over arbitrary stdlib containers | The host needs fixed arrays, aggregates, scalar/text constants, and structural facts. Dynamic collections remain ordinary runtime compiler data structures unless a concrete compile-time use case appears. |
 
-## Remaining CTFE Work After This Audit
+## Scheduling Outcome After Scope Split
 
-The audit does not close the entire comptime feature. It closes the inventory
-step. The remaining work is:
+The audit no longer implies that the broad `comptime` feature must close before
+self-hosting. The schedule is:
 
-| Work area | Effort | Notes |
+| Work area | Schedule | Notes |
 | --- | --- | --- |
-| Evaluator parity closure | M | Keep type-check CTFE, MIR CTFE, and imported-template CTFE behavior aligned. |
-| Port-driven `System.Compiler` fact closure | M-L | Add only facts proven necessary by the compiler port. The audit found no immediate need for general runtime reflection or package enumeration facts. |
-| Package-image/source-bridge preservation closure | M-L | Required whenever the port uses a CTFE form across package boundaries. |
-| Final self-hosting closure pass | L | Re-run the audit against the actual self-hosted compiler source once enough of it exists, then close exact remaining gaps. |
+| Frozen pre-self-host baseline | before self-host | Preserve the currently implemented CTFE syntax, typed integer `comptime` generics, deterministic constants/tables/layout queries, supported finite/law calls, existing structural facts, diagnostics, and erasure. |
+| Evaluator parity closure | post-self-host by default | Close broad parity in the Stark compiler architecture unless the active compiler port proves a specific pre-self-host requirement. |
+| Port-driven `System.Compiler` fact closure | post-self-host by default | Add new fact families only when real compiler code needs them; broad structural reflection remains rejected. |
+| Package-image/source-bridge preservation closure | post-self-host by default | Preserve current tested cases before bootstrap; complete broad preservation later. |
+| Final broad-comptime closure pass | post-self-host | Re-run this audit once the Stark compiler source exists and decide which broad `comptime` pieces are still worth implementing. |
 
-## Completion Criteria For The Whole Comptime Feature
+## Completion Criteria For Pre-Self-Host Comptime
 
-- Every self-hosted compiler CTFE use is either already covered or has a
-  documented full-task implementation item.
-- Type-check CTFE, MIR CTFE, and imported-template CTFE agree on the accepted
-  subset.
-- Required CTFE forms and structural facts survive package-image publication,
-  package loading, source bridging, and imported-template lowering.
+- The currently implemented CTFE baseline remains regression-tested.
 - Unsupported compile-time execution reports a compile-time diagnostic.
-- Compile-time-only facts and calls are erased before runtime lowering and have
-  no runtime execution cost.
+- Compile-time-only facts and calls remain rejected at runtime and erased before
+  runtime lowering.
+- Any new pre-self-host CTFE work is justified by a concrete compiler-port
+  blocker and documented in the roadmap at the same task granularity as other
+  blockers.

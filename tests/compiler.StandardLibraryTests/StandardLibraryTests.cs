@@ -28,6 +28,7 @@ public class StandardLibraryTestSuite
         Assert.True(moduleGraph.ContainsLoadedModule("System.C"));
         Assert.True(moduleGraph.ContainsLoadedModule("System.Collections"));
         Assert.True(moduleGraph.ContainsLoadedModule("System.Console"));
+        Assert.True(moduleGraph.ContainsLoadedModule("System.Compiler.IntegerFacts"));
         Assert.True(moduleGraph.ContainsLoadedModule("System.FileSystem"));
         Assert.True(moduleGraph.ContainsLoadedModule("System.IO"));
         Assert.True(moduleGraph.ContainsLoadedModule("System.IO.File"));
@@ -402,16 +403,23 @@ public class StandardLibraryTestSuite
             var cModule = modules.Single(module => module.ModuleName == "System.C");
             var cTypes = cModule.EffectiveSourceSurface.Types?.Select(static item => item.Name).ToArray() ?? [];
             var cFunctions = cModule.EffectiveSourceSurface.Functions?.Select(static item => item.Name).ToArray() ?? [];
+            var cAliases = cModule.EffectiveSourceSurface.TypeAliases?.Select(static item => item.Name).ToArray() ?? [];
             Assert.Contains("CStringError", cTypes);
             Assert.Contains("CStringResult", cTypes);
             Assert.Contains("CStr", cTypes);
             Assert.Contains("OwnedCStr", cTypes);
             Assert.Contains("CCharBuffer", cTypes);
+            Assert.Contains("ForeignOwnedCStr", cTypes);
+            Assert.Contains("CStringDisposer", cAliases);
             Assert.Contains("FromAscii", cFunctions);
             Assert.Contains("FromUnicodeUtf8", cFunctions);
             Assert.Contains("ToAscii", cFunctions);
             Assert.Contains("ToUnicodeUtf8", cFunctions);
             Assert.Contains("NewCCharBuffer", cFunctions);
+            Assert.Contains("TryFromForeignOwnedRaw", cFunctions);
+            Assert.Contains("DisposeForeignOwned", cFunctions);
+            Assert.Contains("CopyForeignOwnedAsciiAndDispose", cFunctions);
+            Assert.Contains("CopyForeignOwnedUnicodeUtf8AndDispose", cFunctions);
 
             var memoryModule = modules.Single(module => module.ModuleName == "System.Memory");
             var memoryTypes = memoryModule.EffectiveSourceSurface.Types?.Select(static item => item.Name).ToArray() ?? [];
@@ -819,6 +827,7 @@ public class StandardLibraryTestSuite
         var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
         Assert.Contains("define i64 @LinuxSyscall2PathBuffer(", llvm, StringComparison.Ordinal);
         Assert.Contains("call i64 @LinuxSyscall2PathBuffer(", llvm, StringComparison.Ordinal);
+        Assert.Contains("define fastcc noundef i1 @TryTempDirectory(", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("@getcwd(", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("@strlen(", llvm, StringComparison.Ordinal);
     }

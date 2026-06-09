@@ -41,6 +41,8 @@ The repository currently contains additional implemented public modules beyond
 the `v1.0` compatibility promise:
 
 - `System.Collections`
+- `System.C`
+- `System.Compiler.IntegerFacts`
 - `System.FileSystem`
 - `System.Memory`
 - `System.Net`

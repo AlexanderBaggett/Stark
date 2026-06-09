@@ -38,6 +38,7 @@ internal sealed class LoweringContractValidator
     private int _checkedLambdaCount;
     private int _checkedTypeLayoutExpressionCount;
     private int _checkedDynamicStorageOperationCount;
+    private int _checkedDynTraitFromPartsCount;
     private int _checkedSwitchCount;
 
     public LoweringContractValidator(
@@ -119,6 +120,7 @@ internal sealed class LoweringContractValidator
             _checkedLambdaCount,
             _checkedTypeLayoutExpressionCount,
             _checkedDynamicStorageOperationCount,
+            _checkedDynTraitFromPartsCount,
             _checkedSwitchCount);
     }
 
@@ -187,6 +189,13 @@ internal sealed class LoweringContractValidator
                     ValidateBoundDynamicStorageOperation(dynamicStorageOperation, arguments, functionName, filePath);
                     ValidateDynamicStorageOperation(postfix, index, dynamicStorageOperation, arguments, filePath);
                     _checkedDynamicStorageOperationCount++;
+                    continue;
+                }
+
+                if (IsDynTraitFromPartsConstructionPrefix(postfix, index, out var dynFromPartsOperationName))
+                {
+                    ValidateBoundDynTraitFromPartsOperation(dynFromPartsOperationName, arguments, functionName, filePath);
+                    _checkedDynTraitFromPartsCount++;
                     continue;
                 }
 
@@ -718,6 +727,30 @@ internal sealed class LoweringContractValidator
                 arguments,
                 filePath,
                 $"Bound dynamic-storage operation for '{operation.OperationName}' does not match typed dynamic-storage facts for '{record.OperationName}'.");
+        }
+    }
+
+    private void ValidateBoundDynTraitFromPartsOperation(
+        string operationName,
+        StarkParser.ArgumentListContext arguments,
+        string functionName,
+        string? filePath)
+    {
+        if (!TryGetBoundOperation(arguments, functionName, out BoundDynTraitFromPartsOperation operation))
+        {
+            ReportMissingBoundOperation(arguments, filePath, "dyn-trait-from-parts");
+            return;
+        }
+
+        if (!string.Equals(operation.OperationName, operationName, StringComparison.Ordinal)
+            || operation.TargetType.Kind != StarkTypeKind.DynTrait
+            || operation.ContextType.Kind != StarkTypeKind.RawPointer
+            || operation.VtableType.Kind != StarkTypeKind.RawPointer)
+        {
+            ReportInvalid(
+                arguments,
+                filePath,
+                $"Bound dyn-trait from-parts operation for '{operation.OperationName}' does not match source '{operationName}'.");
         }
     }
 
@@ -2133,6 +2166,19 @@ internal sealed class LoweringContractValidator
     {
         return postfixPartIndex == 0
             && string.Equals(expression.primaryExpression().Identifier()?.GetText(), "slice", StringComparison.Ordinal);
+    }
+
+    private static bool IsDynTraitFromPartsConstructionPrefix(
+        StarkParser.PostfixExpressionContext expression,
+        int postfixPartIndex,
+        out string operationName)
+    {
+        operationName = expression.primaryExpression().genericQualifiedName()?.qualifiedName().GetText()
+            ?? expression.primaryExpression().Identifier()?.GetText()
+            ?? string.Empty;
+        return postfixPartIndex == 0
+            && (string.Equals(operationName, "dynview", StringComparison.Ordinal)
+                || string.Equals(operationName, "dynbox", StringComparison.Ordinal));
     }
 
     private bool TryGetRecord<T>(

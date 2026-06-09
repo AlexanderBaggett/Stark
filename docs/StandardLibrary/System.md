@@ -5,8 +5,10 @@
 It re-exports:
 
 - `System.BitOperations`
+- `System.C`
 - `System.Collections`
 - `System.Console`
+- `System.Compiler.IntegerFacts`
 - `System.FileSystem`
 - `System.IO`
 - `System.IO.File`
@@ -49,22 +51,28 @@ export fn i32 main()
 - The package root and public module graph are stable for the current Milestone 7 slice.
 - `System.Console` and `System.IO.File` are usable today.
 - `System.BitOperations` currently exposes integer bit-manipulation helpers.
+- `System.C` currently exposes target-mapped C primitive aliases and C string interop helpers.
+- `System.Compiler.IntegerFacts` currently exposes bounded `i1024`/`u1024`
+  compiler integer-fact helpers for range, storage, tag, checked arithmetic,
+  known-bit, and two's-complement reasoning.
 - `System.Math` currently exposes scalar math helpers, including `Sqrt`,
-  `Min`, `Max`, `Sin`, `Cos`, `SinCos`, rounding, reciprocal estimates, and
-  `XorShift32`.
+  `Min`, `Max`, `Sin`, `Cos`, `SinCos`, `Exp`, `Log`, `Pow`, rounding,
+  reciprocal estimates, fused multiply-add, and `XorShift32`.
 - `System.Memory` currently exposes the first allocator vocabulary and internal default-allocation contract needed for owned collections and buffers.
 - `System.Collections` currently exposes the first owned allocator-backed
   collection surface for `List<T>`, `Stack<T>`, `Queue<T>`, `RingQueue<T>`,
-  `LinkedList<T>`, `Dictionary<K, V>`, and readonly `Lookup<T>`.
-- `System.IO.Path` currently provides the separator/dot-path helpers plus a low-level caller-buffer `CurrentDirectory` API documented in its module reference.
-- `System.FileSystem` currently exposes directory creation/deletion, directory opening/iteration with owned entry names, and filesystem metadata queries.
-- `System.Threading` currently exposes the no-state `ThreadEntry` callable alias, compact thread status/result enums, owned `Thread` construction, `Join`, `Detach`, best-effort drop cleanup, and static scheduler helpers for yield and millisecond sleep.
+  `LinkedList<T>`, `Dictionary<K, V>`, `HashSet<T>`, readonly `Lookup<T>`,
+  comparator-based `SortBy<T>`, and direct `Ord`-based `Sort<T>`.
+- `System.IO.File` currently provides owned file handles plus whole-file text/byte read and write helpers and line-oriented text reading.
+- `System.IO.Path` currently provides separator/current-directory/temp-directory helpers, glob matching, multi-part joins, path facts, full/lexical path shaping, rooted/relative checks, and extension rewriting.
+- `System.FileSystem` currently exposes directory creation/deletion, directory opening/iteration with owned entry names, cross-platform filesystem metadata queries, temp-directory creation, recursive walk, and streaming glob traversal.
+- `System.Threading` currently exposes the no-state `ThreadEntry` callable alias, compact thread status/result enums, owned `Thread` construction, `Join`, `Detach`, best-effort drop cleanup, static scheduler helpers for yield and millisecond sleep, seq-cst atomics, `Synchronized<T>` / `Locked<T>` guarded shared state, and MPSC `Channel<T>` / `Sender<T>` / `Receiver<T>` handles.
 - `System.Net` currently exposes the shared networking error/result/status vocabulary plus IPv4 address and endpoint value types.
 - `System.Net.Tcp` currently exposes `TcpShutdown` plus owned `TcpClient` and
   `TcpListener`, including connect/listen/accept, slice reads and writes,
   byte-buffer overloads, vectored IO, wait helpers, shutdown, and close.
-- `System.Process` currently exposes `CurrentId` and `Exit` as the public process helper surface over the internal platform layer.
-- `System.Testing` currently exposes boolean/equality assertions and an explicit `RunFact` helper for `stark test` executables.
+- `System.Process` currently exposes process id/exit helpers plus Linux-backed process spawn/capture, environment, argv, and working-directory APIs.
+- `System.Testing` currently exposes boolean/equality, text, range, slice/List shape assertions, temp fixture helpers, snapshot/golden text helpers, and `RunFact`/exit helpers used by generated `stark test` `[Fact]` runners.
 - `System.Text` currently exposes owned text helpers, parsers, formatters, and low-level caller-buffer conversion APIs through explicit `import System.Text`.
 - `System.Runtime.Buffer` exposes fixed and dynamic byte buffers through
   explicit `import System.Runtime.Buffer`.

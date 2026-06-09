@@ -299,7 +299,10 @@ internal sealed partial class LlvmFunctionBodyEmitter
 
     private int? GetTypeAlignmentBytes(StarkTypeSymbol type)
     {
-        return TryGetConcreteTypeLayout(NormalizeAggregateType(type)) is { AlignmentBytes: > 0 } layout
+        var layoutType = StarkTypeSymbols.IsPointerBackedBorrowType(type)
+            ? type
+            : NormalizeAggregateType(type);
+        return TryGetConcreteTypeLayout(layoutType) is { AlignmentBytes: > 0 } layout
             ? layout.AlignmentBytes
             : null;
     }
@@ -321,7 +324,9 @@ internal sealed partial class LlvmFunctionBodyEmitter
 
     private int? GetOwnedObjectAlignmentBytes(StarkTypeSymbol type)
     {
-        var normalizedType = NormalizeAggregateType(type);
+        var normalizedType = StarkTypeSymbols.IsPointerBackedBorrowType(type)
+            ? type
+            : NormalizeAggregateType(type);
         if (TryGetConcreteTypeLayout(normalizedType) is not { } layout)
         {
             return null;

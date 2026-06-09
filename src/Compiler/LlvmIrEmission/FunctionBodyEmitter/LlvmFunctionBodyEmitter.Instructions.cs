@@ -172,6 +172,12 @@ internal sealed partial class LlvmFunctionBodyEmitter
                 EmitSliceElementAddress(result, sliceElementAddress);
                 return;
             case SsaLoadIndirectRValue loadIndirect:
+                if (StarkTypeSymbols.IsPointerBackedBorrowType(loadIndirect.Type))
+                {
+                    EmitPointerBackedBorrowLoad(result, loadIndirect);
+                    return;
+                }
+
                 AppendLine(
                     $"  {result} = load {MapType(loadIndirect.Type)}, ptr {FormatValue(loadIndirect.Address)}{GetKnownPointerAlignmentSuffix(loadIndirect.Address, loadIndirect.Type)}{GetInvariantLoadMetadataSuffix(loadIndirect.Address)}{GetValueRangeMetadataSuffix(instruction.ResultName, loadIndirect.Type)}{GetTbaaMetadataSuffix(loadIndirect.Address, loadIndirect.Type)}{GetScopedNoAliasMetadataSuffix(loadIndirect.Address, instruction.ScopedNoAliasGroups)}{GetLoopAccessGroupMetadataSuffix(instruction.LoopAccessGroups)}");
                 return;
@@ -203,6 +209,62 @@ internal sealed partial class LlvmFunctionBodyEmitter
             default:
                 throw new UnsupportedBodyEmissionException($"Unsupported SSA rvalue '{instruction.Value.GetType().Name}'.");
         }
+    }
+
+    private void EmitPointerBackedBorrowLoad(string result, SsaLoadIndirectRValue loadIndirect)
+    {
+        if (TryResolveDirectPointerBackedBorrowPointeeAddress(
+                loadIndirect.Address,
+                loadIndirect.Type,
+                out var directSourceAddress,
+                out _,
+                out var directPointeeType))
+        {
+            AppendLine($"  {result} = getelementptr{GetZeroOffsetGepFlags()} {MapType(directPointeeType)}, ptr {directSourceAddress}, i32 0");
+            return;
+        }
+
+        if (IsAddressOfPointerBackedBorrowParameter(loadIndirect.Address))
+        {
+            AppendLine($"  {result} = getelementptr{GetZeroOffsetGepFlags()} ptr, ptr {FormatValue(loadIndirect.Address)}, i32 0");
+            return;
+        }
+
+        AppendLine(
+            $"  {result} = load ptr, ptr {FormatValue(loadIndirect.Address)}{GetKnownPointerAlignmentSuffix(loadIndirect.Address, loadIndirect.Type)}{GetInvariantLoadMetadataSuffix(loadIndirect.Address)}{GetTbaaMetadataSuffix(loadIndirect.Address, loadIndirect.Type)}");
+    }
+
+    private static StarkTypeSymbol GetScalarOperationType(StarkTypeSymbol type)
+    {
+        if (!StarkTypeSymbols.IsPointerBackedBorrowType(type))
+        {
+            return type;
+        }
+
+        return StarkTypeSymbols.WithQualifiers(
+            StarkTypeSymbols.BorrowReturnValueType(type),
+            borrowKind: StarkBorrowKind.None,
+            accessKind: StarkAccessKind.None,
+            initializationKind: StarkInitializationKind.None,
+            isMutableView: false);
+    }
+
+    private string FormatScalarOperationValue(SsaValue value, StarkTypeSymbol scalarType)
+    {
+        if (!StarkTypeSymbols.IsPointerBackedBorrowType(value.Type))
+        {
+            return FormatValue(value);
+        }
+
+        if (!TryResolveAggregateSourceAddress(value, value.Type, out var sourceAddress, out var sourceAlignmentBytes))
+        {
+            throw new UnsupportedBodyEmissionException(
+                $"Could not resolve borrowed scalar operand '{value.Text}' of type '{value.Type.DisplayName}' to an address.");
+        }
+
+        var loaded = $"%{EscapeIdentifier(CreateAbiTempName("borrow_scalar_load"))}";
+        AppendLine($"  {loaded} = load {MapType(scalarType)}, ptr {sourceAddress}{GetAlignmentSuffix(sourceAlignmentBytes)}{GetValueRangeMetadataSuffix(scalarType)}");
+        return loaded;
     }
 
     private void EmitConvert(string resultName, string result, SsaConvertRValue convert)
@@ -321,6 +383,8 @@ internal sealed partial class LlvmFunctionBodyEmitter
 
     private void EmitBinary(string result, SsaBinaryRValue binary)
     {
+        var leftType = GetScalarOperationType(binary.Left.Type);
+        var rightType = GetScalarOperationType(binary.Right.Type);
         if (binary.Type.Kind == StarkTypeKind.Integer)
         {
             if (binary.Operator is SsaBinaryOperator.SaturatingAdd or SsaBinaryOperator.SaturatingSubtract or SsaBinaryOperator.SaturatingMultiply)
@@ -349,7 +413,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
 
             if (!string.IsNullOrEmpty(opcode))
             {
-                AppendLine($"  {result} = {opcode}{GetIntegerInstructionFlags(binary)} {MapType(binary.Left.Type)} {FormatValue(binary.Left)}, {FormatValue(binary.Right)}");
+                AppendLine($"  {result} = {opcode}{GetIntegerInstructionFlags(binary)} {MapType(leftType)} {FormatScalarOperationValue(binary.Left, leftType)}, {FormatScalarOperationValue(binary.Right, rightType)}");
                 return;
             }
         }
@@ -394,18 +458,18 @@ internal sealed partial class LlvmFunctionBodyEmitter
                 if (_isStrictFp)
                 {
                     AppendLine(
-                        $"  {result} = call {MapType(binary.Type)} @{GetConstrainedBinaryIntrinsicName(opcode, binary.Type)}({MapType(binary.Left.Type)} {FormatValue(binary.Left)}, {MapType(binary.Right.Type)} {FormatValue(binary.Right)}, metadata !\"round.dynamic\", metadata !\"fpexcept.strict\") strictfp");
+                        $"  {result} = call {MapType(binary.Type)} @{GetConstrainedBinaryIntrinsicName(opcode, binary.Type)}({MapType(leftType)} {FormatScalarOperationValue(binary.Left, leftType)}, {MapType(rightType)} {FormatScalarOperationValue(binary.Right, rightType)}, metadata !\"round.dynamic\", metadata !\"fpexcept.strict\") strictfp");
                     return;
                 }
 
-                AppendLine($"  {result} = {opcode}{GetFastMathSuffix()} {MapType(binary.Left.Type)} {FormatValue(binary.Left)}, {FormatValue(binary.Right)}");
+                AppendLine($"  {result} = {opcode}{GetFastMathSuffix()} {MapType(leftType)} {FormatScalarOperationValue(binary.Left, leftType)}, {FormatScalarOperationValue(binary.Right, rightType)}");
                 return;
             }
         }
 
         if (binary.Type.Kind == StarkTypeKind.Bool)
         {
-            if (binary.Left.Type.Kind == StarkTypeKind.Bool && binary.Right.Type.Kind == StarkTypeKind.Bool)
+            if (leftType.Kind == StarkTypeKind.Bool && rightType.Kind == StarkTypeKind.Bool)
             {
                 var booleanOpcode = binary.Operator switch
                 {
@@ -417,12 +481,12 @@ internal sealed partial class LlvmFunctionBodyEmitter
 
                 if (!string.IsNullOrEmpty(booleanOpcode))
                 {
-                    AppendLine($"  {result} = {booleanOpcode} i1 {FormatValue(binary.Left)}, {FormatValue(binary.Right)}");
+                    AppendLine($"  {result} = {booleanOpcode} i1 {FormatScalarOperationValue(binary.Left, leftType)}, {FormatScalarOperationValue(binary.Right, rightType)}");
                     return;
                 }
             }
 
-            if (binary.Left.Type.Kind == StarkTypeKind.Integer || binary.Left.Type.Kind == StarkTypeKind.Bool)
+            if (leftType.Kind == StarkTypeKind.Integer || leftType.Kind == StarkTypeKind.Bool)
             {
                 var predicate = binary.Operator switch
                 {
@@ -437,12 +501,12 @@ internal sealed partial class LlvmFunctionBodyEmitter
 
                 if (!string.IsNullOrEmpty(predicate))
                 {
-                    AppendLine($"  {result} = icmp {predicate} {MapType(binary.Left.Type)} {FormatValue(binary.Left)}, {FormatValue(binary.Right)}");
+                    AppendLine($"  {result} = icmp {predicate} {MapType(leftType)} {FormatScalarOperationValue(binary.Left, leftType)}, {FormatScalarOperationValue(binary.Right, rightType)}");
                     return;
                 }
             }
 
-            if (binary.Left.Type.Kind == StarkTypeKind.Float)
+            if (leftType.Kind == StarkTypeKind.Float)
             {
                 var predicate = binary.Operator switch
                 {
@@ -460,16 +524,16 @@ internal sealed partial class LlvmFunctionBodyEmitter
                     if (_isStrictFp)
                     {
                         AppendLine(
-                            $"  {result} = call i1 @{GetConstrainedFloatCompareIntrinsicName(binary.Left.Type)}({MapType(binary.Left.Type)} {FormatValue(binary.Left)}, {MapType(binary.Right.Type)} {FormatValue(binary.Right)}, metadata !\"{predicate}\", metadata !\"fpexcept.strict\") strictfp");
+                            $"  {result} = call i1 @{GetConstrainedFloatCompareIntrinsicName(leftType)}({MapType(leftType)} {FormatScalarOperationValue(binary.Left, leftType)}, {MapType(rightType)} {FormatScalarOperationValue(binary.Right, rightType)}, metadata !\"{predicate}\", metadata !\"fpexcept.strict\") strictfp");
                         return;
                     }
 
-                    AppendLine($"  {result} = fcmp{GetFastMathSuffix()} {predicate} {MapType(binary.Left.Type)} {FormatValue(binary.Left)}, {FormatValue(binary.Right)}");
+                    AppendLine($"  {result} = fcmp{GetFastMathSuffix()} {predicate} {MapType(leftType)} {FormatScalarOperationValue(binary.Left, leftType)}, {FormatScalarOperationValue(binary.Right, rightType)}");
                     return;
                 }
             }
 
-            if (binary.Left.Type.Kind == StarkTypeKind.RawPointer)
+            if (leftType.Kind == StarkTypeKind.RawPointer)
             {
                 var predicate = binary.Operator switch
                 {
@@ -484,7 +548,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
 
                 if (!string.IsNullOrEmpty(predicate))
                 {
-                    AppendLine($"  {result} = icmp {predicate} ptr {FormatValue(binary.Left)}, {FormatValue(binary.Right)}");
+                    AppendLine($"  {result} = icmp {predicate} ptr {FormatScalarOperationValue(binary.Left, leftType)}, {FormatScalarOperationValue(binary.Right, rightType)}");
                     return;
                 }
             }

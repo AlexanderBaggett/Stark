@@ -1,6 +1,12 @@
 import System.Runtime.Platform.Linux
 module System.Runtime.Platform
 
+internal enum FileOpenResult
+{
+    Ok(rawptr<i8[min max]>),
+    Err(i32[min max]),
+}
+
 internal fn void ExitProcess(i32[min max] code)
 {
     unsafe
@@ -166,11 +172,61 @@ internal unsafe fn rawptr<i8[min max]> OpenFileRead(ascii path)
     }
 }
 
+internal unsafe fn FileOpenResult OpenFileReadResult(ascii path)
+{
+    unsafe
+    {
+        switch (System.Runtime.Platform.Linux.OpenFileReadResult(path))
+        {
+            case System.Runtime.Platform.Linux.FileOpenResult.Ok(var handle):
+                return FileOpenResult.Ok(handle);
+            case System.Runtime.Platform.Linux.FileOpenResult.Err(var error):
+                return FileOpenResult.Err(error);
+        }
+    }
+}
+
 internal unsafe fn rawptr<i8[min max]> OpenFileWrite(ascii path)
 {
     unsafe
     {
         return System.Runtime.Platform.Linux.OpenFileWrite(path);
+    }
+}
+
+internal unsafe fn FileOpenResult OpenFileWriteResult(ascii path)
+{
+    unsafe
+    {
+        switch (System.Runtime.Platform.Linux.OpenFileWriteResult(path))
+        {
+            case System.Runtime.Platform.Linux.FileOpenResult.Ok(var handle):
+                return FileOpenResult.Ok(handle);
+            case System.Runtime.Platform.Linux.FileOpenResult.Err(var error):
+                return FileOpenResult.Err(error);
+        }
+    }
+}
+
+internal unsafe fn rawptr<i8[min max]> OpenFileCreateNew(ascii path)
+{
+    unsafe
+    {
+        return System.Runtime.Platform.Linux.OpenFileCreateNew(path);
+    }
+}
+
+internal unsafe fn FileOpenResult OpenFileCreateNewResult(ascii path)
+{
+    unsafe
+    {
+        switch (System.Runtime.Platform.Linux.OpenFileCreateNewResult(path))
+        {
+            case System.Runtime.Platform.Linux.FileOpenResult.Ok(var handle):
+                return FileOpenResult.Ok(handle);
+            case System.Runtime.Platform.Linux.FileOpenResult.Err(var error):
+                return FileOpenResult.Err(error);
+        }
     }
 }
 
@@ -182,11 +238,39 @@ internal unsafe fn rawptr<i8[min max]> OpenFileAppend(ascii path)
     }
 }
 
+internal unsafe fn FileOpenResult OpenFileAppendResult(ascii path)
+{
+    unsafe
+    {
+        switch (System.Runtime.Platform.Linux.OpenFileAppendResult(path))
+        {
+            case System.Runtime.Platform.Linux.FileOpenResult.Ok(var handle):
+                return FileOpenResult.Ok(handle);
+            case System.Runtime.Platform.Linux.FileOpenResult.Err(var error):
+                return FileOpenResult.Err(error);
+        }
+    }
+}
+
 internal unsafe fn rawptr<i8[min max]> OpenFileReadWrite(ascii path)
 {
     unsafe
     {
         return System.Runtime.Platform.Linux.OpenFileReadWrite(path);
+    }
+}
+
+internal unsafe fn FileOpenResult OpenFileReadWriteResult(ascii path)
+{
+    unsafe
+    {
+        switch (System.Runtime.Platform.Linux.OpenFileReadWriteResult(path))
+        {
+            case System.Runtime.Platform.Linux.FileOpenResult.Ok(var handle):
+                return FileOpenResult.Ok(handle);
+            case System.Runtime.Platform.Linux.FileOpenResult.Err(var error):
+                return FileOpenResult.Err(error);
+        }
     }
 }
 
@@ -296,6 +380,14 @@ internal fn bool IsFile(ascii path)
 internal fn bool IsDirectory(ascii path)
 {
     return System.Runtime.Platform.Linux.IsDirectory(path);
+}
+
+internal unsafe fn i32[min max] ReadPathMetadata(ascii path, rawmutptr<i8[min max]> metadataData)
+{
+    unsafe
+    {
+        return System.Runtime.Platform.Linux.ReadPathMetadata(path, metadataData);
+    }
 }
 
 internal fn i32[min max] CreateDirectory(ascii path)
@@ -414,11 +506,29 @@ internal unsafe fn bool TryCurrentDirectory(rawmutptr<Ascii> destination)
     }
 }
 
+internal unsafe fn bool TryTempDirectory(rawmutptr<Ascii> destination)
+{
+    unsafe
+    {
+        return System.Runtime.Platform.Linux.TryTempDirectory(destination);
+    }
+}
+
 internal unsafe fn rawmutptr<i8[min max]> StartThread(fnptr<fn i32[min max]()> entry)
 {
     unsafe
     {
         return System.Runtime.Platform.Linux.StartThread(entry);
+    }
+}
+
+internal unsafe fn rawmutptr<i8[min max]> StartThreadWithContext(
+    fnptr<unsafe fn i32[min max](rawmutptr<i8[min max]>)> entry,
+    rawmutptr<i8[min max]> context)
+{
+    unsafe
+    {
+        return System.Runtime.Platform.Linux.StartThreadWithContext(entry, context);
     }
 }
 

@@ -1,6 +1,7 @@
 # Stark Design Specification: Compile-Time Evaluation (`comptime`)
 
-**Status:** Accepted direction; partial implementation
+**Status:** Accepted direction; pre-self-host baseline frozen, broad expansion
+deferred
 **Feature:** `comptime` blocks, `comptime` expressions, and `comptime` generic
 value parameters
 
@@ -13,11 +14,16 @@ selector*: code in a `comptime` context runs under the same type, ownership, and
 contract rules it would obey at run time. There is no separate comptime
 sublanguage.
 
-The accepted self-hosting scope is **CTFE plus broad compile-time branching over
-program structure**. Stark code may compute constants, tables, range facts, and
-layout facts, and may branch at compile time based on explicit structural facts
-about declarations such as types, fields, enum variants, functions, attributes,
-and doctrine/trait conformance.
+The feature is now split into two schedules:
+
+- **Pre-self-host:** preserve the currently implemented, tested baseline needed
+  by the C# host and by core Stark language semantics. This includes
+  expression/block CTFE, typed integer `comptime` generics, deterministic
+  aggregate/table constants, concrete layout queries, supported finite/law
+  calls, and already-landed compile-time-only structural facts.
+- **Post-self-host:** revisit the broad Zig-like `comptime` direction after the
+  Stark compiler can build itself. That phase owns full evaluator parity,
+  future `System.Compiler` fact expansion, and broad cross-package preservation.
 
 Program-structure facts are compile-time-only. They must not create runtime
 reflection metadata, hidden dispatch, hidden allocation, or backend-visible
@@ -92,14 +98,14 @@ Implementation status summary:
   compile-time-only program-structure branching. These facts are ordinary CTFE
   values, are rejected in runtime expressions, and must erase before MIR/codegen.
 - Package-image and source-bridge preservation exists for many landed CTFE
-  cases, but the self-hosting requirement is not "every possible fact exists";
-  it is that every fact and CTFE behavior the compiler port actually depends on
-  is implemented and tested end-to-end.
+  cases. Before self-hosting, this support is maintained as a regression
+  baseline, not expanded into a complete broad-CTFE parity project.
 - The current-host compiler-port CTFE audit is recorded in
   [../internal/ctfe-self-host-compiler-audit.md](../internal/ctfe-self-host-compiler-audit.md).
-  The feature remains in-progress until the remaining parity, package
-  preservation, and port-driven fact gaps are closed. Do not treat each
-  compiler-known structural fact as a separate roadmap task.
+- The pre-self-host scope is locked in
+  [26-comptime-pre-self-host-scope.md](26-comptime-pre-self-host-scope.md). The
+  post-self-host expansion scope is tracked in
+  [27-comptime-post-self-host-scope.md](27-comptime-post-self-host-scope.md).
 
 ### 2.3 `comptime` generic parameters
 
@@ -140,7 +146,8 @@ Section 4.
 
 ### 3.1 CTFE Scope
 
-The CTFE engine must support the compiler-port use cases:
+The pre-self-host CTFE baseline supports the use cases already implemented and
+covered by tests:
 
 - scalar and aggregate constant construction
 - table generation
@@ -148,7 +155,7 @@ The CTFE engine must support the compiler-port use cases:
 - enum and layout fact computation
 - string/text constants used by diagnostics, package metadata, and LLVM text
 - calls to declared `finite`, `law`, and `finite law` Stark functions and
-  methods whose bodies stay within the supported compile-time subset
+  methods whose bodies stay within the already implemented deterministic subset
 - local mutation inside bounded compile-time execution
 - `willexit` loops whose bounds can be validated by the compile-time evaluator
 
@@ -156,6 +163,9 @@ The CTFE engine must support the compiler-port use cases:
 
 Compile-time code may inspect explicit program-structure facts and branch over
 them with ordinary Stark control flow, especially `if` and exhaustive `switch`.
+For self-hosting, the currently implemented fact surface is maintained as a
+baseline. Expanding this into a complete program-structure API is deferred until
+after self-hosting.
 
 Required structural inputs include:
 
@@ -167,8 +177,8 @@ Required structural inputs include:
   storage/ownership annotations, memory contracts, and ABI facts
 - trait/doctrine conformance and associated type bindings
 - compile-time alias/noalias proof facts where exposed by the typed model
-- named type declaration module identity and package-visible metadata needed by
-  package-image generation
+- named and nested type declaration module identity and package-visible metadata
+  needed by package-image generation
 
 The named structural-query surface is `System.Compiler`. It is a
 compiler-known, compile-time-only API for asking explicit questions about types,
@@ -176,11 +186,16 @@ fields, enum variants, callable shapes, ABI/layout facts, associated types,
 trait/doctrine conformance, and package-visible metadata. The exact fact list is
 reference material, not roadmap task granularity.
 
-The language decision is that the capability exists and is explicit:
-compile-time branching over program structure is part of `comptime`, not a
-runtime reflection feature. The current-host audit found no need for hidden
-runtime reflection or package enumeration facts; remaining facts should be
-driven by concrete self-hosted compiler queries and supported end-to-end.
+`System.Compiler` is not currently a standard-library module. Calls under that
+namespace are recognized and evaluated by the compiler during `comptime`; using
+them outside compile-time contexts is a diagnostic, and no runtime library symbol
+is emitted.
+
+The language decision is that the capability remains explicit:
+compile-time branching over program structure is part of broad `comptime`, not
+a runtime reflection feature. The broad version is post-self-host work; before
+self-hosting, only the already implemented fact surface and regression fixes are
+in scope.
 
 ### 3.3 Comptime Generic Specialization
 
@@ -285,122 +300,33 @@ is emitted.
 
 ## 6. Work Items
 
-- [x] Decide that `comptime` includes CTFE plus broad compile-time branching
-      over explicit program-structure facts.
+- [x] Decide that `comptime` has two schedules: a frozen pre-self-host baseline
+      and a deferred post-self-host expansion.
 - [x] Decide that Stark const generics are spelled as typed `comptime` generic
       value parameters, not `const`, because Stark `const` already means deep
       interior immutability.
 - [x] Keep program-structure facts compile-time-only; do not add runtime
       reflection as part of this feature.
-- [~] Implement the self-hosting `comptime` capability in the host compiler.
-      Current broad support includes expression/block CTFE, typed `comptime`
-      generics, deterministic local mutation, bounded loops/traversal,
-      aggregate constants, layout queries, switch/pattern execution, explicit
-      conversion/cast evaluation, CTFE `try` propagation over role-marked
-      enums, generic CTFE substitution, declared `finite`/`law` function and
-      method calls including chained receiver calls, trait-default receiver
-      calls, and nested calls that preserve symbolic `comptime` value
-      arguments until specialization, cross-package/package-image preservation
-      for CTFE `try` and typed-template structural facts, many explicit
-      `System.Compiler` structural facts, typed thread-safety law attribute
-      condition type predicate/metadata facts for `[Grant]` / `[Deny]` on
-      types and fields,
-      implemented-trait metadata facts, declaration and actual `comptime`
-      generic argument type predicate/metadata facts, ordinary actual type
-      argument predicate/metadata facts, method `where` law predicate type
-      predicate/metadata facts, method module identity facts, method parameter
-      name facts, method generic trait-bound facts, C source alias identity
-      facts including closure
-      return/parameter type aliases, named type module identity facts, callable
-      return/parameter qualifier facts, field/enum-payload qualifier facts,
-      callable bounded raw-pointer count-expression facts, diagnostics for
-      unsupported compile-time execution, and erasure before runtime lowering.
-    - [x] Finish the compiler-port CTFE use-case audit against the current host
-          compiler implementation, recording the required constants, generated
-          tables, layout/range facts, structural facts, and compile-time
-          branching forms. Audit reference:
-          [../internal/ctfe-self-host-compiler-audit.md](../internal/ctfe-self-host-compiler-audit.md).
-    - [~] Close evaluator parity gaps between
-          `CompileTimeFunctionEvaluator` and the MIR/imported-template CTFE
-          evaluator so type checking, MIR lowering, and cross-package typed
-          template lowering accept and reject the same compile-time subset.
-          MIR CTFE now preserves open structural-fact targets and default
-          constants consistently with type-check CTFE, and imported
-          typed-template structural facts fold through the same
-          `System.Compiler` evaluator after generic substitution. Source-free
-          imported typed templates also preserve ordinary unary `comptime`
-          expressions over deterministic manifest-backed constants. Open
-          integer `comptime` generic values now validate symbolically during
-          template type checking, survive nested finite/law CTFE calls, and
-          fold to concrete immediates after specialization.
-    - [~] Close required ordinary-expression CTFE gaps found by the audit.
-          Explicit conversion/cast evaluation and CTFE `try` propagation over
-          role-marked result/option/status-shaped enums have landed; integer
-          arithmetic over typed `comptime` generic values now validates in
-          generic templates and folds after specialization; nested finite/law
-          calls can forward symbolic `comptime` value arguments until a
-          concrete specialization is available; any remaining
-          ordinary-expression work is driven by the CTFE closure pass and
-          concrete compiler-port use.
-    - [~] Close required package-image, source-bridge, and imported-template
-          preservation gaps for CTFE forms used across package boundaries:
-          conversions, structural facts, receiver calls, aggregate constants,
-          `try` fallbacks, ordinary unary `comptime` expressions, and
-          `comptime` generic substitution. CTFE `try` now
-          publishes typed-template `try` expressions, ordinal-keyed propagation
-          facts, source-bridge rendering, and imported-template MIR lowering;
-          typed-template `System.Compiler` structural facts now preserve fact
-          name, type arguments, and comptime value arguments and fold in
-          imported MIR lowering; ordinary unary `comptime` expressions now
-          publish/load/render as typed-template expressions and fold source-free
-          when their operand is a deterministic manifest-backed constant or
-          specialized integer `comptime` generic expression;
-          source-free imported typed templates now resolve and fold
-          manifest-backed direct finite/law calls with concrete `comptime`
-          substitutions;
-          published generic enum calls resolve through direct enum-layout facts
-          instead of display-name parsing; typed package-template bodies are
-          authoritative and bridge source emits declaration-only APIs for them
-          instead of reconstructing bodies from stale or corrupted legacy
-          `BodyText`.
-    - [ ] Close required `System.Compiler` structural-fact coverage from actual
-          compiler-port queries, including callable/package/module facts,
-          ABI/layout facts, field/enum/associated-type/doctrine facts, and
-          typed thread-safety law attribute facts, and wrong-target/out-of-range
-          diagnostics. Type/field `[Grant]` / `[Deny]` law attribute
-          count/name/kind/condition/type-predicate/type-metadata facts,
-          implemented-trait count/type-predicate/type/metadata facts,
-          declaration `comptime` generic parameter
-          type-predicate/type/metadata facts, callable return/parameter
-          qualifier facts, field/enum-payload qualifier facts, method module
-          identity facts, method `where` law predicate
-          count/name/type-predicate/type/metadata facts, method parameter
-          name facts, method generic trait-bound count/type-predicate/type/metadata
-          facts, C source alias identity facts including closure return and
-          parameter types, named type module identity facts, and
-          function-pointer/closure return and parameter nested-type metadata
-          facts, plus
-          function-pointer/closure/method bounded raw-pointer parameter
-          count-expression facts, now fold in CTFE, reject invalid runtime use,
-          and are covered through package-backed typed aliases,
-          package-backed trait metadata, or method imports.
-    - [x] Complete runtime-boundary verification: structural fact calls and
-          bare structural fact references report STK3054 outside `comptime`;
-          compile-time-only trait/doctrine/integer storage remains rejected in
-          runtime contexts; scalar, aggregate, enum, layout, and
-          structural-fact CTFE materialization is covered by targeted
-          regressions that assert no compile-time calls leak into MIR/LLVM.
-- [ ] Complete the self-hosting CTFE audit and closure pass. This is the real
-      remaining task: audit the self-hosted compiler port against the host
-      implementation, identify exact missing CTFE behaviors or structural facts,
-      implement those gaps end-to-end, verify package-image/source-bridge
-      preservation for required cases, and verify runtime erasure.
+- [x] Freeze the pre-self-host `comptime` baseline at the currently implemented
+      host capability. See
+      [26-comptime-pre-self-host-scope.md](26-comptime-pre-self-host-scope.md).
+- [x] Preserve current runtime-boundary verification: structural fact calls and
+      bare structural fact references report STK3054 outside `comptime`;
+      compile-time-only trait/doctrine/integer storage remains rejected in
+      runtime contexts; scalar, aggregate, enum, layout, and structural-fact
+      CTFE materialization is covered by targeted regressions that assert no
+      compile-time calls leak into MIR/LLVM.
+- [ ] Revisit broad `comptime` after self-hosting: rebuild the evaluator in the
+      Stark compiler architecture, settle the stable structural fact surface,
+      finish broad evaluator parity, and complete package/source preservation
+      for broad CTFE helper bodies. See
+      [27-comptime-post-self-host-scope.md](27-comptime-post-self-host-scope.md).
 
 Reference notes:
 
 - The exact `System.Compiler` fact inventory belongs in reference material and
   tests, not as separate roadmap tasks in this document. Current reference:
   [comptime-structural-facts-reference.md](../../skills/stark-language/references/comptime-structural-facts-reference.md).
-- Do not split this feature into new roadmap subtasks merely to show partial
-  progress. Add a new task only when the compiler port reveals genuinely
-  unplanned work at the same planning granularity as the existing roadmap.
+- Before self-hosting, `comptime` work is maintenance-only unless the active
+  compiler port proves a missing behavior is required. Broad expansion belongs
+  to the post-self-host scope document.

@@ -125,6 +125,7 @@ internal sealed class TypeChecker
     private readonly List<LambdaTypingRecord> _lambdas = [];
     private readonly List<ClosureLambdaTypingRecord> _closureLambdas = [];
     private readonly List<LambdaCaptureTypingRecord> _lambdaCaptures = [];
+    private readonly List<FunctionGlobalReference> _functionGlobalReferences = [];
     private readonly List<FieldAccessTypingRecord> _fieldAccesses = [];
     private readonly List<MemberCallTypingRecord> _memberCalls = [];
     private readonly List<ObjectCreationTypingRecord> _objectCreations = [];
@@ -137,6 +138,7 @@ internal sealed class TypeChecker
     private readonly List<DeferredFunctionInstantiationTriggerRecord> _deferredFunctionInstantiationTriggers = [];
     private readonly List<DeferredTypeInstantiationTriggerRecord> _deferredTypeInstantiationTriggers = [];
     private readonly List<TypeInstantiationTriggerRecord> _typeInstantiationTriggers = [];
+    private readonly List<(StarkTypeSymbol Type, SourceLocation? Location)> _pendingDictionaryKeyConstraintValidations = [];
     private readonly HashSet<StarkParser.AdditiveExpressionContext> _fixedTextStorageConcatExpressions = [];
     private readonly HashSet<StarkParser.LiteralContext> _fixedTextStorageInterpolatedLiterals = [];
     private readonly HashSet<string> _functionInstantiationKeys = new(StringComparer.Ordinal);
@@ -181,6 +183,7 @@ internal sealed class TypeChecker
     private CompileTimeFunctionEvaluator? _compileTimeFunctionEvaluator;
     private IReadOnlyDictionary<string, EnumLayoutSymbol>? _compileTimeEnumLayouts;
     private ThreadSafetyLawEvaluator? _threadSafetyLawEvaluator;
+    private bool _canValidateDictionaryKeyConstraints;
 
     public TypeChecker(
         CompilerPassContext context,
@@ -209,10 +212,13 @@ internal sealed class TypeChecker
         PopulateNamedTypeFields();
         BuildConstructorShapes();
         BuildFunctionSignatures();
+        _canValidateDictionaryKeyConstraints = true;
+        ValidatePendingDictionaryKeyConstraints();
         SeedCompilerKnownCGlobals();
         CheckGlobalDeclarations();
         CheckConstructorBodies();
         CheckFunctionBodies();
+        ValidateThreadEntryMutableStaticReferences();
 
         var threadSafetyLawFacts = ComputeThreadSafetyLawFacts();
 
@@ -385,7 +391,8 @@ internal sealed class TypeChecker
                         ? null
                         : seedGenericParameters.ComptimeGenericParameters.ToArray(),
                     IsDynTrait: IsDynTraitDeclaration(module, declaration),
-                    DeclaringModuleName: module.SyntaxModel.ModuleName);
+                    DeclaringModuleName: module.SyntaxModel.ModuleName,
+                    Visibility: declaration.Visibility);
             }
         }
     }
@@ -517,6 +524,10 @@ internal sealed class TypeChecker
                         structDeclaration.typeParameterList(),
                         structGenericParams,
                         module.SyntaxModel.ModuleName);
+                    var implementedTraits = ResolveBaseTraits(
+                        structDeclaration.baseTraitList(),
+                        structGenericParams,
+                        module.SyntaxModel.ModuleName);
                     _namedTypes[typeName] = BuildStructLikeNamedType(
                         typeName,
                         DeclarationKind.Struct,
@@ -525,7 +536,8 @@ internal sealed class TypeChecker
                         declarationModel.Visibility,
                         structGenericParams,
                         structComptimeParams,
-                        ResolveBaseTraitNames(structDeclaration.baseTraitList(), structGenericParams, module.SyntaxModel.ModuleName),
+                        implementedTraits.Names,
+                        implementedTraits.Types,
                         ResolveStructLayoutMetadata(typeName, declaration.attributeList()),
                         declaration.attributeList());
                     continue;
@@ -549,6 +561,10 @@ internal sealed class TypeChecker
                         genericParameters,
                         module.SyntaxModel.ModuleName);
                     var comptimeParameterMap = ToComptimeGenericParameterMap(comptimeParameters);
+                    var implementedTraits = ResolveBaseTraits(
+                        recordDeclaration.baseTraitList(),
+                        genericParameters,
+                        module.SyntaxModel.ModuleName);
 
                     if (recordDeclaration.primaryConstructorParameters() is { } primaryConstructor)
                     {
@@ -595,7 +611,8 @@ internal sealed class TypeChecker
                         orderedFields,
                         GenericParameterNames: genericParameters?.ToList(),
                         ComptimeGenericParameterNames: comptimeParameters.Count == 0 ? null : comptimeParameters.ToArray(),
-                        ImplementedTraitNames: ResolveBaseTraitNames(recordDeclaration.baseTraitList(), genericParameters, module.SyntaxModel.ModuleName),
+                        ImplementedTraitNames: implementedTraits.Names,
+                        ImplementedTraitTypeSymbols: implementedTraits.Types,
                         AssociatedTypeMembers: BuildRecordAssociatedTypes(
                             recordName,
                             recordDeclaration.recordBody().recordMember(),
@@ -607,7 +624,8 @@ internal sealed class TypeChecker
                             genericParameters,
                             module.SyntaxModel.ModuleName,
                             comptimeParameterMap),
-                        DeclaringModuleName: module.SyntaxModel.ModuleName);
+                        DeclaringModuleName: module.SyntaxModel.ModuleName,
+                        Visibility: declarationModel.Visibility);
                     continue;
                 }
 
@@ -632,7 +650,8 @@ internal sealed class TypeChecker
                         genericParameters,
                         comptimeParameters,
                         module.SyntaxModel.ModuleName,
-                        declaration.attributeList());
+                        declaration.attributeList(),
+                        declarationModel.Visibility);
                     continue;
                 }
 
@@ -664,7 +683,8 @@ internal sealed class TypeChecker
                             genericParameters,
                             module.SyntaxModel.ModuleName),
                         IsDynTrait: traitDeclaration.DYN() is not null,
-                        DeclaringModuleName: module.SyntaxModel.ModuleName);
+                        DeclaringModuleName: module.SyntaxModel.ModuleName,
+                        Visibility: declarationModel.Visibility);
                     continue;
                 }
 
@@ -695,7 +715,8 @@ internal sealed class TypeChecker
                             doctrineDeclaration.doctrineBody().doctrineMember(),
                             genericParameters,
                             module.SyntaxModel.ModuleName),
-                        DeclaringModuleName: module.SyntaxModel.ModuleName);
+                        DeclaringModuleName: module.SyntaxModel.ModuleName,
+                        Visibility: declarationModel.Visibility);
                 }
             }
         }
@@ -710,6 +731,7 @@ internal sealed class TypeChecker
         ISet<string>? genericParameters = null,
         IReadOnlyList<ComptimeGenericParameterSymbol>? comptimeGenericParameters = null,
         IReadOnlyList<string>? implementedTraitNames = null,
+        IReadOnlyList<StarkTypeSymbol>? implementedTraitTypes = null,
         StructLayoutMetadata? layout = null,
         IEnumerable<StarkParser.AttributeListContext>? typeAttributeLists = null)
     {
@@ -737,10 +759,12 @@ internal sealed class TypeChecker
             GenericParameterNames: genericParameterNames,
             ComptimeGenericParameterNames: comptimeParameterList.Count == 0 ? null : comptimeParameterList.ToArray(),
             ImplementedTraitNames: implementedTraitNames,
+            ImplementedTraitTypeSymbols: implementedTraitTypes,
             AssociatedTypeMembers: associatedTypes,
             Layout: layout,
             ThreadSafetyLawAttributes: threadSafetyLawAttributes,
-            DeclaringModuleName: currentModuleName);
+            DeclaringModuleName: currentModuleName,
+            Visibility: containingVisibility);
 
         foreach (var member in members)
         {
@@ -764,10 +788,12 @@ internal sealed class TypeChecker
             GenericParameterNames: genericParameterNames,
             ComptimeGenericParameterNames: comptimeParameterList.Count == 0 ? null : comptimeParameterList.ToArray(),
             ImplementedTraitNames: implementedTraitNames,
+            ImplementedTraitTypeSymbols: implementedTraitTypes,
             AssociatedTypeMembers: associatedTypes,
             Layout: layout,
             ThreadSafetyLawAttributes: threadSafetyLawAttributes,
-            DeclaringModuleName: currentModuleName);
+            DeclaringModuleName: currentModuleName,
+            Visibility: containingVisibility);
         RefreshConcreteInstantiationsForTemplate(namedType);
         return namedType;
     }
@@ -893,33 +919,47 @@ internal sealed class TypeChecker
         return result;
     }
 
-    // Resolves each base-list entry to the qualified name of the trait it
-    // names. Non-trait entries are dropped here; the base-list-must-be-trait
+    // Resolves each base-list entry to the qualified name and typed shape of the
+    // trait it names. Non-trait entries are dropped here; the base-list-must-be-trait
     // contract is reported separately in semantic validation (STK3026).
-    private IReadOnlyList<string>? ResolveBaseTraitNames(
+    private (IReadOnlyList<string>? Names, IReadOnlyList<StarkTypeSymbol>? Types) ResolveBaseTraits(
         StarkParser.BaseTraitListContext? baseTraitList,
         ISet<string>? genericParameters,
         string currentModuleName)
     {
         if (baseTraitList is null)
         {
-            return null;
+            return (null, null);
         }
 
         var names = new List<string>();
+        var types = new List<StarkTypeSymbol>();
         foreach (var entry in baseTraitList.type_())
         {
             var resolved = ResolveType(entry, genericParameters, currentModuleName);
             if (resolved.NamedType is { } namedType
-                && _namedTypes.TryGetValue(namedType, out var symbol)
+                && TryResolveBaseTraitSymbol(namedType, out var symbol)
                 && symbol.Kind == DeclarationKind.Trait
                 && !names.Contains(namedType))
             {
                 names.Add(namedType);
+                types.Add(resolved);
             }
         }
 
-        return names.Count > 0 ? names : null;
+        return names.Count > 0 ? (names, types) : (null, null);
+    }
+
+    private bool TryResolveBaseTraitSymbol(string name, out NamedTypeSymbol symbol)
+    {
+        if (_namedTypes.TryGetValue(name, out symbol!))
+        {
+            return true;
+        }
+
+        var baseName = StarkTypeSymbols.GetGenericBaseName(name);
+        return !string.Equals(baseName, name, StringComparison.Ordinal)
+            && _namedTypes.TryGetValue(baseName, out symbol!);
     }
 
     // Parses `where T: Trait, ...` clauses into typed constraints so they can be
@@ -1032,7 +1072,8 @@ internal sealed class TypeChecker
         ISet<string>? genericParameters,
         IReadOnlyList<ComptimeGenericParameterSymbol>? comptimeGenericParameters,
         string currentModuleName,
-        IEnumerable<StarkParser.AttributeListContext>? typeAttributeLists = null)
+        IEnumerable<StarkParser.AttributeListContext>? typeAttributeLists = null,
+        StarkVisibility visibility = StarkVisibility.Module)
     {
         var variants = new List<EnumVariantSymbol>();
         var variantContexts = new List<StarkParser.EnumVariantDeclarationContext>();
@@ -1163,7 +1204,8 @@ internal sealed class TypeChecker
             GenericParameterNames: genericParameters?.ToList(),
             ComptimeGenericParameterNames: comptimeParameterList.Count == 0 ? null : comptimeParameterList.ToArray(),
             ThreadSafetyLawAttributes: threadSafetyLawAttributes,
-            DeclaringModuleName: currentModuleName);
+            DeclaringModuleName: currentModuleName,
+            Visibility: visibility);
     }
 
     /// <summary>
@@ -1874,7 +1916,8 @@ internal sealed class TypeChecker
                             functionSyntax,
                             genericParameters,
                             module.SyntaxModel.ModuleName,
-                            comptimeGenericParameterMap));
+                            comptimeGenericParameterMap),
+                        Visibility: declarationModel.Visibility);
                     RegisterFunctionSignature(signature, seenOverloadKeys, functionSyntax.DeclarationContext);
                     _functionSyntaxByQualifiedName[signature.Name] = functionSyntax;
                 }
@@ -3336,6 +3379,194 @@ internal sealed class TypeChecker
         }
     }
 
+    private void ValidateThreadEntryMutableStaticReferences()
+    {
+        if (_functionGlobalReferences.Count == 0)
+        {
+            return;
+        }
+
+        var reachable = new HashSet<string>(StringComparer.Ordinal);
+        var worklist = new Queue<string>();
+        foreach (var (entryFunction, _) in EnumerateThreadEntryFunctionSeeds())
+        {
+            if (reachable.Add(entryFunction))
+            {
+                worklist.Enqueue(entryFunction);
+            }
+        }
+
+        if (reachable.Count == 0)
+        {
+            return;
+        }
+
+        var calleesByFunction = BuildDirectCalleesByFunction();
+        var globalReferencesByFunction = _functionGlobalReferences
+            .GroupBy(static reference => reference.FunctionName, StringComparer.Ordinal)
+            .ToDictionary(
+                static group => group.Key,
+                static group => (IReadOnlyList<FunctionGlobalReference>)group.ToArray(),
+                StringComparer.Ordinal);
+        var reported = new HashSet<string>(StringComparer.Ordinal);
+
+        while (worklist.Count != 0)
+        {
+            var functionName = worklist.Dequeue();
+            if (globalReferencesByFunction.TryGetValue(functionName, out var references))
+            {
+                foreach (var reference in references)
+                {
+                    ValidateThreadReachableGlobalReference(functionName, reference, reported);
+                }
+            }
+
+            if (!calleesByFunction.TryGetValue(functionName, out var callees))
+            {
+                continue;
+            }
+
+            foreach (var callee in callees)
+            {
+                if (reachable.Add(callee))
+                {
+                    worklist.Enqueue(callee);
+                }
+            }
+        }
+    }
+
+    private IEnumerable<(string FunctionName, SourceLocation Location)> EnumerateThreadEntryFunctionSeeds()
+    {
+        foreach (var promotion in _functionPointerPromotions)
+        {
+            if (IsThreadEntryFunctionPointerType(promotion.TargetType))
+            {
+                yield return (promotion.Signature.Name, promotion.Location);
+            }
+        }
+
+        foreach (var lambda in _lambdas)
+        {
+            if (IsThreadEntryFunctionPointerType(lambda.FunctionPointerType))
+            {
+                yield return (lambda.FunctionName, lambda.Location);
+            }
+        }
+    }
+
+    private Dictionary<string, IReadOnlyList<string>> BuildDirectCalleesByFunction()
+    {
+        var result = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+
+        void Add(string? caller, string callee)
+        {
+            if (caller is null)
+            {
+                return;
+            }
+
+            if (!result.TryGetValue(caller, out var callees))
+            {
+                callees = [];
+                result[caller] = callees;
+            }
+
+            callees.Add(callee);
+        }
+
+        foreach (var call in _directCalls)
+        {
+            Add(call.EnclosingFunctionName, call.Signature.Name);
+        }
+
+        foreach (var call in _memberCalls)
+        {
+            Add(call.EnclosingFunctionName, call.Signature.Name);
+        }
+
+        return result.ToDictionary(
+            static pair => pair.Key,
+            static pair => (IReadOnlyList<string>)pair.Value.Distinct(StringComparer.Ordinal).ToArray(),
+            StringComparer.Ordinal);
+    }
+
+    private void ValidateThreadReachableGlobalReference(
+        string reachableFunctionName,
+        FunctionGlobalReference reference,
+        HashSet<string> reported)
+    {
+        if (!_globals.TryGetValue(reference.GlobalName, out var global)
+            || !global.IsMutable
+            || IsSynchronizationBackedMutableStaticType(global.Type))
+        {
+            return;
+        }
+
+        var reportKey = $"{reachableFunctionName}|{reference.GlobalName}";
+        if (!reported.Add(reportKey))
+        {
+            return;
+        }
+
+        ReportError(
+            "STK3049",
+            $"Thread-reachable function '{reachableFunctionName}' touches mutable global '{reference.GlobalName}'. Mutable statics reachable from thread entries must be synchronization-backed; use a System.Threading.Atomic* type for scalar state or System.Threading.Synchronized<T> for guarded aggregate state.",
+            reference.Location);
+    }
+
+    private static bool IsThreadEntryFunctionPointerType(StarkTypeSymbol type)
+    {
+        return type.Kind == StarkTypeKind.FunctionPointer
+            && type.FunctionPointerKind == StarkFunctionKind.Fn
+            && !type.FunctionPointerIsUnsafe
+            && type.FunctionPointerReturnType is { Kind: StarkTypeKind.Integer, BitWidth: 32, IsUnsigned: false }
+            && type.FunctionPointerParameterTypes is { Count: <= 1 };
+    }
+
+    private static bool IsSynchronizationBackedMutableStaticType(StarkTypeSymbol type)
+    {
+        var coreType = StarkTypeSymbols.WithQualifiers(
+            type,
+            borrowKind: StarkBorrowKind.None,
+            accessKind: StarkAccessKind.None,
+            initializationKind: StarkInitializationKind.None,
+            isMutableView: false);
+        if (coreType.Kind != StarkTypeKind.Named || coreType.NamedType is not { } namedType)
+        {
+            return false;
+        }
+
+        var baseName = StarkTypeSymbols.GetGenericBaseName(namedType);
+        if (string.Equals(baseName, "System.Threading.Synchronized", StringComparison.Ordinal)
+            || string.Equals(baseName, "Synchronized", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        var atomicTypeName = baseName;
+        if (atomicTypeName.StartsWith(SystemThreadingAtomicFacts.ModuleName + ".", StringComparison.Ordinal))
+        {
+            atomicTypeName = atomicTypeName[(SystemThreadingAtomicFacts.ModuleName.Length + 1)..];
+        }
+
+        return SystemThreadingAtomicFacts.TryParseAtomicTypeName(
+            atomicTypeName,
+            out _,
+            out _,
+            out _);
+    }
+
+    private void RecordGlobalReference(string globalName, SourceLocation location)
+    {
+        if (_currentFunctionName is not { } functionName)
+        {
+            return;
+        }
+
+        _functionGlobalReferences.Add(new FunctionGlobalReference(functionName, globalName, location));
+    }
+
     private Scope CheckBlock(StarkParser.BlockContext block, Scope parentScope, StarkTypeSymbol returnType)
     {
         var scope = new Scope(parentScope);
@@ -3500,7 +3731,12 @@ internal sealed class TypeChecker
             return;
         }
 
-        if (statement.switchStatement() is { } switchStatement)
+        var labeledStatement = statement.labeledStatement();
+        var statementSwitch = statement.switchStatement() ?? labeledStatement?.switchStatement();
+        var statementWhile = statement.whileStatement() ?? labeledStatement?.whileStatement();
+        var statementFor = statement.forStatement() ?? labeledStatement?.forStatement();
+
+        if (statementSwitch is { } switchStatement)
         {
             // Imported (package-image) signatures can hand back generic enum instantiations
             // this compilation has not monomorphized yet (e.g. switching directly on
@@ -3543,7 +3779,7 @@ internal sealed class TypeChecker
             return;
         }
 
-        if (statement.whileStatement() is { } whileStatement)
+        if (statementWhile is { } whileStatement)
         {
             var whileConditionType = EvaluateExpression(whileStatement.expression(), scope, allowFunctionReference: false).Type;
             var loopBodyScope = new Scope(scope);
@@ -3568,7 +3804,7 @@ internal sealed class TypeChecker
             return;
         }
 
-        if (statement.forStatement() is { } forStatement)
+        if (statementFor is { } forStatement)
         {
             var loopScope = new Scope(scope);
             var forTraversal = forStatement.forTraversal();
@@ -6318,7 +6554,13 @@ internal sealed class TypeChecker
                 && StatementGuaranteesFunctionExit(ifStatement.statement(1));
         }
 
-        if (statement.switchStatement() is { } switchStatement)
+        var labeledStatement = statement.labeledStatement();
+        var statementSwitch = statement.switchStatement() ?? labeledStatement?.switchStatement();
+        var statementWhile = statement.whileStatement() ?? labeledStatement?.whileStatement();
+        var statementFor = statement.forStatement() ?? labeledStatement?.forStatement();
+        var statementLabel = labeledStatement?.Identifier().GetText();
+
+        if (statementSwitch is { } switchStatement)
         {
             if (!_exhaustiveSwitches.Contains(switchStatement))
             {
@@ -6342,21 +6584,21 @@ internal sealed class TypeChecker
         // additionally forbid structural exits), and the loop-until-return idiom — a
         // literal `true` condition (or no `for` condition) with no top-level break, whose
         // only exits are `return`s.
-        if (statement.whileStatement() is { } whileStatement)
+        if (statementWhile is { } whileStatement)
         {
             var whileAlwaysRepeats = whileStatement.loopBehavior().INFINITE() is not null
                 || (whileStatement.pattern() is null
                     && string.Equals(whileStatement.expression().GetText(), "true", StringComparison.Ordinal));
-            return whileAlwaysRepeats && !LoopBodyContainsTopLevelBreak(whileStatement.statement());
+            return whileAlwaysRepeats && !LoopBodyContainsTopLevelBreak(whileStatement.statement(), statementLabel);
         }
 
-        if (statement.forStatement() is { } forStatement)
+        if (statementFor is { } forStatement)
         {
             var forCondition = forStatement.forCondition();
             var forAlwaysRepeats = forStatement.loopBehavior().INFINITE() is not null
                 || forCondition is null
                 || string.Equals(forCondition.GetText(), "true", StringComparison.Ordinal);
-            return forAlwaysRepeats && !LoopBodyContainsTopLevelBreak(forStatement.statement());
+            return forAlwaysRepeats && !LoopBodyContainsTopLevelBreak(forStatement.statement(), statementLabel);
         }
 
         return false;
@@ -6366,26 +6608,28 @@ internal sealed class TypeChecker
     /// True when the loop body contains a `break` that targets this loop (i.e. not nested
     /// inside an inner loop), meaning the loop can exit and control can flow past it.
     /// </summary>
-    private static bool LoopBodyContainsTopLevelBreak(StarkParser.StatementContext body)
+    private static bool LoopBodyContainsTopLevelBreak(StarkParser.StatementContext body, string? loopLabel)
     {
-        return ContainsTopLevelBreak(body);
+        return ContainsTopLevelBreak(body, allowUnlabeledBreak: true);
 
-        static bool ContainsTopLevelBreak(Antlr4.Runtime.Tree.IParseTree node)
+        bool ContainsTopLevelBreak(Antlr4.Runtime.Tree.IParseTree node, bool allowUnlabeledBreak)
         {
-            if (node is StarkParser.BreakStatementContext)
+            if (node is StarkParser.BreakStatementContext breakStatement)
             {
-                return true;
+                var breakLabel = breakStatement.Identifier()?.GetText();
+                return breakLabel is null
+                    ? allowUnlabeledBreak
+                    : string.Equals(breakLabel, loopLabel, StringComparison.Ordinal);
             }
 
-            // Breaks inside nested loops target those loops, not this one.
-            if (node is StarkParser.WhileStatementContext or StarkParser.ForStatementContext)
-            {
-                return false;
-            }
+            var childBreaksCanTargetCurrentLoopWithoutLabel = allowUnlabeledBreak
+                && node is not StarkParser.WhileStatementContext
+                && node is not StarkParser.ForStatementContext
+                && node is not StarkParser.SwitchStatementContext;
 
             for (var index = 0; index < node.ChildCount; index++)
             {
-                if (ContainsTopLevelBreak(node.GetChild(index)))
+                if (ContainsTopLevelBreak(node.GetChild(index), childBreaksCanTargetCurrentLoopWithoutLabel))
                 {
                     return true;
                 }
@@ -9126,7 +9370,7 @@ internal sealed class TypeChecker
                 }
 
                 var genericParameters = GetGenericParameterNames(typeParameterList);
-                if (ResolveBaseTraitNames(baseTraitList, genericParameters, module.SyntaxModel.ModuleName) is { Count: > 0 } traits)
+                if (ResolveBaseTraits(baseTraitList, genericParameters, module.SyntaxModel.ModuleName).Names is { Count: > 0 } traits)
                 {
                     implementedTraits = traits;
                     return true;
@@ -12188,6 +12432,15 @@ internal sealed class TypeChecker
         {
             binding = rawSliceBinding;
         }
+        else if (TryEvaluateUnsafeDynTraitFromPartsConstructionPrefix(
+                     expression,
+                     scope,
+                     expectedType,
+                     out var dynTraitFromPartsBinding,
+                     out firstUnhandledPostfixIndex))
+        {
+            binding = dynTraitFromPartsBinding;
+        }
         else
         {
             var requiresCallableTarget = postfixParts.Any(static part => part.argumentList() is not null);
@@ -12594,6 +12847,222 @@ internal sealed class TypeChecker
             MemoryRootKey: pointer.MemoryRootKey,
             MemoryRootIsIndependentStorage: pointer.MemoryRootIsIndependentStorage);
         return true;
+    }
+
+    private bool TryEvaluateUnsafeDynTraitFromPartsConstructionPrefix(
+        StarkParser.PostfixExpressionContext expression,
+        Scope scope,
+        StarkTypeSymbol? expectedType,
+        out ExpressionBinding binding,
+        out int firstUnhandledPostfixIndex)
+    {
+        binding = null!;
+        firstUnhandledPostfixIndex = 0;
+        if (!TryGetDynTraitFromPartsOperationName(expression, out var operationName)
+            || expression.postfixPart().Length == 0
+            || expression.postfixPart()[0] is not { } callPart
+            || callPart.argumentList() is not { } arguments)
+        {
+            return false;
+        }
+
+        firstUnhandledPostfixIndex = 1;
+        if (_unsafeDepth == 0)
+        {
+            ReportError(
+                "STK3024",
+                $"Unsafe dynamic trait object construction '{operationName}(context, vtable)' requires an unsafe context.",
+                callPart);
+        }
+
+        var argumentList = arguments.argument();
+        if (argumentList.Length != 2)
+        {
+            ReportError(
+                "STK3009",
+                $"Dynamic trait object construction '{operationName}' expects 2 arguments but received {argumentList.Length}.",
+                arguments);
+            binding = new ExpressionBinding(StarkTypeSymbols.Error);
+            firstUnhandledPostfixIndex = expression.postfixPart().Length;
+            return true;
+        }
+
+        var isOwning = string.Equals(operationName, "dynbox", StringComparison.Ordinal);
+        if (!TryResolveDynTraitFromPartsTargetType(expression, expectedType, isOwning, out var targetType))
+        {
+            binding = new ExpressionBinding(StarkTypeSymbols.Error);
+            firstUnhandledPostfixIndex = expression.postfixPart().Length;
+            return true;
+        }
+
+        var contextType = StarkTypeSymbols.RawPointer(StarkTypeSymbols.Integer(8), isMutable: true);
+        var vtableType = StarkTypeSymbols.DynTraitVtablePointerForTraitObject(targetType);
+        var contextArgument = EvaluateExpression(argumentList[0].expression(), scope, allowFunctionReference: false, contextType);
+        var vtableArgument = EvaluateExpression(argumentList[1].expression(), scope, allowFunctionReference: false, vtableType);
+
+        if (!CanAssign(contextType, contextArgument.Type))
+        {
+            ReportError(
+                "STK3002",
+                $"Dynamic trait object construction '{operationName}' expects '{contextType.DisplayName}' as its context argument, but found '{contextArgument.Type.DisplayName}'.",
+                argumentList[0].expression());
+        }
+
+        if (!CanAssign(vtableType, vtableArgument.Type))
+        {
+            ReportError(
+                "STK3002",
+                $"Dynamic trait object construction '{operationName}' expects '{vtableType.DisplayName}' as its vtable argument, but found '{vtableArgument.Type.DisplayName}'.",
+                argumentList[1].expression());
+        }
+
+        _boundOperations.Add(new BoundDynTraitFromPartsOperation(
+            operationName,
+            targetType,
+            contextType,
+            vtableType,
+            Location(arguments),
+            _currentFunctionName));
+
+        binding = new ExpressionBinding(
+            targetType,
+            NamedType: ResolveNamedTypeSymbol(targetType),
+            DiagnosticName: $"dynamic trait object '{operationName}'");
+        return true;
+    }
+
+    private bool TryResolveDynTraitFromPartsTargetType(
+        StarkParser.PostfixExpressionContext expression,
+        StarkTypeSymbol? expectedType,
+        bool isOwning,
+        out StarkTypeSymbol targetType)
+    {
+        targetType = StarkTypeSymbols.Error;
+        var storageKind = isOwning ? StarkDynTraitStorageKind.Heap : StarkDynTraitStorageKind.View;
+
+        if (TryResolveExplicitDynTraitFromPartsTypeArgument(expression, storageKind, out targetType))
+        {
+            return targetType.Kind != StarkTypeKind.Error;
+        }
+
+        if (expectedType?.Kind == StarkTypeKind.DynTrait)
+        {
+            if (expectedType.DynTraitStorageKind != storageKind)
+            {
+                ReportError(
+                    "STK3002",
+                    isOwning
+                        ? $"'dynbox' constructs 'heap dyn' trait objects, but the expected type is '{expectedType.DisplayName}'."
+                        : $"'dynview' constructs borrowed 'dyn' trait object views, but the expected type is '{expectedType.DisplayName}'.",
+                    expression.primaryExpression());
+                return false;
+            }
+
+            targetType = expectedType;
+            return true;
+        }
+
+        ReportError(
+            "STK3019",
+            isOwning
+                ? "'dynbox' requires an explicit target trait, for example 'dynbox<Module.Resolver>(context, vtable)', or an expected 'heap dyn Trait' type."
+                : "'dynview' requires an explicit target trait, for example 'dynview<Module.Resolver>(context, vtable)', or an expected 'borrow dyn Trait' type.",
+            expression.primaryExpression());
+        return false;
+    }
+
+    private bool TryResolveExplicitDynTraitFromPartsTypeArgument(
+        StarkParser.PostfixExpressionContext expression,
+        StarkDynTraitStorageKind storageKind,
+        out StarkTypeSymbol targetType)
+    {
+        targetType = StarkTypeSymbols.Error;
+        var genericQualifiedName = expression.primaryExpression().genericQualifiedName();
+        if (genericQualifiedName is null)
+        {
+            return false;
+        }
+
+        var genericArguments = GenericArgumentSyntaxFacts.Resolve(
+            genericQualifiedName.typeArgumentList(),
+            ["T"],
+            [],
+            typeArgument => ResolveType(typeArgument, currentModuleName: CurrentFunctionModuleName),
+            ReportError,
+            visibleComptimeParameters: _currentFunctionComptimeGenericParameters);
+        if (genericArguments.TypeArguments.Count != 1
+            || genericArguments.TypeArguments[0].Kind == StarkTypeKind.Error)
+        {
+            return true;
+        }
+
+        targetType = BuildDynTraitFromPartsTargetType(
+            genericArguments.TypeArguments[0],
+            storageKind,
+            genericQualifiedName);
+        return true;
+    }
+
+    private StarkTypeSymbol BuildDynTraitFromPartsTargetType(
+        StarkTypeSymbol declaredType,
+        StarkDynTraitStorageKind storageKind,
+        ParserRuleContext context)
+    {
+        if (declaredType.Kind == StarkTypeKind.DynTrait)
+        {
+            if (declaredType.DynTraitStorageKind != storageKind)
+            {
+                ReportError(
+                    "STK3002",
+                    storageKind == StarkDynTraitStorageKind.Heap
+                        ? $"'dynbox' requires a 'heap dyn' target, but found '{declaredType.DisplayName}'."
+                        : $"'dynview' requires a borrowed 'dyn' target, but found '{declaredType.DisplayName}'.",
+                    context);
+                return StarkTypeSymbols.Error;
+            }
+
+            return storageKind == StarkDynTraitStorageKind.View && declaredType.BorrowKind == StarkBorrowKind.None
+                ? StarkTypeSymbols.ApplyQualifiers(declaredType, borrowKind: StarkBorrowKind.Borrow, isMutableView: declaredType.IsMutableView)
+                : declaredType;
+        }
+
+        if (declaredType.Kind != StarkTypeKind.Named
+            || declaredType.NamedType is not { } traitName
+            || !_namedTypes.TryGetValue(traitName, out var traitSymbol)
+            || traitSymbol.Kind != DeclarationKind.Trait)
+        {
+            ReportError(
+                "STK3035",
+                $"Dynamic trait object construction requires a trait target, but found '{declaredType.DisplayName}'.",
+                context);
+            return StarkTypeSymbols.Error;
+        }
+
+        if (!traitSymbol.IsDynTrait)
+        {
+            var simpleName = traitName.LastIndexOf('.') is var dot && dot >= 0 ? traitName[(dot + 1)..] : traitName;
+            ReportError(
+                "STK3035",
+                $"Trait '{simpleName}' is static-only and cannot form a trait object. Declare it as 'dyn trait {simpleName}' to opt into dynamic dispatch, or use an enum for a closed set of cases.",
+                context);
+            return StarkTypeSymbols.Error;
+        }
+
+        var dynType = StarkTypeSymbols.DynTrait(traitName, storageKind, declaredType.TypeArguments);
+        return storageKind == StarkDynTraitStorageKind.View
+            ? StarkTypeSymbols.ApplyQualifiers(dynType, borrowKind: StarkBorrowKind.Borrow)
+            : dynType;
+    }
+
+    private static bool TryGetDynTraitFromPartsOperationName(
+        StarkParser.PostfixExpressionContext expression,
+        out string operationName)
+    {
+        operationName = expression.primaryExpression().genericQualifiedName()?.qualifiedName().GetText()
+            ?? expression.primaryExpression().Identifier()?.GetText()
+            ?? string.Empty;
+        return string.Equals(operationName, "dynview", StringComparison.Ordinal)
+            || string.Equals(operationName, "dynbox", StringComparison.Ordinal);
     }
 
     private bool IsCompileTimeNullExpression(
@@ -16227,6 +16696,11 @@ internal sealed class TypeChecker
             return ApplyDynamicMemberAccess(target, memberName, context);
         }
 
+        if (TryApplyKnownViewMemberAccess(target, memberName, context, out var knownViewMember))
+        {
+            return knownViewMember;
+        }
+
         if (target.Type.Kind == StarkTypeKind.DynTrait)
         {
             return ApplyDynTraitMemberAccess(target, memberName, context);
@@ -16363,6 +16837,41 @@ internal sealed class TypeChecker
         return new ExpressionBinding(StarkTypeSymbols.Error);
     }
 
+    private bool TryApplyKnownViewMemberAccess(
+        ExpressionBinding target,
+        string memberName,
+        ParserRuleContext context,
+        out ExpressionBinding result)
+    {
+        result = null!;
+        if (!string.Equals(memberName, "Length", StringComparison.Ordinal)
+            || target.Type.Kind is not (StarkTypeKind.FixedArray or StarkTypeKind.Slice))
+        {
+            return false;
+        }
+
+        var memberType = target.Type.Kind == StarkTypeKind.FixedArray
+            && target.Type.FixedLength is int fixedLength
+                ? StarkTypeSymbols.Integer(64, new BigInteger(fixedLength), new BigInteger(fixedLength))
+                : NonNegativeI64Type;
+        RecordFieldAccess(memberName, 1, memberType, context);
+        result = new ExpressionBinding(
+            memberType,
+            IsAssignable: false,
+            NamedType: ResolveNamedTypeSymbol(memberType),
+            DiagnosticName: target.Type.Kind == StarkTypeKind.FixedArray
+                ? "fixed array length"
+                : "slice length",
+            RootGlobalName: target.RootGlobalName,
+            RootGlobalBindingKind: target.RootGlobalBindingKind,
+            HasConstProvenance: target.Type.Kind == StarkTypeKind.FixedArray || HasConstProvenance(target),
+            MemoryRootKey: target.MemoryRootKey is { } memoryRootKey
+                ? $"{memoryRootKey}.{memberName}"
+                : null,
+            MemoryRootIsIndependentStorage: target.MemoryRootIsIndependentStorage);
+        return true;
+    }
+
     // CG05: resolves `value.Member(...)` where `value` is a generic type parameter
     // constrained by `where T: Trait`. Binds the call to the trait method with
     // `Self` (and any trait type arguments) substituted to the type parameter so
@@ -16378,6 +16887,11 @@ internal sealed class TypeChecker
         {
             ReportError("STK3011", $"Cannot access member '{memberName}' on {DescribeExpressionTarget(target)}.", context);
             return new ExpressionBinding(StarkTypeSymbols.Error);
+        }
+
+        if (TryApplyDynTraitRepresentationMemberAccess(target, memberName, context, out var representationMember))
+        {
+            return representationMember;
         }
 
         var traitSimpleName = traitName.LastIndexOf('.') is var dot && dot >= 0 ? traitName[(dot + 1)..] : traitName;
@@ -16432,6 +16946,35 @@ internal sealed class TypeChecker
             Function: resolvedMethod,
             DiagnosticName: $"dynamic trait method '{traitMethod.DisplaySourceName}'",
             Receiver: target);
+    }
+
+    private bool TryApplyDynTraitRepresentationMemberAccess(
+        ExpressionBinding target,
+        string memberName,
+        ParserRuleContext context,
+        out ExpressionBinding binding)
+    {
+        binding = default!;
+        var fieldType = memberName switch
+        {
+            "Context" => StarkTypeSymbols.RawPointer(StarkTypeSymbols.Integer(8), isMutable: true),
+            "Vtable" => StarkTypeSymbols.DynTraitVtablePointerForTraitObject(target.Type),
+            _ => StarkTypeSymbols.Error
+        };
+        if (fieldType.Kind == StarkTypeKind.Error)
+        {
+            return false;
+        }
+
+        RequireUnsafeContext($"Dynamic trait object representation member '.{memberName}'", context);
+        RecordFieldAccess(memberName, string.Equals(memberName, "Context", StringComparison.Ordinal) ? 0 : 1, fieldType, context);
+        binding = new ExpressionBinding(
+            fieldType,
+            NamedType: ResolveNamedTypeSymbol(fieldType),
+            DiagnosticName: $"dynamic trait object member '{memberName}'",
+            HasConstProvenance: target.HasConstProvenance,
+            MemoryRootIsIndependentStorage: false);
+        return true;
     }
 
     // (a direct call, not dynamic dispatch).
@@ -16763,6 +17306,7 @@ internal sealed class TypeChecker
                 || IsLocalBindingIndependentStorage(local);
             if (local.BindingKind is not null)
             {
+                RecordGlobalReference(local.Name, Location(token));
                 return new ExpressionBinding(
                     expressionType,
                     IsAssignable: local.IsMutable,
@@ -16801,6 +17345,7 @@ internal sealed class TypeChecker
 
         if (TryResolveGlobalBySourceName(name, out var global, out var ambiguousGlobalNames))
         {
+            RecordGlobalReference(global.Name, Location(token));
             return new ExpressionBinding(
                 global.Type,
                 IsAssignable: global.IsMutable,
@@ -16984,13 +17529,14 @@ internal sealed class TypeChecker
 
         if (candidates.Length == 1)
         {
-            var function = candidates[0];
+            var function = CacheFunctionInstantiation(candidates[0]);
             var location = Location(token);
             _functionPointerPromotions.Add(new FunctionPointerPromotionTypingRecord(
                 function,
                 targetType,
                 location,
                 _currentFunctionName));
+            RecordFunctionInstantiationTrigger(function, location);
             RecordAddressTakenFunction(function, location);
             return new ExpressionBinding(
                 targetType,
@@ -17065,7 +17611,7 @@ internal sealed class TypeChecker
 
         if (candidates.Length == 1)
         {
-            var function = candidates[0];
+            var function = CacheFunctionInstantiation(candidates[0]);
             var location = Location(token);
             var enclosingFunctionName = _currentFunctionName ?? "module";
             var adapterFunctionName = CallableValueFacts.BuildClosureFunctionAdapterName(enclosingFunctionName, location);
@@ -17076,6 +17622,7 @@ internal sealed class TypeChecker
                 location,
                 _currentFunctionName);
             _closureFunctionPromotions.Add(promotion);
+            RecordFunctionInstantiationTrigger(function, location);
             _functions.TryAdd(adapterFunctionName, CallableValueFacts.BuildClosureFunctionAdapterSignature(promotion));
             return new ExpressionBinding(
                 targetType,
@@ -17554,7 +18101,8 @@ internal sealed class TypeChecker
 
         if (TryGetFunctionOverloads(baseName, out var overloads))
         {
-            if (!allowFunctionReference)
+            if (!allowFunctionReference
+                && expectedType?.Kind is not (StarkTypeKind.FunctionPointer or StarkTypeKind.Closure))
             {
                 ReportError("STK3012", $"Function '{baseName}' must be called before its value can be used.", genericQualifiedName);
                 return new ExpressionBinding(StarkTypeSymbols.Error);
@@ -17683,6 +18231,32 @@ internal sealed class TypeChecker
             || arguments.AdditionalTypeArguments.Any(static argument => argument.Kind == StarkTypeKind.Error);
     }
 
+    private bool ValidateStructuralFactTypeArgumentIndex(
+        string factName,
+        StarkTypeSymbol type,
+        BigInteger index,
+        string subjectDescription,
+        ParserRuleContext context)
+    {
+        var coreType = StarkTypeSymbols.WithQualifiers(
+            type,
+            borrowKind: StarkBorrowKind.None,
+            accessKind: StarkAccessKind.None,
+            initializationKind: StarkInitializationKind.None,
+            isMutableView: false);
+        var typeArgumentCount = coreType.TypeArguments?.Count ?? 0;
+        if (index >= BigInteger.Zero && index < typeArgumentCount)
+        {
+            return true;
+        }
+
+        ReportError(
+            "STK3054",
+            $"Compile-time structural fact '{factName}' type argument index '{index}' is out of range for {subjectDescription} with {typeArgumentCount} type argument(s).",
+            context);
+        return false;
+    }
+
     private bool ValidateCompileTimeStructuralFactArguments(
         string factName,
         CompileTimeStructuralFactArguments arguments,
@@ -17722,7 +18296,7 @@ internal sealed class TypeChecker
 
         if (CompileTimeStructuralFacts.IsImplementedTraitIndexedFact(kind))
         {
-            if (ResolveNamedTypeDefinitionSymbol(arguments.TargetType) is not { } namedType)
+            if ((ResolveNamedTypeSymbol(arguments.TargetType) ?? ResolveNamedTypeDefinitionSymbol(arguments.TargetType)) is not { } namedType)
             {
                 ReportError(
                     "STK3054",
@@ -17739,6 +18313,40 @@ internal sealed class TypeChecker
                     $"Compile-time structural fact '{factName}' implemented-trait index '{index}' is out of range for '{arguments.TargetType.DisplayName}' with {namedType.ImplementedTraits.Count} implemented trait(s).",
                     context);
                 return false;
+            }
+
+            if (CompileTimeStructuralFacts.IsImplementedTraitTypeArgumentIndexedFact(kind))
+            {
+                var argumentIndex = arguments.ComptimeValueArguments[1].IntegerValue;
+                var implementedTraitTypeArgumentCount =
+                    (int)index < namedType.ImplementedTraitTypes.Count
+                        ? namedType.ImplementedTraitTypes[(int)index].TypeArguments?.Count ?? 0
+                        : 0;
+                if (argumentIndex < BigInteger.Zero || argumentIndex >= implementedTraitTypeArgumentCount)
+                {
+                    ReportError(
+                        "STK3054",
+                        $"Compile-time structural fact '{factName}' implemented-trait type argument index '{argumentIndex}' is out of range for trait slot {index} of '{arguments.TargetType.DisplayName}' with {implementedTraitTypeArgumentCount} type argument(s).",
+                        context);
+                    return false;
+                }
+            }
+
+            if (CompileTimeStructuralFacts.IsImplementedTraitComptimeArgumentIndexedFact(kind))
+            {
+                var argumentIndex = arguments.ComptimeValueArguments[1].IntegerValue;
+                var implementedTraitComptimeArgumentCount =
+                    (int)index < namedType.ImplementedTraitTypes.Count
+                        ? namedType.ImplementedTraitTypes[(int)index].ComptimeValueArguments?.Count ?? 0
+                        : 0;
+                if (argumentIndex < BigInteger.Zero || argumentIndex >= implementedTraitComptimeArgumentCount)
+                {
+                    ReportError(
+                        "STK3054",
+                        $"Compile-time structural fact '{factName}' implemented-trait comptime argument index '{argumentIndex}' is out of range for trait slot {index} of '{arguments.TargetType.DisplayName}' with {implementedTraitComptimeArgumentCount} comptime argument(s).",
+                        context);
+                    return false;
+                }
             }
         }
 
@@ -17946,6 +18554,7 @@ internal sealed class TypeChecker
                 || kind == CompileTimeStructuralFactKind.MethodParameterTypeIs
                 || CompileTimeStructuralFacts.IsMethodParameterTypePredicate(kind)
                 || CompileTimeStructuralFacts.IsMethodParameterTypeMetadataFact(kind)
+                || CompileTimeStructuralFacts.IsMethodParameterTypeArgumentFact(kind)
                 || CompileTimeStructuralFacts.IsMethodParameterRawPointerElementCountExpressionFact(kind))
             {
                 var parameterIndex = arguments.ComptimeValueArguments[1].IntegerValue;
@@ -17955,6 +18564,35 @@ internal sealed class TypeChecker
                         "STK3054",
                         $"Compile-time structural fact '{factName}' parameter index '{parameterIndex}' is out of range for method slot {methodIndex} of '{arguments.TargetType.DisplayName}' with {method.Parameters.Count} parameter(s).",
                         context);
+                    return false;
+                }
+            }
+
+            if (CompileTimeStructuralFacts.IsMethodReturnTypeArgumentFact(kind))
+            {
+                var argumentIndex = arguments.ComptimeValueArguments[1].IntegerValue;
+                if (!ValidateStructuralFactTypeArgumentIndex(
+                        factName,
+                        method.ReturnType,
+                        argumentIndex,
+                        $"return type of method slot {methodIndex} of '{arguments.TargetType.DisplayName}'",
+                        context))
+                {
+                    return false;
+                }
+            }
+
+            if (CompileTimeStructuralFacts.IsMethodParameterTypeArgumentFact(kind))
+            {
+                var parameterIndex = arguments.ComptimeValueArguments[1].IntegerValue;
+                var argumentIndex = arguments.ComptimeValueArguments[2].IntegerValue;
+                if (!ValidateStructuralFactTypeArgumentIndex(
+                        factName,
+                        method.Parameters[(int)parameterIndex].Type,
+                        argumentIndex,
+                        $"parameter slot {parameterIndex} of method slot {methodIndex} of '{arguments.TargetType.DisplayName}'",
+                        context))
+                {
                     return false;
                 }
             }
@@ -18059,6 +18697,8 @@ internal sealed class TypeChecker
             || CompileTimeStructuralFacts.IsFunctionPointerParameterTypePredicate(kind)
             || CompileTimeStructuralFacts.IsFunctionPointerReturnTypeMetadataFact(kind)
             || CompileTimeStructuralFacts.IsFunctionPointerParameterTypeMetadataFact(kind)
+            || CompileTimeStructuralFacts.IsFunctionPointerReturnTypeArgumentFact(kind)
+            || CompileTimeStructuralFacts.IsFunctionPointerParameterTypeArgumentFact(kind)
             || CompileTimeStructuralFacts.IsFunctionPointerParameterRawPointerElementCountExpressionFact(kind)
             || CompileTimeStructuralFacts.IsFunctionPointerParameterMemoryFact(kind)
             || kind == CompileTimeStructuralFactKind.FunctionPointerIsUnsafe)
@@ -18087,6 +18727,7 @@ internal sealed class TypeChecker
             if (kind == CompileTimeStructuralFactKind.FunctionPointerParameterTypeIs
                 || CompileTimeStructuralFacts.IsFunctionPointerParameterTypePredicate(kind)
                 || CompileTimeStructuralFacts.IsFunctionPointerParameterTypeMetadataFact(kind)
+                || CompileTimeStructuralFacts.IsFunctionPointerParameterTypeArgumentFact(kind)
                 || CompileTimeStructuralFacts.IsFunctionPointerParameterRawPointerElementCountExpressionFact(kind))
             {
                 var index = arguments.ComptimeValueArguments[0].IntegerValue;
@@ -18097,6 +18738,37 @@ internal sealed class TypeChecker
                         "STK3054",
                         $"Compile-time structural fact '{factName}' parameter index '{index}' is out of range for '{arguments.TargetType.DisplayName}' with {parameterCount} parameter(s).",
                         context);
+                    return false;
+                }
+            }
+
+            if (CompileTimeStructuralFacts.IsFunctionPointerReturnTypeArgumentFact(kind)
+                && targetType.FunctionPointerReturnType is { } returnType)
+            {
+                var argumentIndex = arguments.ComptimeValueArguments[0].IntegerValue;
+                if (!ValidateStructuralFactTypeArgumentIndex(
+                        factName,
+                        returnType,
+                        argumentIndex,
+                        $"return type of '{arguments.TargetType.DisplayName}'",
+                        context))
+                {
+                    return false;
+                }
+            }
+
+            if (CompileTimeStructuralFacts.IsFunctionPointerParameterTypeArgumentFact(kind)
+                && targetType.FunctionPointerParameterTypes is { } parameterTypes)
+            {
+                var parameterIndex = arguments.ComptimeValueArguments[0].IntegerValue;
+                var argumentIndex = arguments.ComptimeValueArguments[1].IntegerValue;
+                if (!ValidateStructuralFactTypeArgumentIndex(
+                        factName,
+                        parameterTypes[(int)parameterIndex],
+                        argumentIndex,
+                        $"parameter slot {parameterIndex} of '{arguments.TargetType.DisplayName}'",
+                        context))
+                {
                     return false;
                 }
             }
@@ -18135,6 +18807,8 @@ internal sealed class TypeChecker
             || CompileTimeStructuralFacts.IsClosureParameterTypePredicate(kind)
             || CompileTimeStructuralFacts.IsClosureReturnTypeMetadataFact(kind)
             || CompileTimeStructuralFacts.IsClosureParameterTypeMetadataFact(kind)
+            || CompileTimeStructuralFacts.IsClosureReturnTypeArgumentFact(kind)
+            || CompileTimeStructuralFacts.IsClosureParameterTypeArgumentFact(kind)
             || CompileTimeStructuralFacts.IsClosureParameterRawPointerElementCountExpressionFact(kind)
             || CompileTimeStructuralFacts.IsClosureParameterMemoryFact(kind))
         {
@@ -18162,6 +18836,7 @@ internal sealed class TypeChecker
             if (kind == CompileTimeStructuralFactKind.ClosureParameterTypeIs
                 || CompileTimeStructuralFacts.IsClosureParameterTypePredicate(kind)
                 || CompileTimeStructuralFacts.IsClosureParameterTypeMetadataFact(kind)
+                || CompileTimeStructuralFacts.IsClosureParameterTypeArgumentFact(kind)
                 || CompileTimeStructuralFacts.IsClosureParameterRawPointerElementCountExpressionFact(kind))
             {
                 var index = arguments.ComptimeValueArguments[0].IntegerValue;
@@ -18172,6 +18847,37 @@ internal sealed class TypeChecker
                         "STK3054",
                         $"Compile-time structural fact '{factName}' parameter index '{index}' is out of range for '{arguments.TargetType.DisplayName}' with {parameterCount} parameter(s).",
                         context);
+                    return false;
+                }
+            }
+
+            if (CompileTimeStructuralFacts.IsClosureReturnTypeArgumentFact(kind)
+                && targetType.ClosureReturnType is { } returnType)
+            {
+                var argumentIndex = arguments.ComptimeValueArguments[0].IntegerValue;
+                if (!ValidateStructuralFactTypeArgumentIndex(
+                        factName,
+                        returnType,
+                        argumentIndex,
+                        $"return type of '{arguments.TargetType.DisplayName}'",
+                        context))
+                {
+                    return false;
+                }
+            }
+
+            if (CompileTimeStructuralFacts.IsClosureParameterTypeArgumentFact(kind)
+                && targetType.ClosureParameterTypes is { } parameterTypes)
+            {
+                var parameterIndex = arguments.ComptimeValueArguments[0].IntegerValue;
+                var argumentIndex = arguments.ComptimeValueArguments[1].IntegerValue;
+                if (!ValidateStructuralFactTypeArgumentIndex(
+                        factName,
+                        parameterTypes[(int)parameterIndex],
+                        argumentIndex,
+                        $"parameter slot {parameterIndex} of '{arguments.TargetType.DisplayName}'",
+                        context))
+                {
                     return false;
                 }
             }
@@ -18238,7 +18944,8 @@ internal sealed class TypeChecker
             or CompileTimeStructuralFactKind.FieldHasExplicitOffset
             or CompileTimeStructuralFactKind.FieldExplicitOffset)
             || CompileTimeStructuralFacts.IsFieldTypePredicate(kind)
-            || CompileTimeStructuralFacts.IsFieldTypeMetadataFact(kind))
+            || CompileTimeStructuralFacts.IsFieldTypeMetadataFact(kind)
+            || CompileTimeStructuralFacts.IsFieldVisibilityFact(kind))
         {
             if (ResolveNamedTypeSymbol(arguments.TargetType) is not { } namedType)
             {
@@ -18834,7 +19541,8 @@ internal sealed class TypeChecker
             ComptimeGenericParameterNames: template.ComptimeGenericParams.ToArray(),
             IsDynTrait: template.IsDynTrait,
             Layout: template.Layout,
-            DeclaringModuleName: template.DeclaringModuleName);
+            DeclaringModuleName: template.DeclaringModuleName,
+            Visibility: template.Visibility);
         _namedTypes[key] = template.Kind == DeclarationKind.Enum
             ? CreateConcreteEnum(key, template, substitution, valueSubstitution)
             : CreateConcreteStructLike(key, template, substitution, valueSubstitution);
@@ -18859,9 +19567,15 @@ internal sealed class TypeChecker
             return;
         }
 
+        if (!_canValidateDictionaryKeyConstraints)
+        {
+            _pendingDictionaryKeyConstraintValidations.Add((dictionaryType, triggerLocation));
+            return;
+        }
+
         if (SystemCollectionsDictionaryKeyFacts.TryResolveContract(
                 keyType,
-                sourceName => _functionOverloads.TryGetValue(sourceName, out var candidates) ? candidates : null,
+                sourceName => TryGetFunctionOverloads(sourceName, CurrentFunctionModuleName, out var candidates) ? candidates : null,
                 out var contract,
                 out var contractDiagnostic))
         {
@@ -18879,8 +19593,32 @@ internal sealed class TypeChecker
 
         ReportError(
             "STK3023",
-            contractDiagnostic,
+            $"{FormatDictionaryKeyCollectionUse(dictionaryType, keyType)} collection use requires a compile-time DictionaryKey contract for key type '{keyType.DisplayName}'. {contractDiagnostic}",
             triggerLocation ?? SourceLocation.Synthetic());
+    }
+
+    private void ValidatePendingDictionaryKeyConstraints()
+    {
+        foreach (var (type, location) in _pendingDictionaryKeyConstraintValidations)
+        {
+            ValidateDictionaryKeyConstraint(type, location);
+        }
+
+        _pendingDictionaryKeyConstraintValidations.Clear();
+    }
+
+    private static string FormatDictionaryKeyCollectionUse(
+        StarkTypeSymbol dictionaryType,
+        StarkTypeSymbol keyType)
+    {
+        var normalizedDictionaryType = SystemCollectionsDictionaryKeyFacts.NormalizeType(dictionaryType);
+        var collectionBaseName = normalizedDictionaryType.NamedType is null
+            ? string.Empty
+            : StarkTypeSymbols.GetGenericBaseName(normalizedDictionaryType.NamedType);
+
+        return collectionBaseName is SystemCollectionsDictionaryKeyFacts.HashSetTypeName
+            ? $"HashSet<{keyType.DisplayName}>"
+            : $"Dictionary<{keyType.DisplayName}, V>";
     }
 
     private void RecordDictionaryKeyContractInstantiationTriggers(
@@ -19019,7 +19757,8 @@ internal sealed class TypeChecker
                 template.ThreadSafetyLaws,
                 substitution,
                 valueSubstitution),
-            DeclaringModuleName: template.DeclaringModuleName);
+            DeclaringModuleName: template.DeclaringModuleName,
+            Visibility: template.Visibility);
     }
 
     private NamedTypeSymbol CreateConcreteStructLike(
@@ -19051,13 +19790,19 @@ internal sealed class TypeChecker
             concreteFields,
             concreteOrderedFields,
             ImplementedTraitNames: template.ImplementedTraits,
+            ImplementedTraitTypeSymbols: template.ImplementedTraitTypes.Count == 0
+                ? null
+                : template.ImplementedTraitTypes
+                    .Select(type => SubstituteType(type, substitution, valueSubstitution))
+                    .ToArray(),
             IsDynTrait: template.IsDynTrait,
             Layout: template.Layout,
             ThreadSafetyLawAttributes: SubstituteThreadSafetyLawAttributes(
                 template.ThreadSafetyLaws,
                 substitution,
                 valueSubstitution),
-            DeclaringModuleName: template.DeclaringModuleName);
+            DeclaringModuleName: template.DeclaringModuleName,
+            Visibility: template.Visibility);
     }
 
     private List<ConstructorShape> CreateConcreteConstructors(
@@ -21628,6 +22373,14 @@ internal sealed class TypeChecker
                 context);
         }
 
+        if (TryFindInvalidDynTraitVtableUse(type, out var invalidVtableType))
+        {
+            ReportError(
+                "STK3035",
+                $"Type '{invalidVtableType.DisplayName}' is a compiler-owned dyn-trait vtable and is valid only as the direct pointee of readonly rawptr<{invalidVtableType.DisplayName}>. User code may carry vtable pointers but cannot store or construct vtables by value.",
+                context);
+        }
+
         if (ContainsInlineClosureType(type)
             && !(allowDirectInlineClosureParameter && IsDirectInlineClosureType(type)))
         {
@@ -21638,6 +22391,101 @@ internal sealed class TypeChecker
         }
 
         return type;
+    }
+
+    private static bool TryFindInvalidDynTraitVtableUse(StarkTypeSymbol type, out StarkTypeSymbol invalidVtableType)
+    {
+        return TryFindInvalidDynTraitVtableUse(type, isDirectRawPointerPointee: false, out invalidVtableType);
+    }
+
+    private static bool TryFindInvalidDynTraitVtableUse(
+        StarkTypeSymbol type,
+        bool isDirectRawPointerPointee,
+        out StarkTypeSymbol invalidVtableType)
+    {
+        if (StarkTypeSymbols.IsDynTraitVtableType(type))
+        {
+            invalidVtableType = StarkTypeSymbols.WithQualifiers(
+                type,
+                borrowKind: StarkBorrowKind.None,
+                accessKind: StarkAccessKind.None,
+                initializationKind: StarkInitializationKind.None,
+                isMutableView: false);
+            return !isDirectRawPointerPointee;
+        }
+
+        if (type.Kind == StarkTypeKind.RawPointer && type.ElementType is not null)
+        {
+            if (type.IsMutablePointer && StarkTypeSymbols.IsDynTraitVtableType(type.ElementType))
+            {
+                invalidVtableType = StarkTypeSymbols.WithQualifiers(
+                    type.ElementType,
+                    borrowKind: StarkBorrowKind.None,
+                    accessKind: StarkAccessKind.None,
+                    initializationKind: StarkInitializationKind.None,
+                    isMutableView: false);
+                return true;
+            }
+
+            return TryFindInvalidDynTraitVtableUse(
+                type.ElementType,
+                isDirectRawPointerPointee: !type.IsMutablePointer,
+                out invalidVtableType);
+        }
+
+        if (type.ElementType is not null
+            && TryFindInvalidDynTraitVtableUse(type.ElementType, isDirectRawPointerPointee: false, out invalidVtableType))
+        {
+            return true;
+        }
+
+        if (type.FunctionPointerReturnType is not null
+            && TryFindInvalidDynTraitVtableUse(type.FunctionPointerReturnType, isDirectRawPointerPointee: false, out invalidVtableType))
+        {
+            return true;
+        }
+
+        if (type.FunctionPointerParameterTypes is { Count: > 0 })
+        {
+            foreach (var parameterType in type.FunctionPointerParameterTypes)
+            {
+                if (TryFindInvalidDynTraitVtableUse(parameterType, isDirectRawPointerPointee: false, out invalidVtableType))
+                {
+                    return true;
+                }
+            }
+        }
+
+        if (type.ClosureReturnType is not null
+            && TryFindInvalidDynTraitVtableUse(type.ClosureReturnType, isDirectRawPointerPointee: false, out invalidVtableType))
+        {
+            return true;
+        }
+
+        if (type.ClosureParameterTypes is { Count: > 0 })
+        {
+            foreach (var parameterType in type.ClosureParameterTypes)
+            {
+                if (TryFindInvalidDynTraitVtableUse(parameterType, isDirectRawPointerPointee: false, out invalidVtableType))
+                {
+                    return true;
+                }
+            }
+        }
+
+        if (type.TypeArguments is { Count: > 0 })
+        {
+            foreach (var argumentType in type.TypeArguments)
+            {
+                if (TryFindInvalidDynTraitVtableUse(argumentType, isDirectRawPointerPointee: false, out invalidVtableType))
+                {
+                    return true;
+                }
+            }
+        }
+
+        invalidVtableType = StarkTypeSymbols.Error;
+        return false;
     }
 
     private static bool IsDirectInlineClosureType(StarkTypeSymbol type)
@@ -22072,6 +22920,9 @@ internal sealed class TypeChecker
     }
 
     private void RecordFunctionInstantiationTrigger(TypedFunctionSignature signature, ParserRuleContext context)
+        => RecordFunctionInstantiationTrigger(signature, Location(context));
+
+    private void RecordFunctionInstantiationTrigger(TypedFunctionSignature signature, SourceLocation location)
     {
         if (!signature.IsGenericInstantiation)
         {
@@ -22081,7 +22932,7 @@ internal sealed class TypeChecker
         if ((signature.TypeArguments ?? []).Any(TypeContainsOpenCurrentFunctionGenericParameter)
             || SignatureContainsOpenCurrentFunctionComptimeParameter(signature))
         {
-            RecordDeferredFunctionInstantiationTrigger(signature, context);
+            RecordDeferredFunctionInstantiationTrigger(signature, location);
             return;
         }
 
@@ -22099,10 +22950,10 @@ internal sealed class TypeChecker
             (signature.TypeArguments ?? []).ToArray(),
             signature.ComptimeValueArguments?.ToArray(),
             signature,
-            Location(context)));
+            location));
     }
 
-    private void RecordDeferredFunctionInstantiationTrigger(TypedFunctionSignature signature, ParserRuleContext context)
+    private void RecordDeferredFunctionInstantiationTrigger(TypedFunctionSignature signature, SourceLocation location)
     {
         if (_currentFunctionName is null
             || signature.TemplateName is not { } templateName
@@ -22120,7 +22971,7 @@ internal sealed class TypeChecker
         _deferredFunctionInstantiationTriggers.Add(new DeferredFunctionInstantiationTriggerRecord(
             _currentFunctionName,
             signature,
-            Location(context)));
+            location));
     }
 
     private void RecordTypeInstantiationTriggers(StarkTypeSymbol type, SourceLocation location)
@@ -22641,6 +23492,11 @@ internal sealed class TypeChecker
         string RootKey,
         bool IsIndependentStorage,
         string? RawPointerElementCountExpression = null);
+
+    private sealed record FunctionGlobalReference(
+        string FunctionName,
+        string GlobalName,
+        SourceLocation Location);
 
     private sealed record EnumConstructorBinding(
         string Name,

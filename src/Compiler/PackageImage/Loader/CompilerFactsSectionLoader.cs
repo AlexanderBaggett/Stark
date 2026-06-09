@@ -27,7 +27,8 @@ internal static partial class PackageImageLoader
         foreach (var function in module.Module.EffectiveTypedInterface?.Functions ?? [])
         {
             var qualifiedResolvedName = function.QualifiedResolvedName ?? function.QualifiedName;
-            if (!TryParseBackendOptimizationMode(function.BackendOptimizationMode, out var functionBackendOptimizationMode))
+            if (!TryParseVisibility(function.Visibility, out var functionVisibility)
+                || !TryParseBackendOptimizationMode(function.BackendOptimizationMode, out var functionBackendOptimizationMode))
             {
                 return false;
             }
@@ -61,12 +62,14 @@ internal static partial class PackageImageLoader
                 ThreadSafetyLawPredicates: BuildThreadSafetyLawPredicates(
                     function.ThreadSafetyLawPredicates,
                     module.Module.ModuleName,
-                    localNamedTypes));
+                    localNamedTypes),
+                Visibility: functionVisibility);
         }
 
         foreach (var type in module.Module.EffectiveTypedInterface?.Types ?? [])
         {
-            if (!TryParseBackendOptimizationMode(type.BackendOptimizationMode, out var typeBackendOptimizationMode))
+            if (!TryParseVisibility(type.Visibility, out var typeVisibility)
+                || !TryParseBackendOptimizationMode(type.BackendOptimizationMode, out var typeBackendOptimizationMode))
             {
                 return false;
             }
@@ -80,7 +83,8 @@ internal static partial class PackageImageLoader
                 var comptimeGenericParameterNames = CombineComptimeGenericParameterSymbols(
                     BuildComptimeGenericParameterSymbols(type.ComptimeGenericParameters, module.Module.ModuleName, localNamedTypes),
                     BuildComptimeGenericParameterSymbols(method.ComptimeGenericParameters, module.Module.ModuleName, localNamedTypes));
-                if (!TryParseBackendOptimizationMode(method.BackendOptimizationMode, out var methodBackendOptimizationMode))
+                if (!TryParseVisibility(method.Visibility ?? type.Visibility, out var methodVisibility)
+                    || !TryParseBackendOptimizationMode(method.BackendOptimizationMode, out var methodBackendOptimizationMode))
                 {
                     return false;
                 }
@@ -117,7 +121,8 @@ internal static partial class PackageImageLoader
                     ThreadSafetyLawPredicates: BuildThreadSafetyLawPredicates(
                         method.ThreadSafetyLawPredicates,
                         module.Module.ModuleName,
-                        localNamedTypes));
+                        localNamedTypes),
+                    Visibility: methodVisibility);
             }
         }
 
@@ -714,7 +719,8 @@ internal static partial class PackageImageLoader
         IDictionary<string, NamedTypeSymbol> loadedNamedTypes,
         IDictionary<string, IReadOnlyList<TypedConstructorShape>> loadedConstructors)
     {
-        if (!TryParseTypeDeclarationKind(type.Kind, out var declarationKind))
+        if (!TryParseVisibility(type.Visibility, out var visibility)
+            || !TryParseTypeDeclarationKind(type.Kind, out var declarationKind))
         {
             return false;
         }
@@ -754,6 +760,10 @@ internal static partial class PackageImageLoader
                     type.ImplementedTraits,
                     moduleName,
                     localNamedTypes),
+                ImplementedTraitTypeSymbols: BuildImplementedTraitTypes(
+                    type.ImplementedTraitTypes,
+                    moduleName,
+                    localNamedTypes),
                 AssociatedTypeMembers: BuildAssociatedTypeSymbols(
                     type.AssociatedTypes,
                     moduleName,
@@ -763,7 +773,8 @@ internal static partial class PackageImageLoader
                     type.ThreadSafetyLawAttributes,
                     moduleName,
                     localNamedTypes),
-                DeclaringModuleName: moduleName);
+                DeclaringModuleName: moduleName,
+                Visibility: visibility);
         }
         else
         {
@@ -798,6 +809,10 @@ internal static partial class PackageImageLoader
                     type.ImplementedTraits,
                     moduleName,
                     localNamedTypes),
+                ImplementedTraitTypeSymbols: BuildImplementedTraitTypes(
+                    type.ImplementedTraitTypes,
+                    moduleName,
+                    localNamedTypes),
                 AssociatedTypeMembers: BuildAssociatedTypeSymbols(
                     type.AssociatedTypes,
                     moduleName,
@@ -808,7 +823,8 @@ internal static partial class PackageImageLoader
                     type.ThreadSafetyLawAttributes,
                     moduleName,
                     localNamedTypes),
-                DeclaringModuleName: moduleName);
+                DeclaringModuleName: moduleName,
+                Visibility: visibility);
         }
 
         var constructors = new List<TypedConstructorShape>();
@@ -954,9 +970,24 @@ internal static partial class PackageImageLoader
         var qualified = implementedTraits
             .Select(traitName => QualifyLoadedNamedType(traitName, moduleName, localNamedTypes))
             .Distinct(StringComparer.Ordinal)
-            .OrderBy(static traitName => traitName, StringComparer.Ordinal)
             .ToArray();
         return qualified.Length == 0 ? null : qualified;
+    }
+
+    private static IReadOnlyList<StarkTypeSymbol>? BuildImplementedTraitTypes(
+        IReadOnlyList<StarkPackageTypeReference>? implementedTraitTypes,
+        string moduleName,
+        ISet<string> localNamedTypes)
+    {
+        if (implementedTraitTypes is not { Count: > 0 })
+        {
+            return null;
+        }
+
+        var result = implementedTraitTypes
+            .Select(type => BuildTypeSymbol(type, moduleName, localNamedTypes))
+            .ToArray();
+        return result.Length == 0 ? null : result;
     }
 
     private static TypedParameterSymbol BuildTypedParameterSymbol(StarkPackageTypedParameterManifest parameter)
@@ -1101,6 +1132,24 @@ internal static partial class PackageImageLoader
                     operation.ArgumentCount.Value,
                     operation.ReceiverIsAddressable ?? false,
                     operation.ReceiverIsMutable ?? false,
+                    location,
+                    enclosingFunctionName);
+                break;
+
+            case "dyn-trait-from-parts":
+                if (operation.OperationName is null
+                    || operation.TargetType is null
+                    || operation.SourceType is null
+                    || operation.ReceiverType is null)
+                {
+                    return false;
+                }
+
+                boundOperation = new BoundDynTraitFromPartsOperation(
+                    operation.OperationName,
+                    BuildTypeSymbol(operation.TargetType),
+                    BuildTypeSymbol(operation.SourceType),
+                    BuildTypeSymbol(operation.ReceiverType),
                     location,
                     enclosingFunctionName);
                 break;

@@ -2,6 +2,8 @@ import System.Memory
 import System.Text
 module System.C
 
+public alias CStringDisposer = fnptr<unsafe ffi(c) fn void(rawmutptr<System.C.c_char>)>;
+
 static System.C.c_char[1] EmptyCString =
 {
     0
@@ -219,6 +221,33 @@ public struct CCharBuffer
     }
 }
 
+public struct ForeignOwnedCStr
+{
+    internal rawmutptr<System.C.c_char> Pointer;
+
+    ForeignOwnedCStr()
+    {
+        self.Pointer = null;
+    }
+
+    inline finite law bool IsNull(borrow ForeignOwnedCStr self)
+    {
+        return self.Pointer == null;
+    }
+
+    unsafe inline finite law rawmutptr<System.C.c_char> Data(borrow ForeignOwnedCStr self)
+    {
+        return self.Pointer;
+    }
+
+    unsafe fn CStringResult<CStr> TryViewBounded(
+        borrow ForeignOwnedCStr self,
+        u64[0 2 ** 63 - 1] maxLength)
+    {
+        return TryFromRawBounded((rawptr<System.C.c_char>)self.Pointer, maxLength);
+    }
+}
+
 public unsafe fn CStringResult<CStr> TryFromRawBounded(
     rawptr<System.C.c_char> data,
     u64[0 2 ** 63 - 1] maxLength)
@@ -252,6 +281,35 @@ public unsafe fn CStr FromRawUnchecked(
         Pointer = data,
         ByteLength = length
     };
+}
+
+public unsafe fn CStringResult<ForeignOwnedCStr> TryFromForeignOwnedRaw(
+    rawmutptr<System.C.c_char> data)
+{
+    if (data == null)
+    {
+        return CStringResult<ForeignOwnedCStr>.Err(CStringError.NullPointer);
+    }
+
+    return CStringResult<ForeignOwnedCStr>.Ok(new ForeignOwnedCStr()
+    {
+        Pointer = data
+    });
+}
+
+public unsafe fn void DisposeForeignOwned(
+    mut borrow ForeignOwnedCStr text,
+    CStringDisposer dispose)
+{
+    if (text.Pointer == null)
+    {
+        return;
+    }
+
+    stack rawmutptr<System.C.c_char> data = text.Pointer;
+    text.Pointer = null;
+    dispose(data);
+    return;
 }
 
 public fn CStringResult<OwnedCStr> FromAscii(ascii text)
@@ -355,6 +413,42 @@ public fn CStringResult<System.Text.OwnedUnicode> ToUnicodeUtf8(borrow CStr text
                 case System.Memory.MemoryResult<System.Text.OwnedUnicode>.Ok(var unicodeText):
                     return CStringResult<System.Text.OwnedUnicode>.Ok(unicodeText);
             }
+    }
+}
+
+public unsafe fn CStringResult<System.Text.OwnedAscii> CopyForeignOwnedAsciiAndDispose(
+    mut borrow ForeignOwnedCStr text,
+    CStringDisposer dispose,
+    u64[0 2 ** 63 - 1] maxLength)
+{
+    stack CStringResult<CStr> viewResult = text.TryViewBounded(maxLength);
+    switch (viewResult)
+    {
+        case CStringResult<CStr>.Err(var error):
+            DisposeForeignOwned(text, dispose);
+            return CStringResult<System.Text.OwnedAscii>.Err(error);
+        case CStringResult<CStr>.Ok(var view):
+            stack CStringResult<System.Text.OwnedAscii> copyResult = ToAscii(view);
+            DisposeForeignOwned(text, dispose);
+            return copyResult;
+    }
+}
+
+public unsafe fn CStringResult<System.Text.OwnedUnicode> CopyForeignOwnedUnicodeUtf8AndDispose(
+    mut borrow ForeignOwnedCStr text,
+    CStringDisposer dispose,
+    u64[0 2 ** 63 - 1] maxLength)
+{
+    stack CStringResult<CStr> viewResult = text.TryViewBounded(maxLength);
+    switch (viewResult)
+    {
+        case CStringResult<CStr>.Err(var error):
+            DisposeForeignOwned(text, dispose);
+            return CStringResult<System.Text.OwnedUnicode>.Err(error);
+        case CStringResult<CStr>.Ok(var view):
+            stack CStringResult<System.Text.OwnedUnicode> copyResult = ToUnicodeUtf8(view);
+            DisposeForeignOwned(text, dispose);
+            return copyResult;
     }
 }
 

@@ -132,7 +132,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
         }
 
         var pointer = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_free_ptr"))}";
-        AppendLine($"  {pointer} = extractvalue {MapType(free.Storage.Type)} {FormatValue(free.Storage)}, 0");
+        AppendLine($"  {pointer} = extractvalue {MapType(NormalizeAggregateType(free.Storage.Type))} {FormatValue(free.Storage)}, 0");
         AppendLine($"  call void @{RuntimeFreeHelperName}(ptr {pointer})");
     }
 
@@ -163,7 +163,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
                 $"Dynamic storage reserve requires a concrete element layout for '{elementType.DisplayName}'.");
         }
 
-        var storageType = MapType(reserve.StorageType);
+        var storageType = MapType(NormalizeAggregateType(reserve.StorageType));
         var storageAddress = FormatValue(reserve.StorageAddress);
         var additionalI64 = EmitUnsignedIntegerAsI64(reserve.AdditionalCapacity, "dynamic_reserve_additional");
         var maxCount = GetMaximumDynamicStorageElementCount(elementLayout.SizeBytes);
@@ -275,7 +275,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
                 $"Dynamic storage TryReserve requires a concrete element layout for '{elementType.DisplayName}'.");
         }
 
-        var storageType = MapType(reserve.StorageType);
+        var storageType = MapType(NormalizeAggregateType(reserve.StorageType));
         var storageAddress = FormatValue(reserve.StorageAddress);
         var additionalI64 = EmitUnsignedIntegerAsI64(reserve.AdditionalCapacity, "dynamic_try_reserve_additional");
         var maxCount = GetMaximumDynamicStorageElementCount(elementLayout.SizeBytes);
@@ -393,7 +393,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
                 $"Dynamic storage TryReserveCapacity requires a concrete element layout for '{elementType.DisplayName}'.");
         }
 
-        var storageType = MapType(reserve.StorageType);
+        var storageType = MapType(NormalizeAggregateType(reserve.StorageType));
         var storageAddress = FormatValue(reserve.StorageAddress);
         var targetCapacityI64 = EmitUnsignedIntegerAsI64(reserve.TargetCapacity, "dynamic_try_reserve_capacity_target");
         var maxCount = GetMaximumDynamicStorageElementCount(elementLayout.SizeBytes);
@@ -497,7 +497,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
                 $"Dynamic storage MoveLast requires a concrete element layout for '{elementType.DisplayName}'.");
         }
 
-        var storageType = MapType(moveLast.StorageType);
+        var storageType = MapType(NormalizeAggregateType(moveLast.StorageType));
         var elementLlvmType = MapType(moveLast.Type);
         var storageAddress = FormatValue(moveLast.StorageAddress);
         var elementAlignment = Math.Max(1, elementLayout.AlignmentBytes);
@@ -622,7 +622,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
                 $"Dynamic storage MoveAt requires a concrete element layout for '{elementType.DisplayName}'.");
         }
 
-        var storageType = MapType(moveAt.StorageType);
+        var storageType = MapType(NormalizeAggregateType(moveAt.StorageType));
         var elementLlvmType = MapType(moveAt.Type);
         var storageAddress = FormatValue(moveAt.StorageAddress);
         var indexI64 = EmitUnsignedIntegerAsI64(moveAt.Index, "dynamic_move_at_index");
@@ -874,7 +874,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
     private void EmitAddressOfLocal(string result, SsaAddressOfLocalRValue addressOfLocal)
     {
         EnsureLocalSlotExists(addressOfLocal.LocalName, addressOfLocal.PointeeType);
-        AppendLine($"  {result} = getelementptr{GetZeroOffsetGepFlags()} {MapType(addressOfLocal.PointeeType)}, ptr {GetLocalSlotPointer(addressOfLocal.LocalName)}, i32 0");
+        AppendLine($"  {result} = getelementptr{GetZeroOffsetGepFlags()} {MapType(NormalizeAggregateType(addressOfLocal.PointeeType))}, ptr {GetLocalSlotPointer(addressOfLocal.LocalName)}, i32 0");
     }
 
     private void EmitAddressOfParameter(string result, SsaAddressOfParameterRValue addressOfParameter)
@@ -889,19 +889,24 @@ internal sealed partial class LlvmFunctionBodyEmitter
         if (parameter.Kind == AbiParameterKind.IndirectIn)
         {
             AppendLine(
-                $"  {result} = getelementptr{GetZeroOffsetGepFlags()} {MapType(addressOfParameter.PointeeType)}, ptr %{EscapeIdentifier(parameter.LlvmName)}, i32 0");
+                $"  {result} = getelementptr{GetZeroOffsetGepFlags()} {MapType(NormalizeAggregateType(addressOfParameter.PointeeType))}, ptr %{EscapeIdentifier(parameter.LlvmName)}, i32 0");
             return;
         }
 
         EnsureParameterSlotExists(parameter, addressOfParameter.PointeeType);
         AppendLine(
-            $"  {result} = getelementptr{GetZeroOffsetGepFlags()} {MapType(addressOfParameter.PointeeType)}, ptr %{EscapeIdentifier($"slot_param_{parameter.SourceName}")}, i32 0");
+            $"  {result} = getelementptr{GetZeroOffsetGepFlags()} {MapType(NormalizeAggregateType(addressOfParameter.PointeeType))}, ptr %{EscapeIdentifier($"slot_param_{parameter.SourceName}")}, i32 0");
     }
 
     private void EmitFieldAddress(string result, SsaFieldAddressRValue fieldAddress)
     {
+        var aggregateType = NormalizeAggregateType(
+            StarkTypeSymbols.IsPointerBackedBorrowType(fieldAddress.AggregateType)
+                ? StarkTypeSymbols.BorrowReturnValueType(fieldAddress.AggregateType)
+                : fieldAddress.AggregateType);
+
         if (TryGetLayoutControlledFieldOffsetBytes(
-                fieldAddress.AggregateType,
+                aggregateType,
                 fieldAddress.FieldIndex,
                 out var fieldOffsetBytes))
         {
@@ -909,7 +914,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
             return;
         }
 
-        AppendLine($"  {result} = getelementptr{GetProvenInObjectGepFlags()} {MapType(fieldAddress.AggregateType)}, ptr {FormatValue(fieldAddress.Address)}, i32 0, i32 {fieldAddress.FieldIndex}");
+        AppendLine($"  {result} = getelementptr{GetProvenInObjectGepFlags()} {MapType(aggregateType)}, ptr {FormatValue(fieldAddress.Address)}, i32 0, i32 {fieldAddress.FieldIndex}");
     }
 
     private bool TryGetLayoutControlledFieldOffsetBytes(

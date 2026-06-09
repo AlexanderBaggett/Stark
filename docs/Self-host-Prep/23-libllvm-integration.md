@@ -166,8 +166,9 @@ Add target/pass configuration through the C API:
 
 - [~] Implement `System.C` C-string helpers from doc `18`, including owned C
       strings, borrowed bounded views, mutable buffers, and foreign-owned string
-      wrapper examples. Core `System.C` helpers have landed; foreign-owned LLVM
-      message wrappers remain.
+      wrapper examples. Core `System.C` helpers, `%s` validation, and generic
+      foreign-owned copy/dispose helpers have landed; LLVM binding-specific
+      owner types remain with the binding layer.
 - [ ] Implement the LLVM FFI binding support needed by the initial backend
       integration:
       out-pointer usage patterns, `char**` error outputs, opaque-ref outputs,

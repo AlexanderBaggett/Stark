@@ -3439,6 +3439,46 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
+    public void StaticGenericConstructorInitializersCanForwardAggregateArguments()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Counter
+            {
+                i32[min max] Value;
+            }
+
+            struct Box<T>
+            {
+                T Value;
+
+                Box(T initial)
+                {
+                    self.Value = initial;
+                }
+            }
+
+            static mut Box<Counter> Current = new Box<Counter>(new Counter()
+            {
+                Value = 42
+            });
+
+            unsafe finite i32[min max] Run()
+            {
+                return Current.Value.Value;
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("%Counter = type { i32 }", llvm);
+        Assert.Contains("@Current = global %Box_Counter_ { %Counter { i32 42 } }", llvm);
+    }
+
+    [Fact]
     public void AggregateArrayFieldsEmitConcreteInitializers()
     {
         var result = Compile(
@@ -6570,6 +6610,33 @@ public sealed class LlvmIrEmissionTests
 
         Assert.Contains("call win64cc i32 %arg_op(i32 %arg_value)", applyBody, StringComparison.Ordinal);
         Assert.DoesNotContain("call fastcc i32 %arg_op", applyBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void UnsafeFfiFunctionItemsPromoteToUnsafeFfiFunctionPointerArguments()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe ffi(win64) fn i32[min max] Callback(i32[min max] value);
+            unsafe ffi(win64) fn i32[min max] Register(fnptr<unsafe ffi(win64) fn i32[min max](i32[min max])> callback, i32[min max] value);
+
+            unsafe fn i32[min max] Run(i32[min max] value)
+            {
+                return Register(Callback, value);
+            }
+            """,
+            new CompilerOptions(
+                OptimizationLevel: CompilerOptimizationLevel.O0,
+                TargetInfo: new LlvmTargetInfo("x86_64-pc-windows-msvc", null)));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("declare win64cc i32 @Callback(i32) nounwind", llvm);
+        Assert.Matches(@"declare win64cc i32 @Register\(ptr(?: [^,\)]*)?, i32\) nounwind", llvm);
+        Assert.Matches(@"call win64cc i32 @Register\(ptr(?: [^,\)]*)? @Callback, i32 %arg_value\)", llvm);
     }
 
     [Fact]
@@ -13046,6 +13113,97 @@ public sealed class LlvmIrEmissionTests
         Assert.Contains("call fastcc void @Inner_Set(ptr nonnull", llvm);
         Assert.DoesNotContain("call fastcc void @Inner_Set(ptr %slot_", llvm);
         Assert.DoesNotContain("alloca %Inner", llvm);
+    }
+
+    [Fact]
+    public void StoreBorrowFieldsUsePointerStorageAndProjectThroughBorrowedValue()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Counter
+            {
+                i32[min max] Value;
+
+                fn Holder Hold(storeborrow mut Counter self)
+                {
+                    return new Holder(self);
+                }
+            }
+
+            struct Holder
+            {
+                storeborrow mut Counter Owner;
+                bool Held;
+
+                Holder(storeborrow mut Counter owner)
+                {
+                    self.Owner = owner;
+                    self.Held = true;
+                }
+
+                unsafe fn void Set(mut borrow Holder self, i32[min max] value)
+                {
+                    self.Owner.Value = value;
+                    return;
+                }
+            }
+
+            unsafe fn i32[min max] Run()
+            {
+                stack mut Counter counter = new Counter()
+                {
+                    Value = 1
+                };
+                stack mut Holder holder = counter.Hold();
+                holder.Set(42);
+                if (!*(&holder.Held))
+                {
+                    return 0;
+                }
+
+                return counter.Value;
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static d => d.ToString())));
+        var llvm = GetLlvm(result);
+        var holdHeader = ExtractDefinitionHeader(llvm, "Counter_Hold");
+        var setHeader = ExtractDefinitionHeader(llvm, "Holder_Set");
+        var runHeader = ExtractDefinitionHeader(llvm, "Run");
+
+        Assert.Contains("%Counter = type { i32 }", llvm);
+        Assert.Contains("%Holder = type { ptr, i1 }", llvm);
+        Assert.Contains("!\"Stark TBAA\"", llvm);
+        Assert.Contains("load ptr", llvm);
+        Assert.Contains("getelementptr inbounds nuw %Counter", llvm);
+        Assert.Contains("captures(address", holdHeader);
+        Assert.DoesNotContain("nocapture", holdHeader, StringComparison.Ordinal);
+        Assert.DoesNotContain("noalias", holdHeader, StringComparison.Ordinal);
+        Assert.DoesNotContain("noalias", setHeader, StringComparison.Ordinal);
+        Assert.DoesNotContain("writeonly", setHeader, StringComparison.Ordinal);
+        Assert.DoesNotContain("memory(none)", runHeader, StringComparison.Ordinal);
+        Assert.DoesNotContain("%Holder = type { %Counter", llvm);
+
+        var pointerDescriptor = Regex.Match(
+            llvm,
+            @"!(\d+) = !\{!""stark\.ptr"", !\d+, i64 0\}",
+            RegexOptions.CultureInvariant);
+        var boolDescriptor = Regex.Match(
+            llvm,
+            @"!(\d+) = !\{!""stark\.bool"", !\d+, i64 0\}",
+            RegexOptions.CultureInvariant);
+        var holderDescriptor = Regex.Match(
+            llvm,
+            @"!\d+ = !\{!""stark\.Holder"", (?<fields>[^}]*)\}",
+            RegexOptions.CultureInvariant);
+        Assert.True(pointerDescriptor.Success, llvm);
+        Assert.True(boolDescriptor.Success, llvm);
+        Assert.True(holderDescriptor.Success, llvm);
+        Assert.Contains($"!{pointerDescriptor.Groups[1].Value}, i64 0", holderDescriptor.Groups["fields"].Value);
+        Assert.Contains($"!{boolDescriptor.Groups[1].Value}, i64 8", holderDescriptor.Groups["fields"].Value);
     }
 
     [Fact]

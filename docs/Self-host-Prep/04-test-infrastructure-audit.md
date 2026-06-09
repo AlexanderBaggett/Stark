@@ -32,11 +32,11 @@ Tool/API usage in tracked tests, excluding build output:
 
 | ID | Capability | Current Stark Status | Blocking Scope |
 |---|---|---|---|
-| TEST-01 | Test discovery and runner model | **Decision specified:** generate an explicit `main` runner from `[Fact]` metadata; `System.Testing` currently has explicit `RunFact`, but the generator is not implemented | Blocks xUnit-style port of all projects until generator exists |
-| TEST-02 | Rich assertions | `True`, `False`, primitive `Equal`, `Fail` only | Blocks most tests: contains/not contains, single, not null, type, collection, ranges, diagnostics |
-| TEST-03 | Snapshot/golden text utilities | None found | Blocks LLVM/MIR/SSA/diagnostic/package text tests |
-| TEST-04 | Temp directory/file fixtures with cleanup | Depends on missing stdlib temp/file helpers | Blocks integration/package/project tests |
-| TEST-05 | Process execution capture | `System.Process` lacks spawn/capture | Blocks CLI, native, project, runtime, and self-host stage tests |
+| TEST-01 | Test discovery and runner model | **Implemented:** `stark test` generates an explicit `main` runner from `[Fact]` metadata, enumerates facts at build time, supports repeatable selected-test filters, calls `System.Testing.RunFact`, and reports stable pass/fail output without runtime reflection | No longer blocks basic xUnit-style `[Fact]` ports; `[Theory]`/data providers remain TEST-08 |
+| TEST-02 | Rich assertions | Partial base landed: `True`, `False`, primitive `Equal`, `NotEqual`, text contains/starts/ends, range, slice/List shape assertions, `Fail` | Remaining blockers: diagnostic/type assertions, root `Option<T>` / `Result<T, E>` predicates, richer collection predicates, null/raw-pointer policy |
+| TEST-03 | Snapshot/golden text utilities | `System.Testing` has explicit `VerifySnapshot`, `UpdateSnapshot`, and `VerifyOrUpdateSnapshot` APIs for ASCII/UTF-8 text snapshots, normalized CRLF/LF comparison, first-difference line/column facts, and stable difference formatting | No longer blocks basic LLVM/MIR/SSA/diagnostic/package text golden checks; artifact access and package inspection still gate many tests |
+| TEST-04 | Temp directory/file fixtures with cleanup | `System.Testing.TempDirectory` covers temp directory creation, safe relative fixture paths, file read/write/atomic edit helpers, explicit cleanup, and best-effort drop cleanup; per-test output capture remains separate | No longer blocks basic integration/package/project fixture files; output capture remains for runner parity |
+| TEST-05 | Process execution capture | Linux-backed `System.Process.RunCapture` captures stdout/stderr/exit code and exposes argv/env/cwd helpers; cross-platform backend parity, timeouts, and runner integration remain | Blocks CLI, native, project, runtime, and self-host stage tests until the harness consumes it |
 | TEST-06 | Host-compiler target mode for ported tests | Not present | Required for M1: Stark tests running against the current C# host compiler |
 | TEST-07 | Fast compiler artifact inspection API for tests | Decision specified: typed in-process compiler test API is the blessed path; persistent/batched compiler runner returns structured results for host and cross-stage tests; full CLI artifact export is selective | Blocks pipeline/unit tests until the API/runner/export slices exist |
 | TEST-08 | Parameterized tests and data providers | No equivalent to `[Theory]`, `[InlineData]`, `MemberData` | Blocks compact parser/stdlib test ports |
@@ -78,13 +78,13 @@ Tool/API usage in tracked tests, excluding build output:
 
 | Needed API Family | Examples From Host Tests | Gap IDs |
 |---|---|---|
-| Assertions | `Assert.Contains`, `DoesNotContain`, `Equal`, `NotEqual`, `True`, `False`, `Null`, `NotNull`, `Single`, `Empty`, `IsType`, collection predicates | TEST-02 |
+| Assertions | `Assert.Contains`, `DoesNotContain`, `Equal`, `NotEqual`, `True`, `False`, `Null`, `NotNull`, `Single`, `Empty`, `IsType`, collection predicates | TEST-02; value/text/range/slice/List shape base is implemented, diagnostic/type/root `Option`/`Result` predicates remain |
 | Diagnostics | Compare code/message/line/column, render diagnostic bags, fail with rich messages | TEST-02, TEST-12 |
-| Text matching | substring, starts/ends, count occurrences, regex or structured match, normalized line comparisons | TEST-03, S04 |
-| Fixture lifecycle | temp dirs/files, cleanup on failure, per-test output capture | TEST-04 |
+| Text matching | substring, starts/ends, count occurrences, normalized snapshot comparisons; regex or structured match remains separate | TEST-03, S04 |
+| Fixture lifecycle | temp dirs/files and cleanup-on-failure helpers are implemented through `System.Testing.TempDirectory`; per-test output capture remains | TEST-04 |
 | Process harness | run compiler executable, capture stdout/stderr, assert exit code, timeout, serial collections | TEST-05, TEST-09 |
-| Discovery | Generated explicit `main` from `[Fact]`, selected test filters, later `[Theory]`/data providers | TEST-01, TEST-08 |
-| Snapshots | update/verify mode, stable diff output, path normalization | TEST-03 |
+| Discovery | Generated explicit `main` from `[Fact]` and selected-test filters are implemented; later `[Theory]`/data providers remain | TEST-01, TEST-08 |
+| Snapshots | explicit update/verify mode, normalized line endings, stable first-difference output | TEST-03 |
 | Compiler inspection | typed in-process compile result API, persistent/batched host compiler runner with structured results, selective full artifact export, structured diagnostic/result assertions | TEST-07, TEST-12, T15 |
 
 ## Portability Verdict
@@ -92,17 +92,14 @@ Tool/API usage in tracked tests, excluding build output:
 Tests are portable in principle, but not as-is. The C# tests are tightly coupled
 to xUnit and compiler internals. The recommended TDD path is:
 
-1. Build the generated Stark test runner slice: scan `[Fact]` metadata at build
-   time, emit an explicit `main`, and call `System.Testing` runner APIs without
-   runtime reflection.
-2. Build a Stark test harness that can invoke the current host compiler as a
+1. Build a Stark test harness that can invoke the current host compiler as a
    process and compare text outputs.
-3. Add the TEST-07 inspection slices: a typed in-process compiler test API for
+2. Add the TEST-07 inspection slices: a typed in-process compiler test API for
    speed, a persistent/batched compiler runner with structured results for
    host/cross-stage tests, and selective full artifact export for
    golden/stage/debug tests.
-4. Port helper libraries first (`FeatureLlvmTestBase`, `CompilerPipelineTestSupport`,
+3. Port helper libraries first (`FeatureLlvmTestBase`, `CompilerPipelineTestSupport`,
    `FallbackLogAssertions`) into Stark.
-5. Port tests category-by-category, starting with parser/diagnostic/LLVM inspection
+4. Port tests category-by-category, starting with parser/diagnostic/LLVM inspection
    checks and leaving native/package/runtime integration until process/temp/JSON
    support is ready.

@@ -677,6 +677,14 @@ internal sealed class LlvmIrEmitter
     {
         foreach (var block in function.Blocks)
         {
+            foreach (var phi in block.Phis)
+            {
+                foreach (var incoming in phi.Incomings)
+                {
+                    CollectReferencedFunctions(incoming.Value, referencedFunctions);
+                }
+            }
+
             foreach (var instruction in block.Instructions)
             {
                 if (instruction is SsaValueInstruction { Value: SsaCallRValue call })
@@ -687,7 +695,30 @@ internal sealed class LlvmIrEmitter
                 {
                     referencedFunctions.Add(statementCall.FunctionName);
                 }
+
+                foreach (var value in EnumerateInstructionOperands(instruction))
+                {
+                    CollectReferencedFunctions(value, referencedFunctions);
+                }
             }
+
+            foreach (var value in EnumerateTerminatorOperands(block.Terminator))
+            {
+                CollectReferencedFunctions(value, referencedFunctions);
+            }
+        }
+    }
+
+    private static void CollectReferencedFunctions(SsaValue value, ISet<string> referencedFunctions)
+    {
+        switch (value)
+        {
+            case SsaFunctionAddressValue functionAddress:
+                referencedFunctions.Add(functionAddress.FunctionName);
+                break;
+            case SsaClosureValue closure:
+                referencedFunctions.Add(closure.InvokeFunctionName);
+                break;
         }
     }
 
@@ -1113,6 +1144,14 @@ internal sealed class LlvmIrEmitter
             var callees = new HashSet<string>(StringComparer.Ordinal);
             foreach (var block in function.Blocks)
             {
+                foreach (var phi in block.Phis)
+                {
+                    foreach (var incoming in phi.Incomings)
+                    {
+                        AddLocalFunctionReference(callees, localFunctionNames, incoming.Value);
+                    }
+                }
+
                 foreach (var instruction in block.Instructions)
                 {
                     if (instruction is SsaValueInstruction { Value: SsaCallRValue call })
@@ -1123,6 +1162,16 @@ internal sealed class LlvmIrEmitter
                     {
                         AddLocalCallee(callees, localFunctionNames, NormalizeOwnedFunctionName(statementCall.FunctionName));
                     }
+
+                    foreach (var value in EnumerateInstructionOperands(instruction))
+                    {
+                        AddLocalFunctionReference(callees, localFunctionNames, value);
+                    }
+                }
+
+                foreach (var value in EnumerateTerminatorOperands(block.Terminator))
+                {
+                    AddLocalFunctionReference(callees, localFunctionNames, value);
                 }
             }
 
@@ -1174,6 +1223,22 @@ internal sealed class LlvmIrEmitter
         if (localFunctionNames.Contains(functionName))
         {
             callees.Add(functionName);
+        }
+    }
+
+    private void AddLocalFunctionReference(
+        ISet<string> callees,
+        IReadOnlySet<string> localFunctionNames,
+        SsaValue value)
+    {
+        switch (value)
+        {
+            case SsaFunctionAddressValue functionAddress:
+                AddLocalCallee(callees, localFunctionNames, NormalizeOwnedFunctionName(functionAddress.FunctionName));
+                break;
+            case SsaClosureValue closure:
+                AddLocalCallee(callees, localFunctionNames, NormalizeOwnedFunctionName(closure.InvokeFunctionName));
+                break;
         }
     }
 
@@ -2530,6 +2595,11 @@ internal sealed class LlvmIrEmitter
 
     private string MapType(StarkTypeSymbol type)
     {
+        if (StarkTypeSymbols.IsPointerBackedBorrowType(type))
+        {
+            return "ptr";
+        }
+
         return type.Kind switch
         {
             StarkTypeKind.Void => "void",
@@ -2558,6 +2628,9 @@ internal sealed class LlvmIrEmitter
                                      && (namedType.Kind is DeclarationKind.Struct or DeclarationKind.Record
                                          || (namedType.Kind == DeclarationKind.Enum && _enumLayoutModel.Layouts.ContainsKey(namedType.Name)))
                 => $"%{EscapeIdentifier(type.NamedType)}",
+            StarkTypeKind.Named when ResolveNamedTypeSymbol(type) is { } resolvedNamedType
+                                     && TryGetScalarizableNamedAggregateFields(resolvedNamedType, out var orderedFields)
+                => $"{{ {string.Join(", ", orderedFields.Select(field => MapType(field.Type)))} }}",
             StarkTypeKind.Named => "ptr",
             StarkTypeKind.Null => "ptr",
             _ => "ptr"

@@ -163,6 +163,7 @@ internal static partial class PackageImageLoader
             summary = new ImportedTemplateTypedBodyStatementSummary(
                 ImportedTemplateTypedBodyStatementKind.Switch,
                 expression,
+                Name: manifest.Name,
                 SwitchCaseSummaries: switchCases);
             return true;
         }
@@ -205,6 +206,7 @@ internal static partial class PackageImageLoader
             summary = new ImportedTemplateTypedBodyStatementSummary(
                 ImportedTemplateTypedBodyStatementKind.For,
                 Expression: expression!,
+                Name: manifest.Name,
                 LoopBehavior: manifest.LoopBehavior,
                 InitializerStatements: initializerStatements,
                 IteratorStatements: iteratorStatements,
@@ -248,6 +250,7 @@ internal static partial class PackageImageLoader
 
             summary = new ImportedTemplateTypedBodyStatementSummary(
                 ImportedTemplateTypedBodyStatementKind.ForTraversal,
+                Name: manifest.Name,
                 LoopBehavior: manifest.LoopBehavior,
                 BodyStatements: bodyStatements,
                 LoopContracts: manifest.LoopContracts,
@@ -281,6 +284,7 @@ internal static partial class PackageImageLoader
             summary = new ImportedTemplateTypedBodyStatementSummary(
                 ImportedTemplateTypedBodyStatementKind.While,
                 expression,
+                Name: manifest.Name,
                 LoopBehavior: manifest.LoopBehavior,
                 BodyStatements: bodyStatements,
                 ConditionPattern: conditionPattern,
@@ -348,14 +352,16 @@ internal static partial class PackageImageLoader
         if (string.Equals(manifest.Kind, "break", StringComparison.Ordinal))
         {
             summary = new ImportedTemplateTypedBodyStatementSummary(
-                ImportedTemplateTypedBodyStatementKind.Break);
+                ImportedTemplateTypedBodyStatementKind.Break,
+                Name: manifest.Name);
             return true;
         }
 
         if (string.Equals(manifest.Kind, "continue", StringComparison.Ordinal))
         {
             summary = new ImportedTemplateTypedBodyStatementSummary(
-                ImportedTemplateTypedBodyStatementKind.Continue);
+                ImportedTemplateTypedBodyStatementKind.Continue,
+                Name: manifest.Name);
             return true;
         }
 
@@ -1139,6 +1145,32 @@ internal static partial class PackageImageLoader
 
             summary = new ImportedTemplateTypedBodyExpressionSummary(
                 ImportedTemplateTypedBodyExpressionKind.DynamicStorageOperation,
+                Ordinal: manifest.Ordinal,
+                Arguments: arguments);
+            return true;
+        }
+
+        if (string.Equals(manifest.Kind, "dyn-trait-from-parts", StringComparison.Ordinal))
+        {
+            if (manifest.Ordinal is null || manifest.Arguments is not { Count: 2 })
+            {
+                return false;
+            }
+
+            var arguments = new List<ImportedTemplateTypedBodyExpressionSummary>(manifest.Arguments.Count);
+            foreach (var argument in manifest.Arguments)
+            {
+                if (!TryBuildImportedTypedTemplateExpression(argument, out var builtArgument))
+                {
+                    return false;
+                }
+
+                arguments.Add(builtArgument);
+            }
+
+            summary = new ImportedTemplateTypedBodyExpressionSummary(
+                ImportedTemplateTypedBodyExpressionKind.DynTraitFromParts,
+                Name: manifest.Name,
                 Ordinal: manifest.Ordinal,
                 Arguments: arguments);
             return true;

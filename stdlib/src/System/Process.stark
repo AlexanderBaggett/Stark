@@ -1,5 +1,359 @@
+import System.C
+import System.IO
+import System.IO.Path
+import System.Memory
 import System.Runtime.Platform
+import System.Runtime.Platform.Linux
+import System.Text
 module System.Process
+
+public enum ProcessError
+{
+    InvalidArgument,
+    TooLarge,
+    CString from System.C.CStringError,
+    IO from System.IO.IOError,
+    Memory from System.Memory.MemoryError,
+    Platform(i32[min max]),
+}
+
+public enum ProcessStatus
+{
+    [Ok] Ok,
+    [Err] Err(ProcessError),
+}
+
+public enum ProcessResult<T>
+{
+    [Ok] Ok(T),
+    [Err] Err(ProcessError),
+}
+
+public enum ProcessOption<T>
+{
+    [Ok] Some(T),
+    [Err] None,
+}
+
+public struct ProcessOutput
+{
+    i32[min max] ExitCode;
+    internal dynamic i8[min max] StdoutBytes;
+    internal dynamic i8[min max] StderrBytes;
+
+    ProcessOutput()
+    {
+        self.ExitCode = -1;
+        self.StdoutBytes = new();
+        self.StderrBytes = new();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] StdoutLength(borrow ProcessOutput self)
+    {
+        return self.StdoutBytes.Length;
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] StderrLength(borrow ProcessOutput self)
+    {
+        return self.StderrBytes.Length;
+    }
+
+    public finite law retborrow i8[min max][] StdoutSlice(borrow ProcessOutput self)
+    {
+        return self.StdoutBytes[0, self.StdoutBytes.Length];
+    }
+
+    public finite law retborrow i8[min max][] StderrSlice(borrow ProcessOutput self)
+    {
+        return self.StderrBytes[0, self.StderrBytes.Length];
+    }
+}
+
+public struct ProcessArguments
+{
+    internal dynamic System.Text.OwnedAscii Items;
+
+    ProcessArguments()
+    {
+        self.Items = new();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] Count(borrow ProcessArguments self)
+    {
+        return self.Items.Length;
+    }
+
+    public finite law retborrow System.Text.OwnedAscii[] AsSlice(borrow ProcessArguments self)
+    {
+        return self.Items[0, self.Items.Length];
+    }
+}
+
+public struct ProcessCommand
+{
+    internal System.C.OwnedCStr Executable;
+    internal dynamic System.C.OwnedCStr Arguments;
+    internal bool HasWorkingDirectory;
+    internal System.C.OwnedCStr WorkingDirectory;
+
+    ProcessCommand()
+    {
+        self.Executable = new();
+        self.Arguments = new();
+        self.HasWorkingDirectory = false;
+        self.WorkingDirectory = new();
+    }
+
+    public fn ProcessStatus AddArgument(mut borrow ProcessCommand self, ascii argument)
+    {
+        stack ProcessResult<System.C.OwnedCStr> prepared = PrepareCString(argument);
+        switch (prepared)
+        {
+            case ProcessResult<System.C.OwnedCStr>.Err(var error):
+                return ProcessStatus.Err(error);
+            case ProcessResult<System.C.OwnedCStr>.Ok(var value):
+                if (!self.Arguments.TryReserve(1))
+                {
+                    return ProcessStatus.Err(ProcessError.Memory(System.Memory.MemoryError.OutOfMemory));
+                }
+
+                init self.Arguments[self.Arguments.Length] = value;
+                return ProcessStatus.Ok;
+        }
+    }
+
+    public fn ProcessStatus SetWorkingDirectory(mut borrow ProcessCommand self, ascii path)
+    {
+        stack ProcessResult<System.C.OwnedCStr> prepared = PrepareCString(path);
+        switch (prepared)
+        {
+            case ProcessResult<System.C.OwnedCStr>.Err(var error):
+                return ProcessStatus.Err(error);
+            case ProcessResult<System.C.OwnedCStr>.Ok(var value):
+                self.WorkingDirectory = value;
+                self.HasWorkingDirectory = true;
+                return ProcessStatus.Ok;
+        }
+    }
+}
+
+internal inline finite law ProcessError FromMemoryError(System.Memory.MemoryError error)
+{
+    return ProcessError.Memory(error);
+}
+
+internal inline finite law ProcessError FromCStringError(System.C.CStringError error)
+{
+    return ProcessError.CString(error);
+}
+
+internal inline finite law ProcessError FromIOError(System.IO.IOError error)
+{
+    return ProcessError.IO(error);
+}
+
+internal fn ProcessResult<System.C.OwnedCStr> PrepareCString(ascii text)
+{
+    stack System.C.CStringResult<System.C.OwnedCStr> result = System.C.FromAscii(text);
+    switch (result)
+    {
+        case System.C.CStringResult<System.C.OwnedCStr>.Err(var error):
+            return ProcessResult<System.C.OwnedCStr>.Err(FromCStringError(error));
+        case System.C.CStringResult<System.C.OwnedCStr>.Ok(var value):
+            return ProcessResult<System.C.OwnedCStr>.Ok(value);
+    }
+}
+
+internal inline finite law i32[min max] DecodeExitStatus(i32[min max] status)
+{
+    stack i32[min max] signal = status & 127;
+    if (signal == 0)
+    {
+        return (status >> 8) & 255;
+    }
+
+    return 128 + signal;
+}
+
+internal unsafe fn i32[min max] CloseDescriptorIfOpen(i32[min max] descriptor)
+{
+    if (descriptor < 0)
+    {
+        return 0;
+    }
+
+    return System.Runtime.Platform.CloseFile((rawptr<i8[min max]>)((i64[min max])descriptor));
+}
+
+internal unsafe fn ProcessStatus BuildArgumentVector(
+    mut borrow ProcessCommand command,
+    mut borrow dynamic rawptr<System.C.c_char> argv)
+{
+    stack u64[0 2 ** 63 - 1] argumentCount = command.Arguments.Length;
+    if (argumentCount > (u64[0 2 ** 63 - 1])(2 ** 63 - 3))
+    {
+        return ProcessStatus.Err(ProcessError.TooLarge);
+    }
+
+    stack u64[0 2 ** 63 - 1] required = (u64[0 2 ** 63 - 1])(argumentCount + 2);
+    if (!argv.TryReserveCapacity(required))
+    {
+        return ProcessStatus.Err(ProcessError.Memory(System.Memory.MemoryError.OutOfMemory));
+    }
+
+    init argv[argv.Length] = command.Executable.Data();
+    stack System.C.OwnedCStr[] arguments = command.Arguments[0, argumentCount];
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < argumentCount; index += 1)
+    {
+        init argv[argv.Length] = arguments[index].Data();
+    }
+
+    init argv[argv.Length] = null;
+    return ProcessStatus.Ok;
+}
+
+internal unsafe fn ProcessResult<u64[0 2 ** 63 - 1]> AppendPipeBytes(
+    i32[min max] descriptor,
+    mut borrow dynamic i8[min max] destination)
+{
+    stack mut i8[min max][8192] buffer;
+    stack rawptr<i8[min max]> handle = (rawptr<i8[min max]>)((i64[min max])descriptor);
+    stack i64[min max] readCount = System.Runtime.Platform.ReadFileBytesFast(&buffer[0], 8192, handle);
+    if (readCount < 0)
+    {
+        return ProcessResult<u64[0 2 ** 63 - 1]>.Err(ProcessError.Platform((i32[min max])readCount));
+    }
+
+    if (readCount == 0)
+    {
+        return ProcessResult<u64[0 2 ** 63 - 1]>.Ok(0);
+    }
+
+    stack u64[0 2 ** 63 - 1] count = (u64[0 2 ** 63 - 1])readCount;
+    stack i8[min max][] slice = slice(&buffer[0], count);
+    stack System.Memory.MemoryStatus status = System.Memory.AppendBytes(destination, slice, count);
+    switch (status)
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return ProcessResult<u64[0 2 ** 63 - 1]>.Err(FromMemoryError(error));
+        case System.Memory.MemoryStatus.Ok:
+            return ProcessResult<u64[0 2 ** 63 - 1]>.Ok(count);
+    }
+}
+
+internal unsafe fn ProcessResult<i32[min max]> CaptureChildOutput(
+    i32[min max] processId,
+    i32[min max] stdoutDescriptor,
+    i32[min max] stderrDescriptor,
+    mut borrow ProcessOutput output)
+{
+    stack mut bool stdoutOpen = stdoutDescriptor >= 0;
+    stack mut bool stderrOpen = stderrDescriptor >= 0;
+    stack mut i32[min max] stdoutFd = stdoutDescriptor;
+    stack mut i32[min max] stderrFd = stderrDescriptor;
+
+    while willexit (stdoutOpen || stderrOpen)
+    {
+        stack mut i16[min max] stdoutEvents = 0;
+        stack mut i16[min max] stderrEvents = 0;
+        stack i32[min max] pollResult = System.Runtime.Platform.Linux.PollProcessPipes(
+            stdoutFd,
+            stderrFd,
+            &stdoutEvents,
+            &stderrEvents);
+        if (pollResult < 0)
+        {
+            stack i32[min max] ignoredClosePollStdout = CloseDescriptorIfOpen(stdoutFd);
+            stack i32[min max] ignoredClosePollStderr = CloseDescriptorIfOpen(stderrFd);
+            return ProcessResult<i32[min max]>.Err(ProcessError.Platform(pollResult));
+        }
+
+        if (stdoutOpen && System.Runtime.Platform.Linux.ProcessPipeReadable(stdoutEvents))
+        {
+            stack ProcessResult<u64[0 2 ** 63 - 1]> readResult = AppendPipeBytes(stdoutFd, output.StdoutBytes);
+            switch (readResult)
+            {
+                case ProcessResult<u64[0 2 ** 63 - 1]>.Err(var error):
+                    stack i32[min max] ignoredCloseStdoutReadError = CloseDescriptorIfOpen(stdoutFd);
+                    stack i32[min max] ignoredCloseStderrAfterStdoutReadError = CloseDescriptorIfOpen(stderrFd);
+                    return ProcessResult<i32[min max]>.Err(error);
+                case ProcessResult<u64[0 2 ** 63 - 1]>.Ok(var count):
+                    if (count == 0)
+                    {
+                        stack i32[min max] ignoredCloseStdoutEof = CloseDescriptorIfOpen(stdoutFd);
+                        stdoutOpen = false;
+                        stdoutFd = -1;
+                    }
+            }
+        }
+
+        if (stderrOpen && System.Runtime.Platform.Linux.ProcessPipeReadable(stderrEvents))
+        {
+            stack ProcessResult<u64[0 2 ** 63 - 1]> readResult = AppendPipeBytes(stderrFd, output.StderrBytes);
+            switch (readResult)
+            {
+                case ProcessResult<u64[0 2 ** 63 - 1]>.Err(var error):
+                    stack i32[min max] ignoredCloseStdoutAfterStderrReadError = CloseDescriptorIfOpen(stdoutFd);
+                    stack i32[min max] ignoredCloseStderrReadError = CloseDescriptorIfOpen(stderrFd);
+                    return ProcessResult<i32[min max]>.Err(error);
+                case ProcessResult<u64[0 2 ** 63 - 1]>.Ok(var count):
+                    if (count == 0)
+                    {
+                        stack i32[min max] ignoredCloseStderrEof = CloseDescriptorIfOpen(stderrFd);
+                        stderrOpen = false;
+                        stderrFd = -1;
+                    }
+            }
+        }
+
+        if (stdoutOpen && System.Runtime.Platform.Linux.ProcessPipeClosed(stdoutEvents))
+        {
+            stack ProcessResult<u64[0 2 ** 63 - 1]> readResult = AppendPipeBytes(stdoutFd, output.StdoutBytes);
+            switch (readResult)
+            {
+                case ProcessResult<u64[0 2 ** 63 - 1]>.Err(var error):
+                    stack i32[min max] ignoredCloseStdoutHangupError = CloseDescriptorIfOpen(stdoutFd);
+                    stack i32[min max] ignoredCloseStderrAfterStdoutHangupError = CloseDescriptorIfOpen(stderrFd);
+                    return ProcessResult<i32[min max]>.Err(error);
+                case ProcessResult<u64[0 2 ** 63 - 1]>.Ok(var count):
+                    if (count == 0)
+                    {
+                        stack i32[min max] ignoredCloseStdoutHangup = CloseDescriptorIfOpen(stdoutFd);
+                        stdoutOpen = false;
+                        stdoutFd = -1;
+                    }
+            }
+        }
+
+        if (stderrOpen && System.Runtime.Platform.Linux.ProcessPipeClosed(stderrEvents))
+        {
+            stack ProcessResult<u64[0 2 ** 63 - 1]> readResult = AppendPipeBytes(stderrFd, output.StderrBytes);
+            switch (readResult)
+            {
+                case ProcessResult<u64[0 2 ** 63 - 1]>.Err(var error):
+                    stack i32[min max] ignoredCloseStdoutAfterStderrHangupError = CloseDescriptorIfOpen(stdoutFd);
+                    stack i32[min max] ignoredCloseStderrHangupError = CloseDescriptorIfOpen(stderrFd);
+                    return ProcessResult<i32[min max]>.Err(error);
+                case ProcessResult<u64[0 2 ** 63 - 1]>.Ok(var count):
+                    if (count == 0)
+                    {
+                        stack i32[min max] ignoredCloseStderrHangup = CloseDescriptorIfOpen(stderrFd);
+                        stderrOpen = false;
+                        stderrFd = -1;
+                    }
+            }
+        }
+    }
+
+    stack mut i32[min max] status = 0;
+    stack i32[min max] waitResult = System.Runtime.Platform.Linux.WaitProcess(processId, &status);
+    if (waitResult < 0)
+    {
+        return ProcessResult<i32[min max]>.Err(ProcessError.Platform(waitResult));
+    }
+
+    return ProcessResult<i32[min max]>.Ok(DecodeExitStatus(status));
+}
 
 public fn i32[min max] CurrentId()
 {
@@ -12,5 +366,392 @@ public fn void Exit(i32[min max] code)
     {
         System.Runtime.Platform.ExitProcess(code);
         return;
+    }
+}
+
+public fn ProcessResult<ProcessCommand> Command(ascii executable)
+{
+    stack ProcessResult<System.C.OwnedCStr> prepared = PrepareCString(executable);
+    switch (prepared)
+    {
+        case ProcessResult<System.C.OwnedCStr>.Err(var error):
+            return ProcessResult<ProcessCommand>.Err(error);
+        case ProcessResult<System.C.OwnedCStr>.Ok(var value):
+            stack mut ProcessCommand command = new();
+            command.Executable = value;
+            return ProcessResult<ProcessCommand>.Ok(command);
+    }
+}
+
+public unsafe fn ProcessResult<ProcessOutput> RunCapture(mut borrow ProcessCommand command)
+{
+    if (command.Executable.IsEmpty())
+    {
+        return ProcessResult<ProcessOutput>.Err(ProcessError.InvalidArgument);
+    }
+
+    stack mut dynamic rawptr<System.C.c_char> argv = new();
+    stack ProcessStatus argvStatus = BuildArgumentVector(command, argv);
+    switch (argvStatus)
+    {
+        case ProcessStatus.Err(var error):
+            return ProcessResult<ProcessOutput>.Err(error);
+        case ProcessStatus.Ok:
+    }
+
+    stack mut i32[min max][2] stdoutPipe;
+    stack mut i32[min max][2] stderrPipe;
+    stdoutPipe[0] = -1;
+    stdoutPipe[1] = -1;
+    stderrPipe[0] = -1;
+    stderrPipe[1] = -1;
+
+    if (System.Runtime.Platform.Linux.CreateProcessPipe(&stdoutPipe[0]) != 0)
+    {
+        return ProcessResult<ProcessOutput>.Err(ProcessError.Platform(-1));
+    }
+
+    if (System.Runtime.Platform.Linux.CreateProcessPipe(&stderrPipe[0]) != 0)
+    {
+        stack i32[min max] ignoredCloseStdoutPipeRead = CloseDescriptorIfOpen(stdoutPipe[0]);
+        stack i32[min max] ignoredCloseStdoutPipeWrite = CloseDescriptorIfOpen(stdoutPipe[1]);
+        return ProcessResult<ProcessOutput>.Err(ProcessError.Platform(-1));
+    }
+
+    stack i32[min max] processId = System.Runtime.Platform.Linux.ForkProcess();
+    if (processId < 0)
+    {
+        stack i32[min max] ignoredCloseForkStdoutRead = CloseDescriptorIfOpen(stdoutPipe[0]);
+        stack i32[min max] ignoredCloseForkStdoutWrite = CloseDescriptorIfOpen(stdoutPipe[1]);
+        stack i32[min max] ignoredCloseForkStderrRead = CloseDescriptorIfOpen(stderrPipe[0]);
+        stack i32[min max] ignoredCloseForkStderrWrite = CloseDescriptorIfOpen(stderrPipe[1]);
+        return ProcessResult<ProcessOutput>.Err(ProcessError.Platform(processId));
+    }
+
+    if (processId == 0)
+    {
+        stack i32[min max] ignoredChildCloseStdoutRead = CloseDescriptorIfOpen(stdoutPipe[0]);
+        stack i32[min max] ignoredChildCloseStderrRead = CloseDescriptorIfOpen(stderrPipe[0]);
+        if (System.Runtime.Platform.Linux.DuplicateProcessDescriptor(stdoutPipe[1], 1) < 0)
+        {
+            System.Runtime.Platform.Linux.ExitProcessNoCleanup(126);
+        }
+
+        if (System.Runtime.Platform.Linux.DuplicateProcessDescriptor(stderrPipe[1], 2) < 0)
+        {
+            System.Runtime.Platform.Linux.ExitProcessNoCleanup(126);
+        }
+
+        stack i32[min max] ignoredChildCloseStdoutWrite = CloseDescriptorIfOpen(stdoutPipe[1]);
+        stack i32[min max] ignoredChildCloseStderrWrite = CloseDescriptorIfOpen(stderrPipe[1]);
+
+        if (command.HasWorkingDirectory)
+        {
+            if (System.Runtime.Platform.Linux.ChangeCurrentDirectoryRaw(command.WorkingDirectory.Data()) != 0)
+            {
+                System.Runtime.Platform.Linux.ExitProcessNoCleanup(126);
+            }
+        }
+
+        stack i32[min max] ignoredExec = System.Runtime.Platform.Linux.execvp(
+            command.Executable.Data(),
+            &argv[0]);
+        System.Runtime.Platform.Linux.ExitProcessNoCleanup(127);
+    }
+
+    stack i32[min max] ignoredParentCloseStdoutWrite = CloseDescriptorIfOpen(stdoutPipe[1]);
+    stack i32[min max] ignoredParentCloseStderrWrite = CloseDescriptorIfOpen(stderrPipe[1]);
+    stdoutPipe[1] = -1;
+    stderrPipe[1] = -1;
+
+    stack mut ProcessOutput output = new();
+    stack ProcessResult<i32[min max]> exitResult = CaptureChildOutput(processId, stdoutPipe[0], stderrPipe[0], output);
+    switch (exitResult)
+    {
+        case ProcessResult<i32[min max]>.Err(var error):
+            return ProcessResult<ProcessOutput>.Err(error);
+        case ProcessResult<i32[min max]>.Ok(var code):
+            output.ExitCode = code;
+            return ProcessResult<ProcessOutput>.Ok(output);
+    }
+}
+
+public unsafe fn ProcessResult<ProcessOutput> RunCapture(ascii executable)
+{
+    stack ProcessResult<ProcessCommand> commandResult = Command(executable);
+    switch (commandResult)
+    {
+        case ProcessResult<ProcessCommand>.Err(var error):
+            return ProcessResult<ProcessOutput>.Err(error);
+        case ProcessResult<ProcessCommand>.Ok(var command):
+            stack mut ProcessCommand mutableCommand = command;
+            return RunCapture(mutableCommand);
+    }
+}
+
+public unsafe fn ProcessResult<ProcessOption<System.Text.OwnedAscii>> GetEnvironment(ascii name)
+{
+    stack i64[min max] signedNameLength = System.Text.AsciiLength(name);
+    if (signedNameLength <= 0)
+    {
+        return ProcessResult<ProcessOption<System.Text.OwnedAscii>>.Err(ProcessError.InvalidArgument);
+    }
+
+    stack u64[0 2 ** 63 - 1] nameLength = (u64[0 2 ** 63 - 1])signedNameLength;
+    stack rawptr<i8[min max]> nameData = System.Text.AsciiData(name);
+    if (nameData == null)
+    {
+        return ProcessResult<ProcessOption<System.Text.OwnedAscii>>.Err(ProcessError.InvalidArgument);
+    }
+
+    stack mut dynamic i8[min max] bytes = new();
+    stack ProcessStatus readStatus = ReadAllBytesIntoRaw("/proc/self/environ", bytes);
+    switch (readStatus)
+    {
+        case ProcessStatus.Err(var error):
+            return ProcessResult<ProcessOption<System.Text.OwnedAscii>>.Err(error);
+        case ProcessStatus.Ok:
+    }
+
+    stack i8[min max][] entries = bytes[0, bytes.Length];
+    stack mut u64[0 2 ** 63 - 1] start = 0;
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < entries.Length; index += 1)
+    {
+        if (entries[index] == 0)
+        {
+            stack u64[0 2 ** 63 - 1] entryLength = (u64[0 2 ** 63 - 1])(index - start);
+            if (entryLength > nameLength && entries[start + nameLength] == (i8[min max])61)
+            {
+                stack mut bool matches = true;
+                for willexit (stack mut u64[0 2 ** 63 - 1] nameIndex = 0; nameIndex < nameLength; nameIndex += 1)
+                {
+                    if (entries[start + nameIndex] != *(&nameData[nameIndex]))
+                    {
+                        matches = false;
+                    }
+                }
+
+                if (matches)
+                {
+                    stack u64[0 2 ** 63 - 1] valueStart = start + nameLength + (u64[0 2 ** 63 - 1])1;
+                    stack u64[0 2 ** 63 - 1] valueLength = entryLength - nameLength - (u64[0 2 ** 63 - 1])1;
+                    stack mut rawptr<i8[min max]> valueData = null;
+                    if (valueLength > 0)
+                    {
+                        valueData = &entries[valueStart];
+                    }
+
+                    stack System.Memory.MemoryResult<System.Text.OwnedAscii> copied =
+                        System.Text.CopyAsciiPointer(valueData, valueLength);
+                    switch (copied)
+                    {
+                        case System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(var copyError):
+                            return ProcessResult<ProcessOption<System.Text.OwnedAscii>>.Err(FromMemoryError(copyError));
+                        case System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(var text):
+                            return ProcessResult<ProcessOption<System.Text.OwnedAscii>>.Ok(ProcessOption<System.Text.OwnedAscii>.Some(text));
+                    }
+                }
+            }
+
+            start = (u64[0 2 ** 63 - 1])(index + 1);
+        }
+    }
+
+    return ProcessResult<ProcessOption<System.Text.OwnedAscii>>.Ok(ProcessOption<System.Text.OwnedAscii>.None);
+}
+
+public unsafe fn ProcessStatus SetEnvironment(ascii name, ascii value)
+{
+    stack ProcessResult<System.C.OwnedCStr> nameResult = PrepareCString(name);
+    switch (nameResult)
+    {
+        case ProcessResult<System.C.OwnedCStr>.Err(var error):
+            return ProcessStatus.Err(error);
+        case ProcessResult<System.C.OwnedCStr>.Ok(var cName):
+            stack ProcessResult<System.C.OwnedCStr> valueResult = PrepareCString(value);
+            switch (valueResult)
+            {
+                case ProcessResult<System.C.OwnedCStr>.Err(var valueError):
+                    return ProcessStatus.Err(valueError);
+                case ProcessResult<System.C.OwnedCStr>.Ok(var cValue):
+                    stack i32[min max] result = System.Runtime.Platform.Linux.SetEnvironmentRaw(cName.Data(), cValue.Data());
+                    if (result != 0)
+                    {
+                        return ProcessStatus.Err(ProcessError.Platform(result));
+                    }
+
+                    return ProcessStatus.Ok;
+            }
+    }
+}
+
+public unsafe fn ProcessStatus RemoveEnvironment(ascii name)
+{
+    stack ProcessResult<System.C.OwnedCStr> prepared = PrepareCString(name);
+    switch (prepared)
+    {
+        case ProcessResult<System.C.OwnedCStr>.Err(var error):
+            return ProcessStatus.Err(error);
+        case ProcessResult<System.C.OwnedCStr>.Ok(var cName):
+            stack i32[min max] result = System.Runtime.Platform.Linux.RemoveEnvironmentRaw(cName.Data());
+            if (result != 0)
+            {
+                return ProcessStatus.Err(ProcessError.Platform(result));
+            }
+
+            return ProcessStatus.Ok;
+    }
+}
+
+public fn ProcessResult<System.Text.OwnedAscii> CurrentDirectory()
+{
+    stack System.Memory.MemoryResult<System.Text.OwnedAscii> result = System.IO.Path.CurrentDirectory();
+    switch (result)
+    {
+        case System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(var error):
+            return ProcessResult<System.Text.OwnedAscii>.Err(FromMemoryError(error));
+        case System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(var value):
+            return ProcessResult<System.Text.OwnedAscii>.Ok(value);
+    }
+}
+
+public unsafe fn ProcessStatus SetCurrentDirectory(ascii path)
+{
+    stack ProcessResult<System.C.OwnedCStr> prepared = PrepareCString(path);
+    switch (prepared)
+    {
+        case ProcessResult<System.C.OwnedCStr>.Err(var error):
+            return ProcessStatus.Err(error);
+        case ProcessResult<System.C.OwnedCStr>.Ok(var cPath):
+            stack i32[min max] result = System.Runtime.Platform.Linux.ChangeCurrentDirectoryRaw(cPath.Data());
+            if (result != 0)
+            {
+                return ProcessStatus.Err(ProcessError.Platform(result));
+            }
+
+            return ProcessStatus.Ok;
+    }
+}
+
+internal unsafe fn ProcessStatus PushArgumentSlice(
+    mut borrow ProcessArguments arguments,
+    borrow i8[min max][] bytes,
+    u64[0 2 ** 63 - 1] start,
+    u64[0 2 ** 63 - 1] length)
+{
+    stack mut rawptr<i8[min max]> data = null;
+    if (length > 0)
+    {
+        data = &bytes[start];
+    }
+
+    stack System.Memory.MemoryResult<System.Text.OwnedAscii> copied = System.Text.CopyAsciiPointer(data, length);
+    switch (copied)
+    {
+        case System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(var error):
+            return ProcessStatus.Err(FromMemoryError(error));
+        case System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(var value):
+            if (!arguments.Items.TryReserve(1))
+            {
+                return ProcessStatus.Err(ProcessError.Memory(System.Memory.MemoryError.OutOfMemory));
+            }
+
+            init arguments.Items[arguments.Items.Length] = value;
+            return ProcessStatus.Ok;
+    }
+}
+
+internal unsafe fn ProcessStatus ReadAllBytesIntoRaw(ascii path, mut borrow dynamic i8[min max] destination)
+{
+    stack rawptr<i8[min max]> handle = System.Runtime.Platform.OpenFileRead(path);
+    if (handle == null)
+    {
+        return ProcessStatus.Err(ProcessError.Platform(-1));
+    }
+
+    stack mut i8[min max][8192] storage;
+    stack mut i8[min max][] buffer = slice(&storage[0], 8192);
+    while willexit (true)
+    {
+        stack i64[min max] readCount = System.Runtime.Platform.ReadFileBytesFast(&storage[0], 8192, handle);
+        if (readCount < 0)
+        {
+            stack i32[min max] ignoredClose = System.Runtime.Platform.CloseFile(handle);
+            return ProcessStatus.Err(ProcessError.Platform((i32[min max])readCount));
+        }
+
+        if (readCount == 0)
+        {
+            stack i32[min max] ignoredClose = System.Runtime.Platform.CloseFile(handle);
+            return ProcessStatus.Ok;
+        }
+
+        stack u64[0 2 ** 63 - 1] count = (u64[0 2 ** 63 - 1])readCount;
+        stack i8[min max][] chunk = slice(&storage[0], count);
+        stack System.Memory.MemoryStatus writeStatus = System.Memory.AppendBytes(destination, chunk, count);
+        switch (writeStatus)
+        {
+            case System.Memory.MemoryStatus.Err(var error):
+                stack i32[min max] ignoredClose = System.Runtime.Platform.CloseFile(handle);
+                return ProcessStatus.Err(FromMemoryError(error));
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+}
+
+public unsafe fn ProcessResult<ProcessArguments> Arguments()
+{
+    stack mut dynamic i8[min max] bytes = new();
+    stack ProcessStatus readStatus = ReadAllBytesIntoRaw("/proc/self/cmdline", bytes);
+    switch (readStatus)
+    {
+        case ProcessStatus.Err(var error):
+            return ProcessResult<ProcessArguments>.Err(error);
+        case ProcessStatus.Ok:
+            stack mut ProcessArguments arguments = new();
+            stack i8[min max][] slice = bytes[0, bytes.Length];
+            stack mut u64[0 2 ** 63 - 1] start = 0;
+            for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < slice.Length; index += 1)
+            {
+                if (slice[index] == 0)
+                {
+                    stack u64[0 2 ** 63 - 1] length = (u64[0 2 ** 63 - 1])(index - start);
+                    stack ProcessStatus status = PushArgumentSlice(arguments, slice, start, length);
+                    switch (status)
+                    {
+                        case ProcessStatus.Err(var pushError):
+                            return ProcessResult<ProcessArguments>.Err(pushError);
+                        case ProcessStatus.Ok:
+                    }
+
+                    start = (u64[0 2 ** 63 - 1])(index + 1);
+                }
+            }
+
+            if (start < slice.Length)
+            {
+                stack u64[0 2 ** 63 - 1] length = (u64[0 2 ** 63 - 1])(slice.Length - start);
+                stack ProcessStatus status = PushArgumentSlice(arguments, slice, start, length);
+                switch (status)
+                {
+                    case ProcessStatus.Err(var pushError):
+                        return ProcessResult<ProcessArguments>.Err(pushError);
+                    case ProcessStatus.Ok:
+                }
+            }
+
+            return ProcessResult<ProcessArguments>.Ok(arguments);
+    }
+}
+
+public unsafe fn ProcessResult<u64[0 2 ** 63 - 1]> ArgumentCount()
+{
+    stack ProcessResult<ProcessArguments> result = Arguments();
+    switch (result)
+    {
+        case ProcessResult<ProcessArguments>.Err(var error):
+            return ProcessResult<u64[0 2 ** 63 - 1]>.Err(error);
+        case ProcessResult<ProcessArguments>.Ok(var arguments):
+            return ProcessResult<u64[0 2 ** 63 - 1]>.Ok(arguments.Count());
     }
 }

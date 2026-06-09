@@ -10,7 +10,7 @@ self-hosted compiler can build itself and pass the ported tests.
 | M0 | Close test-infrastructure blockers | TEST-01 through TEST-12, S09-S12, S18, T12 |
 | M1 | Port tests to Stark, still targeting host compiler | TEST-06, TEST-07, T03 |
 | M2 | Close language blockers | L01, L06, L07, L11, T01 |
-| M3 | Close stdlib blockers | S01, S02, S05, S06, S07, S09-S14, S17 |
+| M3 | Close stdlib blockers | S01, S02, S06, S07, S09-S14, S17 |
 | M4 | Close tooling blockers | T02-T11, T14 |
 | M5 | Port compiler subsystems leaf-first | `05-port-checklist.md` compiler rows |
 | M6 | Bootstrap | Stage1/Stage2 compiler equivalence, tests pass |
@@ -21,10 +21,10 @@ self-hosted compiler can build itself and pass the ported tests.
 | Field | Details |
 |---|---|
 | Entry Criteria | Current host compiler builds and tests can still run from C#; Phase 4 gap IDs accepted as the test-infrastructure backlog. |
-| Work | Expand `System.Testing` and the generated test runner to cover TEST-01 through TEST-12. Add build-time `[Fact]` discovery, explicit generated `main` runners, temp file/dir, process capture, text diff/snapshot, rich assertions, platform gating, parameterized tests, and host-compiler execution support. |
+| Work | Expand `System.Testing` and the test harness to cover TEST-01 through TEST-12. Build-time `[Fact]` discovery and explicit generated `main` runners have landed; continue with process capture, text diff/snapshot coverage, rich assertions, platform gating, parameterized tests, and host-compiler execution support. |
 | Exit Criteria | A Stark test executable can run selected tests against the current host compiler, capture stdout/stderr/exit code, compare text/golden output, and report failures clearly. |
 | Key Risks | TEST-07 must avoid slow per-test process/JSON overhead while still supporting host and cross-stage inspection; TEST-05 depends on process APIs S12; TEST-04 depends on file/path/temp APIs S09-S11. |
-| Parallel Workstreams | Generated runner/discovery TEST-01; rich assertions TEST-02; process/temp fixtures TEST-04/TEST-05; snapshot/diff helpers TEST-03; parameterized/platform/serial runner support TEST-08/TEST-09; fast in-process artifact/diagnostic API plus batched runner TEST-07/TEST-12/T15. |
+| Parallel Workstreams | Rich assertions TEST-02; process/temp fixtures TEST-04/TEST-05; snapshot/diff helpers TEST-03; parameterized/platform/serial runner support TEST-08/TEST-09; fast in-process artifact/diagnostic API plus batched runner TEST-07/TEST-12/T15. |
 
 ## M1 - Port Test Suite To Stark Against Host Compiler
 
@@ -51,10 +51,10 @@ self-hosted compiler can build itself and pass the ported tests.
 | Field | Details |
 |---|---|
 | Entry Criteria | M2 directions accepted; stdlib API changes can be tested by the Stark test harness. |
-| Work | Implement or finalize S01, S02, S05, S06, S07, S09, S10, S11, S12, S13, S14, and S17. S17 is the accepted arena/table IR storage model with typed handles, first-class fact tables, lowering policies, package-image durable facts, and validation. S16 is not required for the synchronous self-hosting path; if build/test parallelism is chosen before bootstrap, limit S16 to doc `22`'s captured thread payloads, `Synchronized<T>` / `Locked<T>`, and MPSC channels. |
+| Work | Implement or finalize S01, S02, S06, S07, S09, S10, S11, S12, S13, S14, and S17. S05 is closed by `System.Compiler.IntegerFacts`. S17 is the accepted arena/table IR storage model with typed handles, first-class fact tables, lowering policies, package-image durable facts, and validation. S16 is not required for the synchronous self-hosting path; if build/test parallelism is chosen before bootstrap, limit S16 to doc `22`'s explicit payload thread starts, `Synchronized<T>` / `Locked<T>`, and MPSC channels. |
 | Exit Criteria | Stark code can read/write source, parse/emit TOML through `System.Toml`, read/write binary package images, render package inspection JSON/text, spawn/capture tools, build text output, use compiler-grade collections, represent bounded `i1024`/`u1024` integer/range facts, and manage compiler IR memory/facts through typed handles and verified fact transfer. |
-| Key Risks | S05 must preserve the host compiler's current range/value behavior while rejecting oversized literals and compile-time integer results as diagnostics; S06/S07 dictionary/text/interner work can affect many compiler modules and must not make compiler output depend on hash iteration order; S17 touches every IR model and must keep backend facts from being dropped or watered down during lowering. |
-| Parallel Workstreams | File/path/process stack S09-S12; text/format builder S02/S03; bounded integer-fact helpers S05; collections/interner S06/S07/S08; `System.Toml` S13/T04; package inspection JSON/text S14; IR arena/table plus fact model S17/doc `24`; narrow threading coordination S16/doc `22` only if parallel build/test work is scheduled. |
+| Key Risks | S06/S07 dictionary/text/interner work can affect many compiler modules and must not make compiler output depend on hash iteration order; S17 touches every IR model and must keep backend facts from being dropped or watered down during lowering. |
+| Parallel Workstreams | File/path/process stack S09-S12; text/format builder S02/S03; collections/interner S06/S07/S08; `System.Toml` S13/T04; package inspection JSON/text S14; IR arena/table plus fact model S17/doc `24`; narrow threading coordination S16/doc `22` only if parallel build/test work is scheduled. |
 
 ## M4 - Close Tooling Blockers
 
@@ -98,6 +98,6 @@ self-hosted compiler can build itself and pass the ported tests.
 
 ## Recommended First Three Concrete Actions
 
-1. Build the M0 generated test-runner slice: `[Fact]` scan, explicit `main` emission, selected-test filters, and stable result reporting.
-2. Build the M0 host-compiler test harness slice: rich assertions, temp dirs, process capture, and text diff.
+1. Build the M0 host-compiler test harness slice: rich assertions, temp dirs, process capture, and text diff.
+2. Add the TEST-07 fast compiler artifact/diagnostic inspection API and batched runner.
 3. Start the T01 handwritten parser conformance slice against canonical `Stark.g4` and the host parser oracle.

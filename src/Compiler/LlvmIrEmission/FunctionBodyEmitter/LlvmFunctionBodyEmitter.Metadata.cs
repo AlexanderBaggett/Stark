@@ -26,7 +26,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
             SsaBoolConstant boolean => boolean.Value ? "true" : "false",
             SsaNullConstant => "null",
             SsaGlobalAddressValue globalAddress => $"@{EscapeIdentifier(ResolveGlobalSymbolName(globalAddress.GlobalName))}",
-            SsaFunctionAddressValue functionAddress => $"@{EscapeIdentifier(functionAddress.FunctionName)}",
+            SsaFunctionAddressValue functionAddress => $"@{EscapeIdentifier(ResolveFunctionAddressSymbolName(functionAddress.FunctionName))}",
             SsaClosureValue closure => FormatClosureValue(closure),
             SsaZeroInitializerValue => "zeroinitializer",
             SsaUndefValue => "undef",
@@ -34,15 +34,20 @@ internal sealed partial class LlvmFunctionBodyEmitter
         };
     }
 
-    private static string FormatClosureValue(SsaClosureValue closure)
+    private string ResolveFunctionAddressSymbolName(string functionName)
     {
-        var invokePointer = $"ptr @{EscapeIdentifier(closure.InvokeFunctionName)}";
+        return _resolveCallAbi(_function.Name, functionName)?.SymbolName ?? functionName;
+    }
+
+    private string FormatClosureValue(SsaClosureValue closure)
+    {
+        var invokePointer = $"ptr @{EscapeIdentifier(ResolveFunctionAddressSymbolName(closure.InvokeFunctionName))}";
         if (closure.Type.ClosureStorageKind != StarkClosureStorageKind.Heap)
         {
             return $"{{ {invokePointer}, ptr null }}";
         }
 
-        return $"{{ {invokePointer}, ptr null, ptr @{EscapeIdentifier(CallableValueFacts.EmptyClosureDropFunctionName)} }}";
+        return $"{{ {invokePointer}, ptr null, ptr @{EscapeIdentifier(ResolveFunctionAddressSymbolName(CallableValueFacts.EmptyClosureDropFunctionName))} }}";
     }
 
     private string GetInvariantLoadMetadataSuffix(string globalName)
@@ -1138,7 +1143,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
 
     private string GetTbaaTypeDescriptorRef(StarkTypeSymbol type, ISet<string> activeTypeKeys)
     {
-        var normalizedType = NormalizeAggregateType(type);
+        var normalizedType = NormalizeTbaaStorageType(type);
         var key = GetTbaaTypeKey(normalizedType);
         var displayName = GetTbaaTypeDisplayName(normalizedType);
 
@@ -1238,12 +1243,23 @@ internal sealed partial class LlvmFunctionBodyEmitter
             return false;
         }
 
+        var aggregateLayout = TryGetConcreteTypeLayout(aggregateType);
         var sizeBytes = 0;
         var collectedFields = new List<(string TypeDescriptorRef, long OffsetBytes)>(orderedFields.Count);
         foreach (var field in orderedFields)
         {
-            var fieldLayout = TryGetConcreteTypeLayout(field.Type);
-            if (fieldLayout is null)
+            if (aggregateLayout is { FieldLayouts.Count: > 0 })
+            {
+                if (!aggregateLayout.TryGetField(field.Name, out var concreteFieldLayout))
+                {
+                    return false;
+                }
+
+                collectedFields.Add((GetTbaaTypeDescriptorRef(field.Type, activeTypeKeys), concreteFieldLayout.OffsetBytes));
+                continue;
+            }
+
+            if (TryGetConcreteTypeLayout(field.Type) is not { } fieldLayout)
             {
                 return false;
             }
@@ -1531,7 +1547,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
 
     private static bool CanEmitTbaaForType(StarkTypeSymbol type)
     {
-        return NormalizeAggregateType(type).Kind is
+        return NormalizeTbaaStorageType(type).Kind is
             StarkTypeKind.Bool
             or StarkTypeKind.Ascii
             or StarkTypeKind.Unicode
@@ -1544,7 +1560,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
 
     private static bool CanUseTbaaAsAccessType(StarkTypeSymbol type)
     {
-        return NormalizeAggregateType(type).Kind is
+        return NormalizeTbaaStorageType(type).Kind is
             StarkTypeKind.Bool
             or StarkTypeKind.Integer
             or StarkTypeKind.Float
@@ -1554,7 +1570,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
 
     private static string GetTbaaTypeKey(StarkTypeSymbol type)
     {
-        var normalizedType = NormalizeAggregateType(type);
+        var normalizedType = NormalizeTbaaStorageType(type);
         return normalizedType.Kind switch
         {
             StarkTypeKind.Bool => "bool",
@@ -1573,7 +1589,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
 
     private static string GetTbaaTypeDisplayName(StarkTypeSymbol type)
     {
-        var normalizedType = NormalizeAggregateType(type);
+        var normalizedType = NormalizeTbaaStorageType(type);
         return normalizedType.Kind switch
         {
             StarkTypeKind.Bool => "stark.bool",
@@ -1588,6 +1604,11 @@ internal sealed partial class LlvmFunctionBodyEmitter
             StarkTypeKind.Named => $"stark.{normalizedType.NamedType ?? normalizedType.DisplayName}",
             _ => $"stark.{normalizedType.DisplayName}"
         };
+    }
+
+    private static StarkTypeSymbol NormalizeTbaaStorageType(StarkTypeSymbol type)
+    {
+        return NormalizeAggregateType(StarkTypeSymbols.BorrowReturnRuntimeType(type));
     }
 
     private static string CreateTbaaLocalRootKey(string localName) => $"local:{localName}";

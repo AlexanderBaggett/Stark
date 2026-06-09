@@ -128,6 +128,66 @@ public sealed partial class MidLevelIrLoweringTests
     }
 
     [Fact]
+    public void LabeledBreakAndContinueLowerThroughNestedLoops()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe finite law i32[min max] Run(i32[min max] count)
+            {
+                stack mut i32[min max] sum = 0;
+                stack mut i32[min max] outer = 0;
+                outerLoop: while willexit (outer < count)
+                {
+                    outer += 1;
+                    stack mut i32[min max] inner = 0;
+                    while willexit (inner < 3)
+                    {
+                        inner += 1;
+                        if (outer == 3)
+                        {
+                            break outerLoop;
+                        }
+
+                        if (inner == 1)
+                        {
+                            continue outerLoop;
+                        }
+
+                        sum += inner;
+                    }
+                }
+
+                return sum + outer;
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var mir = GetMir(result);
+        var function = Assert.Single(mir.Functions);
+        AssertMirHasNoNullLoweringArtifacts(mir);
+
+        var whileConditionBlocks = function.Blocks
+            .Where(static block => block.Label.Contains("while_willexit_cond", StringComparison.Ordinal))
+            .ToArray();
+        var whileExitBlocks = function.Blocks
+            .Where(static block => block.Label.Contains("while_exit", StringComparison.Ordinal))
+            .ToArray();
+
+        Assert.True(whileConditionBlocks.Length >= 2);
+        Assert.True(whileExitBlocks.Length >= 2);
+        Assert.Contains(
+            function.Blocks,
+            block => block.Terminator.Kind == MidLevelIrTerminatorKind.Goto
+                && block.Terminator.Targets.Contains(whileConditionBlocks[0].Id));
+        Assert.Contains(
+            function.Blocks,
+            block => block.Terminator.Kind == MidLevelIrTerminatorKind.Goto
+                && block.Terminator.Targets.Contains(whileExitBlocks[0].Id));
+    }
+
+    [Fact]
     public void EnumConstructorsLowerToDirectTagFieldInserts()
     {
         var result = Compile(

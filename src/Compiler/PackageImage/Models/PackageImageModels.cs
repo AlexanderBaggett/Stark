@@ -423,7 +423,8 @@ internal sealed record StarkPackageTypedTypeManifest(
     IReadOnlyList<StarkPackageTypedAssociatedTypeManifest>? AssociatedTypes = null,
     IReadOnlyList<StarkPackageComptimeGenericParameterManifest>? ComptimeGenericParameters = null,
     bool IsDynTrait = false,
-    IReadOnlyList<StarkPackageTypedThreadSafetyLawAttributeManifest>? ThreadSafetyLawAttributes = null);
+    IReadOnlyList<StarkPackageTypedThreadSafetyLawAttributeManifest>? ThreadSafetyLawAttributes = null,
+    IReadOnlyList<StarkPackageTypeReference>? ImplementedTraitTypes = null);
 
 internal sealed record StarkPackageTypedAssociatedTypeManifest(
     string Name,

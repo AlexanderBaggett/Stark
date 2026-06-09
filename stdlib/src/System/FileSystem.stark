@@ -1,10 +1,18 @@
 import System.Text
 import System.IO
+import System.IO.File
+import System.IO.Path
 import System.Memory
 import System.Runtime
 import System.Runtime.Platform
 import System.Runtime.Buffer
 module System.FileSystem
+
+const FileSystemMetadataKindOffset = 0;
+const FileSystemMetadataPermissionsOffset = 4;
+const FileSystemMetadataSizeOffset = 8;
+const FileSystemMetadataModifiedSecondsOffset = 16;
+const FileSystemMetadataModifiedNanosecondsOffset = 24;
 
 public enum FileSystemEntryKind
 {
@@ -29,6 +37,20 @@ public struct FileSystemEntryInfo
 {
     u64[0 2 ** 63 - 1] NameLength;
     FileSystemEntryKind Kind;
+}
+
+public struct FileMetadata
+{
+    u64[0 2 ** 63 - 1] Size;
+    i64[min max] ModifiedUnixSeconds;
+    i64[min max] ModifiedNanoseconds;
+    u32[0 max] Permissions;
+    FileSystemEntryKind Kind;
+
+    inline finite law bool IsExecutable(borrow FileMetadata self)
+    {
+        return (self.Permissions & (u32[0 max])73) != 0;
+    }
 }
 
 public enum DirectoryReadResult
@@ -275,6 +297,21 @@ fn FileSystemEntryKind FileSystemEntryKindFromPlatformKind(i32[min max] kindCode
     return FileSystemEntryKind.Other;
 }
 
+inline finite law System.IO.IOError IOErrorFromMemoryError(System.Memory.MemoryError error)
+{
+    switch (error)
+    {
+        case System.Memory.MemoryError.OutOfMemory:
+            return System.IO.IOError.Unknown(-12);
+        case System.Memory.MemoryError.UnsupportedAlignment:
+            return System.IO.IOError.Unknown(-22);
+        case System.Memory.MemoryError.TooLarge:
+            return System.IO.IOError.Unknown(-27);
+        case System.Memory.MemoryError.InvalidLayout:
+            return System.IO.IOError.Unknown(-22);
+    }
+}
+
 fn DirectoryReadInfoResult DirectoryReadInfoResultFromPlatformInfo(
     i64[min max] nameLength,
     i32[min max] kindCode)
@@ -390,6 +427,128 @@ public fn System.IO.IOStatus DeleteDirectory(ascii path)
     return StatusFromPlatformResult(System.Runtime.Platform.DeleteDirectory(path));
 }
 
+internal fn System.IO.IOStatus DeleteTreePath(mut borrow System.Text.OwnedAscii path, FileSystemEntryKind kind)
+{
+    switch (kind)
+    {
+        case FileSystemEntryKind.Directory:
+            stack mut Directory directory = new();
+            switch (OpenDirectory(path.View()))
+            {
+                case System.IO.IOResult<Directory>.Err(var openError):
+                    return System.IO.IOStatus.Err(openError);
+                case System.IO.IOResult<Directory>.Ok(var opened):
+                    directory = opened;
+            }
+
+            while willexit (true)
+            {
+                stack DirectoryReadResult next = directory.ReadNext();
+                switch (next)
+                {
+                    case DirectoryReadResult.End:
+                        switch (directory.Close())
+                        {
+                            case System.IO.IOStatus.Err(var closeError):
+                                return System.IO.IOStatus.Err(closeError);
+                            case System.IO.IOStatus.Ok:
+                        }
+
+                        return DeleteDirectory(path.View());
+                    case DirectoryReadResult.Err(var readError):
+                        directory.Close();
+                        return System.IO.IOStatus.Err(readError);
+                    case DirectoryReadResult.Entry(var entry):
+                        stack mut FileSystemEntry child = entry;
+                        stack u64[0 2 ** 63 - 1] previousLength = path.Length();
+                        stack System.IO.IOStatus appendStatus = AppendPathSegment(path, child);
+                        switch (appendStatus)
+                        {
+                            case System.IO.IOStatus.Err(var appendError):
+                                directory.Close();
+                                path.Truncate(previousLength);
+                                return System.IO.IOStatus.Err(appendError);
+                            case System.IO.IOStatus.Ok:
+                        }
+
+                        stack System.IO.IOStatus childStatus = DeleteTreePath(path, child.Kind);
+                        path.Truncate(previousLength);
+                        switch (childStatus)
+                        {
+                            case System.IO.IOStatus.Err(var childError):
+                                directory.Close();
+                                return System.IO.IOStatus.Err(childError);
+                            case System.IO.IOStatus.Ok:
+                        }
+                }
+            }
+        case FileSystemEntryKind.File:
+            return System.IO.File.Delete(path.View());
+        case FileSystemEntryKind.Symlink:
+            return System.IO.File.Delete(path.View());
+        case FileSystemEntryKind.Other:
+            return System.IO.File.Delete(path.View());
+    }
+}
+
+internal fn System.IO.IOStatus DeleteTreeFromMetadata(ascii root, borrow FileMetadata metadata)
+{
+    stack mut System.Text.OwnedAscii rootPath = new();
+    stack System.Memory.MemoryStatus appendStatus = rootPath.AppendAscii(root);
+    switch (appendStatus)
+    {
+        case System.Memory.MemoryStatus.Err(var appendError):
+            return System.IO.IOStatus.Err(IOErrorFromMemoryError(appendError));
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    return DeleteTreePath(rootPath, metadata.Kind);
+}
+
+public fn System.IO.IOStatus DeleteTree(ascii root)
+{
+    stack mut FileMetadata rootMetadata = new();
+    switch (Metadata(root))
+    {
+        case System.IO.IOResult<FileMetadata>.Err(var metadataError):
+            return System.IO.IOStatus.Err(metadataError);
+        case System.IO.IOResult<FileMetadata>.Ok(var metadata):
+            rootMetadata = metadata;
+    }
+
+    return DeleteTreeFromMetadata(root, rootMetadata);
+}
+
+public fn System.IO.IOStatus DeleteTreeIfExists(ascii root)
+{
+    stack mut FileMetadata rootMetadata = new();
+    switch (Metadata(root))
+    {
+        case System.IO.IOResult<FileMetadata>.Err(var metadataError):
+            switch (metadataError)
+            {
+                case System.IO.IOError.NotFound:
+                    return System.IO.IOStatus.Ok;
+                case System.IO.IOError.AlreadyExists:
+                    return System.IO.IOStatus.Err(metadataError);
+                case System.IO.IOError.PermissionDenied:
+                    return System.IO.IOStatus.Err(metadataError);
+                case System.IO.IOError.InvalidPath:
+                    return System.IO.IOStatus.Err(metadataError);
+                case System.IO.IOError.BrokenPipe:
+                    return System.IO.IOStatus.Err(metadataError);
+                case System.IO.IOError.DiskFull:
+                    return System.IO.IOStatus.Err(metadataError);
+                case System.IO.IOError.Unknown(var code):
+                    return System.IO.IOStatus.Err(metadataError);
+            }
+        case System.IO.IOResult<FileMetadata>.Ok(var metadata):
+            rootMetadata = metadata;
+    }
+
+    return DeleteTreeFromMetadata(root, rootMetadata);
+}
+
 public fn System.IO.IOResult<Directory> OpenDirectory(ascii path)
 {
     return OpenDirectoryWithPlatform(path);
@@ -413,4 +572,345 @@ public fn System.IO.IOResult<bool> IsDirectory(ascii path)
 public fn System.IO.IOStatus Move(ascii oldPath, ascii newPath)
 {
     return StatusFromPlatformResult(System.Runtime.Platform.MoveFile(oldPath, newPath));
+}
+
+public fn System.IO.IOResult<FileMetadata> Metadata(ascii path)
+{
+    unsafe
+    {
+        stack mut System.Runtime.Buffer.FixedByteBuffer512 metadataBuffer = new System.Runtime.Buffer.FixedByteBuffer512();
+        stack rawmutptr<i8[min max]> metadataData = metadataBuffer.WritePointer();
+        if (metadataData == null)
+        {
+            return System.IO.IOResult<FileMetadata>.Err(System.IO.IOError.Unknown(-1));
+        }
+
+        stack mut i32[min max] metadataStatus = -1;
+        metadataStatus = System.Runtime.Platform.ReadPathMetadata(path, metadataData);
+        if (metadataStatus != 0)
+        {
+            return System.IO.IOResult<FileMetadata>.Err(IOErrorFromPlatformResult(metadataStatus));
+        }
+
+        stack rawptr<i32[min max]> kindPointer = (rawptr<i32[min max]>)(&metadataData[FileSystemMetadataKindOffset]);
+        stack rawptr<i32[min max]> permissionsPointer =
+            (rawptr<i32[min max]>)(&metadataData[FileSystemMetadataPermissionsOffset]);
+        stack rawptr<i64[min max]> sizePointer = (rawptr<i64[min max]>)(&metadataData[FileSystemMetadataSizeOffset]);
+        stack rawptr<i64[min max]> modifiedSecondsPointer =
+            (rawptr<i64[min max]>)(&metadataData[FileSystemMetadataModifiedSecondsOffset]);
+        stack rawptr<i64[min max]> modifiedNanosecondsPointer =
+            (rawptr<i64[min max]>)(&metadataData[FileSystemMetadataModifiedNanosecondsOffset]);
+
+        stack mut i64[min max] size = *sizePointer;
+        if (size < 0)
+        {
+            size = 0;
+        }
+
+        stack FileMetadata metadata = new FileMetadata()
+        {
+            Size = (u64[0 2 ** 63 - 1])size,
+            ModifiedUnixSeconds = *modifiedSecondsPointer,
+            ModifiedNanoseconds = *modifiedNanosecondsPointer,
+            Permissions = (u32[0 max])(*permissionsPointer),
+            Kind = FileSystemEntryKindFromPlatformKind(*kindPointer)
+        };
+        return System.IO.IOResult<FileMetadata>.Ok(metadata);
+    }
+}
+
+public fn System.IO.IOResult<System.Text.OwnedAscii> CreateTempDirectoryIn(ascii parent, ascii prefix)
+{
+    stack mut System.Text.OwnedAscii path = new();
+
+    for willexit (stack mut u16[0 1024] attempt = 0; attempt < 1024; attempt += 1)
+    {
+        stack System.Memory.MemoryStatus buildStatus =
+            System.IO.Path.TryTempPathIn(path, parent, prefix, (u64[0 max])attempt, "");
+        switch (buildStatus)
+        {
+            case System.Memory.MemoryStatus.Err(var buildError):
+                return System.IO.IOResult<System.Text.OwnedAscii>.Err(IOErrorFromMemoryError(buildError));
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        stack System.IO.IOStatus createStatus = CreateDirectory(path.View());
+        switch (createStatus)
+        {
+            case System.IO.IOStatus.Ok:
+                return System.IO.IOResult<System.Text.OwnedAscii>.Ok(path);
+            case System.IO.IOStatus.Err(var createError):
+                switch (createError)
+                {
+                    case System.IO.IOError.AlreadyExists:
+                        continue;
+                    case System.IO.IOError.NotFound:
+                        return System.IO.IOResult<System.Text.OwnedAscii>.Err(createError);
+                    case System.IO.IOError.PermissionDenied:
+                        return System.IO.IOResult<System.Text.OwnedAscii>.Err(createError);
+                    case System.IO.IOError.InvalidPath:
+                        return System.IO.IOResult<System.Text.OwnedAscii>.Err(createError);
+                    case System.IO.IOError.BrokenPipe:
+                        return System.IO.IOResult<System.Text.OwnedAscii>.Err(createError);
+                    case System.IO.IOError.DiskFull:
+                        return System.IO.IOResult<System.Text.OwnedAscii>.Err(createError);
+                    case System.IO.IOError.Unknown(var code):
+                        return System.IO.IOResult<System.Text.OwnedAscii>.Err(createError);
+                }
+        }
+    }
+
+    return System.IO.IOResult<System.Text.OwnedAscii>.Err(System.IO.IOError.AlreadyExists);
+}
+
+public fn System.IO.IOResult<System.Text.OwnedAscii> CreateTempDirectory(ascii prefix)
+{
+    stack mut System.Text.OwnedAscii parent = new();
+    stack System.Memory.MemoryStatus parentStatus = System.IO.Path.TempDirectory(parent);
+    switch (parentStatus)
+    {
+        case System.Memory.MemoryStatus.Err(var parentError):
+            return System.IO.IOResult<System.Text.OwnedAscii>.Err(IOErrorFromMemoryError(parentError));
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    return CreateTempDirectoryIn(parent.View(), prefix);
+}
+
+internal fn System.IO.IOStatus AppendPathSegment(
+    mut borrow System.Text.OwnedAscii path,
+    mut borrow FileSystemEntry entry)
+{
+    stack System.Memory.MemoryStatus separatorStatus = path.AppendAscii(System.IO.Path.DirectorySeparator());
+    switch (separatorStatus)
+    {
+        case System.Memory.MemoryStatus.Err(var separatorError):
+            return System.IO.IOStatus.Err(IOErrorFromMemoryError(separatorError));
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    stack System.Memory.MemoryStatus nameStatus = path.AppendAscii(entry.NameView());
+    switch (nameStatus)
+    {
+        case System.Memory.MemoryStatus.Err(var nameError):
+            return System.IO.IOStatus.Err(IOErrorFromMemoryError(nameError));
+        case System.Memory.MemoryStatus.Ok:
+            return System.IO.IOStatus.Ok;
+    }
+}
+
+internal fn System.IO.IOStatus WalkRecursivePath(
+    mut borrow System.Text.OwnedAscii path,
+    FileSystemEntryKind kind,
+    inline closure<fn System.IO.IOStatus(ascii, FileSystemEntryKind)> visitor)
+{
+    stack mut bool shouldRecurse = false;
+    switch (kind)
+    {
+        case FileSystemEntryKind.Directory:
+            shouldRecurse = true;
+        case FileSystemEntryKind.Symlink:
+            shouldRecurse = false;
+        case FileSystemEntryKind.File:
+            shouldRecurse = false;
+        case FileSystemEntryKind.Other:
+            shouldRecurse = false;
+    }
+
+    stack System.IO.IOStatus visitStatus = visitor(path.View(), kind);
+    switch (visitStatus)
+    {
+        case System.IO.IOStatus.Err(var visitError):
+            return System.IO.IOStatus.Err(visitError);
+        case System.IO.IOStatus.Ok:
+    }
+
+    if (!shouldRecurse)
+    {
+        return System.IO.IOStatus.Ok;
+    }
+
+    stack System.IO.IOResult<Directory> opened = OpenDirectory(path.View());
+    switch (opened)
+    {
+        case System.IO.IOResult<Directory>.Err(var openError):
+            return System.IO.IOStatus.Err(openError);
+        case System.IO.IOResult<Directory>.Ok(var value):
+            stack mut Directory directory = value;
+            while willexit (true)
+            {
+                stack DirectoryReadResult next = directory.ReadNext();
+                switch (next)
+                {
+                    case DirectoryReadResult.End:
+                        return directory.Close();
+                    case DirectoryReadResult.Err(var readError):
+                        directory.Close();
+                        return System.IO.IOStatus.Err(readError);
+                    case DirectoryReadResult.Entry(var entry):
+                        stack mut FileSystemEntry child = entry;
+                        stack u64[0 2 ** 63 - 1] previousLength = path.Length();
+                        stack System.IO.IOStatus appendStatus = AppendPathSegment(path, child);
+                        switch (appendStatus)
+                        {
+                            case System.IO.IOStatus.Err(var appendError):
+                                directory.Close();
+                                path.Truncate(previousLength);
+                                return System.IO.IOStatus.Err(appendError);
+                            case System.IO.IOStatus.Ok:
+                        }
+
+                        stack System.IO.IOStatus childStatus = WalkRecursivePath(path, child.Kind, visitor);
+                        path.Truncate(previousLength);
+                        switch (childStatus)
+                        {
+                            case System.IO.IOStatus.Err(var childError):
+                                directory.Close();
+                                return System.IO.IOStatus.Err(childError);
+                            case System.IO.IOStatus.Ok:
+                        }
+                }
+            }
+    }
+}
+
+internal fn System.IO.IOStatus GlobRecursivePath(
+    mut borrow System.Text.OwnedAscii path,
+    FileSystemEntryKind kind,
+    ascii pattern,
+    inline closure<fn System.IO.IOStatus(ascii, FileSystemEntryKind)> visitor)
+    where overlap(path, pattern)
+{
+    stack mut bool shouldRecurse = false;
+    switch (kind)
+    {
+        case FileSystemEntryKind.Directory:
+            shouldRecurse = true;
+        case FileSystemEntryKind.Symlink:
+            shouldRecurse = false;
+        case FileSystemEntryKind.File:
+            shouldRecurse = false;
+        case FileSystemEntryKind.Other:
+            shouldRecurse = false;
+    }
+
+    if (System.IO.Path.GlobMatches(pattern, path.View()))
+    {
+        stack System.IO.IOStatus visitStatus = visitor(path.View(), kind);
+        switch (visitStatus)
+        {
+            case System.IO.IOStatus.Err(var visitError):
+                return System.IO.IOStatus.Err(visitError);
+            case System.IO.IOStatus.Ok:
+        }
+    }
+
+    if (!shouldRecurse)
+    {
+        return System.IO.IOStatus.Ok;
+    }
+
+    stack System.IO.IOResult<Directory> opened = OpenDirectory(path.View());
+    switch (opened)
+    {
+        case System.IO.IOResult<Directory>.Err(var openError):
+            return System.IO.IOStatus.Err(openError);
+        case System.IO.IOResult<Directory>.Ok(var value):
+            stack mut Directory directory = value;
+            while willexit (true)
+            {
+                stack DirectoryReadResult next = directory.ReadNext();
+                switch (next)
+                {
+                    case DirectoryReadResult.End:
+                        return directory.Close();
+                    case DirectoryReadResult.Err(var readError):
+                        directory.Close();
+                        return System.IO.IOStatus.Err(readError);
+                    case DirectoryReadResult.Entry(var entry):
+                        stack mut FileSystemEntry child = entry;
+                        stack u64[0 2 ** 63 - 1] previousLength = path.Length();
+                        stack System.IO.IOStatus appendStatus = AppendPathSegment(path, child);
+                        switch (appendStatus)
+                        {
+                            case System.IO.IOStatus.Err(var appendError):
+                                directory.Close();
+                                path.Truncate(previousLength);
+                                return System.IO.IOStatus.Err(appendError);
+                            case System.IO.IOStatus.Ok:
+                        }
+
+                        stack System.IO.IOStatus childStatus = GlobRecursivePath(path, child.Kind, pattern, visitor);
+                        path.Truncate(previousLength);
+                        switch (childStatus)
+                        {
+                            case System.IO.IOStatus.Err(var childError):
+                                directory.Close();
+                                return System.IO.IOStatus.Err(childError);
+                            case System.IO.IOStatus.Ok:
+                        }
+                }
+            }
+    }
+}
+
+public fn System.IO.IOStatus WalkRecursive(
+    ascii root,
+    inline closure<fn System.IO.IOStatus(ascii, FileSystemEntryKind)> visitor)
+{
+    stack mut System.Text.OwnedAscii rootPath = new();
+    stack System.Memory.MemoryStatus appendStatus = rootPath.AppendAscii(root);
+    switch (appendStatus)
+    {
+        case System.Memory.MemoryStatus.Err(var appendError):
+            return System.IO.IOStatus.Err(IOErrorFromMemoryError(appendError));
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    stack mut FileMetadata rootMetadata = new();
+    switch (Metadata(root))
+    {
+        case System.IO.IOResult<FileMetadata>.Err(var metadataError):
+            return System.IO.IOStatus.Err(metadataError);
+        case System.IO.IOResult<FileMetadata>.Ok(var metadata):
+            rootMetadata = metadata;
+    }
+
+    return WalkRecursivePath(rootPath, rootMetadata.Kind, visitor);
+}
+
+public fn System.IO.IOStatus Glob(
+    ascii root,
+    ascii pattern,
+    inline closure<fn System.IO.IOStatus(ascii, FileSystemEntryKind)> visitor)
+    where overlap(root, pattern)
+{
+    stack mut System.Text.OwnedAscii rootPath = new();
+    stack System.Memory.MemoryStatus appendStatus = rootPath.AppendAscii(root);
+    switch (appendStatus)
+    {
+        case System.Memory.MemoryStatus.Err(var appendError):
+            return System.IO.IOStatus.Err(IOErrorFromMemoryError(appendError));
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    stack mut System.Text.OwnedAscii fullPattern = new();
+    stack System.Memory.MemoryStatus patternStatus = System.IO.Path.TryJoin(fullPattern, root, pattern);
+    switch (patternStatus)
+    {
+        case System.Memory.MemoryStatus.Err(var patternError):
+            return System.IO.IOStatus.Err(IOErrorFromMemoryError(patternError));
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    stack mut FileMetadata rootMetadata = new();
+    switch (Metadata(root))
+    {
+        case System.IO.IOResult<FileMetadata>.Err(var metadataError):
+            return System.IO.IOStatus.Err(metadataError);
+        case System.IO.IOResult<FileMetadata>.Ok(var metadata):
+            rootMetadata = metadata;
+    }
+
+    return GlobRecursivePath(rootPath, rootMetadata.Kind, fullPattern.View(), visitor);
 }

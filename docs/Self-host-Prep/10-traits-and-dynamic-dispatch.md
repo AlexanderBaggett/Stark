@@ -18,8 +18,9 @@ form (`heap dyn Trait`, which boxes the value on the heap, owns it, and drops + 
     contract; object safety and `dyn`-misuse are diagnosed (STK3035/3036). Also landed:
     `Dictionary<K,V>` keys may now use explicit static `finite law` `Hash`/`Equals`
     methods on the key type, with bool/integer keys retaining the scalar fast path.
-    Remaining: dyn-call devirt + DSE-precision (a perf follow-up);
-    visible vtable (Phase D). The fully manual ops-table pattern is now tested:
+    Dyn-call devirtualization, DSE precision, the nameable vtable type,
+    unsafe from-parts construction, and unsafe decomposition are landed. The
+    fully manual ops-table pattern is now tested:
     ordinary structs may carry kind-bearing `fnptr` fields plus explicit raw
     context pointers, and field-path calls such as `handle.Ops.Resolve(...)`
     lower to visible indirect calls without a hidden vtable. This document tracks the work to make traits usable in Stark
@@ -245,8 +246,8 @@ Three ways to touch it, ordered by how much you assert:
 1. **Safe, default** - compiler builds the fat pointer and selects the table:
    `borrow dyn ModuleResolver r = fr;`
 2. **Unsafe, roll-your-own** - supply context + table (plugins, FFI, runtime
-   impls). Placeholder spellings, paralleling the existing unsafe
-   `slice(pointer, count)` intrinsic; exact names TBD:
+   impls). The blessed spellings parallel the existing unsafe
+   `slice(pointer, count)` intrinsic:
    ```stark
    unsafe
    {
@@ -349,8 +350,8 @@ the absence of `vtable`/`dispatch` where dispatch must not appear).
 | ID | Item | Status | Notes |
 |---|---|---|---|
 | TD01 | Grammar: add `baseTraitList` to struct/record; regen parser | **done** | landed; `antlr4` 4.13.2 regen; full suite green |
-| TD02 | Capture base-trait list on the type model | **done** | `NamedTypeSymbol.ImplementedTraits` populated for source struct/record (`TypeChecking.ResolveBaseTraitNames`) and package-backed imports; package typed/source surfaces preserve base lists for imported type queries and `dyn` codegen |
-| TD03 | type -> implemented-trait edges | **done** | exposed as `NamedTypeSymbol.ImplementedTraits` |
+| TD02 | Capture base-trait list on the type model | **done** | `NamedTypeSymbol.ImplementedTraits` and typed `NamedTypeSymbol.ImplementedTraitTypes` populated for source struct/record (`TypeChecking.ResolveBaseTraits`) and package-backed imports; package typed/source surfaces preserve base lists for imported type queries and `dyn` codegen |
+| TD03 | type -> implemented-trait edges | **done** | exposed as `NamedTypeSymbol.ImplementedTraits` plus typed implemented-trait shapes for generic/`comptime` argument inspection |
 | TD04 | Conformance: required methods, compatible signatures, `Self` receiver | **done** | `Self` type ✅; base-must-be-trait (**STK3026**) ✅; required-method presence (**STK3032**) ✅; arity + function-kind + **exact parameter/return-type matching** with `Self`/type-arg substitution (**STK3033**, via `SubstituteType` + a structural `TraitTypesEquivalent` comparator) ✅; imported source and package-backed trait required-method detection ✅ |
 | TD05 | Allow trait-method calls on conforming values and `where T: Trait` generics | **done** | concrete-receiver calls already worked; generic dispatch now resolves via `TryResolveTraitBoundMemberCall` at `ApplyMemberAccess` (consults the captured bound, `Self`-substituted). `Trait.Method(...)` via the trait name stays rejected (STK3013), which is correct |
 | TD06 | Monomorphization + lowering: static trait calls resolve to the concrete impl as direct calls (no vtable) | **done** | `FunctionMirBuilder.IsTraitMethodTarget` reroutes a recorded trait-method call to the receiver's concrete-type impl; verified end-to-end (runs, returns 10) and LLVM shows `call fastcc @Widget_Width` with **zero** indirect/vtable surface |
@@ -380,26 +381,30 @@ polymorphic borrowed runtime test (two impls behind one `dyn` param → 31), an 
 runtime test (two types boxed + dropped → 9), an LLVM effect-preservation test, and
 diagnostic tests; all suites green.
 
-One follow-up remains (tracked below): **dyn-call devirt / DSE-precision** (perf only).
-
 | ID | Item | Status | Notes |
 |---|---|---|---|
 | TD12 | Grammar: `DYN` token, `dyn trait`, `dynTraitType`, `dynStoragePrefix`; regen | **done** | `borrow dyn T` / `heap dyn T` and `dyn trait` parse |
 | TD13 | Object-safety check + diagnostics | **done** | STK3035 (`dyn` over a non-`dyn trait`), STK3036 (non-object-safe method in a `dyn trait`) |
 | TD14 | Vtable synthesis: per-(type, trait) static table of method `fnptr` slots + drop slot | **done** | `@__stark_vtable_<Type>__<Trait>` emitted in the module surface; the drop slot holds the type's `<Type>.__dyn_drop` thunk (used by owning objects, ignored by borrowed ones). Size/Align deferred to Phase D roll-your-own |
 | TD15 | Coercion: concrete → dyn slot | **done** | `borrow`/`mut borrow dyn` (View) coerces via address-of-source + vtable global (no alloc); `heap dyn` (owned) moves the source into an untracked heap box the trait object owns (mirroring a heap closure's environment). Both via `CoerceOperand` |
-| TD16 | Lowering: `dyn` call → indirect `fnptr`-kind call; preserve finite/law; devirt | **done** (dispatch) | indirect dispatch via `DynVTableSlot` (GEP+load) feeding the existing indirect-call path → kind attributes preserved (verified). Owned drop loads the vtable drop slot and calls it (`MayFree`), freeing the box via the thunk. **Stark-level devirt of dyn calls deferred** (perf): LLVM still devirtualizes after inlining |
-| TD17 | Tests | **done** | borrowed polymorphic dispatch, owned alloc/dispatch/drop, LLVM indirect+effect-attrs, STK3035/3036 diagnostics |
-| TD-perf | DSE precision around dyn dispatch | **done** (escape-based) | A dyn call reads the object behind the data pointer (`ReadsOtherMemory`). Both memory optimizers (`SsaScalarReplacementOptimizer`, `SsaAliasAwareMemoryOptimizer`) now bound such a callee's local reads to the **address-escaped** locals (those whose address is taken anywhere in the function) instead of the earlier blanket "all locals" barrier — sound (only escaped locals can be reached through a pointer) and frees non-escaped locals' field stores for elimination. A finer pointer-content provenance summary (per-local content roots) could narrow this to only the locals reachable from each call's arguments, and Stark-level dyn-call devirtualization could recover direct calls when the concrete vtable is provable; both are further refinements (LLVM already devirtualizes dyn calls after inlining) |
+| TD16 | Lowering: `dyn` call → indirect `fnptr`-kind call; preserve finite/law; devirt | **done** | indirect dispatch via `DynVTableSlot` (GEP+load) feeds the existing indirect-call path at O0 → kind attributes preserved (verified). Optimized SSA devirtualizes known concrete vtable slots into direct calls before inlining. Owned drop loads the vtable drop slot and calls it (`MayFree`), freeing the box via the thunk. |
+| TD17 | Tests | **done** | borrowed polymorphic dispatch, owned alloc/dispatch/drop, LLVM indirect+effect-attrs, SSA dyn-call devirt, STK3035/3036 diagnostics |
+| TD-perf | DSE precision around dyn dispatch | **done** (escape-based) | A dyn call reads the object behind the data pointer (`ReadsOtherMemory`). Both memory optimizers (`SsaScalarReplacementOptimizer`, `SsaAliasAwareMemoryOptimizer`) now bound such a callee's local reads to the **address-escaped** locals (those whose address is taken anywhere in the function) instead of the earlier blanket "all locals" barrier — sound (only escaped locals can be reached through a pointer) and frees non-escaped locals' field stores for elimination. A finer pointer-content provenance summary (per-local content roots) could narrow this to only the locals reachable from each call's arguments, but the current escape-based precision is the landed baseline. |
 
 ### Phase D - Visible vtable / roll-your-own
 
+`Trait.Vtable` is now nameable as a compiler-owned vtable type, and generic
+dyn traits use the existing type-argument surface as `Trait.Vtable<...>`.
+User code may carry read-only `rawptr<Trait.Vtable>` values; vtables are not
+user-constructible or storable by value. The dyn fat-pointer vtable component is
+typed as `rawptr<Trait.Vtable>` in MIR/SSA and stays a plain pointer in LLVM.
+
 | ID | Item | Depends | Acceptance |
 |---|---|---|---|
-| TD18 | Expose nameable `T.Vtable` type and fat-pointer representation | TD14 | `T.Vtable` usable as a type |
-| TD19 | Unsafe from-parts construction (`dynview`/`dynbox`, final spelling per OQ) | TD18 | builds `borrow`/`heap dyn` from (context, vtable) under `unsafe` |
-| TD20 | Unsafe decomposition `.Context` / `.Vtable` | TD18 | parts readable under `unsafe` |
-| TD21 | Tests: round-trip construct/decompose, manual dispatch, FFI/plugin shape | TD19-TD20 | feature tests |
+| TD18 | Expose nameable `T.Vtable` type and fat-pointer representation | TD14 | **done** — `Trait.Vtable` / `Trait.Vtable<...>` resolve as compiler-owned vtable types; dyn fat pointers carry `rawptr<Trait.Vtable>`; package-backed signatures preserve/load the type |
+| TD19 | Unsafe from-parts construction (`dynview`/`dynbox`) | **done** | `dynview` builds `borrow dyn` views and `dynbox` builds owned `heap dyn` objects from `(rawmutptr<i8>, rawptr<Trait.Vtable>)` under `unsafe`; explicit target and expected-type inference both work; package-image typed bodies preserve/load the bound operation |
+| TD20 | Unsafe decomposition `.Context` / `.Vtable` | **done** | representation parts are readable only under `unsafe`; `.Context` exposes `rawmutptr<i8>` and `.Vtable` exposes `rawptr<Trait.Vtable>` |
+| TD21 | Tests: round-trip construct/decompose, manual dispatch, FFI/plugin shape | **done** | feature tests cover round-trip decompose/recompose, unsafe diagnostics, wrong-vtable diagnostics, owned `dynbox`, and package-image/imported-template preservation with dynamic dispatch through the rebuilt view |
 
 ### Cross-cutting
 
@@ -418,7 +423,7 @@ One follow-up remains (tracked below): **dyn-call devirt / DSE-precision** (perf
 | TD-OQ2 | Multi-trait method-name collisions in a base list | matching signatures unify into one impl; genuine conflicts error; qualified explicit-impl disambiguation can come later. |
 | TD-OQ3 | `heap dyn` allocation-failure path | trap vs `MemoryResult<heap dyn T>`. Lean: match whatever a plain `heap new` local does, for consistency. |
 | TD-OQ4 | Consuming dispatch `heap dyn<once>` | defer to v2; mirrors existing `heap closure<once>`. |
-| TD-OQ5 | Final from-parts/decompose spelling | `dynview`/`dynbox` + `.Context`/`.Vtable` are placeholders paralleling `slice(...)`. |
+| TD-OQ5 | Final from-parts/decompose spelling | **decided**: `dynview`/`dynbox` + `.Context`/`.Vtable`, paralleling `slice(...)` while keeping representation access explicit and unsafe. |
 | TD-OQ6 | Default-member lowering | monomorphized per implementing type vs a shared thunk. Lean monomorphized, matching doctrine path. |
 | TD-OQ7 | Coherence / orphan rules | v1 scope: base list on your own type only. Implementing a foreign trait for a foreign type is out of scope for v1. |
 

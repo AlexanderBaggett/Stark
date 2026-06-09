@@ -2204,6 +2204,25 @@ internal sealed partial class MidLevelIrLowerer
                     return TryExecuteIfStatement(ifStatement, moduleName, state, activeCalls, returnType, out flow, out returnValue);
                 }
 
+                if (statement.labeledStatement() is { } labeledStatement)
+                {
+                    var labelName = labeledStatement.Identifier().GetText();
+                    if (labeledStatement.switchStatement() is { } labeledSwitchStatement)
+                    {
+                        return TryExecuteSwitchStatement(labeledSwitchStatement, moduleName, state, activeCalls, returnType, out flow, out returnValue, labelName);
+                    }
+
+                    if (labeledStatement.whileStatement() is { } labeledWhileStatement)
+                    {
+                        return TryExecuteWhileStatement(labeledWhileStatement, moduleName, state, activeCalls, returnType, out flow, out returnValue, labelName);
+                    }
+
+                    if (labeledStatement.forStatement() is { } labeledForStatement)
+                    {
+                        return TryExecuteForStatement(labeledForStatement, moduleName, state, activeCalls, returnType, out flow, out returnValue, labelName);
+                    }
+                }
+
                 if (statement.switchStatement() is { } switchStatement)
                 {
                     return TryExecuteSwitchStatement(switchStatement, moduleName, state, activeCalls, returnType, out flow, out returnValue);
@@ -2219,15 +2238,17 @@ internal sealed partial class MidLevelIrLowerer
                     return TryExecuteForStatement(forStatement, moduleName, state, activeCalls, returnType, out flow, out returnValue);
                 }
 
-                if (statement.breakStatement() is not null)
+                if (statement.breakStatement() is { } breakStatement)
                 {
                     flow = CompileTimeStatementFlow.Break;
+                    state.SetPendingControlFlowLabel(breakStatement.Identifier()?.GetText());
                     return true;
                 }
 
-                if (statement.continueStatement() is not null)
+                if (statement.continueStatement() is { } continueStatement)
                 {
                     flow = CompileTimeStatementFlow.Continue;
+                    state.SetPendingControlFlowLabel(continueStatement.Identifier()?.GetText());
                     return true;
                 }
 
@@ -2282,7 +2303,8 @@ internal sealed partial class MidLevelIrLowerer
                 HashSet<string> activeCalls,
                 StarkTypeSymbol returnType,
                 out CompileTimeStatementFlow flow,
-                out CompileTimeConstant returnValue)
+                out CompileTimeConstant returnValue,
+                string? labelName = null)
             {
                 flow = CompileTimeStatementFlow.None;
                 returnValue = default;
@@ -2329,7 +2351,13 @@ internal sealed partial class MidLevelIrLowerer
 
                             if (flow == CompileTimeStatementFlow.Break)
                             {
-                                flow = CompileTimeStatementFlow.None;
+                                if (state.ShouldConsumeControlFlow(labelName))
+                                {
+                                    state.ClearPendingControlFlowLabel();
+                                    flow = CompileTimeStatementFlow.None;
+                                }
+
+                                return true;
                             }
 
                             return true;
@@ -2975,7 +3003,8 @@ internal sealed partial class MidLevelIrLowerer
                 HashSet<string> activeCalls,
                 StarkTypeSymbol returnType,
                 out CompileTimeStatementFlow flow,
-                out CompileTimeConstant returnValue)
+                out CompileTimeConstant returnValue,
+                string? labelName = null)
             {
                 flow = CompileTimeStatementFlow.None;
                 returnValue = default;
@@ -3025,13 +3054,27 @@ internal sealed partial class MidLevelIrLowerer
 
                             if (flow == CompileTimeStatementFlow.Break)
                             {
-                                flow = CompileTimeStatementFlow.None;
+                                if (state.ShouldConsumeControlFlow(labelName))
+                                {
+                                    state.ClearPendingControlFlowLabel();
+                                    flow = CompileTimeStatementFlow.None;
+                                    return true;
+                                }
+
                                 return true;
                             }
 
                             if (flow == CompileTimeStatementFlow.Continue)
                             {
-                                flow = CompileTimeStatementFlow.None;
+                                if (state.ShouldConsumeControlFlow(labelName))
+                                {
+                                    state.ClearPendingControlFlowLabel();
+                                    flow = CompileTimeStatementFlow.None;
+                                }
+                                else
+                                {
+                                    return true;
+                                }
                             }
                         }
                         finally
@@ -3071,13 +3114,27 @@ internal sealed partial class MidLevelIrLowerer
 
                     if (flow == CompileTimeStatementFlow.Break)
                     {
-                        flow = CompileTimeStatementFlow.None;
+                        if (state.ShouldConsumeControlFlow(labelName))
+                        {
+                            state.ClearPendingControlFlowLabel();
+                            flow = CompileTimeStatementFlow.None;
+                            return true;
+                        }
+
                         return true;
                     }
 
                     if (flow == CompileTimeStatementFlow.Continue)
                     {
-                        flow = CompileTimeStatementFlow.None;
+                        if (state.ShouldConsumeControlFlow(labelName))
+                        {
+                            state.ClearPendingControlFlowLabel();
+                            flow = CompileTimeStatementFlow.None;
+                        }
+                        else
+                        {
+                            return true;
+                        }
                     }
                 }
             }
@@ -3089,7 +3146,8 @@ internal sealed partial class MidLevelIrLowerer
                 HashSet<string> activeCalls,
                 StarkTypeSymbol returnType,
                 out CompileTimeStatementFlow flow,
-                out CompileTimeConstant returnValue)
+                out CompileTimeConstant returnValue,
+                string? labelName = null)
             {
                 flow = CompileTimeStatementFlow.None;
                 returnValue = default;
@@ -3109,7 +3167,8 @@ internal sealed partial class MidLevelIrLowerer
                         activeCalls,
                         returnType,
                         out flow,
-                        out returnValue);
+                        out returnValue,
+                        labelName);
                 }
 
                 state.PushScope();
@@ -3159,13 +3218,27 @@ internal sealed partial class MidLevelIrLowerer
 
                         if (flow == CompileTimeStatementFlow.Break)
                         {
-                            flow = CompileTimeStatementFlow.None;
+                            if (state.ShouldConsumeControlFlow(labelName))
+                            {
+                                state.ClearPendingControlFlowLabel();
+                                flow = CompileTimeStatementFlow.None;
+                                return true;
+                            }
+
                             return true;
                         }
 
                         if (flow == CompileTimeStatementFlow.Continue)
                         {
-                            flow = CompileTimeStatementFlow.None;
+                            if (state.ShouldConsumeControlFlow(labelName))
+                            {
+                                state.ClearPendingControlFlowLabel();
+                                flow = CompileTimeStatementFlow.None;
+                            }
+                            else
+                            {
+                                return true;
+                            }
                         }
 
                         if (!TryExecuteForIterator(statement.forIterator(), moduleName, state, activeCalls))
@@ -3193,7 +3266,8 @@ internal sealed partial class MidLevelIrLowerer
                 HashSet<string> activeCalls,
                 StarkTypeSymbol returnType,
                 out CompileTimeStatementFlow flow,
-                out CompileTimeConstant returnValue)
+                out CompileTimeConstant returnValue,
+                string? labelName = null)
             {
                 flow = CompileTimeStatementFlow.None;
                 returnValue = default;
@@ -3310,13 +3384,27 @@ internal sealed partial class MidLevelIrLowerer
 
                         if (flow == CompileTimeStatementFlow.Break)
                         {
-                            flow = CompileTimeStatementFlow.None;
+                            if (state.ShouldConsumeControlFlow(labelName))
+                            {
+                                state.ClearPendingControlFlowLabel();
+                                flow = CompileTimeStatementFlow.None;
+                                return true;
+                            }
+
                             return true;
                         }
 
                         if (flow == CompileTimeStatementFlow.Continue)
                         {
-                            flow = CompileTimeStatementFlow.None;
+                            if (state.ShouldConsumeControlFlow(labelName))
+                            {
+                                state.ClearPendingControlFlowLabel();
+                                flow = CompileTimeStatementFlow.None;
+                            }
+                            else
+                            {
+                                return true;
+                            }
                         }
                     }
                     finally
@@ -4149,6 +4237,7 @@ internal sealed partial class MidLevelIrLowerer
                 public StarkTypeSymbol? CurrentReturnType { get; private set; }
 
                 private CompileTimeConstant? PendingReturnValue { get; set; }
+                private string? PendingControlFlowLabel { get; set; }
 
                 public void SetGenericContext(
                     ISet<string>? genericParameterNames,
@@ -4185,6 +4274,22 @@ internal sealed partial class MidLevelIrLowerer
 
                     value = default;
                     return false;
+                }
+
+                public void SetPendingControlFlowLabel(string? labelName)
+                {
+                    PendingControlFlowLabel = labelName;
+                }
+
+                public bool ShouldConsumeControlFlow(string? currentLabel)
+                {
+                    return PendingControlFlowLabel is null
+                        || string.Equals(PendingControlFlowLabel, currentLabel, StringComparison.Ordinal);
+                }
+
+                public void ClearPendingControlFlowLabel()
+                {
+                    PendingControlFlowLabel = null;
                 }
 
                 public StarkTypeSymbol SubstituteType(StarkTypeSymbol type)
