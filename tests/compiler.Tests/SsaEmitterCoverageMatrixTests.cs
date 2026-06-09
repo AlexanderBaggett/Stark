@@ -55,7 +55,7 @@ public sealed class SsaEmitterCoverageMatrixTests
             Row(nameof(SsaInsertIndexRValue), CoverageKind.PositiveLlvmEmission, "LlvmIrEmissionTests.LargeLocalFixedArrayConstantIndexUpdateUsesScalarProjectionAccess", "LlvmIrEmissionTests.LargeEnumPayloadProjectionIntoAddressableLocalUsesAddressCopy"),
             Row(nameof(SsaDynVTableSlotRValue), CoverageKind.PositiveLlvmEmission, "LlvmIrEmissionTests.DynTraitObjectDispatchLoadsVtableSlotAndCallsIndirectly"),
             Row(nameof(SsaMakeSliceFromLocalRValue), CoverageKind.PositiveLlvmEmission, "LlvmIrEmissionTests.LocalFixedArrayCanBeCoercedToSliceForCalls", "LlvmIrEmissionTests.FixedArrayBackedSliceAndKnownTextSliceCarryProvenGepFlags"),
-            Row(nameof(SsaMakeSliceFromPointerRValue), CoverageKind.PositiveLlvmEmission, "LlvmIrEmissionTests.RawSlicesFromConstPointersPreserveInvariantLoadMetadata", "LlvmIrEmissionTests.RuntimeDisjointSliceConditionUsesViewDataAndLength"),
+            Row(nameof(SsaMakeSliceFromPointerRValue), CoverageKind.PositiveLlvmEmission, "LlvmIrEmissionTests.RawSlicesFromConstPointersDoNotEmitInvariantLoadMetadata", "LlvmIrEmissionTests.RuntimeDisjointSliceConditionUsesViewDataAndLength"),
             Row(nameof(SsaDynamicStorageAllocationRValue), CoverageKind.PositiveLlvmEmission, "LlvmIrEmissionTests.DynamicStorageAllocationIndexInitAndDropEmitRuntimeAllocatorCalls"),
             Row(nameof(SsaDynamicStorageFreeRValue), CoverageKind.PositiveLlvmEmission, "LlvmIrEmissionTests.DynamicStorageAllocationIndexInitAndDropEmitRuntimeAllocatorCalls"),
             Row(nameof(SsaHeapStorageFreeRValue), CoverageKind.PositiveLlvmEmission, "LlvmIrEmissionTests.HeapClosureMoveCaptureDropReleasesOwnedFieldsBeforeEnvironment"),

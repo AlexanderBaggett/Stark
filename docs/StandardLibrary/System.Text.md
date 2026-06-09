@@ -48,7 +48,7 @@ public struct OwnedUnicode
 public struct OwnedUtf16
 {
     finite law i64 Length(borrow OwnedUtf16 self);
-    finite i16[] AsSlice(borrow OwnedUtf16 self);
+    finite law i16[] AsSlice(borrow OwnedUtf16 self);
 }
 
 public finite law ascii AsciiView(Ascii source);
@@ -61,6 +61,13 @@ public finite law bool EndsWith(ascii source, ascii suffix) where overlap(source
 public finite law bool EndsWith(unicode source, unicode suffix) where overlap(source, suffix);
 public finite law bool Contains(ascii source, ascii needle) where overlap(source, needle);
 public finite law bool Contains(unicode source, unicode needle) where overlap(source, needle);
+public finite law u64[0 2 ** 63 - 1] CountOccurrences(ascii source, ascii needle) where overlap(source, needle);
+public finite law u64[0 2 ** 63 - 1] CountOccurrences(unicode source, unicode needle) where overlap(source, needle);
+public finite law bool AsciiBytesEqual(borrow i8[min max][] source, ascii expected) where overlap(source, expected);
+public finite law bool AsciiBytesStartsWith(borrow i8[min max][] source, ascii prefix) where overlap(source, prefix);
+public finite law bool AsciiBytesEndsWith(borrow i8[min max][] source, ascii suffix) where overlap(source, suffix);
+public finite law bool AsciiBytesContains(borrow i8[min max][] source, ascii needle) where overlap(source, needle);
+public finite law u64[0 2 ** 63 - 1] AsciiBytesCountOccurrences(borrow i8[min max][] source, ascii needle) where overlap(source, needle);
 public fn System.Memory.MemoryStatus FromAscii(out OwnedAscii destination, ascii source);
 public fn System.Memory.MemoryStatus FromConstAscii(out OwnedAscii destination, const ascii source);
 public fn System.Memory.MemoryStatus FromUnicode(out OwnedUnicode destination, unicode source);
@@ -279,6 +286,11 @@ public fn System.Memory.MemoryResult<OwnedUnicode> ToUnicode(TextError value);
 - `OwnedAscii.View`, `OwnedUnicode.View`, and their `Length` helpers expose read-only text without transferring ownership.
 - `OwnedAscii.Truncate` shortens an owned ASCII buffer in place without allocation; it is useful for reusable path and line buffers.
 - `AsciiLength` and `UnicodeLength` expose immutable view lengths without exposing raw data pointers to user code.
+- `CountOccurrences` counts non-overlapping ASCII or Unicode needle matches without
+  allocation. Empty needles return `0`.
+- `AsciiBytesEqual`, `AsciiBytesStartsWith`, `AsciiBytesEndsWith`,
+  `AsciiBytesContains`, and `AsciiBytesCountOccurrences` compare byte slices
+  directly against ASCII text without allocating an owned text copy.
 - `ParseBoolAscii` and `ParseBoolUnicode` parse exact lowercase `true` or `false` and return `TextResult<bool>` instead of throwing.
 - `ParseEncodingAscii`, `ParseEncodingUnicode`, `ParseTextErrorAscii`, and `ParseTextErrorUnicode` parse exact enum case names for the `System.Text` enum types.
 - The implemented integer parse APIs for signed and unsigned widths from 8 bits through 1024 bits parse exact base-10 text from `ascii` or `unicode` and return `TextResult<T>` with `TextError.InvalidFormat` or `TextError.Overflow` on failure.

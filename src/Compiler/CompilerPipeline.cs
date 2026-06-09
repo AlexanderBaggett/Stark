@@ -32,6 +32,8 @@ public sealed class ArtifactStore
 {
     private readonly Dictionary<string, object?> _values = new(StringComparer.Ordinal);
 
+    public IReadOnlyList<string> Names => _values.Keys.Order(StringComparer.Ordinal).ToArray();
+
     public void Set<T>(ArtifactKey<T> key, T value)
     {
         _values[key.Name] = value;

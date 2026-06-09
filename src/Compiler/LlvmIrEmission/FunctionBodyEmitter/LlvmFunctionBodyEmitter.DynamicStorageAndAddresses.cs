@@ -877,6 +877,13 @@ internal sealed partial class LlvmFunctionBodyEmitter
         AppendLine($"  {result} = getelementptr{GetZeroOffsetGepFlags()} {MapType(NormalizeAggregateType(addressOfLocal.PointeeType))}, ptr {GetLocalSlotPointer(addressOfLocal.LocalName)}, i32 0");
     }
 
+    private bool TryAliasAddressOfLocal(string resultName, SsaAddressOfLocalRValue addressOfLocal)
+    {
+        EnsureLocalSlotExists(addressOfLocal.LocalName, addressOfLocal.PointeeType);
+        _valueAliases[resultName] = GetLocalSlotPointer(addressOfLocal.LocalName);
+        return true;
+    }
+
     private void EmitAddressOfParameter(string result, SsaAddressOfParameterRValue addressOfParameter)
     {
         var parameter = _abiFunction.UserParameters.FirstOrDefault(
@@ -896,6 +903,26 @@ internal sealed partial class LlvmFunctionBodyEmitter
         EnsureParameterSlotExists(parameter, addressOfParameter.PointeeType);
         AppendLine(
             $"  {result} = getelementptr{GetZeroOffsetGepFlags()} {MapType(NormalizeAggregateType(addressOfParameter.PointeeType))}, ptr %{EscapeIdentifier($"slot_param_{parameter.SourceName}")}, i32 0");
+    }
+
+    private bool TryAliasAddressOfParameter(string resultName, SsaAddressOfParameterRValue addressOfParameter)
+    {
+        var parameter = _abiFunction.UserParameters.FirstOrDefault(
+            candidate => string.Equals(candidate.SourceName, addressOfParameter.ParameterName, StringComparison.Ordinal));
+        if (parameter is null)
+        {
+            return false;
+        }
+
+        if (parameter.Kind == AbiParameterKind.IndirectIn)
+        {
+            _valueAliases[resultName] = $"%{EscapeIdentifier(parameter.LlvmName)}";
+            return true;
+        }
+
+        EnsureParameterSlotExists(parameter, addressOfParameter.PointeeType);
+        _valueAliases[resultName] = $"%{EscapeIdentifier($"slot_param_{parameter.SourceName}")}";
+        return true;
     }
 
     private void EmitFieldAddress(string result, SsaFieldAddressRValue fieldAddress)
@@ -978,6 +1005,18 @@ internal sealed partial class LlvmFunctionBodyEmitter
         }
 
         AppendLine($"  {result} = getelementptr{GetUnboundedPointerIndexGepFlags(elementAddress.Address, elementAddress.Index)} {MapType(elementAddress.AggregateType)}, ptr {FormatValue(elementAddress.Address)}, {MapType(elementAddress.Index.Type)} {FormatValue(elementAddress.Index)}");
+    }
+
+    private bool TryAliasZeroElementAddress(string resultName, SsaElementAddressRValue elementAddress)
+    {
+        if (elementAddress.AggregateType.Kind == StarkTypeKind.FixedArray
+            || elementAddress.ConstantIndex != 0)
+        {
+            return false;
+        }
+
+        _valueAliases[resultName] = FormatValue(elementAddress.Address);
+        return true;
     }
 
     private void EmitSliceElementAddress(string result, SsaSliceElementAddressRValue sliceElementAddress)

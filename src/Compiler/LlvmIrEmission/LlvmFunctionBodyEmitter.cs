@@ -69,7 +69,6 @@ internal sealed partial class LlvmFunctionBodyEmitter
     private readonly IReadOnlyDictionary<string, ConcreteTypeLayout> _publishedConcreteLayouts;
     private readonly bool _enableOptimizedRawPointerLoopIntrinsics;
     private readonly HashSet<string> _allocatedLocalSlots = new(StringComparer.Ordinal);
-    private readonly HashSet<string> _constProvenanceLocalNames;
     private readonly HashSet<string> _invariantLocalNames;
     private readonly IReadOnlyDictionary<string, SsaValue> _singleStoreLocalValues;
     private readonly HashSet<string> _tailCallResultNames;
@@ -149,7 +148,6 @@ internal sealed partial class LlvmFunctionBodyEmitter
         _localStorageClasses = CollectLocalStorageClasses(ssaFunction);
         _singleStoreLocalValues = CollectSingleStoreLocalValues();
         _directAggregateAliasCandidateLocalNames = CollectDirectAggregateAliasCandidateLocalNames();
-        _constProvenanceLocalNames = CollectConstProvenanceLocalNames();
         _invariantLocalNames = CollectInvariantLocalNames();
         _tailCallResultNames = CollectTailCallResultNames(
             ssaFunction,

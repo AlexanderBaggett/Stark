@@ -836,11 +836,16 @@ internal static class SyntaxModelFactory
         string targetDescription,
         List<SyntaxModelDiagnostic> diagnostics,
         bool allowTestingAttributes = false,
+        bool allowTestingPlatformAttributes = false,
         bool allowStructLayoutAttributes = false,
         bool allowThreadSafetyLawAttributes = false)
     {
         var backendOptimizationMode = ModuleBackendOptimizationMode.Default;
         var backendAttributeCount = 0;
+        var isTestingCallable = allowTestingAttributes
+            && attributes.Any(static attribute => IsTestingAttribute(attribute.Name));
+        var isTheoryCallable = allowTestingAttributes
+            && attributes.Any(static attribute => string.Equals(attribute.Name, "Theory", StringComparison.Ordinal));
 
         for (var index = 0; index < attributes.Count; index++)
         {
@@ -850,9 +855,138 @@ internal static class SyntaxModelFactory
             {
                 if (attribute.Arguments.Count != 0)
                 {
+                    if (!allowTestingAttributes && !allowTestingPlatformAttributes)
+                    {
+                        diagnostics.Add(new SyntaxModelDiagnostic(
+                            "STK2113",
+                            $"Attribute '[Platform]' on {targetDescription} does not take arguments.",
+                            attributeContext.Start.Line,
+                            attributeContext.Start.Column + 1));
+                    }
+                    else if (allowTestingAttributes
+                             && !allowTestingPlatformAttributes
+                             && !isTestingCallable)
+                    {
+                        diagnostics.Add(new SyntaxModelDiagnostic(
+                            "STK2110",
+                            $"Attribute '[Platform(...)]' on {targetDescription} is a test gate and requires '[Fact]' or '[Theory]'.",
+                            attributeContext.Start.Line,
+                            attributeContext.Start.Column + 1));
+                    }
+                }
+
+                continue;
+            }
+
+            if (IsTestingPlatformAttribute(attribute.Name))
+            {
+                if (!allowTestingAttributes && !allowTestingPlatformAttributes)
+                {
+                    diagnostics.Add(new SyntaxModelDiagnostic(
+                        "STK2110",
+                        $"Unsupported attribute '[{attribute.Name}]' on {targetDescription}. Platform test gates are supported only on fact-bearing functions, structs, and records.",
+                        attributeContext.Start.Line,
+                        attributeContext.Start.Column + 1));
+                }
+                else if (allowTestingAttributes
+                         && !allowTestingPlatformAttributes
+                         && !isTestingCallable)
+                {
+                    diagnostics.Add(new SyntaxModelDiagnostic(
+                        "STK2110",
+                        $"Attribute '[{attribute.Name}]' on {targetDescription} is a test gate and requires '[Fact]' or '[Theory]'.",
+                        attributeContext.Start.Line,
+                        attributeContext.Start.Column + 1));
+                }
+
+                continue;
+            }
+
+            if (IsTestingSchedulingAttribute(attribute.Name))
+            {
+                if (!allowTestingAttributes && !allowTestingPlatformAttributes)
+                {
+                    diagnostics.Add(new SyntaxModelDiagnostic(
+                        "STK2110",
+                        $"Unsupported attribute '[{attribute.Name}]' on {targetDescription}. Test scheduling attributes are supported only on fact-bearing functions, structs, and records.",
+                        attributeContext.Start.Line,
+                        attributeContext.Start.Column + 1));
+                    continue;
+                }
+                else if (allowTestingAttributes
+                         && !allowTestingPlatformAttributes
+                         && !isTestingCallable)
+                {
+                    diagnostics.Add(new SyntaxModelDiagnostic(
+                        "STK2110",
+                        $"Attribute '[{attribute.Name}]' on {targetDescription} is test scheduling metadata and requires '[Fact]' or '[Theory]'.",
+                        attributeContext.Start.Line,
+                        attributeContext.Start.Column + 1));
+                    continue;
+                }
+
+                if (attributeContext.attributeCondition() is not null)
+                {
                     diagnostics.Add(new SyntaxModelDiagnostic(
                         "STK2113",
-                        $"Attribute '[Platform]' on {targetDescription} does not take arguments.",
+                        $"Attribute '[{attribute.Name}]' on {targetDescription} cannot use an attribute condition.",
+                        attributeContext.Start.Line,
+                        attributeContext.Start.Column + 1));
+                }
+
+                if (string.Equals(attribute.Name, "Collection", StringComparison.Ordinal))
+                {
+                    if (attribute.Arguments.Count != 1)
+                    {
+                        diagnostics.Add(new SyntaxModelDiagnostic(
+                            "STK2113",
+                            $"Attribute '[Collection]' on {targetDescription} must name exactly one test collection.",
+                            attributeContext.Start.Line,
+                            attributeContext.Start.Column + 1));
+                    }
+
+                    continue;
+                }
+
+                if (attribute.Arguments.Count != 0)
+                {
+                    diagnostics.Add(new SyntaxModelDiagnostic(
+                        "STK2113",
+                        $"Attribute '[Serial]' on {targetDescription} does not take arguments.",
+                        attributeContext.Start.Line,
+                        attributeContext.Start.Column + 1));
+                }
+
+                continue;
+            }
+
+            if (IsTestingDataAttribute(attribute.Name))
+            {
+                if (!allowTestingAttributes)
+                {
+                    diagnostics.Add(new SyntaxModelDiagnostic(
+                        "STK2110",
+                        $"Unsupported attribute '[{attribute.Name}]' on {targetDescription}. Test data attributes are supported only on [Theory] functions and methods.",
+                        attributeContext.Start.Line,
+                        attributeContext.Start.Column + 1));
+                    continue;
+                }
+
+                if (!isTheoryCallable)
+                {
+                    diagnostics.Add(new SyntaxModelDiagnostic(
+                        "STK2110",
+                        $"Attribute '[{attribute.Name}]' on {targetDescription} requires '[Theory]'.",
+                        attributeContext.Start.Line,
+                        attributeContext.Start.Column + 1));
+                    continue;
+                }
+
+                if (attributeContext.attributeCondition() is not null)
+                {
+                    diagnostics.Add(new SyntaxModelDiagnostic(
+                        "STK2113",
+                        $"Attribute '[{attribute.Name}]' on {targetDescription} cannot use an attribute condition.",
                         attributeContext.Start.Line,
                         attributeContext.Start.Column + 1));
                 }
@@ -919,7 +1053,7 @@ internal static class SyntaxModelFactory
                 diagnostics.Add(new SyntaxModelDiagnostic(
                     "STK2110",
                     allowTestingAttributes
-                        ? $"Unsupported attribute '[{attribute.Name}]' on {targetDescription}. v1 attributes support '[Backend(Opaque)]', '[Platform]', '[Fact]', and '[Theory]'."
+                        ? $"Unsupported attribute '[{attribute.Name}]' on {targetDescription}. v1 attributes support '[Backend(Opaque)]', '[Platform]', '[SkipPlatform]', '[Collection]', '[Serial]', '[Fact]', '[Theory]', '[InlineData]', and '[MemberData]'."
                         : $"Unsupported attribute '[{attribute.Name}]' on {targetDescription}. v1 attributes support '[Backend(Opaque)]' and '[Platform]'.",
                     attributeContext.Start.Line,
                     attributeContext.Start.Column + 1));
@@ -958,6 +1092,23 @@ internal static class SyntaxModelFactory
     {
         return string.Equals(name, "Fact", StringComparison.Ordinal)
             || string.Equals(name, "Theory", StringComparison.Ordinal);
+    }
+
+    private static bool IsTestingPlatformAttribute(string name)
+    {
+        return string.Equals(name, "SkipPlatform", StringComparison.Ordinal);
+    }
+
+    private static bool IsTestingSchedulingAttribute(string name)
+    {
+        return string.Equals(name, "Collection", StringComparison.Ordinal)
+            || string.Equals(name, "Serial", StringComparison.Ordinal);
+    }
+
+    private static bool IsTestingDataAttribute(string name)
+    {
+        return string.Equals(name, "InlineData", StringComparison.Ordinal)
+            || string.Equals(name, "MemberData", StringComparison.Ordinal);
     }
 
     private static bool IsStructLayoutAttribute(string name)
@@ -1052,6 +1203,7 @@ internal static class SyntaxModelFactory
                 declarationAttributeContexts,
                 $"struct '{structDeclaration.Identifier().GetText()}'",
                 diagnostics,
+                allowTestingPlatformAttributes: true,
                 allowStructLayoutAttributes: true,
                 allowThreadSafetyLawAttributes: true);
             declarations.Add(new TopLevelDeclarationModel(
@@ -1131,6 +1283,7 @@ internal static class SyntaxModelFactory
                 declarationAttributeContexts,
                 $"record '{recordDeclaration.Identifier().GetText()}'",
                 diagnostics,
+                allowTestingPlatformAttributes: true,
                 allowThreadSafetyLawAttributes: true);
             declarations.Add(new TopLevelDeclarationModel(
                 recordDeclaration.Identifier().GetText(),

@@ -50,6 +50,7 @@ internal static class ProjectCliDriver
                 ProjectCommand.Build => await ExecuteBuildAsync(discovery!, options, userConfig, stdout, stderr),
                 ProjectCommand.Run => await ExecuteRunAsync(discovery!, options, userConfig, stdout, stderr),
                 ProjectCommand.Test => await ExecuteTestAsync(discovery!, options, userConfig, stdout, stderr),
+                ProjectCommand.Clean => await ExecuteCleanAsync(discovery!, options, stdout, stderr),
                 _ => 1
             };
         }
@@ -69,28 +70,36 @@ internal static class ProjectCliDriver
     {
         if (discovery.Project is not null)
         {
-            var projectSession = new BuildSession(
-                Profile: options.Profile,
-                BuildRootDirectory: discovery.RootDirectory,
-                UserConfig: userConfig,
-                DefaultProfiles: EmptyProfiles,
-                TestFilters: options.TestFilters,
-                Stdout: stdout,
-                Stderr: stderr);
+            if (!TryCreateBuildSession(
+                    options,
+                    discovery.RootDirectory,
+                    EmptyProfiles,
+                    userConfig,
+                    stdout,
+                    stderr,
+                    out var projectSession))
+            {
+                return 1;
+            }
+
             var project = LoadProjectManifest(discovery.Project);
             var buildResult = await BuildProjectAsync(project, projectSession);
             return buildResult.Success ? 0 : 1;
         }
 
         var solution = LoadSolutionManifest(discovery.Solution!);
-        var session = new BuildSession(
-            Profile: options.Profile,
-            BuildRootDirectory: discovery.RootDirectory,
-            UserConfig: userConfig,
-            DefaultProfiles: solution.Profiles,
-            TestFilters: options.TestFilters,
-            Stdout: stdout,
-            Stderr: stderr);
+        if (!TryCreateBuildSession(
+                options,
+                discovery.RootDirectory,
+                solution.Profiles,
+                userConfig,
+                stdout,
+                stderr,
+                out var session))
+        {
+            return 1;
+        }
+
         var targets = ResolveBuildTargets(solution, options.TargetName, session.ManifestCache, stderr);
         if (targets is null)
         {
@@ -136,18 +145,21 @@ internal static class ProjectCliDriver
             project = resolvedProject;
         }
 
-        var session = new BuildSession(
-            Profile: options.Profile,
-            BuildRootDirectory: discovery.RootDirectory,
-            UserConfig: userConfig,
-            DefaultProfiles: defaultProfiles,
-            TestFilters: options.TestFilters,
-            Stdout: stdout,
-            Stderr: stderr);
-
         if (project.Kind != ProjectKind.Executable)
         {
             await stderr.WriteLineAsync($"Project '{project.Name}' is not runnable because it is a library.");
+            return 1;
+        }
+
+        if (!TryCreateBuildSession(
+                options,
+                discovery.RootDirectory,
+                defaultProfiles,
+                userConfig,
+                stdout,
+                stderr,
+                out var session))
+        {
             return 1;
         }
 
@@ -208,14 +220,17 @@ internal static class ProjectCliDriver
             projects = targets;
         }
 
-        var session = new BuildSession(
-            Profile: options.Profile,
-            BuildRootDirectory: discovery.RootDirectory,
-            UserConfig: userConfig,
-            DefaultProfiles: defaultProfiles,
-            TestFilters: options.TestFilters,
-            Stdout: stdout,
-            Stderr: stderr);
+        if (!TryCreateBuildSession(
+                options,
+                discovery.RootDirectory,
+                defaultProfiles,
+                userConfig,
+                stdout,
+                stderr,
+                out var session))
+        {
+            return 1;
+        }
 
         var failed = false;
         foreach (var project in projects)
@@ -243,30 +258,73 @@ internal static class ProjectCliDriver
         return failed ? 1 : 0;
     }
 
+    private static async Task<int> ExecuteCleanAsync(
+        DiscoveredManifest discovery,
+        ProjectCommandOptions options,
+        TextWriter stdout,
+        TextWriter stderr)
+    {
+        if (!TryResolveCleanScope(options.TargetName, stderr, out var scope))
+        {
+            return 1;
+        }
+
+        if (!TryCreateCleanSession(options, discovery.RootDirectory, scope, stdout, stderr, out var session))
+        {
+            return 1;
+        }
+
+        var path = GetCleanPath(session, scope);
+        if (!IsPathInsideBuildDirectory(path, GetBuildDirectory(session.BuildRootDirectory)))
+        {
+            await stderr.WriteLineAsync($"Refusing to clean path outside the Stark build directory: {path}");
+            return 1;
+        }
+
+        if (!Directory.Exists(path))
+        {
+            await stdout.WriteLineAsync($"Nothing to clean: {path}");
+            return 0;
+        }
+
+        Directory.Delete(path, recursive: true);
+        await stdout.WriteLineAsync($"Deleted {path}");
+        return 0;
+    }
+
     private static async Task WriteHelpAsync(ProjectCommand command, TextWriter stdout)
     {
         switch (command)
         {
             case ProjectCommand.Build:
-                await stdout.WriteLineAsync("Usage: stark build [target] [--dev|--release]");
+                await stdout.WriteLineAsync("Usage: stark build [target] [--dev|--release] [--target <triple>] [--stage stage0]");
                 await stdout.WriteLineAsync();
                 await stdout.WriteLineAsync("Build the current Stark project or solution.");
                 await stdout.WriteLineAsync("- In a project directory, `stark build` builds that project.");
                 await stdout.WriteLineAsync("- In a solution directory, `stark build` builds the default solution targets or all members.");
                 await stdout.WriteLineAsync("- `target` may be a solution alias, member path, or project name.");
+                await stdout.WriteLineAsync("- Outputs are routed under `.stark/build/<profile>/<target-triple>/<stage>/`.");
                 return;
             case ProjectCommand.Run:
-                await stdout.WriteLineAsync("Usage: stark run [target] [--dev|--release]");
+                await stdout.WriteLineAsync("Usage: stark run [target] [--dev|--release] [--target <triple>] [--stage stage0]");
                 await stdout.WriteLineAsync();
                 await stdout.WriteLineAsync("Build and run the current Stark executable project or solution run target.");
                 return;
             case ProjectCommand.Test:
-                await stdout.WriteLineAsync("Usage: stark test [target] [--dev|--release]");
+                await stdout.WriteLineAsync("Usage: stark test [target] [--dev|--release] [--target <triple>] [--stage stage0]");
                 await stdout.WriteLineAsync();
                 await stdout.WriteLineAsync("Build and run Stark test projects.");
                 await stdout.WriteLineAsync("- In a test project directory, `stark test` runs that project.");
                 await stdout.WriteLineAsync("- In a solution directory, `stark test` runs the default test set or every test project.");
-                await stdout.WriteLineAsync("- `--filter <text>` may be repeated; matching is ordinal substring over generated [Fact] names.");
+                await stdout.WriteLineAsync("- `--filter <text>` may be repeated; matching is ordinal substring over generated test names.");
+                return;
+            case ProjectCommand.Clean:
+                await stdout.WriteLineAsync("Usage: stark clean [stage|target|profile|diagnostics|artifacts] [--dev|--release] [--target <triple>] [--stage stage0]");
+                await stdout.WriteLineAsync();
+                await stdout.WriteLineAsync("Clean the formal `.stark/build/<profile>/<target-triple>/<stage>/` tree.");
+                await stdout.WriteLineAsync("- Default scope is `stage`.");
+                await stdout.WriteLineAsync("- `target`, `stage`, `diagnostics`, and `artifacts` use `--target <triple>` or the detected default target.");
+                await stdout.WriteLineAsync("- `profile` deletes `.stark/build/<profile>/` and does not require target discovery.");
                 return;
         }
     }
@@ -367,13 +425,42 @@ internal static class ProjectCliDriver
             }
         }
 
+        var outputPath = GetOutputPath(project, outputDirectory);
         var compileArgs = new List<string>
         {
             rootInputPath,
             project.Kind == ProjectKind.Library ? "--emit-lib" : "--emit-exe",
+            "--no-stark-path",
             "-o",
-            GetOutputPath(project, outputDirectory)
+            outputPath
         };
+
+        compileArgs.Add("--target");
+        compileArgs.Add(session.TargetTriple);
+
+        var intermediateDirectory = GetIntermediateDirectory(project, session);
+        Directory.CreateDirectory(intermediateDirectory);
+        compileArgs.Add("--save-temps");
+        compileArgs.Add(intermediateDirectory);
+
+        var stdlibSearchPaths = GetStdlibSearchPaths(session);
+        foreach (var stdlibSearchDirectory in stdlibSearchPaths
+                     .Where(static path => path.IncludeInCompilerSearch)
+                     .Select(static path => path.Path)
+                     .Distinct(StringComparer.Ordinal))
+        {
+            compileArgs.Add("-I");
+            compileArgs.Add(stdlibSearchDirectory);
+        }
+
+        string? packageSearchDirectory = null;
+        if (project.Kind == ProjectKind.Library)
+        {
+            packageSearchDirectory = GetPackageDirectory(project, session);
+            Directory.CreateDirectory(packageSearchDirectory);
+            compileArgs.Add("--package-image-output");
+            compileArgs.Add(GetPackageImagePath(project, session));
+        }
 
         if (generatedTestRunner)
         {
@@ -382,8 +469,8 @@ internal static class ProjectCliDriver
         }
 
         foreach (var searchDirectory in session.BuildResults.Values
-                     .Where(result => result.Success && result.Project.Kind == ProjectKind.Library)
-                     .Select(result => result.OutputDirectory)
+                     .Where(result => result.Success && result.PackageSearchDirectory is not null)
+                     .Select(result => result.PackageSearchDirectory!)
                      .Distinct(StringComparer.Ordinal))
         {
             compileArgs.Add("-I");
@@ -400,14 +487,26 @@ internal static class ProjectCliDriver
 
         compileArgs.AddRange(nativeArgsResult.Arguments);
 
+        var compilerStderr = new StringWriter();
         var exitCode = await CompilerCli.RunAsync(
             compileArgs.ToArray(),
             new StringReader(string.Empty),
             session.Stdout,
-            session.Stderr);
+            compilerStderr);
+
+        var compilerStderrText = compilerStderr.ToString();
+        if (!string.IsNullOrEmpty(compilerStderrText))
+        {
+            await session.Stderr.WriteAsync(compilerStderrText);
+        }
 
         if (exitCode != 0)
         {
+            if (ShouldWriteStdlibDiscoveryFailure(compilerStderrText))
+            {
+                await WriteStdlibDiscoveryFailureAsync(session, stdlibSearchPaths);
+            }
+
             return RememberFailure(project, session);
         }
 
@@ -415,7 +514,8 @@ internal static class ProjectCliDriver
             true,
             project,
             outputDirectory,
-            compileArgs[3]);
+            outputPath,
+            packageSearchDirectory);
         session.BuildResults[project.ManifestPath] = success;
         return success;
     }
@@ -434,7 +534,7 @@ internal static class ProjectCliDriver
         }
 
         var sourceText = await File.ReadAllTextAsync(rootSourcePath);
-        var generation = StarkTestRunnerGenerator.Generate(sourceText, session.TestFilters);
+        var generation = StarkTestRunnerGenerator.Generate(sourceText, session.TestFilters, session.TargetTriple);
         if (!generation.Success)
         {
             foreach (var diagnostic in generation.Diagnostics)
@@ -451,7 +551,7 @@ internal static class ProjectCliDriver
             return TestRunnerBuildResult.NotGenerated();
         }
 
-        var generatedDirectory = Path.Combine(outputDirectory, "tests");
+        var generatedDirectory = Path.Combine(outputDirectory, "generated");
         Directory.CreateDirectory(generatedDirectory);
         var generatedPath = Path.Combine(generatedDirectory, $"{project.OutputName}.generated.stark");
         await File.WriteAllTextAsync(generatedPath, generation.SourceText);
@@ -477,7 +577,7 @@ internal static class ProjectCliDriver
 
     private static BuildResult RememberFailure(ProjectManifest project, BuildSession session)
     {
-        var failure = new BuildResult(false, project, string.Empty, string.Empty);
+        var failure = new BuildResult(false, project, string.Empty, string.Empty, null);
         session.BuildResults[project.ManifestPath] = failure;
         return failure;
     }
@@ -775,20 +875,378 @@ internal static class ProjectCliDriver
         return Path.GetFullPath(Path.Combine(baseDirectory, path));
     }
 
+    private static bool TryCreateBuildSession(
+        ProjectCommandOptions options,
+        string buildRootDirectory,
+        IReadOnlyDictionary<BuildProfile, ProfileManifest> defaultProfiles,
+        UserConfig userConfig,
+        TextWriter stdout,
+        TextWriter stderr,
+        out BuildSession session)
+    {
+        session = default!;
+
+        if (!string.Equals(options.StageName, "stage0", StringComparison.Ordinal))
+        {
+            stderr.WriteLine(
+                $"Compiler stage '{options.StageName}' is not available yet. The current host project driver can build only stage0 artifacts.");
+            return false;
+        }
+
+        var targetTriple = options.TargetTriple;
+        if (string.IsNullOrWhiteSpace(targetTriple)
+            && NativeToolchain.TryDetectDefaultTargetInfo(out var detectedTargetInfo))
+        {
+            targetTriple = detectedTargetInfo.Triple;
+        }
+
+        if (string.IsNullOrWhiteSpace(targetTriple))
+        {
+            stderr.WriteLine("Could not resolve a target triple. Pass --target <triple>.");
+            return false;
+        }
+
+        session = new BuildSession(
+            Profile: options.Profile,
+            BuildRootDirectory: buildRootDirectory,
+            TargetTriple: targetTriple.Trim(),
+            StageName: options.StageName,
+            UserConfig: userConfig,
+            DefaultProfiles: defaultProfiles,
+            TestFilters: options.TestFilters,
+            Stdout: stdout,
+            Stderr: stderr);
+        return true;
+    }
+
+    private static bool TryCreateCleanSession(
+        ProjectCommandOptions options,
+        string buildRootDirectory,
+        CleanScope scope,
+        TextWriter stdout,
+        TextWriter stderr,
+        out CleanSession session)
+    {
+        session = default!;
+
+        string? targetTriple = null;
+        if (scope.RequiresTargetTriple())
+        {
+            targetTriple = options.TargetTriple;
+            if (string.IsNullOrWhiteSpace(targetTriple)
+                && NativeToolchain.TryDetectDefaultTargetInfo(out var detectedTargetInfo))
+            {
+                targetTriple = detectedTargetInfo.Triple;
+            }
+
+            if (string.IsNullOrWhiteSpace(targetTriple))
+            {
+                stderr.WriteLine("Could not resolve a target triple. Pass --target <triple>.");
+                return false;
+            }
+
+            targetTriple = targetTriple.Trim();
+        }
+
+        session = new CleanSession(
+            Profile: options.Profile,
+            BuildRootDirectory: buildRootDirectory,
+            TargetTriple: targetTriple,
+            StageName: options.StageName,
+            Stdout: stdout,
+            Stderr: stderr);
+        return true;
+    }
+
     private static string GetOutputDirectory(ProjectManifest project, BuildSession session)
     {
-        var relativeDirectory = Path.GetRelativePath(session.BuildRootDirectory, project.DirectoryPath);
-        var directoryName = string.Equals(relativeDirectory, ".", StringComparison.Ordinal)
-            ? project.Name
-            : relativeDirectory
-                .Replace(Path.DirectorySeparatorChar, '_')
-                .Replace(Path.AltDirectorySeparatorChar, '_');
         return Path.Combine(
-            session.BuildRootDirectory,
-            ".stark",
-            "build",
+            GetStageRootDirectory(session),
+            project.Kind == ProjectKind.Test ? "tests" : "bin",
+            GetProjectArtifactDirectoryName(project, session));
+    }
+
+    private static string GetIntermediateDirectory(ProjectManifest project, BuildSession session)
+    {
+        return Path.Combine(
+            GetStageRootDirectory(session),
+            "obj",
+            GetProjectArtifactDirectoryName(project, session));
+    }
+
+    private static string GetPackageDirectory(ProjectManifest project, BuildSession session)
+    {
+        return Path.Combine(
+            GetStageRootDirectory(session),
+            "pkg",
+            GetProjectArtifactDirectoryName(project, session));
+    }
+
+    private static string GetPackageImagePath(ProjectManifest project, BuildSession session)
+    {
+        return Path.Combine(GetPackageDirectory(project, session), GetPackageImageFileName(project));
+    }
+
+    private static string GetPackageImageFileName(ProjectManifest project)
+    {
+        return $"lib{project.OutputName}.starkpkg.json";
+    }
+
+    private static string GetStageStdlibDirectory(BuildSession session)
+    {
+        return Path.Combine(GetStageRootDirectory(session), "stdlib");
+    }
+
+    private static IReadOnlyList<StdlibSearchPath> GetStdlibSearchPaths(BuildSession session)
+    {
+        var paths = new List<StdlibSearchPath>();
+        var stageStdlibDirectory = GetStageStdlibDirectory(session);
+        paths.Add(new StdlibSearchPath(
+            "stage/build-local",
+            Path.GetFullPath(stageStdlibDirectory),
+            IncludeInCompilerSearch: true,
+            Directory.Exists(stageStdlibDirectory) ? "present" : "missing"));
+        AddDevelopmentStdlibSearchPaths(session.BuildRootDirectory, paths);
+        AddInstalledStdlibSearchPaths(AppContext.BaseDirectory, paths);
+        return paths;
+    }
+
+    private static void AddDevelopmentStdlibSearchPaths(string buildRootDirectory, List<StdlibSearchPath> paths)
+    {
+        foreach (var stdlibDirectory in GetDevelopmentStdlibRootCandidates(buildRootDirectory))
+        {
+            if (IsDevelopmentStdlibDirectory(stdlibDirectory))
+            {
+                AddStdlibSearchDirectories(stdlibDirectory, "repo development", paths);
+                return;
+            }
+
+            paths.Add(new StdlibSearchPath(
+                "repo development",
+                Path.GetFullPath(stdlibDirectory),
+                IncludeInCompilerSearch: false,
+                Directory.Exists(stdlibDirectory) ? "not a stdlib project" : "missing"));
+        }
+    }
+
+    private static bool IsDevelopmentStdlibDirectory(string path)
+    {
+        return File.Exists(Path.Combine(path, ProjectManifestFileName))
+            && (Directory.Exists(Path.Combine(path, "dist"))
+                || Directory.Exists(Path.Combine(path, "src")));
+    }
+
+    private static IEnumerable<string> GetDevelopmentStdlibRootCandidates(string buildRootDirectory)
+    {
+        var yielded = new HashSet<string>(StringComparer.Ordinal);
+        var directory = new DirectoryInfo(Path.GetFullPath(buildRootDirectory));
+        while (directory is not null)
+        {
+            if (string.Equals(directory.Name, "stdlib", StringComparison.OrdinalIgnoreCase)
+                && TryYieldDirectory(directory.FullName, yielded, out var self))
+            {
+                yield return self;
+            }
+
+            var childStdlibDirectory = Path.Combine(directory.FullName, "stdlib");
+            if (TryYieldDirectory(childStdlibDirectory, yielded, out var child))
+            {
+                yield return child;
+            }
+
+            directory = directory.Parent;
+        }
+    }
+
+    private static void AddInstalledStdlibSearchPaths(string compilerBaseDirectory, List<StdlibSearchPath> paths)
+    {
+        foreach (var stdlibDirectory in GetInstalledStdlibRootCandidates(compilerBaseDirectory))
+        {
+            AddStdlibSearchDirectories(stdlibDirectory, "installed bundle", paths);
+        }
+    }
+
+    private static IEnumerable<string> GetInstalledStdlibRootCandidates(string compilerBaseDirectory)
+    {
+        var baseDirectory = Path.GetFullPath(compilerBaseDirectory);
+        yield return Path.Combine(baseDirectory, "stdlib");
+
+        var parentDirectory = Directory.GetParent(baseDirectory);
+        if (parentDirectory is not null)
+        {
+            yield return Path.Combine(parentDirectory.FullName, "stdlib");
+        }
+    }
+
+    private static void AddStdlibSearchDirectories(string stdlibDirectory, string tier, List<StdlibSearchPath> paths)
+    {
+        if (!Directory.Exists(stdlibDirectory))
+        {
+            paths.Add(new StdlibSearchPath(
+                tier,
+                Path.GetFullPath(stdlibDirectory),
+                IncludeInCompilerSearch: false,
+                "missing"));
+            return;
+        }
+
+        var includedAny = false;
+        var distDirectory = Path.Combine(stdlibDirectory, "dist");
+        if (ContainsPackageImages(distDirectory))
+        {
+            AddDistinctSearchPath(paths, tier, distDirectory, "package images");
+            includedAny = true;
+        }
+        else if (Directory.Exists(distDirectory))
+        {
+            paths.Add(new StdlibSearchPath(
+                tier,
+                Path.GetFullPath(distDirectory),
+                IncludeInCompilerSearch: false,
+                "no package images"));
+        }
+
+        if (ContainsPackageImages(stdlibDirectory, SearchOption.TopDirectoryOnly))
+        {
+            AddDistinctSearchPath(paths, tier, stdlibDirectory, "package images");
+            includedAny = true;
+        }
+
+        var sourceDirectory = Path.Combine(stdlibDirectory, "src");
+        if (Directory.Exists(sourceDirectory))
+        {
+            AddDistinctSearchPath(paths, tier, sourceDirectory, "source tree");
+            includedAny = true;
+        }
+
+        if (!includedAny && !Directory.Exists(distDirectory) && !Directory.Exists(sourceDirectory))
+        {
+            paths.Add(new StdlibSearchPath(
+                tier,
+                Path.GetFullPath(stdlibDirectory),
+                IncludeInCompilerSearch: false,
+                "no dist package images or src tree"));
+        }
+    }
+
+    private static bool ContainsPackageImages(string directory, SearchOption searchOption = SearchOption.AllDirectories)
+    {
+        return Directory.Exists(directory)
+            && Directory.EnumerateFiles(directory, "*.starkpkg.json", searchOption).Any();
+    }
+
+    private static void AddDistinctSearchPath(List<StdlibSearchPath> paths, string tier, string directory, string state)
+    {
+        var fullPath = Path.GetFullPath(directory);
+        if (!paths.Any(path => string.Equals(path.Path, fullPath, StringComparison.Ordinal)
+                               && path.IncludeInCompilerSearch))
+        {
+            paths.Add(new StdlibSearchPath(tier, fullPath, IncludeInCompilerSearch: true, state));
+        }
+    }
+
+    private static bool TryYieldDirectory(string directory, HashSet<string> yielded, out string fullPath)
+    {
+        fullPath = Path.GetFullPath(directory);
+        return yielded.Add(fullPath);
+    }
+
+    private static bool ShouldWriteStdlibDiscoveryFailure(string compilerStderr)
+    {
+        return compilerStderr.Contains("Unable to resolve imported module 'System.", StringComparison.Ordinal)
+            || compilerStderr.Contains("Unable to resolve imported module \"System.", StringComparison.Ordinal);
+    }
+
+    private static async Task WriteStdlibDiscoveryFailureAsync(BuildSession session, IReadOnlyList<StdlibSearchPath> paths)
+    {
+        await session.Stderr.WriteLineAsync("Stark stdlib discovery failed while resolving a System.* import.");
+        await session.Stderr.WriteLineAsync(
+            $"Active stdlib context: profile={(session.Profile == BuildProfile.Release ? "release" : "dev")}, target={session.TargetTriple}, stage={session.StageName}");
+        await session.Stderr.WriteLineAsync("Searched stdlib paths:");
+
+        foreach (var path in paths)
+        {
+            var marker = path.IncludeInCompilerSearch ? "included" : "checked";
+            await session.Stderr.WriteLineAsync($"  - {path.Tier}: {path.Path} ({marker}, {path.State})");
+        }
+    }
+
+    private static string GetStageRootDirectory(BuildSession session)
+    {
+        return Path.Combine(
+            GetBuildDirectory(session.BuildRootDirectory),
             session.Profile == BuildProfile.Release ? "release" : "dev",
-            directoryName);
+            NormalizeBuildPathSegment(session.TargetTriple),
+            session.StageName);
+    }
+
+    private static string GetCleanPath(CleanSession session, CleanScope scope)
+    {
+        var profilePath = Path.Combine(
+            GetBuildDirectory(session.BuildRootDirectory),
+            session.Profile == BuildProfile.Release ? "release" : "dev");
+
+        if (scope == CleanScope.Profile)
+        {
+            return profilePath;
+        }
+
+        var targetPath = Path.Combine(profilePath, NormalizeBuildPathSegment(session.TargetTriple!));
+        if (scope == CleanScope.Target)
+        {
+            return targetPath;
+        }
+
+        var stagePath = Path.Combine(targetPath, session.StageName);
+        return scope switch
+        {
+            CleanScope.Stage => stagePath,
+            CleanScope.Diagnostics => Path.Combine(stagePath, "diagnostics"),
+            CleanScope.Artifacts => Path.Combine(stagePath, "artifacts"),
+            _ => throw new InvalidOperationException($"Unhandled clean scope '{scope}'.")
+        };
+    }
+
+    private static string GetBuildDirectory(string buildRootDirectory)
+    {
+        return Path.Combine(buildRootDirectory, ".stark", "build");
+    }
+
+    private static bool IsPathInsideBuildDirectory(string path, string buildDirectory)
+    {
+        var fullPath = Path.GetFullPath(path);
+        var fullBuildDirectory = Path.GetFullPath(buildDirectory);
+        var relativePath = Path.GetRelativePath(fullBuildDirectory, fullPath);
+        return !string.IsNullOrWhiteSpace(relativePath)
+            && relativePath != "."
+            && !relativePath.StartsWith("..", StringComparison.Ordinal)
+            && !Path.IsPathRooted(relativePath);
+    }
+
+    private static string GetProjectArtifactDirectoryName(ProjectManifest project, BuildSession session)
+    {
+        var relativeDirectory = Path.GetRelativePath(session.BuildRootDirectory, project.DirectoryPath);
+        return string.Equals(relativeDirectory, ".", StringComparison.Ordinal)
+            ? NormalizeBuildPathSegment(project.Name)
+            : NormalizeBuildPathSegment(relativeDirectory);
+    }
+
+    private static string NormalizeBuildPathSegment(string value)
+    {
+        var builder = new StringBuilder(value.Length);
+        foreach (var ch in value.Trim())
+        {
+            if (char.IsAsciiLetterOrDigit(ch) || ch is '-' or '_' or '.' or '+')
+            {
+                builder.Append(ch);
+            }
+            else
+            {
+                builder.Append('_');
+            }
+        }
+
+        return builder.Length == 0 ? "_" : builder.ToString();
     }
 
     private static string GetOutputPath(ProjectManifest project, string outputDirectory)
@@ -1074,10 +1532,46 @@ internal static class ProjectCliDriver
             "build" => ProjectCommand.Build,
             "run" => ProjectCommand.Run,
             "test" => ProjectCommand.Test,
+            "clean" => ProjectCommand.Clean,
             _ => ProjectCommand.None
         };
 
         return command != ProjectCommand.None;
+    }
+
+    private static bool TryResolveCleanScope(string? scopeName, TextWriter stderr, out CleanScope scope)
+    {
+        if (string.IsNullOrWhiteSpace(scopeName))
+        {
+            scope = CleanScope.Stage;
+            return true;
+        }
+
+        scope = scopeName.Trim() switch
+        {
+            "stage" => CleanScope.Stage,
+            "target" => CleanScope.Target,
+            "profile" => CleanScope.Profile,
+            "diagnostics" => CleanScope.Diagnostics,
+            "artifacts" => CleanScope.Artifacts,
+            _ => CleanScope.None
+        };
+
+        if (scope != CleanScope.None)
+        {
+            return true;
+        }
+
+        stderr.WriteLine("Unknown clean scope. Expected stage, target, profile, diagnostics, or artifacts.");
+        return false;
+    }
+
+    private static bool RequiresTargetTriple(this CleanScope scope)
+    {
+        return scope is CleanScope.Target
+            or CleanScope.Stage
+            or CleanScope.Diagnostics
+            or CleanScope.Artifacts;
     }
 
     private sealed record DiscoveredManifest(
@@ -1098,6 +1592,8 @@ internal static class ProjectCliDriver
     private sealed record BuildSession(
         BuildProfile Profile,
         string BuildRootDirectory,
+        string TargetTriple,
+        string StageName,
         UserConfig UserConfig,
         IReadOnlyDictionary<BuildProfile, ProfileManifest> DefaultProfiles,
         IReadOnlyList<string> TestFilters,
@@ -1108,11 +1604,26 @@ internal static class ProjectCliDriver
         public Dictionary<string, BuildResult> BuildResults { get; } = new(StringComparer.Ordinal);
     }
 
+    private sealed record CleanSession(
+        BuildProfile Profile,
+        string BuildRootDirectory,
+        string? TargetTriple,
+        string StageName,
+        TextWriter Stdout,
+        TextWriter Stderr);
+
     private sealed record BuildResult(
         bool Success,
         ProjectManifest Project,
         string OutputDirectory,
-        string OutputPath);
+        string OutputPath,
+        string? PackageSearchDirectory);
+
+    private sealed record StdlibSearchPath(
+        string Tier,
+        string Path,
+        bool IncludeInCompilerSearch,
+        string State);
 
     private sealed record ProjectManifest(
         string ManifestPath,
@@ -1197,6 +1708,8 @@ internal static class ProjectCliDriver
     private sealed record ProjectCommandOptions(
         BuildProfile Profile,
         string? TargetName,
+        string? TargetTriple,
+        string StageName,
         bool ShowHelp,
         IReadOnlyList<string> TestFilters)
     {
@@ -1204,6 +1717,8 @@ internal static class ProjectCliDriver
         {
             var profile = BuildProfile.Dev;
             string? targetName = null;
+            string? targetTriple = null;
+            var stageName = "stage0";
             var showHelp = false;
             var testFilters = new List<string>();
 
@@ -1222,6 +1737,28 @@ internal static class ProjectCliDriver
                     case "--help":
                         showHelp = true;
                         break;
+                    case "--target":
+                        if (index + 1 >= args.Length || string.IsNullOrWhiteSpace(args[index + 1]))
+                        {
+                            stderr.WriteLine("--target requires a non-empty target triple.");
+                            return null;
+                        }
+
+                        targetTriple = args[++index].Trim();
+                        break;
+                    case "--stage":
+                        if (index + 1 >= args.Length || string.IsNullOrWhiteSpace(args[index + 1]))
+                        {
+                            stderr.WriteLine("--stage requires one of: stage0, stage1, stage2.");
+                            return null;
+                        }
+
+                        if (!TryParseStageName(args[++index], stderr, out stageName))
+                        {
+                            return null;
+                        }
+
+                        break;
                     case "--filter":
                         if (command != ProjectCommand.Test)
                         {
@@ -1238,6 +1775,29 @@ internal static class ProjectCliDriver
                         testFilters.Add(args[++index]);
                         break;
                     default:
+                        if (argument.StartsWith("--target=", StringComparison.Ordinal))
+                        {
+                            var value = argument["--target=".Length..].Trim();
+                            if (string.IsNullOrWhiteSpace(value))
+                            {
+                                stderr.WriteLine("--target requires a non-empty target triple.");
+                                return null;
+                            }
+
+                            targetTriple = value;
+                            break;
+                        }
+
+                        if (argument.StartsWith("--stage=", StringComparison.Ordinal))
+                        {
+                            if (!TryParseStageName(argument["--stage=".Length..], stderr, out stageName))
+                            {
+                                return null;
+                            }
+
+                            break;
+                        }
+
                         if (argument.StartsWith("--filter=", StringComparison.Ordinal))
                         {
                             if (command != ProjectCommand.Test)
@@ -1274,7 +1834,19 @@ internal static class ProjectCliDriver
                 }
             }
 
-            return new ProjectCommandOptions(profile, targetName, showHelp, testFilters);
+            return new ProjectCommandOptions(profile, targetName, targetTriple, stageName, showHelp, testFilters);
+        }
+
+        private static bool TryParseStageName(string value, TextWriter stderr, out string stageName)
+        {
+            stageName = value.Trim();
+            if (stageName is "stage0" or "stage1" or "stage2")
+            {
+                return true;
+            }
+
+            stderr.WriteLine("--stage requires one of: stage0, stage1, stage2.");
+            return false;
         }
     }
 
@@ -1293,7 +1865,18 @@ internal static class ProjectCliDriver
         None,
         Build,
         Run,
-        Test
+        Test,
+        Clean
+    }
+
+    private enum CleanScope
+    {
+        None,
+        Profile,
+        Target,
+        Stage,
+        Diagnostics,
+        Artifacts
     }
 
     private enum ProjectKind

@@ -35,8 +35,9 @@ The standard library provides:
 - owned heap-backed collections
 - minimal thread management
 - minimal blocking TCP
-- public process id/exit plus Linux-backed process spawn/capture/env/argv helpers
-- explicit test-project assertion helpers
+- public process id/exit plus Linux-backed process spawn/capture with optional
+  stdin input, env, and argv helpers
+- explicit test-project assertion and process-output helpers
 - text encoding support
 - a small dynamic-memory contract for owned standard-library containers
 - a platform abstraction layer that avoids stdio and keeps Linux syscall shims,
@@ -83,6 +84,7 @@ Repository source layout:
 - `stdlib/src/System/Compiler/IntegerFacts.stark`
 - `stdlib/src/System/Console.stark`
 - `stdlib/src/System/Collections.stark`
+- `stdlib/src/System/Core.stark`
 - `stdlib/src/System/FileSystem.stark`
 - `stdlib/src/System/IO.stark`
 - `stdlib/src/System/IO/File.stark`
@@ -112,6 +114,7 @@ Current public module surface:
 - `System.Compiler.IntegerFacts`
 - `System.Console`
 - `System.Collections`
+- `System.Core`
 - `System.FileSystem`
 - `System.IO`
 - `System.IO.File`
@@ -146,6 +149,7 @@ syscall support needed during package build:
 ```stark
 import System.Runtime
 import System.Syscall
+import System.Core
 import System.Testing
 export import System.BitOperations
 export import System.Collections
@@ -165,7 +169,8 @@ module System
 
 The repository `System` root now re-exports the implemented source slices for
 `System.Memory`, `System.Collections`, `System.FileSystem`, `System.Threading`,
-`System.Process` process id/exit and Linux-backed spawn/capture/env/argv surface,
+`System.Process` process id/exit and Linux-backed spawn/capture with optional
+stdin input, timeout capture, env/argv surface,
 the foundational `System.Net` value/result surface, and the
 initial `System.Net.Tcp` owned lifecycle, `TcpClient.Connect`,
 `TcpClient.Read`, `TcpClient.Write`, `TcpClient.Shutdown`,
@@ -225,7 +230,7 @@ public enum IOStatus
 
 `IOStatus` exists because Stark does not treat `void` as a first-class value type. Value-returning APIs use `IOResult<T>`. Effect-only APIs use `IOStatus`.
 
-`System.Text` is the public text module. It declares the shared encoding enum plus the current owned-text helper APIs for view projection, explicit runtime conversion, concatenation, formatting, parsing, and allocation-visible owned text convenience:
+`System.Text` is the public text module. It declares the shared encoding enum plus the current owned-text helper APIs for view projection, byte-slice-to-ASCII scans, explicit runtime conversion, concatenation, formatting, parsing, and allocation-visible owned text convenience:
 
 ```stark
 module System.Text
@@ -265,7 +270,7 @@ public struct OwnedUnicode
 public struct OwnedUtf16
 {
     finite law i64 Length(borrow OwnedUtf16 self);
-    finite i16[] AsSlice(borrow OwnedUtf16 self);
+    finite law i16[] AsSlice(borrow OwnedUtf16 self);
 }
 
 public finite law ascii AsciiView(Ascii source);

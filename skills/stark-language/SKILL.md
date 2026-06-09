@@ -1069,7 +1069,7 @@ Raw pointers and `storeborrow` fields deny both laws by default. `System.Threadi
 
 ## Standard Library
 
-Import standard-library modules explicitly when it improves readability. The root `System` module re-exports the common public modules, while `System.Text`, `System.Testing`, and `System.Runtime.Buffer` are usually imported directly when needed.
+Import standard-library modules explicitly when it improves readability. The root `System` module re-exports the common public modules and exposes `System.Option<T>` / `System.Result<T, E>` as aliases over `System.Core`; `System.Text`, `System.Testing`, and `System.Runtime.Buffer` are usually imported directly when needed.
 
 Public modules:
 
@@ -1077,16 +1077,17 @@ Public modules:
 - `System.C`: C primitive aliases, null-terminated C string views/owners/buffers, and foreign-owned C string copy/dispose helpers
 - `System.Collections`: `List`, `Stack`, `Queue`, `RingQueue`, `Dictionary`, `HashSet`, `LinkedList`, `Lookup`, `SortBy<T>`, `Sort<T>`, and canonical `Eq`/`Hash`/`Ord`/`Format` contracts
 - `System.Console`: console reads/writes for text, slices, and byte buffers
+- `System.Core`: canonical `Option<T>` and `Result<T, E>` enum definitions backing the root aliases
 - `System.FileSystem`: directories, entry information, existence/type checks, move/delete, cross-platform metadata, temp directories, recursive walk, and streaming glob traversal
 - `System.IO` / `System.IO.File` / `System.IO.Path`: IO result types, owned files, whole-file text/byte helpers, atomic whole-file replacement helpers, line-oriented file reading, current/temp directory queries, glob matching, multi-part path joins, explicit temp name/path candidate helpers, path facts, full/lexical path shaping, and extension rewriting
 - `System.Compiler.IntegerFacts`: bounded `i1024`/`u1024` compiler integer-fact helpers for range, storage, tag, checked arithmetic, known-bit, and two's-complement reasoning
 - `System.Math`: float math including trig, `SinCos`, `Exp`/`Log`/`Pow`, min/max/rounding, fused multiply-add, reciprocal estimates, `XorShift32`
 - `System.Memory`: dynamic-storage reserve/append/copy/move/fill helpers
 - `System.Net` / `System.Net.Tcp`: network result types, IPv4 endpoints, TCP clients/listeners
-- `System.Process`: process id/exit, Linux-backed command spawn with stdout/stderr/exit-code capture, inherited environment reads, child environment mutation, cwd get/set, and argv/argc access
+- `System.Process`: process id/exit, Linux-backed command spawn with optional stdin, timeout, and stdout/stderr/exit-code capture, inherited environment reads, child environment mutation, cwd get/set, and argv/argc access
 - `System.Runtime.Buffer`: fixed and dynamic byte buffers
-- `System.Testing`: explicit test helpers with boolean/equality, text contains/starts/ends, range, slice/List shape, temp fixture helpers, snapshot/golden text helpers, status, and `RunFact`/exit-code helpers used by generated `[Fact]` runners
-- `System.Text`: owned text, encoding conversion, parsing, formatting
+- `System.Testing`: explicit test helpers with finite-law boolean/equality, text contains/starts/ends/occurrence counts, range, slice/List shape, root `Option`/`Result` shape predicates, structured diagnostic predicates, compile-time type assertion predicates, process output assertions/counts, effectful run-match/timeout helpers, temp fixture helpers, snapshot/golden text helpers, status, and `RunFact`/`SkipFact`/exit-code helpers used by generated `[Fact]` / `[Theory]` runners with inline data, typed indexed member-data providers, build-time platform gates, and serial collection grouping. Pure local test predicates and pure `[Fact]` / `[Theory]` bodies should also be `finite law`; keep fixture IO, process execution, output, and owned result consumption as plain `fn` unless their full callees and ownership effects justify stronger contracts.
+- `System.Text`: owned text, text contains/starts/ends/occurrence scans, byte-slice-to-ASCII scans, encoding conversion, parsing, formatting
 - `System.Threading`: no-payload and explicit payload thread starts, joins, detach, yield, sleep; atomic types (`AtomicBool`, `AtomicI8`…`AtomicI1024`, `AtomicU8`…`AtomicU1024`) for safe seq-cst counters/flags; `Synchronized<T>` / `Locked<T>` for explicit guarded shared mutable state
 
 **Sharing state between threads**: functions reachable from a `ThreadEntry` or `ThreadPayloadEntry<T>` may touch a `static mut` only when the static is synchronization-backed: use an atomic type for scalar state or `Synchronized<T>` for guarded aggregate state. There is no atomic qualifier keyword and no hidden synchronized assignment/member access. One atomic struct exists per integer width plus `AtomicBool`; every operation is one indivisible seq-cst action. RMW operations (`Add`/`Sub`/`And`/`Or`/`Xor`/`Exchange`) return the **previous** value; `Add`/`Sub` wrap at the value width; `CompareExchange(expected, desired)` returns whether it swapped. Module-level declarations spell the qualified type name (unqualified imported types only resolve inside function bodies):
@@ -1127,8 +1128,10 @@ Use these bundled references when the task needs more detail while staying self-
 - [`references/borrower-recipes.md`](references/borrower-recipes.md): choosing `borrow`, `mut borrow`, `retborrow`, `storeborrow`, `frozen`, `const`, `out`, `init`, raw pointers, and memory contracts.
 - [`references/callables-closures-reference.md`](references/callables-closures-reference.md): function items, `fnptr`, lambdas, inline closures, borrowed closures, heap closures, once closures, and thread entries.
 - [`references/assembly-functions-reference.md`](references/assembly-functions-reference.md): `unsafe ffi asm(arch) fn`, operands, clobbers, target selection, supported types, and current lowering limits.
-- [`references/project-manifest-reference.md`](references/project-manifest-reference.md): `Stark.toml`, `Stark.solution.toml`, project kinds, profiles, dependencies, native metadata, and commands.
+- [`references/project-manifest-reference.md`](references/project-manifest-reference.md): `Stark.toml`, `Stark.solution.toml`, project kinds, profiles, dependencies, package/source-root resolver precedence, native metadata, and commands.
+- [`references/compiler-test-harness-reference.md`](references/compiler-test-harness-reference.md): host compiler test protocol, persistent server mode, structured diagnostics, pass execution records, and artifact text inspection.
 - [`references/ffi-native-layout-reference.md`](references/ffi-native-layout-reference.md): FFI declarations, `export`, raw pointer regions, ABI-facing layout, enum tags, safe wrappers, and native package metadata.
+- [`references/llvm-metadata-reference.md`](references/llvm-metadata-reference.md): LLVM metadata and address-emission contracts, including TBAA roots, no-op GEP aliasing, and the narrow rule for `!invariant.load` versus `llvm.invariant.start`.
 - [`references/performance-cookbook.md`](references/performance-cookbook.md): source-level performance recipes for kernels, non-overlap, independent loops, raw regions, `const`, allocation, numeric policy, and benchmarks.
 - [`references/diagnostics-guide.md`](references/diagnostics-guide.md): common diagnostic categories and source-level fixes.
 - [`references/examples-cookbook.md`](references/examples-cookbook.md): portable embedded examples for common Stark patterns.
@@ -1158,7 +1161,7 @@ opt = 0
 opt = 3
 ```
 
-Project kinds are `executable`, `library`, and `test`. A test project compiles to an executable. Test roots that contain `[Fact]` metadata use a build-time generated explicit `main`; do not write a manual `main` in those roots. A `[Fact]` is a non-generic, no-argument `bool` function with a body, either top-level or a `static` method on a struct/record. Manual `main` runners are only for no-`[Fact]` bootstrap tests.
+Project kinds are `executable`, `library`, and `test`. A test project compiles to an executable. Test roots that contain `[Fact]` or `[Theory]` metadata use a build-time generated explicit `main`; do not write a manual `main` in those roots. A `[Fact]` is a non-generic, no-argument `bool` function with a body, either top-level or a `static` method on a struct/record. A `[Theory]` follows the same rules but may take parameters and must have one or more data rows from `[InlineData(...)]` or typed indexed `[MemberData(provider, rowType, count, ...fields)]`; inline data supports strings, booleans, signed integers, and qualified names. Member-data providers are called once per selected row with the zero-based row index and return a typed row record/struct; optional field names map row fields to parameters by order. Use `[Platform(...)]` and `[SkipPlatform(...)]` on facts, theories, structs, or records for target-triple gates; selectors can be OS names, architecture names, `os.arch` pairs, or exact target triple strings. Use `[Collection(name)]` for shared-resource serial groups and `[Serial]` as shorthand for `[Collection("Serial")]`; tests in the same named collection are emitted contiguously in the generated runner. Manual `main` runners are only for bootstrap tests with no generated test metadata.
 
 Use `Stark.solution.toml` for multi-project repos:
 
@@ -1185,9 +1188,24 @@ stark run
 stark test
 stark test --filter Parser
 stark build app --release
+stark build --target x86_64-unknown-linux-gnu --stage stage0
+stark clean stage --target x86_64-unknown-linux-gnu
+stark clean profile
 ```
 
-Manifest discovery searches upward. The nearest `Stark.toml` runs in project mode; the nearest `Stark.solution.toml` runs in solution mode.
+For self-host prep tests that target the current C# host compiler, prefer the
+structured host-test protocol over scraping CLI text. Use
+`compiler --host-test-inspect request.json` for one-off inspection and
+`compiler --host-test-server` for large newline-delimited batches. Requests can
+compile `sourceText` or `sourcePath`, stop after a pass, return structured
+diagnostics/logs/pass executions, render selected LLVM/MIR/SSA artifacts, and
+write large artifacts or diagnostics to files while keeping JSON responses
+small. Stark-side batched tests can drive server stdin with
+`System.Process.RunCaptureWithInput` or bounded server calls with
+`System.Process.RunCaptureWithInputTimeout`.
+See `references/compiler-test-harness-reference.md`.
+
+Manifest discovery searches upward. The nearest `Stark.toml` runs in project mode; the nearest `Stark.solution.toml` runs in solution mode. Project commands route current host outputs through `.stark/build/<profile>/<target-triple>/stage0/`: executables/libraries under `bin/<project>/`, saved native intermediates under `obj/<project>/`, library package images under `pkg/<project>/`, and generated test runners/test executables under `tests/<project>/`. Project builds search the active stage's `stdlib/` directory for stage-local `System` artifacts, then nearest repo `stdlib/dist` package images, then nearest repo `stdlib/src` source for source-tree development, then bundled stdlib artifacts next to the active compiler distribution; they ignore `STARK_PATH`, which remains a low-level direct compiler search-path escape hatch. If a `System.*` import cannot be resolved, project builds report the searched stdlib paths plus active profile, target, and stage. `--target <triple>` sets both codegen target and output path; `--stage stage0` selects the current C# host stage, while Stage1/Stage2 execution remains future self-hosting work. `stark clean` defaults to the active stage scope and also supports explicit `profile`, `target`, `diagnostics`, and `artifacts` scopes.
 
 Native-backed packages keep native metadata in the package manifest:
 
@@ -1209,7 +1227,7 @@ Machine-local paths belong in user config, such as `~/.config/stark/config.toml`
 raylib-src = "/path/to/raylib/src"
 ```
 
-Build outputs live under `.stark/build/dev`, `.stark/build/release`, `.stark/cache`, and `.stark/packages`.
+Build outputs live under `.stark/build/<profile>/<target-triple>/stage0/` today, with executables/libraries in `bin/<project>/`, saved native intermediates in `obj/<project>/`, library package images in `pkg/<project>/`, generated test runners/test executables in `tests/<project>/`, stage-local stdlib lookup under `stdlib/`, repo development stdlib lookup through nearest `stdlib/dist` then `stdlib/src`, and installed bundled stdlib lookup next to the compiler distribution. Project builds ignore `STARK_PATH`; low-level direct compiler invocations may still use it unless `--no-stark-path` is passed. Cache and package-manager work may also use `.stark/cache` and `.stark/packages`.
 
 ## Style
 

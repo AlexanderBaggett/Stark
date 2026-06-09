@@ -4707,6 +4707,18 @@ internal sealed class SemanticValidator
     private StarkTypeSymbol ResolveGenericQualifiedName(StarkParser.GenericQualifiedNameContext genericQualifiedName)
     {
         var baseName = genericQualifiedName.qualifiedName().GetText();
+        if (_typeResolver.TryResolveGenericTypeAlias(
+                baseName,
+                CurrentModuleName,
+                genericQualifiedName.qualifiedName().Start,
+                genericQualifiedName.typeArgumentList(),
+                _currentFunctionGenericParameters,
+                _currentFunctionComptimeGenericParameters,
+                out var aliasType))
+        {
+            return aliasType;
+        }
+
         var baseType = _typeResolver.ResolveQualifiedType(
             baseName,
             _currentFunctionGenericParameters,
@@ -7552,7 +7564,8 @@ internal sealed class SemanticValidator
             GuaranteedReadOnly = parameter.IsConst || DeriveGuaranteedReadOnly(parameter.Type);
             GuaranteedWriteOnly = parameter.Type.InitializationKind != StarkInitializationKind.None;
             GuaranteedNoAlias = DeriveGuaranteedNoAlias(parameter, parameters, disjointGroups);
-            var concreteLayout = ConcreteTypeLayoutHelper.TryGetConcreteTypeLayout(parameter.Type, namedTypes, enumLayouts);
+            var layoutType = GetParameterDereferenceableLayoutType(parameter.Type);
+            var concreteLayout = ConcreteTypeLayoutHelper.TryGetConcreteTypeLayout(layoutType, namedTypes, enumLayouts);
             DereferenceableBytes = GuaranteedNonNull && concreteLayout is not null ? concreteLayout.SizeBytes : null;
             AlignmentBytes = GuaranteedNonNull && concreteLayout is not null ? concreteLayout.AlignmentBytes : null;
         }
@@ -7645,6 +7658,13 @@ internal sealed class SemanticValidator
             }
 
             return changed;
+        }
+
+        private static StarkTypeSymbol GetParameterDereferenceableLayoutType(StarkTypeSymbol type)
+        {
+            return StarkTypeSymbols.IsPointerBackedBorrowType(type)
+                ? StarkTypeSymbols.BorrowReturnValueType(type)
+                : type;
         }
     }
 

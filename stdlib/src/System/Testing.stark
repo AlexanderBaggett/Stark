@@ -7,6 +7,7 @@ import System.Memory
 import System.Process
 import System.Text
 import System.Collections
+import System.Core
 module System.Testing
 
 public enum TestStatus
@@ -31,6 +32,33 @@ public enum SnapshotResult
     Missing,
     Different(SnapshotDifference),
     Err(System.IO.IOError),
+}
+
+public enum DiagnosticSeverity
+{
+    Info,
+    Warning,
+    Error,
+}
+
+public struct DiagnosticLocation
+{
+    bool HasValue;
+    ascii FilePath;
+    u64[0 2 ** 63 - 1] Line;
+    u64[0 2 ** 63 - 1] Column;
+    bool HasEndValue;
+    u64[0 2 ** 63 - 1] EndLine;
+    u64[0 2 ** 63 - 1] EndColumn;
+}
+
+public struct Diagnostic
+{
+    ascii Code;
+    DiagnosticSeverity Severity;
+    ascii Message;
+    ascii Stage;
+    DiagnosticLocation Location;
 }
 
 public struct TempDirectory
@@ -340,7 +368,7 @@ internal finite law SnapshotResult SnapshotDifferent(
     return SnapshotResult.Different(difference);
 }
 
-public fn SnapshotResult CompareSnapshotText(borrow System.Text.OwnedAscii expected, ascii actual)
+public finite law SnapshotResult CompareSnapshotText(borrow System.Text.OwnedAscii expected, ascii actual)
     where overlap(expected, actual)
 {
     if (System.Text.OwnedAsciiEqualsAscii(expected, actual))
@@ -556,12 +584,12 @@ public fn System.Memory.MemoryStatus AppendSnapshotDifference(
     return writer.AppendAscii(")");
 }
 
-public fn bool True(bool condition)
+public finite law bool True(bool condition)
 {
     return condition;
 }
 
-public fn bool False(bool condition)
+public finite law bool False(bool condition)
 {
     return !condition;
 }
@@ -573,225 +601,982 @@ public fn bool Fail(ascii message)
     return false;
 }
 
-public fn bool Equal(bool expected, bool actual)
+public finite law bool Equal(bool expected, bool actual)
 {
     return expected == actual;
 }
 
-public fn bool NotEqual(bool expected, bool actual)
+public finite law bool NotEqual(bool expected, bool actual)
 {
     return expected != actual;
 }
 
-public fn bool Equal(i32[min max] expected, i32[min max] actual)
+public finite law bool Equal(i32[min max] expected, i32[min max] actual)
 {
     return expected == actual;
 }
 
-public fn bool NotEqual(i32[min max] expected, i32[min max] actual)
+public finite law bool NotEqual(i32[min max] expected, i32[min max] actual)
 {
     return expected != actual;
 }
 
-public fn bool Equal(i64[min max] expected, i64[min max] actual)
+public finite law bool Equal(i64[min max] expected, i64[min max] actual)
 {
     return expected == actual;
 }
 
-public fn bool NotEqual(i64[min max] expected, i64[min max] actual)
+public finite law bool NotEqual(i64[min max] expected, i64[min max] actual)
 {
     return expected != actual;
 }
 
-public fn bool Equal(u32[0 max] expected, u32[0 max] actual)
+public finite law bool Equal(u32[0 max] expected, u32[0 max] actual)
 {
     return expected == actual;
 }
 
-public fn bool NotEqual(u32[0 max] expected, u32[0 max] actual)
+public finite law bool NotEqual(u32[0 max] expected, u32[0 max] actual)
 {
     return expected != actual;
 }
 
-public fn bool Equal(u64[0 max] expected, u64[0 max] actual)
+public finite law bool Equal(u64[0 max] expected, u64[0 max] actual)
 {
     return expected == actual;
 }
 
-public fn bool NotEqual(u64[0 max] expected, u64[0 max] actual)
+public finite law bool NotEqual(u64[0 max] expected, u64[0 max] actual)
 {
     return expected != actual;
 }
 
-public fn bool Equal(ascii expected, ascii actual)
+public finite law bool Equal(ascii expected, ascii actual)
 {
     return expected == actual;
 }
 
-public fn bool NotEqual(ascii expected, ascii actual)
+public finite law bool NotEqual(ascii expected, ascii actual)
 {
     return expected != actual;
 }
 
-public fn bool Equal(unicode expected, unicode actual)
+public finite law bool Equal(unicode expected, unicode actual)
 {
     return expected == actual;
 }
 
-public fn bool NotEqual(unicode expected, unicode actual)
+public finite law bool NotEqual(unicode expected, unicode actual)
 {
     return expected != actual;
 }
 
-public fn bool InRange(i32[min max] min, i32[min max] max, i32[min max] actual)
+public finite law bool InRange(i32[min max] min, i32[min max] max, i32[min max] actual)
 {
     return min <= actual && actual <= max;
 }
 
-public fn bool InRange(i64[min max] min, i64[min max] max, i64[min max] actual)
+public finite law bool InRange(i64[min max] min, i64[min max] max, i64[min max] actual)
 {
     return min <= actual && actual <= max;
 }
 
-public fn bool InRange(u32[0 max] min, u32[0 max] max, u32[0 max] actual)
+public finite law bool InRange(u32[0 max] min, u32[0 max] max, u32[0 max] actual)
 {
     return min <= actual && actual <= max;
 }
 
-public fn bool InRange(u64[0 max] min, u64[0 max] max, u64[0 max] actual)
+public finite law bool InRange(u64[0 max] min, u64[0 max] max, u64[0 max] actual)
 {
     return min <= actual && actual <= max;
 }
 
-public fn bool NotInRange(i32[min max] min, i32[min max] max, i32[min max] actual)
+public finite law bool NotInRange(i32[min max] min, i32[min max] max, i32[min max] actual)
 {
     return actual < min || actual > max;
 }
 
-public fn bool NotInRange(i64[min max] min, i64[min max] max, i64[min max] actual)
+public finite law bool NotInRange(i64[min max] min, i64[min max] max, i64[min max] actual)
 {
     return actual < min || actual > max;
 }
 
-public fn bool NotInRange(u32[0 max] min, u32[0 max] max, u32[0 max] actual)
+public finite law bool NotInRange(u32[0 max] min, u32[0 max] max, u32[0 max] actual)
 {
     return actual < min || actual > max;
 }
 
-public fn bool NotInRange(u64[0 max] min, u64[0 max] max, u64[0 max] actual)
+public finite law bool NotInRange(u64[0 max] min, u64[0 max] max, u64[0 max] actual)
 {
     return actual < min || actual > max;
 }
 
-public fn bool Empty(ascii value)
+public finite law bool Empty(ascii value)
 {
     return System.Text.AsciiLength(value) == 0;
 }
 
-public fn bool Empty(unicode value)
+public finite law bool Empty(unicode value)
 {
     return System.Text.UnicodeLength(value) == 0;
 }
 
-public fn bool Empty<T>(borrow T[] values)
+public finite law bool Empty<T>(borrow T[] values)
 {
     return values.Length == 0;
 }
 
-public fn bool Empty<T>(borrow System.Collections.List<T> values)
+public finite law bool Empty<T>(borrow System.Collections.List<T> values)
 {
     return values.IsEmpty();
 }
 
-public fn bool NotEmpty(ascii value)
+public finite law bool NotEmpty(ascii value)
 {
     return System.Text.AsciiLength(value) != 0;
 }
 
-public fn bool NotEmpty(unicode value)
+public finite law bool NotEmpty(unicode value)
 {
     return System.Text.UnicodeLength(value) != 0;
 }
 
-public fn bool NotEmpty<T>(borrow T[] values)
+public finite law bool NotEmpty<T>(borrow T[] values)
 {
     return values.Length != 0;
 }
 
-public fn bool NotEmpty<T>(borrow System.Collections.List<T> values)
+public finite law bool NotEmpty<T>(borrow System.Collections.List<T> values)
 {
     return !values.IsEmpty();
 }
 
-public fn bool Single<T>(borrow T[] values)
+public finite law bool Single<T>(borrow T[] values)
 {
     return values.Length == 1;
 }
 
-public fn bool Single<T>(borrow System.Collections.List<T> values)
+public finite law bool Single<T>(borrow System.Collections.List<T> values)
 {
     return values.Count() == 1;
 }
 
-public fn bool Count<T>(u64[0 2 ** 63 - 1] expected, borrow T[] values)
+public finite law bool Count<T>(u64[0 2 ** 63 - 1] expected, borrow T[] values)
 {
     return values.Length == expected;
 }
 
-public fn bool Count<T>(u64[0 2 ** 63 - 1] expected, borrow System.Collections.List<T> values)
+public finite law bool Count<T>(u64[0 2 ** 63 - 1] expected, borrow System.Collections.List<T> values)
 {
     return values.Count() == expected;
 }
 
-public fn bool Contains(ascii value, ascii expected)
+public finite law bool Contains(ascii value, ascii expected)
     where overlap(value, expected)
 {
     return System.Text.Contains(value, expected);
 }
 
-public fn bool Contains(unicode value, unicode expected)
+public finite law bool Contains(unicode value, unicode expected)
     where overlap(value, expected)
 {
     return System.Text.Contains(value, expected);
 }
 
-public fn bool DoesNotContain(ascii value, ascii expected)
+public finite law bool DoesNotContain(ascii value, ascii expected)
     where overlap(value, expected)
 {
     return !System.Text.Contains(value, expected);
 }
 
-public fn bool DoesNotContain(unicode value, unicode expected)
+public finite law bool DoesNotContain(unicode value, unicode expected)
     where overlap(value, expected)
 {
     return !System.Text.Contains(value, expected);
 }
 
-public fn bool StartsWith(ascii value, ascii expected)
+public finite law bool StartsWith(ascii value, ascii expected)
     where overlap(value, expected)
 {
     return System.Text.StartsWith(value, expected);
 }
 
-public fn bool StartsWith(unicode value, unicode expected)
+public finite law bool StartsWith(unicode value, unicode expected)
     where overlap(value, expected)
 {
     return System.Text.StartsWith(value, expected);
 }
 
-public fn bool EndsWith(ascii value, ascii expected)
+public finite law bool EndsWith(ascii value, ascii expected)
     where overlap(value, expected)
 {
     return System.Text.EndsWith(value, expected);
 }
 
-public fn bool EndsWith(unicode value, unicode expected)
+public finite law bool EndsWith(unicode value, unicode expected)
     where overlap(value, expected)
 {
     return System.Text.EndsWith(value, expected);
 }
 
-public fn TestStatus Status(bool assertion)
+public finite law u64[0 2 ** 63 - 1] CountOccurrences(ascii value, ascii needle)
+    where overlap(value, needle)
+{
+    return System.Text.CountOccurrences(value, needle);
+}
+
+public finite law u64[0 2 ** 63 - 1] CountOccurrences(unicode value, unicode needle)
+    where overlap(value, needle)
+{
+    return System.Text.CountOccurrences(value, needle);
+}
+
+public finite law bool Occurrences(u64[0 2 ** 63 - 1] expected, ascii value, ascii needle)
+    where overlap(value, needle)
+{
+    return CountOccurrences(value, needle) == expected;
+}
+
+public finite law bool Occurrences(u64[0 2 ** 63 - 1] expected, unicode value, unicode needle)
+    where overlap(value, needle)
+{
+    return CountOccurrences(value, needle) == expected;
+}
+
+public inline finite law bool DiagnosticCode(ascii expected, borrow Diagnostic diagnostic)
+    where overlap(expected, diagnostic)
+{
+    return diagnostic.Code == expected;
+}
+
+inline finite law u8[0 2] DiagnosticSeverityRank(DiagnosticSeverity severity)
+{
+    switch (severity)
+    {
+        case DiagnosticSeverity.Info:
+            return 0;
+        case DiagnosticSeverity.Warning:
+            return 1;
+        case DiagnosticSeverity.Error:
+            return 2;
+    }
+
+    return 2;
+}
+
+public inline finite law bool DiagnosticSeverityIs(DiagnosticSeverity expected, borrow Diagnostic diagnostic)
+{
+    return DiagnosticSeverityRank(diagnostic.Severity) == DiagnosticSeverityRank(expected);
+}
+
+public inline finite law bool DiagnosticStage(ascii expected, borrow Diagnostic diagnostic)
+    where overlap(expected, diagnostic)
+{
+    return diagnostic.Stage == expected;
+}
+
+public inline finite law bool DiagnosticMessageEqual(ascii expected, borrow Diagnostic diagnostic)
+    where overlap(expected, diagnostic)
+{
+    return diagnostic.Message == expected;
+}
+
+public inline finite law bool DiagnosticMessageContains(borrow Diagnostic diagnostic, ascii expected)
+    where overlap(diagnostic, expected)
+{
+    return System.Text.Contains(diagnostic.Message, expected);
+}
+
+public inline finite law bool DiagnosticHasLocation(borrow Diagnostic diagnostic)
+{
+    return diagnostic.Location.HasValue;
+}
+
+public inline finite law bool DiagnosticHasEndLocation(borrow Diagnostic diagnostic)
+{
+    return diagnostic.Location.HasValue && diagnostic.Location.HasEndValue;
+}
+
+public inline finite law bool DiagnosticFilePath(ascii expected, borrow Diagnostic diagnostic)
+    where overlap(expected, diagnostic)
+{
+    return diagnostic.Location.HasValue && diagnostic.Location.FilePath == expected;
+}
+
+public inline finite law bool DiagnosticAt(
+    borrow Diagnostic diagnostic,
+    u64[0 2 ** 63 - 1] line,
+    u64[0 2 ** 63 - 1] column)
+{
+    return diagnostic.Location.HasValue
+        && diagnostic.Location.Line == line
+        && diagnostic.Location.Column == column;
+}
+
+public inline finite law bool DiagnosticEndsAt(
+    borrow Diagnostic diagnostic,
+    u64[0 2 ** 63 - 1] endLine,
+    u64[0 2 ** 63 - 1] endColumn)
+{
+    return diagnostic.Location.HasValue
+        && diagnostic.Location.HasEndValue
+        && diagnostic.Location.EndLine == endLine
+        && diagnostic.Location.EndColumn == endColumn;
+}
+
+public inline finite law bool DiagnosticMatches(
+    borrow Diagnostic diagnostic,
+    ascii code,
+    DiagnosticSeverity severity,
+    ascii stage,
+    ascii messageContains)
+    where overlap(diagnostic, code),
+          overlap(diagnostic, stage),
+          overlap(diagnostic, messageContains),
+          overlap(code, stage),
+          overlap(code, messageContains),
+          overlap(stage, messageContains)
+{
+    return DiagnosticCode(code, diagnostic)
+        && DiagnosticSeverityIs(severity, diagnostic)
+        && DiagnosticStage(stage, diagnostic)
+        && DiagnosticMessageContains(diagnostic, messageContains);
+}
+
+public inline finite law bool DiagnosticMatchesAt(
+    borrow Diagnostic diagnostic,
+    ascii code,
+    DiagnosticSeverity severity,
+    ascii stage,
+    ascii messageContains,
+    u64[0 2 ** 63 - 1] line,
+    u64[0 2 ** 63 - 1] column)
+    where overlap(diagnostic, code),
+          overlap(diagnostic, stage),
+          overlap(diagnostic, messageContains),
+          overlap(code, stage),
+          overlap(code, messageContains),
+          overlap(stage, messageContains)
+{
+    return DiagnosticMatches(diagnostic, code, severity, stage, messageContains)
+        && DiagnosticAt(diagnostic, line, column);
+}
+
+public finite law bool DiagnosticsCount(
+    u64[0 2 ** 63 - 1] expected,
+    borrow Diagnostic[] diagnostics)
+{
+    return diagnostics.Length == expected;
+}
+
+public finite law bool DiagnosticsEmpty(borrow Diagnostic[] diagnostics)
+{
+    return diagnostics.Length == 0;
+}
+
+public finite law bool DiagnosticsNotEmpty(borrow Diagnostic[] diagnostics)
+{
+    return diagnostics.Length != 0;
+}
+
+public finite law bool DiagnosticsContainCode(borrow Diagnostic[] diagnostics, ascii code)
+    where overlap(diagnostics, code)
+{
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < diagnostics.Length)
+    {
+        if (DiagnosticCode(code, diagnostics[index]))
+        {
+            return true;
+        }
+
+        index += 1;
+    }
+
+    return false;
+}
+
+public finite law bool DiagnosticsContainMessage(borrow Diagnostic[] diagnostics, ascii messageContains)
+    where overlap(diagnostics, messageContains)
+{
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < diagnostics.Length)
+    {
+        if (DiagnosticMessageContains(diagnostics[index], messageContains))
+        {
+            return true;
+        }
+
+        index += 1;
+    }
+
+    return false;
+}
+
+public finite law bool DiagnosticsContain(
+    borrow Diagnostic[] diagnostics,
+    ascii code,
+    DiagnosticSeverity severity,
+    ascii stage,
+    ascii messageContains)
+    where overlap(diagnostics, code),
+          overlap(diagnostics, stage),
+          overlap(diagnostics, messageContains),
+          overlap(code, stage),
+          overlap(code, messageContains),
+          overlap(stage, messageContains)
+{
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < diagnostics.Length)
+    {
+        if (DiagnosticMatches(diagnostics[index], code, severity, stage, messageContains))
+        {
+            return true;
+        }
+
+        index += 1;
+    }
+
+    return false;
+}
+
+public finite law bool DiagnosticsContainAt(
+    borrow Diagnostic[] diagnostics,
+    ascii code,
+    DiagnosticSeverity severity,
+    ascii stage,
+    ascii messageContains,
+    u64[0 2 ** 63 - 1] line,
+    u64[0 2 ** 63 - 1] column)
+    where overlap(diagnostics, code),
+          overlap(diagnostics, stage),
+          overlap(diagnostics, messageContains),
+          overlap(code, stage),
+          overlap(code, messageContains),
+          overlap(stage, messageContains)
+{
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < diagnostics.Length)
+    {
+        if (DiagnosticMatchesAt(diagnostics[index], code, severity, stage, messageContains, line, column))
+        {
+            return true;
+        }
+
+        index += 1;
+    }
+
+    return false;
+}
+
+public finite law u64[0 2 ** 63 - 1] DiagnosticsSeverityCount(
+    DiagnosticSeverity severity,
+    borrow Diagnostic[] diagnostics)
+{
+    stack mut u64[0 2 ** 63 - 1] count = 0;
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < diagnostics.Length)
+    {
+        if (DiagnosticSeverityIs(severity, diagnostics[index]))
+        {
+            count += 1;
+        }
+
+        index += 1;
+    }
+
+    return count;
+}
+
+public finite law u64[0 2 ** 63 - 1] DiagnosticsErrorCount(borrow Diagnostic[] diagnostics)
+{
+    return DiagnosticsSeverityCount(DiagnosticSeverity.Error, diagnostics);
+}
+
+public finite law u64[0 2 ** 63 - 1] DiagnosticsWarningCount(borrow Diagnostic[] diagnostics)
+{
+    return DiagnosticsSeverityCount(DiagnosticSeverity.Warning, diagnostics);
+}
+
+public finite law u64[0 2 ** 63 - 1] DiagnosticsInfoCount(borrow Diagnostic[] diagnostics)
+{
+    return DiagnosticsSeverityCount(DiagnosticSeverity.Info, diagnostics);
+}
+
+public finite law bool DiagnosticsHaveNoErrors(borrow Diagnostic[] diagnostics)
+{
+    return DiagnosticsErrorCount(diagnostics) == 0;
+}
+
+public finite law bool DiagnosticsHaveErrors(borrow Diagnostic[] diagnostics)
+{
+    return DiagnosticsErrorCount(diagnostics) != 0;
+}
+
+public finite law bool TypeIs<TActual, TExpected>()
+{
+    return comptime System.Compiler.TypeUnqualifiedTypeIs<TActual, TExpected>();
+}
+
+public finite law bool TypeIsBool<T>()
+{
+    return comptime System.Compiler.IsBool<T>();
+}
+
+public finite law bool TypeIsInteger<T>()
+{
+    return comptime System.Compiler.IsInteger<T>();
+}
+
+public finite law bool TypeIsFloat<T>()
+{
+    return comptime System.Compiler.IsFloat<T>();
+}
+
+public finite law bool TypeIsRawPointer<T>()
+{
+    return comptime System.Compiler.IsRawPointer<T>();
+}
+
+public finite law bool TypeIsFixedArray<T>()
+{
+    return comptime System.Compiler.IsFixedArray<T>();
+}
+
+public finite law bool TypeIsSlice<T>()
+{
+    return comptime System.Compiler.IsSlice<T>();
+}
+
+public finite law bool TypeIsDynamic<T>()
+{
+    return comptime System.Compiler.IsDynamic<T>();
+}
+
+public finite law bool TypeIsFunctionPointer<T>()
+{
+    return comptime System.Compiler.IsFunctionPointer<T>();
+}
+
+public finite law bool TypeIsClosure<T>()
+{
+    return comptime System.Compiler.IsClosure<T>();
+}
+
+public finite law bool TypeIsNamed<T>()
+{
+    return comptime System.Compiler.IsNamed<T>();
+}
+
+public finite law bool TypeIsStruct<T>()
+{
+    return comptime System.Compiler.IsStruct<T>();
+}
+
+public finite law bool TypeIsRecord<T>()
+{
+    return comptime System.Compiler.IsRecord<T>();
+}
+
+public finite law bool TypeIsEnum<T>()
+{
+    return comptime System.Compiler.IsEnum<T>();
+}
+
+public finite law bool TypeIsTrait<T>()
+{
+    return comptime System.Compiler.IsTrait<T>();
+}
+
+public finite law bool TypeIsDoctrine<T>()
+{
+    return comptime System.Compiler.IsDoctrine<T>();
+}
+
+public finite law bool TypeIsDynTrait<T>()
+{
+    return comptime System.Compiler.IsDynTrait<T>();
+}
+
+public finite law bool TypeHasConcreteLayout<T>()
+{
+    return comptime System.Compiler.HasConcreteLayout<T>();
+}
+
+public finite law bool TypeIsZeroSized<T>()
+{
+    if (comptime !System.Compiler.HasConcreteLayout<T>())
+    {
+        return false;
+    }
+
+    return comptime System.Compiler.TypeIsZeroSized<T>();
+}
+
+public finite law bool TypeSizeIs<T>(u64[0 max] expected)
+{
+    if (comptime !System.Compiler.HasConcreteLayout<T>())
+    {
+        return false;
+    }
+
+    return (comptime System.Compiler.TypeSize<T>()) == expected;
+}
+
+public finite law bool TypeAlignIs<T>(u64[0 max] expected)
+{
+    if (comptime !System.Compiler.HasConcreteLayout<T>())
+    {
+        return false;
+    }
+
+    return (comptime System.Compiler.TypeAlign<T>()) == expected;
+}
+
+public finite law bool TypeDisplayName<T>(ascii expected)
+{
+    stack ascii actual = comptime System.Compiler.TypeDisplayName<T>();
+    return actual == expected;
+}
+
+public finite law bool TypeBaseName<T>(ascii expected)
+{
+    stack ascii actual = comptime System.Compiler.TypeBaseName<T>();
+    return actual == expected;
+}
+
+public finite law bool TypeModuleName<T>(ascii expected)
+{
+    stack ascii actual = comptime System.Compiler.TypeModuleName<T>();
+    return actual == expected;
+}
+
+public finite law bool TypeIsGenericInstantiation<T>()
+{
+    return comptime System.Compiler.TypeIsGenericInstantiation<T>();
+}
+
+public finite law bool TypeArgumentCount<T>(u64[0 max] expected)
+{
+    return (comptime System.Compiler.TypeArgumentCount<T>()) == expected;
+}
+
+public finite law bool TypeComptimeArgumentCount<T>(u64[0 max] expected)
+{
+    return (comptime System.Compiler.TypeComptimeArgumentCount<T>()) == expected;
+}
+
+public finite law bool OptionSome<T>(borrow System.Core.Option<T> value)
+{
+    switch (value)
+    {
+        case System.Core.Option<T>.Some(_):
+            return true;
+        case System.Core.Option<T>.None:
+            return false;
+    }
+}
+
+public finite law bool OptionNone<T>(borrow System.Core.Option<T> value)
+{
+    switch (value)
+    {
+        case System.Core.Option<T>.Some(_):
+            return false;
+        case System.Core.Option<T>.None:
+            return true;
+    }
+}
+
+public finite law bool ResultOk<T, E>(borrow System.Core.Result<T, E> value)
+{
+    switch (value)
+    {
+        case System.Core.Result<T, E>.Ok(_):
+            return true;
+        case System.Core.Result<T, E>.Err(_):
+            return false;
+    }
+}
+
+public finite law bool ResultErr<T, E>(borrow System.Core.Result<T, E> value)
+{
+    switch (value)
+    {
+        case System.Core.Result<T, E>.Ok(_):
+            return false;
+        case System.Core.Result<T, E>.Err(_):
+            return true;
+    }
+}
+
+public finite law bool ProcessExitCode(i32[min max] expected, borrow System.Process.ProcessOutput output)
+{
+    return output.ExitCode == expected;
+}
+
+public finite law bool ProcessTimedOut(borrow System.Process.ProcessOutput output)
+{
+    return output.WasTimedOut();
+}
+
+public finite law bool ProcessCompleted(borrow System.Process.ProcessOutput output)
+{
+    return !output.WasTimedOut();
+}
+
+public finite law bool ProcessStdoutEqual(ascii expected, borrow System.Process.ProcessOutput output)
+    where overlap(expected, output)
+{
+    return System.Text.AsciiBytesEqual(output.StdoutSlice(), expected);
+}
+
+public finite law bool ProcessStderrEqual(ascii expected, borrow System.Process.ProcessOutput output)
+    where overlap(expected, output)
+{
+    return System.Text.AsciiBytesEqual(output.StderrSlice(), expected);
+}
+
+public finite law bool ProcessStdoutContains(borrow System.Process.ProcessOutput output, ascii expected)
+    where overlap(output, expected)
+{
+    return System.Text.AsciiBytesContains(output.StdoutSlice(), expected);
+}
+
+public finite law bool ProcessStderrContains(borrow System.Process.ProcessOutput output, ascii expected)
+    where overlap(output, expected)
+{
+    return System.Text.AsciiBytesContains(output.StderrSlice(), expected);
+}
+
+public finite law u64[0 2 ** 63 - 1] ProcessStdoutCountOccurrences(
+    borrow System.Process.ProcessOutput output,
+    ascii needle)
+    where overlap(output, needle)
+{
+    return System.Text.AsciiBytesCountOccurrences(output.StdoutSlice(), needle);
+}
+
+public finite law u64[0 2 ** 63 - 1] ProcessStderrCountOccurrences(
+    borrow System.Process.ProcessOutput output,
+    ascii needle)
+    where overlap(output, needle)
+{
+    return System.Text.AsciiBytesCountOccurrences(output.StderrSlice(), needle);
+}
+
+public finite law bool ProcessStdoutOccurrences(
+    u64[0 2 ** 63 - 1] expected,
+    borrow System.Process.ProcessOutput output,
+    ascii needle)
+    where overlap(output, needle)
+{
+    return ProcessStdoutCountOccurrences(output, needle) == expected;
+}
+
+public finite law bool ProcessStderrOccurrences(
+    u64[0 2 ** 63 - 1] expected,
+    borrow System.Process.ProcessOutput output,
+    ascii needle)
+    where overlap(output, needle)
+{
+    return ProcessStderrCountOccurrences(output, needle) == expected;
+}
+
+public finite law bool ProcessStdoutStartsWith(borrow System.Process.ProcessOutput output, ascii expected)
+    where overlap(output, expected)
+{
+    return System.Text.AsciiBytesStartsWith(output.StdoutSlice(), expected);
+}
+
+public finite law bool ProcessStderrStartsWith(borrow System.Process.ProcessOutput output, ascii expected)
+    where overlap(output, expected)
+{
+    return System.Text.AsciiBytesStartsWith(output.StderrSlice(), expected);
+}
+
+public finite law bool ProcessStdoutEndsWith(borrow System.Process.ProcessOutput output, ascii expected)
+    where overlap(output, expected)
+{
+    return System.Text.AsciiBytesEndsWith(output.StdoutSlice(), expected);
+}
+
+public finite law bool ProcessStderrEndsWith(borrow System.Process.ProcessOutput output, ascii expected)
+    where overlap(output, expected)
+{
+    return System.Text.AsciiBytesEndsWith(output.StderrSlice(), expected);
+}
+
+public finite law bool ProcessStdoutEmpty(borrow System.Process.ProcessOutput output)
+{
+    return output.StdoutLength() == 0;
+}
+
+public finite law bool ProcessStderrEmpty(borrow System.Process.ProcessOutput output)
+{
+    return output.StderrLength() == 0;
+}
+
+public finite law bool ProcessOutputEqual(
+    i32[min max] expectedExitCode,
+    ascii expectedStdout,
+    ascii expectedStderr,
+    borrow System.Process.ProcessOutput output)
+    where overlap(expectedStdout, expectedStderr),
+          overlap(expectedStdout, output),
+          overlap(expectedStderr, output)
+{
+    return ProcessExitCode(expectedExitCode, output)
+        && ProcessStdoutEqual(expectedStdout, output)
+        && ProcessStderrEqual(expectedStderr, output);
+}
+
+public unsafe fn bool RunProcessMatches(
+    mut borrow System.Process.ProcessCommand command,
+    i32[min max] expectedExitCode,
+    ascii expectedStdout,
+    ascii expectedStderr)
+    where overlap(command, expectedStdout),
+          overlap(command, expectedStderr),
+          overlap(expectedStdout, expectedStderr)
+{
+    switch (System.Process.RunCapture(command))
+    {
+        case System.Process.ProcessResult<System.Process.ProcessOutput>.Err(var error):
+            return false;
+        case System.Process.ProcessResult<System.Process.ProcessOutput>.Ok(var output):
+            return ProcessOutputEqual(expectedExitCode, expectedStdout, expectedStderr, output);
+    }
+}
+
+public unsafe fn bool RunProcessMatchesWithInput(
+    mut borrow System.Process.ProcessCommand command,
+    ascii input,
+    i32[min max] expectedExitCode,
+    ascii expectedStdout,
+    ascii expectedStderr)
+    where overlap(command, input),
+          overlap(command, expectedStdout),
+          overlap(command, expectedStderr),
+          overlap(input, expectedStdout),
+          overlap(input, expectedStderr),
+          overlap(expectedStdout, expectedStderr)
+{
+    switch (System.Process.RunCaptureWithInput(command, input))
+    {
+        case System.Process.ProcessResult<System.Process.ProcessOutput>.Err(var error):
+            return false;
+        case System.Process.ProcessResult<System.Process.ProcessOutput>.Ok(var output):
+            return ProcessOutputEqual(expectedExitCode, expectedStdout, expectedStderr, output);
+    }
+}
+
+public unsafe fn bool RunProcessTimesOut(
+    mut borrow System.Process.ProcessCommand command,
+    u32[0 2 ** 31 - 1] timeoutMilliseconds)
+{
+    switch (System.Process.RunCaptureWithTimeout(command, timeoutMilliseconds))
+    {
+        case System.Process.ProcessResult<System.Process.ProcessOutput>.Err(var error):
+            return false;
+        case System.Process.ProcessResult<System.Process.ProcessOutput>.Ok(var output):
+            return ProcessTimedOut(output);
+    }
+}
+
+public unsafe fn bool RunProcessTimesOutWithInput(
+    mut borrow System.Process.ProcessCommand command,
+    ascii input,
+    u32[0 2 ** 31 - 1] timeoutMilliseconds)
+    where overlap(command, input)
+{
+    switch (System.Process.RunCaptureWithInputTimeout(command, input, timeoutMilliseconds))
+    {
+        case System.Process.ProcessResult<System.Process.ProcessOutput>.Err(var error):
+            return false;
+        case System.Process.ProcessResult<System.Process.ProcessOutput>.Ok(var output):
+            return ProcessTimedOut(output);
+    }
+}
+
+public unsafe fn bool RunProcessMatches(
+    ascii executable,
+    i32[min max] expectedExitCode,
+    ascii expectedStdout,
+    ascii expectedStderr)
+    where overlap(executable, expectedStdout),
+          overlap(executable, expectedStderr),
+          overlap(expectedStdout, expectedStderr)
+{
+    switch (System.Process.Command(executable))
+    {
+        case System.Process.ProcessResult<System.Process.ProcessCommand>.Err(var error):
+            return false;
+        case System.Process.ProcessResult<System.Process.ProcessCommand>.Ok(var command):
+            stack mut System.Process.ProcessCommand mutableCommand = command;
+            return RunProcessMatches(mutableCommand, expectedExitCode, expectedStdout, expectedStderr);
+    }
+}
+
+public unsafe fn bool RunProcessTimesOut(
+    ascii executable,
+    u32[0 2 ** 31 - 1] timeoutMilliseconds)
+{
+    switch (System.Process.Command(executable))
+    {
+        case System.Process.ProcessResult<System.Process.ProcessCommand>.Err(var error):
+            return false;
+        case System.Process.ProcessResult<System.Process.ProcessCommand>.Ok(var command):
+            stack mut System.Process.ProcessCommand mutableCommand = command;
+            return RunProcessTimesOut(mutableCommand, timeoutMilliseconds);
+    }
+}
+
+public unsafe fn bool RunProcessMatchesWithInput(
+    ascii executable,
+    ascii input,
+    i32[min max] expectedExitCode,
+    ascii expectedStdout,
+    ascii expectedStderr)
+    where overlap(executable, input),
+          overlap(executable, expectedStdout),
+          overlap(executable, expectedStderr),
+          overlap(input, expectedStdout),
+          overlap(input, expectedStderr),
+          overlap(expectedStdout, expectedStderr)
+{
+    switch (System.Process.Command(executable))
+    {
+        case System.Process.ProcessResult<System.Process.ProcessCommand>.Err(var error):
+            return false;
+        case System.Process.ProcessResult<System.Process.ProcessCommand>.Ok(var command):
+            stack mut System.Process.ProcessCommand mutableCommand = command;
+            return RunProcessMatchesWithInput(
+                mutableCommand,
+                input,
+                expectedExitCode,
+                expectedStdout,
+                expectedStderr);
+    }
+}
+
+public unsafe fn bool RunProcessTimesOutWithInput(
+    ascii executable,
+    ascii input,
+    u32[0 2 ** 31 - 1] timeoutMilliseconds)
+    where overlap(executable, input)
+{
+    switch (System.Process.Command(executable))
+    {
+        case System.Process.ProcessResult<System.Process.ProcessCommand>.Err(var error):
+            return false;
+        case System.Process.ProcessResult<System.Process.ProcessCommand>.Ok(var command):
+            stack mut System.Process.ProcessCommand mutableCommand = command;
+            return RunProcessTimesOutWithInput(mutableCommand, input, timeoutMilliseconds);
+    }
+}
+
+public finite law TestStatus Status(bool assertion)
 {
     if (assertion)
     {
@@ -829,7 +1614,25 @@ public fn u8[0 1] RunFact(unicode name, bool assertion)
     return 1;
 }
 
-public fn i32[min max] ExitCode(u32[0 2 ** 31 - 1] failureCount)
+public fn u8[0 1] SkipFact(ascii name, ascii reason)
+{
+    System.Console.Write("skipped ");
+    System.Console.Write(name);
+    System.Console.Write(": ");
+    System.Console.WriteLine(reason);
+    return 0;
+}
+
+public fn u8[0 1] SkipFact(unicode name, unicode reason)
+{
+    System.Console.Write((unicode)"skipped ");
+    System.Console.Write(name);
+    System.Console.Write((unicode)": ");
+    System.Console.WriteLine(reason);
+    return 0;
+}
+
+public finite law i32[min max] ExitCode(u32[0 2 ** 31 - 1] failureCount)
 {
     if (failureCount == 0)
     {

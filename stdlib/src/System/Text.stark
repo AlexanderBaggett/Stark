@@ -506,11 +506,17 @@ public finite law bool Contains(ascii source, ascii needle)
             return false;
         }
 
+        stack i8[min max] first = *(&needleData[0]);
         stack u64[0 2 ** 63 - 1] lastStart = sourceLength - needleLength;
         for willexit (stack mut u64[0 2 ** 63 - 1] start = 0; start <= lastStart; start += 1)
         {
+            if (*(&sourceData[start]) != first)
+            {
+                continue;
+            }
+
             stack mut bool matched = true;
-            stack mut u64[0 2 ** 63 - 1] index = 0;
+            stack mut u64[0 2 ** 63 - 1] index = 1;
             while willexit (matched && index < needleLength)
             {
                 if (*(&sourceData[start + index]) != *(&needleData[index]))
@@ -562,11 +568,17 @@ public finite law bool Contains(unicode source, unicode needle)
             return false;
         }
 
+        stack i32[min max] first = *(&needleData[0]);
         stack u64[0 2 ** 63 - 1] lastStart = sourceLength - needleLength;
         for willexit (stack mut u64[0 2 ** 63 - 1] start = 0; start <= lastStart; start += 1)
         {
+            if (*(&sourceData[start]) != first)
+            {
+                continue;
+            }
+
             stack mut bool matched = true;
-            stack mut u64[0 2 ** 63 - 1] index = 0;
+            stack mut u64[0 2 ** 63 - 1] index = 1;
             while willexit (matched && index < needleLength)
             {
                 if (*(&sourceData[start + index]) != *(&needleData[index]))
@@ -584,6 +596,410 @@ public finite law bool Contains(unicode source, unicode needle)
         }
 
         return false;
+    }
+}
+
+public finite law u64[0 2 ** 63 - 1] CountOccurrences(ascii source, ascii needle)
+    where overlap(source, needle)
+{
+    unsafe
+    {
+        stack i64[min max] signedSourceLength = AsciiLength(source);
+        stack i64[min max] signedNeedleLength = AsciiLength(needle);
+        if (signedSourceLength < 0 || signedNeedleLength < 0)
+        {
+            return 0;
+        }
+
+        stack u64[0 2 ** 63 - 1] sourceLength = (u64[0 2 ** 63 - 1])signedSourceLength;
+        stack u64[0 2 ** 63 - 1] needleLength = (u64[0 2 ** 63 - 1])signedNeedleLength;
+        if (needleLength == 0 || needleLength > sourceLength)
+        {
+            return 0;
+        }
+
+        stack rawptr<i8[min max]> sourceData = AsciiData(source);
+        stack rawptr<i8[min max]> needleData = AsciiData(needle);
+        if (sourceData == null || needleData == null)
+        {
+            return 0;
+        }
+
+        stack i8[min max] first = *(&needleData[0]);
+        stack u64[0 2 ** 63 - 1] lastStart = sourceLength - needleLength;
+        stack mut u64[0 2 ** 63 - 1] count = 0;
+        stack mut u64[0 2 ** 63 - 1] start = 0;
+        while willexit (start <= lastStart)
+        {
+            if (*(&sourceData[start]) != first)
+            {
+                start += 1;
+                continue;
+            }
+
+            stack mut bool matched = true;
+            stack mut u64[0 2 ** 63 - 1] index = 1;
+            while willexit (matched && index < needleLength)
+            {
+                if (*(&sourceData[start + index]) != *(&needleData[index]))
+                {
+                    matched = false;
+                }
+
+                index += 1;
+            }
+
+            if (matched)
+            {
+                count += 1;
+                start += needleLength;
+                continue;
+            }
+
+            start += 1;
+        }
+
+        return count;
+    }
+}
+
+public finite law u64[0 2 ** 63 - 1] CountOccurrences(unicode source, unicode needle)
+    where overlap(source, needle)
+{
+    unsafe
+    {
+        stack i64[min max] signedSourceLength = UnicodeLength(source);
+        stack i64[min max] signedNeedleLength = UnicodeLength(needle);
+        if (signedSourceLength < 0 || signedNeedleLength < 0)
+        {
+            return 0;
+        }
+
+        stack u64[0 2 ** 63 - 1] sourceLength = (u64[0 2 ** 63 - 1])signedSourceLength;
+        stack u64[0 2 ** 63 - 1] needleLength = (u64[0 2 ** 63 - 1])signedNeedleLength;
+        if (needleLength == 0 || needleLength > sourceLength)
+        {
+            return 0;
+        }
+
+        stack rawptr<i32[min max]> sourceData = UnicodeData(source);
+        stack rawptr<i32[min max]> needleData = UnicodeData(needle);
+        if (sourceData == null || needleData == null)
+        {
+            return 0;
+        }
+
+        stack i32[min max] first = *(&needleData[0]);
+        stack u64[0 2 ** 63 - 1] lastStart = sourceLength - needleLength;
+        stack mut u64[0 2 ** 63 - 1] count = 0;
+        stack mut u64[0 2 ** 63 - 1] start = 0;
+        while willexit (start <= lastStart)
+        {
+            if (*(&sourceData[start]) != first)
+            {
+                start += 1;
+                continue;
+            }
+
+            stack mut bool matched = true;
+            stack mut u64[0 2 ** 63 - 1] index = 1;
+            while willexit (matched && index < needleLength)
+            {
+                if (*(&sourceData[start + index]) != *(&needleData[index]))
+                {
+                    matched = false;
+                }
+
+                index += 1;
+            }
+
+            if (matched)
+            {
+                count += 1;
+                start += needleLength;
+                continue;
+            }
+
+            start += 1;
+        }
+
+        return count;
+    }
+}
+
+public finite law bool AsciiBytesEqual(borrow i8[min max][] source, ascii expected)
+    where overlap(source, expected)
+{
+    unsafe
+    {
+        stack i64[min max] signedExpectedLength = AsciiLength(expected);
+        if (signedExpectedLength < 0)
+        {
+            return false;
+        }
+
+        stack u64[0 2 ** 63 - 1] expectedLength = (u64[0 2 ** 63 - 1])signedExpectedLength;
+        if (source.Length < 0)
+        {
+            return false;
+        }
+
+        stack u64[0 2 ** 63 - 1] sourceLength = (u64[0 2 ** 63 - 1])source.Length;
+        if (sourceLength != expectedLength)
+        {
+            return false;
+        }
+
+        if (expectedLength == 0)
+        {
+            return true;
+        }
+
+        stack rawptr<i8[min max]> expectedData = AsciiData(expected);
+        if (expectedData == null)
+        {
+            return false;
+        }
+
+        for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < expectedLength; index += 1)
+        {
+            if (source[index] != *(&expectedData[index]))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+}
+
+public finite law bool AsciiBytesStartsWith(borrow i8[min max][] source, ascii prefix)
+    where overlap(source, prefix)
+{
+    unsafe
+    {
+        stack i64[min max] signedPrefixLength = AsciiLength(prefix);
+        if (signedPrefixLength < 0)
+        {
+            return false;
+        }
+
+        stack u64[0 2 ** 63 - 1] prefixLength = (u64[0 2 ** 63 - 1])signedPrefixLength;
+        if (source.Length < 0)
+        {
+            return false;
+        }
+
+        stack u64[0 2 ** 63 - 1] sourceLength = (u64[0 2 ** 63 - 1])source.Length;
+        if (prefixLength > sourceLength)
+        {
+            return false;
+        }
+
+        if (prefixLength == 0)
+        {
+            return true;
+        }
+
+        stack rawptr<i8[min max]> prefixData = AsciiData(prefix);
+        if (prefixData == null)
+        {
+            return false;
+        }
+
+        for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < prefixLength; index += 1)
+        {
+            if (source[index] != *(&prefixData[index]))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+}
+
+public finite law bool AsciiBytesEndsWith(borrow i8[min max][] source, ascii suffix)
+    where overlap(source, suffix)
+{
+    unsafe
+    {
+        stack i64[min max] signedSuffixLength = AsciiLength(suffix);
+        if (signedSuffixLength < 0)
+        {
+            return false;
+        }
+
+        stack u64[0 2 ** 63 - 1] suffixLength = (u64[0 2 ** 63 - 1])signedSuffixLength;
+        if (source.Length < 0)
+        {
+            return false;
+        }
+
+        stack u64[0 2 ** 63 - 1] sourceLength = (u64[0 2 ** 63 - 1])source.Length;
+        if (suffixLength > sourceLength)
+        {
+            return false;
+        }
+
+        if (suffixLength == 0)
+        {
+            return true;
+        }
+
+        stack rawptr<i8[min max]> suffixData = AsciiData(suffix);
+        if (suffixData == null)
+        {
+            return false;
+        }
+
+        stack u64[0 2 ** 63 - 1] offset = sourceLength - suffixLength;
+        for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < suffixLength; index += 1)
+        {
+            if (source[offset + index] != *(&suffixData[index]))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+}
+
+public finite law bool AsciiBytesContains(borrow i8[min max][] source, ascii needle)
+    where overlap(source, needle)
+{
+    unsafe
+    {
+        stack i64[min max] signedNeedleLength = AsciiLength(needle);
+        if (signedNeedleLength < 0)
+        {
+            return false;
+        }
+
+        stack u64[0 2 ** 63 - 1] needleLength = (u64[0 2 ** 63 - 1])signedNeedleLength;
+        if (needleLength == 0)
+        {
+            return true;
+        }
+
+        if (source.Length < 0)
+        {
+            return false;
+        }
+
+        stack u64[0 2 ** 63 - 1] sourceLength = (u64[0 2 ** 63 - 1])source.Length;
+        if (needleLength > sourceLength)
+        {
+            return false;
+        }
+
+        stack rawptr<i8[min max]> needleData = AsciiData(needle);
+        if (needleData == null)
+        {
+            return false;
+        }
+
+        stack i8[min max] first = *(&needleData[0]);
+        stack u64[0 2 ** 63 - 1] lastStart = sourceLength - needleLength;
+        for willexit (stack mut u64[0 2 ** 63 - 1] start = 0; start <= lastStart; start += 1)
+        {
+            if (source[start] != first)
+            {
+                continue;
+            }
+
+            stack mut bool matched = true;
+            stack mut u64[0 2 ** 63 - 1] index = 1;
+            while willexit (matched && index < needleLength)
+            {
+                if (source[start + index] != *(&needleData[index]))
+                {
+                    matched = false;
+                }
+
+                index += 1;
+            }
+
+            if (matched)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+}
+
+public finite law u64[0 2 ** 63 - 1] AsciiBytesCountOccurrences(borrow i8[min max][] source, ascii needle)
+    where overlap(source, needle)
+{
+    unsafe
+    {
+        stack i64[min max] signedNeedleLength = AsciiLength(needle);
+        if (signedNeedleLength < 0)
+        {
+            return 0;
+        }
+
+        stack u64[0 2 ** 63 - 1] needleLength = (u64[0 2 ** 63 - 1])signedNeedleLength;
+        if (needleLength == 0)
+        {
+            return 0;
+        }
+
+        if (source.Length < 0)
+        {
+            return 0;
+        }
+
+        stack u64[0 2 ** 63 - 1] sourceLength = (u64[0 2 ** 63 - 1])source.Length;
+        if (needleLength > sourceLength)
+        {
+            return 0;
+        }
+
+        stack rawptr<i8[min max]> needleData = AsciiData(needle);
+        if (needleData == null)
+        {
+            return 0;
+        }
+
+        stack i8[min max] first = *(&needleData[0]);
+        stack u64[0 2 ** 63 - 1] lastStart = sourceLength - needleLength;
+        stack mut u64[0 2 ** 63 - 1] count = 0;
+        stack mut u64[0 2 ** 63 - 1] start = 0;
+        while willexit (start <= lastStart)
+        {
+            if (source[start] != first)
+            {
+                start += 1;
+                continue;
+            }
+
+            stack mut bool matched = true;
+            stack mut u64[0 2 ** 63 - 1] index = 1;
+            while willexit (matched && index < needleLength)
+            {
+                if (source[start + index] != *(&needleData[index]))
+                {
+                    matched = false;
+                }
+
+                index += 1;
+            }
+
+            if (matched)
+            {
+                count += 1;
+                start += needleLength;
+                continue;
+            }
+
+            start += 1;
+        }
+
+        return count;
     }
 }
 
@@ -956,7 +1372,7 @@ public struct OwnedAscii
         return writer.AppendSlice(value.AsSlice(), value.Bytes.Length);
     }
 
-    finite retborrow i8[min max][] AsSlice(borrow OwnedAscii self)
+    finite law retborrow i8[min max][] AsSlice(borrow OwnedAscii self)
     {
         return self.Bytes[0, self.Bytes.Length];
     }
@@ -1475,7 +1891,7 @@ public struct OwnedUnicode
         return writer.AppendSlice(value.AsSlice(), value.CodePoints.Length);
     }
 
-    finite retborrow i32[min max][] AsSlice(borrow OwnedUnicode self)
+    finite law retborrow i32[min max][] AsSlice(borrow OwnedUnicode self)
     {
         return self.CodePoints[0, self.CodePoints.Length];
     }
@@ -2854,7 +3270,7 @@ public struct OwnedUtf16
         return self.CodeUnits.Length == 0;
     }
 
-    finite retborrow i16[min max][] AsSlice(borrow OwnedUtf16 self)
+    finite law retborrow i16[min max][] AsSlice(borrow OwnedUtf16 self)
     {
         return self.CodeUnits[0, self.CodeUnits.Length];
     }

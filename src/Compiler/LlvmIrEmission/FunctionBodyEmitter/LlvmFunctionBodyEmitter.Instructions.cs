@@ -79,6 +79,11 @@ internal sealed partial class LlvmFunctionBodyEmitter
                 EmitConvert(instruction.ResultName, result, convert);
                 return;
             case SsaExtractFieldRValue extract:
+                if (TryEmitPointerBackedBorrowExtractFieldLoad(result, extract))
+                {
+                    return;
+                }
+
                 if (TryEmitAggregateElementLoad(result, extract.Target, extract.FieldIndex, extract.Type, "extract_field_load"))
                 {
                     return;
@@ -100,6 +105,11 @@ internal sealed partial class LlvmFunctionBodyEmitter
                 AppendLine($"  {result} = insertvalue {MapType(insert.Target.Type)} {FormatAggregateValueUse(insert.Target, insert.Target.Type, "insert_field_target")}, {MapType(insert.Value.Type)} {FormatAggregateValueUse(insert.Value, insert.Value.Type, "insert_field_value")}, {insert.FieldIndex}");
                 return;
             case SsaExtractIndexRValue extractIndex:
+                if (TryEmitPointerBackedBorrowExtractIndexLoad(result, extractIndex))
+                {
+                    return;
+                }
+
                 if (TryEmitAggregateElementLoad(result, extractIndex.Target, extractIndex.ElementIndex, extractIndex.Type, "extract_index_load"))
                 {
                     return;
@@ -157,15 +167,30 @@ internal sealed partial class LlvmFunctionBodyEmitter
                 EmitTextSlice(result, textSlice);
                 return;
             case SsaAddressOfLocalRValue addressOfLocal:
+                if (TryAliasAddressOfLocal(instruction.ResultName, addressOfLocal))
+                {
+                    return;
+                }
+
                 EmitAddressOfLocal(result, addressOfLocal);
                 return;
             case SsaAddressOfParameterRValue addressOfParameter:
+                if (TryAliasAddressOfParameter(instruction.ResultName, addressOfParameter))
+                {
+                    return;
+                }
+
                 EmitAddressOfParameter(result, addressOfParameter);
                 return;
             case SsaFieldAddressRValue fieldAddress:
                 EmitFieldAddress(result, fieldAddress);
                 return;
             case SsaElementAddressRValue elementAddress:
+                if (TryAliasZeroElementAddress(instruction.ResultName, elementAddress))
+                {
+                    return;
+                }
+
                 EmitElementAddress(result, elementAddress);
                 return;
             case SsaSliceElementAddressRValue sliceElementAddress:
@@ -174,7 +199,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
             case SsaLoadIndirectRValue loadIndirect:
                 if (StarkTypeSymbols.IsPointerBackedBorrowType(loadIndirect.Type))
                 {
-                    EmitPointerBackedBorrowLoad(result, loadIndirect);
+                    EmitPointerBackedBorrowLoad(instruction.ResultName, result, loadIndirect);
                     return;
                 }
 
@@ -211,7 +236,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
         }
     }
 
-    private void EmitPointerBackedBorrowLoad(string result, SsaLoadIndirectRValue loadIndirect)
+    private void EmitPointerBackedBorrowLoad(string resultName, string result, SsaLoadIndirectRValue loadIndirect)
     {
         if (TryResolveDirectPointerBackedBorrowPointeeAddress(
                 loadIndirect.Address,
@@ -220,13 +245,13 @@ internal sealed partial class LlvmFunctionBodyEmitter
                 out _,
                 out var directPointeeType))
         {
-            AppendLine($"  {result} = getelementptr{GetZeroOffsetGepFlags()} {MapType(directPointeeType)}, ptr {directSourceAddress}, i32 0");
+            _valueAliases[resultName] = directSourceAddress;
             return;
         }
 
         if (IsAddressOfPointerBackedBorrowParameter(loadIndirect.Address))
         {
-            AppendLine($"  {result} = getelementptr{GetZeroOffsetGepFlags()} ptr, ptr {FormatValue(loadIndirect.Address)}, i32 0");
+            _valueAliases[resultName] = FormatValue(loadIndirect.Address);
             return;
         }
 

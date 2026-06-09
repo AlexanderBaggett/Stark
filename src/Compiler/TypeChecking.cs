@@ -18046,6 +18046,20 @@ internal sealed class TypeChecker
     private StarkTypeSymbol ResolveGenericQualifiedName(StarkParser.GenericQualifiedNameContext genericQualifiedName)
     {
         var baseName = genericQualifiedName.qualifiedName().GetText();
+        if (_typeResolver!.TryResolveGenericTypeAlias(
+                baseName,
+                CurrentFunctionModuleName,
+                genericQualifiedName.qualifiedName().Start,
+                genericQualifiedName.typeArgumentList(),
+                _currentFunctionGenericParameters,
+                _currentFunctionComptimeGenericParameters,
+                out var aliasType))
+        {
+            return aliasType.Kind == StarkTypeKind.Error
+                ? StarkTypeSymbols.Error
+                : EnsureMonomorphizedType(aliasType, Location(genericQualifiedName));
+        }
+
         var baseType = ResolveQualifiedType(baseName, genericParameters: null, genericQualifiedName.qualifiedName().Start, CurrentFunctionModuleName);
         if (baseType.Kind == StarkTypeKind.Error)
         {

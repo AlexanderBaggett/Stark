@@ -20,8 +20,9 @@ It re-exports:
 - `System.Process`
 - `System.Threading`
 
-It also imports internal runtime support, `System.Syscall`, and `System.Testing`
-during package build, but those modules are not re-exported through `System`.
+It also imports internal runtime support, `System.Syscall`, `System.Core`, and
+`System.Testing` during package build, but those modules are not re-exported
+through `System`.
 `System.Runtime.Buffer` is not re-exported through `System`, but its byte-buffer
 types are part of public Console, File, and TCP APIs. Code that names those
 types directly should import `System.Runtime.Buffer`.
@@ -49,6 +50,8 @@ export fn i32 main()
 ## Current Status
 
 - The package root and public module graph are stable for the current Milestone 7 slice.
+- `System.Option<T>` and `System.Result<T, E>` are public root aliases backed by
+  the ordinary `[Ok]`/`[Err]` enums in `System.Core`.
 - `System.Console` and `System.IO.File` are usable today.
 - `System.BitOperations` currently exposes integer bit-manipulation helpers.
 - `System.C` currently exposes target-mapped C primitive aliases and C string interop helpers.
@@ -71,9 +74,9 @@ export fn i32 main()
 - `System.Net.Tcp` currently exposes `TcpShutdown` plus owned `TcpClient` and
   `TcpListener`, including connect/listen/accept, slice reads and writes,
   byte-buffer overloads, vectored IO, wait helpers, shutdown, and close.
-- `System.Process` currently exposes process id/exit helpers plus Linux-backed process spawn/capture, environment, argv, and working-directory APIs.
-- `System.Testing` currently exposes boolean/equality, text, range, slice/List shape assertions, temp fixture helpers, snapshot/golden text helpers, and `RunFact`/exit helpers used by generated `stark test` `[Fact]` runners.
-- `System.Text` currently exposes owned text helpers, parsers, formatters, and low-level caller-buffer conversion APIs through explicit `import System.Text`.
+- `System.Process` currently exposes process id/exit helpers plus Linux-backed process spawn/capture with optional stdin input, timeout capture, environment, argv, and working-directory APIs.
+- `System.Testing` currently exposes finite-law boolean/equality, text/count, range, slice/List shape assertions, root `Option`/`Result` shape predicates, process output predicates plus effectful run-match/timeout helpers, temp fixture helpers, snapshot/golden text helpers, and `RunFact`/exit helpers used by generated `stark test` `[Fact]` / `[Theory]` runners with inline and typed member data.
+- `System.Text` currently exposes owned text helpers, text/count scans, byte-slice-to-ASCII scans, parsers, formatters, and low-level caller-buffer conversion APIs through explicit `import System.Text`.
 - `System.Runtime.Buffer` exposes fixed and dynamic byte buffers through
   explicit `import System.Runtime.Buffer`.
 - `System.Net.Http` is intentionally not planned for the standard library. HTTP should be provided by packages built on `System.Net.Tcp`.

@@ -27,7 +27,9 @@ attributeCondition
 attributeArgument
     : qualifiedName
     | StringLiteral
-    | IntegerLiteral
+    | signedIntegerLiteral
+    | TRUE
+    | FALSE
     ;
 
 topLevelDeclaration

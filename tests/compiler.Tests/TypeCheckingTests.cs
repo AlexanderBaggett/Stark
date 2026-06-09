@@ -4644,6 +4644,46 @@ public sealed class TypeCheckingTests
     }
 
     [Fact]
+    public void GenericEnumAliasesCanQualifyVariants()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            enum ResultCore<T, E>
+            {
+                Ok(T),
+                Err(E),
+            }
+
+            alias Result<T, E> = ResultCore<T, E>;
+
+            finite law i32[min max] Run()
+            {
+                stack Result<i32[min max], bool> result = Result<i32[min max], bool>.Ok(7);
+                switch (result)
+                {
+                    case Result<i32[min max], bool>.Ok(var value):
+                        return value;
+                    case Result<i32[min max], bool>.Err(var failed):
+                        if (failed)
+                        {
+                            return -1;
+                        }
+
+                        return -2;
+                }
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static d => d.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+        Assert.True(typeCheckModel.NamedTypes.ContainsKey("ResultCore<i32,bool>"), "alias-qualified variants should instantiate the underlying enum");
+    }
+
+    [Fact]
     public void GenericTypeWithWrongArgCountIsAnError()
     {
         var result = Compile(

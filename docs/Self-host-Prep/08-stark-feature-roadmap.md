@@ -1237,7 +1237,7 @@ Rules landed in the host compiler:
       glob traversal. Platform-backed temp roots and cross-platform
       Linux/macOS/Windows metadata support have landed; cross-platform walk
       parity remains.
-- [~] Process spawn with stdout/stderr capture: Linux-backed `System.Process.RunCapture` has landed; cross-platform backend parity remains.
+- [~] Process spawn with stdin/stdout/stderr/timeout capture: Linux-backed `System.Process.RunCapture`, `RunCaptureWithInput`, and timeout variants have landed; cross-platform backend parity remains.
 - [~] Environment and argv APIs: Linux-backed `System.Process` environment and argv APIs have landed; cross-platform backend parity remains.
 
 ## Memory Model Work

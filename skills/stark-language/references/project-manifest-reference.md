@@ -137,18 +137,42 @@ stark build app --release
 stark run hello
 stark test stdlib-tests
 stark test stdlib-tests --filter Integer
+stark build --target x86_64-unknown-linux-gnu --stage stage0
+stark clean stage --target x86_64-unknown-linux-gnu
+stark clean profile
 ```
 
 Manifest discovery searches upward. The nearest `Stark.toml` runs in project
 mode. The nearest `Stark.solution.toml` runs in solution mode.
 
+Project command outputs use `.stark/build/<profile>/<target-triple>/<stage>/`.
+The current host driver supports `stage0`: executables and libraries go under
+`bin/<project>/`, saved native intermediates under `obj/<project>/`, library
+package images under `pkg/<project>/`, and test executables plus generated
+`[Fact]` runners under `tests/<project>/`. Project builds use the explicit
+stdlib discovery order below and ignore `STARK_PATH`. `--target <triple>`
+selects the codegen target and path segment. Stage1/Stage2 selectors are
+reserved until those compilers exist. `stark clean` defaults to the active stage
+and also accepts explicit `profile`, `target`, `diagnostics`, and `artifacts`
+scopes.
+
 For `kind = "test"` projects, `stark test` generates an explicit `main` runner
-when the root contains `[Fact]` metadata. `[Fact]` functions must be
-non-generic, no-argument `bool` functions with a body. The generated runner
-enumerates facts at build time, applies repeatable `--filter <text>` selections
-against fact display names, calls `System.Testing.RunFact`, and returns a stable
-process exit code. Do not declare a manual `main` in a `[Fact]` test root;
-manual runners are reserved for no-`[Fact]` bootstrap tests.
+when the root contains `[Fact]` or `[Theory]` metadata. `[Fact]` functions must
+be non-generic, no-argument `bool` functions with a body. `[Theory]` functions
+follow the same rules but may take parameters and must declare one or more
+data rows from `[InlineData(...)]` constants or typed indexed
+`[MemberData(provider, rowType, count, ...fields)]` providers. The generated
+runner enumerates tests at build time, expands inline/member data rows, applies
+repeatable `--filter <text>` selections against generated display names,
+resolves `[Platform(...)]` / `[SkipPlatform(...)]` gates from the selected target
+triple, calls `System.Testing.RunFact` or `System.Testing.SkipFact`, applies
+`[Collection(name)]` / `[Serial]` serial scheduling groups, and returns a stable
+process exit code. Gate selectors can be OS names, architecture names,
+`os.arch` pairs, or exact target triple strings.
+`[Serial]` is shorthand for `[Collection("Serial")]`; tests in the same named
+collection are emitted contiguously with source order preserved inside the
+collection. Do not declare a manual `main` in a generated-test root; manual
+runners are reserved for bootstrap tests with no generated test metadata.
 
 ## Source And Package Shape
 
@@ -183,11 +207,29 @@ geometry = { path = "../geometry" }
 Build outputs and caches live under the project or solution work area:
 
 ```text
-.stark/build/dev
-.stark/build/release
+.stark/build/<profile>/<target-triple>/stage0/bin/<project>
+.stark/build/<profile>/<target-triple>/stage0/obj/<project>
+.stark/build/<profile>/<target-triple>/stage0/pkg/<project>
+.stark/build/<profile>/<target-triple>/stage0/tests/<project>
+.stark/build/<profile>/<target-triple>/stage0/stdlib
 .stark/cache
 .stark/packages
 ```
+
+Project builds search the active stage's `stdlib` directory first, then the
+nearest repo `stdlib/dist` package images, then the nearest repo `stdlib/src`
+source tree for source-tree development, then bundled stdlib artifacts next to
+the active compiler distribution. Project builds ignore `STARK_PATH`; declare
+package dependencies in manifests or use direct compiler `-I` for low-level
+compiler invocations.
+Failed `System.*` imports report every searched stdlib path plus the active
+profile, target, and stage.
+
+When a normal source/package search root is indexed, nested `.stark` build
+artifact manifests are ignored so stale package images under a project's build
+directory cannot shadow an explicit source root later in the resolver list. If
+the search root itself is inside `.stark`, package manifests there are considered
+explicit inputs and remain resolvable.
 
 Keep generated outputs out of source examples unless the task specifically
 asks to inspect them.

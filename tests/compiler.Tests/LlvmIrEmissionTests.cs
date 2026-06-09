@@ -1076,7 +1076,7 @@ public sealed class LlvmIrEmissionTests
         Assert.DoesNotContain("; LLVM body emission fallback for Apply", llvm);
         Assert.Contains("ptr noundef nonnull %arg_op", header, StringComparison.Ordinal);
         Assert.Matches(
-            @"call fastcc i32 %arg_op\(ptr nonnull noalias readonly captures\(address, read_provenance\) dereferenceable\(4\) align 4 %v\d+\)",
+            @"call fastcc i32 %arg_op\(ptr nonnull noalias readonly captures\(address, read_provenance\) dereferenceable\(4\) align 4 %arg_box\)",
             applyBody);
     }
 
@@ -1154,7 +1154,7 @@ public sealed class LlvmIrEmissionTests
         Assert.DoesNotContain("; LLVM body emission fallback for Apply", llvm);
         Assert.Contains("ptr noundef nonnull %arg_op", header, StringComparison.Ordinal);
         Assert.Matches(
-            @"call fastcc i1 %arg_op\(ptr nonnull noalias writeonly captures\(address, provenance\) dereferenceable\(4\) align 4 %v\d+\)",
+            @"call fastcc i1 %arg_op\(ptr nonnull noalias writeonly captures\(address, provenance\) dereferenceable\(4\) align 4 %arg_value\)",
             applyBody);
     }
 
@@ -1196,7 +1196,7 @@ public sealed class LlvmIrEmissionTests
         Assert.DoesNotContain("; LLVM body emission fallback for Apply", llvm);
         Assert.Contains("ptr noundef nonnull %arg_op", header, StringComparison.Ordinal);
         Assert.Matches(
-            @"call fastcc void %arg_op\(ptr nonnull noalias captures\(address, provenance\) dereferenceable\(16\) align 8 %v\d+\)",
+            @"call fastcc void %arg_op\(ptr nonnull noalias captures\(address, provenance\) dereferenceable\(16\) align 8 %arg_destination\)",
             applyBody);
     }
 
@@ -3569,7 +3569,7 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
-    public void OnceInitializedReadonlyStackStorageEmitsInvariantStartAndLoadMetadata()
+    public void OnceInitializedReadonlyStackStorageEmitsInvariantStartWithoutInvariantLoadMetadata()
     {
         var result = Compile(
             """
@@ -3610,7 +3610,7 @@ public sealed class LlvmIrEmissionTests
 
         Assert.Contains("declare ptr @llvm.invariant.start.p0(i64 immarg, ptr nocapture)", llvm);
         Assert.Matches(@"call ptr @llvm\.invariant\.start\.p0\(i64 4, ptr %slot_value\)", llvm);
-        Assert.Matches(@"load i32, ptr %v\d+, align 4, !invariant\.load !\d+", llvm);
+        Assert.DoesNotContain("!invariant.load", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("call ptr @llvm.invariant.start.p0(i64 4, ptr %slot_escaped)", llvm);
         Assert.DoesNotContain("call ptr @llvm.invariant.start.p0(i64 4, ptr %slot_mutable)", llvm);
 
@@ -3872,7 +3872,7 @@ public sealed class LlvmIrEmissionTests
         Assert.True(rawCastResult.Succeeded, string.Join(Environment.NewLine, rawCastResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var rawCastLlvm = GetLlvmRaw(rawCastResult);
 
-        Assert.Contains("getelementptr inbounds nuw i8, ptr %slot_value, i32 0", rawCastLlvm);
+        Assert.Contains("load i8, ptr %slot_value", rawCastLlvm);
         Assert.DoesNotContain("ptrtoint", rawCastLlvm);
         Assert.DoesNotContain("inttoptr", rawCastLlvm);
         Assert.DoesNotContain("!tbaa", rawCastLlvm);
@@ -7140,7 +7140,7 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
 
-        Assert.Matches(@"load i8, ptr %v\d+, !range !\d+", llvm);
+        Assert.Matches(@"load i8, ptr (?:%v\d+|%slot_value), !range !\d+", llvm);
         Assert.Matches(@"call fastcc i8 @Bounded\(\), !range !\d+", llvm);
         Assert.Contains("!{i8 0, i8 11}", llvm);
     }
@@ -7306,7 +7306,7 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
 
-        Assert.Matches(@"load i8, ptr %v\d+, !range !\d+", llvm);
+        Assert.Matches(@"load i8, ptr (?:%v\d+|%slot_value), !range !\d+", llvm);
         Assert.Contains("!{i8 -10, i8 11}", llvm);
     }
 
@@ -8218,7 +8218,7 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvmRaw(result);
 
-        Assert.Matches(@"load i64, ptr %v\d+, align 8", llvm);
+        Assert.Contains("load i64, ptr %slot_value, align 8", llvm);
     }
 
     [Fact]
@@ -9262,7 +9262,7 @@ public sealed class LlvmIrEmissionTests
         var llvm = GetLlvm(result);
 
         Assert.Contains("%Pair = type { i8, i32 }", llvm);
-        Assert.Contains("load %Pair, ptr %v", llvm);
+        Assert.Contains("load %Pair, ptr %slot_source", llvm);
         Assert.Contains("store %Pair %abi_copy_load_", llvm);
         Assert.DoesNotContain("@llvm.memcpy.p0.p0.i64", llvm);
     }
@@ -9324,7 +9324,7 @@ public sealed class LlvmIrEmissionTests
         var llvm = GetLlvm(result);
 
         Assert.Contains("declare void @llvm.memcpy.inline.p0.p0.i64", llvm);
-        Assert.Contains("call void @llvm.memcpy.inline.p0.p0.i64(ptr align 4 %v", llvm);
+        Assert.Contains("call void @llvm.memcpy.inline.p0.p0.i64(ptr align 4 %slot_dest, ptr align 4 %slot_source", llvm);
         Assert.Contains("i64 36, i1 false)", llvm);
     }
 
@@ -9382,7 +9382,7 @@ public sealed class LlvmIrEmissionTests
 
         Assert.Contains("%slot_values = alloca [256 x i8]", llvm);
         Assert.Contains("getelementptr inbounds nuw [256 x i8], ptr %slot_values, i32 0", llvm);
-        Assert.Contains("getelementptr inbounds nuw [256 x i8], ptr %v", llvm);
+        Assert.Contains("getelementptr inbounds nuw [256 x i8], ptr %slot_values, i32 0, i32 7", llvm);
         Assert.Contains("i32 7", llvm);
         Assert.Contains("store i8", llvm);
         Assert.Contains("load i8", llvm);
@@ -10456,8 +10456,8 @@ public sealed class LlvmIrEmissionTests
 
         Assert.Contains("define fastcc void @Buffer_Put(ptr nonnull noalias nocapture dereferenceable(16) %arg_self, i64 %arg_index, i8 %arg_value)", llvm);
         Assert.Contains("define fastcc range(i32 -128, 128) i32 @Buffer_Read(ptr nonnull noalias readonly nocapture dereferenceable(16) %arg_self, i64 %arg_index)", llvm);
-        Assert.Contains("getelementptr inbounds nuw %Buffer, ptr %arg_self, i32 0", llvm);
-        Assert.Contains("getelementptr inbounds nuw %Buffer, ptr %v0, i32 0, i32 0", llvm);
+        Assert.Contains("getelementptr inbounds nuw %Buffer, ptr %arg_self, i32 0, i32 0", llvm);
+        Assert.Contains("getelementptr [16 x i8], ptr %v", llvm);
         Assert.DoesNotContain("alloca %Buffer", llvm);
     }
 
@@ -10599,8 +10599,7 @@ public sealed class LlvmIrEmissionTests
         Assert.Contains("declare void @llvm.lifetime.end.p0(i64 immarg, ptr nocapture)", llvm);
         Assert.Contains("call void @llvm.lifetime.start.p0(i64 12, ptr %slot_values)", llvm);
         Assert.Contains("call void @llvm.lifetime.end.p0(i64 12, ptr %slot_values)", llvm);
-        Assert.Contains("getelementptr inbounds nuw [3 x i32], ptr %slot_values, i32 0", llvm);
-        Assert.Matches(@"getelementptr \[3 x i32\], ptr %v\d+, i32 0, i32 %arg_index", llvm);
+        Assert.Matches(@"getelementptr \[3 x i32\], ptr %slot_values, i32 0, i32 %arg_index", llvm);
         Assert.DoesNotContain("getelementptr inbounds [3 x i32], ptr %v", llvm);
         Assert.DoesNotContain("getelementptr inbounds nuw [3 x i32], ptr %v", llvm);
         Assert.Contains("load i32, ptr", llvm);
@@ -10637,7 +10636,7 @@ public sealed class LlvmIrEmissionTests
         Assert.Contains("alloca [3 x i32]", runBody);
         Assert.Contains("extractvalue [3 x i32]", runBody);
         Assert.Contains("getelementptr inbounds nuw [3 x i32], ptr %slot_", runBody);
-        Assert.Matches(@"getelementptr \[3 x i32\], ptr %v\d+, i32 0, i32 %arg_index", runBody);
+        Assert.Matches(@"getelementptr \[3 x i32\], ptr %slot_[^,]+, i32 0, i32 %arg_index", runBody);
         Assert.Contains("load i32, ptr", runBody);
         Assert.DoesNotContain("declare fastcc i32 @Run", llvm);
     }
@@ -10783,8 +10782,7 @@ public sealed class LlvmIrEmissionTests
         Assert.Contains("define fastcc i32 @Read([3 x i32] %arg_values, i32 %arg_index)", llvm);
         Assert.Contains("%slot_param_values = alloca [3 x i32]", llvm);
         Assert.Contains("store [3 x i32] %arg_values, ptr %slot_param_values", llvm);
-        Assert.Contains("getelementptr inbounds nuw [3 x i32], ptr %slot_param_values, i32 0", llvm);
-        Assert.Matches(@"getelementptr \[3 x i32\], ptr %v\d+, i32 0, i32 %arg_index", llvm);
+        Assert.Matches(@"getelementptr \[3 x i32\], ptr %slot_param_values, i32 0, i32 %arg_index", llvm);
         Assert.DoesNotContain("getelementptr inbounds [3 x i32], ptr %v", llvm);
         Assert.DoesNotContain("getelementptr inbounds nuw [3 x i32], ptr %v", llvm);
         Assert.Contains("load i32, ptr", llvm);
@@ -10819,9 +10817,9 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvm(result);
 
-        Assert.Matches(@"getelementptr inbounds nuw \[3 x i32\], ptr %v\d+, i32 0, i8 %arg_index", llvm);
-        Assert.Matches(@"getelementptr \[3 x i32\], ptr %v\d+, i32 0, i32 %arg_index", llvm);
-        Assert.Single(Regex.Matches(llvm, @"getelementptr inbounds nuw \[3 x i32\], ptr %v\d+, i32 0, i8 %arg_index").Cast<Match>());
+        Assert.Matches(@"getelementptr inbounds nuw \[3 x i32\], ptr %slot_values, i32 0, i8 %arg_index", llvm);
+        Assert.Matches(@"getelementptr \[3 x i32\], ptr %slot_values, i32 0, i32 %arg_index", llvm);
+        Assert.Single(Regex.Matches(llvm, @"getelementptr inbounds nuw \[3 x i32\], ptr %slot_values, i32 0, i8 %arg_index").Cast<Match>());
         Assert.DoesNotContain("getelementptr inbounds [3 x i32], ptr %v", llvm);
     }
 
@@ -10878,8 +10876,7 @@ public sealed class LlvmIrEmissionTests
         var llvm = GetLlvm(result);
 
         Assert.Contains("define fastcc i32 @Run(i32 %arg_index)", llvm);
-        Assert.Contains("getelementptr inbounds nuw [3 x i32], ptr %slot_values, i32 0", llvm);
-        Assert.Matches(@"getelementptr \[3 x i32\], ptr %v\d+, i32 0, i32 %arg_index", llvm);
+        Assert.Matches(@"getelementptr \[3 x i32\], ptr %slot_values, i32 0, i32 %arg_index", llvm);
         Assert.DoesNotContain("getelementptr inbounds [3 x i32], ptr %v", llvm);
         Assert.DoesNotContain("getelementptr inbounds nuw [3 x i32], ptr %v", llvm);
         Assert.Contains("call void @llvm.lifetime.start.p0(i64 12, ptr %slot_values)", llvm);
@@ -13034,9 +13031,10 @@ public sealed class LlvmIrEmissionTests
 
         Assert.Contains("define fastcc void @Touch(ptr nonnull noalias readonly nocapture dereferenceable(4) align 4 %arg_box)", llvm);
         Assert.Contains("define fastcc void @Forward(ptr nonnull noalias readonly nocapture dereferenceable(4) align 4 %arg_box)", llvm);
-        Assert.Contains("%slot_aliasBox = alloca %Box", llvm);
-        Assert.Contains("getelementptr inbounds nuw %Box, ptr %slot_aliasBox", llvm);
-        Assert.Contains("call fastcc void @Touch(ptr nonnull", llvm);
+        Assert.Contains("%slot_aliasBox = alloca ptr", llvm);
+        Assert.Contains("store ptr %arg_box, ptr %slot_aliasBox", llvm);
+        Assert.Matches(@"call fastcc void @Touch\(ptr [^\n]*%arg_box\)", llvm);
+        Assert.DoesNotContain("abi_borrow_ptr_load", llvm);
         Assert.DoesNotContain("callarg_box", llvm);
     }
 
@@ -13430,7 +13428,7 @@ public sealed class LlvmIrEmissionTests
         var llvm = GetLlvm(result);
 
         Assert.Contains("trunc i64 %arg_bits to i32", llvm);
-        Assert.Contains("getelementptr inbounds nuw i32, ptr %slot_value, i32 0", llvm);
+        Assert.Contains("store i32 %v2, ptr %slot_value", llvm);
         Assert.DoesNotContain("getelementptr inbounds nuw i8, ptr %", llvm);
         Assert.DoesNotContain("ptrtoint", llvm);
         Assert.DoesNotContain("inttoptr", llvm);
@@ -13766,7 +13764,7 @@ public sealed class LlvmIrEmissionTests
         var llvm = GetLlvmRaw(result);
         var copyBody = ExtractDefinitionBody(llvm, "Copy");
 
-        Assert.Matches(@"call fastcc i32 @Read\(ptr [^\n]*\), !llvm\.access\.group !\d+", copyBody);
+        Assert.Matches(@"call fastcc i32 @Read\(ptr [^\n]*\).*!llvm\.access\.group !\d+", copyBody);
         Assert.Contains("!\"llvm.loop.parallel_accesses\"", llvm, StringComparison.Ordinal);
     }
 
@@ -14147,7 +14145,7 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
-    public void ConstRawPointerParameterLoadsEmitInvariantMetadata()
+    public void ConstRawPointerParameterLoadsDoNotEmitInvariantLoadMetadata()
     {
         var result = Compile(
             """
@@ -14163,7 +14161,7 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
 
-        Assert.Matches(@"load i32, ptr .* !invariant\.load !\d+", llvm);
+        Assert.DoesNotMatch(@"load i32, ptr .* !invariant\.load !\d+", llvm);
     }
 
     [Fact]
@@ -14204,7 +14202,7 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
-    public void RawSlicesFromConstPointersPreserveInvariantLoadMetadata()
+    public void RawSlicesFromConstPointersDoNotEmitInvariantLoadMetadata()
     {
         var result = Compile(
             """
@@ -14226,11 +14224,11 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
 
-        Assert.Matches(@"load i32, ptr .* !invariant\.load !\d+", llvm);
+        Assert.DoesNotMatch(@"load i32, ptr .* !invariant\.load !\d+", llvm);
     }
 
     [Fact]
-    public void RawSlicesFromConstPointerLocalsPreserveInvariantLoadMetadata()
+    public void RawSlicesFromConstPointerLocalsDoNotEmitInvariantLoadMetadata()
     {
         var result = Compile(
             """
@@ -14253,7 +14251,7 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
 
-        Assert.Matches(@"load i32, ptr .* !invariant\.load !\d+", llvm);
+        Assert.DoesNotMatch(@"load i32, ptr .* !invariant\.load !\d+", llvm);
     }
 
     [Fact]

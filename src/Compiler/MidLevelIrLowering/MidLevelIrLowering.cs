@@ -1040,7 +1040,10 @@ internal sealed partial class MidLevelIrLowerer
 
         foreach (var module in loadedModules.Modules.Values)
         {
-            foreach (var declaration in DeclaredFunctionSyntaxCollector.Collect(module.ParseResult, module.SyntaxModel))
+            foreach (var declaration in DeclaredFunctionSyntaxCollector.Collect(
+                         module.ParseResult,
+                         module.SyntaxModel,
+                         includeUnselectedDeclarations: true))
             {
                 var qualifiedName = module.Reference.IsRoot
                     ? declaration.Name
@@ -1554,7 +1557,10 @@ internal sealed partial class MidLevelIrLowerer
                 continue;
             }
 
-            foreach (var declaration in DeclaredFunctionSyntaxCollector.Collect(module.ParseResult, module.SyntaxModel))
+            foreach (var declaration in DeclaredFunctionSyntaxCollector.Collect(
+                         module.ParseResult,
+                         module.SyntaxModel,
+                         includeUnselectedDeclarations: true))
             {
                 var genericParameterNames = FunctionGenericParameterFacts.GetEffectiveGenericParameterNames(module, declaration);
                 var genericParameters = FunctionGenericParameterFacts.ToGenericParameterSet(genericParameterNames);

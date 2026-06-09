@@ -110,6 +110,7 @@ The current package-author CLI surface is:
 ```bash
 compiler Raylib.stark --emit-lib \
   -o dist/libRaylibStark.a \
+  --package-image-output dist/pkg/libRaylibStark.starkpkg.json \
   --native-source RaylibNative.c \
   --native-pkg-config raylib
 ```
@@ -261,7 +262,9 @@ That richer shape is what makes package-boundary generic specialization and stru
 The current user-facing commands are:
 
 - `--emit-lib`:
-  emits a static library plus a sidecar package image
+  emits a static library plus a package image; `--package-image-output <path>`
+  can route the image away from the library, in which case the image records a
+  relative library reference for downstream linking
 - `--emit-pkg` or `--emit-package`:
   currently emits the host JSON package image without linker or archiver steps;
   self-hosting should let builds choose binary, JSON, text, or any requested

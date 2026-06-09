@@ -312,6 +312,25 @@ internal sealed class StarkTypeResolver
         return TryResolveTypeAliasSymbol(lookupName, currentModuleName, out alias);
     }
 
+    internal bool TryResolveGenericTypeAlias(
+        string qualifiedName,
+        string? currentModuleName,
+        IToken token,
+        StarkParser.TypeArgumentListContext typeArgumentList,
+        ISet<string>? genericParameters,
+        IReadOnlyDictionary<string, ComptimeGenericParameterSymbol>? comptimeGenericParameters,
+        out StarkTypeSymbol aliasType)
+    {
+        return TryResolveTypeAlias(
+            qualifiedName,
+            currentModuleName,
+            token,
+            typeArgumentList,
+            genericParameters,
+            comptimeGenericParameters,
+            out aliasType);
+    }
+
     private StarkTypeSymbol ResolveNonArrayType(
         StarkParser.NonArrayTypeContext type,
         ISet<string>? genericParameters,
