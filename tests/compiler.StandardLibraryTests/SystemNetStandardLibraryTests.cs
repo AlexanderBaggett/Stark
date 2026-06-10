@@ -97,11 +97,8 @@ public sealed class SystemNetStandardLibraryTests : StandardLibraryTestSuite
     [Fact]
     public async Task PackagedStdLibNetFoundationTypesWorkWithoutSource()
     {
-        var repositoryRoot = FindRepositoryRoot();
-        var systemPath = Path.Combine(repositoryRoot, "stdlib", "src", "System.stark");
         var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-net-foundation-");
-        var packageDirectory = Path.Combine(tempDirectory.FullName, "packages");
-        Directory.CreateDirectory(packageDirectory);
+        var packageDirectory = await SharedStdlibPackage.GetDirectoryAsync();
 
         var libraryFileName = OperatingSystem.IsWindows() ? "System.lib" : "libSystem.a";
         var manifestPath = Path.Combine(packageDirectory, Path.GetFileNameWithoutExtension(libraryFileName) + ".starkpkg.json");
@@ -109,17 +106,6 @@ public sealed class SystemNetStandardLibraryTests : StandardLibraryTestSuite
 
         try
         {
-            var stdout = new StringWriter();
-            var stderr = new StringWriter();
-            var exitCode = await CompilerCli.RunAsync(
-                [systemPath, "--emit-pkg", "--package-library-file", libraryFileName, "-o", manifestPath],
-                new StringReader(string.Empty),
-                stdout,
-                stderr);
-
-            Assert.True(exitCode == 0, stdout + Environment.NewLine + stderr);
-            Assert.Contains("Emitted package image:", stdout.ToString());
-            Assert.Equal(string.Empty, stderr.ToString());
             Assert.True(File.Exists(manifestPath));
 
             var appSource =

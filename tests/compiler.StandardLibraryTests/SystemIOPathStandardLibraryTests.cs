@@ -413,8 +413,7 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
             return;
         }
 
-        var repositoryRoot = FindRepositoryRoot();
-        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var sourceRoot = await SharedStdlibPackage.GetDirectoryAsync();
         var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-promoted-path-");
         var appPath = Path.Combine(tempDirectory.FullName, "App.stark");
         var outputPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "App.exe" : "app");
@@ -971,8 +970,7 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
             return;
         }
 
-        var repositoryRoot = FindRepositoryRoot();
-        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var sourceRoot = await SharedStdlibPackage.GetDirectoryAsync();
         var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-path-temp-");
         var appPath = Path.Combine(tempDirectory.FullName, "App.stark");
         var outputPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "App.exe" : "app");
@@ -1197,8 +1195,7 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
             return;
         }
 
-        var repositoryRoot = FindRepositoryRoot();
-        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var sourceRoot = await SharedStdlibPackage.GetDirectoryAsync();
         var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-path-glob-");
         var appPath = Path.Combine(tempDirectory.FullName, "App.stark");
         var outputPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "App.exe" : "app");
@@ -1299,30 +1296,15 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
             return;
         }
 
-        var repositoryRoot = FindRepositoryRoot();
-        var systemPath = Path.Combine(repositoryRoot, "stdlib", "src", "System.stark");
         var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-current-directory-");
-        var packageDirectory = Path.Combine(tempDirectory.FullName, "packages");
+        var packageDirectory = await SharedStdlibPackage.GetDirectoryAsync();
         var appDirectory = Path.Combine(tempDirectory.FullName, "app");
-        Directory.CreateDirectory(packageDirectory);
         Directory.CreateDirectory(appDirectory);
 
-        var libraryPath = Path.Combine(packageDirectory, "libSystem.a");
         var appPath = Path.Combine(appDirectory, "App.stark");
         var outputPath = Path.Combine(appDirectory, "app");
         try
         {
-            var buildStdout = new StringWriter();
-            var buildStderr = new StringWriter();
-            var buildExitCode = await CompilerCli.RunAsync(
-                [systemPath, "--emit-lib", "-o", libraryPath, "--target", targetInfo.Triple],
-                new StringReader(string.Empty),
-                buildStdout,
-                buildStderr);
-
-            Assert.Equal(0, buildExitCode);
-            AssertCompilerLogsEmitted(buildStderr.ToString());
-
             await File.WriteAllTextAsync(
                 appPath,
                 $$"""
@@ -1459,30 +1441,15 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
             return;
         }
 
-        var repositoryRoot = FindRepositoryRoot();
-        var systemPath = Path.Combine(repositoryRoot, "stdlib", "src", "System.stark");
         var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-path-helpers-");
-        var packageDirectory = Path.Combine(tempDirectory.FullName, "packages");
+        var packageDirectory = await SharedStdlibPackage.GetDirectoryAsync();
         var appDirectory = Path.Combine(tempDirectory.FullName, "app");
-        Directory.CreateDirectory(packageDirectory);
         Directory.CreateDirectory(appDirectory);
 
-        var libraryPath = Path.Combine(packageDirectory, "libSystem.a");
         var appPath = Path.Combine(appDirectory, "App.stark");
         var outputPath = Path.Combine(appDirectory, "app");
         try
         {
-            var buildStdout = new StringWriter();
-            var buildStderr = new StringWriter();
-            var buildExitCode = await CompilerCli.RunAsync(
-                [systemPath, "--emit-lib", "-o", libraryPath, "--target", targetInfo.Triple],
-                new StringReader(string.Empty),
-                buildStdout,
-                buildStderr);
-
-            Assert.Equal(0, buildExitCode);
-            AssertCompilerLogsEmitted(buildStderr.ToString());
-
             await File.WriteAllTextAsync(
                 appPath,
                 $$"""

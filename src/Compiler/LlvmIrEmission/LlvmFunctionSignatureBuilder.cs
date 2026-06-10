@@ -2,12 +2,14 @@ namespace Stark.Compiler.LlvmIrEmission;
 
 internal sealed class LlvmFunctionSignatureBuilder
 {
+    private readonly LlvmEmissionContext _context;
     private readonly LlvmFunctionAttributeBuilder _attributeBuilder;
 
     public LlvmFunctionSignatureBuilder(
         LlvmEmissionContext context,
         LlvmFunctionAttributeBuilder attributeBuilder)
     {
+        _context = context;
         _attributeBuilder = attributeBuilder;
     }
 
@@ -92,7 +94,8 @@ internal sealed class LlvmFunctionSignatureBuilder
             segments.Add(attributes);
         }
 
-        if (specializationLinkage == MonomorphizationLinkageKind.LinkOnceOdrComdat)
+        if (specializationLinkage == MonomorphizationLinkageKind.LinkOnceOdrComdat
+            && _context.TargetSupportsComdat)
         {
             segments.Add("comdat");
         }

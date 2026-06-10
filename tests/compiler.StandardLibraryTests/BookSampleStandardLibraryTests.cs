@@ -37,6 +37,9 @@ public sealed class BookSampleStandardLibraryTests : StandardLibraryTestSuite
             new CompilationInput(File.ReadAllText(path), path),
             new CompilerOptions(
                 ModuleResolver: new FileSystemModuleResolver(sourceRoot),
+                // Samples only assert acceptance; borrow-liveness is the last pass that can
+                // reject a program, so the SSA/optimization/emission passes add no coverage.
+                StopAfterPassId: "borrow-liveness",
                 EnforceIntegerRangeStorageRules: true));
 
         Assert.True(
