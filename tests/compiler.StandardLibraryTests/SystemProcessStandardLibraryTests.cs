@@ -155,8 +155,7 @@ public sealed class SystemProcessStandardLibraryTests : StandardLibraryTestSuite
             return;
         }
 
-        var repositoryRoot = FindRepositoryRoot();
-        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var sourceRoot = await SharedStdlibPackage.GetDirectoryAsync();
         var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-process-public-");
         var appPath = Path.Combine(tempDirectory.FullName, "App.stark");
         var outputPath = Path.Combine(tempDirectory.FullName, "app");
@@ -221,8 +220,7 @@ public sealed class SystemProcessStandardLibraryTests : StandardLibraryTestSuite
             return;
         }
 
-        var repositoryRoot = FindRepositoryRoot();
-        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var sourceRoot = await SharedStdlibPackage.GetDirectoryAsync();
         var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-process-capture-");
         var appPath = Path.Combine(tempDirectory.FullName, "App.stark");
         var outputPath = Path.Combine(tempDirectory.FullName, "app");
@@ -449,8 +447,7 @@ public sealed class SystemProcessStandardLibraryTests : StandardLibraryTestSuite
             return;
         }
 
-        var repositoryRoot = FindRepositoryRoot();
-        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var sourceRoot = await SharedStdlibPackage.GetDirectoryAsync();
         var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-process-capture-input-");
         var appPath = Path.Combine(tempDirectory.FullName, "App.stark");
         var outputPath = Path.Combine(tempDirectory.FullName, "app");
@@ -574,8 +571,7 @@ public sealed class SystemProcessStandardLibraryTests : StandardLibraryTestSuite
             return;
         }
 
-        var repositoryRoot = FindRepositoryRoot();
-        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var sourceRoot = await SharedStdlibPackage.GetDirectoryAsync();
         var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-process-timeout-");
         var appPath = Path.Combine(tempDirectory.FullName, "App.stark");
         var outputPath = Path.Combine(tempDirectory.FullName, "app");
@@ -763,11 +759,8 @@ public sealed class SystemProcessStandardLibraryTests : StandardLibraryTestSuite
     [Fact]
     public async Task PackagedStdLibProcessHelpersWorkWithoutSource()
     {
-        var repositoryRoot = FindRepositoryRoot();
-        var systemPath = Path.Combine(repositoryRoot, "stdlib", "src", "System.stark");
         var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-process-package-");
-        var packageDirectory = Path.Combine(tempDirectory.FullName, "packages");
-        Directory.CreateDirectory(packageDirectory);
+        var packageDirectory = await SharedStdlibPackage.GetDirectoryAsync();
 
         var libraryFileName = OperatingSystem.IsWindows() ? "System.lib" : "libSystem.a";
         var manifestPath = Path.Combine(packageDirectory, Path.GetFileNameWithoutExtension(libraryFileName) + ".starkpkg.json");
@@ -775,17 +768,6 @@ public sealed class SystemProcessStandardLibraryTests : StandardLibraryTestSuite
 
         try
         {
-            var stdout = new StringWriter();
-            var stderr = new StringWriter();
-            var exitCode = await CompilerCli.RunAsync(
-                [systemPath, "--emit-pkg", "--package-library-file", libraryFileName, "-o", manifestPath],
-                new StringReader(string.Empty),
-                stdout,
-                stderr);
-
-            Assert.True(exitCode == 0, stdout + Environment.NewLine + stderr);
-            Assert.Contains("Emitted package image:", stdout.ToString());
-            Assert.Equal(string.Empty, stderr.ToString());
             Assert.True(File.Exists(manifestPath));
 
             var appSource =

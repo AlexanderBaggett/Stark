@@ -702,8 +702,7 @@ public sealed class SystemTestingStandardLibraryTests : StandardLibraryTestSuite
             return;
         }
 
-        var repositoryRoot = FindRepositoryRoot();
-        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var sourceRoot = await SharedStdlibPackage.GetDirectoryAsync();
         var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-testing-assertions-");
         var appPath = Path.Combine(tempDirectory.FullName, "App.stark");
         var outputPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "App.exe" : "app");

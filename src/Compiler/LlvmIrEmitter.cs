@@ -488,6 +488,7 @@ internal sealed class LlvmIrEmitter
             builder.AppendLine();
         }
 
+        var emittedDeclarationSymbols = new HashSet<string>(StringComparer.Ordinal);
         foreach (var abiFunction in _abiModel.Functions.Values
                      .Where(function => !handledFunctionNames.Contains(function.Name)
                                         )
@@ -562,12 +563,21 @@ internal sealed class LlvmIrEmitter
                 continue;
             }
 
+            // Distinct Stark FFI declarations (for example per-platform modules) can share one
+            // binary symbol; LLVM allows only a single declaration per symbol in a module.
+            if (!emittedDeclarationSymbols.Add(abiFunction.SymbolName))
+            {
+                builder.AppendLine($"; imported declaration merged into earlier declaration of '@{abiFunction.SymbolName}': {abiFunction.Name}");
+                builder.AppendLine();
+                continue;
+            }
+
             builder.AppendLine($"; imported declaration: {abiFunction.Name}");
             builder.AppendLine(BuildDeclarationSignature(false, signature, abiFunction, effects, memoryEffects, parameterEffects));
             builder.AppendLine();
         }
 
-        EmitReferencedImportedFunctionDeclarations(builder, handledFunctionNames);
+        EmitReferencedImportedFunctionDeclarations(builder, handledFunctionNames, emittedDeclarationSymbols);
 
         _debugInfo.EmitModuleMetadata(builder);
 
@@ -576,7 +586,8 @@ internal sealed class LlvmIrEmitter
 
     private void EmitReferencedImportedFunctionDeclarations(
         StringBuilder builder,
-        ISet<string> handledFunctionNames)
+        ISet<string> handledFunctionNames,
+        ISet<string> emittedDeclarationSymbols)
     {
         foreach (var functionName in _referencedImportedFunctions.OrderBy(static name => name, StringComparer.Ordinal))
         {
@@ -608,6 +619,13 @@ internal sealed class LlvmIrEmitter
                     memoryEffects,
                     parameterEffects))
             {
+                builder.AppendLine();
+                continue;
+            }
+
+            if (!emittedDeclarationSymbols.Add(abiFunction.SymbolName))
+            {
+                builder.AppendLine($"; referenced imported declaration merged into earlier declaration of '@{abiFunction.SymbolName}': {functionName}");
                 builder.AppendLine();
                 continue;
             }
@@ -1090,7 +1108,8 @@ internal sealed class LlvmIrEmitter
                     supportsDirectCodeGeneration,
                     operation: "EmitFunctionDefinition"),
             EscapeIdentifier,
-            _emitFallbackDeclarationsForSourceBodies);
+            _emitFallbackDeclarationsForSourceBodies,
+            _emissionContext.TargetSupportsComdat);
     }
 
     private IReadOnlyDictionary<string, ImportedLawClonePlan> BuildClosedWorldImportedLawClones()

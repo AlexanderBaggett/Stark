@@ -152,7 +152,8 @@ internal static class LlvmSpecializationEmissionPlanner
         EmitLlvmFunctionDefinitionDelegate emitFunctionDefinition,
         LogLlvmFallbackDelegate logLlvmFallback,
         Func<string, string> escapeIdentifier,
-        bool emitFallbackDeclarationsForSourceBodies = true)
+        bool emitFallbackDeclarationsForSourceBodies = true,
+        bool targetSupportsComdat = true)
     {
         if (specializationCodegenStrategy is null)
         {
@@ -196,7 +197,8 @@ internal static class LlvmSpecializationEmissionPlanner
                     // available_externally lets LLVM discard the only real definition
                     // and leaves non-law callers with an unresolved symbol at link time.
                     var availableExternally = false;
-                    if (strategy.Linkage == MonomorphizationLinkageKind.LinkOnceOdrComdat)
+                    if (strategy.Linkage == MonomorphizationLinkageKind.LinkOnceOdrComdat
+                        && targetSupportsComdat)
                     {
                         builder.AppendLine($"${escapeIdentifier(strategy.SymbolName)} = comdat any");
                     }

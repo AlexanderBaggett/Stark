@@ -1291,6 +1291,13 @@ internal sealed partial class LlvmFunctionBodyEmitter
         int? destinationAlignmentBytes,
         ISet<string> visitedValueNames)
     {
+        // Unoptimized SSA keeps aggregate build chains uncollapsed, so following them can
+        // otherwise recurse past the thread stack; the caller's generic store path is safe.
+        if (visitedValueNames.Count > 256)
+        {
+            return false;
+        }
+
         switch (value)
         {
             case SsaZeroInitializerValue:
@@ -1435,6 +1442,13 @@ internal sealed partial class LlvmFunctionBodyEmitter
         }
 
         if (!visitingValueNames.Add(valueName))
+        {
+            return true;
+        }
+
+        // Unoptimized SSA keeps use-def chains uncollapsed, so this walk can otherwise
+        // recurse past the thread stack on large functions; materializing is always safe.
+        if (visitingValueNames.Count > 256)
         {
             return true;
         }

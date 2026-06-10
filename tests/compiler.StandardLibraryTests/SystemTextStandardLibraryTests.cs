@@ -844,11 +844,8 @@ public sealed class SystemTextStandardLibraryTests
     [Fact]
     public async Task PackagedStdLibTryFormatSurfaceCanBeConsumedWithoutSource()
     {
-        var repositoryRoot = FindRepositoryRoot();
-        var systemPath = Path.Combine(repositoryRoot, "stdlib", "src", "System.stark");
         var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-text-package-");
-        var packageDirectory = Path.Combine(tempDirectory.FullName, "packages");
-        Directory.CreateDirectory(packageDirectory);
+        var packageDirectory = await SharedStdlibPackage.GetDirectoryAsync();
 
         var libraryFileName = OperatingSystem.IsWindows() ? "System.lib" : "libSystem.a";
         var manifestPath = Path.Combine(packageDirectory, Path.GetFileNameWithoutExtension(libraryFileName) + ".starkpkg.json");
@@ -856,16 +853,6 @@ public sealed class SystemTextStandardLibraryTests
 
         try
         {
-            var stdout = new StringWriter();
-            var stderr = new StringWriter();
-            var exitCode = await CompilerCli.RunAsync(
-                [systemPath, "--emit-pkg", "--package-library-file", libraryFileName, "-o", manifestPath],
-                new StringReader(string.Empty),
-                stdout,
-                stderr);
-
-            Assert.True(exitCode == 0, stdout + Environment.NewLine + stderr);
-            Assert.Contains("Emitted package image:", stdout.ToString());
             Assert.True(File.Exists(manifestPath));
 
             var appSource =
@@ -1312,8 +1299,7 @@ public sealed class SystemTextStandardLibraryTests
             return;
         }
 
-        var repositoryRoot = FindRepositoryRoot();
-        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var sourceRoot = await SharedStdlibPackage.GetDirectoryAsync();
         var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-promoted-text-");
         var appPath = Path.Combine(tempDirectory.FullName, "App.stark");
         var outputPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "App.exe" : "app");
@@ -1371,8 +1357,7 @@ public sealed class SystemTextStandardLibraryTests
             return;
         }
 
-        var repositoryRoot = FindRepositoryRoot();
-        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var sourceRoot = await SharedStdlibPackage.GetDirectoryAsync();
         var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-text-literals-");
         var appPath = Path.Combine(tempDirectory.FullName, "App.stark");
         var outputPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "app.exe" : "app");
@@ -1614,6 +1599,9 @@ public sealed class SystemTextStandardLibraryTests
             return;
         }
 
+        // Stays source-based: enum-receiver calls such as Encoding.UTF8.ToAscii() do not
+        // lower yet against package-backed imports (see PackagedStdLibTryFormatSurface
+        // CanBeConsumedWithoutSource, which tracks that gap).
         var repositoryRoot = FindRepositoryRoot();
         var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
         var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-text-format-");
