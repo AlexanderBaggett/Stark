@@ -229,7 +229,7 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
         Directory.CreateDirectory(packageDirectory);
         Directory.CreateDirectory(appDirectory);
 
-        var manifestPath = Path.Combine(packageDirectory, "System.starkpkg.json");
+        var manifestPath = Path.Combine(packageDirectory, "System.starkpkg");
         var appPath = Path.Combine(appDirectory, "App.stark");
         var llvmPath = Path.Combine(appDirectory, "App.ll");
 

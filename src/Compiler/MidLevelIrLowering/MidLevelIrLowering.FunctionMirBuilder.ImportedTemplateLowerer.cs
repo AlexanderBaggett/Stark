@@ -7184,7 +7184,9 @@ internal sealed partial class MidLevelIrLowerer
             MidLevelIrOperand current = new MidLevelIrZeroInitializerOperand(createdType);
             var constructor = publishedObjectCreation.Constructor is null
                 ? null
-                : ApplyGenericSubstitution(publishedObjectCreation.Constructor);
+                : ResolveImportedConstructorBodyKey(
+                    createdType,
+                    ApplyGenericSubstitution(publishedObjectCreation.Constructor));
             var initializerMembers = BuildImportedObjectInitializerMemberFacts(publishedObjectCreation.InitializerMembers);
             if (createdType.Kind != StarkTypeKind.Named)
             {
@@ -7202,10 +7204,16 @@ internal sealed partial class MidLevelIrLowerer
 
             if (constructor is not null)
             {
-                var constructed = LowerImportedTypedTemplatePrimaryConstructorObjectCreation(
-                    createdType,
-                    constructor,
-                    expression.Args.Take(constructor.Parameters.Count).ToArray());
+                var constructorArguments = expression.Args.Take(constructor.Parameters.Count).ToArray();
+                var constructed = constructor.IsPrimaryShape
+                    ? LowerImportedTypedTemplatePrimaryConstructorObjectCreation(
+                        createdType,
+                        constructor,
+                        constructorArguments)
+                    : LowerImportedTypedTemplateExplicitConstructorObjectCreation(
+                        createdType,
+                        constructor,
+                        constructorArguments);
                 if (constructed is null)
                 {
                     return null;
@@ -7515,6 +7523,44 @@ internal sealed partial class MidLevelIrLowerer
             }
 
             return current;
+        }
+
+        private MidLevelIrOperand? LowerImportedTypedTemplateExplicitConstructorObjectCreation(
+            StarkTypeSymbol createdType,
+            TypedConstructorShape constructor,
+            IReadOnlyList<ImportedTemplateTypedBodyExpressionSummary> arguments)
+        {
+            if (constructor.IsPrimaryShape || constructor.Parameters.Count != arguments.Count)
+            {
+                throw LoweringInvariantViolation(
+                    null,
+                    $"Imported object creation for '{createdType.DisplayName}' requires an explicit constructor shape and matching argument count.");
+            }
+
+            if (constructor.BodyKey is null
+                || !_constructorsByBodyKey.TryGetValue(constructor.BodyKey, out var constructorContext))
+            {
+                throw LoweringInvariantViolation(
+                    null,
+                    $"Constructor body for '{createdType.DisplayName}' is not available to MIR lowering.");
+            }
+
+            var loweredArguments = new MidLevelIrOperand[constructor.Parameters.Count];
+            var argumentTexts = new string[constructor.Parameters.Count];
+            for (var index = 0; index < constructor.Parameters.Count; index++)
+            {
+                var parameterType = ApplyGenericSubstitution(constructor.Parameters[index].Type);
+                var loweredArgument = LowerImportedTypedTemplateExpressionCore(arguments[index], parameterType);
+                if (loweredArgument is null)
+                {
+                    return null;
+                }
+
+                loweredArguments[index] = CoerceOperand(loweredArgument, parameterType) ?? loweredArgument;
+                argumentTexts[index] = RenderImportedTypedTemplateExpressionCore(arguments[index]);
+            }
+
+            return LowerExplicitConstructorBody(createdType, constructor, constructorContext, loweredArguments, argumentTexts);
         }
 
         private MidLevelIrOperand? LowerImportedTypedTemplateObjectInitializer(

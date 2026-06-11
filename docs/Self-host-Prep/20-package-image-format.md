@@ -31,10 +31,13 @@ views. It deliberately avoids a broad artifact-combination matrix for v1.
 | JSON package image | deterministic inspection/export format | no for the normal path | yes |
 | text package dump | deterministic readable summary | no | yes |
 
-The current host compiler's `.starkpkg.json` artifact remains the legacy/current
-host format during migration. The self-hosted compiler should move normal
-dependency loading to the binary artifact. A legacy JSON loader may exist during
-bootstrap or migration, but it is not the long-term hot path.
+The host compiler now emits and loads a binary `.starkpkg` container by default
+(STARKPKG magic, format version, Brotli-compressed canonical JSON payload), with
+`--package-image-json` as the opt-in JSON sidecar and `--inspect-pkg` rendering
+JSON/text from either form. Legacy `.starkpkg.json` artifacts still load during
+migration. The self-hosted compiler still owns the long-term sectioned byte-level
+encoding described below; the host container exists so the default artifact and
+tooling contracts are binary-first before the port.
 
 Conventional names can be decided with the artifact-layout work, but the
 intended split is:

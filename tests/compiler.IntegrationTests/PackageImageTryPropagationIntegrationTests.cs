@@ -215,7 +215,7 @@ public sealed class PackageImageTryPropagationIntegrationTests
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-try-facts-");
         var packageSourcePath = Path.Combine(tempDirectory.FullName, "Loader.stark");
-        var manifestPath = Path.Combine(tempDirectory.FullName, "libLoader.starkpkg.json");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libLoader.starkpkg");
         var libraryPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Loader.lib" : "libLoader.a");
 
         try
@@ -261,10 +261,9 @@ public sealed class PackageImageTryPropagationIntegrationTests
             Assert.Equal(0, exitCode);
             Assert.True(File.Exists(manifestPath));
 
-            var manifest = StarkPackageManifest.FromJson(await File.ReadAllTextAsync(manifestPath));
-            Assert.NotNull(manifest);
+            Assert.True(PackageImageLoader.TryLoadManifest(manifestPath, out var manifest));
 
-            var loaderModule = Assert.Single(manifest!.Modules, static module => module.ModuleName == "Loader");
+            var loaderModule = Assert.Single(manifest.Modules, static module => module.ModuleName == "Loader");
 
             // The role attributes survive in the typed interface variants.
             var typedInterface = loaderModule.EffectiveTypedInterface;
@@ -305,7 +304,7 @@ public sealed class PackageImageTryPropagationIntegrationTests
         var packageDirectory = Path.Combine(tempDirectory.FullName, "pkg");
         Directory.CreateDirectory(packageDirectory);
         var packageSourcePath = Path.Combine(packageDirectory, $"{packageModuleName}.stark");
-        var manifestPath = Path.Combine(packageDirectory, $"lib{packageModuleName}.starkpkg.json");
+        var manifestPath = Path.Combine(packageDirectory, $"lib{packageModuleName}.starkpkg");
         var libraryPath = Path.Combine(packageDirectory, OperatingSystem.IsWindows() ? $"{packageModuleName}.lib" : $"lib{packageModuleName}.a");
         var consumerSourcePath = Path.Combine(tempDirectory.FullName, "Demo.stark");
         var outputPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "app.exe" : "app");
@@ -330,11 +329,10 @@ public sealed class PackageImageTryPropagationIntegrationTests
 
             if (stripToTypedOnlyManifest)
             {
-                var manifest = StarkPackageManifest.FromJson(await File.ReadAllTextAsync(manifestPath));
-                Assert.NotNull(manifest);
+                Assert.True(PackageImageLoader.TryLoadManifest(manifestPath, out var manifest));
 
                 var packageModule = WithEffectiveLegacyCompilerSectionCopies(
-                    Assert.Single(manifest!.Modules, module => module.ModuleName == packageModuleName));
+                    Assert.Single(manifest.Modules, module => module.ModuleName == packageModuleName));
                 var typedOnlyManifest = manifest with
                 {
                     Modules = manifest.Modules

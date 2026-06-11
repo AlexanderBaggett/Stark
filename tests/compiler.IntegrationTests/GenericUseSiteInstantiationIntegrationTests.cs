@@ -406,7 +406,7 @@ public sealed class GenericUseSiteInstantiationIntegrationTests
 
         var tempDirectory = Directory.CreateTempSubdirectory("stark-manifest-typed-interface-modifiers-runtime-");
         var facadeSourcePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
-        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg");
         var libraryPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a");
         var demoSourcePath = Path.Combine(tempDirectory.FullName, "Demo.stark");
         var outputPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "app.exe" : "app");
@@ -444,11 +444,10 @@ public sealed class GenericUseSiteInstantiationIntegrationTests
             Assert.True(File.Exists(libraryPath));
             Assert.True(File.Exists(manifestPath));
 
-            var manifest = StarkPackageManifest.FromJson(await File.ReadAllTextAsync(manifestPath));
-            Assert.NotNull(manifest);
+            Assert.True(PackageImageLoader.TryLoadManifest(manifestPath, out var manifest));
 
             var typedOnlyManifest = BuildTypedOnlyFacadeManifest(
-                manifest!,
+                manifest,
                 static template => template,
                 omitCompilerFacts: true);
 

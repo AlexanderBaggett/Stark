@@ -358,7 +358,16 @@ internal sealed partial class LlvmFunctionBodyEmitter
 
         if (sourceType.Kind == StarkTypeKind.Integer && targetType.Kind == StarkTypeKind.RawPointer)
         {
-            AppendLine($"  {result} = inttoptr {MapType(sourceType)} {FormatValue(convert.Operand)} to ptr");
+            // Constant folding can leave a null constant as the operand of an
+            // integer-to-pointer conversion; LLVM only accepts `null` at pointer
+            // type, so spell the equivalent integer zero explicitly.
+            var operand = FormatValue(convert.Operand);
+            if (operand == "null")
+            {
+                operand = "0";
+            }
+
+            AppendLine($"  {result} = inttoptr {MapType(sourceType)} {operand} to ptr");
             return;
         }
 

@@ -45,15 +45,19 @@ internal sealed record StarkPackageModuleManifest(
     StarkPackageSourceSurfaceSection? SourceSurface = null,
     StarkPackageCompilerSectionsManifest? CompilerSections = null)
 {
+    [JsonIgnore]
     public StarkPackageTypedInterfaceSection? EffectiveTypedInterface =>
         CompilerSections?.TypedInterface ?? TypedInterface;
 
+    [JsonIgnore]
     public StarkPackageCompilerFactsSection? EffectiveCompilerFacts =>
         CompilerSections?.CompilerFacts ?? CompilerFacts;
 
+    [JsonIgnore]
     public StarkPackageGenericTemplateSection? EffectiveGenericTemplates =>
         CompilerSections?.GenericTemplates ?? GenericTemplates;
 
+    [JsonIgnore]
     public StarkPackageSourceSurfaceSection EffectiveSourceSurface =>
         SourceSurface
         ?? new StarkPackageSourceSurfaceSection(

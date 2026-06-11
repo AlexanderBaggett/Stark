@@ -189,7 +189,7 @@ public sealed class CompilerCliTests
         var rootPath = Path.Combine(tempDirectory.FullName, "Facade.stark");
         var extension = OperatingSystem.IsWindows() ? ".lib" : ".a";
         var outputPath = Path.Combine(tempDirectory.FullName, $"libFacade{extension}");
-        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg");
 
         try
         {
@@ -256,7 +256,7 @@ public sealed class CompilerCliTests
 
         var extension = OperatingSystem.IsWindows() ? ".lib" : ".a";
         var outputPath = Path.Combine(binDirectory, $"libFacade{extension}");
-        var manifestPath = Path.Combine(packageDirectory, "libFacade.starkpkg.json");
+        var manifestPath = Path.Combine(packageDirectory, "libFacade.starkpkg");
 
         try
         {
@@ -286,11 +286,10 @@ public sealed class CompilerCliTests
             Assert.Equal(string.Empty, stderr.ToString());
             Assert.True(File.Exists(outputPath));
             Assert.True(File.Exists(manifestPath));
-            Assert.False(File.Exists(Path.Combine(binDirectory, "libFacade.starkpkg.json")));
+            Assert.False(File.Exists(Path.Combine(binDirectory, "libFacade.starkpkg")));
 
-            var manifest = StarkPackageManifest.FromJson(await File.ReadAllTextAsync(manifestPath));
-            Assert.NotNull(manifest);
-            Assert.Equal(Path.Combine("..", "bin", $"libFacade{extension}"), manifest!.LibraryFileName);
+            Assert.True(PackageImageLoader.TryLoadManifest(manifestPath, out var manifest));
+            Assert.Equal(Path.Combine("..", "bin", $"libFacade{extension}"), manifest.LibraryFileName);
         }
         finally
         {
@@ -1569,7 +1568,7 @@ public sealed class CompilerCliTests
         var dependencyPath = Path.Combine(tempDirectory.FullName, "Math.stark");
         var extension = OperatingSystem.IsWindows() ? ".lib" : ".a";
         var outputPath = Path.Combine(tempDirectory.FullName, $"libFacade{extension}");
-        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg");
 
         try
         {
@@ -1613,21 +1612,20 @@ public sealed class CompilerCliTests
             Assert.True(new FileInfo(outputPath).Length > 0);
             Assert.True(File.Exists(manifestPath));
 
-            using var manifest = System.Text.Json.JsonDocument.Parse(await File.ReadAllTextAsync(manifestPath));
-            var root = manifest.RootElement;
-            Assert.Equal("Facade", root.GetProperty("RootModule").GetString());
+            Assert.True(PackageImageLoader.TryLoadManifest(manifestPath, out var manifest));
+            Assert.Equal("Facade", manifest.RootModule);
             Assert.Contains(
-                root.GetProperty("Modules").EnumerateArray(),
+                manifest.Modules,
                 module =>
                 {
-                    if (module.GetProperty("ModuleName").GetString() != "Facade")
+                    if (module.ModuleName != "Facade")
                     {
                         return false;
                     }
 
-                    var sourceSurface = module.GetProperty("SourceSurface");
-                    return sourceSurface.GetProperty("ReExports").EnumerateArray().Any(reExport => reExport.GetProperty("ModuleName").GetString() == "Math")
-                           && sourceSurface.GetProperty("Functions").EnumerateArray().Any(function => function.GetProperty("SymbolName").GetString() == "Facade.Double");
+                    var sourceSurface = module.SourceSurface;
+                    return sourceSurface?.ReExports?.Any(reExport => reExport.ModuleName == "Math") == true
+                           && sourceSurface.Functions?.Any(function => function.SymbolName == "Facade.Double") == true;
                 });
         }
         finally
@@ -2692,7 +2690,7 @@ public sealed class CompilerCliTests
         var syscallPath = Path.Combine(packageDirectory, "Syscall.stark");
         var appPath = Path.Combine(appDirectory, "App.stark");
         var libraryPath = Path.Combine(packageDirectory, "libSyscall.a");
-        var manifestPath = Path.Combine(packageDirectory, "libSyscall.starkpkg.json");
+        var manifestPath = Path.Combine(packageDirectory, "libSyscall.starkpkg");
         var outputPath = Path.Combine(appDirectory, "app");
 
         try
@@ -2724,20 +2722,19 @@ public sealed class CompilerCliTests
             Assert.True(File.Exists(libraryPath));
             Assert.True(File.Exists(manifestPath));
 
-            using (var manifest = System.Text.Json.JsonDocument.Parse(await File.ReadAllTextAsync(manifestPath)))
             {
-                var syscallModule = manifest.RootElement.GetProperty("Modules")
-                    .EnumerateArray()
-                    .Single(module => module.GetProperty("ModuleName").GetString() == "Syscall");
-                var syscallFunctions =
-                    syscallModule.GetProperty("Functions").EnumerateArray().ToArray().Length != 0
-                        ? syscallModule.GetProperty("Functions").EnumerateArray()
-                        : syscallModule.GetProperty("SourceSurface").GetProperty("Functions").EnumerateArray();
+                Assert.True(PackageImageLoader.TryLoadManifest(manifestPath, out var manifest));
+                var syscallModule = Assert.Single(
+                    manifest.Modules,
+                    static module => module.ModuleName == "Syscall");
+                var syscallFunctions = syscallModule.Functions.Count != 0
+                    ? syscallModule.Functions
+                    : syscallModule.SourceSurface?.Functions ?? [];
                 var syscallFunction = syscallFunctions
-                    .Single(function => function.GetProperty("Name").GetString() == "Syscall0");
-                Assert.True(syscallFunction.TryGetProperty("Asm", out var asm));
-                Assert.Equal("x86_64", asm.GetProperty("ArchitectureText").GetString());
-                Assert.Equal("syscall", asm.GetProperty("TemplateText").GetString());
+                    .Single(static function => function.Name == "Syscall0");
+                Assert.NotNull(syscallFunction.Asm);
+                Assert.Equal("x86_64", syscallFunction.Asm!.ArchitectureText);
+                Assert.Equal("syscall", syscallFunction.Asm.TemplateText);
             }
 
             File.Delete(syscallPath);
@@ -3292,11 +3289,21 @@ public sealed class CompilerCliTests
         }
 
         var bytes = await File.ReadAllBytesAsync(path);
-        return bytes.Length >= 4
-            && bytes[0] == (byte)'B'
-            && bytes[1] == (byte)'C'
-            && bytes[2] == 0xC0
-            && bytes[3] == 0xDE;
+        if (bytes.Length < 4)
+        {
+            return false;
+        }
+
+        // Raw bitcode ('BC' 0xC0DE) on ELF/COFF targets; Darwin emits the bitcode
+        // wrapper header (0x0B17C0DE little-endian) around the same payload.
+        return (bytes[0] == (byte)'B'
+                && bytes[1] == (byte)'C'
+                && bytes[2] == 0xC0
+                && bytes[3] == 0xDE)
+            || (bytes[0] == 0xDE
+                && bytes[1] == 0xC0
+                && bytes[2] == 0x17
+                && bytes[3] == 0x0B);
     }
 
     private static string? FindFirstAvailableTool(params string[] toolNames)

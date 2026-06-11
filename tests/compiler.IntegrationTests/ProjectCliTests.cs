@@ -805,7 +805,7 @@ public sealed class ProjectCliTests
             Assert.Equal(string.Empty, stderr.ToString());
             Assert.True(File.Exists(BuildArtifactPath(tempDirectory.FullName, targetInfo.Triple, "bin", "math", LibraryFileName("Math"))));
             Assert.True(File.Exists(BuildPackageImagePath(tempDirectory.FullName, targetInfo.Triple, "math", "Math")));
-            Assert.False(File.Exists(BuildArtifactPath(tempDirectory.FullName, targetInfo.Triple, "bin", "math", "libMath.starkpkg.json")));
+            Assert.False(File.Exists(BuildArtifactPath(tempDirectory.FullName, targetInfo.Triple, "bin", "math", "libMath.starkpkg")));
             Assert.True(File.Exists(BuildArtifactPath(tempDirectory.FullName, targetInfo.Triple, "bin", "app", ExecutableFileName("demo-app"))));
         }
         finally
@@ -1479,7 +1479,7 @@ public sealed class ProjectCliTests
             Assert.Equal(string.Empty, stderr.ToString());
             Assert.True(File.Exists(BuildArtifactPath(tempDirectory.FullName, targetInfo.Triple, "bin", "math", LibraryFileName("Math"))));
             Assert.True(File.Exists(BuildPackageImagePath(tempDirectory.FullName, targetInfo.Triple, "math", "Math")));
-            Assert.False(File.Exists(BuildArtifactPath(tempDirectory.FullName, targetInfo.Triple, "bin", "math", "libMath.starkpkg.json")));
+            Assert.False(File.Exists(BuildArtifactPath(tempDirectory.FullName, targetInfo.Triple, "bin", "math", "libMath.starkpkg")));
             Assert.True(File.Exists(BuildArtifactPath(tempDirectory.FullName, targetInfo.Triple, "tests", "math-tests", ExecutableFileName("math-tests"))));
         }
         finally
@@ -1835,7 +1835,7 @@ public sealed class ProjectCliTests
                 "-o",
                 Path.Combine(distDirectory, LibraryFileName("SystemRepoDistProbe")),
                 "--package-image-output",
-                Path.Combine(distDirectory, "libSystemRepoDistProbe.starkpkg.json"),
+                Path.Combine(distDirectory, "libSystemRepoDistProbe.starkpkg"),
                 "--target",
                 targetTriple
             ],
@@ -1870,7 +1870,7 @@ public sealed class ProjectCliTests
             """);
 
         var libraryPath = Path.Combine(distDirectory, LibraryFileName("SystemInstalledProbe"));
-        var packageImagePath = Path.Combine(distDirectory, "libSystemInstalledProbe.starkpkg.json");
+        var packageImagePath = Path.Combine(distDirectory, "libSystemInstalledProbe.starkpkg");
         var stdout = new StringWriter();
         var stderr = new StringWriter();
         var exitCode = await CompilerCli.RunAsync(
@@ -1962,7 +1962,7 @@ public sealed class ProjectCliTests
 
     private static string BuildPackageImagePath(string rootDirectory, string targetTriple, string projectKey, string outputName)
     {
-        return BuildArtifactPath(rootDirectory, targetTriple, "pkg", projectKey, $"lib{outputName}.starkpkg.json");
+        return BuildArtifactPath(rootDirectory, targetTriple, "pkg", projectKey, $"lib{outputName}.starkpkg");
     }
 
     private static string GeneratedRunnerPath(string testDirectory, string targetTriple)

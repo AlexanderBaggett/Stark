@@ -24,7 +24,9 @@ public sealed record CompilerOptions(
     bool InternalizeModulePrivate = false,
     bool EnforceIntegerRangeStorageRules = true,
     IReadOnlySet<string>? ImportedInlineCloneSeedFunctions = null,
-    int MaximumCompileTimeLoopIterations = CompileTimeFunctionEvaluator.DefaultMaximumCompileTimeLoopIterations);
+    int MaximumCompileTimeLoopIterations = CompileTimeFunctionEvaluator.DefaultMaximumCompileTimeLoopIterations,
+    SharedSourceModuleParseCache? SharedSourceModuleParseCache = null,
+    bool PruneUnusedLoweredFunctions = false);
 
 public readonly record struct ArtifactKey<T>(string Name);
 
@@ -379,9 +381,12 @@ public sealed class CompilerPipeline
             catch (Exception ex)
             {
                 stopwatch.Stop();
+                var crashDetail = Environment.GetEnvironmentVariable("STARK_DEBUG_PASS_CRASH") == "1"
+                    ? $"{ex.Message}{Environment.NewLine}{ex.StackTrace}"
+                    : ex.Message;
                 state.Diagnostics.Error(
                     "STK9999",
-                    $"Pass '{pass.Id}' crashed: {ex.Message}",
+                    $"Pass '{pass.Id}' crashed: {crashDetail}",
                     pass.Id);
 
                 state.Executions.Add(new PassExecutionRecord(

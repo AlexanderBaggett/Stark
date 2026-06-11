@@ -10,7 +10,7 @@ public sealed class PackageImageCliToolingTests
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-cli-emit-pkg-");
         var sourcePath = Path.Combine(tempDirectory.FullName, "Demo.stark");
-        var packagePath = Path.Combine(tempDirectory.FullName, "Demo.starkpkg.json");
+        var packagePath = Path.Combine(tempDirectory.FullName, "Demo.starkpkg");
         await File.WriteAllTextAsync(sourcePath, DemoSource);
 
         try
@@ -30,9 +30,8 @@ public sealed class PackageImageCliToolingTests
             Assert.Contains("Package library file: libDemoCustom.a", stdout.ToString(), StringComparison.Ordinal);
             Assert.True(File.Exists(packagePath));
 
-            var manifest = StarkPackageManifest.FromJson(await File.ReadAllTextAsync(packagePath));
-            Assert.NotNull(manifest);
-            Assert.Equal("Demo", manifest!.RootModule);
+            Assert.True(PackageImageLoader.TryLoadManifest(packagePath, out var manifest));
+            Assert.Equal("Demo", manifest.RootModule);
             Assert.Equal("libDemoCustom.a", manifest.LibraryFileName);
             Assert.Single(manifest.Modules);
         }
@@ -54,7 +53,7 @@ public sealed class PackageImageCliToolingTests
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-cli-emit-pkg-native-");
         var sourcePath = Path.Combine(tempDirectory.FullName, "Demo.stark");
-        var packagePath = Path.Combine(tempDirectory.FullName, "Demo.starkpkg.json");
+        var packagePath = Path.Combine(tempDirectory.FullName, "Demo.starkpkg");
         var nativeSourcePath = Path.Combine(tempDirectory.FullName, "DemoNative.c");
         var includeDirectory = Path.Combine(tempDirectory.FullName, "include");
         var libraryDirectory = Path.Combine(tempDirectory.FullName, "native");
@@ -94,9 +93,8 @@ public sealed class PackageImageCliToolingTests
             Assert.Equal(0, exitCode);
             Assert.Equal(string.Empty, stderr.ToString());
 
-            var manifest = StarkPackageManifest.FromJson(await File.ReadAllTextAsync(packagePath));
-            Assert.NotNull(manifest);
-            Assert.NotNull(manifest!.NativeDependencies);
+            Assert.True(PackageImageLoader.TryLoadManifest(packagePath, out var manifest));
+            Assert.NotNull(manifest.NativeDependencies);
             Assert.Equal("DemoNative.c", Assert.Single(manifest.NativeDependencies!.Sources!));
             Assert.Equal("include", Assert.Single(manifest.NativeDependencies.IncludeDirectories!));
             Assert.Equal("native", Assert.Single(manifest.NativeDependencies.LibraryDirectories!));
@@ -139,7 +137,7 @@ public sealed class PackageImageCliToolingTests
         Directory.CreateDirectory(packageDirectory);
 
         var sourcePath = Path.Combine(sourceDirectory, "Demo.stark");
-        var packagePath = Path.Combine(packageDirectory, "Demo.starkpkg.json");
+        var packagePath = Path.Combine(packageDirectory, "Demo.starkpkg");
         var nativeSourcePath = Path.Combine(sourceDirectory, "DemoNative.c");
         await File.WriteAllTextAsync(sourcePath, DemoSource);
         await File.WriteAllTextAsync(nativeSourcePath, "int demo_native(void) { return 0; }\n");
@@ -165,9 +163,8 @@ public sealed class PackageImageCliToolingTests
             Assert.Equal(0, exitCode);
             Assert.Equal(string.Empty, stderr.ToString());
 
-            var manifest = StarkPackageManifest.FromJson(await File.ReadAllTextAsync(packagePath));
-            Assert.NotNull(manifest);
-            Assert.NotNull(manifest!.NativeDependencies);
+            Assert.True(PackageImageLoader.TryLoadManifest(packagePath, out var manifest));
+            Assert.NotNull(manifest.NativeDependencies);
 
             var storedSource = Assert.Single(manifest.NativeDependencies!.Sources!);
             Assert.False(Path.IsPathRooted(storedSource));
@@ -429,7 +426,7 @@ public sealed class PackageImageCliToolingTests
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-cli-inspect-pkg-");
         var sourcePath = Path.Combine(tempDirectory.FullName, "Demo.stark");
-        var packagePath = Path.Combine(tempDirectory.FullName, "Demo.starkpkg.json");
+        var packagePath = Path.Combine(tempDirectory.FullName, "Demo.starkpkg");
         await File.WriteAllTextAsync(sourcePath, DemoSource);
 
         try

@@ -619,7 +619,7 @@ public finite law IntegerFactResult<IntegerTagType> TagTypeForVariantCount(u64[0
         bitWidth = 16;
     }
 
-    if (variantCount > 65536)
+    if (variantCount > 2 ** 16)
     {
         bitWidth = 32;
     }

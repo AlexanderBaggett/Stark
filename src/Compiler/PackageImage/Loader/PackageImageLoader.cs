@@ -10,8 +10,13 @@ internal static partial class PackageImageLoader
 
         try
         {
-            var json = File.ReadAllText(manifestPath);
-            var parsed = StarkPackageManifest.FromJson(json);
+            var bytes = File.ReadAllBytes(manifestPath);
+            if (PackageImageBinaryFormat.HasBinaryMagic(bytes))
+            {
+                return PackageImageBinaryFormat.TryDecode(bytes, out manifest);
+            }
+
+            var parsed = StarkPackageManifest.FromJson(System.Text.Encoding.UTF8.GetString(bytes));
             if (parsed is null)
             {
                 return false;

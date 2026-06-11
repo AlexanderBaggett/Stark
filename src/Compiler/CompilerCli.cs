@@ -14,7 +14,7 @@ internal sealed record ModuleOptimizationSafetyFacts(
 
 internal static class CompilerCli
 {
-    private const string Usage = "Usage: compiler [path-to-stark-file] [--check|--emit-mir|--emit-ssa|--emit-llvm|--emit-obj|--compile-only|--emit-lib|--emit-exe|--link-only|--emit-pkg|--emit-package|--inspect-pkg|--inspect-package|--host-test-inspect|--host-test-server] [-I dir|--search-dir dir]* [--no-stark-path] [-L dir|--library-dir dir]* [--link-arg arg]* [--native-source path]* [--native-include-dir dir]* [--native-library-dir dir]* [--native-library name]* [--native-pkg-config name]* [--native-link-arg arg]* [--package-library-file name] [--package-image-output path] [-o output] [--target triple] [--target-data-layout layout] [--target-cpu cpu] [--target-feature feature]* [--relocation-model mode] [--code-model model] [-O0|-Og|-O1|-O2|-O3|--optimize level] [--strict-integer-ranges] [--linker tool] [--archiver tool] [--save-temps dir] [--toolchain-metrics path] [--diagnostic-format format] [--log-level level] [--log-verbosity mode] [--log-category name]* [--log-stage pass]* [--log-kind kind]*";
+    private const string Usage = "Usage: compiler [path-to-stark-file] [--check|--emit-mir|--emit-ssa|--emit-llvm|--emit-obj|--compile-only|--emit-lib|--emit-exe|--link-only|--emit-pkg|--emit-package|--inspect-pkg|--inspect-package|--host-test-inspect|--host-test-server] [-I dir|--search-dir dir]* [--no-stark-path] [-L dir|--library-dir dir]* [--link-arg arg]* [--native-source path]* [--native-include-dir dir]* [--native-library-dir dir]* [--native-library name]* [--native-pkg-config name]* [--native-link-arg arg]* [--package-library-file name] [--package-image-output path] [--package-image-json] [-o output] [--target triple] [--target-data-layout layout] [--target-cpu cpu] [--target-feature feature]* [--relocation-model mode] [--code-model model] [-O0|-Og|-O1|-O2|-O3|--optimize level] [--strict-integer-ranges] [--linker tool] [--archiver tool] [--save-temps dir] [--toolchain-metrics path] [--diagnostic-format format] [--log-level level] [--log-verbosity mode] [--log-category name]* [--log-stage pass]* [--log-kind kind]*";
     private const int DiagnosticTabWidth = 4;
     private static readonly IReadOnlySet<string> EmptyImportedInlineCloneSeedFunctions = new HashSet<string>(StringComparer.Ordinal);
 
@@ -55,6 +55,7 @@ internal static class CompilerCli
         string? toolchainMetricsPath = null;
         string? packageLibraryFile = null;
         string? packageImageOutputPath = null;
+        var emitPackageImageJson = false;
         var diagnosticFormat = DiagnosticOutputFormat.Text;
         var logLevel = DiagnosticSeverity.Warning;
         var logVerbosity = CompilerLogVerbosity.Normal;
@@ -315,6 +316,12 @@ internal static class CompilerCli
                 continue;
             }
 
+            if (string.Equals(argument, "--package-image-json", StringComparison.Ordinal))
+            {
+                emitPackageImageJson = true;
+                continue;
+            }
+
             if (TryReadOptionValue(argument, "--log-level", args, ref index, out var logLevelValue))
             {
                 if (!TryParseLogLevel(logLevelValue, out logLevel))
@@ -505,7 +512,14 @@ internal static class CompilerCli
             QualifyModuleSymbols: effectiveMode == CliMode.EmitLibrary,
             OptimizationLevel: optimizationLevel,
             InternalizeModulePrivate: effectiveMode == CliMode.EmitExecutable,
-            EnforceIntegerRangeStorageRules: strictIntegerRanges);
+            EnforceIntegerRangeStorageRules: strictIntegerRanges,
+            // One invocation compiles the root plus each source-dependency module; parsed
+            // source modules are shared across those sequential pipeline runs.
+            SharedSourceModuleParseCache: new SharedSourceModuleParseCache(),
+            // Binary outputs only emit owned definitions plus referenced clones, so lowered
+            // functions outside that reachable set are dead weight. Inspection modes
+            // (--check/--emit-mir/--emit-ssa/--emit-llvm) keep the full lowered view.
+            PruneUnusedLoweredFunctions: effectiveMode is CliMode.EmitObject or CliMode.EmitLibrary or CliMode.EmitExecutable);
         var nativeDependencies = new NativeDependencyCliOptions(
             nativeSources,
             nativeIncludeDirectories,
@@ -550,11 +564,11 @@ internal static class CompilerCli
             case CliMode.EmitObject:
                 return await EmitObjectAsync(outputPath, inputPath, stdout, stderr, result, compilerOptions, toolchainOptions);
             case CliMode.EmitLibrary:
-                return await EmitLibraryAsync(outputPath, packageImageOutputPath, inputPath, stdout, stderr, result, compilerOptions, toolchainOptions, diagnosticFormat);
+                return await EmitLibraryAsync(outputPath, packageImageOutputPath, inputPath, stdout, stderr, result, compilerOptions, toolchainOptions, diagnosticFormat, emitPackageImageJson);
             case CliMode.EmitExecutable:
                 return await EmitExecutableAsync(outputPath, inputPath, stdout, stderr, result, compilerOptions, toolchainOptions, diagnosticFormat);
             case CliMode.EmitPackage:
-                return await EmitPackageImageAsync(outputPath, inputPath, stdout, stderr, result, packageLibraryFile, toolchainOptions.NativeDependencies, diagnosticFormat);
+                return await EmitPackageImageAsync(outputPath, inputPath, stdout, stderr, result, packageLibraryFile, toolchainOptions.NativeDependencies, diagnosticFormat, emitPackageImageJson);
             default:
                 throw new InvalidOperationException($"Unhandled compiler mode '{effectiveMode}'.");
         }
@@ -754,7 +768,8 @@ internal static class CompilerCli
         CompilationResult result,
         CompilerOptions compilerOptions,
         ToolchainCliOptions toolchainOptions,
-        DiagnosticOutputFormat diagnosticFormat)
+        DiagnosticOutputFormat diagnosticFormat,
+        bool emitPackageImageJson)
     {
         if (!result.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule) || llvmModule is null)
         {
@@ -802,18 +817,43 @@ internal static class CompilerCli
             if (result.Artifacts.TryGet(CompilerArtifactKeys.LoadedModules, out LoadedModuleSet? loadedModules)
                 && loadedModules is not null)
             {
-                foreach (var module in loadedModules.ImportedModules.Where(static module => !module.Reference.IsExternal))
+                var dependencyModules = loadedModules.ImportedModules
+                    .Where(static module => !module.Reference.IsExternal)
+                    .ToArray();
+
+                // Optimization decisions write to the metrics stream, so they resolve
+                // sequentially in module order before the compiles fan out. Every archive
+                // member is needed, so all modules compile in parallel; the runs only
+                // share the module resolver and the parse cache, which are thread-safe.
+                var dependencyLtoDecisions = new bool[dependencyModules.Length];
+                for (var index = 0; index < dependencyModules.Length; index++)
                 {
-                    var dependencyResult = CompileDependencyObject(
-                        module,
+                    dependencyLtoDecisions[index] = AddOptimizationDecision(
+                        toolchainMetrics,
+                        "library_dependency",
+                        AnalyzeModuleOptimizationSafety(dependencyModules[index], enableDependencyLto)).CanEmitThinLtoBitcode;
+                }
+
+                var dependencyResults = new DependencyCompileResult[dependencyModules.Length];
+                Parallel.For(
+                    0,
+                    dependencyModules.Length,
+                    new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount },
+                    index => dependencyResults[index] = CompileDependencyObject(
+                        dependencyModules[index],
                         compilerOptions,
                         intermediateDirectory,
                         preserveTemps: toolchainOptions.SaveTempsDirectory is not null,
-                        toolchainMetrics: toolchainMetrics,
-                        enableLto: AddOptimizationDecision(
-                            toolchainMetrics,
-                            "library_dependency",
-                            AnalyzeModuleOptimizationSafety(module, enableDependencyLto)).CanEmitThinLtoBitcode);
+                        toolchainMetrics: null,
+                        enableLto: dependencyLtoDecisions[index]));
+
+                foreach (var dependencyResult in dependencyResults)
+                {
+                    if (dependencyResult.ToolchainResult is not null)
+                    {
+                        toolchainMetrics.AddLlvmObject(dependencyResult.ToolchainResult);
+                    }
+
                     if (!dependencyResult.Success)
                     {
                         await WriteDiagnosticsAsync(stderr, dependencyResult.Diagnostics, diagnosticFormat, succeeded: false);
@@ -856,7 +896,8 @@ internal static class CompilerCli
                 await stderr.WriteAsync(toolchainResult.StandardError);
             }
 
-            var manifestPath = Path.GetFullPath(packageImageOutputPath ?? DeriveLibraryManifestPath(toolchainResult.OutputPath, inputPath, result));
+            var manifestPath = Path.GetFullPath(PackageImageBinaryFormat.NormalizeBinaryImagePath(
+                packageImageOutputPath ?? DeriveLibraryManifestPath(toolchainResult.OutputPath, inputPath, result)));
             var manifestDirectory = Path.GetDirectoryName(manifestPath) ?? Environment.CurrentDirectory;
             Directory.CreateDirectory(manifestDirectory);
             var manifest = PackageImageBuilder.Create(
@@ -873,11 +914,18 @@ internal static class CompilerCli
                 {
                     LibraryFileName = BuildPackageLibraryReference(toolchainResult.OutputPath, manifestPath)
                 };
-            await File.WriteAllTextAsync(manifestPath, manifest.ToJson());
+            await File.WriteAllBytesAsync(manifestPath, PackageImageBinaryFormat.Encode(manifest));
 
             await toolchainMetrics.WriteAsync(toolchainOptions.ToolchainMetricsPath);
             await stdout.WriteLineAsync($"Emitted static library: {toolchainResult.OutputPath}");
             await stdout.WriteLineAsync($"Emitted package image: {manifestPath}");
+            if (emitPackageImageJson)
+            {
+                var jsonPath = PackageImageBinaryFormat.JsonSidecarPath(manifestPath);
+                await File.WriteAllTextAsync(jsonPath, manifest.ToJson());
+                await stdout.WriteLineAsync($"Emitted package image JSON: {jsonPath}");
+            }
+
             return 0;
         }
         finally
@@ -960,10 +1008,12 @@ internal static class CompilerCli
         CompilationResult result,
         string? packageLibraryFile,
         NativeDependencyCliOptions nativeDependencies,
-        DiagnosticOutputFormat diagnosticFormat)
+        DiagnosticOutputFormat diagnosticFormat,
+        bool emitPackageImageJson)
     {
         var packageLibraryFileName = ResolvePackageLibraryFileName(packageLibraryFile, inputPath, result);
-        var resolvedOutputPath = Path.GetFullPath(outputPath ?? DerivePackageImageOutputPath(inputPath, result, packageLibraryFileName));
+        var resolvedOutputPath = Path.GetFullPath(PackageImageBinaryFormat.NormalizeBinaryImagePath(
+            outputPath ?? DerivePackageImageOutputPath(inputPath, result, packageLibraryFileName)));
         var packageImage = PackageImageBuilder.Create(
             result,
             packageLibraryFileName,
@@ -978,9 +1028,16 @@ internal static class CompilerCli
             }
         }
 
-        await File.WriteAllTextAsync(resolvedOutputPath, packageImage.ToJson());
+        await File.WriteAllBytesAsync(resolvedOutputPath, PackageImageBinaryFormat.Encode(packageImage));
         await stdout.WriteLineAsync($"Emitted package image: {resolvedOutputPath}");
         await stdout.WriteLineAsync($"Package library file: {packageImage.LibraryFileName}");
+        if (emitPackageImageJson)
+        {
+            var jsonPath = PackageImageBinaryFormat.JsonSidecarPath(resolvedOutputPath);
+            await File.WriteAllTextAsync(jsonPath, packageImage.ToJson());
+            await stdout.WriteLineAsync($"Emitted package image JSON: {jsonPath}");
+        }
+
         return 0;
     }
 
@@ -1005,7 +1062,22 @@ internal static class CompilerCli
                 return 1;
             }
 
-            json = await File.ReadAllTextAsync(fullPath);
+            var bytes = await File.ReadAllBytesAsync(fullPath);
+            if (PackageImageBinaryFormat.HasBinaryMagic(bytes))
+            {
+                if (!PackageImageBinaryFormat.TryDecode(bytes, out var binaryManifest))
+                {
+                    await stderr.WriteLineAsync($"Package image file '{fullPath}' is not a readable binary package image.");
+                    return 1;
+                }
+
+                json = binaryManifest.ToJson();
+            }
+            else
+            {
+                json = System.Text.Encoding.UTF8.GetString(bytes);
+            }
+
             sourceName = fullPath;
         }
         else
@@ -2123,30 +2195,6 @@ internal static class CompilerCli
         bool enableLto,
         IReadOnlyDictionary<string, IReadOnlySet<string>>? importedInlineCloneSeedsByModule)
     {
-        var compiledModules = new List<DependencyLlvmCompileResult>(modules.Count);
-        foreach (var module in modules)
-        {
-            var dependencyResult = CompileDependencyLlvm(
-                module,
-                rootOptions,
-                ResolveImportedInlineCloneSeedFunctions(module, importedInlineCloneSeedsByModule));
-            if (!dependencyResult.Success)
-            {
-                return new SourceDependencyLinkResult(
-                    false,
-                    [],
-                    dependencyResult.Diagnostics,
-                    dependencyResult.Logs,
-                    null,
-                    RequiresMathLibrary: false,
-                    RequiresWinsockLibrary: false,
-                    RequiresWindowsSynchronizationLibrary: false,
-                    RequiresNtDllLibrary: false);
-            }
-
-            compiledModules.Add(dependencyResult);
-        }
-
         var rootSymbols = SummarizeLlvmSymbols(rootLlvmText);
         var unresolvedSymbols = new HashSet<string>(rootSymbols.ReferencedSymbols, StringComparer.Ordinal);
         var emittedModuleIndexes = new HashSet<int>();
@@ -2157,17 +2205,77 @@ internal static class CompilerCli
         var requiresWindowsSynchronizationLibrary = false;
         var requiresNtDllLibrary = false;
 
+        // Dependency modules compile lazily: a module's pipeline only runs once the
+        // unresolved-symbol loop suspects it (by sanitized name match), with one
+        // completeness fallback wave that compiles everything left when suspicion
+        // misses. Fully inlined roots therefore skip dependency compilation entirely.
+        // Each wave compiles its modules in parallel; the runs only share the module
+        // resolver and the parse cache, which are thread-safe.
+        var compiledModules = new DependencyLlvmCompileResult?[modules.Count];
+
+        SourceDependencyLinkResult? CompileWave(IReadOnlyList<int> indexes)
+        {
+            Parallel.For(
+                0,
+                indexes.Count,
+                new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount },
+                position =>
+                {
+                    var index = indexes[position];
+                    var module = modules[index];
+                    compiledModules[index] = CompileDependencyLlvm(
+                        module,
+                        rootOptions,
+                        ResolveImportedInlineCloneSeedFunctions(module, importedInlineCloneSeedsByModule));
+                });
+
+            foreach (var index in indexes)
+            {
+                var dependencyResult = compiledModules[index]!;
+                if (!dependencyResult.Success)
+                {
+                    return new SourceDependencyLinkResult(
+                        false,
+                        objectPaths,
+                        dependencyResult.Diagnostics,
+                        dependencyResult.Logs,
+                        null,
+                        requiresMathLibrary,
+                        requiresWinsockLibrary,
+                        requiresWindowsSynchronizationLibrary,
+                        requiresNtDllLibrary);
+                }
+            }
+
+            return null;
+        }
+
+        List<int> CollectSuspectedUncompiledIndexes()
+        {
+            var indexes = new List<int>();
+            for (var index = 0; index < modules.Count; index++)
+            {
+                if (compiledModules[index] is null
+                    && ModuleMayDefineUnresolvedSymbol(unresolvedSymbols, modules[index]))
+                {
+                    indexes.Add(index);
+                }
+            }
+
+            return indexes;
+        }
+
         while (true)
         {
             var madeProgress = false;
-            for (var index = 0; index < compiledModules.Count; index++)
+            for (var index = 0; index < compiledModules.Length; index++)
             {
-                if (emittedModuleIndexes.Contains(index))
+                if (emittedModuleIndexes.Contains(index)
+                    || compiledModules[index] is not { } dependencyResult)
                 {
                     continue;
                 }
 
-                var dependencyResult = compiledModules[index];
                 if (!dependencyResult.Symbols.DefinedSymbols.Overlaps(unresolvedSymbols))
                 {
                     continue;
@@ -2220,19 +2328,34 @@ internal static class CompilerCli
                 continue;
             }
 
+            if (unresolvedSymbols.Count != 0)
+            {
+                var suspectedIndexes = CollectSuspectedUncompiledIndexes();
+                if (suspectedIndexes.Count != 0)
+                {
+                    if (CompileWave(suspectedIndexes) is { } waveFailure)
+                    {
+                        return waveFailure;
+                    }
+
+                    continue;
+                }
+            }
+
             var broadenedDependency = false;
-            for (var index = 0; index < compiledModules.Count; index++)
+            for (var index = 0; index < compiledModules.Length; index++)
             {
                 if (emittedModuleIndexes.Contains(index)
                     || broadenedModuleIndexes.Contains(index)
-                    || !compiledModules[index].UsesFilteredOwnedFunctionEmission
-                    || !UnresolvedSymbolsMayBelongToModule(unresolvedSymbols, compiledModules[index].Module))
+                    || compiledModules[index] is not { } filteredResult
+                    || !filteredResult.UsesFilteredOwnedFunctionEmission
+                    || !UnresolvedSymbolsMayBelongToModule(unresolvedSymbols, filteredResult.Module))
                 {
                     continue;
                 }
 
                 var dependencyResult = CompileDependencyLlvm(
-                    compiledModules[index].Module,
+                    filteredResult.Module,
                     rootOptions,
                     importedInlineCloneSeedFunctions: null);
                 if (!dependencyResult.Success)
@@ -2265,12 +2388,43 @@ internal static class CompilerCli
             true,
             objectPaths,
             [],
-            compiledModules.SelectMany(static module => module.Logs).ToArray(),
+            compiledModules
+                .Where(static module => module is not null)
+                .SelectMany(static module => module!.Logs)
+                .ToArray(),
             null,
             requiresMathLibrary,
             requiresWinsockLibrary,
             requiresWindowsSynchronizationLibrary,
             requiresNtDllLibrary);
+    }
+
+    private static bool ModuleMayDefineUnresolvedSymbol(
+        IReadOnlySet<string> unresolvedSymbols,
+        LoadedModuleDocument module)
+    {
+        if (UnresolvedSymbolsMayBelongToModule(unresolvedSymbols, module))
+        {
+            return true;
+        }
+
+        // Asm functions and `export` functions define binary symbols spelled exactly as
+        // declared, without the module-qualified shape the name heuristic looks for.
+        foreach (var declaration in module.SyntaxModel.Declarations)
+        {
+            if (declaration.Kind != DeclarationKind.Function || declaration.Function is null)
+            {
+                continue;
+            }
+
+            if ((declaration.Function.Asm is not null || declaration.Visibility == StarkVisibility.Export)
+                && unresolvedSymbols.Contains(declaration.Name))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static bool UnresolvedSymbolsMayBelongToModule(
@@ -2673,7 +2827,8 @@ internal static class CompilerCli
                 EmitLlvmIr = true,
                 StopAfterPassId = null,
                 QualifyModuleSymbols = true,
-                ImportedInlineCloneSeedFunctions = importedInlineCloneSeedFunctions
+                ImportedInlineCloneSeedFunctions = importedInlineCloneSeedFunctions,
+                PruneUnusedLoweredFunctions = true
             });
 
         if (!dependencyResult.Succeeded)
@@ -3153,7 +3308,7 @@ internal static class CompilerCli
         await stdout.WriteLineAsync("  --emit-obj    Compile LLVM IR to an object file");
         await stdout.WriteLineAsync("  --compile-only Compile LLVM IR to an object file");
         await stdout.WriteLineAsync("  --emit-lib    Build a static library and Stark package image");
-        await stdout.WriteLineAsync("  --emit-pkg    Emit a Stark package image without linker/archive steps");
+        await stdout.WriteLineAsync("  --emit-pkg    Emit a Stark package image without linker/archive steps\n  --package-image-json    Also write the indented JSON inspection sidecar next to the binary package image");
         await stdout.WriteLineAsync("  --emit-package Emit a Stark package image without linker/archive steps");
         await stdout.WriteLineAsync("  --inspect-pkg Inspect and validate a Stark package image");
         await stdout.WriteLineAsync("  --inspect-package Inspect and validate a Stark package image");
@@ -3205,7 +3360,7 @@ internal static class CompilerCli
         await stdout.WriteLineAsync("  --emit-obj is compile-only.");
         await stdout.WriteLineAsync("  --emit-lib and --emit-exe force the archive/link workflow.");
         await stdout.WriteLineAsync("  --emit-pkg validates and emits package image JSON only.");
-        await stdout.WriteLineAsync("  --inspect-pkg accepts a .starkpkg.json file path or JSON from stdin.");
+        await stdout.WriteLineAsync("  --inspect-pkg accepts a binary .starkpkg or legacy .starkpkg.json file path, or JSON from stdin.");
         await stdout.WriteLineAsync("  --host-test-inspect and --host-test-server are for Stark-native tests targeting the current host compiler.");
         await stdout.WriteLineAsync("  With no workflow flag, the compiler infers executable vs library from the root source.");
         await stdout.WriteLineAsync("  --diagnostic-format json suppresses the text compiler log stream so stderr stays machine-readable.");
@@ -3216,8 +3371,8 @@ internal static class CompilerCli
         await stdout.WriteLineAsync("  compiler app.stark --check");
         await stdout.WriteLineAsync("  compiler app.stark --emit-llvm -o app.ll");
         await stdout.WriteLineAsync("  compiler libFacade.stark --emit-lib -o libFacade.a");
-        await stdout.WriteLineAsync("  compiler app.stark --emit-pkg -o app.starkpkg.json");
-        await stdout.WriteLineAsync("  compiler libFacade.starkpkg.json --inspect-pkg");
+        await stdout.WriteLineAsync("  compiler app.stark --emit-pkg -o app.starkpkg");
+        await stdout.WriteLineAsync("  compiler libFacade.starkpkg --inspect-pkg");
         await stdout.WriteLineAsync("  compiler app.stark --diagnostic-format json");
         await stdout.WriteLineAsync("  compiler --host-test-inspect request.json");
     }
@@ -3299,15 +3454,18 @@ internal static class CompilerCli
         LlvmRelocationModel relocationModel,
         LlvmCodeModel? codeModel)
     {
-        if (!requiresTargetInfo)
-        {
-            return null;
-        }
-
+        // An explicit --target steers target-dependent decisions (asm variant selection,
+        // package facts) in every mode; only host-toolchain detection stays reserved for
+        // the modes that need native output.
         var explicitTargetInfo = CreateTargetInfo(targetTriple, targetDataLayout, targetCpu, targetFeatures, relocationModel, codeModel);
         if (explicitTargetInfo is not null)
         {
             return explicitTargetInfo;
+        }
+
+        if (!requiresTargetInfo)
+        {
+            return null;
         }
 
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out var detectedTargetInfo))
@@ -3526,7 +3684,7 @@ internal static class CompilerCli
         var emittedLibraryFileName = Path.GetFileName(libraryOutputPath);
         var canonicalLibraryFileName = ResolvePackageLibraryFileName(null, inputPath, result);
         var baseName = GetLibraryPackageImageBaseName(emittedLibraryFileName, canonicalLibraryFileName);
-        return Path.Combine(directory, $"{baseName}.starkpkg.json");
+        return Path.Combine(directory, $"{baseName}{PackageImageBinaryFormat.FileExtension}");
     }
 
     private static string GetLibraryPackageImageBaseName(string emittedLibraryFileName, string canonicalLibraryFileName)
@@ -3567,7 +3725,7 @@ internal static class CompilerCli
 
     private static string DerivePackageImageOutputPath(string? inputPath, CompilationResult result, string packageLibraryFileName)
     {
-        var packageImageFileName = $"{Path.GetFileNameWithoutExtension(packageLibraryFileName)}.starkpkg.json";
+        var packageImageFileName = $"{Path.GetFileNameWithoutExtension(packageLibraryFileName)}{PackageImageBinaryFormat.FileExtension}";
 
         if (inputPath is not null)
         {

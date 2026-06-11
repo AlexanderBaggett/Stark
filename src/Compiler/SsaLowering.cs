@@ -22,6 +22,17 @@ internal sealed class SsaLowerer
 
     public SsaIrModule Lower(MidLevelIrModule mir)
     {
+        SeedFunctionSignatures(mir);
+
+        var functions = mir.Functions
+            .Select(LowerFunction)
+            .ToArray();
+
+        return new SsaIrModule(mir.ModuleName, functions, mir.AddressTakenFunctions);
+    }
+
+    public void SeedFunctionSignatures(MidLevelIrModule mir)
+    {
         foreach (var function in mir.Functions)
         {
             _signatures.TryAdd(
@@ -32,15 +43,9 @@ internal sealed class SsaLowerer
                     function.Parameters,
                     SourceName: function.Name));
         }
-
-        var functions = mir.Functions
-            .Select(LowerFunction)
-            .ToArray();
-
-        return new SsaIrModule(mir.ModuleName, functions, mir.AddressTakenFunctions);
     }
 
-    private SsaFunction LowerFunction(MidLevelIrFunction function)
+    public SsaFunction LowerFunction(MidLevelIrFunction function)
     {
         if (!function.HasBody || !function.SupportsDirectCodeGeneration || function.Blocks.Count == 0)
         {

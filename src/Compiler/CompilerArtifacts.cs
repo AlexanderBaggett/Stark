@@ -886,6 +886,48 @@ public sealed record SourceModuleParseCache(
     public bool TryGet(string moduleName, out SourceModuleParse? module) => Modules.TryGetValue(moduleName, out module);
 }
 
+/// <summary>
+/// Shares parsed source modules across the sequential pipeline runs of a single compiler
+/// invocation (the root compile plus its per-dependency compiles). Only diagnostic-free
+/// parses of plain source files are cached so error reporting and package-image loading
+/// behave exactly as uncached compilation.
+/// </summary>
+public sealed class SharedSourceModuleParseCache
+{
+    private readonly object _lock = new();
+    private readonly Dictionary<string, SourceModuleParse> _modules = new(StringComparer.Ordinal);
+
+    public bool TryGet(string moduleName, string? filePath, out SourceModuleParse module)
+    {
+        if (filePath is not null)
+        {
+            lock (_lock)
+            {
+                if (_modules.TryGetValue(moduleName, out var cached)
+                    && string.Equals(cached.Reference.FilePath, filePath, StringComparison.Ordinal))
+                {
+                    module = cached;
+                    return true;
+                }
+            }
+        }
+
+        module = default!;
+        return false;
+    }
+
+    public void Add(SourceModuleParse module)
+    {
+        if (module.Reference.FilePath is not null)
+        {
+            lock (_lock)
+            {
+                _modules[module.Reference.ModuleName] = module;
+            }
+        }
+    }
+}
+
 public sealed record LoadedModuleDocument(
     ResolvedModuleReference Reference,
     ParseResult ParseResult,

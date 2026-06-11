@@ -3943,7 +3943,7 @@ internal fn System.Memory.MemoryStatus AppendEscapedStringCodePoint(mut borrow O
         return destination.AppendConstAsciiDisjoint("\\\\");
     }
 
-    if (codePoint < 32 || (codePoint > 126 && codePoint <= 65535))
+    if (codePoint < 32 || (codePoint > 126 && codePoint <= 2 ** 16 - 1))
     {
         stack System.Memory.MemoryStatus status = destination.Reserve(6);
         switch (status)

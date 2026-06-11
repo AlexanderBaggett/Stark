@@ -14,7 +14,7 @@ public sealed class PackageImageTypedGroupedLocalDeclarationIntegrationTests
 
         var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-typed-grouped-local-runtime-");
         var facadeSourcePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
-        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg");
         var demoSourcePath = Path.Combine(tempDirectory.FullName, "Demo.stark");
         var libraryPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a");
         var outputPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "app.exe" : "app");
@@ -52,11 +52,10 @@ public sealed class PackageImageTypedGroupedLocalDeclarationIntegrationTests
             Assert.True(File.Exists(libraryPath));
             Assert.True(File.Exists(manifestPath));
 
-            var manifest = StarkPackageManifest.FromJson(await File.ReadAllTextAsync(manifestPath));
-            Assert.NotNull(manifest);
+            Assert.True(PackageImageLoader.TryLoadManifest(manifestPath, out var manifest));
 
             var facadeModule = WithEffectiveLegacyCompilerSectionCopies(
-                Assert.Single(manifest!.Modules, static module => module.ModuleName == "Facade"));
+                Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade"));
             var template = Assert.Single(facadeModule.GenericTemplates!.Functions, static template => template.QualifiedResolvedName == "Facade.SumTo");
             Assert.Null(template.BodyText);
             Assert.NotNull(template.TypedBody);
