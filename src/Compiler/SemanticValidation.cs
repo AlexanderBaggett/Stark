@@ -3782,7 +3782,7 @@ internal sealed class SemanticValidator
             }
             else if (!TryGetFunctionOverloads(overloadSourceName!, out overloads))
             {
-                return new ValidationValue(StarkTypeSymbols.Error);
+                return UnresolvedCallValue(summary);
             }
 
             var resolution = FunctionOverloadFacts.Resolve(
@@ -3793,7 +3793,7 @@ internal sealed class SemanticValidator
                 ResolveAssociatedTypeForSubstitution);
             if (!resolution.Succeeded)
             {
-                return new ValidationValue(StarkTypeSymbols.Error);
+                return UnresolvedCallValue(summary);
             }
 
             target = target with
@@ -3824,7 +3824,7 @@ internal sealed class SemanticValidator
                     NamedType: ResolveNamedTypeSymbol(target.Type.ClosureReturnType ?? StarkTypeSymbols.Error));
             }
 
-            return new ValidationValue(StarkTypeSymbols.Error);
+            return UnresolvedCallValue(summary);
         }
 
         var receiverOffset = target.Receiver is null ? 0 : 1;
@@ -3894,6 +3894,25 @@ internal sealed class SemanticValidator
             arguments.Start));
 
         return BuildCallReturnValue(target, argumentValues, receiverOffset, explicitParameterCount);
+    }
+
+    /// <summary>
+    /// An unresolvable callee must not leave the enclosing function looking pure:
+    /// claiming memory(none)/argmemonly for a body that actually performs a call
+    /// would let LLVM delete or reorder the call's effects. Destructor bodies hit
+    /// this routinely — their generic 'self' member calls only resolve during MIR
+    /// lowering — and a dropped Close()/free() that the optimizer erases is a
+    /// miscompile, so the summary degrades to conservative memory effects.
+    /// </summary>
+    private static ValidationValue UnresolvedCallValue(FunctionValidationBuilder summary)
+    {
+        summary.ApplyFunctionMemoryEffects(new FunctionMemoryEffectSummary(
+            ReadsArgumentMemory: true,
+            WritesArgumentMemory: true,
+            CapturesArgumentMemory: false,
+            ReadsOtherMemory: true,
+            WritesOtherMemory: true));
+        return new ValidationValue(StarkTypeSymbols.Error);
     }
 
     private ValidationValue BuildCallReturnValue(

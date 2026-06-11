@@ -3289,10 +3289,17 @@ public sealed record TypeCheckModel(
     IReadOnlyList<ClosureFunctionPromotionTypingRecord>? ClosureFunctionPromotionRecords = null,
     IReadOnlyList<BoundOperation>? BoundOperationRecords = null,
     IReadOnlyList<TryPropagationTypingRecord>? TryPropagationRecords = null,
-    IReadOnlyDictionary<string, ThreadSafetyLawTypeFacts>? ThreadSafetyLawFactRecords = null)
+    IReadOnlyDictionary<string, ThreadSafetyLawTypeFacts>? ThreadSafetyLawFactRecords = null,
+    IReadOnlyDictionary<string, IReadOnlyList<TypedConstructorShape>>? ConstructorShapeRecords = null)
 {
     public IReadOnlyList<TryPropagationTypingRecord> TryPropagations =>
         TryPropagationRecords ?? [];
+
+    public IReadOnlyDictionary<string, IReadOnlyList<TypedConstructorShape>> ConstructorShapes =>
+        ConstructorShapeRecords ?? EmptyConstructorShapes;
+
+    private static IReadOnlyDictionary<string, IReadOnlyList<TypedConstructorShape>> EmptyConstructorShapes { get; } =
+        new Dictionary<string, IReadOnlyList<TypedConstructorShape>>(StringComparer.Ordinal);
 
     public IReadOnlyDictionary<string, ThreadSafetyLawTypeFacts> ThreadSafetyLawFacts =>
         ThreadSafetyLawFactRecords ?? EmptyThreadSafetyLawFacts;

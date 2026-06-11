@@ -68,6 +68,7 @@ internal unsafe ffi fn i32[min max] pthread_join(rawmutptr<i8[min max]> thread, 
 internal unsafe ffi fn i32[min max] pthread_detach(rawmutptr<i8[min max]> thread);
 internal unsafe ffi fn i32[min max] sched_yield();
 internal unsafe ffi fn i32[min max] nanosleep(rawptr<MacOSTimespec> request, rawptr<MacOSTimespec> remaining);
+internal unsafe ffi fn i32[min max] clock_gettime(i32[min max] clockId, rawmutptr<MacOSTimespec> time);
 internal unsafe ffi fn i32[min max] socket(i32[min max] domain, i32[min max] socketType, i32[min max] protocol);
 internal unsafe ffi fn i32[min max] connect(i32[min max] socketHandle, rawptr<i8[min max]> address, i32[min max] addressLength);
 internal unsafe ffi fn i32[min max] bind(i32[min max] socketHandle, rawptr<i8[min max]> address, i32[min max] addressLength);
@@ -1021,6 +1022,74 @@ internal unsafe fn i32[min max] FlushFile(rawptr<i8[min max]> handle)
     }
 
     return NegativeErrno();
+}
+
+// Darwin's CLOCK_MONOTONIC is 6 (Linux uses 1).
+const MacOSClockMonotonic = 6;
+
+internal unsafe fn i64[min max] MonotonicMilliseconds()
+{
+    stack mut MacOSTimespec time = new MacOSTimespec()
+    {
+        Seconds = 0,
+        Nanoseconds = 0
+    };
+    stack i32[min max] result = clock_gettime(MacOSClockMonotonic, &time);
+    if (result != 0)
+    {
+        return (i64[min max])result;
+    }
+
+    return (time.Seconds * 1000) + (time.Nanoseconds / 1000000);
+}
+
+// Raw numeric descriptors (process pipes) are not MacOSHandle allocations, so
+// they close and transfer bytes through the descriptor-based libc calls.
+internal unsafe fn i32[min max] CloseRawDescriptor(i32[min max] descriptor)
+{
+    if (descriptor < 0)
+    {
+        return -1;
+    }
+
+    if (close(descriptor) == 0)
+    {
+        return 0;
+    }
+
+    return NegativeErrno();
+}
+
+internal unsafe fn i64[min max] ReadRawDescriptorBytes(rawmutptr<i8[min max]>[length] buffer, u64[0 2 ** 63 - 1] length, i32[min max] descriptor)
+{
+    if (buffer == null || descriptor < 0)
+    {
+        return -1;
+    }
+
+    stack i64[min max] result = read(descriptor, buffer, length);
+    if (result < 0)
+    {
+        return (i64[min max])NegativeErrno();
+    }
+
+    return result;
+}
+
+internal unsafe fn i64[min max] WriteRawDescriptorBytes(rawptr<i8[min max]>[length] buffer, u64[0 2 ** 63 - 1] length, i32[min max] descriptor)
+{
+    if (buffer == null || descriptor < 0)
+    {
+        return -1;
+    }
+
+    stack i64[min max] result = write(descriptor, buffer, length);
+    if (result < 0)
+    {
+        return (i64[min max])NegativeErrno();
+    }
+
+    return result;
 }
 
 internal unsafe fn i64[min max] ReadFile(rawmutptr<i8[min max]> buffer, i64[min max] size, i64[min max] count, rawptr<i8[min max]> handle)

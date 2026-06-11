@@ -1060,13 +1060,20 @@ internal sealed partial class MidLevelIrLowerer
         {
             parsedAggregatePattern = null;
 
+            // Resolve from the substituted type symbol directly: a display-name
+            // round-trip ("Result<i32, i32>.Ok") does not match the canonical
+            // named-type keys for generic instantiations.
             var publishedEnumType = ApplyGenericSubstitution(publishedEnumPattern.EnumType);
-            var publishedCaseName = $"{publishedEnumType.DisplayName}.{publishedEnumPattern.VariantName}";
-            if (!TryResolveEnumCaseReference(publishedCaseName, out var enumType, out _, out var enumVariant)
+            if (publishedEnumType.Kind != StarkTypeKind.Named
+                || publishedEnumType.NamedType is null
+                || !TryGetEnumLayout(publishedEnumType, out var publishedLayout)
+                || !publishedLayout.TryGetVariant(publishedEnumPattern.VariantName, out var enumVariant)
                 || enumVariant.UsesNamedFields)
             {
                 return false;
             }
+
+            var enumType = publishedEnumType;
 
             if (enumVariant.Fields.Count == 0)
             {

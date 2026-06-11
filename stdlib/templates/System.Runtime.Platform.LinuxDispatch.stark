@@ -290,6 +290,38 @@ internal unsafe fn i32[min max] FlushFile(rawptr<i8[min max]> handle)
     }
 }
 
+internal unsafe inline fn i32[min max] CloseRawDescriptor(i32[min max] descriptor)
+{
+    unsafe
+    {
+        return System.Runtime.Platform.Linux.CloseRawDescriptor(descriptor);
+    }
+}
+
+internal unsafe fn i64[min max] MonotonicMilliseconds()
+{
+    unsafe
+    {
+        return System.Runtime.Platform.Linux.MonotonicMilliseconds();
+    }
+}
+
+internal unsafe inline fn i64[min max] ReadRawDescriptorBytes(rawmutptr<i8[min max]>[length] buffer, u64[0 2 ** 63 - 1] length, i32[min max] descriptor)
+{
+    unsafe
+    {
+        return System.Runtime.Platform.Linux.ReadRawDescriptorBytes(buffer, length, descriptor);
+    }
+}
+
+internal unsafe inline fn i64[min max] WriteRawDescriptorBytes(rawptr<i8[min max]>[length] buffer, u64[0 2 ** 63 - 1] length, i32[min max] descriptor)
+{
+    unsafe
+    {
+        return System.Runtime.Platform.Linux.WriteRawDescriptorBytes(buffer, length, descriptor);
+    }
+}
+
 internal unsafe inline fn i64[min max] ReadFile(rawmutptr<i8[min max]> buffer, i64[min max] size, i64[min max] count, rawptr<i8[min max]> handle)
     where overlap(buffer, handle)
 {

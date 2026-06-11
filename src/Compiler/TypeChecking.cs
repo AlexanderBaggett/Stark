@@ -270,7 +270,17 @@ internal sealed class TypeChecker
             _closureFunctionPromotions,
             _boundOperations,
             _tryPropagations,
-            threadSafetyLawFacts);
+            threadSafetyLawFacts,
+            _constructors.ToDictionary(
+                static pair => pair.Key,
+                static pair => (IReadOnlyList<TypedConstructorShape>)pair.Value
+                    .Select(static shape => new TypedConstructorShape(
+                        shape.Name,
+                        shape.Parameters,
+                        shape.IsPrimaryShape,
+                        shape.BodyKey))
+                    .ToArray(),
+                StringComparer.Ordinal));
     }
 
     private IReadOnlyDictionary<string, ThreadSafetyLawTypeFacts> ComputeThreadSafetyLawFacts()

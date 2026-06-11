@@ -2460,13 +2460,13 @@ public sealed class CompilerPipelineEmitLlvmTests
         Assert.True(
             System.Text.RegularExpressions.Regex.Matches(
                 body,
-                @"load i32, ptr %v\d+(?:, align \d+)?",
+                @"load i32, ptr %(?:v\d+|slot_\w+)(?:, align \d+)?",
                 System.Text.RegularExpressions.RegexOptions.CultureInvariant).Count == 2,
             "Expected exactly two i32 loads in Run: one local and one const-derived.");
         Assert.True(
             System.Text.RegularExpressions.Regex.Matches(
                 body,
-                @"load i32, ptr %v\d+(?:, align \d+)?, !invariant\.load !\d+",
+                @"load i32, ptr %(?:v\d+|slot_\w+)(?:, align \d+)?, !invariant\.load !\d+",
                 System.Text.RegularExpressions.RegexOptions.CultureInvariant).Count == 1,
             "Expected exactly one invariant-marked load in Run.");
     }

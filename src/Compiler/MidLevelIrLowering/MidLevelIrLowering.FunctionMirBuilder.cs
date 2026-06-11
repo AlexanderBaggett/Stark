@@ -4280,6 +4280,25 @@ internal sealed partial class MidLevelIrLowerer
         {
             if (_compileTimeEvaluator.TryEvaluateExpression(expression, CurrentModuleName, _compileTimeConstantState, activeCalls: null, out var constant))
             {
+                // A bare reference to a const-global aggregate stays a global load so
+                // const-lookup folding still fires and each use avoids re-building the
+                // aggregate element-by-element on the stack.
+                if (TryLowerConstAggregateGlobalReference(expression, constant, out var globalOperand))
+                {
+                    if (expectedType is null)
+                    {
+                        return globalOperand;
+                    }
+
+                    if (CoerceOperand(globalOperand, expectedType) is { } coercedGlobalOperand)
+                    {
+                        return coercedGlobalOperand;
+                    }
+
+                    // The global value could not adapt to the expected type; fall back
+                    // to materializing the folded constant below.
+                }
+
                 if (expectedType is not null
                     && CompileTimeExpressionEvaluator.TryCoerce(constant, expectedType, out var coerced))
                 {
@@ -6219,7 +6238,9 @@ internal sealed partial class MidLevelIrLowerer
                     : ApplyGenericSubstitution(boundObjectCreation.Constructor)
                 : TryGetMatchedObjectCreationConstructor(expression, out var recordedConstructor)
                     ? recordedConstructor
-                    : null;
+                    : publishedObjectCreation?.Constructor is { } publishedConstructor
+                        ? ApplyGenericSubstitution(publishedConstructor)
+                        : TryResolveFallbackObjectCreationConstructor(expression, createdType);
             if (constructor is not null)
             {
                 constructor = ResolveImportedConstructorBodyKey(createdType, constructor);
@@ -6245,7 +6266,7 @@ internal sealed partial class MidLevelIrLowerer
             {
                 throw LoweringInvariantViolation(
                     expression,
-                    "Object creation with arguments reached MIR without a resolved constructor shape.");
+                    $"Object creation with arguments reached MIR without a resolved constructor shape for '{createdType.DisplayName}'.");
             }
 
             if (expression.objectInitializer() is { } objectInitializer)
@@ -6491,6 +6512,46 @@ internal sealed partial class MidLevelIrLowerer
                 initializerMembers.ToArray(),
                 constructor is { IsPrimaryShape: false } ? constructor.BodyKey : null);
             return new MidLevelIrObjectConstructionOperand(value, facts);
+        }
+
+        /// <summary>
+        /// Creations inside bridge-parsed package constructor bodies carry no
+        /// object-creation typing record (package bodies are not re-type-checked), so
+        /// they resolve their constructor shape from the type model's per-type shapes
+        /// instead. This only runs when no typing record exists at all; a record that
+        /// intentionally bound no constructor keeps zero-initialization semantics.
+        /// </summary>
+        private TypedConstructorShape? TryResolveFallbackObjectCreationConstructor(
+            StarkParser.ObjectCreationExpressionContext expression,
+            StarkTypeSymbol createdType)
+        {
+            if (createdType.Kind != StarkTypeKind.Named
+                || createdType.NamedType is not { } createdTypeName
+                || !_typeModel.ConstructorShapes.TryGetValue(createdTypeName, out var shapes))
+            {
+                return null;
+            }
+
+            var argumentCount = expression.argumentList()?.argument().Length ?? 0;
+            TypedConstructorShape? match = null;
+            foreach (var shape in shapes)
+            {
+                if (shape.Parameters.Count != argumentCount)
+                {
+                    continue;
+                }
+
+                if (match is not null)
+                {
+                    // Ambiguous arity; without a typing record the overload cannot be
+                    // chosen safely.
+                    return null;
+                }
+
+                match = shape;
+            }
+
+            return match;
         }
 
         private MidLevelIrOperand? LowerConstructorObjectCreation(
@@ -10720,6 +10781,117 @@ internal sealed partial class MidLevelIrLowerer
             return true;
         }
 
+        private bool TryLowerConstAggregateGlobalReference(
+            StarkParser.ExpressionContext expression,
+            CompileTimeConstant constant,
+            out MidLevelIrOperand operand)
+        {
+            operand = default!;
+            if (constant.Kind is not (CompileTimeConstantKind.FixedArray
+                or CompileTimeConstantKind.NamedAggregate
+                or CompileTimeConstantKind.EnumAggregate))
+            {
+                return false;
+            }
+
+            if (TryGetSimplePostfixExpression(expression) is not { } postfix
+                || TryGetBareNamePath(postfix) is not { } name)
+            {
+                return false;
+            }
+
+            if (_nameAliases.TryGetValue(name, out var aliasedName))
+            {
+                name = aliasedName;
+            }
+
+            // The folded value must be the global's own initializer; a shadowing local
+            // const that folds to a different value keeps the materialized constant.
+            if (!TryResolveGlobal(name, out var global)
+                || global.BindingKind != GlobalBindingKind.Const
+                || global.ConstantInitializer is not { } initializer
+                || !HasSameStorageType(global.Type, constant.Type)
+                || !ConstantMatchesTypedInitializer(constant, initializer))
+            {
+                return false;
+            }
+
+            operand = new MidLevelIrGlobalOperand(global.Name, global.Type);
+            return true;
+        }
+
+        private static string? TryGetBareNamePath(StarkParser.PostfixExpressionContext postfix)
+        {
+            var primary = postfix.primaryExpression();
+            var name = primary.Identifier()?.GetText() ?? primary.qualifiedName()?.GetText();
+            if (name is null)
+            {
+                return null;
+            }
+
+            foreach (var part in postfix.postfixPart())
+            {
+                if (part.Identifier() is not { } member)
+                {
+                    return null;
+                }
+
+                name = $"{name}.{member.GetText()}";
+            }
+
+            return name;
+        }
+
+        private static bool ConstantMatchesTypedInitializer(CompileTimeConstant constant, TypedConstantInitializer initializer)
+        {
+            if (constant.IsSymbolic || !HasSameStorageType(constant.Type, initializer.Type))
+            {
+                return false;
+            }
+
+            return constant.Kind switch
+            {
+                CompileTimeConstantKind.Integer => initializer.Kind == TypedConstantInitializerKind.Integer
+                    && initializer.IntegerValue == constant.IntegerValue,
+                CompileTimeConstantKind.Float => initializer.Kind == TypedConstantInitializerKind.Float
+                    && string.Equals(
+                        initializer.FloatLiteralText,
+                        CompileTimeExpressionEvaluator.FormatFloatLiteral(constant),
+                        StringComparison.Ordinal),
+                CompileTimeConstantKind.Bool => initializer.Kind == TypedConstantInitializerKind.Bool
+                    && initializer.BoolValue == constant.BoolValue,
+                CompileTimeConstantKind.Text => initializer.Kind == TypedConstantInitializerKind.Text
+                    && string.Equals(initializer.TextLiteralText, constant.TextLiteral, StringComparison.Ordinal),
+                CompileTimeConstantKind.Null => initializer.Kind == TypedConstantInitializerKind.Null,
+                CompileTimeConstantKind.FixedArray => initializer.Kind == TypedConstantInitializerKind.FixedArray
+                    && ConstantElementsMatchTypedInitializer(constant, initializer),
+                CompileTimeConstantKind.NamedAggregate => initializer.Kind == TypedConstantInitializerKind.NamedAggregate
+                    && ConstantElementsMatchTypedInitializer(constant, initializer),
+                CompileTimeConstantKind.EnumAggregate => initializer.Kind == TypedConstantInitializerKind.EnumAggregate
+                    && string.Equals(initializer.VariantName, constant.VariantName, StringComparison.Ordinal)
+                    && ConstantElementsMatchTypedInitializer(constant, initializer),
+                _ => false
+            };
+        }
+
+        private static bool ConstantElementsMatchTypedInitializer(CompileTimeConstant constant, TypedConstantInitializer initializer)
+        {
+            if (constant.Elements.Count != initializer.ElementValues.Count)
+            {
+                return false;
+            }
+
+            for (var index = 0; index < constant.Elements.Count; index++)
+            {
+                if (!ConstantMatchesTypedInitializer(constant.Elements[index], initializer.ElementValues[index]))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
         private bool TryCreateTypedConstantOperand(
             TypedConstantInitializer initializer,
             out MidLevelIrOperand operand)
@@ -10978,12 +11150,74 @@ internal sealed partial class MidLevelIrLowerer
                 return functionAddress;
             }
 
+            if (TryResolvePublishedTemplateFunctionAddress(name, expectedType, out var publishedFunctionAddress))
+            {
+                return publishedFunctionAddress;
+            }
+
             if (TryResolveFunctionSignature(name, out _))
             {
                 throw LoweringInvariantViolation(null, $"Function '{name}' cannot be used as a value without a function-pointer target type.");
             }
 
             throw LoweringInvariantViolation(null, $"Named operand '{name}' could not be resolved.");
+        }
+
+        /// <summary>
+        /// Function references inside bridge-parsed package template bodies have no
+        /// function-pointer-promotion typing record; the producing package republishes
+        /// them as ordinal-keyed function-address summaries instead. Locations do not
+        /// survive source reconstruction, so the summary is matched by the reference's
+        /// trailing name segment and must be unambiguous within the template.
+        /// </summary>
+        private bool TryResolvePublishedTemplateFunctionAddress(
+            string name,
+            StarkTypeSymbol? targetType,
+            out MidLevelIrFunctionAddressOperand operand)
+        {
+            operand = default!;
+            if (_importedTemplateFunctionAddresses.Count == 0)
+            {
+                return false;
+            }
+
+            var simpleName = name[(name.LastIndexOf('.') + 1)..];
+            ImportedTemplateFunctionAddressSummary? match = null;
+            foreach (var summary in _importedTemplateFunctionAddresses.Values)
+            {
+                var summaryName = summary.Signature.SourceName
+                    ?? summary.Signature.TemplateName
+                    ?? summary.Signature.Name;
+                var summarySimpleName = summaryName[(summaryName.LastIndexOf('.') + 1)..];
+                if (!string.Equals(summarySimpleName, simpleName, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                if (match is not null)
+                {
+                    return false;
+                }
+
+                match = summary;
+            }
+
+            if (match is null)
+            {
+                return false;
+            }
+
+            var signature = ApplyGenericSubstitution(match.Signature);
+            var operandType = targetType?.Kind == StarkTypeKind.FunctionPointer
+                ? targetType
+                : ApplyGenericSubstitution(match.TargetType);
+            if (operandType.Kind != StarkTypeKind.FunctionPointer)
+            {
+                return false;
+            }
+
+            operand = new MidLevelIrFunctionAddressOperand(ResolveCallTargetName(signature.Name, signature), operandType);
+            return true;
         }
 
         private bool TryResolveFunctionAddressOperand(
@@ -11256,9 +11490,15 @@ internal sealed partial class MidLevelIrLowerer
 
             if (TryResolveGlobal(name, out var global))
             {
+                // Aggregate consts stay global loads: const-lookup folding matches the
+                // load-global shape, and uses that survive folding read the const global
+                // instead of re-building the aggregate on the stack.
                 if (!preserveConstGlobalAddress
                     && global.BindingKind == GlobalBindingKind.Const
                     && global.ConstantInitializer is { } constantInitializer
+                    && constantInitializer.Kind is not (TypedConstantInitializerKind.FixedArray
+                        or TypedConstantInitializerKind.NamedAggregate
+                        or TypedConstantInitializerKind.EnumAggregate)
                     && TryCreateTypedConstantOperand(constantInitializer, out var constantOperand))
                 {
                     return constantOperand;

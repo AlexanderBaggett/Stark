@@ -2182,6 +2182,38 @@ internal unsafe inline fn i32[min max] CloseFile(rawptr<i8[min max]> handle)
     return (i32[min max])LinuxSyscall1Handle(LinuxCloseSyscallNumber, handle);
 }
 
+// Raw numeric descriptors (process pipes) share the Linux fd-in-pointer handle
+// contract, so they reuse the handle-based calls directly.
+internal unsafe inline fn i32[min max] CloseRawDescriptor(i32[min max] descriptor)
+{
+    if (descriptor < 0)
+    {
+        return -1;
+    }
+
+    return CloseFile((rawptr<i8[min max]>)((i64[min max])descriptor));
+}
+
+internal unsafe inline fn i64[min max] ReadRawDescriptorBytes(rawmutptr<i8[min max]>[length] buffer, u64[0 2 ** 63 - 1] length, i32[min max] descriptor)
+{
+    if (descriptor < 0)
+    {
+        return -1;
+    }
+
+    return ReadFileBytes(buffer, length, (rawptr<i8[min max]>)((i64[min max])descriptor));
+}
+
+internal unsafe inline fn i64[min max] WriteRawDescriptorBytes(rawptr<i8[min max]>[length] buffer, u64[0 2 ** 63 - 1] length, i32[min max] descriptor)
+{
+    if (descriptor < 0)
+    {
+        return -1;
+    }
+
+    return WriteFileBytes(buffer, length, (rawptr<i8[min max]>)((i64[min max])descriptor));
+}
+
 internal unsafe fn i32[min max] FlushFile(rawptr<i8[min max]> handle)
 {
     if (handle == null)

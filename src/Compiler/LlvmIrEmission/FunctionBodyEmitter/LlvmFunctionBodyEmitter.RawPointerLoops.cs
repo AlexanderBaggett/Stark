@@ -650,6 +650,15 @@ internal sealed partial class LlvmFunctionBodyEmitter
             return plans;
         }
 
+        // These per-function facts are loop-invariant; computing them per candidate
+        // preheader made this scan quadratic in block count on large functions
+        // (dominator dataflow alone is O(blocks^2) per computation).
+        var definitions = CollectValueDefinitions(function);
+        var nonEntryValueNames = CollectNonEntrySsaValueNames(function);
+        var blocksById = function.Blocks.ToDictionary(static block => block.Id);
+        var availableValueNamesByBlock = BuildAvailableValueNamesByBlock(function, blocksById);
+        var predecessorCounts = CountPredecessors(function);
+
         var skippedBlockIds = new HashSet<int>();
         foreach (var preheader in function.Blocks)
         {
@@ -659,6 +668,11 @@ internal sealed partial class LlvmFunctionBodyEmitter
                     preheader,
                     tryGetConcreteTypeLayout,
                     parameterEffects,
+                    definitions,
+                    nonEntryValueNames,
+                    blocksById,
+                    availableValueNamesByBlock,
+                    predecessorCounts,
                     out var plan))
             {
                 continue;
@@ -679,14 +693,14 @@ internal sealed partial class LlvmFunctionBodyEmitter
         SsaBasicBlock preheader,
         Func<StarkTypeSymbol, ConcreteTypeLayout?> tryGetConcreteTypeLayout,
         IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? parameterEffects,
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        ISet<string> nonEntryValueNames,
+        IReadOnlyDictionary<int, SsaBasicBlock> blocksById,
+        IReadOnlyDictionary<int, ISet<string>> availableValueNamesByBlock,
+        IReadOnlyDictionary<int, int> predecessorCounts,
         out RawPointerLoopIntrinsicPlan plan)
     {
         plan = null!;
-        var definitions = CollectValueDefinitions(function);
-        var nonEntryValueNames = CollectNonEntrySsaValueNames(function);
-        var blocksById = function.Blocks.ToDictionary(static block => block.Id);
-        var availableValueNamesByBlock = BuildAvailableValueNamesByBlock(function, blocksById);
-        var predecessorCounts = CountPredecessors(function);
         if (TryMatchEmbeddedOptimizedRawPointerMemmoveFromPreheader(
                 function,
                 preheader,
