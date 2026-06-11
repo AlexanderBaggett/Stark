@@ -3476,7 +3476,10 @@ internal sealed class SsaCleanupOptimizer
         {
             SsaValueInstruction valueInstruction => new SsaValueInstruction(
                 valueInstruction.ResultName,
-                RewriteRValue(valueInstruction.Value, replacements)),
+                RewriteRValue(valueInstruction.Value, replacements),
+                valueInstruction.Location,
+                valueInstruction.ScopedNoAliasGroups,
+                valueInstruction.LoopAccessGroups),
             SsaCallInstruction call => call with
             {
                 Arguments = call.Arguments

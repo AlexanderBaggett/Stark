@@ -26,11 +26,10 @@ Legend: `[ ]` not done, `[~]` partially done, `[x]` done.
       runs at ~7.6x parallel efficiency; the remaining wall-time floor is a
       single 17-minute test (see the long-pole note below).
 - [~] Audit the ~104 in-process `pipeline.Run(...)` calls with no
-      `StopAfterPassId`: add the earliest sufficient stop pass, and pass
-      `OptimizationLevel: Og` where assertions do not inspect optimized
-      SSA/LLVM text. Each converted test: ~12s -> ~2s. Done for the book
-      sample compiles (`StopAfterPassId: "borrow-liveness"`); the per-module
-      LLVM-text tests remain.
+      `StopAfterPassId`: add the earliest sufficient stop pass. Each
+      converted test: ~12s -> ~2s. Done for the book sample compiles
+      (`StopAfterPassId: "borrow-liveness"`); the per-module LLVM-text
+      tests remain.
 
 ## Structural Fix (test infrastructure)
 
@@ -48,9 +47,10 @@ Legend: `[ ]` not done, `[~]` partially done, `[x]` done.
       `StdLibPackageBuildsFromRepositorySources` and
       `PackagedStdLibCanBeConsumedWithoutSource` remain the canonical
       build-flow tests; in-process LLVM-text tests stay source-based.
-- [ ] Decide the default optimization level for runtime-behavior tests
-      (Og/O1 with explicit O3 opt-in for optimization-verification tests).
-      Blocked by the low-opt clang crash below.
+- [x] Obsolete: the compiler has exactly one compilation mode (all Stark
+      optimization passes plus clang -O3). Optimization levels were removed
+      from the CLI and `CompilerOptions`; opting out of optimization passes
+      was never an intended capability.
 
 ## Compiler Bugs (block the fixes above)
 
@@ -61,13 +61,9 @@ Legend: `[ ]` not done, `[~]` partially done, `[x]` done.
       for monomorphized generics, which Mach-O rejects; comdat emission is
       now target-gated. `build-stdlib.sh` works on macOS for the first time;
       26 previously failing tests now pass.
-- [ ] Fix the clang crash on `--emit-exe` at `-O0`/`-Og`/`-O1` (unoptimized
-      emission produces IR that only the O2/O3 Stark-side passes clean up).
-      Blocks cheap native test builds. Two stack-overflow-deep recursions on
-      the unoptimized path (`RequiresAggregateValueMaterialization`,
-      `TryEmitStructuredAggregateStore`) were depth-capped to their safe
-      fallbacks, but the clang crash remains; the two `-O0` packaged tests
-      are gated off macOS until fixed.
+- [x] Obsolete: the unoptimized emission path no longer exists, so the
+      clang crash it provoked is unreachable. The two formerly `-O0` packaged
+      tests now build in the single compilation mode and run on macOS.
 - [x] Fix enum-receiver method calls against package-backed imports
       (`Encoding.UTF8.ToAscii()` passed type-check but crashed `lower-mir`
       with "Field 'ToAscii' could not be resolved"). Root cause was not
@@ -202,8 +198,7 @@ bug:
 
 With these, the known macOS failure set is empty: the previously-failing
 tests plus the threading/process/file-IO/console/packaged slices all pass
-(targeted runs, June 2026). The two `-O0` packaged tests remain gated off
-macOS behind the chipped low-opt clang crash.
+(targeted runs, June 2026).
 - [x] The const-lookup fold regression from the CTFE materialization change:
       imported const aggregates lowered as inline `$tmp*_ctfe_array` stack
       copies instead of const-global loads, so `const-lookup-tables-ssa`

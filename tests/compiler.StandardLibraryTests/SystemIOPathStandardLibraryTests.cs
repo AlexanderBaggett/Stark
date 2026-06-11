@@ -52,8 +52,7 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                 // Target Linux explicitly: this test asserts the libc-free dynamic-storage
                 // lowering, and only the Linux OS allocation shim is syscall-backed (macOS
                 // legitimately bottoms out in libc malloc, Windows in HeapAlloc).
-                TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null),
-                OptimizationLevel: CompilerOptimizationLevel.O0));
+                TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null)));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvm));
@@ -76,8 +75,7 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
             new CompilationInput(File.ReadAllText(modulePath), modulePath),
             new CompilerOptions(
                 ModuleResolver: new FileSystemModuleResolver(sourceRoot),
-                EmitLlvmIr: true,
-                OptimizationLevel: CompilerOptimizationLevel.O3));
+                EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
@@ -400,8 +398,7 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                 appPath),
             new CompilerOptions(
                 ModuleResolver: new FileSystemModuleResolver(sourceRoot),
-                StopAfterPassId: "emit-llvm",
-                OptimizationLevel: CompilerOptimizationLevel.O0));
+                StopAfterPassId: "emit-llvm"));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvm));

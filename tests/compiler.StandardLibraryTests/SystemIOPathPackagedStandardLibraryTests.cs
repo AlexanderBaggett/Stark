@@ -391,7 +391,7 @@ public sealed class SystemIOPathPackagedStandardLibraryTests : StandardLibraryTe
             var buildStdout = new StringWriter();
             var buildStderr = new StringWriter();
             var buildExitCode = await CompilerCli.RunAsync(
-                [systemPath, "--emit-lib", "-O0", "-o", libraryPath],
+                [systemPath, "--emit-lib", "-o", libraryPath],
                 new StringReader(string.Empty),
                 buildStdout,
                 buildStderr);
@@ -579,7 +579,7 @@ public sealed class SystemIOPathPackagedStandardLibraryTests : StandardLibraryTe
             var stderr = new StringWriter();
 
             var exitCode = await CompilerCli.RunAsync(
-                [appPath, "--emit-exe", "-O0", "-I", packageDirectory, "-o", outputPath],
+                [appPath, "--emit-exe", "-I", packageDirectory, "-o", outputPath],
                 new StringReader(string.Empty),
                 stdout,
                 stderr);

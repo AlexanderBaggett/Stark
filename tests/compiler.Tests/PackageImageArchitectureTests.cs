@@ -215,8 +215,7 @@ public sealed class PackageImageArchitectureTests
                     Path.Combine(tempDirectory.FullName, "Demo.stark")),
                 new CompilerOptions(
                     EmitLlvmIr: true,
-                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName),
-                    OptimizationLevel: CompilerOptimizationLevel.O0));
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
 
             Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
             Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule));
@@ -585,8 +584,7 @@ public sealed class PackageImageArchitectureTests
                     Path.Combine(tempDirectory.FullName, "Demo.stark")),
                 new CompilerOptions(
                     EmitLlvmIr: true,
-                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName),
-                    OptimizationLevel: CompilerOptimizationLevel.O0));
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
 
             Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
             Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule));
@@ -695,8 +693,7 @@ public sealed class PackageImageArchitectureTests
                     Path.Combine(tempDirectory.FullName, "Demo.stark")),
                 new CompilerOptions(
                     EmitLlvmIr: true,
-                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName),
-                    OptimizationLevel: CompilerOptimizationLevel.O0));
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
 
             Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
             Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule));
@@ -822,8 +819,7 @@ public sealed class PackageImageArchitectureTests
                     Path.Combine(tempDirectory.FullName, "Demo.stark")),
                 new CompilerOptions(
                     EmitLlvmIr: true,
-                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName),
-                    OptimizationLevel: CompilerOptimizationLevel.O0));
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
 
             Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
             Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule));
@@ -961,8 +957,7 @@ public sealed class PackageImageArchitectureTests
                     Path.Combine(tempDirectory.FullName, "Demo.stark")),
                 new CompilerOptions(
                     EmitLlvmIr: true,
-                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName),
-                    OptimizationLevel: CompilerOptimizationLevel.O0));
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
 
             Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
             Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule));
@@ -2287,8 +2282,7 @@ public sealed class PackageImageArchitectureTests
                     Path.Combine(tempDirectory.FullName, "Demo.stark")),
                 new CompilerOptions(
                     EmitLlvmIr: true,
-                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName),
-                    OptimizationLevel: CompilerOptimizationLevel.O0));
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
 
             Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
             Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule));
@@ -2465,8 +2459,7 @@ public sealed class PackageImageArchitectureTests
                     Path.Combine(tempDirectory.FullName, "Demo.stark")),
                 new CompilerOptions(
                     EmitLlvmIr: true,
-                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName),
-                    OptimizationLevel: CompilerOptimizationLevel.O0));
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
 
             Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
             Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule));
@@ -2623,8 +2616,7 @@ public sealed class PackageImageArchitectureTests
                     Path.Combine(tempDirectory.FullName, "Demo.stark")),
                 new CompilerOptions(
                     EmitLlvmIr: true,
-                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName),
-                    OptimizationLevel: CompilerOptimizationLevel.O0));
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
 
             Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
             Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule));
@@ -2854,8 +2846,7 @@ public sealed class PackageImageArchitectureTests
                     Path.Combine(tempDirectory.FullName, "Demo.stark")),
                 new CompilerOptions(
                     EmitLlvmIr: true,
-                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName),
-                    OptimizationLevel: CompilerOptimizationLevel.O0));
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
 
             Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
             Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule));
@@ -4419,8 +4410,7 @@ public sealed class PackageImageArchitectureTests
                     Path.Combine(tempDirectory.FullName, "Demo.stark")),
                 new CompilerOptions(
                     EmitLlvmIr: true,
-                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName),
-                    OptimizationLevel: CompilerOptimizationLevel.O0));
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
 
             Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
             Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule));
@@ -5919,7 +5909,6 @@ public sealed class PackageImageArchitectureTests
                 new CompilerOptions(
                     EmitLlvmIr: true,
                     ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName),
-                    OptimizationLevel: CompilerOptimizationLevel.O0,
                     TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null)));
 
             Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));

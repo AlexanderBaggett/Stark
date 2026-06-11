@@ -202,87 +202,6 @@ public sealed class CompilerPipelineFullIntegrationTests
 
 
     [Fact]
-    public void OptimizationLevelZeroPreservesRawSsaBeforeLlvmEmission()
-    {
-        var pipeline = DefaultCompilerPipeline.Create();
-
-        var result = pipeline.Run(
-            new CompilationInput(
-                """
-                module Demo
-
-                fn i32[min max] Run(bool flag)
-                {
-                    stack mut i32[min max] value = 0;
-                    if (flag)
-                    {
-                        value = 1;
-                    }
-                    else
-                    {
-                        value = 2;
-                    }
-
-                    return value;
-                }
-                """),
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
-
-        Assert.True(result.Succeeded);
-        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.SsaIr, out SsaIrModule? ssa));
-        Assert.NotNull(ssa);
-        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? optimizedSsa));
-        Assert.NotNull(optimizedSsa);
-
-        Assert.Equal(ArtifactTextRenderer.Render(ssa), ArtifactTextRenderer.Render(optimizedSsa));
-
-        var function = Assert.Single(optimizedSsa.Functions, static function => function.Name == "Run");
-        Assert.Contains(function.Blocks, static block => block.Phis.Count != 0);
-        Assert.Contains(function.Blocks, static block => block.Terminator.Kind == SsaTerminatorKind.Branch);
-    }
-
-    [Fact]
-    public void DebugFriendlyOptimizationLevelPreservesRawSsaBeforeLlvmEmission()
-    {
-        var pipeline = DefaultCompilerPipeline.Create();
-
-        var result = pipeline.Run(
-            new CompilationInput(
-                """
-                module Demo
-
-                fn i32[min max] Run(bool flag)
-                {
-                    stack mut i32[min max] value = 0;
-                    if (flag)
-                    {
-                        value = 1;
-                    }
-                    else
-                    {
-                        value = 2;
-                    }
-
-                    return value;
-                }
-                """),
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.Og));
-
-        Assert.True(result.Succeeded);
-        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.SsaIr, out SsaIrModule? ssa));
-        Assert.NotNull(ssa);
-        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? optimizedSsa));
-        Assert.NotNull(optimizedSsa);
-
-        Assert.Equal(ArtifactTextRenderer.Render(ssa), ArtifactTextRenderer.Render(optimizedSsa));
-
-        var function = Assert.Single(optimizedSsa.Functions, static function => function.Name == "Run");
-        Assert.Contains(function.Blocks, static block => block.Phis.Count != 0);
-        Assert.Contains(function.Blocks, static block => block.Terminator.Kind == SsaTerminatorKind.Branch);
-    }
-
-
-    [Fact]
     public void PipelineFoldsImportedConstantLawCallsAcrossMirSsaAndLlvm()
     {
         var pipeline = DefaultCompilerPipeline.Create();
@@ -3171,8 +3090,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     """,
                     Path.Combine(tempDirectory.FullName, "Demo.stark")),
                 new CompilerOptions(
-                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName),
-                    OptimizationLevel: CompilerOptimizationLevel.O0));
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
 
             Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static d => d.ToString())));
             Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule));
@@ -3277,8 +3195,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     """,
                     Path.Combine(tempDirectory.FullName, "Demo.stark")),
                 new CompilerOptions(
-                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName),
-                    OptimizationLevel: CompilerOptimizationLevel.O0));
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
 
             Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static d => d.ToString())));
             Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule));

@@ -347,7 +347,7 @@ rough sizing hint.
       [SsaIrValidation.cs](../../src/Compiler/SsaIrValidation.cs) (3723 lines).
 - [ ] 20 in-tree SSA passes
       ([src/Compiler/SsaOptimization/](../../src/Compiler/SsaOptimization/)).
-      All optional under `-O0`; defer if needed.
+      All optional; defer if needed.
 - [ ] [AbiLowering.cs](../../src/Compiler/AbiLowering.cs) +
       [LlvmIrEmitter.cs](../../src/Compiler/LlvmIrEmitter.cs) (3096 lines) +
       [LlvmIrEmission/](../../src/Compiler/LlvmIrEmission/).

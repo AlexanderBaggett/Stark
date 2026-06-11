@@ -574,7 +574,6 @@ public sealed class PackageImageCallableValueTests
                     Path.Combine(tempDirectory.FullName, "Demo.stark")),
                 new CompilerOptions(
                     ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName),
-                    OptimizationLevel: CompilerOptimizationLevel.O0,
                     StopAfterPassId: "emit-llvm"));
 
             Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
@@ -654,7 +653,6 @@ public sealed class PackageImageCallableValueTests
                     Path.Combine(tempDirectory.FullName, "Demo.stark")),
                 new CompilerOptions(
                     ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName),
-                    OptimizationLevel: CompilerOptimizationLevel.O0,
                     StopAfterPassId: "emit-llvm"));
 
             Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));

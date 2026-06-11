@@ -111,10 +111,9 @@ internal static class NativeToolchain
         string outputPath,
         string? preservedLlvmOutputPath = null,
         LlvmTargetInfo? targetInfo = null,
-        CompilerOptimizationLevel optimizationLevel = CompilerOptimizationLevel.O3,
         bool enableLto = false)
     {
-        return CompileLlvmIr(llvmIr, outputPath, compileOnly: true, preservedLlvmOutputPath, targetInfo, optimizationLevel, enableLto);
+        return CompileLlvmIr(llvmIr, outputPath, compileOnly: true, preservedLlvmOutputPath, targetInfo, enableLto);
     }
 
     public static NativeToolchainResult EmitNativeObject(
@@ -122,7 +121,6 @@ internal static class NativeToolchain
         string outputPath,
         IEnumerable<string>? includeDirectories = null,
         LlvmTargetInfo? targetInfo = null,
-        CompilerOptimizationLevel optimizationLevel = CompilerOptimizationLevel.O3,
         bool enableLto = false)
     {
         var fullSourcePath = Path.GetFullPath(sourcePath);
@@ -141,7 +139,7 @@ internal static class NativeToolchain
         startInfo.ArgumentList.Add("-c");
         startInfo.ArgumentList.Add("-ffunction-sections");
         startInfo.ArgumentList.Add("-fdata-sections");
-        AppendOptimizationArgument(startInfo.ArgumentList, optimizationLevel);
+        startInfo.ArgumentList.Add("-O3");
         AppendCompileLtoArguments(startInfo.ArgumentList, enableLto);
         AppendTargetCodegenArguments(startInfo.ArgumentList, targetInfo, compileOnly: true);
         AppendMacOSPlatformSdkArguments(startInfo.ArgumentList, targetInfo, forClangDriver: true);
@@ -180,10 +178,9 @@ internal static class NativeToolchain
     public static NativeToolchainResult EmitExecutable(
         string llvmIr,
         string outputPath,
-        LlvmTargetInfo? targetInfo = null,
-        CompilerOptimizationLevel optimizationLevel = CompilerOptimizationLevel.O3)
+        LlvmTargetInfo? targetInfo = null)
     {
-        return CompileLlvmIr(llvmIr, outputPath, compileOnly: false, preservedLlvmOutputPath: null, targetInfo, optimizationLevel, enableLto: false);
+        return CompileLlvmIr(llvmIr, outputPath, compileOnly: false, preservedLlvmOutputPath: null, targetInfo, enableLto: false);
     }
 
     public static NativeToolchainResult LinkExecutable(
@@ -193,7 +190,6 @@ internal static class NativeToolchain
         IEnumerable<string>? librarySearchPaths = null,
         IEnumerable<string>? extraArguments = null,
         LlvmTargetInfo? targetInfo = null,
-        CompilerOptimizationLevel optimizationLevel = CompilerOptimizationLevel.O3,
         bool enableLto = false)
     {
         var resolvedLinkerTool = string.IsNullOrWhiteSpace(linkerTool) ? "clang" : linkerTool;
@@ -205,7 +201,6 @@ internal static class NativeToolchain
                 librarySearchPaths,
                 extraArguments,
                 targetInfo,
-                optimizationLevel,
                 enableLto,
                 IsClangDriver(resolvedLinkerTool)),
             outputPath);
@@ -299,7 +294,6 @@ internal static class NativeToolchain
         bool compileOnly,
         string? preservedLlvmOutputPath,
         LlvmTargetInfo? targetInfo,
-        CompilerOptimizationLevel optimizationLevel,
         bool enableLto)
     {
         var fullOutputPath = Path.GetFullPath(outputPath);
@@ -331,9 +325,9 @@ internal static class NativeToolchain
                 startInfo.ArgumentList.Add("-fdata-sections");
             }
 
-            AppendOptimizationArgument(startInfo.ArgumentList, optimizationLevel);
+            startInfo.ArgumentList.Add("-O3");
             AppendCompileLtoArguments(startInfo.ArgumentList, compileOnly && enableLto);
-            AppendStarkLlvmIrCompileStabilityArguments(startInfo.ArgumentList, llvmIr, optimizationLevel, compileOnly && enableLto);
+            AppendStarkLlvmIrCompileStabilityArguments(startInfo.ArgumentList, llvmIr, compileOnly && enableLto);
             AppendTargetCodegenArguments(startInfo.ArgumentList, targetInfo, compileOnly);
             AppendMacOSPlatformSdkArguments(startInfo.ArgumentList, targetInfo, forClangDriver: true);
             startInfo.ArgumentList.Add(llvmPath);
@@ -374,7 +368,6 @@ internal static class NativeToolchain
         IEnumerable<string>? librarySearchPaths,
         IEnumerable<string>? extraArguments,
         LlvmTargetInfo? targetInfo,
-        CompilerOptimizationLevel optimizationLevel,
         bool enableLto,
         bool linkerIsClangDriver)
     {
@@ -392,14 +385,7 @@ internal static class NativeToolchain
         if (enableLto)
         {
             yield return "-flto=thin";
-            yield return optimizationLevel switch
-            {
-                CompilerOptimizationLevel.O0 => "-O0",
-                CompilerOptimizationLevel.Og => "-Og",
-                CompilerOptimizationLevel.O1 => "-O1",
-                CompilerOptimizationLevel.O2 => "-O2",
-                _ => "-O3"
-            };
+            yield return "-O3";
 
             if ((OperatingSystem.IsWindows() && CommandExists("lld-link"))
                 || (!OperatingSystem.IsWindows() && CommandExists("ld.lld")))
@@ -736,26 +722,12 @@ internal static class NativeToolchain
         };
     }
 
-    private static void AppendOptimizationArgument(ICollection<string> arguments, CompilerOptimizationLevel optimizationLevel)
-    {
-        arguments.Add(optimizationLevel switch
-        {
-            CompilerOptimizationLevel.O0 => "-O0",
-            CompilerOptimizationLevel.Og => "-Og",
-            CompilerOptimizationLevel.O1 => "-O1",
-            CompilerOptimizationLevel.O2 => "-O2",
-            _ => "-O3"
-        });
-    }
-
     private static void AppendStarkLlvmIrCompileStabilityArguments(
         ICollection<string> arguments,
         string llvmIr,
-        CompilerOptimizationLevel optimizationLevel,
         bool enableLto)
     {
-        if (optimizationLevel == CompilerOptimizationLevel.O0
-            || enableLto
+        if (enableLto
             || RequiresNormalLlvmPassesForImportedInlineBodies(llvmIr))
         {
             return;

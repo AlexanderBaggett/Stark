@@ -32,7 +32,7 @@ public sealed class TraversalLoopFeatureTests : FeatureLlvmTestBase
                 return sum;
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         Assert.Contains("define fastcc noundef i32 @Sum()", llvm);
         Assert.Contains("getelementptr", llvm);
@@ -68,7 +68,7 @@ public sealed class TraversalLoopFeatureTests : FeatureLlvmTestBase
                 return sum;
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         Assert.Contains("define fastcc noundef i32 @MutateAndSum()", llvm);
         Assert.Contains("store i32", llvm);
@@ -102,7 +102,7 @@ public sealed class TraversalLoopFeatureTests : FeatureLlvmTestBase
                 return sum;
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         Assert.Contains("define fastcc noundef i32 @SumSlice()", llvm);
         Assert.DoesNotContain("iterator", llvm, StringComparison.OrdinalIgnoreCase);
@@ -133,7 +133,7 @@ public sealed class TraversalLoopFeatureTests : FeatureLlvmTestBase
                 return sum;
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         Assert.Contains("define fastcc noundef i32 @SumDynamic()", llvm);
         Assert.Contains("extractvalue { ptr, i64, i64 }", llvm);

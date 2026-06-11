@@ -4793,7 +4793,7 @@ internal static class CompileTimeStructuralFacts
                                 resolveNamedType,
                                 resolveConcreteLayout)),
                     _ when IsImplementedTraitTypeArgumentTypeMetadataFact(kind) =>
-                        EvaluateNestedTypeMetadataFact(kind, typeArgument),
+                        EvaluateNestedTypeMetadataFact(kind, typeArgument, arguments: null, resolveNamedType),
                     _ => constant
                 };
                 return true;
@@ -4829,7 +4829,7 @@ internal static class CompileTimeStructuralFacts
                                 resolveNamedType,
                                 resolveConcreteLayout)),
                     _ when IsImplementedTraitComptimeArgumentTypeMetadataFact(kind) =>
-                        EvaluateNestedTypeMetadataFact(kind, valueArgument.Type),
+                        EvaluateNestedTypeMetadataFact(kind, valueArgument.Type, arguments: null, resolveNamedType),
                     CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentValueIs =>
                         CompileTimeConstant.Bool(
                             !valueArgument.IsSymbolic
@@ -4919,7 +4919,7 @@ internal static class CompileTimeStructuralFacts
                             resolveNamedType,
                             resolveConcreteLayout)),
                 _ when IsTypeComptimeGenericParameterTypeMetadataFact(kind) =>
-                    EvaluateNestedTypeMetadataFact(kind, parameterType),
+                    EvaluateNestedTypeMetadataFact(kind, parameterType, arguments: null, resolveNamedType),
                 _ => constant
             };
             return true;
@@ -5006,7 +5006,7 @@ internal static class CompileTimeStructuralFacts
                             resolveNamedType,
                             resolveConcreteLayout)),
                 _ when IsTypeArgumentTypeMetadataFact(kind) =>
-                    EvaluateNestedTypeMetadataFact(kind, typeArgument),
+                    EvaluateNestedTypeMetadataFact(kind, typeArgument, arguments: null, resolveNamedType),
                 _ => constant
             };
             return true;
@@ -5043,7 +5043,7 @@ internal static class CompileTimeStructuralFacts
                             resolveNamedType,
                             resolveConcreteLayout)),
                 _ when IsTypeComptimeArgumentTypeMetadataFact(kind) =>
-                    EvaluateNestedTypeMetadataFact(kind, valueArgument.Type),
+                    EvaluateNestedTypeMetadataFact(kind, valueArgument.Type, arguments: null, resolveNamedType),
                 CompileTimeStructuralFactKind.TypeComptimeArgumentValueIs =>
                     CompileTimeConstant.Bool(
                         !valueArgument.IsSymbolic
@@ -5096,7 +5096,7 @@ internal static class CompileTimeStructuralFacts
                     return TryCreateDefaultConstant(kind, out constant);
                 }
 
-                constant = EvaluateNestedTypeMetadataFact(kind, associatedTypeTarget);
+                constant = EvaluateNestedTypeMetadataFact(kind, associatedTypeTarget, arguments: null, resolveNamedType);
                 return true;
             }
 
@@ -5171,7 +5171,7 @@ internal static class CompileTimeStructuralFacts
                 return false;
             }
 
-            constant = EvaluateNestedTypeMetadataFact(kind, returnType, arguments);
+            constant = EvaluateNestedTypeMetadataFact(kind, returnType, arguments, resolveNamedType);
             return true;
         }
 
@@ -5239,7 +5239,7 @@ internal static class CompileTimeStructuralFacts
                 return false;
             }
 
-            constant = EvaluateNestedTypeMetadataFact(kind, parameterTypes[parameterIndex], arguments);
+            constant = EvaluateNestedTypeMetadataFact(kind, parameterTypes[parameterIndex], arguments, resolveNamedType);
             return true;
         }
 
@@ -5340,7 +5340,7 @@ internal static class CompileTimeStructuralFacts
                 return false;
             }
 
-            constant = EvaluateNestedTypeMetadataFact(kind, returnType, arguments);
+            constant = EvaluateNestedTypeMetadataFact(kind, returnType, arguments, resolveNamedType);
             return true;
         }
 
@@ -5408,7 +5408,7 @@ internal static class CompileTimeStructuralFacts
                 return false;
             }
 
-            constant = EvaluateNestedTypeMetadataFact(kind, parameterTypes[parameterIndex], arguments);
+            constant = EvaluateNestedTypeMetadataFact(kind, parameterTypes[parameterIndex], arguments, resolveNamedType);
             return true;
         }
 
@@ -5596,7 +5596,10 @@ internal static class CompileTimeStructuralFacts
 
             if (kind == CompileTimeStructuralFactKind.MethodModuleName)
             {
-                constant = TextConstant(GetMethodModuleName(method));
+                // Root-module owners are keyed without a module prefix; the
+                // owner definition's declaring module is authoritative.
+                constant = TextConstant(
+                    namedTypeDefinition.DeclaringModuleName ?? GetMethodModuleName(method));
                 return true;
             }
 
@@ -5650,7 +5653,8 @@ internal static class CompileTimeStructuralFacts
                 constant = EvaluateNestedTypeMetadataFact(
                     kind,
                     SubstituteOwnerGenericType(namedTypeDefinition, coreType, method.ReturnType),
-                    arguments);
+                    arguments,
+                    resolveNamedType);
                 return true;
             }
 
@@ -5708,7 +5712,8 @@ internal static class CompileTimeStructuralFacts
                 constant = EvaluateNestedTypeMetadataFact(
                     kind,
                     SubstituteOwnerGenericType(namedTypeDefinition, coreType, method.Parameters[parameterIndex].Type),
-                    arguments);
+                    arguments,
+                    resolveNamedType);
                 return true;
             }
 
@@ -5872,7 +5877,7 @@ internal static class CompileTimeStructuralFacts
                                 resolveNamedType,
                                 resolveConcreteLayout)),
                     _ when IsMethodGenericParameterTraitBoundTypeMetadataFact(kind) =>
-                        EvaluateNestedTypeMetadataFact(kind, boundType),
+                        EvaluateNestedTypeMetadataFact(kind, boundType, arguments: null, resolveNamedType),
                     _ => constant
                 };
                 return true;
@@ -5929,7 +5934,7 @@ internal static class CompileTimeStructuralFacts
                                 resolveNamedType,
                                 resolveConcreteLayout)),
                     _ when IsMethodComptimeGenericParameterTypeMetadataFact(kind) =>
-                        EvaluateNestedTypeMetadataFact(kind, comptimeParameterType),
+                        EvaluateNestedTypeMetadataFact(kind, comptimeParameterType, arguments: null, resolveNamedType),
                     _ => constant
                 };
                 return true;
@@ -5967,7 +5972,7 @@ internal static class CompileTimeStructuralFacts
                                 resolveNamedType,
                                 resolveConcreteLayout)),
                     _ when IsMethodThreadSafetyLawPredicateTypeMetadataFact(kind) =>
-                        EvaluateNestedTypeMetadataFact(kind, predicateType),
+                        EvaluateNestedTypeMetadataFact(kind, predicateType, arguments: null, resolveNamedType),
                     _ => constant
                 };
                 return true;
@@ -6172,7 +6177,9 @@ internal static class CompileTimeStructuralFacts
             }
 
             constant = CompileTimeConstant.Bool(
-                TypesEquivalent(namedType.OrderedFields[fieldIndex].Type, arguments.AdditionalTypeArguments[0]));
+                TypesEquivalent(
+                    SubstituteOwnerGenericType(namedType, coreType, namedType.OrderedFields[fieldIndex].Type),
+                    arguments.AdditionalTypeArguments[0]));
             return true;
         }
 
@@ -6185,7 +6192,11 @@ internal static class CompileTimeStructuralFacts
                 return false;
             }
 
-            constant = EvaluateNestedTypeMetadataFact(kind, namedType.OrderedFields[fieldIndex].Type);
+            constant = EvaluateNestedTypeMetadataFact(
+                kind,
+                SubstituteOwnerGenericType(namedType, coreType, namedType.OrderedFields[fieldIndex].Type),
+                arguments,
+                resolveNamedType);
             return true;
         }
 
@@ -6201,7 +6212,7 @@ internal static class CompileTimeStructuralFacts
             constant = CompileTimeConstant.Bool(
                 EvaluateTypePredicate(
                     GetTypePredicate(kind),
-                    namedType.OrderedFields[fieldIndex].Type,
+                    SubstituteOwnerGenericType(namedType, coreType, namedType.OrderedFields[fieldIndex].Type),
                     resolveNamedType,
                     resolveConcreteLayout));
             return true;
@@ -6407,7 +6418,9 @@ internal static class CompileTimeStructuralFacts
             }
 
             constant = CompileTimeConstant.Bool(
-                TypesEquivalent(variant.Fields[payloadIndex].Type, arguments.AdditionalTypeArguments[0]));
+                TypesEquivalent(
+                    SubstituteOwnerGenericType(namedType, coreType, variant.Fields[payloadIndex].Type),
+                    arguments.AdditionalTypeArguments[0]));
             return true;
         }
 
@@ -6430,7 +6443,7 @@ internal static class CompileTimeStructuralFacts
             constant = CompileTimeConstant.Bool(
                 EvaluateTypePredicate(
                     GetTypePredicate(kind),
-                    variant.Fields[payloadIndex].Type,
+                    SubstituteOwnerGenericType(namedType, coreType, variant.Fields[payloadIndex].Type),
                     resolveNamedType,
                     resolveConcreteLayout));
             return true;
@@ -6452,7 +6465,11 @@ internal static class CompileTimeStructuralFacts
                 return false;
             }
 
-            constant = EvaluateNestedTypeMetadataFact(kind, variant.Fields[payloadIndex].Type);
+            constant = EvaluateNestedTypeMetadataFact(
+                kind,
+                SubstituteOwnerGenericType(namedType, coreType, variant.Fields[payloadIndex].Type),
+                arguments,
+                resolveNamedType);
             return true;
         }
 
@@ -6546,7 +6563,7 @@ internal static class CompileTimeStructuralFacts
 
         if (IsCallableNestedTypeArgumentMetadataFact(kind))
         {
-            constant = EvaluateNestedTypeMetadataFact(kind, typeArgument);
+            constant = EvaluateNestedTypeMetadataFact(kind, typeArgument, arguments: null, resolveNamedType);
             return true;
         }
 
@@ -7070,7 +7087,7 @@ internal static class CompileTimeStructuralFacts
             _ when IsThreadSafetyLawAttributeConditionTypeMetadataFact(kind) =>
                 conditionType is null
                     ? EvaluateAbsentThreadSafetyLawConditionTypeMetadataFact(kind)
-                    : EvaluateNestedTypeMetadataFact(kind, conditionType),
+                    : EvaluateNestedTypeMetadataFact(kind, conditionType, arguments: null, resolveNamedType),
             _ => CompileTimeConstant.Bool(false)
         };
     }
@@ -7459,7 +7476,8 @@ internal static class CompileTimeStructuralFacts
     private static CompileTimeConstant EvaluateNestedTypeMetadataFact(
         CompileTimeStructuralFactKind kind,
         StarkTypeSymbol type,
-        CompileTimeStructuralFactArguments? arguments = null)
+        CompileTimeStructuralFactArguments? arguments = null,
+        Func<StarkTypeSymbol, NamedTypeSymbol?>? resolveNamedType = null)
     {
         if (IsNestedTypeQualifierMetadataFact(kind))
         {
@@ -7476,7 +7494,7 @@ internal static class CompileTimeStructuralFacts
                     ? StarkTypeSymbols.GetGenericBaseName(namedTypeName)
                     : string.Empty),
             _ when IsCallableNestedTypeArgumentModuleNameFact(kind) =>
-                TextConstant(GetNestedTypeModuleName(coreType)),
+                TextConstant(GetNestedTypeModuleName(coreType, resolveNamedType)),
             _ when IsCallableNestedTypeArgumentIsGenericInstantiationFact(kind) =>
                 CompileTimeConstant.Bool(StarkTypeSymbols.IsGenericInstantiation(coreType)),
             _ when GetCallableNestedTypeArgumentOffset(kind) == CallableNestedTypeArgumentArgumentCountOffset =>
@@ -7544,7 +7562,7 @@ internal static class CompileTimeStructuralFacts
                 or CompileTimeStructuralFactKind.ImplementedTraitTypeComptimeArgumentTypeModuleName
                 or CompileTimeStructuralFactKind.TypeThreadSafetyLawAttributeConditionTypeModuleName
                 or CompileTimeStructuralFactKind.FieldThreadSafetyLawAttributeConditionTypeModuleName =>
-                TextConstant(GetNestedTypeModuleName(coreType)),
+                TextConstant(GetNestedTypeModuleName(coreType, resolveNamedType)),
             CompileTimeStructuralFactKind.FieldTypeHasCSourceAlias
                 or CompileTimeStructuralFactKind.EnumVariantPayloadTypeHasCSourceAlias
                 or CompileTimeStructuralFactKind.FunctionPointerReturnTypeHasCSourceAlias
@@ -7769,12 +7787,22 @@ internal static class CompileTimeStructuralFacts
         return separator > 0 ? baseName[..separator] : string.Empty;
     }
 
-    private static string GetNestedTypeModuleName(StarkTypeSymbol type)
+    private static string GetNestedTypeModuleName(
+        StarkTypeSymbol type,
+        Func<StarkTypeSymbol, NamedTypeSymbol?>? resolveNamedType = null)
     {
         var coreType = NormalizeTypeForComparison(type);
-        return coreType.Kind == StarkTypeKind.Named && coreType.NamedType is { } namedTypeName
-            ? GetModuleName(namedTypeName)
-            : string.Empty;
+        if (coreType.Kind != StarkTypeKind.Named || coreType.NamedType is not { } namedTypeName)
+        {
+            return string.Empty;
+        }
+
+        // Root-module types are keyed without a module prefix, so the declaring
+        // module recorded on the resolved symbol (or its generic template) is
+        // authoritative.
+        return resolveNamedType?.Invoke(coreType)?.DeclaringModuleName
+            ?? resolveNamedType?.Invoke(StarkTypeSymbols.Named(StarkTypeSymbols.GetGenericBaseName(namedTypeName)))?.DeclaringModuleName
+            ?? GetModuleName(namedTypeName);
     }
 
     private static CompileTimeStructuralTypePredicate GetNestedTypePredicate(
@@ -8924,7 +8952,9 @@ internal static class CompileTimeStructuralFacts
             CompileTimeStructuralFactKind.ImplementedTraitTypeBaseName =>
                 TextConstant(StarkTypeSymbols.GetGenericBaseName(implementedTrait)),
             CompileTimeStructuralFactKind.ImplementedTraitTypeModuleName =>
-                TextConstant(GetModuleName(implementedTrait)),
+                // Root-module traits are keyed without a module prefix; the
+                // resolved trait symbol's declaring module is authoritative.
+                TextConstant(traitSymbol?.DeclaringModuleName ?? GetModuleName(implementedTrait)),
             CompileTimeStructuralFactKind.ImplementedTraitTypeIsGenericInstantiation =>
                 CompileTimeConstant.Bool(hasInstantiation),
             CompileTimeStructuralFactKind.ImplementedTraitTypeArgumentCount =>

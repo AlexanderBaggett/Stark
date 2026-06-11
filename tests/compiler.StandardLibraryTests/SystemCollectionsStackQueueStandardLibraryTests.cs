@@ -542,8 +542,7 @@ public sealed class SystemCollectionsStackQueueStandardLibraryTests : StandardLi
                 appPath),
             new CompilerOptions(
                 ModuleResolver: new FileSystemModuleResolver(sourceRoot),
-                StopAfterPassId: "emit-llvm",
-                OptimizationLevel: CompilerOptimizationLevel.O0));
+                StopAfterPassId: "emit-llvm"));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvm));
@@ -730,7 +729,6 @@ public sealed class SystemCollectionsStackQueueStandardLibraryTests : StandardLi
         var result = DefaultCompilerPipeline.Create().Run(
             new CompilationInput(File.ReadAllText(benchmarkPath), benchmarkPath),
             new CompilerOptions(
-                OptimizationLevel: CompilerOptimizationLevel.O3,
                 EmitLlvmIr: true,
                 TargetInfo: targetInfo,
                 ModuleResolver: new TargetAwareStdLibModuleResolver(

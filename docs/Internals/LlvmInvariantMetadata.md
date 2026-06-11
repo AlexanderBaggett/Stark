@@ -38,5 +38,5 @@ Loads from those locals must not also receive `!invariant.load`.
 
 Keep optimized native coverage for imported finite-law helper chains over
 stack-built aggregates. A long `&&` chain over `System.Testing.Diagnostic`
-predicates caught the previous invalid metadata because `-O0` passed while
-`-O3` folded the chain incorrectly.
+predicates caught the previous invalid metadata because optimized folding
+collapsed the chain incorrectly while the unfolded form behaved.

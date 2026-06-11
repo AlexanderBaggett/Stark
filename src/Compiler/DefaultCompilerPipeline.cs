@@ -4373,12 +4373,8 @@ public static class DefaultCompilerPipeline
             var specializationCodegenStrategy = context.Artifacts.GetRequired(CompilerArtifactKeys.SpecializationCodegenStrategy);
             var abiModel = context.Artifacts.GetRequired(CompilerArtifactKeys.AbiModel);
             var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.OptimizedSsaIr);
-            var useSsaValueFacts = context.Options.OptimizationLevel is CompilerOptimizationLevel.O1
-                or CompilerOptimizationLevel.O2
-                or CompilerOptimizationLevel.O3;
             SsaValueFactModel? ssaValueFacts = null;
-            if (useSsaValueFacts
-                && context.Artifacts.TryGet(CompilerArtifactKeys.SsaValueFacts, out SsaValueFactModel? facts))
+            if (context.Artifacts.TryGet(CompilerArtifactKeys.SsaValueFacts, out SsaValueFactModel? facts))
             {
                 ssaValueFacts = facts;
             }
@@ -4395,10 +4391,8 @@ public static class DefaultCompilerPipeline
                 ssa,
                 context.Options.TargetInfo,
                 internalizeModulePrivate: context.Options.InternalizeModulePrivate || context.Options.QualifyModuleSymbols,
-                isOptimizedBuild: context.Options.OptimizationLevel != CompilerOptimizationLevel.O0,
-                enableOptimizedRawPointerLoopIntrinsics: context.Options.OptimizationLevel is CompilerOptimizationLevel.O1
-                    or CompilerOptimizationLevel.O2
-                    or CompilerOptimizationLevel.O3,
+                isOptimizedBuild: true,
+                enableOptimizedRawPointerLoopIntrinsics: true,
                 semanticValidation: validationModel,
                 closedWorldModel: closedWorldModel,
                 specializationCodegenStrategy: specializationCodegenStrategy,
@@ -4452,9 +4446,7 @@ public static class DefaultCompilerPipeline
         public void Execute(CompilerPassContext context)
         {
             var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.SsaIr);
-            var optimized = context.Options.OptimizationLevel is CompilerOptimizationLevel.O0 or CompilerOptimizationLevel.Og
-                ? ssa
-                : new SsaCleanupOptimizer(enableSelectPredication: false).Optimize(ssa);
+            var optimized = new SsaCleanupOptimizer(enableSelectPredication: false).Optimize(ssa);
             context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, optimized);
         }
     }
@@ -4472,9 +4464,7 @@ public static class DefaultCompilerPipeline
         public void Execute(CompilerPassContext context)
         {
             var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.OptimizedSsaIr);
-            var optimized = context.Options.OptimizationLevel is CompilerOptimizationLevel.O0 or CompilerOptimizationLevel.Og
-                ? ssa
-                : new SsaConstantPropagator().Optimize(ssa);
+            var optimized = new SsaConstantPropagator().Optimize(ssa);
             context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, optimized);
         }
     }
@@ -4492,11 +4482,6 @@ public static class DefaultCompilerPipeline
         public void Execute(CompilerPassContext context)
         {
             var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.OptimizedSsaIr);
-            if (context.Options.OptimizationLevel is CompilerOptimizationLevel.O0 or CompilerOptimizationLevel.Og)
-            {
-                context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, ssa);
-                return;
-            }
 
             var effectModel = context.Artifacts.GetRequired(CompilerArtifactKeys.FunctionEffects);
             var typeModel = context.Artifacts.GetRequired(CompilerArtifactKeys.TypeCheckModel);
@@ -4676,9 +4661,7 @@ public static class DefaultCompilerPipeline
         public void Execute(CompilerPassContext context)
         {
             var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.OptimizedSsaIr);
-            var optimized = context.Options.OptimizationLevel is CompilerOptimizationLevel.O0 or CompilerOptimizationLevel.Og
-                ? ssa
-                : new SsaDirectCallDevirtualizer(context.Artifacts.GetRequired(CompilerArtifactKeys.TypeCheckModel)).Optimize(ssa);
+            var optimized = new SsaDirectCallDevirtualizer(context.Artifacts.GetRequired(CompilerArtifactKeys.TypeCheckModel)).Optimize(ssa);
             context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, optimized);
         }
     }
@@ -4696,11 +4679,6 @@ public static class DefaultCompilerPipeline
         public void Execute(CompilerPassContext context)
         {
             var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.OptimizedSsaIr);
-            if (context.Options.OptimizationLevel is CompilerOptimizationLevel.O0 or CompilerOptimizationLevel.Og)
-            {
-                context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, ssa);
-                return;
-            }
 
             var effectModel = context.Artifacts.GetRequired(CompilerArtifactKeys.FunctionEffects);
             var semanticValidation = context.Artifacts.GetRequired(CompilerArtifactKeys.SemanticValidation);
@@ -4883,11 +4861,6 @@ public static class DefaultCompilerPipeline
         public void Execute(CompilerPassContext context)
         {
             var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.OptimizedSsaIr);
-            if (context.Options.OptimizationLevel is CompilerOptimizationLevel.O0 or CompilerOptimizationLevel.Og)
-            {
-                context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, ssa);
-                return;
-            }
 
             var typeModel = context.Artifacts.GetRequired(CompilerArtifactKeys.TypeCheckModel);
             var optimized = new SsaConstLookupTableOptimizer(typeModel).Optimize(ssa);
@@ -4915,11 +4888,6 @@ public static class DefaultCompilerPipeline
         public void Execute(CompilerPassContext context)
         {
             var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.OptimizedSsaIr);
-            if (context.Options.OptimizationLevel is CompilerOptimizationLevel.O0 or CompilerOptimizationLevel.Og)
-            {
-                context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, ssa);
-                return;
-            }
 
             var facts = context.Artifacts.GetRequired(CompilerArtifactKeys.SsaValueFacts);
             var specialized = new SsaAsciiToUnicodeLiteralSpecializer().Optimize(ssa, facts);
@@ -4946,11 +4914,6 @@ public static class DefaultCompilerPipeline
         public void Execute(CompilerPassContext context)
         {
             var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.OptimizedSsaIr);
-            if (context.Options.OptimizationLevel is CompilerOptimizationLevel.O0 or CompilerOptimizationLevel.Og)
-            {
-                context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, ssa);
-                return;
-            }
 
             var facts = context.Artifacts.GetRequired(CompilerArtifactKeys.SsaValueFacts);
             var typeModel = context.Artifacts.GetRequired(CompilerArtifactKeys.TypeCheckModel);
@@ -4983,11 +4946,6 @@ public static class DefaultCompilerPipeline
         public void Execute(CompilerPassContext context)
         {
             var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.OptimizedSsaIr);
-            if (context.Options.OptimizationLevel is CompilerOptimizationLevel.O0 or CompilerOptimizationLevel.Og)
-            {
-                context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, ssa);
-                return;
-            }
 
             var facts = context.Artifacts.GetRequired(CompilerArtifactKeys.SsaValueFacts);
             var semanticValidation = context.Artifacts.GetRequired(CompilerArtifactKeys.SemanticValidation);
@@ -5024,11 +4982,6 @@ public static class DefaultCompilerPipeline
         public void Execute(CompilerPassContext context)
         {
             var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.OptimizedSsaIr);
-            if (context.Options.OptimizationLevel is CompilerOptimizationLevel.O0 or CompilerOptimizationLevel.Og)
-            {
-                context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, ssa);
-                return;
-            }
 
             var optimized = new SsaDynamicAppendLoopOptimizer().Optimize(ssa);
             if (ReferenceEquals(optimized, ssa))
@@ -5063,11 +5016,6 @@ public static class DefaultCompilerPipeline
         public void Execute(CompilerPassContext context)
         {
             var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.OptimizedSsaIr);
-            if (context.Options.OptimizationLevel is CompilerOptimizationLevel.O0 or CompilerOptimizationLevel.Og)
-            {
-                context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, ssa);
-                return;
-            }
 
             var specialized = new SsaConstantTextFormatSpecializer().Optimize(ssa);
             if (ReferenceEquals(specialized, ssa))
@@ -5093,11 +5041,6 @@ public static class DefaultCompilerPipeline
         public void Execute(CompilerPassContext context)
         {
             var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.OptimizedSsaIr);
-            if (context.Options.OptimizationLevel is CompilerOptimizationLevel.O0 or CompilerOptimizationLevel.Og)
-            {
-                context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, ssa);
-                return;
-            }
 
             var facts = context.Artifacts.GetRequired(CompilerArtifactKeys.SsaValueFacts);
             var pruned = new SsaFactDrivenBranchPruner().Optimize(ssa, facts);
@@ -5127,11 +5070,6 @@ public static class DefaultCompilerPipeline
         {
             var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.OptimizedSsaIr);
             var effectModel = context.Artifacts.GetRequired(CompilerArtifactKeys.FunctionEffects);
-            if (context.Options.OptimizationLevel is CompilerOptimizationLevel.O0 or CompilerOptimizationLevel.Og)
-            {
-                context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, ssa);
-                return;
-            }
 
             var optimized = new SsaAliasAwareMemoryOptimizer(effectModel).Optimize(ssa);
             if (ReferenceEquals(optimized, ssa))
@@ -5160,11 +5098,6 @@ public static class DefaultCompilerPipeline
         {
             var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.OptimizedSsaIr);
             var effectModel = context.Artifacts.GetRequired(CompilerArtifactKeys.FunctionEffects);
-            if (context.Options.OptimizationLevel is CompilerOptimizationLevel.O0 or CompilerOptimizationLevel.Og)
-            {
-                context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, ssa);
-                return;
-            }
 
             var optimized = new SsaScalarReplacementOptimizer(effectModel).Optimize(ssa);
             if (ReferenceEquals(optimized, ssa))
@@ -5192,11 +5125,6 @@ public static class DefaultCompilerPipeline
         public void Execute(CompilerPassContext context)
         {
             var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.OptimizedSsaIr);
-            if (context.Options.OptimizationLevel is CompilerOptimizationLevel.O0 or CompilerOptimizationLevel.Og)
-            {
-                context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, ssa);
-                return;
-            }
 
             var optimized = new SsaOwnershipTrafficOptimizer().Optimize(ssa);
             if (ReferenceEquals(optimized, ssa))
@@ -5224,11 +5152,6 @@ public static class DefaultCompilerPipeline
         public void Execute(CompilerPassContext context)
         {
             var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.OptimizedSsaIr);
-            if (context.Options.OptimizationLevel is CompilerOptimizationLevel.O0 or CompilerOptimizationLevel.Og)
-            {
-                context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, ssa);
-                return;
-            }
 
             var typeModel = context.Artifacts.GetRequired(CompilerArtifactKeys.TypeCheckModel);
             var optimized = new SsaAggregateConstructionStoreOptimizer(typeModel.NamedTypes).Optimize(ssa);
@@ -5257,11 +5180,6 @@ public static class DefaultCompilerPipeline
         public void Execute(CompilerPassContext context)
         {
             var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.OptimizedSsaIr);
-            if (context.Options.OptimizationLevel is CompilerOptimizationLevel.O0 or CompilerOptimizationLevel.Og)
-            {
-                context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, ssa);
-                return;
-            }
 
             var shaped = new SsaCleanupOptimizer(enableSelectPredication: true).Optimize(ssa);
             context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, shaped);
@@ -5283,11 +5201,6 @@ public static class DefaultCompilerPipeline
         public void Execute(CompilerPassContext context)
         {
             var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.OptimizedSsaIr);
-            if (context.Options.OptimizationLevel is CompilerOptimizationLevel.O0 or CompilerOptimizationLevel.Og)
-            {
-                context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, ssa);
-                return;
-            }
 
             var folded = new SsaIntegerArithmeticFolder().Optimize(ssa);
             if (ReferenceEquals(folded, ssa))

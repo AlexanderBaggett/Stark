@@ -1831,7 +1831,6 @@ public sealed class ProjectCliTests
             [
                 packageSourcePath,
                 "--emit-lib",
-                "-O0",
                 "-o",
                 Path.Combine(distDirectory, LibraryFileName("SystemRepoDistProbe")),
                 "--package-image-output",
@@ -1877,7 +1876,6 @@ public sealed class ProjectCliTests
             [
                 packageSourcePath,
                 "--emit-lib",
-                "-O0",
                 "-o",
                 libraryPath,
                 "--package-image-output",

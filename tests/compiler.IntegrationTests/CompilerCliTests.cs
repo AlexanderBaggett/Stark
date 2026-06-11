@@ -49,7 +49,6 @@ public sealed class CompilerCliTests
         Assert.Contains("--target-feature <feature>", text);
         Assert.Contains("--relocation-model <default|static|pic|pie>", text);
         Assert.Contains("--code-model <tiny|small|kernel|medium|large>", text);
-        Assert.Contains("-O0|-Og|-O1|-O2|-O3", text);
         Assert.Contains("--optimize <0|g|1|2|3>", text);
         Assert.Contains("--strict-integer-ranges", text);
         Assert.Contains("--link-arg <arg>", text);
@@ -1168,153 +1167,6 @@ public sealed class CompilerCliTests
     }
 
     [Fact]
-    public async Task EmitObjectModeForwardsOptimizationLevelToClang()
-    {
-        if (OperatingSystem.IsWindows())
-        {
-            return;
-        }
-
-        var tempDirectory = Directory.CreateTempSubdirectory("stark-cli-opt-level-");
-        var outputPath = Path.Combine(tempDirectory.FullName, "app.o");
-        var clangLogPath = Path.Combine(tempDirectory.FullName, "clang.log");
-        _ = await CreateUnixCaptureClangAsync(tempDirectory.FullName, clangLogPath);
-        var originalPath = Environment.GetEnvironmentVariable("PATH");
-
-        try
-        {
-            Environment.SetEnvironmentVariable("PATH", $"{tempDirectory.FullName}{Path.PathSeparator}{originalPath}");
-
-            var stdout = new StringWriter();
-            var stderr = new StringWriter();
-
-            var exitCode = await CompilerCli.RunAsync(
-                [
-                    "--emit-obj",
-                    "-o", outputPath,
-                    "-O0"
-                ],
-                new StringReader(
-                    """
-                    module Demo
-
-                    fn i32[min max] Run(bool flag)
-                    {
-                        stack mut i32[min max] value = 0;
-                        if (flag)
-                        {
-                            value = 1;
-                        }
-                        else
-                        {
-                            value = 2;
-                        }
-
-                        return value;
-                    }
-                    """),
-                stdout,
-                stderr);
-
-            Assert.Equal(0, exitCode);
-            Assert.Contains("Emitted object file:", stdout.ToString());
-            Assert.Equal(string.Empty, stderr.ToString());
-            Assert.True(File.Exists(outputPath));
-
-            var clangLog = await File.ReadAllTextAsync(clangLogPath);
-            Assert.Contains("-O0", clangLog, StringComparison.Ordinal);
-            Assert.DoesNotContain("-disable-llvm-passes", clangLog, StringComparison.Ordinal);
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("PATH", originalPath);
-
-            try
-            {
-                tempDirectory.Delete(recursive: true);
-            }
-            catch
-            {
-                // Best effort cleanup only.
-            }
-        }
-    }
-
-    [Fact]
-    public async Task EmitObjectModeForwardsDebugFriendlyOptimizationLevelToClang()
-    {
-        if (OperatingSystem.IsWindows())
-        {
-            return;
-        }
-
-        var tempDirectory = Directory.CreateTempSubdirectory("stark-cli-opt-level-og-");
-        var outputPath = Path.Combine(tempDirectory.FullName, "app.o");
-        var clangLogPath = Path.Combine(tempDirectory.FullName, "clang.log");
-        _ = await CreateUnixCaptureClangAsync(tempDirectory.FullName, clangLogPath);
-        var originalPath = Environment.GetEnvironmentVariable("PATH");
-
-        try
-        {
-            Environment.SetEnvironmentVariable("PATH", $"{tempDirectory.FullName}{Path.PathSeparator}{originalPath}");
-
-            var stdout = new StringWriter();
-            var stderr = new StringWriter();
-
-            var exitCode = await CompilerCli.RunAsync(
-                [
-                    "--emit-obj",
-                    "-o", outputPath,
-                    "-Og"
-                ],
-                new StringReader(
-                    """
-                    module Demo
-
-                    fn i32[min max] Run(bool flag)
-                    {
-                        stack mut i32[min max] value = 0;
-                        if (flag)
-                        {
-                            value = 1;
-                        }
-                        else
-                        {
-                            value = 2;
-                        }
-
-                        return value;
-                    }
-                    """),
-                stdout,
-                stderr);
-
-            Assert.Equal(0, exitCode);
-            Assert.Contains("Emitted object file:", stdout.ToString());
-            Assert.Equal(string.Empty, stderr.ToString());
-            Assert.True(File.Exists(outputPath));
-
-            var clangLog = await File.ReadAllTextAsync(clangLogPath);
-            Assert.Contains("-Og", clangLog, StringComparison.Ordinal);
-            Assert.Contains("-Xclang", clangLog, StringComparison.Ordinal);
-            Assert.Contains("-disable-llvm-passes", clangLog, StringComparison.Ordinal);
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("PATH", originalPath);
-
-            try
-            {
-                tempDirectory.Delete(recursive: true);
-            }
-            catch
-            {
-                // Best effort cleanup only.
-            }
-        }
-    }
-
-    [Fact]
     public async Task EmitObjectModeKeepsLlvmPassesForImportedInlineBodyClones()
     {
         if (OperatingSystem.IsWindows())
@@ -1380,7 +1232,6 @@ public sealed class CompilerCliTests
                 [
                     appPath,
                     "--emit-obj",
-                    "-O3",
                     "-I", tempDirectory.FullName,
                     "-o", outputPath
                 ],
@@ -2010,7 +1861,6 @@ public sealed class CompilerCliTests
                 [
                     rootPath,
                     "--emit-exe",
-                    "-O3",
                     "-o", outputPath,
                     "--target", "x86_64-unknown-linux-gnu"
                 ],
@@ -2082,7 +1932,6 @@ public sealed class CompilerCliTests
                 [
                     rootPath,
                     "--emit-exe",
-                    "-O0",
                     "-o", outputPath,
                     "--target", "arm64-apple-darwin"
                 ],
@@ -2159,7 +2008,6 @@ public sealed class CompilerCliTests
                 [
                     rootPath,
                     "--emit-exe",
-                    "-O3",
                     "-I", Path.Combine(repositoryRoot, "stdlib", "src"),
                     "-o", outputPath,
                     "--target", "x86_64-unknown-linux-gnu",
@@ -2255,7 +2103,6 @@ public sealed class CompilerCliTests
                 [
                     rootPath,
                     "--emit-exe",
-                    "-O3",
                     "-I", Path.Combine(repositoryRoot, "stdlib", "src"),
                     "-o", outputPath,
                     "--target", "x86_64-unknown-linux-gnu",
@@ -2363,7 +2210,6 @@ public sealed class CompilerCliTests
                 [
                     rootPath,
                     "--emit-exe",
-                    "-O3",
                     "-I", tempDirectory.FullName,
                     "-o", outputPath,
                     "--target", "x86_64-unknown-linux-gnu",
@@ -2462,7 +2308,7 @@ public sealed class CompilerCliTests
             var buildStdout = new StringWriter();
             var buildStderr = new StringWriter();
             var buildExitCode = await CompilerCli.RunAsync(
-                [facadePath, "--emit-lib", "-O3", "-o", libraryPath, "--save-temps", buildTempsPath],
+                [facadePath, "--emit-lib", "-o", libraryPath, "--save-temps", buildTempsPath],
                 new StringReader(string.Empty),
                 buildStdout,
                 buildStderr);
@@ -2495,7 +2341,7 @@ public sealed class CompilerCliTests
             var stderr = new StringWriter();
 
             var exitCode = await CompilerCli.RunAsync(
-                [appPath, "--emit-exe", "-O3", "-I", packageDirectory, "-o", outputPath],
+                [appPath, "--emit-exe", "-I", packageDirectory, "-o", outputPath],
                 new StringReader(string.Empty),
                 stdout,
                 stderr);

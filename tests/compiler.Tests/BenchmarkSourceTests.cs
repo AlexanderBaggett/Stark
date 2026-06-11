@@ -53,7 +53,6 @@ public sealed class BenchmarkSourceTests
             new CompilationInput(File.ReadAllText(benchmarkSource), benchmarkSource),
             new CompilerOptions(
                 EmitLlvmIr: true,
-                OptimizationLevel: CompilerOptimizationLevel.O3,
                 TargetInfo: targetInfo,
                 ModuleResolver: new TargetAwareStdLibModuleResolver(
                     new FileSystemModuleResolver(sourceRoot),
@@ -556,7 +555,6 @@ public sealed class BenchmarkSourceTests
             new CompilationInput(source, sourcePath),
             new CompilerOptions(
                 EmitLlvmIr: true,
-                OptimizationLevel: CompilerOptimizationLevel.O3,
                 TargetInfo: targetInfo,
                 ModuleResolver: new TargetAwareStdLibModuleResolver(
                     new FileSystemModuleResolver(sourceRoot),

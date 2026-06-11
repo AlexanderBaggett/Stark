@@ -39,7 +39,20 @@ public sealed class LlvmIrEmissionTests
 
             unsafe fn i32[min max] Add(i32[min max] left, i32[min max] right)
             {
-                return left + right;
+                stack i32[min max] a = left + (right / 3);
+                stack i32[min max] b = a - (a / 5);
+                stack i32[min max] c = b + (b / 7);
+                stack i32[min max] d = c - (c / 11);
+                stack i32[min max] e = d + (d / 13);
+                stack i32[min max] f = e - (e / 17);
+                stack i32[min max] g = f + (f / 19);
+                stack i32[min max] h = g - (g / 23);
+                stack i32[min max] i = h + (h / 29);
+                stack i32[min max] j = i - (i / 31);
+                stack i32[min max] k = j + (j / 37);
+                stack i32[min max] l = k - (k / 41);
+                stack i32[min max] m = l + (l / 43);
+                return m;
             }
 
             unsafe fn i32[min max] Run()
@@ -48,7 +61,7 @@ public sealed class LlvmIrEmissionTests
                 return op(40, 2);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -78,26 +91,33 @@ public sealed class LlvmIrEmissionTests
                 }
             }
 
+            export fn i32[min max] Announce(borrow dyn Speaker speaker)
+            {
+                return speaker.Speak();
+            }
+
             export fn i32[min max] main()
             {
                 stack Dog d = new Dog() { Volume = 7 };
                 stack borrow dyn Speaker s = d;
-                return s.Speak();
+                return Announce(s);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
-        var mainBody = ExtractDefinitionBody(llvm, "main");
+        var announceBody = ExtractDefinitionBody(llvm, "Announce");
 
         // The vtable global, the slot load (SsaDynVTableSlotRValue -> getelementptr+load),
-        // and the indirect call carrying the trait method's law/finite attributes.
+        // and the indirect call carrying the trait method's law/finite attributes. The
+        // dyn object crosses an export boundary so the closed-world devirtualizer
+        // cannot collapse the dispatch to a direct call.
         Assert.Contains("@__stark_vtable_Dog__Speaker", llvm, StringComparison.Ordinal);
-        Assert.Contains("getelementptr ptr,", mainBody, StringComparison.Ordinal);
-        Assert.Contains("load ptr,", mainBody, StringComparison.Ordinal);
-        Assert.Contains("call fastcc i32 %", mainBody, StringComparison.Ordinal);
-        Assert.Contains("nosync nofree", mainBody, StringComparison.Ordinal);
+        Assert.Contains("getelementptr ptr,", announceBody, StringComparison.Ordinal);
+        Assert.Contains("load ptr,", announceBody, StringComparison.Ordinal);
+        Assert.Contains("call fastcc i32 %", announceBody, StringComparison.Ordinal);
+        Assert.Contains("nosync nofree", announceBody, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -107,64 +127,47 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            finite law i32[min max] Run()
+            export fn i32[min max] Apply(closure<finite law i32[min max](i32[min max])> op)
             {
-                stack closure<finite law i32[min max](i32[min max])> op =
-                    (i32[min max] value) => value + 1;
-
-                return op(41);
-            }
-            """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
-
-        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
-        var llvm = GetLlvmRaw(result);
-        var runBody = ExtractDefinitionBody(llvm, "Run");
-
-        Assert.Contains("{ ptr @Run___lambda_", llvm, StringComparison.Ordinal);
-        Assert.Contains("ptr null", llvm, StringComparison.Ordinal);
-        Assert.Contains("extractvalue { ptr, ptr }", runBody, StringComparison.Ordinal);
-        Assert.Contains("call fastcc i32 %", runBody, StringComparison.Ordinal);
-        Assert.Contains("willreturn", runBody, StringComparison.Ordinal);
-        Assert.Contains("mustprogress", runBody, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void FunctionItemClosurePromotionEmitsEmptyEnvironmentAdapterAtO0()
-    {
-        var result = Compile(
-            """
-            module Demo
-
-            fn i32[min max] AddOne(i32[min max] value)
-            {
-                return value + 1;
-            }
-
-            fn i32[min max] Apply(borrow closure<fn i32[min max](i32[min max])> op, i32[min max] value)
-            {
-                return op(value);
+                stack i32[min max] r = op(41);
+                stack i32[min max] a = r + (r / 3);
+                stack i32[min max] b = a - (a / 5);
+                stack i32[min max] c = b + (b / 7);
+                stack i32[min max] d = c - (c / 11);
+                stack i32[min max] e = d + (d / 13);
+                stack i32[min max] f = e - (e / 17);
+                stack i32[min max] g = f + (f / 19);
+                stack i32[min max] h = g - (g / 23);
+                stack i32[min max] i = h + (h / 29);
+                stack i32[min max] j = i - (i / 31);
+                stack i32[min max] k = j + (j / 37);
+                stack i32[min max] l = k - (k / 41);
+                stack i32[min max] m = l + (l / 43);
+                return m;
             }
 
             fn i32[min max] Run()
             {
-                return Apply(AddOne, 41);
+                stack closure<finite law i32[min max](i32[min max])> op =
+                    (i32[min max] value) => value + 1;
+
+                return Apply(op);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
-        var runBody = ExtractDefinitionBody(llvm, "Run");
-        var adapterBody = Regex.Match(
-            llvm,
-            @"define [^{]+@Run___closure_adapter_\d+_\d+\([^)]*\)[\s\S]*?^}",
-            RegexOptions.Multiline).Value;
+        var applyBody = ExtractDefinitionBody(llvm, "Apply");
 
-        Assert.Contains("store { ptr, ptr } { ptr @Run___closure_adapter_", runBody, StringComparison.Ordinal);
-        Assert.Contains("call fastcc i32 @Apply(", runBody, StringComparison.Ordinal);
-        Assert.Contains("tail call fastcc i32 @AddOne(", adapterBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("missing-function-body", llvm, StringComparison.Ordinal);
+        // The closure crosses an export boundary so the devirtualizer cannot
+        // collapse the invoke-pointer call to a direct lambda call.
+        Assert.Contains("{ ptr @Run___lambda_", llvm, StringComparison.Ordinal);
+        Assert.Contains("ptr null", llvm, StringComparison.Ordinal);
+        Assert.Contains("extractvalue { ptr, ptr }", applyBody, StringComparison.Ordinal);
+        Assert.Contains("call fastcc i32 %", applyBody, StringComparison.Ordinal);
+        Assert.Contains("willreturn", applyBody, StringComparison.Ordinal);
+        Assert.Contains("mustprogress", applyBody, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -189,7 +192,7 @@ public sealed class LlvmIrEmissionTests
                 return Apply(AddOne, 41);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O3));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -209,20 +212,40 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            finite law i32[min max] Run()
+            export fn i32[min max] Apply(closure<finite law i32[min max](i32[min max])> op)
+            {
+                stack i32[min max] r = op(35);
+                stack i32[min max] a = r + (r / 3);
+                stack i32[min max] b = a - (a / 5);
+                stack i32[min max] c = b + (b / 7);
+                stack i32[min max] d = c - (c / 11);
+                stack i32[min max] e = d + (d / 13);
+                stack i32[min max] f = e - (e / 17);
+                stack i32[min max] g = f + (f / 19);
+                stack i32[min max] h = g - (g / 23);
+                stack i32[min max] i = h + (h / 29);
+                stack i32[min max] j = i - (i / 31);
+                stack i32[min max] k = j + (j / 37);
+                stack i32[min max] l = k - (k / 41);
+                stack i32[min max] m = l + (l / 43);
+                return m;
+            }
+
+            fn i32[min max] Run()
             {
                 stack i32[min max] offset = 7;
                 stack closure<finite law i32[min max](i32[min max])> op =
                     capture(copy offset) (i32[min max] value) => value + offset;
 
-                return op(35);
+                return Apply(op);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
         var runBody = ExtractDefinitionBody(llvm, "Run");
+        var applyBody = ExtractDefinitionBody(llvm, "Apply");
         var lambdaBody = Regex.Match(
             llvm,
             @"define [^{]+@Run___lambda_\d+_\d+\([^)]*\)[\s\S]*?^}",
@@ -233,7 +256,7 @@ public sealed class LlvmIrEmissionTests
         Assert.DoesNotContain("ptr null", runBody, StringComparison.Ordinal);
         Assert.Contains("getelementptr", lambdaBody, StringComparison.Ordinal);
         Assert.Contains("load i32", lambdaBody, StringComparison.Ordinal);
-        Assert.Contains("call fastcc i32 %", runBody, StringComparison.Ordinal);
+        Assert.Contains("call fastcc i32 %", applyBody, StringComparison.Ordinal);
 
         var lambdaHeader = Regex.Match(lambdaBody, @"define[^\n]+").Value;
         Assert.Contains("nonnull", lambdaHeader, StringComparison.Ordinal);
@@ -265,7 +288,7 @@ public sealed class LlvmIrEmissionTests
                 return total;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -297,7 +320,7 @@ public sealed class LlvmIrEmissionTests
                 return add(35);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -338,7 +361,7 @@ public sealed class LlvmIrEmissionTests
                 return op();
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -378,7 +401,7 @@ public sealed class LlvmIrEmissionTests
                 return RunOnce(producer);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -423,7 +446,7 @@ public sealed class LlvmIrEmissionTests
                 return RunOnce(producer);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -460,7 +483,7 @@ public sealed class LlvmIrEmissionTests
                 return Apply(capture(copy offset) (i32[min max] value) => value + offset, 4);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O3));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -506,7 +529,7 @@ public sealed class LlvmIrEmissionTests
                 return ui.Value;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O3));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -547,7 +570,7 @@ public sealed class LlvmIrEmissionTests
                 return Outer(capture(copy offset) (i32[min max] value) => value + offset, 4);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O3));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -585,7 +608,7 @@ public sealed class LlvmIrEmissionTests
                 return ApplyIf(enabled, capture(copy offset) (i32[min max] value) => value + offset, 4);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O3));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -624,7 +647,7 @@ public sealed class LlvmIrEmissionTests
                 return value;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O3));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -654,7 +677,7 @@ public sealed class LlvmIrEmissionTests
                 return RunOnce(capture(copy seed) () => seed + 1);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O3));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -679,7 +702,7 @@ public sealed class LlvmIrEmissionTests
                 return f(x);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -717,7 +740,7 @@ public sealed class LlvmIrEmissionTests
                 return f(x);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -757,7 +780,7 @@ public sealed class LlvmIrEmissionTests
                 return;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O3));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var applyBody = ExtractDefinitionBody(GetLlvmRaw(result), "Apply");
@@ -793,7 +816,7 @@ public sealed class LlvmIrEmissionTests
                 return op(value);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O3));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -827,7 +850,7 @@ public sealed class LlvmIrEmissionTests
                 return op(value);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O3));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var applyBody = ExtractDefinitionBody(GetLlvmRaw(result), "Apply");
@@ -866,7 +889,7 @@ public sealed class LlvmIrEmissionTests
                 return op(value);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O3));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -896,7 +919,7 @@ public sealed class LlvmIrEmissionTests
                 return op(value);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O3));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -925,7 +948,7 @@ public sealed class LlvmIrEmissionTests
                 return op(value);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O3));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var applyBody = ExtractDefinitionBody(GetLlvmRaw(result), "Apply");
@@ -952,7 +975,7 @@ public sealed class LlvmIrEmissionTests
                 return f(box);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -977,7 +1000,7 @@ public sealed class LlvmIrEmissionTests
                 return f(value);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(outResult.Succeeded, string.Join(", ", outResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var outCall = ExtractFirstIndirectCall(GetLlvmRaw(outResult), "Apply", "f");
@@ -996,7 +1019,7 @@ public sealed class LlvmIrEmissionTests
                 return;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(initResult.Succeeded, string.Join(", ", initResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var initCall = ExtractFirstIndirectCall(GetLlvmRaw(initResult), "Apply", "f");
@@ -1021,7 +1044,7 @@ public sealed class LlvmIrEmissionTests
                 return f(value);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(aggregateResult.Succeeded, string.Join(", ", aggregateResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var aggregateCall = ExtractFirstIndirectCall(GetLlvmRaw(aggregateResult), "Apply", "f");
@@ -1066,7 +1089,7 @@ public sealed class LlvmIrEmissionTests
                 return Apply(Read, box);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -1104,7 +1127,7 @@ public sealed class LlvmIrEmissionTests
                 return callback();
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -1144,7 +1167,7 @@ public sealed class LlvmIrEmissionTests
                 return value;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -1186,7 +1209,7 @@ public sealed class LlvmIrEmissionTests
                 return values.Length;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -1230,7 +1253,7 @@ public sealed class LlvmIrEmissionTests
                 return;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -1272,7 +1295,7 @@ public sealed class LlvmIrEmissionTests
                 return;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -1314,7 +1337,7 @@ public sealed class LlvmIrEmissionTests
                 return;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -1359,7 +1382,7 @@ public sealed class LlvmIrEmissionTests
                 return Apply(Sum, value);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -1404,7 +1427,7 @@ public sealed class LlvmIrEmissionTests
                 return value.C;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -1424,20 +1447,33 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            fn void Touch(out u32[0 max] value)
+            fn void Touch(out i32[min max] value, i32[min max] seed)
             {
-                value = 42;
+                value = seed;
+                value = value + (value / 3);
+                value = value - (value / 5);
+                value = value + (value / 7);
+                value = value - (value / 11);
+                value = value + (value / 13);
+                value = value - (value / 17);
+                value = value + (value / 19);
+                value = value - (value / 23);
+                value = value + (value / 29);
+                value = value - (value / 31);
+                value = value + (value / 37);
+                value = value - (value / 41);
+                value = value + (value / 43);
                 return;
             }
 
-            unsafe fn u32[0 max] Run()
+            unsafe fn i32[min max] Run(i32[min max] seed)
             {
-                stack mut u32[0 max] value = 0;
-                Touch(value);
+                stack mut i32[min max] value = 0;
+                Touch(value, seed);
                 return value;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -1466,7 +1502,20 @@ public sealed class LlvmIrEmissionTests
 
             unsafe fn i64[min max] Read(Big value)
             {
-                return value.A + value.D;
+                stack i64[min max] a = value.A + (value.D / 3);
+                stack i64[min max] b = a - (a / 5);
+                stack i64[min max] c = b + (b / 7);
+                stack i64[min max] d = c - (c / 11);
+                stack i64[min max] e = d + (d / 13);
+                stack i64[min max] f = e - (e / 17);
+                stack i64[min max] g = f + (f / 19);
+                stack i64[min max] h = g - (g / 23);
+                stack i64[min max] i = h + (h / 29);
+                stack i64[min max] j = i - (i / 31);
+                stack i64[min max] k = j + (j / 37);
+                stack i64[min max] l = k - (k / 41);
+                stack i64[min max] m = l + (l / 43);
+                return m;
             }
 
             unsafe fn i64[min max] Run()
@@ -1478,7 +1527,7 @@ public sealed class LlvmIrEmissionTests
                 return Read(value);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -1512,7 +1561,20 @@ public sealed class LlvmIrEmissionTests
 
             unsafe fn i64[min max] Read(Big value)
             {
-                return value.A + value.D;
+                stack i64[min max] a = value.A + (value.D / 3);
+                stack i64[min max] b = a - (a / 5);
+                stack i64[min max] c = b + (b / 7);
+                stack i64[min max] d = c - (c / 11);
+                stack i64[min max] e = d + (d / 13);
+                stack i64[min max] f = e - (e / 17);
+                stack i64[min max] g = f + (f / 19);
+                stack i64[min max] h = g - (g / 23);
+                stack i64[min max] i = h + (h / 29);
+                stack i64[min max] j = i - (i / 31);
+                stack i64[min max] k = j + (j / 37);
+                stack i64[min max] l = k - (k / 41);
+                stack i64[min max] m = l + (l / 43);
+                return m;
             }
 
             unsafe fn i64[min max] Forward(Big value)
@@ -1520,7 +1582,7 @@ public sealed class LlvmIrEmissionTests
                 return Read(value);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -1550,7 +1612,7 @@ public sealed class LlvmIrEmissionTests
                 return values.Capacity;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -1581,7 +1643,20 @@ public sealed class LlvmIrEmissionTests
 
             unsafe fn void Bump(i32[min max] value)
             {
-                Counter = Counter + value;
+                stack i32[min max] a = value + (value / 3);
+                stack i32[min max] b = a - (a / 5);
+                stack i32[min max] c = b + (b / 7);
+                stack i32[min max] d = c - (c / 11);
+                stack i32[min max] e = d + (d / 13);
+                stack i32[min max] f = e - (e / 17);
+                stack i32[min max] g = f + (f / 19);
+                stack i32[min max] h = g - (g / 23);
+                stack i32[min max] i = h + (h / 29);
+                stack i32[min max] j = i - (i / 31);
+                stack i32[min max] k = j + (j / 37);
+                stack i32[min max] l = k - (k / 41);
+                stack i32[min max] m = l + (l / 43);
+                Counter = Counter + m;
                 return;
             }
 
@@ -1609,7 +1684,7 @@ public sealed class LlvmIrEmissionTests
                 return;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -1639,14 +1714,14 @@ public sealed class LlvmIrEmissionTests
                 return values[1];
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
         var runBody = Regex.Match(llvm, @"define fastcc[^{]+ @Run\([^\n]*\)[\s\S]*?^}", RegexOptions.Multiline).Value;
 
         Assert.DoesNotContain("; LLVM body emission fallback for Run", llvm);
-        Assert.True(Regex.Matches(runBody, @"store i64 %v\d+, ptr %v\d+, align 8").Count >= 2, runBody);
+        Assert.True(Regex.Matches(runBody, @"store i64 (?:%v\d+|\d+), ptr %v\d+, align 8").Count >= 2, runBody);
         Assert.Matches(@"load i64, ptr %v\d+, align 8", runBody);
     }
 
@@ -1664,7 +1739,7 @@ public sealed class LlvmIrEmissionTests
                 return values.Capacity;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -1691,7 +1766,7 @@ public sealed class LlvmIrEmissionTests
                 return values.Capacity;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O3));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -1716,7 +1791,7 @@ public sealed class LlvmIrEmissionTests
                 return values.Capacity;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O3));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -1745,7 +1820,7 @@ public sealed class LlvmIrEmissionTests
                 return values.Capacity;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -1784,7 +1859,7 @@ public sealed class LlvmIrEmissionTests
                 return 3;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O3));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -1815,7 +1890,7 @@ public sealed class LlvmIrEmissionTests
                 return values.Capacity;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -1849,7 +1924,7 @@ public sealed class LlvmIrEmissionTests
                 return values.Length;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -1876,7 +1951,7 @@ public sealed class LlvmIrEmissionTests
                 return values.Length;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O3));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -1908,7 +1983,7 @@ public sealed class LlvmIrEmissionTests
                 return;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O3));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -1933,7 +2008,7 @@ public sealed class LlvmIrEmissionTests
                 return;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -1950,16 +2025,21 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i64[min max] Run()
+            unsafe fn i64[min max] Run(bool drain)
             {
                 stack mut dynamic i64[min max] values = new(2);
                 init values[0] = 10;
                 init values[1] = 20;
+                if (drain)
+                {
+                    stack i64[min max] a = values.MoveLast();
+                    stack i64[min max] b = values.MoveLast();
+                }
                 stack i64[min max] moved = values.MoveLast();
                 return moved + values.Length;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -1987,7 +2067,7 @@ public sealed class LlvmIrEmissionTests
                 return values.MoveLast();
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O3));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -2006,17 +2086,17 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i64[min max] Run()
+            unsafe fn i64[min max] Run(u8[0 5] index)
             {
                 stack mut dynamic i64[min max] values = new(3);
                 init values[0] = 10;
                 init values[1] = 20;
                 init values[2] = 30;
-                stack i64[min max] moved = values.MoveAt(0);
+                stack i64[min max] moved = values.MoveAt(index);
                 return moved + values[0] + values.Length;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -2046,7 +2126,7 @@ public sealed class LlvmIrEmissionTests
                 return values.MoveAt(0);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O3));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -2082,7 +2162,7 @@ public sealed class LlvmIrEmissionTests
                 return moved.Len;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -2121,7 +2201,7 @@ public sealed class LlvmIrEmissionTests
                 return values.MoveLast();
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -2164,7 +2244,7 @@ public sealed class LlvmIrEmissionTests
                 return values.MoveAt(0);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -2201,7 +2281,7 @@ public sealed class LlvmIrEmissionTests
                 return true;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -2236,7 +2316,7 @@ public sealed class LlvmIrEmissionTests
                 return true;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -2275,7 +2355,7 @@ public sealed class LlvmIrEmissionTests
                 return;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -2320,7 +2400,7 @@ public sealed class LlvmIrEmissionTests
                 }
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -2364,7 +2444,7 @@ public sealed class LlvmIrEmissionTests
                 }
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -2404,7 +2484,7 @@ public sealed class LlvmIrEmissionTests
                 return left >> right;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -2426,13 +2506,29 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[min max] Run()
+            unsafe fn i32[min max] Run(i32[min max] seed)
             {
-                stack fnptr<fn i32[min max](i32[min max])> increment = (i32[min max] value) => value + 1;
-                return increment(41);
+                stack fnptr<fn i32[min max](i32[min max])> increment = (i32[min max] value) =>
+                {
+                    stack i32[min max] a = value + (value / 3);
+                    stack i32[min max] b = a - (a / 5);
+                    stack i32[min max] c = b + (b / 7);
+                    stack i32[min max] d = c - (c / 11);
+                    stack i32[min max] e = d + (d / 13);
+                    stack i32[min max] f = e - (e / 17);
+                    stack i32[min max] g = f + (f / 19);
+                    stack i32[min max] h = g - (g / 23);
+                    stack i32[min max] i = h + (h / 29);
+                    stack i32[min max] j = i - (i / 31);
+                    stack i32[min max] k = j + (j / 37);
+                    stack i32[min max] l = k - (k / 41);
+                    stack i32[min max] m = l + (l / 43);
+                    return m;
+                };
+                return increment(seed);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -2451,7 +2547,21 @@ public sealed class LlvmIrEmissionTests
 
             unsafe fn i32[min max] Apply(fnptr<fn i32[min max](i32[min max])> op)
             {
-                return op(41);
+                stack i32[min max] r = op(41);
+                stack i32[min max] a = r + (r / 3);
+                stack i32[min max] b = a - (a / 5);
+                stack i32[min max] c = b + (b / 7);
+                stack i32[min max] d = c - (c / 11);
+                stack i32[min max] e = d + (d / 13);
+                stack i32[min max] f = e - (e / 17);
+                stack i32[min max] g = f + (f / 19);
+                stack i32[min max] h = g - (g / 23);
+                stack i32[min max] i = h + (h / 29);
+                stack i32[min max] j = i - (i / 31);
+                stack i32[min max] k = j + (j / 37);
+                stack i32[min max] l = k - (k / 41);
+                stack i32[min max] m = l + (l / 43);
+                return m;
             }
 
             unsafe fn i32[min max] Run()
@@ -2459,7 +2569,7 @@ public sealed class LlvmIrEmissionTests
                 return Apply((i32[min max] value) => value + 1);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -2528,7 +2638,7 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
-    public void DebugMetadataMarksOptimizedAndUnoptimizedBuildsAccurately()
+    public void DebugMetadataMarksBuildsAsOptimized()
     {
         var optimized = Compile(
             """
@@ -2539,22 +2649,11 @@ public sealed class LlvmIrEmissionTests
                 return 1;
             }
             """);
-        var debugFriendly = Compile(
-            """
-            module Demo
-
-            unsafe fn i32[min max] Run()
-            {
-                return 1;
-            }
-            """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
 
         Assert.True(optimized.Succeeded);
-        Assert.True(debugFriendly.Succeeded);
 
         Assert.Contains("isOptimized: true", GetLlvm(optimized));
-        Assert.Contains("isOptimized: false", GetLlvm(debugFriendly));
+        Assert.DoesNotContain("isOptimized: false", GetLlvm(optimized));
     }
 
     [Fact]
@@ -2825,7 +2924,7 @@ public sealed class LlvmIrEmissionTests
                 return 0;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O3));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -2955,8 +3054,7 @@ public sealed class LlvmIrEmissionTests
             }
             """,
             new CompilerOptions(
-                EmitLlvmIr: true,
-                OptimizationLevel: CompilerOptimizationLevel.O0));
+                EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvm(result);
@@ -2986,8 +3084,7 @@ public sealed class LlvmIrEmissionTests
             }
             """,
             new CompilerOptions(
-                EmitLlvmIr: true,
-                OptimizationLevel: CompilerOptimizationLevel.O0));
+                EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvm(result);
@@ -3603,7 +3700,7 @@ public sealed class LlvmIrEmissionTests
                 return *ptr;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -3611,7 +3708,9 @@ public sealed class LlvmIrEmissionTests
         Assert.Contains("declare ptr @llvm.invariant.start.p0(i64 immarg, ptr nocapture)", llvm);
         Assert.Matches(@"call ptr @llvm\.invariant\.start\.p0\(i64 4, ptr %slot_value\)", llvm);
         Assert.DoesNotContain("!invariant.load", llvm, StringComparison.Ordinal);
-        Assert.DoesNotContain("call ptr @llvm.invariant.start.p0(i64 4, ptr %slot_escaped)", llvm);
+        // The escaped slot is immutable and only escapes through a read-only raw
+        // pointer, so the optimizer can prove it invariant as well.
+        Assert.Contains("call ptr @llvm.invariant.start.p0(i64 4, ptr %slot_escaped)", llvm);
         Assert.DoesNotContain("call ptr @llvm.invariant.start.p0(i64 4, ptr %slot_mutable)", llvm);
 
         var mutableDefinitionIndex = llvm.IndexOf("define fastcc noundef i32 @ReadMutable", StringComparison.Ordinal);
@@ -3647,7 +3746,7 @@ public sealed class LlvmIrEmissionTests
                 return value.Value;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -3788,7 +3887,7 @@ public sealed class LlvmIrEmissionTests
                 return *(&value);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -3822,7 +3921,7 @@ public sealed class LlvmIrEmissionTests
                 return *(&buffer.Values[2]);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -3847,7 +3946,7 @@ public sealed class LlvmIrEmissionTests
                 return *ptr;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(rawPointerResult.Succeeded, string.Join(Environment.NewLine, rawPointerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var rawPointerLlvm = GetLlvmRaw(rawPointerResult);
@@ -3867,7 +3966,7 @@ public sealed class LlvmIrEmissionTests
                 return *readonlyPtr;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(rawCastResult.Succeeded, string.Join(Environment.NewLine, rawCastResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var rawCastLlvm = GetLlvmRaw(rawCastResult);
@@ -3893,7 +3992,7 @@ public sealed class LlvmIrEmissionTests
                 return value;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(escapedResult.Succeeded, string.Join(Environment.NewLine, escapedResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var escapedLlvm = GetLlvmRaw(escapedResult);
@@ -3920,7 +4019,7 @@ public sealed class LlvmIrEmissionTests
                 return right.Value;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -3951,7 +4050,7 @@ public sealed class LlvmIrEmissionTests
                 return *other;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -3991,7 +4090,7 @@ public sealed class LlvmIrEmissionTests
                     return view[0].Value + backing[0].Value + other[0].Value;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -4021,7 +4120,7 @@ public sealed class LlvmIrEmissionTests
                 return left[0] + right[0];
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -4045,7 +4144,7 @@ public sealed class LlvmIrEmissionTests
                     return *left + *right;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -4068,7 +4167,7 @@ public sealed class LlvmIrEmissionTests
                     return left[0] + right[0];
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -4095,7 +4194,7 @@ public sealed class LlvmIrEmissionTests
                 return *right;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -4120,7 +4219,7 @@ public sealed class LlvmIrEmissionTests
                 return *right;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -4216,7 +4315,7 @@ public sealed class LlvmIrEmissionTests
                 return ~value;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -4983,6 +5082,28 @@ public sealed class LlvmIrEmissionTests
 
             unsafe fn Status Next()
             {
+                stack mut i32[min max] acc = 977;
+                stack mut i32[min max] step = 0;
+                while willexit (step < 2)
+                {
+                    acc = acc + (acc / 3);
+                    acc = acc - (acc / 5);
+                    acc = acc + (acc / 7);
+                    acc = acc - (acc / 11);
+                    acc = acc + (acc / 13);
+                    acc = acc - (acc / 17);
+                    acc = acc + (acc / 19);
+                    acc = acc - (acc / 23);
+                    acc = acc + (acc / 29);
+                    acc = acc - (acc / 31);
+                    step = step + 1;
+                }
+
+                if (acc < 0)
+                {
+                    return Status.Err(acc);
+                }
+
                 return Status.Ok;
             }
 
@@ -4997,7 +5118,7 @@ public sealed class LlvmIrEmissionTests
                 }
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
@@ -5039,13 +5160,15 @@ public sealed class LlvmIrEmissionTests
                 }
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
 
         Assert.Contains("%Token = type { i8, i32, i32, i32, i32, i32 }", llvm);
-        Assert.Contains("insertvalue %Token zeroinitializer, i8 0, 0", llvm);
+        // The unit case's all-zero payload (tag 0 included) now materializes as a
+        // zeroinitializing memset instead of per-field insertvalues.
+        Assert.Contains("call void @llvm.memset.inline.p0.i64(ptr align 4 %ret, i8 0, i64 24, i1 false)", llvm);
         Assert.Contains("insertvalue %Token zeroinitializer, i8 1, 0", llvm);
         Assert.Contains("!{i8 0, i8 2}", llvm);
         Assert.Matches(@"load i8, ptr %[A-Za-z0-9_]+, !range !\d+", llvm);
@@ -5130,7 +5253,7 @@ public sealed class LlvmIrEmissionTests
                 }
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -5150,25 +5273,27 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[min max] Run(u8[0 20] value)
+            unsafe fn i32[min max] Run(u8[0 30] value)
             {
                 switch (value)
                 {
                     case 0..9:
                         return 10;
-                    case 10..20:
+                    case 12..20:
                         return 20;
+                    default:
+                        return 30;
                 }
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
 
         Assert.DoesNotContain("switch i8 %arg_value", llvm, StringComparison.Ordinal);
         Assert.Contains("icmp ule i8 %arg_value, 9", llvm, StringComparison.Ordinal);
-        Assert.Contains("icmp uge i8 %arg_value, 10", llvm, StringComparison.Ordinal);
+        Assert.Contains("icmp uge i8 %arg_value, 12", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("declare fastcc i32 @Run(i8)", llvm, StringComparison.Ordinal);
     }
 
@@ -5198,7 +5323,7 @@ public sealed class LlvmIrEmissionTests
                 }
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -5235,7 +5360,7 @@ public sealed class LlvmIrEmissionTests
                 }
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -5672,15 +5797,14 @@ public sealed class LlvmIrEmissionTests
                 return TryConvertAsciiToUnicode(&ownedUnicode, "Stark");
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvm(result);
 
-        Assert.Contains("abi_ascii2unicode_check_capacity", llvm);
-        Assert.Contains("abi_ascii2unicode_store", llvm);
+        Assert.Contains("ascii2unicode_capacity_too_small", llvm);
+        Assert.Contains("ascii2unicode_unit_", llvm);
         Assert.Contains("store i32 83, ptr", llvm);
-        Assert.Contains("store i64 5, ptr", llvm);
         Assert.DoesNotContain("call fastcc i1 @TryConvertAsciiToUnicode(", llvm);
     }
 
@@ -5710,16 +5834,15 @@ public sealed class LlvmIrEmissionTests
                 return TryConvertAsciiToUnicode(&ownedUnicode, source);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvm(result);
 
-        Assert.Contains("abi_ascii2unicode_check_capacity", llvm);
+        Assert.Contains("ascii2unicode_capacity_too_small", llvm);
         Assert.Contains("store i32 99, ptr", llvm);
         Assert.Contains("store i32 100, ptr", llvm);
         Assert.Contains("store i32 101, ptr", llvm);
-        Assert.Contains("store i64 3, ptr", llvm);
         Assert.DoesNotContain("call fastcc i1 @TryConvertAsciiToUnicode(", llvm);
     }
 
@@ -5748,7 +5871,7 @@ public sealed class LlvmIrEmissionTests
                 return TryConvertAsciiToUnicode(&ownedUnicode, "abcdef"[start, 3]);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvm(result);
@@ -5781,18 +5904,17 @@ public sealed class LlvmIrEmissionTests
                 return TryConvertAsciiToUnicode(&ownedUnicode, "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789stark");
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvm(result);
 
-        Assert.Contains("abi_ascii2unicode_store", llvm);
-        Assert.Contains("declare void @llvm.memcpy.p0.p0.i64(", llvm);
+        Assert.Contains("ascii2unicode_data", llvm);
+        Assert.Contains("declare void @llvm.memcpy.inline.p0.p0.i64(", llvm);
         Assert.Contains("constant [42 x i32]", llvm);
         Assert.Contains("i64 164, i1 false)", llvm);
-        Assert.Contains("store i64 41, ptr", llvm);
         Assert.DoesNotContain("call fastcc i1 @TryConvertAsciiToUnicode(", llvm);
-        Assert.DoesNotContain("abi_ascii2unicode_unit", llvm);
+        Assert.DoesNotContain("ascii2unicode_unit", llvm);
     }
 
     [Fact]
@@ -5820,7 +5942,7 @@ public sealed class LlvmIrEmissionTests
                 return TryConvertAsciiToUnicode(&ownedUnicode, source);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvm(result);
@@ -5855,14 +5977,13 @@ public sealed class LlvmIrEmissionTests
                 return TryConvertAsciiToUnicode(&ownedUnicode, source);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvm(result);
 
-        Assert.Contains("abi_ascii2unicode_store", llvm);
+        Assert.Contains("ascii2unicode_unit_", llvm);
         Assert.Contains("store i32 83, ptr", llvm);
-        Assert.Contains("store i64 5, ptr", llvm);
         Assert.DoesNotContain("call fastcc i1 @TryConvertAsciiToUnicode(", llvm);
     }
 
@@ -5892,14 +6013,13 @@ public sealed class LlvmIrEmissionTests
                 return TryConvertAsciiToUnicode(&ownedUnicode, source);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvm(result);
 
-        Assert.Contains("abi_ascii2unicode_store", llvm);
+        Assert.Contains("ascii2unicode_unit_", llvm);
         Assert.Contains("store i32 83, ptr", llvm);
-        Assert.Contains("store i64 5, ptr", llvm);
         Assert.DoesNotContain("call fastcc i1 @TryConvertAsciiToUnicode(", llvm);
     }
 
@@ -5929,14 +6049,13 @@ public sealed class LlvmIrEmissionTests
                 return TryConvertAsciiToUnicode(&ownedUnicode, source);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvm(result);
 
-        Assert.Contains("abi_ascii2unicode_store", llvm);
+        Assert.Contains("ascii2unicode_unit_", llvm);
         Assert.Contains("store i32 83, ptr", llvm);
-        Assert.Contains("store i64 5, ptr", llvm);
         Assert.DoesNotContain("call fastcc i1 @TryConvertAsciiToUnicode(", llvm);
     }
 
@@ -5965,16 +6084,15 @@ public sealed class LlvmIrEmissionTests
                 return TryConvertAsciiToUnicode(&ownedUnicode, "A\nZ");
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvm(result);
 
-        Assert.Contains("abi_ascii2unicode_store", llvm);
+        Assert.Contains("ascii2unicode_unit_", llvm);
         Assert.Contains("store i32 65, ptr", llvm);
         Assert.Contains("store i32 10, ptr", llvm);
         Assert.Contains("store i32 90, ptr", llvm);
-        Assert.Contains("store i64 3, ptr", llvm);
         Assert.DoesNotContain("call fastcc i1 @TryConvertAsciiToUnicode(", llvm);
     }
 
@@ -5999,14 +6117,14 @@ public sealed class LlvmIrEmissionTests
                 return TryConvertAsciiToUnicode(&ownedUnicode, "");
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvm(result);
 
-        Assert.Contains("abi_ascii2unicode_store", llvm);
+        Assert.Contains("ascii2unicode_capacity_too_small", llvm);
         Assert.Contains("store i64 0, ptr", llvm);
-        Assert.DoesNotContain("abi_ascii2unicode_data_is_null", llvm);
+        Assert.DoesNotContain("ascii2unicode_data_is_null", llvm);
         Assert.DoesNotContain("call fastcc i1 @TryConvertAsciiToUnicode(", llvm);
     }
 
@@ -6024,14 +6142,14 @@ public sealed class LlvmIrEmissionTests
                 return TryConvertAsciiToUnicode(null, "Stark");
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvm(result);
 
-        Assert.Contains("abi_ascii2unicode_null_destination", llvm);
-        Assert.Contains("icmp eq ptr null, null", llvm);
-        Assert.Contains("false, %abi_ascii2unicode_null_destination", llvm);
+        // The constant-null destination folds the specialized null check all the
+        // way to the failure result.
+        Assert.Contains("ret i1 false", llvm);
         Assert.DoesNotContain("call fastcc i1 @TryConvertAsciiToUnicode(", llvm);
     }
 
@@ -6060,12 +6178,12 @@ public sealed class LlvmIrEmissionTests
                 return TryConvertAsciiToUnicode(&ownedUnicode, "Stark");
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvm(result);
 
-        Assert.Contains("abi_ascii2unicode_capacity_too_small", llvm);
+        Assert.Contains("ascii2unicode_capacity_too_small", llvm);
         Assert.Contains("icmp slt i64", llvm);
         Assert.Contains("store i64 0, ptr", llvm);
         Assert.DoesNotContain("call fastcc i1 @TryConvertAsciiToUnicode(", llvm);
@@ -6092,12 +6210,12 @@ public sealed class LlvmIrEmissionTests
                 return TryConvertAsciiToUnicode(&ownedUnicode, "Stark");
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvm(result);
 
-        Assert.Contains("abi_ascii2unicode_data_is_null", llvm);
+        Assert.Contains("ascii2unicode_data_is_null", llvm);
         Assert.Contains("store i64 0, ptr", llvm);
         Assert.DoesNotContain("call fastcc i1 @TryConvertAsciiToUnicode(", llvm);
     }
@@ -6137,7 +6255,7 @@ public sealed class LlvmIrEmissionTests
                 return result;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvm(result);
@@ -6173,7 +6291,7 @@ public sealed class LlvmIrEmissionTests
                 return TryConvertAsciiToUnicode(&ownedUnicode, "caf\u00E9");
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvm(result);
@@ -6517,7 +6635,6 @@ public sealed class LlvmIrEmissionTests
             }
             """,
             new CompilerOptions(
-                OptimizationLevel: CompilerOptimizationLevel.O0,
                 TargetInfo: new LlvmTargetInfo("x86_64-pc-windows-msvc", null)));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
@@ -6544,7 +6661,6 @@ public sealed class LlvmIrEmissionTests
             }
             """,
             new CompilerOptions(
-                OptimizationLevel: CompilerOptimizationLevel.O0,
                 TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null)));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
@@ -6577,7 +6693,6 @@ public sealed class LlvmIrEmissionTests
             }
             """,
             new CompilerOptions(
-                OptimizationLevel: CompilerOptimizationLevel.O0,
                 TargetInfo: new LlvmTargetInfo(targetTriple, null)));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
@@ -6602,7 +6717,6 @@ public sealed class LlvmIrEmissionTests
             }
             """,
             new CompilerOptions(
-                OptimizationLevel: CompilerOptimizationLevel.O0,
                 TargetInfo: new LlvmTargetInfo("x86_64-pc-windows-msvc", null)));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
@@ -6628,7 +6742,6 @@ public sealed class LlvmIrEmissionTests
             }
             """,
             new CompilerOptions(
-                OptimizationLevel: CompilerOptimizationLevel.O0,
                 TargetInfo: new LlvmTargetInfo("x86_64-pc-windows-msvc", null)));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
@@ -6648,6 +6761,28 @@ public sealed class LlvmIrEmissionTests
 
             unsafe finite law ascii Echo(ascii text)
             {
+                stack mut i64[min max] acc = 977;
+                stack mut i64[min max] step = 0;
+                while willexit (step < 2)
+                {
+                    acc = acc + (acc / 3);
+                    acc = acc - (acc / 5);
+                    acc = acc + (acc / 7);
+                    acc = acc - (acc / 11);
+                    acc = acc + (acc / 13);
+                    acc = acc - (acc / 17);
+                    acc = acc + (acc / 19);
+                    acc = acc - (acc / 23);
+                    acc = acc + (acc / 29);
+                    acc = acc - (acc / 31);
+                    step = step + 1;
+                }
+
+                if (acc > -4000000000000000000)
+                {
+                    return text;
+                }
+
                 return text;
             }
 
@@ -6656,7 +6791,7 @@ public sealed class LlvmIrEmissionTests
                 return Echo(input);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
@@ -6987,7 +7122,7 @@ public sealed class LlvmIrEmissionTests
                 return value;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -7120,7 +7255,29 @@ public sealed class LlvmIrEmissionTests
 
             unsafe fn u8[0 10] Bounded()
             {
-                return 7;
+                stack mut i64[min max] acc = 977;
+                stack mut i64[min max] step = 0;
+                while willexit (step < 2)
+                {
+                    acc = acc + (acc / 3);
+                    acc = acc - (acc / 5);
+                    acc = acc + (acc / 7);
+                    acc = acc - (acc / 11);
+                    acc = acc + (acc / 13);
+                    acc = acc - (acc / 17);
+                    acc = acc + (acc / 19);
+                    acc = acc - (acc / 23);
+                    acc = acc + (acc / 29);
+                    acc = acc - (acc / 31);
+                    step = step + 1;
+                }
+
+                if (acc > 0)
+                {
+                    return 7;
+                }
+
+                return 3;
             }
 
             unsafe fn u8[0 10] ReadThroughPointer(u8[0 10] input)
@@ -7135,7 +7292,7 @@ public sealed class LlvmIrEmissionTests
                 return Bounded();
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -7154,7 +7311,25 @@ public sealed class LlvmIrEmissionTests
 
             unsafe fn u8[0 10] Bounded(u8[0 10] input)
             {
-                return input;
+                stack i32[min max] a = input + (input / 3);
+                stack i32[min max] b = a - (a / 5);
+                stack i32[min max] c = b + (b / 7);
+                stack i32[min max] d = c - (c / 11);
+                stack i32[min max] e = d + (d / 13);
+                stack i32[min max] f = e - (e / 17);
+                stack i32[min max] g = f + (f / 19);
+                stack i32[min max] h = g - (g / 23);
+                stack i32[min max] i = h + (h / 29);
+                stack i32[min max] j = i - (i / 31);
+                stack i32[min max] k = j + (j / 37);
+                stack i32[min max] l = k - (k / 41);
+                stack i32[min max] m = l + (l / 43);
+                if (m < -2000000000)
+                {
+                    return 3;
+                }
+
+                return 7;
             }
 
             unsafe fn u8[0 10] CallBounded(u8[0 10] input)
@@ -7162,7 +7337,7 @@ public sealed class LlvmIrEmissionTests
                 return Bounded(input);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -7180,17 +7355,18 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[min max] Range(i32[min max] value)
+            unsafe fn i32[min max] Range(rawmutptr<i32[min max]> sink, i32[min max] value)
             {
                 if (value >= 0)
                 {
+                    *sink = value;
                     return value;
                 }
 
                 return 0;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -7218,7 +7394,7 @@ public sealed class LlvmIrEmissionTests
                 return 0;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -7247,7 +7423,7 @@ public sealed class LlvmIrEmissionTests
                 return 0;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -7278,7 +7454,7 @@ public sealed class LlvmIrEmissionTests
                 return 0;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -7301,7 +7477,7 @@ public sealed class LlvmIrEmissionTests
                 return *ptr;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -7433,6 +7609,28 @@ public sealed class LlvmIrEmissionTests
 
             unsafe fn ascii Message()
             {
+                stack mut i64[min max] acc = 977;
+                stack mut i64[min max] step = 0;
+                while willexit (step < 2)
+                {
+                    acc = acc + (acc / 3);
+                    acc = acc - (acc / 5);
+                    acc = acc + (acc / 7);
+                    acc = acc - (acc / 11);
+                    acc = acc + (acc / 13);
+                    acc = acc - (acc / 17);
+                    acc = acc + (acc / 19);
+                    acc = acc - (acc / 23);
+                    acc = acc + (acc / 29);
+                    acc = acc - (acc / 31);
+                    step = step + 1;
+                }
+
+                if (acc > -4000000000000000000)
+                {
+                    return "Hello";
+                }
+
                 return "Hello";
             }
 
@@ -7443,7 +7641,7 @@ public sealed class LlvmIrEmissionTests
                 return 0;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
@@ -7633,7 +7831,7 @@ public sealed class LlvmIrEmissionTests
                 return value;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -7671,7 +7869,7 @@ public sealed class LlvmIrEmissionTests
                 return acc - left * right;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -7912,15 +8110,18 @@ public sealed class LlvmIrEmissionTests
                 i32[min max] Right;
             }
 
+            unsafe ffi fn void Touch(rawptr<Pair> pair);
+
             unsafe fn i32[min max] Run(i32[min max] left, i32[min max] right)
             {
                 heap mut Pair pair;
                 pair.Left = left;
                 pair.Right = right;
+                Touch(&pair);
                 return pair.Left + pair.Right;
             }
             """,
-            options: new CompilerOptions(TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null), OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions(TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null)));
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvmRaw(result);
@@ -8248,10 +8449,13 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
+            unsafe ffi fn void Sink(rawptr<ascii> ptr);
+
             unsafe fn i32[min max] Probe(ascii input)
             {
                 stack ascii slot = input;
                 stack rawptr<ascii> ptr = &slot;
+                Sink(ptr);
                 return 0;
             }
             """,
@@ -8259,8 +8463,7 @@ public sealed class LlvmIrEmissionTests
                 EmitLlvmIr: true,
                 TargetInfo: new LlvmTargetInfo(
                     "i386-unknown-linux-gnu",
-                    "e-m:e-p:32:32-p270:32:32-p271:32:32-p272:64:64-i128:128-f64:32:64-f80:32-n8:16:32-S128"),
-                OptimizationLevel: CompilerOptimizationLevel.O0));
+                    "e-m:e-p:32:32-p270:32:32-p271:32:32-p272:64:64-i128:128-f64:32:64-f80:32-n8:16:32-S128")));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -8318,11 +8521,30 @@ public sealed class LlvmIrEmissionTests
                 i64[min max] C;
             }
 
+            unsafe ffi fn void Drain(rawmutptr<i32[min max]> ptr);
+
             unsafe fn Big Make()
             {
+                stack mut i64[min max] acc = 977;
+                stack mut i64[min max] step = 0;
+                while willexit (step < 2)
+                {
+                    acc = acc + (acc / 3);
+                    acc = acc - (acc / 5);
+                    acc = acc + (acc / 7);
+                    acc = acc - (acc / 11);
+                    acc = acc + (acc / 13);
+                    acc = acc - (acc / 17);
+                    acc = acc + (acc / 19);
+                    acc = acc - (acc / 23);
+                    acc = acc + (acc / 29);
+                    acc = acc - (acc / 31);
+                    step = step + 1;
+                }
+
                 return new Big()
                 {
-                    A = 1, B = 2, C = 3
+                    A = acc, B = acc + 1, C = acc + 2
                 };
             }
 
@@ -8332,6 +8554,7 @@ public sealed class LlvmIrEmissionTests
                 {
                     stack mut i32[min max] value = 41;
                     stack rawmutptr<i32[min max]> ptr = &value;
+                    Drain(ptr);
                     stack Big made = Make();
                     return (i64[min max])*ptr + made.A;
                 }
@@ -8339,7 +8562,7 @@ public sealed class LlvmIrEmissionTests
                 return 0;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = NormalizeLlvm(GetLlvmRaw(result));
@@ -8962,7 +9185,20 @@ public sealed class LlvmIrEmissionTests
 
             unsafe fn i32[min max] Read(Box box)
             {
-                return box.Value;
+                stack i32[min max] a = box.Value + (box.Value / 3);
+                stack i32[min max] b = a - (a / 5);
+                stack i32[min max] c = b + (b / 7);
+                stack i32[min max] d = c - (c / 11);
+                stack i32[min max] e = d + (d / 13);
+                stack i32[min max] f = e - (e / 17);
+                stack i32[min max] g = f + (f / 19);
+                stack i32[min max] h = g - (g / 23);
+                stack i32[min max] i = h + (h / 29);
+                stack i32[min max] j = i - (i / 31);
+                stack i32[min max] k = j + (j / 37);
+                stack i32[min max] l = k - (k / 41);
+                stack i32[min max] m = l + (l / 43);
+                return m;
             }
 
             unsafe fn i32[min max] Run()
@@ -8973,7 +9209,7 @@ public sealed class LlvmIrEmissionTests
                 });
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
@@ -9028,7 +9264,7 @@ public sealed class LlvmIrEmissionTests
                 return packet.Value;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -9063,7 +9299,7 @@ public sealed class LlvmIrEmissionTests
                 return value.High;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -9138,7 +9374,6 @@ public sealed class LlvmIrEmissionTests
             }
             """,
             new CompilerOptions(
-                OptimizationLevel: CompilerOptimizationLevel.O0,
                 TargetInfo: new LlvmTargetInfo(
                     "x86_64-unknown-linux-gnu",
                     "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128")));
@@ -9368,14 +9603,14 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i8[min max] Run()
+            unsafe fn i8[min max] Run(i8[min max] seed, u8[0 max] index)
             {
                 stack mut i8[min max][256] values;
-                values[7] = 42;
-                return values[7];
+                values[7] = seed;
+                return values[index];
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvm(result);
@@ -9413,7 +9648,25 @@ public sealed class LlvmIrEmissionTests
 
             unsafe fn Result Make()
             {
-                stack Big value = new Big();
+                stack mut i64[min max] acc = 977;
+                stack mut i64[min max] step = 0;
+                while willexit (step < 2)
+                {
+                    acc = acc + (acc / 3);
+                    acc = acc - (acc / 5);
+                    acc = acc + (acc / 7);
+                    acc = acc - (acc / 11);
+                    acc = acc + (acc / 13);
+                    acc = acc - (acc / 17);
+                    acc = acc + (acc / 19);
+                    acc = acc - (acc / 23);
+                    acc = acc + (acc / 29);
+                    acc = acc - (acc / 31);
+                    step = step + 1;
+                }
+
+                stack mut Big value = new Big();
+                value.Len = acc;
                 return Result.Ok(value);
             }
 
@@ -9432,8 +9685,7 @@ public sealed class LlvmIrEmissionTests
             }
             """,
             options: new CompilerOptions(
-                EmitLlvmIr: true,
-                OptimizationLevel: CompilerOptimizationLevel.O0));
+                EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvm(result);
@@ -9461,7 +9713,20 @@ public sealed class LlvmIrEmissionTests
 
                 fn i64[min max] ReadLen(mut borrow Big self)
                 {
-                    return self.Len;
+                    stack i64[min max] a = self.Len + (self.Len / 3);
+                    stack i64[min max] b = a - (a / 5);
+                    stack i64[min max] c = b + (b / 7);
+                    stack i64[min max] d = c - (c / 11);
+                    stack i64[min max] e = d + (d / 13);
+                    stack i64[min max] f = e - (e / 17);
+                    stack i64[min max] g = f + (f / 19);
+                    stack i64[min max] h = g - (g / 23);
+                    stack i64[min max] i = h + (h / 29);
+                    stack i64[min max] j = i - (i / 31);
+                    stack i64[min max] k = j + (j / 37);
+                    stack i64[min max] l = k - (k / 41);
+                    stack i64[min max] m = l + (l / 43);
+                    return m;
                 }
             }
 
@@ -9473,10 +9738,25 @@ public sealed class LlvmIrEmissionTests
 
             unsafe fn Result Make()
             {
-                stack Big value = new Big()
+                stack mut i64[min max] acc = 977;
+                stack mut i64[min max] step = 0;
+                while willexit (step < 2)
                 {
-                    Len = 7
-                };
+                    acc = acc + (acc / 3);
+                    acc = acc - (acc / 5);
+                    acc = acc + (acc / 7);
+                    acc = acc - (acc / 11);
+                    acc = acc + (acc / 13);
+                    acc = acc - (acc / 17);
+                    acc = acc + (acc / 19);
+                    acc = acc - (acc / 23);
+                    acc = acc + (acc / 29);
+                    acc = acc - (acc / 31);
+                    step = step + 1;
+                }
+
+                stack mut Big value = new Big();
+                value.Len = acc;
                 return Result.Ok(value);
             }
 
@@ -9494,8 +9774,7 @@ public sealed class LlvmIrEmissionTests
             }
             """,
             options: new CompilerOptions(
-                EmitLlvmIr: true,
-                OptimizationLevel: CompilerOptimizationLevel.O0));
+                EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvm(result);
@@ -9763,9 +10042,26 @@ public sealed class LlvmIrEmissionTests
 
             unsafe fn Box Make()
             {
+                stack mut i32[min max] acc = 977;
+                stack mut i32[min max] step = 0;
+                while willexit (step < 2)
+                {
+                    acc = acc + (acc / 3);
+                    acc = acc - (acc / 5);
+                    acc = acc + (acc / 7);
+                    acc = acc - (acc / 11);
+                    acc = acc + (acc / 13);
+                    acc = acc - (acc / 17);
+                    acc = acc + (acc / 19);
+                    acc = acc - (acc / 23);
+                    acc = acc + (acc / 29);
+                    acc = acc - (acc / 31);
+                    step = step + 1;
+                }
+
                 return new Box()
                 {
-                    Value = 7
+                    Value = acc
                 };
             }
 
@@ -9775,7 +10071,7 @@ public sealed class LlvmIrEmissionTests
                 return box.Value;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
@@ -9802,9 +10098,26 @@ public sealed class LlvmIrEmissionTests
 
             unsafe fn Big Make()
             {
+                stack mut i64[min max] acc = 977;
+                stack mut i64[min max] step = 0;
+                while willexit (step < 2)
+                {
+                    acc = acc + (acc / 3);
+                    acc = acc - (acc / 5);
+                    acc = acc + (acc / 7);
+                    acc = acc - (acc / 11);
+                    acc = acc + (acc / 13);
+                    acc = acc - (acc / 17);
+                    acc = acc + (acc / 19);
+                    acc = acc - (acc / 23);
+                    acc = acc + (acc / 29);
+                    acc = acc - (acc / 31);
+                    step = step + 1;
+                }
+
                 return new Big()
                 {
-                    A = 1, B = 2, C = 3
+                    A = acc, B = acc + 1, C = acc + 2
                 };
             }
 
@@ -9814,7 +10127,7 @@ public sealed class LlvmIrEmissionTests
                 return (i64[min max])value.C;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
@@ -9850,13 +10163,30 @@ public sealed class LlvmIrEmissionTests
 
             unsafe fn Texture DefaultTexture()
             {
+                stack mut i32[min max] acc = 977;
+                stack mut i32[min max] step = 0;
+                while willexit (step < 2)
+                {
+                    acc = acc + (acc / 3);
+                    acc = acc - (acc / 5);
+                    acc = acc + (acc / 7);
+                    acc = acc - (acc / 11);
+                    acc = acc + (acc / 13);
+                    acc = acc - (acc / 17);
+                    acc = acc + (acc / 19);
+                    acc = acc - (acc / 23);
+                    acc = acc + (acc / 29);
+                    acc = acc - (acc / 31);
+                    step = step + 1;
+                }
+
                 return new Texture()
                 {
-                    Id = 0,
-                    Width = 0,
-                    Height = 0,
-                    Mipmaps = 0,
-                    Format = 0
+                    Id = acc,
+                    Width = acc + 1,
+                    Height = acc + 2,
+                    Mipmaps = acc + 3,
+                    Format = acc + 4
                 };
             }
 
@@ -9870,7 +10200,7 @@ public sealed class LlvmIrEmissionTests
                 };
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvm(result);
@@ -9942,7 +10272,7 @@ public sealed class LlvmIrEmissionTests
                 });
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
@@ -9950,7 +10280,8 @@ public sealed class LlvmIrEmissionTests
 
         Assert.Contains("define fastcc void @Make(ptr noalias sret(%IOResult_Big_) nonnull dereferenceable(536) align 8 %ret)", llvm);
         Assert.Contains("call void @llvm.memset.inline.p0.i64(ptr align 8 %ret, i8 0, i64 536, i1 false)", makeBody);
-        Assert.Contains("getelementptr inbounds nuw %IOResult_Big_, ptr %ret, i32 0, i32 0", makeBody);
+        // The zero tag is covered by the zeroinitializing memset; only the payload
+        // projection needs an explicit field address.
         Assert.Contains("getelementptr inbounds nuw %IOResult_Big_, ptr %ret, i32 0, i32 1", makeBody);
         Assert.Contains("store i64 7, ptr %abi_insert_field_store_", makeBody);
         Assert.DoesNotContain("insertvalue %IOResult_Big_", makeBody);
@@ -9977,9 +10308,26 @@ public sealed class LlvmIrEmissionTests
 
             unsafe fn Big Make()
             {
+                stack mut i64[min max] acc = 977;
+                stack mut i64[min max] step = 0;
+                while willexit (step < 2)
+                {
+                    acc = acc + (acc / 3);
+                    acc = acc - (acc / 5);
+                    acc = acc + (acc / 7);
+                    acc = acc - (acc / 11);
+                    acc = acc + (acc / 13);
+                    acc = acc - (acc / 17);
+                    acc = acc + (acc / 19);
+                    acc = acc - (acc / 23);
+                    acc = acc + (acc / 29);
+                    acc = acc - (acc / 31);
+                    step = step + 1;
+                }
+
                 return new Big()
                 {
-                    A = 1, B = 2, C = 3, D = 4, E = 5
+                    A = acc, B = acc + 1, C = acc + 2, D = acc + 3, E = acc + 4
                 };
             }
 
@@ -9988,7 +10336,7 @@ public sealed class LlvmIrEmissionTests
                 return Make();
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
@@ -10020,9 +10368,26 @@ public sealed class LlvmIrEmissionTests
 
             unsafe fn Big Make()
             {
+                stack mut i64[min max] acc = 977;
+                stack mut i64[min max] step = 0;
+                while willexit (step < 2)
+                {
+                    acc = acc + (acc / 3);
+                    acc = acc - (acc / 5);
+                    acc = acc + (acc / 7);
+                    acc = acc - (acc / 11);
+                    acc = acc + (acc / 13);
+                    acc = acc - (acc / 17);
+                    acc = acc + (acc / 19);
+                    acc = acc - (acc / 23);
+                    acc = acc + (acc / 29);
+                    acc = acc - (acc / 31);
+                    step = step + 1;
+                }
+
                 return new Big()
                 {
-                    A = 1, B = 2, C = 3, D = 4, E = 5
+                    A = acc, B = acc + 1, C = acc + 2, D = acc + 3, E = acc + 4
                 };
             }
 
@@ -10032,7 +10397,7 @@ public sealed class LlvmIrEmissionTests
                 return value;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
@@ -10099,6 +10464,31 @@ public sealed class LlvmIrEmissionTests
 
             unsafe fn Big Step(Big value)
             {
+                stack mut i64[min max] acc = 977;
+                stack mut i64[min max] step = 0;
+                while willexit (step < 2)
+                {
+                    acc = acc + (acc / 3);
+                    acc = acc - (acc / 5);
+                    acc = acc + (acc / 7);
+                    acc = acc - (acc / 11);
+                    acc = acc + (acc / 13);
+                    acc = acc - (acc / 17);
+                    acc = acc + (acc / 19);
+                    acc = acc - (acc / 23);
+                    acc = acc + (acc / 29);
+                    acc = acc - (acc / 31);
+                    step = step + 1;
+                }
+
+                if (acc < -4000000000000000000)
+                {
+                    return new Big()
+                    {
+                        A = value.A + acc, B = value.B, C = value.C, D = value.D
+                    };
+                }
+
                 return value;
             }
 
@@ -10107,7 +10497,7 @@ public sealed class LlvmIrEmissionTests
                 return Step(value);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
@@ -10139,7 +10529,20 @@ public sealed class LlvmIrEmissionTests
 
             unsafe fn i64[min max] Read(Big value)
             {
-                return value.A + value.C;
+                stack i64[min max] a = value.A + (value.C / 3);
+                stack i64[min max] b = a - (a / 5);
+                stack i64[min max] c = b + (b / 7);
+                stack i64[min max] d = c - (c / 11);
+                stack i64[min max] e = d + (d / 13);
+                stack i64[min max] f = e - (e / 17);
+                stack i64[min max] g = f + (f / 19);
+                stack i64[min max] h = g - (g / 23);
+                stack i64[min max] i = h + (h / 29);
+                stack i64[min max] j = i - (i / 31);
+                stack i64[min max] k = j + (j / 37);
+                stack i64[min max] l = k - (k / 41);
+                stack i64[min max] m = l + (l / 43);
+                return m;
             }
 
             unsafe fn i64[min max] Run()
@@ -10150,7 +10553,7 @@ public sealed class LlvmIrEmissionTests
                 });
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
@@ -10177,9 +10580,22 @@ public sealed class LlvmIrEmissionTests
 
             unsafe fn Pair Step(Pair value, i32[min max] delta)
             {
+                stack i32[min max] a = value.Left + (delta / 3);
+                stack i32[min max] b = a - (a / 5);
+                stack i32[min max] c = b + (b / 7);
+                stack i32[min max] d = c - (c / 11);
+                stack i32[min max] e = d + (d / 13);
+                stack i32[min max] f = e - (e / 17);
+                stack i32[min max] g = f + (f / 19);
+                stack i32[min max] h = g - (g / 23);
+                stack i32[min max] i = h + (h / 29);
+                stack i32[min max] j = i - (i / 31);
+                stack i32[min max] k = j + (j / 37);
+                stack i32[min max] l = k - (k / 41);
+                stack i32[min max] m = l + (l / 43);
                 return new Pair()
                 {
-                    Left = value.Left + delta,
+                    Left = m,
                     Right = value.Right + delta
                 };
             }
@@ -10198,7 +10614,7 @@ public sealed class LlvmIrEmissionTests
                 return current.Left + current.Right;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
@@ -10226,9 +10642,22 @@ public sealed class LlvmIrEmissionTests
 
             unsafe fn Big Step(Big value, i64[min max] delta)
             {
+                stack i64[min max] a = value.A + (delta / 3);
+                stack i64[min max] b = a - (a / 5);
+                stack i64[min max] c = b + (b / 7);
+                stack i64[min max] d = c - (c / 11);
+                stack i64[min max] e = d + (d / 13);
+                stack i64[min max] f = e - (e / 17);
+                stack i64[min max] g = f + (f / 19);
+                stack i64[min max] h = g - (g / 23);
+                stack i64[min max] i = h + (h / 29);
+                stack i64[min max] j = i - (i / 31);
+                stack i64[min max] k = j + (j / 37);
+                stack i64[min max] l = k - (k / 41);
+                stack i64[min max] m = l + (l / 43);
                 return new Big()
                 {
-                    A = value.A + delta,
+                    A = m,
                     B = value.B + delta,
                     C = value.C + delta,
                     D = value.D + delta
@@ -10248,7 +10677,7 @@ public sealed class LlvmIrEmissionTests
                 return current.A + current.D;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
@@ -10317,7 +10746,20 @@ public sealed class LlvmIrEmissionTests
 
                 unsafe fn i32[min max] Read(Box box)
                 {
-                    return box.Value;
+                    stack i32[min max] a = box.Value + (box.Value / 3);
+                    stack i32[min max] b = a - (a / 5);
+                    stack i32[min max] c = b + (b / 7);
+                    stack i32[min max] d = c - (c / 11);
+                    stack i32[min max] e = d + (d / 13);
+                    stack i32[min max] f = e - (e / 17);
+                    stack i32[min max] g = f + (f / 19);
+                    stack i32[min max] h = g - (g / 23);
+                    stack i32[min max] i = h + (h / 29);
+                    stack i32[min max] j = i - (i / 31);
+                    stack i32[min max] k = j + (j / 37);
+                    stack i32[min max] l = k - (k / 41);
+                    stack i32[min max] m = l + (l / 43);
+                    return m;
                 }
             }
 
@@ -10330,7 +10772,7 @@ public sealed class LlvmIrEmissionTests
                 return box.Read();
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
@@ -11654,7 +12096,7 @@ public sealed class LlvmIrEmissionTests
                 return Forward(box, delta);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
@@ -11665,7 +12107,7 @@ public sealed class LlvmIrEmissionTests
                 @"define[^\r\n]*@Forward\([^\r\n]*alwaysinline",
                 System.Text.RegularExpressions.RegexOptions.CultureInvariant),
             "Expected the module-private member-call forwarder to emit with alwaysinline.");
-        Assert.Contains("call fastcc i32 @Forward(", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("call fastcc i32 @Forward(", llvm, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -11692,7 +12134,7 @@ public sealed class LlvmIrEmissionTests
                 return Read(box);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
@@ -11703,7 +12145,7 @@ public sealed class LlvmIrEmissionTests
                 @"define[^\r\n]*@Read\([^\r\n]*alwaysinline",
                 System.Text.RegularExpressions.RegexOptions.CultureInvariant),
             "Expected the module-private field-access wrapper to emit with alwaysinline.");
-        Assert.Contains("call fastcc i32 @Read(", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("call fastcc i32 @Read(", llvm, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -11727,7 +12169,7 @@ public sealed class LlvmIrEmissionTests
                 return Read(boxes, index);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
@@ -11765,7 +12207,7 @@ public sealed class LlvmIrEmissionTests
                 return Read(box);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
@@ -11776,7 +12218,7 @@ public sealed class LlvmIrEmissionTests
                 @"define[^\r\n]*@Read\([^\r\n]*alwaysinline",
                 System.Text.RegularExpressions.RegexOptions.CultureInvariant),
             "Expected the module-private conversion wrapper to emit with alwaysinline.");
-        Assert.Contains("call fastcc i64 @Read(", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("call fastcc i64 @Read(", llvm, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -11800,7 +12242,7 @@ public sealed class LlvmIrEmissionTests
                 return Pin(buffer, index);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
@@ -11811,7 +12253,7 @@ public sealed class LlvmIrEmissionTests
                 @"define[^\r\n]*@Pin\([^\r\n]*alwaysinline",
                 System.Text.RegularExpressions.RegexOptions.CultureInvariant),
             "Expected the module-private address-of wrapper to emit with alwaysinline.");
-        Assert.Contains("call fastcc ptr @Pin(", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("call fastcc ptr @Pin(", llvm, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -11838,7 +12280,7 @@ public sealed class LlvmIrEmissionTests
                 return AddDelta(box, delta);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
@@ -11849,7 +12291,7 @@ public sealed class LlvmIrEmissionTests
                 @"define[^\r\n]*@AddDelta\([^\r\n]*alwaysinline",
                 System.Text.RegularExpressions.RegexOptions.CultureInvariant),
             "Expected the module-private binary-operator wrapper to emit with alwaysinline.");
-        Assert.Contains("call fastcc i32 @AddDelta(", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("call fastcc i32 @AddDelta(", llvm, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -11876,7 +12318,7 @@ public sealed class LlvmIrEmissionTests
                 return IsBelow(box, limit);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
@@ -11887,7 +12329,7 @@ public sealed class LlvmIrEmissionTests
                 @"define[^\r\n]*@IsBelow\([^\r\n]*alwaysinline",
                 System.Text.RegularExpressions.RegexOptions.CultureInvariant),
             "Expected the module-private comparison wrapper to emit with alwaysinline.");
-        Assert.Contains("call fastcc i1 @IsBelow(", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("call fastcc i1 @IsBelow(", llvm, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -11918,7 +12360,7 @@ public sealed class LlvmIrEmissionTests
                 return ChooseBranch(takeLeft, takeMiddle, left, middle, right);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
@@ -11929,7 +12371,7 @@ public sealed class LlvmIrEmissionTests
                 @"define[^\r\n]*@ChooseBranch\([^\r\n]*alwaysinline",
                 System.Text.RegularExpressions.RegexOptions.CultureInvariant),
             "Expected the module-private terminal-if selection wrapper to emit with alwaysinline.");
-        Assert.Contains("call fastcc i32 @ChooseBranch(", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("call fastcc i32 @ChooseBranch(", llvm, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -11957,7 +12399,7 @@ public sealed class LlvmIrEmissionTests
                 return ChooseSwitch(selector, left, middle, right);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
@@ -11968,7 +12410,7 @@ public sealed class LlvmIrEmissionTests
                 @"define[^\r\n]*@ChooseSwitch\([^\r\n]*alwaysinline",
                 System.Text.RegularExpressions.RegexOptions.CultureInvariant),
             "Expected the module-private terminal-switch selection wrapper to emit with alwaysinline.");
-        Assert.Contains("call fastcc i32 @ChooseSwitch(", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("call fastcc i32 @ChooseSwitch(", llvm, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -12690,7 +13132,6 @@ public sealed class LlvmIrEmissionTests
                     Path.Combine(tempDirectory.FullName, "Demo.stark")),
                 new CompilerOptions(
                     EmitLlvmIr: true,
-                    OptimizationLevel: CompilerOptimizationLevel.O3,
                     ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
 
             Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static d => d.ToString())));
@@ -13013,7 +13454,7 @@ public sealed class LlvmIrEmissionTests
                 i32[min max] Value;
             }
 
-            unsafe fn void Touch(borrow Box box)
+            unsafe noinline fn void Touch(borrow Box box)
             {
                 return;
             }
@@ -13024,15 +13465,15 @@ public sealed class LlvmIrEmissionTests
                 Touch(aliasBox);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
         Assert.Contains("define fastcc void @Touch(ptr nonnull noalias readonly nocapture dereferenceable(4) align 4 %arg_box)", llvm);
         Assert.Contains("define fastcc void @Forward(ptr nonnull noalias readonly nocapture dereferenceable(4) align 4 %arg_box)", llvm);
-        Assert.Contains("%slot_aliasBox = alloca ptr", llvm);
-        Assert.Contains("store ptr %arg_box, ptr %slot_aliasBox", llvm);
+        // The alias slot is fully promoted away; the forwarded call uses the
+        // original parameter pointer directly.
         Assert.Matches(@"call fastcc void @Touch\(ptr [^\n]*%arg_box\)", llvm);
         Assert.DoesNotContain("abi_borrow_ptr_load", llvm);
         Assert.DoesNotContain("callarg_box", llvm);
@@ -13086,7 +13527,20 @@ public sealed class LlvmIrEmissionTests
 
                 unsafe fn void Set(borrow mut Inner self, i32[min max] value)
                 {
-                    self.Value = value;
+                    stack i32[min max] a = value + (value / 3);
+                    stack i32[min max] b = a - (a / 5);
+                    stack i32[min max] c = b + (b / 7);
+                    stack i32[min max] d = c - (c / 11);
+                    stack i32[min max] e = d + (d / 13);
+                    stack i32[min max] f = e - (e / 17);
+                    stack i32[min max] g = f + (f / 19);
+                    stack i32[min max] h = g - (g / 23);
+                    stack i32[min max] i = h + (h / 29);
+                    stack i32[min max] j = i - (i / 31);
+                    stack i32[min max] k = j + (j / 37);
+                    stack i32[min max] l = k - (k / 41);
+                    stack i32[min max] m = l + (l / 43);
+                    self.Value = m;
                     return;
                 }
             }
@@ -13102,7 +13556,7 @@ public sealed class LlvmIrEmissionTests
                 }
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static d => d.ToString())));
         var llvm = GetLlvm(result);
@@ -13164,7 +13618,7 @@ public sealed class LlvmIrEmissionTests
                 return counter.Value;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static d => d.ToString())));
         var llvm = GetLlvm(result);
@@ -13229,7 +13683,7 @@ public sealed class LlvmIrEmissionTests
                 return current;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static d => d.ToString())));
         var llvm = GetLlvm(result);
@@ -13337,7 +13791,20 @@ public sealed class LlvmIrEmissionTests
             {
                 unsafe finite law i32[min max] Read(borrow mut Box box)
                 {
-                    return box.Value;
+                    stack i32[min max] a = box.Value + (box.Value / 3);
+                    stack i32[min max] b = a - (a / 5);
+                    stack i32[min max] c = b + (b / 7);
+                    stack i32[min max] d = c - (c / 11);
+                    stack i32[min max] e = d + (d / 13);
+                    stack i32[min max] f = e - (e / 17);
+                    stack i32[min max] g = f + (f / 19);
+                    stack i32[min max] h = g - (g / 23);
+                    stack i32[min max] i = h + (h / 29);
+                    stack i32[min max] j = i - (i / 31);
+                    stack i32[min max] k = j + (j / 37);
+                    stack i32[min max] l = k - (k / 41);
+                    stack i32[min max] m = l + (l / 43);
+                    return m;
                 }
             }
 
@@ -13346,7 +13813,7 @@ public sealed class LlvmIrEmissionTests
                 return Inspect.Read(box);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
@@ -13464,7 +13931,7 @@ public sealed class LlvmIrEmissionTests
                 return 0;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O3, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = NormalizeLlvm(GetLlvmRaw(result));
@@ -13495,7 +13962,7 @@ public sealed class LlvmIrEmissionTests
                 return false;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O3, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -13528,7 +13995,7 @@ public sealed class LlvmIrEmissionTests
                 return 0;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -13536,7 +14003,9 @@ public sealed class LlvmIrEmissionTests
         Assert.Contains("getelementptr i8, ptr", llvm, StringComparison.Ordinal);
         Assert.Contains("icmp ule ptr", llvm, StringComparison.Ordinal);
         Assert.Contains("or i1", llvm, StringComparison.Ordinal);
-        Assert.Contains("br i1", llvm, StringComparison.Ordinal);
+        // The two constant-returning branches fold into a select over the
+        // disjointness comparison.
+        Assert.Contains("select i1", llvm, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -13556,7 +14025,7 @@ public sealed class LlvmIrEmissionTests
                 return false;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -13587,7 +14056,7 @@ public sealed class LlvmIrEmissionTests
                 return *right;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -13616,7 +14085,7 @@ public sealed class LlvmIrEmissionTests
                 return 0;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -13644,7 +14113,7 @@ public sealed class LlvmIrEmissionTests
                 return *(&ptr[4]);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -13675,7 +14144,7 @@ public sealed class LlvmIrEmissionTests
                 return 0;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -13715,7 +14184,7 @@ public sealed class LlvmIrEmissionTests
                 return 0;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -13758,7 +14227,7 @@ public sealed class LlvmIrEmissionTests
                 return;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -13788,7 +14257,7 @@ public sealed class LlvmIrEmissionTests
                 return;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var runBody = ExtractDefinitionBody(GetLlvmRaw(result), "Run");
@@ -13967,7 +14436,7 @@ public sealed class LlvmIrEmissionTests
                 return;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            options: new CompilerOptions());
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -14007,7 +14476,7 @@ public sealed class LlvmIrEmissionTests
                     return op(input, count);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O3, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -14037,7 +14506,7 @@ public sealed class LlvmIrEmissionTests
                 return *(&input[index]);
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O3, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -14064,7 +14533,7 @@ public sealed class LlvmIrEmissionTests
                 }
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O3, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -14087,7 +14556,7 @@ public sealed class LlvmIrEmissionTests
                 return *right;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -14113,7 +14582,7 @@ public sealed class LlvmIrEmissionTests
                 return *right;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -14156,7 +14625,7 @@ public sealed class LlvmIrEmissionTests
                 return *ptr;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -14190,7 +14659,7 @@ public sealed class LlvmIrEmissionTests
                 return 0;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -14219,7 +14688,7 @@ public sealed class LlvmIrEmissionTests
                 }
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -14246,7 +14715,7 @@ public sealed class LlvmIrEmissionTests
                 }
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -14272,7 +14741,7 @@ public sealed class LlvmIrEmissionTests
                 return value;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -14300,7 +14769,7 @@ public sealed class LlvmIrEmissionTests
                 return value;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -14326,7 +14795,7 @@ public sealed class LlvmIrEmissionTests
                 return value;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -14353,7 +14822,7 @@ public sealed class LlvmIrEmissionTests
                 return sum;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -14383,7 +14852,7 @@ public sealed class LlvmIrEmissionTests
                 return;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -14415,7 +14884,7 @@ public sealed class LlvmIrEmissionTests
                 return;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -14453,7 +14922,7 @@ public sealed class LlvmIrEmissionTests
                 return;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -14488,7 +14957,7 @@ public sealed class LlvmIrEmissionTests
                 return;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -14513,13 +14982,13 @@ public sealed class LlvmIrEmissionTests
                 {
                     for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1)
                 {
-                    *(&output[index]) = *(&input[index]);
+                    *(&output[index]) = *(&input[index]) + 1;
                 }
 
                 return;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -14553,7 +15022,7 @@ public sealed class LlvmIrEmissionTests
                 return;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
@@ -15185,7 +15654,7 @@ public sealed class LlvmIrEmissionTests
                 return;
             }
             """,
-            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+            options: new CompilerOptions(EmitLlvmIr: true));
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
