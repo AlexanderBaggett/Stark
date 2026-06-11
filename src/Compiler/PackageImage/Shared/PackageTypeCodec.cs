@@ -415,7 +415,30 @@ internal static partial class PackageImageBuilder
             return name;
         }
 
-        return name.Replace($"{moduleName}.", string.Empty, StringComparison.Ordinal);
+        var prefix = $"{moduleName}.";
+        if (!name.StartsWith(prefix, StringComparison.Ordinal))
+        {
+            return name;
+        }
+
+        // Only strip names the loader can re-qualify: module-local single
+        // segments and module-local dyn-trait vtable members. A child-module
+        // type ("System.Core.Option" in module "System") must stay fully
+        // qualified or consumers resolve it as a different type identity.
+        var remainder = name[prefix.Length..];
+        if (!remainder.Contains('.', StringComparison.Ordinal))
+        {
+            return remainder;
+        }
+
+        var vtableSuffix = $".{StarkTypeSymbols.DynTraitVtableMemberName}";
+        if (remainder.EndsWith(vtableSuffix, StringComparison.Ordinal)
+            && !remainder[..^vtableSuffix.Length].Contains('.', StringComparison.Ordinal))
+        {
+            return remainder;
+        }
+
+        return name;
     }
 
     private static string CanonicalizeManifestTypeText(string text)

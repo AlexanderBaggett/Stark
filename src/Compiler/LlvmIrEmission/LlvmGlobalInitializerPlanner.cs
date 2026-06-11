@@ -369,7 +369,12 @@ internal sealed class LlvmGlobalInitializerPlanner
         var preludeDefinitions = new List<string>();
         var fieldValues = new Dictionary<string, string>(StringComparer.Ordinal);
         var arguments = objectCreation.argumentList()?.argument() ?? [];
-        var constructor = _context.ResolveObjectCreationConstructor(objectCreation);
+
+        // Creations inside reconstructed package-module constructor bodies have no
+        // object-creation typing record (package bodies are not re-type-checked), so
+        // fall back to the type model's constructor shapes for the created type.
+        var constructor = _context.ResolveObjectCreationConstructor(objectCreation)
+            ?? TryResolveConstructorShapeByArity(namedType.Name, arguments.Length);
 
         if (constructor is not null && arguments.Length != constructor.Parameters.Count)
         {
@@ -437,6 +442,34 @@ internal sealed class LlvmGlobalInitializerPlanner
 
         plan = new LlvmGlobalInitializerPlan(FormatNamedAggregateInitializer(namedType, fieldValues), preludeDefinitions);
         return true;
+    }
+
+    private TypedConstructorShape? TryResolveConstructorShapeByArity(string typeName, int argumentCount)
+    {
+        if (!_context.TypeModel.ConstructorShapes.TryGetValue(typeName, out var shapes))
+        {
+            return null;
+        }
+
+        TypedConstructorShape? match = null;
+        foreach (var shape in shapes)
+        {
+            if (shape.Parameters.Count != argumentCount)
+            {
+                continue;
+            }
+
+            if (match is not null)
+            {
+                // Ambiguous arity; without a typing record the overload cannot be
+                // chosen safely.
+                return null;
+            }
+
+            match = shape;
+        }
+
+        return match;
     }
 
     /// <summary>

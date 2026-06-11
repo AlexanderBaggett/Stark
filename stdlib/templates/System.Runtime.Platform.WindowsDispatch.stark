@@ -290,6 +290,28 @@ internal unsafe fn i32[min max] FlushFile(rawptr<i8[min max]> handle)
     }
 }
 
+// Raw numeric descriptors back process pipes, which the Windows backend does
+// not provide yet; mirror the unsupported-process behavior.
+internal unsafe inline fn i32[min max] CloseRawDescriptor(i32[min max] descriptor)
+{
+    return -1;
+}
+
+internal unsafe fn i64[min max] MonotonicMilliseconds()
+{
+    return -1;
+}
+
+internal unsafe inline fn i64[min max] ReadRawDescriptorBytes(rawmutptr<i8[min max]>[length] buffer, u64[0 2 ** 63 - 1] length, i32[min max] descriptor)
+{
+    return -1;
+}
+
+internal unsafe inline fn i64[min max] WriteRawDescriptorBytes(rawptr<i8[min max]>[length] buffer, u64[0 2 ** 63 - 1] length, i32[min max] descriptor)
+{
+    return -1;
+}
+
 internal unsafe inline fn i64[min max] ReadFile(rawmutptr<i8[min max]> buffer, i64[min max] size, i64[min max] count, rawptr<i8[min max]> handle)
     where overlap(buffer, handle)
 {

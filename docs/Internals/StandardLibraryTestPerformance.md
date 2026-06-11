@@ -127,47 +127,115 @@ Legend: `[ ]` not done, `[~]` partially done, `[x]` done.
       serialized computed properties). The self-hosted compiler still owns the
       long-term sectioned byte-level encoding.
 
-## Current Long Pole (June 2026)
+## Current Long Pole (June 2026) — fixed
 
-After the class splits and parallel dependency compiles, suite wall time is
+After the class splits and parallel dependency compiles, suite wall time was
 bounded by a single test: `SourceImportedStdLibTryFormatExecutableWritesText`
 (~17 minutes), whose app reaches the full wide-integer (`i1024`/`u1024`)
-formatting machinery and pays one enormous O3 root compile. Reducing that one
-compile (formatter code size, per-function pass budgets, or reachability
-depth) is the next meaningful suite-time lever.
+formatting machinery. Profiling (dotnet-trace) put all the time inside
+`emit-llvm`: the raw-pointer-loop intrinsic matcher rebuilt five
+whole-function structures — including an O(blocks^2) dominator dataflow —
+once per candidate loop preheader, making the scan quadratic-plus in block
+count on large functions. Hoisting the five loop-invariant computations out
+of the per-preheader matcher
+(`LlvmFunctionBodyEmitter.RawPointerLoops.cs`) fixed it:
+
+- TryFormat app compile: ~17 min -> 5.2 s (~200x); the test passes in 11 s.
+- Heavy dictionary program `--emit-exe`: 65.2 s -> 4.4 s (the "expensive
+  root compile" was mostly this same scan).
+- All 480 LLVM-emission/intrinsic-filtered tests pass unchanged.
 
 ## Remaining Failures (macOS, June 2026)
 
-After the failure-fixing round, 6 tests remain red, all sharing two deep
-package-generics gaps:
+After the package-generics round, 2 stdlib tests remain red, each a distinct
+bug:
 
-- [ ] Imported generic templates that construct generic types or switch over
-      generic enums still have gaps on the package path. The `Locked<T>`
-      constructor-body publication now lowers (partial fix landed in
-      `ImportedTemplateLowerer`), but the three `SystemThreading*AtRuntime`
-      tests now fail one layer later: the consumer app's generic-typed static
-      global (`App_Shared`) is not emitted, so linking fails. The
-      `SourceStdLibTestingRichAssertionsExecutableRuns` test fails on switch
-      lowering inside an imported `Result<T, E>` template
-      ("Accepted switch shape could not be lowered").
-- [ ] The const-lookup fold regression from the CTFE materialization change:
-      imported const aggregates lower as inline `$tmp*_ctfe_array` stack
+- [x] Generic-typed statics against packaged generics now emit. The global
+      initializer planner and MIR object-creation lowering both resolve
+      constructor shapes structurally (via the type model's new
+      `ConstructorShapes` export) when a creation has no typing record —
+      creations inside bridge-parsed package constructor bodies are never
+      re-type-checked. `SystemThreadingSynchronizedGuardsSharedMutableStateAtRuntime`
+      passes; `static mut Synchronized<Counter>` apps link and run against the
+      package.
+- [x] Switches over imported generic enums now lower: the published
+      enum-pattern path resolved cases by re-parsing a *display name*
+      ("Result<i32, i32>.Ok"), which never matches canonical instantiation
+      keys; it now resolves from the substituted type symbol and enum layout
+      directly. Packaged `System.Testing.ResultErr/ResultOk` compile and
+      return correct values, including payload captures.
+- [x] Effect-inference miscompile (latent in source mode too): a function
+      whose callee could not be resolved during semantic validation kept a
+      pure-looking memory summary, so e.g. a function whose only side effect
+      is an implicit drop got `memory(none)` and LLVM legally deleted the
+      drop's writes (a dropped `Receiver` never marked the channel closed at
+      O3 on the package path). Unresolved callees now degrade the summary to
+      conservative memory effects; destructor drop effects survive.
+      `SystemThreadingChannelMovesMessagesAndObservesCloseAtRuntime` passes.
+- [x] `SystemThreadingChannelHandlesContendedProducersAtRuntime`: bare generic
+      function references inside packaged template bodies
+      (`stack ThreadContextEntry thunk = ThreadPayloadThunk<T>;`) now lower
+      via the template's published function-address summaries — MIR's
+      `ResolveNamedOperand` falls back to the unique name-matched summary and
+      substitutes the active specialization (the deferred-instantiation
+      machinery already planned the thunk's monomorphization). The contended
+      producers app compiles, links, and runs green.
+- [x] `SourceStdLibTestingRichAssertionsExecutableRuns`: three independent
+      stdlib/platform bugs, all fixed:
+      1. The exit-139 SIGSEGV: `System.Process` passed raw pipe fds into the
+         handle-based `Platform.CloseFile`, which on macOS dereferences a
+         `MacOSHandle` struct. The platform dispatch surface gained
+         `CloseRawDescriptor`/`ReadRawDescriptorBytes`/`WriteRawDescriptorBytes`
+         (libc close/read/write by fd on macOS; the fd-in-pointer contract on
+         Linux; stubs on Windows), and the process pipe paths use them.
+      2. Process timeouts never fired on macOS: the monotonic clock used
+         Linux's `CLOCK_MONOTONIC` id (1), which is invalid on Darwin (6).
+         `MonotonicMilliseconds` joined the platform dispatch surface with a
+         Darwin clock id.
+      3. The packaged `System.Option`/`System.Result` aliases broke type
+         identity (`TypeIs<System.Option<T>, System.Core.Option<T>>` false):
+         the package type codec's module-prefix strip turned child-module
+         names into unloadable relatives ("System.Core.Option" stored as
+         "Core.Option"). The strip now only applies to names the loader can
+         re-qualify (module-local single segments and vtable members).
+      The full rich-assertions app passes in both source and package modes.
+
+With these, the known macOS failure set is empty: the previously-failing
+tests plus the threading/process/file-IO/console/packaged slices all pass
+(targeted runs, June 2026). The two `-O0` packaged tests remain gated off
+macOS behind the chipped low-opt clang crash.
+- [x] The const-lookup fold regression from the CTFE materialization change:
+      imported const aggregates lowered as inline `$tmp*_ctfe_array` stack
       copies instead of const-global loads, so `const-lookup-tables-ssa`
-      never folds and no later pass folds the constant-index read either.
-      Fails `ConstLookupTableOptimizationFoldsPackageConstLookupHelperFromTypedInitializer`
-      and `ConstGlobalDerivedLoadsEmitInvariantLoadMetadataWithoutTaggingLocalLoads`
-      in compiler.PipelineTests.
+      never folded. Fixed in MIR lowering: a bare reference to a const-global
+      aggregate now stays a `MidLevelIrGlobalOperand` (global load) instead of
+      materializing element-by-element — both in named-value resolution and in
+      the eager expression-level CTFE shortcut, which now probes whether the
+      folded constant is exactly the named global's initializer before
+      materializing (shadowing-safe; computed `comptime` aggregates still
+      materialize inline). This restores the fold (a packaged
+      `System.Collections.Lookup(Facade.Lookup, 2)` folds to the constant
+      through the slice coercion) and is also a generated-code win: surviving
+      uses read the const global rather than rebuilding the aggregate on the
+      stack per use. The invariant-load test's load regex was also updated to
+      count direct `%slot_*` loads, since local pointer round-trips now fold
+      to direct slot loads. Both pipeline tests pass; compiler.PipelineTests
+      is fully green (497/497) for the first time, and compiler.Tests passes
+      1,624/1,624.
 
 ## Verification
 
-- [~] Re-run the full suite and compare against the 38m baseline:
+- [x] Re-run the full suite and compare against the 38m baseline:
       `dotnet test tests/compiler.StandardLibraryTests/compiler.StandardLibraryTests.csproj --logger "trx;LogFileName=stdlib-tests.trx"`.
       Target after test-infrastructure items: under 6 minutes wall on the
       baseline machine; after compiler items: 1-2 minutes.
-      First round measured 11m 52s (3.2x); remaining wall time is dominated
-      by the one-time shared package build under startup contention, the
-      still-serial big classes, and 23 pre-existing macOS failures that
-      burn full compile time before failing.
+      Final measurement (June 2026, same machine): **309 tests, 5m 49s wall,
+      48.9 CPU-minutes (~8.4x parallel efficiency), 0 failures** — 6.6x
+      faster than the 38m 18s baseline and the first fully green run on
+      macOS. No single test exceeds 82s (was 1,043s); the remaining top
+      tests are ~60-80s source-mode `--emit-exe` compiles, so the next
+      meaningful lever toward the 1-2 minute stretch goal is converting
+      more of those to the packaged path or trimming per-test O3 work.
 - [ ] Replace the stale x86_64-only `stdlib/dist/libSystem.starkpkg.json`
       or document that dist images are target-specific and not portable
       fixtures.
