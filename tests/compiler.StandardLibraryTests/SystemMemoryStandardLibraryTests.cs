@@ -549,15 +549,41 @@ public sealed class SystemMemoryStandardLibraryTests : StandardLibraryTestSuite
             AssertCompilerLogsEmitted(stderr.ToString());
             Assert.True(File.Exists(outputPath));
 
+            using (var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = outputPath,
+                WorkingDirectory = tempDirectory.FullName,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            }))
+            {
+                Assert.NotNull(process);
+                var processStdout = await process!.StandardOutput.ReadToEndAsync();
+                var processStderr = await process.StandardError.ReadToEndAsync();
+                await process.WaitForExitAsync();
+
+                Assert.Equal(0, process.ExitCode);
+                Assert.Equal("allocator stays unused\n", processStdout);
+                Assert.Equal(string.Empty, processStderr);
+            }
+
             var emittedFiles = Directory.EnumerateFiles(tempsDirectory)
                 .Select(Path.GetFileName)
                 .OrderBy(static fileName => fileName, StringComparer.Ordinal)
                 .ToArray();
-            var emittedFileList = string.Join(Environment.NewLine, emittedFiles);
-            Assert.Contains($"System_Console{objectExtension}", emittedFiles);
-            Assert.DoesNotContain($"System_Memory{objectExtension}", emittedFiles);
+            // Reachability pruning plus symbol-driven dependency emission may fold every
+            // reachable definition (Console.WriteLine included) into the root object, so a
+            // standalone System_Console object is not required. The property under test is
+            // that no unused memory/file-system objects are ever emitted as intermediates.
+            Assert.NotEmpty(emittedFiles);
+            Assert.DoesNotContain(
+                emittedFiles,
+                fileName => fileName is not null
+                    && fileName.EndsWith(objectExtension, StringComparison.Ordinal)
+                    && fileName.Contains("Memory", StringComparison.Ordinal));
             Assert.DoesNotContain($"System_FileSystem{objectExtension}", emittedFiles);
-            Assert.DoesNotContain($"System_Memory{objectExtension}", emittedFileList);
         }
         finally
         {

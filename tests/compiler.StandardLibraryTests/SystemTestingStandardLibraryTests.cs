@@ -169,10 +169,10 @@ public sealed class SystemTestingStandardLibraryTests : StandardLibraryTestSuite
             stack System.Collections.List<i32[min max]> pair = new();
             stack System.Memory.MemoryStatus firstStatus = pair.Push(10);
             stack System.Memory.MemoryStatus secondStatus = pair.Push(20);
-            stack System.Option<i32[min max]> someValue = System.Option<i32[min max]>.Some(7);
-            stack System.Option<i32[min max]> noneValue = System.Option<i32[min max]>.None;
-            stack System.Result<i32[min max], i32[min max]> okValue = System.Result<i32[min max], i32[min max]>.Ok(11);
-            stack System.Result<i32[min max], i32[min max]> errValue = System.Result<i32[min max], i32[min max]>.Err(13);
+            stack System.Core.Option<i32[min max]> someValue = System.Core.Option<i32[min max]>.Some(7);
+            stack System.Core.Option<i32[min max]> noneValue = System.Core.Option<i32[min max]>.None;
+            stack System.Core.Result<i32[min max], i32[min max]> okValue = System.Core.Result<i32[min max], i32[min max]>.Ok(11);
+            stack System.Core.Result<i32[min max], i32[min max]> errValue = System.Core.Result<i32[min max], i32[min max]>.Err(13);
 
             return System.Testing.NotEqual(4, 5)
                 && oneStatus == System.Memory.MemoryStatus.Ok

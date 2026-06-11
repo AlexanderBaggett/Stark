@@ -15,7 +15,7 @@ public sealed class PackageImageTypedTextFullViewIntegrationTests
         var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-typed-text-full-view-runtime-");
         var facadeSourcePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
         var demoSourcePath = Path.Combine(tempDirectory.FullName, "Demo.stark");
-        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg");
         var libraryPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a");
         var outputPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "app.exe" : "app");
 

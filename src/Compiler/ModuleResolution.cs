@@ -73,6 +73,7 @@ public sealed class InMemoryModuleResolver : IModuleSourceResolver
 public sealed class FileSystemModuleResolver : IModuleSourceResolver, IModuleDocumentResolver
 {
     private readonly IReadOnlyList<string> _searchDirectories;
+    private readonly object _manifestIndexLock = new();
     private Dictionary<string, ResolvedPackageModule>? _manifestModules;
     private Dictionary<string, Dictionary<string, ResolvedPackageModule>>? _manifestModulesBySearchDirectory;
     private Dictionary<string, Dictionary<string, ResolvedPackageModule>>? _manifestModulesByPath;
@@ -204,57 +205,74 @@ public sealed class FileSystemModuleResolver : IModuleSourceResolver, IModuleDoc
 
     private void EnsureManifestIndex()
     {
-        if (_manifestModules is not null)
+        if (Volatile.Read(ref _manifestModules) is not null)
         {
             return;
         }
 
-        _manifestModules = new Dictionary<string, ResolvedPackageModule>(StringComparer.Ordinal);
-        _manifestModulesBySearchDirectory = new Dictionary<string, Dictionary<string, ResolvedPackageModule>>(StringComparer.Ordinal);
-        _manifestModulesByPath = new Dictionary<string, Dictionary<string, ResolvedPackageModule>>(StringComparer.Ordinal);
-
-        foreach (var searchDirectory in _searchDirectories)
+        // One resolver instance is shared by parallel dependency-module compiles, so the
+        // index builds once under the lock and publishes through the final volatile write.
+        lock (_manifestIndexLock)
         {
-            if (!Directory.Exists(searchDirectory))
+            if (_manifestModules is not null)
             {
-                continue;
+                return;
             }
 
-            var resolvedSearchDirectory = Path.GetFullPath(searchDirectory);
-            var directoryModules = new Dictionary<string, ResolvedPackageModule>(StringComparer.Ordinal);
-            foreach (var manifestPath in Directory
-                         .EnumerateFiles(resolvedSearchDirectory, "*.starkpkg.json", SearchOption.AllDirectories)
-                         .Where(path => !IsNestedBuildArtifactManifest(resolvedSearchDirectory, path))
-                         .OrderBy(static path => path, StringComparer.Ordinal))
+            var allModules = new Dictionary<string, ResolvedPackageModule>(StringComparer.Ordinal);
+            var modulesBySearchDirectory = new Dictionary<string, Dictionary<string, ResolvedPackageModule>>(StringComparer.Ordinal);
+            var modulesByPath = new Dictionary<string, Dictionary<string, ResolvedPackageModule>>(StringComparer.Ordinal);
+
+            foreach (var searchDirectory in _searchDirectories)
             {
-                if (!PackageImageLoader.TryLoadManifest(manifestPath, out var manifest))
+                if (!Directory.Exists(searchDirectory))
                 {
                     continue;
                 }
 
-                var resolvedManifestPath = Path.GetFullPath(manifestPath);
-                var libraryPath = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(resolvedManifestPath) ?? resolvedSearchDirectory, manifest.LibraryFileName));
-                var manifestModules = new Dictionary<string, ResolvedPackageModule>(StringComparer.Ordinal);
-
-                foreach (var module in manifest.Modules)
+                var resolvedSearchDirectory = Path.GetFullPath(searchDirectory);
+                var directoryModules = new Dictionary<string, ResolvedPackageModule>(StringComparer.Ordinal);
+                foreach (var manifestPath in Directory
+                             .EnumerateFiles(resolvedSearchDirectory, "*.starkpkg", SearchOption.AllDirectories)
+                             .Where(static path => PackageImageBinaryFormat.HasBinaryFileName(path))
+                             .Concat(Directory.EnumerateFiles(resolvedSearchDirectory, "*.starkpkg.json", SearchOption.AllDirectories))
+                             .Where(path => !IsNestedBuildArtifactManifest(resolvedSearchDirectory, path))
+                             .OrderBy(static path => !PackageImageBinaryFormat.HasBinaryFileName(path))
+                             .ThenBy(static path => path, StringComparer.Ordinal))
                 {
-                    var resolvedModule = new ResolvedPackageModule(
-                        resolvedManifestPath,
-                        libraryPath,
-                        manifest,
-                        module);
-                    directoryModules.TryAdd(module.ModuleName, resolvedModule);
-                    manifestModules[module.ModuleName] = resolvedModule;
-                    _manifestModules.TryAdd(module.ModuleName, resolvedModule);
+                    if (!PackageImageLoader.TryLoadManifest(manifestPath, out var manifest))
+                    {
+                        continue;
+                    }
+
+                    var resolvedManifestPath = Path.GetFullPath(manifestPath);
+                    var libraryPath = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(resolvedManifestPath) ?? resolvedSearchDirectory, manifest.LibraryFileName));
+                    var manifestModules = new Dictionary<string, ResolvedPackageModule>(StringComparer.Ordinal);
+
+                    foreach (var module in manifest.Modules)
+                    {
+                        var resolvedModule = new ResolvedPackageModule(
+                            resolvedManifestPath,
+                            libraryPath,
+                            manifest,
+                            module);
+                        directoryModules.TryAdd(module.ModuleName, resolvedModule);
+                        manifestModules[module.ModuleName] = resolvedModule;
+                        allModules.TryAdd(module.ModuleName, resolvedModule);
+                    }
+
+                    modulesByPath[resolvedManifestPath] = manifestModules;
                 }
 
-                _manifestModulesByPath[resolvedManifestPath] = manifestModules;
+                if (directoryModules.Count != 0)
+                {
+                    modulesBySearchDirectory[resolvedSearchDirectory] = directoryModules;
+                }
             }
 
-            if (directoryModules.Count != 0)
-            {
-                _manifestModulesBySearchDirectory[resolvedSearchDirectory] = directoryModules;
-            }
+            _manifestModulesBySearchDirectory = modulesBySearchDirectory;
+            _manifestModulesByPath = modulesByPath;
+            Volatile.Write(ref _manifestModules, allModules);
         }
     }
 

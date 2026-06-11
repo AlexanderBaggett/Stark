@@ -914,7 +914,7 @@ public sealed class SystemMemoryHelperStandardLibraryTests : StandardLibraryTest
         Directory.CreateDirectory(packageDirectory);
 
         var libraryFileName = OperatingSystem.IsWindows() ? "SystemMemory.lib" : "libSystemMemory.a";
-        var manifestPath = Path.Combine(packageDirectory, Path.GetFileNameWithoutExtension(libraryFileName) + ".starkpkg.json");
+        var manifestPath = Path.Combine(packageDirectory, Path.GetFileNameWithoutExtension(libraryFileName) + ".starkpkg");
         var appPath = Path.Combine(tempDirectory.FullName, "App.stark");
         var llvmPath = Path.Combine(tempDirectory.FullName, "App.ll");
 

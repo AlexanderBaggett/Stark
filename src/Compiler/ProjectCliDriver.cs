@@ -989,7 +989,7 @@ internal static class ProjectCliDriver
 
     private static string GetPackageImageFileName(ProjectManifest project)
     {
-        return $"lib{project.OutputName}.starkpkg.json";
+        return $"lib{project.OutputName}{PackageImageBinaryFormat.FileExtension}";
     }
 
     private static string GetStageStdlibDirectory(BuildSession session)
@@ -1132,7 +1132,8 @@ internal static class ProjectCliDriver
     private static bool ContainsPackageImages(string directory, SearchOption searchOption = SearchOption.AllDirectories)
     {
         return Directory.Exists(directory)
-            && Directory.EnumerateFiles(directory, "*.starkpkg.json", searchOption).Any();
+            && (Directory.EnumerateFiles(directory, "*.starkpkg", searchOption).Any(static path => PackageImageBinaryFormat.HasBinaryFileName(path))
+                || Directory.EnumerateFiles(directory, "*.starkpkg.json", searchOption).Any());
     }
 
     private static void AddDistinctSearchPath(List<StdlibSearchPath> paths, string tier, string directory, string state)

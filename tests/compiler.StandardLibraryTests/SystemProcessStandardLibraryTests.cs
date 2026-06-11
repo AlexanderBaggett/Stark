@@ -763,7 +763,7 @@ public sealed class SystemProcessStandardLibraryTests : StandardLibraryTestSuite
         var packageDirectory = await SharedStdlibPackage.GetDirectoryAsync();
 
         var libraryFileName = OperatingSystem.IsWindows() ? "System.lib" : "libSystem.a";
-        var manifestPath = Path.Combine(packageDirectory, Path.GetFileNameWithoutExtension(libraryFileName) + ".starkpkg.json");
+        var manifestPath = Path.Combine(packageDirectory, Path.GetFileNameWithoutExtension(libraryFileName) + ".starkpkg");
         var appPath = Path.Combine(tempDirectory.FullName, "App.stark");
 
         try

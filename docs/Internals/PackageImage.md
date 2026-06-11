@@ -9,7 +9,10 @@ downstream compilation and inspection.
 
 Current host status:
 
-- the C# host emits and loads `.starkpkg.json`
+- the C# host emits and loads a binary `.starkpkg` container (STARKPKG magic,
+  format version, Brotli-compressed canonical JSON payload); legacy
+  `.starkpkg.json` files still load, and `--package-image-json` writes the
+  indented JSON inspection sidecar on demand
 - the JSON artifact is compiler-owned and not intended to be hand-authored
 - current tests and tooling often inspect or diff that JSON directly
 
@@ -25,7 +28,8 @@ Historical note:
 
 - some internal type names and older comments still use `Manifest` because the
   feature started as a smaller package-manifest slice
-- the current host file extension remains `.starkpkg.json`
+- the current host file extension is `.starkpkg` (binary); `.starkpkg.json`
+  remains the legacy/inspection JSON form
 - self-hosting format work is tracked in `docs/Self-host-Prep/20-package-image-format.md`
 - user-facing docs and tooling should treat package images as compiler-owned
   artifacts regardless of the concrete file format
@@ -96,7 +100,7 @@ The roles are:
 - compiler-only compatibility data:
   temporary legacy flat fields and bridge-oriented fallback content that still exist only while the older reconstruction path is being retired
 
-No section in `.starkpkg.json` is intended to be the normal place a user writes package APIs by hand.
+No section in the package image is intended to be the normal place a user writes package APIs by hand.
 Users author Stark source; the compiler emits the package image.
 
 ## Native Dependency Metadata
@@ -110,7 +114,7 @@ The current package-author CLI surface is:
 ```bash
 compiler Raylib.stark --emit-lib \
   -o dist/libRaylibStark.a \
-  --package-image-output dist/pkg/libRaylibStark.starkpkg.json \
+  --package-image-output dist/pkg/libRaylibStark.starkpkg \
   --native-source RaylibNative.c \
   --native-pkg-config raylib
 ```
@@ -278,7 +282,8 @@ The current user-facing commands are:
 The repository still contains some legacy uses of the word `manifest` in internal identifiers and compatibility paths.
 That legacy naming does not change the intended model:
 
-- `.starkpkg.json` is the current host's compiler-owned JSON package image
+- `.starkpkg` is the current host's compiler-owned binary package image;
+  `.starkpkg.json` is its deterministic JSON inspection form
 - binary package images are the self-hosted compiler's normal load path
 - JSON/text inspection output remains compiler-owned and deterministic
 - direct structured loading is the primary path

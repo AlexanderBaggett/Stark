@@ -17,10 +17,14 @@ Legend: `[ ]` not done, `[~]` partially done, `[x]` done.
 - [x] Enable server GC in all test project csproj files
       (`<ServerGarbageCollection>true</ServerGarbageCollection>`).
       Measured: 8 concurrent in-process compiles 55.4s -> 26.7s (2.1x).
-- [ ] Split oversized test classes so xUnit can parallelize them
-      (`SystemCollections` 29 tests, `SystemIOFile`, `SystemText`,
-      `SystemIOPath`). Within-class tests run serially; classes set the
-      wall-time floor.
+- [x] Split oversized test classes so xUnit can parallelize them.
+      `SystemCollections` (29 tests) is now four classes, `SystemIOFile`
+      (17) three, `SystemText` and `SystemIOPath` (10 each) two apiece —
+      eleven classes capped at roughly nine tests and three or four
+      CLI-native tests each, with test methods byte-identical and shared
+      programs hoisted into `SystemCollectionsTestPrograms`. The suite now
+      runs at ~7.6x parallel efficiency; the remaining wall-time floor is a
+      single 17-minute test (see the long-pole note below).
 - [~] Audit the ~104 in-process `pipeline.Run(...)` calls with no
       `StopAfterPassId`: add the earliest sufficient stop pass, and pass
       `OptimizationLevel: Og` where assertions do not inspect optimized
@@ -64,31 +68,95 @@ Legend: `[ ]` not done, `[~]` partially done, `[x]` done.
       `TryEmitStructuredAggregateStore`) were depth-capped to their safe
       fallbacks, but the clang crash remains; the two `-O0` packaged tests
       are gated off macOS until fixed.
-- [ ] Fix enum-receiver method calls against package-backed imports
-      (`Encoding.UTF8.ToAscii()` passes type-check but crashes `lower-mir`
-      with "Field 'ToAscii' could not be resolved"). Pre-existing; fails
-      `PackagedStdLibTryFormatSurfaceCanBeConsumedWithoutSource` and keeps
-      `SourceImportedStdLibTryFormatExecutableWritesText` pinned to the
-      source path.
+- [x] Fix enum-receiver method calls against package-backed imports
+      (`Encoding.UTF8.ToAscii()` passed type-check but crashed `lower-mir`
+      with "Field 'ToAscii' could not be resolved"). Root cause was not
+      package-specific: the speculative function-pointer call-target walk in
+      MIR lowering called the throwing field-access lowering while probing
+      chained `EnumType.Case.UfcsMethod()` expressions in any compilation
+      mode. Speculative callers now pass `requireResolved: false` and fall
+      through to receiver-call binding. Both
+      `PackagedStdLibTryFormatSurfaceCanBeConsumedWithoutSource` and
+      `SourceImportedStdLibTryFormatExecutableWritesText` now pass.
 
 ## Compiler Performance (helps all users, not just tests)
 
-- [ ] Reachability-filtered lowering: lower/optimize only functions reachable
+- [~] Reachability-filtered lowering: lower/optimize only functions reachable
       from `main`/exports (validation still covers everything). Hello-world
-      currently lowers 1,233 MIR functions and emits 34 (~97% waste in the
-      MIR/SSA/O3 passes).
-- [ ] Compile `--emit-exe` root plus source-dependency modules in one
+      previously lowered 1,233 MIR functions and emitted 34 (~97% waste in the
+      MIR/SSA/O3 passes). CLI binary outputs (`--emit-obj`/`--emit-lib`/
+      `--emit-exe` roots and every dependency compile) now lower SSA lazily
+      from emission roots via `SsaEmissionReachability`, skipping SSA lowering
+      and optimization for unreachable functions; the root pipeline for
+      hello-world dropped 11.8s -> 4.9s. MIR lowering still covers the full
+      closure, and inspection modes (`--check`/`--emit-mir`/`--emit-ssa`/
+      `--emit-llvm`) keep the full lowered view by design.
+- [x] Compile `--emit-exe` root plus source-dependency modules in one
       pipeline run, or share parsed modules and the type-check model across
       the per-module runs in `CompileAndEmitReferencedDependencyObjects`.
-      Hello-world currently runs the full 43-pass pipeline 4 times (37.5s);
-      heavy imports trigger 8-12 runs.
-- [ ] Parallelize the sequential dependency-module compile loop in
-      `CompilerCli.CompileAndEmitReferencedDependencyObjects` (modules are
-      independent; the compiler runs at ~105% CPU today).
-- [ ] Binary package image load path (already tracked in
-      [../Self-host-Prep/20-package-image-format.md](../Self-host-Prep/20-package-image-format.md));
-      the current 24MB JSON image is parsed on every package-consuming
-      compile.
+      Implemented as sharing plus per-run reachability: parsed source modules
+      are shared across the sequential runs of one CLI invocation
+      (`SharedSourceModuleParseCache`, diagnostic-free parses only), and each
+      run lowers only emission-reachable functions. Measured (Release, M5):
+      hello-world `--emit-exe` 37.5s -> 22.2s; full stdlib `--emit-lib`
+      2m10s -> 47.9s; integration CLI test slice 5m21s -> 1m23s. All test
+      gates unchanged (same pre-existing failures only). Remaining ideas:
+      truly single-pipeline emission, sharing the type-check model itself,
+      and MIR-level reachability.
+- [x] Parallelize the sequential dependency-module compile loop in
+      `CompilerCli.CompileAndEmitReferencedDependencyObjects`. Implemented as
+      lazy symbol-driven waves: a dependency module's pipeline only runs when
+      the unresolved-symbol loop suspects it (module-name shapes plus declared
+      `asm`/`export` symbol names from the syntax model), each wave compiles
+      in parallel, and fully inlined roots skip dependency compilation
+      entirely. The library path compiles every archive member in parallel
+      (`--emit-lib` peaked at ~492% CPU). The shared module resolver and parse
+      cache are now thread-safe, and the compiler runs with server GC.
+      Measured (Release, M5): full stdlib `--emit-lib` 50.8s -> 24.5s;
+      hello-world `--emit-exe` 22.2s -> 7.6s; heavy dictionary program
+      92.5s -> 65.2s. Package image byte-identical and archive symbol-set
+      identical to sequential builds; all gates green.
+- [x] Binary package image load path (design tracked in
+      [../Self-host-Prep/20-package-image-format.md](../Self-host-Prep/20-package-image-format.md)).
+      The host compiler now emits and loads a binary `.starkpkg` container
+      (STARKPKG magic + version + Brotli-compressed canonical JSON payload) by
+      default; `--package-image-json` opts into the indented JSON sidecar and
+      `--inspect-pkg` renders JSON/text from either form. Legacy
+      `.starkpkg.json` files keep loading. The stdlib image shrank from 41MB
+      JSON to 275KB binary (the JSON itself also halved after dropping
+      serialized computed properties). The self-hosted compiler still owns the
+      long-term sectioned byte-level encoding.
+
+## Current Long Pole (June 2026)
+
+After the class splits and parallel dependency compiles, suite wall time is
+bounded by a single test: `SourceImportedStdLibTryFormatExecutableWritesText`
+(~17 minutes), whose app reaches the full wide-integer (`i1024`/`u1024`)
+formatting machinery and pays one enormous O3 root compile. Reducing that one
+compile (formatter code size, per-function pass budgets, or reachability
+depth) is the next meaningful suite-time lever.
+
+## Remaining Failures (macOS, June 2026)
+
+After the failure-fixing round, 6 tests remain red, all sharing two deep
+package-generics gaps:
+
+- [ ] Imported generic templates that construct generic types or switch over
+      generic enums still have gaps on the package path. The `Locked<T>`
+      constructor-body publication now lowers (partial fix landed in
+      `ImportedTemplateLowerer`), but the three `SystemThreading*AtRuntime`
+      tests now fail one layer later: the consumer app's generic-typed static
+      global (`App_Shared`) is not emitted, so linking fails. The
+      `SourceStdLibTestingRichAssertionsExecutableRuns` test fails on switch
+      lowering inside an imported `Result<T, E>` template
+      ("Accepted switch shape could not be lowered").
+- [ ] The const-lookup fold regression from the CTFE materialization change:
+      imported const aggregates lower as inline `$tmp*_ctfe_array` stack
+      copies instead of const-global loads, so `const-lookup-tables-ssa`
+      never folds and no later pass folds the constant-index read either.
+      Fails `ConstLookupTableOptimizationFoldsPackageConstLookupHelperFromTypedInitializer`
+      and `ConstGlobalDerivedLoadsEmitInvariantLoadMetadataWithoutTaggingLocalLoads`
+      in compiler.PipelineTests.
 
 ## Verification
 

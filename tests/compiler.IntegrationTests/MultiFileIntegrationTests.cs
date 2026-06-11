@@ -1,4 +1,3 @@
-using System.Text.Json;
 using Stark.Compiler;
 
 namespace compiler.IntegrationTests;
@@ -290,7 +289,7 @@ public sealed class MultiFileIntegrationTests
         var mathPath = Path.Combine(packageDirectory, "Math.stark");
         var facadePath = Path.Combine(packageDirectory, "Facade.stark");
         var libraryPath = Path.Combine(packageDirectory, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a");
-        var manifestPath = Path.Combine(packageDirectory, "libFacade.starkpkg.json");
+        var manifestPath = Path.Combine(packageDirectory, "libFacade.starkpkg");
         var appPath = Path.Combine(appDirectory, "App.stark");
         var outputPath = Path.Combine(appDirectory, OperatingSystem.IsWindows() ? "app.exe" : "app");
 
@@ -334,24 +333,20 @@ public sealed class MultiFileIntegrationTests
             Assert.True(File.Exists(libraryPath));
             Assert.True(File.Exists(manifestPath));
 
-            using (var manifest = JsonDocument.Parse(await File.ReadAllTextAsync(manifestPath)))
-            {
-                Assert.Equal("Facade", manifest.RootElement.GetProperty("RootModule").GetString());
-                Assert.Contains(
-                    manifest.RootElement.GetProperty("Modules").EnumerateArray(),
-                    module =>
+            Assert.True(PackageImageLoader.TryLoadManifest(manifestPath, out var manifest));
+            Assert.Equal("Facade", manifest.RootModule);
+            Assert.Contains(
+                manifest.Modules,
+                module =>
+                {
+                    if (module.ModuleName != "Facade")
                     {
-                        if (module.GetProperty("ModuleName").GetString() != "Facade")
-                        {
-                            return false;
-                        }
+                        return false;
+                    }
 
-                        return module.GetProperty("SourceSurface")
-                            .GetProperty("ReExports")
-                            .EnumerateArray()
-                            .Any(reExport => reExport.GetProperty("ModuleName").GetString() == "Math");
-                    });
-            }
+                    return module.SourceSurface?.ReExports?
+                        .Any(reExport => reExport.ModuleName == "Math") == true;
+                });
 
             File.Delete(mathPath);
             File.Delete(facadePath);
@@ -422,7 +417,7 @@ public sealed class MultiFileIntegrationTests
 
         var globalsPath = Path.Combine(packageDirectory, "Globals.stark");
         var libraryPath = Path.Combine(packageDirectory, OperatingSystem.IsWindows() ? "Globals.lib" : "libGlobals.a");
-        var manifestPath = Path.Combine(packageDirectory, "libGlobals.starkpkg.json");
+        var manifestPath = Path.Combine(packageDirectory, "libGlobals.starkpkg");
         var appPath = Path.Combine(appDirectory, "App.stark");
         var outputPath = Path.Combine(appDirectory, OperatingSystem.IsWindows() ? "app.exe" : "app");
 

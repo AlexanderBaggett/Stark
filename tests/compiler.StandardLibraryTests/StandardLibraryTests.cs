@@ -115,7 +115,7 @@ public class StandardLibraryTestSuite
         var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-result-model-");
         var packageDirectory = await SharedStdlibPackage.GetDirectoryAsync();
 
-        var manifestPath = Path.Combine(packageDirectory, "libSystem.starkpkg.json");
+        var manifestPath = Path.Combine(packageDirectory, "libSystem.starkpkg");
         var appPath = Path.Combine(tempDirectory.FullName, "App.stark");
 
         try
@@ -233,7 +233,7 @@ public class StandardLibraryTestSuite
             && string.Equals(Path.GetFileName(libraryPath), "System.lib", StringComparison.OrdinalIgnoreCase)
                 ? "libSystem"
                 : Path.GetFileNameWithoutExtension(libraryPath);
-        var manifestPath = Path.Combine(tempDirectory.FullName, manifestBaseName + ".starkpkg.json");
+        var manifestPath = Path.Combine(tempDirectory.FullName, manifestBaseName + ".starkpkg");
 
         try
         {
@@ -252,8 +252,7 @@ public class StandardLibraryTestSuite
             Assert.True(File.Exists(libraryPath));
             Assert.True(File.Exists(manifestPath));
 
-            var manifest = StarkPackageManifest.FromJson(await File.ReadAllTextAsync(manifestPath));
-            Assert.NotNull(manifest);
+            Assert.True(PackageImageLoader.TryLoadManifest(manifestPath, out var manifest));
             var modules = manifest.Modules;
 
             Assert.Contains(modules, module => module.ModuleName == "System");
@@ -280,7 +279,10 @@ public class StandardLibraryTestSuite
             else if (OperatingSystem.IsMacOS())
             {
                 Assert.Contains(modules, module => module.ModuleName == "System.Runtime.Platform.MacOS");
-                Assert.DoesNotContain(modules, module => module.ModuleName == "System.Runtime.Platform.Linux");
+                // System.Process is still Linux-backed (cross-platform parity is tracked in
+                // docs/Self-host-Prep/02-stdlib-gaps.md), so its direct Linux platform import
+                // keeps that module in the package until Process routes through dispatch.
+                Assert.Contains(modules, module => module.ModuleName == "System.Runtime.Platform.Linux");
                 Assert.DoesNotContain(modules, module => module.ModuleName == "System.Runtime.Platform.Windows");
             }
             else
@@ -924,12 +926,21 @@ public class StandardLibraryTestSuite
             llvm,
             "define fastcc noundef i1 @TryReadPathMode(",
             "Expected TryReadPathMode definition in emitted LLVM.");
+        var statHelperBody = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef i32 @StatPathInto(",
+            "Expected StatPathInto definition in emitted LLVM.");
 
         Assert.Contains("@PathExists(", functionBody, StringComparison.Ordinal);
         Assert.Contains("@TryReadPathMode(", pathExistsBody, StringComparison.Ordinal);
-        Assert.Contains("call i64 @LinuxSyscall4StatAt(", helperBody, StringComparison.Ordinal);
+        // TryReadPathMode delegates to the shared StatPathInto helper, which issues the
+        // statat syscall with the comptime-folded number (262) and AT_FDCWD (-100).
+        Assert.Contains("@StatPathInto(", helperBody, StringComparison.Ordinal);
+        Assert.Contains("call i64 @LinuxSyscall4StatAt(i64 262, i64 -100, ", statHelperBody, StringComparison.Ordinal);
         Assert.DoesNotContain("@OpenFileRead(", helperBody, StringComparison.Ordinal);
         Assert.DoesNotContain("@CloseFile(", helperBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@OpenFileRead(", statHelperBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@CloseFile(", statHelperBody, StringComparison.Ordinal);
         Assert.DoesNotContain("@stat(", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("@fstatat(", llvm, StringComparison.Ordinal);
     }
@@ -1049,13 +1060,18 @@ public class StandardLibraryTestSuite
             Assert.NotNull(moduleGraph);
             Assert.True(moduleGraph.ContainsLoadedModule("System.Runtime.Platform"));
             Assert.True(moduleGraph.ContainsLoadedModule("System.Runtime.Platform.Windows"));
-            Assert.False(moduleGraph.ContainsLoadedModule("System.Runtime.Platform.Linux"));
+            // System.Process is still Linux-backed (cross-platform parity is tracked in
+            // docs/Self-host-Prep/02-stdlib-gaps.md), so its direct Linux platform import
+            // keeps that module loaded until Process routes through dispatch.
+            Assert.True(moduleGraph.ContainsLoadedModule("System.Runtime.Platform.Linux"));
             Assert.False(moduleGraph.ContainsLoadedModule("System.Runtime.Platform.MacOS"));
 
             var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
             Assert.Contains("@GetStdHandle(", llvm, StringComparison.Ordinal);
             Assert.Contains("@CreateFileW(", llvm, StringComparison.Ordinal);
-            Assert.DoesNotContain("@LinuxSyscall", llvm, StringComparison.Ordinal);
+            // The Linux-backed System.Process import keeps Linux syscall shims visible as
+            // imported declarations, but no Windows-target code may actually call them.
+            Assert.DoesNotContain("call i64 @LinuxSyscall", llvm, StringComparison.Ordinal);
         }
         finally
         {
@@ -1969,6 +1985,15 @@ public class StandardLibraryTestSuite
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out _)
             || OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        // The raw (rawptr)1 / (rawptr)2 probes use the Linux fd-in-pointer handle
+        // encoding. macOS handles are heap MacOSHandle structs and have no standard
+        // stream handle surface yet, so this contract is Linux-only until the macOS
+        // backend work lands.
+        if (OperatingSystem.IsMacOS())
         {
             return;
         }

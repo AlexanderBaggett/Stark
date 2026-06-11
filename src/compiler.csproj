@@ -7,6 +7,9 @@
     <Nullable>enable</Nullable>
     <NoWarn>$(NoWarn);CS3021</NoWarn>
     <AntlrGrammar>$(MSBuildProjectDirectory)/../Stark.g4</AntlrGrammar>
+    <!-- Dependency-module compiles run in parallel; workstation GC throttles the
+         allocation-heavy concurrent pipelines to roughly two effective cores. -->
+    <ServerGarbageCollection>true</ServerGarbageCollection>
   </PropertyGroup>
 
   <ItemGroup>

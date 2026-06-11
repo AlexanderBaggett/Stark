@@ -365,6 +365,26 @@ public static class DefaultCompilerPipeline
                                 pendingImports.Enqueue((resolved.ModuleName, nestedImport));
                             }
                         }
+                        else if (context.Options.SharedSourceModuleParseCache is { } sharedParseCache
+                                 && resolved.ManifestPath is null
+                                 && sharedParseCache.TryGet(resolved.ModuleName, resolved.FilePath, out var sharedParse))
+                        {
+                            sourceModuleParseCache[resolved.ModuleName] = sharedParse;
+
+                            if (!string.Equals(sharedParse.SyntaxModel.ModuleName, resolved.ModuleName, StringComparison.Ordinal))
+                            {
+                                context.Diagnostics.Error(
+                                    "STK2002",
+                                    $"Resolved module '{resolved.ModuleName}' declares itself as '{sharedParse.SyntaxModel.ModuleName}'.",
+                                    Id,
+                                    new SourceLocation(sharedParse.Reference.FilePath ?? resolved.FilePath, 1, 1));
+                            }
+
+                            foreach (var nestedImport in sharedParse.SyntaxModel.Imports)
+                            {
+                                pendingImports.Enqueue((resolved.ModuleName, nestedImport));
+                            }
+                        }
                         else if (resolver is IModuleSourceResolver sourceResolver
                                  && sourceResolver.TryLoadModuleSource(resolved, out var sourceText, out var filePath))
                         {
@@ -395,10 +415,21 @@ public static class DefaultCompilerPipeline
                             }
 
                             var importedSyntax = buildResult.Model;
-                            sourceModuleParseCache[resolved.ModuleName] = new SourceModuleParse(
+                            var sourceModuleParse = new SourceModuleParse(
                                 cachedReference,
                                 parseResult,
                                 importedSyntax);
+                            sourceModuleParseCache[resolved.ModuleName] = sourceModuleParse;
+
+                            // Only diagnostic-free plain source parses may be reused by later
+                            // pipeline runs; anything else must re-parse so diagnostics repeat.
+                            if (context.Options.SharedSourceModuleParseCache is { } populateSharedCache
+                                && resolved.ManifestPath is null
+                                && parseResult.Diagnostics.Count == 0
+                                && buildResult.Diagnostics.Count == 0)
+                            {
+                                populateSharedCache.Add(sourceModuleParse);
+                            }
 
                             if (!string.Equals(importedSyntax.ModuleName, resolved.ModuleName, StringComparison.Ordinal))
                             {
@@ -4388,13 +4419,22 @@ public static class DefaultCompilerPipeline
 
         public PassExecutionMode ExecutionMode => PassExecutionMode.SkipOnErrors;
 
-        public IReadOnlyList<string> Dependencies => ["type-check", "lower-mir", "borrow-liveness"];
+        public IReadOnlyList<string> Dependencies => ["type-check", "lower-mir", "borrow-liveness", "load-modules", "function-effects", "specialization-codegen-strategy"];
 
         public void Execute(CompilerPassContext context)
         {
             var mir = context.Artifacts.GetRequired(CompilerArtifactKeys.MidLevelIr);
             var typeModel = context.Artifacts.GetRequired(CompilerArtifactKeys.TypeCheckModel);
-            var ssa = new SsaLowerer(typeModel).Lower(mir);
+            var lowerer = new SsaLowerer(typeModel);
+            var ssa = context.Options.PruneUnusedLoweredFunctions
+                ? SsaEmissionReachability.LowerReachableFromEmission(
+                    lowerer,
+                    mir,
+                    context.Artifacts.GetRequired(CompilerArtifactKeys.LoadedModules),
+                    typeModel,
+                    context.Artifacts.GetRequired(CompilerArtifactKeys.FunctionEffects),
+                    context.Artifacts.GetRequired(CompilerArtifactKeys.SpecializationCodegenStrategy))
+                : lowerer.Lower(mir);
             context.Artifacts.Set(CompilerArtifactKeys.SsaIr, ssa);
         }
     }
@@ -4530,7 +4570,7 @@ public static class DefaultCompilerPipeline
             {
                 if (!prunableSyntheticNames.Contains(function.Name))
                 {
-                    CollectReferencedFunctions(function, referencedFunctions);
+                    SsaFunctionReferenceWalker.CollectReferencedFunctions(function, referencedFunctions);
                 }
             }
 
@@ -4545,7 +4585,7 @@ public static class DefaultCompilerPipeline
                 }
 
                 var nestedReferences = new HashSet<string>(StringComparer.Ordinal);
-                CollectReferencedFunctions(function, nestedReferences);
+                SsaFunctionReferenceWalker.CollectReferencedFunctions(function, nestedReferences);
                 foreach (var nestedReference in nestedReferences)
                 {
                     if (prunableSyntheticNames.Contains(nestedReference)
@@ -4575,242 +4615,6 @@ public static class DefaultCompilerPipeline
                 module.ModuleName,
                 prunedFunctions,
                 prunedAddressTakenFunctions);
-        }
-
-        private static void CollectReferencedFunctions(
-            SsaFunction function,
-            ISet<string> referencedFunctions)
-        {
-            foreach (var block in function.Blocks)
-            {
-                foreach (var phi in block.Phis)
-                {
-                    foreach (var incoming in phi.Incomings)
-                    {
-                        CollectReferencedFunctions(incoming.Value, referencedFunctions);
-                    }
-                }
-
-                foreach (var instruction in block.Instructions)
-                {
-                    CollectReferencedFunctions(instruction, referencedFunctions);
-                }
-
-                CollectReferencedFunctions(block.Terminator, referencedFunctions);
-            }
-        }
-
-        private static void CollectReferencedFunctions(
-            SsaInstruction instruction,
-            ISet<string> referencedFunctions)
-        {
-            switch (instruction)
-            {
-                case SsaValueInstruction valueInstruction:
-                    CollectReferencedFunctions(valueInstruction.Value, referencedFunctions);
-                    break;
-                case SsaCallInstruction call:
-                    referencedFunctions.Add(call.FunctionName);
-                    foreach (var argument in call.Arguments)
-                    {
-                        CollectReferencedFunctions(argument, referencedFunctions);
-                    }
-
-                    foreach (var address in call.IndirectArgumentAddresses?.OfType<SsaValue>() ?? [])
-                    {
-                        CollectReferencedFunctions(address, referencedFunctions);
-                    }
-
-                    break;
-                case SsaIndirectCallInstruction call:
-                    CollectReferencedFunctions(call.Target, referencedFunctions);
-                    foreach (var argument in call.Arguments)
-                    {
-                        CollectReferencedFunctions(argument, referencedFunctions);
-                    }
-
-                    foreach (var address in call.IndirectArgumentAddresses?.OfType<SsaValue>() ?? [])
-                    {
-                        CollectReferencedFunctions(address, referencedFunctions);
-                    }
-
-                    break;
-                case SsaStoreLocalInstruction storeLocal:
-                    CollectReferencedFunctions(storeLocal.Value, referencedFunctions);
-                    break;
-                case SsaCopyMemoryInstruction copyMemory:
-                    CollectReferencedFunctions(copyMemory.DestinationAddress, referencedFunctions);
-                    CollectReferencedFunctions(copyMemory.SourceAddress, referencedFunctions);
-                    break;
-                case SsaStoreIndirectInstruction storeIndirect:
-                    CollectReferencedFunctions(storeIndirect.Address, referencedFunctions);
-                    CollectReferencedFunctions(storeIndirect.Value, referencedFunctions);
-                    break;
-                case SsaStoreGlobalInstruction storeGlobal:
-                    CollectReferencedFunctions(storeGlobal.Value, referencedFunctions);
-                    break;
-            }
-        }
-
-        private static void CollectReferencedFunctions(
-            SsaRValue value,
-            ISet<string> referencedFunctions)
-        {
-            switch (value)
-            {
-                case SsaUseRValue use:
-                    CollectReferencedFunctions(use.Value, referencedFunctions);
-                    break;
-                case SsaUnaryRValue unary:
-                    CollectReferencedFunctions(unary.Operand, referencedFunctions);
-                    break;
-                case SsaBinaryRValue binary:
-                    CollectReferencedFunctions(binary.Left, referencedFunctions);
-                    CollectReferencedFunctions(binary.Right, referencedFunctions);
-                    break;
-                case SsaSelectRValue select:
-                    CollectReferencedFunctions(select.Condition, referencedFunctions);
-                    CollectReferencedFunctions(select.WhenTrue, referencedFunctions);
-                    CollectReferencedFunctions(select.WhenFalse, referencedFunctions);
-                    break;
-                case SsaCallRValue call:
-                    referencedFunctions.Add(call.FunctionName);
-                    foreach (var argument in call.Arguments)
-                    {
-                        CollectReferencedFunctions(argument, referencedFunctions);
-                    }
-
-                    foreach (var address in call.IndirectArgumentAddresses?.OfType<SsaValue>() ?? [])
-                    {
-                        CollectReferencedFunctions(address, referencedFunctions);
-                    }
-
-                    break;
-                case SsaIndirectCallRValue indirectCall:
-                    CollectReferencedFunctions(indirectCall.Target, referencedFunctions);
-                    foreach (var argument in indirectCall.Arguments)
-                    {
-                        CollectReferencedFunctions(argument, referencedFunctions);
-                    }
-
-                    foreach (var address in indirectCall.IndirectArgumentAddresses?.OfType<SsaValue>() ?? [])
-                    {
-                        CollectReferencedFunctions(address, referencedFunctions);
-                    }
-
-                    break;
-                case SsaConvertRValue convert:
-                    CollectReferencedFunctions(convert.Operand, referencedFunctions);
-                    break;
-                case SsaExtractFieldRValue extractField:
-                    CollectReferencedFunctions(extractField.Target, referencedFunctions);
-                    break;
-                case SsaInsertFieldRValue insertField:
-                    CollectReferencedFunctions(insertField.Target, referencedFunctions);
-                    CollectReferencedFunctions(insertField.Value, referencedFunctions);
-                    break;
-                case SsaExtractIndexRValue extractIndex:
-                    CollectReferencedFunctions(extractIndex.Target, referencedFunctions);
-                    break;
-                case SsaInsertIndexRValue insertIndex:
-                    CollectReferencedFunctions(insertIndex.Target, referencedFunctions);
-                    CollectReferencedFunctions(insertIndex.Value, referencedFunctions);
-                    break;
-                case SsaMakeSliceFromPointerRValue makeSlice:
-                    CollectReferencedFunctions(makeSlice.Pointer, referencedFunctions);
-                    CollectReferencedFunctions(makeSlice.Length, referencedFunctions);
-                    break;
-                case SsaDynamicStorageAllocationRValue allocation:
-                    CollectReferencedFunctions(allocation.Capacity, referencedFunctions);
-                    break;
-                case SsaDynamicStorageFreeRValue free:
-                    CollectReferencedFunctions(free.Storage, referencedFunctions);
-                    break;
-                case SsaHeapStorageFreeRValue free:
-                    CollectReferencedFunctions(free.Pointer, referencedFunctions);
-                    break;
-                case SsaDynamicStorageReserveRValue reserve:
-                    CollectReferencedFunctions(reserve.StorageAddress, referencedFunctions);
-                    CollectReferencedFunctions(reserve.AdditionalCapacity, referencedFunctions);
-                    break;
-                case SsaDynamicStorageTryReserveRValue reserve:
-                    CollectReferencedFunctions(reserve.StorageAddress, referencedFunctions);
-                    CollectReferencedFunctions(reserve.AdditionalCapacity, referencedFunctions);
-                    break;
-                case SsaDynamicStorageTryReserveCapacityRValue reserve:
-                    CollectReferencedFunctions(reserve.StorageAddress, referencedFunctions);
-                    CollectReferencedFunctions(reserve.TargetCapacity, referencedFunctions);
-                    break;
-                case SsaDynamicStorageMoveLastRValue moveLast:
-                    CollectReferencedFunctions(moveLast.StorageAddress, referencedFunctions);
-                    break;
-                case SsaDynamicStorageMoveAtRValue moveAt:
-                    CollectReferencedFunctions(moveAt.StorageAddress, referencedFunctions);
-                    CollectReferencedFunctions(moveAt.Index, referencedFunctions);
-                    break;
-                case SsaLoadSliceElementRValue loadSlice:
-                    CollectReferencedFunctions(loadSlice.Slice, referencedFunctions);
-                    CollectReferencedFunctions(loadSlice.Index, referencedFunctions);
-                    break;
-                case SsaTextSliceRValue textSlice:
-                    CollectReferencedFunctions(textSlice.TextValue, referencedFunctions);
-                    CollectReferencedFunctions(textSlice.Start, referencedFunctions);
-                    CollectReferencedFunctions(textSlice.Length, referencedFunctions);
-                    break;
-                case SsaFieldAddressRValue fieldAddress:
-                    CollectReferencedFunctions(fieldAddress.Address, referencedFunctions);
-                    break;
-                case SsaElementAddressRValue elementAddress:
-                    CollectReferencedFunctions(elementAddress.Address, referencedFunctions);
-                    if (elementAddress.Index is not null)
-                    {
-                        CollectReferencedFunctions(elementAddress.Index, referencedFunctions);
-                    }
-
-                    break;
-                case SsaSliceElementAddressRValue sliceElementAddress:
-                    CollectReferencedFunctions(sliceElementAddress.Slice, referencedFunctions);
-                    CollectReferencedFunctions(sliceElementAddress.Index, referencedFunctions);
-                    break;
-                case SsaLoadIndirectRValue loadIndirect:
-                    CollectReferencedFunctions(loadIndirect.Address, referencedFunctions);
-                    break;
-            }
-        }
-
-        private static void CollectReferencedFunctions(
-            SsaTerminator terminator,
-            ISet<string> referencedFunctions)
-        {
-            if (terminator.Value is not null)
-            {
-                CollectReferencedFunctions(terminator.Value, referencedFunctions);
-            }
-
-            if (terminator.Condition is not null)
-            {
-                CollectReferencedFunctions(terminator.Condition, referencedFunctions);
-            }
-
-            foreach (var switchCase in terminator.SwitchCases ?? [])
-            {
-                CollectReferencedFunctions(switchCase.MatchValue, referencedFunctions);
-            }
-        }
-
-        private static void CollectReferencedFunctions(
-            SsaValue value,
-            ISet<string> referencedFunctions)
-        {
-            switch (value)
-            {
-                case SsaFunctionAddressValue functionAddress:
-                    referencedFunctions.Add(functionAddress.FunctionName);
-                    break;
-                case SsaClosureValue closure:
-                    referencedFunctions.Add(closure.InvokeFunctionName);
-                    break;
-            }
         }
 
         private static FunctionEffectModel BuildInlinerEffectModel(

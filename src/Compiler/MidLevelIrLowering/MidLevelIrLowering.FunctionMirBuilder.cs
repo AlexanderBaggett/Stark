@@ -2056,7 +2056,7 @@ internal sealed partial class MidLevelIrLowerer
                         ? ReadPlace(currentPlace)
                         : TryLowerPublishedFieldAccess(currentValue, postfixPart, out var publishedFieldAccess)
                             ? publishedFieldAccess
-                            : LowerFieldAccess(currentValue, memberName);
+                            : LowerFieldAccess(currentValue, memberName, requireResolved: false);
                     if (currentValue is null)
                     {
                         return false;
@@ -6220,6 +6220,11 @@ internal sealed partial class MidLevelIrLowerer
                 : TryGetMatchedObjectCreationConstructor(expression, out var recordedConstructor)
                     ? recordedConstructor
                     : null;
+            if (constructor is not null)
+            {
+                constructor = ResolveImportedConstructorBodyKey(createdType, constructor);
+            }
+
             MidLevelIrOperand current = new MidLevelIrZeroInitializerOperand(createdType);
             var initializerMembers = expression.objectInitializer() is { } sourceInitializer
                 ? new List<ObjectInitializerMemberTypingRecord>(sourceInitializer.memberInitializer().Length)
@@ -6591,6 +6596,7 @@ internal sealed partial class MidLevelIrLowerer
             }
 
             var loweredArguments = new MidLevelIrOperand[constructor.Parameters.Count];
+            var argumentTexts = new string[constructor.Parameters.Count];
             for (var index = 0; index < constructor.Parameters.Count; index++)
             {
                 var parameter = constructor.Parameters[index];
@@ -6603,8 +6609,19 @@ internal sealed partial class MidLevelIrLowerer
                 }
 
                 loweredArguments[index] = CoerceOperand(loweredArgument, parameter.Type) ?? loweredArgument;
+                argumentTexts[index] = argumentList!.argument(index).GetText();
             }
 
+            return LowerExplicitConstructorBody(createdType, constructor, constructorContext, loweredArguments, argumentTexts);
+        }
+
+        private MidLevelIrOperand? LowerExplicitConstructorBody(
+            StarkTypeSymbol createdType,
+            TypedConstructorShape constructor,
+            ConstructorLoweringContext constructorContext,
+            IReadOnlyList<MidLevelIrOperand> loweredArguments,
+            IReadOnlyList<string> argumentTexts)
+        {
             _scopes.Push(new ScopeFrame());
             try
             {
@@ -6631,7 +6648,7 @@ internal sealed partial class MidLevelIrLowerer
 
                     var parameterLocal = new MidLevelIrLocalOperand(parameterName, parameter.Type);
                     InitializeRuntimeDropState(parameterName, parameter.Type, isActive: false);
-                    EmitOperandAssignment(parameterLocal, loweredArguments[index], argumentList!.argument(index).GetText());
+                    EmitOperandAssignment(parameterLocal, loweredArguments[index], argumentTexts[index]);
                     RecordMoveFromOperand(loweredArguments[index], parameter.Type);
                     SetRuntimeDropState(parameterName, isActive: true);
                     aliases[parameter.Name] = parameterName;
@@ -6659,6 +6676,71 @@ internal sealed partial class MidLevelIrLowerer
                 var scope = _scopes.Pop();
                 EmitStorageDead(scope);
             }
+        }
+
+        /// <summary>
+        /// Constructor shapes republished through package-image facts (typed interface
+        /// constructors and generic-template object creations) carry no constructor body
+        /// key: typed facts publish only the shape. The explicit constructor body itself
+        /// still reaches MIR lowering through the bridge-parsed package source, so resolve
+        /// the published shape back to the parsed constructor declaration by qualified
+        /// type name and parameter shape, mirroring the type checker's imported
+        /// constructor body-key resolution.
+        /// </summary>
+        private TypedConstructorShape ResolveImportedConstructorBodyKey(
+            StarkTypeSymbol createdType,
+            TypedConstructorShape constructor)
+        {
+            if (constructor.IsPrimaryShape
+                || constructor.BodyKey is not null
+                || createdType.NamedType is null)
+            {
+                return constructor;
+            }
+
+            var qualifiedTypeName = StarkTypeSymbols.GetGenericBaseName(createdType.NamedType);
+            ConstructorLoweringContext? match = null;
+            foreach (var candidate in _constructorsByBodyKey.Values)
+            {
+                if (!string.Equals(candidate.QualifiedTypeName, qualifiedTypeName, StringComparison.Ordinal)
+                    || !ConstructorDeclarationMatchesShape(candidate.Declaration, constructor))
+                {
+                    continue;
+                }
+
+                if (match is not null)
+                {
+                    return constructor;
+                }
+
+                match = candidate;
+            }
+
+            return match is null ? constructor : constructor with { BodyKey = match.BodyKey };
+        }
+
+        private static bool ConstructorDeclarationMatchesShape(
+            StarkParser.ConstructorDeclarationContext declaration,
+            TypedConstructorShape constructor)
+        {
+            var parameters = declaration.parameterList().parameter();
+            if (parameters.Length != constructor.Parameters.Count)
+            {
+                return false;
+            }
+
+            for (var index = 0; index < parameters.Length; index++)
+            {
+                if (!string.Equals(
+                        parameters[index].Identifier().GetText(),
+                        constructor.Parameters[index].Name,
+                        StringComparison.Ordinal))
+                {
+                    return false;
+                }
+            }
+
+            return true;
         }
 
         private ConstructorBodyContext EnterConstructorBodyContext(
@@ -7304,7 +7386,7 @@ internal sealed partial class MidLevelIrLowerer
             return current;
         }
 
-        private MidLevelIrOperand? LowerFieldAccess(MidLevelIrOperand target, string memberName)
+        private MidLevelIrOperand? LowerFieldAccess(MidLevelIrOperand target, string memberName, bool requireResolved = true)
         {
             if (target.Type.Kind == StarkTypeKind.DynTrait
                 && TryLowerDynTraitRepresentationFieldAccess(target, memberName, out var dynField))
@@ -7331,6 +7413,13 @@ internal sealed partial class MidLevelIrLowerer
 
             if (!TryResolveField(target.Type, memberName, out var field, out var fieldIndex))
             {
+                // Speculative callers (for example the function-pointer call-target probe)
+                // pass requireResolved: false; the member may still bind as a receiver call.
+                if (!requireResolved)
+                {
+                    return null;
+                }
+
                 throw LoweringInvariantViolation(
                     null,
                     $"Field '{memberName}' could not be resolved on type '{target.Type.DisplayName}' (named type '{target.Type.NamedType ?? "<none>"}').");
@@ -8365,7 +8454,7 @@ internal sealed partial class MidLevelIrLowerer
                         ? ReadPlace(currentPlace)
                         : TryLowerPublishedFieldAccess(currentValue, postfixPart, out var publishedFieldAccess)
                             ? publishedFieldAccess
-                            : LowerFieldAccess(currentValue, memberName);
+                            : LowerFieldAccess(currentValue, memberName, requireResolved: hasBoundOperation);
                     currentName = null;
                     if (currentValue is null)
                     {
