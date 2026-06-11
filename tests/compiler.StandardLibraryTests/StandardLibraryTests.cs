@@ -1184,13 +1184,6 @@ public class StandardLibraryTestSuite
             return;
         }
 
-        // The -O0 native pipeline does not work on macOS yet: clang rejects the
-        // unoptimized stdlib modules. Re-enable when the -O0 emission path is fixed.
-        if (OperatingSystem.IsMacOS())
-        {
-            return;
-        }
-
         var repositoryRoot = FindRepositoryRoot();
         var systemPath = Path.Combine(repositoryRoot, "stdlib", "src", "System.stark");
         var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-app-");
@@ -1208,7 +1201,7 @@ public class StandardLibraryTestSuite
             var buildStdout = new StringWriter();
             var buildStderr = new StringWriter();
             var buildExitCode = await CompilerCli.RunAsync(
-                [systemPath, "--emit-lib", "-O0", "-o", libraryPath, "--target", targetInfo.Triple],
+                [systemPath, "--emit-lib", "-o", libraryPath, "--target", targetInfo.Triple],
                 new StringReader(string.Empty),
                 buildStdout,
                 buildStderr);
@@ -1319,7 +1312,7 @@ public class StandardLibraryTestSuite
             var stderr = new StringWriter();
 
             var exitCode = await CompilerCli.RunAsync(
-                [appPath, "--emit-exe", "-O0", "-I", packageDirectory, "-o", outputPath, "--target", targetInfo.Triple],
+                [appPath, "--emit-exe", "-I", packageDirectory, "-o", outputPath, "--target", targetInfo.Triple],
                 new StringReader(string.Empty),
                 stdout,
                 stderr);

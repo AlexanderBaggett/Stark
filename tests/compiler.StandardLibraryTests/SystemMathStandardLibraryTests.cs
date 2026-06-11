@@ -156,7 +156,6 @@ public sealed class SystemMathStandardLibraryTests
             new CompilerOptions(
                 EmitLlvmIr: true,
                 ModuleResolver: new FileSystemModuleResolver(sourceRoot),
-                OptimizationLevel: CompilerOptimizationLevel.O0,
                 TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null)));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));

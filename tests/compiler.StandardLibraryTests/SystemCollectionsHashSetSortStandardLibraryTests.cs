@@ -1039,8 +1039,7 @@ public sealed class SystemCollectionsHashSetSortStandardLibraryTests : StandardL
                 appPath),
             new CompilerOptions(
                 ModuleResolver: new FileSystemModuleResolver(sourceRoot),
-                StopAfterPassId: "emit-llvm",
-                OptimizationLevel: CompilerOptimizationLevel.O3));
+                StopAfterPassId: "emit-llvm"));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvm));
@@ -1113,8 +1112,7 @@ public sealed class SystemCollectionsHashSetSortStandardLibraryTests : StandardL
                 appPath),
             new CompilerOptions(
                 ModuleResolver: new FileSystemModuleResolver(sourceRoot),
-                StopAfterPassId: "emit-llvm",
-                OptimizationLevel: CompilerOptimizationLevel.O3));
+                StopAfterPassId: "emit-llvm"));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvm));
@@ -1331,8 +1329,7 @@ public sealed class SystemCollectionsHashSetSortStandardLibraryTests : StandardL
                 appPath),
             new CompilerOptions(
                 ModuleResolver: new FileSystemModuleResolver(sourceRoot),
-                StopAfterPassId: "emit-llvm",
-                OptimizationLevel: CompilerOptimizationLevel.O0));
+                StopAfterPassId: "emit-llvm"));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvm));

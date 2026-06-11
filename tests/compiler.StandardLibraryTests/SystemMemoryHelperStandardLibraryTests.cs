@@ -828,7 +828,6 @@ public sealed class SystemMemoryHelperStandardLibraryTests : StandardLibraryTest
         var result = DefaultCompilerPipeline.Create().Run(
             new CompilationInput(File.ReadAllText(modulePath), modulePath),
             new CompilerOptions(
-                OptimizationLevel: CompilerOptimizationLevel.O0,
                 EmitLlvmIr: true,
                 ModuleResolver: new FileSystemModuleResolver(sourceRoot)));
 
@@ -879,7 +878,6 @@ public sealed class SystemMemoryHelperStandardLibraryTests : StandardLibraryTest
         var result = DefaultCompilerPipeline.Create().Run(
             new CompilationInput(File.ReadAllText(modulePath), modulePath),
             new CompilerOptions(
-                OptimizationLevel: CompilerOptimizationLevel.O3,
                 EmitLlvmIr: true,
                 ModuleResolver: new FileSystemModuleResolver(sourceRoot)));
 
@@ -970,7 +968,6 @@ public sealed class SystemMemoryHelperStandardLibraryTests : StandardLibraryTest
             var sourceResult = DefaultCompilerPipeline.Create().Run(
                 new CompilationInput(File.ReadAllText(modulePath), modulePath),
                 new CompilerOptions(
-                    OptimizationLevel: CompilerOptimizationLevel.O3,
                     EmitLlvmIr: true,
                     ModuleResolver: new FileSystemModuleResolver(sourceRoot)));
 

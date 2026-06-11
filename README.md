@@ -206,7 +206,6 @@ Native and target options:
 - `--native-source`, `--native-library`, and `--native-pkg-config` attach
   native dependencies to a package or executable build.
 - `--save-temps <dir>` preserves generated LLVM/object intermediates.
-- `-O0`, `-Og`, `-O1`, `-O2`, and `-O3` select optimization level.
 
 Run `dotnet run --project src -- --help` for the full option list.
 

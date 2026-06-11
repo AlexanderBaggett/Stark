@@ -14,7 +14,7 @@ internal sealed record ModuleOptimizationSafetyFacts(
 
 internal static class CompilerCli
 {
-    private const string Usage = "Usage: compiler [path-to-stark-file] [--check|--emit-mir|--emit-ssa|--emit-llvm|--emit-obj|--compile-only|--emit-lib|--emit-exe|--link-only|--emit-pkg|--emit-package|--inspect-pkg|--inspect-package|--host-test-inspect|--host-test-server] [-I dir|--search-dir dir]* [--no-stark-path] [-L dir|--library-dir dir]* [--link-arg arg]* [--native-source path]* [--native-include-dir dir]* [--native-library-dir dir]* [--native-library name]* [--native-pkg-config name]* [--native-link-arg arg]* [--package-library-file name] [--package-image-output path] [--package-image-json] [-o output] [--target triple] [--target-data-layout layout] [--target-cpu cpu] [--target-feature feature]* [--relocation-model mode] [--code-model model] [-O0|-Og|-O1|-O2|-O3|--optimize level] [--strict-integer-ranges] [--linker tool] [--archiver tool] [--save-temps dir] [--toolchain-metrics path] [--diagnostic-format format] [--log-level level] [--log-verbosity mode] [--log-category name]* [--log-stage pass]* [--log-kind kind]*";
+    private const string Usage = "Usage: compiler [path-to-stark-file] [--check|--emit-mir|--emit-ssa|--emit-llvm|--emit-obj|--compile-only|--emit-lib|--emit-exe|--link-only|--emit-pkg|--emit-package|--inspect-pkg|--inspect-package|--host-test-inspect|--host-test-server] [-I dir|--search-dir dir]* [--no-stark-path] [-L dir|--library-dir dir]* [--link-arg arg]* [--native-source path]* [--native-include-dir dir]* [--native-library-dir dir]* [--native-library name]* [--native-pkg-config name]* [--native-link-arg arg]* [--package-library-file name] [--package-image-output path] [--package-image-json] [-o output] [--target triple] [--target-data-layout layout] [--target-cpu cpu] [--target-feature feature]* [--relocation-model mode] [--code-model model] [--strict-integer-ranges] [--linker tool] [--archiver tool] [--save-temps dir] [--toolchain-metrics path] [--diagnostic-format format] [--log-level level] [--log-verbosity mode] [--log-category name]* [--log-stage pass]* [--log-kind kind]*";
     private const int DiagnosticTabWidth = 4;
     private static readonly IReadOnlySet<string> EmptyImportedInlineCloneSeedFunctions = new HashSet<string>(StringComparer.Ordinal);
 
@@ -48,7 +48,6 @@ internal static class CompilerCli
         var targetFeatures = new List<string>();
         var relocationModel = LlvmRelocationModel.Default;
         LlvmCodeModel? codeModel = null;
-        var optimizationLevel = CompilerOptimizationLevel.O3;
         string? linkerTool = null;
         string? archiverTool = null;
         string? saveTempsDirectory = null;
@@ -151,28 +150,9 @@ internal static class CompilerCli
                 continue;
             }
 
-            if (TryParseOptimizationLevelArgument(argument, out var shortOptimizationLevel))
-            {
-                optimizationLevel = shortOptimizationLevel;
-                continue;
-            }
-
             if (string.Equals(argument, "--strict-integer-ranges", StringComparison.Ordinal))
             {
                 strictIntegerRanges = true;
-                continue;
-            }
-
-            if (TryReadOptionValue(argument, "--optimize", args, ref index, out var optimizeValue)
-                || TryReadOptionValue(argument, "-O", args, ref index, out optimizeValue))
-            {
-                if (!TryParseOptimizationLevel(optimizeValue, out optimizationLevel))
-                {
-                    await stderr.WriteLineAsync($"Unknown optimization level '{optimizeValue}'. Expected 0, g, 1, 2, or 3.");
-                    await stderr.WriteLineAsync(Usage);
-                    return 1;
-                }
-
                 continue;
             }
 
@@ -510,7 +490,6 @@ internal static class CompilerCli
             StopAfterPassId: ResolveStopAfterPassId(effectiveMode),
             ModuleResolver: moduleResolver,
             QualifyModuleSymbols: effectiveMode == CliMode.EmitLibrary,
-            OptimizationLevel: optimizationLevel,
             InternalizeModulePrivate: effectiveMode == CliMode.EmitExecutable,
             EnforceIntegerRangeStorageRules: strictIntegerRanges,
             // One invocation compiles the root plus each source-dependency module; parsed
@@ -594,7 +573,7 @@ internal static class CompilerCli
         var linkInputs = new List<string>();
         var linkedLibraries = new HashSet<string>(StringComparer.Ordinal);
         var intermediateDirectory = CreateIntermediateDirectory(toolchainOptions.SaveTempsDirectory, "stark-link-", out var cleanupDirectory);
-        var canUseExecutableLto = ShouldEnableExecutableLto(compilerOptions.OptimizationLevel, toolchainOptions.LinkerTool);
+        var canUseExecutableLto = ShouldEnableExecutableLto(toolchainOptions.LinkerTool);
         var enableRootModuleLto = canUseExecutableLto
                                   && ShouldEnableRootModuleLto(result);
         var enableDependencyLto = canUseExecutableLto;
@@ -609,7 +588,6 @@ internal static class CompilerCli
                 rootObjectPath,
                 preservedLlvmOutputPath: rootLlvmPath,
                 targetInfo: compilerOptions.TargetInfo,
-                optimizationLevel: compilerOptions.OptimizationLevel,
                 enableLto: enableRootModuleLto);
             toolchainMetrics.AddLlvmObject(rootObjectResult);
             if (!rootObjectResult.Succeeded)
@@ -718,7 +696,6 @@ internal static class CompilerCli
                 combinedLibrarySearchDirectories,
                 linkArguments,
                 compilerOptions.TargetInfo,
-                compilerOptions.OptimizationLevel,
                 enableRootModuleLto || enableDependencyLto);
             toolchainMetrics.AddLink(toolchainResult);
             if (!toolchainResult.Succeeded)
@@ -780,7 +757,7 @@ internal static class CompilerCli
         var resolvedOutputPath = outputPath ?? DeriveLibraryOutputPath(inputPath, result);
         var objectPaths = new List<string>();
         var intermediateDirectory = CreateIntermediateDirectory(toolchainOptions.SaveTempsDirectory, "stark-lib-", out var cleanupDirectory);
-        var canUseLibraryLto = ShouldEnableLibraryLto(compilerOptions.OptimizationLevel);
+        var canUseLibraryLto = ShouldEnableLibraryLto();
         var enableRootModuleLto = canUseLibraryLto
                                   && ShouldEnableRootModuleLto(result);
         var enableDependencyLto = canUseLibraryLto;
@@ -795,7 +772,6 @@ internal static class CompilerCli
                 rootObjectPath,
                 preservedLlvmOutputPath: rootLlvmPath,
                 targetInfo: compilerOptions.TargetInfo,
-                optimizationLevel: compilerOptions.OptimizationLevel,
                 enableLto: enableRootModuleLto);
             toolchainMetrics.AddLlvmObject(rootObjectResult);
             if (!rootObjectResult.Succeeded)
@@ -967,8 +943,7 @@ internal static class CompilerCli
             llvmModule.Text,
             resolvedOutputPath,
             preservedLlvmOutputPath: preservedLlvmPath,
-            targetInfo: compilerOptions.TargetInfo,
-            optimizationLevel: compilerOptions.OptimizationLevel);
+            targetInfo: compilerOptions.TargetInfo);
         toolchainMetrics.AddLlvmObject(toolchainResult);
         if (!toolchainResult.Succeeded)
         {
@@ -1692,8 +1667,7 @@ internal static class CompilerCli
                     sourcePath,
                     objectPath,
                     includeDirectories,
-                    compilerOptions.TargetInfo,
-                    compilerOptions.OptimizationLevel);
+                    compilerOptions.TargetInfo);
                 toolchainMetrics?.AddNativeObject(toolchainResult);
                 if (!toolchainResult.Succeeded)
                 {
@@ -2891,17 +2865,11 @@ internal static class CompilerCli
             objectPath,
             preservedLlvmOutputPath: llvmPath,
             targetInfo: rootOptions.TargetInfo,
-            optimizationLevel: rootOptions.OptimizationLevel,
             enableLto: enableLto);
     }
 
-    private static bool ShouldEnableExecutableLto(CompilerOptimizationLevel optimizationLevel, string? linkerTool)
+    private static bool ShouldEnableExecutableLto(string? linkerTool)
     {
-        if (optimizationLevel is CompilerOptimizationLevel.O0 or CompilerOptimizationLevel.Og or CompilerOptimizationLevel.O1)
-        {
-            return false;
-        }
-
         if (!string.IsNullOrWhiteSpace(linkerTool)
             && !Path.GetFileName(linkerTool).Contains("clang", StringComparison.OrdinalIgnoreCase))
         {
@@ -2911,13 +2879,8 @@ internal static class CompilerCli
         return NativeToolchain.SupportsExecutableThinLto();
     }
 
-    private static bool ShouldEnableLibraryLto(CompilerOptimizationLevel optimizationLevel)
+    private static bool ShouldEnableLibraryLto()
     {
-        if (optimizationLevel is CompilerOptimizationLevel.O0 or CompilerOptimizationLevel.Og or CompilerOptimizationLevel.O1)
-        {
-            return false;
-        }
-
         return NativeToolchain.SupportsExecutableThinLto();
     }
 
@@ -3332,8 +3295,6 @@ internal static class CompilerCli
         await stdout.WriteLineAsync("  --target-feature <feature>     Forward a target feature string; repeatable (for example: +sse4.1)");
         await stdout.WriteLineAsync("  --relocation-model <default|static|pic|pie>  Choose the native relocation/PIC model");
         await stdout.WriteLineAsync("  --code-model <tiny|small|kernel|medium|large>  Forward an explicit LLVM code model");
-        await stdout.WriteLineAsync("  -O0|-Og|-O1|-O2|-O3            Select the optimization level for frontend/codegen behavior (default: -O3)");
-        await stdout.WriteLineAsync("  --optimize <0|g|1|2|3>         Long-form optimization level control");
         await stdout.WriteLineAsync("  --strict-integer-ranges        Keep strict integer range storage checks enabled (default)");
         await stdout.WriteLineAsync("  --linker <tool>                Override the executable linker tool");
         await stdout.WriteLineAsync("  --archiver <tool>              Override the static library archiver tool");
@@ -3750,48 +3711,6 @@ internal static class CompilerCli
         return string.Equals(text, "info", StringComparison.OrdinalIgnoreCase)
             || string.Equals(text, "warning", StringComparison.OrdinalIgnoreCase)
             || string.Equals(text, "error", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static bool TryParseOptimizationLevelArgument(string argument, out CompilerOptimizationLevel optimizationLevel)
-    {
-        optimizationLevel = CompilerOptimizationLevel.O3;
-
-        if (argument.Length != 3 || !argument.StartsWith("-O", StringComparison.Ordinal))
-        {
-            return false;
-        }
-
-        return TryParseOptimizationLevel(argument[2..], out optimizationLevel);
-    }
-
-    private static bool TryParseOptimizationLevel(string value, out CompilerOptimizationLevel optimizationLevel)
-    {
-        switch (value.Trim().ToUpperInvariant())
-        {
-            case "0":
-            case "O0":
-                optimizationLevel = CompilerOptimizationLevel.O0;
-                return true;
-            case "G":
-            case "OG":
-                optimizationLevel = CompilerOptimizationLevel.Og;
-                return true;
-            case "1":
-            case "O1":
-                optimizationLevel = CompilerOptimizationLevel.O1;
-                return true;
-            case "2":
-            case "O2":
-                optimizationLevel = CompilerOptimizationLevel.O2;
-                return true;
-            case "3":
-            case "O3":
-                optimizationLevel = CompilerOptimizationLevel.O3;
-                return true;
-            default:
-                optimizationLevel = CompilerOptimizationLevel.O3;
-                return false;
-        }
     }
 
     private static bool TryParseRelocationModel(string value, out LlvmRelocationModel relocationModel)

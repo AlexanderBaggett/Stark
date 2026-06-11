@@ -20,14 +20,29 @@ public sealed class CompilerPipelineEmitLlvmTests
                 """
                 module Lib
 
-                export inline finite u8[0 102] SelectOrAdd(u8[0 100] value, bool add)
+                export inline fn u8[0 102] SelectOrAdd(u8[0 100] value, bool add)
                 {
-                    if (add)
+                    stack mut u8[0 102] result = value;
+                    stack mut i32[min max] step = 0;
+                    while willexit (step < 2)
                     {
-                        return value + 1;
+                        if (add)
+                        {
+                            result = (result / 2) + 1;
+                            result = (result / 3) + (result / 5);
+                            result = (result / 2) + 1;
+                        }
+                        else
+                        {
+                            result = (result / 2) + 2;
+                            result = (result / 3) + (result / 7);
+                            result = (result / 2) + 2;
+                        }
+
+                        step = step + 1;
                     }
 
-                    return value + 2;
+                    return result;
                 }
                 """);
 
@@ -44,7 +59,6 @@ public sealed class CompilerPipelineEmitLlvmTests
                     """,
                     demoPath),
                 new CompilerOptions(
-                    OptimizationLevel: CompilerOptimizationLevel.O0,
                     StopAfterPassId: "emit-llvm",
                     ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
 
@@ -102,7 +116,19 @@ public sealed class CompilerPipelineEmitLlvmTests
 
                 export inline fn i32[min max] AddOffset(i32[min max] value)
                 {
-                    return value + Offset;
+                    stack mut i32[min max] total = value;
+                    stack mut i32[min max] step = 0;
+                    while willexit (step < 3)
+                    {
+                        total = total + Offset;
+                        total = total + (total / 3);
+                        total = total - (total / 5);
+                        total = total + (total / 7);
+                        total = total - (total / 11);
+                        step = step + 1;
+                    }
+
+                    return total;
                 }
                 """);
 
@@ -119,7 +145,6 @@ public sealed class CompilerPipelineEmitLlvmTests
                     """,
                     demoPath),
                 new CompilerOptions(
-                    OptimizationLevel: CompilerOptimizationLevel.O0,
                     StopAfterPassId: "emit-llvm",
                     ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
 
@@ -167,7 +192,18 @@ public sealed class CompilerPipelineEmitLlvmTests
 
                 fn u8[0 100] ApplyOffset(u8[0 93] value)
                 {
-                    return value + Offset;
+                    stack mut u8[0 100] total = value;
+                    stack mut i32[min max] step = 0;
+                    while willexit (step < 2)
+                    {
+                        total = (total / 2) + Offset;
+                        total = (total / 3) + Offset;
+                        total = (total / 2) + (total / 5);
+                        total = (total / 3) + (total / 7);
+                        step = step + 1;
+                    }
+
+                    return total;
                 }
 
                 export inline fn u8[0 100] AddOffset(u8[0 93] value)
@@ -233,22 +269,48 @@ public sealed class CompilerPipelineEmitLlvmTests
 
                 export inline fn i32[min max] Used(i32[min max] value, bool add)
                 {
-                    if (add)
+                    stack mut i32[min max] total = value;
+                    stack mut i32[min max] step = 0;
+                    while willexit (step < 2)
                     {
-                        return value + 1;
+                        if (add)
+                        {
+                            total = total + 1 + (total / 3);
+                            total = total - (total / 5);
+                        }
+                        else
+                        {
+                            total = total + 3 + (total / 7);
+                            total = total - (total / 11);
+                        }
+
+                        step = step + 1;
                     }
 
-                    return value + 3;
+                    return total;
                 }
 
                 export inline fn i32[min max] Unused(i32[min max] value, bool add)
                 {
-                    if (add)
+                    stack mut i32[min max] total = value;
+                    stack mut i32[min max] step = 0;
+                    while willexit (step < 2)
                     {
-                        return value + 2;
+                        if (add)
+                        {
+                            total = total + 2 + (total / 3);
+                            total = total - (total / 5);
+                        }
+                        else
+                        {
+                            total = total + 4 + (total / 7);
+                            total = total - (total / 11);
+                        }
+
+                        step = step + 1;
                     }
 
-                    return value + 4;
+                    return total;
                 }
                 """);
 
@@ -270,7 +332,6 @@ public sealed class CompilerPipelineEmitLlvmTests
                     """,
                     wrapperPath),
                 new CompilerOptions(
-                    OptimizationLevel: CompilerOptimizationLevel.O0,
                     StopAfterPassId: "emit-llvm",
                     ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName),
                     ImportedInlineCloneSeedFunctions: new HashSet<string>(StringComparer.Ordinal)
@@ -514,19 +575,19 @@ public sealed class CompilerPipelineEmitLlvmTests
 
                 public inline fn i32[min max] Blend<T>(T tag, i32[min max] value)
                 {
-                    stack i32[min max] a = value + 1;
-                    stack i32[min max] b = a + 2;
-                    stack i32[min max] c = b + 3;
-                    stack i32[min max] d = c + 4;
-                    stack i32[min max] e = d + 5;
-                    stack i32[min max] f = e + 6;
-                    stack i32[min max] g = f + 7;
-                    stack i32[min max] h = g + 8;
-                    stack i32[min max] i = h + 9;
-                    stack i32[min max] j = i + 10;
-                    stack i32[min max] k = j + 11;
-                    stack i32[min max] l = k + 12;
-                    stack i32[min max] m = l + 13;
+                    stack i32[min max] a = value + (value / 3);
+                    stack i32[min max] b = a - (a / 5);
+                    stack i32[min max] c = b + (b / 7);
+                    stack i32[min max] d = c - (c / 11);
+                    stack i32[min max] e = d + (d / 13);
+                    stack i32[min max] f = e - (e / 17);
+                    stack i32[min max] g = f + (f / 19);
+                    stack i32[min max] h = g - (g / 23);
+                    stack i32[min max] i = h + (h / 29);
+                    stack i32[min max] j = i - (i / 31);
+                    stack i32[min max] k = j + (j / 37);
+                    stack i32[min max] l = k - (k / 41);
+                    stack i32[min max] m = l + (l / 43);
                     return m;
                 }
                 """,
@@ -572,7 +633,6 @@ public sealed class CompilerPipelineEmitLlvmTests
                     """,
                     Path.Combine(tempDirectory.FullName, "Demo.stark")),
                 new CompilerOptions(
-                    OptimizationLevel: CompilerOptimizationLevel.O0,
                     StopAfterPassId: "emit-llvm",
                     ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
 

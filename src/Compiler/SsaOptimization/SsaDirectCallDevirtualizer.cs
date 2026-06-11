@@ -8,10 +8,12 @@ namespace Stark.Compiler;
 internal sealed class SsaDirectCallDevirtualizer
 {
     private readonly IReadOnlyDictionary<DynVTableSlotKey, SsaFunctionAddressValue> _dynVTableSlotTargets;
+    private readonly IReadOnlyDictionary<string, StarkTypeSymbol> _dynSlotReceiverTypes;
 
     public SsaDirectCallDevirtualizer(TypeCheckModel? typeModel = null)
     {
-        _dynVTableSlotTargets = BuildDynVTableSlotTargets(typeModel);
+        _dynVTableSlotTargets = BuildDynVTableSlotTargets(typeModel, out var dynSlotReceiverTypes);
+        _dynSlotReceiverTypes = dynSlotReceiverTypes;
     }
 
     public SsaIrModule Optimize(SsaIrModule module)
@@ -43,19 +45,19 @@ internal sealed class SsaDirectCallDevirtualizer
         }
 
         var functionPointerTargets = FunctionPointerTargetFacts.Build(function, _dynVTableSlotTargets);
+        var usedValueNames = CollectUsedValueNames(function);
         var changed = false;
         var blocks = function.Blocks
             .Select(block =>
             {
                 var blockChanged = false;
-                var instructions = block.Instructions
-                    .Select(instruction =>
-                    {
-                        var optimized = OptimizeInstruction(instruction, functionPointerTargets);
-                        blockChanged |= !ReferenceEquals(optimized, instruction);
-                        return optimized;
-                    })
-                    .ToArray();
+                var instructions = new List<SsaInstruction>(block.Instructions.Count);
+                foreach (var instruction in block.Instructions)
+                {
+                    var optimized = OptimizeInstruction(instruction, functionPointerTargets, usedValueNames, instructions);
+                    blockChanged |= !ReferenceEquals(optimized, instruction);
+                    instructions.Add(optimized);
+                }
 
                 if (!blockChanged)
                 {
@@ -72,14 +74,42 @@ internal sealed class SsaDirectCallDevirtualizer
             : function;
     }
 
-    private static IReadOnlyDictionary<DynVTableSlotKey, SsaFunctionAddressValue> BuildDynVTableSlotTargets(TypeCheckModel? typeModel)
+    private static HashSet<string> CollectUsedValueNames(SsaFunction function)
+    {
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var parameter in function.Parameters)
+        {
+            names.Add(parameter.Name);
+        }
+
+        foreach (var block in function.Blocks)
+        {
+            foreach (var phi in block.Phis)
+            {
+                names.Add(phi.ResultName);
+            }
+
+            foreach (var instruction in block.Instructions.OfType<SsaValueInstruction>())
+            {
+                names.Add(instruction.ResultName);
+            }
+        }
+
+        return names;
+    }
+
+    private static IReadOnlyDictionary<DynVTableSlotKey, SsaFunctionAddressValue> BuildDynVTableSlotTargets(
+        TypeCheckModel? typeModel,
+        out IReadOnlyDictionary<string, StarkTypeSymbol> dynSlotReceiverTypes)
     {
         if (typeModel is null)
         {
+            dynSlotReceiverTypes = EmptyDynSlotReceiverTypes;
             return EmptyDynVTableSlotTargets;
         }
 
         var targets = new Dictionary<DynVTableSlotKey, SsaFunctionAddressValue>();
+        var receiverTypes = new Dictionary<string, StarkTypeSymbol>(StringComparer.Ordinal);
         foreach (var concreteType in typeModel.NamedTypes.Values
                      .Where(static type => type.Kind is DeclarationKind.Struct or DeclarationKind.Record
                                            && type.ImplementedTraits.Count > 0)
@@ -106,10 +136,15 @@ internal sealed class SsaDirectCallDevirtualizer
 
                     targets[new DynVTableSlotKey(vtableGlobalName, slot.Index)] =
                         new SsaFunctionAddressValue(function.Name, BuildDynSlotFunctionPointerType(slot.TraitSignature));
+                    if (function.Parameters.Count > 0)
+                    {
+                        receiverTypes[function.Name] = function.Parameters[0].Type;
+                    }
                 }
             }
         }
 
+        dynSlotReceiverTypes = receiverTypes;
         return targets;
     }
 
@@ -149,20 +184,36 @@ internal sealed class SsaDirectCallDevirtualizer
     private static IReadOnlyDictionary<DynVTableSlotKey, SsaFunctionAddressValue> EmptyDynVTableSlotTargets { get; } =
         new Dictionary<DynVTableSlotKey, SsaFunctionAddressValue>();
 
+    private static IReadOnlyDictionary<string, StarkTypeSymbol> EmptyDynSlotReceiverTypes { get; } =
+        new Dictionary<string, StarkTypeSymbol>(StringComparer.Ordinal);
+
     private readonly record struct DynVTableSlotKey(string VtableGlobalName, int SlotIndex);
 
-    private static SsaInstruction OptimizeInstruction(
+    private SsaInstruction OptimizeInstruction(
         SsaInstruction instruction,
-        FunctionPointerTargetFacts functionPointerTargets)
+        FunctionPointerTargetFacts functionPointerTargets,
+        ISet<string> usedValueNames,
+        ICollection<SsaInstruction> prologueInstructions)
     {
         if (instruction is SsaValueInstruction valueInstruction
-            && TryDevirtualizeDirectFunctionAddressCall(valueInstruction.Value, functionPointerTargets, out var directCall))
+            && TryDevirtualizeDirectFunctionAddressCall(
+                valueInstruction.Value,
+                functionPointerTargets,
+                usedValueNames,
+                prologueInstructions,
+                valueInstruction.Location,
+                out var directCall))
         {
             return valueInstruction with { Value = directCall };
         }
 
         if (instruction is SsaIndirectCallInstruction indirectCall
-            && TryDevirtualizeDirectFunctionAddressCall(indirectCall, functionPointerTargets, out var directCallInstruction))
+            && TryDevirtualizeDirectFunctionAddressCall(
+                indirectCall,
+                functionPointerTargets,
+                usedValueNames,
+                prologueInstructions,
+                out var directCallInstruction))
         {
             return directCallInstruction;
         }
@@ -170,9 +221,12 @@ internal sealed class SsaDirectCallDevirtualizer
         return instruction;
     }
 
-    private static bool TryDevirtualizeDirectFunctionAddressCall(
+    private bool TryDevirtualizeDirectFunctionAddressCall(
         SsaRValue value,
         FunctionPointerTargetFacts functionPointerTargets,
+        ISet<string> usedValueNames,
+        ICollection<SsaInstruction> prologueInstructions,
+        SourceLocation? location,
         out SsaCallRValue directCall)
     {
         directCall = default!;
@@ -183,9 +237,16 @@ internal sealed class SsaDirectCallDevirtualizer
             return false;
         }
 
-        directCall = new SsaCallRValue(
+        var arguments = AdjustReceiverArgument(
             functionAddress.FunctionName,
             indirectCall.Arguments,
+            usedValueNames,
+            prologueInstructions,
+            location);
+
+        directCall = new SsaCallRValue(
+            functionAddress.FunctionName,
+            arguments,
             indirectCall.Type,
             indirectCall.Text,
             indirectCall.IndirectArgumentLocalNames,
@@ -194,9 +255,11 @@ internal sealed class SsaDirectCallDevirtualizer
         return true;
     }
 
-    private static bool TryDevirtualizeDirectFunctionAddressCall(
+    private bool TryDevirtualizeDirectFunctionAddressCall(
         SsaIndirectCallInstruction indirectCall,
         FunctionPointerTargetFacts functionPointerTargets,
+        ISet<string> usedValueNames,
+        ICollection<SsaInstruction> prologueInstructions,
         out SsaCallInstruction directCall)
     {
         directCall = default!;
@@ -206,9 +269,16 @@ internal sealed class SsaDirectCallDevirtualizer
             return false;
         }
 
-        directCall = new SsaCallInstruction(
+        var arguments = AdjustReceiverArgument(
             functionAddress.FunctionName,
             indirectCall.Arguments,
+            usedValueNames,
+            prologueInstructions,
+            indirectCall.Location);
+
+        directCall = new SsaCallInstruction(
+            functionAddress.FunctionName,
+            arguments,
             indirectCall.Type,
             indirectCall.Text,
             indirectCall.IndirectArgumentLocalNames,
@@ -218,6 +288,84 @@ internal sealed class SsaDirectCallDevirtualizer
             ScopedNoAliasGroups: indirectCall.ScopedNoAliasGroups,
             LoopAccessGroups: indirectCall.LoopAccessGroups);
         return true;
+    }
+
+    /// <summary>
+    /// Devirtualized dyn-trait slot calls pass the receiver as a type-erased raw
+    /// pointer while the concrete target declares a typed pointer-backed receiver
+    /// (e.g. <c>borrow Dog</c>). Re-type the receiver through raw-pointer and
+    /// pointer-backed-borrow conversions (both no-ops at LLVM emission) so the
+    /// direct call site matches the target's declared signature.
+    /// </summary>
+    private IReadOnlyList<SsaValue> AdjustReceiverArgument(
+        string targetFunctionName,
+        IReadOnlyList<SsaValue> arguments,
+        ISet<string> usedValueNames,
+        ICollection<SsaInstruction> prologueInstructions,
+        SourceLocation? location)
+    {
+        if (arguments.Count == 0
+            || !_dynSlotReceiverTypes.TryGetValue(targetFunctionName, out var receiverType))
+        {
+            return arguments;
+        }
+
+        var receiver = arguments[0];
+        if (receiver.Type.Kind != StarkTypeKind.RawPointer
+            || !StarkTypeSymbols.IsPointerBackedBorrowType(receiverType))
+        {
+            return arguments;
+        }
+
+        var pointeeType = StarkTypeSymbols.BorrowReturnValueType(receiverType);
+        if (receiver.Type.ElementType is { } receiverPointee
+            && receiverPointee.Kind == pointeeType.Kind
+            && string.Equals(receiverPointee.DisplayName, pointeeType.DisplayName, StringComparison.Ordinal))
+        {
+            return arguments;
+        }
+
+        var typedPointerName = CreateFreshName("__devirt_recv_ptr", usedValueNames);
+        var typedPointerType = StarkTypeSymbols.RawPointer(pointeeType, isMutable: false);
+        prologueInstructions.Add(new SsaValueInstruction(
+            typedPointerName,
+            new SsaConvertRValue(receiver, typedPointerType, $"devirt receiver pointer for {targetFunctionName}"),
+            location));
+
+        var borrowName = CreateFreshName("__devirt_recv", usedValueNames);
+        prologueInstructions.Add(new SsaValueInstruction(
+            borrowName,
+            new SsaConvertRValue(
+                new SsaValueReference(typedPointerName, typedPointerType),
+                receiverType,
+                $"devirt receiver for {targetFunctionName}"),
+            location));
+
+        var adjusted = new SsaValue[arguments.Count];
+        adjusted[0] = new SsaValueReference(borrowName, receiverType);
+        for (var index = 1; index < arguments.Count; index++)
+        {
+            adjusted[index] = arguments[index];
+        }
+
+        return adjusted;
+    }
+
+    private static string CreateFreshName(string baseName, ISet<string> usedValueNames)
+    {
+        if (usedValueNames.Add(baseName))
+        {
+            return baseName;
+        }
+
+        for (var suffix = 0; ; suffix++)
+        {
+            var candidate = $"{baseName}_{suffix.ToString(CultureInfo.InvariantCulture)}";
+            if (usedValueNames.Add(candidate))
+            {
+                return candidate;
+            }
+        }
     }
 
     private sealed class FunctionPointerTargetFacts

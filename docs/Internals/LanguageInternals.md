@@ -145,9 +145,8 @@ boundaries.
 
 Operationally, the policy is:
 
-- optimize closed-world by default for `-O1`, `-O2`, and `-O3` executable
-  builds when source bodies, package typed bodies, or package optimization facts
-  are available
+- optimize closed-world by default for executable builds when source bodies,
+  package typed bodies, or package optimization facts are available
 - prefer the narrowest opaque boundary that preserves correctness or measured
   performance: function before type, type before module
 - use `[Backend(Opaque)]` for runtime/platform/interop code, fragile backend

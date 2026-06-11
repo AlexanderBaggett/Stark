@@ -477,8 +477,6 @@ internal static class ProjectCliDriver
             compileArgs.Add(searchDirectory);
         }
 
-        compileArgs.Add(GetOptimizationArgument(project, session));
-
         var nativeArgsResult = BuildNativeArgs(project, session.UserConfig, session.Stderr);
         if (!nativeArgsResult.Success)
         {
@@ -556,23 +554,6 @@ internal static class ProjectCliDriver
         var generatedPath = Path.Combine(generatedDirectory, $"{project.OutputName}.generated.stark");
         await File.WriteAllTextAsync(generatedPath, generation.SourceText);
         return TestRunnerBuildResult.Generated(generatedPath);
-    }
-
-    private static string GetOptimizationArgument(ProjectManifest project, BuildSession session)
-    {
-        if (project.Profiles.TryGetValue(session.Profile, out var projectProfile)
-            && projectProfile.OptimizationLevel is int projectOptimizationLevel)
-        {
-            return $"-O{projectOptimizationLevel}";
-        }
-
-        if (session.DefaultProfiles.TryGetValue(session.Profile, out var defaultProfile)
-            && defaultProfile.OptimizationLevel is int defaultOptimizationLevel)
-        {
-            return $"-O{defaultOptimizationLevel}";
-        }
-
-        return session.Profile == BuildProfile.Release ? "-O3" : "-O0";
     }
 
     private static BuildResult RememberFailure(ProjectManifest project, BuildSession session)
@@ -1520,7 +1501,7 @@ internal static class ProjectCliDriver
                 continue;
             }
 
-            profiles[buildProfile.Value] = new ProfileManifest(SimpleToml.GetOptionalInt32(table, "opt"));
+            profiles[buildProfile.Value] = new ProfileManifest();
         }
 
         return profiles;
@@ -1652,7 +1633,7 @@ internal static class ProjectCliDriver
         IReadOnlyDictionary<string, string> Aliases,
         IReadOnlyDictionary<BuildProfile, ProfileManifest> Profiles);
 
-    private sealed record ProfileManifest(int? OptimizationLevel);
+    private sealed record ProfileManifest;
 
     private sealed record NativeDependencyManifest(
         IReadOnlyList<string> Sources,

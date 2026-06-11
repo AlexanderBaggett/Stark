@@ -2846,6 +2846,19 @@ internal sealed class LlvmIrEmitter
 
                 AddAsciiToUnicodeLiteralMemcpyConstant(call, constants, ref index);
                 return;
+            case SsaIndirectCallRValue indirectCall:
+                AddStringConstant(indirectCall.Target, constants, ref index);
+                foreach (var argument in indirectCall.Arguments)
+                {
+                    AddStringConstant(argument, constants, ref index);
+                }
+
+                foreach (var address in indirectCall.IndirectArgumentAddresses?.OfType<SsaValue>() ?? [])
+                {
+                    AddStringConstant(address, constants, ref index);
+                }
+
+                return;
             case SsaConvertRValue convert:
                 AddStringConstant(convert.Operand, constants, ref index);
                 return;

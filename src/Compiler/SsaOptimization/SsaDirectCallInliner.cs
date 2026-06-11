@@ -449,7 +449,8 @@ internal sealed class SsaDirectCallInliner
             || candidate.Function.Parameters.Count != call.Arguments.Count
             || (!candidate.CanInlineByDefault
                 && (!candidate.CanInlineWithConstantArguments || !HasConstantSpecializationArgument(call)))
-            || HasUnsupportedIndirectArgumentMetadata(call, candidate.Function.Parameters))
+            || HasUnsupportedIndirectArgumentMetadata(call, candidate.Function.Parameters)
+            || HasShapeErasedPointerArgument(candidate, call))
         {
             return false;
         }
@@ -557,7 +558,8 @@ internal sealed class SsaDirectCallInliner
             || candidate.Function.Parameters.Count != call.Arguments.Count
             || (!candidate.CanInlineByDefault
                 && (!candidate.CanInlineWithConstantArguments || !HasConstantSpecializationArgument(call)))
-            || HasUnsupportedIndirectArgumentMetadata(call, candidate.Function.Parameters))
+            || HasUnsupportedIndirectArgumentMetadata(call, candidate.Function.Parameters)
+            || HasShapeErasedPointerArgument(candidate, call))
         {
             return false;
         }
@@ -2262,6 +2264,35 @@ internal sealed class SsaDirectCallInliner
         return type.BorrowKind != StarkBorrowKind.None
             || type.InitializationKind != StarkInitializationKind.None
             || type.Kind == StarkTypeKind.RawPointer;
+    }
+
+    private static bool HasShapeErasedPointerArgument(InlineCandidate candidate, ISsaDirectCallOperation call)
+    {
+        // Devirtualized dyn-trait calls pass the receiver as a type-erased
+        // rawptr<i8> while the concrete target declares a typed pointer-backed
+        // receiver (e.g. `borrow Dog`). Substituting the erased pointer into the
+        // callee body would produce field/element addresses whose base pointee
+        // shape no longer matches the declared aggregate, so such call sites are
+        // kept as direct calls instead of being inlined.
+        for (var index = 0; index < candidate.Function.Parameters.Count; index++)
+        {
+            var parameterType = candidate.Function.Parameters[index].Type;
+            if (parameterType.Kind != StarkTypeKind.Named
+                || !IsPointerBackedParameterType(parameterType))
+            {
+                continue;
+            }
+
+            var argumentType = call.Arguments[index].Type;
+            if (argumentType.Kind == StarkTypeKind.RawPointer
+                && argumentType.ElementType is { } argumentPointee
+                && argumentPointee.Kind != StarkTypeKind.Named)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static bool IsInlineClosureParameter(StarkTypeSymbol type)

@@ -62,7 +62,7 @@ public sealed class TraitsAndDoctrinesFeatureTests : FeatureLlvmTestBase
                 return Dispatch(resolver, "core");
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var dispatchHeader = ExtractDefinitionHeader(llvm, "Dispatch");
         var dispatchBody = ExtractDefinitionBody(llvm, "Dispatch");
@@ -96,7 +96,20 @@ public sealed class TraitsAndDoctrinesFeatureTests : FeatureLlvmTestBase
             {
                 law i32[min max] Read(borrow Box box)
                 {
-                    return box.Value;
+                    stack i32[min max] a = box.Value + (box.Value / 3);
+                    stack i32[min max] b = a - (a / 5);
+                    stack i32[min max] c = b + (b / 7);
+                    stack i32[min max] d = c - (c / 11);
+                    stack i32[min max] e = d + (d / 13);
+                    stack i32[min max] f = e - (e / 17);
+                    stack i32[min max] g = f + (f / 19);
+                    stack i32[min max] h = g - (g / 23);
+                    stack i32[min max] i = h + (h / 29);
+                    stack i32[min max] j = i - (i / 31);
+                    stack i32[min max] k = j + (j / 37);
+                    stack i32[min max] l = k - (k / 41);
+                    stack i32[min max] m = l + (l / 43);
+                    return m;
                 }
             }
 
@@ -105,7 +118,7 @@ public sealed class TraitsAndDoctrinesFeatureTests : FeatureLlvmTestBase
                 return Inspect.Read(box);
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var inspectHeader = ExtractDefinitionHeader(llvm, "Inspect_Read");
         var runHeader = ExtractDefinitionHeader(llvm, "Run");
@@ -143,6 +156,28 @@ public sealed class TraitsAndDoctrinesFeatureTests : FeatureLlvmTestBase
             {
                 finite law T Read(borrow Box<T> box)
                 {
+                    stack mut i64[min max] acc = 977;
+                    stack mut i64[min max] step = 0;
+                    while willexit (step < 2)
+                    {
+                        acc = acc + (acc / 3);
+                        acc = acc - (acc / 5);
+                        acc = acc + (acc / 7);
+                        acc = acc - (acc / 11);
+                        acc = acc + (acc / 13);
+                        acc = acc - (acc / 17);
+                        acc = acc + (acc / 19);
+                        acc = acc - (acc / 23);
+                        acc = acc + (acc / 29);
+                        acc = acc - (acc / 31);
+                        step = step + 1;
+                    }
+
+                    if (acc > -4000000000000000000)
+                    {
+                        return box.Value;
+                    }
+
                     return box.Value;
                 }
             }
@@ -152,7 +187,7 @@ public sealed class TraitsAndDoctrinesFeatureTests : FeatureLlvmTestBase
                 return Inspect<i32[min max]>.Read(box);
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runHeader = ExtractDefinitionHeader(llvm, "Run");
         var specializationHeader = ExtractDefinitionHeader(llvm, "__stark_mono_fn_Demo__Inspect_Read__i32");
@@ -246,7 +281,7 @@ public sealed class TraitsAndDoctrinesFeatureTests : FeatureLlvmTestBase
                 return DoubleWidth(w);
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         // A trait-method call on a `where T: Trait` generic must monomorphize to a
         // direct call to the concrete implementation -- no vtable, no indirect dispatch.
@@ -287,7 +322,6 @@ public sealed class TraitsAndDoctrinesFeatureTests : FeatureLlvmTestBase
             }
             """,
             new CompilerOptions(
-                OptimizationLevel: CompilerOptimizationLevel.O0,
                 ModuleResolver: new InMemoryModuleResolver(
                 [
                     (
@@ -349,7 +383,7 @@ public sealed class TraitsAndDoctrinesFeatureTests : FeatureLlvmTestBase
                 return w.Doubled() + CallIt(w);
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         // A not-overridden default method dispatches to the default body monomorphized
         // for the concrete type (both directly and through a `where T: Trait` generic),
@@ -365,6 +399,10 @@ public sealed class TraitsAndDoctrinesFeatureTests : FeatureLlvmTestBase
     [Fact]
     public void DynTraitObjectDispatchesThroughVtablePreservingEffectContract()
     {
+        // The dyn object crosses an export boundary so the closed-world
+        // devirtualizer cannot prove a single target; a locally-built dyn whose
+        // vtable is statically known is (correctly) devirtualized to a direct
+        // call instead.
         var llvm = CompileToLlvm(
             """
             module Demo
@@ -384,14 +422,19 @@ public sealed class TraitsAndDoctrinesFeatureTests : FeatureLlvmTestBase
                 }
             }
 
+            export fn i32[min max] Announce(borrow dyn Speaker speaker)
+            {
+                return speaker.Speak();
+            }
+
             export fn i32[min max] main()
             {
                 stack Dog d = new Dog() { Volume = 7 };
                 stack borrow dyn Speaker s = d;
-                return s.Speak();
+                return Announce(s);
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         // A read-only vtable is synthesized for the (type, trait) pair: the Speak
         // slot points at the concrete implementation, followed by the type's drop
@@ -718,7 +761,7 @@ public sealed class TraitsAndDoctrinesFeatureTests : FeatureLlvmTestBase
                 return ReadGeneric(c) + 1;
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         Assert.Contains("call fastcc i32 @Counter_Read(", llvm);
         Assert.Contains("__stark_mono_fn_Demo__ReadGeneric__Counter", llvm);
@@ -816,7 +859,7 @@ public sealed class TraitsAndDoctrinesFeatureTests : FeatureLlvmTestBase
                 return key.Hash();
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         Assert.Contains("call fastcc i64 @Key_Hash(", llvm);
     }

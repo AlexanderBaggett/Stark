@@ -76,7 +76,7 @@ public sealed class GenericsFeatureTests : FeatureLlvmTestBase
                 return Length<i32[min max], 3>(values);
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var specializationBody = ExtractDefinitionBody(llvm, "__stark_mono_fn_Demo__Length__i32__N_3");
         Assert.Contains("ret i8 3", specializationBody);
@@ -102,7 +102,7 @@ public sealed class GenericsFeatureTests : FeatureLlvmTestBase
                 return Length<i32[min max], 2>(left) + Length<i32[min max], 3>(right);
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         Assert.Contains("__stark_mono_fn_Demo__Length__i32__N_2", llvm);
         Assert.Contains("__stark_mono_fn_Demo__Length__i32__N_3", llvm);
@@ -125,7 +125,7 @@ public sealed class GenericsFeatureTests : FeatureLlvmTestBase
                 return Pick<5>();
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var specializationBody = ExtractDefinitionBody(llvm, "__stark_mono_fn_Demo__Pick__N_5");
         Assert.Contains("ret i8 5", specializationBody);
@@ -411,6 +411,28 @@ public sealed class GenericsFeatureTests : FeatureLlvmTestBase
 
             finite law T Identity<T>(T value)
             {
+                stack mut i64[min max] acc = 977;
+                stack mut i64[min max] step = 0;
+                while willexit (step < 2)
+                {
+                    acc = acc + (acc / 3);
+                    acc = acc - (acc / 5);
+                    acc = acc + (acc / 7);
+                    acc = acc - (acc / 11);
+                    acc = acc + (acc / 13);
+                    acc = acc - (acc / 17);
+                    acc = acc + (acc / 19);
+                    acc = acc - (acc / 23);
+                    acc = acc + (acc / 29);
+                    acc = acc - (acc / 31);
+                    step = step + 1;
+                }
+
+                if (acc > -4000000000000000000)
+                {
+                    return value;
+                }
+
                 return value;
             }
 
@@ -419,7 +441,7 @@ public sealed class GenericsFeatureTests : FeatureLlvmTestBase
                 return Identity(value);
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         Assert.Contains("define internal dso_local fastcc noundef i32 @__stark_mono_fn_Demo__Identity__i32(", llvm);
         Assert.Contains("call fastcc i32 @__stark_mono_fn_Demo__Identity__i32(", llvm);
@@ -468,7 +490,24 @@ public sealed class GenericsFeatureTests : FeatureLlvmTestBase
 
             inline finite law i64[min max] Read<T>(T value)
             {
-                return 1;
+                stack mut i64[min max] acc = 977;
+                stack mut i64[min max] step = 0;
+                while willexit (step < 2)
+                {
+                    acc = acc + (acc / 3);
+                    acc = acc - (acc / 5);
+                    acc = acc + (acc / 7);
+                    acc = acc - (acc / 11);
+                    acc = acc + (acc / 13);
+                    acc = acc - (acc / 17);
+                    acc = acc + (acc / 19);
+                    acc = acc - (acc / 23);
+                    acc = acc + (acc / 29);
+                    acc = acc - (acc / 31);
+                    step = step + 1;
+                }
+
+                return acc;
             }
 
             finite law i64[min max] Run(Big value)
@@ -476,7 +515,7 @@ public sealed class GenericsFeatureTests : FeatureLlvmTestBase
                 return Read(value);
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runHeader = ExtractDefinitionHeader(llvm, "Run");
         var specializationHeader = ExtractDefinitionHeader(llvm, "__stark_mono_fn_Demo__Read__Big");

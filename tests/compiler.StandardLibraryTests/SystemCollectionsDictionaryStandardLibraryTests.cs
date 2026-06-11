@@ -513,8 +513,7 @@ public sealed class SystemCollectionsDictionaryStandardLibraryTests : StandardLi
                 // Target Linux explicitly: this test asserts the libc-free sparse storage
                 // lowering, and only the Linux OS allocation shim is syscall-backed (macOS
                 // legitimately bottoms out in libc malloc, Windows in HeapAlloc).
-                TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null),
-                OptimizationLevel: CompilerOptimizationLevel.O0));
+                TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null)));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvm));
@@ -551,7 +550,6 @@ public sealed class SystemCollectionsDictionaryStandardLibraryTests : StandardLi
         var result = DefaultCompilerPipeline.Create().Run(
             new CompilationInput(File.ReadAllText(benchmarkPath), benchmarkPath),
             new CompilerOptions(
-                OptimizationLevel: CompilerOptimizationLevel.O3,
                 EmitLlvmIr: true,
                 TargetInfo: targetInfo,
                 ModuleResolver: new TargetAwareStdLibModuleResolver(
@@ -721,8 +719,7 @@ public sealed class SystemCollectionsDictionaryStandardLibraryTests : StandardLi
                 appPath),
             new CompilerOptions(
                 ModuleResolver: new FileSystemModuleResolver(sourceRoot),
-                StopAfterPassId: "emit-llvm",
-                OptimizationLevel: CompilerOptimizationLevel.O0));
+                StopAfterPassId: "emit-llvm"));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvm));
@@ -759,8 +756,7 @@ public sealed class SystemCollectionsDictionaryStandardLibraryTests : StandardLi
             new CompilationInput(TextKeyCollectionsProgram, appPath),
             new CompilerOptions(
                 ModuleResolver: new FileSystemModuleResolver(sourceRoot),
-                StopAfterPassId: "emit-llvm",
-                OptimizationLevel: CompilerOptimizationLevel.O0));
+                StopAfterPassId: "emit-llvm"));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvm));

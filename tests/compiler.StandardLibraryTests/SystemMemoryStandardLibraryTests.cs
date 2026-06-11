@@ -101,7 +101,6 @@ public sealed class SystemMemoryStandardLibraryTests : StandardLibraryTestSuite
             new CompilerOptions(
                 EmitLlvmIr: true,
                 ModuleResolver: new FileSystemModuleResolver(sourceRoot),
-                OptimizationLevel: CompilerOptimizationLevel.O0,
                 TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null)));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
@@ -447,13 +446,6 @@ public sealed class SystemMemoryStandardLibraryTests : StandardLibraryTestSuite
             return;
         }
 
-        // The -O0 native pipeline does not work on macOS yet: clang rejects the
-        // unoptimized stdlib modules. Re-enable when the -O0 emission path is fixed.
-        if (OperatingSystem.IsMacOS())
-        {
-            return;
-        }
-
         var nmPath = FindFirstAvailableTool(OperatingSystem.IsWindows() ? "llvm-nm" : "nm", OperatingSystem.IsWindows() ? "nm" : "llvm-nm");
         if (nmPath is null)
         {
@@ -478,7 +470,7 @@ public sealed class SystemMemoryStandardLibraryTests : StandardLibraryTestSuite
             var buildStdout = new StringWriter();
             var buildStderr = new StringWriter();
             var buildExitCode = await CompilerCli.RunAsync(
-                [systemPath, "--emit-lib", "-O0", "-o", libraryPath, "--target", targetInfo.Triple],
+                [systemPath, "--emit-lib", "-o", libraryPath, "--target", targetInfo.Triple],
                 new StringReader(string.Empty),
                 buildStdout,
                 buildStderr);
@@ -492,7 +484,7 @@ public sealed class SystemMemoryStandardLibraryTests : StandardLibraryTestSuite
             var packagedStdout = new StringWriter();
             var packagedStderr = new StringWriter();
             var packagedExitCode = await CompilerCli.RunAsync(
-                [packagedAppPath, "--emit-exe", "-O0", "-I", packageDirectory, "-o", packagedOutputPath, "--target", targetInfo.Triple],
+                [packagedAppPath, "--emit-exe", "-I", packageDirectory, "-o", packagedOutputPath, "--target", targetInfo.Triple],
                 new StringReader(string.Empty),
                 packagedStdout,
                 packagedStderr);
@@ -539,7 +531,7 @@ public sealed class SystemMemoryStandardLibraryTests : StandardLibraryTestSuite
             var stdout = new StringWriter();
             var stderr = new StringWriter();
             var exitCode = await CompilerCli.RunAsync(
-                [appPath, "--emit-exe", "-O0", "-I", sourceRoot, "--save-temps", tempsDirectory, "-o", outputPath, "--target", targetInfo.Triple],
+                [appPath, "--emit-exe", "-I", sourceRoot, "--save-temps", tempsDirectory, "-o", outputPath, "--target", targetInfo.Triple],
                 new StringReader(string.Empty),
                 stdout,
                 stderr);

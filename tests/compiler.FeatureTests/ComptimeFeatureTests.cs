@@ -28,7 +28,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 return comptime Build(20);
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
         Assert.Contains("ret i32 42", runBody);
@@ -54,7 +54,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 return comptime Build(14);
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
         Assert.Contains("ret i32 42", runBody);
@@ -78,7 +78,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 return comptime Pick<6>();
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
         Assert.Contains("ret i8 6", runBody);
@@ -102,7 +102,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 return Pick<5>();
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var specializationBody = ExtractDefinitionBody(llvm, "__stark_mono_fn_Demo__Pick__N_5");
         Assert.Contains("ret i8 7", specializationBody);
@@ -157,7 +157,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 return Forward<3>();
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var addBody = ExtractDefinitionBody(llvm, "__stark_mono_fn_Demo__Add2__N_3");
         Assert.Contains("ret i8 5", addBody);
@@ -186,7 +186,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 return comptime Build();
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
         Assert.Contains("ret i32 42", runBody);
@@ -212,7 +212,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 };
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
         Assert.Contains("ret i32 42", runBody);
@@ -269,7 +269,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 return comptime Score(Build(true));
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
         Assert.Contains("ret i32 42", runBody);
@@ -328,7 +328,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 return comptime Score(Build(false));
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
         Assert.Contains("ret i32 42", runBody);
@@ -404,7 +404,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 return comptime Score(Build(false));
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
         Assert.Contains("ret i32 42", runBody);
@@ -454,7 +454,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 return comptime Score(Build(false));
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
         Assert.Contains("ret i32 42", runBody);
@@ -481,7 +481,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 return comptime Calculator.Build(20);
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
         Assert.Contains("ret i32 42", runBody);
@@ -514,7 +514,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 };
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
         Assert.Contains("ret i32 42", runBody);
@@ -551,7 +551,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 };
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
         Assert.Contains("ret i32 42", runBody);
@@ -593,7 +593,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 };
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
         Assert.Contains("ret i32 42", runBody);
@@ -636,7 +636,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 };
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
         Assert.Contains("ret i32 42", runBody);
@@ -686,7 +686,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 };
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
         Assert.Contains("ret i32 42", runBody);
@@ -773,7 +773,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 return Answer;
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
         Assert.Contains("ret i32 42", runBody);
@@ -804,11 +804,11 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 return Values[1];
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         Assert.Contains("@Values = local_unnamed_addr constant [3 x i32] [i32 10, i32 20, i32 30]", llvm);
         var runBody = ExtractDefinitionBody(llvm, "Run");
-        Assert.Contains("extractvalue [3 x i32]", runBody);
+        Assert.Contains("ret i32 20", runBody);
         Assert.DoesNotContain("load i32, ptr @Values", runBody);
         Assert.DoesNotContain("call fastcc [3 x i32] @Build", runBody);
     }
@@ -836,7 +836,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 return comptime Build();
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
         Assert.Contains("insertvalue [3 x i32]", runBody);
@@ -870,11 +870,10 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 return (comptime Build()).Right;
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
-        Assert.Contains("insertvalue %Pair", runBody);
-        Assert.Contains("extractvalue %Pair", runBody);
+        Assert.Contains("ret i32 32", runBody);
         Assert.DoesNotContain("call fastcc %Pair @Build", runBody);
     }
 
@@ -905,7 +904,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 return Origin.Right;
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         Assert.Contains("@Origin = local_unnamed_addr constant %Pair { i32 3, i32 9 }", llvm);
         var runBody = ExtractDefinitionBody(llvm, "Run");
@@ -952,7 +951,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 return Graph.Item.Value + Graph.Values[1];
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         Assert.Contains("@Graph = local_unnamed_addr constant %Outer { %Inner { i32 7 }, [2 x i32] [i32 4, i32 5] }", llvm);
         var runBody = ExtractDefinitionBody(llvm, "Run");
@@ -985,11 +984,10 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 return (comptime Build()).X + (comptime Build()).Y;
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
-        Assert.Contains("insertvalue %Point", runBody);
-        Assert.Contains("extractvalue %Point", runBody);
+        Assert.Contains("ret i32 12", runBody);
         Assert.DoesNotContain("call fastcc %Point @Build", runBody);
     }
 
@@ -1017,7 +1015,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 return comptime local.Right;
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
         Assert.Contains("ret i32 5", runBody);
@@ -1062,10 +1060,10 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 }
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
-        Assert.Contains("insertvalue %Token", runBody);
+        Assert.Contains("ret i32 42", runBody);
         Assert.DoesNotContain("call fastcc %Token @Build", runBody);
     }
 
@@ -1110,11 +1108,12 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 }
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         Assert.Contains("@Favorite = local_unnamed_addr constant %Token { i8 2, i32 0, i32 2, i32 5 }", llvm);
         var runBody = ExtractDefinitionBody(llvm, "Run");
-        Assert.DoesNotContain("load %Token, ptr @Favorite", runBody);
+        Assert.Contains("getelementptr inbounds nuw %Token, ptr @Favorite", runBody);
+        Assert.DoesNotContain("call fastcc", runBody);
     }
 
     [Fact]
@@ -1157,7 +1156,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 return comptime Score(Token.Number(41));
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
         Assert.Contains("ret i32 42", runBody);
@@ -1236,7 +1235,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 };
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
         Assert.Contains("ret i32 56", runBody);
@@ -1300,7 +1299,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 };
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
         Assert.Contains("ret i32 42", runBody);
@@ -1355,7 +1354,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 };
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
         Assert.Contains("ret i32 7", runBody);
@@ -1390,7 +1389,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 };
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
         Assert.Contains("ret i32 12", runBody);
@@ -1415,7 +1414,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 return comptime sizeof(Pair) + comptime alignof(Pair);
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
         Assert.Contains("ret i64 24", runBody);
@@ -1443,7 +1442,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 };
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
         Assert.Contains("ret i64 12", runBody);
@@ -1473,7 +1472,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 return comptime LayoutScore();
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
         Assert.Contains("ret i64 24", runBody);
@@ -1500,7 +1499,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 return PairSize;
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         Assert.Contains("@PairSize = local_unnamed_addr constant i8 16", llvm);
         var runBody = ExtractDefinitionBody(llvm, "Run");
@@ -1541,7 +1540,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 return 0;
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
         Assert.Contains("ret i32 42", runBody);
@@ -1619,7 +1618,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 return 0;
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
         Assert.Contains("ret i32 42", runBody);
@@ -1731,7 +1730,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 return 0;
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
         Assert.Contains("ret i32 42", runBody);
@@ -1818,7 +1817,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 return 0;
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
         Assert.Contains("ret i32 42", runBody);
@@ -1882,7 +1881,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 return 0;
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
         Assert.Contains("ret i32 42", runBody);
@@ -1986,7 +1985,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 return comptime System.Compiler.EnumVariantCount<Token>();
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var headerBody = ExtractDefinitionBody(llvm, "HeaderFields");
         Assert.Contains("ret i64 3", headerBody);
@@ -2046,7 +2045,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 return comptime ShapeScore<Token>();
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var structBody = ExtractDefinitionBody(llvm, "RunStruct");
         Assert.Contains("ret i64 20", structBody);
@@ -2146,7 +2145,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 return comptime System.Compiler.TypeIsZeroSized<Marker>();
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
         Assert.Contains("ret i64 20", runBody);
@@ -2267,7 +2266,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                     && comptime RangeMaxAt<i32[-7 10], 10>();
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
         Assert.Contains("ret i64 112", runBody);
@@ -2394,7 +2393,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                     && comptime !System.Compiler.RawPointerIsReadOnly<WriteNumber>();
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
         Assert.Contains("ret i1 true", runBody);
@@ -2520,7 +2519,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 return 0;
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
         Assert.Contains("ret i64 9", runBody);
@@ -2636,7 +2635,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 return comptime System.Compiler.FieldIsMisaligned<Packet, 1>();
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
         Assert.Contains("ret i64 7", runBody);
@@ -2681,7 +2680,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 return comptime System.Compiler.EnumTagIsMisaligned<Packet>();
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
         Assert.Contains("ret i64 5", runBody);
@@ -2730,7 +2729,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 return comptime System.Compiler.EnumVariantPayloadIsMisaligned<Packet, 1, 1>();
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
         Assert.Contains("ret i64 15", runBody);
@@ -2809,7 +2808,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 return comptime LayoutScore<Packet, WordParts, AutoPacket>();
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
         Assert.Contains("ret i64 11", runBody);
@@ -2950,7 +2949,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 return 0;
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
         Assert.Contains("ret i32 42", runBody);
@@ -3025,7 +3024,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 return 0;
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
         Assert.Contains("ret i32 42", runBody);
@@ -3060,7 +3059,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 return 0;
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
         Assert.Contains("ret i64 31", runBody);
@@ -3134,7 +3133,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 return 0;
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
         Assert.Contains("ret i32 42", runBody);
@@ -3237,7 +3236,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 return 0;
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
         Assert.Contains("ret i32 42", runBody);
@@ -3317,7 +3316,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 return 0;
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
         Assert.Contains("ret i32 42", runBody);
@@ -3440,7 +3439,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 return 0;
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
         Assert.Contains("ret i32 42", runBody);
@@ -3537,7 +3536,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 return 0;
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
         Assert.Contains("ret i32 42", runBody);
@@ -3603,7 +3602,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 return 0;
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
         Assert.Contains("ret i32 42", runBody);
@@ -3653,7 +3652,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 return 0;
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
         Assert.Contains("ret i32 42", runBody);
@@ -3792,7 +3791,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 return 0;
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
         Assert.Contains("ret i32 42", runBody);
@@ -3858,7 +3857,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 return 0;
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
         Assert.Contains("ret i32 42", runBody);
@@ -3928,7 +3927,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 return 0;
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
         Assert.Contains("ret i32 42", runBody);
@@ -3996,7 +3995,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 return 0;
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
         Assert.Contains("ret i32 42", runBody);
@@ -4067,7 +4066,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 return 0;
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
         Assert.Contains("ret i32 42", runBody);
@@ -4178,7 +4177,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 return 0;
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
         Assert.Contains("ret i32 42", runBody);
@@ -4248,7 +4247,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 return 0;
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
         Assert.Contains("ret i32 42", runBody);
@@ -4420,7 +4419,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 return 0;
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
         Assert.Contains("ret i32 42", runBody);
@@ -6314,7 +6313,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 return comptime AssociatedScore<Reader, Counter, Box<i32[min max]>>();
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
         Assert.Contains("ret i64 42", runBody);
@@ -6524,7 +6523,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 return 0;
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
         Assert.Contains("ret i32 42", runBody);
@@ -6593,7 +6592,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 return 0;
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
         Assert.Contains("ret i32 42", runBody);
@@ -6711,7 +6710,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 return 0;
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
         Assert.Contains("ret i32 42", runBody);
@@ -6765,7 +6764,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 return comptime ShapeScore<Plain>();
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var widgetBody = ExtractDefinitionBody(llvm, "RunWidget");
         Assert.Contains("ret i32 7", widgetBody);
@@ -7093,7 +7092,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 return comptime Score<Pair>();
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var integerBody = ExtractDefinitionBody(llvm, "RunInteger");
         Assert.Contains("ret i64 4", integerBody);
@@ -7123,7 +7122,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 };
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
         Assert.Contains("ret i32 42", runBody);
@@ -7147,7 +7146,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 return Answer;
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         Assert.Contains("@Answer = local_unnamed_addr constant i8 42", llvm);
         var runBody = ExtractDefinitionBody(llvm, "Run");
@@ -7175,11 +7174,10 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 })[2];
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
-        Assert.Contains("extractvalue [3 x i32]", runBody);
-        Assert.Contains("ret i32 %", runBody);
+        Assert.Contains("ret i32 15", runBody);
     }
 
     [Fact]
@@ -7205,7 +7203,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 return Values[3];
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         Assert.Contains("@Values = local_unnamed_addr constant [4 x i32] [i32 0, i32 3, i32 6, i32 9]", llvm);
         var runBody = ExtractDefinitionBody(llvm, "Run");
@@ -7240,7 +7238,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 };
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
         Assert.Contains("ret i32 38", runBody);
@@ -7281,7 +7279,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 };
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
         Assert.Contains("ret i32 296", runBody);
@@ -7321,7 +7319,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 };
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
         Assert.Contains("ret i32 12", runBody);
@@ -7385,7 +7383,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 };
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
         Assert.Contains("ret i32 138", runBody);
@@ -7628,7 +7626,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 return 0;
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
         Assert.Contains("ret i32 42", runBody);
@@ -7723,7 +7721,7 @@ public sealed class ComptimeFeatureTests : FeatureLlvmTestBase
                 return 0;
             }
             """,
-            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+            new CompilerOptions());
 
         var runBody = ExtractDefinitionBody(llvm, "Run");
         Assert.Contains("ret i32 42", runBody);

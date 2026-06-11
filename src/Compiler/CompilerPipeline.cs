@@ -4,15 +4,6 @@ namespace Stark.Compiler;
 
 public sealed record CompilationInput(string SourceText, string? FilePath = null);
 
-public enum CompilerOptimizationLevel
-{
-    O0,
-    Og,
-    O1,
-    O2,
-    O3
-}
-
 public sealed record CompilerOptions(
     bool EmitLlvmIr = false,
     bool ContinueAfterErrors = false,
@@ -20,7 +11,6 @@ public sealed record CompilerOptions(
     string? StopAfterPassId = null,
     LlvmTargetInfo? TargetInfo = null,
     bool QualifyModuleSymbols = false,
-    CompilerOptimizationLevel OptimizationLevel = CompilerOptimizationLevel.O3,
     bool InternalizeModulePrivate = false,
     bool EnforceIntegerRangeStorageRules = true,
     IReadOnlySet<string>? ImportedInlineCloneSeedFunctions = null,

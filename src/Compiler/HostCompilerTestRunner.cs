@@ -269,7 +269,6 @@ internal static class HostCompilerTestRunner
                 StopAfterPassId: string.IsNullOrWhiteSpace(request.StopAfterPassId) ? null : request.StopAfterPassId,
                 TargetInfo: BuildTargetInfo(request),
                 QualifyModuleSymbols: request.QualifyModuleSymbols ?? false,
-                OptimizationLevel: ParseOptimizationLevel(request.OptimizationLevel),
                 InternalizeModulePrivate: request.InternalizeModulePrivate ?? false,
                 EnforceIntegerRangeStorageRules: request.StrictIntegerRanges ?? true,
                 ImportedInlineCloneSeedFunctions: request.ImportedInlineCloneSeedFunctions is { Count: > 0 } seeds
@@ -330,19 +329,6 @@ internal static class HostCompilerTestRunner
                 request.TargetFeatures is { Count: > 0 } ? request.TargetFeatures.ToArray() : null,
                 ParseRelocationModel(request.RelocationModel),
                 ParseCodeModel(request.CodeModel));
-        }
-
-        private static CompilerOptimizationLevel ParseOptimizationLevel(string? value)
-        {
-            return value?.Trim().ToLowerInvariant() switch
-            {
-                "0" or "o0" => CompilerOptimizationLevel.O0,
-                "g" or "og" => CompilerOptimizationLevel.Og,
-                "1" or "o1" => CompilerOptimizationLevel.O1,
-                "2" or "o2" => CompilerOptimizationLevel.O2,
-                "3" or "o3" or null or "" => CompilerOptimizationLevel.O3,
-                _ => CompilerOptimizationLevel.O3
-            };
         }
 
         private static LlvmRelocationModel ParseRelocationModel(string? value)
@@ -778,7 +764,6 @@ internal static class HostCompilerTestRunner
         public bool? EmitLlvmIr { get; init; }
         public bool? ContinueAfterErrors { get; init; }
         public bool? StrictIntegerRanges { get; init; }
-        public string? OptimizationLevel { get; init; }
         public string? TargetTriple { get; init; }
         public string? TargetDataLayout { get; init; }
         public string? TargetCpu { get; init; }

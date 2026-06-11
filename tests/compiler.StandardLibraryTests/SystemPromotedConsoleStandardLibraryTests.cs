@@ -255,7 +255,6 @@ public sealed class SystemPromotedConsoleStandardLibraryTests : StandardLibraryT
         var result = DefaultCompilerPipeline.Create().Run(
             new CompilationInput(File.ReadAllText(modulePath), modulePath),
             new CompilerOptions(
-                OptimizationLevel: CompilerOptimizationLevel.O3,
                 EmitLlvmIr: true,
                 ModuleResolver: resolver));
 
@@ -305,7 +304,6 @@ public sealed class SystemPromotedConsoleStandardLibraryTests : StandardLibraryT
         var result = DefaultCompilerPipeline.Create().Run(
             new CompilationInput(File.ReadAllText(modulePath), modulePath),
             new CompilerOptions(
-                OptimizationLevel: CompilerOptimizationLevel.O3,
                 EmitLlvmIr: true,
                 ModuleResolver: new FileSystemModuleResolver(sourceRoot)));
 
