@@ -1,3 +1,4 @@
+import System.C
 import System.Runtime.Platform.Windows
 module System.Runtime.Platform
 
@@ -720,4 +721,122 @@ internal unsafe fn i32[min max] FutexWake(rawmutptr<i32[min max]> address, i32[m
     {
         return System.Runtime.Platform.Windows.FutexWake(address, count);
     }
+}
+
+internal unsafe fn i32[min max] StartProcessCapture(
+    rawptr<System.C.c_char> executable,
+    borrow rawptr<System.C.c_char>[] argv,
+    rawptr<System.C.c_char> workingDirectory,
+    bool captureStdin,
+    rawmutptr<i32[min max]> processId,
+    rawmutptr<i32[min max]> stdinDescriptor,
+    rawmutptr<i32[min max]> stdoutDescriptor,
+    rawmutptr<i32[min max]> stderrDescriptor)
+    where overlap(executable, argv),
+          overlap(executable, workingDirectory),
+          overlap(argv, workingDirectory),
+          overlap(executable, processId),
+          overlap(executable, stdinDescriptor),
+          overlap(executable, stdoutDescriptor),
+          overlap(executable, stderrDescriptor)
+{
+    return System.Runtime.Platform.Windows.StartProcessCapture(
+        executable,
+        argv,
+        workingDirectory,
+        captureStdin,
+        processId,
+        stdinDescriptor,
+        stdoutDescriptor,
+        stderrDescriptor);
+}
+
+internal unsafe fn i32[min max] WaitProcess(i32[min max] processId, rawmutptr<i32[min max]> status)
+{
+    return System.Runtime.Platform.Windows.WaitProcess(processId, status);
+}
+
+internal unsafe fn i32[min max] WaitProcessNoHang(i32[min max] processId, rawmutptr<i32[min max]> status)
+{
+    return System.Runtime.Platform.Windows.WaitProcessNoHang(processId, status);
+}
+
+internal unsafe fn i32[min max] KillProcess(i32[min max] processId)
+{
+    return System.Runtime.Platform.Windows.KillProcess(processId);
+}
+
+internal unsafe fn i32[min max] PollProcessPipesTimed(
+    i32[min max] stdoutDescriptor,
+    i32[min max] stderrDescriptor,
+    rawmutptr<i16[min max]> stdoutEvents,
+    rawmutptr<i16[min max]> stderrEvents,
+    i32[min max] timeoutMilliseconds)
+{
+    return System.Runtime.Platform.Windows.PollProcessPipesTimed(
+        stdoutDescriptor,
+        stderrDescriptor,
+        stdoutEvents,
+        stderrEvents,
+        timeoutMilliseconds);
+}
+
+internal unsafe fn i32[min max] PollProcessIoTimed(
+    i32[min max] stdinDescriptor,
+    i32[min max] stdoutDescriptor,
+    i32[min max] stderrDescriptor,
+    rawmutptr<i16[min max]> stdinEvents,
+    rawmutptr<i16[min max]> stdoutEvents,
+    rawmutptr<i16[min max]> stderrEvents,
+    i32[min max] timeoutMilliseconds)
+{
+    return System.Runtime.Platform.Windows.PollProcessIoTimed(
+        stdinDescriptor,
+        stdoutDescriptor,
+        stderrDescriptor,
+        stdinEvents,
+        stdoutEvents,
+        stderrEvents,
+        timeoutMilliseconds);
+}
+
+internal inline finite law bool ProcessPipeReadable(i16[min max] events)
+{
+    return System.Runtime.Platform.Windows.ProcessPipeReadable(events);
+}
+
+internal inline finite law bool ProcessPipeWritable(i16[min max] events)
+{
+    return System.Runtime.Platform.Windows.ProcessPipeWritable(events);
+}
+
+internal inline finite law bool ProcessPipeClosed(i16[min max] events)
+{
+    return System.Runtime.Platform.Windows.ProcessPipeClosed(events);
+}
+
+internal unsafe fn i32[min max] SetEnvironmentRaw(rawptr<System.C.c_char> name, rawptr<System.C.c_char> value)
+    where overlap(name, value)
+{
+    return System.Runtime.Platform.Windows.SetEnvironmentRaw(name, value);
+}
+
+internal unsafe fn i32[min max] RemoveEnvironmentRaw(rawptr<System.C.c_char> name)
+{
+    return System.Runtime.Platform.Windows.RemoveEnvironmentRaw(name);
+}
+
+internal unsafe fn rawptr<System.C.c_char> GetEnvironmentRaw(rawptr<System.C.c_char> name)
+{
+    return System.Runtime.Platform.Windows.GetEnvironmentRaw(name);
+}
+
+internal unsafe fn i32[min max] ChangeCurrentDirectoryRaw(rawptr<System.C.c_char> path)
+{
+    return System.Runtime.Platform.Windows.ChangeCurrentDirectoryRaw(path);
+}
+
+internal unsafe fn i32[min max] ReadArgumentsBlock(mut borrow dynamic i8[min max] destination)
+{
+    return System.Runtime.Platform.Windows.ReadArgumentsBlock(destination);
 }

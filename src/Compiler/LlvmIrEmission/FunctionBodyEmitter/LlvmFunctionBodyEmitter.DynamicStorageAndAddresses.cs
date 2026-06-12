@@ -973,7 +973,8 @@ internal sealed partial class LlvmFunctionBodyEmitter
 
     private void EmitElementAddress(string result, SsaElementAddressRValue elementAddress)
     {
-        if (elementAddress.AggregateType.Kind == StarkTypeKind.FixedArray)
+        if (elementAddress.AggregateType.Kind == StarkTypeKind.FixedArray
+            && !ElementAddressTargetsWholeAggregate(elementAddress))
         {
             var indexValue = elementAddress.ConstantIndex is int constantIndex
                 ? constantIndex.ToString()
@@ -1005,6 +1006,19 @@ internal sealed partial class LlvmFunctionBodyEmitter
         }
 
         AppendLine($"  {result} = getelementptr{GetUnboundedPointerIndexGepFlags(elementAddress.Address, elementAddress.Index)} {MapType(elementAddress.AggregateType)}, ptr {FormatValue(elementAddress.Address)}, {MapType(elementAddress.Index.Type)} {FormatValue(elementAddress.Index)}");
+    }
+
+    /// <summary>
+    /// True when the element address yields a pointer to the whole aggregate type
+    /// rather than into it: addressing an element of dynamic or raw storage whose
+    /// element type is itself a fixed array. Such addresses must use the
+    /// pointer-element GEP form (stride = whole array), not the into-array form.
+    /// </summary>
+    private bool ElementAddressTargetsWholeAggregate(SsaElementAddressRValue elementAddress)
+    {
+        return elementAddress.Type.Kind == StarkTypeKind.RawPointer
+            && elementAddress.Type.ElementType is { } pointeeType
+            && string.Equals(MapType(pointeeType), MapType(elementAddress.AggregateType), StringComparison.Ordinal);
     }
 
     private bool TryAliasZeroElementAddress(string resultName, SsaElementAddressRValue elementAddress)

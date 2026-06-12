@@ -3094,7 +3094,6 @@ internal sealed class SsaIrValidator
         SourceLocation? location)
     {
         var aggregateType = NormalizeType(elementAddress.AggregateType);
-        var expectedElementType = aggregateType;
         if (aggregateType.Kind == StarkTypeKind.FixedArray)
         {
             if (aggregateType.ElementType is not { } fixedArrayElementType)
@@ -3103,10 +3102,24 @@ internal sealed class SsaIrValidator
                 return;
             }
 
-            expectedElementType = fixedArrayElementType;
+            // A fixed-array aggregate type reaches element addressing two ways:
+            // indexing into a fixed array (result pointee is the array element)
+            // and addressing an element of dynamic or raw storage whose element
+            // type is itself a fixed array (result pointee is the whole array).
+            // Accept either pointee shape.
+            if (elementAddress.Type.Kind == StarkTypeKind.RawPointer
+                && elementAddress.Type.ElementType is { } pointeeType
+                && (HaveSameLlvmValueShape(fixedArrayElementType, pointeeType)
+                    || HaveSameLlvmValueShape(aggregateType, pointeeType)))
+            {
+                return;
+            }
+
+            ValidatePointerElementShape(function, elementAddress.Type, fixedArrayElementType, "element address result", location);
+            return;
         }
 
-        ValidatePointerElementShape(function, elementAddress.Type, expectedElementType, "element address result", location);
+        ValidatePointerElementShape(function, elementAddress.Type, aggregateType, "element address result", location);
     }
 
     private void ValidateRawPointerValue(

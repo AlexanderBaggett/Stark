@@ -222,12 +222,14 @@ outermost layers. Without them, a Stark-hosted compiler cannot drive a build.
 ### Process & environment
 - [x] `argv` / `argc` access. [Process.stark](../../stdlib/src/System/Process.stark)
       exposes copied argument access through `Arguments()` and `ArgumentCount()`
-      on the current Linux backend.
+      on the Linux (`/proc/self/cmdline`) and macOS (`_NSGetArgv`) backends.
       [LanguageReference.md §14](../Userfacing/LanguageReference.md) notes
       `main` only needs `unsafe`/`ffi` if it touches raw `argc`/`argv`, so
       a safe wrapper API is the natural place.
-- [x] Environment variable read/write on the current Linux backend.
-- [x] Process spawn with stdin/stdout/stderr capture + exit code on the current Linux backend.
+- [x] Environment variable read/write on the Linux and macOS backends (live `getenv`/`setenv`).
+- [x] Process spawn with stdin/stdout/stderr capture + exit code on the Linux
+      (fork/execvp) and macOS (posix_spawnp) backends through the platform
+      dispatch layer; the Windows backend is stubbed.
       [NativeToolchain.cs:30-507](../../src/Compiler/NativeToolchain.cs#L30-L507)
       shells out to `clang` and the linker repeatedly.
 

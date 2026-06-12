@@ -113,6 +113,13 @@ internal sealed partial class MidLevelIrLowerer
 
                 if (postfixPart.expressionList() is { } expressionList)
                 {
+                    // A start/count (or empty full-view) bracket is the slice
+                    // form: a value expression, never an addressable place step.
+                    if (expressionList.expression().Length != 1)
+                    {
+                        return false;
+                    }
+
                     foreach (var indexExpression in expressionList.expression())
                     {
                         if (currentType.Kind == StarkTypeKind.FixedArray
@@ -489,6 +496,13 @@ internal sealed partial class MidLevelIrLowerer
 
                 if (postfixPart.expressionList() is { } expressionList)
                 {
+                    // A start/count (or empty full-view) bracket is the slice
+                    // form: a value expression, never an addressable place step.
+                    if (expressionList.expression().Length != 1)
+                    {
+                        return false;
+                    }
+
                     foreach (var indexExpression in expressionList.expression())
                     {
                         if (currentType.Kind == StarkTypeKind.FixedArray
@@ -618,6 +632,14 @@ internal sealed partial class MidLevelIrLowerer
             out PlaceTarget updated)
         {
             updated = target;
+
+            // A start/count (or empty full-view) bracket is the slice form:
+            // a value expression, never an addressable place step.
+            if (expressionList.expression().Length != 1)
+            {
+                return false;
+            }
+
             var path = target.Path.ToList();
             var currentType = target.Type;
             var usesAddressModel = target.UsesAddressModel;
@@ -759,6 +781,13 @@ internal sealed partial class MidLevelIrLowerer
 
                 if (postfixPart.expressionList() is { } expressionList)
                 {
+                    // A start/count (or empty full-view) bracket is the slice
+                    // form: a value expression, never an addressable place step.
+                    if (expressionList.expression().Length != 1)
+                    {
+                        return false;
+                    }
+
                     foreach (var indexExpression in expressionList.expression())
                     {
                         if (currentType.Kind == StarkTypeKind.FixedArray

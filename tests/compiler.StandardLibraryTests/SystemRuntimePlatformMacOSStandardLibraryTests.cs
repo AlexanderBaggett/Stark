@@ -193,6 +193,56 @@ public sealed class SystemRuntimePlatformMacOSStandardLibraryTests
     }
 
     [Fact]
+    public void SourceStdLibBuildRoutesProcessSpawnThroughMacOSModuleForMacOSTargets()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var targetInfo = new LlvmTargetInfo(MacOSTargetTriple, null);
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(
+                """
+                import System.Process
+                module Demo
+
+                export unsafe fn i32[min max] main()
+                {
+                    switch (System.Process.RunCapture("/bin/echo"))
+                    {
+                        case System.Process.ProcessResult<System.Process.ProcessOutput>.Err(var error):
+                            return 1;
+                        case System.Process.ProcessResult<System.Process.ProcessOutput>.Ok(var output):
+                            return output.ExitCode;
+                    }
+                }
+                """,
+                "MacOSProcessSpawnDispatchProbe.stark"),
+            new CompilerOptions(
+                EmitLlvmIr: true,
+                TargetInfo: targetInfo,
+                ModuleResolver: new TargetAwareStdLibModuleResolver(
+                    new FileSystemModuleResolver(sourceRoot),
+                    [sourceRoot],
+                    targetInfo)));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.ModuleGraph, out ModuleGraph? moduleGraph));
+        Assert.NotNull(moduleGraph);
+        // System.Process routes spawning through the System.Runtime.Platform
+        // dispatch module, so a macOS-target process build must not pull the
+        // Linux or Windows backends back into the module graph.
+        Assert.True(moduleGraph.ContainsLoadedModule("System.Runtime.Platform.MacOS"));
+        Assert.False(moduleGraph.ContainsLoadedModule("System.Runtime.Platform.Linux"));
+        Assert.False(moduleGraph.ContainsLoadedModule("System.Runtime.Platform.Windows"));
+
+        var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
+        Assert.Contains("@System_Runtime_Platform_MacOS_StartProcessCapture", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("@System_Runtime_Platform_Linux_StartProcessCapture", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("@System_Runtime_Platform_Windows_StartProcessCapture", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("@fork(", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("@execvp(", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void MacOSRuntimeAllocatorUsesMallocReallocAndFreeForAppleTargets()
     {
         var repositoryRoot = FindRepositoryRoot();

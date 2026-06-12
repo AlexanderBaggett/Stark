@@ -150,7 +150,7 @@ public sealed class SystemProcessStandardLibraryTests : StandardLibraryTestSuite
     public async Task SourceProcessExitTerminatesWithRequestedExitCode()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo)
-            || !OperatingSystem.IsLinux())
+            || !(OperatingSystem.IsLinux() || OperatingSystem.IsMacOS()))
         {
             return;
         }
@@ -215,7 +215,7 @@ public sealed class SystemProcessStandardLibraryTests : StandardLibraryTestSuite
     public async Task SourceProcessRunCaptureCapturesStdoutStderrExitCodeAndEnvironment()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo)
-            || !OperatingSystem.IsLinux())
+            || !(OperatingSystem.IsLinux() || OperatingSystem.IsMacOS()))
         {
             return;
         }
@@ -442,7 +442,7 @@ public sealed class SystemProcessStandardLibraryTests : StandardLibraryTestSuite
     public async Task SourceProcessRunCaptureWithInputFeedsStdinAndClosesIt()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo)
-            || !OperatingSystem.IsLinux())
+            || !(OperatingSystem.IsLinux() || OperatingSystem.IsMacOS()))
         {
             return;
         }
@@ -566,7 +566,7 @@ public sealed class SystemProcessStandardLibraryTests : StandardLibraryTestSuite
     public async Task SourceProcessRunCaptureTimeoutKillsChildAndKeepsPartialOutput()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo)
-            || !OperatingSystem.IsLinux())
+            || !(OperatingSystem.IsLinux() || OperatingSystem.IsMacOS()))
         {
             return;
         }

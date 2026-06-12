@@ -31,6 +31,104 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
+    public void DynamicRawPointerStorageSliceLowersToSlicePairInLocalAndArgumentPositions()
+    {
+        // Regression: the assignment-target place resolvers used to treat the
+        // start/count bracket over a dynamic of raw pointers as two chained
+        // single-index steps ((argv[0])[count]), emitting a pointee-typed load
+        // that was then stored as the slice pair.
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn u64[0 2 ** 63 - 1] CountEntries(borrow rawptr<i8[min max]>[] entries)
+            {
+                return entries.Length;
+            }
+
+            export unsafe fn i32[min max] main()
+            {
+                stack mut dynamic rawptr<i8[min max]> pointers = new();
+                if (!pointers.TryReserve(2))
+                {
+                    return 1;
+                }
+
+                stack mut i8[min max] storage = 7;
+                init pointers[pointers.Length] = &storage;
+                init pointers[pointers.Length] = null;
+
+                stack rawptr<i8[min max]>[] view = pointers[0, pointers.Length];
+                if (view.Length != 2)
+                {
+                    return 2;
+                }
+
+                if (CountEntries(pointers[0, pointers.Length]) != 2)
+                {
+                    return 3;
+                }
+
+                if (*(view[0]) != 7)
+                {
+                    return 4;
+                }
+
+                return 0;
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+
+        // Both slice uses (local binding and direct call argument) must build the
+        // { ptr, i64 } pair from the element address and the count.
+        Assert.Equal(2, Regex.Matches(llvm, @"insertvalue \{ ptr, i64 \} zeroinitializer, ptr ").Count);
+        // The broken chained form loaded a pointee byte and stored it as the pair.
+        Assert.DoesNotMatch(new Regex(@"%(\w+) = load i8[^\n]*\n\s*store \{ ptr, i64 \} %\1[,\s]"), llvm);
+    }
+
+    [Fact]
+    public void DynamicRawPointerStorageSliceReassignmentLowersToSlicePair()
+    {
+        // Same regression family for plain reassignment of an existing slice
+        // local from a start/count access over a dynamic of raw pointers.
+        var result = Compile(
+            """
+            module Demo
+
+            export unsafe fn i32[min max] main()
+            {
+                stack mut dynamic rawptr<i8[min max]> pointers = new();
+                if (!pointers.TryReserve(1))
+                {
+                    return 1;
+                }
+
+                init pointers[pointers.Length] = null;
+                stack mut rawptr<i8[min max]>[] view = pointers[0, 0];
+                view = pointers[0, pointers.Length];
+                if (view.Length != 1)
+                {
+                    return 2;
+                }
+
+                return 0;
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+
+        // The dead initial slice store may be eliminated; the live reassignment
+        // must still build the pair.
+        Assert.True(
+            Regex.Matches(llvm, @"insertvalue \{ ptr, i64 \} zeroinitializer, ptr ").Count >= 1,
+            "Expected the dynamic start/count reassignment to lower to a slice-pair construction.");
+        Assert.DoesNotMatch(new Regex(@"%(\w+) = load i8[^\n]*\n\s*store \{ ptr, i64 \} %\1[,\s]"), llvm);
+    }
+
+    [Fact]
     public void FunctionPointerCallsEmitFastccIndirectCall()
     {
         var result = Compile(

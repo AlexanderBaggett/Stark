@@ -1,4 +1,5 @@
 import System.C
+import System.Memory
 import System.Runtime.Buffer
 module System.Runtime.Platform.Linux
 
@@ -31,6 +32,7 @@ internal unsafe ffi(c) fn i32[min max] dup2(i32[min max] oldFileDescriptor, i32[
 internal unsafe ffi(c) fn i32[min max] execvp(rawptr<System.C.c_char> file, rawptr<rawptr<System.C.c_char>> argv)
     where overlap(file, argv);
 internal unsafe ffi(c) fn i32[min max] fork();
+internal unsafe ffi(c) fn rawptr<System.C.c_char> getenv(rawptr<System.C.c_char> name);
 internal unsafe ffi(c) fn i32[min max] kill(i32[min max] processId, i32[min max] signal);
 internal unsafe ffi(c) fn i32[min max] pipe(rawmutptr<i32[min max]> fileDescriptors);
 internal unsafe ffi(c) fn i32[min max] poll(rawmutptr<LinuxPollFd> fileDescriptors, u64[0 2 ** 63 - 1] count, i32[min max] timeoutMilliseconds);
@@ -1020,6 +1022,16 @@ internal unsafe fn i32[min max] RemoveEnvironmentRaw(rawptr<System.C.c_char> nam
     return unsetenv(name);
 }
 
+internal unsafe fn rawptr<System.C.c_char> GetEnvironmentRaw(rawptr<System.C.c_char> name)
+{
+    if (name == null)
+    {
+        return null;
+    }
+
+    return getenv(name);
+}
+
 internal unsafe fn i32[min max] ChangeCurrentDirectoryRaw(rawptr<System.C.c_char> path)
 {
     if (path == null)
@@ -1050,6 +1062,149 @@ internal unsafe fn i32[min max] DuplicateProcessDescriptor(i32[min max] oldFileD
     return dup2(oldFileDescriptor, newFileDescriptor);
 }
 
+internal unsafe fn void CloseProcessDescriptorIfOpen(i32[min max] descriptor)
+{
+    if (descriptor >= 0)
+    {
+        stack i32[min max] ignoredClose = CloseRawDescriptor(descriptor);
+    }
+
+    return;
+}
+
+// Spawns the executable with stdout/stderr (and optionally stdin) routed
+// through fresh pipes. Returns 0 with the child id and parent-side pipe
+// descriptors on success and a negative value when the pipes or the process
+// itself cannot be created. The child reports descriptor/directory setup
+// failures as exit code 126 and exec failures as exit code 127, matching
+// shell conventions; platforms without a fork/exec split return those codes
+// directly from this call instead.
+internal unsafe fn i32[min max] StartProcessCapture(
+    rawptr<System.C.c_char> executable,
+    borrow rawptr<System.C.c_char>[] argv,
+    rawptr<System.C.c_char> workingDirectory,
+    bool captureStdin,
+    rawmutptr<i32[min max]> processId,
+    rawmutptr<i32[min max]> stdinDescriptor,
+    rawmutptr<i32[min max]> stdoutDescriptor,
+    rawmutptr<i32[min max]> stderrDescriptor)
+    where overlap(executable, argv),
+          overlap(executable, workingDirectory),
+          overlap(argv, workingDirectory),
+          overlap(executable, processId),
+          overlap(executable, stdinDescriptor),
+          overlap(executable, stdoutDescriptor),
+          overlap(executable, stderrDescriptor)
+{
+    if (executable == null
+        || argv.Length == 0
+        || processId == null
+        || stdinDescriptor == null
+        || stdoutDescriptor == null
+        || stderrDescriptor == null)
+    {
+        return -1;
+    }
+
+    stack mut i32[min max][2] stdinPipe;
+    stack mut i32[min max][2] stdoutPipe;
+    stack mut i32[min max][2] stderrPipe;
+    stdinPipe[0] = -1;
+    stdinPipe[1] = -1;
+    stdoutPipe[0] = -1;
+    stdoutPipe[1] = -1;
+    stderrPipe[0] = -1;
+    stderrPipe[1] = -1;
+
+    if (captureStdin && CreateProcessPipe(&stdinPipe[0]) != 0)
+    {
+        return -1;
+    }
+
+    if (CreateProcessPipe(&stdoutPipe[0]) != 0)
+    {
+        CloseProcessDescriptorIfOpen(stdinPipe[0]);
+        CloseProcessDescriptorIfOpen(stdinPipe[1]);
+        return -1;
+    }
+
+    if (CreateProcessPipe(&stderrPipe[0]) != 0)
+    {
+        CloseProcessDescriptorIfOpen(stdinPipe[0]);
+        CloseProcessDescriptorIfOpen(stdinPipe[1]);
+        CloseProcessDescriptorIfOpen(stdoutPipe[0]);
+        CloseProcessDescriptorIfOpen(stdoutPipe[1]);
+        return -1;
+    }
+
+    stack i32[min max] forkResult = ForkProcess();
+    if (forkResult < 0)
+    {
+        CloseProcessDescriptorIfOpen(stdinPipe[0]);
+        CloseProcessDescriptorIfOpen(stdinPipe[1]);
+        CloseProcessDescriptorIfOpen(stdoutPipe[0]);
+        CloseProcessDescriptorIfOpen(stdoutPipe[1]);
+        CloseProcessDescriptorIfOpen(stderrPipe[0]);
+        CloseProcessDescriptorIfOpen(stderrPipe[1]);
+        return forkResult;
+    }
+
+    if (forkResult == 0)
+    {
+        CloseProcessDescriptorIfOpen(stdinPipe[1]);
+        CloseProcessDescriptorIfOpen(stdoutPipe[0]);
+        CloseProcessDescriptorIfOpen(stderrPipe[0]);
+
+        if (captureStdin && DuplicateProcessDescriptor(stdinPipe[0], 0) < 0)
+        {
+            ExitProcessNoCleanup(126);
+        }
+
+        if (DuplicateProcessDescriptor(stdoutPipe[1], 1) < 0)
+        {
+            ExitProcessNoCleanup(126);
+        }
+
+        if (DuplicateProcessDescriptor(stderrPipe[1], 2) < 0)
+        {
+            ExitProcessNoCleanup(126);
+        }
+
+        CloseProcessDescriptorIfOpen(stdinPipe[0]);
+        CloseProcessDescriptorIfOpen(stdoutPipe[1]);
+        CloseProcessDescriptorIfOpen(stderrPipe[1]);
+
+        if (workingDirectory != null)
+        {
+            if (chdir(workingDirectory) != 0)
+            {
+                ExitProcessNoCleanup(126);
+            }
+        }
+
+        stack i32[min max] ignoredExec = execvp(executable, &argv[0]);
+        ExitProcessNoCleanup(127);
+    }
+
+    CloseProcessDescriptorIfOpen(stdinPipe[0]);
+    CloseProcessDescriptorIfOpen(stdoutPipe[1]);
+    CloseProcessDescriptorIfOpen(stderrPipe[1]);
+
+    *processId = forkResult;
+    if (captureStdin)
+    {
+        *stdinDescriptor = stdinPipe[1];
+    }
+    else
+    {
+        *stdinDescriptor = -1;
+    }
+
+    *stdoutDescriptor = stdoutPipe[0];
+    *stderrDescriptor = stderrPipe[0];
+    return 0;
+}
+
 internal unsafe fn i32[min max] WaitProcess(i32[min max] processId, rawmutptr<i32[min max]> status)
 {
     if (status == null)
@@ -1073,6 +1228,44 @@ internal unsafe fn i32[min max] WaitProcessNoHang(i32[min max] processId, rawmut
 internal unsafe fn i32[min max] KillProcess(i32[min max] processId)
 {
     return kill(processId, LinuxSignalKill);
+}
+
+// Appends the current process argument vector to the destination as
+// NUL-terminated entries, one per argument, in /proc/self/cmdline byte format.
+internal unsafe fn i32[min max] ReadArgumentsBlock(mut borrow dynamic i8[min max] destination)
+{
+    switch (OpenFileReadResult("/proc/self/cmdline"))
+    {
+        case FileOpenResult.Err(var openError):
+            return openError;
+        case FileOpenResult.Ok(var handle):
+            stack mut i8[min max][4096] storage;
+            while willexit (true)
+            {
+                stack i64[min max] readCount = ReadFileBytes(&storage[0], 4096, handle);
+                if (readCount < 0)
+                {
+                    stack i32[min max] ignoredCloseReadError = CloseFile(handle);
+                    return (i32[min max])readCount;
+                }
+
+                if (readCount == 0)
+                {
+                    stack i32[min max] ignoredCloseDone = CloseFile(handle);
+                    return 0;
+                }
+
+                stack u64[0 2 ** 63 - 1] count = (u64[0 2 ** 63 - 1])readCount;
+                stack i8[min max][] chunk = slice(&storage[0], count);
+                switch (System.Memory.AppendBytes(destination, chunk, count))
+                {
+                    case System.Memory.MemoryStatus.Err(var appendError):
+                        stack i32[min max] ignoredCloseAppendError = CloseFile(handle);
+                        return -12;
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+    }
 }
 
 internal unsafe fn i64[min max] MonotonicMilliseconds()

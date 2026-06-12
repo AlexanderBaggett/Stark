@@ -218,6 +218,7 @@ internal sealed class TypeChecker
         CheckGlobalDeclarations();
         CheckConstructorBodies();
         CheckFunctionBodies();
+        MaterializeImportedSourceInstantiations();
         ValidateThreadEntryMutableStaticReferences();
 
         var threadSafetyLawFacts = ComputeThreadSafetyLawFacts();
@@ -3157,6 +3158,282 @@ internal sealed class TypeChecker
                 }
             }
         }
+    }
+
+    /// <summary>
+    /// Materializes concrete generic instantiations referenced inside imported
+    /// source modules. Imported non-generic function bodies skip body checking
+    /// (their own compile as a root module already validated them), so
+    /// instantiations that appear only there — locals, constructor expressions,
+    /// module-private signatures — would otherwise never reach
+    /// <c>EnsureMonomorphizedType</c>: no concrete enum/type registration and no
+    /// monomorphization triggers, which crashes MIR lowering of those bodies. The
+    /// syntax-level walk resolves every type-argument-bearing reference and runs it
+    /// through the normal monomorphization entry point. References mentioning an
+    /// in-scope generic parameter belong to generic templates and are skipped (they
+    /// are planned at their concrete instantiations); references whose arguments
+    /// are comptime values rather than types are also skipped here and still
+    /// require a root-visible use today, as do instantiations of an imported
+    /// module's own module-private generics (private declarations are not in the
+    /// type catalog).
+    /// </summary>
+    private void MaterializeImportedSourceInstantiations()
+    {
+        foreach (var module in _loadedModules.Modules.Values)
+        {
+            if (module.Reference.IsRoot || module.PackageImageFacts is not null)
+            {
+                continue;
+            }
+
+            foreach (var declaration in module.ParseResult.Root.topLevelDeclaration())
+            {
+                var declaredTypeParameters = CollectDeclaredTypeParameterNames(declaration, names: null);
+                MaterializeImportedInstantiationCandidates(declaration, module, declaredTypeParameters);
+            }
+        }
+    }
+
+    private static HashSet<string>? CollectDeclaredTypeParameterNames(
+        Antlr4.Runtime.Tree.IParseTree node,
+        HashSet<string>? names)
+    {
+        if (node is StarkParser.TypeParameterListContext typeParameterList)
+        {
+            foreach (var parameter in typeParameterList.typeParameter())
+            {
+                (names ??= new HashSet<string>(StringComparer.Ordinal)).Add(parameter.Identifier().GetText());
+            }
+        }
+
+        for (var index = 0; index < node.ChildCount; index++)
+        {
+            names = CollectDeclaredTypeParameterNames(node.GetChild(index), names);
+        }
+
+        return names;
+    }
+
+    private void MaterializeImportedInstantiationCandidates(
+        Antlr4.Runtime.Tree.IParseTree node,
+        LoadedModuleDocument module,
+        HashSet<string>? genericParameters)
+    {
+        if (node is StarkParser.Type_Context typeContext)
+        {
+            if (SubtreeHasTypeArgumentList(typeContext)
+                && ImportedTypeNamesResolveSilently(typeContext, module.SyntaxModel.ModuleName, genericParameters))
+            {
+                // Use the raw resolver: imported modules may reference their own
+                // package-visible types, which root-context resolution would reject.
+                var resolved = _typeResolver.ResolveType(typeContext, genericParameters, module.SyntaxModel.ModuleName);
+                MaterializeImportedInstantiationSymbol(resolved, typeContext.Start, module, genericParameters);
+            }
+
+            return;
+        }
+
+        if (node is StarkParser.GenericQualifiedNameContext genericName)
+        {
+            MaterializeImportedGenericQualifiedName(genericName, module, genericParameters);
+            return;
+        }
+
+        for (var index = 0; index < node.ChildCount; index++)
+        {
+            MaterializeImportedInstantiationCandidates(node.GetChild(index), module, genericParameters);
+        }
+    }
+
+    /// <summary>
+    /// True when every named type mentioned in the subtree resolves without
+    /// diagnostics in the given module scope. The materializer trusts imported
+    /// modules and must skip silently rather than report — references it cannot
+    /// resolve (module-private generics, aliases of them, associated types) keep
+    /// today's behavior of requiring a root-visible use.
+    /// </summary>
+    private bool ImportedTypeNamesResolveSilently(
+        Antlr4.Runtime.Tree.IParseTree node,
+        string moduleName,
+        HashSet<string>? genericParameters)
+    {
+        if (node is StarkParser.SimpleTypeContext simpleType)
+        {
+            if (simpleType.builtinType() is not null)
+            {
+                return true;
+            }
+
+            var typeName = simpleType.qualifiedName().GetText();
+            if (genericParameters?.Contains(typeName) == true)
+            {
+                return ImportedChildTypeNamesResolveSilently(node, moduleName, genericParameters);
+            }
+
+            var resolvable = _namedTypes.ContainsKey(typeName)
+                || _typeAliases.ContainsKey(typeName)
+                || (!typeName.Contains('.', StringComparison.Ordinal)
+                    && (_namedTypes.ContainsKey($"{moduleName}.{typeName}")
+                        || _typeAliases.ContainsKey($"{moduleName}.{typeName}")
+                        || _moduleGraph.EnumerateAccessibleModuleQualifiedNames(moduleName, typeName)
+                            .Any(candidate => _namedTypes.ContainsKey(candidate) || _typeAliases.ContainsKey(candidate))));
+            if (!resolvable)
+            {
+                return false;
+            }
+
+            return ImportedChildTypeNamesResolveSilently(node, moduleName, genericParameters);
+        }
+
+        return ImportedChildTypeNamesResolveSilently(node, moduleName, genericParameters);
+    }
+
+    private bool ImportedChildTypeNamesResolveSilently(
+        Antlr4.Runtime.Tree.IParseTree node,
+        string moduleName,
+        HashSet<string>? genericParameters)
+    {
+        for (var index = 0; index < node.ChildCount; index++)
+        {
+            if (!ImportedTypeNamesResolveSilently(node.GetChild(index), moduleName, genericParameters))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool SubtreeHasTypeArgumentList(Antlr4.Runtime.Tree.IParseTree node)
+    {
+        if (node is StarkParser.TypeArgumentListContext)
+        {
+            return true;
+        }
+
+        for (var index = 0; index < node.ChildCount; index++)
+        {
+            if (SubtreeHasTypeArgumentList(node.GetChild(index)))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private void MaterializeImportedGenericQualifiedName(
+        StarkParser.GenericQualifiedNameContext genericName,
+        LoadedModuleDocument module,
+        HashSet<string>? genericParameters)
+    {
+        var argumentContexts = genericName.typeArgumentList().genericArgument();
+        var argumentSymbols = new List<StarkTypeSymbol>(argumentContexts.Length);
+        foreach (var argument in argumentContexts)
+        {
+            if (argument.type_() is not { } argumentType)
+            {
+                // Comptime value argument — see the materializer doc comment.
+                return;
+            }
+
+            if (!ImportedTypeNamesResolveSilently(argumentType, module.SyntaxModel.ModuleName, genericParameters))
+            {
+                return;
+            }
+
+            argumentSymbols.Add(_typeResolver.ResolveType(argumentType, genericParameters, module.SyntaxModel.ModuleName));
+        }
+
+        var typeName = genericName.qualifiedName().GetText();
+        var moduleName = module.SyntaxModel.ModuleName;
+        string? baseName = null;
+        if (!typeName.Contains('.', StringComparison.Ordinal)
+            && _namedTypes.ContainsKey($"{moduleName}.{typeName}"))
+        {
+            baseName = $"{moduleName}.{typeName}";
+        }
+        else if (_namedTypes.ContainsKey(typeName))
+        {
+            baseName = typeName;
+        }
+        else if (!typeName.Contains('.', StringComparison.Ordinal)
+            && _moduleGraph.EnumerateAccessibleModuleQualifiedNames(moduleName, typeName)
+                .Where(_namedTypes.ContainsKey)
+                .Take(2)
+                .ToArray() is { Length: 1 } importedMatches)
+        {
+            baseName = importedMatches[0];
+        }
+
+        if (baseName is null)
+        {
+            return;
+        }
+
+        MaterializeImportedInstantiationSymbol(
+            StarkTypeSymbols.GenericInstantiation(baseName, argumentSymbols),
+            genericName.Start,
+            module,
+            genericParameters);
+    }
+
+    private void MaterializeImportedInstantiationSymbol(
+        StarkTypeSymbol symbol,
+        Antlr4.Runtime.IToken location,
+        LoadedModuleDocument module,
+        HashSet<string>? genericParameters)
+    {
+        if (ContainsOpenGenericReference(symbol, genericParameters))
+        {
+            return;
+        }
+
+        if (StarkTypeSymbols.IsGenericInstantiation(symbol)
+            || symbol.ElementType is not null)
+        {
+            EnsureMonomorphizedType(
+                symbol,
+                new SourceLocation(module.Reference.FilePath, location.Line, location.Column + 1));
+        }
+    }
+
+    private static bool ContainsOpenGenericReference(StarkTypeSymbol symbol, HashSet<string>? genericParameters)
+    {
+        if (genericParameters is null)
+        {
+            return false;
+        }
+
+        if (symbol.Kind == StarkTypeKind.Named
+            && symbol.NamedType is { } namedType
+            && !namedType.Contains('.', StringComparison.Ordinal)
+            && genericParameters.Contains(namedType))
+        {
+            return true;
+        }
+
+        if (symbol.FixedLengthParameterName is { } lengthParameter
+            && genericParameters.Contains(lengthParameter))
+        {
+            return true;
+        }
+
+        if (symbol.ElementType is { } elementType
+            && ContainsOpenGenericReference(elementType, genericParameters))
+        {
+            return true;
+        }
+
+        foreach (var argument in symbol.TypeArguments ?? [])
+        {
+            if (ContainsOpenGenericReference(argument, genericParameters))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private void CheckFunctionBodies()
