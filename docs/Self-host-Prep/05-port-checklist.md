@@ -218,21 +218,24 @@ Each test target path is provisional and assumes the test harness lives under
 
 | Port | Source Path | Provisional Target Path | Effort | Depends On Checklist Items | Gap Dependencies |
 |---|---|---|---|---|---|
-| - [ ] | `tests/compiler.FeatureTests/FeatureLlvmTestBase.cs` | `tests-stark/compiler.FeatureTests/FeatureLlvmTestBase.stark` | M | test harness, host compiler runner | TEST-02, TEST-03, TEST-05, TEST-06, TEST-07 |
-| - [ ] | `tests/compiler.FeatureTests/BorrowingFeatureTests.cs` | `tests-stark/compiler.FeatureTests/BorrowingFeatureTests.stark` | S | `FeatureLlvmTestBase` | TEST-02, TEST-03, TEST-06 |
-| - [ ] | `tests/compiler.FeatureTests/EnumsFeatureTests.cs` | `tests-stark/compiler.FeatureTests/EnumsFeatureTests.stark` | M | `FeatureLlvmTestBase` | TEST-02, TEST-03, TEST-06 |
-| - [ ] | `tests/compiler.FeatureTests/FloatingPointFeatureTests.cs` | `tests-stark/compiler.FeatureTests/FloatingPointFeatureTests.stark` | S | `FeatureLlvmTestBase` | TEST-02, TEST-03, TEST-06 |
-| - [ ] | `tests/compiler.FeatureTests/FunctionClassesFeatureTests.cs` | `tests-stark/compiler.FeatureTests/FunctionClassesFeatureTests.stark` | S | `FeatureLlvmTestBase` | TEST-02, TEST-03, TEST-06 |
-| - [ ] | `tests/compiler.FeatureTests/FunctionKindsFeatureTests.cs` | `tests-stark/compiler.FeatureTests/FunctionKindsFeatureTests.stark` | S | `FeatureLlvmTestBase` | TEST-02, TEST-03, TEST-06 |
-| - [ ] | `tests/compiler.FeatureTests/GenericsFeatureTests.cs` | `tests-stark/compiler.FeatureTests/GenericsFeatureTests.stark` | M | `FeatureLlvmTestBase`, artifact access | TEST-02, TEST-03, TEST-06, TEST-07 |
-| - [ ] | `tests/compiler.FeatureTests/IntegerFeatureTests.cs` | `tests-stark/compiler.FeatureTests/IntegerFeatureTests.stark` | S | `FeatureLlvmTestBase` | TEST-02, TEST-03, TEST-06 |
-| - [ ] | `tests/compiler.FeatureTests/ModulesAndImportsFeatureTests.cs` | `tests-stark/compiler.FeatureTests/ModulesAndImportsFeatureTests.stark` | M | host compiler runner/temp files | TEST-02, TEST-04, TEST-06 |
-| - [ ] | `tests/compiler.FeatureTests/StringsFeatureTests.cs` | `tests-stark/compiler.FeatureTests/StringsFeatureTests.stark` | M | text helpers | TEST-02, TEST-03, TEST-06, S02 |
-| - [ ] | `tests/compiler.FeatureTests/StructRecordFeatureTests.cs` | `tests-stark/compiler.FeatureTests/StructRecordFeatureTests.stark` | S | `FeatureLlvmTestBase` | TEST-02, TEST-03, TEST-06 |
-| - [ ] | `tests/compiler.FeatureTests/StructsAndRecordsFeatureTests.cs` | `tests-stark/compiler.FeatureTests/StructsAndRecordsFeatureTests.stark` | S | `FeatureLlvmTestBase` | TEST-02, TEST-03, TEST-06 |
-| - [ ] | `tests/compiler.FeatureTests/TraitsAndDoctrinesFeatureTests.cs` | `tests-stark/compiler.FeatureTests/TraitsAndDoctrinesFeatureTests.stark` | M | `FeatureLlvmTestBase` | TEST-02, TEST-03, TEST-06 |
-| - [ ] | `tests/compiler.FeatureTests/compiler.FeatureTests.csproj` | `tests-stark/compiler.FeatureTests/Stark.toml` | S | test project layout | T03, T12 |
-| - [ ] | `tests/compiler.FeatureTests/xunit.runner.json` | `tests-stark/compiler.FeatureTests/TestRunner.stark.toml` | S | generated test runner implementation | TEST-01, TEST-09, T12 |
+| - [x] | `tests/compiler.FeatureTests/FeatureLlvmTestBase.cs` | `tests-stark/compiler.FeatureTests/FeatureTestSupport.stark` | M | shared harness module over `System.Testing.HostCompiler`: CompileLlvm/CompileTypeCheck/CompileFull/CompileMir, `*WithModule` temp-dir module resolution, loop-limit variant, diagnostic count/contains helpers | TEST-02, TEST-03, TEST-05, TEST-06, TEST-07 |
+| - [x] | `tests/compiler.FeatureTests/BorrowingFeatureTests.cs` | `tests-stark/compiler.FeatureTests/FeatureTests.stark` | S | facts live in the root file (runner collects root-file facts only) | TEST-02, TEST-03, TEST-06 |
+| - [x] | `tests/compiler.FeatureTests/EnumsFeatureTests.cs` | n/a | S | no facts to port (empty placeholder class in C#) | TEST-02, TEST-03, TEST-06 |
+| - [x] | `tests/compiler.FeatureTests/FloatingPointFeatureTests.cs` | `tests-stark/compiler.FeatureTests/FeatureTests.stark` | S | ported | TEST-02, TEST-03, TEST-06 |
+| - [x] | `tests/compiler.FeatureTests/FunctionClassesFeatureTests.cs` | `tests-stark/compiler.FeatureTests/FeatureTests.stark` | S | ported | TEST-02, TEST-03, TEST-06 |
+| - [x] | `tests/compiler.FeatureTests/FunctionKindsFeatureTests.cs` | `tests-stark/compiler.FeatureTests/FeatureTests.stark` | S | ported | TEST-02, TEST-03, TEST-06 |
+| - [x] | `tests/compiler.FeatureTests/GenericsFeatureTests.cs` | `tests-stark/compiler.FeatureTests/FeatureTests.stark` | M | ported; TypeCheckModel trigger/NamedTypes facts re-expressed behaviorally (mono symbols or type-check success) | TEST-02, TEST-03, TEST-06, TEST-07 |
+| - [x] | `tests/compiler.FeatureTests/IntegerFeatureTests.cs` | `tests-stark/compiler.FeatureTests/FeatureTests.stark` | S | ported | TEST-02, TEST-03, TEST-06 |
+| - [x] | `tests/compiler.FeatureTests/ModulesAndImportsFeatureTests.cs` | n/a | M | no facts to port (empty placeholder class in C#) | TEST-02, TEST-04, TEST-06 |
+| - [x] | `tests/compiler.FeatureTests/StringsFeatureTests.cs` | `tests-stark/compiler.FeatureTests/FeatureTests.stark` | M | ported | TEST-02, TEST-03, TEST-06, S02 |
+| - [x] | `tests/compiler.FeatureTests/StructRecordFeatureTests.cs` | n/a | S | no facts to port (empty placeholder class in C#) | TEST-02, TEST-03, TEST-06 |
+| - [x] | `tests/compiler.FeatureTests/StructsAndRecordsFeatureTests.cs` | n/a | S | no facts to port (empty placeholder class in C#) | TEST-02, TEST-03, TEST-06 |
+| - [x] | `tests/compiler.FeatureTests/ThreadSafetyLawFeatureTests.cs` | `tests-stark/compiler.FeatureTests/FeatureTests.stark` | M | ported; ThreadSafetyLawFacts model assertions re-expressed as `where Transferable/Shareable` call-site diagnostics; InMemoryModuleResolver facts use the temp-dir `searchDirectories` mechanism | TEST-02, TEST-03, TEST-06 |
+| - [x] | `tests/compiler.FeatureTests/TraitsAndDoctrinesFeatureTests.cs` | `tests-stark/compiler.FeatureTests/FeatureTests.stark` | M | ported; MIR object-graph facts re-expressed over the rendered `mir` artifact text; one-line regex matched via `System.Testing.AnyLineContainsBoth` | TEST-02, TEST-03, TEST-06 |
+| - [x] | `tests/compiler.FeatureTests/TraversalLoopFeatureTests.cs` | `tests-stark/compiler.FeatureTests/FeatureTests.stark` | S | ported | TEST-02, TEST-03, TEST-06 |
+| - [x] | `tests/compiler.FeatureTests/ComptimeFeatureTests.cs` | `tests-stark/compiler.FeatureTests/FeatureTests.stark` | L | ported (143 facts, incl. the three MaximumCompileTimeLoopIterations facts via the loop-limit request option) | TEST-02, TEST-03, TEST-06, TEST-07 |
+| - [x] | `tests/compiler.FeatureTests/compiler.FeatureTests.csproj` | `tests-stark/compiler.FeatureTests/Stark.toml` | S | test project layout | T03, T12 |
+| - [x] | `tests/compiler.FeatureTests/xunit.runner.json` | n/a | S | covered by the `stark test` generated runner; no per-project runner config needed | TEST-01, TEST-09, T12 |
 
 ### `tests/compiler.PipelineTests`
 
@@ -263,7 +266,7 @@ Each test target path is provisional and assumes the test harness lives under
 | Port | Source Path | Provisional Target Path | Effort | Depends On Checklist Items | Gap Dependencies |
 |---|---|---|---|---|---|
 | - [ ] | `tests/compiler.Tests/FallbackLogAssertions.cs` | `tests-stark/compiler.Tests/FallbackLogAssertions.stark` | M | diagnostic/log helpers | TEST-02, TEST-12 |
-| - [ ] | `tests/compiler.Tests/ParserSmokeTests.cs` | `tests-stark/compiler.Tests/ParserSmokeTests.stark` | S | parser/test harness | TEST-02, TEST-06, TEST-07 |
+| - [~] | `tests/compiler.Tests/ParserSmokeTests.cs` | `tests-stark/compiler.Tests/ParserSmokeTests.stark` | S | parser/test harness; first valid/invalid smoke facts green under `stark test` in `CompilerTests.stark` | TEST-02, TEST-06, TEST-07 |
 | - [ ] | `tests/compiler.Tests/ParserConformanceTests.cs` | `tests-stark/compiler.Tests/ParserConformanceTests.stark` | M | parser/test harness | TEST-02, TEST-08, TEST-12 |
 | - [ ] | `tests/compiler.Tests/ParserEdgeCaseTests.cs` | `tests-stark/compiler.Tests/ParserEdgeCaseTests.stark` | M | parser/test harness | TEST-02, TEST-08, TEST-12 |
 | - [ ] | `tests/compiler.Tests/CommentTriviaTests.cs` | `tests-stark/compiler.Tests/CommentTriviaTests.stark` | S | parser/test harness | TEST-02, TEST-12 |
@@ -305,7 +308,7 @@ Each test target path is provisional and assumes the test harness lives under
 | - [ ] | `tests/compiler.Tests/ExampleSourceTests.cs` | `tests-stark/compiler.Tests/ExampleSourceTests.stark` | M | file/process runner | TEST-02, TEST-04, TEST-05, TEST-09 |
 | - [ ] | `tests/compiler.Tests/BenchmarkSourceTests.cs` | `tests-stark/compiler.Tests/BenchmarkSourceTests.stark` | M | file/process runner | TEST-02, TEST-04, TEST-05, TEST-10 |
 | - [ ] | `tests/compiler.Tests/BenchmarkRegressionScriptTests.cs` | `tests-stark/compiler.Tests/BenchmarkRegressionScriptTests.stark` | M | benchmark harness | TEST-05, TEST-10 |
-| - [ ] | `tests/compiler.Tests/compiler.Tests.csproj` | `tests-stark/compiler.Tests/Stark.toml` | S | test project layout | T03, T12 |
+| - [x] | `tests/compiler.Tests/compiler.Tests.csproj` | `tests-stark/compiler.Tests/Stark.toml` | S | test project layout | T03, T12 |
 | - [ ] | `tests/compiler.Tests/xunit.runner.json` | `tests-stark/compiler.Tests/TestRunner.stark.toml` | S | generated test runner implementation | TEST-01, TEST-09, T12 |
 
 ### `tests/compiler.IntegrationTests`

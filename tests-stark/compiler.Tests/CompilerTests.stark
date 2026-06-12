@@ -1,0 +1,99 @@
+import System.Json
+import System.Process
+import System.Testing
+import System.Testing.HostCompiler
+import System.Text
+module CompilerTests
+
+// First ported slice of tests/compiler.Tests parser smoke checks, running
+// against the current C# host compiler through the host test protocol.
+// Requires STARK_HOST_COMPILER to point at the host compiler executable.
+
+const HostTimeoutMilliseconds = 120000;
+
+unsafe fn System.Testing.HostCompiler.HostResult<System.Testing.HostCompiler.HostCompileOutcome> CompileSource(
+    ascii id,
+    ascii source)
+{
+    stack mut System.Text.OwnedAscii compilerPath = new();
+    switch (System.Testing.HostCompiler.CompilerPathFromEnvironment())
+    {
+        case System.Testing.HostCompiler.HostResult<System.Text.OwnedAscii>.Err(var pathError):
+            return System.Testing.HostCompiler.HostResult<System.Testing.HostCompiler.HostCompileOutcome>.Err(pathError);
+        case System.Testing.HostCompiler.HostResult<System.Text.OwnedAscii>.Ok(var path):
+            compilerPath = path;
+    }
+
+    return System.Testing.HostCompiler.CompileOnce(
+        compilerPath.View(),
+        id,
+        source,
+        "",
+        false,
+        HostTimeoutMilliseconds);
+}
+
+// Ported from ParserSmokeTests.ValidProgramsParse ("minimal module").
+[Fact]
+fn bool MinimalModuleParsesAndCompiles()
+{
+    unsafe
+    {
+        switch (CompileSource("parser-minimal-module", "module SomeModule\n"))
+    {
+        case System.Testing.HostCompiler.HostResult<System.Testing.HostCompiler.HostCompileOutcome>.Err(var error):
+            return false;
+        case System.Testing.HostCompiler.HostResult<System.Testing.HostCompiler.HostCompileOutcome>.Ok(var captured):
+            stack mut System.Testing.HostCompiler.HostCompileOutcome outcome = captured;
+            if (outcome.HadProtocolError())
+            {
+                return false;
+            }
+
+            if (!outcome.CompileSucceeded())
+            {
+                return false;
+            }
+
+            return outcome.CompileErrorCount() == 0;
+        }
+    }
+}
+
+// Ported from ParserSmokeTests.InvalidProgramsDoNotParse: a malformed function
+// header must produce parse-stage errors, never a successful compile.
+[Fact]
+fn bool MalformedFunctionHeaderReportsParseErrors()
+{
+    stack ascii source = raw"""
+module Demo
+
+fn i32[min max] Broken(
+""";
+    unsafe
+    {
+        switch (CompileSource("parser-malformed-header", source))
+    {
+        case System.Testing.HostCompiler.HostResult<System.Testing.HostCompiler.HostCompileOutcome>.Err(var error):
+            return false;
+        case System.Testing.HostCompiler.HostResult<System.Testing.HostCompiler.HostCompileOutcome>.Ok(var captured):
+            stack mut System.Testing.HostCompiler.HostCompileOutcome outcome = captured;
+            if (outcome.HadProtocolError())
+            {
+                return false;
+            }
+
+            if (outcome.CompileSucceeded())
+            {
+                return false;
+            }
+
+            if (outcome.CompileErrorCount() <= 0)
+            {
+                return false;
+            }
+
+            return outcome.HasDiagnosticCode("STK1000");
+        }
+    }
+}

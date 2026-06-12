@@ -1,3 +1,4 @@
+import System.C
 import System.Runtime.Buffer
 import System.Memory
 module System.Runtime.Platform.Windows
@@ -3661,4 +3662,151 @@ internal unsafe fn bool TryTempDirectory(rawmutptr<Ascii> destination)
     }
 
     return TryCopyWideUtf8(destination, &pathBuffer[0], written);
+}
+
+// The Windows process backend is not implemented yet. These stubs keep the
+// platform dispatch surface compiling for Windows targets and report -38
+// (ENOSYS in the Linux-style negative errno convention the platform layer
+// uses) until a CreateProcessW-based backend lands.
+internal unsafe fn i32[min max] StartProcessCapture(
+    rawptr<System.C.c_char> executable,
+    borrow rawptr<System.C.c_char>[] argv,
+    rawptr<System.C.c_char> workingDirectory,
+    bool captureStdin,
+    rawmutptr<i32[min max]> processId,
+    rawmutptr<i32[min max]> stdinDescriptor,
+    rawmutptr<i32[min max]> stdoutDescriptor,
+    rawmutptr<i32[min max]> stderrDescriptor)
+    where overlap(executable, argv),
+          overlap(executable, workingDirectory),
+          overlap(argv, workingDirectory),
+          overlap(executable, processId),
+          overlap(executable, stdinDescriptor),
+          overlap(executable, stdoutDescriptor),
+          overlap(executable, stderrDescriptor)
+{
+    if (executable == null
+        || argv.Length == 0
+        || processId == null
+        || stdinDescriptor == null
+        || stdoutDescriptor == null
+        || stderrDescriptor == null)
+    {
+        return -1;
+    }
+
+    return -38;
+}
+
+internal unsafe fn i32[min max] WaitProcess(i32[min max] processId, rawmutptr<i32[min max]> status)
+{
+    if (status == null)
+    {
+        return -1;
+    }
+
+    return -38;
+}
+
+internal unsafe fn i32[min max] WaitProcessNoHang(i32[min max] processId, rawmutptr<i32[min max]> status)
+{
+    if (status == null)
+    {
+        return -1;
+    }
+
+    return -38;
+}
+
+internal unsafe fn i32[min max] KillProcess(i32[min max] processId)
+{
+    return -38;
+}
+
+internal unsafe fn i32[min max] PollProcessPipesTimed(
+    i32[min max] stdoutDescriptor,
+    i32[min max] stderrDescriptor,
+    rawmutptr<i16[min max]> stdoutEvents,
+    rawmutptr<i16[min max]> stderrEvents,
+    i32[min max] timeoutMilliseconds)
+{
+    if (stdoutEvents == null || stderrEvents == null)
+    {
+        return -1;
+    }
+
+    return -38;
+}
+
+internal unsafe fn i32[min max] PollProcessIoTimed(
+    i32[min max] stdinDescriptor,
+    i32[min max] stdoutDescriptor,
+    i32[min max] stderrDescriptor,
+    rawmutptr<i16[min max]> stdinEvents,
+    rawmutptr<i16[min max]> stdoutEvents,
+    rawmutptr<i16[min max]> stderrEvents,
+    i32[min max] timeoutMilliseconds)
+{
+    if (stdinEvents == null || stdoutEvents == null || stderrEvents == null)
+    {
+        return -1;
+    }
+
+    return -38;
+}
+
+internal inline finite law bool ProcessPipeReadable(i16[min max] events)
+{
+    return false;
+}
+
+internal inline finite law bool ProcessPipeWritable(i16[min max] events)
+{
+    return false;
+}
+
+internal inline finite law bool ProcessPipeClosed(i16[min max] events)
+{
+    return false;
+}
+
+internal unsafe fn i32[min max] SetEnvironmentRaw(rawptr<System.C.c_char> name, rawptr<System.C.c_char> value)
+    where overlap(name, value)
+{
+    if (name == null || value == null)
+    {
+        return -1;
+    }
+
+    return -38;
+}
+
+internal unsafe fn i32[min max] RemoveEnvironmentRaw(rawptr<System.C.c_char> name)
+{
+    if (name == null)
+    {
+        return -1;
+    }
+
+    return -38;
+}
+
+internal unsafe fn rawptr<System.C.c_char> GetEnvironmentRaw(rawptr<System.C.c_char> name)
+{
+    return null;
+}
+
+internal unsafe fn i32[min max] ChangeCurrentDirectoryRaw(rawptr<System.C.c_char> path)
+{
+    if (path == null)
+    {
+        return -1;
+    }
+
+    return -38;
+}
+
+internal unsafe fn i32[min max] ReadArgumentsBlock(mut borrow dynamic i8[min max] destination)
+{
+    return -38;
 }

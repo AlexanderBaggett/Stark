@@ -1060,17 +1060,14 @@ public class StandardLibraryTestSuite
             Assert.NotNull(moduleGraph);
             Assert.True(moduleGraph.ContainsLoadedModule("System.Runtime.Platform"));
             Assert.True(moduleGraph.ContainsLoadedModule("System.Runtime.Platform.Windows"));
-            // System.Process is still Linux-backed (cross-platform parity is tracked in
-            // docs/Self-host-Prep/02-stdlib-gaps.md), so its direct Linux platform import
-            // keeps that module loaded until Process routes through dispatch.
-            Assert.True(moduleGraph.ContainsLoadedModule("System.Runtime.Platform.Linux"));
+            // System.Process routes through the System.Runtime.Platform dispatch
+            // module, so Windows-target builds load only the Windows backend.
+            Assert.False(moduleGraph.ContainsLoadedModule("System.Runtime.Platform.Linux"));
             Assert.False(moduleGraph.ContainsLoadedModule("System.Runtime.Platform.MacOS"));
 
             var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
             Assert.Contains("@GetStdHandle(", llvm, StringComparison.Ordinal);
             Assert.Contains("@CreateFileW(", llvm, StringComparison.Ordinal);
-            // The Linux-backed System.Process import keeps Linux syscall shims visible as
-            // imported declarations, but no Windows-target code may actually call them.
             Assert.DoesNotContain("call i64 @LinuxSyscall", llvm, StringComparison.Ordinal);
         }
         finally

@@ -825,6 +825,167 @@ public finite law u64[0 2 ** 63 - 1] CountOccurrences(ascii value, ascii needle)
     return System.Text.CountOccurrences(value, needle);
 }
 
+// Returns the LLVM `define ...` header line whose symbol spells `@name(`, or
+// empty text when no defined function matches. Ported feature tests use this
+// (with LlvmDefinitionBody) instead of scraping module text by hand.
+public finite ascii LlvmDefinitionHeader(ascii llvm, ascii symbolName)
+    where overlap(llvm, symbolName)
+{
+    stack u64[0 2 ** 63 - 1] totalLength = (u64[0 2 ** 63 - 1])System.Text.AsciiLength(llvm);
+    stack mut u64[0 2 ** 63 - 1] lineStart = 0;
+    stack mut u64[0 2 ** 63 - 1] lineEnd = 0;
+    if (!TryFindLlvmDefinitionLine(llvm, symbolName, lineStart, lineEnd))
+    {
+        return "";
+    }
+
+    return llvm[(i64[min max])lineStart, (i64[min max])(lineEnd - lineStart)];
+}
+
+// Returns the LLVM function definition with the given symbol from its
+// `define ...` header line through the closing `}` line, or empty text when no
+// defined function matches.
+public finite ascii LlvmDefinitionBody(ascii llvm, ascii symbolName)
+    where overlap(llvm, symbolName)
+{
+    stack mut u64[0 2 ** 63 - 1] start = 0;
+    stack mut u64[0 2 ** 63 - 1] headerEnd = 0;
+    if (!TryFindLlvmDefinitionLine(llvm, symbolName, start, headerEnd))
+    {
+        return "";
+    }
+
+    stack u64[0 2 ** 63 - 1] totalLength = (u64[0 2 ** 63 - 1])System.Text.AsciiLength(llvm);
+
+    // Scan forward line by line for the closing `}` at column zero.
+    stack mut u64[0 2 ** 63 - 1] lineStart = headerEnd;
+    while willexit (lineStart < totalLength)
+    {
+        lineStart += 1;
+        if (lineStart >= totalLength)
+        {
+            return "";
+        }
+
+        stack u64[0 2 ** 63 - 1] lineEnd = LineEndFrom(llvm, lineStart);
+        if (lineEnd > lineStart && IsActualUnit(llvm, lineStart, "}"))
+        {
+            return llvm[(i64[min max])start, (i64[min max])(lineEnd - start)];
+        }
+
+        lineStart = lineEnd;
+    }
+
+    return "";
+}
+
+// True when any single line of `value` contains both fragments. Ported
+// feature tests use this where the C# originals match a one-line regex.
+public finite law bool AnyLineContainsBoth(ascii value, ascii first, ascii second)
+    where overlap(value, first), overlap(value, second), overlap(first, second)
+{
+    stack u64[0 2 ** 63 - 1] totalLength = (u64[0 2 ** 63 - 1])System.Text.AsciiLength(value);
+    stack mut u64[0 2 ** 63 - 1] lineStart = 0;
+    while willexit (lineStart < totalLength)
+    {
+        stack u64[0 2 ** 63 - 1] lineEnd = LineEndFrom(value, lineStart);
+        if (lineEnd > lineStart)
+        {
+            stack ascii line = value[(i64[min max])lineStart, (i64[min max])(lineEnd - lineStart)];
+            if (System.Text.Contains(line, first) && System.Text.Contains(line, second))
+            {
+                return true;
+            }
+        }
+
+        lineStart = (u64[0 2 ** 63 - 1])(lineEnd + 1);
+    }
+
+    return false;
+}
+
+// Index of the line break ending the line that starts at `from`, or the text
+// length when the final line is unterminated.
+internal finite law u64[0 2 ** 63 - 1] LineEndFrom(ascii value, u64[0 2 ** 63 - 1] searchStart)
+{
+    stack u64[0 2 ** 63 - 1] totalLength = (u64[0 2 ** 63 - 1])System.Text.AsciiLength(value);
+    stack mut u64[0 2 ** 63 - 1] index = searchStart;
+    while willexit (index < totalLength)
+    {
+        if (IsActualUnit(value, index, "\n"))
+        {
+            return index;
+        }
+
+        index += 1;
+    }
+
+    return totalLength;
+}
+
+internal finite bool TryFindLlvmDefinitionLine(
+    ascii llvm,
+    ascii symbolName,
+    out u64[0 2 ** 63 - 1] lineStart,
+    out u64[0 2 ** 63 - 1] lineEndExclusive)
+    where overlap(llvm, symbolName)
+{
+    lineStart = 0;
+    lineEndExclusive = 0;
+    if (System.Text.AsciiLength(llvm) <= 0 || System.Text.AsciiLength(symbolName) <= 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] totalLength = (u64[0 2 ** 63 - 1])System.Text.AsciiLength(llvm);
+    stack mut u64[0 2 ** 63 - 1] currentLineStart = 0;
+    while willexit (currentLineStart < totalLength)
+    {
+        stack u64[0 2 ** 63 - 1] lineEnd = LineEndFrom(llvm, currentLineStart);
+        if (lineEnd > currentLineStart)
+        {
+            stack ascii line = llvm[(i64[min max])currentLineStart, (i64[min max])(lineEnd - currentLineStart)];
+            if (System.Text.StartsWith(line, "define ") && LineDefinesSymbol(line, symbolName))
+            {
+                lineStart = currentLineStart;
+                lineEndExclusive = lineEnd;
+                return true;
+            }
+        }
+
+        currentLineStart = (u64[0 2 ** 63 - 1])(lineEnd + 1);
+    }
+
+    return false;
+}
+
+// The line must mention `@<symbolName>(` exactly.
+internal finite law bool LineDefinesSymbol(ascii line, ascii symbolName)
+    where overlap(line, symbolName)
+{
+    stack u64[0 2 ** 63 - 1] lineLength = (u64[0 2 ** 63 - 1])System.Text.AsciiLength(line);
+    stack u64[0 2 ** 63 - 1] symbolLength = (u64[0 2 ** 63 - 1])System.Text.AsciiLength(symbolName);
+    if (lineLength < symbolLength + 2)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] lastStart = (u64[0 2 ** 63 - 1])(lineLength - symbolLength - 2);
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index <= lastStart; index += 1)
+    {
+        if (IsActualUnit(line, index, "@")
+            && IsActualUnit(line, (u64[0 2 ** 63 - 1])(index + symbolLength + 1), "(")
+            && System.Text.Equals(
+                line[(i64[min max])(index + 1), (i64[min max])symbolLength],
+                symbolName))
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 public finite law u64[0 2 ** 63 - 1] CountOccurrences(unicode value, unicode needle)
     where overlap(value, needle)
 {

@@ -4761,15 +4761,17 @@ internal sealed partial class MidLevelIrLowerer
             var record = _typeModel.TryPropagations.LastOrDefault(candidate =>
                 candidate.Location.Line == line && candidate.Location.Column == column)
                 ?? ResolveImportedTemplateTryPropagation(expression);
-            if (record is null)
-            {
-                throw LoweringInvariantViolation(expression, "No type-checked `try` propagation record was found for MIR lowering.");
-            }
 
             var operandValue = LowerUnaryExpression(expression.unaryExpression(), expectedType: null);
             if (operandValue is null)
             {
                 return null;
+            }
+
+            record ??= DeriveImportedSourceTryPropagation(expression, operandValue.Type);
+            if (record is null)
+            {
+                throw LoweringInvariantViolation(expression, "No type-checked `try` propagation record was found for MIR lowering.");
             }
 
             return LowerTryPropagationCore(expression, record, operandValue);
@@ -4886,6 +4888,167 @@ internal sealed partial class MidLevelIrLowerer
                 summary.EnclosingFailurePayloadType,
                 summary.ConversionFunnelVariant,
                 _function.Name);
+        }
+
+        private readonly record struct TryPropagationRoles(
+            string OkVariantName,
+            string ErrVariantName,
+            StarkTypeSymbol? SuccessPayloadType,
+            StarkTypeSymbol? FailurePayloadType);
+
+        /// <summary>
+        /// Derives the `try` propagation facts for an expression inside an imported source
+        /// module body. Type checking skips imported non-generic bodies (their own compile
+        /// as a root module already validated them), so no typing record exists for these
+        /// sites; the role and funnel rules here mirror
+        /// <c>TypeChecking.EvaluateTryExpression</c> and the CTFE equivalent in
+        /// <c>CompileTimeFunctionEvaluator</c>. Returns null when the operand or enclosing
+        /// return type is not propagatable or the failure payloads are not connected,
+        /// letting the caller surface the lowering invariant.
+        /// </summary>
+        private TryPropagationTypingRecord? DeriveImportedSourceTryPropagation(
+            StarkParser.UnaryExpressionContext expression,
+            StarkTypeSymbol operandType)
+        {
+            if (!TryResolveTryPropagationRoles(operandType, out var operandRoles))
+            {
+                return null;
+            }
+
+            var returnType = ApplyGenericSubstitution(_function.Signature.ReturnType);
+            if (!TryResolveTryPropagationRoles(returnType, out var enclosingRoles))
+            {
+                return null;
+            }
+
+            string? funnelVariant = null;
+            if (operandRoles.FailurePayloadType is { } operandFailure
+                && enclosingRoles.FailurePayloadType is { } enclosingFailure)
+            {
+                if (!SameTryPropagationErrorType(operandFailure, enclosingFailure))
+                {
+                    funnelVariant = ResolveTryPropagationFunnelVariant(operandFailure, enclosingFailure);
+                    if (funnelVariant is null)
+                    {
+                        return null;
+                    }
+                }
+            }
+            else if (operandRoles.FailurePayloadType is not null || enclosingRoles.FailurePayloadType is not null)
+            {
+                // Unit-vs-payload failure mixing is rejected by type checking in root
+                // modules; an imported body reaching this shape is malformed.
+                return null;
+            }
+
+            return new TryPropagationTypingRecord(
+                new SourceLocation(_moduleFilePath, expression.Start.Line, expression.Start.Column + 1),
+                operandType,
+                operandRoles.OkVariantName,
+                operandRoles.ErrVariantName,
+                operandRoles.SuccessPayloadType,
+                operandRoles.FailurePayloadType,
+                returnType,
+                enclosingRoles.ErrVariantName,
+                enclosingRoles.FailurePayloadType,
+                funnelVariant,
+                _function.Name);
+        }
+
+        private bool TryResolveTryPropagationRoles(StarkTypeSymbol type, out TryPropagationRoles roles)
+        {
+            roles = default;
+            if (type.Kind != StarkTypeKind.Named
+                || type.NamedType is not { } namedTypeName
+                || !TryResolveNamedTypeBySourceName(namedTypeName, out var namedType)
+                || namedType.Kind != DeclarationKind.Enum
+                || namedType.Variants.Count != 2)
+            {
+                return false;
+            }
+
+            EnumVariantSymbol? okVariant = null;
+            EnumVariantSymbol? errVariant = null;
+            foreach (var variant in namedType.Variants)
+            {
+                if (variant.Role == EnumVariantRole.Ok)
+                {
+                    okVariant = variant;
+                }
+                else if (variant.Role == EnumVariantRole.Err)
+                {
+                    errVariant = variant;
+                }
+            }
+
+            if (okVariant is null
+                || errVariant is null
+                || okVariant.Fields.Count > 1
+                || errVariant.Fields.Count > 1)
+            {
+                return false;
+            }
+
+            roles = new TryPropagationRoles(
+                okVariant.Name,
+                errVariant.Name,
+                okVariant.Fields.Count == 1
+                    ? SubstituteTryPropagationPayloadType(okVariant.Fields[0].Type, namedType, type)
+                    : null,
+                errVariant.Fields.Count == 1
+                    ? SubstituteTryPropagationPayloadType(errVariant.Fields[0].Type, namedType, type)
+                    : null);
+            return true;
+        }
+
+        private static StarkTypeSymbol SubstituteTryPropagationPayloadType(
+            StarkTypeSymbol payloadType,
+            NamedTypeSymbol enumDefinition,
+            StarkTypeSymbol instantiatedType)
+        {
+            if (!enumDefinition.IsGeneric || instantiatedType.TypeArguments is not { Count: > 0 } typeArguments)
+            {
+                return payloadType;
+            }
+
+            var substitution = new Dictionary<string, StarkTypeSymbol>(StringComparer.Ordinal);
+            var genericParameters = enumDefinition.GenericParams;
+            for (var index = 0; index < genericParameters.Count && index < typeArguments.Count; index++)
+            {
+                substitution[genericParameters[index]] = typeArguments[index];
+            }
+
+            return FunctionOverloadFacts.SubstituteType(payloadType, substitution);
+        }
+
+        private static bool SameTryPropagationErrorType(StarkTypeSymbol left, StarkTypeSymbol right)
+        {
+            return string.Equals(
+                left.NamedType ?? left.DisplayName,
+                right.NamedType ?? right.DisplayName,
+                StringComparison.Ordinal);
+        }
+
+        private string? ResolveTryPropagationFunnelVariant(
+            StarkTypeSymbol operandErrorType,
+            StarkTypeSymbol enclosingErrorType)
+        {
+            if (enclosingErrorType.NamedType is not { } enclosingName
+                || !TryResolveNamedTypeBySourceName(enclosingName, out var enclosingNamed))
+            {
+                return null;
+            }
+
+            foreach (var variant in enclosingNamed.Variants)
+            {
+                if (variant.AbsorbsErrorType is { } absorbed
+                    && SameTryPropagationErrorType(absorbed, operandErrorType))
+                {
+                    return variant.Name;
+                }
+            }
+
+            return null;
         }
 
         private MidLevelIrOperand? BuildTryErrorReturnValue(

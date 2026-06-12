@@ -1503,10 +1503,11 @@ internal sealed partial class MidLevelIrLowerer
         IReadOnlyDictionary<string, ComptimeGenericParameterSymbol>? comptimeGenericParameters,
         StarkTypeResolver resolver)
     {
+        var role = ResolveFallbackEnumVariantRole(variant);
         var payload = variant.enumVariantPayload();
         if (payload is null)
         {
-            return new EnumVariantSymbol(variant.Identifier().GetText(), UsesNamedFields: false, Fields: []);
+            return new EnumVariantSymbol(variant.Identifier().GetText(), UsesNamedFields: false, Fields: [], Role: role);
         }
 
         if (payload.enumVariantFieldDeclaration().Length != 0)
@@ -1519,7 +1520,21 @@ internal sealed partial class MidLevelIrLowerer
                         index,
                         field.Identifier().GetText(),
                         resolver.ResolveType(field.type_(), genericParameters, moduleName, comptimeGenericParameters)))
-                    .ToArray());
+                    .ToArray(),
+                Role: role);
+        }
+
+        // `Name from ErrorType` — keep the funnel marker so `try` lowering inside
+        // imported source bodies can resolve cross-family error conversion.
+        if (payload.FROM() is not null)
+        {
+            var sourceType = resolver.ResolveType(payload.type_(0), genericParameters, moduleName, comptimeGenericParameters);
+            return new EnumVariantSymbol(
+                variant.Identifier().GetText(),
+                UsesNamedFields: false,
+                Fields: [new EnumVariantFieldSymbol(0, Name: null, sourceType)],
+                AbsorbsErrorType: sourceType,
+                Role: role);
         }
 
         return new EnumVariantSymbol(
@@ -1530,7 +1545,33 @@ internal sealed partial class MidLevelIrLowerer
                     index,
                     Name: null,
                     resolver.ResolveType(fieldType, genericParameters, moduleName, comptimeGenericParameters)))
-                .ToArray());
+                .ToArray(),
+            Role: role);
+    }
+
+    /// <summary>
+    /// Reads the `[Ok]` / `[Err]` propagation-role attributes from an enum variant for
+    /// fallback symbols of imported source modules. Mirrors
+    /// <c>TypeChecking.ResolveEnumVariantRole</c> without diagnostics: imported modules
+    /// were validated when compiled as their own root.
+    /// </summary>
+    private static EnumVariantRole ResolveFallbackEnumVariantRole(StarkParser.EnumVariantDeclarationContext variant)
+    {
+        foreach (var attributeList in variant.attributeList())
+        {
+            foreach (var attribute in attributeList.attribute())
+            {
+                switch (attribute.qualifiedName().GetText())
+                {
+                    case "Ok":
+                        return EnumVariantRole.Ok;
+                    case "Err":
+                        return EnumVariantRole.Err;
+                }
+            }
+        }
+
+        return EnumVariantRole.None;
     }
 
     private static Dictionary<string, TypedFunctionSignature> CollectFallbackFunctionSignatures(
