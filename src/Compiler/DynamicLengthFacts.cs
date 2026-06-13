@@ -53,6 +53,10 @@ internal static class DynamicLengthFacts
                 {
                     CollectFromRelational(relational, thenFacts, elseFacts: null, thenComparisons, elseComparisons: null);
                 }
+                else if (DescendToEquality(conjunct) is { } equality)
+                {
+                    CollectFromEquality(equality, thenFacts, elseFacts: null);
+                }
             }
 
             return;
@@ -61,6 +65,10 @@ internal static class DynamicLengthFacts
         if (DescendToRelational(conjuncts[0]) is { } single)
         {
             CollectFromRelational(single, thenFacts, elseFacts, thenComparisons, elseComparisons);
+        }
+        else if (DescendToEquality(conjuncts[0]) is { } singleEquality)
+        {
+            CollectFromEquality(singleEquality, thenFacts, elseFacts);
         }
     }
 
@@ -205,6 +213,106 @@ internal static class DynamicLengthFacts
                     break;
             }
         }
+    }
+
+    // Exact-length facts from an equality guard. `root.Length == k` proves the
+    // constant indices [0, k) on the true path; `root.Length != k` proves them on
+    // the false path (the surviving path after an early-return guard like
+    // `if (dyn.Length != 1) { return ...; }`). A non-empty check
+    // (`root.Length != 0`, since a length is non-negative) proves index 0 on the
+    // true path. Proven indices are emitted as ordinary DynamicLengthFacts, so the
+    // read proof, text matching, and invalidation are all shared with comparisons.
+    private const long MaxDerivedConstantIndexBound = 64;
+
+    private static void CollectFromEquality(
+        StarkParser.EqualityExpressionContext equality,
+        List<DynamicLengthFact> thenFacts,
+        List<DynamicLengthFact>? elseFacts)
+    {
+        var operands = equality.relationalExpression();
+        if (operands.Length != 2 || equality.GetChild(1) is not ITerminalNode operatorNode)
+        {
+            return;
+        }
+
+        var operatorText = operatorNode.GetText();
+        if (operatorText is not ("==" or "!="))
+        {
+            return;
+        }
+
+        var leftText = operands[0].GetText();
+        var rightText = operands[1].GetText();
+
+        string root;
+        long length;
+        if (TryRootFromLengthText(leftText) is { } leftRoot && TryParseNonNegativeConstant(rightText, out length))
+        {
+            root = leftRoot;
+        }
+        else if (TryRootFromLengthText(rightText) is { } rightRoot && TryParseNonNegativeConstant(leftText, out length))
+        {
+            root = rightRoot;
+        }
+        else
+        {
+            return;
+        }
+
+        // `==` puts `Length == length` on the true path; `!=` puts it on the false path.
+        var equalPathFacts = operatorText == "==" ? thenFacts : elseFacts;
+        var notEqualPathFacts = operatorText == "==" ? elseFacts : thenFacts;
+        AddLengthEqualityFacts(root, length, isExactlyEqual: true, equalPathFacts);
+        AddLengthEqualityFacts(root, length, isExactlyEqual: false, notEqualPathFacts);
+    }
+
+    private static void AddLengthEqualityFacts(string root, long length, bool isExactlyEqual, List<DynamicLengthFact>? facts)
+    {
+        if (facts is null)
+        {
+            return;
+        }
+
+        if (isExactlyEqual)
+        {
+            var bound = length < MaxDerivedConstantIndexBound ? length : MaxDerivedConstantIndexBound;
+            for (long index = 0; index < bound; index++)
+            {
+                facts.Add(new DynamicLengthFact(root, index.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+            }
+        }
+        else if (length == 0)
+        {
+            // `Length != 0` with a non-negative length means `Length >= 1`.
+            facts.Add(new DynamicLengthFact(root, "0"));
+        }
+    }
+
+    private static bool TryParseNonNegativeConstant(string text, out long value)
+    {
+        return long.TryParse(
+            text,
+            System.Globalization.NumberStyles.None,
+            System.Globalization.CultureInfo.InvariantCulture,
+            out value);
+    }
+
+    private static StarkParser.EqualityExpressionContext? DescendToEquality(StarkParser.BitwiseOrExpressionContext conjunct)
+    {
+        var xors = conjunct.bitwiseXorExpression();
+        if (xors.Length != 1)
+        {
+            return null;
+        }
+
+        var ands = xors[0].bitwiseAndExpression();
+        if (ands.Length != 1)
+        {
+            return null;
+        }
+
+        var equalities = ands[0].equalityExpression();
+        return equalities.Length == 1 ? equalities[0] : null;
     }
 
     private static string? NegateComparisonOperator(string operatorText) => operatorText switch

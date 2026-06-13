@@ -304,11 +304,22 @@ preconditions.
       derivation, raw literal operands, enum tags, out-param drops). The old
       chip's exact original recipe died with the workaround rewrites; if it
       resurfaces, file fresh with a minimal repro.
-- [ ] Flow-fact polish: equality guards do not feed indexed-read proofs —
-      `if (dyn.Length != 1) { return ...; }` then `dyn[0]` still demands a
-      `<`/`>=` comparison guard (`if (0 >= dyn.Length) { return ...; }`).
-      Derive `Length == k` facts into index bounds, or document the
-      comparison-guard idiom as the rule.
+- [x] Flow-fact polish: equality guards now feed indexed-read proofs —
+      `if (dyn.Length != 1) { return ...; }` then `dyn[0]` compiles (no
+      `<`/`>=` guard needed). Done in `DynamicLengthFacts`: a new
+      `CollectFromEquality` (descended via `DescendToEquality`, which handles
+      the `equalityExpression` level that `DescendToRelational` skips) reads
+      `dyn.Length == k` / `dyn.Length != k` against a constant `k` and emits
+      the in-bounds constant indices `[0, k)` as ordinary `DynamicLengthFact`s
+      on the path where `Length == k` holds (the true branch of `==`, the
+      surviving path of `!=`). A non-empty check (`!= 0`, since a length is
+      non-negative) emits index 0. Reusing the existing fact type means the
+      read proof, whitespace-free text matching, and write-invalidation are
+      all shared — out-of-bounds constant indices and reads after a mutating
+      use still fail. Constant indices capped at `[0, 64)` per guard.
+      `EqualityGuardFlowFactTests` (5). Verified: full stdlib `--check`,
+      `selfhost.Lexing`, `stdlib.Toml`, and the flow-fact/ownership C# slices
+      all clean.
 - [x] SSA cross-block load forwarding miscompile (the `%vN_inlK` STK5002):
       the alias-aware memory optimizer's load-indirect (field) forwarding
       dropped the defining load with a per-block replacement map and NO

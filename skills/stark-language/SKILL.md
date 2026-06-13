@@ -914,9 +914,13 @@ The guard and the read must spell the index and the storage path with the
 same source text (bind a local first if the index is computed). The proof
 dies on any write to something it mentions: assigning or `+=`-ing the index,
 passing the owner by `mut borrow`, or shadowing. Non-strict `<=` proves
-nothing for reads. Genuinely sparse structures (hash slots, parent links)
-keep the explicit `unsafe { }` sparse proof, and whole-slot MOVES still go
-through `MoveLast()` regardless of guards.
+nothing for reads. An equality guard against a constant length proves the
+matching CONSTANT indices: `if (dyn.Length != 1) { return ...; }` then `dyn[0]`,
+`if (dyn.Length == k) { dyn[0..k-1] }`, and the non-empty `if (dyn.Length != 0)`
+→ `dyn[0]` (a variable index still needs `<`/`>=` or a `where` contract).
+Genuinely sparse structures (hash slots, parent links) keep the explicit
+`unsafe { }` sparse proof, and whole-slot MOVES still go through `MoveLast()`
+regardless of guards.
 
 Value contracts move the obligation to callers: `where index <
 self.Tokens.Length` in a function's where clause proves the body's reads,
