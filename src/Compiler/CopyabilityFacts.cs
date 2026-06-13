@@ -3,7 +3,9 @@ namespace Stark.Compiler;
 /// <summary>
 /// Structural copyability: a type is copyable when reading it out of a place
 /// is byte-copy-safe and creates no drop obligation. Scalars, raw pointers,
-/// and text views are copyable; a named struct/record/enum is copyable when
+/// function pointers, non-owning slices, and text views are copyable; a fixed
+/// array is copyable when its element is;
+/// a named struct/record/enum is copyable when
 /// it has no destructor and every field (of every variant) is copyable.
 /// Anything that owns resources — dynamic storage, owned text, heap closures,
 /// heap dyn traits, destructor-bearing types — is not. Generic types are
@@ -37,6 +39,19 @@ internal sealed class CopyabilityFacts
             StarkTypeKind.Ascii => true,
             StarkTypeKind.Unicode => true,
             StarkTypeKind.Null => true,
+            // A function pointer is a bare code address: byte-copy-safe and owns
+            // nothing.
+            StarkTypeKind.FunctionPointer => true,
+            // A slice is a non-owning {ptr, len} view of external storage. Copying
+            // the header is byte-safe and creates no drop obligation regardless of
+            // the element type (it never owns or duplicates the elements). The
+            // outer BorrowKind guard above keeps an explicitly borrowed slice
+            // move-only; referent lifetime is governed by borrow-escape analysis,
+            // which is orthogonal to copy-vs-move.
+            StarkTypeKind.Slice => true,
+            // A fixed array is an inline value aggregate: copyable exactly when its
+            // element is, with no drop obligation of its own.
+            StarkTypeKind.FixedArray => type.ElementType is { } elementType && IsCopyable(elementType),
             StarkTypeKind.Named => IsCopyableNamed(type),
             _ => false
         };

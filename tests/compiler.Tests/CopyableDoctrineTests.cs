@@ -494,4 +494,113 @@ public sealed class CopyableDoctrineTests
             }
         }
     }
+
+    [Fact]
+    public void FixedArrayOfCopyableElementsIsCopyable()
+    {
+        // A fixed array of copyable elements is an inline value aggregate, so it
+        // is copyable: the struct asserts [Copyable], and the array (and a struct
+        // holding it) can be read out of a place twice without a move error.
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput("""
+                module Demo
+
+                [Copyable]
+                struct Board
+                {
+                    i32[min max][4] Cells;
+                }
+
+                finite law i32[min max] Sum(Board board)
+                {
+                    stack Board copy = board;
+                    return board.Cells[0] + copy.Cells[0];
+                }
+
+                export fn i32[min max] main()
+                {
+                    return 0;
+                }
+                """),
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(
+            result.Succeeded,
+            string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+
+    [Fact]
+    public void FixedArrayOfMoveOnlyElementsStaysMoveOnly()
+    {
+        // A fixed array of a non-copyable element type is itself move-only, so the
+        // [Copyable] assertion on a struct holding one fails with the field chain.
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput("""
+                module Demo
+
+                struct Owner
+                {
+                    dynamic i32[min max] Items;
+                }
+
+                [Copyable]
+                struct Bad
+                {
+                    Owner[2] Owners;
+                }
+
+                export fn i32[min max] main()
+                {
+                    return 0;
+                }
+                """),
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3051"
+                && diagnostic.Message.Contains("Owners", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void SliceAndFunctionPointerFieldsAreCopyable()
+    {
+        // A slice is a non-owning {ptr, len} view and a function pointer is a bare
+        // code address — both own nothing, so they are copyable and a struct that
+        // holds one stays copyable. (Both were previously move-only off the bare-
+        // local fast path, making the wrapping struct move-only.)
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput("""
+                module Demo
+
+                [Copyable]
+                struct View
+                {
+                    i32[min max][] Data;
+                }
+
+                [Copyable]
+                struct Callback
+                {
+                    fnptr<fn i32[min max](i32[min max])> Fn;
+                }
+
+                finite law bool ReuseView(View view)
+                {
+                    stack View copy = view;
+                    return view.Data.Length == copy.Data.Length;
+                }
+
+                export fn i32[min max] main()
+                {
+                    return 0;
+                }
+                """),
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(
+            result.Succeeded,
+            string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
 }

@@ -102,6 +102,38 @@ moves.
       `.starkpkg` facts round-trip.
 - [x] Stark validation: full accessor rewrite landed via section 4 —
       `KindAtIs` is deleted, facts compare values directly.
+- [x] Fixed-array copyability (the one definition clause above that was NOT
+      implemented in the initial slice — `CopyabilityFacts.IsCopyable` returned
+      `false` for `FixedArray`, so a struct with a `bool[64]` field was move-only,
+      and `CopyableDoctrineTests` had zero fixed-array cases; surfaced by the §6
+      doc audit's adversarial verifier). Now `T[N]` is copyable iff `T` is:
+      added the `FixedArray` case to `IsCopyable` (recurses on the element) and
+      widened the `Named`-only guard to `(Named or FixedArray)` in all three
+      `IsMoveOnly` resolvers (OwnershipValidation / SsaLowering /
+      NonLexicalBorrowLifetimeValidation) so move-classification stays in sync.
+      SSA already had `SupportsAggregateMemoryCopy` for fixed arrays, so the read
+      lowers to a memcpy; a runtime probe confirmed the copy is independent
+      (mutating the copy leaves the original unchanged). `dynamic[N]` and other
+      move-only-element arrays stay move-only. SLICES (`T[]`) and function
+      pointers were then made copyable by the same kind of change (added to
+      `IsCopyable`; the three guards widened to
+      `(Named or FixedArray or Slice or FunctionPointer)`): both own nothing, so
+      copying the `{ptr,len}` view or the bare code address is byte-safe (a slice
+      is copyable regardless of element type — it never duplicates elements). The
+      prior gap was asymmetric — fnptr was genuinely move-only (copying/passing/
+      field-reading a fnptr consumed it; only *calling* is a non-consuming read),
+      and slices were copyable only off a `ValueUse` fast path that did not recurse,
+      so a slice nested in a struct made the struct move-only. An explicitly
+      borrowed slice stays move-only via the BorrowKind guard; referent lifetime is
+      still governed by borrow-escape analysis (untouched). With the doctrine now
+      covering slices/fnptrs, the redundant `Slice` (and the always-redundant
+      `RawPointer`) fast-path branches in `ValueUse.ForAssignment` /
+      `ForCallArgument` were removed — both classifications now route through the
+      single `!IsMoveOnly` check (behavior-neutral, ownership/move/SSA slices
+      green). `CopyableDoctrineTests`
+      gained two fixed-array cases and a slice/fnptr case. Verified: full stdlib
+      `--check`, `selfhost.Lexing`, `stdlib.Toml`, runtime copy-independence probes
+      (fixed array, fnptr, slice-in-struct), and the C# suite.
 
 ## 2. Initialized-Read Value Contracts
 
@@ -451,35 +483,44 @@ in the generated runner keys on the first listed name (preserving today's
 behavior for single-name uses), and filtering happens at runtime in the
 generated runner so changing the filter never recompiles.
 
-- [ ] Extend the runner generator (`src/Compiler/StarkTestRunnerGenerator.cs`)
+- [x] Extend the runner generator (`src/Compiler/StarkTestRunnerGenerator.cs`)
       to variadic `[Collection("a", "b", ...)]` and module-level attachment
       (the grammar already allows `attributeList* MODULE name`). Effective
       collections = union of module/type/member names; replace the current
       type-vs-member conflict diagnostic with union semantics; keep
       run-grouping by the first listed name.
-- [ ] Embed each fact's collection names in the generated runner and accept
+- [x] Embed each fact's collection names in the generated runner and accept
       runtime filter arguments; an unknown collection name is an error that
       lists the known collections (typo protection), and a run that selects
       zero facts fails rather than silently passing.
-- [ ] `stark test` CLI: repeatable `--collection NAME` with comma-splitting
+- [x] `stark test` CLI: repeatable `--collection NAME` with comma-splitting
       inside each value (`--collection ownership,lexing`), union semantics,
       forwarded to the runner binary. Optional discovery aid:
       `stark test --list-collections`.
-- [ ] Scope note: v1 is per-project (the project `stark test` runs in);
+- [x] Scope note: v1 is per-project (the project `stark test` runs in);
       solution-wide collection runs across multiple test projects are a
       follow-up once `stark test` grows a solution mode. Module-level tags
       are still useful today (tagging the root module tags the project) and
       become more powerful when fact discovery extends beyond the root file.
-- [ ] C# host tests: runner-generator coverage for variadic names,
+- [x] C# host tests: runner-generator coverage for variadic names,
       module-level attachment, union with type/member names, grouping by
       first name; CLI integration coverage for filtering, comma-splitting,
       unknown-name error, and zero-selection failure.
-- [ ] Stark validation: tag the lexer facts (e.g. "lexing", "diagnostics")
-      and a compiler.Tests swath (e.g. "ownership"), then verify
-      `stark test --collection diagnostics` runs exactly the tagged subset.
-- [ ] Docs: the projects/tooling doc's testing section and the
+- [x] Stark validation: lexer facts tagged (selfhost.Lexing: module
+      `[Collection("lexing")]` + member `[Collection("diagnostics")]`), and the
+      two big ported suites now tagged with multi-param category collections —
+      `tests-stark/compiler.Tests` (268 facts: compiler/ownership/diagnostics/
+      patterns/ffi/traits/types/dynamic/lowering) and
+      `tests-stark/compiler.FeatureTests` (120 facts: features/traits/patterns/
+      lowering/...). Verified on compiler.Tests: `--list-collections` prints all
+      nine names, and `--collection lowering` ran exactly the 7 lowering-tagged
+      facts (filtered subset, runtime-gated, no recompile).
+- [x] Docs: the projects/tooling doc's testing section and the
       stark-language SKILL ([Fact]/[Theory]/[Platform]/[Collection] row)
       document the variadic attribute, module tagging, and the CLI.
+      (project-manifest-reference.md `stark test` runner paragraph +
+      compiler-test-harness-reference.md `[Collection]` paragraph + SKILL.md
+      row, all rewritten to the variadic / union / runtime-filter / CLI shape.)
 
 ### Section 5 status (2026-06-12, partial)
 
@@ -535,44 +576,65 @@ runner shape (both existing suites green).
   `CollectionsUnionAcrossModuleTypeAndMemberAndAcceptVariadicNames` asserts
   the module/type/member union order, first-name grouping, and the emitted
   filter/list machinery (16/16 generator tests green).
-- [ ] Remaining: docs row (projects/tooling doc + SKILL [Collection] entry).
+- [x] Docs row landed: `project-manifest-reference.md` (`stark test` runner
+  paragraph) + `compiler-test-harness-reference.md` (`[Collection]` paragraph) +
+  SKILL.md ([Fact]/[Theory]/[Platform]/[Collection] row), all rewritten to the
+  variadic attribute, module/type/member union, first-name grouping, and the
+  `--collection` / `--list-collections` CLI (unknown-name error, zero-selection
+  failure, per-project scope). compiler.Tests + compiler.FeatureTests tagged and
+  the filtered run validated end to end.
 
 ## 6. Documentation, Skill, And Memory Updates
 
-- [ ] `docs/Userfacing/LanguageReference.md`: add the `Copyable` doctrine
+- [x] `docs/Userfacing/LanguageReference.md`: add the `Copyable` doctrine
       (definition, structural derivation, `[Copyable]` assertion,
       `where Copyable(T)` bound), `where` value contracts (accepted
       expression forms, call-site proof rules, flow facts), the corrected
       integer-literal typing rule, and the C#-parity `raw"""` semantics.
-- [ ] `Stark.g4`: `where` comparison grammar; `[Copyable]` attribute
+- [x] `Stark.g4`: `where` comparison grammar; `[Copyable]` attribute
       coverage check.
-- [ ] Book (`site/content/book`): strings chapter for `raw"""` semantics;
+- [x] Book (`site/content/book`): strings chapter for `raw"""` semantics;
       ownership chapter for `Copyable`; contracts/where chapter for value
       predicates; integer chapter for literal typing.
-- [ ] `skills/stark-language/SKILL.md` and references: remove superseded
+- [x] `skills/stark-language/SKILL.md` and references: remove superseded
       gotchas (KindAtIs-style equality workaround, literal narrowing-cast
       noise, `raw"""` leading-newline warning, unsafe hoisting for
       guard-then-read), add the new rules and the remaining sparse-`unsafe`
       boundary.
-- [ ] Claude memory files (`stark-lang-core`, `stark-ownership-borrowing`,
+- [x] Claude memory files (`stark-lang-core`, `stark-ownership-borrowing`,
       `stark-enums-errors`, `stark-text-storage`,
       `stark-test-port-harness`): update each affected fact once the
       features and fixes land.
-- [ ] `docs/Self-host-Prep/ROADMAP.md`: keep the feature rows in
+- [x] `docs/Self-host-Prep/ROADMAP.md`: keep the feature rows in
       sync as items land; when every box here is checked, fold durable
       content into LanguageReference.md/the book and delete this file (and
       its ROADMAP links).
 
-### Section 6 status (2026-06-13, integer-literal typing parts)
+### Section 6 status (2026-06-13, complete)
 
-The boxes above stay unchecked because they each span several features. The
-**integer-literal typing** documentation (section 3 bug 1, now landed) is
-complete: LanguageReference.md §11.6 states the literal-adopts-the-ranged-operand
-rule (with the qualifier-strip and non-fitting caveats); the book's
-`31-integers-floats-overflow` chapter contrasts literal adoption (no cast) with
-runtime-value narrowing (cast required); the SKILL.md gotcha row and the
-`stark-lang-core` / `stark-test-port-harness` memory facts were rewritten from the
-old "literal collapses to i64, add a cast" wording to the new rule. No `Stark.g4`
-or ROADMAP change was needed (the fix added no grammar surface and matches no
-existing ROADMAP feature row). The remaining unchecked work under these rows is
-the `Copyable` / `where`-contract / `raw"""` documentation owned by sections 1–2.
+All §6 documentation is in place, verified by a fan-out audit + adversarial
+verify pass across every target:
+
+- **LanguageReference.md** already carried the full `Copyable` doctrine (§7.1:
+  structural derivation, copies-not-moves, `[Copyable]` assertion,
+  `where Copyable(T)`, the empty-destructor escape hatch), `where` value
+  contracts and the initialized-read flow facts (§7.2/§7.3, including the
+  equality-guard and summed-index proofs), the corrected integer-literal rule
+  (§11.6), and the C#-parity `raw"""` semantics (§12) — the verifier confirmed
+  these are complete, so no edits were needed.
+- **Stark.g4** already contains the `valueContract` (where-comparison) rule, and
+  `[Copyable]` rides the existing attribute rule — presence check passed, no
+  change.
+- **Book**: added the `Copyable` doctrine to `07-ownership-moves-drops`, and the
+  guard / `where`-contract flow-fact proofs plus the `raw"""` C#-parity semantics
+  to `14-arrays-slices-text`; `31-integers-floats-overflow` already covered
+  literal typing. All embedded examples compile clean.
+- **SKILL.md + references** already had the superseded gotchas removed and the new
+  rules present (Copyable, value contracts, equality-guard flow facts, the
+  sparse-`unsafe` boundary) — no edits needed.
+- **Memory**: added the `where Copyable(T)` fact to
+  `stark-generics-traits-comptime` and the closing-line `raw"""` error case to
+  `stark-text-storage`; `stark-lang-core` / `stark-ownership-borrowing` /
+  `stark-test-port-harness` were already updated this session.
+- **ROADMAP.md**: the `raw"..."` / `raw"""` / `$raw` book-and-reference doc row is
+  now checked.

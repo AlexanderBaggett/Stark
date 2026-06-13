@@ -130,11 +130,21 @@ triple. The generated runner resolves gates at build time from
 `stark test --target`, calls `System.Testing.SkipFact` for gated-out tests, and
 emits no call to the test body.
 
-Use `[Collection(name)]` for tests that share a serialized resource. The name may
-be a string literal or qualified identifier. `[Serial]` is shorthand for the
-reserved `Serial` collection. Struct/record-level collections apply to contained
-test methods, and the generated runner emits tests in stable collection groups
-with source order preserved inside each named collection.
+Use `[Collection(name, ...)]` to tag tests into one or more named collections
+for cross-cutting selection. The attribute is variadic (at least one name; each
+name is a string literal or qualified identifier) and can sit on the `module`
+declaration (tagging every fact in the file), on a `struct`/`record`, or on an
+individual fact — a fact's effective set is the union of all three levels.
+`[Serial]` is shorthand for the reserved `Serial` collection. The generated
+runner groups tests by the first listed name with source order preserved inside
+each group, then filters at runtime: `stark test --collection NAME` (repeatable,
+comma-splitting inside each value, union semantics) runs only the tagged subset,
+`stark test --list-collections` prints the known names, an unknown name errors
+with the known list, and a zero-selection run fails. Tagging the root `module`
+with `[Collection("lexing")]` and a few facts with member tags
+(`[Collection("diagnostics")]`) is the discipline `tests-stark/selfhost.Lexing`
+uses; `tests-stark/stdlib.Toml` adds a multi-name member tag,
+`[Collection("manifests", "acceptance")]`.
 
 For LLVM, MIR, SSA, and diagnostic text ports, use `System.Testing.Contains`,
 `DoesNotContain`, `StartsWith`, `EndsWith`, `CountOccurrences`, and

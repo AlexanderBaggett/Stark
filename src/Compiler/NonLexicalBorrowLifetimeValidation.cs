@@ -1007,7 +1007,7 @@ internal sealed class NonLexicalBorrowLifetimeValidator
             return type.IsMutableView;
         }
 
-        if (type.Kind == StarkTypeKind.Named && _copyability.IsCopyable(type))
+        if ((type.Kind is StarkTypeKind.Named or StarkTypeKind.FixedArray or StarkTypeKind.Slice or StarkTypeKind.FunctionPointer) && _copyability.IsCopyable(type))
         {
             return false;
         }

@@ -4628,7 +4628,7 @@ internal sealed class OwnershipValidator
             return type.IsMutableView;
         }
 
-        if (type.Kind == StarkTypeKind.Named && copyability?.IsCopyable(type) == true)
+        if ((type.Kind is StarkTypeKind.Named or StarkTypeKind.FixedArray or StarkTypeKind.Slice or StarkTypeKind.FunctionPointer) && copyability?.IsCopyable(type) == true)
         {
             return false;
         }
@@ -5634,8 +5634,6 @@ internal sealed class OwnershipValidator
         public static ValueUse ForAssignment(StarkTypeSymbol targetType, CopyabilityFacts copyability) =>
             targetType.BorrowKind != StarkBorrowKind.None
                 ? new(ValueUseKind.Read, CaptureBorrowLifetime: true, TargetType: targetType)
-                : targetType.Kind == StarkTypeKind.Slice
-                ? new(ValueUseKind.Read, TargetType: targetType)
                 : IsMoveOnly(targetType, copyability) ? new(ValueUseKind.Consume, TargetType: targetType) : new(ValueUseKind.Read, TargetType: targetType);
 
         public static ValueUse ForCallArgument(StarkTypeSymbol parameterType, CopyabilityFacts copyability) =>
@@ -5644,7 +5642,7 @@ internal sealed class OwnershipValidator
                 :
             parameterType.BorrowKind != StarkBorrowKind.None
                 ? new(ValueUseKind.Read, CaptureBorrowLifetime: true, TargetType: parameterType)
-                : parameterType.Kind is StarkTypeKind.RawPointer or StarkTypeKind.Slice || !IsMoveOnly(parameterType, copyability)
+                : !IsMoveOnly(parameterType, copyability)
                 ? new(ValueUseKind.Read, TargetType: parameterType)
                 : new(ValueUseKind.Consume, TargetType: parameterType);
 
