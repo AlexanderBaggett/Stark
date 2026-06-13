@@ -64,7 +64,8 @@ internal static partial class PackageImageBuilder
                 ModuleNameFromQualifiedName(qualifiedName)),
             ThreadSafetyLawPredicates: BuildThreadSafetyLawPredicateManifests(
                 function.ThreadSafetyLaws,
-                ModuleNameFromQualifiedName(qualifiedName)));
+                ModuleNameFromQualifiedName(qualifiedName)),
+            ValueContracts: BuildParameterValueContractManifests(function.ValueContracts));
         return true;
     }
 
@@ -117,7 +118,8 @@ internal static partial class PackageImageBuilder
             HasBody: declarationFunction.HasBody,
             ComptimeGenericParameters: BuildComptimeGenericParameterManifests(function.ComptimeGenericParams, moduleName),
             TypeParameterConstraints: BuildTypedTypeParameterConstraintManifests(function.Constraints, moduleName),
-            ThreadSafetyLawPredicates: BuildTypedThreadSafetyLawPredicateManifests(function.ThreadSafetyLaws, moduleName));
+            ThreadSafetyLawPredicates: BuildTypedThreadSafetyLawPredicateManifests(function.ThreadSafetyLaws, moduleName),
+            ValueContracts: BuildParameterValueContractManifests(function.ValueContracts));
     }
 
     private static StarkPackageTypeManifest BuildTypeManifest(
@@ -620,7 +622,8 @@ internal static partial class PackageImageBuilder
                         module.SyntaxModel.ModuleName),
                     ThreadSafetyLawPredicates: BuildThreadSafetyLawPredicateManifests(
                         function.ThreadSafetyLaws,
-                        module.SyntaxModel.ModuleName));
+                        module.SyntaxModel.ModuleName),
+                    ValueContracts: BuildParameterValueContractManifests(function.ValueContracts));
             })
             .Where(static manifest => manifest is not null)
             .Cast<StarkPackageMethodManifest>()
@@ -699,7 +702,8 @@ internal static partial class PackageImageBuilder
                         module.SyntaxModel.ModuleName),
                     ThreadSafetyLawPredicates: BuildTypedThreadSafetyLawPredicateManifests(
                         function.ThreadSafetyLaws,
-                        module.SyntaxModel.ModuleName));
+                        module.SyntaxModel.ModuleName),
+                    ValueContracts: BuildParameterValueContractManifests(function.ValueContracts));
             })
             .Where(static manifest => manifest is not null)
             .Cast<StarkPackageTypedMethodManifest>()
@@ -811,6 +815,19 @@ internal static partial class PackageImageBuilder
         return BuildParameterRelationGroupManifests(groups.Select(static group => group.ParameterNames));
     }
 
+    private static IReadOnlyList<StarkPackageValueContractManifest>? BuildParameterValueContractManifests(
+        IReadOnlyList<ParameterValueContract> contracts)
+    {
+        return contracts.Count == 0
+            ? null
+            : contracts
+                .Select(static contract => new StarkPackageValueContractManifest(
+                    contract.LeftText,
+                    contract.OperatorText,
+                    contract.RightText))
+                .ToArray();
+    }
+
     private static IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? BuildParameterRelationGroupManifests(
         IEnumerable<IReadOnlyList<string>> groups)
     {
@@ -888,6 +905,30 @@ internal static partial class PackageImageBuilder
         return BuildParameterRelationGroupManifests(
             memoryContractClauses,
             static contract => contract.sameContract()?.expressionList());
+    }
+
+    private static IReadOnlyList<StarkPackageValueContractManifest>? BuildParameterValueContractManifests(
+        IReadOnlyList<StarkParser.ParameterMemoryContractClauseContext> memoryContractClauses)
+    {
+        List<StarkPackageValueContractManifest>? contracts = null;
+        foreach (var clause in memoryContractClauses)
+        {
+            foreach (var contract in clause.parameterMemoryContract())
+            {
+                if (contract.valueContract() is not { } valueContract)
+                {
+                    continue;
+                }
+
+                contracts ??= [];
+                contracts.Add(new StarkPackageValueContractManifest(
+                    valueContract.shiftExpression(0).GetText(),
+                    valueContract.valueContractOperator().GetText(),
+                    valueContract.shiftExpression(1).GetText()));
+            }
+        }
+
+        return contracts;
     }
 
     private static IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? BuildParameterRelationGroupManifests(

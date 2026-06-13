@@ -149,9 +149,11 @@ public sealed class ParserConformanceTests
 
             finite law ascii Template()
             {
-                return raw"""define fastcc i32 @main() {
+                return raw"""
+                define fastcc i32 @main() {
                   ret i32 0
-                }""";
+                }
+                """;
             }
 
             finite law ascii Label()

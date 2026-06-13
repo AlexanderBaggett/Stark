@@ -67,10 +67,13 @@ internal static class EnumLayoutBuilder
 
     private static StarkTypeSymbol CreateTagType(int variantCount)
     {
+        // Tags are signed integers, so the width must hold tag values
+        // 0..variantCount-1 within the SIGNED range: an i8 covers at most 128
+        // variants (tags 0..127), not 256.
         var maxTagValue = BigInteger.Max(BigInteger.Zero, variantCount - 1);
-        var bitWidth = variantCount <= 0x100
+        var bitWidth = variantCount <= 0x80
             ? 8
-            : variantCount <= 0x1_0000
+            : variantCount <= 0x8000
                 ? 16
                 : 32;
 

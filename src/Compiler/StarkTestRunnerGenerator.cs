@@ -71,6 +71,8 @@ internal static class StarkTestRunnerGenerator
     {
         var facts = new List<StarkTestFact>();
         var diagnostics = new List<StarkTestRunnerDiagnostic>();
+        // [Collection] on the module declaration tags every fact in the file.
+        var moduleNames = CreateCollectionScope(root.moduleDeclaration().attributeList(), diagnostics).CollectionNames;
         foreach (var declaration in root.topLevelDeclaration())
         {
             if (declaration.functionDeclaration() is { } function
@@ -83,20 +85,20 @@ internal static class StarkTestRunnerGenerator
                     function,
                     testKind,
                     CompactPlatformScopes(platformScope),
-                    collectionScope.CollectionName,
+                    CombineCollectionScopes(moduleNames, collectionScope, StarkTestCollectionScope.Empty),
                     dataSources));
                 continue;
             }
 
             if (declaration.structDeclaration() is { } structDeclaration)
             {
-                AddStructFacts(facts, diagnostics, declaration.attributeList(), structDeclaration);
+                AddStructFacts(facts, diagnostics, moduleNames, declaration.attributeList(), structDeclaration);
                 continue;
             }
 
             if (declaration.recordDeclaration() is { } recordDeclaration)
             {
-                AddRecordFacts(facts, diagnostics, declaration.attributeList(), recordDeclaration);
+                AddRecordFacts(facts, diagnostics, moduleNames, declaration.attributeList(), recordDeclaration);
             }
         }
 
@@ -106,6 +108,7 @@ internal static class StarkTestRunnerGenerator
     private static void AddStructFacts(
         List<StarkTestFact> facts,
         List<StarkTestRunnerDiagnostic> diagnostics,
+        IReadOnlyList<string> moduleNames,
         IEnumerable<StarkParser.AttributeListContext> typeAttributeLists,
         StarkParser.StructDeclarationContext declaration)
     {
@@ -132,7 +135,7 @@ internal static class StarkTestRunnerGenerator
                 method,
                 testKind,
                 CombinePlatformScopes(typePlatformScope, memberPlatformScope),
-                CombineCollectionScopes(typeCollectionScope, memberCollectionScope, displayName, diagnostics),
+                CombineCollectionScopes(moduleNames, typeCollectionScope ?? StarkTestCollectionScope.Empty, memberCollectionScope),
                 dataSources));
         }
     }
@@ -140,6 +143,7 @@ internal static class StarkTestRunnerGenerator
     private static void AddRecordFacts(
         List<StarkTestFact> facts,
         List<StarkTestRunnerDiagnostic> diagnostics,
+        IReadOnlyList<string> moduleNames,
         IEnumerable<StarkParser.AttributeListContext> typeAttributeLists,
         StarkParser.RecordDeclarationContext declaration)
     {
@@ -166,7 +170,7 @@ internal static class StarkTestRunnerGenerator
                 method,
                 testKind,
                 CombinePlatformScopes(typePlatformScope, memberPlatformScope),
-                CombineCollectionScopes(typeCollectionScope, memberCollectionScope, displayName, diagnostics),
+                CombineCollectionScopes(moduleNames, typeCollectionScope ?? StarkTestCollectionScope.Empty, memberCollectionScope),
                 dataSources));
         }
     }
@@ -175,7 +179,7 @@ internal static class StarkTestRunnerGenerator
         StarkParser.FunctionDeclarationContext function,
         StarkTestDeclarationKind testKind,
         IReadOnlyList<StarkTestPlatformScope> platformScopes,
-        string? collectionName,
+        IReadOnlyList<string> collectionNames,
         IReadOnlyList<StarkTestDataSource> dataSources)
     {
         var name = function.Identifier().GetText();
@@ -189,7 +193,7 @@ internal static class StarkTestRunnerGenerator
             IsStaticMember: true,
             IsGeneric: function.typeParameterList() is not null,
             PlatformScopes: platformScopes,
-            CollectionName: collectionName,
+            CollectionNames: collectionNames,
             TestKind: testKind,
             DataSources: dataSources);
     }
@@ -199,7 +203,7 @@ internal static class StarkTestRunnerGenerator
         StarkParser.MethodDeclarationContext method,
         StarkTestDeclarationKind testKind,
         IReadOnlyList<StarkTestPlatformScope> platformScopes,
-        string? collectionName,
+        IReadOnlyList<string> collectionNames,
         IReadOnlyList<StarkTestDataSource> dataSources)
     {
         var methodName = method.Identifier().GetText();
@@ -215,7 +219,7 @@ internal static class StarkTestRunnerGenerator
                 string.Equals(modifier.GetText(), "static", StringComparison.Ordinal)),
             IsGeneric: method.typeParameterList() is not null,
             PlatformScopes: platformScopes,
-            CollectionName: collectionName,
+            CollectionNames: collectionNames,
             TestKind: testKind,
             DataSources: dataSources);
     }
@@ -441,13 +445,110 @@ internal static class StarkTestRunnerGenerator
         builder.AppendLine("export fn i32[min max] main()");
         builder.AppendLine("{");
         builder.AppendLine("    stack mut u8[0 1] failed = 0;");
+
+        // Runtime collection filtering: every process argument after the
+        // executable is a collection name (the CLI normalizes flags), plus
+        // the literal --list-collections discovery request.
+        var knownCollectionNames = new List<string>();
+        foreach (var entry in entries)
+        {
+            foreach (var name in entry.Fact.CollectionNames)
+            {
+                if (!knownCollectionNames.Contains(name, StringComparer.Ordinal))
+                {
+                    knownCollectionNames.Add(name);
+                }
+            }
+        }
+
+        var emitCollectionFilter = knownCollectionNames.Count > 0;
+        if (emitCollectionFilter)
+        {
+        builder.AppendLine("    stack mut bool anyFilter = false;");
+        builder.AppendLine("    stack mut bool listOnly = false;");
+        builder.AppendLine("    stack mut bool anyExecuted = false;");
+        for (var nameIndex = 0; nameIndex < knownCollectionNames.Count; nameIndex++)
+        {
+            builder.Append("    stack mut bool select_");
+            builder.Append(nameIndex.ToString(CultureInfo.InvariantCulture));
+            builder.AppendLine(" = false;");
+        }
+
+        builder.AppendLine("    stack u64[0 2 ** 63 - 1] collectionArgumentCount = System.Testing.CollectionArgumentCount();");
+        builder.AppendLine("    for willexit (stack mut u64[0 2 ** 63 - 1] argumentIndex = 1; argumentIndex < collectionArgumentCount; argumentIndex += 1)");
+        builder.AppendLine("    {");
+        builder.AppendLine("        if (System.Testing.CollectionArgumentEquals(argumentIndex, \"--list-collections\"))");
+        builder.AppendLine("        {");
+        builder.AppendLine("            listOnly = true;");
+        builder.AppendLine("            continue;");
+        builder.AppendLine("        }");
+        builder.AppendLine();
+        for (var nameIndex = 0; nameIndex < knownCollectionNames.Count; nameIndex++)
+        {
+            var indexText = nameIndex.ToString(CultureInfo.InvariantCulture);
+            builder.Append("        if (System.Testing.CollectionArgumentEquals(argumentIndex, \"");
+            builder.Append(EscapeAsciiString(knownCollectionNames[nameIndex]));
+            builder.AppendLine("\"))");
+            builder.AppendLine("        {");
+            builder.AppendLine("            anyFilter = true;");
+            builder.Append("            select_");
+            builder.Append(indexText);
+            builder.AppendLine(" = true;");
+            builder.AppendLine("            continue;");
+            builder.AppendLine("        }");
+            builder.AppendLine();
+        }
+
+        builder.AppendLine("        System.Testing.ReportUnknownCollection();");
+        foreach (var name in knownCollectionNames)
+        {
+            builder.Append("        System.Testing.ReportKnownCollection(\"");
+            builder.Append(EscapeAsciiString(name));
+            builder.AppendLine("\");");
+        }
+
+        builder.AppendLine("        return System.Testing.ExitCode(1);");
+        builder.AppendLine("    }");
+        builder.AppendLine();
+        builder.AppendLine("    if (listOnly)");
+        builder.AppendLine("    {");
+        foreach (var name in knownCollectionNames)
+        {
+            builder.Append("        System.Testing.ReportKnownCollection(\"");
+            builder.Append(EscapeAsciiString(name));
+            builder.AppendLine("\");");
+        }
+
+        builder.AppendLine("        return System.Testing.ExitCode(0);");
+        builder.AppendLine("    }");
+        builder.AppendLine();
+        }
+
         string? currentCollectionName = null;
         foreach (var entry in entries)
         {
             var fact = entry.Fact;
-            if (!string.Equals(currentCollectionName, fact.CollectionName, StringComparison.Ordinal))
+            if (emitCollectionFilter)
             {
-                currentCollectionName = fact.CollectionName;
+            var gateTerms = new List<string> { "!anyFilter" };
+            foreach (var name in fact.CollectionNames)
+            {
+                var nameIndex = knownCollectionNames.IndexOf(name);
+                if (nameIndex >= 0)
+                {
+                    gateTerms.Add($"select_{nameIndex.ToString(CultureInfo.InvariantCulture)}");
+                }
+            }
+
+            builder.Append("    if (");
+            builder.Append(string.Join(" || ", gateTerms));
+            builder.AppendLine(")");
+            builder.AppendLine("    {");
+            builder.AppendLine("    anyExecuted = true;");
+            }
+            if (!string.Equals(currentCollectionName, fact.PrimaryCollectionName, StringComparison.Ordinal))
+            {
+                currentCollectionName = fact.PrimaryCollectionName;
                 if (currentCollectionName is not null)
                 {
                     builder.Append("    // Test collection: ");
@@ -462,6 +563,11 @@ internal static class StarkTestRunnerGenerator
                 builder.Append("\", \"");
                 builder.Append(EscapeAsciiString(skipReason));
                 builder.AppendLine("\");");
+                if (emitCollectionFilter)
+                {
+                    builder.AppendLine("    }");
+                }
+
                 builder.AppendLine();
                 continue;
             }
@@ -486,6 +592,21 @@ internal static class StarkTestRunnerGenerator
             builder.AppendLine(") != 0)");
             builder.AppendLine("    {");
             builder.AppendLine("        failed = 1;");
+            builder.AppendLine("    }");
+            if (emitCollectionFilter)
+            {
+                builder.AppendLine("    }");
+            }
+
+            builder.AppendLine();
+        }
+
+        if (emitCollectionFilter)
+        {
+            builder.AppendLine("    if (anyFilter && !anyExecuted)");
+            builder.AppendLine("    {");
+            builder.AppendLine("        System.Testing.ReportNoFactsSelected();");
+            builder.AppendLine("        return System.Testing.ExitCode(1);");
             builder.AppendLine("    }");
             builder.AppendLine();
         }
@@ -668,7 +789,7 @@ internal static class StarkTestRunnerGenerator
         var namedGroups = new Dictionary<string, List<StarkTestRunnerEntry>>(StringComparer.Ordinal);
         foreach (var entry in entries)
         {
-            var collectionName = entry.Fact.CollectionName;
+            var collectionName = entry.Fact.PrimaryCollectionName;
             if (collectionName is null)
             {
                 groups.Add([entry]);
@@ -1191,26 +1312,27 @@ internal static class StarkTestRunnerGenerator
                     continue;
                 }
 
-                AssignCollectionName(ref scope, "Serial", attribute, diagnostics);
+                AppendCollectionName(ref scope, "Serial", attribute);
                 continue;
             }
 
             var arguments = attribute.attributeArgument();
-            if (arguments.Length != 1)
+            if (arguments.Length == 0)
             {
                 diagnostics.Add(new StarkTestRunnerDiagnostic(
-                    "[Collection] on generated tests must name exactly one collection.",
+                    "[Collection] on generated tests must name at least one collection.",
                     attribute.Start.Line,
                     attribute.Start.Column + 1));
                 continue;
             }
 
-            if (!TryCreateCollectionName(arguments[0], diagnostics, out var collectionName))
+            foreach (var argument in arguments)
             {
-                continue;
+                if (TryCreateCollectionName(argument, diagnostics, out var collectionName))
+                {
+                    AppendCollectionName(ref scope, collectionName, attribute);
+                }
             }
-
-            AssignCollectionName(ref scope, collectionName, attribute, diagnostics);
         }
 
         return scope;
@@ -1391,52 +1513,43 @@ internal static class StarkTestRunnerGenerator
             : [typeScope, memberScope];
     }
 
-    private static string? CombineCollectionScopes(
+    private static IReadOnlyList<string> CombineCollectionScopes(
+        IReadOnlyList<string> moduleNames,
         StarkTestCollectionScope typeScope,
-        StarkTestCollectionScope memberScope,
-        string displayName,
-        List<StarkTestRunnerDiagnostic> diagnostics)
+        StarkTestCollectionScope memberScope)
     {
-        if (typeScope.CollectionName is null)
+        var names = new List<string>(moduleNames);
+        foreach (var name in typeScope.CollectionNames)
         {
-            return memberScope.CollectionName;
+            if (!names.Contains(name, StringComparer.Ordinal))
+            {
+                names.Add(name);
+            }
         }
 
-        if (memberScope.CollectionName is null
-            || string.Equals(typeScope.CollectionName, memberScope.CollectionName, StringComparison.Ordinal))
+        foreach (var name in memberScope.CollectionNames)
         {
-            return typeScope.CollectionName;
+            if (!names.Contains(name, StringComparer.Ordinal))
+            {
+                names.Add(name);
+            }
         }
 
-        var token = memberScope.AttributeToken ?? typeScope.AttributeToken;
-        diagnostics.Add(new StarkTestRunnerDiagnostic(
-            $"Generated test '{displayName}' cannot combine collection '{typeScope.CollectionName}' from its containing type with collection '{memberScope.CollectionName}' on the test.",
-            token?.Line ?? 1,
-            (token?.Column ?? 0) + 1));
-        return memberScope.CollectionName;
+        return names;
     }
 
-    private static void AssignCollectionName(
+    private static void AppendCollectionName(
         ref StarkTestCollectionScope scope,
         string collectionName,
-        StarkParser.AttributeContext attribute,
-        List<StarkTestRunnerDiagnostic> diagnostics)
+        StarkParser.AttributeContext attribute)
     {
-        if (scope.CollectionName is null)
-        {
-            scope = new StarkTestCollectionScope(collectionName, attribute.Start);
-            return;
-        }
-
-        if (string.Equals(scope.CollectionName, collectionName, StringComparison.Ordinal))
+        if (scope.CollectionNames.Contains(collectionName, StringComparer.Ordinal))
         {
             return;
         }
 
-        diagnostics.Add(new StarkTestRunnerDiagnostic(
-            $"Generated test collection attributes conflict: '{scope.CollectionName}' and '{collectionName}'. Use one collection name.",
-            attribute.Start.Line,
-            attribute.Start.Column + 1));
+        var names = new List<string>(scope.CollectionNames) { collectionName };
+        scope = new StarkTestCollectionScope(names, scope.AttributeToken ?? attribute.Start);
     }
 
     private static bool IsValidCollectionName(string collectionName)
@@ -1593,10 +1706,12 @@ internal sealed record StarkTestFact(
     bool IsStaticMember,
     bool IsGeneric,
     IReadOnlyList<StarkTestPlatformScope> PlatformScopes,
-    string? CollectionName,
+    IReadOnlyList<string> CollectionNames,
     StarkTestDeclarationKind TestKind,
     IReadOnlyList<StarkTestDataSource> DataSources)
 {
+    public string? PrimaryCollectionName => CollectionNames.Count > 0 ? CollectionNames[0] : null;
+
     public int ParameterCount => Parameters.Count;
 }
 
@@ -1686,10 +1801,10 @@ internal sealed record StarkTestPlatformScope(
 }
 
 internal sealed record StarkTestCollectionScope(
-    string? CollectionName,
+    IReadOnlyList<string> CollectionNames,
     IToken? AttributeToken)
 {
-    public static StarkTestCollectionScope Empty { get; } = new(null, null);
+    public static StarkTestCollectionScope Empty { get; } = new([], null);
 }
 
 internal enum StarkTestPlatformSelectorKind

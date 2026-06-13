@@ -302,6 +302,7 @@ internal static partial class PackageImageLoader
                         method.SameParameterGroups,
                         emitDisjointGroups: method.IsFfi);
                     AppendThreadSafetyLawPredicates(builder, method.ThreadSafetyLawPredicates);
+                    AppendValueContracts(builder, method.ValueContracts);
                     if (methodBodyText is null)
                     {
                         builder.AppendLine(";");
@@ -676,6 +677,26 @@ internal static partial class PackageImageLoader
         }
     }
 
+    private static void AppendValueContracts(
+        StringBuilder builder,
+        IReadOnlyList<StarkPackageValueContractManifest>? contracts)
+    {
+        if (contracts is not { Count: > 0 })
+        {
+            return;
+        }
+
+        foreach (var contract in contracts)
+        {
+            builder.Append(" where ");
+            builder.Append(contract.Left);
+            builder.Append(' ');
+            builder.Append(contract.Operator);
+            builder.Append(' ');
+            builder.Append(contract.Right);
+        }
+    }
+
     private static void AppendTypeParameterConstraints(
         StringBuilder builder,
         IReadOnlyList<StarkPackageTypeParameterConstraintManifest>? constraints)
@@ -853,6 +874,7 @@ internal static partial class PackageImageLoader
             function.SameParameterGroups,
             emitDisjointContracts);
         AppendThreadSafetyLawPredicates(builder, function.ThreadSafetyLawPredicates);
+        AppendValueContracts(builder, function.ValueContracts);
 
         if (function.Asm is null && bodyText is null)
         {
@@ -943,7 +965,8 @@ internal static partial class PackageImageLoader
         IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? disjointParameterGroups = null,
         IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? overlapParameterGroups = null,
         IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? sameParameterGroups = null,
-        IReadOnlyList<StarkPackageTypedThreadSafetyLawPredicateManifest>? threadSafetyLawPredicates = null)
+        IReadOnlyList<StarkPackageTypedThreadSafetyLawPredicateManifest>? threadSafetyLawPredicates = null,
+        IReadOnlyList<StarkPackageValueContractManifest>? valueContracts = null)
     {
         var parsedInlinePreference = ParseInlinePreferenceOrDefault(inlinePreference);
         return new FunctionDeclarationModel(
@@ -979,7 +1002,8 @@ internal static partial class PackageImageLoader
             DisjointParameterGroups: BuildParameterDisjointGroups(parameters, disjointParameterGroups),
             OverlapParameterGroups: BuildParameterOverlapGroups(overlapParameterGroups),
             SameParameterGroups: BuildParameterSameGroups(sameParameterGroups),
-            ThreadSafetyLawPredicates: BuildThreadSafetyLawPredicateModels(threadSafetyLawPredicates));
+            ThreadSafetyLawPredicates: BuildThreadSafetyLawPredicateModels(threadSafetyLawPredicates),
+            ValueParameterContracts: BuildParameterValueContracts(valueContracts));
     }
 
     private static IReadOnlyList<ThreadSafetyLawPredicateModel>? BuildThreadSafetyLawPredicateModels(
@@ -994,6 +1018,22 @@ internal static partial class PackageImageLoader
             .Select(predicate => new ThreadSafetyLawPredicateModel(
                 predicate.LawName,
                 RenderTypeReference(predicate.Type)))
+            .ToArray();
+    }
+
+    private static IReadOnlyList<ParameterValueContract>? BuildParameterValueContracts(
+        IReadOnlyList<StarkPackageValueContractManifest>? contracts)
+    {
+        if (contracts is not { Count: > 0 })
+        {
+            return null;
+        }
+
+        return contracts
+            .Select(static contract => new ParameterValueContract(
+                contract.Left,
+                contract.Operator,
+                contract.Right))
             .ToArray();
     }
 
@@ -2880,7 +2920,8 @@ internal static partial class PackageImageLoader
             SameParameterGroups: function.SameParameterGroups,
             ComptimeGenericParameters: function.ComptimeGenericParameters,
             TypeParameterConstraints: ConvertTypeParameterConstraints(function.TypeParameterConstraints),
-            ThreadSafetyLawPredicates: ConvertThreadSafetyLawPredicates(function.ThreadSafetyLawPredicates));
+            ThreadSafetyLawPredicates: ConvertThreadSafetyLawPredicates(function.ThreadSafetyLawPredicates),
+            ValueContracts: function.ValueContracts);
     }
 
     private static StarkPackageTypeManifest ConvertTypeManifest(StarkPackageTypedTypeManifest type)
@@ -2950,7 +2991,8 @@ internal static partial class PackageImageLoader
                 SameParameterGroups: method.SameParameterGroups,
                 ComptimeGenericParameters: method.ComptimeGenericParameters,
                 TypeParameterConstraints: ConvertTypeParameterConstraints(method.TypeParameterConstraints),
-                ThreadSafetyLawPredicates: ConvertThreadSafetyLawPredicates(method.ThreadSafetyLawPredicates)))
+                ThreadSafetyLawPredicates: ConvertThreadSafetyLawPredicates(method.ThreadSafetyLawPredicates),
+                ValueContracts: method.ValueContracts))
                 .ToArray(),
             type.Destructor,
             BackendOptimizationMode: type.BackendOptimizationMode,

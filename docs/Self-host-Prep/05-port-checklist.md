@@ -31,11 +31,11 @@ artifacts (`src/Parsing/StarkLexer.cs`, `StarkParser.cs`, `StarkVisitor.cs`,
 | Port | Source Path | Migration Target Path | Effort | Depends On Checklist Items | Gap Dependencies |
 |---|---|---|---|---|---|
 | - [ ] | `Stark.g4` | `Stark.g4` canonical reference | S | none | T01 |
-| - [ ] | new handwritten lexer, informed by `Stark.g4` and `src/Parsing/StarkLexer.cs` behavior | `src/Parsing/StarkLexer.stark` | L | canonical grammar, parser tests | T01, S02, S03 |
+| - [x] | new handwritten lexer, informed by `Stark.g4` and `src/Parsing/StarkLexer.cs` behavior | `selfhost/Compiler/Lexing.stark` (pre-cutover staging; moves to `src/Parsing/StarkLexer.stark` at cutover). API: safe `LexText`/`Lex`, value accessors `KindAt`/`TokenAt`/`TokenAtProven` (contracted core)/`DiagnosticKindAt` + span/line accessors; 18 facts in `tests-stark/selfhost.Lexing`, all safe code | L | canonical grammar, parser tests | T01, S02, S03 |
 | - [ ] | new handwritten parser, informed by `Stark.g4` and `src/Parsing/StarkParser.cs` behavior | `src/Parsing/StarkParser.stark` | XL | handwritten lexer, parser tests | T01, L04, L12 |
 | - [ ] | new Stark-native syntax tree / parse-event model | `src/Parsing/StarkSyntaxTree.stark` | L | handwritten parser | T01, L12, S06 |
 | - [ ] | `src/Parsing/StarkSyntax.cs` parser facade behavior | `src/Parsing/StarkSyntax.stark` | M | handwritten lexer/parser | T01, S02, S03, S18 |
-| - [ ] | `src/Parsing/TextLiteralDecoder.cs` | `src/Parsing/TextLiteralDecoder.stark` | M | `System.Text` builders/encoding | S02, S03, S05 |
+| - [ ] | `src/Parsing/TextLiteralDecoder.cs` | `src/Parsing/TextLiteralDecoder.stark` | M | `System.Text` builders/encoding; NOTE: port the June 2026 C#-parity `raw\"\"\"` semantics (delimiter-newline strips, closing-indentation strip, the three error cases) — not the pre-parity verbatim behavior | S02, S03, S05 |
 
 ### Entry Point, CLI, Project Driver, Native Toolchain
 
@@ -270,16 +270,16 @@ Each test target path is provisional and assumes the test harness lives under
 | - [ ] | `tests/compiler.Tests/ParserConformanceTests.cs` | `tests-stark/compiler.Tests/ParserConformanceTests.stark` | M | parser/test harness | TEST-02, TEST-08, TEST-12 |
 | - [ ] | `tests/compiler.Tests/ParserEdgeCaseTests.cs` | `tests-stark/compiler.Tests/ParserEdgeCaseTests.stark` | M | parser/test harness | TEST-02, TEST-08, TEST-12 |
 | - [ ] | `tests/compiler.Tests/CommentTriviaTests.cs` | `tests-stark/compiler.Tests/CommentTriviaTests.stark` | S | parser/test harness | TEST-02, TEST-12 |
-| - [ ] | `tests/compiler.Tests/DiagnosticRegressionTests.cs` | `tests-stark/compiler.Tests/DiagnosticRegressionTests.stark` | L | diagnostic helpers | TEST-02, TEST-03, TEST-12 |
+| - [x] | `tests/compiler.Tests/DiagnosticRegressionTests.cs` | `tests-stark/compiler.Tests/CompilerTests.stark` | L | ported (113 facts; facts live in the root file) | TEST-02, TEST-03, TEST-12 |
 | - [ ] | `tests/compiler.Tests/TypeCheckingTests.cs` | `tests-stark/compiler.Tests/TypeCheckingTests.stark` | XL | artifact API | TEST-02, TEST-03, TEST-06, TEST-07, TEST-12 |
-| - [ ] | `tests/compiler.Tests/TypeTypingDiagnosticsTests.cs` | `tests-stark/compiler.Tests/TypeTypingDiagnosticsTests.stark` | L | artifact API | TEST-02, TEST-06, TEST-07, TEST-12 |
+| - [x] | `tests/compiler.Tests/TypeTypingDiagnosticsTests.cs` | `tests-stark/compiler.Tests/CompilerTests.stark` | L | ported (86/91 facts; 5 PORT-NOTEs need target-triple pinning in the host protocol) | TEST-02, TEST-06, TEST-07, TEST-12 |
 | - [ ] | `tests/compiler.Tests/TypeTypingExpressionFamilyTests.cs` | `tests-stark/compiler.Tests/TypeTypingExpressionFamilyTests.stark` | L | artifact API | TEST-02, TEST-08, TEST-06, TEST-07 |
-| - [ ] | `tests/compiler.Tests/SemanticValidationTests.cs` | `tests-stark/compiler.Tests/SemanticValidationTests.stark` | XL | artifact API | TEST-02, TEST-06, TEST-07, TEST-12 |
+| - [x] | `tests/compiler.Tests/SemanticValidationTests.cs` | `tests-stark/compiler.Tests/CompilerTests.stark` | XL | ported (82/83 facts via stopAfter semantic-validate/instantiation-ownership; 1 PORT-NOTE needs the SemanticValidation artifact model) | TEST-02, TEST-06, TEST-07, TEST-12 |
 | - [ ] | `tests/compiler.Tests/FunctionSemanticsTests.cs` | `tests-stark/compiler.Tests/FunctionSemanticsTests.stark` | L | artifact API | TEST-02, TEST-06, TEST-07 |
 | - [ ] | `tests/compiler.Tests/V1LoweringContractTests.cs` | `tests-stark/compiler.Tests/V1LoweringContractTests.stark` | M | artifact API | TEST-02, TEST-06, TEST-07, TEST-12 |
-| - [ ] | `tests/compiler.Tests/OwnershipValidationTests.cs` | `tests-stark/compiler.Tests/OwnershipValidationTests.stark` | XL | artifact API | TEST-02, TEST-06, TEST-07, TEST-12 |
+| - [x] | `tests/compiler.Tests/OwnershipValidationTests.cs` | `tests-stark/compiler.Tests/CompilerTests.stark` | XL | ported (14/15 facts; 1 PORT-NOTE needs ownership-summary artifacts) | TEST-02, TEST-06, TEST-07, TEST-12 |
 | - [ ] | `tests/compiler.Tests/BorrowLivenessValidationTests.cs` | `tests-stark/compiler.Tests/BorrowLivenessValidationTests.stark` | L | artifact API | TEST-02, TEST-06, TEST-07, TEST-12 |
-| - [ ] | `tests/compiler.Tests/OwnershipRoadmapRegressionTests.cs` | `tests-stark/compiler.Tests/OwnershipRoadmapRegressionTests.stark` | M | diagnostic helpers | TEST-02, TEST-12 |
+| - [x] | `tests/compiler.Tests/OwnershipRoadmapRegressionTests.cs` | `tests-stark/compiler.Tests/CompilerTests.stark` | M | ported (46/48 facts; 2 PORT-NOTEs need ownership/artifact introspection; ~21 success facts drop model-side assertions) | TEST-02, TEST-12 |
 | - [ ] | `tests/compiler.Tests/LoweringContractValidationTests.cs` | `tests-stark/compiler.Tests/LoweringContractValidationTests.stark` | L | artifact API | TEST-02, TEST-06, TEST-07, TEST-12 |
 | - [ ] | `tests/compiler.Tests/MidLevelIrArtifactValidationTests.cs` | `tests-stark/compiler.Tests/MidLevelIrArtifactValidationTests.stark` | M | MIR artifact API | TEST-02, TEST-06, TEST-07 |
 | - [ ] | `tests/compiler.Tests/MidLevelIrLowering/MidLevelIrLoweringTests.cs` | `tests-stark/compiler.Tests/MidLevelIrLowering/MidLevelIrLoweringTests.stark` | L | MIR helpers | TEST-02, TEST-03, TEST-06, TEST-07 |

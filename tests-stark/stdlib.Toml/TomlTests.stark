@@ -1,0 +1,676 @@
+import System.Testing
+import System.Toml
+[Collection("toml")]
+module TomlTests
+
+// Stark-native tests for the System.Toml reader (doc 21 work items:
+// conformance, malformed input, source spans, and manifest decoding against
+// the repo's real manifest shape).
+
+fn bool IsDuplicateKey(TomlError error)
+{
+    switch (error)
+    {
+        case TomlError.DuplicateKey
+        {
+            Line: var line, Column: var column
+        }:
+            return true;
+        default:
+            return false;
+    }
+}
+
+fn bool IsUnterminatedString(TomlError error)
+{
+    switch (error)
+    {
+        case TomlError.UnterminatedString
+        {
+            Line: var line, Column: var column
+        }:
+            return true;
+        default:
+            return false;
+    }
+}
+
+fn bool IsUnsupportedValue(TomlError error)
+{
+    switch (error)
+    {
+        case TomlError.UnsupportedValue
+        {
+            Line: var line, Column: var column
+        }:
+            return true;
+        default:
+            return false;
+    }
+}
+
+fn bool IsUnexpectedCharacterAt(TomlError error, u32[0 max] line, u32[0 max] column)
+{
+    switch (error)
+    {
+        case TomlError.UnexpectedCharacter
+        {
+            Line: var errorLine, Column: var errorColumn
+        }:
+            return errorLine == line && errorColumn == column;
+        default:
+            return false;
+    }
+}
+
+[Fact]
+fn bool EmptyDocumentParsesToRootTable()
+{
+    unsafe
+    {
+        switch (ParseText(""))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                stack mut TomlDocument document = value;
+                return document.Count() == 1
+                    && document.KindAt(TomlRootNode) == TomlKind.Table
+                    && document.ChildCountAt(TomlRootNode) == 0;
+        }
+    }
+}
+
+[Fact]
+fn bool SimpleKeyValuesParse()
+{
+    unsafe
+    {
+        switch (ParseText(raw"""
+name = "stark"
+count = 42
+ready = true
+closed = false
+"""))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                stack mut TomlDocument document = value;
+                if (document.ChildCountAt(TomlRootNode) != 4)
+                {
+                    return false;
+                }
+
+                stack mut u64[0 2 ** 63 - 1] name = 0;
+                if (!document.TryFindMember(TomlRootNode, "name", name))
+                {
+                    return false;
+                }
+
+                if (document.TextAt(name) != "stark")
+                {
+                    return false;
+                }
+
+                stack mut u64[0 2 ** 63 - 1] count = 0;
+                if (!document.TryFindMember(TomlRootNode, "count", count))
+                {
+                    return false;
+                }
+
+                switch (document.I64At(count))
+                {
+                    case TomlResult<i64[min max]>.Err(var countError):
+                        return false;
+                    case TomlResult<i64[min max]>.Ok(var countValue):
+                        if (countValue != 42)
+                        {
+                            return false;
+                        }
+                }
+
+                stack mut u64[0 2 ** 63 - 1] ready = 0;
+                if (!document.TryFindMember(TomlRootNode, "ready", ready))
+                {
+                    return false;
+                }
+
+                stack mut u64[0 2 ** 63 - 1] closed = 0;
+                if (!document.TryFindMember(TomlRootNode, "closed", closed))
+                {
+                    return false;
+                }
+
+                return document.BoolAt(ready)
+                    && document.KindAt(closed) == TomlKind.False;
+        }
+    }
+}
+
+[Fact]
+fn bool TableHeadersResolveAndNest()
+{
+    unsafe
+    {
+        switch (ParseText(raw"""
+[project]
+name = "demo"
+
+[project.settings]
+level = 3
+"""))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                stack mut TomlDocument document = value;
+                stack mut u64[0 2 ** 63 - 1] project = 0;
+                if (!document.TryFindMemberOfKind(TomlRootNode, "project", TomlKind.Table, project))
+                {
+                    return false;
+                }
+
+                stack mut u64[0 2 ** 63 - 1] name = 0;
+                if (!document.TryFindMember(project, "name", name))
+                {
+                    return false;
+                }
+
+                stack mut u64[0 2 ** 63 - 1] settings = 0;
+                if (!document.TryFindMemberOfKind(project, "settings", TomlKind.Table, settings))
+                {
+                    return false;
+                }
+
+                stack mut u64[0 2 ** 63 - 1] level = 0;
+                if (!document.TryFindMember(settings, "level", level))
+                {
+                    return false;
+                }
+
+                return document.TextAt(name) == "demo"
+                    && document.KindAt(level) == TomlKind.Integer;
+        }
+    }
+}
+
+[Fact]
+fn bool DottedKeysCreateNestedTables()
+{
+    unsafe
+    {
+        switch (ParseText(raw"""
+project.name = "demo"
+project.version = "0.1.0"
+"""))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                stack mut TomlDocument document = value;
+                stack mut u64[0 2 ** 63 - 1] project = 0;
+                if (!document.TryFindMemberOfKind(TomlRootNode, "project", TomlKind.Table, project))
+                {
+                    return false;
+                }
+
+                stack mut u64[0 2 ** 63 - 1] version = 0;
+                if (!document.TryFindMember(project, "version", version))
+                {
+                    return false;
+                }
+
+                return document.ChildCountAt(project) == 2
+                    && document.TextAt(version) == "0.1.0";
+        }
+    }
+}
+
+[Fact]
+fn bool InlineTablesParse()
+{
+    unsafe
+    {
+        switch (ParseText(raw"""
+[dependencies]
+raylib = { path = "../raylib" }
+empty = {}
+"""))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                stack mut TomlDocument document = value;
+                stack mut u64[0 2 ** 63 - 1] dependencies = 0;
+                if (!document.TryFindMemberOfKind(TomlRootNode, "dependencies", TomlKind.Table, dependencies))
+                {
+                    return false;
+                }
+
+                stack mut u64[0 2 ** 63 - 1] raylib = 0;
+                if (!document.TryFindMemberOfKind(dependencies, "raylib", TomlKind.Table, raylib))
+                {
+                    return false;
+                }
+
+                stack mut u64[0 2 ** 63 - 1] path = 0;
+                if (!document.TryFindMember(raylib, "path", path))
+                {
+                    return false;
+                }
+
+                stack mut u64[0 2 ** 63 - 1] empty = 0;
+                if (!document.TryFindMemberOfKind(dependencies, "empty", TomlKind.Table, empty))
+                {
+                    return false;
+                }
+
+                return document.TextAt(path) == "../raylib"
+                    && document.ChildCountAt(empty) == 0;
+        }
+    }
+}
+
+[Fact]
+fn bool ArraysParseInOrder()
+{
+    unsafe
+    {
+        switch (ParseText(raw"""
+members = [
+  "stdlib",
+  "examples/raylib",
+  "examples/breakout",
+]
+"""))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                stack mut TomlDocument document = value;
+                stack mut u64[0 2 ** 63 - 1] members = 0;
+                if (!document.TryFindMemberOfKind(TomlRootNode, "members", TomlKind.Array, members))
+                {
+                    return false;
+                }
+
+                if (document.ChildCountAt(members) != 3)
+                {
+                    return false;
+                }
+
+                stack mut u64[0 2 ** 63 - 1] first = 0;
+                if (!document.TryChildAt(members, 0, first))
+                {
+                    return false;
+                }
+
+                stack mut u64[0 2 ** 63 - 1] last = 0;
+                if (!document.TryChildAt(members, 2, last))
+                {
+                    return false;
+                }
+
+                return document.TextAt(first) == "stdlib"
+                    && document.TextAt(last) == "examples/breakout";
+        }
+    }
+}
+
+[Fact]
+fn bool BasicStringEscapesDecode()
+{
+    unsafe
+    {
+        switch (ParseText(raw"""
+text = "line\nnext\tcol \"quoted\" back\\slash A"
+"""))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                stack mut TomlDocument document = value;
+                stack mut u64[0 2 ** 63 - 1] text = 0;
+                if (!document.TryFindMember(TomlRootNode, "text", text))
+                {
+                    return false;
+                }
+
+                return document.TextAt(text) == "line\nnext\tcol \"quoted\" back\\slash A";
+        }
+    }
+}
+
+[Fact]
+fn bool LiteralStringsAreVerbatim()
+{
+    unsafe
+    {
+        switch (ParseText(raw"""
+pattern = '\d+\.\d+'
+"""))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                stack mut TomlDocument document = value;
+                stack mut u64[0 2 ** 63 - 1] pattern = 0;
+                if (!document.TryFindMember(TomlRootNode, "pattern", pattern))
+                {
+                    return false;
+                }
+
+                return document.TextAt(pattern) == raw"\d+\.\d+";
+        }
+    }
+}
+
+[Fact]
+fn bool UnderscoredIntegersNormalize()
+{
+    unsafe
+    {
+        switch (ParseText(raw"""
+big = 1_000_000
+negative = -42
+"""))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                stack mut TomlDocument document = value;
+                stack mut u64[0 2 ** 63 - 1] big = 0;
+                if (!document.TryFindMember(TomlRootNode, "big", big))
+                {
+                    return false;
+                }
+
+                stack mut u64[0 2 ** 63 - 1] negative = 0;
+                if (!document.TryFindMember(TomlRootNode, "negative", negative))
+                {
+                    return false;
+                }
+
+                stack mut i64[min max] bigValue = 0;
+                switch (document.I64At(big))
+                {
+                    case TomlResult<i64[min max]>.Err(var bigError):
+                        return false;
+                    case TomlResult<i64[min max]>.Ok(var parsedBig):
+                        bigValue = parsedBig;
+                }
+
+                stack mut i64[min max] negativeValue = 0;
+                switch (document.I64At(negative))
+                {
+                    case TomlResult<i64[min max]>.Err(var negativeError):
+                        return false;
+                    case TomlResult<i64[min max]>.Ok(var parsedNegative):
+                        negativeValue = parsedNegative;
+                }
+
+                return bigValue == 1000000 && negativeValue == -42;
+        }
+    }
+}
+
+[Fact]
+fn bool CommentsAndBlankLinesAreSkipped()
+{
+    unsafe
+    {
+        switch (ParseText(raw"""
+# leading comment
+
+name = "demo" # trailing comment
+
+# closing comment
+"""))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                stack mut TomlDocument document = value;
+                stack mut u64[0 2 ** 63 - 1] name = 0;
+                if (!document.TryFindMember(TomlRootNode, "name", name))
+                {
+                    return false;
+                }
+
+                return document.ChildCountAt(TomlRootNode) == 1
+                    && document.TextAt(name) == "demo";
+        }
+    }
+}
+
+[Fact]
+fn bool SpansRecordLineAndColumn()
+{
+    unsafe
+    {
+        switch (ParseText("first = 1\nsecond = \"two\"\n"))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                stack mut TomlDocument document = value;
+                stack mut u64[0 2 ** 63 - 1] first = 0;
+                if (!document.TryFindMember(TomlRootNode, "first", first))
+                {
+                    return false;
+                }
+
+                stack mut u64[0 2 ** 63 - 1] second = 0;
+                if (!document.TryFindMember(TomlRootNode, "second", second))
+                {
+                    return false;
+                }
+
+                return document.LineAt(first) == 1
+                    && document.ColumnAt(first) == 9
+                    && document.LineAt(second) == 2
+                    && document.ColumnAt(second) == 10;
+        }
+    }
+}
+
+[Fact]
+fn bool DuplicateKeysAreRejected()
+{
+    unsafe
+    {
+        switch (ParseText(raw"""
+name = "first"
+name = "second"
+"""))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return IsDuplicateKey(error);
+            case TomlResult<TomlDocument>.Ok(var value):
+                return false;
+        }
+    }
+}
+
+[Fact]
+fn bool UnterminatedStringsAreRejected()
+{
+    unsafe
+    {
+        switch (ParseText(raw"""
+name = "missing end
+"""))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return IsUnterminatedString(error);
+            case TomlResult<TomlDocument>.Ok(var value):
+                return false;
+        }
+    }
+}
+
+[Fact]
+fn bool FloatsAreUnsupportedForNow()
+{
+    unsafe
+    {
+        switch (ParseText(raw"""
+ratio = 1.5
+"""))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return IsUnsupportedValue(error);
+            case TomlResult<TomlDocument>.Ok(var value):
+                return false;
+        }
+    }
+}
+
+[Fact]
+fn bool ArraysOfTablesAreUnsupportedForNow()
+{
+    unsafe
+    {
+        switch (ParseText(raw"""
+[[bin]]
+name = "tool"
+"""))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return IsUnsupportedValue(error);
+            case TomlResult<TomlDocument>.Ok(var value):
+                return false;
+        }
+    }
+}
+
+[Fact]
+fn bool TrailingGarbageAfterValueIsRejected()
+{
+    unsafe
+    {
+        switch (ParseText("name = \"demo\" extra\n"))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return IsUnexpectedCharacterAt(error, 1, 15);
+            case TomlResult<TomlDocument>.Ok(var value):
+                return false;
+        }
+    }
+}
+
+[Fact]
+[Collection("manifests", "acceptance")]
+fn bool RealProjectManifestDecodes()
+{
+    unsafe
+    {
+        switch (ParseText(raw"""
+[project]
+name = "compiler-feature-tests"
+version = "0.1.0"
+kind = "test"
+
+[test]
+root = "FeatureTests.stark"
+output = "compiler-feature-tests"
+
+[dependencies]
+stdlib = { path = "../../stdlib" }
+
+[profiles.dev]
+opt = 0
+
+[profiles.release]
+opt = 3
+"""))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                stack mut TomlDocument document = value;
+
+                stack mut u64[0 2 ** 63 - 1] project = 0;
+                if (!document.TryFindMemberOfKind(TomlRootNode, "project", TomlKind.Table, project))
+                {
+                    return false;
+                }
+
+                stack mut u64[0 2 ** 63 - 1] name = 0;
+                if (!document.TryFindMember(project, "name", name))
+                {
+                    return false;
+                }
+
+                stack mut u64[0 2 ** 63 - 1] kind = 0;
+                if (!document.TryFindMember(project, "kind", kind))
+                {
+                    return false;
+                }
+
+                stack mut u64[0 2 ** 63 - 1] test = 0;
+                if (!document.TryFindMemberOfKind(TomlRootNode, "test", TomlKind.Table, test))
+                {
+                    return false;
+                }
+
+                stack mut u64[0 2 ** 63 - 1] root = 0;
+                if (!document.TryFindMember(test, "root", root))
+                {
+                    return false;
+                }
+
+                stack mut u64[0 2 ** 63 - 1] dependencies = 0;
+                if (!document.TryFindMemberOfKind(TomlRootNode, "dependencies", TomlKind.Table, dependencies))
+                {
+                    return false;
+                }
+
+                stack mut u64[0 2 ** 63 - 1] stdlibDependency = 0;
+                if (!document.TryFindMemberOfKind(dependencies, "stdlib", TomlKind.Table, stdlibDependency))
+                {
+                    return false;
+                }
+
+                stack mut u64[0 2 ** 63 - 1] path = 0;
+                if (!document.TryFindMember(stdlibDependency, "path", path))
+                {
+                    return false;
+                }
+
+                stack mut u64[0 2 ** 63 - 1] profiles = 0;
+                if (!document.TryFindMemberOfKind(TomlRootNode, "profiles", TomlKind.Table, profiles))
+                {
+                    return false;
+                }
+
+                stack mut u64[0 2 ** 63 - 1] dev = 0;
+                if (!document.TryFindMemberOfKind(profiles, "dev", TomlKind.Table, dev))
+                {
+                    return false;
+                }
+
+                stack mut u64[0 2 ** 63 - 1] opt = 0;
+                if (!document.TryFindMember(dev, "opt", opt))
+                {
+                    return false;
+                }
+
+                stack mut i64[min max] optValue = -1;
+                switch (document.I64At(opt))
+                {
+                    case TomlResult<i64[min max]>.Err(var optError):
+                        return false;
+                    case TomlResult<i64[min max]>.Ok(var parsedOpt):
+                        optValue = parsedOpt;
+                }
+
+                return document.TextAt(name) == "compiler-feature-tests"
+                    && document.TextAt(kind) == "test"
+                    && document.TextAt(root) == "FeatureTests.stark"
+                    && document.TextAt(path) == "../../stdlib"
+                    && optValue == 0;
+        }
+    }
+}

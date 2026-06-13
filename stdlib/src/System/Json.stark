@@ -142,27 +142,42 @@ public struct JsonDocument
         return self.KindAt(node) == JsonKind.True;
     }
 
-    public unsafe fn ascii TextAt(mut borrow JsonDocument self, u64[0 2 ** 63 - 1] node)
+    public finite ascii TextAt(mut borrow JsonDocument self, u64[0 2 ** 63 - 1] node)
     {
         if (node >= self.Nodes.Length)
         {
             return "";
         }
 
-        return self.ViewRange(self.Nodes[node].TextStart, self.Nodes[node].TextLength);
+        stack u64[0 2 ** 63 - 1] textStart = self.Nodes[node].TextStart;
+        stack u64[0 2 ** 63 - 1] textLength = self.Nodes[node].TextLength;
+        unsafe
+        {
+            return self.ViewRange(textStart, textLength);
+        }
     }
 
-    public unsafe fn ascii KeyAt(mut borrow JsonDocument self, u64[0 2 ** 63 - 1] node)
+    public finite ascii KeyAt(mut borrow JsonDocument self, u64[0 2 ** 63 - 1] node)
     {
-        if (node >= self.Nodes.Length || !self.Nodes[node].HasKey)
+        if (node >= self.Nodes.Length)
         {
             return "";
         }
 
-        return self.ViewRange(self.Nodes[node].KeyStart, self.Nodes[node].KeyLength);
+        if (!self.Nodes[node].HasKey)
+        {
+            return "";
+        }
+
+        stack u64[0 2 ** 63 - 1] keyStart = self.Nodes[node].KeyStart;
+        stack u64[0 2 ** 63 - 1] keyLength = self.Nodes[node].KeyLength;
+        unsafe
+        {
+            return self.ViewRange(keyStart, keyLength);
+        }
     }
 
-    public unsafe fn JsonResult<i64[min max]> I64At(mut borrow JsonDocument self, u64[0 2 ** 63 - 1] node)
+    public finite JsonResult<i64[min max]> I64At(mut borrow JsonDocument self, u64[0 2 ** 63 - 1] node)
     {
         if (self.KindAt(node) != JsonKind.Number)
         {
@@ -180,7 +195,7 @@ public struct JsonDocument
     }
 
     // Finds the value node of an object member by exact key bytes.
-    public unsafe fn bool TryFindMember(
+    public finite bool TryFindMember(
         borrow JsonDocument self,
         u64[0 2 ** 63 - 1] objectNode,
         ascii name,
@@ -250,7 +265,7 @@ public struct JsonDocument
     }
 
     // Convenience: member lookup that requires a specific kind.
-    public unsafe fn bool TryFindMemberOfKind(
+    public finite bool TryFindMemberOfKind(
         borrow JsonDocument self,
         u64[0 2 ** 63 - 1] objectNode,
         ascii name,
@@ -274,7 +289,7 @@ public struct JsonDocument
         return true;
     }
 
-    internal unsafe fn ascii ViewRange(
+    internal unsafe finite ascii ViewRange(
         mut borrow JsonDocument self,
         u64[0 2 ** 63 - 1] start,
         u64[0 2 ** 63 - 1] length)
@@ -291,7 +306,8 @@ public struct JsonDocument
         return System.Text.AsciiView(view);
     }
 
-    internal unsafe fn bool KeyEquals(borrow JsonDocument self, u64[0 2 ** 63 - 1] node, ascii name)
+    internal finite bool KeyEquals(borrow JsonDocument self, u64[0 2 ** 63 - 1] node, ascii name)
+        where node < self.Nodes.Length
     {
         stack i64[min max] signedNameLength = System.Text.AsciiLength(name);
         if (signedNameLength < 0)
@@ -310,22 +326,33 @@ public struct JsonDocument
             return true;
         }
 
-        stack rawptr<i8[min max]> nameData = System.Text.AsciiData(name);
-        if (nameData == null)
+        stack u64[0 2 ** 63 - 1] keyStart = self.Nodes[node].KeyStart;
+        // Stored key ranges always lie inside DecodedText; the guard spells
+        // that bound for the dense-prefix proof and never fires in practice.
+        if (keyStart + nameLength > self.DecodedText.Length)
         {
             return false;
         }
 
-        stack u64[0 2 ** 63 - 1] keyStart = self.Nodes[node].KeyStart;
-        for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < nameLength; index += 1)
+        // Only the raw name bytes still need an audited pointer walk.
+        unsafe
         {
-            if (self.DecodedText[keyStart + index] != *(&nameData[index]))
+            stack rawptr<i8[min max]> nameData = System.Text.AsciiData(name);
+            if (nameData == null)
             {
                 return false;
             }
-        }
 
-        return true;
+            for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < nameLength; index += 1)
+            {
+                if (self.DecodedText[keyStart + index] != *(&nameData[index]))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
     }
 }
 

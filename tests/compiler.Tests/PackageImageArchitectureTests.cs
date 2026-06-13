@@ -2832,7 +2832,7 @@ public sealed class PackageImageArchitectureTests
                             && comptime System.Compiler.TypeIsMutableView<Facade.BorrowedInt>()
                             && comptime System.Compiler.TypeUnqualifiedTypeIs<Facade.BorrowedInt, i32[min max]>())
                         {
-                            return 7 + comptime System.Compiler.TypeFixedArrayLength<Facade.ByteArray<4>>();
+                            return (i64[min max])(7 + comptime System.Compiler.TypeFixedArrayLength<Facade.ByteArray<4>>());
                         }
 
                         return 0;

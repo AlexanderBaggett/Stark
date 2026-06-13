@@ -1747,6 +1747,59 @@ public finite law TestStatus Status(bool assertion)
     return TestStatus.Failed;
 }
 
+// Collection-filter reporting for generated test runners. The runner emits
+// the matching logic; these keep the printing (and the Testing module's
+// raw-pointer-free policy) in one place.
+// Process-argument access for generated runners, wrapped so the generated
+// root needs no extra imports and no unsafe blocks.
+public fn u64[0 2 ** 63 - 1] CollectionArgumentCount()
+{
+    unsafe
+    {
+        switch (System.Process.Arguments())
+        {
+            case System.Process.ProcessResult<System.Process.ProcessArguments>.Err(var error):
+                return 0;
+            case System.Process.ProcessResult<System.Process.ProcessArguments>.Ok(var value):
+                stack System.Process.ProcessArguments arguments = value;
+                return arguments.Count();
+        }
+    }
+}
+
+public fn bool CollectionArgumentEquals(u64[0 2 ** 63 - 1] index, ascii expected)
+{
+    unsafe
+    {
+        switch (System.Process.Arguments())
+        {
+            case System.Process.ProcessResult<System.Process.ProcessArguments>.Err(var error):
+                return false;
+            case System.Process.ProcessResult<System.Process.ProcessArguments>.Ok(var value):
+                stack System.Process.ProcessArguments arguments = value;
+                return arguments.ArgumentEquals(index, expected);
+        }
+    }
+}
+
+public fn void ReportUnknownCollection()
+{
+    System.Console.WriteLine("Unknown test collection argument. Known collections:");
+    return;
+}
+
+public fn void ReportKnownCollection(ascii name)
+{
+    System.Console.WriteLine(name);
+    return;
+}
+
+public fn void ReportNoFactsSelected()
+{
+    System.Console.WriteLine("No facts matched the requested collections.");
+    return;
+}
+
 public fn u8[0 1] RunFact(ascii name, bool assertion)
 {
     if (assertion)

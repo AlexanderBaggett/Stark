@@ -2187,13 +2187,12 @@ internal sealed class LoweringContractValidator
         string functionName,
         out T record)
     {
-        var key = Key(functionName, context);
-        if (facts.TryGetValue(key, out record!))
-        {
-            return true;
-        }
-
-        return facts.TryGetValue(key with { FunctionName = null }, out record!);
+        // No null-name fallback: records keyed without an enclosing function
+        // (constructor bodies, materialized imported instantiations) live at
+        // OTHER files' coordinates, so a fallback hit here mis-associates a
+        // different call's fact (e.g. a member call matching a constructor's
+        // direct call at the same line/column in another file).
+        return facts.TryGetValue(Key(functionName, context), out record!);
     }
 
     private bool TryGetBoundOperation<T>(

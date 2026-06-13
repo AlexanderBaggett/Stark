@@ -63,7 +63,8 @@ internal static partial class PackageImageLoader
                     function.ThreadSafetyLawPredicates,
                     module.Module.ModuleName,
                     localNamedTypes),
-                Visibility: functionVisibility);
+                Visibility: functionVisibility,
+                ValueParameterContracts: BuildParameterValueContracts(function.ValueContracts));
         }
 
         foreach (var type in module.Module.EffectiveTypedInterface?.Types ?? [])
@@ -122,7 +123,8 @@ internal static partial class PackageImageLoader
                         method.ThreadSafetyLawPredicates,
                         module.Module.ModuleName,
                         localNamedTypes),
-                    Visibility: methodVisibility);
+                    Visibility: methodVisibility,
+                    ValueParameterContracts: BuildParameterValueContracts(method.ValueContracts));
             }
         }
 
@@ -824,7 +826,8 @@ internal static partial class PackageImageLoader
                     moduleName,
                     localNamedTypes),
                 DeclaringModuleName: moduleName,
-                Visibility: visibility);
+                Visibility: visibility,
+                HasDestructor: type.Destructor is not null);
         }
 
         var constructors = new List<TypedConstructorShape>();

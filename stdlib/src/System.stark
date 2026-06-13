@@ -21,6 +21,7 @@ export import System.Net
 export import System.Net.Tcp
 export import System.Process
 export import System.Threading
+export import System.Toml
 module System
 
 public alias Result<T, E> = System.Core.Result<T, E>;

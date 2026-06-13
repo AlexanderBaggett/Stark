@@ -144,3 +144,54 @@ allocation-free; `CountOccurrences` counts non-overlapping matches and returns
 For captured process output, use `ProcessStdoutOccurrences` /
 `ProcessStderrOccurrences` or their count-returning companions to stay on
 borrowed stdout/stderr byte slices.
+
+For function-definition-scoped LLVM assertions, `System.Testing` provides
+`LlvmDefinitionHeader(llvm, symbolName)` (the `define ...` line whose symbol
+spells `@name(`), `LlvmDefinitionBody(llvm, symbolName)` (header through the
+closing `}` line), and `AnyLineContainsBoth(text, first, second)` (one-line
+regex approximation). These are the Stark ports of the C# feature-test
+`ExtractDefinitionHeader`/`ExtractDefinitionBody` helpers. `System/Testing.stark`
+must stay raw-pointer-free (enforced by
+`StdLibTestingModuleStaysRawPointerFreeAndExplicit`); new helpers there scan via
+ascii slicing (`value[(i64[min max])index, 1] == "\n"`), not `AsciiData`.
+
+## Stark-Side Wrapper: `System.Testing.HostCompiler`
+
+Ported tests drive the server through `System.Testing.HostCompiler` instead of
+hand-writing protocol JSON:
+
+- `CompilerPathFromEnvironment()` reads `STARK_HOST_COMPILER` →
+  `HostResult<OwnedAscii>`.
+- `CompileOnce(compilerPath, id, sourceText, stopAfterPassId, includeLlvm,
+  timeoutMs)` runs one compile (empty `stopAfterPassId` = full pipeline).
+- `CompileOnceIn(..., searchDirectory, ...)` additionally exposes one module
+  search directory (server-side `FileSystemModuleResolver`), which is how
+  C# `InMemoryModuleResolver` tests port: write the module source under a temp
+  directory (`System.FileSystem.CreateTempDirectory` + `System.IO.File.WriteAllText`,
+  dotted modules in subdirectories: `System.Threading` → `System/Threading.stark`)
+  and pass the temp root.
+- `CompileOnceArtifactIn(compilerPath, id, sourceText, stopAfterPassId,
+  artifactName, searchDirectory, maximumComptimeLoopIterations, timeoutMs)` is
+  the general entry: one named text artifact (`"llvm"`, `"mir"`, or empty),
+  optional search directory, and an optional compile-time loop iteration cap
+  (`0` keeps the compiler default; the cap maps to the request's
+  `maximumCompileTimeLoopIterations`).
+- `HostCompileOutcome` exposes `CompileSucceeded()`, `CompileErrorCount()`,
+  `HadProtocolError()`, `DiagnosticCount()`, `DiagnosticCodeAt/MessageAt/
+  SeverityAt/StageAt(index)`, `HasDiagnosticCode(code)`, and
+  `ArtifactText(requestedName)` (matched against the request alias, e.g.
+  `"mir"`). Text accessors take `mut borrow` because views borrow the outcome's
+  decoded buffer.
+- `HostError` funnels `ProcessError` and `JsonError`; consumers must import
+  `System.Process` and `System.Json` for the funnel payload types.
+
+`tests-stark/compiler.FeatureTests/FeatureTestSupport.stark` layers fact-shaped
+helpers over this wrapper (`CompileLlvm`/`CompileMir` with success-implying
+`Ok`, `CompileTypeCheck`/`CompileFull` with transport-only `Ok` for
+`FailsWithDiagnostic*` assertions, `*WithModule` temp-directory variants,
+`CountDiagnosticsWithCodeAndMessage`). The generated `stark test` runner
+collects `[Fact]`s from the ROOT file only, so ported facts live in the root
+file and shared helpers in an imported support module. MIR text assertions read
+the `ArtifactTextRenderer` forms (e.g. `$tmp5_dyn_vtable: temp
+rawptr<Speaker.Vtable>`, `= dynview<Speaker>(context,table)`); probe the
+rendering with a one-off server request before asserting fragments.

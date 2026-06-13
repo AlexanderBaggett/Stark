@@ -5737,8 +5737,10 @@ public sealed class LlvmIrEmissionTests
 
             unsafe fn ascii Multiline()
             {
-                return raw"""first
-            second""";
+                return raw"""
+                    first
+                    second
+                    """;
             }
 
             unsafe fn ascii Interpolated()
@@ -10062,6 +10064,10 @@ public sealed class LlvmIrEmissionTests
             {
                 i32[min max] Left;
                 i32[min max] Right;
+
+                drop
+                {
+                }
             }
 
             unsafe fn i32[min max] Run()

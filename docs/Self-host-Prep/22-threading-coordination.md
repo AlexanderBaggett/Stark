@@ -56,8 +56,8 @@ module Build
 
 struct WorkerPayload
 {
-    Job: BuildJob;
-    Results: System.Threading.Sender<BuildResult>;
+    BuildJob Job;
+    System.Threading.Sender<BuildResult> Results;
 }
 
 fn i32[min max] Worker(WorkerPayload payload)

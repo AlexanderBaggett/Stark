@@ -2783,6 +2783,20 @@ internal sealed class SsaIrValidator
             && !valueDefinitions.Contains(reference.Name))
         {
             Report(function, location, $"value reference '%{reference.Name}' is not defined in this SSA function.");
+            if (Environment.GetEnvironmentVariable("STARK_DEBUG_SSA_VALIDATE") == "1")
+            {
+                Console.Error.WriteLine($"[ssa-validate-debug] function '{function.Name}' missing '%{reference.Name}'; blocks:");
+                foreach (var debugBlock in function.Blocks)
+                {
+                    var names = debugBlock.Phis.Select(static phi => phi.ResultName)
+                        .Concat(debugBlock.Instructions.OfType<SsaValueInstruction>().Select(static instruction => instruction.ResultName));
+                    Console.Error.WriteLine($"  block {debugBlock.Id} '{debugBlock.Label}': defs [{string.Join(", ", names)}] terminator {debugBlock.Terminator.Kind} -> [{string.Join(", ", debugBlock.Terminator.Targets)}]");
+                    foreach (var debugPhi in debugBlock.Phis)
+                    {
+                        Console.Error.WriteLine($"    phi {debugPhi.ResultName}: {string.Join(", ", debugPhi.Incomings.Select(static incoming => $"[{(incoming.Value is SsaValueReference r ? "%" + r.Name : incoming.Value.GetType().Name)} from {incoming.PredecessorBlockId}]"))}");
+                    }
+                }
+            }
         }
 
         switch (value)

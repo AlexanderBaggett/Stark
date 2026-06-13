@@ -390,3 +390,64 @@ Do not copy linker flags into every consuming executable.
 - Handle status/result values with `switch`.
 - Keep raw pointer work inside small wrapper functions.
 - Keep private package details behind `internal` or module-private APIs.
+
+## Hard-Won Checker And Lowering Gotchas
+
+Patterns discovered while porting real test/stdlib code against the host
+compiler (June 2026). Each has a proven restructure.
+
+### Law Demotions (STK4106 Family)
+
+`Law 'X' may only call other laws` — a `law` body calls a non-law. Either
+strengthen the callee honestly or drop `law` from the caller (keep `finite`).
+`out` parameters demote a function from `law` even when the body looks pure:
+`internal finite bool TryFind(..., out u64[0 2 ** 63 - 1] start)` is the
+ceiling; a sibling helper without out-params can stay `finite law`.
+
+### Ownership Joins Across Branches (fixed June 2026)
+
+An early `return value;` (a move) inside one `switch` arm or `if` branch used
+to poison the binding on the other paths — later use reported "value ... is
+not fully initialized" at the tail return, forcing flag-and-single-tail-return
+rewrites. Fixed: a branch that returns from the function on every path never
+reaches the join, so its end-state no longer merges. Early `return value;`
+guards, per-arm field stores, and conditional-field-store-then-field-move-store
+shapes all validate and run correctly now (the old "clang rejects with `use of
+undefined value`" mislower does not reproduce either).
+
+Still true, by design: a move before `break` or `continue` keeps merging into
+the enclosing loop's join, so using the moved value below the loop errors —
+those paths really do reach it.
+
+### Bare-Name Ambiguity In Imported Source Modules
+
+Imported source module bodies skip full type checking, but a focused scan still
+catches a name exported by two of that module's imports (e.g.
+`CreateTempDirectory` in `System.Testing` and `System.FileSystem`) used bare:
+`STK3003: Imported symbol 'CreateTempDirectory' is ambiguous between
+System.FileSystem.CreateTempDirectory, System.Testing.CreateTempDirectory. Use a
+fully qualified name.`, located in the imported file. Qualify the ambiguous call.
+(Before June 2026 this crashed `lower-mir` with `Named operand 'X' could not be
+resolved`; type-position and constructor-body ambiguities can still crash and
+remain follow-ups.)
+
+### Literal-Mixed Integer Arithmetic
+
+A bare integer literal adopts the other operand's ranged type when its value
+fits, so `lineEnd + 1` on a `u64[0 2 ** 63 - 1]` is itself `u64[0 2 ** 63 - 1]`
+— no narrowing cast is needed to store or return it (same as var-with-var
+`end - start`). A literal that does not fit, or a negative literal against an
+unsigned operand, still reports STK3002 and needs an explicit cast. (Before June
+2026 any literal-mixed expression collapsed to `i64` and demanded the cast.)
+
+### Misc Quick Fixes
+
+- `from` is a keyword (enum funnels); it cannot name a parameter or local.
+- Unit-length text views compare directly: `value[(i64[min max])index, 1] == "\n"`
+  (the stdlib `IsActualUnit` idiom); multi-length slices use `System.Text.Equals`.
+- Unit enum variants compare with `==`/`!=` (`status == IOStatus.Ok`); payload
+  variants need `switch`/`is`.
+- `slice(pointer, count)` rejects hidden roots (STK3029): bind the raw pointer
+  to a visible local first, never pass a call result directly.
+- Facts in generated `stark test` runners are plain safe `fn bool` collected
+  from the root file; wrap harness calls in `unsafe { }` blocks inside the fact.

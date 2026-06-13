@@ -453,12 +453,34 @@ public sealed class StarkTestRunnerGeneratorTests
                                   return true;
                               }
 
+                              """;
+
+        var result = StarkTestRunnerGenerator.Generate(
+            source,
+            [],
+            "x86_64-unknown-linux-gnu");
+
+        Assert.False(result.Success);
+        var diagnostics = FormatDiagnostics(result);
+        Assert.Contains("[Collection] on generated tests must name at least one collection", diagnostics, StringComparison.Ordinal);
+        Assert.Contains("[Collection] name must be a string literal or qualified identifier", diagnostics, StringComparison.Ordinal);
+        Assert.Contains("[Serial] on generated tests does not take arguments", diagnostics, StringComparison.Ordinal);
+        Assert.Contains("Invalid [Collection] name ' Toolchain'", diagnostics, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void CollectionsUnionAcrossModuleTypeAndMemberAndAcceptVariadicNames()
+    {
+        const string source = """
+                              [Collection("module-wide")]
+                              module Tests
+
                               [Serial]
                               struct SerialGroup
                               {
                                   [Fact]
-                                  [Collection(Toolchain)]
-                                  static fn bool ConflictingMember()
+                                  [Collection(Toolchain, "extra")]
+                                  static fn bool UnionMember()
                                   {
                                       return true;
                                   }
@@ -470,16 +492,12 @@ public sealed class StarkTestRunnerGeneratorTests
             [],
             "x86_64-unknown-linux-gnu");
 
-        Assert.False(result.Success);
-        var diagnostics = FormatDiagnostics(result);
-        Assert.Contains("[Collection] on generated tests must name exactly one collection", diagnostics, StringComparison.Ordinal);
-        Assert.Contains("[Collection] name must be a string literal or qualified identifier", diagnostics, StringComparison.Ordinal);
-        Assert.Contains("[Serial] on generated tests does not take arguments", diagnostics, StringComparison.Ordinal);
-        Assert.Contains("Invalid [Collection] name ' Toolchain'", diagnostics, StringComparison.Ordinal);
-        Assert.Contains(
-            "Generated test 'SerialGroup.ConflictingMember' cannot combine collection 'Serial' from its containing type with collection 'Toolchain' on the test",
-            diagnostics,
-            StringComparison.Ordinal);
+        Assert.True(result.Success, FormatDiagnostics(result));
+        var fact = Assert.Single(result.AllFacts);
+        Assert.Equal(["module-wide", "Serial", "Toolchain", "extra"], fact.CollectionNames);
+        Assert.Equal("module-wide", fact.PrimaryCollectionName);
+        Assert.Contains("System.Testing.CollectionArgumentEquals(argumentIndex, \"module-wide\")", result.SourceText, StringComparison.Ordinal);
+        Assert.Contains("--list-collections", result.SourceText, StringComparison.Ordinal);
     }
 
     [Fact]

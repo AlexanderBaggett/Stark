@@ -136,7 +136,8 @@ internal static partial class PackageImageLoader
                         disjointParameterGroups: method.DisjointParameterGroups,
                         overlapParameterGroups: method.OverlapParameterGroups,
                         sameParameterGroups: method.SameParameterGroups,
-                        threadSafetyLawPredicates: method.ThreadSafetyLawPredicates),
+                        threadSafetyLawPredicates: method.ThreadSafetyLawPredicates,
+                        valueContracts: method.ValueContracts),
                     Attributes: BuildBackendAttributes(methodBackendOptimizationMode),
                     BackendOptimizationMode: methodBackendOptimizationMode));
             }
@@ -207,7 +208,8 @@ internal static partial class PackageImageLoader
                     disjointParameterGroups: function.DisjointParameterGroups,
                     overlapParameterGroups: function.OverlapParameterGroups,
                     sameParameterGroups: function.SameParameterGroups,
-                    threadSafetyLawPredicates: function.ThreadSafetyLawPredicates),
+                    threadSafetyLawPredicates: function.ThreadSafetyLawPredicates,
+                    valueContracts: function.ValueContracts),
                 Attributes: BuildBackendAttributes(functionBackendOptimizationMode),
                 BackendOptimizationMode: functionBackendOptimizationMode));
         }

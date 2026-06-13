@@ -35,6 +35,9 @@ Rules:
 - `export import Some.Module` is the only re-export form.
 - Importing a module makes visible top-level names available by final name; use fully qualified names only for ambiguity or clarity.
 - One file is one module; modules are not reopened across files.
+- Comments: `//`, non-nesting `/* */`, and C#-style XML doc forms `///` and `/** */`.
+
+Ambiguity caution: when two imported modules export the same final name (e.g. `Contains` in both `System.Testing` and `System.Text`, or `CreateTempDirectory` in both `System.Testing` and `System.FileSystem`), the bare name is rejected — in root-module code by ordinary resolution, and inside an **imported source module** (whose bodies otherwise skip type checking) by a focused scan that reports STK3003 (`Imported symbol 'X' is ambiguous between A.X, B.X. Use a fully qualified name.`) located in the imported file. Qualify ambiguous names. (Before June 2026 the imported-module case crashed `lower-mir` with `Named operand 'X' could not be resolved`; that no longer happens for function/value references — type-position and constructor-body ambiguities remain follow-ups.)
 
 Top-level declarations include functions, structs, records, enums, traits, doctrines, aliases, constants, and globals.
 
@@ -59,6 +62,13 @@ Function kinds:
 - `finite`: guaranteed progress and return
 - `law`: pure/read-only/no visible side effects
 - `finite law`: both sets of guarantees; keyword order is fixed
+
+Use the strongest kind the body honestly satisfies; `fn` is the last resort. Kinds compose from the inside out:
+
+- a `law` may only call other laws (STK4106); IO, allocation, process work, and general `fn` calls belong outside laws
+- `out` parameters and mutation through `mut borrow` demote a function from `law` (write `finite` instead of `finite law`)
+- a `finite` function may only contain `willexit` loops and call finite-or-stronger callees
+- stronger function items flow into weaker `fnptr` slots, never the reverse
 
 Common modifiers:
 
@@ -732,7 +742,17 @@ fn i32[min max] Read(Token token)
 
 A two-variant enum can opt into `try` error propagation by marking its variants with the innate `[Ok]`/`[Err]` role attributes (see Control Flow).
 
+Equality against a **unit** variant works directly with `==`/`!=`, so status checks do not need a `switch`: `status == MemoryStatus.Ok`, `entry.Kind == FileSystemEntryKind.File`, `FromConstAscii(text, "literal") == MemoryStatus.Ok`. Payload-carrying variants are read with `switch` or `is` patterns.
+
+`struct` and `record` bodies may declare at most one destructor block: `drop { ... }` (readonly `self`) or `mut drop { ... }` (mutable `self`, e.g. to disarm a handle). Destructor blocks have no name, parameters, return type, or visibility; they run on owned drop, must not panic/synchronize/allocate, and ordinary field destruction still proceeds afterwards. Put fallible or order-sensitive teardown in an explicit method such as `Close` and keep the destructor as the deterministic backstop.
+
 Traits name behavior contracts. A `struct`/`record` implements a trait with a base list (`struct Button : Drawable`) and provides the methods inline; `Self` is the implementing type, so receivers read `borrow Self self` (the impl writes the concrete type). A trait method with a `;` body is required of every implementer; one with a `{ ... }` body is a default the implementer may override. Trait, doctrine, struct, and record bodies may declare associated aliases: `alias Item;` is a required associated type in a trait, `alias Item = Type;` defines a concrete/default associated type, and signatures can refer to `Self.Item` or `T.Item`. Conformance requires required associated aliases, matching parameter/return types (with `Self`, trait type arguments, and associated types substituted), arity, and a function kind at least as strong as the trait's. A generic parameter is bounded with `where T: Trait`, which makes the trait's methods callable on `T` and requires every concrete type argument to implement the trait. Trait dispatch is **static by default**: concrete-receiver calls, bounded-generic calls, and not-overridden defaults all monomorphize to **direct calls** with no vtable or runtime indirection. Runtime dispatch is opt-in: a trait declared `dyn trait` can form a **trait object** — a two-word fat pointer (data + vtable). It comes in a borrowed form, `borrow dyn Trait` / `mut borrow dyn Trait` (a non-owning view, no allocation), and an owning form, `heap dyn Trait` (the value is moved into a heap box the trait object owns and drops + frees at scope exit; in a local, write the storage class then the type, e.g. `stack heap dyn Trait`, paralleling `heap closure`). A conforming concrete value coerces into a `dyn`-typed slot (the visible `dyn`/`heap` is the cost disclosure), and a call on it lowers to one indirect call through the vtable, with the method's `law`/`finite` effect contract preserved. A `dyn trait` must be object-safe (borrow-`Self` receiver, no generic methods, no by-value `Self`) and currently cannot declare associated types; `dyn` over a plain `trait` is an error. A plain `trait` is otherwise compile-time-only — no trait objects, and no calling through the trait name. Doctrines bundle `law` functions and constraints; they have no owned identity, heap allocation, or captured environment, and members are called directly by qualified name.
+
+## Storage Classes And Globals
+
+Every local names its storage class: `stack` (the default choice), `heap` (global-allocator-backed owned storage; never manually freed), or `register` (scalar locals with no source-visible address — `&local`, slices, and address-requiring APIs are rejected; use `stack` when an address matters). `arena` is reserved and not yet a valid executable local storage class; function-local `static` is invalid (use a top-level global). `dynamic T` is a value type, not a storage class — the owner local still says `stack`/`heap`.
+
+Globals come in three forms: `const Name = ...;` (deeply frozen reachable object graph — strongest), `static T Name = ...;` (immutable binding; the value may still have interior mutability), and `static mut T Name = ...;` (rebindable). Scalar integer consts omit the type so the compiler derives the smallest width (`const PageSize = 2 ** 12;`); an explicit type must be the canonical bare width (`const u8 Count = 80;` is accepted, `const i32 Count = 80;` is rejected).
 
 ## Ownership And Borrows
 
@@ -747,6 +767,24 @@ Safe Stark has no garbage collector. Owned is the default.
 - Raw pointers are the only null-capable pointer forms.
 - Safe optional values use `System.Option<T>` (`Some(T)` / `None`), not nullable
   safe references.
+
+Structural copyability: a named type with NO destructor whose contents are all
+copyable (scalars, raw pointers, views; enums whose variants carry only
+copyable fields; structs/records of copyable fields) is a copy type — reads
+from fields, indexed places, and locals are copies, the source stays usable,
+and accessors can return such values directly
+(`return self.Tokens[index].Kind;`). Anything owning (`dynamic`, owned text,
+heap closures) or destructor-bearing stays move-only; concrete generic
+instantiations classify through their substituted payloads. To force a
+scalar-only type to be move-only (e.g. a unique token), give it an empty
+`drop { }`.
+
+Generic code requiring copyability declares `where Copyable(T)` (the same
+law-predicate family as `Transferable(T)`; checked at call sites with
+field-chain diagnostics, forwarded by declaring the same bound). `[Copyable]`
+on a struct/record/enum asserts structural copyability at the definition
+(STK3051 with the responsible field chain when violated); it takes no
+arguments, and Copyable cannot be granted or denied with attributes.
 
 Borrow escape classes:
 
@@ -856,6 +894,40 @@ fn bool Append(mut borrow IntList self, i32[0 max] value)
 }
 ```
 
+Reading dynamic slots needs an initialization proof, and a strict length
+guard provides one on the dominated path — in any function, for direct
+reads, whole-value copies, and field projections alike:
+
+```stark
+finite law Kind TagAt(borrow IntTable self, u64[0 2 ** 63 - 1] index)
+{
+    if (index >= self.Items.Length)
+    {
+        return Kind.None;
+    }
+
+    return self.Items[index].Tag;    // proven by the guard above
+}
+```
+
+The guard and the read must spell the index and the storage path with the
+same source text (bind a local first if the index is computed). The proof
+dies on any write to something it mentions: assigning or `+=`-ing the index,
+passing the owner by `mut borrow`, or shadowing. Non-strict `<=` proves
+nothing for reads. Genuinely sparse structures (hash slots, parent links)
+keep the explicit `unsafe { }` sparse proof, and whole-slot MOVES still go
+through `MoveLast()` regardless of guards.
+
+Value contracts move the obligation to callers: `where index <
+self.Tokens.Length` in a function's where clause proves the body's reads,
+and every call site must discharge the contract (re-spelled with the actual
+arguments) via a dominating comparison, its own matching `where` contract,
+or constant arguments — else STK4206. All four comparison operators work at
+call sites; only strict `<`-Length contracts prove body reads. Contracts
+over internal fields are undischargeable outside the module — keep a guarded
+public wrapper and a contracted internal core (the lexer's
+`TokenAt`/`TokenAtProven` pattern).
+
 ## Raw Pointers, Unsafe, And FFI
 
 Raw pointer forms are `rawptr<T>` and `rawmutptr<T>`. They may be null, dangling, unaligned, aliased, or point to foreign memory. Safe borrows cannot be null.
@@ -957,6 +1029,8 @@ for willexit independent (stack mut i64[0 max] index = 0; index < length; index 
 
 A loop or `switch` may be labeled (`outer: for willexit (...)`) so an inner `break outer;` / `continue outer;` targets it directly; `continue` targets labeled loops only.
 
+`if` and `switch` accept an optional branch-weight annotation (`w9`, `w99`) for performance tuning of expected-likelihood branches.
+
 `switch` supports literal cases, `default`, `when` guards, `case var capture`, `_`, enum case patterns, exact aggregate patterns, aggregate property patterns (`case Box { Field: pattern }:`), exact-length list patterns over fixed arrays/slices/dynamic storage (`case [first, second]:`), switch-label or-patterns (`case A | B:`), and inclusive integer range patterns (`case 0..10:`). Property patterns must name every aggregate field exactly once. List patterns are exact-length only: fixed-array length mismatches are compile-time errors; slice/dynamic list patterns lower to a length check plus direct element tests, with no iterator protocol or hidden allocation. Range patterns are integer-only, work at top level and inside enum/aggregate/list field patterns, and are checked as intervals rather than expanded into individual values. Every `switch` must be **exhaustive**: cover all enum variants / both bools / every value of a ranged integer (e.g. `u8[0 3]` with cases `0..3`), or include a `default`. `when`-guarded arms never count toward coverage. Relatedly, a non-`void` function must **return on every path** (end paths with `return`, an `if`/`else` that returns on both sides, an exhaustive `switch` whose sections all return, or a break-free `infinite` loop) — falling off the end is a compile error, not a runtime trap.
 
 ```stark
@@ -997,8 +1071,11 @@ Operator notes:
 - Wrapping integer arithmetic uses `+%`, `-%`, `*%`.
 - Saturating integer arithmetic uses `+|`, `-|`, `*|`.
 - Comparison chains such as `a < b < c` evaluate each operand once and short-circuit adjacent comparisons.
-- Explicit conversions use C-style casts: `(targetType)value`.
+- Explicit conversions use C-style casts: `(targetType)value`. Casts may never strengthen mutability (no readonly-raw to `rawmutptr`).
 - `strictfp` is required for strict IEEE-style floating point; ordinary floating point is fast-math friendly.
+- `==`/`!=` compare scalars, text views, and unit enum variants; payload variants need `switch`/`is`. There is no `is not` operator, and `is` patterns appear only as the whole `if`/`while` condition.
+- A bare integer literal adopts the other operand's ranged type in mixed arithmetic when its value fits, so `index + 1` on a `u64[0 …]` variable is itself `u64[0 …]` (no narrowing cast needed to store or return it) — the same outcome as var-with-var arithmetic over a shared ranged type (`end - start`). The literal takes only the operand's numeric shape (width, range, sign), never an `out`/`borrow`/`frozen` qualifier (arithmetic yields a plain value). A literal that does NOT fit the operand's range, or a negative literal against an unsigned operand (`small + 1000`, `position + -1`), keeps its own type and still needs an explicit cast. Comparisons (`index + 1 < length`) are unaffected (they yield `bool`).
+- In a constructor body, `self` fields start in their zero state; assign an owning field (dynamic storage, owned text) before reading it. Reading `self.Items.Length` — or indexing `self.Items[i]` — before `self.Items = new();` is rejected as STK3055 ("Constructor reads field 'Items' of 'self' before it is assigned"). Scalars, fixed arrays, and copyable aggregates have a valid zero state and are exempt (a `bool[64]` field can be written element-wise without a prior whole-field assignment). Assignment on any earlier path counts, so a field set inside an `if` is treated as assigned afterward.
 
 Array initializer `{ ... }` needs owning backing storage:
 
@@ -1029,7 +1106,7 @@ text[index]
 text[start, length]
 ```
 
-Raw string literals skip escape processing: `raw"\d+"` is verbatim and `raw"""..."""` is a verbatim multiline literal. Both compose with interpolation as `$raw"..."` / `$raw"""..."""`.
+Raw string literals skip escape processing: `raw"\d+"` is verbatim, and `raw"""..."""` spanning lines follows C# raw-string rules — the newline after the opening quotes and the newline before the closing quotes are NOT part of the value, and the whitespace before the closing `"""` is stripped from every content line (content on the opening-quote line or an under-indented line is a compile error; keep the closing `"""` on its own line at the indentation you want stripped). Both compose with interpolation as `$raw"..."` / `$raw"""..."""`.
 
 C#-style interpolated text is supported. Fully compile-time interpolation folds to a text constant. Runtime interpolation needs caller-selected fixed storage:
 
@@ -1087,8 +1164,9 @@ Public modules:
 - `System.Process`: process id/exit, Linux/macOS-backed command spawn with optional stdin, timeout, and stdout/stderr/exit-code capture, live environment reads, child environment mutation, cwd get/set, and argv/argc access
 - `System.Runtime.Buffer`: fixed and dynamic byte buffers
 - `System.Testing`: explicit test helpers with finite-law boolean/equality, text contains/starts/ends/occurrence counts, range, slice/List shape, root `Option`/`Result` shape predicates, structured diagnostic predicates, compile-time type assertion predicates, process output assertions/counts, effectful run-match/timeout helpers, temp fixture helpers, snapshot/golden text helpers, status, and `RunFact`/`SkipFact`/exit-code helpers used by generated `[Fact]` / `[Theory]` runners with inline data, typed indexed member-data providers, build-time platform gates, and serial collection grouping. Pure local test predicates and pure `[Fact]` / `[Theory]` bodies should also be `finite law`; keep fixture IO, process execution, output, and owned result consumption as plain `fn` unless their full callees and ownership effects justify stronger contracts.
-- `System.Text`: owned text, text contains/starts/ends/occurrence scans, byte-slice-to-ASCII scans, encoding conversion, parsing, formatting
-- `System.Threading`: no-payload and explicit payload thread starts, joins, detach, yield, sleep; atomic types (`AtomicBool`, `AtomicI8`…`AtomicI1024`, `AtomicU8`…`AtomicU1024`) for safe seq-cst counters/flags; `Synchronized<T>` / `Locked<T>` for explicit guarded shared mutable state
+- `System.Text`: owned text, text contains/starts/ends/occurrence scans, byte-slice-to-ASCII scans, encoding conversion, parsing, formatting, string-literal escaping and ordinary/raw string + character literal decoding
+- `System.Text.Interning`: compiler ID model — `SymbolId`/`TypeId`/`ModuleId`/`PackageId` (distinct u32 wrappers with static `Hash`/`Equals`/`Compare`) plus `AsciiInterner` and per-ID interners (`TryGet(name, out id)`, `Intern(name)`, `CopyName(id)` reverse lookup, insertion-order preserved). Intern stable names once at source/package boundaries; compare typed IDs in hot paths; never depend on hash-iteration order for deterministic output
+- `System.Threading`: no-payload and explicit payload thread starts (`Thread.Start<T>(entry, payload) where Transferable(T)`), joins, detach, yield, sleep; atomic types (`AtomicBool`, `AtomicI8`…`AtomicI1024`, `AtomicU8`…`AtomicU1024`) for safe seq-cst counters/flags; `Synchronized<T>` / `Locked<T>` for explicit guarded shared mutable state; MPSC channels (`Channel<T>.CreateSender()`/`.CreateReceiver()`, `Sender<T>.Send(value)` moving a `Transferable` payload, `Receiver<T>.Receive()`, sender close/drop signals completion) for worker→driver event publication
 
 **Sharing state between threads**: functions reachable from a `ThreadEntry` or `ThreadPayloadEntry<T>` may touch a `static mut` only when the static is synchronization-backed: use an atomic type for scalar state or `Synchronized<T>` for guarded aggregate state. There is no atomic qualifier keyword and no hidden synchronized assignment/member access. One atomic struct exists per integer width plus `AtomicBool`; every operation is one indivisible seq-cst action. RMW operations (`Add`/`Sub`/`And`/`Or`/`Xor`/`Exchange`) return the **previous** value; `Add`/`Sub` wrap at the value width; `CompareExchange(expected, desired)` returns whether it swapped. Module-level declarations spell the qualified type name (unqualified imported types only resolve inside function bodies):
 

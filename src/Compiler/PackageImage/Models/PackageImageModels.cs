@@ -115,7 +115,8 @@ internal sealed record StarkPackageFunctionManifest(
     IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? SameParameterGroups = null,
     IReadOnlyList<StarkPackageComptimeGenericParameterManifest>? ComptimeGenericParameters = null,
     IReadOnlyList<StarkPackageTypeParameterConstraintManifest>? TypeParameterConstraints = null,
-    IReadOnlyList<StarkPackageThreadSafetyLawPredicateManifest>? ThreadSafetyLawPredicates = null);
+    IReadOnlyList<StarkPackageThreadSafetyLawPredicateManifest>? ThreadSafetyLawPredicates = null,
+    IReadOnlyList<StarkPackageValueContractManifest>? ValueContracts = null);
 
 internal sealed record StarkPackageParameterManifest(
     string Name,
@@ -175,7 +176,8 @@ internal sealed record StarkPackageMethodManifest(
     IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? SameParameterGroups = null,
     IReadOnlyList<StarkPackageComptimeGenericParameterManifest>? ComptimeGenericParameters = null,
     IReadOnlyList<StarkPackageTypeParameterConstraintManifest>? TypeParameterConstraints = null,
-    IReadOnlyList<StarkPackageThreadSafetyLawPredicateManifest>? ThreadSafetyLawPredicates = null);
+    IReadOnlyList<StarkPackageThreadSafetyLawPredicateManifest>? ThreadSafetyLawPredicates = null,
+    IReadOnlyList<StarkPackageValueContractManifest>? ValueContracts = null);
 
 internal sealed record StarkPackageDestructorManifest(
     bool IsMutable,
@@ -210,6 +212,11 @@ internal sealed record StarkPackageTypeManifest(
 internal sealed record StarkPackageThreadSafetyLawPredicateManifest(
     string LawName,
     string Type);
+
+internal sealed record StarkPackageValueContractManifest(
+    string Left,
+    string Operator,
+    string Right);
 
 internal sealed record StarkPackageTypeParameterConstraintManifest(
     string ParameterName,
@@ -366,7 +373,8 @@ internal sealed record StarkPackageTypedFunctionManifest(
     bool HasBody = true,
     IReadOnlyList<StarkPackageComptimeGenericParameterManifest>? ComptimeGenericParameters = null,
     IReadOnlyList<StarkPackageTypedTypeParameterConstraintManifest>? TypeParameterConstraints = null,
-    IReadOnlyList<StarkPackageTypedThreadSafetyLawPredicateManifest>? ThreadSafetyLawPredicates = null);
+    IReadOnlyList<StarkPackageTypedThreadSafetyLawPredicateManifest>? ThreadSafetyLawPredicates = null,
+    IReadOnlyList<StarkPackageValueContractManifest>? ValueContracts = null);
 
 internal sealed record StarkPackageTypedMethodManifest(
     string Name,
@@ -398,7 +406,8 @@ internal sealed record StarkPackageTypedMethodManifest(
     bool HasBody = true,
     IReadOnlyList<StarkPackageComptimeGenericParameterManifest>? ComptimeGenericParameters = null,
     IReadOnlyList<StarkPackageTypedTypeParameterConstraintManifest>? TypeParameterConstraints = null,
-    IReadOnlyList<StarkPackageTypedThreadSafetyLawPredicateManifest>? ThreadSafetyLawPredicates = null);
+    IReadOnlyList<StarkPackageTypedThreadSafetyLawPredicateManifest>? ThreadSafetyLawPredicates = null,
+    IReadOnlyList<StarkPackageValueContractManifest>? ValueContracts = null);
 
 internal sealed record StarkPackageTypedEnumVariantManifest(
     string Name,

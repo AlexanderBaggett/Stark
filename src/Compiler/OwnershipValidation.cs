@@ -19,6 +19,7 @@ internal sealed class OwnershipValidator
     private readonly Dictionary<string, TypedFunctionSignature> _signatures;
     private readonly Dictionary<string, bool> _mutableGlobals = new(StringComparer.Ordinal);
     private readonly List<DynamicInitSliceLoopContext> _dynamicInitSliceLoopContexts = [];
+    private readonly CopyabilityFacts _copyability;
     private ISet<string>? _currentFunctionGenericParameters;
     private IReadOnlyDictionary<string, ComptimeGenericParameterSymbol>? _currentFunctionComptimeGenericParameters;
     private IReadOnlyDictionary<string, ClosureWriteContract>? _activeClosureWriteContracts;
@@ -40,6 +41,7 @@ internal sealed class OwnershipValidator
         _functionDeclarations = DeclaredFunctionSyntaxCollector.Collect(parseResult, syntaxModel)
             .ToDictionary(static declaration => declaration.Name, StringComparer.Ordinal);
         _signatures = new Dictionary<string, TypedFunctionSignature>(typeModel.Functions, StringComparer.Ordinal);
+        _copyability = new CopyabilityFacts(typeModel.NamedTypes);
 
         SeedMutableGlobals();
     }
@@ -126,6 +128,19 @@ internal sealed class OwnershipValidator
                 if (parameter.Type.Kind == StarkTypeKind.Dynamic)
                 {
                     state.SetDynamicStoragePrefix(parameter.Name, DynamicStoragePrefixState.Unknown);
+                }
+            }
+
+            foreach (var contract in signature.ValueContracts)
+            {
+                state.AddValueContractFact(NormalizeValueComparison(contract.LeftText, contract.OperatorText, contract.RightText));
+                if (contract.OperatorText == "<" && TryRootFromLengthText(contract.RightText) is { } rootBelow)
+                {
+                    state.AddDynamicLengthFact(rootBelow, contract.LeftText);
+                }
+                else if (contract.OperatorText == ">" && TryRootFromLengthText(contract.LeftText) is { } rootAbove)
+                {
+                    state.AddDynamicLengthFact(rootAbove, contract.RightText);
                 }
             }
 
@@ -256,9 +271,14 @@ internal sealed class OwnershipValidator
 
         if (statement.ifStatement() is { } ifStatement)
         {
+            var thenLengthFacts = new List<DynamicLengthFacts.DynamicLengthFact>();
+            var elseLengthFacts = new List<DynamicLengthFacts.DynamicLengthFact>();
+            var thenComparisonFacts = new List<DynamicLengthFacts.ComparisonFact>();
+            var elseComparisonFacts = new List<DynamicLengthFacts.ComparisonFact>();
             if (ifStatement.expression() is { } condition)
             {
                 EvaluateExpression(condition, state, signature, summary, ValueUse.Read, allowFunctionReference: false);
+                DynamicLengthFacts.Collect(condition, thenLengthFacts, elseLengthFacts, thenComparisonFacts, elseComparisonFacts);
             }
             else if (ifStatement.disjointRuntimeCondition() is { } disjointCondition)
             {
@@ -274,16 +294,87 @@ internal sealed class OwnershipValidator
             }
 
             var thenState = state.Clone();
+            foreach (var fact in thenLengthFacts)
+            {
+                thenState.AddDynamicLengthFact(fact.RootText, fact.IndexText);
+            }
+
+            foreach (var fact in thenComparisonFacts)
+            {
+                thenState.AddValueContractFact(NormalizeValueComparison(fact.LeftText, fact.OperatorText, fact.RightText));
+            }
+
             CheckStatement(ifStatement.statement(0), thenState, signature, summary);
 
             FlowState? elseState = null;
             if (ifStatement.statement().Length > 1)
             {
                 elseState = state.Clone();
+                foreach (var fact in elseLengthFacts)
+                {
+                    elseState.AddDynamicLengthFact(fact.RootText, fact.IndexText);
+                }
+
+                foreach (var fact in elseComparisonFacts)
+                {
+                    elseState.AddValueContractFact(NormalizeValueComparison(fact.LeftText, fact.OperatorText, fact.RightText));
+                }
+
                 CheckStatement(ifStatement.statement(1), elseState, signature, summary);
             }
 
-            state.MergeBranches(thenState, elseState);
+            // A branch that returns from the function on every path never
+            // reaches the code below the if, so its end-state (e.g. a value
+            // consumed by an early `return value`) must not leak into the
+            // join. break/continue paths still merge: their states stay
+            // visible at the enclosing loop's join.
+            var thenReturns = DynamicLengthFacts.ReturnsAlways(ifStatement.statement(0));
+            var elseReturns = elseState is not null && DynamicLengthFacts.ReturnsAlways(ifStatement.statement(1));
+            if (thenReturns && !elseReturns)
+            {
+                if (elseState is not null)
+                {
+                    state.AdoptBranch(elseState);
+                }
+            }
+            else if (elseReturns && !thenReturns)
+            {
+                state.AdoptBranch(thenState);
+            }
+            else
+            {
+                state.MergeBranches(thenState, elseState);
+            }
+
+            // After a branch that always returns/breaks/continues, only the
+            // other path reaches the code below the if, so its facts hold.
+            var thenTerminates = DynamicLengthFacts.TerminatesAlways(ifStatement.statement(0));
+            var elseTerminates = elseState is not null && DynamicLengthFacts.TerminatesAlways(ifStatement.statement(1));
+            if (thenTerminates && !elseTerminates)
+            {
+                foreach (var fact in elseLengthFacts)
+                {
+                    state.AddDynamicLengthFact(fact.RootText, fact.IndexText);
+                }
+
+                foreach (var fact in elseComparisonFacts)
+                {
+                    state.AddValueContractFact(NormalizeValueComparison(fact.LeftText, fact.OperatorText, fact.RightText));
+                }
+            }
+            else if (elseTerminates && !thenTerminates)
+            {
+                foreach (var fact in thenLengthFacts)
+                {
+                    state.AddDynamicLengthFact(fact.RootText, fact.IndexText);
+                }
+
+                foreach (var fact in thenComparisonFacts)
+                {
+                    state.AddValueContractFact(NormalizeValueComparison(fact.LeftText, fact.OperatorText, fact.RightText));
+                }
+            }
+
             return;
         }
 
@@ -292,6 +383,7 @@ internal sealed class OwnershipValidator
             var switchValue = EvaluateExpression(switchStatement.expression(), state, signature, summary, ValueUse.Read, allowFunctionReference: false);
 
             var sectionStates = new List<FlowState>();
+            var joinStates = new List<FlowState>();
             foreach (var section in switchStatement.switchSection())
             {
                 var sectionState = state.Clone();
@@ -309,16 +401,26 @@ internal sealed class OwnershipValidator
                     }
                 }
 
+                var sectionReturns = false;
                 foreach (var nestedStatement in section.statement())
                 {
                     CheckStatement(nestedStatement, sectionState, signature, summary);
+                    sectionReturns |= DynamicLengthFacts.ReturnsAlways(nestedStatement);
                 }
 
                 sectionState.ExitScope(sectionScope, summary, ValidateScopeExitState, RecordImplicitDrops);
                 sectionStates.Add(sectionState);
+
+                // Sections that return from the function on every path never
+                // reach the code below the switch; keep their end-states out
+                // of the join (mirrors the if-statement handling above).
+                if (!sectionReturns)
+                {
+                    joinStates.Add(sectionState);
+                }
             }
 
-            state.MergeBranches(sectionStates);
+            state.MergeBranches(joinStates.Count > 0 ? joinStates : sectionStates);
             return;
         }
 
@@ -326,6 +428,19 @@ internal sealed class OwnershipValidator
         {
             EvaluateExpression(whileStatement.expression(), state, signature, summary, ValueUse.Read, allowFunctionReference: false);
             var loopState = state.Clone();
+            var whileLengthFacts = new List<DynamicLengthFacts.DynamicLengthFact>();
+            var whileComparisonFacts = new List<DynamicLengthFacts.ComparisonFact>();
+            DynamicLengthFacts.Collect(whileStatement.expression(), whileLengthFacts, [], whileComparisonFacts, elseComparisons: null);
+            foreach (var fact in whileLengthFacts)
+            {
+                loopState.AddDynamicLengthFact(fact.RootText, fact.IndexText);
+            }
+
+            foreach (var fact in whileComparisonFacts)
+            {
+                loopState.AddValueContractFact(NormalizeValueComparison(fact.LeftText, fact.OperatorText, fact.RightText));
+            }
+
             CheckStatement(whileStatement.statement(), loopState, signature, summary);
             state.MergeLoop(loopState);
             return;
@@ -356,6 +471,18 @@ internal sealed class OwnershipValidator
             if (forTraversal is null && forStatement.forCondition() is { } condition)
             {
                 EvaluateExpression(condition.expression(), loopState, signature, summary, ValueUse.Read, allowFunctionReference: false);
+                var forLengthFacts = new List<DynamicLengthFacts.DynamicLengthFact>();
+                var forComparisonFacts = new List<DynamicLengthFacts.ComparisonFact>();
+                DynamicLengthFacts.Collect(condition.expression(), forLengthFacts, [], forComparisonFacts, elseComparisons: null);
+                foreach (var fact in forLengthFacts)
+                {
+                    loopState.AddDynamicLengthFact(fact.RootText, fact.IndexText);
+                }
+
+                foreach (var fact in forComparisonFacts)
+                {
+                    loopState.AddValueContractFact(NormalizeValueComparison(fact.LeftText, fact.OperatorText, fact.RightText));
+                }
             }
 
             var dynamicInitSliceLoopContext = forTraversal is null
@@ -400,7 +527,7 @@ internal sealed class OwnershipValidator
                     state,
                     signature,
                     summary,
-                    ValueUse.ForReturn(signature.ReturnType),
+                    ValueUse.ForReturn(signature.ReturnType, _copyability),
                     allowFunctionReference: false);
 
                 if (signature.ReturnType.BorrowKind != StarkBorrowKind.None)
@@ -724,7 +851,7 @@ internal sealed class OwnershipValidator
                     state,
                     signature,
                     summary,
-                    ValueUse.ForAssignment(declaredType),
+                    ValueUse.ForAssignment(declaredType, _copyability),
                     allowFunctionReference: false);
                 borrowLifetime = InferLifetimeForAssignment(declaredType, value, summary, constantExpression);
                 var variable = state.Declare(new VariableInfo(
@@ -738,7 +865,7 @@ internal sealed class OwnershipValidator
                     DeclarationLocation: Location(declarator.Identifier.Symbol)),
                     isInitialized: true,
                     aggregateState: value.AggregateState);
-                summary.DeclareRoot(variable, requiresDrop: IsAutomaticallyDropped(variable.Type, variable.StorageClass));
+                summary.DeclareRoot(variable, requiresDrop: IsAutomaticallyDropped(variable.Type, variable.StorageClass, _copyability));
                 RecordDeclaredDynamicStorageState(declarator.Identifier.GetText(), declaredType, value, state, initializer: null);
             }
             else if (declarator.Initializer is { } initializer)
@@ -756,7 +883,7 @@ internal sealed class OwnershipValidator
                     DeclarationLocation: Location(declarator.Identifier.Symbol)),
                     isInitialized: true,
                     aggregateState: value.AggregateState);
-                summary.DeclareRoot(variable, requiresDrop: IsAutomaticallyDropped(variable.Type, variable.StorageClass));
+                summary.DeclareRoot(variable, requiresDrop: IsAutomaticallyDropped(variable.Type, variable.StorageClass, _copyability));
                 RecordDeclaredDynamicStorageState(declarator.Identifier.GetText(), declaredType, value, state, initializer);
                 TryRecordDynamicInitSliceState(declarator.Identifier.GetText(), declaredType, initializer, state, summary);
             }
@@ -772,7 +899,7 @@ internal sealed class OwnershipValidator
                     borrowLifetime,
                     DeclarationLocation: Location(declarator.Identifier.Symbol)),
                     isInitialized: false);
-                summary.DeclareRoot(variable, requiresDrop: IsAutomaticallyDropped(variable.Type, variable.StorageClass));
+                summary.DeclareRoot(variable, requiresDrop: IsAutomaticallyDropped(variable.Type, variable.StorageClass, _copyability));
             }
         }
     }
@@ -953,7 +1080,7 @@ internal sealed class OwnershipValidator
                 return new ExpressionInfo(declaredType);
             }
 
-            return EvaluateExpression(expression, state, signature, summary, ValueUse.ForAssignment(declaredType), allowFunctionReference: false);
+            return EvaluateExpression(expression, state, signature, summary, ValueUse.ForAssignment(declaredType, _copyability), allowFunctionReference: false);
         }
 
         if (initializer.objectInitializer() is { } objectInitializer)
@@ -1163,7 +1290,7 @@ internal sealed class OwnershipValidator
                 state,
                 signature,
                 summary,
-                ValueUse.ForAssignment(storageType),
+                ValueUse.ForAssignment(storageType, _copyability),
                 allowFunctionReference: false);
 
             ApplyAssignment(initTarget, initValue, state, summary, expression.unaryExpression(), isInitializationAssignment: true);
@@ -1184,7 +1311,7 @@ internal sealed class OwnershipValidator
             isSimpleAssignment ? ValueUse.Place : ValueUse.Read,
             allowFunctionReference: true);
         var rightUse = isSimpleAssignment
-            ? ValueUse.ForAssignment(left.Type)
+            ? ValueUse.ForAssignment(left.Type, _copyability)
             : ValueUse.Read;
         var right = EvaluateAssignmentExpression(expression.assignmentExpression(), state, signature, summary, rightUse, allowFunctionReference: false);
 
@@ -1197,6 +1324,11 @@ internal sealed class OwnershipValidator
         if (IsMoveOnly(left.Type) && left.IsIndirectPlace)
         {
             OwnershipError(summary, "STK4203", $"Cannot move out of field or indexed place of type '{left.Type.DisplayName}'.", expression.unaryExpression());
+        }
+
+        if (left.Variable is { } compoundTarget)
+        {
+            state.InvalidateDynamicLengthFactsFor(compoundTarget.Name);
         }
 
         return left;
@@ -1217,7 +1349,7 @@ internal sealed class OwnershipValidator
 
         if (left.DynamicStorageAccess is { } dynamicAccess)
         {
-            if (isInitializationAssignment)
+            if (isInitializationAssignment && !dynamicAccess.IsFieldProjected)
             {
                 MarkDynamicSlotInitialized(dynamicAccess, state, summary);
             }
@@ -1229,6 +1361,7 @@ internal sealed class OwnershipValidator
 
         if (left.Variable is { } variable)
         {
+            state.InvalidateDynamicLengthFactsFor(variable.Name);
             if (variable.Origin == VariableOrigin.Global)
             {
                 if (IsMoveOnly(left.Type))
@@ -1493,6 +1626,17 @@ internal sealed class OwnershipValidator
             return true;
         }
 
+        var indexText = access.IndexExpression.GetText();
+        if (state.HasDynamicLengthFact(access.RootKey, indexText))
+        {
+            return true;
+        }
+
+        if (state.TryProveSumBelowLength(indexText, access.RootKey))
+        {
+            return true;
+        }
+
         if (_unsafeDepth != 0)
         {
             return true;
@@ -1520,6 +1664,168 @@ internal sealed class OwnershipValidator
 
     private static bool IsDynamicLengthExpression(StarkParser.ExpressionContext expression, string rootKey) =>
         string.Equals(expression.GetText(), $"{rootKey}.Length", StringComparison.Ordinal);
+
+    private void CheckValueContractObligations(
+        TypedFunctionSignature function,
+        ExpressionInfo? receiver,
+        StarkParser.ArgumentListContext arguments,
+        FlowState state,
+        FunctionOwnershipBuilder summary)
+    {
+        if (function.ValueContracts.Count == 0)
+        {
+            return;
+        }
+
+        var receiverOffset = receiver is null ? 0 : 1;
+        var substitution = new Dictionary<string, string>(StringComparer.Ordinal);
+        for (var index = 0; index < function.Parameters.Count; index++)
+        {
+            string? argumentText = null;
+            if (index == 0 && receiver is not null)
+            {
+                argumentText = BuildSimplePlaceText(receiver);
+            }
+            else
+            {
+                var argumentIndex = index - receiverOffset;
+                if (argumentIndex >= 0 && argumentIndex < arguments.argument().Length)
+                {
+                    argumentText = arguments.argument(argumentIndex).expression().GetText();
+                }
+            }
+
+            if (argumentText is not null)
+            {
+                substitution[function.Parameters[index].Name] = argumentText;
+            }
+        }
+
+        foreach (var contract in function.ValueContracts)
+        {
+            var left = SubstituteIdentifierTokens(contract.LeftText, substitution);
+            var right = SubstituteIdentifierTokens(contract.RightText, substitution);
+            if (IsValueContractDischarged(left, contract.OperatorText, right, state))
+            {
+                continue;
+            }
+
+            OwnershipError(
+                summary,
+                "STK4206",
+                $"Value contract '{contract.DisplayText}' of '{function.DisplaySourceName}' is not proven at this call site: establish '{left} {contract.OperatorText} {right}' with a dominating comparison or a matching 'where' contract.",
+                arguments);
+        }
+    }
+
+    private bool IsValueContractDischarged(string leftText, string operatorText, string rightText, FlowState state)
+    {
+        if (TryParseIntegerLiteralText(leftText, out var leftValue)
+            && TryParseIntegerLiteralText(rightText, out var rightValue))
+        {
+            return operatorText switch
+            {
+                "<" => leftValue < rightValue,
+                "<=" => leftValue <= rightValue,
+                ">" => leftValue > rightValue,
+                ">=" => leftValue >= rightValue,
+                _ => false
+            };
+        }
+
+        if (state.HasValueContractFact(NormalizeValueComparison(leftText, operatorText, rightText)))
+        {
+            return true;
+        }
+
+        if (operatorText == "<"
+            && TryRootFromLengthText(rightText) is { } rootBelow
+            && state.HasDynamicLengthFact(rootBelow, leftText))
+        {
+            return true;
+        }
+
+        return operatorText == ">"
+            && TryRootFromLengthText(leftText) is { } rootAbove
+            && state.HasDynamicLengthFact(rootAbove, rightText);
+    }
+
+    private static string? BuildSimplePlaceText(ExpressionInfo value)
+    {
+        if (value.Variable is not { } variable || value.HasIndexProjection)
+        {
+            return null;
+        }
+
+        return value.ProjectionPath is { Length: > 0 } projectionPath
+            ? $"{variable.Name}.{string.Join(".", projectionPath)}"
+            : variable.Name;
+    }
+
+    private static string SubstituteIdentifierTokens(string text, IReadOnlyDictionary<string, string> substitution)
+    {
+        if (substitution.Count == 0)
+        {
+            return text;
+        }
+
+        var builder = new System.Text.StringBuilder(text.Length);
+        var index = 0;
+        while (index < text.Length)
+        {
+            var ch = text[index];
+            if (!IsValueContractIdentifierCharacter(ch) || ch is >= '0' and <= '9')
+            {
+                builder.Append(ch);
+                index++;
+                continue;
+            }
+
+            var start = index;
+            while (index < text.Length && IsValueContractIdentifierCharacter(text[index]))
+            {
+                index++;
+            }
+
+            var token = text[start..index];
+            builder.Append(substitution.TryGetValue(token, out var replacement) ? replacement : token);
+        }
+
+        return builder.ToString();
+    }
+
+    private static bool IsValueContractIdentifierCharacter(char ch) =>
+        ch is (>= 'a' and <= 'z') or (>= 'A' and <= 'Z') or (>= '0' and <= '9') or '_';
+
+    private static bool TryParseIntegerLiteralText(string text, out BigInteger value)
+    {
+        value = BigInteger.Zero;
+        return text.Length != 0
+            && text.All(static ch => ch is >= '0' and <= '9')
+            && BigInteger.TryParse(text, out value);
+    }
+
+    private static string? TryRootFromLengthText(string text)
+    {
+        const string suffix = ".Length";
+        return text.EndsWith(suffix, StringComparison.Ordinal) && text.Length > suffix.Length
+            ? text[..^suffix.Length]
+            : null;
+    }
+
+    // Mirrored comparisons normalize to '<'/'<=' so 'a < b' and 'b > a'
+    // produce the same fact and obligation keys.
+    private static ValueComparisonFact NormalizeValueComparison(string leftText, string operatorText, string rightText)
+    {
+        return operatorText switch
+        {
+            ">" => new ValueComparisonFact(rightText, "<", leftText),
+            ">=" => new ValueComparisonFact(rightText, "<=", leftText),
+            _ => new ValueComparisonFact(leftText, operatorText, rightText)
+        };
+    }
+
+    internal readonly record struct ValueComparisonFact(string Left, string Op, string Right);
 
     private static string? BuildDynamicRootKey(ExpressionInfo value)
     {
@@ -1898,12 +2204,12 @@ internal sealed class OwnershipValidator
         var signature = resolution.Match!;
         if (signature.Parameters.Count >= 1)
         {
-            ApplyUse(left, state, summary, ValueUse.ForCallArgument(signature.Parameters[0].Type), context);
+            ApplyUse(left, state, summary, ValueUse.ForCallArgument(signature.Parameters[0].Type, _copyability), context);
         }
 
         if (signature.Parameters.Count >= 3)
         {
-            ApplyUse(right, state, summary, ValueUse.ForCallArgument(signature.Parameters[2].Type), context);
+            ApplyUse(right, state, summary, ValueUse.ForCallArgument(signature.Parameters[2].Type, _copyability), context);
         }
 
         result = new ExpressionInfo(signature.ReturnType);
@@ -2236,7 +2542,7 @@ internal sealed class OwnershipValidator
                 continue;
             }
 
-            binding = ApplyMemberAccess(binding, postfixPart.Identifier().GetText(), summary, postfixPart);
+            binding = ApplyMemberAccess(binding, postfixPart.Identifier().GetText(), state, summary, postfixPart);
         }
 
         return ApplyUse(binding, state, summary, use, expression);
@@ -2659,7 +2965,7 @@ internal sealed class OwnershipValidator
                     state,
                     signature,
                     summary,
-                    ValueUse.ForReturn(signature.ReturnType),
+                    ValueUse.ForReturn(signature.ReturnType, _copyability),
                     allowFunctionReference: false);
 
                 if (signature.ReturnType.BorrowKind != StarkBorrowKind.None)
@@ -2731,7 +3037,7 @@ internal sealed class OwnershipValidator
                         state,
                         signature,
                         summary,
-                        ValueUse.ForReturn(signature.ReturnType),
+                        ValueUse.ForReturn(signature.ReturnType, _copyability),
                         allowFunctionReference: false);
 
                     if (signature.ReturnType.BorrowKind != StarkBorrowKind.None)
@@ -3145,6 +3451,7 @@ internal sealed class OwnershipValidator
             return ApplyMemberAccess(
                 new ExpressionInfo(targetType),
                 genericMemberReference.Identifier().GetText(),
+                state,
                 summary,
                 genericMemberReference);
         }
@@ -3154,6 +3461,7 @@ internal sealed class OwnershipValidator
             return ApplyMemberAccess(
                 new ExpressionInfo(StarkTypeSymbols.Error, NamespaceName: targetType.NamedType),
                 genericMemberReference.Identifier().GetText(),
+                state,
                 summary,
                 genericMemberReference);
         }
@@ -3742,7 +4050,7 @@ internal sealed class OwnershipValidator
                         argumentValues[index],
                         state,
                         summary,
-                        ValueUse.ForCallArgument(parameterType),
+                        ValueUse.ForCallArgument(parameterType, _copyability),
                         arguments.argument(index));
                 }
 
@@ -3766,7 +4074,7 @@ internal sealed class OwnershipValidator
                         argumentValues[index],
                         state,
                         summary,
-                        ValueUse.ForCallArgument(parameterType),
+                        ValueUse.ForCallArgument(parameterType, _copyability),
                         arguments.argument(index));
                 }
 
@@ -3786,6 +4094,8 @@ internal sealed class OwnershipValidator
             return new ExpressionInfo(StarkTypeSymbols.Error);
         }
 
+        CheckValueContractObligations(target.Function, target.Receiver, arguments, state, summary);
+
         var borrowArguments = new List<BorrowLifetime>();
         var receiverOffset = target.Receiver is null ? 0 : 1;
         var explicitParameterCount = Math.Max(0, target.Function.Parameters.Count - receiverOffset);
@@ -3793,7 +4103,7 @@ internal sealed class OwnershipValidator
         if (target.Receiver is not null && target.Function.Parameters.Count != 0)
         {
             var receiverParameterType = target.Function.Parameters[0].Type;
-            var receiverValue = ApplyUse(target.Receiver, state, summary, ValueUse.ForCallArgument(receiverParameterType), arguments);
+            var receiverValue = ApplyUse(target.Receiver, state, summary, ValueUse.ForCallArgument(receiverParameterType, _copyability), arguments);
             if (receiverParameterType.BorrowKind != StarkBorrowKind.None)
             {
                 borrowArguments.Add(receiverValue.BorrowLifetime);
@@ -3812,7 +4122,7 @@ internal sealed class OwnershipValidator
                 argumentValue,
                 state,
                 summary,
-                ValueUse.ForCallArgument(parameterType),
+                ValueUse.ForCallArgument(parameterType, _copyability),
                 arguments.argument(index));
 
             if (parameterType.BorrowKind != StarkBorrowKind.None)
@@ -3904,6 +4214,7 @@ internal sealed class OwnershipValidator
     private ExpressionInfo ApplyMemberAccess(
         ExpressionInfo target,
         string memberName,
+        FlowState state,
         FunctionOwnershipBuilder summary,
         ParserRuleContext context)
     {
@@ -3998,6 +4309,10 @@ internal sealed class OwnershipValidator
             && (string.Equals(memberName, "Length", StringComparison.Ordinal)
                 || string.Equals(memberName, "Capacity", StringComparison.Ordinal)))
         {
+            // Reading the storage header is a read of the receiver. The
+            // result is a plain scalar with no variable attached, so the
+            // outer use check can never see a moved root — enforce it here.
+            TryEnsureValueAvailable(target, state, summary, ValueUse.Read, context.Start);
             return new ExpressionInfo(NonNegativeI64Type, BorrowLifetime: BorrowLifetime.None);
         }
 
@@ -4019,7 +4334,10 @@ internal sealed class OwnershipValidator
             ProjectionPath: target.Variable is null
                 ? target.ProjectionPath
                 : AppendProjection(target.ProjectionPath, memberName),
-            HasIndexProjection: target.HasIndexProjection);
+            HasIndexProjection: target.HasIndexProjection,
+            DynamicStorageAccess: target.DynamicStorageAccess is { } slotAccess
+                ? slotAccess with { IsFieldProjected = true }
+                : null);
         }
 
         var methodSourceName = $"{StarkTypeSymbols.GetGenericBaseName(namedType.Name)}.{memberName}";
@@ -4126,8 +4444,21 @@ internal sealed class OwnershipValidator
             value = value with { BorrowLifetime = InferBorrowLifetimeFromValue(value, token) };
         }
 
+        if (use.TargetType is { BorrowKind: not StarkBorrowKind.None, IsMutableView: true }
+            && value.Variable is { } mutBorrowedVariable)
+        {
+            state.InvalidateDynamicLengthFactsFor(mutBorrowedVariable.Name);
+        }
+
         if (use.Kind == ValueUseKind.ProjectBase)
         {
+            // Field and index projections through a dynamic slot read that
+            // slot: the dense-prefix proof applies the same as a direct read.
+            if (value.DynamicStorageAccess is { } projectedDynamicAccess)
+            {
+                EnsureDynamicSlotInitialized(projectedDynamicAccess, state, summary, forReplacement: false);
+            }
+
             return value;
         }
 
@@ -4283,7 +4614,9 @@ internal sealed class OwnershipValidator
         };
     }
 
-    private static bool IsMoveOnly(StarkTypeSymbol type)
+    private bool IsMoveOnly(StarkTypeSymbol type) => IsMoveOnly(type, _copyability);
+
+    private static bool IsMoveOnly(StarkTypeSymbol type, CopyabilityFacts? copyability)
     {
         if (type.Kind == StarkTypeKind.Error || type.Kind == StarkTypeKind.Void)
         {
@@ -4293,6 +4626,11 @@ internal sealed class OwnershipValidator
         if (type.BorrowKind != StarkBorrowKind.None)
         {
             return type.IsMutableView;
+        }
+
+        if (type.Kind == StarkTypeKind.Named && copyability?.IsCopyable(type) == true)
+        {
+            return false;
         }
 
         return type.Kind switch
@@ -4308,9 +4646,14 @@ internal sealed class OwnershipValidator
         };
     }
 
-    private static bool IsAutomaticallyDropped(StarkTypeSymbol type, StorageClass storageClass)
+    private bool IsAutomaticallyDropped(StarkTypeSymbol type, StorageClass storageClass)
     {
         return IsMoveOnly(type) && storageClass != StorageClass.Static;
+    }
+
+    private static bool IsAutomaticallyDropped(StarkTypeSymbol type, StorageClass storageClass, CopyabilityFacts? copyability)
+    {
+        return IsMoveOnly(type, copyability) && storageClass != StorageClass.Static;
     }
 
     private static StarkTypeSymbol FindCommonType(StarkTypeSymbol left, StarkTypeSymbol right)
@@ -5091,7 +5434,7 @@ internal sealed class OwnershipValidator
         }
 
         var dropVariants = namedType.Variants
-            .Where(static variant => VariantRequiresImplicitDrop(variant))
+            .Where(variant => VariantRequiresImplicitDrop(variant))
             .ToArray();
         if (dropVariants.Length == 0)
         {
@@ -5115,8 +5458,8 @@ internal sealed class OwnershipValidator
         return targets;
     }
 
-    private static bool VariantRequiresImplicitDrop(EnumVariantSymbol variant) =>
-        variant.Fields.Any(static field => IsMoveOnly(field.Type));
+    private bool VariantRequiresImplicitDrop(EnumVariantSymbol variant) =>
+        variant.Fields.Any(field => IsMoveOnly(field.Type));
 
     private void ConsumeSwitchValueForOwnedEnumCapture(
         ExpressionInfo switchValue,
@@ -5288,27 +5631,27 @@ internal sealed class OwnershipValidator
         public static readonly ValueUse Place = new(ValueUseKind.Place);
         public static readonly ValueUse ProjectBase = new(ValueUseKind.ProjectBase);
 
-        public static ValueUse ForAssignment(StarkTypeSymbol targetType) =>
+        public static ValueUse ForAssignment(StarkTypeSymbol targetType, CopyabilityFacts copyability) =>
             targetType.BorrowKind != StarkBorrowKind.None
                 ? new(ValueUseKind.Read, CaptureBorrowLifetime: true, TargetType: targetType)
                 : targetType.Kind == StarkTypeKind.Slice
                 ? new(ValueUseKind.Read, TargetType: targetType)
-                : IsMoveOnly(targetType) ? new(ValueUseKind.Consume, TargetType: targetType) : new(ValueUseKind.Read, TargetType: targetType);
+                : IsMoveOnly(targetType, copyability) ? new(ValueUseKind.Consume, TargetType: targetType) : new(ValueUseKind.Read, TargetType: targetType);
 
-        public static ValueUse ForCallArgument(StarkTypeSymbol parameterType) =>
+        public static ValueUse ForCallArgument(StarkTypeSymbol parameterType, CopyabilityFacts copyability) =>
             parameterType.InitializationKind is StarkInitializationKind.Init or StarkInitializationKind.Out
                 ? Place
                 :
             parameterType.BorrowKind != StarkBorrowKind.None
                 ? new(ValueUseKind.Read, CaptureBorrowLifetime: true, TargetType: parameterType)
-                : parameterType.Kind is StarkTypeKind.RawPointer or StarkTypeKind.Slice || !IsMoveOnly(parameterType)
+                : parameterType.Kind is StarkTypeKind.RawPointer or StarkTypeKind.Slice || !IsMoveOnly(parameterType, copyability)
                 ? new(ValueUseKind.Read, TargetType: parameterType)
                 : new(ValueUseKind.Consume, TargetType: parameterType);
 
-        public static ValueUse ForReturn(StarkTypeSymbol returnType) =>
+        public static ValueUse ForReturn(StarkTypeSymbol returnType, CopyabilityFacts copyability) =>
             returnType.BorrowKind != StarkBorrowKind.None
                 ? new(ValueUseKind.Read, CaptureBorrowLifetime: true, TargetType: returnType)
-                : !IsMoveOnly(returnType)
+                : !IsMoveOnly(returnType, copyability)
                 ? new(ValueUseKind.Read, TargetType: returnType)
                 : new(ValueUseKind.Consume, TargetType: returnType);
 
@@ -5446,7 +5789,8 @@ internal sealed class OwnershipValidator
         StarkTypeSymbol StorageType,
         StarkParser.ExpressionContext IndexExpression,
         SourceLocation? Location,
-        int? InitSliceVariableId = null);
+        int? InitSliceVariableId = null,
+        bool IsFieldProjected = false);
 
     private sealed record DynamicInitSliceState(
         string RootKey,
@@ -5524,6 +5868,8 @@ internal sealed class OwnershipValidator
     private sealed class FlowState
     {
         private readonly IReadOnlyDictionary<string, NamedTypeSymbol> _namedTypes;
+        private readonly CopyabilityFacts _copyability;
+        private readonly Dictionary<string, HashSet<string>> _dynamicLengthFacts;
         private readonly Dictionary<int, VariableInfo> _variables;
         private readonly Dictionary<int, VariableState> _states;
         private readonly Dictionary<string, DynamicStoragePrefixState> _dynamicStorageStates;
@@ -5535,6 +5881,8 @@ internal sealed class OwnershipValidator
         public FlowState(IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes)
         {
             _namedTypes = namedTypes;
+            _copyability = new CopyabilityFacts(namedTypes);
+            _dynamicLengthFacts = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
             _variables = new Dictionary<int, VariableInfo>();
             _states = new Dictionary<int, VariableState>();
             _dynamicStorageStates = new Dictionary<string, DynamicStoragePrefixState>(StringComparer.Ordinal);
@@ -5547,6 +5895,8 @@ internal sealed class OwnershipValidator
 
         private FlowState(
             IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
+            CopyabilityFacts copyability,
+            Dictionary<string, HashSet<string>> dynamicLengthFacts,
             Dictionary<int, VariableInfo> variables,
             Dictionary<int, VariableState> states,
             Dictionary<string, DynamicStoragePrefixState> dynamicStorageStates,
@@ -5557,6 +5907,8 @@ internal sealed class OwnershipValidator
             int nextScopeId)
         {
             _namedTypes = namedTypes;
+            _copyability = copyability;
+            _dynamicLengthFacts = dynamicLengthFacts;
             _variables = variables;
             _states = states;
             _dynamicStorageStates = dynamicStorageStates;
@@ -5594,10 +5946,10 @@ internal sealed class OwnershipValidator
                 summary.ObserveRootState(
                     variable,
                     state,
-                    requiresDrop: IsAutomaticallyDropped(variable.Type, variable.StorageClass));
+                    requiresDrop: IsAutomaticallyDropped(variable.Type, variable.StorageClass, _copyability));
                 validateScopeExitState(variable, state, summary);
 
-                if (state.MayBeInitialized && IsAutomaticallyDropped(variable.Type, variable.StorageClass))
+                if (state.MayBeInitialized && IsAutomaticallyDropped(variable.Type, variable.StorageClass, _copyability))
                 {
                     recordImplicitDrops(variable, state, summary);
                 }
@@ -5627,7 +5979,8 @@ internal sealed class OwnershipValidator
             _states[id] = isInitialized
                 ? VariableState.Initialized(bound.BorrowLifetime, aggregateState)
                 : VariableState.Uninitialized(bound.BorrowLifetime, aggregateState);
-            summary?.DeclareRoot(bound, requiresDrop: IsAutomaticallyDropped(bound.Type, bound.StorageClass));
+            summary?.DeclareRoot(bound, requiresDrop: IsAutomaticallyDropped(bound.Type, bound.StorageClass, _copyability));
+            InvalidateDynamicLengthFactsFor(bound.Name);
             return bound;
         }
 
@@ -5757,8 +6110,13 @@ internal sealed class OwnershipValidator
 
             var currentScope = CloneScope(CurrentScope);
             var scopes = scopeMap.ToDictionary(static pair => pair.Key, static pair => pair.Value);
-            return new FlowState(
+            var clone = new FlowState(
                 _namedTypes,
+                _copyability,
+                _dynamicLengthFacts.ToDictionary(
+                    static pair => pair.Key,
+                    static pair => new HashSet<string>(pair.Value, StringComparer.Ordinal),
+                    StringComparer.Ordinal),
                 _variables.ToDictionary(static pair => pair.Key, static pair => pair.Value),
                 _states.ToDictionary(static pair => pair.Key, static pair => pair.Value),
                 _dynamicStorageStates.ToDictionary(static pair => pair.Key, static pair => pair.Value, StringComparer.Ordinal),
@@ -5767,7 +6125,210 @@ internal sealed class OwnershipValidator
                 currentScope,
                 _nextVariableId,
                 _nextScopeId);
+            clone._valueContractFacts.UnionWith(_valueContractFacts);
+            return clone;
         }
+
+        private readonly HashSet<ValueComparisonFact> _valueContractFacts = [];
+
+        public void AddValueContractFact(ValueComparisonFact normalizedComparison)
+        {
+            _valueContractFacts.Add(normalizedComparison);
+        }
+
+        public bool HasValueContractFact(ValueComparisonFact normalizedComparison)
+        {
+            return _valueContractFacts.Contains(normalizedComparison);
+        }
+
+        // Proves `A + B < root.Length` from `B < C` (or `B <= C`) plus a
+        // matching sum fact `A + C <= root.Length` (strict where needed).
+        // Sound under the language's overflow-is-illegal arithmetic
+        // contract: B < C implies A + B < A + C for mathematical integers.
+        public bool TryProveSumBelowLength(string indexText, string rootKey)
+        {
+            var lengthText = $"{rootKey}.Length";
+            foreach (var (first, second) in SplitTopLevelSums(indexText))
+            {
+                foreach (var fact in _valueContractFacts)
+                {
+                    if (!string.Equals(fact.Left, second, StringComparison.Ordinal))
+                    {
+                        continue;
+                    }
+
+                    var requireStrictSum = fact.Op == "<=";
+                    foreach (var sumText in new[] { $"{first}+{fact.Right}", $"{fact.Right}+{first}" })
+                    {
+                        if (HasDynamicLengthFact(rootKey, sumText))
+                        {
+                            return true;
+                        }
+
+                        if (_valueContractFacts.Contains(new ValueComparisonFact(sumText, "<", lengthText)))
+                        {
+                            return true;
+                        }
+
+                        if (!requireStrictSum
+                            && _valueContractFacts.Contains(new ValueComparisonFact(sumText, "<=", lengthText)))
+                        {
+                            return true;
+                        }
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        private static IEnumerable<(string First, string Second)> SplitTopLevelSums(string text)
+        {
+            var depth = 0;
+            for (var index = 1; index < text.Length - 1; index++)
+            {
+                switch (text[index])
+                {
+                    case '(' or '[' or '<':
+                        depth++;
+                        continue;
+                    case ')' or ']':
+                        depth--;
+                        continue;
+                    case '>':
+                        if (depth > 0)
+                        {
+                            depth--;
+                        }
+
+                        continue;
+                    case '+' when depth == 0 && text[index - 1] != '+' && text[index + 1] != '+'
+                        && text[index + 1] != '%' && text[index + 1] != '|' && text[index + 1] != '=':
+                        var first = text[..index];
+                        var second = text[(index + 1)..];
+                        yield return (first, second);
+                        yield return (second, first);
+                        break;
+                }
+            }
+        }
+
+        public void AddDynamicLengthFact(string rootText, string indexText)
+        {
+            if (!_dynamicLengthFacts.TryGetValue(rootText, out var indexes))
+            {
+                indexes = new HashSet<string>(StringComparer.Ordinal);
+                _dynamicLengthFacts[rootText] = indexes;
+            }
+
+            indexes.Add(indexText);
+        }
+
+        public bool HasDynamicLengthFact(string rootText, string indexText)
+        {
+            return _dynamicLengthFacts.TryGetValue(rootText, out var indexes)
+                && indexes.Contains(indexText);
+        }
+
+        // Drops every fact that mentions the identifier — as the head of the
+        // storage path or anywhere inside the index expression — because a
+        // write to it (assignment, compound assignment, mut borrow, shadowing
+        // declaration) can change what the fact was proven against.
+        public void InvalidateDynamicLengthFactsFor(string identifier)
+        {
+            if (_dynamicLengthFacts.Count == 0)
+            {
+                return;
+            }
+
+            var deadRoots = new List<string>();
+            foreach (var (rootText, indexes) in _dynamicLengthFacts)
+            {
+                if (string.Equals(RootHead(rootText), identifier, StringComparison.Ordinal))
+                {
+                    deadRoots.Add(rootText);
+                    continue;
+                }
+
+                indexes.RemoveWhere(indexText => ContainsIdentifierToken(indexText, identifier));
+                if (indexes.Count == 0)
+                {
+                    deadRoots.Add(rootText);
+                }
+            }
+
+            foreach (var rootText in deadRoots)
+            {
+                _dynamicLengthFacts.Remove(rootText);
+            }
+
+            _valueContractFacts.RemoveWhere(fact => ContainsIdentifierToken(fact.Left, identifier)
+                || ContainsIdentifierToken(fact.Right, identifier));
+        }
+
+        public void InvalidateDynamicLengthFactsForRoot(string rootText)
+        {
+            _dynamicLengthFacts.Remove(rootText);
+        }
+
+        private void IntersectDynamicLengthFacts(params FlowState[] branches)
+        {
+            _valueContractFacts.RemoveWhere(fact => branches.Any(branch => !branch._valueContractFacts.Contains(fact)));
+            var deadRoots = new List<string>();
+            foreach (var (rootText, indexes) in _dynamicLengthFacts)
+            {
+                indexes.RemoveWhere(indexText => branches.Any(branch => !branch.HasDynamicLengthFact(rootText, indexText)));
+                if (indexes.Count == 0)
+                {
+                    deadRoots.Add(rootText);
+                }
+            }
+
+            foreach (var rootText in deadRoots)
+            {
+                _dynamicLengthFacts.Remove(rootText);
+            }
+        }
+
+        private static string RootHead(string rootText)
+        {
+            var dot = rootText.IndexOf('.', StringComparison.Ordinal);
+            return dot < 0 ? rootText : rootText[..dot];
+        }
+
+        private static bool ContainsIdentifierToken(string text, string identifier)
+        {
+            var start = 0;
+            while (true)
+            {
+                var index = text.IndexOf(identifier, start, StringComparison.Ordinal);
+                if (index < 0)
+                {
+                    return false;
+                }
+
+                var beforeOk = index == 0 || !IsIdentifierCharacter(text[index - 1]);
+                var afterIndex = index + identifier.Length;
+                var afterOk = afterIndex >= text.Length || !IsIdentifierCharacter(text[afterIndex]);
+                if (beforeOk && afterOk)
+                {
+                    return true;
+                }
+
+                start = index + 1;
+            }
+        }
+
+        private static bool IsIdentifierCharacter(char ch) =>
+            ch is (>= 'a' and <= 'z') or (>= 'A' and <= 'Z') or (>= '0' and <= '9') or '_';
+
+        /// <summary>
+        /// Replaces this state's view of visible variables with a single
+        /// surviving branch's end-state — used when every other path out of
+        /// a branch statement returns from the function, so only that branch
+        /// reaches the join.
+        /// </summary>
+        public void AdoptBranch(FlowState branch) => MergeBranches(branch, branch);
 
         public void MergeBranches(FlowState thenState, FlowState? elseState)
         {
@@ -5786,6 +6347,7 @@ internal sealed class OwnershipValidator
 
             MergeDynamicStorageStates(thenState, elseState ?? this);
             MergeDynamicInitSliceStates(thenState, elseState ?? this);
+            IntersectDynamicLengthFacts(thenState, elseState ?? this);
         }
 
         public void MergeBranches(IEnumerable<FlowState> branches)
@@ -5827,6 +6389,7 @@ internal sealed class OwnershipValidator
 
             MergeDynamicStorageStates(branchList);
             MergeDynamicInitSliceStates(branchList);
+            IntersectDynamicLengthFacts(branchList);
         }
 
         public void MergeLoop(FlowState loopState)
@@ -5841,6 +6404,7 @@ internal sealed class OwnershipValidator
 
             MergeDynamicStorageStates(this, loopState);
             MergeDynamicInitSliceStates(this, loopState);
+            IntersectDynamicLengthFacts(this, loopState);
         }
 
         private void MergeDynamicStorageStates(params FlowState[] branches)

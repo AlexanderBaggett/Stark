@@ -528,6 +528,18 @@ internal sealed partial class MidLevelIrLowerer
                     continue;
                 }
 
+                if (parameter.Type.InitializationKind is StarkInitializationKind.Out or StarkInitializationKind.Init)
+                {
+                    // Out/init parameters are caller-owned places the callee
+                    // fills in: they arrive uninitialized and the final value
+                    // transfers back to the caller, so they never join the
+                    // exit drop order. The state starts inactive so a
+                    // reassignment inside the callee still drops the value it
+                    // overwrites.
+                    _runtimeDropStates[parameter.Name] = false;
+                    continue;
+                }
+
                 _runtimeDropStates[parameter.Name] = true;
                 _parameterDropOrder.Add(parameter.Name);
             }
@@ -11252,6 +11264,11 @@ internal sealed partial class MidLevelIrLowerer
             }
 
             if (literalText.Length > 0 && literalText[0] == '"')
+            {
+                return new MidLevelIrStringConstantOperand(literalText, type);
+            }
+
+            if (TextLiteralDecoder.IsRawStringLiteral(literalText))
             {
                 return new MidLevelIrStringConstantOperand(literalText, type);
             }

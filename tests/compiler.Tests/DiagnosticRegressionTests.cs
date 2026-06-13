@@ -126,6 +126,10 @@ public sealed class DiagnosticRegressionTests
             struct Box
             {
                 i32[min max] Value;
+
+                drop
+                {
+                }
             }
 
             static Box Current = new Box()
