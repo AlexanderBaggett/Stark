@@ -114,13 +114,27 @@ often enough that the parser should not be casually wasteful.
 ## 7. Work Items
 
 - [x] Decide TOML strategy: add general reusable `System.Toml`.
-- [ ] Define and implement the `System.Toml` public model: namespace/module
+- [~] Define and implement the `System.Toml` public model: namespace/module
       layout, value/table/array/key/datetime/diagnostic types, source-span
       representation, and typed lookup/projection helpers for manifest decoding.
-- [ ] Implement the TOML reader for the chosen standard baseline: lexer,
+      Landed: flat-node `TomlDocument` (kinds Table/Array/Text/Integer/True/
+      False) with line/column spans on every node, span-carrying `TomlError`
+      variants, `TomlStatus`/`TomlResult<T>`, and Json-parity lookup helpers
+      (`TryFindMember`, `TryChildAt`, `TryFindMemberOfKind`, `TextAt`/`KeyAt`/
+      `I64At`/`BoolAt`/`LineAt`/`ColumnAt`). Datetime types and richer typed
+      projection helpers remain.
+- [~] Implement the TOML reader for the chosen standard baseline: lexer,
       parser, duplicate-key/table validation, dotted keys, inline tables,
       arrays, arrays of tables, strings/multiline strings, numeric/boolean
       values, date/time/datetime values, and useful malformed-input diagnostics.
+      Landed (staged manifest subset, tracked here as temporary): bare/basic/
+      literal keys and strings with \b \t \n \f \r \" \\ \uXXXX escapes,
+      dotted keys, table headers, inline tables, arrays, decimal integers with
+      underscore validation, booleans, comments, duplicate-key rejection, and
+      span-carrying diagnostics; 17 facts in `tests-stark/stdlib.Toml` include
+      decoding the repo's real manifest shape. Remaining: multiline strings,
+      arrays of tables, floats, date/times, hex/octal/binary integers, and \U
+      escapes (currently explicit UnsupportedValue/InvalidEscape diagnostics).
 - [ ] Implement deterministic TOML writing and file helpers that compose
       `System.IO.File` with `System.Toml` without hiding IO failures.
 - [ ] Replace host-style `SimpleToml` manifest handling in the self-hosted

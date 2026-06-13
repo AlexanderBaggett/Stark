@@ -68,7 +68,7 @@ abstractions:
 ```stark
 struct FixedBuffer<T, comptime u64[0 max] N>
 {
-    Items: T[N];
+    T[N] Items;
 }
 ```
 
@@ -113,15 +113,15 @@ Example:
 ```stark
 struct ModuleResolverOps
 {
-    Resolve: fnptr<fn ResolveResult(
+    fnptr<fn ResolveResult(
         rawmutptr<i8[min max]> context,
-        ascii moduleName)>;
+        ascii moduleName)> Resolve;
 }
 
 struct ModuleResolverHandle
 {
-    Context: rawmutptr<i8[min max]>;
-    Ops: ModuleResolverOps;
+    rawmutptr<i8[min max]> Context;
+    ModuleResolverOps Ops;
 }
 ```
 

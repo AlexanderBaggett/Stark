@@ -610,6 +610,7 @@ internal static class CompilerCli
                 && loadedModules is not null)
             {
                 var sourceDependencyModules = new List<LoadedModuleDocument>();
+                var packageProvidedModuleNames = new HashSet<string>(StringComparer.Ordinal);
                 foreach (var module in loadedModules.ImportedModules.Where(static module => !module.Reference.IsExternal))
                 {
                     if (!string.IsNullOrWhiteSpace(module.Reference.LibraryPath))
@@ -618,6 +619,7 @@ internal static class CompilerCli
                         if (linkedLibraries.Add(libraryPath))
                         {
                             linkInputs.Add(libraryPath);
+                            CollectPackageProvidedModuleNames(module.Reference.ManifestPath, packageProvidedModuleNames);
                         }
 
                         continue;
@@ -625,6 +627,13 @@ internal static class CompilerCli
 
                     sourceDependencyModules.Add(module);
                 }
+
+                // A linked package archive bundles every module object its own
+                // build compiled (its modules plus its stdlib closure). Any of
+                // those modules that this build ALSO reaches from source must
+                // not be compiled locally, or the link sees duplicate symbols.
+                sourceDependencyModules.RemoveAll(module =>
+                    packageProvidedModuleNames.Contains(module.SyntaxModel.ModuleName));
 
                 var importedInlineCloneSeedsByModule = BuildImportedInlineCloneSeedsByModule(result);
                 var sourceDependencyResult = CompileAndEmitReferencedDependencyObjects(
@@ -2127,6 +2136,34 @@ internal static class CompilerCli
         }
 
         return combined;
+    }
+
+    private static void CollectPackageProvidedModuleNames(string? manifestPath, HashSet<string> providedModuleNames)
+    {
+        if (string.IsNullOrWhiteSpace(manifestPath))
+        {
+            return;
+        }
+
+        try
+        {
+            var fullPath = Path.GetFullPath(PackageImageBinaryFormat.NormalizeBinaryImagePath(manifestPath));
+            if (!File.Exists(fullPath)
+                || !PackageImageBinaryFormat.TryDecode(File.ReadAllBytes(fullPath), out var manifest))
+            {
+                return;
+            }
+
+            foreach (var module in manifest.Modules)
+            {
+                providedModuleNames.Add(module.ModuleName);
+            }
+        }
+        catch (IOException)
+        {
+            // Unreadable manifests fall back to the previous behavior; the
+            // linker reports any resulting duplicates.
+        }
     }
 
     private static DependencyCompileResult CompileDependencyObject(

@@ -1105,7 +1105,7 @@ body text or generated parser source.
 ```stark
 struct FixedBuffer<T, comptime u64[0 max] N>
 {
-    Items: T[N];
+    T[N] Items;
 }
 ```
 

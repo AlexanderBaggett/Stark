@@ -248,7 +248,7 @@ internal static class ProjectCliDriver
                 return 1;
             }
 
-            var exitCode = await RunTestExecutableAsync(buildResult, stdout, stderr);
+            var exitCode = await RunTestExecutableAsync(buildResult, session.TestCollections, session.ListTestCollections, stdout, stderr);
             if (exitCode != 0)
             {
                 failed = true;
@@ -317,6 +317,8 @@ internal static class ProjectCliDriver
                 await stdout.WriteLineAsync("- In a test project directory, `stark test` runs that project.");
                 await stdout.WriteLineAsync("- In a solution directory, `stark test` runs the default test set or every test project.");
                 await stdout.WriteLineAsync("- `--filter <text>` may be repeated; matching is ordinal substring over generated test names.");
+                await stdout.WriteLineAsync("- `--collection <name[,name...]>` may be repeated; runs only facts tagged with the named [Collection]s (union).");
+                await stdout.WriteLineAsync("- `--list-collections` prints the project's collection names without running facts.");
                 return;
             case ProjectCommand.Clean:
                 await stdout.WriteLineAsync("Usage: stark clean [stage|target|profile|diagnostics|artifacts] [--dev|--release] [--target <triple>] [--stage stage0]");
@@ -329,7 +331,12 @@ internal static class ProjectCliDriver
         }
     }
 
-    private static async Task<int> RunTestExecutableAsync(BuildResult buildResult, TextWriter stdout, TextWriter stderr)
+    private static async Task<int> RunTestExecutableAsync(
+        BuildResult buildResult,
+        IReadOnlyList<string> testCollections,
+        bool listTestCollections,
+        TextWriter stdout,
+        TextWriter stderr)
     {
         await stdout.WriteLineAsync($"Running test project '{buildResult.Project.Name}'...");
 
@@ -342,6 +349,18 @@ internal static class ProjectCliDriver
             UseShellExecute = false,
             CreateNoWindow = true
         };
+
+        // The generated runner treats every argument as a collection name,
+        // plus the literal --list-collections discovery request.
+        if (listTestCollections)
+        {
+            startInfo.ArgumentList.Add("--list-collections");
+        }
+
+        foreach (var collectionName in testCollections)
+        {
+            startInfo.ArgumentList.Add(collectionName);
+        }
 
         using var process = Process.Start(startInfo);
         if (process is null)
@@ -895,6 +914,8 @@ internal static class ProjectCliDriver
             UserConfig: userConfig,
             DefaultProfiles: defaultProfiles,
             TestFilters: options.TestFilters,
+            TestCollections: options.TestCollections,
+            ListTestCollections: options.ListTestCollections,
             Stdout: stdout,
             Stderr: stderr);
         return true;
@@ -1579,6 +1600,8 @@ internal static class ProjectCliDriver
         UserConfig UserConfig,
         IReadOnlyDictionary<BuildProfile, ProfileManifest> DefaultProfiles,
         IReadOnlyList<string> TestFilters,
+        IReadOnlyList<string> TestCollections,
+        bool ListTestCollections,
         TextWriter Stdout,
         TextWriter Stderr)
     {
@@ -1693,7 +1716,9 @@ internal static class ProjectCliDriver
         string? TargetTriple,
         string StageName,
         bool ShowHelp,
-        IReadOnlyList<string> TestFilters)
+        IReadOnlyList<string> TestFilters,
+        IReadOnlyList<string> TestCollections,
+        bool ListTestCollections)
     {
         public static ProjectCommandOptions? Parse(ProjectCommand command, string[] args, TextWriter stderr)
         {
@@ -1703,6 +1728,8 @@ internal static class ProjectCliDriver
             var stageName = "stage0";
             var showHelp = false;
             var testFilters = new List<string>();
+            var testCollections = new List<string>();
+            var listTestCollections = false;
 
             for (var index = 0; index < args.Length; index++)
             {
@@ -1755,6 +1782,37 @@ internal static class ProjectCliDriver
                         }
 
                         testFilters.Add(args[++index]);
+                        break;
+                    case "--collection":
+                        if (command != ProjectCommand.Test)
+                        {
+                            stderr.WriteLine("--collection is only valid for `stark test`.");
+                            return null;
+                        }
+
+                        if (index + 1 >= args.Length || string.IsNullOrWhiteSpace(args[index + 1]))
+                        {
+                            stderr.WriteLine("--collection requires one or more collection names (comma-separated values are split).");
+                            return null;
+                        }
+
+                        foreach (var collectionName in args[++index].Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                        {
+                            if (!testCollections.Contains(collectionName, StringComparer.Ordinal))
+                            {
+                                testCollections.Add(collectionName);
+                            }
+                        }
+
+                        break;
+                    case "--list-collections":
+                        if (command != ProjectCommand.Test)
+                        {
+                            stderr.WriteLine("--list-collections is only valid for `stark test`.");
+                            return null;
+                        }
+
+                        listTestCollections = true;
                         break;
                     default:
                         if (argument.StartsWith("--target=", StringComparison.Ordinal))
@@ -1816,7 +1874,7 @@ internal static class ProjectCliDriver
                 }
             }
 
-            return new ProjectCommandOptions(profile, targetName, targetTriple, stageName, showHelp, testFilters);
+            return new ProjectCommandOptions(profile, targetName, targetTriple, stageName, showHelp, testFilters, testCollections, listTestCollections);
         }
 
         private static bool TryParseStageName(string value, TextWriter stderr, out string stageName)

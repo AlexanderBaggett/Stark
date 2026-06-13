@@ -78,11 +78,28 @@ internal static class SyntaxModelFactory
         {
             var attribute = attributes[index];
             var attributeContext = attributeContexts[index];
+            if (string.Equals(attribute.Name, "Collection", StringComparison.Ordinal))
+            {
+                // [Collection("...")] on a module tags every generated test
+                // fact in the file; the test runner generator validates the
+                // names. It is inert outside test projects.
+                if (attribute.Arguments.Count == 0)
+                {
+                    diagnostics.Add(new SyntaxModelDiagnostic(
+                        "STK2113",
+                        "Module attribute '[Collection]' must name at least one collection.",
+                        attributeContext.Start.Line,
+                        attributeContext.Start.Column + 1));
+                }
+
+                continue;
+            }
+
             if (!string.Equals(attribute.Name, "Backend", StringComparison.Ordinal))
             {
                 diagnostics.Add(new SyntaxModelDiagnostic(
                     "STK2110",
-                    $"Unsupported module attribute '[{attribute.Name}]'. v1 module attributes only support '[Backend(Opaque)]'.",
+                    $"Unsupported module attribute '[{attribute.Name}]'. v1 module attributes only support '[Backend(Opaque)]' and '[Collection(...)]'.",
                     attributeContext.Start.Line,
                     attributeContext.Start.Column + 1));
                 continue;
@@ -827,7 +844,8 @@ internal static class SyntaxModelFactory
     private static bool IsThreadSafetyLawName(string lawName)
     {
         return string.Equals(lawName, "Transferable", StringComparison.Ordinal)
-            || string.Equals(lawName, "Shareable", StringComparison.Ordinal);
+            || string.Equals(lawName, "Shareable", StringComparison.Ordinal)
+            || string.Equals(lawName, "Copyable", StringComparison.Ordinal);
     }
 
     private static ModuleBackendOptimizationMode ResolveBackendOptimizationMode(
@@ -838,7 +856,8 @@ internal static class SyntaxModelFactory
         bool allowTestingAttributes = false,
         bool allowTestingPlatformAttributes = false,
         bool allowStructLayoutAttributes = false,
-        bool allowThreadSafetyLawAttributes = false)
+        bool allowThreadSafetyLawAttributes = false,
+        bool allowCopyableAssertion = false)
     {
         var backendOptimizationMode = ModuleBackendOptimizationMode.Default;
         var backendAttributeCount = 0;
@@ -936,11 +955,11 @@ internal static class SyntaxModelFactory
 
                 if (string.Equals(attribute.Name, "Collection", StringComparison.Ordinal))
                 {
-                    if (attribute.Arguments.Count != 1)
+                    if (attribute.Arguments.Count == 0)
                     {
                         diagnostics.Add(new SyntaxModelDiagnostic(
                             "STK2113",
-                            $"Attribute '[Collection]' on {targetDescription} must name exactly one test collection.",
+                            $"Attribute '[Collection]' on {targetDescription} must name at least one test collection.",
                             attributeContext.Start.Line,
                             attributeContext.Start.Column + 1));
                     }
@@ -1048,6 +1067,30 @@ internal static class SyntaxModelFactory
                 continue;
             }
 
+            if (string.Equals(attribute.Name, ThreadSafetyLawNames.Copyable, StringComparison.Ordinal))
+            {
+                if (!allowCopyableAssertion)
+                {
+                    diagnostics.Add(new SyntaxModelDiagnostic(
+                        "STK2110",
+                        $"Unsupported attribute '[Copyable]' on {targetDescription}. The Copyable assertion is supported only on struct, record, and enum declarations.",
+                        attributeContext.Start.Line,
+                        attributeContext.Start.Column + 1));
+                    continue;
+                }
+
+                if (attribute.Arguments.Count != 0)
+                {
+                    diagnostics.Add(new SyntaxModelDiagnostic(
+                        "STK2113",
+                        $"Attribute '[Copyable]' on {targetDescription} does not take arguments.",
+                        attributeContext.Start.Line,
+                        attributeContext.Start.Column + 1));
+                }
+
+                continue;
+            }
+
             if (!string.Equals(attribute.Name, "Backend", StringComparison.Ordinal))
             {
                 diagnostics.Add(new SyntaxModelDiagnostic(
@@ -1128,7 +1171,8 @@ internal static class SyntaxModelFactory
         IReadOnlyList<StarkParser.AttributeContext> attributeContexts,
         string targetDescription,
         List<SyntaxModelDiagnostic> diagnostics,
-        bool allowThreadSafetyLawAttributes = false)
+        bool allowThreadSafetyLawAttributes = false,
+        bool allowCopyableAssertion = false)
     {
         for (var index = 0; index < attributes.Count; index++)
         {
@@ -1139,6 +1183,21 @@ internal static class SyntaxModelFactory
             }
 
             var attributeContext = attributeContexts[index];
+            if (allowCopyableAssertion
+                && string.Equals(attribute.Name, ThreadSafetyLawNames.Copyable, StringComparison.Ordinal))
+            {
+                if (attribute.Arguments.Count != 0)
+                {
+                    diagnostics.Add(new SyntaxModelDiagnostic(
+                        "STK2113",
+                        $"Attribute '[Copyable]' on {targetDescription} does not take arguments.",
+                        attributeContext.Start.Line,
+                        attributeContext.Start.Column + 1));
+                }
+
+                continue;
+            }
+
             diagnostics.Add(new SyntaxModelDiagnostic(
                 "STK2110",
                 $"Unsupported attribute '[{attribute.Name}]' on {targetDescription}. v1 attributes only support modules, callables, structs, records, and doctrines.",
@@ -1205,7 +1264,8 @@ internal static class SyntaxModelFactory
                 diagnostics,
                 allowTestingPlatformAttributes: true,
                 allowStructLayoutAttributes: true,
-                allowThreadSafetyLawAttributes: true);
+                allowThreadSafetyLawAttributes: true,
+                allowCopyableAssertion: true);
             declarations.Add(new TopLevelDeclarationModel(
                 structDeclaration.Identifier().GetText(),
                 DeclarationKind.Struct,
@@ -1284,7 +1344,8 @@ internal static class SyntaxModelFactory
                 $"record '{recordDeclaration.Identifier().GetText()}'",
                 diagnostics,
                 allowTestingPlatformAttributes: true,
-                allowThreadSafetyLawAttributes: true);
+                allowThreadSafetyLawAttributes: true,
+                allowCopyableAssertion: true);
             declarations.Add(new TopLevelDeclarationModel(
                 recordDeclaration.Identifier().GetText(),
                 DeclarationKind.Record,
@@ -1362,7 +1423,8 @@ internal static class SyntaxModelFactory
                 declarationAttributeContexts,
                 $"enum '{enumDeclaration.Identifier().GetText()}'",
                 diagnostics,
-                allowThreadSafetyLawAttributes: true);
+                allowThreadSafetyLawAttributes: true,
+                allowCopyableAssertion: true);
             declarations.Add(new TopLevelDeclarationModel(
                 enumDeclaration.Identifier().GetText(),
                 DeclarationKind.Enum,
@@ -1759,6 +1821,7 @@ internal static class SyntaxModelFactory
             DisjointParameterGroups: CreateDisjointParameterGroups(parameterList, memoryContractClauses),
             OverlapParameterGroups: CreateOverlapParameterGroups(memoryContractClauses),
             SameParameterGroups: CreateSameParameterGroups(memoryContractClauses),
+            ValueParameterContracts: CreateValueParameterContracts(memoryContractClauses),
             ThreadSafetyLawPredicates: CreateThreadSafetyLawPredicates(
                 memoryContractClauses,
                 targetDescription ?? $"function '{name}'",
@@ -1842,6 +1905,29 @@ internal static class SyntaxModelFactory
                 static contract => contract.overlapContract()?.expressionList())
             .Select(static group => new ParameterOverlapGroup(group))
             .ToArray();
+    }
+
+    private static IReadOnlyList<ParameterValueContract> CreateValueParameterContracts(
+        IReadOnlyList<StarkParser.ParameterMemoryContractClauseContext> memoryContractClauses)
+    {
+        var contracts = new List<ParameterValueContract>();
+        foreach (var clause in memoryContractClauses)
+        {
+            foreach (var contract in clause.parameterMemoryContract())
+            {
+                if (contract.valueContract() is not { } valueContract)
+                {
+                    continue;
+                }
+
+                contracts.Add(new ParameterValueContract(
+                    valueContract.shiftExpression(0).GetText(),
+                    valueContract.valueContractOperator().GetText(),
+                    valueContract.shiftExpression(1).GetText()));
+            }
+        }
+
+        return contracts;
     }
 
     private static IReadOnlyList<ParameterSameGroup> CreateSameParameterGroups(

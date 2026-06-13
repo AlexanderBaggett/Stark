@@ -355,6 +355,20 @@ fn u32[0 max] UseArray()
 }
 ```
 
+A bare integer literal mixed into ranged-integer arithmetic is not a hidden
+representation change: the literal adopts the other operand's ranged type when its
+value fits, so the result keeps that type and needs no cast.
+
+```stark
+finite law u64[0 2 ** 63 - 1] Next(u64[0 2 ** 63 - 1] position)
+{
+    return position + 1;
+}
+```
+
+Only a value that does not provably fit needs an explicit conversion: a runtime
+value of a wider range, or a literal too large or wrong-signed for the operand.
+
 The rejected narrowing example in the book samples shows the important rule:
 do not return a whole-range value from a smaller-range function without making
 the conversion valid.

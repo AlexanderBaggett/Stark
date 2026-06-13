@@ -639,6 +639,11 @@ public sealed record ParameterOverlapGroup(IReadOnlyList<string> ParameterNames)
 
 public sealed record ParameterSameGroup(IReadOnlyList<string> ParameterNames);
 
+public sealed record ParameterValueContract(string LeftText, string OperatorText, string RightText)
+{
+    public string DisplayText => $"{LeftText} {OperatorText} {RightText}";
+}
+
 public enum ThreadSafetyLawAttributeKind
 {
     Grant,
@@ -678,7 +683,8 @@ public sealed record FunctionDeclarationModel(
     IReadOnlyList<ParameterDisjointGroup>? DisjointParameterGroups = null,
     IReadOnlyList<ParameterOverlapGroup>? OverlapParameterGroups = null,
     IReadOnlyList<ParameterSameGroup>? SameParameterGroups = null,
-    IReadOnlyList<ThreadSafetyLawPredicateModel>? ThreadSafetyLawPredicates = null)
+    IReadOnlyList<ThreadSafetyLawPredicateModel>? ThreadSafetyLawPredicates = null,
+    IReadOnlyList<ParameterValueContract>? ValueParameterContracts = null)
 {
     public IReadOnlyList<string> GenericParams => GenericParameterNames ?? [];
     public IReadOnlyList<ComptimeGenericParameterSymbol> ComptimeGenericParams => ComptimeGenericParameterNames ?? [];
@@ -687,6 +693,7 @@ public sealed record FunctionDeclarationModel(
     public IReadOnlyList<ParameterOverlapGroup> OverlapGroups => OverlapParameterGroups ?? [];
     public IReadOnlyList<ParameterSameGroup> SameGroups => SameParameterGroups ?? [];
     public IReadOnlyList<ThreadSafetyLawPredicateModel> ThreadSafetyLaws => ThreadSafetyLawPredicates ?? [];
+    public IReadOnlyList<ParameterValueContract> ValueContracts => ValueParameterContracts ?? [];
 }
 
 public sealed record DestructorDeclarationModel(
@@ -2402,6 +2409,7 @@ public static class ThreadSafetyLawNames
 {
     public const string Transferable = "Transferable";
     public const string Shareable = "Shareable";
+    public const string Copyable = "Copyable";
 }
 
 public enum StructLayoutKind
@@ -2469,7 +2477,8 @@ public sealed record NamedTypeSymbol(
     StructLayoutMetadata? Layout = null,
     IReadOnlyList<ThreadSafetyLawAttributeSymbol>? ThreadSafetyLawAttributes = null,
     string? DeclaringModuleName = null,
-    StarkVisibility Visibility = StarkVisibility.Module)
+    StarkVisibility Visibility = StarkVisibility.Module,
+    bool HasDestructor = false)
 {
     public bool TryGetField(string name, out FieldSymbol field, out int index)
     {
@@ -2606,7 +2615,8 @@ public sealed record TypedFunctionSignature(
     IReadOnlyList<TypeParameterConstraint>? TypeParameterConstraints = null,
     bool HasBody = true,
     IReadOnlyList<ThreadSafetyLawPredicateSymbol>? ThreadSafetyLawPredicates = null,
-    StarkVisibility Visibility = StarkVisibility.Module)
+    StarkVisibility Visibility = StarkVisibility.Module,
+    IReadOnlyList<ParameterValueContract>? ValueParameterContracts = null)
 {
     public string DisplaySourceName => SourceName ?? Name;
     public IReadOnlyList<string> GenericParams => GenericParameterNames ?? [];
@@ -2620,6 +2630,7 @@ public sealed record TypedFunctionSignature(
     public IReadOnlyList<ParameterOverlapGroup> OverlapGroups => OverlapParameterGroups ?? [];
     public IReadOnlyList<ParameterSameGroup> SameGroups => SameParameterGroups ?? [];
     public IReadOnlyList<ThreadSafetyLawPredicateSymbol> ThreadSafetyLaws => ThreadSafetyLawPredicates ?? [];
+    public IReadOnlyList<ParameterValueContract> ValueContracts => ValueParameterContracts ?? [];
 }
 
 public enum GlobalBindingKind

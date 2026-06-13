@@ -977,6 +977,164 @@ The main rules:
 * raw pointers are the only null capable pointer forms
 * safe code cannot use `forget` style escape hatches
 
+### 7.1 Copyable Types
+
+Move semantics only apply to types that own something. A named type is
+**copyable** when copying its bytes is safe and creates no drop obligation,
+derived structurally:
+
+* scalars, raw pointers, function pointers used as values, and text views are copyable
+* an `enum` is copyable when every variant is a unit variant or carries only copyable fields
+* a `struct` or `record` is copyable when every field is copyable
+* a type with a destructor is never copyable
+* anything owning — `dynamic` storage, owning text containers, heap closures, heap `dyn` trait objects — is never copyable
+
+Reads of copyable values out of fields, indexed places, and locals are
+copies, not moves: the source stays usable, and accessors can return the
+value directly.
+
+```stark
+struct Token
+{
+    TokenKind Kind;
+    u64[0 2 ** 63 - 1] Start;
+}
+
+public finite law TokenKind KindAt(borrow TokenStream self, u64[0 2 ** 63 - 1] index)
+{
+    if (index >= self.Tokens.Length)
+    {
+        return TokenKind.EndOfFile;
+    }
+
+    return self.Tokens[index].Kind;    // a copy; the table is untouched
+}
+```
+
+Concrete generic instantiations classify through their substituted payloads
+(`Option<TokenKind>` is copyable; `Option<OwnedAscii>` is not). Uninstantiated
+generic templates are conservatively move-only inside their own bodies.
+
+To force a scalar-only type to keep move semantics — unique handles,
+capability tokens — give it an empty destructor:
+
+```stark
+struct FileHandle
+{
+    i32[min max] Descriptor;
+
+    drop
+    {
+    }
+}
+```
+
+Generic code that requires copyability states it with the law-predicate
+spelling used by `Transferable` and `Shareable`:
+
+```stark
+fn bool Duplicate<T>(T value)
+    where Copyable(T)
+{
+    stack T first = value;
+    stack T second = value;
+    return true;
+}
+```
+
+Call sites with concrete type arguments are checked structurally; a generic
+caller forwards the requirement by declaring the same `where Copyable(T)`.
+`Copyable` is purely structural — it cannot be granted or denied with
+attributes.
+
+A type that is meant to stay copyable can assert it at the definition, so
+adding an owning field or a destructor later errors at the type instead of
+at every downstream copy site:
+
+```stark
+[Copyable]
+enum TokenKind
+{
+    EndOfFile,
+    Identifier,
+}
+```
+
+### 7.2 Initialized-Read Proofs For Dynamic Storage
+
+`dynamic T` storage keeps a dense initialized prefix: the first `Length`
+slots are initialized, everything at `Length` and beyond is spare capacity.
+Reading a slot requires a compile-time proof that it is initialized.
+
+A strict comparison against the storage's `Length` proves reads on the path
+it dominates — in any function, for direct reads, whole-value copies, and
+field projections through the slot:
+
+```stark
+finite law TokenKind KindAt(borrow TokenStream self, u64[0 2 ** 63 - 1] index)
+{
+    if (index >= self.Tokens.Length)
+    {
+        return TokenKind.EndOfFile;
+    }
+
+    return self.Tokens[index].Kind;    // proven: the guard above returned
+}
+```
+
+The accepted forms are `index < storage.Length` (and the mirrored
+`storage.Length > index`) in a positive `if` branch or a loop condition, the
+negated `index >= storage.Length` guard whose branch always returns, breaks,
+or continues, and `&&` conjunctions of those. The guard and the read must
+spell the index and the storage path with the same source text; bind a local
+first when the index is computed. The proof is invalidated by any write to
+something it mentions: assigning or compound-assigning the index variable,
+passing the storage's owner by `mut borrow`, or shadowing a name. Non-strict
+`<=` comparisons prove nothing.
+
+Genuinely sparse structures — hash slots, free lists, parent links — where
+initialization is an invariant the type system cannot see keep the explicit
+`unsafe { }` sparse initialized-slot proof. Moving a whole value out of a
+slot is a separate concern from reading it: non-tail slot moves stay
+restricted to `MoveLast()` or an explicit sparse proof so the dense prefix
+never acquires holes.
+
+### 7.3 Value Contracts
+
+A function can move the proof obligation to its callers with a comparison
+in its `where` clause. The comparison joins the same clause list as the
+memory contracts, using `<`, `>`, `<=`, or `>=` over parameters and paths
+through them:
+
+```stark
+finite law Token TokenAtProven(borrow TokenStream self, u64[0 2 ** 63 - 1] index)
+    where index < self.Tokens.Length
+{
+    return self.Tokens[index];    // proven by the contract
+}
+```
+
+Inside the function, a strict `< storage.Length` contract proves the body's
+reads exactly like a guard would. At every call site the contract is
+re-spelled with the actual receiver and arguments, and must be proven by
+one of:
+
+* a dominating comparison the caller already made (`if (index >= stream.Tokens.Length) { return ...; }` proves the negation on the path that continues)
+* the caller's own matching `where` contract, forwarding the obligation outward
+* constant arguments that satisfy the comparison outright
+
+An unproven call site is a compile error that names both the declared
+contract and the obligation as spelled at that call site. Comparisons match
+by spelling: the guard, the contract, and the call must write the same
+expressions for the same things (bind a local first when an argument is
+computed). Mirrored forms (`a < b` and `b > a`) are recognized as the same
+fact.
+
+Contracts over module-internal fields are only provable inside that module —
+public contracted functions should phrase their contracts over their public
+surface, or keep a guarded total wrapper public and the contracted core
+internal, as the lexer does with `TokenAt` / `TokenAtProven`.
+
 The borrow classes:
 
 * `borrow T`: cannot be stored or returned
@@ -1783,6 +1941,24 @@ Target typed `new()` and `new(args)` require the surrounding code to already say
 
 `new()` calls the zero argument constructor for the target `struct` or `record`. If the type declares no constructors, Stark provides an implicit default constructor that default initializes the value. `new(value)` and `new(args)` call a matching constructor if one exists. If the type declares constructors but none match the supplied arguments, compilation fails.
 
+Inside a constructor body, `self` begins with every field in its zero state; a field's intended value exists only after the body assigns it. Reading an owning field of `self` — one backed by dynamic storage or owned text — before it has been assigned is a compile error, because it would read that zero state rather than the constructed value. Assign the field first, then read it:
+
+```stark
+struct Tokens
+{
+    u64[0 2 ** 63 - 1] Count;
+    dynamic i32[min max] Items;
+
+    Tokens()
+    {
+        self.Items = new();
+        self.Count = self.Items.Length;   // ok: Items is assigned above
+    }
+}
+```
+
+Scalars, fixed arrays, and other inline storage have a valid zero state and may be read or written element-wise without a prior whole-field assignment.
+
 Text views use the existing postfix indexing form:
 
 ```stark
@@ -1938,6 +2114,27 @@ Ordinary integer arithmetic in Stark is performance first and intentionally stri
 * wrapping arithmetic uses the Zig style spellings `+%`, `-%`, `*%` and the corresponding compound assignments
 * saturating arithmetic uses the Zig style spellings `+|`, `-|`, `*|` and the corresponding compound assignments
 
+A bare integer literal carries no fixed width of its own in mixed arithmetic. When
+it is combined with a runtime ranged-integer operand, the literal adopts that
+operand's ranged type whenever its value fits, so the expression keeps the
+operand's type instead of widening to a signed default. This is the same outcome
+as variable-with-variable arithmetic over a shared ranged type, and it means a
+result can be stored or returned in the operand's type without a narrowing cast:
+
+```stark
+finite law u64[0 2 ** 63 - 1] Next(u64[0 2 ** 63 - 1] position)
+{
+    return position + 1;   // u64[0 2 ** 63 - 1]; no narrowing cast required
+}
+```
+
+The literal adopts only the other operand's numeric shape — its width, range, and
+sign — never an `out`, `borrow`, or `frozen` qualifier, because arithmetic yields
+a plain value. A literal whose value does not fit the operand's range, or a
+negative literal paired with an unsigned operand, keeps its own type and still
+needs an explicit narrowing conversion. Fully compile-time expressions fold on
+their own and are unaffected.
+
 ### 11.7 Compile-Time Evaluation
 
 `comptime expr` forces an expression to be evaluated during compilation, and
@@ -2014,17 +2211,27 @@ Character literals follow the same inference path instead of using a dedicated s
 Raw string literals do not process escape sequences; the characters between the delimiters are taken verbatim, which suits regexes, Windows paths, and embedded source text:
 
 * `raw"..."` is a single-line raw literal: no escapes, no embedded newlines
-* `raw"""..."""` is a multiline raw literal: newlines and content are preserved exactly
+* `raw"""..."""` with content on one line is a single-line raw literal whose content may include `"` characters
+* `raw"""..."""` spanning lines is a multiline raw literal and follows the C# raw-string rules below
+
+Multiline raw literals delimit their content by lines, exactly like C# raw string literals:
+
+* the opening `raw"""` ends its line; the newline after it is not part of the value (content on the opening-quote line is an error)
+* the closing `"""` stands alone on its line; the newline before it is not part of the value
+* the whitespace before the closing `"""` defines an indentation that is stripped from every content line, so the literal can be indented with the surrounding code
+* a non-blank content line that does not start with that exact indentation is an error; whitespace-only lines contribute empty lines
 
 ```stark
-stack ascii pattern = raw"\d+\.\d+";
 stack ascii usage = raw"""
-usage: stark build [--release]
-       stark run
-""";
+    usage: stark build [--release]
+           stark run
+    """;
+// value: "usage: stark build [--release]\n       stark run"
+
+stack ascii pattern = raw"\d+\.\d+";
 ```
 
-Raw literals compose with interpolation as `$raw"..."` and `$raw"""..."""`: the verbatim escape rules still hold while `{ ... }` holes are evaluated. Raw literals infer to `ascii` when the contents fit UTF-8, like ordinary string literals.
+Raw literals compose with interpolation as `$raw"..."` and `$raw"""..."""`: the verbatim escape rules and the multiline trimming rules still hold while `{ ... }` holes are evaluated. Raw literals infer to `ascii` when the contents fit UTF-8, like ordinary string literals.
 
 The text runtime contract:
 

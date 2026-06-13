@@ -218,10 +218,12 @@ internal sealed class TypeChecker
         CheckGlobalDeclarations();
         CheckConstructorBodies();
         CheckFunctionBodies();
+        CheckImportedModuleNameAmbiguities();
         MaterializeImportedSourceInstantiations();
         ValidateThreadEntryMutableStaticReferences();
 
         var threadSafetyLawFacts = ComputeThreadSafetyLawFacts();
+        ValidateCopyableAssertions();
 
         return new TypeCheckModel(
             _syntaxModel.ModuleName,
@@ -282,6 +284,67 @@ internal sealed class TypeChecker
                         shape.BodyKey))
                     .ToArray(),
                 StringComparer.Ordinal));
+    }
+
+    // [Copyable] on a struct, record, or enum asserts structural copyability
+    // at the definition, so adding an owning field or a destructor later
+    // errors here instead of at every downstream copy site.
+    private void ValidateCopyableAssertions()
+    {
+        foreach (var module in _loadedModules.Modules.Values)
+        {
+            foreach (var declaration in module.ParseResult.Root.topLevelDeclaration())
+            {
+                string? typeName = null;
+                Antlr4.Runtime.IToken? nameToken = null;
+                if (declaration.structDeclaration() is { } structDeclaration)
+                {
+                    nameToken = structDeclaration.Identifier().Symbol;
+                    typeName = structDeclaration.Identifier().GetText();
+                }
+                else if (declaration.recordDeclaration() is { } recordDeclaration)
+                {
+                    nameToken = recordDeclaration.Identifier().Symbol;
+                    typeName = recordDeclaration.Identifier().GetText();
+                }
+                else if (declaration.enumDeclaration() is { } enumDeclaration)
+                {
+                    nameToken = enumDeclaration.Identifier().Symbol;
+                    typeName = enumDeclaration.Identifier().GetText();
+                }
+
+                if (typeName is null
+                    || !declaration.attributeList().Any(static list => list.attribute().Any(static attribute =>
+                        attribute.attributeArgument().Length == 0
+                        && string.Equals(attribute.qualifiedName().GetText(), ThreadSafetyLawNames.Copyable, StringComparison.Ordinal))))
+                {
+                    continue;
+                }
+
+                var qualifiedName = QualifyName(module, typeName);
+                if (!_namedTypes.ContainsKey(qualifiedName))
+                {
+                    continue;
+                }
+
+                var type = StarkTypeSymbols.Named(qualifiedName);
+                var fact = GetThreadSafetyLawEvaluator().Evaluate(ThreadSafetyLawNames.Copyable, type);
+                if (fact.Holds)
+                {
+                    continue;
+                }
+
+                var failure = fact.FailureReasons.FirstOrDefault();
+                var reason = failure?.Message ?? $"Type '{typeName}' is not structurally Copyable.";
+                var fieldChain = failure?.Path is { Count: > 0 } path
+                    ? $" Responsible field chain: {typeName}.{string.Join(".", path)}."
+                    : string.Empty;
+                ReportError(
+                    "STK3051",
+                    $"[Copyable] assertion failed: {reason}{fieldChain}",
+                    Location(nameToken!));
+            }
+        }
     }
 
     private IReadOnlyDictionary<string, ThreadSafetyLawTypeFacts> ComputeThreadSafetyLawFacts()
@@ -636,7 +699,9 @@ internal sealed class TypeChecker
                             module.SyntaxModel.ModuleName,
                             comptimeParameterMap),
                         DeclaringModuleName: module.SyntaxModel.ModuleName,
-                        Visibility: declarationModel.Visibility);
+                        Visibility: declarationModel.Visibility,
+                        HasDestructor: recordDeclaration.recordBody().recordMember()
+                            .Any(static member => member.destructorDeclaration() is not null));
                     continue;
                 }
 
@@ -751,6 +816,7 @@ internal sealed class TypeChecker
         var genericParameterNames = genericParameters?.ToList();
         var comptimeParameterList = comptimeGenericParameters ?? [];
         var comptimeParameterMap = ToComptimeGenericParameterMap(comptimeParameterList);
+        var hasDestructor = members.Any(static member => member.destructorDeclaration() is not null);
         var threadSafetyLawAttributes = ResolveThreadSafetyLawAttributes(
             typeAttributeLists ?? [],
             genericParameters,
@@ -775,7 +841,8 @@ internal sealed class TypeChecker
             Layout: layout,
             ThreadSafetyLawAttributes: threadSafetyLawAttributes,
             DeclaringModuleName: currentModuleName,
-            Visibility: containingVisibility);
+            Visibility: containingVisibility,
+            HasDestructor: hasDestructor);
 
         foreach (var member in members)
         {
@@ -804,7 +871,8 @@ internal sealed class TypeChecker
             Layout: layout,
             ThreadSafetyLawAttributes: threadSafetyLawAttributes,
             DeclaringModuleName: currentModuleName,
-            Visibility: containingVisibility);
+            Visibility: containingVisibility,
+            HasDestructor: hasDestructor);
         RefreshConcreteInstantiationsForTemplate(namedType);
         return namedType;
     }
@@ -1522,7 +1590,8 @@ internal sealed class TypeChecker
     private static bool IsThreadSafetyLawName(string lawName)
     {
         return string.Equals(lawName, "Transferable", StringComparison.Ordinal)
-            || string.Equals(lawName, "Shareable", StringComparison.Ordinal);
+            || string.Equals(lawName, "Shareable", StringComparison.Ordinal)
+            || string.Equals(lawName, "Copyable", StringComparison.Ordinal);
     }
 
     private void AddFields(
@@ -1928,7 +1997,10 @@ internal sealed class TypeChecker
                             genericParameters,
                             module.SyntaxModel.ModuleName,
                             comptimeGenericParameterMap),
-                        Visibility: declarationModel.Visibility);
+                        Visibility: declarationModel.Visibility,
+                        ValueParameterContracts: declarationModel.Function?.ValueContracts is { Count: > 0 } valueContracts
+                            ? valueContracts
+                            : null);
                     RegisterFunctionSignature(signature, seenOverloadKeys, functionSyntax.DeclarationContext);
                     _functionSyntaxByQualifiedName[signature.Name] = functionSyntax;
                 }
@@ -2925,6 +2997,13 @@ internal sealed class TypeChecker
         var qualifiedTypeName = QualifyName(module, localTypeName);
         var genericParameters = GetGenericParameterNames(typeParameterList);
         var selfType = StarkTypeSymbols.Named(qualifiedTypeName);
+        // Constructor field-read validation needs the struct's field set. Records
+        // initialize their primary-constructor fields before any explicit body, so
+        // the assigned-so-far analysis below is scoped to structs for now.
+        var selfFieldOwner = declarationKind == DeclarationKind.Struct
+            && _namedTypes.TryGetValue(qualifiedTypeName, out var resolvedSelfType)
+                ? resolvedSelfType
+                : null;
 
         foreach (var constructor in constructors)
         {
@@ -2961,6 +3040,10 @@ internal sealed class TypeChecker
             try
             {
                 CheckBlock(constructor.block(), scope, StarkTypeSymbols.Void);
+                if (selfFieldOwner is not null)
+                {
+                    ValidateConstructorFieldReads(constructor.block(), selfFieldOwner);
+                }
             }
             finally
             {
@@ -2970,6 +3053,143 @@ internal sealed class TypeChecker
                 _insideConstructorBody = previousInsideConstructorBody;
             }
         }
+    }
+
+    // A `self` field holds its pre-construction zero state until the body assigns
+    // it, so reading a field before assignment yields that zero state rather than
+    // the intended value. Walk the body in evaluation order tracking the fields
+    // assigned so far; a field is "assigned" once any path assigns it (monotonic
+    // union — conservative, so valid code is never rejected), and reading a field
+    // not yet in that set reports STK3055.
+    private void ValidateConstructorFieldReads(StarkParser.BlockContext block, NamedTypeSymbol selfType)
+    {
+        var copyability = new CopyabilityFacts(_namedTypes);
+        WalkConstructorNodeForFieldReads(block, selfType, copyability, new HashSet<string>(StringComparer.Ordinal));
+    }
+
+    private void WalkConstructorNodeForFieldReads(
+        IParseTree node,
+        NamedTypeSymbol selfType,
+        CopyabilityFacts copyability,
+        HashSet<string> assignedFields)
+    {
+        switch (node)
+        {
+            case StarkParser.AssignmentExpressionContext assignment
+                when assignment.assignmentOperator()?.GetText() == "="
+                    && assignment.assignmentExpression() is { } rightSide:
+            {
+                // The right side is evaluated before the assignment takes effect.
+                WalkConstructorNodeForFieldReads(rightSide, selfType, copyability, assignedFields);
+
+                var target = assignment.unaryExpression();
+                if (TryGetSelfFieldDirectTarget(target, selfType, out var initializedField))
+                {
+                    // `self.Field = ...` initializes the whole field: mark it, and do
+                    // not treat the target itself as a read.
+                    assignedFields.Add(initializedField);
+                }
+                else
+                {
+                    // A deeper or indexed target (`self.Field.X = ...`,
+                    // `self.Field[i] = ...`) still reads `self.Field` as its receiver.
+                    WalkConstructorNodeForFieldReads(target, selfType, copyability, assignedFields);
+                }
+
+                return;
+            }
+
+            case StarkParser.PostfixExpressionContext postfix
+                when TryGetSelfFieldAccess(postfix, selfType, copyability, out var readField, out var trailingParts):
+            {
+                if (!assignedFields.Contains(readField))
+                {
+                    ReportError(
+                        "STK3055",
+                        $"Constructor reads field '{readField}' of 'self' before it is assigned. Assign 'self.{readField}' before reading it.",
+                        postfix);
+                }
+
+                // The `self.Field` base is handled; index/argument sub-expressions of
+                // the access (e.g. `self.Field[self.Other]`) still need checking.
+                foreach (var trailingPart in trailingParts)
+                {
+                    WalkConstructorNodeForFieldReads(trailingPart, selfType, copyability, assignedFields);
+                }
+
+                return;
+            }
+        }
+
+        if (node is ParserRuleContext rule && rule.children is { } children)
+        {
+            foreach (var child in children)
+            {
+                WalkConstructorNodeForFieldReads(child, selfType, copyability, assignedFields);
+            }
+        }
+    }
+
+    private static bool TryGetSelfFieldDirectTarget(
+        StarkParser.UnaryExpressionContext target,
+        NamedTypeSymbol selfType,
+        out string field)
+    {
+        field = string.Empty;
+        if (target.unaryOperator() is not null
+            || target.powerExpression()?.postfixExpression() is not { } postfix
+            || postfix.primaryExpression()?.Identifier()?.GetText() != "self")
+        {
+            return false;
+        }
+
+        var parts = postfix.postfixPart();
+        if (parts.Length != 1
+            || parts[0].Identifier() is not { } fieldIdentifier
+            || !selfType.Fields.ContainsKey(fieldIdentifier.GetText()))
+        {
+            return false;
+        }
+
+        field = fieldIdentifier.GetText();
+        return true;
+    }
+
+    private static bool TryGetSelfFieldAccess(
+        StarkParser.PostfixExpressionContext postfix,
+        NamedTypeSymbol selfType,
+        CopyabilityFacts copyability,
+        out string field,
+        out IReadOnlyList<StarkParser.PostfixPartContext> trailingParts)
+    {
+        field = string.Empty;
+        trailingParts = Array.Empty<StarkParser.PostfixPartContext>();
+        if (postfix.primaryExpression()?.Identifier()?.GetText() != "self")
+        {
+            return false;
+        }
+
+        var parts = postfix.postfixPart();
+        if (parts.Length == 0
+            || parts[0].Identifier() is not { } fieldIdentifier
+            || !selfType.Fields.TryGetValue(fieldIdentifier.GetText(), out var fieldSymbol))
+        {
+            return false;
+        }
+
+        // Only owning fields (dynamic storage, owned text, destructor-bearing
+        // aggregates) have a meaningless pre-assignment state worth flagging.
+        // Inline storage — scalars, fixed arrays, copyable aggregates — reads a
+        // valid zero value and is written element-wise, so it is not a read error.
+        if (copyability.IsCopyable(fieldSymbol.Type)
+            || fieldSymbol.Type.Kind == StarkTypeKind.FixedArray)
+        {
+            return false;
+        }
+
+        field = fieldIdentifier.GetText();
+        trailingParts = parts.Skip(1).ToArray();
+        return true;
     }
 
     private void CheckGlobalDeclarations()
@@ -3662,6 +3882,145 @@ internal sealed class TypeChecker
                     _currentImportedTemplateMemberCallOrdinals = previousImportedTemplateMemberCallOrdinals;
                     _unsafeDepth = previousUnsafeDepth;
                 }
+            }
+        }
+    }
+
+    // Imported source-module bodies are not type-checked (their module-private
+    // names cannot resolve from this context), and lower-mir has no diagnostic
+    // channel — so a bare name that is exported by two of the module's own
+    // imports used to crash lowering ("Named operand could not be resolved")
+    // instead of reporting an ambiguity. Detect that case here: for each
+    // imported source module, find the names exported by >= 2 of its imports
+    // and report a bare, unshadowed reference as STK3003. The scan is gated on a
+    // non-empty ambiguous-name set, which is empty for almost every module.
+    private void CheckImportedModuleNameAmbiguities()
+    {
+        foreach (var module in _loadedModules.Modules.Values)
+        {
+            // The root is fully type-checked; package images are pre-checked.
+            if (module.Reference.IsRoot || module.IsPackageImageImport)
+            {
+                continue;
+            }
+
+            var ambiguousNames = ComputeAmbiguousImportNames(module);
+            if (ambiguousNames.Count == 0)
+            {
+                continue;
+            }
+
+            foreach (var functionSyntax in DeclaredFunctionSyntaxCollector.Collect(module.ParseResult, module.SyntaxModel))
+            {
+                if (functionSyntax.Body.block() is not { } block)
+                {
+                    continue;
+                }
+
+                // A parameter or local of the same name shadows the imports.
+                var shadowedNames = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var parameter in functionSyntax.ParameterList.parameter())
+                {
+                    if (parameter.Identifier()?.GetText() is { } parameterName)
+                    {
+                        shadowedNames.Add(parameterName);
+                    }
+                }
+
+                CollectDeclaredLocalNames(block, shadowedNames);
+                WalkForAmbiguousImportReferences(module, block, ambiguousNames, shadowedNames);
+            }
+        }
+    }
+
+    // Names a module's own declarations would shadow, or that only one import
+    // exports, are not ambiguous. Only the module's OWN declarations are counted
+    // for each import (re-exports are not declarations), so a name re-exported
+    // through several imports is not double-counted as an ambiguity.
+    private Dictionary<string, IReadOnlyList<string>> ComputeAmbiguousImportNames(LoadedModuleDocument module)
+    {
+        var exportersByName = new Dictionary<string, SortedSet<string>>(StringComparer.Ordinal);
+        foreach (var import in module.SyntaxModel.Imports)
+        {
+            if (!_loadedModules.Modules.TryGetValue(import.ModuleName, out var importedModule))
+            {
+                continue;
+            }
+
+            foreach (var declaration in importedModule.SyntaxModel.Declarations)
+            {
+                if (declaration.Visibility is not (StarkVisibility.Public or StarkVisibility.Export))
+                {
+                    continue;
+                }
+
+                if (!exportersByName.TryGetValue(declaration.Name, out var exporters))
+                {
+                    exporters = new SortedSet<string>(StringComparer.Ordinal);
+                    exportersByName[declaration.Name] = exporters;
+                }
+
+                exporters.Add(import.ModuleName);
+            }
+        }
+
+        var locallyDeclared = module.SyntaxModel.Declarations
+            .Select(static declaration => declaration.Name)
+            .ToHashSet(StringComparer.Ordinal);
+
+        var ambiguous = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
+        foreach (var (name, exporters) in exportersByName)
+        {
+            if (exporters.Count >= 2 && !locallyDeclared.Contains(name))
+            {
+                ambiguous[name] = exporters.ToArray();
+            }
+        }
+
+        return ambiguous;
+    }
+
+    private static void CollectDeclaredLocalNames(IParseTree node, ISet<string> names)
+    {
+        if (node is StarkParser.VariableDeclaratorContext declarator
+            && declarator.Identifier()?.GetText() is { } localName)
+        {
+            names.Add(localName);
+        }
+
+        if (node is ParserRuleContext rule && rule.children is { } children)
+        {
+            foreach (var child in children)
+            {
+                CollectDeclaredLocalNames(child, names);
+            }
+        }
+    }
+
+    private void WalkForAmbiguousImportReferences(
+        LoadedModuleDocument module,
+        IParseTree node,
+        IReadOnlyDictionary<string, IReadOnlyList<string>> ambiguousNames,
+        ISet<string> shadowedNames)
+    {
+        if (node is StarkParser.PostfixExpressionContext postfix
+            && postfix.primaryExpression() is { } primary
+            && primary.Identifier()?.GetText() is { } name
+            && !shadowedNames.Contains(name)
+            && ambiguousNames.TryGetValue(name, out var exporters))
+        {
+            var candidates = string.Join(", ", exporters.Select(exporter => $"{exporter}.{name}"));
+            ReportError(
+                "STK3003",
+                $"Imported symbol '{name}' is ambiguous between {candidates}. Use a fully qualified name.",
+                new SourceLocation(module.Reference.FilePath, primary.Start.Line, primary.Start.Column + 1));
+        }
+
+        if (node is ParserRuleContext rule && rule.children is { } children)
+        {
+            foreach (var child in children)
+            {
+                WalkForAmbiguousImportReferences(module, child, ambiguousNames, shadowedNames);
             }
         }
     }
@@ -17120,8 +17479,47 @@ internal sealed class TypeChecker
             return traitDefaultCall;
         }
 
-        ReportError("STK3005", $"Type '{namedType.Name}' does not contain a field named '{memberName}'.", context);
+        var methodSyntaxHint = TryDescribeMethodSyntaxFreeFunctionHint(memberName, target.Type, out var freeFunctionHint)
+            ? freeFunctionHint
+            : string.Empty;
+        ReportError("STK3005", $"Type '{namedType.Name}' does not contain a field named '{memberName}'.{methodSyntaxHint}", context);
         return new ExpressionBinding(StarkTypeSymbols.Error);
+    }
+
+    // `value.Fn(...)` where `Fn` is not a member but a free function whose first
+    // parameter accepts the receiver type is a common method-syntax slip: Stark
+    // has no UFCS, so methods must live inside the type body. Surface that as a
+    // hint rather than a bare "does not contain a field named".
+    private bool TryDescribeMethodSyntaxFreeFunctionHint(
+        string memberName,
+        StarkTypeSymbol receiverType,
+        out string hint)
+    {
+        hint = string.Empty;
+        if (!TryGetFunctionOverloads(memberName, out var overloads))
+        {
+            return false;
+        }
+
+        foreach (var overload in overloads)
+        {
+            if (overload.Parameters.Count == 0)
+            {
+                continue;
+            }
+
+            var firstParameterType = overload.Parameters[0].Type;
+            var matchesReceiver = firstParameterType.Kind == StarkTypeKind.Named && receiverType.Kind == StarkTypeKind.Named
+                ? string.Equals(firstParameterType.NamedType, receiverType.NamedType, StringComparison.Ordinal)
+                : firstParameterType.Kind == receiverType.Kind;
+            if (matchesReceiver)
+            {
+                hint = $" '{memberName}' is a free function — call it as '{memberName}(...)' with the receiver as the first argument. Methods are declared inside the type body.";
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private bool TryApplyKnownViewMemberAccess(
@@ -18131,11 +18529,13 @@ internal sealed class TypeChecker
         StarkTypeSymbol type;
         string? textLiteral = null;
         TextLiteralKind? textLiteralKind = null;
+        BigInteger? integerLiteralValue = null;
 
         if (literal.signedIntegerLiteral() is { } integerLiteral)
         {
             var value = ParseSignedIntegerLiteral(integerLiteral);
             type = InferIntegerLiteralType(value);
+            integerLiteralValue = value;
         }
         else if (literal.FloatLiteral() is not null)
         {
@@ -18170,7 +18570,8 @@ internal sealed class TypeChecker
             TextLiteralKind: textLiteralKind,
             HasConstProvenance: textLiteralHasMemoryRoot,
             MemoryRootKey: textLiteralHasMemoryRoot ? BuildLiteralMemoryRootKey(literal) : null,
-            MemoryRootIsIndependentStorage: textLiteralHasMemoryRoot);
+            MemoryRootIsIndependentStorage: textLiteralHasMemoryRoot,
+            IntegerLiteralValue: integerLiteralValue);
     }
 
     private ExpressionBinding EvaluateInterpolatedTextLiteral(
@@ -20103,7 +20504,8 @@ internal sealed class TypeChecker
                 substitution,
                 valueSubstitution),
             DeclaringModuleName: template.DeclaringModuleName,
-            Visibility: template.Visibility);
+            Visibility: template.Visibility,
+            HasDestructor: template.HasDestructor);
     }
 
     private List<ConstructorShape> CreateConcreteConstructors(
@@ -20647,6 +21049,75 @@ internal sealed class TypeChecker
         return operators;
     }
 
+    // A bare integer literal is typed as the smallest signed singleton range that
+    // holds its value (e.g. `1` is `i8[1 1]`). Reconciling that against a runtime
+    // ranged operand in `FindCommonType` misses the same-type fast path and merges
+    // to a full-width, opposite-signed default (`u64[...] + 1` becomes `i64`),
+    // which then demands a narrowing cast. When the chain has a single ranged
+    // integer "anchor" shared by every non-literal integer operand, let each
+    // fitting literal adopt that anchor so the literal stops dragging the
+    // expression's type. Non-fitting literals keep their own type (a genuine
+    // out-of-range value still requires an explicit cast).
+    private static StarkTypeSymbol[] ResolveIntegerLiteralOperandTypes(IReadOnlyList<ExpressionBinding> operands)
+    {
+        StarkTypeSymbol? anchor = null;
+        var hasNonLiteralInteger = false;
+        foreach (var operand in operands)
+        {
+            if (operand.IntegerLiteralValue is not null)
+            {
+                continue;
+            }
+
+            if (operand.Type.Kind != StarkTypeKind.Integer || operand.Type.BitWidth is null)
+            {
+                continue;
+            }
+
+            hasNonLiteralInteger = true;
+            anchor = anchor is null ? operand.Type : FindCommonType(anchor, operand.Type);
+        }
+
+        var effective = new StarkTypeSymbol[operands.Count];
+        for (var index = 0; index < operands.Count; index++)
+        {
+            effective[index] = operands[index].Type;
+        }
+
+        if (!hasNonLiteralInteger
+            || anchor is not { Kind: StarkTypeKind.Integer, BitWidth: int anchorWidth })
+        {
+            return effective;
+        }
+
+        // Adopt a PLAIN integer of the anchor's numeric shape (width/range/sign),
+        // stripping any out/init/borrow/frozen qualifiers the anchor operand
+        // carries: arithmetic on a qualified operand yields a plain value, so the
+        // literal must not inherit those qualifiers (else e.g. `outParam * 2`
+        // would type as `out u64` and reject the surrounding conversion).
+        var cleanAnchor = StarkTypeSymbols.Integer(
+            anchorWidth,
+            anchor.RangeMin,
+            anchor.RangeMax,
+            anchor.IsUnsigned);
+        if (!StarkTypeSymbols.TryGetEffectiveIntegerBounds(cleanAnchor, out var min, out var max))
+        {
+            return effective;
+        }
+
+        for (var index = 0; index < operands.Count; index++)
+        {
+            if (operands[index].IntegerLiteralValue is { } literalValue
+                && literalValue >= min
+                && literalValue <= max)
+            {
+                effective[index] = cleanAnchor;
+            }
+        }
+
+        return effective;
+    }
+
     private ExpressionBinding EvaluateBinaryChain(
         IReadOnlyList<ExpressionBinding> operands,
         IReadOnlyList<string> operators,
@@ -20659,11 +21130,12 @@ internal sealed class TypeChecker
             return operands[0];
         }
 
-        var currentType = operands[0].Type;
+        var effectiveTypes = ResolveIntegerLiteralOperandTypes(operands);
+        var currentType = effectiveTypes[0];
 
         for (var index = 1; index < operands.Count; index++)
         {
-            var nextType = operands[index].Type;
+            var nextType = effectiveTypes[index];
             if (requireInteger)
             {
                 if (currentType.Kind != StarkTypeKind.Integer || nextType.Kind != StarkTypeKind.Integer)
@@ -20703,11 +21175,12 @@ internal sealed class TypeChecker
             return operands[0];
         }
 
-        var currentType = operands[0].Type;
+        var effectiveTypes = ResolveIntegerLiteralOperandTypes(operands);
+        var currentType = effectiveTypes[0];
 
         for (var index = 1; index < operands.Count; index++)
         {
-            var nextType = operands[index].Type;
+            var nextType = effectiveTypes[index];
             var operatorText = operators[index - 1];
 
             if (IsExplicitArithmeticOperator(operatorText))
@@ -23782,7 +24255,8 @@ internal sealed class TypeChecker
         bool HasConstProvenance = false,
         string? MemoryRootKey = null,
         bool MemoryRootIsIndependentStorage = false,
-        bool IsMisalignedFieldProjection = false);
+        bool IsMisalignedFieldProjection = false,
+        BigInteger? IntegerLiteralValue = null);
 
     private sealed record TraversalSourceInfo(
         StarkTypeSymbol ElementType,

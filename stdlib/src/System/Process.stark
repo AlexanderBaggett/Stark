@@ -93,6 +93,48 @@ public struct ProcessArguments
     {
         return self.Items[0, self.Items.Length];
     }
+
+    // Byte-exact comparison of one argument against an ascii literal; used
+    // by generated test runners to match collection filters.
+    public finite bool ArgumentEquals(borrow ProcessArguments self, u64[0 2 ** 63 - 1] index, ascii expected)
+    {
+        if (index >= self.Items.Length)
+        {
+            return false;
+        }
+
+        stack i64[min max] signedLength = System.Text.AsciiLength(expected);
+        if (signedLength < 0)
+        {
+            return false;
+        }
+
+        stack System.Text.OwnedAscii[] items = self.AsSlice();
+        if (items[index].Length() != (u64[0 2 ** 63 - 1])signedLength)
+        {
+            return false;
+        }
+
+        stack i8[min max][] bytes = items[index].AsSlice();
+        unsafe
+        {
+            stack rawptr<i8[min max]> expectedData = System.Text.AsciiData(expected);
+            if (expectedData == null)
+            {
+                return signedLength == 0;
+            }
+
+            for willexit (stack mut u64[0 2 ** 63 - 1] offset = 0; offset < bytes.Length; offset += 1)
+            {
+                if (bytes[offset] != *(&expectedData[offset]))
+                {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
 }
 
 public struct ProcessCommand

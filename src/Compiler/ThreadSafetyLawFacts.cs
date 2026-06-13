@@ -5,7 +5,8 @@ internal sealed class ThreadSafetyLawEvaluator
     private static readonly IReadOnlyList<string> KnownLawNames =
     [
         ThreadSafetyLawNames.Transferable,
-        ThreadSafetyLawNames.Shareable
+        ThreadSafetyLawNames.Shareable,
+        ThreadSafetyLawNames.Copyable
     ];
 
     private readonly IReadOnlyDictionary<string, NamedTypeSymbol> _namedTypes;
@@ -14,6 +15,7 @@ internal sealed class ThreadSafetyLawEvaluator
     private readonly Dictionary<string, ThreadSafetyLawFact> _cache = new(StringComparer.Ordinal);
     private readonly HashSet<string> _active = new(StringComparer.Ordinal);
     private readonly HashSet<string> _reportedConflicts = new(StringComparer.Ordinal);
+    private CopyabilityFacts? _copyability;
 
     public ThreadSafetyLawEvaluator(
         IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
@@ -80,6 +82,15 @@ internal sealed class ThreadSafetyLawEvaluator
         if (type.Kind == StarkTypeKind.Error)
         {
             return Success(lawName, type);
+        }
+
+        // Copyability is purely structural: it shares the predicate pipeline
+        // (caching, where-bound checking, failure formatting) but its verdict
+        // comes from the same CopyabilityFacts resolver ownership validation
+        // uses, and Grant/Deny attributes never apply.
+        if (string.Equals(lawName, ThreadSafetyLawNames.Copyable, StringComparison.Ordinal))
+        {
+            return EvaluateCopyable(type);
         }
 
         if (type.BorrowKind == StarkBorrowKind.StoreBorrow)
@@ -353,6 +364,111 @@ internal sealed class ThreadSafetyLawEvaluator
             out _,
             out _);
     }
+
+    private ThreadSafetyLawFact EvaluateCopyable(StarkTypeSymbol type)
+    {
+        _copyability ??= new CopyabilityFacts(_namedTypes);
+        if (_copyability.IsCopyable(type))
+        {
+            return Success(ThreadSafetyLawNames.Copyable, type);
+        }
+
+        var coreType = StripTopLevelQualifiers(type);
+        if (coreType.Kind == StarkTypeKind.Named && coreType.NamedType is { } typeName)
+        {
+            if (!_namedTypes.TryGetValue(typeName, out var namedType))
+            {
+                return ConditionalRequirement(ThreadSafetyLawNames.Copyable, coreType);
+            }
+
+            if (string.Equals(typeName, StarkTypeSymbols.OwnedAsciiName, StringComparison.Ordinal)
+                || string.Equals(typeName, StarkTypeSymbols.OwnedUnicodeName, StringComparison.Ordinal))
+            {
+                return CopyableFailure(type, $"Type '{typeName}' owns heap text storage and is never Copyable.");
+            }
+
+            if (namedType.HasDestructor)
+            {
+                return CopyableFailure(type, $"Type '{typeName}' has a destructor, so it keeps move semantics.");
+            }
+
+            if (namedType.GenericParameterNames is { Count: > 0 }
+                || namedType.ComptimeGenericParameterNames is { Count: > 0 })
+            {
+                return ConditionalRequirement(ThreadSafetyLawNames.Copyable, coreType);
+            }
+
+            foreach (var field in namedType.OrderedFields)
+            {
+                if (!_copyability.IsCopyable(field.Type))
+                {
+                    return CopyableFieldFailure(type, field.Name, field.Type);
+                }
+            }
+
+            foreach (var variant in namedType.Variants)
+            {
+                foreach (var field in variant.Fields)
+                {
+                    if (_copyability.IsCopyable(field.Type))
+                    {
+                        continue;
+                    }
+
+                    var segment = field.Name is { Length: > 0 }
+                        ? $"{variant.Name}.{field.Name}"
+                        : $"{variant.Name}#{field.Position}";
+                    return CopyableFieldFailure(type, segment, field.Type);
+                }
+            }
+
+            return CopyableFailure(type, $"Type '{typeName}' is not structurally Copyable.");
+        }
+
+        var reason = coreType.Kind switch
+        {
+            StarkTypeKind.Dynamic => $"Type '{type.DisplayName}' is owning dynamic storage and is never Copyable.",
+            StarkTypeKind.Closure => $"Type '{type.DisplayName}' is a closure and is never Copyable.",
+            StarkTypeKind.DynTrait => $"Type '{type.DisplayName}' is a dyn trait object and is never Copyable.",
+            _ when type.BorrowKind != StarkBorrowKind.None =>
+                $"Type '{type.DisplayName}' is a borrow form; Copyable applies to owned value types.",
+            _ => $"Type '{type.DisplayName}' is not Copyable."
+        };
+        return CopyableFailure(type, reason);
+    }
+
+    private ThreadSafetyLawFact CopyableFieldFailure(StarkTypeSymbol ownerType, string fieldName, StarkTypeSymbol fieldType)
+    {
+        var nested = EvaluateCopyable(fieldType);
+        var nestedReason = nested.FailureReasons.FirstOrDefault()?.Message
+            ?? $"Field type '{fieldType.DisplayName}' is not Copyable.";
+        var path = new List<string> { fieldName };
+        if (nested.FailureReasons.FirstOrDefault()?.Path is { Count: > 0 } nestedPath)
+        {
+            path.AddRange(nestedPath);
+        }
+
+        return new ThreadSafetyLawFact(
+            ThreadSafetyLawNames.Copyable,
+            ownerType,
+            Holds: false,
+            Failures:
+            [
+                new ThreadSafetyLawFailure(
+                    ThreadSafetyLawFailureKind.StructuralFieldFailure,
+                    nestedReason,
+                    fieldType,
+                    path)
+            ]);
+    }
+
+    private static ThreadSafetyLawFact CopyableFailure(StarkTypeSymbol type, string message) =>
+        Failure(
+            ThreadSafetyLawNames.Copyable,
+            type,
+            ThreadSafetyLawFailureKind.StructuralFieldFailure,
+            message,
+            type);
 
     private static ThreadSafetyLawFact Rewrap(
         string lawName,

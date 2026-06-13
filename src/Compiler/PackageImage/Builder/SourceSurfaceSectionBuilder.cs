@@ -135,7 +135,8 @@ internal static partial class PackageImageBuilder
                 functionDeclaration.typeParameterConstraints()),
             ThreadSafetyLawPredicates = BuildSourceSurfaceThreadSafetyLawPredicates(
                 module,
-                functionDeclaration.parameterMemoryContractClause())
+                functionDeclaration.parameterMemoryContractClause()),
+            ValueContracts = BuildParameterValueContractManifests(functionDeclaration.parameterMemoryContractClause())
         };
     }
 
@@ -502,7 +503,8 @@ internal static partial class PackageImageBuilder
                     method.typeParameterConstraints()),
                 ThreadSafetyLawPredicates = BuildSourceSurfaceThreadSafetyLawPredicates(
                     module,
-                    method.parameterMemoryContractClause())
+                    method.parameterMemoryContractClause()),
+                ValueContracts = BuildParameterValueContractManifests(method.parameterMemoryContractClause())
             });
         }
 
@@ -564,7 +566,8 @@ internal static partial class PackageImageBuilder
                     method.typeParameterConstraints()),
                 ThreadSafetyLawPredicates = BuildSourceSurfaceThreadSafetyLawPredicates(
                     module,
-                    method.parameterMemoryContractClause())
+                    method.parameterMemoryContractClause()),
+                ValueContracts = BuildParameterValueContractManifests(method.parameterMemoryContractClause())
             });
         }
 
@@ -626,7 +629,8 @@ internal static partial class PackageImageBuilder
                     method.typeParameterConstraints()),
                 ThreadSafetyLawPredicates = BuildSourceSurfaceThreadSafetyLawPredicates(
                     module,
-                    method.parameterMemoryContractClause())
+                    method.parameterMemoryContractClause()),
+                ValueContracts = BuildParameterValueContractManifests(method.parameterMemoryContractClause())
             });
         }
 

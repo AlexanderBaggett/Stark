@@ -1,0 +1,17 @@
+[project]
+name = "stdlib-toml-tests"
+version = "0.1.0"
+kind = "test"
+
+[test]
+root = "TomlTests.stark"
+output = "stdlib-toml-tests"
+
+[dependencies]
+stdlib = { path = "../../stdlib" }
+
+[profiles.dev]
+opt = 0
+
+[profiles.release]
+opt = 3

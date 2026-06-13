@@ -25,6 +25,21 @@ internal static class InterpolatedText
         var reportedDiagnostics = new List<InterpolatedTextDiagnostic>();
         var isRawLiteral = TextLiteralDecoder.IsRawStringLiteral(stringLiteralText);
         var content = TextLiteralDecoder.GetContent(stringLiteralText);
+        if (isRawLiteral
+            && TextLiteralDecoder.IsRawMultilineStringLiteral(stringLiteralText)
+            && content.Contains('\n', StringComparison.Ordinal))
+        {
+            if (!TextLiteralDecoder.TryNormalizeRawMultilineContent(content, out var normalizedContent, out var rawDiagnostic))
+            {
+                reportedDiagnostics.Add(new InterpolatedTextDiagnostic(rawDiagnostic.Offset, rawDiagnostic.Message));
+                segments = parsedSegments;
+                diagnostics = reportedDiagnostics;
+                return false;
+            }
+
+            content = normalizedContent;
+        }
+
         var raw = new StringBuilder();
 
         for (var index = 0; index < content.Length;)

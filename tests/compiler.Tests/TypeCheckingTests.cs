@@ -3343,8 +3343,10 @@ public sealed class TypeCheckingTests
 
             finite law ascii Multiline()
             {
-                return raw"""alpha
-                beta""";
+                return raw"""
+                alpha
+                beta
+                """;
             }
 
             finite law ascii Interpolated()

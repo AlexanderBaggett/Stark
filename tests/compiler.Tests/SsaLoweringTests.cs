@@ -499,6 +499,10 @@ public sealed class SsaLoweringTests
             {
                 i32[min max] Left;
                 i32[min max] Right;
+
+                drop
+                {
+                }
             }
 
             unsafe fn i32[min max] Run()
@@ -549,6 +553,10 @@ public sealed class SsaLoweringTests
             {
                 i32[min max] Left;
                 i32[min max] Right;
+
+                drop
+                {
+                }
             }
 
             unsafe fn void Touch(Pair value)

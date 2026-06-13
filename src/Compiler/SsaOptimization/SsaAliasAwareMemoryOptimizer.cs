@@ -205,7 +205,13 @@ internal sealed class SsaAliasAwareMemoryOptimizer
                          && TryResolveFieldMemoryKey(loadIndirect.Address, definitions, fieldAddressKeys, out var loadedFieldKey)
                          && loadedFieldKey.Type == loadIndirect.Type
                          && knownFields.TryGetValue(loadedFieldKey, out var knownValue)
-                         && knownValue.Type == loadIndirect.Type:
+                         && knownValue.Type == loadIndirect.Type
+                         && ValueUsesAreConfinedToBlock(valueInstruction.ResultName, block.Id, valueUseBlockIds):
+                    // The confinement check matches the load-local and
+                    // load-global forwarding cases above: replacements are
+                    // per-block, so a result consumed in another block (e.g.
+                    // an inlined call's continuation phi) must keep its
+                    // defining load.
                     replacements[valueInstruction.ResultName] = RewriteValue(knownValue, replacements);
                     blockChanged = true;
                     continue;

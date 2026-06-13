@@ -125,6 +125,18 @@ parameterMemoryContract
     | overlapContract
     | sameContract
     | lawPredicateContract
+    | valueContract
+    ;
+
+valueContract
+    : shiftExpression valueContractOperator shiftExpression
+    ;
+
+valueContractOperator
+    : LT
+    | GT
+    | LTE
+    | GTE
     ;
 
 disjointContract
