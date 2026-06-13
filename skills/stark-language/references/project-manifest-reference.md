@@ -166,12 +166,36 @@ runner enumerates tests at build time, expands inline/member data rows, applies
 repeatable `--filter <text>` selections against generated display names,
 resolves `[Platform(...)]` / `[SkipPlatform(...)]` gates from the selected target
 triple, calls `System.Testing.RunFact` or `System.Testing.SkipFact`, applies
-`[Collection(name)]` / `[Serial]` serial scheduling groups, and returns a stable
+`[Collection(name, ...)]` collection groups, and returns a stable
 process exit code. Gate selectors can be OS names, architecture names,
 `os.arch` pairs, or exact target triple strings.
-`[Serial]` is shorthand for `[Collection("Serial")]`; tests in the same named
-collection are emitted contiguously with source order preserved inside the
-collection. Do not declare a manual `main` in a generated-test root; manual
+
+`[Collection(...)]` is variadic — it names one or more collections (at least
+one; an empty `[Collection()]` is rejected). Attach it to the `module`
+declaration (tagging every `[Fact]`/`[Theory]` in the file), to a `struct`/
+`record`, or to an individual fact/member; a fact's effective collection set
+is the **union** of its module-level, type-level, and member-level names. The
+generated runner groups tests by the **first** listed name (so single-name
+uses keep their previous contiguous-group behavior) and preserves source order
+inside each group. `[Serial]` remains shorthand for `[Collection("Serial")]`.
+
+Collection filtering happens at **runtime** in the generated runner, so
+changing the filter never recompiles. `stark test --collection NAME` runs only
+the facts tagged with the named collections; it is repeatable and comma-splits
+inside each value, with union semantics:
+
+    stark test --collection ownership,lexing
+    stark test --collection toml --collection manifests
+
+`stark test --list-collections` prints the project's known collection names
+without running anything. An unknown collection name is an error that lists the
+known collections (typo protection), and a run that selects zero facts **fails**
+rather than silently passing. Filtering is gated on the project having any
+collections — untagged projects keep the previous runner behavior. v1 scope is
+per-project (the project `stark test` runs in); solution-wide collection runs
+are a follow-up.
+
+Do not declare a manual `main` in a generated-test root; manual
 runners are reserved for bootstrap tests with no generated test metadata.
 
 ## Source And Package Shape

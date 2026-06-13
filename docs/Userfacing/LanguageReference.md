@@ -983,11 +983,13 @@ Move semantics only apply to types that own something. A named type is
 **copyable** when copying its bytes is safe and creates no drop obligation,
 derived structurally:
 
-* scalars, raw pointers, function pointers used as values, and text views are copyable
-* an `enum` is copyable when every variant is a unit variant or carries only copyable fields
-* a `struct` or `record` is copyable when every field is copyable
+* scalars (`bool`, the integer widths, the floating point widths), raw pointers, function pointers, and the `ascii` / `unicode` text views are copyable
+* a slice (`T[]`) is copyable — it is a non-owning `{ptr, len}` view, so copying it is byte-safe regardless of the element type (the referent's lifetime is governed separately by borrow checking)
+* an `enum` is copyable when every variant is a unit variant or carries only copyable fields, and it has no destructor
+* a `struct` or `record` is copyable when every field is copyable and it has no destructor
+* a fixed array `T[N]` is copyable when its element type is copyable
 * a type with a destructor is never copyable
-* anything owning — `dynamic` storage, owning text containers, heap closures, heap `dyn` trait objects — is never copyable
+* anything owning — `dynamic` storage, the `Ascii` / `Unicode` owning text containers, heap closures, heap `dyn` trait objects — is never copyable
 
 Reads of copyable values out of fields, indexed places, and locals are
 copies, not moves: the source stays usable, and accessors can return the
@@ -1098,6 +1100,14 @@ indices. `if (storage.Length == k) { ... }` proves `storage[0]` through
 proves them on the path that continues; the non-empty check
 `if (storage.Length != 0)` proves `storage[0]`. A variable index still needs a
 `<` / `>=` comparison guard or a `where` value contract.
+
+A summed index is proven by combining two facts. `storage[start + index]` is
+proven from a strict bound on one addend (`index < length`) together with a
+matching sum fact (`start + length <= storage.Length`, from either a contract or
+a spelled guard); exactly one of the two facts must be strict. This is sound
+because overflow is illegal (11.6), so `start + index` cannot wrap below the
+proven bound. The summands are matched by their top-level `+` split, and both
+operand orders are tried.
 
 Genuinely sparse structures — hash slots, free lists, parent links — where
 initialization is an invariant the type system cannot see keep the explicit

@@ -1,5 +1,6 @@
 import CompilerTestSupport
 import System.Testing
+[Collection("compiler")]
 module CompilerTests
 
 // Ported slice of tests/compiler.Tests, running against the current C# host
@@ -34,6 +35,7 @@ export fn i32[min max] main()
 // Ported from ParserSmokeTests.InvalidProgramsDoNotParse: a malformed function
 // header must produce parse-stage errors, never a successful compile.
 [Fact]
+[Collection("diagnostics")]
 fn bool MalformedFunctionHeaderReportsParseErrors()
 {
     unsafe
@@ -54,6 +56,7 @@ fn i32[min max] Broken(
 // ---------------------------------------------------------------------------
 
 [Fact]
+[Collection("diagnostics")]
 fn bool MalformedSyntaxProducesAStableParseDiagnostic()
 {
     unsafe
@@ -73,6 +76,7 @@ unsafe fn void Run()
 }
 
 [Fact]
+[Collection("diagnostics")]
 fn bool InvalidEscapeSequencesProduceStableParseDiagnostics()
 {
     unsafe
@@ -92,6 +96,7 @@ unsafe fn ascii Run()
 }
 
 [Fact]
+[Collection("types")]
 fn bool CharacterLiteralsRequireExactlyOneDecodedCharacter()
 {
     unsafe
@@ -111,6 +116,7 @@ unsafe fn ascii Run()
 }
 
 [Fact]
+[Collection("diagnostics")]
 fn bool SelfImportsProduceAStableFrontEndDiagnostic()
 {
     unsafe
@@ -131,6 +137,7 @@ unsafe fn void Run()
 }
 
 [Fact]
+[Collection("diagnostics")]
 fn bool MissingMembersProduceTypeDiagnostics()
 {
     unsafe
@@ -178,6 +185,7 @@ unsafe law i32[min max] Read(out i32[min max] value)
 }
 
 [Fact]
+[Collection("ownership")]
 fn bool StaticOwnedValuesCannotBeMovedOut()
 {
     unsafe
@@ -211,6 +219,7 @@ unsafe fn Box Take()
 }
 
 [Fact]
+[Collection("diagnostics")]
 fn bool ImmutableGlobalsRejectRebindingWithSpecificDiagnostic()
 {
     unsafe
@@ -233,6 +242,7 @@ unsafe fn void Run()
 }
 
 [Fact]
+[Collection("diagnostics")]
 fn bool ConstGlobalsRejectMutationWithSpecificDiagnostic()
 {
     unsafe
@@ -263,6 +273,7 @@ unsafe fn void Run()
 }
 
 [Fact]
+[Collection("ownership")]
 fn bool ConstGlobalsExplainWhyReachableStateIsNotFrozen()
 {
     unsafe
@@ -289,6 +300,7 @@ const Holder Current = new Holder()
 }
 
 [Fact]
+[Collection("lowering")]
 fn bool ConstGlobalsExplainWhenInitializersCannotLowerAsStaticData()
 {
     unsafe
@@ -308,6 +320,7 @@ const i32 Answer = Source();
 }
 
 [Fact]
+[Collection("patterns")]
 fn bool NamedAggregateWholeValueTypedCaptureMarksFollowingDefaultUnreachable()
 {
     unsafe
@@ -340,6 +353,7 @@ unsafe fn i32[min max] Run(Box box)
 }
 
 [Fact]
+[Collection("patterns", "diagnostics")]
 fn bool CapturePatternsMixedWithOtherLabelsProduceAnExplicitDiagnostic()
 {
     unsafe
@@ -368,6 +382,7 @@ fn bool CapturePatternsMixedWithOtherLabelsProduceAnExplicitDiagnostic()
 }
 
 [Fact]
+[Collection("patterns")]
 fn bool UnreachableSwitchLabelsPointBackToTheCoveringArm()
 {
     unsafe
@@ -398,6 +413,7 @@ unsafe fn i32[min max] Run(bool value)
 }
 
 [Fact]
+[Collection("patterns", "diagnostics")]
 fn bool BreakOutsideLoopOrSwitchProducesAStableSemanticDiagnostic()
 {
     unsafe
@@ -417,6 +433,7 @@ unsafe fn void Run()
 }
 
 [Fact]
+[Collection("diagnostics")]
 fn bool ContinueOutsideLoopProducesAStableSemanticDiagnostic()
 {
     unsafe
@@ -436,6 +453,7 @@ unsafe fn void Run()
 }
 
 [Fact]
+[Collection("ownership", "lowering", "diagnostics")]
 fn bool RuntimeDisjointConditionsCompileWithoutLoweringDiagnostic()
 {
     unsafe
@@ -466,6 +484,7 @@ unsafe fn void Run(borrow Box left, borrow Box right)
 }
 
 [Fact]
+[Collection("ownership", "lowering")]
 fn bool RuntimeDisjointScalarOperandsFailBeforeMirLowering()
 {
     unsafe
@@ -492,6 +511,7 @@ unsafe fn bool Run(i32[min max] left, i32[min max] right)
 }
 
 [Fact]
+[Collection("ownership")]
 fn bool DisjointParameterCallsRejectObviousOverlappingArguments()
 {
     unsafe
@@ -520,6 +540,7 @@ unsafe fn void Run(rawmutptr<i32[min max]> ptr)
 }
 
 [Fact]
+[Collection("ownership")]
 fn bool DefaultNonOverlapParametersRejectObviousOverlappingArguments()
 {
     unsafe
@@ -549,6 +570,7 @@ unsafe fn void Run(rawmutptr<i32[min max]> ptr)
 }
 
 [Fact]
+[Collection("ownership")]
 fn bool OverlapContractAllowsIntentionalOverlappingArguments()
 {
     unsafe
@@ -576,6 +598,7 @@ unsafe fn void Run(rawmutptr<i32[min max]> ptr)
 }
 
 [Fact]
+[Collection("diagnostics")]
 fn bool SameContractRejectsDistinctRegions()
 {
     unsafe
@@ -633,6 +656,7 @@ unsafe fn void Run(rawmutptr<i32[min max]> ptr)
 }
 
 [Fact]
+[Collection("ownership", "ffi", "diagnostics")]
 fn bool DefaultNonOverlapRejectsImmutableRawPointerLocalAliases()
 {
     unsafe
@@ -662,6 +686,7 @@ unsafe fn void Run(rawmutptr<i32[min max]> ptr)
 }
 
 [Fact]
+[Collection("ownership", "ffi", "diagnostics")]
 fn bool DefaultNonOverlapRejectsMutableRawPointerAssignmentAliases()
 {
     unsafe
@@ -692,6 +717,7 @@ unsafe fn void Run(rawmutptr<i32[min max]> ptr)
 }
 
 [Fact]
+[Collection("ownership", "ffi", "diagnostics")]
 fn bool DefaultNonOverlapRejectsMutableRawPointerInitializerAliases()
 {
     unsafe
@@ -721,6 +747,7 @@ unsafe fn void Run(rawmutptr<i32[min max]> ptr)
 }
 
 [Fact]
+[Collection("ownership", "ffi", "diagnostics")]
 fn bool DefaultNonOverlapRejectsIndirectFunctionPointerRawPointerAliases()
 {
     unsafe
@@ -747,6 +774,7 @@ unsafe fn void Run(
 }
 
 [Fact]
+[Collection("ownership")]
 fn bool FunctionPointerWhereDisjointIsRejectedAsRedundant()
 {
     unsafe
@@ -817,6 +845,7 @@ unsafe fn void Run(
 }
 
 [Fact]
+[Collection("ownership", "ffi")]
 fn bool DefaultNonOverlapAcceptsMutableRawPointerInitializersFromDistinctRoots()
 {
     unsafe
@@ -847,6 +876,7 @@ unsafe fn void Run()
 }
 
 [Fact]
+[Collection("ownership", "ffi")]
 fn bool SameContractAcceptsMutableRawPointerInitializerAlias()
 {
     unsafe
@@ -874,6 +904,7 @@ unsafe fn void Run(rawmutptr<i32[min max]> ptr)
 }
 
 [Fact]
+[Collection("ownership", "ffi", "types", "diagnostics")]
 fn bool DefaultNonOverlapRejectsSimpleRawPointerCastAliases()
 {
     unsafe
@@ -903,6 +934,7 @@ unsafe fn void Run(rawmutptr<i32[min max]> ptr)
 }
 
 [Fact]
+[Collection("ownership", "ffi", "types", "diagnostics")]
 fn bool DefaultNonOverlapRejectsIntegerLaunderedRawPointerAliasesWithoutProof()
 {
     unsafe
@@ -933,6 +965,7 @@ unsafe fn void Run(rawmutptr<i32[min max]> ptr)
 }
 
 [Fact]
+[Collection("ownership")]
 fn bool DefaultNonOverlapInvalidatesMutablePointerAliasAfterBranchAssignment()
 {
     unsafe
@@ -968,6 +1001,7 @@ unsafe fn void Run(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right, 
 }
 
 [Fact]
+[Collection("ownership")]
 fn bool BranchLocalPointerAliasInvalidationDoesNotPolluteSiblingBranch()
 {
     unsafe
@@ -1003,6 +1037,7 @@ unsafe fn void Run(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right, 
 }
 
 [Fact]
+[Collection("ownership")]
 fn bool DisjointParameterPrefixesRejectNonMemoryBackedTypes()
 {
     unsafe
@@ -1025,6 +1060,7 @@ unsafe fn void Touch(disjoint i32[min max] value)
 }
 
 [Fact]
+[Collection("ownership", "diagnostics")]
 fn bool WholeParameterDisjointPrefixIsRejectedWithFixItDiagnostic()
 {
     unsafe
@@ -1048,6 +1084,7 @@ unsafe fn void Touch(disjoint rawmutptr<i32[min max]> left, rawmutptr<i32[min ma
 }
 
 [Fact]
+[Collection("ownership", "diagnostics")]
 fn bool WholeParameterWhereDisjointIsRejectedWithFixItDiagnostic()
 {
     unsafe
@@ -1073,6 +1110,7 @@ unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right
 }
 
 [Fact]
+[Collection("ownership", "ffi")]
 fn bool FfiWholeParameterDisjointStillOptsIntoExternalNoAliasContract()
 {
     unsafe
@@ -1089,6 +1127,7 @@ public unsafe ffi fn void Touch(disjoint rawmutptr<i32[min max]> left, disjoint 
 }
 
 [Fact]
+[Collection("ownership")]
 fn bool WhereDisjointContractsRejectNonMemoryBackedParameters()
 {
     unsafe
@@ -1111,6 +1150,7 @@ unsafe fn void Touch(i32[min max] value, rawmutptr<i32[min max]> ptr)
 }
 
 [Fact]
+[Collection("ownership")]
 fn bool OverlapContractsRejectRepeatedOperands()
 {
     unsafe
@@ -1151,6 +1191,7 @@ unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right
 }
 
 [Fact]
+[Collection("ownership")]
 fn bool OverlapContractsRejectNonMemoryBackedOperands()
 {
     unsafe
@@ -1173,6 +1214,7 @@ unsafe fn void Touch(i32[min max] value, rawmutptr<i32[min max]> ptr)
 }
 
 [Fact]
+[Collection("ownership")]
 fn bool UnsafeFunctionDisjointParameterCallsForwardCallerDefaultParameterFacts()
 {
     unsafe
@@ -1198,6 +1240,7 @@ unsafe fn void Run(rawmutptr<i32[min max]> maybeLeft, rawmutptr<i32[min max]> ma
 }
 
 [Fact]
+[Collection("ownership")]
 fn bool UnsafeFunctionDisjointParameterCallsRejectHiddenRootsWithoutAssumption()
 {
     unsafe
@@ -1231,6 +1274,7 @@ unsafe fn void Run(rawmutptr<i32[min max]> maybeLeft, rawmutptr<i32[min max]> ma
 }
 
 [Fact]
+[Collection("ownership", "ffi")]
 fn bool UnsafeAssumeDisjointAllowsProgrammerProvenRawPointerArguments()
 {
     unsafe
@@ -1261,6 +1305,7 @@ unsafe fn void Run(rawmutptr<i32[min max]> maybeLeft, rawmutptr<i32[min max]> ma
 }
 
 [Fact]
+[Collection("ownership")]
 fn bool BareAssumeDisjointIsAllowedInsideUnsafeFunction()
 {
     unsafe
@@ -1291,6 +1336,7 @@ unsafe fn void Run(rawmutptr<i32[min max]> maybeLeft, rawmutptr<i32[min max]> ma
 }
 
 [Fact]
+[Collection("ownership")]
 fn bool BareAssumeDisjointRequiresUnsafeContext()
 {
     unsafe
@@ -1327,6 +1373,7 @@ fn void Run(borrow mut Box maybeLeft, borrow mut Box maybeRight)
 }
 
 [Fact]
+[Collection("ownership")]
 fn bool UnsafeBlockAloneDoesNotSatisfyUnknownDisjointCallContract()
 {
     unsafe
@@ -1360,6 +1407,7 @@ unsafe fn void Run(rawmutptr<i32[min max]> maybeLeft, rawmutptr<i32[min max]> ma
 }
 
 [Fact]
+[Collection("ownership", "diagnostics")]
 fn bool UnsafeAssumeDisjointRejectsHiddenRoots()
 {
     unsafe
@@ -1397,6 +1445,7 @@ unsafe fn void Run(rawmutptr<i32[min max]> maybeLeft, rawmutptr<i32[min max]> ma
 }
 
 [Fact]
+[Collection("ownership", "diagnostics")]
 fn bool UnsafeAssumeDisjointRejectsObviousSameRoot()
 {
     unsafe
@@ -1429,6 +1478,7 @@ unsafe fn void Run(rawmutptr<i32[min max]> ptr)
 }
 
 [Fact]
+[Collection("ownership")]
 fn bool DisjointParameterFactsAllowForwardingToDisjointCallee()
 {
     unsafe
@@ -1454,6 +1504,7 @@ unsafe fn void Run(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
 }
 
 [Fact]
+[Collection("ownership")]
 fn bool DisjointParameterCallsAllowDistinctMutableBorrowParameters()
 {
     unsafe
@@ -1486,6 +1537,7 @@ unsafe fn void Run(borrow mut Box left, borrow mut Box right)
 }
 
 [Fact]
+[Collection("ownership")]
 fn bool DisjointParameterCallsAllowDistinctOutParameterRoots()
 {
     unsafe
@@ -1524,6 +1576,7 @@ unsafe fn void Run(out Box left, out Box right)
 }
 
 [Fact]
+[Collection("ownership")]
 fn bool DisjointParameterCallsRejectRepeatedOutParameterRoots()
 {
     unsafe
@@ -1565,6 +1618,7 @@ unsafe fn void Run(out Box value)
 }
 
 [Fact]
+[Collection("ownership")]
 fn bool DisjointParameterCallsAllowImmutableSliceViewsFromDistinctLocalArrays()
 {
     unsafe
@@ -1600,6 +1654,7 @@ unsafe fn void Run()
 }
 
 [Fact]
+[Collection("ownership")]
 fn bool DisjointParameterCallsRejectSliceViewAndBackingArrayOverlap()
 {
     unsafe
@@ -1633,6 +1688,7 @@ unsafe fn void Run()
 }
 
 [Fact]
+[Collection("ownership")]
 fn bool DisjointParameterCallsAllowNonOverlappingTextSliceRanges()
 {
     unsafe
@@ -1660,6 +1716,7 @@ unsafe fn void Run(ascii text)
 }
 
 [Fact]
+[Collection("ownership", "dynamic")]
 fn bool DisjointParameterCallsAllowNonOverlappingDynamicTextSliceRanges()
 {
     unsafe
@@ -1687,6 +1744,7 @@ unsafe fn void Run(ascii text, u8[0 1] leftStart, u8[4 5] rightStart)
 }
 
 [Fact]
+[Collection("ownership")]
 fn bool DisjointParameterCallsRejectOverlappingTextSliceRanges()
 {
     unsafe
@@ -1715,6 +1773,7 @@ unsafe fn void Run(ascii text)
 }
 
 [Fact]
+[Collection("ownership", "dynamic")]
 fn bool DisjointParameterCallsRejectOverlappingDynamicTextSliceRanges()
 {
     unsafe
@@ -1745,6 +1804,7 @@ unsafe fn void Run(ascii text, u8[0 2] leftStart, u8[4 5] rightStart)
 }
 
 [Fact]
+[Collection("ownership")]
 fn bool DisjointParameterCallsAcceptDefaultNonOverlapReadonlyBorrowParameters()
 {
     unsafe
@@ -1775,6 +1835,7 @@ fn void Run(borrow Box maybeLeft, borrow Box maybeRight)
 }
 
 [Fact]
+[Collection("ownership")]
 fn bool DisjointMethodCallsValidateReceiverContracts()
 {
     unsafe
@@ -1807,6 +1868,7 @@ fn void Run(borrow mut Box left, borrow mut Box right)
 }
 
 [Fact]
+[Collection("ownership")]
 fn bool DisjointMethodCallsAcceptDefaultNonOverlapReceiverContracts()
 {
     unsafe
@@ -1837,6 +1899,7 @@ fn void Run(borrow Box maybeLeft, borrow Box maybeRight)
 }
 
 [Fact]
+[Collection("ownership")]
 fn bool DisjointParameterCallsAllowDistinctAddressedLocalStorage()
 {
     unsafe
@@ -1864,6 +1927,7 @@ unsafe fn void Run()
 }
 
 [Fact]
+[Collection("ownership")]
 fn bool DisjointParameterCallsRejectAncestorProjectionArguments()
 {
     unsafe
@@ -1898,6 +1962,7 @@ unsafe fn void Run(borrow mut Pair pair)
 }
 
 [Fact]
+[Collection("ownership")]
 fn bool DisjointParameterCallsAllowDistinctProjectionArguments()
 {
     unsafe
@@ -1929,6 +1994,7 @@ unsafe fn void Run(borrow mut Pair pair)
 }
 
 [Fact]
+[Collection("ownership")]
 fn bool DisjointParameterCallsRejectUnprovenIndexedArguments()
 {
     unsafe
@@ -1961,6 +2027,7 @@ unsafe fn void Run(u8[0 2] leftIndex, u8[0 2] rightIndex)
 }
 
 [Fact]
+[Collection("ownership")]
 fn bool DisjointParameterCallsAllowDistinctConstantIndexedArguments()
 {
     unsafe
@@ -1990,6 +2057,7 @@ unsafe fn void Run()
 }
 
 [Fact]
+[Collection("ownership")]
 fn bool DisjointParameterCallsAllowNonOverlappingIndexRangeArguments()
 {
     unsafe
@@ -2019,6 +2087,7 @@ unsafe fn void Run(u8[0 1] leftIndex, u8[2 3] rightIndex)
 }
 
 [Fact]
+[Collection("ownership")]
 fn bool DisjointParameterCallsRejectOverlappingIndexRangeArguments()
 {
     unsafe
@@ -2051,6 +2120,7 @@ unsafe fn void Run(u8[0 2] leftIndex, u8[2 3] rightIndex)
 }
 
 [Fact]
+[Collection("ownership")]
 fn bool RuntimeDisjointTrueBranchSatisfiesDisjointCallContract()
 {
     unsafe
@@ -2084,6 +2154,7 @@ unsafe fn void Run(u8[0 2] leftIndex, u8[0 2] rightIndex)
 }
 
 [Fact]
+[Collection("ownership")]
 fn bool RuntimeDisjointTrueBranchUsesTextSliceLocalBackingRoots()
 {
     unsafe
@@ -2115,6 +2186,7 @@ unsafe fn void Run(ascii text, u8[0 3] leftStart, u8[0 3] rightStart)
 }
 
 [Fact]
+[Collection("ownership")]
 fn bool RuntimeDisjointTrueBranchUsesRawSliceLocalBackingRoots()
 {
     unsafe
@@ -2154,6 +2226,7 @@ unsafe fn void Run(
 }
 
 [Fact]
+[Collection("ownership")]
 fn bool RuntimeDisjointTrueBranchCoversDescendantRegions()
 {
     unsafe
@@ -2203,6 +2276,7 @@ unsafe fn void Run(u8[0 2] leftIndex, u8[0 2] rightIndex)
 }
 
 [Fact]
+[Collection("ownership")]
 fn bool RuntimeDisjointFalseBranchDoesNotSatisfyDisjointCallContract()
 {
     unsafe
@@ -2287,6 +2361,7 @@ unsafe fn u8[0 10] ForRun()
 }
 
 [Fact]
+[Collection("ownership")]
 fn bool IndependentSliceLoopsCompileWithDisjointParameterFacts()
 {
     unsafe
@@ -2382,6 +2457,7 @@ unsafe fn void Copy(
 }
 
 [Fact]
+[Collection("ffi")]
 fn bool IndependentBoundedRawPointerLoopsCompileWithRegionContracts()
 {
     unsafe
@@ -2410,6 +2486,7 @@ unsafe fn void Copy(
 }
 
 [Fact]
+[Collection("ownership")]
 fn bool OverlapCapableSubregionDisjointCallsAllowSameRootWhenRangesAreProvenDisjoint()
 {
     unsafe
@@ -2439,6 +2516,7 @@ unsafe fn void Run(rawmutptr<i32[min max]>[8] buffer)
 }
 
 [Fact]
+[Collection("ownership")]
 fn bool OverlapCapableSubregionDisjointCallsRejectSameRootWhenRangesOverlap()
 {
     unsafe
@@ -2471,6 +2549,7 @@ unsafe fn void Run(rawmutptr<i32[min max]>[8] buffer)
 }
 
 [Fact]
+[Collection("ffi")]
 fn bool IndependentBoundedRawPointerLoopsCompileWithRuntimeRegionFacts()
 {
     unsafe
@@ -2501,6 +2580,7 @@ unsafe fn void Copy(
 }
 
 [Fact]
+[Collection("ffi")]
 fn bool IndependentBoundedRawPointerLoopsRejectUnprovenInductionBounds()
 {
     unsafe
@@ -2531,6 +2611,7 @@ unsafe fn void Copy(
 }
 
 [Fact]
+[Collection("ffi")]
 fn bool BoundedRawPointerCallsRejectNullWhenCountIsPositive()
 {
     unsafe
@@ -2557,6 +2638,7 @@ unsafe fn void Run()
 }
 
 [Fact]
+[Collection("ffi")]
 fn bool BoundedRawPointerCallsAllowNullWhenCountIsZero()
 {
     unsafe
@@ -2582,6 +2664,7 @@ unsafe fn void Run()
 }
 
 [Fact]
+[Collection("ffi")]
 fn bool BoundedRawPointerCallsAllowFixedArrayElementWhenStorageCoversCount()
 {
     unsafe
@@ -2611,6 +2694,7 @@ unsafe fn void Run()
 }
 
 [Fact]
+[Collection("ffi")]
 fn bool BoundedRawPointerCallsAllowForwardedBoundedPointerWhenCountMatches()
 {
     unsafe
@@ -2636,6 +2720,7 @@ unsafe fn void Forward(rawptr<i32[min max]>[count] input, u8[0 10] count)
 }
 
 [Fact]
+[Collection("ffi")]
 fn bool BoundedRawPointerCallsAllowImmutablePointerLocalWithProvenance()
 {
     unsafe
@@ -2662,6 +2747,7 @@ unsafe fn void Forward(rawptr<i32[min max]>[count] input, u8[0 10] count)
 }
 
 [Fact]
+[Collection("ffi")]
 fn bool BoundedRawPointerCallsAllowForwardedSubregionsWhenStorageCoversCount()
 {
     unsafe
@@ -2687,6 +2773,7 @@ unsafe fn void Forward(rawptr<i32[min max]>[count] input, u8[6 10] count)
 }
 
 [Fact]
+[Collection("ffi")]
 fn bool BoundedRawPointerCallsAllowSliceDerivedRawRegionsWhenStorageCoversCount()
 {
     unsafe
@@ -2717,6 +2804,7 @@ unsafe fn void Forward(rawptr<i32[min max]>[count] input, u8[5 10] count)
 }
 
 [Fact]
+[Collection("ffi")]
 fn bool BoundedRawPointerCallsRejectFixedArrayElementWhenStorageIsTooShort()
 {
     unsafe
@@ -2792,6 +2880,7 @@ unsafe fn i32[min max] Read(rawptr<i32[min max]>[count] pointer, u8[0 10] count)
 }
 
 [Fact]
+[Collection("ffi")]
 fn bool BoundedRawPointerParametersRejectPossiblyNegativeCounts()
 {
     unsafe
@@ -2812,6 +2901,7 @@ unsafe fn void Run(rawptr<i32[min max]>[count] pointer, i32[-1 10] count)
 }
 
 [Fact]
+[Collection("ffi")]
 fn bool RuntimeRawPointerRegionChecksRejectPossiblyNegativeBounds()
 {
     unsafe
@@ -2841,6 +2931,7 @@ unsafe fn bool Check(
 }
 
 [Fact]
+[Collection("diagnostics")]
 fn bool RawSliceConstructionRejectsPossiblyNegativeCounts()
 {
     unsafe
@@ -2866,6 +2957,7 @@ unsafe fn void Run(rawptr<i32[min max]> pointer, i32[-1 10] count)
 }
 
 [Fact]
+[Collection("diagnostics")]
 fn bool RawSliceConstructionRejectsNullWhenCountIsPositive()
 {
     unsafe
@@ -2916,6 +3008,7 @@ unsafe fn void Run()
 }
 
 [Fact]
+[Collection("diagnostics")]
 fn bool RawSliceConstructionRejectsHiddenPointerRoots()
 {
     unsafe
@@ -2947,6 +3040,7 @@ unsafe fn void Run(rawptr<i32[min max]> pointer, u8[0 10] count)
 }
 
 [Fact]
+[Collection("diagnostics")]
 fn bool RawSliceConstructionRejectsMutableViewStrengthening()
 {
     unsafe
@@ -3282,6 +3376,7 @@ unsafe fn void Run(rawmutptr<i32[min max]> ptr)
 // ---------------------------------------------------------------------------
 
 [Fact]
+[Collection("patterns", "types")]
 fn bool RangePatternRequiresIntegerTarget()
 {
     unsafe
@@ -3308,6 +3403,7 @@ fn i32[min max] Run(bool flag)
 }
 
 [Fact]
+[Collection("patterns", "lowering", "diagnostics")]
 fn bool RangePatternRejectsLowerBoundGreaterThanUpperBound()
 {
     unsafe
@@ -3333,6 +3429,7 @@ fn i32[min max] Run(u8[0 10] value)
 }
 
 [Fact]
+[Collection("ownership", "patterns", "types", "diagnostics")]
 fn bool RangePatternRejectsNonOverlappingIntegerDomain()
 {
     unsafe
@@ -3359,6 +3456,7 @@ fn i32[min max] Run(u8[0 3] value)
 }
 
 [Fact]
+[Collection("ffi")]
 fn bool VarargsModifierRequiresFfiDeclaration()
 {
     unsafe
@@ -3377,6 +3475,7 @@ public varargs fn void Log(ascii format);
 }
 
 [Fact]
+[Collection("ffi", "diagnostics")]
 fn bool FfiVarargsRejectsArgumentsThatNeedHiddenCPromotion()
 {
     unsafe
@@ -3400,6 +3499,7 @@ fn i32[min max] Run(f32 value)
 }
 
 [Fact]
+[Collection("ffi", "diagnostics")]
 fn bool FfiVarargsRejectsStarkTextForPercentSFormatArguments()
 {
     unsafe
@@ -3423,6 +3523,7 @@ fn i32[min max] Run(ascii name)
 }
 
 [Fact]
+[Collection("ffi", "diagnostics")]
 fn bool FfiVarargsRejectsStarkTextForPercentSConstFormatArguments()
 {
     unsafe
@@ -3473,6 +3574,7 @@ fn void Run()
 }
 
 [Fact]
+[Collection("diagnostics")]
 fn bool ConstructorArityMismatchReportsAvailableShapes()
 {
     unsafe
@@ -3527,6 +3629,7 @@ fn void Run()
 }
 
 [Fact]
+[Collection("patterns")]
 fn bool TupleLikeEnumConstructorsRejectArityMismatchDuringTypeChecking()
 {
     unsafe
@@ -3700,6 +3803,7 @@ fn void Run()
 }
 
 [Fact]
+[Collection("patterns", "ffi")]
 fn bool ExportedFunctionsRejectEnumTypesAtAbiBoundaries()
 {
     unsafe
@@ -3726,6 +3830,7 @@ export fn Token Use(Token token);
 }
 
 [Fact]
+[Collection("patterns", "ffi")]
 fn bool FfiFunctionsRejectEnumTypesAtAbiBoundaries()
 {
     unsafe
@@ -3750,6 +3855,7 @@ unsafe ffi fn void Use(Token token);
 }
 
 [Fact]
+[Collection("ffi")]
 fn bool FfiFunctionsRejectTextViewReturnTypes()
 {
     unsafe
@@ -3781,6 +3887,7 @@ unsafe ffi fn unicode CurrentUnicode();
 // PORT-NOTE AsmFunctionsRejectRegisterClassesThatDoNotMatchValueKinds: compiles with CompilerOptions TargetInfo (LlvmTargetInfo x86_64-unknown-linux-gnu); the host compile protocol has no target-triple override.
 
 [Fact]
+[Collection("patterns")]
 fn bool ExportedFunctionsRejectAggregateTypesThatTransitivelyDependOnEnums()
 {
     unsafe
@@ -3817,6 +3924,7 @@ export fn Outer Use(Outer value);
 }
 
 [Fact]
+[Collection("ownership")]
 fn bool TypeAliasesShareTheUnderlyingOverloadIdentity()
 {
     unsafe
@@ -3843,6 +3951,7 @@ fn i32[min max] Parse(Score value)
 }
 
 [Fact]
+[Collection("ownership")]
 fn bool TypeAliasCyclesAreRejected()
 {
     unsafe
@@ -3865,6 +3974,7 @@ fn void Use(A value)
 }
 
 [Fact]
+[Collection("patterns", "ffi")]
 fn bool FfiFunctionsRejectAggregateTypesThatTransitivelyDependOnEnums()
 {
     unsafe
@@ -3894,6 +4004,7 @@ unsafe ffi fn void Use(State value);
 }
 
 [Fact]
+[Collection("patterns")]
 fn bool GlobalTypesRejectAggregateTypesThatTransitivelyDependOnEnums()
 {
     unsafe
@@ -3933,6 +4044,7 @@ static Outer Shared = new Outer()
 }
 
 [Fact]
+[Collection("ownership", "patterns")]
 fn bool AggregateSwitchPatternsRejectMoveOnlyFieldCaptures()
 {
     unsafe
@@ -3965,6 +4077,7 @@ fn i32[min max] Run(Box value)
 }
 
 [Fact]
+[Collection("patterns")]
 fn bool FixedArrayListSwitchPatternsRejectWrongLength()
 {
     unsafe
@@ -3991,6 +4104,7 @@ fn i32[min max] Run(i32[min max][2] values)
 }
 
 [Fact]
+[Collection("patterns")]
 fn bool SwitchOrPatternsRejectInconsistentSharedCaptures()
 {
     unsafe
@@ -4025,6 +4139,7 @@ fn i32[min max] Run(Token token)
 }
 
 [Fact]
+[Collection("patterns")]
 fn bool SwitchPatternsRejectDuplicateCapturesInOneAlternative()
 {
     unsafe
@@ -4052,6 +4167,7 @@ fn i32[min max] Run(Pair pair)
 }
 
 [Fact]
+[Collection("patterns", "diagnostics")]
 fn bool ExhaustiveBoolSwitchRejectsLaterDefaultLabel()
 {
     unsafe
@@ -4082,6 +4198,7 @@ fn i32[min max] Run(bool value)
 }
 
 [Fact]
+[Collection("patterns", "diagnostics")]
 fn bool AggregateWildcardPatternRejectsLaterSpecificArm()
 {
     unsafe
@@ -4114,6 +4231,7 @@ fn i32[min max] Run(Pair value)
 }
 
 [Fact]
+[Collection("patterns", "diagnostics")]
 fn bool BroaderAggregatePatternRejectsLaterSpecificArm()
 {
     unsafe
@@ -4147,6 +4265,7 @@ fn i32[min max] Run(Pair value)
 }
 
 [Fact]
+[Collection("patterns", "diagnostics")]
 fn bool NestedAggregatePatternRejectsLaterSpecificArm()
 {
     unsafe
@@ -4183,6 +4302,7 @@ fn i32[min max] Run(Outer value)
 }
 
 [Fact]
+[Collection("patterns")]
 fn bool ExhaustiveEnumCasePatternsRejectLaterDefaultLabel()
 {
     unsafe
@@ -4228,6 +4348,7 @@ fn i32[min max] Run(Token token)
 }
 
 [Fact]
+[Collection("patterns", "diagnostics")]
 fn bool BroaderEnumTuplePatternRejectsLaterSpecificArm()
 {
     unsafe
@@ -4363,6 +4484,7 @@ fn i32[min max] Run()
 }
 
 [Fact]
+[Collection("ffi")]
 fn bool ImmutableLocalAddressCannotInitializeMutableRawPointer()
 {
     unsafe
@@ -4432,6 +4554,7 @@ fn void Run()
 }
 
 [Fact]
+[Collection("ffi")]
 fn bool ImmutableLocalReadonlyPointerCannotBeUpgradedToMutableRawPointer()
 {
     unsafe
@@ -4454,6 +4577,7 @@ fn void Run()
 }
 
 [Fact]
+[Collection("ffi")]
 fn bool ConstArrayDerivedReadonlyPointersCannotBeUpgradedToMutableRawPointers()
 {
     unsafe
@@ -4480,6 +4604,7 @@ fn void Run()
 }
 
 [Fact]
+[Collection("types")]
 fn bool ConstArrayDerivedReadonlyPointersCannotBeLaunderedThroughIntegers()
 {
     unsafe
@@ -4506,6 +4631,7 @@ fn void Run()
 }
 
 [Fact]
+[Collection("ffi")]
 fn bool ConstFieldDerivedReadonlyPointersCannotBeUpgradedToMutableRawPointers()
 {
     unsafe
@@ -4537,6 +4663,7 @@ fn void Run()
 }
 
 [Fact]
+[Collection("types")]
 fn bool ConstFieldDerivedReadonlyPointersCannotBeLaunderedThroughIntegers()
 {
     unsafe
@@ -4568,6 +4695,7 @@ fn void Run()
 }
 
 [Fact]
+[Collection("ownership")]
 fn bool FrozenMemberProjectionsCannotBeMutated()
 {
     unsafe
@@ -4592,6 +4720,7 @@ fn void Run(frozen Box box)
 }
 
 [Fact]
+[Collection("ownership")]
 fn bool FrozenSliceProjectionsRemainReadonly()
 {
     unsafe
@@ -4611,6 +4740,7 @@ fn void Run(frozen i32[min max][] view)
 }
 
 [Fact]
+[Collection("ownership", "ffi")]
 fn bool FrozenDerivedReadonlyPointersCannotBeUpgradedToMutableRawPointers()
 {
     unsafe
@@ -4637,6 +4767,7 @@ fn void Run(frozen Box box)
 }
 
 [Fact]
+[Collection("ownership", "types")]
 fn bool FrozenDerivedReadonlyPointersCannotBeLaunderedThroughIntegers()
 {
     unsafe
@@ -4663,6 +4794,7 @@ fn void Run(frozen Box box)
 }
 
 [Fact]
+[Collection("ownership", "ffi")]
 fn bool FrozenReachableRawPointerFieldsCannotLeakMutableAliases()
 {
     unsafe
@@ -4688,6 +4820,7 @@ fn void Run(frozen PtrBox box)
 }
 
 [Fact]
+[Collection("ffi")]
 fn bool ConstRawPointerParametersCannotMutatePointees()
 {
     unsafe
@@ -4708,6 +4841,7 @@ unsafe fn void Run(const rawmutptr<i32[min max]> ptr)
 }
 
 [Fact]
+[Collection("ownership", "ffi")]
 fn bool ConstParameterReachableRawPointerFieldsCannotLeakMutableAliases()
 {
     unsafe
@@ -4764,6 +4898,7 @@ fn void Run(Box box)
 }
 
 [Fact]
+[Collection("ownership")]
 fn bool FrozenParameterCallsDoNotSatisfyConstProvenance()
 {
     unsafe
@@ -4795,6 +4930,7 @@ fn void Run(frozen Box box)
 }
 
 [Fact]
+[Collection("ownership")]
 fn bool FrozenParameterProjectionsDoNotSatisfyConstProvenance()
 {
     unsafe
@@ -4830,6 +4966,7 @@ fn void Run(frozen Outer outer)
 }
 
 [Fact]
+[Collection("ownership", "ffi")]
 fn bool FrozenRawPointerFieldsDoNotSatisfyConstProvenance()
 {
     unsafe
@@ -4860,6 +4997,7 @@ fn void Run(frozen PtrBox box)
 }
 
 [Fact]
+[Collection("ownership")]
 fn bool RawSlicesFromFrozenPointersDoNotSatisfyConstProvenance()
 {
     unsafe
@@ -4949,6 +5087,7 @@ fn i32[min max] Run()
 }
 
 [Fact]
+[Collection("types")]
 fn bool ExplicitArithmeticOperatorsRequireIntegerOperands()
 {
     unsafe
@@ -4969,6 +5108,7 @@ fn f32 Run()
 }
 
 [Fact]
+[Collection("types")]
 fn bool RuntimeAsciiAndUnicodeCastsStillRequireOwningTextStorage()
 {
     unsafe
@@ -4995,6 +5135,7 @@ fn ascii Narrow(unicode text)
 }
 
 [Fact]
+[Collection("types")]
 fn bool RuntimeUnicodeToAsciiCastsStillRequireCompileTimeTextConstants()
 {
     unsafe
@@ -5150,6 +5291,7 @@ fn bool Run(bool flag)
 }
 
 [Fact]
+[Collection("diagnostics")]
 fn bool TextAccessRejectsMoreThanTwoIndices()
 {
     unsafe
@@ -5169,6 +5311,7 @@ fn ascii Run(ascii text)
 }
 
 [Fact]
+[Collection("dynamic", "diagnostics")]
 fn bool DynamicStorageAccessRejectsMoreThanTwoIndices()
 {
     unsafe
@@ -5189,6 +5332,7 @@ fn i32[min max] Run()
 }
 
 [Fact]
+[Collection("diagnostics")]
 fn bool EmptyIndexAccessProducesATypeDiagnostic()
 {
     unsafe
@@ -5290,6 +5434,7 @@ unsafe fn rawptr<i32[min max]> Run()
 }
 
 [Fact]
+[Collection("ffi")]
 fn bool DereferenceRequiresARawPointerOperand()
 {
     unsafe
@@ -5310,6 +5455,7 @@ fn i32[min max] Run()
 }
 
 [Fact]
+[Collection("traits")]
 fn bool DoctrinesCannotBeUsedAsRuntimeValueTypes()
 {
     unsafe
@@ -5352,6 +5498,7 @@ fn void Run()
 }
 
 [Fact]
+[Collection("traits")]
 fn bool TraitsCannotBeUsedAsRuntimeValueTypes()
 {
     unsafe
@@ -5394,6 +5541,7 @@ fn void Run()
 }
 
 [Fact]
+[Collection("traits")]
 fn bool TraitMethodsCannotBeCalledDirectly()
 {
     unsafe
@@ -5419,6 +5567,7 @@ fn i32[min max] Run()
 }
 
 [Fact]
+[Collection("diagnostics")]
 fn bool OverloadResolutionReportsNoMatchingCandidates()
 {
     unsafe
@@ -5450,6 +5599,7 @@ fn i32[min max] Run()
 }
 
 [Fact]
+[Collection("traits")]
 fn bool GenericCallsWithoutInferableTypeArgumentsReportNoMatchingCandidates()
 {
     unsafe
@@ -5472,6 +5622,7 @@ fn i32[min max] Run()
 }
 
 [Fact]
+[Collection("diagnostics")]
 fn bool OverloadResolutionReportsAmbiguousCalls()
 {
     unsafe
@@ -5504,6 +5655,7 @@ fn i32[min max] Run()
 }
 
 [Fact]
+[Collection("diagnostics")]
 fn bool MemberOverloadResolutionReportsNoMatchingCandidates()
 {
     unsafe
@@ -5544,6 +5696,7 @@ fn i32[min max] Run()
 }
 
 [Fact]
+[Collection("diagnostics")]
 fn bool MemberOverloadResolutionReportsAmbiguousCalls()
 {
     unsafe
@@ -5585,6 +5738,7 @@ fn i32[min max] Run()
 }
 
 [Fact]
+[Collection("lowering")]
 fn bool VoidCallsUsedAsValuesFailBeforeMirLowering()
 {
     unsafe
@@ -5636,6 +5790,7 @@ fn i32[min max] Indirect()
 }
 
 [Fact]
+[Collection("lowering")]
 fn bool SemanticErrorShapedLoweringFallbackCasesFailBeforeMirLowering()
 {
     unsafe
@@ -6072,6 +6227,7 @@ fn i32[min max] Run()
 // ---------------------------------------------------------------------------
 
 [Fact]
+[Collection("ffi", "types")]
 fn bool StrictIntegerRangesRejectNonCanonicalStorageOutsideFfiBoundaries()
 {
     unsafe
@@ -6124,6 +6280,7 @@ fn i64[0 max] Run(i32[1 10] parameter, Holder<i32[0 63]> holder)
 }
 
 [Fact]
+[Collection("ffi", "types")]
 fn bool StrictIntegerRangesAllowFfiAbiSignatureStorage()
 {
     unsafe
@@ -6142,6 +6299,7 @@ public unsafe ffi fn i32[0 255] Read(i32[0 255] value);
 }
 
 [Fact]
+[Collection("ffi", "types")]
 fn bool StrictIntegerRangesAllowPlatformAnnotatedAbiSignatureStorage()
 {
     unsafe
@@ -6164,6 +6322,7 @@ unsafe fn i32[0 255] ReadPlatformStatus(i32[0 255] status)
 }
 
 [Fact]
+[Collection("types")]
 fn bool StrictIntegerRangesAllowPlatformAnnotatedAggregateFieldStorage()
 {
     unsafe
@@ -6191,6 +6350,7 @@ fn i32[min max] Read(HostStatus status)
 }
 
 [Fact]
+[Collection("types")]
 fn bool StrictIntegerRangesStillRejectNonCanonicalLocalsInsidePlatformAnnotatedFunctions()
 {
     unsafe
@@ -6215,6 +6375,7 @@ unsafe fn i32[min max] Run()
 }
 
 [Fact]
+[Collection("types")]
 fn bool StrictIntegerRangesRejectUnnecessarilyWideUnsignedAndSignedRanges()
 {
     unsafe
@@ -6242,6 +6403,7 @@ fn u32[0 255] Run(u16[0 15] tag)
 }
 
 [Fact]
+[Collection("ownership")]
 fn bool BorrowReturnTypesAreRejected()
 {
     unsafe
@@ -6261,6 +6423,7 @@ fn borrow i32[min max] Echo(borrow i32[min max] value)
 }
 
 [Fact]
+[Collection("ownership")]
 fn bool GlobalNonEscapingBorrowsAreRejected()
 {
     unsafe
@@ -6283,6 +6446,7 @@ static borrow Box Current = Source();
 }
 
 [Fact]
+[Collection("ownership")]
 fn bool AggregateFieldsRejectNonEscapingBorrowClasses()
 {
     unsafe
@@ -6316,6 +6480,7 @@ struct BorrowClosureField
 }
 
 [Fact]
+[Collection("ownership", "traits")]
 fn bool AggregateFieldsAllowExplicitStoredClosureBorrows()
 {
     unsafe
@@ -6380,6 +6545,7 @@ unsafe fn void Run()
 }
 
 [Fact]
+[Collection("ownership")]
 fn bool RegisterLocalsCannotBePassedToBorrowParameters()
 {
     unsafe
@@ -6443,6 +6609,7 @@ fn void Run()
 }
 
 [Fact]
+[Collection("lowering")]
 fn bool ArenaLocalStorageIsRejectedUntilArenaLoweringExists()
 {
     unsafe
@@ -6490,6 +6657,7 @@ fn i32[min max] Run()
 }
 
 [Fact]
+[Collection("ffi")]
 fn bool NestedRawPointersAreRejectedOutsideFfiBoundaries()
 {
     unsafe
@@ -6506,6 +6674,7 @@ unsafe fn void Use(rawptr<rawptr<i8[min max]>> value);
 }
 
 [Fact]
+[Collection("ffi")]
 fn bool NestedRawPointersAreAllowedOnFfiBoundaries()
 {
     unsafe
@@ -6522,6 +6691,7 @@ unsafe ffi fn void Use(rawptr<rawptr<i8[min max]>> value);
 }
 
 [Fact]
+[Collection("ffi")]
 fn bool NestedRawPointersAreAllowedInPlatformAggregateFields()
 {
     unsafe
@@ -6590,6 +6760,7 @@ internal unsafe fn rawmutptr<i8[min max]> AllocateBytes(u64[0 922337203685477580
 }
 
 [Fact]
+[Collection("ffi")]
 fn bool FfiRawAllocationBoundariesRemainAvailable()
 {
     unsafe
@@ -6606,6 +6777,7 @@ public unsafe ffi fn rawmutptr<i8[min max]> AllocateBytes(i64[0 max] byteCount);
 }
 
 [Fact]
+[Collection("ffi")]
 fn bool PublicSafeNonAllocationRawPointerViewsRemainAvailable()
 {
     unsafe
@@ -6622,6 +6794,7 @@ public unsafe finite law rawptr<i8[min max]> Data(ascii source);
 }
 
 [Fact]
+[Collection("ffi")]
 fn bool ConstGlobalsRejectReachableRawPointers()
 {
     unsafe
@@ -6741,6 +6914,7 @@ law void Touch()
 }
 
 [Fact]
+[Collection("dynamic")]
 fn bool LawsCannotAllocateDynamicStorage()
 {
     unsafe
@@ -6760,6 +6934,7 @@ law dynamic i32[0 max] Make()
 }
 
 [Fact]
+[Collection("dynamic")]
 fn bool LawsCannotReserveDynamicStorage()
 {
     unsafe
@@ -6780,6 +6955,7 @@ law void Grow()
 }
 
 [Fact]
+[Collection("dynamic")]
 fn bool LawsCannotTryReserveDynamicStorage()
 {
     unsafe
@@ -6800,6 +6976,7 @@ law bool Grow()
 }
 
 [Fact]
+[Collection("ownership", "dynamic")]
 fn bool LawsCannotMoveLastFromDynamicStorage()
 {
     unsafe
@@ -6819,6 +6996,7 @@ law i32[0 max] Pop(mut borrow dynamic i32[0 max] values)
 }
 
 [Fact]
+[Collection("ownership", "dynamic")]
 fn bool LawsCannotMoveAtFromDynamicStorage()
 {
     unsafe
@@ -6838,6 +7016,7 @@ law i32[0 max] Remove(mut borrow dynamic i32[0 max] values)
 }
 
 [Fact]
+[Collection("dynamic")]
 fn bool DynamicStorageAllowsConcreteDestructibleElementTypes()
 {
     unsafe
@@ -6984,6 +7163,7 @@ struct Holder
 }
 
 [Fact]
+[Collection("ownership")]
 fn bool LawsCannotWriteThroughBorrowedMemory()
 {
     unsafe
@@ -7169,6 +7349,7 @@ fn void Loop()
 }
 
 [Fact]
+[Collection("patterns")]
 fn bool BreakOutsideLoopOrSwitchIsRejected()
 {
     unsafe
@@ -7190,6 +7371,7 @@ fn void Run()
 }
 
 [Fact]
+[Collection("patterns")]
 fn bool ContinueOutsideLoopIsRejectedEvenInsideSwitch()
 {
     unsafe
@@ -7215,6 +7397,7 @@ fn void Run(i32[min max] value)
 }
 
 [Fact]
+[Collection("patterns")]
 fn bool BreakInsideSwitchIsAllowed()
 {
     unsafe
@@ -7244,6 +7427,7 @@ fn void Run(i32[min max] value)
 }
 
 [Fact]
+[Collection("patterns")]
 fn bool BreakToSwitchLabelIsAllowed()
 {
     unsafe
@@ -7295,6 +7479,7 @@ fn void Run()
 }
 
 [Fact]
+[Collection("patterns")]
 fn bool ContinueToSwitchLabelIsRejected()
 {
     unsafe
@@ -7379,6 +7564,7 @@ fn void Run()
 }
 
 [Fact]
+[Collection("patterns")]
 fn bool WillexitLoopDoesNotTreatSwitchBreakAsALoopExit()
 {
     unsafe
@@ -7407,6 +7593,7 @@ fn void Run(i32[min max] value)
 }
 
 [Fact]
+[Collection("patterns")]
 fn bool InfiniteLoopAllowsSwitchBreakBecauseItOnlyExitsTheSwitch()
 {
     unsafe
@@ -7568,6 +7755,7 @@ fn retborrow i32[min max] Forward(retborrow i32[min max] value)
 }
 
 [Fact]
+[Collection("ownership", "ffi")]
 fn bool SafeBorrowsCannotCrossFfiBoundaries()
 {
     unsafe
@@ -7595,6 +7783,7 @@ unsafe fn void Use(borrow i32[min max] value)
 // host harness exposes no artifact-model API.
 
 [Fact]
+[Collection("traits")]
 fn bool DoctrineLawMembersCanReadConstGlobalValues()
 {
     unsafe
@@ -7619,6 +7808,7 @@ doctrine Numbers
 }
 
 [Fact]
+[Collection("ownership")]
 fn bool ReadOnlyDropBlocksCannotMutateSelf()
 {
     unsafe
@@ -7645,6 +7835,7 @@ struct Buffer
 }
 
 [Fact]
+[Collection("ownership")]
 fn bool MutDropWithoutSelfMutationProducesWarning()
 {
     unsafe
@@ -7671,6 +7862,7 @@ struct Buffer
 }
 
 [Fact]
+[Collection("ownership")]
 fn bool MutDropCallingSelfMethodDoesNotProduceFalseWarning()
 {
     unsafe
@@ -7727,6 +7919,7 @@ struct Buffer
 }
 
 [Fact]
+[Collection("diagnostics")]
 fn bool BaseListRejectsClassStyleInheritanceFromStruct()
 {
     unsafe
@@ -7754,6 +7947,7 @@ struct Widget : Base
 }
 
 [Fact]
+[Collection("traits")]
 fn bool BaseListAcceptsConformingTraitImplementation()
 {
     unsafe
@@ -7788,6 +7982,7 @@ struct Widget : Drawable
 }
 
 [Fact]
+[Collection("traits", "diagnostics")]
 fn bool BaseListRejectsTraitMethodKindMismatch()
 {
     unsafe
@@ -7820,6 +8015,7 @@ struct Widget : Drawable
 }
 
 [Fact]
+[Collection("traits", "diagnostics")]
 fn bool BaseListRejectsTraitMethodParameterTypeMismatch()
 {
     unsafe
@@ -7851,6 +8047,7 @@ struct Widget : Scaler
 }
 
 [Fact]
+[Collection("traits", "diagnostics")]
 fn bool BaseListRejectsMissingTraitMethod()
 {
     unsafe
@@ -7878,6 +8075,7 @@ struct Widget : Drawable
 }
 
 [Fact]
+[Collection("traits", "diagnostics")]
 fn bool BaseListRejectsMissingTraitMethodFromImportedTrait()
 {
     unsafe
@@ -7911,6 +8109,7 @@ public trait Drawable
 }
 
 [Fact]
+[Collection("traits", "diagnostics")]
 fn bool BaseListRejectsImportedTraitMethodSignatureMismatch()
 {
     unsafe
@@ -7949,6 +8148,7 @@ public trait Drawable
 }
 
 [Fact]
+[Collection("traits", "diagnostics")]
 fn bool DynTraitObjectRejectsStaticOnlyTrait()
 {
     unsafe
@@ -7976,6 +8176,7 @@ finite law i32[min max] AreaOf(borrow dyn Speaker speaker)
 }
 
 [Fact]
+[Collection("traits", "diagnostics")]
 fn bool DynTraitRejectsNonObjectSafeGenericMethod()
 {
     unsafe
@@ -7998,6 +8199,7 @@ dyn trait Speaker
 }
 
 [Fact]
+[Collection("traits")]
 fn bool GenericConstraintAcceptsConformingTypeArgument()
 {
     unsafe
@@ -8040,6 +8242,7 @@ export fn i32[min max] main()
 }
 
 [Fact]
+[Collection("traits", "diagnostics")]
 fn bool GenericConstraintRejectsNonConformingTypeArgument()
 {
     unsafe
@@ -8078,6 +8281,7 @@ export fn i32[min max] main()
 }
 
 [Fact]
+[Collection("traits")]
 fn bool BaseListDoesNotRequireDefaultTraitMethods()
 {
     unsafe
@@ -8118,6 +8322,7 @@ struct Widget : Greeter
 // ---------------------------------------------------------------------------
 
 [Fact]
+[Collection("ownership")]
 fn bool MovedOwnedLocalCanBeReinitializedBeforeLaterRead()
 {
     unsafe
@@ -8303,6 +8508,7 @@ fn i32[min max] Run()
 }
 
 [Fact]
+[Collection("ownership", "patterns")]
 fn bool EnumWithOnlyCopyPayloadsDoesNotRecordImplicitDropAtScopeExit()
 {
     unsafe
@@ -8339,6 +8545,7 @@ fn i32[min max] Run(bool choose)
 }
 
 [Fact]
+[Collection("patterns")]
 fn bool EnumWithOnlyCopyPayloadsMayRemainUninitializedAtScopeExit()
 {
     unsafe
@@ -8371,6 +8578,7 @@ fn i32[min max] Run(bool choose)
 }
 
 [Fact]
+[Collection("patterns")]
 fn bool TupleEnumConstructorCallsRemainOwnedAcrossScopeExit()
 {
     unsafe
@@ -8409,6 +8617,7 @@ fn i32[min max] Run()
 }
 
 [Fact]
+[Collection("ownership", "patterns")]
 fn bool ConditionalEnumConstructorsOnlyDropOwnedCases()
 {
     unsafe
@@ -8449,6 +8658,7 @@ fn i32[min max] Run(bool choose)
 }
 
 [Fact]
+[Collection("patterns")]
 fn bool EnumInitializedOnOnlyOnePathWithOwnedPayloadIsRejectedAtScopeExit()
 {
     unsafe
@@ -8495,6 +8705,7 @@ fn i32[min max] Run(bool choose)
 }
 
 [Fact]
+[Collection("ownership", "patterns")]
 fn bool OwnedEnumPayloadCaptureLeavesNoDropWhenOnlyUnitCaseRemains()
 {
     unsafe
@@ -8549,6 +8760,7 @@ fn i32[min max] Run(bool choose)
 }
 
 [Fact]
+[Collection("patterns")]
 fn bool OwnedEnumPayloadCaptureCanBeReinitializedBeforeScopeExit()
 {
     unsafe
@@ -8604,6 +8816,7 @@ fn i32[min max] Run(bool choose)
 }
 
 [Fact]
+[Collection("ownership", "patterns")]
 fn bool OwnedEnumPayloadCaptureCannotMoveOutOfFieldPlace()
 {
     unsafe
@@ -8665,6 +8878,7 @@ fn i32[min max] Run()
 }
 
 [Fact]
+[Collection("ownership", "patterns")]
 fn bool ReassigningOwnedEnumDropsOnlyThePreviousOwnedCase()
 {
     unsafe
@@ -8704,6 +8918,7 @@ fn i32[min max] Run()
 }
 
 [Fact]
+[Collection("ownership", "patterns")]
 fn bool SwitchingOnEnumParameterNarrowsActiveCaseForDropAnalysis()
 {
     unsafe
@@ -8751,6 +8966,7 @@ fn i32[min max] Run(Token token)
 }
 
 [Fact]
+[Collection("ownership")]
 fn bool UninitializedOwnedLocalIsNotDroppedAtScopeExit()
 {
     unsafe
@@ -8776,6 +8992,7 @@ fn i32[min max] Run()
 }
 
 [Fact]
+[Collection("diagnostics")]
 fn bool ReadingUninitializedOwnedLocalProducesInitializationDiagnostic()
 {
     unsafe
@@ -8897,6 +9114,7 @@ fn i32[min max] Run()
 }
 
 [Fact]
+[Collection("ownership", "diagnostics")]
 fn bool WholeAggregateUseAfterFieldMoveReportsPartialMove()
 {
     unsafe
@@ -8952,6 +9170,7 @@ fn i32[min max] Run()
 }
 
 [Fact]
+[Collection("ownership")]
 fn bool ReinitializingMovedFieldRestoresWholeAggregateAvailability()
 {
     unsafe
@@ -9004,6 +9223,7 @@ fn i32[min max] Run()
 }
 
 [Fact]
+[Collection("ownership")]
 fn bool BranchMergesPartialFieldMoveStateAcrossPaths()
 {
     unsafe
@@ -9057,6 +9277,7 @@ fn i32[min max] Run(bool choose)
 }
 
 [Fact]
+[Collection("ownership")]
 fn bool BranchReinitializationAfterFieldMoveKeepsFieldAvailable()
 {
     unsafe
@@ -9183,6 +9404,7 @@ fn i32[min max] Run(bool choose)
 }
 
 [Fact]
+[Collection("ownership", "diagnostics")]
 fn bool ReturningBorrowFromUnknownSourceReportsLifetimeDiagnostic()
 {
     unsafe
@@ -9206,6 +9428,7 @@ fn retborrow i32[min max] Leak()
 }
 
 [Fact]
+[Collection("ownership", "traits")]
 fn bool StoredBorrowClosureFieldsRejectTemporaryEnvironments()
 {
     unsafe
@@ -9235,6 +9458,7 @@ fn Holder Bad()
 }
 
 [Fact]
+[Collection("ownership", "patterns", "traits")]
 fn bool MoveCapturesConsumeSourceBindingAtClosureCreation()
 {
     unsafe
@@ -9265,6 +9489,7 @@ fn i32[min max] Run()
 }
 
 [Fact]
+[Collection("patterns", "traits")]
 fn bool OutAndInitClosureCapturesMustBeAssignedOnEveryReturnPath()
 {
     unsafe
@@ -9325,6 +9550,7 @@ fn void BadInit(bool choose)
 }
 
 [Fact]
+[Collection("traits")]
 fn bool OnceClosureCallsConsumeTheClosureValue()
 {
     unsafe
@@ -9375,6 +9601,7 @@ fn i32[min max] UseBorrow()
 }
 
 [Fact]
+[Collection("ownership", "diagnostics")]
 fn bool ReturningBorrowFromBranchSpecificCallsStillReportsLifetimeDiagnostic()
 {
     unsafe
@@ -9403,6 +9630,7 @@ fn retborrow i32[min max] Leak(bool choose)
 }
 
 [Fact]
+[Collection("ownership", "diagnostics")]
 fn bool AssigningBorrowFromUnknownSourceReportsDestinationLifetime()
 {
     unsafe
@@ -9428,6 +9656,7 @@ fn void Run()
 }
 
 [Fact]
+[Collection("ownership", "diagnostics")]
 fn bool AssigningBorrowFromInnerScopeToOuterScopeReportsEscapeDiagnostic()
 {
     unsafe
@@ -9457,6 +9686,7 @@ fn void Run()
 }
 
 [Fact]
+[Collection("ownership", "diagnostics")]
 fn bool ReturningBorrowFromInnerScopeReportsEscapeDiagnostic()
 {
     unsafe
@@ -9482,6 +9712,7 @@ fn retborrow i32[min max] Run()
 }
 
 [Fact]
+[Collection("dynamic")]
 fn bool DynamicInitAssignmentsTrackDensePrefix()
 {
     unsafe
@@ -9504,6 +9735,7 @@ fn u32[0 2 ** 31 - 1] Run()
 }
 
 [Fact]
+[Collection("dynamic", "diagnostics")]
 fn bool DynamicInitAssignmentRejectsDensePrefixHole()
 {
     unsafe
@@ -9525,6 +9757,7 @@ fn void Run()
 }
 
 [Fact]
+[Collection("dynamic")]
 fn bool DynamicAppendByLengthIsAcceptedForUnknownPrefix()
 {
     unsafe
@@ -9549,6 +9782,7 @@ fn void Push(mut borrow Buffer self, u32[0 2 ** 31 - 1] value)
 }
 
 [Fact]
+[Collection("dynamic")]
 fn bool DynamicInitSliceAssignmentsTrackSequentialSlots()
 {
     unsafe
@@ -9572,6 +9806,7 @@ fn u32[0 2 ** 31 - 1] Run()
 }
 
 [Fact]
+[Collection("dynamic")]
 fn bool DynamicInitSliceIndependentInductionLoopTracksRuntimeSlots()
 {
     unsafe
@@ -9598,6 +9833,7 @@ fn u64[0 2 ** 63 - 1] Run(u64[0 2 ** 63 - 1] count)
 }
 
 [Fact]
+[Collection("dynamic", "diagnostics")]
 fn bool DynamicInitSliceIndependentInductionLoopRejectsRepeatedSlotProof()
 {
     unsafe
@@ -9623,6 +9859,7 @@ fn void Run(u64[0 2 ** 63 - 1] count)
 }
 
 [Fact]
+[Collection("dynamic", "diagnostics")]
 fn bool DynamicInitSliceRejectsOutOfOrderSlotInitialization()
 {
     unsafe
@@ -9644,6 +9881,7 @@ fn void Run()
 }
 
 [Fact]
+[Collection("ownership", "dynamic")]
 fn bool DynamicNonTailMoveRequiresSparseSlotProof()
 {
     unsafe
@@ -9678,6 +9916,7 @@ fn void Run()
 }
 
 [Fact]
+[Collection("dynamic")]
 fn bool UnsafeDynamicSparseSlotProofAllowsReadInsideProofBoundary()
 {
     unsafe
@@ -9700,6 +9939,7 @@ fn u32[0 2 ** 31 - 1] Read(dynamic u32[0 2 ** 31 - 1] values, u32[0 2 ** 31 - 1]
 }
 
 [Fact]
+[Collection("dynamic")]
 fn bool UnsafeDynamicSparseInitProofAllowsUseInsideProofBoundaryOnly()
 {
     unsafe
@@ -9724,6 +9964,7 @@ fn u32[0 2 ** 31 - 1] Run()
 }
 
 [Fact]
+[Collection("dynamic")]
 fn bool UnsafeDynamicSparseInitProofDoesNotLeakIntoSafeCode()
 {
     unsafe
@@ -9750,6 +9991,7 @@ fn u32[0 2 ** 31 - 1] Run()
 }
 
 [Fact]
+[Collection("ownership", "dynamic")]
 fn bool UnsafeDynamicSparseProofAllowsNonTailMoveInsideProofBoundary()
 {
     unsafe
@@ -9791,6 +10033,7 @@ fn ascii Run()
 // ---------------------------------------------------------------------------
 
 [Fact]
+[Collection("ownership")]
 fn bool HeapOwnedValuesAreDroppedAtScopeExit()
 {
     unsafe
@@ -9863,6 +10106,7 @@ finite law i32[min max] Run()
 }
 
 [Fact]
+[Collection("ownership", "diagnostics")]
 fn bool MoveDiagnosticsAreNotDuplicatedForTheSameUse()
 {
     unsafe
@@ -9903,6 +10147,7 @@ finite law i32[min max] Run()
 }
 
 [Fact]
+[Collection("ownership")]
 fn bool ValueReceiverMethodCallsMoveTheReceiver()
 {
     unsafe
@@ -9999,6 +10244,7 @@ finite law u64[0 2 ** 63 - 1] Run()
 }
 
 [Fact]
+[Collection("ownership")]
 fn bool ReassigningOwnedLocalDropsPreviousValue()
 {
     unsafe
@@ -10035,6 +10281,7 @@ finite law i32[min max] Run()
 }
 
 [Fact]
+[Collection("ownership")]
 fn bool ConditionalMoveMakesLaterUseInvalid()
 {
     unsafe
@@ -10077,6 +10324,7 @@ finite law i32[min max] Run()
 }
 
 [Fact]
+[Collection("ownership")]
 fn bool ReturningOwnedLocalMovesItOutInsteadOfDroppingIt()
 {
     unsafe
@@ -10202,6 +10450,7 @@ finite law Name Run()
 }
 
 [Fact]
+[Collection("ownership", "traits")]
 fn bool DoctrineCallsParticipateInOwnershipFlow()
 {
     unsafe
@@ -10244,6 +10493,7 @@ finite law i32[min max] Run()
 }
 
 [Fact]
+[Collection("ownership", "traits")]
 fn bool ExplicitGenericDoctrineCallsParticipateInOwnershipFlow()
 {
     unsafe
@@ -10288,6 +10538,7 @@ finite law i32[min max] Run()
 // PORT-NOTE RuntimeTextConcatenationConsumesOwnedTextResult: requires CompilerOptions with an InMemoryModuleResolver supplying two virtual modules (System.Memory, System.Text); the harness has no full-pipeline multi-module helper.
 
 [Fact]
+[Collection("ownership")]
 fn bool DisjointMutableBorrowCallsParticipateInOwnershipFlow()
 {
     unsafe
@@ -10326,6 +10577,7 @@ fn i32[min max] Run(borrow mut Box left, borrow mut Box right)
 // ---------------------------------------------------------------------------
 
 [Fact]
+[Collection("patterns")]
 fn bool ExhaustiveEnumSwitchWithAllVariantsReturningTypeChecks()
 {
     unsafe
@@ -10351,6 +10603,7 @@ fn i32[min max] Pick(Color c)
 }
 
 [Fact]
+[Collection("patterns")]
 fn bool EnumSwitchWithDefaultArmTypeChecks()
 {
     unsafe
@@ -10375,6 +10628,7 @@ fn i32[min max] Pick(Color c)
 }
 
 [Fact]
+[Collection("patterns")]
 fn bool ExhaustiveBoolSwitchTypeChecks()
 {
     unsafe
@@ -10399,6 +10653,7 @@ fn i32[min max] Pick(bool flag)
 }
 
 [Fact]
+[Collection("patterns", "types")]
 fn bool ExhaustiveRangedIntegerSwitchTypeChecks()
 {
     unsafe
@@ -10425,6 +10680,7 @@ fn i32[min max] Pick(u8[0 3] tag)
 }
 
 [Fact]
+[Collection("patterns", "types")]
 fn bool ExhaustiveRangedIntegerSwitchWithRangePatternTypeChecks()
 {
     unsafe
@@ -10448,6 +10704,7 @@ fn i32[min max] Pick(u8[0 3] tag)
 }
 
 [Fact]
+[Collection("patterns", "types")]
 fn bool LiteralCoveredByEarlierRangePatternIsRejectedAsUnreachable()
 {
     unsafe
@@ -10472,6 +10729,7 @@ fn i32[min max] Pick(u8[0 3] tag)
 }
 
 [Fact]
+[Collection("patterns", "types")]
 fn bool WideIntegerSwitchWithDefaultArmTypeChecks()
 {
     unsafe
@@ -10548,6 +10806,7 @@ fn i32[min max] Spin(i32[min max] seed)
 }
 
 [Fact]
+[Collection("patterns")]
 fn bool EnumSwitchMissingVariantIsRejected()
 {
     unsafe
@@ -10572,6 +10831,7 @@ fn i32[min max] Pick(Color c)
 }
 
 [Fact]
+[Collection("patterns")]
 fn bool BoolSwitchMissingFalseIsRejected()
 {
     unsafe
@@ -10595,6 +10855,7 @@ fn i32[min max] Pick(bool flag)
 }
 
 [Fact]
+[Collection("patterns", "types")]
 fn bool RangedIntegerSwitchMissingValueIsRejected()
 {
     unsafe
@@ -10620,6 +10881,7 @@ fn i32[min max] Pick(u8[0 3] tag)
 }
 
 [Fact]
+[Collection("patterns")]
 fn bool StatementPositionEnumSwitchMissingVariantIsRejected()
 {
     unsafe
@@ -11082,6 +11344,7 @@ fn i32[min max] BadReturn(i32[min max] x)
 }
 
 [Fact]
+[Collection("patterns")]
 fn bool TryOnEnumWithoutRolesIsRejected()
 {
     unsafe
@@ -11275,6 +11538,7 @@ enum Outcome<T>
 }
 
 [Fact]
+[Collection("patterns")]
 fn bool RolesOnThreeVariantEnumAreRejected()
 {
     unsafe
@@ -11340,6 +11604,7 @@ enum Outcome
 // ---------------------------------------------------------------------------
 
 [Fact]
+[Collection("patterns")]
 fn bool IfPatternBindsCaptureIntoThenBranch()
 {
     unsafe
@@ -11368,6 +11633,7 @@ fn i32[min max] UseIf(i32[min max] n)
 }
 
 [Fact]
+[Collection("patterns")]
 fn bool WhilePatternBindsCaptureIntoLoopBody()
 {
     unsafe
@@ -11398,6 +11664,7 @@ fn i32[min max] UseWhile(i32[min max] n)
 }
 
 [Fact]
+[Collection("patterns")]
 fn bool IfPatternCaptureIsNotVisibleInElseBranch()
 {
     unsafe
@@ -11429,6 +11696,7 @@ fn i32[min max] LeakCapture(i32[min max] n)
 }
 
 [Fact]
+[Collection("patterns")]
 fn bool IfPatternWithMismatchedEnumTypeIsRejected()
 {
     unsafe
@@ -11457,6 +11725,7 @@ fn i32[min max] Mismatch(i32[min max] n)
 }
 
 [Fact]
+[Collection("patterns")]
 fn bool IfPatternOnNonEnumScrutineeIsRejected()
 {
     unsafe

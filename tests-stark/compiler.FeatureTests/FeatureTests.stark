@@ -1,5 +1,6 @@
 import FeatureTestSupport
 import System.Testing
+[Collection("features")]
 module CompilerFeatureTests
 
 // Ported slice of tests/compiler.FeatureTests, running against the current C#
@@ -12,6 +13,7 @@ module CompilerFeatureTests
 // ---------------------------------------------------------------------------
 
 [Fact]
+[Collection("ownership", "ffi")]
 fn bool BorrowParametersPreserveReadonlyPointerAbiThroughTheWholePipeline()
 {
     unsafe
@@ -47,6 +49,7 @@ fn i32[min max] Read(borrow Box box)
 // ---------------------------------------------------------------------------
 
 [Fact]
+[Collection("types")]
 fn bool ConstantFloatExpressionsFoldThroughTheWholePipeline()
 {
     unsafe
@@ -78,6 +81,7 @@ fn f32 Run()
 // ---------------------------------------------------------------------------
 
 [Fact]
+[Collection("lowering")]
 fn bool FunctionClassesFlowThroughTheWholePipelineAndPreserveTheirLlvmShapes()
 {
     unsafe
@@ -127,6 +131,7 @@ finite law i32[min max] Run()
 // ---------------------------------------------------------------------------
 
 [Fact]
+[Collection("lowering")]
 fn bool LawFunctionEmitsLawShapedLlvmAttributes()
 {
     unsafe
@@ -160,6 +165,7 @@ law i32[min max] Run()
 // ---------------------------------------------------------------------------
 
 [Fact]
+[Collection("types")]
 fn bool ConstantIntegerExpressionsFoldThroughTheWholePipeline()
 {
     unsafe
@@ -188,6 +194,7 @@ finite law i32[min max] Run()
 
 // Ported from StraightLineFunctionEmitsOptimizedLlvmBody in LlvmIrEmissionTests.
 [Fact]
+[Collection("lowering")]
 fn bool StraightLineFunctionEmitsOptimizedLlvmBody()
 {
     unsafe
@@ -221,6 +228,7 @@ unsafe finite law i32[min max] Run()
 // ---------------------------------------------------------------------------
 
 [Fact]
+[Collection("ownership")]
 fn bool ForInTraversesFixedArraysWithBorrowElements()
 {
     unsafe
@@ -265,6 +273,7 @@ finite law i32[min max] Sum()
 }
 
 [Fact]
+[Collection("ownership")]
 fn bool ForInCanExposeCheckedIndexAndMutableElementBorrow()
 {
     unsafe
@@ -351,6 +360,7 @@ unsafe finite law i32[min max] SumSlice()
 }
 
 [Fact]
+[Collection("dynamic")]
 fn bool ForInTraversesDynamicStorage()
 {
     unsafe
@@ -392,6 +402,7 @@ unsafe fn i32[min max] SumDynamic()
 }
 
 [Fact]
+[Collection("ownership", "diagnostics")]
 fn bool ForInRejectsNonBorrowElementBindings()
 {
     unsafe
@@ -419,6 +430,7 @@ finite law i32[min max] Bad()
 }
 
 [Fact]
+[Collection("ownership", "diagnostics")]
 fn bool ForInRejectsMutableBorrowFromImmutableStorage()
 {
     unsafe
@@ -458,6 +470,7 @@ finite law i32[min max] Bad()
 // ---------------------------------------------------------------------------
 
 [Fact]
+[Collection("ffi", "types")]
 fn bool AsciiStringsUseConcreteRuntimeAbiThroughTheWholePipeline()
 {
     unsafe
@@ -561,6 +574,7 @@ fn unicode PickUnicode(unicode text, i32[min max] index)
 }
 
 [Fact]
+[Collection("types")]
 fn bool ExplicitAsciiLiteralToUnicodeConversionUsesUnicodeStaticDataThroughTheWholePipeline()
 {
     unsafe
@@ -637,6 +651,7 @@ unsafe fn i64[min max] Run()
 }
 
 [Fact]
+[Collection("types")]
 fn bool OwnedAsciiConcatenationUsesMemcpyAndViewProjection()
 {
     unsafe
@@ -688,6 +703,7 @@ public unsafe fn ascii Run()
 }
 
 [Fact]
+[Collection("lowering", "types")]
 fn bool FixedCapacityAsciiConcatenationLowersToStackStorageAndConcatTrap()
 {
     unsafe
@@ -741,6 +757,7 @@ public unsafe fn i64[min max] Run()
 }
 
 [Fact]
+[Collection("lowering", "types")]
 fn bool FixedCapacityUnicodeConcatenationLowersToStackStorageAndConcatTrap()
 {
     unsafe
@@ -794,6 +811,7 @@ public unsafe fn i64[min max] Run()
 }
 
 [Fact]
+[Collection("types")]
 fn bool FixedCapacityAsciiInterpolationFormatsIntoStackStorage()
 {
     unsafe
@@ -829,6 +847,7 @@ public unsafe fn i64[min max] Run()
 }
 
 [Fact]
+[Collection("types")]
 fn bool FixedCapacityUnicodeInterpolationFormatsIntoStackStorage()
 {
     unsafe
@@ -864,6 +883,7 @@ public unsafe fn i64[min max] Run()
 }
 
 [Fact]
+[Collection("lowering")]
 fn bool TextViewPointerAndLengthBuiltinsEmitConcreteDefinitions()
 {
     unsafe
@@ -1061,6 +1081,7 @@ fn void Run()
 }
 
 [Fact]
+[Collection("traits")]
 fn bool ConditionalGrantsPropagateThroughGenericInstantiation()
 {
     unsafe
@@ -1244,6 +1265,7 @@ fn void Run()
 }
 
 [Fact]
+[Collection("traits")]
 fn bool GenericFunctionLawPredicatesMustBePropagatedThroughOpenCalls()
 {
     unsafe
@@ -1267,6 +1289,7 @@ fn void Relay<T>(T value) where Transferable(T)
 }
 
 [Fact]
+[Collection("traits")]
 fn bool MissingGenericFunctionLawPredicatePropagationIsATypeCheckError()
 {
     unsafe
@@ -1406,6 +1429,7 @@ public fn void RequireTransfer<T>(T value) where Transferable(T)
 }
 
 [Fact]
+[Collection("diagnostics")]
 fn bool ThreadEntryReachabilityRejectsPlainMutableStatics()
 {
     unsafe
@@ -1508,6 +1532,7 @@ public struct AtomicI64
 // ---------------------------------------------------------------------------
 
 [Fact]
+[Collection("traits")]
 fn bool ComptimeGenericValueParameterCanBindFixedArrayLength()
 {
     unsafe
@@ -1539,6 +1564,7 @@ finite law u8[0 max] Run()
 }
 
 [Fact]
+[Collection("traits", "diagnostics")]
 fn bool ComptimeGenericValueParameterRejectsOutOfRangeLength()
 {
     unsafe
@@ -1564,6 +1590,7 @@ finite law u8[0 max] Run()
 }
 
 [Fact]
+[Collection("traits")]
 fn bool ExplicitComptimeGenericFunctionArgumentMaterializesAsConstant()
 {
     unsafe
@@ -1598,6 +1625,7 @@ finite law u8[0 max] Run()
 }
 
 [Fact]
+[Collection("traits")]
 fn bool ComptimeGenericValueArgumentsParticipateInFunctionIdentity()
 {
     unsafe
@@ -1631,6 +1659,7 @@ finite law u32[0 max] Run()
 }
 
 [Fact]
+[Collection("traits")]
 fn bool ValueOnlyComptimeGenericFunctionArgumentMaterializesAsConstant()
 {
     unsafe
@@ -1667,6 +1696,7 @@ finite law u8[0 max] Run()
 // The C# original inspects TypeCheckModel.TypeTriggers; the host protocol only
 // shows diagnostics, so this asserts the instantiation type-checks.
 [Fact]
+[Collection("traits")]
 fn bool ExplicitComptimeGenericNamedTypeArgumentRecordsInstantiation()
 {
     unsafe
@@ -1693,6 +1723,7 @@ finite law u8[0 max] Run()
 
 // TypeCheckModel.TypeTriggers re-expressed as type-check success.
 [Fact]
+[Collection("traits")]
 fn bool ValueOnlyComptimeGenericNamedTypeArgumentRecordsInstantiation()
 {
     unsafe
@@ -1720,6 +1751,7 @@ finite law u8[0 max] Run()
 // TypeCheckModel.InstantiationTriggers re-expressed as type-check success of
 // the symbolic comptime forwarding.
 [Fact]
+[Collection("traits")]
 fn bool SymbolicComptimeGenericValueArgumentForwardsBySourceName()
 {
     unsafe
@@ -1750,6 +1782,7 @@ finite law u8[0 max] Run()
 }
 
 [Fact]
+[Collection("traits", "types")]
 fn bool ComptimeGenericParametersMustUseIntegerTypes()
 {
     unsafe
@@ -1774,6 +1807,7 @@ finite law i32[min max] Bad<comptime bool N>()
 // TypeCheckModel.NamedTypes symbolic-length check re-expressed as type-check
 // success of the open template.
 [Fact]
+[Collection("traits")]
 fn bool ComptimeGenericStructPreservesSymbolicFixedArrayLength()
 {
     unsafe
@@ -1793,6 +1827,7 @@ struct Buffer<T, comptime u8[1 8] N>
 }
 
 [Fact]
+[Collection("patterns", "traits", "lowering")]
 fn bool GenericEnumMonomorphizationEmitsConcreteStructType()
 {
     unsafe
@@ -1832,6 +1867,7 @@ export fn i32[min max] main()
 }
 
 [Fact]
+[Collection("traits", "lowering")]
 fn bool GenericRecordMonomorphizationEmitsConcreteFields()
 {
     unsafe
@@ -1863,6 +1899,7 @@ export fn i32[min max] main()
 }
 
 [Fact]
+[Collection("traits", "lowering")]
 fn bool TwoDistinctInstantiationsOfSameGenericEmitTwoTypes()
 {
     unsafe
@@ -1923,6 +1960,7 @@ export fn i32[min max] main()
 // TypeCheckModel.NamedTypes nested-instantiation check re-expressed as
 // type-check success.
 [Fact]
+[Collection("traits")]
 fn bool NestedGenericInstantiationTypeChecks()
 {
     unsafe
@@ -1954,6 +1992,7 @@ finite law bool IsPresent(Option<Option<i32[min max]>> outer)
 }
 
 [Fact]
+[Collection("ffi", "traits", "lowering")]
 fn bool OpenGenericFunctionTemplatesDoNotEmitRuntimeAbiDeclarations()
 {
     unsafe
@@ -2009,6 +2048,7 @@ finite law i32[min max] Run(i32[min max] value)
 }
 
 [Fact]
+[Collection("traits")]
 fn bool ExplicitGenericFunctionCallWithOneRuntimeArgumentParsesAsGenericCall()
 {
     unsafe
@@ -2035,6 +2075,7 @@ finite law i32[min max] Run(i32[min max] value)
 }
 
 [Fact]
+[Collection("traits")]
 fn bool LargeByValueGenericSpecializationsPreserveObservableMemoryFacts()
 {
     unsafe
@@ -2189,6 +2230,7 @@ finite law i32[min max] Run()
 }
 
 [Fact]
+[Collection("ownership", "traits")]
 fn bool DoctrineLawCallsStayDirectAndPreserveBorrowFacts()
 {
     unsafe
@@ -2256,6 +2298,7 @@ law i32[min max] Run(borrow Box box)
 }
 
 [Fact]
+[Collection("ownership", "traits")]
 fn bool GenericDoctrineMethodsPreserveStaticFiniteLawBorrowContracts()
 {
     unsafe
@@ -2336,6 +2379,7 @@ finite law i32[min max] Run(borrow Box<i32[min max]> box)
 }
 
 [Fact]
+[Collection("traits", "lowering")]
 fn bool TraitContractsDoNotEmitRuntimeDispatchSurface()
 {
     unsafe
@@ -2379,6 +2423,7 @@ finite law i32[min max] Run(i32[min max] value)
 }
 
 [Fact]
+[Collection("traits", "lowering")]
 fn bool GenericTraitBoundDispatchLowersToDirectConcreteCall()
 {
     unsafe
@@ -2431,6 +2476,7 @@ export fn i32[min max] main()
 }
 
 [Fact]
+[Collection("traits", "lowering")]
 fn bool ImportedGenericTraitBoundDispatchLowersToDirectConcreteCall()
 {
     unsafe
@@ -2489,6 +2535,7 @@ public trait Drawable
 }
 
 [Fact]
+[Collection("traits")]
 fn bool TraitDefaultMethodsDispatchToMonomorphizedDirectCalls()
 {
     unsafe
@@ -2546,6 +2593,7 @@ export fn i32[min max] main()
 }
 
 [Fact]
+[Collection("traits")]
 fn bool DynTraitObjectDispatchesThroughVtablePreservingEffectContract()
 {
     unsafe
@@ -2598,6 +2646,7 @@ export fn i32[min max] main()
 // host protocol shows diagnostics only, so this asserts the vtable types
 // type-check as readonly raw pointer parameters.
 [Fact]
+[Collection("ffi", "traits")]
 fn bool DynTraitVtableTypeIsNameableAsReadonlyRawPointer()
 {
     unsafe
@@ -2631,6 +2680,7 @@ unsafe finite law i32[min max] Use(
 // MIR object-graph assertions re-expressed over the rendered MIR text: the
 // borrowed fat pointer decomposes into a typed `rawptr<Speaker.Vtable>` slot.
 [Fact]
+[Collection("traits", "lowering")]
 fn bool DynTraitFatPointerCarriesTypedVtablePointerInMir()
 {
     unsafe
@@ -2674,6 +2724,7 @@ export fn i32[min max] main()
 }
 
 [Fact]
+[Collection("traits", "diagnostics")]
 fn bool DynTraitVtableTypeRejectsByValueAndMutablePointerUse()
 {
     unsafe
@@ -2706,6 +2757,7 @@ unsafe finite law i32[min max] Bad(rawmutptr<Speaker.Vtable> table)
 // BoundOperations/MIR object assertions re-expressed over the MIR text: both
 // dynview forms lower, and the components keep their representation types.
 [Fact]
+[Collection("traits")]
 fn bool UnsafeDynTraitFromPartsCanRoundTripContextAndVtable()
 {
     unsafe
@@ -2766,6 +2818,7 @@ export fn i32[min max] main()
 }
 
 [Fact]
+[Collection("traits", "diagnostics")]
 fn bool UnsafeDynTraitFromPartsRejectsSafeUseAndWrongVtable()
 {
     unsafe
@@ -2814,6 +2867,7 @@ unsafe finite law i32[min max] WrongTable(rawmutptr<i8[min max]> context, rawptr
 // BoundOperations assertion re-expressed as MIR lowering success of dynbox
 // plus the owned dyn type appearing in the MIR text.
 [Fact]
+[Collection("traits")]
 fn bool UnsafeDynBoxFromPartsConstructsOwnedDynTraitObject()
 {
     unsafe
@@ -2844,6 +2898,7 @@ unsafe finite law heap dyn Speaker Adopt(rawmutptr<i8[min max]> context, rawptr<
 }
 
 [Fact]
+[Collection("traits")]
 fn bool TraitAssociatedTypeRequirementSubstitutesIntoConcreteImplementation()
 {
     unsafe
@@ -2898,6 +2953,7 @@ export fn i32[min max] main()
 }
 
 [Fact]
+[Collection("traits")]
 fn bool TraitAssociatedTypeRequirementMustBeDefinedByImplementer()
 {
     unsafe
@@ -2929,6 +2985,7 @@ struct Counter : Reader
 }
 
 [Fact]
+[Collection("traits")]
 fn bool TraitAssociatedTypeMismatchIsAConformanceError()
 {
     unsafe
@@ -2962,6 +3019,7 @@ struct Counter : Reader
 }
 
 [Fact]
+[Collection("ownership", "traits")]
 fn bool TraitDefaultAssociatedTypeDoesNotRequireImplementationAlias()
 {
     unsafe
@@ -3009,6 +3067,7 @@ export fn u64[0 max] main()
 // ---------------------------------------------------------------------------
 
 [Fact]
+[Collection("lowering")]
 fn bool ComptimeExpressionEvaluatesFiniteLawCallAndLowersToImmediate()
 {
     unsafe
@@ -3048,6 +3107,7 @@ finite law i32[min max] Run()
 }
 
 [Fact]
+[Collection("lowering")]
 fn bool ComptimeExpressionEvaluatesFiniteFunctionCallAndLowersToImmediate()
 {
     unsafe
@@ -3082,6 +3142,7 @@ finite law i32[min max] Run()
 }
 
 [Fact]
+[Collection("traits")]
 fn bool ComptimeExpressionEvaluatesGenericFiniteFunctionCall()
 {
     unsafe
@@ -3114,6 +3175,7 @@ finite law u8[0 max] Run()
 }
 
 [Fact]
+[Collection("traits")]
 fn bool ComptimeExpressionEvaluatesComptimeGenericArithmeticAfterSpecialization()
 {
     unsafe
@@ -3147,6 +3209,7 @@ finite law u8[0 max] Run()
 }
 
 [Fact]
+[Collection("traits", "diagnostics")]
 fn bool ComptimeGenericArithmeticStillRejectsRuntimeValues()
 {
     unsafe
@@ -3171,6 +3234,7 @@ finite law u8[0 max] Run()
 }
 
 [Fact]
+[Collection("traits")]
 fn bool ComptimeGenericFiniteCallPreservesSymbolicValueUntilSpecialization()
 {
     unsafe
@@ -3211,6 +3275,7 @@ finite law u8[0 max] Run()
 }
 
 [Fact]
+[Collection("types")]
 fn bool ComptimeExpressionEvaluatesExplicitNumericConversions()
 {
     unsafe
@@ -3247,6 +3312,7 @@ finite law i32[min max] Run()
 }
 
 [Fact]
+[Collection("types")]
 fn bool ComptimeBlockEvaluatesExplicitNumericConversions()
 {
     unsafe
@@ -3724,6 +3790,7 @@ finite law i32[min max] Run()
 }
 
 [Fact]
+[Collection("traits")]
 fn bool ComptimeBlockEvaluatesTraitDefaultReceiverMethodCall()
 {
     unsafe
@@ -3779,6 +3846,7 @@ finite law i32[min max] Run()
 }
 
 [Fact]
+[Collection("traits")]
 fn bool ComptimeBlockEvaluatesGenericTraitDefaultReceiverMethodCall()
 {
     unsafe
@@ -3839,6 +3907,7 @@ finite law i32[min max] Run()
 }
 
 [Fact]
+[Collection("diagnostics")]
 fn bool ComptimeExpressionRejectsPlainFunctionCall()
 {
     unsafe
@@ -3863,6 +3932,7 @@ finite law i32[min max] Run()
 }
 
 [Fact]
+[Collection("diagnostics")]
 fn bool ComptimeExpressionRejectsPlainReceiverMethodCall()
 {
     unsafe
@@ -3971,6 +4041,7 @@ finite law i32[min max] Run()
 }
 
 [Fact]
+[Collection("lowering")]
 fn bool ComptimeFixedArrayExpressionCanLowerToRuntimeAggregate()
 {
     unsafe
@@ -4227,6 +4298,7 @@ finite law i32[min max] Run()
 }
 
 [Fact]
+[Collection("patterns")]
 fn bool ComptimeExpressionCanMaterializeTupleEnumPayload()
 {
     unsafe
@@ -4281,6 +4353,7 @@ finite law i32[min max] Run()
 }
 
 [Fact]
+[Collection("patterns")]
 fn bool ComptimeBlockCanInitializeNamedFieldEnumConstGlobal()
 {
     unsafe
@@ -4338,6 +4411,7 @@ finite law i32[min max] Run()
 }
 
 [Fact]
+[Collection("patterns")]
 fn bool ComptimeBlockCanExecuteSwitchWithEnumPatternsCapturesAndGuards()
 {
     unsafe
@@ -4393,6 +4467,7 @@ finite law i32[min max] Run()
 }
 
 [Fact]
+[Collection("patterns")]
 fn bool ComptimeBlockCanExecuteSwitchWithAggregateListRangeOrAndDefaultPatterns()
 {
     unsafe
@@ -4480,6 +4555,7 @@ finite law i32[min max] Run()
 }
 
 [Fact]
+[Collection("patterns")]
 fn bool ComptimeBlockCanExecutePatternIfConditions()
 {
     unsafe
@@ -4552,6 +4628,7 @@ finite law i32[min max] Run()
 }
 
 [Fact]
+[Collection("patterns")]
 fn bool ComptimeBlockCanExecutePatternWhileConditions()
 {
     unsafe
@@ -4615,6 +4692,7 @@ finite law i32[min max] Run()
 }
 
 [Fact]
+[Collection("patterns")]
 fn bool ComptimeBlockCanBranchOnUnitEnumEquality()
 {
     unsafe
@@ -4695,6 +4773,7 @@ finite law i64[min max] Run()
 // ---------------------------------------------------------------------------
 
 [Fact]
+[Collection("patterns")]
 fn bool ComptimeBlockCanFoldEnumLayoutFacts()
 {
     unsafe
@@ -5147,6 +5226,7 @@ finite law i32[min max] Run()
 }
 
 [Fact]
+[Collection("patterns")]
 fn bool ComptimeFieldAndEnumPayloadQualifierMetadataFactsFoldToBoolConstants()
 {
     unsafe
@@ -5265,6 +5345,7 @@ finite law bool Run()
 }
 
 [Fact]
+[Collection("types")]
 fn bool ComptimeStructuralCountFactsFoldToIntegerConstants()
 {
     unsafe
@@ -5326,6 +5407,7 @@ finite law u64[0 max] TokenVariants()
 }
 
 [Fact]
+[Collection("traits")]
 fn bool GenericComptimeLawCanBranchOnStructuralCountFacts()
 {
     unsafe
@@ -5688,6 +5770,7 @@ finite law u64[0 max] Run()
 }
 
 [Fact]
+[Collection("ffi")]
 fn bool ComptimeRawPointerMetadataFactsFoldToConstants()
 {
     unsafe
@@ -5729,6 +5812,7 @@ finite law bool Run()
 }
 
 [Fact]
+[Collection("ffi")]
 fn bool ComptimeRawPointerMetadataFactsRejectWrongTargets()
 {
     unsafe
@@ -5764,6 +5848,7 @@ finite law bool Run()
 }
 
 [Fact]
+[Collection("ffi")]
 fn bool ComptimeRawPointerMetadataFactsAreRejectedAtRuntime()
 {
     unsafe
@@ -5971,6 +6056,7 @@ finite law bool Misaligned()
 }
 
 [Fact]
+[Collection("patterns")]
 fn bool ComptimeEnumTagFactsFoldToConstants()
 {
     unsafe
@@ -6023,6 +6109,7 @@ finite law bool TagMisaligned()
 }
 
 [Fact]
+[Collection("patterns")]
 fn bool ComptimeEnumPayloadLayoutFactsFoldToConstants()
 {
     unsafe
@@ -6394,6 +6481,7 @@ finite law i32[min max] Run()
 }
 
 [Fact]
+[Collection("patterns")]
 fn bool ComptimeIndexedEnumVariantFactsFoldToConstants()
 {
     unsafe
@@ -7032,6 +7120,7 @@ finite law i32[min max] Run()
 }
 
 [Fact]
+[Collection("ffi")]
 fn bool ComptimeCallableRawPointerElementCountExpressionFactsFoldToConstants()
 {
     unsafe
@@ -7090,6 +7179,7 @@ finite law i32[min max] Run()
 }
 
 [Fact]
+[Collection("traits")]
 fn bool ComptimeClosureStructuralFactsFoldToConstants()
 {
     unsafe
@@ -7237,6 +7327,7 @@ finite law i32[min max] Run()
 }
 
 [Fact]
+[Collection("traits")]
 fn bool ComptimeClosureMemoryContractFactsFoldToConstants()
 {
     unsafe
@@ -7392,6 +7483,7 @@ finite law i32[min max] EscapedTextEquality()
 }
 
 [Fact]
+[Collection("patterns")]
 fn bool ComptimeEnumPayloadNameFactsFoldToConstants()
 {
     unsafe
@@ -7464,6 +7556,7 @@ finite law i32[min max] Run()
 }
 
 [Fact]
+[Collection("patterns")]
 fn bool ComptimeEnumVariantFunnelFactsFoldToConstants()
 {
     unsafe
@@ -7543,6 +7636,7 @@ finite law i32[min max] Run()
 }
 
 [Fact]
+[Collection("traits")]
 fn bool ComptimeTypeGenericParameterFactsFoldToConstants()
 {
     unsafe
@@ -8420,6 +8514,7 @@ finite law bool Run()
 }
 
 [Fact]
+[Collection("traits")]
 fn bool ComptimeClosureStructuralFactsRejectWrongTargetsAndOutOfRangeIndices()
 {
     unsafe
@@ -8801,6 +8896,7 @@ finite law ascii Variant()
 }
 
 [Fact]
+[Collection("patterns")]
 fn bool ComptimeEnumPayloadNameFactsRejectOutOfRangeIndices()
 {
     unsafe
@@ -8878,6 +8974,7 @@ finite law bool UsesNamed()
 }
 
 [Fact]
+[Collection("patterns")]
 fn bool ComptimeEnumVariantFunnelFactsRejectOutOfRangeIndices()
 {
     unsafe
@@ -8907,6 +9004,7 @@ finite law bool Run()
 }
 
 [Fact]
+[Collection("traits")]
 fn bool ComptimeTypeGenericParameterFactsRejectOutOfRangeIndices()
 {
     unsafe
@@ -9236,6 +9334,7 @@ finite law ascii Run()
 }
 
 [Fact]
+[Collection("patterns")]
 fn bool ComptimeEnumPayloadNameFactsAreRejectedAtRuntime()
 {
     unsafe
@@ -9260,6 +9359,7 @@ finite law ascii Run()
 }
 
 [Fact]
+[Collection("patterns")]
 fn bool ComptimeEnumTagFactsAreRejectedAtRuntime()
 {
     unsafe
@@ -9284,6 +9384,7 @@ finite law u64[0 max] Run()
 }
 
 [Fact]
+[Collection("patterns")]
 fn bool ComptimeEnumPayloadLayoutFactsAreRejectedAtRuntime()
 {
     unsafe
@@ -9312,6 +9413,7 @@ finite law u64[0 max] Run()
 // ---------------------------------------------------------------------------
 
 [Fact]
+[Collection("patterns")]
 fn bool ComptimeEnumVariantFunnelFactsAreRejectedAtRuntime()
 {
     unsafe
@@ -9341,6 +9443,7 @@ finite law bool Run()
 }
 
 [Fact]
+[Collection("traits")]
 fn bool ComptimeTypeGenericParameterFactsAreRejectedAtRuntime()
 {
     unsafe
@@ -9696,6 +9799,7 @@ finite law u64[0 max] Run()
 }
 
 [Fact]
+[Collection("traits")]
 fn bool ComptimeTraitConformanceFactFoldsToBoolConstant()
 {
     unsafe
@@ -9814,6 +9918,7 @@ finite law i32[min max] Run()
 }
 
 [Fact]
+[Collection("traits")]
 fn bool ComptimeDynTraitStructuralFactsFoldToBoolConstants()
 {
     unsafe
@@ -9891,6 +9996,7 @@ finite law i32[min max] Run()
 }
 
 [Fact]
+[Collection("traits")]
 fn bool ComptimeDynTraitNestedTypePredicateFactsFoldToBoolConstants()
 {
     unsafe
@@ -10017,6 +10123,7 @@ finite law i32[min max] Run()
 }
 
 [Fact]
+[Collection("traits")]
 fn bool GenericComptimeLawCanBranchOnTraitConformanceFact()
 {
     unsafe
@@ -10082,6 +10189,7 @@ finite law i32[min max] RunPlain()
 }
 
 [Fact]
+[Collection("traits")]
 fn bool ComptimeTraitConformanceFactRequiresTraitArgument()
 {
     unsafe
@@ -10116,6 +10224,7 @@ finite law bool Run()
 }
 
 [Fact]
+[Collection("traits")]
 fn bool ComptimeImplementedTraitStructuralFactsValidateIndexedArguments()
 {
     unsafe
@@ -10216,6 +10325,7 @@ finite law bool Run()
 }
 
 [Fact]
+[Collection("traits", "diagnostics")]
 fn bool ComptimeDynTraitTargetFactRejectsWrongTargetAndSecondArgument()
 {
     unsafe
@@ -10265,6 +10375,7 @@ finite law bool Run()
 }
 
 [Fact]
+[Collection("traits")]
 fn bool ComptimeTraitConformanceFactIsRejectedAtRuntime()
 {
     unsafe
@@ -10299,6 +10410,7 @@ finite law bool Run()
 }
 
 [Fact]
+[Collection("traits")]
 fn bool ComptimeImplementedTraitStructuralFactsAreRejectedAtRuntime()
 {
     unsafe
@@ -10327,6 +10439,7 @@ finite law bool Run()
 }
 
 [Fact]
+[Collection("traits")]
 fn bool ComptimeDynTraitStructuralFactsAreRejectedAtRuntime()
 {
     unsafe
@@ -10351,6 +10464,7 @@ finite law bool Run()
 }
 
 [Fact]
+[Collection("traits")]
 fn bool GenericComptimeLawCanBranchOnStructuralFactsAndLayout()
 {
     unsafe
@@ -10759,6 +10873,7 @@ finite law i32[min max] Run()
 }
 
 [Fact]
+[Collection("diagnostics")]
 fn bool ComptimeWillexitWhileReportsIterationBudgetExhaustion()
 {
     unsafe
@@ -10788,6 +10903,7 @@ finite law i32[min max] Run()
 }
 
 [Fact]
+[Collection("diagnostics")]
 fn bool ComptimeWillexitForReportsIterationBudgetExhaustion()
 {
     unsafe
@@ -10817,6 +10933,7 @@ finite law i32[min max] Run()
 }
 
 [Fact]
+[Collection("diagnostics")]
 fn bool ComptimeWillexitForTraversalReportsIterationBudgetExhaustion()
 {
     unsafe
@@ -10852,6 +10969,7 @@ finite law i32[min max] Run()
 }
 
 [Fact]
+[Collection("diagnostics")]
 fn bool ComptimeRecursiveFunctionCallReportsNonTerminatingEvaluation()
 {
     unsafe
@@ -10904,6 +11022,7 @@ finite law i32[min max] Run()
 }
 
 [Fact]
+[Collection("diagnostics")]
 fn bool ComptimeExpressionRejectsRuntimeDependentValue()
 {
     unsafe
@@ -10923,6 +11042,7 @@ finite law i32[min max] Run(i32[min max] input)
 }
 
 [Fact]
+[Collection("ownership")]
 fn bool ComptimeStructuralFactsExposeCSourceAliasIdentity()
 {
     unsafe
@@ -11103,6 +11223,7 @@ finite law i32[min max] Run()
 }
 
 [Fact]
+[Collection("diagnostics")]
 fn bool ComptimeBlockRejectsRuntimeDependentValue()
 {
     unsafe

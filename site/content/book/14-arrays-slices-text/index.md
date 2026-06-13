@@ -213,6 +213,58 @@ path/text buffers. The public surface can stay slice-shaped while the
 owner keeps spare capacity private:
 
 {{< stark-sample "samples/dynamic-storage-patterns.stark" >}}
+Reading a dynamic slot is only safe when the slot is part of the initialized
+prefix. The compiler proves that at compile time, with no runtime bounds check,
+in two ways.
+
+The first is a comparison guard. A strict `index < storage.Length` check (or the
+mirrored `storage.Length > index`) proves reads of that slot on the path the
+guard dominates — in any function, not only inside the owning type:
+
+```stark
+fn i32[min max] ReadOrZero(borrow dynamic i32[min max] items, u64[0 max] index)
+{
+    if (index >= items.Length)
+    {
+        return 0;
+    }
+
+    return items[index];
+}
+```
+
+The early-return guard above leaves the in-range fact on the path that
+continues. A loop condition seeds the same fact for the loop body, and `&&`
+joins several facts. The guard and the read must spell the index and the storage
+path the same way, so bind a local first when the index is computed. Any write
+the fact mentions — assigning the index, or passing the storage owner by
+`mut borrow` — retires the fact.
+
+The second way moves the obligation to the caller with a `where` value contract.
+The comparison joins the same `where` clause list as the memory contracts and
+uses `<`, `>`, `<=`, or `>=` over parameters and paths through them:
+
+```stark
+finite law i32[min max] ItemAt(borrow dynamic i32[min max] items, u64[0 max] index)
+    where index < items.Length
+{
+    return items[index];
+}
+```
+
+Inside the function, the strict `< items.Length` contract proves the read just
+like a guard would. At every call site the contract is re-spelled with the
+actual receiver and argument and must be proven by a dominating comparison the
+caller already made, the caller's own matching `where` contract forwarding the
+obligation outward, or a constant argument that satisfies it. An unproven call
+is a compile error that names both the declared contract and the obligation as
+spelled at that call site — no runtime cost, and the contract rides through
+package images. Value contracts also read as ordinary range preconditions, so
+`where start + length <= items.Length` works the same way.
+
+Genuinely sparse structures — hash slots, free lists, parent links — keep the
+explicit `unsafe { }` sparse initialized-slot proof, because their
+initialization is an invariant the dense prefix cannot show.
 
 ## Step 4: Keep Text Views Zero-Copy
 
@@ -282,6 +334,38 @@ fn unicode FirstCodePoint(unicode text)
     return text[0];
 }
 ```
+When a literal should be taken verbatim — a regex, a Windows path, or embedded
+source text — use a raw string. `raw"..."` is a single-line raw literal with no
+escape processing:
+
+```stark
+stack ascii pattern = raw"\d+\.\d+";
+```
+
+For multiline text, `raw"""` opens a block that follows the same rules as C# raw
+string literals. The content starts on the line after the opening quotes and
+ends on the line before the closing quotes, and the indentation in front of the
+closing quotes is stripped from every content line so the literal can sit at the
+indentation of the surrounding code:
+
+```stark
+stack ascii usage = raw"""
+    usage: stark build [--release]
+           stark run
+    """;
+// value: "usage: stark build [--release]\n       stark run"
+```
+
+Three shapes are errors, because they make the trimming ambiguous: content on
+the opening-quote line, content on the closing-quote line, and a non-blank
+content line indented less than the closing quotes. Whitespace-only lines are
+kept as empty lines. The newline right after `raw"""` and the newline right
+before the closing `"""` are never part of the value.
+
+Raw literals compose with interpolation as `$raw"..."` and `$raw"""..."""`: the
+block is trimmed by these same rules first, then the `{ ... }` holes are
+evaluated. Like ordinary string literals, raw literals infer to `ascii` when the
+contents fit UTF-8.
 
 ## Step 5: Choose Owned Text When Storage Must Survive
 

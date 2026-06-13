@@ -832,7 +832,7 @@ internal sealed class SsaLowerer
                 return type.IsMutableView;
             }
 
-            if (type.Kind == StarkTypeKind.Named && _copyability?.IsCopyable(type) == true)
+            if ((type.Kind is StarkTypeKind.Named or StarkTypeKind.FixedArray or StarkTypeKind.Slice or StarkTypeKind.FunctionPointer) && _copyability?.IsCopyable(type) == true)
             {
                 return false;
             }
