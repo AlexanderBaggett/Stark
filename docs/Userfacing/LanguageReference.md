@@ -1092,6 +1092,13 @@ something it mentions: assigning or compound-assigning the index variable,
 passing the storage's owner by `mut borrow`, or shadowing a name. Non-strict
 `<=` comparisons prove nothing.
 
+An equality guard against a constant length proves the corresponding *constant*
+indices. `if (storage.Length == k) { ... }` proves `storage[0]` through
+`storage[k - 1]` inside the branch, and `if (storage.Length != k) { return; }`
+proves them on the path that continues; the non-empty check
+`if (storage.Length != 0)` proves `storage[0]`. A variable index still needs a
+`<` / `>=` comparison guard or a `where` value contract.
+
 Genuinely sparse structures — hash slots, free lists, parent links — where
 initialization is an invariant the type system cannot see keep the explicit
 `unsafe { }` sparse initialized-slot proof. Moving a whole value out of a
