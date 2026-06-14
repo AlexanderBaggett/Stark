@@ -304,5 +304,5 @@ Recommended diagnostics:
 ## 12. Book And Reference Work
 
 - [x] Update Stark language skill references for layout-control structural facts.
-- [ ] Update user-facing FFI docs for layout-control attributes and packed-field
+- [x] Update user-facing FFI docs for layout-control attributes and packed-field
       safety.

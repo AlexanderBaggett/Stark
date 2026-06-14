@@ -532,7 +532,7 @@ fnptr<fn void(rawmutptr<i32[min max]>, rawmutptr<i32[min max]>) where same(arg0,
 fnptr<fn void(rawptr<i32[min max]>[arg1], u8[1 10])>
 ```
 
-The current `fnptr` type is an ordinary safe callable pointer. Unsafe function items cannot be promoted to ordinary `fnptr` values because that would hide the unsafe requirement from later calls. Call unsafe functions directly inside an `unsafe` block, or expose a safe wrapper that checks the required conditions.
+An ordinary `fnptr<fn ...>` (and `fnptr<ffi(c) fn ...>` without `unsafe`) is a safe callable pointer, and an unsafe function item cannot be promoted into it, because that would hide the unsafe requirement from later calls. To carry an unsafe foreign callback, write the `unsafe` keyword inside the `fnptr` type (`fnptr<unsafe ffi(c) fn ...>`) and promote inside an unsafe context; calling it still requires unsafe (see 13.3). Otherwise, call unsafe functions directly inside an `unsafe` block, or expose a safe wrapper that checks the required conditions.
 
 ### 5.6 Lambdas and Capture Modes
 
@@ -1490,7 +1490,30 @@ struct WordParts
 }
 ```
 
-A field whose offset does not satisfy its natural alignment (under `Pack` or `Explicit` layout) is a packed field: access goes through unaligned reads and writes, and taking a safe borrow of such a field is restricted. `N` for `Pack`, `Align`, and `FieldOffset` is a byte count, a power of two where alignment applies. Default Stark layout is not a stable ABI; these attributes are the opt-in for predictable C-compatible layout.
+`[StructLayout(C)]` lays fields out in declaration order using the active target's C ABI alignment for each resolved field type, inserts padding before fields as needed, and rounds the aggregate size up to the struct alignment. The struct alignment is the maximum effective field alignment unless `[Align(N)]` raises it. This is Stark's `repr(C)` equivalent.
+
+`[Pack(N)]` caps each field's effective alignment at `min(naturalAlignment, N)`, which removes the inter-field padding that field alignment would otherwise add. `[Pack(1)]` is the fully packed form. `[Align(N)]` only raises the aggregate alignment; it never caps a field alignment or moves a field except through the final tail-padding rule. When both appear, field offsets come from `Pack(N)` and `Align(N)` then raises the whole-struct alignment. `N` for `Pack`, `Align`, and `FieldOffset` is a byte count; `Pack(N)` and `Align(N)` require a positive power-of-two literal (`1, 2, 4, 8, 16, 32, 64, ...`).
+
+`[StructLayout(C)]` does not make every field type FFI-safe. C-layout field types are limited to:
+
+* Stark sized integer and floating point primitives
+* `System.C` target-mapped aliases (see 13.4)
+* raw pointers, including `rawptr<System.C.c_void>` / `rawmutptr<System.C.c_void>`
+* fixed arrays of FFI-safe element types
+* nested `[StructLayout(C)]` or `[StructLayout(Explicit)]` structs
+
+Stark enums, dynamic storage, safe borrows, closures, trait objects, and owning heap values are rejected across an FFI layout boundary because their layout or drop behavior is Stark-specific. Those types can still appear in ordinary (non-`StructLayout`) structs.
+
+**Packed-field safety.** A field whose computed offset does not satisfy its natural alignment (under `Pack` or `Explicit` layout) is a *packed field*:
+
+* Reading and writing a packed field is allowed; the compiler emits unaligned loads and stores.
+* Taking a **safe borrow** of a misaligned packed field is a compile-time error, because a safe borrow promises natural alignment.
+* Taking a **raw pointer** to a misaligned packed field is allowed in unsafe code and preserves the misalignment fact.
+* Passing a packed field by address to `ffi` requires the external declaration to accept the actual pointer alignment.
+
+This keeps packed layout from becoming hidden undefined behavior. Default Stark layout is not a stable ABI; these attributes are the opt-in for predictable C-compatible layout. The compiler never uses the host machine's C layout when compiling for a different target.
+
+The `System.Compiler` compile-time facts (`StructLayoutIsC<T>()`, `StructHasPack<T>()`, `FieldHasExplicitOffset<T, I>()`, `FieldIsMisaligned<T, I>()`, and the field/offset/size/align facts) expose this layout metadata for generic code; see the comptime structural facts reference.
 
 ## 9. Globals and Storage Classes
 
@@ -2447,35 +2470,55 @@ public unsafe ffi(platform(
 )) fn i32[min max] HostCall(rawptr<i8[min max]> context);
 ```
 
-The resolved ABI is part of the function and function-pointer type, so it is preserved through package images and indirect calls. `ffi(abi)` does not combine with `asm(...)` declarations.
+The resolved ABI is part of the function and function-pointer type, so a `fnptr<ffi(c) fn ...>` is a distinct, incompatible type from `fnptr<ffi(stdcall) fn ...>` or an ordinary `fnptr<fn ...>`, and the ABI is preserved through package images and indirect calls (see 5.5 for ABI-bearing function-pointer types). `ffi(abi)` does not combine with `asm(...)` declarations. An ABI that the active target does not support is a compile-time error (STK2111).
+
+For the C-facing types used at these boundaries, see 13.4 (C primitive aliases) and 13.5 (C strings). For C ABI struct layout, see 8.7.
 
 ### 13.1 C Style Varargs
 
 Foreign C APIs that use variadic arguments may be declared with `ffi varargs`:
 
 ```stark
-public unsafe ffi varargs fn i32 printf(ascii format);
+public unsafe ffi(c) varargs fn System.C.c_int printf(rawptr<System.C.c_char> format);
 ```
 
 `varargs` is only valid on `ffi` declarations that end with `;`. Stark functions do not define C style variadic bodies.
 
 The fixed parameters are checked normally. Extra call arguments are allowed after the fixed parameters, but they must already be safe to pass through the C varargs ABI as written:
 
-* `i32`, `u32`, or wider integers
+* `i32[min max]`, `u32[0 max]`, or wider integers
 * `f64`
-* raw pointers
-* `ascii` and `unicode` text views, which pass their data pointer
+* raw pointers, including `rawptr<System.C.c_char>` for C strings
 
-Stark does not hide C's default argument promotions. If a C variadic function expects a floating point value, pass `f64`; cast `f32` to `f64` yourself. If a value is smaller than 32 bits, cast it to an explicit `i32` or `u32` first.
+Stark does not hide C's default argument promotions. If a C variadic function expects a floating point value, pass `f64`; cast `f32` to `f64` yourself. If a value is smaller than 32 bits, cast it to an explicit `i32[min max]` or `u32[0 max]` first.
 
 ```stark
-public unsafe ffi varargs fn i32 printf(ascii format);
+public unsafe ffi(c) varargs fn System.C.c_int printf(ascii format);
 
-unsafe fn i32 PrintScore(i32[min max] score)
+unsafe fn System.C.c_int PrintScore(i32[min max] score)
 {
     return printf("Score: %d\n", score);
 }
 ```
+
+**`%s` takes C strings, not Stark text.** Stark `ascii` and `unicode` are length-carrying views, not null-terminated `char*`. A `%s` conversion that receives ordinary Stark text is a compile-time error (STK3009): the argument must be `rawptr<System.C.c_char>` or `rawmutptr<System.C.c_char>`. Convert Stark text to a `System.C.OwnedCStr` first and pass `OwnedCStr.Data()`:
+
+```stark
+public unsafe ffi(c) varargs fn System.C.c_int printf(rawptr<System.C.c_char> format);
+
+fn System.C.CStringResult<System.C.c_int> PrintName(ascii name)
+{
+    stack System.C.OwnedCStr format = try System.C.FromAscii("name: %s\n");
+    stack System.C.OwnedCStr cName = try System.C.FromAscii(name);
+    unsafe
+    {
+        return System.C.CStringResult<System.C.c_int>.Ok(
+            printf(format.Data(), cName.Data()));
+    }
+}
+```
+
+See 13.5 for the `System.C` C-string types.
 
 ### 13.2 Assembly Functions
 
@@ -2622,7 +2665,163 @@ RegisterCallback(capture(unsafe addr token) () =>
 
 FFI imports and assembly declarations must be declared `unsafe`. Raw pointers should normally be avoided outside FFI, OS/platform, allocator/runtime, and tightly audited low-level code. Prefer borrows, slices, `dynamic` storage, owned handle types, or platform wrappers for ordinary APIs.
 
-Unsafe function items can be promoted to ordinary `fnptr` values only inside an unsafe context. This is intended for ABI callback registration where the platform API stores a plain function pointer. After erasure, the programmer owns the proof that the callback is invoked only under the unsafe function's documented invariants.
+An unsafe function item may be promoted to a function pointer only when the target `fnptr` type also carries `unsafe`, and only inside an unsafe context. Promoting an unsafe item to an ordinary safe `fnptr<...>` (one without `unsafe`) is rejected (STK3024), because that would hide the unsafe requirement from later indirect calls. This is intended for ABI callback registration where the platform API stores a plain function pointer:
+
+```stark
+public unsafe ffi(c) fn i32[min max] puts(rawptr<i8[min max]> text);
+
+unsafe fn void Register()
+{
+    unsafe
+    {
+        stack fnptr<unsafe ffi(c) fn i32[min max](rawptr<i8[min max]>)> cb = puts;
+    }
+    return;
+}
+```
+
+After promotion, the call site still needs an unsafe context to invoke the pointer, and the programmer owns the proof that the callback is invoked only under the unsafe function's documented invariants.
+
+### 13.4 C Primitive Type Aliases
+
+C headers spell integer and pointer-size types as `int`, `long`, `size_t`, and so on, whose widths depend on the target's C data model. `System.C` provides compiler-known aliases for those spellings so FFI declarations mirror the header instead of hard-coding a width:
+
+| Alias | C spelling | Alias | C spelling |
+|---|---|---|---|
+| `System.C.c_char` | `char` | `System.C.c_ulong` | `unsigned long` |
+| `System.C.c_schar` | `signed char` | `System.C.c_longlong` | `long long` |
+| `System.C.c_uchar` | `unsigned char` | `System.C.c_ulonglong` | `unsigned long long` |
+| `System.C.c_short` | `short` | `System.C.c_size_t` | `size_t` |
+| `System.C.c_ushort` | `unsigned short` | `System.C.c_ptrdiff_t` | `ptrdiff_t` |
+| `System.C.c_int` | `int` | `System.C.c_void` | `void` (raw pointee only) |
+| `System.C.c_uint` | `unsigned int` | | |
+| `System.C.c_long` | `long` | | |
+
+These are **target-resolved aliases**: the compiler maps each one onto an ordinary Stark sized primitive for the active target before layout, type checking, and codegen. They do not create a second integer type system, hidden conversions, or distinct ABI identities. For example, `System.C.c_int` resolves to `i32[min max]`, and `System.C.c_long` resolves to `i32[min max]` on ILP32/LLP64 targets but `i64[min max]` on LP64 targets. Two aliases that resolve to the same primitive are the same runtime type on that target.
+
+```stark
+public unsafe ffi(c) fn System.C.c_int close(System.C.c_int fd);
+
+public unsafe ffi(c) fn System.C.c_size_t strlen(rawptr<System.C.c_char> text);
+
+public unsafe ffi(c) fn rawmutptr<System.C.c_void> malloc(System.C.c_size_t bytes);
+
+public unsafe ffi(c) fn void free(rawmutptr<System.C.c_void> ptr);
+```
+
+After a value enters Stark logic, prefer a stable Stark type. The conversion point is explicit. Because the C-style cast parser does not accept a qualified `System.C` alias as a cast target, leave the platform-width surface by **binding into a typed local** (or casting the alias value to a Stark width), rather than writing `(System.C.c_long)value`:
+
+```stark
+unsafe ffi(c) fn System.C.c_long PlatformCount();
+
+unsafe fn i64[min max] StableCount()
+{
+    stack System.C.c_long nativeCount = PlatformCount();
+    return (i64[min max])nativeCount;        // cast FROM the alias to a Stark width
+}
+```
+
+`c_char` signedness is target-dependent. Plain `System.C.c_char` follows the target's `char` signedness (exposed as the compile-time bool `System.C.c_char_is_signed`); `System.C.c_schar` is always signed 8-bit and `System.C.c_uchar` is always unsigned 8-bit. Use `c_char` only where the header says `char`. For byte buffers that are not text, use `System.C.c_uchar` or `u8[0 max]`. `c_char` signedness is a C ABI fact, not an encoding fact, and there is no implicit conversion between `rawptr<System.C.c_char>` and Stark `ascii`.
+
+`System.C.c_void` is an incomplete foreign pointee. It is valid only as the direct pointee of a raw pointer (`rawptr<System.C.c_void>` / `rawmutptr<System.C.c_void>`); using it as a value, field, array element, or function return is a compile-time error (STK3050). C functions that return `void` use Stark's ordinary `void` return type. Conversions between `rawptr<System.C.c_void>` and a typed raw pointer are explicit raw pointer conversions and stay unsafe.
+
+For ABI aggregates, C aliases preserve layout intent; the layout engine resolves each field alias for the active target before computing offsets (see 8.7):
+
+```stark
+[StructLayout(C)]
+struct StatLike
+{
+    System.C.c_ulong Device;
+    System.C.c_ulong Inode;
+    System.C.c_long Size;
+}
+```
+
+### 13.5 C Strings
+
+A C `char*` is a foreign byte pointer with a trailing zero byte, no carried length, and nullable raw-pointer behavior. It is not a Stark `ascii` or `unicode` view, and there is no implicit conversion in either direction. `System.C` models C strings explicitly:
+
+* `CStr`: a non-owning, validated null-terminated view (`Data` non-null, `Length` excludes the terminator, no interior zero).
+* `OwnedCStr`: Stark-allocated, always-null-terminated storage; the normal way to pass Stark text to a C `const char*`. Its destructor frees the storage.
+* `CCharBuffer`: caller-owned mutable storage for C APIs that write into a provided `char*`. `Capacity` includes the terminator slot.
+* `ForeignOwnedCStr`: a wrapper over a pointer owned by a *foreign* allocator, used while copying the string into Stark text and then releasing it with the matching foreign dispose function.
+* `CStringResult<T>` / `CStringError`: the result and error vocabulary for these operations.
+
+Construction goes through checked or explicitly unsafe functions so invalid C-string states are not ordinary user-constructible values. `OwnedCStr` is only for Stark-allocator memory; never adopt a foreign pointer into it.
+
+**Stark text to a C string.** `System.C.FromAscii` / `FromUnicodeUtf8` allocate `Length + 1` bytes, append the terminator, and reject interior zero bytes (`CStringError.InteriorNull`). Pass the raw pointer with `OwnedCStr.Data()` (unsafe, because it exposes the raw boundary):
+
+```stark
+public unsafe ffi(c) fn System.C.c_int puts(rawptr<System.C.c_char> text);
+
+fn System.C.CStringResult<System.C.c_int> Puts(ascii text)
+{
+    stack System.C.OwnedCStr cText = try System.C.FromAscii(text);
+    unsafe
+    {
+        return System.C.CStringResult<System.C.c_int>.Ok(puts(cText.Data()));
+    }
+}
+```
+
+**A raw C string to Stark text.** Validate first. `System.C.TryFromRawBounded(data, maxLength)` scans at most `maxLength` bytes for the terminator and returns a borrowed `CStr` (or an error for `null`, no terminator within the bound, or an unrepresentable length); `FromRawUnchecked` stays unsafe for call sites that already hold the proof. `System.C.ToAscii` / `ToUnicodeUtf8` then copy a validated `CStr` into owned Stark text, validating UTF-8 (`CStringError.InvalidUtf8`) and reporting allocation failure as a value.
+
+**Caller-provided output buffers.** Allocate a `CCharBuffer` with `NewCCharBuffer`, hand its `Data()` to the C API, then validate with `TryAsCStr`. Because the C-style cast parser does not accept a qualified C alias as a cast target, bind the capacity into a `c_size_t` local instead of writing `(System.C.c_size_t)buffer.Capacity()`:
+
+```stark
+public unsafe ffi(c) fn rawmutptr<System.C.c_char> getcwd(
+    rawmutptr<System.C.c_char> buffer,
+    System.C.c_size_t size);
+
+fn System.C.CStringResult<System.Text.OwnedAscii> CurrentDirectory()
+{
+    stack mut System.C.CCharBuffer buffer = try System.C.NewCCharBuffer(4096);
+    unsafe
+    {
+        stack System.C.c_size_t capacity = buffer.Capacity();
+        if (getcwd(buffer.Data(), capacity) == null)
+        {
+            return System.C.CStringResult<System.Text.OwnedAscii>.Err(
+                System.C.CStringError.NullPointer);
+        }
+    }
+
+    unsafe
+    {
+        stack System.C.CStr view = try buffer.TryAsCStr();
+        return System.C.ToAscii(view);
+    }
+}
+```
+
+**Foreign-owned strings.** A string returned by a foreign allocator must be freed by that allocator. Either write a small owner type whose `drop` calls the matching free function, or use the generic copy-and-dispose helpers, which validate within a caller bound, copy into Stark text, and dispose the foreign pointer exactly once:
+
+```stark
+public unsafe ffi(c) fn rawmutptr<System.C.c_char> get_message();
+public unsafe ffi(c) fn void dispose_message(rawmutptr<System.C.c_char> text);
+
+fn System.C.CStringResult<System.Text.OwnedAscii> ReadMessage()
+{
+    unsafe
+    {
+        stack System.C.CStringResult<System.C.ForeignOwnedCStr> created =
+            System.C.TryFromForeignOwnedRaw(get_message());
+        switch (created)
+        {
+            case System.C.CStringResult<System.C.ForeignOwnedCStr>.Err(var error):
+                return System.C.CStringResult<System.Text.OwnedAscii>.Err(error);
+            case System.C.CStringResult<System.C.ForeignOwnedCStr>.Ok(var value):
+                stack mut System.C.ForeignOwnedCStr message = value;
+                return System.C.CopyForeignOwnedAsciiAndDispose(
+                    message,
+                    dispose_message,
+                    4096);
+        }
+    }
+}
+```
+
+The `CStringDisposer` alias (`fnptr<unsafe ffi(c) fn void(rawmutptr<System.C.c_char>)>`) is the C-ABI callback shape these helpers accept. See the `System.C` standard library reference for the full surface.
 
 ## 14. Runtime Surface
 
