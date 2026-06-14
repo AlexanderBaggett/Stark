@@ -360,4 +360,4 @@ Recommended diagnostics:
 
 | Status | ID | Item |
 |---|---|---|
-| [ ] | ABI-DOC-01 | Update user-facing book chapters, `LanguageReference.md`, SKILL references, and FFI checklist for explicit ABI spelling and ABI-bearing function pointer types. |
+| [x] | ABI-DOC-01 | Update user-facing book chapters, `LanguageReference.md`, SKILL references, and FFI checklist for explicit ABI spelling and ABI-bearing function pointer types. |

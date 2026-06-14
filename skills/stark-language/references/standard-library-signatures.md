@@ -49,6 +49,17 @@ public finite law i64[min max] RotateRight(i64[min max] value, i64[min max] amou
 
 Source: `stdlib/src/System/C.stark`
 
+Compiler-known C primitive aliases (target-resolved to Stark sized primitives):
+
+`c_char`, `c_schar`, `c_uchar`, `c_short`, `c_ushort`, `c_int`, `c_uint`,
+`c_long`, `c_ulong`, `c_longlong`, `c_ulonglong`, `c_size_t`, `c_ptrdiff_t`, and
+`c_void` (incomplete pointee, valid only behind `rawptr`/`rawmutptr`). The
+compile-time bool `System.C.c_char_is_signed` reports the target's plain-`char`
+signedness. `c_int` is `i32[min max]`; `c_long` is `i32[min max]` on
+ILP32/LLP64 and `i64[min max]` on LP64; `c_size_t` is `u64[0 max]` on 64-bit and
+`u32[0 max]` on 32-bit. No implicit conversion exists between `rawptr<c_char>`
+and `ascii`, or between `rawptr<c_void>` and a typed raw pointer.
+
 Public types:
 
 - `enum CStringError`
