@@ -189,7 +189,7 @@ working and the need is concrete.
 - [ ] Make ordinary builds discover bundled stdlib artifacts.
   - [ ] Add a dedicated stdlib discovery resolver with explicit inputs for target triple, profile, compiler stage, current project root, repo root, build root, compiler distribution root, and user config.
   - [ ] Implement explicit overrides first: CLI flags, project manifest fields, solution manifest fields, user config, and existing `-I`, `-L`, package library override behavior.
-  - [x] Implement stage/build-local lookup for bootstrap artifacts under `.stark/build/<profile>/<target-triple>/<stage>/stdlib/` from [25-build-artifact-layout.md](25-build-artifact-layout.md).
+  - [x] Implement stage/build-local lookup for bootstrap artifacts under `build/<profile>/<target-triple>/<stage>/stdlib/` from [25-build-artifact-layout.md](25-build-artifact-layout.md).
   - [x] Implement source-tree development lookup through repo `stdlib/Stark.toml` and `stdlib/dist` artifacts without requiring release layout.
   - [x] Implement installed bundled lookup relative to the active compiler distribution.
   - [ ] Validate discovered stdlib binary package image, native library, target triple, data layout, profile, and compiler/package compatibility before use.

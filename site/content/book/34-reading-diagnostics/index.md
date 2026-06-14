@@ -290,16 +290,13 @@ Fix the package that owns the native boundary. Do not copy linker flags into
 every consuming executable.
 
 For missing imports, check the source and the manifest together. The source
-must import the module, and the project must depend on the package:
+must import the module. If the missing module is from an ordinary package, the
+project must also depend on that package. `System.*` imports use standard
+library discovery instead of a `stdlib` dependency:
 
 ```stark
 import System.Console
 module App
-```
-
-```toml
-[dependencies]
-stdlib = { path = "../../stdlib" }
 ```
 
 For missing native functions, check the Stark declaration and the native symbol

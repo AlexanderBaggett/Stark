@@ -145,7 +145,7 @@ stark clean profile
 Manifest discovery searches upward. The nearest `Stark.toml` runs in project
 mode. The nearest `Stark.solution.toml` runs in solution mode.
 
-Project command outputs use `.stark/build/<profile>/<target-triple>/<stage>/`.
+Project command outputs use `build/<profile>/<target-triple>/<stage>/`.
 The current host driver supports `stage0`: executables and libraries go under
 `bin/<project>/`, saved native intermediates under `obj/<project>/`, library
 package images under `pkg/<project>/`, and test executables plus generated
@@ -231,11 +231,11 @@ geometry = { path = "../geometry" }
 Build outputs and caches live under the project or solution work area:
 
 ```text
-.stark/build/<profile>/<target-triple>/stage0/bin/<project>
-.stark/build/<profile>/<target-triple>/stage0/obj/<project>
-.stark/build/<profile>/<target-triple>/stage0/pkg/<project>
-.stark/build/<profile>/<target-triple>/stage0/tests/<project>
-.stark/build/<profile>/<target-triple>/stage0/stdlib
+build/<profile>/<target-triple>/stage0/bin/<project>
+build/<profile>/<target-triple>/stage0/obj/<project>
+build/<profile>/<target-triple>/stage0/pkg/<project>
+build/<profile>/<target-triple>/stage0/tests/<project>
+build/<profile>/<target-triple>/stage0/stdlib
 .stark/cache
 .stark/packages
 ```

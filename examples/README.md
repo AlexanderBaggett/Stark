@@ -8,7 +8,7 @@ The examples directory includes `Stark.toml` project manifests and a root
 `Stark.solution.toml` for the current project driver.
 
 From this directory, the default solution build covers the examples that do not
-need a local native graphics library or a standard-library package rebuild:
+need a local native graphics library:
 
 ```bash
 dotnet run --project ../src -- build
@@ -26,7 +26,7 @@ dotnet run --project ../src -- build http-get
 ```
 
 The `standard-library` manifest builds through the project driver and is the
-recommended smoke test for examples that use the packaged standard library.
+recommended smoke test for examples that use `System.*` modules.
 
 `raylib` and `breakout` require Raylib to be available through `pkg-config` or
 through a local native path configured in `Stark.user.toml` or
@@ -128,8 +128,7 @@ Build it through the examples solution:
 
 ```bash
 cd examples
-dotnet run --project ../src -- build standard-library
-./.stark/build/dev/standard-library/standard-library
+dotnet run --project ../src -- run standard-library
 ```
 
 For a quick source-imported check from the repository root:
@@ -150,8 +149,7 @@ This example requires OpenSSL development headers and libraries discoverable via
 Build and run it from the examples solution:
 
 ```bash
-dotnet run --project ../src -- build http-get
-./.stark/build/dev/http-get/http-get
+dotnet run --project ../src -- run http-get
 ```
 
 ## `build-your-own-git/`
