@@ -166,7 +166,7 @@ often enough that the parser should not be casually wasteful.
 
 ## 8. Documentation Work
 
-- [ ] Document `System.Toml` in the standard library reference.
-- [ ] Update project/build docs to say Stark manifests are parsed through
+- [x] Document `System.Toml` in the standard library reference.
+- [x] Update project/build docs to say Stark manifests are parsed through
       `System.Toml`.
 - [ ] Document the supported TOML version and any temporary bootstrap subset.
