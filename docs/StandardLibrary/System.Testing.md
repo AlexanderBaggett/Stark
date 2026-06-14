@@ -321,6 +321,10 @@ public fn System.Memory.MemoryStatus AppendSnapshotDifference(mut borrow System.
   in stable collection groups at the first occurrence of each named collection,
   preserving fact order inside the collection and adding no runtime cost for
   uncollected facts.
+- `stark test --collection <name[,name...]>` runs only the facts tagged with the
+  named `[Collection]`s. The flag is repeatable and comma-splits each value, with
+  union semantics across all selections. `stark test --list-collections` prints
+  the project's collection names without running any facts.
 - Test roots that contain `[Fact]` or `[Theory]` metadata should not declare their own
   `main`; manual runners remain a compatibility path for bootstrap test
   executables with no generated test metadata.
