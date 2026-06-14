@@ -45,6 +45,6 @@ Design syntax for each of the following C interop features. Each item is a remin
 ---
 
 ## Cross-cutting notes
-- [ ] Keep all syntax consistent with Allman braces, 4-space indent, PascalCase/camelCase
-- [ ] Decide attribute-style vs. modifier-style uniformly across these features
-- [ ] Document each in the stdlib FFI section and the Agent Skills SKILL.md
+- [x] Keep all syntax consistent with Allman braces, 4-space indent, PascalCase/camelCase
+- [x] Decide attribute-style vs. modifier-style uniformly across these features - layout uses attributes (`[StructLayout(C)]`, `[Pack(N)]`, `[Align(N)]`, `[FieldOffset(N)]`); ABI/varargs use the `ffi(...)`/`varargs` modifiers
+- [x] Document each in the stdlib FFI section and the Agent Skills SKILL.md - covered in `docs/Userfacing/LanguageReference.md` (§8.7, §13.4, §13.5, §13.1), `docs/StandardLibrary/System.C.md`, `skills/stark-language/SKILL.md`, and `skills/stark-language/references/ffi-native-layout-reference.md` + `standard-library-signatures.md`

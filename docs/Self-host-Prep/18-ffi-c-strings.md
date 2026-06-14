@@ -417,7 +417,9 @@ Recommended diagnostics:
       coverage; generic foreign-owned copy/dispose coverage has targeted
       source/runtime tests. LLVM binding-specific string ownership coverage
       remains with doc `23`.
-- [~] Update user-facing FFI docs and Stark language skill references. Stark
-      language skill references now cover `System.C` C strings, varargs C string
-      use, and foreign-owned copy/dispose helpers; user-facing FFI/book docs
-      remain.
+- [x] Update user-facing FFI docs and Stark language skill references. Stark
+      language skill references cover `System.C` C strings, varargs C string
+      use, and foreign-owned copy/dispose helpers; user-facing FFI docs
+      (`LanguageReference.md` §13.5, `docs/StandardLibrary/System.C.md`) now
+      document `CStr`/`OwnedCStr`/`CCharBuffer`, explicit conversions, and the
+      `%s` varargs rule. LLVM-binding-specific owner types stay with doc `23`.

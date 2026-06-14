@@ -960,7 +960,9 @@ FFI rules:
 
 - Declare imported FFI as `unsafe ffi fn`.
 - An `ffi` function uses the target C ABI by default; spell a different convention as `ffi(abi)` (e.g. `unsafe ffi(stdcall) fn`), or `ffi(platform(...))` for per-target selection. The ABI is part of `fnptr<ffi(c) fn ...>` type identity. Supported names: `c`, `cdecl`, `stdcall`, `fastcall`, `thiscall`, `vectorcall`, `sysv`, `win64`, `aapcs`, `aapcs64`.
-- C-facing aggregates use layout attributes: `[StructLayout(C)]` / `[StructLayout(Explicit)]`, `[Pack(N)]`, `[Align(N)]`, and `[FieldOffset(N)]`. Default Stark layout is not a stable ABI.
+- C-facing aggregates use layout attributes: `[StructLayout(C)]` / `[StructLayout(Explicit)]`, `[Pack(N)]`, `[Align(N)]`, and `[FieldOffset(N)]`. Default Stark layout is not a stable ABI. A safe borrow of a misaligned packed field is rejected; a raw pointer to one is allowed and keeps the misalignment.
+- Use `System.C` C primitive aliases (`c_char`, `c_int`, `c_long`, `c_size_t`, `c_ptrdiff_t`, `c_void`, …) for C integer/pointer-size types instead of hand-picking widths; they target-resolve to Stark primitives. `c_char` signedness is target-dependent (`System.C.c_char_is_signed`); `c_void` is valid only behind `rawptr`/`rawmutptr`. A qualified alias is not a valid cast target — bind into a typed local to leave the platform-width surface.
+- C `char*` strings use `System.C` types (`CStr` borrowed, `OwnedCStr` Stark-owned, `CCharBuffer` output, `ForeignOwnedCStr` foreign-owned), not Stark `ascii`/`unicode`. Convert with `FromAscii`/`ToAscii`; a `%s` varargs argument must be `rawptr<System.C.c_char>` (pass `OwnedCStr.Data()`), never Stark text.
 - Preserve foreign symbol spelling exactly. Underscore-leading identifiers are valid for FFI symbols such as `__error`; bare `_` remains discard.
 - Use safe wrappers only when they hide raw handles, combine calls, narrow a foreign surface, or define a real Stark-level abstraction.
 - Do not let foreign code unwind through Stark frames.
