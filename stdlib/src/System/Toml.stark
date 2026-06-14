@@ -1,5 +1,8 @@
 import System.Memory
 import System.Text
+import System.Collections
+import System.IO
+import System.IO.File
 module System.Toml
 
 // Reusable TOML reader for Stark manifests, tools, tests, and user code (the
@@ -134,6 +137,18 @@ public struct TomlDocument
     public inline finite law u64[0 2 ** 63 - 1] Count(borrow TomlDocument self)
     {
         return self.Nodes.Length;
+    }
+
+    // Whole-length initialized slice views (every appended slot is written),
+    // used by the emitter so dynamic-storage reads carry an init proof.
+    internal finite law retborrow TomlNode[] NodeSlice(borrow TomlDocument self)
+    {
+        return self.Nodes[0, self.Nodes.Length];
+    }
+
+    internal finite law retborrow i8[min max][] DecodedSlice(borrow TomlDocument self)
+    {
+        return self.DecodedText[0, self.DecodedText.Length];
     }
 
     public finite law TomlKind KindAt(borrow TomlDocument self, u64[0 2 ** 63 - 1] node)
@@ -1812,4 +1827,1000 @@ internal fn TomlStatus ParseInteger(
 
     stack u64[0 2 ** 63 - 1] textLength = (u64[0 2 ** 63 - 1])(document.DecodedText.Length - textStart);
     return AppendNode(document, TomlKind.Integer, parentPlusOne, hasKey, keyStart, keyLength, textStart, textLength, valueLine, valueColumn);
+}
+
+// ---------------------------------------------------------------------------
+// Deterministic emitter (doc 21 work item: deterministic TOML writing)
+// ---------------------------------------------------------------------------
+//
+// EmitText/Emit serialize a parsed TomlDocument back to canonical TOML text.
+// Output is deterministic: members of every table are written in ascending
+// decoded-key byte order, scalar members precede sub-tables, sub-tables are
+// emitted as bracket headers carrying their full dotted path, and arrays keep
+// their source element order (TOML arrays are ordered). The same document
+// always produces byte-identical text, and re-parsing that text yields the
+// same structure (parse -> emit -> parse stability).
+//
+// Value kinds the staged parser cannot produce (anything outside Table/Array/
+// Text/Integer/True/False) route through an UnsupportedValue diagnostic rather
+// than inventing a spelling.
+
+internal struct TomlChildList
+{
+    dynamic u64[0 2 ** 63 - 1] Indices;
+
+    TomlChildList()
+    {
+        self.Indices = new();
+    }
+
+    finite law u64[0 2 ** 63 - 1] Count(borrow TomlChildList self)
+    {
+        return self.Indices.Length;
+    }
+
+    finite law u64[0 2 ** 63 - 1] At(borrow TomlChildList self, u64[0 2 ** 63 - 1] position)
+    {
+        if (position >= self.Indices.Length)
+        {
+            return 0;
+        }
+
+        return self.Indices[position];
+    }
+
+    fn bool Append(mut borrow TomlChildList self, u64[0 2 ** 63 - 1] node)
+    {
+        if (!self.Indices.TryReserve(1))
+        {
+            return false;
+        }
+
+        init self.Indices[self.Indices.Length] = node;
+        return true;
+    }
+
+    // Whole-length initialized mutable slice view (every appended slot is
+    // written), used by the in-place key sort.
+    finite retborrow mut u64[0 2 ** 63 - 1][] AsMutableSlice(mut borrow TomlChildList self)
+    {
+        return self.Indices[0, self.Indices.Length];
+    }
+}
+
+// Compares two nodes by their decoded key bytes (lexicographic, then shorter
+// key first). A node without a key sorts before one with a key.
+internal finite law System.Collections.Ordering CompareNodeKeys(
+    borrow TomlDocument document,
+    u64[0 2 ** 63 - 1] left,
+    u64[0 2 ** 63 - 1] right)
+{
+    stack TomlNode[] nodes = document.NodeSlice();
+    if (left >= nodes.Length || right >= nodes.Length)
+    {
+        return System.Collections.Ordering.Equal;
+    }
+
+    stack bool leftHasKey = nodes[left].HasKey;
+    stack bool rightHasKey = nodes[right].HasKey;
+    if (!leftHasKey && !rightHasKey)
+    {
+        return System.Collections.Ordering.Equal;
+    }
+
+    if (!leftHasKey)
+    {
+        return System.Collections.Ordering.Less;
+    }
+
+    if (!rightHasKey)
+    {
+        return System.Collections.Ordering.Greater;
+    }
+
+    stack u64[0 2 ** 63 - 1] leftStart = nodes[left].KeyStart;
+    stack u64[0 2 ** 63 - 1] leftLength = nodes[left].KeyLength;
+    stack u64[0 2 ** 63 - 1] rightStart = nodes[right].KeyStart;
+    stack u64[0 2 ** 63 - 1] rightLength = nodes[right].KeyLength;
+
+    stack i8[min max][] decoded = document.DecodedSlice();
+    stack mut u64[0 2 ** 63 - 1] sharedLength = leftLength;
+    if (rightLength < sharedLength)
+    {
+        sharedLength = rightLength;
+    }
+
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < sharedLength; index += 1)
+    {
+        stack u64[0 2 ** 63 - 1] leftPos = (u64[0 2 ** 63 - 1])(leftStart + index);
+        stack u64[0 2 ** 63 - 1] rightPos = (u64[0 2 ** 63 - 1])(rightStart + index);
+        if (leftPos >= decoded.Length || rightPos >= decoded.Length)
+        {
+            return System.Collections.Ordering.Equal;
+        }
+
+        stack i8[min max] leftByte = decoded[leftPos];
+        stack i8[min max] rightByte = decoded[rightPos];
+        stack i32[min max] leftValue = ByteOrderValue(leftByte);
+        stack i32[min max] rightValue = ByteOrderValue(rightByte);
+        if (leftValue < rightValue)
+        {
+            return System.Collections.Ordering.Less;
+        }
+
+        if (leftValue > rightValue)
+        {
+            return System.Collections.Ordering.Greater;
+        }
+    }
+
+    if (leftLength < rightLength)
+    {
+        return System.Collections.Ordering.Less;
+    }
+
+    if (leftLength > rightLength)
+    {
+        return System.Collections.Ordering.Greater;
+    }
+
+    return System.Collections.Ordering.Equal;
+}
+
+internal finite law i32[min max] ByteOrderValue(i8[min max] value)
+{
+    if (value < 0)
+    {
+        return ((i32[min max])value) + 256;
+    }
+
+    return (i32[min max])value;
+}
+
+// Collects the direct children of `parent` into a key-sorted list. Scalar
+// members and sub-tables are gathered separately so the caller can emit all
+// scalars before any sub-table header, matching canonical TOML shape.
+internal fn bool CollectSortedChildren(
+    borrow TomlDocument document,
+    u64[0 2 ** 63 - 1] parent,
+    mut borrow TomlChildList scalars,
+    mut borrow TomlChildList tables)
+{
+    stack u64[0 2 ** 63 - 1] parentPlusOne = (u64[0 2 ** 63 - 1])(parent + 1);
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = parentPlusOne; index < document.Nodes.Length; index += 1)
+    {
+        if (document.Nodes[index].ParentPlusOne != parentPlusOne)
+        {
+            continue;
+        }
+
+        if (document.Nodes[index].Kind == TomlKind.Table)
+        {
+            if (!tables.Append(index))
+            {
+                return false;
+            }
+        }
+        else
+        {
+            if (!scalars.Append(index))
+            {
+                return false;
+            }
+        }
+    }
+
+    SortChildrenByKey(document, scalars);
+    SortChildrenByKey(document, tables);
+    return true;
+}
+
+// Insertion sort by decoded key bytes. Tables and the manifests they hold are
+// small, so the simple stable sort keeps the emitter allocation-light and the
+// output deterministic without depending on hash iteration order.
+internal fn void SortChildrenByKey(borrow TomlDocument document, mut borrow TomlChildList list)
+{
+    stack mut u64[0 2 ** 63 - 1][] indices = list.AsMutableSlice();
+    InsertionSortIndices(document, indices);
+    return;
+}
+
+// In-place insertion sort over a mutable slice of node indices, ordered by
+// decoded key bytes. A `mut borrow` slice parameter keeps element writes
+// assignable; the lists are small (table members), so insertion sort is fine.
+internal fn void InsertionSortIndices(
+    borrow TomlDocument document,
+    mut borrow u64[0 2 ** 63 - 1][] indices)
+{
+    stack u64[0 2 ** 63 - 1] count = indices.Length;
+    if (count < 2)
+    {
+        return;
+    }
+
+    for willexit (stack mut u64[0 2 ** 63 - 1] i = 1; i < count; i += 1)
+    {
+        stack u64[0 2 ** 63 - 1] current = indices[i];
+        stack mut u64[0 2 ** 63 - 1] j = i;
+        // Shift greater predecessors one slot right and stop at the first
+        // predecessor that is not greater. The stop test lives in the loop
+        // guard on purpose: a `break` inside a nested `switch` would only exit
+        // the switch, leaving `j` unchanged and looping forever.
+        while willexit (j > 0 && PredecessorIsGreater(document, indices, j, current))
+        {
+            indices[j] = indices[(u64[0 2 ** 63 - 1])(j - 1)];
+            j -= 1;
+        }
+
+        indices[j] = current;
+    }
+
+    return;
+}
+
+// True when the slot before `j` sorts after `current` by decoded key bytes.
+internal finite law bool PredecessorIsGreater(
+    borrow TomlDocument document,
+    borrow u64[0 2 ** 63 - 1][] indices,
+    u64[0 2 ** 63 - 1] j,
+    u64[0 2 ** 63 - 1] current)
+{
+    if (j == 0 || j > indices.Length)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] previous = indices[(u64[0 2 ** 63 - 1])(j - 1)];
+    return CompareNodeKeys(document, previous, current) == System.Collections.Ordering.Greater;
+}
+
+// True when a decoded byte range is a non-empty bare key (so it can be emitted
+// without quotes and still re-parse as the same key).
+internal finite law bool IsBareKeyRange(
+    borrow TomlDocument document,
+    u64[0 2 ** 63 - 1] start,
+    u64[0 2 ** 63 - 1] length)
+{
+    stack i8[min max][] decoded = document.DecodedSlice();
+    if (length == 0 || start + length > decoded.Length)
+    {
+        return false;
+    }
+
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < length; index += 1)
+    {
+        stack u64[0 2 ** 63 - 1] position = (u64[0 2 ** 63 - 1])(start + index);
+        if (position >= decoded.Length)
+        {
+            return false;
+        }
+
+        if (!IsBareKeyByte(decoded[position]))
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+// Deterministic TOML emitter sink. Output is appended to an owned ascii buffer
+// so the caller owns the result and IO is decoupled from formatting.
+public struct TomlWriter
+{
+    internal System.Text.OwnedAscii Buffer;
+
+    TomlWriter()
+    {
+        self.Buffer = new();
+    }
+
+    public finite ascii View(mut borrow TomlWriter self)
+    {
+        return self.Buffer.View();
+    }
+
+    public finite law retborrow i8[min max][] Bytes(borrow TomlWriter self)
+    {
+        return self.Buffer.AsSlice();
+    }
+
+    public finite law u64[0 2 ** 63 - 1] Length(borrow TomlWriter self)
+    {
+        return self.Buffer.Length();
+    }
+
+    internal fn TomlStatus AppendText(mut borrow TomlWriter self, ascii text)
+    {
+        return TomlStatusFromMemory(self.Buffer.AppendAscii(text));
+    }
+
+    internal fn TomlStatus AppendByte(mut borrow TomlWriter self, i8[min max] value)
+    {
+        return TomlStatusFromMemory(self.Buffer.AppendByte(value));
+    }
+}
+
+internal finite law TomlStatus TomlStatusFromMemory(System.Memory.MemoryStatus status)
+{
+    switch (status)
+    {
+        case System.Memory.MemoryStatus.Ok:
+            return TomlStatus.Ok;
+        case System.Memory.MemoryStatus.Err(var error):
+            return TomlStatus.Err(TomlError.OutOfMemory);
+    }
+}
+
+// Serializes the whole document into the writer using canonical ordering.
+public fn TomlStatus Write(mut borrow TomlWriter writer, mut borrow TomlDocument document)
+{
+    if (document.Nodes.Length == 0)
+    {
+        return TomlStatus.Ok;
+    }
+
+    stack mut OwnedAscii prefix = new();
+    return WriteTable(writer, document, TomlRootNode, prefix, true);
+}
+
+// Emits one table: its scalar members as `key = value` lines, then each
+// sub-table as `[dotted.path]` followed by its own members (depth-first).
+internal fn TomlStatus WriteTable(
+    mut borrow TomlWriter writer,
+    mut borrow TomlDocument document,
+    u64[0 2 ** 63 - 1] table,
+    mut borrow OwnedAscii prefix,
+    bool isRoot)
+{
+    stack mut TomlChildList scalars = new();
+    stack mut TomlChildList tables = new();
+    if (!CollectSortedChildren(document, table, scalars, tables))
+    {
+        return TomlStatus.Err(TomlError.OutOfMemory);
+    }
+
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < scalars.Count(); index += 1)
+    {
+        stack u64[0 2 ** 63 - 1] member = scalars.At(index);
+        stack TomlStatus keyStatus = WriteKey(writer, document, member);
+        switch (keyStatus)
+        {
+            case TomlStatus.Err(var keyError):
+                return TomlStatus.Err(keyError);
+            case TomlStatus.Ok:
+        }
+
+        stack TomlStatus separator = writer.AppendText(" = ");
+        switch (separator)
+        {
+            case TomlStatus.Err(var separatorError):
+                return TomlStatus.Err(separatorError);
+            case TomlStatus.Ok:
+        }
+
+        stack TomlStatus valueStatus = WriteValue(writer, document, member);
+        switch (valueStatus)
+        {
+            case TomlStatus.Err(var valueError):
+                return TomlStatus.Err(valueError);
+            case TomlStatus.Ok:
+        }
+
+        stack TomlStatus newline = writer.AppendByte((i8[min max])10);
+        switch (newline)
+        {
+            case TomlStatus.Err(var newlineError):
+                return TomlStatus.Err(newlineError);
+            case TomlStatus.Ok:
+        }
+    }
+
+    for willexit (stack mut u64[0 2 ** 63 - 1] tableIndex = 0; tableIndex < tables.Count(); tableIndex += 1)
+    {
+        stack u64[0 2 ** 63 - 1] subTable = tables.At(tableIndex);
+
+        stack mut OwnedAscii childPrefix = new();
+        stack TomlStatus prefixStatus = BuildChildPrefix(document, prefix, subTable, childPrefix);
+        switch (prefixStatus)
+        {
+            case TomlStatus.Err(var prefixError):
+                return TomlStatus.Err(prefixError);
+            case TomlStatus.Ok:
+        }
+
+        stack mut bool needBlank = !isRoot || scalars.Count() > 0 || tableIndex > 0;
+        if (needBlank)
+        {
+            stack TomlStatus blank = writer.AppendByte((i8[min max])10);
+            switch (blank)
+            {
+                case TomlStatus.Err(var blankError):
+                    return TomlStatus.Err(blankError);
+                case TomlStatus.Ok:
+            }
+        }
+
+        stack TomlStatus open = writer.AppendByte((i8[min max])91);
+        switch (open)
+        {
+            case TomlStatus.Err(var openError):
+                return TomlStatus.Err(openError);
+            case TomlStatus.Ok:
+        }
+
+        stack TomlStatus header = writer.AppendText(childPrefix.View());
+        switch (header)
+        {
+            case TomlStatus.Err(var headerError):
+                return TomlStatus.Err(headerError);
+            case TomlStatus.Ok:
+        }
+
+        stack TomlStatus close = writer.AppendByte((i8[min max])93);
+        switch (close)
+        {
+            case TomlStatus.Err(var closeError):
+                return TomlStatus.Err(closeError);
+            case TomlStatus.Ok:
+        }
+
+        stack TomlStatus headerNewline = writer.AppendByte((i8[min max])10);
+        switch (headerNewline)
+        {
+            case TomlStatus.Err(var headerNewlineError):
+                return TomlStatus.Err(headerNewlineError);
+            case TomlStatus.Ok:
+        }
+
+        stack TomlStatus recursed = WriteTable(writer, document, subTable, childPrefix, false);
+        switch (recursed)
+        {
+            case TomlStatus.Err(var recursedError):
+                return TomlStatus.Err(recursedError);
+            case TomlStatus.Ok:
+        }
+    }
+
+    return TomlStatus.Ok;
+}
+
+// Appends `prefix + "." + key` (or just `key` at the root) into destination,
+// quoting any key segment that is not a bare key.
+internal fn TomlStatus BuildChildPrefix(
+    mut borrow TomlDocument document,
+    mut borrow OwnedAscii prefix,
+    u64[0 2 ** 63 - 1] node,
+    mut borrow OwnedAscii destination)
+{
+    destination.Clear();
+    if (prefix.Length() > 0)
+    {
+        stack System.Memory.MemoryStatus copyStatus = destination.AppendAscii(prefix.View());
+        switch (copyStatus)
+        {
+            case System.Memory.MemoryStatus.Err(var copyError):
+                return TomlStatus.Err(TomlError.OutOfMemory);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        stack System.Memory.MemoryStatus dotStatus = destination.AppendByte((i8[min max])46);
+        switch (dotStatus)
+        {
+            case System.Memory.MemoryStatus.Err(var dotError):
+                return TomlStatus.Err(TomlError.OutOfMemory);
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
+    return AppendKeyText(document, node, destination);
+}
+
+// Appends one node's key (bare when possible, otherwise basic-quoted with
+// escapes) into the destination owned buffer.
+internal fn TomlStatus AppendKeyText(
+    mut borrow TomlDocument document,
+    u64[0 2 ** 63 - 1] node,
+    mut borrow OwnedAscii destination)
+{
+    stack TomlNode[] nodes = document.NodeSlice();
+    if (node >= nodes.Length || !nodes[node].HasKey)
+    {
+        // A keyless node has nothing to spell; an empty quoted key is valid.
+        return TomlStatusFromMemory(destination.AppendAscii("\"\""));
+    }
+
+    stack u64[0 2 ** 63 - 1] keyStart = nodes[node].KeyStart;
+    stack u64[0 2 ** 63 - 1] keyLength = nodes[node].KeyLength;
+
+    if (IsBareKeyRange(document, keyStart, keyLength))
+    {
+        return AppendRangeBytes(document, keyStart, keyLength, destination);
+    }
+
+    return AppendQuotedRange(document, keyStart, keyLength, destination);
+}
+
+internal fn TomlStatus AppendRangeBytes(
+    mut borrow TomlDocument document,
+    u64[0 2 ** 63 - 1] start,
+    u64[0 2 ** 63 - 1] length,
+    mut borrow OwnedAscii destination)
+{
+    stack i8[min max][] decoded = document.DecodedSlice();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < length; index += 1)
+    {
+        stack u64[0 2 ** 63 - 1] position = (u64[0 2 ** 63 - 1])(start + index);
+        if (position >= decoded.Length)
+        {
+            return TomlStatus.Ok;
+        }
+
+        stack System.Memory.MemoryStatus appended = destination.AppendByte(decoded[position]);
+        switch (appended)
+        {
+            case System.Memory.MemoryStatus.Err(var error):
+                return TomlStatus.Err(TomlError.OutOfMemory);
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
+    return TomlStatus.Ok;
+}
+
+// Appends a `"..."` basic string for a decoded byte range, escaping the
+// control bytes and quote/backslash that the parser also decodes.
+internal fn TomlStatus AppendQuotedRange(
+    mut borrow TomlDocument document,
+    u64[0 2 ** 63 - 1] start,
+    u64[0 2 ** 63 - 1] length,
+    mut borrow OwnedAscii destination)
+{
+    stack System.Memory.MemoryStatus openQuote = destination.AppendByte((i8[min max])34);
+    switch (openQuote)
+    {
+        case System.Memory.MemoryStatus.Err(var openError):
+            return TomlStatus.Err(TomlError.OutOfMemory);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    stack i8[min max][] decoded = document.DecodedSlice();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < length; index += 1)
+    {
+        stack u64[0 2 ** 63 - 1] position = (u64[0 2 ** 63 - 1])(start + index);
+        if (position >= decoded.Length)
+        {
+            break;
+        }
+
+        stack TomlStatus escaped = AppendEscapedByte(destination, decoded[position]);
+        switch (escaped)
+        {
+            case TomlStatus.Err(var escapedError):
+                return TomlStatus.Err(escapedError);
+            case TomlStatus.Ok:
+        }
+    }
+
+    return TomlStatusFromMemory(destination.AppendByte((i8[min max])34));
+}
+
+// Mirrors the parser's basic-string escape set so emitted text re-parses to the
+// same decoded bytes.
+internal fn TomlStatus AppendEscapedByte(mut borrow OwnedAscii destination, i8[min max] unit)
+{
+    if (unit == 34)
+    {
+        return TomlStatusFromMemory(destination.AppendAscii("\\\""));
+    }
+
+    if (unit == 92)
+    {
+        return TomlStatusFromMemory(destination.AppendAscii("\\\\"));
+    }
+
+    if (unit == 8)
+    {
+        return TomlStatusFromMemory(destination.AppendAscii("\\b"));
+    }
+
+    if (unit == 9)
+    {
+        return TomlStatusFromMemory(destination.AppendAscii("\\t"));
+    }
+
+    if (unit == 10)
+    {
+        return TomlStatusFromMemory(destination.AppendAscii("\\n"));
+    }
+
+    if (unit == 12)
+    {
+        return TomlStatusFromMemory(destination.AppendAscii("\\f"));
+    }
+
+    if (unit == 13)
+    {
+        return TomlStatusFromMemory(destination.AppendAscii("\\r"));
+    }
+
+    if (unit >= 0 && unit < 32)
+    {
+        stack System.Memory.MemoryStatus prefix = destination.AppendAscii("\\u00");
+        switch (prefix)
+        {
+            case System.Memory.MemoryStatus.Err(var prefixError):
+                return TomlStatus.Err(TomlError.OutOfMemory);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        stack System.Memory.MemoryStatus high = destination.AppendByte(EmitHexDigit((u64[0 2 ** 63 - 1])(unit / 16)));
+        switch (high)
+        {
+            case System.Memory.MemoryStatus.Err(var highError):
+                return TomlStatus.Err(TomlError.OutOfMemory);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        return TomlStatusFromMemory(destination.AppendByte(EmitHexDigit((u64[0 2 ** 63 - 1])(unit % 16))));
+    }
+
+    return TomlStatusFromMemory(destination.AppendByte(unit));
+}
+
+internal finite law i8[min max] EmitHexDigit(u64[0 2 ** 63 - 1] value)
+{
+    stack u64[0 2 ** 63 - 1] digit = (u64[0 2 ** 63 - 1])(value % 16);
+    if (digit < 10)
+    {
+        return (i8[min max])(48 + digit);
+    }
+
+    return (i8[min max])(97 + digit);
+}
+
+// Emits one node key directly into the writer (used for `key = value` lines).
+internal fn TomlStatus WriteKey(
+    mut borrow TomlWriter writer,
+    mut borrow TomlDocument document,
+    u64[0 2 ** 63 - 1] node)
+{
+    stack mut OwnedAscii keyText = new();
+    stack TomlStatus built = AppendKeyText(document, node, keyText);
+    switch (built)
+    {
+        case TomlStatus.Err(var error):
+            return TomlStatus.Err(error);
+        case TomlStatus.Ok:
+    }
+
+    return writer.AppendText(keyText.View());
+}
+
+// Emits one value node: string, integer token, boolean, or inline array. Inline
+// tables and any value kind the parser cannot produce route through
+// UnsupportedValue so the emitter never invents a spelling it cannot read back.
+internal fn TomlStatus WriteValue(
+    mut borrow TomlWriter writer,
+    mut borrow TomlDocument document,
+    u64[0 2 ** 63 - 1] node)
+{
+    stack TomlNode[] nodes = document.NodeSlice();
+    if (node >= nodes.Length)
+    {
+        return TomlStatus.Err(TomlError.UnsupportedValue
+        {
+            Line: 0, Column: 0
+        });
+    }
+
+    switch (nodes[node].Kind)
+    {
+        case TomlKind.Text:
+            stack u64[0 2 ** 63 - 1] textStart = nodes[node].TextStart;
+            stack u64[0 2 ** 63 - 1] textLength = nodes[node].TextLength;
+            stack mut OwnedAscii quoted = new();
+            stack TomlStatus built = AppendQuotedRange(document, textStart, textLength, quoted);
+            switch (built)
+            {
+                case TomlStatus.Err(var builtError):
+                    return TomlStatus.Err(builtError);
+                case TomlStatus.Ok:
+            }
+
+            return writer.AppendText(quoted.View());
+        case TomlKind.Integer:
+            stack u64[0 2 ** 63 - 1] integerStart = nodes[node].TextStart;
+            stack u64[0 2 ** 63 - 1] integerLength = nodes[node].TextLength;
+            stack mut OwnedAscii integerText = new();
+            stack TomlStatus integerBuilt = AppendRangeBytes(document, integerStart, integerLength, integerText);
+            switch (integerBuilt)
+            {
+                case TomlStatus.Err(var integerError):
+                    return TomlStatus.Err(integerError);
+                case TomlStatus.Ok:
+            }
+
+            return writer.AppendText(integerText.View());
+        case TomlKind.True:
+            return writer.AppendText("true");
+        case TomlKind.False:
+            return writer.AppendText("false");
+        case TomlKind.Array:
+            return WriteArray(writer, document, node);
+        case TomlKind.Table:
+            return WriteInlineTable(writer, document, node);
+    }
+}
+
+// Emits an inline array `[a, b, c]` preserving element order.
+internal fn TomlStatus WriteArray(
+    mut borrow TomlWriter writer,
+    mut borrow TomlDocument document,
+    u64[0 2 ** 63 - 1] array)
+{
+    stack TomlStatus open = writer.AppendByte((i8[min max])91);
+    switch (open)
+    {
+        case TomlStatus.Err(var openError):
+            return TomlStatus.Err(openError);
+        case TomlStatus.Ok:
+    }
+
+    stack u64[0 2 ** 63 - 1] parentPlusOne = (u64[0 2 ** 63 - 1])(array + 1);
+    stack mut u64[0 2 ** 63 - 1] emitted = 0;
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = parentPlusOne; index < document.Nodes.Length; index += 1)
+    {
+        if (document.Nodes[index].ParentPlusOne != parentPlusOne)
+        {
+            continue;
+        }
+
+        if (emitted > 0)
+        {
+            stack TomlStatus comma = writer.AppendText(", ");
+            switch (comma)
+            {
+                case TomlStatus.Err(var commaError):
+                    return TomlStatus.Err(commaError);
+                case TomlStatus.Ok:
+            }
+        }
+
+        stack TomlStatus element = WriteValue(writer, document, index);
+        switch (element)
+        {
+            case TomlStatus.Err(var elementError):
+                return TomlStatus.Err(elementError);
+            case TomlStatus.Ok:
+        }
+
+        emitted += 1;
+    }
+
+    return writer.AppendByte((i8[min max])93);
+}
+
+// Emits an inline table `{ key = value, ... }` with key-sorted members. This is
+// the shape the parser produces for `{ ... }` values nested inside arrays or
+// other inline tables, so round-tripping stays structurally stable.
+internal fn TomlStatus WriteInlineTable(
+    mut borrow TomlWriter writer,
+    mut borrow TomlDocument document,
+    u64[0 2 ** 63 - 1] table)
+{
+    stack mut TomlChildList scalars = new();
+    stack mut TomlChildList tables = new();
+    if (!CollectSortedChildren(document, table, scalars, tables))
+    {
+        return TomlStatus.Err(TomlError.OutOfMemory);
+    }
+
+    stack TomlStatus open = writer.AppendByte((i8[min max])123);
+    switch (open)
+    {
+        case TomlStatus.Err(var openError):
+            return TomlStatus.Err(openError);
+        case TomlStatus.Ok:
+    }
+
+    stack mut u64[0 2 ** 63 - 1] emitted = 0;
+    switch (WriteInlineMembers(writer, document, scalars, emitted))
+    {
+        case TomlResult<u64[0 2 ** 63 - 1]>.Err(var scalarError):
+            return TomlStatus.Err(scalarError);
+        case TomlResult<u64[0 2 ** 63 - 1]>.Ok(var scalarCount):
+            emitted = scalarCount;
+    }
+
+    switch (WriteInlineMembers(writer, document, tables, emitted))
+    {
+        case TomlResult<u64[0 2 ** 63 - 1]>.Err(var tableError):
+            return TomlStatus.Err(tableError);
+        case TomlResult<u64[0 2 ** 63 - 1]>.Ok(var tableCount):
+            emitted = tableCount;
+    }
+
+    if (emitted > 0)
+    {
+        return writer.AppendText(" }");
+    }
+
+    return writer.AppendByte((i8[min max])125);
+}
+
+// Emits each member of `members` as ` key = value` (space-led for the first,
+// comma-led afterwards) starting from `alreadyEmitted` and returns the running
+// count so the caller can chain scalar then sub-table members.
+internal fn TomlResult<u64[0 2 ** 63 - 1]> WriteInlineMembers(
+    mut borrow TomlWriter writer,
+    mut borrow TomlDocument document,
+    mut borrow TomlChildList members,
+    u64[0 2 ** 63 - 1] alreadyEmitted)
+{
+    stack mut u64[0 2 ** 63 - 1] emitted = alreadyEmitted;
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < members.Count(); index += 1)
+    {
+        stack u64[0 2 ** 63 - 1] member = members.At(index);
+        if (emitted == 0)
+        {
+            switch (writer.AppendByte((i8[min max])32))
+            {
+                case TomlStatus.Err(var spaceError):
+                    return TomlResult<u64[0 2 ** 63 - 1]>.Err(spaceError);
+                case TomlStatus.Ok:
+            }
+        }
+        else
+        {
+            switch (writer.AppendText(", "))
+            {
+                case TomlStatus.Err(var commaError):
+                    return TomlResult<u64[0 2 ** 63 - 1]>.Err(commaError);
+                case TomlStatus.Ok:
+            }
+        }
+
+        switch (WriteKey(writer, document, member))
+        {
+            case TomlStatus.Err(var keyError):
+                return TomlResult<u64[0 2 ** 63 - 1]>.Err(keyError);
+            case TomlStatus.Ok:
+        }
+
+        switch (writer.AppendText(" = "))
+        {
+            case TomlStatus.Err(var separatorError):
+                return TomlResult<u64[0 2 ** 63 - 1]>.Err(separatorError);
+            case TomlStatus.Ok:
+        }
+
+        switch (WriteValue(writer, document, member))
+        {
+            case TomlStatus.Err(var valueError):
+                return TomlResult<u64[0 2 ** 63 - 1]>.Err(valueError);
+            case TomlStatus.Ok:
+        }
+
+        emitted += 1;
+    }
+
+    return TomlResult<u64[0 2 ** 63 - 1]>.Ok(emitted);
+}
+
+// Serializes a document to a fresh owned ascii buffer (canonical form).
+public fn TomlResult<System.Text.OwnedAscii> Emit(mut borrow TomlDocument document)
+{
+    stack mut TomlWriter writer = new();
+    stack TomlStatus status = Write(writer, document);
+    switch (status)
+    {
+        case TomlStatus.Err(var error):
+            return TomlResult<System.Text.OwnedAscii>.Err(error);
+        case TomlStatus.Ok:
+    }
+
+    stack mut System.Text.OwnedAscii result = new();
+    stack System.Memory.MemoryStatus copied = result.AppendAscii(writer.View());
+    switch (copied)
+    {
+        case System.Memory.MemoryStatus.Err(var copyError):
+            return TomlResult<System.Text.OwnedAscii>.Err(TomlError.OutOfMemory);
+        case System.Memory.MemoryStatus.Ok:
+            return TomlResult<System.Text.OwnedAscii>.Ok(result);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// File helpers (doc 21 work item: compose System.IO.File without hiding IO)
+// ---------------------------------------------------------------------------
+//
+// TomlFileError surfaces BOTH parse/emit failures and IO failures explicitly.
+// Read helpers route file IO errors through the Io funnel; parse errors keep
+// their span-carrying TomlError. Write helpers do the same for emit + IO.
+
+public enum TomlFileError
+{
+    Io from System.IO.IOError,
+    Toml from TomlError,
+}
+
+public enum TomlFileResult<T>
+{
+    [Ok] Ok(T),
+    [Err] Err(TomlFileError),
+}
+
+public enum TomlFileStatus
+{
+    [Ok] Ok,
+    [Err] Err(TomlFileError),
+}
+
+// Reads a file with System.IO.File and parses it as TOML. IO failures and parse
+// failures are both returned as data through TomlFileError; nothing is swallowed.
+public fn TomlFileResult<TomlDocument> ReadFile(ascii path)
+{
+    stack mut System.Text.OwnedAscii contents = new();
+    switch (System.IO.File.ReadAllTextInto(path, contents))
+    {
+        case System.IO.IOStatus.Err(var ioError):
+            return TomlFileResult<TomlDocument>.Err(TomlFileError.Io(ioError));
+        case System.IO.IOStatus.Ok:
+    }
+
+    unsafe
+    {
+        switch (ParseText(contents.View()))
+        {
+            case TomlResult<TomlDocument>.Err(var parseError):
+                return TomlFileResult<TomlDocument>.Err(TomlFileError.Toml(parseError));
+            case TomlResult<TomlDocument>.Ok(var document):
+                return TomlFileResult<TomlDocument>.Ok(document);
+        }
+    }
+}
+
+// Emits the document to canonical TOML and writes it with System.IO.File. Emit
+// failures and IO failures are both surfaced explicitly through TomlFileError.
+public fn TomlFileStatus WriteFile(ascii path, mut borrow TomlDocument document)
+{
+    stack mut System.Text.OwnedAscii text = new();
+    switch (Emit(document))
+    {
+        case TomlResult<System.Text.OwnedAscii>.Err(var emitError):
+            return TomlFileStatus.Err(TomlFileError.Toml(emitError));
+        case TomlResult<System.Text.OwnedAscii>.Ok(var emitted):
+            text = emitted;
+    }
+
+    switch (System.IO.File.WriteAllText(path, text.View()))
+    {
+        case System.IO.IOStatus.Err(var ioError):
+            return TomlFileStatus.Err(TomlFileError.Io(ioError));
+        case System.IO.IOStatus.Ok:
+            return TomlFileStatus.Ok;
+    }
+}
+
+// Atomic variant of WriteFile: emits then replaces the target file in one
+// step via System.IO.File.WriteAllTextAtomic, surfacing every failure.
+public fn TomlFileStatus WriteFileAtomic(ascii path, mut borrow TomlDocument document)
+{
+    stack mut System.Text.OwnedAscii text = new();
+    switch (Emit(document))
+    {
+        case TomlResult<System.Text.OwnedAscii>.Err(var emitError):
+            return TomlFileStatus.Err(TomlFileError.Toml(emitError));
+        case TomlResult<System.Text.OwnedAscii>.Ok(var emitted):
+            text = emitted;
+    }
+
+    switch (System.IO.File.WriteAllTextAtomic(path, text.View()))
+    {
+        case System.IO.IOStatus.Err(var ioError):
+            return TomlFileStatus.Err(TomlFileError.Io(ioError));
+        case System.IO.IOStatus.Ok:
+            return TomlFileStatus.Ok;
+    }
 }
