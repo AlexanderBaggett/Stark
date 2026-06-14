@@ -874,6 +874,9 @@ const LinuxListenSyscallNumber = 50;
 const LinuxAccept4SyscallNumber = 288;
 const LinuxShutdownSyscallNumber = 48;
 const LinuxStatAtSyscallNumber = 262;
+const LinuxReadLinkAtSyscallNumber = 267;
+const LinuxSymlinkAtSyscallNumber = 266;
+const LinuxAtSymlinkNoFollowFlag = 256;
 const LinuxOpenAtSyscallNumber = 257;
 const LinuxMkdirAtSyscallNumber = 258;
 const LinuxRenameAtSyscallNumber = 264;
@@ -2721,6 +2724,149 @@ internal unsafe fn i32[min max] ReadPathMetadata(ascii path, rawmutptr<i8[min ma
     *modifiedSecondsDestination = *modifiedSecondsPointer;
     *modifiedNanosecondsDestination = *modifiedNanosecondsPointer;
     return 0;
+}
+
+internal unsafe fn i32[min max] LstatPathInto(ascii path, rawmutptr<i8[min max]> statData)
+{
+    if (statData == null)
+    {
+        return -1;
+    }
+
+    stack mut System.Runtime.Buffer.FixedByteBuffer4096 pathBuffer = new System.Runtime.Buffer.FixedByteBuffer4096();
+    stack mut Ascii preparedPath = new Ascii();
+    preparedPath.Data = pathBuffer.WritePointer();
+    preparedPath.Length = 0;
+    preparedPath.Capacity = pathBuffer.Writable();
+
+    if (!TryBuildLinuxPath(&preparedPath, path))
+    {
+        return -1;
+    }
+
+    stack i64[min max] syscallResult = LinuxSyscall4StatAt(
+        LinuxStatAtSyscallNumber,
+        LinuxAtFdcwd,
+        preparedPath.Data,
+        statData,
+        LinuxAtSymlinkNoFollowFlag);
+    if (syscallResult != 0)
+    {
+        return (i32[min max])syscallResult;
+    }
+
+    return 0;
+}
+
+internal unsafe fn i32[min max] ReadLinkMetadata(ascii path, rawmutptr<i8[min max]> metadataData)
+{
+    if (metadataData == null)
+    {
+        return -1;
+    }
+
+    stack mut System.Runtime.Buffer.FixedByteBuffer512 statBuffer = new System.Runtime.Buffer.FixedByteBuffer512();
+    stack rawmutptr<i8[min max]> statData = statBuffer.WritePointer();
+    if (statData == null)
+    {
+        return -1;
+    }
+
+    stack i32[min max] statStatus = LstatPathInto(path, statData);
+    if (statStatus != 0)
+    {
+        return statStatus;
+    }
+
+    stack rawptr<i32[min max]> modePointer = (rawptr<i32[min max]>)(&statData[LinuxStatModeOffset]);
+    stack rawptr<i64[min max]> sizePointer = (rawptr<i64[min max]>)(&statData[LinuxStatSizeOffset]);
+    stack rawptr<i64[min max]> modifiedSecondsPointer =
+        (rawptr<i64[min max]>)(&statData[LinuxStatModifiedSecondsOffset]);
+    stack rawptr<i64[min max]> modifiedNanosecondsPointer =
+        (rawptr<i64[min max]>)(&statData[LinuxStatModifiedNanosecondsOffset]);
+
+    stack i32[min max] mode = *modePointer;
+    stack mut i64[min max] size = *sizePointer;
+    if (size < 0)
+    {
+        size = 0;
+    }
+
+    stack rawmutptr<i32[min max]> kindPointer =
+        (rawmutptr<i32[min max]>)(&metadataData[LinuxPathMetadataKindOffset]);
+    stack rawmutptr<i32[min max]> permissionsPointer =
+        (rawmutptr<i32[min max]>)(&metadataData[LinuxPathMetadataPermissionsOffset]);
+    stack rawmutptr<i64[min max]> sizeDestination =
+        (rawmutptr<i64[min max]>)(&metadataData[LinuxPathMetadataSizeOffset]);
+    stack rawmutptr<i64[min max]> modifiedSecondsDestination =
+        (rawmutptr<i64[min max]>)(&metadataData[LinuxPathMetadataModifiedSecondsOffset]);
+    stack rawmutptr<i64[min max]> modifiedNanosecondsDestination =
+        (rawmutptr<i64[min max]>)(&metadataData[LinuxPathMetadataModifiedNanosecondsOffset]);
+
+    *kindPointer = DirectoryEntryKindFromLinuxMode(mode);
+    *permissionsPointer = mode & 4095;
+    *sizeDestination = size;
+    *modifiedSecondsDestination = *modifiedSecondsPointer;
+    *modifiedNanosecondsDestination = *modifiedNanosecondsPointer;
+    return 0;
+}
+
+internal unsafe fn i64[min max] ReadSymlinkInto(
+    ascii path,
+    rawmutptr<i8[min max]>[capacity] buffer,
+    u64[0 2 ** 63 - 1] capacity)
+{
+    if (buffer == null || capacity == 0)
+    {
+        return -1;
+    }
+
+    stack mut System.Runtime.Buffer.FixedByteBuffer4096 pathBuffer = new System.Runtime.Buffer.FixedByteBuffer4096();
+    stack mut Ascii preparedPath = new Ascii();
+    preparedPath.Data = pathBuffer.WritePointer();
+    preparedPath.Length = 0;
+    preparedPath.Capacity = pathBuffer.Writable();
+
+    if (!TryBuildLinuxPath(&preparedPath, path))
+    {
+        return -1;
+    }
+
+    return LinuxSyscall4StatAt(
+        LinuxReadLinkAtSyscallNumber,
+        LinuxAtFdcwd,
+        preparedPath.Data,
+        (rawmutptr<i8[min max]>)buffer,
+        (i64[min max])capacity);
+}
+
+internal fn i32[min max] CreateSymlink(ascii target, ascii linkPath)
+{
+    unsafe
+    {
+        stack mut System.Runtime.Buffer.FixedByteBuffer4096 targetBuffer = new System.Runtime.Buffer.FixedByteBuffer4096();
+        stack mut System.Runtime.Buffer.FixedByteBuffer4096 linkBuffer = new System.Runtime.Buffer.FixedByteBuffer4096();
+        stack mut Ascii preparedTarget = new Ascii();
+        preparedTarget.Data = targetBuffer.WritePointer();
+        preparedTarget.Length = 0;
+        preparedTarget.Capacity = targetBuffer.Writable();
+        stack mut Ascii preparedLink = new Ascii();
+        preparedLink.Data = linkBuffer.WritePointer();
+        preparedLink.Length = 0;
+        preparedLink.Capacity = linkBuffer.Writable();
+
+        if (!TryBuildLinuxPath(&preparedTarget, target)
+            || !TryBuildLinuxPath(&preparedLink, linkPath))
+            {
+            return -1;
+        }
+
+        return (i32[min max])LinuxSyscall3HandleRequestPointer(
+            LinuxSymlinkAtSyscallNumber,
+            preparedTarget.Data,
+            LinuxAtFdcwd,
+            preparedLink.Data);
+    }
 }
 
 internal fn i32[min max] CreateDirectory(ascii path)

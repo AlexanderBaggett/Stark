@@ -234,7 +234,7 @@ public struct Directory
 
 fn System.IO.IOError IOErrorFromPlatformResult(i32[min max] result)
 {
-    if (result == -2 || result == -3 || result == -20)
+    if (result == -2 || result == -3)
     {
         return System.IO.IOError.NotFound;
     }
@@ -259,7 +259,30 @@ fn System.IO.IOError IOErrorFromPlatformResult(i32[min max] result)
         return System.IO.IOError.BrokenPipe;
     }
 
-    if (result == -36 || result == -206)
+    if (result == -20)
+    {
+        return System.IO.IOError.NotADirectory;
+    }
+
+    if (result == -21)
+    {
+        return System.IO.IOError.IsADirectory;
+    }
+
+    // ENOTEMPTY is 39 on Linux and 66 on macOS.
+    if (result == -39 || result == -66)
+    {
+        return System.IO.IOError.DirectoryNotEmpty;
+    }
+
+    // ELOOP is 40 on Linux and 62 on macOS; EMLINK is 31.
+    if (result == -40 || result == -62 || result == -31)
+    {
+        return System.IO.IOError.TooManyLinks;
+    }
+
+    // ENAMETOOLONG is 36 on Linux and 63 on macOS; -206 is the Windows funnel.
+    if (result == -36 || result == -63 || result == -206)
     {
         return System.IO.IOError.InvalidPath;
     }
@@ -539,6 +562,14 @@ public fn System.IO.IOStatus DeleteTreeIfExists(ascii root)
                     return System.IO.IOStatus.Err(metadataError);
                 case System.IO.IOError.DiskFull:
                     return System.IO.IOStatus.Err(metadataError);
+                case System.IO.IOError.NotADirectory:
+                    return System.IO.IOStatus.Err(metadataError);
+                case System.IO.IOError.IsADirectory:
+                    return System.IO.IOStatus.Err(metadataError);
+                case System.IO.IOError.DirectoryNotEmpty:
+                    return System.IO.IOStatus.Err(metadataError);
+                case System.IO.IOError.TooManyLinks:
+                    return System.IO.IOStatus.Err(metadataError);
                 case System.IO.IOError.Unknown(var code):
                     return System.IO.IOStatus.Err(metadataError);
             }
@@ -574,6 +605,33 @@ public fn System.IO.IOStatus Move(ascii oldPath, ascii newPath)
     return StatusFromPlatformResult(System.Runtime.Platform.MoveFile(oldPath, newPath));
 }
 
+internal unsafe fn FileMetadata DecodeMetadataBuffer(rawptr<i8[min max]> metadataData)
+{
+    stack rawptr<i32[min max]> kindPointer = (rawptr<i32[min max]>)(&metadataData[FileSystemMetadataKindOffset]);
+    stack rawptr<i32[min max]> permissionsPointer =
+        (rawptr<i32[min max]>)(&metadataData[FileSystemMetadataPermissionsOffset]);
+    stack rawptr<i64[min max]> sizePointer = (rawptr<i64[min max]>)(&metadataData[FileSystemMetadataSizeOffset]);
+    stack rawptr<i64[min max]> modifiedSecondsPointer =
+        (rawptr<i64[min max]>)(&metadataData[FileSystemMetadataModifiedSecondsOffset]);
+    stack rawptr<i64[min max]> modifiedNanosecondsPointer =
+        (rawptr<i64[min max]>)(&metadataData[FileSystemMetadataModifiedNanosecondsOffset]);
+
+    stack mut i64[min max] size = *sizePointer;
+    if (size < 0)
+    {
+        size = 0;
+    }
+
+    return new FileMetadata()
+    {
+        Size = (u64[0 2 ** 63 - 1])size,
+        ModifiedUnixSeconds = *modifiedSecondsPointer,
+        ModifiedNanoseconds = *modifiedNanosecondsPointer,
+        Permissions = (u32[0 max])(*permissionsPointer),
+        Kind = FileSystemEntryKindFromPlatformKind(*kindPointer)
+    };
+}
+
 public fn System.IO.IOResult<FileMetadata> Metadata(ascii path)
 {
     unsafe
@@ -585,37 +643,109 @@ public fn System.IO.IOResult<FileMetadata> Metadata(ascii path)
             return System.IO.IOResult<FileMetadata>.Err(System.IO.IOError.Unknown(-1));
         }
 
-        stack mut i32[min max] metadataStatus = -1;
-        metadataStatus = System.Runtime.Platform.ReadPathMetadata(path, metadataData);
+        stack i32[min max] metadataStatus = System.Runtime.Platform.ReadPathMetadata(path, metadataData);
         if (metadataStatus != 0)
         {
             return System.IO.IOResult<FileMetadata>.Err(IOErrorFromPlatformResult(metadataStatus));
         }
 
-        stack rawptr<i32[min max]> kindPointer = (rawptr<i32[min max]>)(&metadataData[FileSystemMetadataKindOffset]);
-        stack rawptr<i32[min max]> permissionsPointer =
-            (rawptr<i32[min max]>)(&metadataData[FileSystemMetadataPermissionsOffset]);
-        stack rawptr<i64[min max]> sizePointer = (rawptr<i64[min max]>)(&metadataData[FileSystemMetadataSizeOffset]);
-        stack rawptr<i64[min max]> modifiedSecondsPointer =
-            (rawptr<i64[min max]>)(&metadataData[FileSystemMetadataModifiedSecondsOffset]);
-        stack rawptr<i64[min max]> modifiedNanosecondsPointer =
-            (rawptr<i64[min max]>)(&metadataData[FileSystemMetadataModifiedNanosecondsOffset]);
+        return System.IO.IOResult<FileMetadata>.Ok(DecodeMetadataBuffer(metadataData));
+    }
+}
 
-        stack mut i64[min max] size = *sizePointer;
-        if (size < 0)
+/// Reads metadata for a path WITHOUT following a final symbolic link
+/// (lstat semantics). When the path is a symlink, the returned `Kind` is
+/// `FileSystemEntryKind.Symlink`; `Metadata` follows the link and reports the
+/// target's kind instead.
+public fn System.IO.IOResult<FileMetadata> LinkMetadata(ascii path)
+{
+    unsafe
+    {
+        stack mut System.Runtime.Buffer.FixedByteBuffer512 metadataBuffer = new System.Runtime.Buffer.FixedByteBuffer512();
+        stack rawmutptr<i8[min max]> metadataData = metadataBuffer.WritePointer();
+        if (metadataData == null)
         {
-            size = 0;
+            return System.IO.IOResult<FileMetadata>.Err(System.IO.IOError.Unknown(-1));
         }
 
-        stack FileMetadata metadata = new FileMetadata()
+        stack i32[min max] metadataStatus = System.Runtime.Platform.ReadLinkMetadata(path, metadataData);
+        if (metadataStatus != 0)
         {
-            Size = (u64[0 2 ** 63 - 1])size,
-            ModifiedUnixSeconds = *modifiedSecondsPointer,
-            ModifiedNanoseconds = *modifiedNanosecondsPointer,
-            Permissions = (u32[0 max])(*permissionsPointer),
-            Kind = FileSystemEntryKindFromPlatformKind(*kindPointer)
-        };
-        return System.IO.IOResult<FileMetadata>.Ok(metadata);
+            return System.IO.IOResult<FileMetadata>.Err(IOErrorFromPlatformResult(metadataStatus));
+        }
+
+        return System.IO.IOResult<FileMetadata>.Ok(DecodeMetadataBuffer(metadataData));
+    }
+}
+
+/// Returns whether `path` itself is a symbolic link (does not follow links).
+public fn System.IO.IOResult<bool> IsSymlink(ascii path)
+{
+    switch (LinkMetadata(path))
+    {
+        case System.IO.IOResult<FileMetadata>.Err(var error):
+            return System.IO.IOResult<bool>.Err(error);
+        case System.IO.IOResult<FileMetadata>.Ok(var metadata):
+            return System.IO.IOResult<bool>.Ok(metadata.Kind == FileSystemEntryKind.Symlink);
+    }
+}
+
+/// Creates a symbolic link at `linkPath` pointing at `target`. `target` is
+/// stored verbatim and may be relative to the link's own directory.
+public fn System.IO.IOStatus CreateSymlink(ascii target, ascii linkPath)
+{
+    return StatusFromPlatformResult(System.Runtime.Platform.CreateSymlink(target, linkPath));
+}
+
+/// Reads the target path stored in the symbolic link at `path`. The result is
+/// the raw link contents (not resolved to an absolute path).
+public fn System.IO.IOResult<System.Text.OwnedAscii> ReadSymlink(ascii path)
+{
+    unsafe
+    {
+        stack mut System.Runtime.Buffer.FixedByteBuffer4096 targetBuffer = new System.Runtime.Buffer.FixedByteBuffer4096();
+        stack rawmutptr<i8[min max]> targetData = targetBuffer.WritePointer();
+        stack u64[0 2 ** 63 - 1] capacity = targetBuffer.Writable();
+        if (targetData == null || capacity == 0)
+        {
+            return System.IO.IOResult<System.Text.OwnedAscii>.Err(System.IO.IOError.Unknown(-1));
+        }
+
+        stack i64[min max] written = System.Runtime.Platform.ReadSymlinkInto(path, targetData, capacity);
+        if (written < 0)
+        {
+            return System.IO.IOResult<System.Text.OwnedAscii>.Err(IOErrorFromPlatformResult((i32[min max])written));
+        }
+
+        // readlink does not null-terminate and truncates silently when the
+        // buffer fills; reject a result that exactly fills the buffer because
+        // it may be truncated.
+        if ((u64[0 2 ** 63 - 1])written >= capacity)
+        {
+            return System.IO.IOResult<System.Text.OwnedAscii>.Err(System.IO.IOError.InvalidPath);
+        }
+
+        stack mut System.Text.OwnedAscii target = new();
+        stack System.Memory.MemoryStatus reserveStatus = target.Reserve((u64[0 2 ** 63 - 1])written);
+        switch (reserveStatus)
+        {
+            case System.Memory.MemoryStatus.Err(var reserveError):
+                return System.IO.IOResult<System.Text.OwnedAscii>.Err(IOErrorFromMemoryError(reserveError));
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        for willexit (stack mut i64[min max] index = 0; index < written; index += 1)
+        {
+            stack System.Memory.MemoryStatus appendStatus = target.AppendByte(*(&targetData[index]));
+            switch (appendStatus)
+            {
+                case System.Memory.MemoryStatus.Err(var appendError):
+                    return System.IO.IOResult<System.Text.OwnedAscii>.Err(IOErrorFromMemoryError(appendError));
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+
+        return System.IO.IOResult<System.Text.OwnedAscii>.Ok(target);
     }
 }
 
@@ -653,6 +783,14 @@ public fn System.IO.IOResult<System.Text.OwnedAscii> CreateTempDirectoryIn(ascii
                     case System.IO.IOError.BrokenPipe:
                         return System.IO.IOResult<System.Text.OwnedAscii>.Err(createError);
                     case System.IO.IOError.DiskFull:
+                        return System.IO.IOResult<System.Text.OwnedAscii>.Err(createError);
+                    case System.IO.IOError.NotADirectory:
+                        return System.IO.IOResult<System.Text.OwnedAscii>.Err(createError);
+                    case System.IO.IOError.IsADirectory:
+                        return System.IO.IOResult<System.Text.OwnedAscii>.Err(createError);
+                    case System.IO.IOError.DirectoryNotEmpty:
+                        return System.IO.IOResult<System.Text.OwnedAscii>.Err(createError);
+                    case System.IO.IOError.TooManyLinks:
                         return System.IO.IOResult<System.Text.OwnedAscii>.Err(createError);
                     case System.IO.IOError.Unknown(var code):
                         return System.IO.IOResult<System.Text.OwnedAscii>.Err(createError);

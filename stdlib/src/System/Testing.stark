@@ -463,6 +463,14 @@ public fn SnapshotResult VerifySnapshot(ascii path, ascii actual)
                     return SnapshotResult.Err(error);
                 case System.IO.IOError.DiskFull:
                     return SnapshotResult.Err(error);
+                case System.IO.IOError.NotADirectory:
+                    return SnapshotResult.Err(error);
+                case System.IO.IOError.IsADirectory:
+                    return SnapshotResult.Err(error);
+                case System.IO.IOError.DirectoryNotEmpty:
+                    return SnapshotResult.Err(error);
+                case System.IO.IOError.TooManyLinks:
+                    return SnapshotResult.Err(error);
                 case System.IO.IOError.Unknown(var code):
                     return SnapshotResult.Err(error);
             }
