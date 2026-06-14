@@ -1,5 +1,7 @@
 import System.Testing
 import System.Toml
+import System.Text
+import System.IO
 [Collection("toml")]
 module TomlTests
 
@@ -671,6 +673,300 @@ opt = 3
                     && document.TextAt(root) == "FeatureTests.stark"
                     && document.TextAt(path) == "../../stdlib"
                     && optValue == 0;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Emitter + file-helper tests (doc 21 work item: deterministic writing and
+// file helpers composing System.IO.File with System.Toml).
+// ---------------------------------------------------------------------------
+
+fn bool IsIoError(TomlFileError error)
+{
+    switch (error)
+    {
+        case TomlFileError.Io(var ioError):
+            return true;
+        case TomlFileError.Toml(var tomlError):
+            return false;
+    }
+}
+
+// Parses `source`, emits it, and compares the emitted bytes to `expected`.
+fn bool EmitMatches(ascii source, ascii expected)
+{
+    unsafe
+    {
+        switch (ParseText(source))
+        {
+            case TomlResult<TomlDocument>.Err(var parseError):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                stack mut TomlDocument document = value;
+                switch (Emit(document))
+                {
+                    case TomlResult<System.Text.OwnedAscii>.Err(var emitError):
+                        return false;
+                    case TomlResult<System.Text.OwnedAscii>.Ok(var emitted):
+                        stack mut System.Text.OwnedAscii text = emitted;
+                        return text.View() == expected;
+                }
+        }
+    }
+}
+
+// Parses two sources and asserts they emit byte-identically.
+fn bool EmitsIdentically(ascii left, ascii right)
+{
+    unsafe
+    {
+        stack mut System.Text.OwnedAscii leftText = new();
+        switch (ParseText(left))
+        {
+            case TomlResult<TomlDocument>.Err(var leftParseError):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var leftValue):
+                stack mut TomlDocument leftDocument = leftValue;
+                switch (Emit(leftDocument))
+                {
+                    case TomlResult<System.Text.OwnedAscii>.Err(var leftEmitError):
+                        return false;
+                    case TomlResult<System.Text.OwnedAscii>.Ok(var leftEmitted):
+                        leftText = leftEmitted;
+                }
+        }
+
+        switch (ParseText(right))
+        {
+            case TomlResult<TomlDocument>.Err(var rightParseError):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var rightValue):
+                stack mut TomlDocument rightDocument = rightValue;
+                switch (Emit(rightDocument))
+                {
+                    case TomlResult<System.Text.OwnedAscii>.Err(var rightEmitError):
+                        return false;
+                    case TomlResult<System.Text.OwnedAscii>.Ok(var rightEmitted):
+                        stack mut System.Text.OwnedAscii rightText = rightEmitted;
+                        return leftText.View() == rightText.View();
+                }
+        }
+    }
+}
+
+[Fact]
+fn bool EmitSortsRootMembersByKey()
+{
+    return EmitMatches(
+        "name = \"stark\"\ncount = 42\nready = true\nclosed = false\n",
+        "closed = false\ncount = 42\nname = \"stark\"\nready = true\n");
+}
+
+[Fact]
+fn bool EmitWritesTablesAsHeaders()
+{
+    return EmitMatches(
+        "[project]\nname = \"demo\"\n",
+        "[project]\nname = \"demo\"\n");
+}
+
+[Fact]
+fn bool EmitNestsSubTablesWithDottedHeaders()
+{
+    return EmitMatches(
+        "[project]\nname = \"demo\"\n\n[project.settings]\nlevel = 3\n",
+        "[project]\nname = \"demo\"\n\n[project.settings]\nlevel = 3\n");
+}
+
+[Fact]
+fn bool EmitWritesArraysInOrder()
+{
+    return EmitMatches(
+        "members = [\n  \"stdlib\",\n  \"examples/raylib\",\n]\n",
+        "members = [\"stdlib\", \"examples/raylib\"]\n");
+}
+
+[Fact]
+fn bool EmitWritesTopLevelInlineTablesAsHeaders()
+{
+    // A top-level `dep = { ... }` inline table is semantically a `[dep]`
+    // section; the emitter writes the canonical header form, with members
+    // sorted by key. Re-parsing yields the same structure (round-trip stable).
+    return EmitMatches(
+        "dep = { path = \"../raylib\", version = \"1.0\" }\n",
+        "[dep]\npath = \"../raylib\"\nversion = \"1.0\"\n");
+}
+
+[Fact]
+fn bool EmitWritesInlineTablesInsideArrays()
+{
+    // Inline tables nested inside an array keep the inline `{ ... }` spelling
+    // (the array element cannot become a header), with members sorted by key.
+    return EmitMatches(
+        "items = [{ b = 2, a = 1 }]\n",
+        "items = [{ a = 1, b = 2 }]\n");
+}
+
+[Fact]
+fn bool EmitEscapesControlBytes()
+{
+    return EmitMatches(
+        "text = \"a\\tb\\nc\"\n",
+        "text = \"a\\tb\\nc\"\n");
+}
+
+[Fact]
+fn bool EmitIsDeterministicAcrossKeyOrder()
+{
+    return EmitsIdentically(
+        "name = \"demo\"\ncount = 7\n",
+        "count = 7\nname = \"demo\"\n");
+}
+
+[Fact]
+fn bool RoundTripEmitIsIdempotent()
+{
+    unsafe
+    {
+        stack ascii source = "name = \"demo\"\ncount = 7\n\n[project]\nkind = \"test\"\n";
+        stack mut System.Text.OwnedAscii firstText = new();
+        switch (ParseText(source))
+        {
+            case TomlResult<TomlDocument>.Err(var parseError):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                stack mut TomlDocument document = value;
+                switch (Emit(document))
+                {
+                    case TomlResult<System.Text.OwnedAscii>.Err(var emitError):
+                        return false;
+                    case TomlResult<System.Text.OwnedAscii>.Ok(var emitted):
+                        firstText = emitted;
+                }
+        }
+
+        // Re-parsing the emitted text and emitting again must be byte-identical.
+        switch (ParseText(firstText.View()))
+        {
+            case TomlResult<TomlDocument>.Err(var reparseError):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var reparsed):
+                stack mut TomlDocument reparsedDocument = reparsed;
+                switch (Emit(reparsedDocument))
+                {
+                    case TomlResult<System.Text.OwnedAscii>.Err(var secondEmitError):
+                        return false;
+                    case TomlResult<System.Text.OwnedAscii>.Ok(var secondEmitted):
+                        stack mut System.Text.OwnedAscii secondText = secondEmitted;
+                        return firstText.View() == secondText.View();
+                }
+        }
+    }
+}
+
+[Fact]
+fn bool WriteFileThenReadFileRoundTrips()
+{
+    unsafe
+    {
+        stack mut System.Testing.TempDirectory fixture = new();
+        switch (System.Testing.CreateTempDirectory("toml-emit"))
+        {
+            case System.IO.IOResult<System.Testing.TempDirectory>.Err(var createError):
+                return false;
+            case System.IO.IOResult<System.Testing.TempDirectory>.Ok(var created):
+                fixture = created;
+        }
+
+        stack mut System.Text.OwnedAscii path = new();
+        switch (fixture.PathFor("config.toml"))
+        {
+            case System.IO.IOResult<System.Text.OwnedAscii>.Err(var pathError):
+                return false;
+            case System.IO.IOResult<System.Text.OwnedAscii>.Ok(var built):
+                path = built;
+        }
+
+        stack mut TomlDocument document = new();
+        switch (ParseText("name = \"demo\"\ncount = 7\n"))
+        {
+            case TomlResult<TomlDocument>.Err(var parseError):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                document = value;
+        }
+
+        switch (WriteFile(path.View(), document))
+        {
+            case TomlFileStatus.Err(var writeError):
+                return false;
+            case TomlFileStatus.Ok:
+        }
+
+        stack mut TomlDocument loaded = new();
+        switch (ReadFile(path.View()))
+        {
+            case TomlFileResult<TomlDocument>.Err(var readError):
+                return false;
+            case TomlFileResult<TomlDocument>.Ok(var readValue):
+                loaded = readValue;
+        }
+
+        stack mut u64[0 2 ** 63 - 1] name = 0;
+        if (!loaded.TryFindMember(TomlRootNode, "name", name))
+        {
+            return false;
+        }
+
+        stack mut u64[0 2 ** 63 - 1] count = 0;
+        if (!loaded.TryFindMember(TomlRootNode, "count", count))
+        {
+            return false;
+        }
+
+        stack mut i64[min max] countValue = -1;
+        switch (loaded.I64At(count))
+        {
+            case TomlResult<i64[min max]>.Err(var countError):
+                return false;
+            case TomlResult<i64[min max]>.Ok(var parsedCount):
+                countValue = parsedCount;
+        }
+
+        return loaded.TextAt(name) == "demo" && countValue == 7;
+    }
+}
+
+[Fact]
+fn bool ReadFileMissingSurfacesIoError()
+{
+    unsafe
+    {
+        stack mut System.Testing.TempDirectory fixture = new();
+        switch (System.Testing.CreateTempDirectory("toml-missing"))
+        {
+            case System.IO.IOResult<System.Testing.TempDirectory>.Err(var createError):
+                return false;
+            case System.IO.IOResult<System.Testing.TempDirectory>.Ok(var created):
+                fixture = created;
+        }
+
+        stack mut System.Text.OwnedAscii path = new();
+        switch (fixture.PathFor("absent.toml"))
+        {
+            case System.IO.IOResult<System.Text.OwnedAscii>.Err(var pathError):
+                return false;
+            case System.IO.IOResult<System.Text.OwnedAscii>.Ok(var built):
+                path = built;
+        }
+
+        switch (ReadFile(path.View()))
+        {
+            case TomlFileResult<TomlDocument>.Err(var readError):
+                return IsIoError(readError);
+            case TomlFileResult<TomlDocument>.Ok(var readValue):
+                return false;
         }
     }
 }

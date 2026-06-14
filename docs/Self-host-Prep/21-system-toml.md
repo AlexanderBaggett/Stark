@@ -135,13 +135,34 @@ often enough that the parser should not be casually wasteful.
       decoding the repo's real manifest shape. Remaining: multiline strings,
       arrays of tables, floats, date/times, hex/octal/binary integers, and \U
       escapes (currently explicit UnsupportedValue/InvalidEscape diagnostics).
-- [ ] Implement deterministic TOML writing and file helpers that compose
+- [x] Implement deterministic TOML writing and file helpers that compose
       `System.IO.File` with `System.Toml` without hiding IO failures.
+      Landed: `TomlWriter` sink plus `Write`/`Emit` produce canonical TOML with
+      stable key ordering (members of each table sorted by decoded key bytes,
+      scalars before sub-table headers, dotted-path headers, arrays in source
+      order, inline tables sorted) so the same document is byte-identical and
+      parse->emit->parse is stable. `Emit` yields an owned `OwnedAscii`. File
+      helpers `ReadFile`/`WriteFile`/`WriteFileAtomic` compose
+      `System.IO.File.ReadAllTextInto`/`WriteAllText`/`WriteAllTextAtomic` and
+      surface BOTH parse/emit and IO failures explicitly through
+      `TomlFileError` (`Io from System.IO.IOError`, `Toml from TomlError`) and
+      `TomlFileResult<T>`/`TomlFileStatus`. Value kinds the parser cannot yet
+      produce route through `UnsupportedValue` rather than inventing a spelling.
+      9 new facts in `tests-stark/stdlib.Toml` cover canonical shape,
+      determinism across key order, round-trip idempotence, escapes, arrays,
+      header-form top-level inline tables, inline-tables-inside-arrays, and the
+      `System.Testing.TempDirectory`-backed read/write helpers including the
+      missing-file IO-error path.
 - [ ] Replace host-style `SimpleToml` manifest handling in the self-hosted
       project driver with `System.Toml` plus typed decoding for `Stark.toml`,
       `Stark.solution.toml`, and `Stark.user.toml`.
-- [ ] Add TOML conformance, emitter, malformed-input, source-span, manifest
+- [~] Add TOML conformance, emitter, malformed-input, source-span, manifest
       decoder, and project-driver error-location tests.
+      Landed: conformance, malformed-input, source-span, and real-manifest
+      decoding facts (17) plus emitter determinism/round-trip and file-helper
+      facts (9) in `tests-stark/stdlib.Toml`. Remaining: manifest decoder and
+      project-driver error-location tests (follow the `SimpleToml` replacement
+      work item).
 
 ## 8. Documentation Work
 
