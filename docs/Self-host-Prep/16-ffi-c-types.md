@@ -260,7 +260,7 @@ Recommended diagnostics:
       aggregate behavior.
 - [x] Add coverage for ILP32, LP64, LLP64, `c_char` signedness, `c_void`,
       package images, FFI declarations, and platform ABI aggregates.
-- [ ] Update user-facing FFI docs and Stark language skill references.
+- [x] Update user-facing FFI docs and Stark language skill references.
 
 ## 11. Implementation Evidence
 
