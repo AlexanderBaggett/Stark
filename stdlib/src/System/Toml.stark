@@ -255,6 +255,136 @@ public struct TomlDocument
             });
         }
 
+        // A 0x/0o/0b prefixed token decodes by its radix; everything else is a
+        // signed decimal token the shared ascii parser handles.
+        if (node < self.Nodes.Length)
+        {
+            stack u64[0 2 ** 63 - 1] textStart = self.Nodes[node].TextStart;
+            stack u64[0 2 ** 63 - 1] textLength = self.Nodes[node].TextLength;
+            if (textLength >= 2)
+            {
+                return self.DecodeRadixToken(node, textStart, textLength);
+            }
+        }
+
+        stack System.Text.TextResult<i64[min max]> parsed = System.Text.ParseI64Ascii(self.TextAt(node));
+        switch (parsed)
+        {
+            case System.Text.TextResult<i64[min max]>.Err(var error):
+                return TomlResult<i64[min max]>.Err(TomlError.InvalidNumber
+                {
+                    Line: self.LineAt(node), Column: self.ColumnAt(node)
+                });
+            case System.Text.TextResult<i64[min max]>.Ok(var value):
+                return TomlResult<i64[min max]>.Ok(value);
+        }
+    }
+
+    // Decodes a stored integer token. A 0x/0o/0b prefix selects the radix and
+    // is decoded inline (underscores were already validated away by the
+    // parser); any other token defers to the shared decimal ascii parser.
+    // Reports InvalidNumber on overflow past the positive i64 range.
+    internal finite TomlResult<i64[min max]> DecodeRadixToken(
+        mut borrow TomlDocument self,
+        u64[0 2 ** 63 - 1] node,
+        u64[0 2 ** 63 - 1] textStart,
+        u64[0 2 ** 63 - 1] textLength)
+    {
+        // Bound the whole token span so every byte read below is a proven slot.
+        if (textLength == 0)
+        {
+            return TomlResult<i64[min max]>.Err(TomlError.InvalidNumber
+            {
+                Line: self.LineAt(node), Column: self.ColumnAt(node)
+            });
+        }
+
+        if (textStart + textLength > self.DecodedText.Length)
+        {
+            return TomlResult<i64[min max]>.Err(TomlError.InvalidNumber
+            {
+                Line: self.LineAt(node), Column: self.ColumnAt(node)
+            });
+        }
+
+        // A prefixed token is '0' followed by a radix marker; decimal/signed
+        // tokens never carry a letter in their second byte, so the marker byte
+        // alone classifies the radix. Spell the index's own strict guard to
+        // prove the '[textStart + 1]' slot read.
+        if (textStart + 1 >= self.DecodedText.Length)
+        {
+            return self.DecodeDecimalToken(node);
+        }
+
+        stack i8[min max] markerByte = self.DecodedText[textStart + 1];
+        stack mut u8[0 16] radix = 0;
+        if (markerByte == 120 || markerByte == 88)
+        {
+            radix = 16;
+        }
+        else if (markerByte == 111 || markerByte == 79)
+        {
+            radix = 8;
+        }
+        else if (markerByte == 98 || markerByte == 66)
+        {
+            radix = 2;
+        }
+        else
+        {
+            return self.DecodeDecimalToken(node);
+        }
+
+        stack u8[2 16] radixBase = (u8[2 16])radix;
+        stack u64[0 max] limit = (u64[0 max])(2 ** 63 - 1);
+        stack u64[0 max] base = (u64[0 max])radixBase;
+        stack u64[0 max] cutoff = limit / base;
+        stack u64[0 max] cutlim = limit % base;
+        stack mut u64[0 max] value = 0;
+
+        // The span guard ('textStart + textLength > Length') proves every
+        // '[textStart + offset]' read for 'offset < textLength'. Offsets 0 and 1
+        // are the '0' and radix marker; digits start at offset 2.
+        for willexit (stack mut u64[0 2 ** 63 - 1] offset = 0; offset < textLength; offset += 1)
+        {
+            if (offset < 2)
+            {
+                continue;
+            }
+
+            stack i8[min max] byte = self.DecodedText[textStart + offset];
+            if (byte == 95)
+            {
+                continue;
+            }
+
+            stack i32[min max] digit = RadixDigitValue(byte, radixBase);
+            if (digit < 0)
+            {
+                return TomlResult<i64[min max]>.Err(TomlError.InvalidNumber
+                {
+                    Line: self.LineAt(node), Column: self.ColumnAt(node)
+                });
+            }
+
+            stack u64[0 max] unsignedDigit = (u64[0 max])digit;
+            if (value > cutoff || (value == cutoff && unsignedDigit > cutlim))
+            {
+                return TomlResult<i64[min max]>.Err(TomlError.InvalidNumber
+                {
+                    Line: self.LineAt(node), Column: self.ColumnAt(node)
+                });
+            }
+
+            value = (value * base) + unsignedDigit;
+        }
+
+        return TomlResult<i64[min max]>.Ok((i64[min max])value);
+    }
+
+    // Decodes a plain decimal integer token through the shared ascii parser.
+    internal finite TomlResult<i64[min max]> DecodeDecimalToken(mut borrow TomlDocument self, u64[0 2 ** 63 - 1] node)
+    {
         stack System.Text.TextResult<i64[min max]> parsed = System.Text.ParseI64Ascii(self.TextAt(node));
         switch (parsed)
         {
@@ -1737,6 +1867,30 @@ internal fn TomlStatus ParseInteger(
     stack u32[0 max] valueColumn = cursor.Column;
     stack u64[0 2 ** 63 - 1] textStart = document.DecodedText.Length;
 
+    // TOML 1.0 prefixed integers (0x/0o/0b) carry no sign. When the value
+    // opens with a leading zero followed by a radix marker, hand it to the
+    // prefixed parser, which stores the prefix + validated digits verbatim
+    // so I64At can decode the radix later.
+    stack u64[0 2 ** 63 - 1] secondPlusOne = (u64[0 2 ** 63 - 1])(cursor.Position + 1);
+    if (source[cursor.Position] == 48 && secondPlusOne < source.Length)
+    {
+        stack i8[min max] marker = source[secondPlusOne];
+        if (marker == 120 || marker == 88)
+        {
+            return ParsePrefixedInteger(document, source, cursor, parentPlusOne, hasKey, keyStart, keyLength, 16);
+        }
+
+        if (marker == 111 || marker == 79)
+        {
+            return ParsePrefixedInteger(document, source, cursor, parentPlusOne, hasKey, keyStart, keyLength, 8);
+        }
+
+        if (marker == 98 || marker == 66)
+        {
+            return ParsePrefixedInteger(document, source, cursor, parentPlusOne, hasKey, keyStart, keyLength, 2);
+        }
+    }
+
     if (source[cursor.Position] == 43 || source[cursor.Position] == 45)
     {
         if (source[cursor.Position] == 45)
@@ -1820,6 +1974,121 @@ internal fn TomlStatus ParseInteger(
     if (cursor.Position < source.Length && source[cursor.Position] == 45)
     {
         return TomlStatus.Err(TomlError.UnsupportedValue
+        {
+            Line: valueLine, Column: valueColumn
+        });
+    }
+
+    stack u64[0 2 ** 63 - 1] textLength = (u64[0 2 ** 63 - 1])(document.DecodedText.Length - textStart);
+    return AppendNode(document, TomlKind.Integer, parentPlusOne, hasKey, keyStart, keyLength, textStart, textLength, valueLine, valueColumn);
+}
+
+// Maps an ASCII byte to its value under the given radix (2, 8, or 16), or
+// returns -1 when the byte is not a digit for that radix. Hex reuses the
+// shared HexDigitValue helper; octal and binary clamp its range.
+internal finite law i32[min max] RadixDigitValue(i8[min max] value, u8[2 16] radix)
+{
+    stack i32[min max] digit = HexDigitValue(value);
+    if (digit < 0 || digit >= (i32[min max])radix)
+    {
+        return -1;
+    }
+
+    return digit;
+}
+
+// Parses a TOML 1.0 prefixed integer (0x/0o/0b). Mirrors the decimal
+// underscore-validation structure: underscores are allowed only between
+// digits, at least one digit is required, and the prefix + digit bytes are
+// stored verbatim in DecodedText so I64At can decode the radix. Prefixed
+// integers carry no sign, so the caller routes here before sign handling.
+internal fn TomlStatus ParsePrefixedInteger(
+    mut borrow TomlDocument document,
+    borrow i8[min max][] source,
+    mut borrow TomlCursor cursor,
+    u64[0 2 ** 63 - 1] parentPlusOne,
+    bool hasKey,
+    u64[0 2 ** 63 - 1] keyStart,
+    u64[0 2 ** 63 - 1] keyLength,
+    u8[2 16] radix)
+{
+    stack u32[0 max] valueLine = cursor.Line;
+    stack u32[0 max] valueColumn = cursor.Column;
+    stack u64[0 2 ** 63 - 1] textStart = document.DecodedText.Length;
+
+    // Store the leading '0'.
+    stack TomlStatus zero = AppendDecodedByte(document, source[cursor.Position]);
+    switch (zero)
+    {
+        case TomlStatus.Err(var error):
+            return TomlStatus.Err(error);
+        case TomlStatus.Ok:
+    }
+
+    Advance(source, cursor);
+
+    // Store the radix marker (x/X/o/O/b/B).
+    stack TomlStatus marker = AppendDecodedByte(document, source[cursor.Position]);
+    switch (marker)
+    {
+        case TomlStatus.Err(var markerError):
+            return TomlStatus.Err(markerError);
+        case TomlStatus.Ok:
+    }
+
+    Advance(source, cursor);
+
+    // At least one radix digit must immediately follow the marker.
+    if (cursor.Position >= source.Length || RadixDigitValue(source[cursor.Position], radix) < 0)
+    {
+        return TomlStatus.Err(TomlError.InvalidNumber
+        {
+            Line: valueLine, Column: valueColumn
+        });
+    }
+
+    stack mut bool lastWasDigit = false;
+    while willexit (cursor.Position < source.Length)
+    {
+        stack i8[min max] value = source[cursor.Position];
+        if (RadixDigitValue(value, radix) >= 0)
+        {
+            stack TomlStatus appended = AppendDecodedByte(document, value);
+            switch (appended)
+            {
+                case TomlStatus.Err(var appendError):
+                    return TomlStatus.Err(appendError);
+                case TomlStatus.Ok:
+            }
+
+            lastWasDigit = true;
+            Advance(source, cursor);
+            continue;
+        }
+
+        if (value == 95)
+        {
+            if (!lastWasDigit)
+            {
+                return TomlStatus.Err(TomlError.InvalidNumber
+                {
+                    Line: valueLine, Column: valueColumn
+                });
+            }
+
+            lastWasDigit = false;
+            Advance(source, cursor);
+            continue;
+        }
+
+        break;
+    }
+
+    // A trailing underscore (digits separator with no following digit) is
+    // rejected, exactly as in the decimal path.
+    if (!lastWasDigit)
+    {
+        return TomlStatus.Err(TomlError.InvalidNumber
         {
             Line: valueLine, Column: valueColumn
         });
