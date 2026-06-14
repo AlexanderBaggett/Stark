@@ -37,7 +37,7 @@ linked low-level work has landed but the detailed list still has open items.
 - Threading coordination work items: [22-threading-coordination.md](22-threading-coordination.md#8-work-items)
 - libLLVM integration work items: [23-libllvm-integration.md](23-libllvm-integration.md#8-work-items)
 - IR memory and fact model work items: [24-ir-memory-and-fact-model.md](24-ir-memory-and-fact-model.md#9-work-items)
-- `.stark/build` artifact layout work items: [25-build-artifact-layout.md](25-build-artifact-layout.md#7-work-items)
+- `build` artifact layout work items: [25-build-artifact-layout.md](25-build-artifact-layout.md#7-work-items)
 - FFI syntax design checklist: [stark-ffi-syntax-checklist.md](stark-ffi-syntax-checklist.md)
 - Release packaging checklist: [ToolchainPackagingRoadmap.md](ToolchainPackagingRoadmap.md)
 - Language ergonomics and confirmed-bug checklist (short-lived): [language-ergonomics-checklist.md](language-ergonomics-checklist.md)
@@ -57,7 +57,7 @@ user-facing examples consistent.
 - [x] Update the book and user-facing language reference for `raw"..."`, `raw"""..."""`, and `$raw` text literals. Source item: L08 in [01-language-feature-gaps.md](01-language-feature-gaps.md).
 - [ ] Update the book and user-facing stdlib docs for generic collection contracts, text key equality/hash/order semantics, `HashSet<T>`, ordered collections, and explicit interning guidance. Source work items: [19-generic-collections-and-interning.md](19-generic-collections-and-interning.md#9-book-and-reference-work).
 - [ ] Update user-facing project/build docs once binary package-image and `stark inspect-pkg` spelling are finalized. Source work items: [20-package-image-format.md](20-package-image-format.md#9-documentation-work).
-- [ ] Update user-facing project/build docs for the formal `.stark/build/<profile>/<target-triple>/<stage>/` layout after command spelling and artifact names are implemented. Source work items: [25-build-artifact-layout.md](25-build-artifact-layout.md#7-work-items).
+- [ ] Update user-facing project/build docs for the formal `build/<profile>/<target-triple>/<stage>/` layout after command spelling and artifact names are implemented. Source work items: [25-build-artifact-layout.md](25-build-artifact-layout.md#7-work-items).
 - [ ] Update the standard library reference and project/build docs for `System.Toml` once the public API is finalized. Source work items: [21-system-toml.md](21-system-toml.md#8-documentation-work).
 - [ ] Update the book and user-facing docs for `Transferable` / `Shareable` thread-safety laws when that design lands. Source spec: [14-thread-safety-laws.md](14-thread-safety-laws.md).
 - [ ] Update the standard library reference and book threading chapter for payload thread starts, `Synchronized<T>`, `Locked<T>`, and channels after the API lands. Source work items: [22-threading-coordination.md](22-threading-coordination.md#9-documentation-work).
@@ -92,7 +92,7 @@ user-facing examples consistent.
 - [x] Decide bootstrap policy: use the existing C# host compiler as Stage0 until the Stark compiler can build itself; do not add a separate blessed snapshot compiler artifact. See [07-open-questions.md](07-open-questions.md).
 - [x] Decide editor/tooling blocking status: track syntax/editor updates, but do not block bootstrap on full editor parity. See [07-open-questions.md](07-open-questions.md) and [03-tooling-gaps.md](03-tooling-gaps.md).
 - [x] Decide the compiler IR memory model: arena/table storage with typed handles, first-class extensible fact tables, explicit fact lowering policies, package-image durable facts, and phase-boundary verification. See [24-ir-memory-and-fact-model.md](24-ir-memory-and-fact-model.md).
-- [x] Decide the `.stark/build` layout: use `.stark/build/<profile>/<target-triple>/<stage>/` with stable artifact subdirectories. See [25-build-artifact-layout.md](25-build-artifact-layout.md).
+- [x] Decide the `build` layout: use `build/<profile>/<target-triple>/<stage>/` with stable artifact subdirectories. See [25-build-artifact-layout.md](25-build-artifact-layout.md).
 
 ## Test Infrastructure
 
@@ -164,7 +164,7 @@ user-facing examples consistent.
 
 - [ ] Add bootstrap staging around the existing C# host, Stage1 Stark compiler, and Stage2 Stark compiler. See [03-tooling-gaps.md](03-tooling-gaps.md) and [06-roadmap.md](06-roadmap.md).
 - [~] Make `stark build`, `stark run`, and `stark test` stage-aware. The host project driver accepts stage selectors, defaults to `stage0`, rejects unavailable Stage1/Stage2 execution, and routes artifacts under the stage directory; invoking actual Stage1/Stage2 compilers remains. See [03-tooling-gaps.md](03-tooling-gaps.md).
-- [~] Implement the formal `.stark/build/<profile>/<target-triple>/<stage>/` artifact layout and route package images, stdlib artifacts, native outputs, tests, diagnostics, and requested compiler artifacts into the stable subdirectories. Final executable/library outputs, generated test runners/test executables, saved native intermediates, project library package images under `pkg/<project>/`, `stark clean` profile/target/stage/diagnostics/artifacts cleanup, and active stage-local `stdlib/` discovery now use the formal profile/target/stage layout; stdlib artifact generation/routing, diagnostics, artifact-export routing, and Stage1/Stage2 execution remain. Track detailed items in [25-build-artifact-layout.md](25-build-artifact-layout.md#7-work-items); see also [03-tooling-gaps.md](03-tooling-gaps.md).
+- [~] Implement the formal `build/<profile>/<target-triple>/<stage>/` artifact layout and route package images, stdlib artifacts, native outputs, tests, diagnostics, and requested compiler artifacts into the stable subdirectories. Final executable/library outputs, generated test runners/test executables, saved native intermediates, project library package images under `pkg/<project>/`, `stark clean` profile/target/stage/diagnostics/artifacts cleanup, and active stage-local `stdlib/` discovery now use the formal profile/target/stage layout; stdlib artifact generation/routing, diagnostics, artifact-export routing, and Stage1/Stage2 execution remain. Track detailed items in [25-build-artifact-layout.md](25-build-artifact-layout.md#7-work-items); see also [03-tooling-gaps.md](03-tooling-gaps.md).
 - [ ] Implement binary package-image generation/loading in Stark plus `stark inspect-pkg` JSON/text inspection output. Track detailed items in [20-package-image-format.md](20-package-image-format.md#8-work-items); see also [03-tooling-gaps.md](03-tooling-gaps.md) and [02-stdlib-gaps.md](02-stdlib-gaps.md).
 - [~] Implement the blessed stdlib discovery order: explicit override, stage/build-local artifacts, repo source or `stdlib/dist` for development, then installed bundled stdlib next to the compiler. Stage/build-local `stdlib/` lookup, nearest repo `stdlib/dist` / `stdlib/src` development lookup, installed bundled stdlib lookup, failure-path diagnostics, and protection against hidden `STARK_PATH` project discovery are wired into project builds; explicit override fields, artifact generation, and compatibility validation remain. Track low-level tasks in [ToolchainPackagingRoadmap.md](ToolchainPackagingRoadmap.md#phase-5-standard-library-bundling); see also [03-tooling-gaps.md](03-tooling-gaps.md).
 - [ ] Implement libLLVM backend integration through direct LLVM C API module construction, keeping textual LLVM only as a printed debug/inspection artifact. Track detailed items in [23-libllvm-integration.md](23-libllvm-integration.md#8-work-items); see also [03-tooling-gaps.md](03-tooling-gaps.md), [07-open-questions.md](07-open-questions.md), and [ToolchainPackagingRoadmap.md](ToolchainPackagingRoadmap.md).
@@ -219,7 +219,7 @@ Keep the detailed options and trade-offs in [07-open-questions.md](07-open-quest
 - [x] Bootstrap policy.
 - [x] IR memory model.
 - [x] Alias/noalias misuse policy.
-- [x] `.stark/build/` layout.
+- [x] `build/` layout.
 - [x] Stdlib/package discovery.
 - [x] VS Code/editor blocking status.
 

@@ -1,8 +1,8 @@
-# `.stark/build` Artifact Layout
+# `build` Artifact Layout
 
 Status: accepted direction for self-hosting prep.
 
-This document locks in OQ-18/T05: Stark uses a formal `.stark/build/` layout
+This document locks in OQ-18/T05: Stark uses a formal `build/` layout
 with profile, target, and compiler-stage directories. The goal is a stable,
 predictable filesystem contract, not an artifact database.
 
@@ -11,19 +11,18 @@ predictable filesystem contract, not an artifact database.
 Use option A from OQ-18:
 
 ```text
-.stark/
-  build/
-    <profile>/
-      <target-triple>/
-        <stage>/
-          bin/
-          obj/
-          pkg/
-          stdlib/
-          native/
-          tests/
-          diagnostics/
-          artifacts/
+build/
+  <profile>/
+    <target-triple>/
+      <stage>/
+        bin/
+        obj/
+        pkg/
+        stdlib/
+        native/
+        tests/
+        diagnostics/
+        artifacts/
 ```
 
 Where:
@@ -79,7 +78,7 @@ contain checked-in source, manifests, docs, and explicit fixtures.
 
 Separate top-level `.stark/cache/` and `.stark/packages/` directories may still
 exist for cache and package-manager work, but self-hosting bootstrap artifacts
-belong under `.stark/build/`.
+belong under `build/`.
 
 ## 4. Clean Semantics
 
@@ -87,11 +86,11 @@ The stable layout supports simple cleanup through `stark clean`:
 
 | Command shape | Deletes |
 |---|---|
-| `stark clean profile` | `.stark/build/<profile>/` |
-| `stark clean target --target <triple>` | `.stark/build/<profile>/<target-triple>/` |
-| `stark clean` or `stark clean stage --target <triple>` | `.stark/build/<profile>/<target-triple>/<stage>/` |
-| `stark clean diagnostics --target <triple>` | `.stark/build/<profile>/<target-triple>/<stage>/diagnostics/` |
-| `stark clean artifacts --target <triple>` | `.stark/build/<profile>/<target-triple>/<stage>/artifacts/` |
+| `stark clean profile` | `build/<profile>/` |
+| `stark clean target --target <triple>` | `build/<profile>/<target-triple>/` |
+| `stark clean` or `stark clean stage --target <triple>` | `build/<profile>/<target-triple>/<stage>/` |
+| `stark clean diagnostics --target <triple>` | `build/<profile>/<target-triple>/<stage>/diagnostics/` |
+| `stark clean artifacts --target <triple>` | `build/<profile>/<target-triple>/<stage>/artifacts/` |
 
 `target`, `stage`, `diagnostics`, and `artifacts` scopes use the explicit
 `--target <triple>` value or the detected default target. `profile` cleanup does
@@ -103,7 +102,7 @@ The stdlib discovery decision uses stage/build-local artifacts as the second
 lookup tier. This layout defines where that tier lives:
 
 ```text
-.stark/build/<profile>/<target-triple>/<stage>/stdlib/
+build/<profile>/<target-triple>/<stage>/stdlib/
 ```
 
 Project builds add this directory to module/package search for the active
@@ -118,7 +117,7 @@ The package image decision uses binary package images as the normal compiler
 load path. Project/package images produced by the active build live under:
 
 ```text
-.stark/build/<profile>/<target-triple>/<stage>/pkg/
+build/<profile>/<target-triple>/<stage>/pkg/
 ```
 
 `stark inspect-pkg` output is an inspection view and should normally be written
@@ -132,8 +131,8 @@ the active stage's `tests/` subtree.
 Stage-comparison outputs should be explicit:
 
 ```text
-.stark/build/<profile>/<target-triple>/stage1/artifacts/
-.stark/build/<profile>/<target-triple>/stage2/artifacts/
+build/<profile>/<target-triple>/stage1/artifacts/
+build/<profile>/<target-triple>/stage2/artifacts/
 ```
 
 Tests should compare requested artifacts from those directories, not scrape
@@ -141,7 +140,7 @@ source folders or rely on ad hoc temp paths.
 
 ## 7. Work Items
 
-- [x] Decide OQ-18/T05: formalize `.stark/build/<profile>/<target-triple>/<stage>/`.
+- [x] Decide OQ-18/T05: formalize `build/<profile>/<target-triple>/<stage>/`.
 - [x] Define the build-layout command contract: target-triple normalization,
       accepted stage selectors for `stark build`, `stark run`, and `stark test`,
       and build-root selection for project, solution, and compiler bootstrap
@@ -150,7 +149,7 @@ source folders or rely on ad hoc temp paths.
       outputs route to `bin/<project>/`, test executables and generated runners
       route to `tests/<project>/`, saved native intermediates route to
       `obj/<project>/`, and project library package images route to
-      `pkg/<project>/` under `.stark/build/<profile>/<target-triple>/stage0/`.
+      `pkg/<project>/` under `build/<profile>/<target-triple>/stage0/`.
       Stdlib artifact generation/routing, diagnostics, requested compiler
       artifacts, and actual Stage1/Stage2 execution remain open.
 - [x] Implement clean/discovery behavior for the formal layout, including

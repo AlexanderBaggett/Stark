@@ -695,9 +695,9 @@ public sealed class ProjectCliTests
         try
         {
             await CreateMinimalExecutableProjectAsync(tempDirectory.FullName, "clean-demo");
-            var targetPath = Path.Combine(tempDirectory.FullName, ".stark", "build", "dev", targetTriple);
-            var otherTargetPath = Path.Combine(tempDirectory.FullName, ".stark", "build", "dev", otherTargetTriple);
-            var releaseProfilePath = Path.Combine(tempDirectory.FullName, ".stark", "build", "release");
+            var targetPath = Path.Combine(tempDirectory.FullName, "build", "dev", targetTriple);
+            var otherTargetPath = Path.Combine(tempDirectory.FullName, "build", "dev", otherTargetTriple);
+            var releaseProfilePath = Path.Combine(tempDirectory.FullName, "build", "release");
             Directory.CreateDirectory(Path.Combine(targetPath, "stage0"));
             Directory.CreateDirectory(Path.Combine(otherTargetPath, "stage0"));
             Directory.CreateDirectory(Path.Combine(releaseProfilePath, targetTriple, "stage0"));
@@ -720,7 +720,7 @@ public sealed class ProjectCliTests
 
             Assert.Equal(0, profileExitCode);
             Assert.Equal(string.Empty, profileStderr.ToString());
-            Assert.False(Directory.Exists(Path.Combine(tempDirectory.FullName, ".stark", "build", "dev")));
+            Assert.False(Directory.Exists(Path.Combine(tempDirectory.FullName, "build", "dev")));
             Assert.True(Directory.Exists(releaseProfilePath));
         }
         finally
@@ -1707,6 +1707,28 @@ public sealed class ProjectCliTests
                 return 0;
             }
 
+            public fn u64[0 2 ** 63 - 1] CollectionArgumentCount()
+            {
+                return 0;
+            }
+
+            public fn bool CollectionArgumentEquals(u64[0 2 ** 63 - 1] index, ascii expected)
+            {
+                return false;
+            }
+
+            public fn void ReportUnknownCollection()
+            {
+            }
+
+            public fn void ReportKnownCollection(ascii name)
+            {
+            }
+
+            public fn void ReportNoFactsSelected()
+            {
+            }
+
             public fn i32[min max] ExitCode(u32[0 2 ** 31 - 1] failureCount)
             {
                 if (failureCount == 0)
@@ -1977,7 +1999,6 @@ public sealed class ProjectCliTests
     {
         return Path.Combine(
             rootDirectory,
-            ".stark",
             "build",
             "dev",
             NormalizeBuildPathSegment(targetTriple),

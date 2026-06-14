@@ -261,7 +261,6 @@ The executable should only name the dependency:
 ```toml
 [dependencies]
 raylib = { path = "../raylib" }
-stdlib = { path = "../../stdlib" }
 ```
 
 That is the point of package-owned native metadata: the package carries the

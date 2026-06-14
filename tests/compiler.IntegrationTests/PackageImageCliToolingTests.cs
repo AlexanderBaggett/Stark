@@ -286,6 +286,154 @@ public sealed class PackageImageCliToolingTests
     }
 
     [Fact]
+    public async Task EmitExecutableCopiesWindowsPackageRuntimeDllsBesideOutput()
+    {
+        if (!OperatingSystem.IsWindows() || !NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
+        {
+            return;
+        }
+
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-cli-pkg-native-runtime-");
+        var packageDirectory = Path.Combine(tempDirectory.FullName, "packages");
+        var nativeDirectory = Path.Combine(tempDirectory.FullName, "native");
+        var appDirectory = Path.Combine(tempDirectory.FullName, "app");
+        Directory.CreateDirectory(packageDirectory);
+        Directory.CreateDirectory(nativeDirectory);
+        Directory.CreateDirectory(appDirectory);
+
+        var packageSourcePath = Path.Combine(packageDirectory, "NativeRuntimeDemo.stark");
+        var nativeSourcePath = Path.Combine(packageDirectory, "NativeRuntimeDemo.c");
+        var dllSourcePath = Path.Combine(nativeDirectory, "DemoRuntime.c");
+        var runtimeDllPath = Path.Combine(nativeDirectory, "demo.dll");
+        var importLibraryPath = Path.Combine(nativeDirectory, "demo.lib");
+        var packageLibraryPath = Path.Combine(packageDirectory, "NativeRuntimeDemo.lib");
+        var appPath = Path.Combine(appDirectory, "App.stark");
+        var executablePath = Path.Combine(appDirectory, "app.exe");
+
+        try
+        {
+            await File.WriteAllTextAsync(
+                dllSourcePath,
+                """
+                __declspec(dllexport) int demo_value(void) {
+                    return 42;
+                }
+                """);
+
+            var dllBuildResult = await RunProcessAsync(
+                "clang",
+                [
+                    "-target", targetInfo.Triple,
+                    "-shared",
+                    dllSourcePath,
+                    "-o", runtimeDllPath,
+                    $"-Wl,/implib:{importLibraryPath}"
+                ],
+                nativeDirectory);
+            Assert.True(
+                dllBuildResult.ExitCode == 0,
+                dllBuildResult.Stdout + Environment.NewLine + dllBuildResult.Stderr);
+            Assert.True(File.Exists(runtimeDllPath));
+            Assert.True(File.Exists(importLibraryPath));
+
+            await File.WriteAllTextAsync(
+                packageSourcePath,
+                """
+                module NativeRuntimeDemo
+
+                unsafe ffi fn i32[min max] stark_native_value();
+
+                public fn i32[min max] GetValue()
+                {
+                    unsafe
+                    {
+                        return stark_native_value();
+                    }
+                }
+                """);
+            await File.WriteAllTextAsync(
+                nativeSourcePath,
+                """
+                __declspec(dllimport) int demo_value(void);
+
+                int stark_native_value(void) {
+                    return demo_value();
+                }
+                """);
+            await File.WriteAllTextAsync(
+                appPath,
+                """
+                import NativeRuntimeDemo
+                module App
+
+                export fn i32[min max] main()
+                {
+                    return GetValue();
+                }
+                """);
+
+            var emitStdout = new StringWriter();
+            var emitStderr = new StringWriter();
+            var emitExitCode = await CompilerCli.RunAsync(
+                [
+                    packageSourcePath,
+                    "--emit-lib",
+                    "-o", packageLibraryPath,
+                    "--native-source", nativeSourcePath,
+                    "--native-library-dir", nativeDirectory,
+                    "--native-library", "demo"
+                ],
+                new StringReader(string.Empty),
+                emitStdout,
+                emitStderr);
+
+            Assert.Equal(0, emitExitCode);
+            Assert.Equal(string.Empty, emitStderr.ToString());
+            File.Delete(packageSourcePath);
+
+            var compileStdout = new StringWriter();
+            var compileStderr = new StringWriter();
+            var compileExitCode = await CompilerCli.RunAsync(
+                [appPath, "--emit-exe", "-I", packageDirectory, "-o", executablePath],
+                new StringReader(string.Empty),
+                compileStdout,
+                compileStderr);
+
+            Assert.True(compileExitCode == 0, compileStderr.ToString());
+            Assert.Contains("Emitted executable:", compileStdout.ToString(), StringComparison.Ordinal);
+            Assert.True(File.Exists(executablePath));
+
+            var stagedRuntimeDllPath = Path.Combine(appDirectory, "demo.dll");
+            Assert.True(File.Exists(stagedRuntimeDllPath));
+            Assert.False(string.Equals(Path.GetFullPath(runtimeDllPath), Path.GetFullPath(stagedRuntimeDllPath), StringComparison.OrdinalIgnoreCase));
+
+            using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = executablePath,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            });
+
+            Assert.NotNull(process);
+            await process!.WaitForExitAsync();
+            Assert.Equal(42, process.ExitCode);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
     public async Task EmitExecutableUsesPackageNativePkgConfigMetadata()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out _) || OperatingSystem.IsWindows())
@@ -546,6 +694,38 @@ public sealed class PackageImageCliToolingTests
             return 7;
         }
         """;
+
+    private static async Task<(int ExitCode, string Stdout, string Stderr)> RunProcessAsync(
+        string fileName,
+        IReadOnlyList<string> arguments,
+        string workingDirectory)
+    {
+        var startInfo = new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = fileName,
+            WorkingDirectory = workingDirectory,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+
+        foreach (var argument in arguments)
+        {
+            startInfo.ArgumentList.Add(argument);
+        }
+
+        using var process = System.Diagnostics.Process.Start(startInfo);
+        if (process is null)
+        {
+            return (1, string.Empty, $"Could not start '{fileName}'.");
+        }
+
+        var stdoutTask = process.StandardOutput.ReadToEndAsync();
+        var stderrTask = process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+        return (process.ExitCode, await stdoutTask, await stderrTask);
+    }
 
     private static async Task<string> CreateUnixPkgConfigAsync(
         string directory,

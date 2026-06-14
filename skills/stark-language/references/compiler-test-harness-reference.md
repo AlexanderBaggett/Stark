@@ -42,8 +42,8 @@ stderr text, and non-timeout status.
     "optimizationLevel": "O0",
     "artifacts": ["llvm", "mir", "optimized-ssa"],
     "includeArtifactTexts": false,
-    "artifactOutputDirectory": ".stark/build/dev/x86_64/stage0/artifacts/Demo",
-    "diagnosticsOutputPath": ".stark/build/dev/x86_64/stage0/diagnostics/Demo.json",
+    "artifactOutputDirectory": "build/dev/x86_64/stage0/artifacts/Demo",
+    "diagnosticsOutputPath": "build/dev/x86_64/stage0/diagnostics/Demo.json",
     "includeExecutions": true
   }
 }

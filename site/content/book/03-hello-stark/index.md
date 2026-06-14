@@ -128,15 +128,10 @@ kind = "executable"
 [executable]
 root = "hello.stark"
 output = "hello"
-
-[dependencies]
-stdlib = { path = "../stdlib" }
 ```
 
-This manifest assumes the standard library package lives at
-`hello-workspace/stdlib`. The `stdlib` path is relative to `hello/Stark.toml`.
-If your installation puts the package somewhere else, change that path once in
-the manifest instead of adding `-I` flags to every build command.
+The project driver resolves `System.*` imports through the standard library
+discovery path, so ordinary projects do not list `stdlib` in `[dependencies]`.
 
 ## Step 5: Build And Run The Project
 
