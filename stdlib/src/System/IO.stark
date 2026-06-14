@@ -8,6 +8,10 @@ public enum IOError
     InvalidPath,
     BrokenPipe,
     DiskFull,
+    NotADirectory,
+    IsADirectory,
+    DirectoryNotEmpty,
+    TooManyLinks,
     Unknown(i32[min max]),
 }
 

@@ -324,6 +324,27 @@ internal unsafe fn i32[min max] ReadPathMetadata(ascii path, rawmutptr<i8[min ma
     }
 }
 
+internal unsafe fn i32[min max] ReadLinkMetadata(ascii path, rawmutptr<i8[min max]> metadataData)
+{
+    unsafe
+    {
+        return System.Runtime.Platform.MacOS.ReadLinkMetadata(path, metadataData);
+    }
+}
+
+internal unsafe fn i64[min max] ReadSymlinkInto(
+    ascii path,
+    rawmutptr<i8[min max]>[capacity] buffer,
+    u64[0 2 ** 63 - 1] capacity)
+{
+    return System.Runtime.Platform.MacOS.ReadSymlinkInto(path, buffer, capacity);
+}
+
+internal fn i32[min max] CreateSymlink(ascii target, ascii linkPath)
+{
+    return System.Runtime.Platform.MacOS.CreateSymlink(target, linkPath);
+}
+
 internal fn i32[min max] CreateDirectory(ascii path)
 {
     return System.Runtime.Platform.MacOS.CreateDirectory(path);

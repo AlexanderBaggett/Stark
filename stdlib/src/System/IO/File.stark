@@ -45,7 +45,7 @@ internal enum OpenHandleResult
 
 fn System.IO.IOError IOErrorFromPlatformResult(i32[min max] result)
 {
-    if (result == -2 || result == -3 || result == -20)
+    if (result == -2 || result == -3)
     {
         return System.IO.IOError.NotFound;
     }
@@ -70,7 +70,30 @@ fn System.IO.IOError IOErrorFromPlatformResult(i32[min max] result)
         return System.IO.IOError.BrokenPipe;
     }
 
-    if (result == -36 || result == -206)
+    if (result == -20)
+    {
+        return System.IO.IOError.NotADirectory;
+    }
+
+    if (result == -21)
+    {
+        return System.IO.IOError.IsADirectory;
+    }
+
+    // ENOTEMPTY is 39 on Linux and 66 on macOS.
+    if (result == -39 || result == -66)
+    {
+        return System.IO.IOError.DirectoryNotEmpty;
+    }
+
+    // ELOOP is 40 on Linux and 62 on macOS; EMLINK is 31.
+    if (result == -40 || result == -62 || result == -31)
+    {
+        return System.IO.IOError.TooManyLinks;
+    }
+
+    // ENAMETOOLONG is 36 on Linux and 63 on macOS; -206 is the Windows funnel.
+    if (result == -36 || result == -63 || result == -206)
     {
         return System.IO.IOError.InvalidPath;
     }
@@ -1850,6 +1873,14 @@ public fn System.IO.IOStatus WriteAllBytesAtomic(ascii path, borrow i8[min max][
                         return System.IO.IOStatus.Err(openError);
                     case System.IO.IOError.DiskFull:
                         return System.IO.IOStatus.Err(openError);
+                    case System.IO.IOError.NotADirectory:
+                        return System.IO.IOStatus.Err(openError);
+                    case System.IO.IOError.IsADirectory:
+                        return System.IO.IOStatus.Err(openError);
+                    case System.IO.IOError.DirectoryNotEmpty:
+                        return System.IO.IOStatus.Err(openError);
+                    case System.IO.IOError.TooManyLinks:
+                        return System.IO.IOStatus.Err(openError);
                     case System.IO.IOError.Unknown(var code):
                         return System.IO.IOStatus.Err(openError);
                 }
@@ -1974,6 +2005,14 @@ public fn System.IO.IOStatus WriteAllTextAtomic(ascii path, ascii text)
                         return System.IO.IOStatus.Err(openError);
                     case System.IO.IOError.DiskFull:
                         return System.IO.IOStatus.Err(openError);
+                    case System.IO.IOError.NotADirectory:
+                        return System.IO.IOStatus.Err(openError);
+                    case System.IO.IOError.IsADirectory:
+                        return System.IO.IOStatus.Err(openError);
+                    case System.IO.IOError.DirectoryNotEmpty:
+                        return System.IO.IOStatus.Err(openError);
+                    case System.IO.IOError.TooManyLinks:
+                        return System.IO.IOStatus.Err(openError);
                     case System.IO.IOError.Unknown(var code):
                         return System.IO.IOStatus.Err(openError);
                 }
@@ -2027,6 +2066,14 @@ public fn System.IO.IOStatus WriteAllTextAtomic(ascii path, unicode text)
                     case System.IO.IOError.BrokenPipe:
                         return System.IO.IOStatus.Err(openError);
                     case System.IO.IOError.DiskFull:
+                        return System.IO.IOStatus.Err(openError);
+                    case System.IO.IOError.NotADirectory:
+                        return System.IO.IOStatus.Err(openError);
+                    case System.IO.IOError.IsADirectory:
+                        return System.IO.IOStatus.Err(openError);
+                    case System.IO.IOError.DirectoryNotEmpty:
+                        return System.IO.IOStatus.Err(openError);
+                    case System.IO.IOError.TooManyLinks:
                         return System.IO.IOStatus.Err(openError);
                     case System.IO.IOError.Unknown(var code):
                         return System.IO.IOStatus.Err(openError);
