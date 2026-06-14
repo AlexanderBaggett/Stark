@@ -60,6 +60,11 @@ internal unsafe ffi fn i64[min max] lseek(i32[min max] fileDescriptor, i64[min m
 internal unsafe ffi fn i32[min max] unlink(rawptr<i8[min max]> path);
 internal unsafe ffi fn i32[min max] rename(rawptr<i8[min max]> oldPath, rawptr<i8[min max]> newPath);
 internal unsafe ffi fn i32[min max] stat(rawptr<i8[min max]> path, rawmutptr<i8[min max]> buffer);
+internal unsafe ffi fn i32[min max] lstat(rawptr<i8[min max]> path, rawmutptr<i8[min max]> buffer);
+internal unsafe ffi fn i64[min max] readlink(rawptr<i8[min max]> path, rawmutptr<i8[min max]> buffer, u64[0 2 ** 63 - 1] bufferSize)
+    where overlap(path, buffer);
+internal unsafe ffi fn i32[min max] symlink(rawptr<i8[min max]> target, rawptr<i8[min max]> linkPath)
+    where overlap(target, linkPath);
 internal unsafe ffi fn i32[min max] mkdir(rawptr<i8[min max]> path, i32[min max] mode);
 internal unsafe ffi fn i32[min max] rmdir(rawptr<i8[min max]> path);
 internal unsafe ffi fn rawmutptr<i8[min max]> getcwd(rawmutptr<i8[min max]> buffer, u64[0 2 ** 63 - 1] size);
@@ -1418,6 +1423,129 @@ internal unsafe fn i32[min max] ReadPathMetadata(ascii path, rawmutptr<i8[min ma
     *modifiedSecondsDestination = *modifiedSecondsPointer;
     *modifiedNanosecondsDestination = *modifiedNanosecondsPointer;
     return 0;
+}
+
+internal unsafe fn i32[min max] ReadLinkMetadata(ascii path, rawmutptr<i8[min max]> metadataData)
+{
+    if (metadataData == null)
+    {
+        return -1;
+    }
+
+    stack mut System.Runtime.Buffer.FixedByteBuffer4096 pathBuffer = new System.Runtime.Buffer.FixedByteBuffer4096();
+    stack mut System.Runtime.Buffer.FixedByteBuffer512 statBuffer = new System.Runtime.Buffer.FixedByteBuffer512();
+    stack mut Ascii preparedPath = new Ascii();
+    preparedPath.Data = pathBuffer.WritePointer();
+    preparedPath.Length = 0;
+    preparedPath.Capacity = pathBuffer.Writable();
+
+    if (!TryBuildMacOSPath(&preparedPath, path))
+    {
+        return -1;
+    }
+
+    stack rawmutptr<i8[min max]> statData = statBuffer.WritePointer();
+    if (statData == null)
+    {
+        return -1;
+    }
+
+    if (lstat(preparedPath.Data, statData) != 0)
+    {
+        return NegativeErrno();
+    }
+
+    stack rawptr<i16[min max]> modePointer = (rawptr<i16[min max]>)(&statData[MacOSStatModeOffset]);
+    stack rawptr<i64[min max]> sizePointer = (rawptr<i64[min max]>)(&statData[MacOSStatSizeOffset]);
+    stack rawptr<i64[min max]> modifiedSecondsPointer =
+        (rawptr<i64[min max]>)(&statData[MacOSStatModifiedSecondsOffset]);
+    stack rawptr<i64[min max]> modifiedNanosecondsPointer =
+        (rawptr<i64[min max]>)(&statData[MacOSStatModifiedNanosecondsOffset]);
+
+    stack i32[min max] mode = UnsignedShort(*modePointer);
+    stack mut i64[min max] size = *sizePointer;
+    if (size < 0)
+    {
+        size = 0;
+    }
+
+    stack rawmutptr<i32[min max]> kindPointer =
+        (rawmutptr<i32[min max]>)(&metadataData[MacOSPathMetadataKindOffset]);
+    stack rawmutptr<i32[min max]> permissionsPointer =
+        (rawmutptr<i32[min max]>)(&metadataData[MacOSPathMetadataPermissionsOffset]);
+    stack rawmutptr<i64[min max]> sizeDestination =
+        (rawmutptr<i64[min max]>)(&metadataData[MacOSPathMetadataSizeOffset]);
+    stack rawmutptr<i64[min max]> modifiedSecondsDestination =
+        (rawmutptr<i64[min max]>)(&metadataData[MacOSPathMetadataModifiedSecondsOffset]);
+    stack rawmutptr<i64[min max]> modifiedNanosecondsDestination =
+        (rawmutptr<i64[min max]>)(&metadataData[MacOSPathMetadataModifiedNanosecondsOffset]);
+
+    *kindPointer = DirectoryEntryKindFromMacOSMode(mode);
+    *permissionsPointer = mode & 4095;
+    *sizeDestination = size;
+    *modifiedSecondsDestination = *modifiedSecondsPointer;
+    *modifiedNanosecondsDestination = *modifiedNanosecondsPointer;
+    return 0;
+}
+
+internal unsafe fn i64[min max] ReadSymlinkInto(
+    ascii path,
+    rawmutptr<i8[min max]>[capacity] buffer,
+    u64[0 2 ** 63 - 1] capacity)
+{
+    if (buffer == null || capacity == 0)
+    {
+        return -1;
+    }
+
+    stack mut System.Runtime.Buffer.FixedByteBuffer4096 pathBuffer = new System.Runtime.Buffer.FixedByteBuffer4096();
+    stack mut Ascii preparedPath = new Ascii();
+    preparedPath.Data = pathBuffer.WritePointer();
+    preparedPath.Length = 0;
+    preparedPath.Capacity = pathBuffer.Writable();
+
+    if (!TryBuildMacOSPath(&preparedPath, path))
+    {
+        return -1;
+    }
+
+    stack i64[min max] written = readlink(preparedPath.Data, (rawmutptr<i8[min max]>)buffer, capacity);
+    if (written < 0)
+    {
+        return (i64[min max])NegativeErrno();
+    }
+
+    return written;
+}
+
+internal fn i32[min max] CreateSymlink(ascii target, ascii linkPath)
+{
+    unsafe
+    {
+        stack mut System.Runtime.Buffer.FixedByteBuffer4096 targetBuffer = new System.Runtime.Buffer.FixedByteBuffer4096();
+        stack mut System.Runtime.Buffer.FixedByteBuffer4096 linkBuffer = new System.Runtime.Buffer.FixedByteBuffer4096();
+        stack mut Ascii preparedTarget = new Ascii();
+        preparedTarget.Data = targetBuffer.WritePointer();
+        preparedTarget.Length = 0;
+        preparedTarget.Capacity = targetBuffer.Writable();
+        stack mut Ascii preparedLink = new Ascii();
+        preparedLink.Data = linkBuffer.WritePointer();
+        preparedLink.Length = 0;
+        preparedLink.Capacity = linkBuffer.Writable();
+
+        if (!TryBuildMacOSPath(&preparedTarget, target)
+            || !TryBuildMacOSPath(&preparedLink, linkPath))
+            {
+            return -1;
+        }
+
+        if (symlink(preparedTarget.Data, preparedLink.Data) == 0)
+        {
+            return 0;
+        }
+
+        return NegativeErrno();
+    }
 }
 
 internal fn i32[min max] CreateDirectory(ascii path)

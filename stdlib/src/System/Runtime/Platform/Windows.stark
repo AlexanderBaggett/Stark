@@ -3195,6 +3195,27 @@ internal unsafe fn i32[min max] ReadPathMetadata(ascii path, rawmutptr<i8[min ma
     return 0;
 }
 
+// Symlink policy is not yet implemented on the Windows backend (see S10
+// deferred items). These stubs report ERROR_NOT_SUPPORTED (50) so the symlink
+// dispatch resolves and callers receive a recoverable IOError on Windows.
+internal unsafe fn i32[min max] ReadLinkMetadata(ascii path, rawmutptr<i8[min max]> metadataData)
+{
+    return -50;
+}
+
+internal unsafe fn i64[min max] ReadSymlinkInto(
+    ascii path,
+    rawmutptr<i8[min max]>[capacity] buffer,
+    u64[0 2 ** 63 - 1] capacity)
+{
+    return -50;
+}
+
+internal fn i32[min max] CreateSymlink(ascii target, ascii linkPath)
+{
+    return -50;
+}
+
 internal fn i32[min max] CreateDirectory(ascii path)
 {
     unsafe
