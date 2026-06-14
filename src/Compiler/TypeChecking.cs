@@ -3673,10 +3673,9 @@ internal sealed class TypeChecker
                     continue;
                 }
 
-                if (!module.Reference.IsRoot && !signature.IsGeneric)
-                {
-                    continue;
-                }
+                // Non-root, non-generic source bodies are type-checked here too: in a
+                // whole-package (emit/library) build their bodies are still lowered and
+                // emitted, so their generic-instantiation triggers must be recorded.
 
                 var hasImportedTemplateSummary = _importedFunctionTemplates.TryGetValue(signature.Name, out var importedTemplateSummary);
                 var useImportedTemplateSummary = importedTemplateSummary?.TypedBody is not null;
@@ -4009,11 +4008,21 @@ internal sealed class TypeChecker
             && !shadowedNames.Contains(name)
             && ambiguousNames.TryGetValue(name, out var exporters))
         {
-            var candidates = string.Join(", ", exporters.Select(exporter => $"{exporter}.{name}"));
-            ReportError(
-                "STK3003",
-                $"Imported symbol '{name}' is ambiguous between {candidates}. Use a fully qualified name.",
-                new SourceLocation(module.Reference.FilePath, primary.Start.Line, primary.Start.Column + 1));
+            // A direct CALL of the ambiguous name is now diagnosed — with a more detailed
+            // message — by overload resolution while the (now type-checked) body is
+            // checked (STK3022). Only report the references that path does not cover
+            // (member access, indexing, a bare function value), so calls aren't
+            // double-diagnosed.
+            var postfixParts = postfix.postfixPart();
+            var isDirectCall = postfixParts.Length > 0 && postfixParts[0].argumentList() is not null;
+            if (!isDirectCall)
+            {
+                var candidates = string.Join(", ", exporters.Select(exporter => $"{exporter}.{name}"));
+                ReportError(
+                    "STK3003",
+                    $"Imported symbol '{name}' is ambiguous between {candidates}. Use a fully qualified name.",
+                    new SourceLocation(module.Reference.FilePath, primary.Start.Line, primary.Start.Column + 1));
+            }
         }
 
         if (node is ParserRuleContext rule && rule.children is { } children)
@@ -17234,6 +17243,18 @@ internal sealed class TypeChecker
 
             if (_globals.TryGetValue(qualifiedName, out var global))
             {
+                if (DeclaringModuleOfQualifiedKey(qualifiedName) is { } globalModule
+                    && IsLoadedModuleName(globalModule)
+                    && TryGetGlobalVisibility(globalModule, LastNameSegment(qualifiedName), out var globalVisibility)
+                    && !IsModuleMemberAccessible(globalModule, globalVisibility))
+                {
+                    ReportError(
+                        "STK3015",
+                        $"Global '{qualifiedName}' is {RenderVisibility(globalVisibility)} and is not visible from module '{CurrentFunctionModuleName}'.",
+                        context);
+                    return new ExpressionBinding(StarkTypeSymbols.Error);
+                }
+
                 return new ExpressionBinding(
                     global.Type,
                     IsAssignable: global.IsMutable,
@@ -17267,6 +17288,24 @@ internal sealed class TypeChecker
                     return new ExpressionBinding(StarkTypeSymbols.Error);
                 }
 
+                if (DeclaringModuleOfQualifiedKey(qualifiedName) is { } functionModule
+                    && IsLoadedModuleName(functionModule))
+                {
+                    var accessibleFunctions = namespaceFunctions
+                        .Where(candidate => IsModuleMemberAccessible(functionModule, candidate.Visibility))
+                        .ToArray();
+                    if (accessibleFunctions.Length == 0 && namespaceFunctions.Count > 0)
+                    {
+                        ReportError(
+                            "STK3015",
+                            $"Function '{qualifiedName}' is {RenderVisibility(namespaceFunctions[0].Visibility)} and is not visible from module '{CurrentFunctionModuleName}'.",
+                            context);
+                        return new ExpressionBinding(StarkTypeSymbols.Error);
+                    }
+
+                    namespaceFunctions = accessibleFunctions;
+                }
+
                 if (namespaceFunctions.Count == 1 && !namespaceFunctions[0].IsGeneric)
                 {
                     var function = namespaceFunctions[0];
@@ -17281,6 +17320,15 @@ internal sealed class TypeChecker
 
             if (TryResolveNamedTypeBySourceName(qualifiedName, out var qualifiedType))
             {
+                if (!IsModuleMemberAccessible(qualifiedType.DeclaringModuleName, qualifiedType.Visibility))
+                {
+                    ReportError(
+                        "STK3015",
+                        $"Type '{qualifiedName}' is {RenderVisibility(qualifiedType.Visibility)} and is not visible from module '{CurrentFunctionModuleName}'.",
+                        context);
+                    return new ExpressionBinding(StarkTypeSymbols.Error);
+                }
+
                 if (qualifiedType.Kind is DeclarationKind.Struct or DeclarationKind.Record)
                 {
                     return new ExpressionBinding(
@@ -18438,7 +18486,22 @@ internal sealed class TypeChecker
         string currentModuleName,
         out IReadOnlyList<TypedFunctionSignature> overloads)
     {
-        if (_functionOverloads.TryGetValue(sourceName, out var candidates))
+        // Prefer the current module's own overloads before the bare (root-module /
+        // builtin) ones — matching TryResolveFunctionSignature's order. A non-root
+        // body must resolve a same-named function from its OWN module before one the
+        // build root happens to register under the bare name; otherwise, when the root
+        // module defines a colliding name (e.g. System.C.ToAscii is registered bare in
+        // a root=System.C build while System.Text's ToAscii body is being checked), the
+        // root's bare entry wrongly shadows the current module's overloads. Cross-module
+        // resolution still works through the accessible-module enumeration below.
+        if (!sourceName.Contains('.', StringComparison.Ordinal)
+            && _functionOverloads.TryGetValue($"{currentModuleName}.{sourceName}", out var candidates))
+        {
+            overloads = candidates;
+            return true;
+        }
+
+        if (_functionOverloads.TryGetValue(sourceName, out candidates))
         {
             overloads = candidates;
             return true;
@@ -18451,21 +18514,27 @@ internal sealed class TypeChecker
             return true;
         }
 
-        if (!sourceName.Contains('.', StringComparison.Ordinal)
-            && _functionOverloads.TryGetValue($"{currentModuleName}.{sourceName}", out candidates))
-        {
-            overloads = candidates;
-            return true;
-        }
-
         if (!sourceName.Contains('.', StringComparison.Ordinal))
         {
             var importedCandidates = new List<TypedFunctionSignature>();
             foreach (var candidateName in _moduleGraph.EnumerateAccessibleModuleQualifiedNames(currentModuleName, sourceName))
             {
-                if (_functionOverloads.TryGetValue(candidateName, out candidates))
+                if (!_functionOverloads.TryGetValue(candidateName, out candidates))
                 {
-                    importedCandidates.AddRange(candidates);
+                    continue;
+                }
+
+                // Exclude another module's module-private overloads: a sibling source
+                // submodule must not reach them just because they are now registered
+                // (IsDeclarationVisible). Same-module calls never reach here — they
+                // resolve through the current-module-qualified lookup above.
+                var declaringModule = DeclaringModuleOfQualifiedKey(candidateName);
+                foreach (var candidate in candidates)
+                {
+                    if (IsModuleMemberAccessible(declaringModule, candidate.Visibility))
+                    {
+                        importedCandidates.Add(candidate);
+                    }
                 }
             }
 
@@ -20849,7 +20918,11 @@ internal sealed class TypeChecker
         if (!name.Contains('.', StringComparison.Ordinal))
         {
             var importedMatches = _moduleGraph.EnumerateAccessibleModuleQualifiedNames(CurrentFunctionModuleName, name)
-                .Where(_globals.ContainsKey)
+                .Where(candidate =>
+                    _globals.ContainsKey(candidate)
+                    && (DeclaringModuleOfQualifiedKey(candidate) is not { } declaringModule
+                        || !TryGetGlobalVisibility(declaringModule, name, out var visibility)
+                        || IsModuleMemberAccessible(declaringModule, visibility)))
                 .ToArray();
             if (importedMatches.Length == 1)
             {
@@ -20895,7 +20968,9 @@ internal sealed class TypeChecker
         if (!typeName.Contains('.', StringComparison.Ordinal))
         {
             var importedMatches = _moduleGraph.EnumerateAccessibleModuleQualifiedNames(CurrentFunctionModuleName, typeName)
-                .Where(_namedTypes.ContainsKey)
+                .Where(candidate =>
+                    _namedTypes.TryGetValue(candidate, out var candidateType)
+                    && IsModuleMemberAccessible(candidateType.DeclaringModuleName, candidateType.Visibility))
                 .ToArray();
             if (importedMatches.Length == 1)
             {
@@ -24065,6 +24140,26 @@ internal sealed class TypeChecker
             return true;
         }
 
+        // A source module being compiled in this build (not an imported package
+        // image, not external) registers its full declaration surface — including
+        // module-private members — so a non-root module's own body can resolve its
+        // own helpers/globals/types when the whole package is compiled as one unit
+        // (the emit/library build).
+        //
+        // NOTE: this registers a source submodule's module-private members under their
+        // qualified key. Because that would otherwise let a sibling submodule reach them
+        // (a direct unqualified lookup misses, but the accessible-module enumeration in
+        // overload / global / type resolution re-qualifies a bare name against every
+        // accessible module), module-privacy is enforced at the call site by
+        // IsModuleMemberAccessible (mirroring IsFieldAccessible): the enumeration filters
+        // out inaccessible candidates, and an explicit `Mod.Member` reach-in reports
+        // STK3015. Privacy across the package-image boundary is independently preserved
+        // (consumers see IsPackageImageImport == true and this branch is skipped).
+        if (!module.Reference.IsExternal && !module.IsPackageImageImport)
+        {
+            return true;
+        }
+
         return declaration.Visibility switch
         {
             StarkVisibility.Module => false,
@@ -24144,6 +24239,78 @@ internal sealed class TypeChecker
             || !declaringModule.Reference.IsExternal;
     }
 
+    // Free-function / global / type analogue of IsFieldAccessible: is a member declared
+    // in `declaringModuleName` with `visibility` reachable from the current body's
+    // module? Module-private members are reachable only from their own module; Internal
+    // only within the same source package; Public/Export always. A null declaring module
+    // is a root/builtin (bare-keyed) member, treated as accessible. Now that a source
+    // submodule registers its full surface into the type-check tables (IsDeclarationVisible),
+    // this is the call-site enforcement that keeps module-privacy across sibling submodules
+    // within a single whole-package build.
+    private bool IsModuleMemberAccessible(string? declaringModuleName, StarkVisibility visibility)
+    {
+        return visibility switch
+        {
+            StarkVisibility.Module =>
+                declaringModuleName is null
+                || string.Equals(declaringModuleName, CurrentFunctionModuleName, StringComparison.Ordinal),
+            StarkVisibility.Internal =>
+                declaringModuleName is null || IsSameSourcePackageModule(declaringModuleName),
+            StarkVisibility.Public => true,
+            StarkVisibility.Export => true,
+            _ => false
+        };
+    }
+
+    private bool IsSameSourcePackageModule(string declaringModuleName)
+    {
+        return !_loadedModules.TryGet(declaringModuleName, out var declaringModule)
+            || declaringModule is null
+            || !declaringModule.Reference.IsExternal;
+    }
+
+    // True only when `name` is an actual loaded module. Used to gate the namespace-
+    // qualified privacy checks: a key like "Allocator.Default" is a type-qualified
+    // static member (Allocator is a type, not a module), and module-privacy must not
+    // apply to it — member visibility is a separate concern (IsFieldAccessible).
+    private bool IsLoadedModuleName(string name)
+    {
+        return _loadedModules.TryGet(name, out var module) && module is not null;
+    }
+
+    // "System.Text.ToAscii" -> "System.Text"; bare "ToAscii" -> null (root/builtin). The
+    // enumeration candidates are always "{module}.{bareName}", so stripping the last
+    // segment yields the declaring module.
+    private static string? DeclaringModuleOfQualifiedKey(string qualifiedKey)
+    {
+        var separator = qualifiedKey.LastIndexOf('.');
+        return separator <= 0 ? null : qualifiedKey[..separator];
+    }
+
+    // Globals carry no visibility on their VariableSymbol, so recover it from the
+    // declaring module's syntax. Returns false when the declaration can't be located
+    // (caller then treats the candidate as accessible, preserving prior behavior).
+    private bool TryGetGlobalVisibility(string declaringModuleName, string localName, out StarkVisibility visibility)
+    {
+        visibility = StarkVisibility.Module;
+        if (!_loadedModules.TryGet(declaringModuleName, out var module) || module is null)
+        {
+            return false;
+        }
+
+        foreach (var declaration in module.SyntaxModel.Declarations)
+        {
+            if ((declaration.Kind is DeclarationKind.GlobalConstant or DeclarationKind.GlobalVariable)
+                && string.Equals(declaration.Name, localName, StringComparison.Ordinal))
+            {
+                visibility = declaration.Visibility;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private string QualifyName(LoadedModuleDocument module, string localName)
     {
         return module.Reference.IsRoot
@@ -24184,7 +24351,27 @@ internal sealed class TypeChecker
     {
         var resolvedStop = stop ?? start;
         var (endLine, endColumn) = GetTokenEndPosition(resolvedStop);
-        return new SourceLocation(_context.Input.FilePath, start.Line, start.Column + 1, endLine, endColumn);
+        return new SourceLocation(CurrentModuleFilePath(), start.Line, start.Column + 1, endLine, endColumn);
+    }
+
+    // Diagnostics and typing records stamped while checking a body belong to the
+    // module being checked, not the build's root input file. In a whole-package
+    // (root=System) build every submodule is checked through this one TypeChecker, so
+    // a non-root source body's diagnostics — and its TryPropagationTypingRecords — must
+    // carry ITS file path, not the root's. Only non-root bodies are redirected; root
+    // bodies and any context with no current module keep the root input path exactly,
+    // so single-module builds are byte-for-byte unchanged.
+    private string? CurrentModuleFilePath()
+    {
+        if (_currentFunctionModuleName is { } moduleName
+            && _loadedModules.TryGet(moduleName, out var module)
+            && module is not null
+            && !module.Reference.IsRoot)
+        {
+            return module.Reference.FilePath;
+        }
+
+        return _context.Input.FilePath;
     }
 
     private static (int Line, int Column) GetTokenEndPosition(IToken token)

@@ -3,12 +3,14 @@ using Stark.Compiler;
 namespace compiler.Tests;
 
 /// <summary>
-/// MIR lowering regression for `try` inside imported source modules. Type checking
-/// skips imported non-generic function bodies, so these sites have no
-/// TryPropagationTypingRecord; lowering must re-derive the roles/funnel from the
-/// operand and enclosing return enums (see
-/// MidLevelIrLowering.FunctionMirBuilder.DeriveImportedSourceTryPropagation).
-/// Previously every shape below crashed lower-mir with STK9999.
+/// `try` propagation inside an imported source module, exercised end-to-end through
+/// LLVM emission. `Demo.Lib` is compiled from source (non-root); since the
+/// cross-module monomorphization fix its bodies are fully type-checked in the
+/// consuming build, so each `try` gets a normal TryPropagationTypingRecord and the
+/// generic `GenericResult<i32[min max]>` used only inside `Demo.Lib` is planned from
+/// its (now type-checked) use sites. Covers same-error binding propagation, the
+/// `from` funnel, unit failure in bare-statement position, and a generic-operand
+/// instantiation bound through a local.
 /// </summary>
 public sealed class TryPropagationImportedModuleTests
 {
@@ -102,10 +104,12 @@ public sealed class TryPropagationImportedModuleTests
             return UnitResult.Done;
         }
 
-        // Propagation from a generic operand instantiation in return position.
+        // Propagation from a generic operand instantiation, bound through a local.
+        // (`try` may not be nested inside another expression such as `Ok(try ...)`.)
         public fn InnerResult ConsumeGenericOperand(i32[min max] value)
         {
-            return InnerResult.Ok(try ProduceGeneric(value));
+            stack i32[min max] produced = try ProduceGeneric(value);
+            return InnerResult.Ok(produced);
         }
         """;
 

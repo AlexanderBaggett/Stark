@@ -4770,8 +4770,16 @@ internal sealed partial class MidLevelIrLowerer
         {
             var line = expression.Start.Line;
             var column = expression.Start.Column + 1;
+            // Match the record to the CURRENT function, not just the (line, column):
+            // _typeModel.TryPropagations is a single global pool spanning every module's
+            // bodies, so two `try` sites at the same (line, column) in different files
+            // would otherwise collide and LastOrDefault would pick by load order, lowering
+            // one with the other's funnel/return type. IsCurrentFunctionRecord is the same
+            // disambiguator every other typing-record lookup in this file already uses.
             var record = _typeModel.TryPropagations.LastOrDefault(candidate =>
-                candidate.Location.Line == line && candidate.Location.Column == column)
+                IsCurrentFunctionRecord(candidate.EnclosingFunctionName)
+                && candidate.Location.Line == line
+                && candidate.Location.Column == column)
                 ?? ResolveImportedTemplateTryPropagation(expression);
 
             var operandValue = LowerUnaryExpression(expression.unaryExpression(), expectedType: null);
@@ -4909,14 +4917,14 @@ internal sealed partial class MidLevelIrLowerer
             StarkTypeSymbol? FailurePayloadType);
 
         /// <summary>
-        /// Derives the `try` propagation facts for an expression inside an imported source
-        /// module body. Type checking skips imported non-generic bodies (their own compile
-        /// as a root module already validated them), so no typing record exists for these
-        /// sites; the role and funnel rules here mirror
-        /// <c>TypeChecking.EvaluateTryExpression</c> and the CTFE equivalent in
-        /// <c>CompileTimeFunctionEvaluator</c>. Returns null when the operand or enclosing
-        /// return type is not propagatable or the failure payloads are not connected,
-        /// letting the caller surface the lowering invariant.
+        /// Derives the `try` propagation facts for an expression inside an imported body
+        /// that has no type-checked record. Source modules compiled in this build are now
+        /// type-checked and carry a TryPropagationTypingRecord, so this path only runs for
+        /// package-image imports whose published facts lack a `try` summary. The role and
+        /// funnel rules here mirror <c>TypeChecking.EvaluateTryExpression</c> and the CTFE
+        /// equivalent in <c>CompileTimeFunctionEvaluator</c>. Returns null when the operand
+        /// or enclosing return type is not propagatable or the failure payloads are not
+        /// connected, letting the caller surface the lowering invariant.
         /// </summary>
         private TryPropagationTypingRecord? DeriveImportedSourceTryPropagation(
             StarkParser.UnaryExpressionContext expression,

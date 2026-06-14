@@ -1833,6 +1833,184 @@ public struct OwnedAscii
         }
     }
 
+    // Append a single ASCII character (code point 0 ** 127). Rejects values
+    // outside the 7-bit ASCII range so an OwnedAscii buffer keeps holding valid
+    // ASCII bytes; use AppendCodePointAsUtf8 for non-ASCII scalars.
+    fn System.Memory.MemoryStatus AppendAsciiChar(mut borrow OwnedAscii self, i32[min max] codePoint)
+    {
+        if (codePoint < 0 || codePoint > 127)
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
+        }
+
+        return self.AppendByte((i8[min max])codePoint);
+    }
+
+    // Append one ASCII byte repeated count times. Reserves the whole run up
+    // front so the underlying dynamic storage grows at most once for the call,
+    // then fills bytes directly.
+    fn System.Memory.MemoryStatus AppendRepeatedByte(
+        mut borrow OwnedAscii self,
+        i8[min max] value,
+        u64[0 2 ** 63 - 1] count)
+    {
+        if (count == 0)
+        {
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        stack System.Memory.MemoryStatus status = self.Reserve(count);
+        switch (status)
+        {
+            case System.Memory.MemoryStatus.Err(var error):
+                return System.Memory.MemoryStatus.Err(error);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+        {
+            init self.Bytes[self.Bytes.Length] = value;
+        }
+
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    // Append one ASCII character (0 ** 127) repeated count times.
+    fn System.Memory.MemoryStatus AppendRepeatedAsciiChar(
+        mut borrow OwnedAscii self,
+        i32[min max] codePoint,
+        u64[0 2 ** 63 - 1] count)
+    {
+        if (codePoint < 0 || codePoint > 127)
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
+        }
+
+        return self.AppendRepeatedByte((i8[min max])codePoint, count);
+    }
+
+    // Append an ASCII view repeated count times. The source is snapshotted once
+    // into a disjoint buffer so each repetition appends without re-checking
+    // overlap, and the total run length is reserved before the first copy.
+    fn System.Memory.MemoryStatus AppendRepeatedAscii(
+        mut borrow OwnedAscii self,
+        ascii source,
+        u64[0 2 ** 63 - 1] count)
+        where overlap(self, source)
+    {
+        unsafe
+        {
+            if (count == 0)
+            {
+                return System.Memory.MemoryStatus.Ok;
+            }
+
+            stack i64[min max] signedLength = AsciiLength(source);
+            if (signedLength < 0)
+            {
+                return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
+            }
+
+            stack u64[0 2 ** 63 - 1] unitLength = (u64[0 2 ** 63 - 1])signedLength;
+            if (unitLength == 0)
+            {
+                return System.Memory.MemoryStatus.Ok;
+            }
+
+            if (count > (u64[0 2 ** 63 - 1])(2 ** 63 - 1) / unitLength)
+            {
+                return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.TooLarge);
+            }
+
+            stack u64[0 2 ** 63 - 1] total = unitLength * count;
+            stack System.Memory.MemoryStatus reserveStatus = self.Reserve(total);
+            switch (reserveStatus)
+            {
+                case System.Memory.MemoryStatus.Err(var reserveError):
+                    return System.Memory.MemoryStatus.Err(reserveError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            stack mut OwnedAscii snapshot = new();
+            stack System.Memory.MemoryStatus snapshotStatus = snapshot.AppendAscii(source);
+            switch (snapshotStatus)
+            {
+                case System.Memory.MemoryStatus.Err(var snapshotError):
+                    return System.Memory.MemoryStatus.Err(snapshotError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+            {
+                stack System.Memory.MemoryStatus appendStatus =
+                    self.AppendSliceDisjoint(snapshot.AsSlice(), unitLength);
+                switch (appendStatus)
+                {
+                    case System.Memory.MemoryStatus.Err(var appendError):
+                        return System.Memory.MemoryStatus.Err(appendError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+
+            return System.Memory.MemoryStatus.Ok;
+        }
+    }
+
+    // Append a const ASCII view repeated count times. A const literal never
+    // overlaps the buffer, so each repetition appends directly.
+    fn System.Memory.MemoryStatus AppendRepeatedConstAscii(
+        mut borrow OwnedAscii self,
+        const ascii source,
+        u64[0 2 ** 63 - 1] count)
+    {
+        unsafe
+        {
+            if (count == 0)
+            {
+                return System.Memory.MemoryStatus.Ok;
+            }
+
+            stack i64[min max] signedLength = AsciiLength(source);
+            if (signedLength < 0)
+            {
+                return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
+            }
+
+            stack u64[0 2 ** 63 - 1] unitLength = (u64[0 2 ** 63 - 1])signedLength;
+            if (unitLength == 0)
+            {
+                return System.Memory.MemoryStatus.Ok;
+            }
+
+            if (count > (u64[0 2 ** 63 - 1])(2 ** 63 - 1) / unitLength)
+            {
+                return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.TooLarge);
+            }
+
+            stack u64[0 2 ** 63 - 1] total = unitLength * count;
+            stack System.Memory.MemoryStatus reserveStatus = self.Reserve(total);
+            switch (reserveStatus)
+            {
+                case System.Memory.MemoryStatus.Err(var reserveError):
+                    return System.Memory.MemoryStatus.Err(reserveError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+            {
+                stack System.Memory.MemoryStatus appendStatus = self.AppendConstAsciiDisjoint(source);
+                switch (appendStatus)
+                {
+                    case System.Memory.MemoryStatus.Err(var appendError):
+                        return System.Memory.MemoryStatus.Err(appendError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+
+            return System.Memory.MemoryStatus.Ok;
+        }
+    }
+
     fn void Clear(mut borrow OwnedAscii self)
     {
         while willexit (self.Bytes.Length > 0)
@@ -2398,6 +2576,156 @@ public struct OwnedUnicode
         return System.Memory.MemoryStatus.Ok;
     }
 
+    // Append one code point repeated count times. Reserves the whole run up
+    // front so the underlying dynamic storage grows at most once for the call.
+    fn System.Memory.MemoryStatus AppendRepeatedCodePoint(
+        mut borrow OwnedUnicode self,
+        i32[min max] value,
+        u64[0 2 ** 63 - 1] count)
+    {
+        if (count == 0)
+        {
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        stack System.Memory.MemoryStatus status = self.Reserve(count);
+        switch (status)
+        {
+            case System.Memory.MemoryStatus.Err(var error):
+                return System.Memory.MemoryStatus.Err(error);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+        {
+            init self.CodePoints[self.CodePoints.Length] = value;
+        }
+
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    // Append a Unicode view repeated count times. The source is snapshotted once
+    // into a disjoint buffer so each repetition appends without re-checking
+    // overlap, and the total run length is reserved before the first copy.
+    fn System.Memory.MemoryStatus AppendRepeatedUnicode(
+        mut borrow OwnedUnicode self,
+        unicode source,
+        u64[0 2 ** 63 - 1] count)
+        where overlap(self, source)
+    {
+        unsafe
+        {
+            if (count == 0)
+            {
+                return System.Memory.MemoryStatus.Ok;
+            }
+
+            stack i64[min max] signedLength = UnicodeLength(source);
+            if (signedLength < 0)
+            {
+                return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
+            }
+
+            stack u64[0 2 ** 63 - 1] unitLength = (u64[0 2 ** 63 - 1])signedLength;
+            if (unitLength == 0)
+            {
+                return System.Memory.MemoryStatus.Ok;
+            }
+
+            if (count > (u64[0 2 ** 63 - 1])(2 ** 63 - 1) / unitLength)
+            {
+                return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.TooLarge);
+            }
+
+            stack u64[0 2 ** 63 - 1] total = unitLength * count;
+            stack System.Memory.MemoryStatus reserveStatus = self.Reserve(total);
+            switch (reserveStatus)
+            {
+                case System.Memory.MemoryStatus.Err(var reserveError):
+                    return System.Memory.MemoryStatus.Err(reserveError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            stack mut OwnedUnicode snapshot = new();
+            stack System.Memory.MemoryStatus snapshotStatus = snapshot.AppendUnicode(source);
+            switch (snapshotStatus)
+            {
+                case System.Memory.MemoryStatus.Err(var snapshotError):
+                    return System.Memory.MemoryStatus.Err(snapshotError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+            {
+                stack System.Memory.MemoryStatus appendStatus =
+                    self.AppendSliceDisjoint(snapshot.AsSlice(), unitLength);
+                switch (appendStatus)
+                {
+                    case System.Memory.MemoryStatus.Err(var appendError):
+                        return System.Memory.MemoryStatus.Err(appendError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+
+            return System.Memory.MemoryStatus.Ok;
+        }
+    }
+
+    // Append a const Unicode view repeated count times. A const literal never
+    // overlaps the buffer, so each repetition appends directly.
+    fn System.Memory.MemoryStatus AppendRepeatedConstUnicode(
+        mut borrow OwnedUnicode self,
+        const unicode source,
+        u64[0 2 ** 63 - 1] count)
+    {
+        unsafe
+        {
+            if (count == 0)
+            {
+                return System.Memory.MemoryStatus.Ok;
+            }
+
+            stack i64[min max] signedLength = UnicodeLength(source);
+            if (signedLength < 0)
+            {
+                return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
+            }
+
+            stack u64[0 2 ** 63 - 1] unitLength = (u64[0 2 ** 63 - 1])signedLength;
+            if (unitLength == 0)
+            {
+                return System.Memory.MemoryStatus.Ok;
+            }
+
+            if (count > (u64[0 2 ** 63 - 1])(2 ** 63 - 1) / unitLength)
+            {
+                return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.TooLarge);
+            }
+
+            stack u64[0 2 ** 63 - 1] total = unitLength * count;
+            stack System.Memory.MemoryStatus reserveStatus = self.Reserve(total);
+            switch (reserveStatus)
+            {
+                case System.Memory.MemoryStatus.Err(var reserveError):
+                    return System.Memory.MemoryStatus.Err(reserveError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+            {
+                stack System.Memory.MemoryStatus appendStatus = self.AppendConstUnicodeDisjoint(source);
+                switch (appendStatus)
+                {
+                    case System.Memory.MemoryStatus.Err(var appendError):
+                        return System.Memory.MemoryStatus.Err(appendError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+
+            return System.Memory.MemoryStatus.Ok;
+        }
+    }
+
     fn void Clear(mut borrow OwnedUnicode self)
     {
         while willexit (self.CodePoints.Length > 0)
@@ -2405,6 +2733,407 @@ public struct OwnedUnicode
             stack i32[min max] value = self.CodePoints.MoveLast();
         }
     }
+}
+
+// Copy `count` bytes starting at `data` into a fresh OwnedAscii. The caller
+// guarantees `data` is disjoint from `destination` (it points into a separate
+// source view), so the bytes are reserved and filled in one pass.
+internal unsafe fn System.Memory.MemoryStatus AppendAsciiBytesFromPointer(
+    mut borrow OwnedAscii destination,
+    u64[0 2 ** 63 - 1] count,
+    rawptr<i8[min max]> data)
+{
+    if (count == 0)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack System.Memory.MemoryStatus reserveStatus = destination.Reserve(count);
+    switch (reserveStatus)
+    {
+        case System.Memory.MemoryStatus.Err(var reserveError):
+            return System.Memory.MemoryStatus.Err(reserveError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    stack init i8[min max][] tail = init destination.Bytes[destination.Bytes.Length, count];
+    unsafe
+    {
+        return System.Memory.InitializeBytesFromPointerDisjoint(count, data, tail);
+    }
+}
+
+// Copy `count` code points starting at `data` into a fresh OwnedUnicode. The
+// caller guarantees `data` is disjoint from `destination`.
+internal unsafe fn System.Memory.MemoryStatus AppendUnicodeCodePointsFromPointer(
+    mut borrow OwnedUnicode destination,
+    u64[0 2 ** 63 - 1] count,
+    rawptr<i32[min max]> data)
+{
+    if (count == 0)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    if (count > (u64[0 2 ** 63 - 1])(2 ** 61 - 1))
+    {
+        return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.TooLarge);
+    }
+
+    stack u64[0 2 ** 61 - 1] safeCount = (u64[0 2 ** 61 - 1])count;
+    stack System.Memory.MemoryStatus reserveStatus = destination.Reserve(safeCount);
+    switch (reserveStatus)
+    {
+        case System.Memory.MemoryStatus.Err(var reserveError):
+            return System.Memory.MemoryStatus.Err(reserveError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    stack init i32[min max][] tail = init destination.CodePoints[destination.CodePoints.Length, safeCount];
+    unsafe
+    {
+        return System.Memory.InitializeCodePointsFromPointerDisjoint(safeCount, data, tail);
+    }
+}
+
+// Join owned ASCII parts into a fresh OwnedAscii, inserting `separator` between
+// consecutive parts (not before the first or after the last). Parts are passed
+// as a borrowed slice (use List.AsSlice()) and the destination is a fresh out
+// buffer, so all storage is disjoint; the total length is reserved up front for
+// amortized growth.
+public fn System.Memory.MemoryStatus JoinAscii(
+    out OwnedAscii destination,
+    borrow OwnedAscii[] parts,
+    ascii separator)
+{
+    unsafe
+    {
+        destination = new();
+
+        stack u64[0 2 ** 63 - 1] partCount = parts.Length;
+        if (partCount == 0)
+        {
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        stack i64[min max] signedSeparatorLength = AsciiLength(separator);
+        if (signedSeparatorLength < 0)
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
+        }
+
+        stack u64[0 2 ** 63 - 1] separatorLength = (u64[0 2 ** 63 - 1])signedSeparatorLength;
+
+        stack mut u64[0 2 ** 63 - 1] total = separatorLength * (partCount - 1);
+        for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < partCount; index += 1)
+        {
+            total += parts[index].Length();
+        }
+
+        stack System.Memory.MemoryStatus reserveStatus = destination.Reserve(total);
+        switch (reserveStatus)
+        {
+            case System.Memory.MemoryStatus.Err(var reserveError):
+                return System.Memory.MemoryStatus.Err(reserveError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < partCount; index += 1)
+        {
+            if (index > 0 && separatorLength > 0)
+            {
+                stack System.Memory.MemoryStatus separatorStatus = destination.AppendAscii(separator);
+                switch (separatorStatus)
+                {
+                    case System.Memory.MemoryStatus.Err(var separatorError):
+                        return System.Memory.MemoryStatus.Err(separatorError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+
+            stack u64[0 2 ** 63 - 1] partLength = parts[index].Length();
+            stack System.Memory.MemoryStatus partStatus =
+                destination.AppendSliceDisjoint(parts[index].AsSlice(), partLength);
+            switch (partStatus)
+            {
+                case System.Memory.MemoryStatus.Err(var partError):
+                    return System.Memory.MemoryStatus.Err(partError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+
+        return System.Memory.MemoryStatus.Ok;
+    }
+}
+
+// Join owned Unicode parts into a fresh OwnedUnicode, inserting `separator`
+// between consecutive parts. Parts are passed as a borrowed slice
+// (use List.AsSlice()).
+public fn System.Memory.MemoryStatus JoinUnicode(
+    out OwnedUnicode destination,
+    borrow OwnedUnicode[] parts,
+    unicode separator)
+{
+    unsafe
+    {
+        destination = new();
+
+        stack u64[0 2 ** 63 - 1] partCount = parts.Length;
+        if (partCount == 0)
+        {
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        stack i64[min max] signedSeparatorLength = UnicodeLength(separator);
+        if (signedSeparatorLength < 0)
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
+        }
+
+        stack u64[0 2 ** 63 - 1] separatorLength = (u64[0 2 ** 63 - 1])signedSeparatorLength;
+
+        stack mut u64[0 2 ** 63 - 1] total = separatorLength * (partCount - 1);
+        for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < partCount; index += 1)
+        {
+            total += parts[index].Length();
+        }
+
+        stack System.Memory.MemoryStatus reserveStatus = destination.Reserve(total);
+        switch (reserveStatus)
+        {
+            case System.Memory.MemoryStatus.Err(var reserveError):
+                return System.Memory.MemoryStatus.Err(reserveError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < partCount; index += 1)
+        {
+            if (index > 0 && separatorLength > 0)
+            {
+                stack System.Memory.MemoryStatus separatorStatus = destination.AppendUnicode(separator);
+                switch (separatorStatus)
+                {
+                    case System.Memory.MemoryStatus.Err(var separatorError):
+                        return System.Memory.MemoryStatus.Err(separatorError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+
+            stack u64[0 2 ** 63 - 1] partLength = parts[index].Length();
+            stack System.Memory.MemoryStatus partStatus =
+                destination.AppendSliceDisjoint(parts[index].AsSlice(), partLength);
+            switch (partStatus)
+            {
+                case System.Memory.MemoryStatus.Err(var partError):
+                    return System.Memory.MemoryStatus.Err(partError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+
+        return System.Memory.MemoryStatus.Ok;
+    }
+}
+
+// Split an ASCII view on a non-empty `delimiter` substring. Ownership model:
+// each returned segment is a fresh OwnedAscii COPY of the source bytes, so the
+// returned List owns its segments independently of the transient source view.
+// An empty source yields one empty segment; an empty delimiter is rejected so
+// the result count is always well-defined. Consecutive delimiters and leading/
+// trailing delimiters produce empty segments, matching the usual split contract.
+public fn System.Memory.MemoryStatus SplitAscii(
+    out System.Collections.List<OwnedAscii> segments,
+    ascii source,
+    ascii delimiter)
+    where overlap(source, delimiter)
+{
+    // Accumulate into a local list, then move it into the out parameter. The
+    // worker takes an ordinary mut-borrow accumulator (an out List cannot host
+    // method calls during SSA lowering).
+    stack mut System.Collections.List<OwnedAscii> result = new();
+    stack System.Memory.MemoryStatus status = SplitAsciiInto(result, source, delimiter);
+    segments = result;
+    return status;
+}
+
+internal fn System.Memory.MemoryStatus SplitAsciiInto(
+    mut borrow System.Collections.List<OwnedAscii> segments,
+    ascii source,
+    ascii delimiter)
+    where overlap(source, delimiter)
+{
+    unsafe
+    {
+        stack i64[min max] signedSourceLength = AsciiLength(source);
+        stack i64[min max] signedDelimiterLength = AsciiLength(delimiter);
+        if (signedSourceLength < 0 || signedDelimiterLength < 0)
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
+        }
+
+        stack u64[0 2 ** 63 - 1] sourceLength = (u64[0 2 ** 63 - 1])signedSourceLength;
+        stack u64[0 2 ** 63 - 1] delimiterLength = (u64[0 2 ** 63 - 1])signedDelimiterLength;
+        if (delimiterLength == 0)
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
+        }
+
+        stack rawptr<i8[min max]> sourceData = AsciiData(source);
+        if (sourceData == null)
+        {
+            if (sourceLength == 0)
+            {
+                stack mut OwnedAscii emptySegment = new();
+                return segments.Push(emptySegment);
+            }
+
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
+        }
+
+        if (delimiterLength > sourceLength)
+        {
+            stack mut OwnedAscii whole = new();
+            stack System.Memory.MemoryStatus wholeStatus =
+                AppendAsciiBytesFromPointer(whole, sourceLength, sourceData);
+            switch (wholeStatus)
+            {
+                case System.Memory.MemoryStatus.Err(var wholeError):
+                    return System.Memory.MemoryStatus.Err(wholeError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            return segments.Push(whole);
+        }
+
+        stack rawptr<i8[min max]> delimiterData = AsciiData(delimiter);
+        if (delimiterData == null)
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
+        }
+
+        stack i8[min max] first = *(&delimiterData[0]);
+        stack u64[0 2 ** 63 - 1] lastStart = sourceLength - delimiterLength;
+        stack mut u64[0 2 ** 63 - 1] segmentStart = 0;
+        stack mut u64[0 2 ** 63 - 1] scan = 0;
+        while willexit (scan <= lastStart)
+        {
+            if (*(&sourceData[scan]) != first)
+            {
+                scan += 1;
+                continue;
+            }
+
+            stack mut bool matched = true;
+            stack mut u64[0 2 ** 63 - 1] index = 1;
+            while willexit (matched && index < delimiterLength)
+            {
+                if (*(&sourceData[scan + index]) != *(&delimiterData[index]))
+                {
+                    matched = false;
+                }
+
+                index += 1;
+            }
+
+            if (!matched)
+            {
+                scan += 1;
+                continue;
+            }
+
+            stack u64[0 2 ** 63 - 1] segmentLength = scan - segmentStart;
+            stack mut OwnedAscii segment = new();
+            stack System.Memory.MemoryStatus segmentStatus =
+                AppendAsciiBytesFromPointer(segment, segmentLength, &sourceData[segmentStart]);
+            switch (segmentStatus)
+            {
+                case System.Memory.MemoryStatus.Err(var segmentError):
+                    return System.Memory.MemoryStatus.Err(segmentError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            stack System.Memory.MemoryStatus pushStatus = segments.Push(segment);
+            switch (pushStatus)
+            {
+                case System.Memory.MemoryStatus.Err(var pushError):
+                    return System.Memory.MemoryStatus.Err(pushError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            scan += delimiterLength;
+            segmentStart = scan;
+        }
+
+        stack u64[0 2 ** 63 - 1] tailLength = sourceLength - segmentStart;
+        stack mut OwnedAscii tailSegment = new();
+        stack System.Memory.MemoryStatus tailStatus =
+            AppendAsciiBytesFromPointer(tailSegment, tailLength, &sourceData[segmentStart]);
+        switch (tailStatus)
+        {
+            case System.Memory.MemoryStatus.Err(var tailError):
+                return System.Memory.MemoryStatus.Err(tailError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        return segments.Push(tailSegment);
+    }
+}
+
+// Build a fresh OwnedAscii by repeating `unit` `count` times. A convenience over
+// AppendRepeatedAscii for the common "build a run of text" case (padding rules,
+// separator rows, indentation), returning an owned buffer.
+public fn System.Memory.MemoryStatus RepeatAscii(
+    out OwnedAscii result,
+    ascii unit,
+    u64[0 2 ** 63 - 1] count)
+{
+    stack mut OwnedAscii builder = new();
+    stack System.Memory.MemoryStatus status = builder.AppendRepeatedAscii(unit, count);
+    result = builder;
+    return status;
+}
+
+// Build a fresh OwnedAscii by repeating a single ASCII character `count` times.
+public fn System.Memory.MemoryStatus RepeatAsciiChar(
+    out OwnedAscii result,
+    i32[min max] codePoint,
+    u64[0 2 ** 63 - 1] count)
+{
+    stack mut OwnedAscii builder = new();
+    stack System.Memory.MemoryStatus status = builder.AppendRepeatedAsciiChar(codePoint, count);
+    result = builder;
+    return status;
+}
+
+// Build a fresh OwnedAscii holding the decimal text of `value`, exercising the
+// AppendU64 builder path through an owned-result convenience.
+public fn System.Memory.MemoryStatus DecimalU64Ascii(out OwnedAscii result, u64[0 max] value)
+{
+    stack mut OwnedAscii builder = new();
+    stack System.Memory.MemoryStatus status = builder.AppendU64(value);
+    result = builder;
+    return status;
+}
+
+// Build a fresh OwnedAscii of `prefix` followed by the decimal text of `value`.
+// Exercises append-text then append-integer composition into one owned buffer.
+public fn System.Memory.MemoryStatus LabeledU64Ascii(
+    out OwnedAscii result,
+    ascii prefix,
+    u64[0 max] value)
+    where overlap(result, prefix)
+{
+    stack mut OwnedAscii builder = new();
+    stack System.Memory.MemoryStatus prefixStatus = builder.AppendAscii(prefix);
+    switch (prefixStatus)
+    {
+        case System.Memory.MemoryStatus.Err(var prefixError):
+            return System.Memory.MemoryStatus.Err(prefixError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    stack System.Memory.MemoryStatus valueStatus = builder.AppendU64(value);
+    result = builder;
+    return valueStatus;
 }
 
 public finite law bool OwnedAsciiEqualsAscii(borrow OwnedAscii left, ascii right)
