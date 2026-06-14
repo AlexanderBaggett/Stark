@@ -57,8 +57,8 @@ stdout lines and assert the process did not time out.
     "optimizationLevel": "O0",
     "artifacts": ["llvm", "mir", "optimized-ssa"],
     "includeArtifactTexts": false,
-    "artifactOutputDirectory": ".stark/build/dev/x86_64/stage0/artifacts/Demo",
-    "diagnosticsOutputPath": ".stark/build/dev/x86_64/stage0/diagnostics/Demo.json",
+    "artifactOutputDirectory": "build/dev/x86_64/stage0/artifacts/Demo",
+    "diagnosticsOutputPath": "build/dev/x86_64/stage0/diagnostics/Demo.json",
     "includeLogs": true,
     "includeExecutions": true
   }

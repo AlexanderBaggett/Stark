@@ -728,6 +728,11 @@ internal static class CompilerCli
                 await stderr.WriteAsync(toolchainResult.StandardError);
             }
 
+            if (!TryStageNativeRuntimeLibraries(toolchainResult.OutputPath, nativeDependencyResult.RuntimeLibraryPaths, stderr))
+            {
+                return 1;
+            }
+
             await toolchainMetrics.WriteAsync(toolchainOptions.ToolchainMetricsPath);
             await stdout.WriteLineAsync($"Emitted executable: {toolchainResult.OutputPath}");
             return 0;
@@ -1586,12 +1591,13 @@ internal static class CompilerCli
 
         if (diagnostics.Count != 0)
         {
-            return new NativeDependencyLinkResult(false, [], [], [], diagnostics, null);
+            return new NativeDependencyLinkResult(false, [], [], [], [], diagnostics, null);
         }
 
         var objectPaths = new List<string>();
         var librarySearchDirectories = new List<string>();
         var linkArguments = new List<string>();
+        var runtimeLibraryPaths = new List<string>();
         var compiledNativeSources = new HashSet<string>(StringComparer.Ordinal);
         var objectIndex = 0;
 
@@ -1607,6 +1613,7 @@ internal static class CompilerCli
                 continue;
             }
 
+            var dependencyLibrarySearchDirectories = new List<string>();
             var includeDirectories = CombineDistinct(
                 ResolveNativePaths(
                     dependencySet.Dependencies.IncludeDirectories,
@@ -1644,6 +1651,7 @@ internal static class CompilerCli
                     continue;
                 }
 
+                dependencyLibrarySearchDirectories.Add(libraryDirectory);
                 librarySearchDirectories.Add(libraryDirectory);
             }
 
@@ -1680,7 +1688,7 @@ internal static class CompilerCli
                 toolchainMetrics?.AddNativeObject(toolchainResult);
                 if (!toolchainResult.Succeeded)
                 {
-                    return new NativeDependencyLinkResult(false, objectPaths, librarySearchDirectories, linkArguments, [], toolchainResult);
+                    return new NativeDependencyLinkResult(false, objectPaths, librarySearchDirectories, linkArguments, runtimeLibraryPaths, [], toolchainResult);
                 }
 
                 objectPaths.Add(toolchainResult.OutputPath);
@@ -1703,11 +1711,17 @@ internal static class CompilerCli
                     linkArguments.Add(linkArgument.Trim());
                 }
             }
+
+            runtimeLibraryPaths.AddRange(ResolveNativeRuntimeLibraryPaths(
+                dependencySet.Dependencies.Libraries ?? [],
+                CombineDistinct(pkgConfigResult.LinkArguments, dependencySet.Dependencies.LinkArguments),
+                dependencyLibrarySearchDirectories,
+                compilerOptions.TargetInfo));
         }
 
         if (diagnostics.Count != 0)
         {
-            return new NativeDependencyLinkResult(false, objectPaths, librarySearchDirectories, linkArguments, diagnostics, null);
+            return new NativeDependencyLinkResult(false, objectPaths, librarySearchDirectories, linkArguments, runtimeLibraryPaths, diagnostics, null);
         }
 
         return new NativeDependencyLinkResult(
@@ -1715,8 +1729,51 @@ internal static class CompilerCli
             objectPaths,
             CombineDistinct(librarySearchDirectories),
             CombineDistinct(linkArguments),
+            CombineDistinct(runtimeLibraryPaths),
             [],
             null);
+    }
+
+    private static bool TryStageNativeRuntimeLibraries(
+        string executablePath,
+        IReadOnlyList<string> runtimeLibraryPaths,
+        TextWriter stderr)
+    {
+        if (runtimeLibraryPaths.Count == 0)
+        {
+            return true;
+        }
+
+        var outputDirectory = Path.GetDirectoryName(Path.GetFullPath(executablePath)) ?? Environment.CurrentDirectory;
+        Directory.CreateDirectory(outputDirectory);
+
+        foreach (var runtimeLibraryPath in runtimeLibraryPaths.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            if (!File.Exists(runtimeLibraryPath))
+            {
+                continue;
+            }
+
+            var sourcePath = Path.GetFullPath(runtimeLibraryPath);
+            var destinationPath = Path.Combine(outputDirectory, Path.GetFileName(sourcePath));
+            if (string.Equals(sourcePath, Path.GetFullPath(destinationPath), StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            try
+            {
+                File.Copy(sourcePath, destinationPath, overwrite: true);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                stderr.WriteLine(
+                    $"Could not copy native runtime library '{sourcePath}' to '{destinationPath}': {exception.Message}");
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static bool HasNativeDependencies(StarkPackageNativeDependencyManifest? dependencies)
@@ -1967,6 +2024,268 @@ internal static class CompilerCli
 
         return $"-l{library}";
     }
+
+    private static IReadOnlyList<string> ResolveNativeRuntimeLibraryPaths(
+        IReadOnlyList<string> libraries,
+        IReadOnlyList<string>? linkArguments,
+        IReadOnlyList<string> librarySearchDirectories,
+        LlvmTargetInfo? targetInfo)
+    {
+        if (!IsWindowsTarget(targetInfo))
+        {
+            return [];
+        }
+
+        var searchDirectories = CombineDistinct(
+            librarySearchDirectories,
+            ExtractLibrarySearchDirectoriesFromLinkArguments(linkArguments));
+        var runtimeLibraries = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var library in libraries)
+        {
+            AddNativeRuntimeLibraryCandidates(library, searchDirectories, runtimeLibraries, seen);
+        }
+
+        foreach (var linkArgument in linkArguments ?? [])
+        {
+            AddNativeRuntimeLibraryCandidates(linkArgument, searchDirectories, runtimeLibraries, seen);
+        }
+
+        return runtimeLibraries;
+    }
+
+    private static IReadOnlyList<string> ExtractLibrarySearchDirectoriesFromLinkArguments(IReadOnlyList<string>? linkArguments)
+    {
+        if (linkArguments is not { Count: > 0 })
+        {
+            return [];
+        }
+
+        var directories = new List<string>();
+        for (var index = 0; index < linkArguments.Count; index++)
+        {
+            var argument = linkArguments[index].Trim();
+            if (argument.Length == 0)
+            {
+                continue;
+            }
+
+            if (string.Equals(argument, "-L", StringComparison.Ordinal)
+                && index + 1 < linkArguments.Count
+                && !string.IsNullOrWhiteSpace(linkArguments[index + 1]))
+            {
+                directories.Add(Path.GetFullPath(linkArguments[++index].Trim()));
+                continue;
+            }
+
+            if (argument.StartsWith("-L", StringComparison.Ordinal) && argument.Length > 2)
+            {
+                directories.Add(Path.GetFullPath(argument[2..]));
+                continue;
+            }
+
+            const string libPathPrefix = "/LIBPATH:";
+            if (argument.StartsWith(libPathPrefix, StringComparison.OrdinalIgnoreCase)
+                && argument.Length > libPathPrefix.Length)
+            {
+                directories.Add(Path.GetFullPath(argument[libPathPrefix.Length..]));
+            }
+        }
+
+        return directories;
+    }
+
+    private static void AddNativeRuntimeLibraryCandidates(
+        string value,
+        IReadOnlyList<string> searchDirectories,
+        List<string> runtimeLibraries,
+        HashSet<string> seen)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return;
+        }
+
+        var trimmed = value.Trim();
+        if (trimmed.StartsWith("-L", StringComparison.Ordinal)
+            || trimmed.StartsWith("/LIBPATH:", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        if (trimmed.StartsWith("-l:", StringComparison.Ordinal))
+        {
+            AddNativeRuntimeLibraryPath(trimmed[3..], searchDirectories, runtimeLibraries, seen);
+            return;
+        }
+
+        if (trimmed.StartsWith("-l", StringComparison.Ordinal) && trimmed.Length > 2)
+        {
+            AddNativeRuntimeLibraryPath(trimmed[2..], searchDirectories, runtimeLibraries, seen);
+            return;
+        }
+
+        if (trimmed.StartsWith("-", StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        AddNativeRuntimeLibraryPath(trimmed, searchDirectories, runtimeLibraries, seen);
+    }
+
+    private static void AddNativeRuntimeLibraryPath(
+        string library,
+        IReadOnlyList<string> searchDirectories,
+        List<string> runtimeLibraries,
+        HashSet<string> seen)
+    {
+        if (string.IsNullOrWhiteSpace(library))
+        {
+            return;
+        }
+
+        var trimmed = library.Trim();
+        if (trimmed.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
+        {
+            if (TryResolveNativeRuntimeFile(trimmed, searchDirectories, out var directRuntimePath)
+                && seen.Add(directRuntimePath))
+            {
+                runtimeLibraries.Add(directRuntimePath);
+            }
+
+            return;
+        }
+
+        var candidateNames = BuildWindowsRuntimeLibraryFileNameCandidates(trimmed);
+        var candidateSearchDirectories = searchDirectories;
+        if (ContainsDirectorySeparator(trimmed) || Path.IsPathRooted(trimmed))
+        {
+            var fullLibraryPath = Path.GetFullPath(trimmed);
+            var libraryDirectory = Path.GetDirectoryName(fullLibraryPath);
+            if (!string.IsNullOrWhiteSpace(libraryDirectory))
+            {
+                candidateSearchDirectories = CombineDistinct([libraryDirectory], searchDirectories);
+            }
+        }
+
+        foreach (var searchDirectory in candidateSearchDirectories)
+        {
+            foreach (var candidateName in candidateNames)
+            {
+                if (TryFindFile(searchDirectory, candidateName, out var runtimePath)
+                    && seen.Add(runtimePath))
+                {
+                    runtimeLibraries.Add(runtimePath);
+                    return;
+                }
+            }
+        }
+    }
+
+    private static IReadOnlyList<string> BuildWindowsRuntimeLibraryFileNameCandidates(string library)
+    {
+        var fileName = Path.GetFileName(library.Trim());
+        if (fileName.Length == 0)
+        {
+            return [];
+        }
+
+        if (fileName.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
+        {
+            return [fileName];
+        }
+
+        var baseName = Path.GetFileNameWithoutExtension(fileName);
+        if (string.IsNullOrWhiteSpace(baseName))
+        {
+            baseName = fileName;
+        }
+
+        var candidates = new List<string> { $"{baseName}.dll" };
+        if (baseName.StartsWith("lib", StringComparison.OrdinalIgnoreCase) && baseName.Length > 3)
+        {
+            candidates.Add($"{baseName[3..]}.dll");
+        }
+        else
+        {
+            candidates.Add($"lib{baseName}.dll");
+        }
+
+        return candidates.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+    }
+
+    private static bool TryResolveNativeRuntimeFile(
+        string value,
+        IReadOnlyList<string> searchDirectories,
+        out string runtimePath)
+    {
+        if (Path.IsPathRooted(value) || ContainsDirectorySeparator(value))
+        {
+            var fullPath = Path.GetFullPath(value);
+            if (File.Exists(fullPath))
+            {
+                runtimePath = fullPath;
+                return true;
+            }
+
+            runtimePath = string.Empty;
+            return false;
+        }
+
+        foreach (var searchDirectory in searchDirectories)
+        {
+            if (TryFindFile(searchDirectory, value, out runtimePath))
+            {
+                return true;
+            }
+        }
+
+        runtimePath = string.Empty;
+        return false;
+    }
+
+    private static bool TryFindFile(string directory, string fileName, out string path)
+    {
+        if (!Directory.Exists(directory))
+        {
+            path = string.Empty;
+            return false;
+        }
+
+        var candidate = Path.GetFullPath(Path.Combine(directory, fileName));
+        if (File.Exists(candidate))
+        {
+            path = candidate;
+            return true;
+        }
+
+        try
+        {
+            var match = Directory.EnumerateFiles(directory)
+                .FirstOrDefault(file => string.Equals(Path.GetFileName(file), fileName, StringComparison.OrdinalIgnoreCase));
+            if (match is not null)
+            {
+                path = Path.GetFullPath(match);
+                return true;
+            }
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
+
+        path = string.Empty;
+        return false;
+    }
+
+    private static bool ContainsDirectorySeparator(string value)
+        => value.Contains(Path.DirectorySeparatorChar)
+           || value.Contains(Path.AltDirectorySeparatorChar)
+           || value.Contains('/')
+           || value.Contains('\\');
 
     private static IReadOnlyList<CompilerDiagnostic> BuildMissingNativeLibraryDiagnostics(
         NativeToolchainResult toolchainResult,
@@ -3861,6 +4180,7 @@ internal static class CompilerCli
         IReadOnlyList<string> ObjectPaths,
         IReadOnlyList<string> LibrarySearchDirectories,
         IReadOnlyList<string> LinkArguments,
+        IReadOnlyList<string> RuntimeLibraryPaths,
         IReadOnlyList<CompilerDiagnostic> Diagnostics,
         NativeToolchainResult? ToolchainResult);
 

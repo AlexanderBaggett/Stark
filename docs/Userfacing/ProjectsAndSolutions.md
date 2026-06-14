@@ -116,10 +116,10 @@ stark test standard-library-tests --filter Integer
 
 ### `stark clean`
 
-* deletes artifacts under the formal `.stark/build/<profile>/<target-triple>/<stage>/` layout
+* deletes artifacts under the formal `build/<profile>/<target-triple>/<stage>/` layout
 * default scope is `stage`
 * `target`, `stage`, `diagnostics`, and `artifacts` use `--target <triple>` or the detected default target
-* `profile` deletes `.stark/build/<profile>/` and does not require target discovery
+* `profile` deletes `build/<profile>/` and does not require target discovery
 
 ```bash
 stark clean
@@ -133,7 +133,7 @@ stark clean artifacts --target x86_64-unknown-linux-gnu
 Project command outputs use the formal build layout:
 
 ```text
-.stark/build/<profile>/<target-triple>/<stage>/
+build/<profile>/<target-triple>/<stage>/
   bin/<project>/
   obj/<project>/
   pkg/<project>/
@@ -148,9 +148,10 @@ active stage's `stdlib` directory for stage-local `System` artifacts, then the
 nearest repo `stdlib/dist` package images, then the nearest repo `stdlib/src`
 source tree for source-tree development, then bundled stdlib artifacts next to
 the active compiler distribution. Project builds do not use `STARK_PATH`; use
-manifest dependencies, future explicit stdlib overrides, or direct low-level
-compiler `-I` inputs instead. Stdlib artifact generation/routing, diagnostic,
-and artifact-export routing are still part of self-hosting prep.
+manifest dependencies for ordinary packages, future explicit stdlib overrides,
+or direct low-level compiler `-I` inputs instead. Stdlib artifact
+generation/routing, diagnostic, and artifact-export routing are still part of
+self-hosting prep.
 When a `System.*` import cannot be resolved, project builds report the searched
 stdlib paths and the active profile, target, and stage.
 
@@ -168,7 +169,6 @@ output = "breakout-raylib"
 
 [dependencies]
 raylib = { path = "../raylib" }
-stdlib = { path = "../../stdlib" }
 
 [profiles.dev]
 opt = 0
@@ -201,9 +201,6 @@ kind = "test"
 [test]
 root = "StandardLibraryTests.stark"
 output = "standard-library-tests"
-
-[dependencies]
-stdlib = { path = "../../stdlib" }
 ```
 
 The test root is compiled as an executable. If it contains `[Fact]` metadata,
@@ -311,10 +308,12 @@ Path dependencies cover v1:
 ```toml
 [dependencies]
 raylib = { path = "../raylib" }
-stdlib = { path = "../../stdlib" }
 ```
 
-That handles examples, standard library work, multi project repos, and native backed packages inside the same solution. Versioned and registry dependencies come later.
+That handles multi project repos and native backed packages inside the same
+solution. `System.*` modules come from the standard library discovery path, so
+projects do not list `stdlib` as an ordinary dependency. Versioned and registry
+dependencies come later.
 
 ## Native Packages
 
@@ -424,7 +423,6 @@ output = "breakout-raylib"
 
 [dependencies]
 raylib = { path = "../raylib" }
-stdlib = { path = "../../stdlib" }
 ```
 
 ### `Stark.solution.toml`

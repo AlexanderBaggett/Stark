@@ -303,7 +303,7 @@ internal static class ProjectCliDriver
                 await stdout.WriteLineAsync("- In a project directory, `stark build` builds that project.");
                 await stdout.WriteLineAsync("- In a solution directory, `stark build` builds the default solution targets or all members.");
                 await stdout.WriteLineAsync("- `target` may be a solution alias, member path, or project name.");
-                await stdout.WriteLineAsync("- Outputs are routed under `.stark/build/<profile>/<target-triple>/<stage>/`.");
+                await stdout.WriteLineAsync("- Outputs are routed under `build/<profile>/<target-triple>/<stage>/`.");
                 return;
             case ProjectCommand.Run:
                 await stdout.WriteLineAsync("Usage: stark run [target] [--dev|--release] [--target <triple>] [--stage stage0]");
@@ -323,10 +323,10 @@ internal static class ProjectCliDriver
             case ProjectCommand.Clean:
                 await stdout.WriteLineAsync("Usage: stark clean [stage|target|profile|diagnostics|artifacts] [--dev|--release] [--target <triple>] [--stage stage0]");
                 await stdout.WriteLineAsync();
-                await stdout.WriteLineAsync("Clean the formal `.stark/build/<profile>/<target-triple>/<stage>/` tree.");
+                await stdout.WriteLineAsync("Clean the formal `build/<profile>/<target-triple>/<stage>/` tree.");
                 await stdout.WriteLineAsync("- Default scope is `stage`.");
                 await stdout.WriteLineAsync("- `target`, `stage`, `diagnostics`, and `artifacts` use `--target <triple>` or the detected default target.");
-                await stdout.WriteLineAsync("- `profile` deletes `.stark/build/<profile>/` and does not require target discovery.");
+                await stdout.WriteLineAsync("- `profile` deletes `build/<profile>/` and does not require target discovery.");
                 return;
         }
     }
@@ -1212,7 +1212,7 @@ internal static class ProjectCliDriver
 
     private static string GetBuildDirectory(string buildRootDirectory)
     {
-        return Path.Combine(buildRootDirectory, ".stark", "build");
+        return Path.Combine(buildRootDirectory, "build");
     }
 
     private static bool IsPathInsideBuildDirectory(string path, string buildDirectory)

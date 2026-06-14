@@ -170,7 +170,6 @@ output = "geometry-app"
 
 [dependencies]
 geometry = { path = "../geometry" }
-stdlib = { path = "../../stdlib" }
 ```
 
 If the app needs another source module from the same app package, import that
