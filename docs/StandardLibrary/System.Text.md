@@ -276,6 +276,12 @@ public fn System.Memory.MemoryResult<OwnedUnicode> ToUnicode(f64 value);
 public fn System.Memory.MemoryResult<OwnedUnicode> ToUnicode(f32 value);
 public fn System.Memory.MemoryResult<OwnedUnicode> ToUnicode(Encoding value);
 public fn System.Memory.MemoryResult<OwnedUnicode> ToUnicode(TextError value);
+
+public fn System.Memory.MemoryStatus SplitAscii(
+    out System.Collections.List<OwnedAscii> segments,
+    ascii source,
+    ascii delimiter)
+    where overlap(source, delimiter);
 ```
 
 ## Behavior
@@ -291,6 +297,9 @@ public fn System.Memory.MemoryResult<OwnedUnicode> ToUnicode(TextError value);
 - `AsciiBytesEqual`, `AsciiBytesStartsWith`, `AsciiBytesEndsWith`,
   `AsciiBytesContains`, and `AsciiBytesCountOccurrences` compare byte slices
   directly against ASCII text without allocating an owned text copy.
+- `SplitAscii` splits an `ascii` view on a non-empty substring delimiter into a
+  caller-provided `System.Collections.List<OwnedAscii>` (see
+  [Splitting ASCII text](#splitting-ascii-text)).
 - `ParseBoolAscii` and `ParseBoolUnicode` parse exact lowercase `true` or `false` and return `TextResult<bool>` instead of throwing.
 - `ParseEncodingAscii`, `ParseEncodingUnicode`, `ParseTextErrorAscii`, and `ParseTextErrorUnicode` parse exact enum case names for the `System.Text` enum types.
 - The implemented integer parse APIs for signed and unsigned widths from 8 bits through 1024 bits parse exact base-10 text from `ascii` or `unicode` and return `TextResult<T>` with `TextError.InvalidFormat` or `TextError.Overflow` on failure.
@@ -340,6 +349,37 @@ leading `-` allowed for signed values. They do not accept leading `+`,
 whitespace, separators, prefixes, suffixes, or locale-specific digits. The
 current integer parsing surface covers signed and unsigned widths through 1024
 bits.
+
+## Splitting ASCII text
+
+`SplitAscii(out segments, source, delimiter)` splits an `ascii` view on a
+non-empty substring `delimiter` into the caller-provided
+`System.Collections.List<OwnedAscii>` and returns `System.Memory.MemoryStatus`.
+The `where overlap(source, delimiter)` contract allows the two views to alias.
+
+Ownership and split rules:
+
+- each returned segment is a fresh `OwnedAscii` copy of the source bytes, so the
+  list owns its segments independently of the transient `source` view
+- an empty `source` yields exactly one empty segment
+- an empty `delimiter` is rejected (returns an `Err` status) so the result count
+  is always well defined
+- consecutive delimiters and leading/trailing delimiters produce empty segments,
+  matching the usual split contract
+- multi-character delimiters are matched as whole substrings
+
+```stark
+import System.Text
+module App
+
+fn System.Memory.MemoryStatus SplitFields(
+    out System.Collections.List<System.Text.OwnedAscii> fields,
+    ascii line)
+{
+    // "a,b,c" -> ["a", "b", "c"]; ",x," -> ["", "x", ""]; "" -> [""].
+    return System.Text.SplitAscii(fields, line, ",");
+}
+```
 
 ## Example
 

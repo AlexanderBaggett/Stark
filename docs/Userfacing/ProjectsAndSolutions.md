@@ -107,11 +107,15 @@ stark run --release
 * `[Theory]` rows can come from `[InlineData(...)]` constants or typed indexed `[MemberData(provider, rowType, count, ...fields)]` providers
 * `[Platform(...)]` and `[SkipPlatform(...)]` gates on facts, structs, and records are resolved from the selected target triple at build time
 * `[Collection(name)]` and `[Serial]` on facts, structs, and records create stable serial scheduling groups in the generated runner
+* `--collection <name[,name...]>` can be repeated and comma-splits each value to run only facts tagged with the named `[Collection]`s, with union semantics across selections
+* `--list-collections` prints the project's collection names without running any facts
 
 ```bash
 stark test
 stark test standard-library-tests
 stark test standard-library-tests --filter Integer
+stark test standard-library-tests --collection ownership,lexing
+stark test standard-library-tests --list-collections
 ```
 
 ### `stark clean`

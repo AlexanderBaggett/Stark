@@ -3,6 +3,9 @@
 Stark uses TOML manifests. A `Stark.toml` describes one project. A
 `Stark.solution.toml` describes a workspace of projects.
 
+The stdlib ships a reusable TOML reader/writer, `System.Toml` (see
+[`docs/StandardLibrary/System.Toml.md`](../../../docs/StandardLibrary/System.Toml.md)), which parses these manifest files. It is the library Stark manifest decoding builds on; wiring `System.Toml` into the project driver in place of the host-style `SimpleToml` handling is still pending.
+
 ## Project Manifest
 
 Executable project:

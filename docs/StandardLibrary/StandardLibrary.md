@@ -71,6 +71,7 @@ The current public module references live here:
 - [System.Testing](./System.Testing.md)
 - [System.Threading](./System.Threading.md)
 - [System.Text](./System.Text.md)
+- [System.Toml](./System.Toml.md)
 
 ## Module Layout
 
