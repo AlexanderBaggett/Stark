@@ -51,6 +51,20 @@ fn bool IsUnsupportedValue(TomlError error)
     }
 }
 
+fn bool IsInvalidNumber(TomlError error)
+{
+    switch (error)
+    {
+        case TomlError.InvalidNumber
+        {
+            Line: var line, Column: var column
+        }:
+            return true;
+        default:
+            return false;
+    }
+}
+
 fn bool IsUnexpectedCharacterAt(TomlError error, u32[0 max] line, u32[0 max] column)
 {
     switch (error)
@@ -523,6 +537,190 @@ ratio = 1.5
         {
             case TomlResult<TomlDocument>.Err(var error):
                 return IsUnsupportedValue(error);
+            case TomlResult<TomlDocument>.Ok(var value):
+                return false;
+        }
+    }
+}
+
+[Fact]
+fn bool PrefixedIntegersDecodeByRadix()
+{
+    unsafe
+    {
+        switch (ParseText(raw"""
+hex = 0xDEAD
+upperhex = 0XdeAd
+octal = 0o755
+binary = 0b1010
+"""))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                stack mut TomlDocument document = value;
+                stack mut u64[0 2 ** 63 - 1] hex = 0;
+                if (!document.TryFindMember(TomlRootNode, "hex", hex))
+                {
+                    return false;
+                }
+
+                stack mut u64[0 2 ** 63 - 1] upperhex = 0;
+                if (!document.TryFindMember(TomlRootNode, "upperhex", upperhex))
+                {
+                    return false;
+                }
+
+                stack mut u64[0 2 ** 63 - 1] octal = 0;
+                if (!document.TryFindMember(TomlRootNode, "octal", octal))
+                {
+                    return false;
+                }
+
+                stack mut u64[0 2 ** 63 - 1] binary = 0;
+                if (!document.TryFindMember(TomlRootNode, "binary", binary))
+                {
+                    return false;
+                }
+
+                stack mut i64[min max] hexValue = 0;
+                switch (document.I64At(hex))
+                {
+                    case TomlResult<i64[min max]>.Err(var hexError):
+                        return false;
+                    case TomlResult<i64[min max]>.Ok(var parsedHex):
+                        hexValue = parsedHex;
+                }
+
+                stack mut i64[min max] upperhexValue = 0;
+                switch (document.I64At(upperhex))
+                {
+                    case TomlResult<i64[min max]>.Err(var upperhexError):
+                        return false;
+                    case TomlResult<i64[min max]>.Ok(var parsedUpperhex):
+                        upperhexValue = parsedUpperhex;
+                }
+
+                stack mut i64[min max] octalValue = 0;
+                switch (document.I64At(octal))
+                {
+                    case TomlResult<i64[min max]>.Err(var octalError):
+                        return false;
+                    case TomlResult<i64[min max]>.Ok(var parsedOctal):
+                        octalValue = parsedOctal;
+                }
+
+                stack mut i64[min max] binaryValue = 0;
+                switch (document.I64At(binary))
+                {
+                    case TomlResult<i64[min max]>.Err(var binaryError):
+                        return false;
+                    case TomlResult<i64[min max]>.Ok(var parsedBinary):
+                        binaryValue = parsedBinary;
+                }
+
+                return hexValue == 57005
+                    && upperhexValue == 57005
+                    && octalValue == 493
+                    && binaryValue == 10;
+        }
+    }
+}
+
+[Fact]
+fn bool UnderscoredPrefixedIntegersNormalize()
+{
+    unsafe
+    {
+        switch (ParseText(raw"""
+hex = 0xDE_AD
+binary = 0b1010_0101
+"""))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                stack mut TomlDocument document = value;
+                stack mut u64[0 2 ** 63 - 1] hex = 0;
+                if (!document.TryFindMember(TomlRootNode, "hex", hex))
+                {
+                    return false;
+                }
+
+                stack mut u64[0 2 ** 63 - 1] binary = 0;
+                if (!document.TryFindMember(TomlRootNode, "binary", binary))
+                {
+                    return false;
+                }
+
+                stack mut i64[min max] hexValue = 0;
+                switch (document.I64At(hex))
+                {
+                    case TomlResult<i64[min max]>.Err(var hexError):
+                        return false;
+                    case TomlResult<i64[min max]>.Ok(var parsedHex):
+                        hexValue = parsedHex;
+                }
+
+                stack mut i64[min max] binaryValue = 0;
+                switch (document.I64At(binary))
+                {
+                    case TomlResult<i64[min max]>.Err(var binaryError):
+                        return false;
+                    case TomlResult<i64[min max]>.Ok(var parsedBinary):
+                        binaryValue = parsedBinary;
+                }
+
+                return hexValue == 57005 && binaryValue == 165;
+        }
+    }
+}
+
+[Fact]
+fn bool PrefixedIntegerWithoutDigitsIsRejected()
+{
+    unsafe
+    {
+        switch (ParseText(raw"""
+x = 0x
+"""))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return IsInvalidNumber(error);
+            case TomlResult<TomlDocument>.Ok(var value):
+                return false;
+        }
+    }
+}
+
+[Fact]
+fn bool PrefixedIntegerWithBadDigitIsRejected()
+{
+    unsafe
+    {
+        switch (ParseText(raw"""
+x = 0xG
+"""))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return IsInvalidNumber(error);
+            case TomlResult<TomlDocument>.Ok(var value):
+                return false;
+        }
+    }
+}
+
+[Fact]
+fn bool PrefixedIntegerWithLeadingUnderscoreIsRejected()
+{
+    unsafe
+    {
+        switch (ParseText(raw"""
+x = 0x_DE
+"""))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return IsInvalidNumber(error);
             case TomlResult<TomlDocument>.Ok(var value):
                 return false;
         }
