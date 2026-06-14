@@ -247,7 +247,8 @@ internal sealed class StarkTypeResolver
             }
 
             var importedMatches = _moduleGraph.EnumerateAccessibleModuleQualifiedNames(currentModuleName, qualifiedName)
-                .Where(_namedTypes.ContainsKey)
+                .Where(candidate => _namedTypes.TryGetValue(candidate, out var candidateType)
+                    && IsNamedTypeAccessible(candidateType, currentModuleName))
                 .ToArray();
             if (importedMatches.Length == 1)
             {
@@ -264,8 +265,17 @@ internal sealed class StarkTypeResolver
             }
         }
 
-        if (_namedTypes.ContainsKey(qualifiedName))
+        if (_namedTypes.TryGetValue(qualifiedName, out var directType))
         {
+            if (!IsNamedTypeAccessible(directType, currentModuleName))
+            {
+                ReportError(
+                    "STK3015",
+                    $"Type '{qualifiedName}' is module and is not visible from module '{currentModuleName}'.",
+                    token);
+                return StarkTypeSymbols.Error;
+            }
+
             return StarkTypeSymbols.Named(qualifiedName);
         }
 
@@ -2476,6 +2486,29 @@ internal sealed class StarkTypeResolver
             StarkVisibility.Export => true,
             _ => false
         };
+    }
+
+    // Module-privacy for a named type in a type position, mirroring IsTypeAliasAccessible.
+    // A Module-visibility type is reachable only from its own module; Internal/Public/
+    // Export are same-source-package or wider. This is what stops a sibling submodule from
+    // naming a module-private type in an annotation.
+    //
+    // Enforced ONLY during the authoritative type-check stage: later passes (lowering,
+    // validation) re-resolve already-checked types from type models that do not carry
+    // real visibility on NamedTypeSymbol (it defaults to Module), so enforcing there would
+    // falsely reject public/internal types. Without a caller module context, privacy can't
+    // be determined either, so defer to the contexts that have one.
+    private bool IsNamedTypeAccessible(NamedTypeSymbol type, string? currentModuleName)
+    {
+        if (!string.Equals(_stage, "type-check", StringComparison.Ordinal)
+            || string.IsNullOrWhiteSpace(currentModuleName))
+        {
+            return true;
+        }
+
+        return type.Visibility != StarkVisibility.Module
+            || type.DeclaringModuleName is null
+            || string.Equals(type.DeclaringModuleName, currentModuleName, StringComparison.Ordinal);
     }
 
     private static bool IsTypeAliasAccessible(TypeAliasResolutionSource alias, string? currentModuleName)

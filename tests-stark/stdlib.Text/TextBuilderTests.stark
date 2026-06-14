@@ -1,0 +1,217 @@
+import System.Testing
+import System.Text
+import System.Memory
+import System.Collections
+[Collection("text")]
+module TextBuilderTests
+
+// Stark-native tests for the System.Text compiler-grade builder slice (stdlib
+// gap S02): incremental append, append-repeated, join over a slice of owned
+// parts, and split into a List of owned segments.
+//
+// Toolchain constraint (see report): in this worktree, code compiled INTO the
+// test executable crashes when it mutates `dynamic` storage (heap corruption on
+// growth), while the same operations run correctly when compiled into the stdlib
+// package. The existing green suites (stdlib.Toml, selfhost.Lexing) avoid this by
+// building their dynamic structures inside imported stdlib/selfhost modules and
+// only READING the results from `[Fact]` code. These tests follow the same
+// discipline: every builder op is driven through a stdlib-package entry point
+// (Split*/Repeat*/Decimal*/Labeled*/SplitJoin*) that performs all `dynamic`
+// building, and the facts only declare empty buffers, call into stdlib, and read
+// the result (View / Count / slice-element equality), which never grows
+// `dynamic`.
+
+fn bool IsOk(System.Memory.MemoryStatus status)
+{
+    switch (status)
+    {
+        case System.Memory.MemoryStatus.Ok:
+            return true;
+        case System.Memory.MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+fn bool IsErr(System.Memory.MemoryStatus status)
+{
+    switch (status)
+    {
+        case System.Memory.MemoryStatus.Ok:
+            return false;
+        case System.Memory.MemoryStatus.Err(var error):
+            return true;
+    }
+}
+
+// Read a split segment through the whole slice (passed as an argument), which
+// avoids chaining a method onto a List<OwnedAscii> borrow-returning method.
+fn bool SegmentEquals(borrow OwnedAscii[] segments, u64[0 2 ** 63 - 1] index, ascii expected)
+{
+    if (index >= segments.Length)
+    {
+        return false;
+    }
+
+    return OwnedAsciiEqualsAscii(segments[index], expected);
+}
+
+fn bool SegmentIsEmpty(borrow OwnedAscii[] segments, u64[0 2 ** 63 - 1] index)
+{
+    if (index >= segments.Length)
+    {
+        return false;
+    }
+
+    return segments[index].IsEmpty();
+}
+
+// ----- Append integer (AppendU64) -----------------------------------------
+
+[Fact]
+fn bool DecimalU64FormatsValue()
+{
+    stack mut OwnedAscii result = new();
+    stack System.Memory.MemoryStatus s = DecimalU64Ascii(result, (u64[0 max])1234567890);
+    return IsOk(s) && System.Testing.Equal("1234567890", result.View());
+}
+
+[Fact]
+fn bool DecimalU64FormatsZero()
+{
+    stack mut OwnedAscii result = new();
+    stack System.Memory.MemoryStatus s = DecimalU64Ascii(result, (u64[0 max])0);
+    return IsOk(s) && System.Testing.Equal("0", result.View());
+}
+
+// ----- Append text then integer (AppendAscii + AppendU64 composition) ------
+
+[Fact]
+fn bool LabeledU64ComposesPrefixAndValue()
+{
+    stack mut OwnedAscii result = new();
+    stack System.Memory.MemoryStatus s = LabeledU64Ascii(result, "count=", (u64[0 max])42);
+    return IsOk(s) && System.Testing.Equal("count=42", result.View());
+}
+
+// ----- AppendRepeated (text and char) -------------------------------------
+
+[Fact]
+fn bool RepeatAsciiRepeatsView()
+{
+    stack mut OwnedAscii result = new();
+    stack System.Memory.MemoryStatus s = RepeatAscii(result, "ab", (u64[0 2 ** 63 - 1])3);
+    return IsOk(s) && System.Testing.Equal("ababab", result.View());
+}
+
+[Fact]
+fn bool RepeatAsciiZeroIsEmpty()
+{
+    stack mut OwnedAscii result = new();
+    stack System.Memory.MemoryStatus s = RepeatAscii(result, "ab", (u64[0 2 ** 63 - 1])0);
+    return IsOk(s) && result.IsEmpty();
+}
+
+[Fact]
+fn bool RepeatAsciiCharRepeatsChar()
+{
+    stack mut OwnedAscii result = new();
+    stack System.Memory.MemoryStatus s = RepeatAsciiChar(result, 45, (u64[0 2 ** 63 - 1])5);   // '-'
+    return IsOk(s) && System.Testing.Equal("-----", result.View());
+}
+
+[Fact]
+fn bool RepeatAsciiCharRejectsNonAscii()
+{
+    stack mut OwnedAscii result = new();
+    stack System.Memory.MemoryStatus s = RepeatAsciiChar(result, 200, (u64[0 2 ** 63 - 1])3);
+    return IsErr(s);
+}
+
+// ----- Split --------------------------------------------------------------
+
+[Fact]
+fn bool SplitAsciiOnSingleChar()
+{
+    stack mut System.Collections.List<OwnedAscii> segments = new();
+    stack System.Memory.MemoryStatus s = SplitAscii(segments, "a,b,c", ",");
+    if (!IsOk(s) || segments.Count() != 3)
+    {
+        return false;
+    }
+
+    return SegmentEquals(segments.AsSlice(), (u64[0 2 ** 63 - 1])0, "a")
+        && SegmentEquals(segments.AsSlice(), (u64[0 2 ** 63 - 1])1, "b")
+        && SegmentEquals(segments.AsSlice(), (u64[0 2 ** 63 - 1])2, "c");
+}
+
+[Fact]
+fn bool SplitAsciiEmptySegments()
+{
+    stack mut System.Collections.List<OwnedAscii> segments = new();
+    stack System.Memory.MemoryStatus s = SplitAscii(segments, ",x,", ",");
+    if (!IsOk(s) || segments.Count() != 3)
+    {
+        return false;
+    }
+
+    return SegmentIsEmpty(segments.AsSlice(), (u64[0 2 ** 63 - 1])0)
+        && SegmentEquals(segments.AsSlice(), (u64[0 2 ** 63 - 1])1, "x")
+        && SegmentIsEmpty(segments.AsSlice(), (u64[0 2 ** 63 - 1])2);
+}
+
+[Fact]
+fn bool SplitAsciiNoDelimiterIsWhole()
+{
+    stack mut System.Collections.List<OwnedAscii> segments = new();
+    stack System.Memory.MemoryStatus s = SplitAscii(segments, "whole", ",");
+    return IsOk(s)
+        && segments.Count() == 1
+        && SegmentEquals(segments.AsSlice(), (u64[0 2 ** 63 - 1])0, "whole");
+}
+
+[Fact]
+fn bool SplitAsciiEmptySourceIsOneEmptySegment()
+{
+    stack mut System.Collections.List<OwnedAscii> segments = new();
+    stack System.Memory.MemoryStatus s = SplitAscii(segments, "", ",");
+    return IsOk(s)
+        && segments.Count() == 1
+        && SegmentIsEmpty(segments.AsSlice(), (u64[0 2 ** 63 - 1])0);
+}
+
+[Fact]
+fn bool SplitAsciiOnMultiCharDelimiter()
+{
+    stack mut System.Collections.List<OwnedAscii> segments = new();
+    stack System.Memory.MemoryStatus s = SplitAscii(segments, "one::two::three", "::");
+    if (!IsOk(s) || segments.Count() != 3)
+    {
+        return false;
+    }
+
+    return SegmentEquals(segments.AsSlice(), (u64[0 2 ** 63 - 1])0, "one")
+        && SegmentEquals(segments.AsSlice(), (u64[0 2 ** 63 - 1])1, "two")
+        && SegmentEquals(segments.AsSlice(), (u64[0 2 ** 63 - 1])2, "three");
+}
+
+[Fact]
+fn bool SplitAsciiTrailingDelimiterYieldsEmptyTail()
+{
+    stack mut System.Collections.List<OwnedAscii> segments = new();
+    stack System.Memory.MemoryStatus s = SplitAscii(segments, "a,", ",");
+    if (!IsOk(s) || segments.Count() != 2)
+    {
+        return false;
+    }
+
+    return SegmentEquals(segments.AsSlice(), (u64[0 2 ** 63 - 1])0, "a")
+        && SegmentIsEmpty(segments.AsSlice(), (u64[0 2 ** 63 - 1])1);
+}
+
+[Fact]
+fn bool SplitAsciiRejectsEmptyDelimiter()
+{
+    stack mut System.Collections.List<OwnedAscii> segments = new();
+    return IsErr(SplitAscii(segments, "abc", ""));
+}
+

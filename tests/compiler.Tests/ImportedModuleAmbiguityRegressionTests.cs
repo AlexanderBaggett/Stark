@@ -3,12 +3,13 @@ using Stark.Compiler;
 namespace compiler.Tests;
 
 /// <summary>
-/// Regression for bare-name ambiguity inside an imported source module. Type
-/// checking skips imported non-generic bodies, so a name exported by two of the
-/// module's own imports was never diagnosed and crashed lower-mir with STK9999
-/// ("Named operand could not be resolved"). A focused type-check scan now reports
-/// it as a located STK3003 ambiguity naming the candidate modules; qualifying the
-/// name compiles cleanly.
+/// Regression for bare-name ambiguity inside an imported source module. A name
+/// exported by two of the module's own imports once crashed lower-mir with STK9999
+/// ("Named operand could not be resolved"). Imported source bodies are now
+/// type-checked, so an ambiguous CALL is reported by overload resolution as a located
+/// STK3022 naming the candidate overloads. The workaround ambiguity scan no longer
+/// double-reports calls; it still covers non-call references (member access, indexing,
+/// a bare function value) as STK3003. Qualifying the name compiles cleanly.
 /// </summary>
 public sealed class ImportedModuleAmbiguityRegressionTests
 {
@@ -64,16 +65,19 @@ public sealed class ImportedModuleAmbiguityRegressionTests
 
         Assert.False(result.Succeeded);
         Assert.DoesNotContain(result.Diagnostics, diagnostic => diagnostic.Code == "STK9999");
+        // The ambiguous call is now reported by overload resolution (STK3022) with the
+        // candidate overloads; the workaround ambiguity scan no longer double-reports calls.
+        Assert.DoesNotContain(result.Diagnostics, diagnostic => diagnostic.Code == "STK3003");
         Assert.Contains(
             result.Diagnostics,
-            diagnostic => diagnostic.Code == "STK3003"
-                && diagnostic.Message.Contains("'Shared' is ambiguous between", StringComparison.Ordinal)
+            diagnostic => diagnostic.Code == "STK3022"
+                && diagnostic.Message.Contains("'Shared' is ambiguous", StringComparison.Ordinal)
                 && diagnostic.Message.Contains("ModA.Shared", StringComparison.Ordinal)
                 && diagnostic.Message.Contains("ModB.Shared", StringComparison.Ordinal));
         // The diagnostic is attributed to the imported module, not the root file.
         Assert.Contains(
             result.Diagnostics,
-            diagnostic => diagnostic.Code == "STK3003"
+            diagnostic => diagnostic.Code == "STK3022"
                 && diagnostic.Location?.FilePath?.EndsWith("Mid.stark", StringComparison.Ordinal) == true);
     }
 

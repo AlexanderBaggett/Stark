@@ -95,11 +95,10 @@ internal sealed class LoweringContractValidator
                     continue;
                 }
 
-                if (!module.Reference.IsRoot && !signature.IsGeneric)
-                {
-                    continue;
-                }
-
+                // Non-root non-generic source bodies are validated here too: in a
+                // whole-package build they are lowered and emitted, so their lowering
+                // contracts must be validated like every other emitted body (mirrors the
+                // matching change in TypeChecking.CheckFunctionBodies).
                 if (declaration.Body.block() is not { } body)
                 {
                     continue;
