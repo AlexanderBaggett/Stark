@@ -155,7 +155,7 @@ format always evolve together without a durable format marker.
 - [ ] Update tests so normal dependency loading uses binary images while
       golden/debug tests compare deterministic inspection output.
 - [~] Route package-image outputs into the accepted
-      `.stark/build/<profile>/<target-triple>/<stage>/pkg/` layout, with
+      `build/<profile>/<target-triple>/<stage>/pkg/` layout, with
       inspection views under `artifacts/` or an explicit caller output path.
       Current project library builds route legacy JSON package images to
       `pkg/<project>/` and preserve dependency linking through relative library

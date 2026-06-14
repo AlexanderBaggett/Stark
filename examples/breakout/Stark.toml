@@ -9,4 +9,3 @@ output = "breakout-raylib"
 
 [dependencies]
 raylib = { path = "../raylib" }
-stdlib = { path = "../../stdlib" }

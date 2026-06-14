@@ -25,6 +25,8 @@ artifacts/
 .claude/
 .codex
 .stark/
+build/
+Stark.user.toml
 
 # Native/compiler-generated artifacts
 /stark

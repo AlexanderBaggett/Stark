@@ -245,9 +245,6 @@ kind = "test"
 [test]
 root = "CollectionsTests.stark"
 output = "collections-tests"
-
-[dependencies]
-stdlib = { path = "../../stdlib" }
 ```
 
 Run focused tests from the project directory with:

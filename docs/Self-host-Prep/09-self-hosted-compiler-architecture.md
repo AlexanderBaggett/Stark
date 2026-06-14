@@ -184,13 +184,13 @@ Rules:
 - `/src` remains the canonical compiler source location after cutover.
 - This decision is about source placement only. Bootstrap staging uses the
   existing C# host as Stage0 until self-hosting succeeds, and build artifacts use
-  the `.stark/build/<profile>/<target-triple>/<stage>/` layout from
+  the `build/<profile>/<target-triple>/<stage>/` layout from
   `25-build-artifact-layout.md`.
 
 ## Build Artifact Layout
 
 **Decision: build artifacts use
-`.stark/build/<profile>/<target-triple>/<stage>/`.** See
+`build/<profile>/<target-triple>/<stage>/`.** See
 `25-build-artifact-layout.md`.
 
 The self-hosted compiler and build driver should route artifacts into stable

@@ -296,7 +296,6 @@ The consuming project should only name the package:
 ```toml
 [dependencies]
 raylib = { path = "../raylib" }
-stdlib = { path = "../../stdlib" }
 ```
 
 ## Step 6: Review The C ABI Surface For Smallness
