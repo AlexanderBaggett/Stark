@@ -2604,6 +2604,27 @@ public struct OwnedUnicode
         return System.Memory.MemoryStatus.Ok;
     }
 
+    // Append one Unicode scalar `codePoint` repeated count times. Mirrors
+    // AppendRepeatedAsciiChar: rejects out-of-range and surrogate code points,
+    // then reuses AppendRepeatedCodePoint for the reserved, single-growth fill.
+    fn System.Memory.MemoryStatus AppendRepeatedUnicodeChar(
+        mut borrow OwnedUnicode self,
+        i32[min max] codePoint,
+        u64[0 2 ** 63 - 1] count)
+    {
+        if (codePoint < 0 || codePoint > 1114111)
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
+        }
+
+        if (55296 <= codePoint && codePoint <= 57343)
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
+        }
+
+        return self.AppendRepeatedCodePoint(codePoint, count);
+    }
+
     // Append a Unicode view repeated count times. The source is snapshotted once
     // into a disjoint buffer so each repetition appends without re-checking
     // overlap, and the total run length is reserved before the first copy.
@@ -3078,6 +3099,150 @@ internal fn System.Memory.MemoryStatus SplitAsciiInto(
     }
 }
 
+// Split a Unicode view on a non-empty `delimiter` substring. Ownership model:
+// each returned segment is a fresh OwnedUnicode COPY of the source code points,
+// so the returned List owns its segments independently of the transient source
+// view. An empty source yields one empty segment; an empty delimiter is rejected
+// so the result count is always well-defined. Consecutive delimiters and leading/
+// trailing delimiters produce empty segments, matching the usual split contract.
+public fn System.Memory.MemoryStatus SplitUnicode(
+    out System.Collections.List<OwnedUnicode> segments,
+    unicode source,
+    unicode delimiter)
+    where overlap(source, delimiter)
+{
+    // Accumulate into a local list, then move it into the out parameter. The
+    // worker takes an ordinary mut-borrow accumulator (an out List cannot host
+    // method calls during SSA lowering).
+    stack mut System.Collections.List<OwnedUnicode> result = new();
+    stack System.Memory.MemoryStatus status = SplitUnicodeInto(result, source, delimiter);
+    segments = result;
+    return status;
+}
+
+internal fn System.Memory.MemoryStatus SplitUnicodeInto(
+    mut borrow System.Collections.List<OwnedUnicode> segments,
+    unicode source,
+    unicode delimiter)
+    where overlap(source, delimiter)
+{
+    unsafe
+    {
+        stack i64[min max] signedSourceLength = UnicodeLength(source);
+        stack i64[min max] signedDelimiterLength = UnicodeLength(delimiter);
+        if (signedSourceLength < 0 || signedDelimiterLength < 0)
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
+        }
+
+        stack u64[0 2 ** 63 - 1] sourceLength = (u64[0 2 ** 63 - 1])signedSourceLength;
+        stack u64[0 2 ** 63 - 1] delimiterLength = (u64[0 2 ** 63 - 1])signedDelimiterLength;
+        if (delimiterLength == 0)
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
+        }
+
+        stack rawptr<i32[min max]> sourceData = UnicodeData(source);
+        if (sourceData == null)
+        {
+            if (sourceLength == 0)
+            {
+                stack mut OwnedUnicode emptySegment = new();
+                return segments.Push(emptySegment);
+            }
+
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
+        }
+
+        if (delimiterLength > sourceLength)
+        {
+            stack mut OwnedUnicode whole = new();
+            stack System.Memory.MemoryStatus wholeStatus =
+                AppendUnicodeCodePointsFromPointer(whole, sourceLength, sourceData);
+            switch (wholeStatus)
+            {
+                case System.Memory.MemoryStatus.Err(var wholeError):
+                    return System.Memory.MemoryStatus.Err(wholeError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            return segments.Push(whole);
+        }
+
+        stack rawptr<i32[min max]> delimiterData = UnicodeData(delimiter);
+        if (delimiterData == null)
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
+        }
+
+        stack i32[min max] first = *(&delimiterData[0]);
+        stack u64[0 2 ** 63 - 1] lastStart = sourceLength - delimiterLength;
+        stack mut u64[0 2 ** 63 - 1] segmentStart = 0;
+        stack mut u64[0 2 ** 63 - 1] scan = 0;
+        while willexit (scan <= lastStart)
+        {
+            if (*(&sourceData[scan]) != first)
+            {
+                scan += 1;
+                continue;
+            }
+
+            stack mut bool matched = true;
+            stack mut u64[0 2 ** 63 - 1] index = 1;
+            while willexit (matched && index < delimiterLength)
+            {
+                if (*(&sourceData[scan + index]) != *(&delimiterData[index]))
+                {
+                    matched = false;
+                }
+
+                index += 1;
+            }
+
+            if (!matched)
+            {
+                scan += 1;
+                continue;
+            }
+
+            stack u64[0 2 ** 63 - 1] segmentLength = scan - segmentStart;
+            stack mut OwnedUnicode segment = new();
+            stack System.Memory.MemoryStatus segmentStatus =
+                AppendUnicodeCodePointsFromPointer(segment, segmentLength, &sourceData[segmentStart]);
+            switch (segmentStatus)
+            {
+                case System.Memory.MemoryStatus.Err(var segmentError):
+                    return System.Memory.MemoryStatus.Err(segmentError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            stack System.Memory.MemoryStatus pushStatus = segments.Push(segment);
+            switch (pushStatus)
+            {
+                case System.Memory.MemoryStatus.Err(var pushError):
+                    return System.Memory.MemoryStatus.Err(pushError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            scan += delimiterLength;
+            segmentStart = scan;
+        }
+
+        stack u64[0 2 ** 63 - 1] tailLength = sourceLength - segmentStart;
+        stack mut OwnedUnicode tailSegment = new();
+        stack System.Memory.MemoryStatus tailStatus =
+            AppendUnicodeCodePointsFromPointer(tailSegment, tailLength, &sourceData[segmentStart]);
+        switch (tailStatus)
+        {
+            case System.Memory.MemoryStatus.Err(var tailError):
+                return System.Memory.MemoryStatus.Err(tailError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        return segments.Push(tailSegment);
+    }
+}
+
 // Build a fresh OwnedAscii by repeating `unit` `count` times. A convenience over
 // AppendRepeatedAscii for the common "build a run of text" case (padding rules,
 // separator rows, indentation), returning an owned buffer.
@@ -3100,6 +3265,32 @@ public fn System.Memory.MemoryStatus RepeatAsciiChar(
 {
     stack mut OwnedAscii builder = new();
     stack System.Memory.MemoryStatus status = builder.AppendRepeatedAsciiChar(codePoint, count);
+    result = builder;
+    return status;
+}
+
+// Build a fresh OwnedUnicode by repeating `unit` `count` times. A convenience
+// over AppendRepeatedUnicode for the common "build a run of text" case (padding
+// rules, separator rows, indentation), returning an owned buffer.
+public fn System.Memory.MemoryStatus RepeatUnicode(
+    out OwnedUnicode result,
+    unicode unit,
+    u64[0 2 ** 63 - 1] count)
+{
+    stack mut OwnedUnicode builder = new();
+    stack System.Memory.MemoryStatus status = builder.AppendRepeatedUnicode(unit, count);
+    result = builder;
+    return status;
+}
+
+// Build a fresh OwnedUnicode by repeating a single Unicode scalar `count` times.
+public fn System.Memory.MemoryStatus RepeatUnicodeChar(
+    out OwnedUnicode result,
+    i32[min max] codePoint,
+    u64[0 2 ** 63 - 1] count)
+{
+    stack mut OwnedUnicode builder = new();
+    stack System.Memory.MemoryStatus status = builder.AppendRepeatedUnicodeChar(codePoint, count);
     result = builder;
     return status;
 }
