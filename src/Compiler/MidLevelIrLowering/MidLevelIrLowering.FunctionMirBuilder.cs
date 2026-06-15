@@ -12326,10 +12326,7 @@ internal sealed partial class MidLevelIrLowerer
             var matches = operations
                 .Where(entry =>
                     entry.Key.Line == line
-                    && entry.Key.Column == column
-                    && (string.IsNullOrWhiteSpace(_moduleFilePath)
-                        || string.IsNullOrWhiteSpace(entry.Key.FilePath)
-                        || string.Equals(entry.Key.FilePath, _moduleFilePath, StringComparison.Ordinal)))
+                    && entry.Key.Column == column)
                 .Select(static entry => entry.Value)
                 .Distinct()
                 .Take(2)
@@ -12348,15 +12345,7 @@ internal sealed partial class MidLevelIrLowerer
         {
             foreach (var functionName in BoundOperationFunctionNames())
             {
-                yield return new BoundOperationKey(functionName, _moduleFilePath, line, column);
-            }
-
-            if (!string.IsNullOrWhiteSpace(_moduleFilePath))
-            {
-                foreach (var functionName in BoundOperationFunctionNames())
-                {
-                    yield return new BoundOperationKey(functionName, null, line, column);
-                }
+                yield return new BoundOperationKey(functionName, line, column);
             }
         }
 

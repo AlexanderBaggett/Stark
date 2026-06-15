@@ -70,8 +70,9 @@ fn f32 Run()
         }
 
         stack ascii llvm = Llvm(compiled);
+        // 2.0 ** 3.0 folds to 8.0; f32 8.0 emits as a bit-exact hex float.
         return Contains(llvm, "define fastcc noundef float @Run()")
-            && Contains(llvm, "ret float 8")
+            && Contains(llvm, "ret float 0x4020000000000000")
             && DoesNotContain(llvm, "@llvm.pow.f32");
     }
 }

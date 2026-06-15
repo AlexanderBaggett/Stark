@@ -383,6 +383,167 @@ pattern = '\d+\.\d+'
 }
 
 [Fact]
+fn bool MultilineBasicStringTrimsLeadingNewlineEscapesAndContinues()
+{
+    // Built as an escaped ascii literal (not a raw string) so the `"""`
+    // delimiters do not collide with the test file's own raw-string syntax.
+    //   key = """<newline>The quick brown \<newline>   fox\tjumps."""<newline>
+    // Expected decoding:
+    //   - the leading newline after the opening `"""` is trimmed;
+    //   - the trailing `\` is a line continuation: it trims the backslash, the
+    //     newline, and the next line's leading whitespace, so `brown ` joins
+    //     `fox` with the single source space preserved;
+    //   - `\t` decodes to a real tab.
+    unsafe
+    {
+        switch (ParseText("key = \"\"\"\nThe quick brown \\\n   fox\\tjumps.\"\"\"\n"))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                stack mut TomlDocument document = value;
+                stack mut u64[0 2 ** 63 - 1] key = 0;
+                if (!document.TryFindMember(TomlRootNode, "key", key))
+                {
+                    return false;
+                }
+
+                return document.KindAt(key) == TomlKind.Text
+                    && document.TextAt(key) == "The quick brown fox\tjumps.";
+        }
+    }
+}
+
+[Fact]
+fn bool MultilineBasicStringAllowsEmbeddedQuotes()
+{
+    // Two embedded quotation marks (`""`) are valid content; the closing `"""`
+    // still terminates the string.
+    //   key = """Here are two quotes: "". Done."""
+    unsafe
+    {
+        switch (ParseText("key = \"\"\"Here are two quotes: \"\". Done.\"\"\"\n"))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                stack mut TomlDocument document = value;
+                stack mut u64[0 2 ** 63 - 1] key = 0;
+                if (!document.TryFindMember(TomlRootNode, "key", key))
+                {
+                    return false;
+                }
+
+                return document.TextAt(key) == "Here are two quotes: \"\". Done.";
+        }
+    }
+}
+
+[Fact]
+fn bool MultilineBasicStringKeepsLiteralNewlines()
+{
+    // Without a line continuation, literal newlines inside the body are kept
+    // verbatim. The leading newline after `"""` is still trimmed.
+    //   key = """first<newline>second"""
+    unsafe
+    {
+        switch (ParseText("key = \"\"\"first\nsecond\"\"\"\n"))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                stack mut TomlDocument document = value;
+                stack mut u64[0 2 ** 63 - 1] key = 0;
+                if (!document.TryFindMember(TomlRootNode, "key", key))
+                {
+                    return false;
+                }
+
+                return document.TextAt(key) == "first\nsecond";
+        }
+    }
+}
+
+[Fact]
+fn bool MultilineLiteralStringIsVerbatim()
+{
+    // Multiline literal strings apply no escapes and no line continuation; the
+    // leading newline after `'''` is trimmed and everything else is verbatim.
+    //   path = '''<newline>C:\Users\nodejs\templates'''
+    unsafe
+    {
+        switch (ParseText("path = '''\nC:\\Users\\nodejs\\templates'''\n"))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                stack mut TomlDocument document = value;
+                stack mut u64[0 2 ** 63 - 1] path = 0;
+                if (!document.TryFindMember(TomlRootNode, "path", path))
+                {
+                    return false;
+                }
+
+                return document.KindAt(path) == TomlKind.Text
+                    && document.TextAt(path) == "C:\\Users\\nodejs\\templates";
+        }
+    }
+}
+
+[Fact]
+fn bool MultilineLiteralStringKeepsNewlinesAndBackslashTrailing()
+{
+    // A backslash at the end of a line in a literal string is NOT a line
+    // continuation; it and the newline are kept verbatim.
+    //   key = '''a\<newline>b'''
+    unsafe
+    {
+        switch (ParseText("key = '''a\\\nb'''\n"))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                stack mut TomlDocument document = value;
+                stack mut u64[0 2 ** 63 - 1] key = 0;
+                if (!document.TryFindMember(TomlRootNode, "key", key))
+                {
+                    return false;
+                }
+
+                return document.TextAt(key) == "a\\\nb";
+        }
+    }
+}
+
+[Fact]
+fn bool UnterminatedMultilineBasicStringIsRejected()
+{
+    // An opening `"""` with no closing delimiter is an unterminated string.
+    unsafe
+    {
+        switch (ParseText("key = \"\"\"no closing here\n"))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return IsUnterminatedString(error);
+            case TomlResult<TomlDocument>.Ok(var value):
+                return false;
+        }
+    }
+}
+
+[Fact]
+fn bool MultilineBasicStringRoundTripsThroughEmitter()
+{
+    // A multiline basic string decodes to the same bytes as the equivalent
+    // single-line basic string, so the canonical emitter (which always writes
+    // single-line basic strings) re-emits it identically to the single-line
+    // form. This confirms multiline `Text` nodes round-trip.
+    return EmitMatches(
+        "key = \"\"\"first\nsecond\"\"\"\n",
+        "key = \"first\\nsecond\"\n");
+}
+
+[Fact]
 fn bool UnderscoredIntegersNormalize()
 {
     unsafe
@@ -526,19 +687,96 @@ name = "missing end
     }
 }
 
+// F64At returns a scalar f64, so these read the value and compare it with a
+// Stark f64 literal. The parsed token and the literal go through the same
+// correctly-rounded text->f64 conversion, so `==` is a bit-exact check inside
+// the supported window (significand <= 2**53, |exp10| <= 22).
+fn bool MemberF64Equals(mut borrow TomlDocument document, ascii key, f64 expected)
+{
+    stack mut u64[0 2 ** 63 - 1] node = 0;
+    if (!document.TryFindMember(TomlRootNode, key, node))
+    {
+        return false;
+    }
+
+    switch (document.F64At(node))
+    {
+        case TomlResult<f64>.Err(var error):
+            return false;
+        case TomlResult<f64>.Ok(var value):
+            return value == expected;
+    }
+}
+
 [Fact]
-fn bool FloatsAreUnsupportedForNow()
+fn bool FloatsParseToExactValues()
 {
     unsafe
     {
         switch (ParseText(raw"""
-ratio = 1.5
+half = 1.5
+pi = 3.14
+negzero = -0.0
+tenth = 0.1
+thousand = 1e3
+fractional = 1234.5
+underscored = 9_224.0
 """))
         {
             case TomlResult<TomlDocument>.Err(var error):
-                return IsUnsupportedValue(error);
-            case TomlResult<TomlDocument>.Ok(var value):
                 return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                stack mut TomlDocument document = value;
+                stack mut u64[0 2 ** 63 - 1] half = 0;
+                if (!document.TryFindMember(TomlRootNode, "half", half))
+                {
+                    return false;
+                }
+
+                if (document.KindAt(half) != TomlKind.Float)
+                {
+                    return false;
+                }
+
+                return MemberF64Equals(document, "half", 1.5)
+                    && MemberF64Equals(document, "pi", 3.14)
+                    && MemberF64Equals(document, "negzero", -0.0)
+                    && MemberF64Equals(document, "tenth", 0.1)
+                    && MemberF64Equals(document, "thousand", 1000.0)
+                    && MemberF64Equals(document, "fractional", 1234.5)
+                    && MemberF64Equals(document, "underscored", 9224.0);
+        }
+    }
+}
+
+[Fact]
+fn bool FloatOutsideExactWindowReportsInvalidNumber()
+{
+    // |exp10| > 22 is outside the correctly-rounded window: F64At must report
+    // InvalidNumber rather than mis-round the value.
+    unsafe
+    {
+        switch (ParseText(raw"""
+tiny = 1e40
+"""))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                stack mut TomlDocument document = value;
+                stack mut u64[0 2 ** 63 - 1] tiny = 0;
+                if (!document.TryFindMember(TomlRootNode, "tiny", tiny))
+                {
+                    return false;
+                }
+
+                switch (document.F64At(tiny))
+                {
+                    case TomlResult<f64>.Err(var error):
+                        return IsInvalidNumber(error);
+                    case TomlResult<f64>.Ok(var parsedValue):
+                        return false;
+                }
         }
     }
 }

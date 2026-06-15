@@ -53,7 +53,7 @@ internal sealed class LlvmGlobalInitializerPlanner
                 plan = new LlvmGlobalInitializerPlan(integerValue.ToString(), []);
                 return true;
             case TypedConstantInitializerKind.Float when initializer.FloatLiteralText is { } floatLiteralText:
-                plan = new LlvmGlobalInitializerPlan(floatLiteralText, []);
+                plan = new LlvmGlobalInitializerPlan(RenderFloatLiteral(floatLiteralText, targetType), []);
                 return true;
             case TypedConstantInitializerKind.Bool when initializer.BoolValue is { } boolValue:
                 plan = new LlvmGlobalInitializerPlan(boolValue ? "true" : "false", []);
@@ -286,7 +286,9 @@ internal sealed class LlvmGlobalInitializerPlanner
                 rendered = constant.IntegerValue.ToString();
                 break;
             case CompileTimeConstantKind.Float:
-                rendered = CompileTimeExpressionEvaluator.FormatFloatLiteral(constant);
+                rendered = RenderFloatLiteral(
+                    CompileTimeExpressionEvaluator.FormatFloatLiteral(constant),
+                    constant.Type.Kind == StarkTypeKind.Float ? constant.Type : targetType);
                 break;
             case CompileTimeConstantKind.Bool:
                 rendered = constant.BoolValue ? "true" : "false";
@@ -319,7 +321,9 @@ internal sealed class LlvmGlobalInitializerPlanner
         }
         else if (literal.FloatLiteral() is { } floatLiteral)
         {
-            rendered = CompileTimeExpressionEvaluator.StripFloatSuffix(floatLiteral.GetText());
+            rendered = RenderFloatLiteral(
+                CompileTimeExpressionEvaluator.StripFloatSuffix(floatLiteral.GetText()),
+                targetType);
         }
         else if (literal.TRUE() is not null)
         {
@@ -1053,6 +1057,25 @@ internal sealed class LlvmGlobalInitializerPlanner
             StarkTypeKind.Ascii or StarkTypeKind.Unicode or StarkTypeKind.FixedArray or StarkTypeKind.Slice or StarkTypeKind.Dynamic or StarkTypeKind.Named => "zeroinitializer",
             _ => "zeroinitializer"
         };
+    }
+
+    /// <summary>
+    /// Re-renders a decimal float literal (e.g. <c>1</c>, <c>10</c>,
+    /// <c>1E+17</c>) as an LLVM-valid hex float for the given float type.
+    /// Integral and scientific decimal forms are rejected by LLVM's IR
+    /// parser; the hex float round-trips every value exactly. Falls back to
+    /// the raw text when the type is not a float or the text is unparseable
+    /// (neither should happen for a well-typed float initializer).
+    /// </summary>
+    private static string RenderFloatLiteral(string literalText, StarkTypeSymbol targetType)
+    {
+        if (targetType.Kind == StarkTypeKind.Float
+            && LlvmFloatLiteral.TryRenderLiteralText(literalText, targetType.BitWidth ?? 64, out var rendered))
+        {
+            return rendered;
+        }
+
+        return literalText;
     }
 
     private string FormatGlobalStringConstantValue(string literalText, StarkTypeSymbol targetType)

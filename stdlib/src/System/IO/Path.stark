@@ -317,6 +317,26 @@ public struct PathFacts
         return self.Path[self.SegmentStart, self.End - self.SegmentStart];
     }
 
+    inline finite law i64[min max] FileNameLength(borrow PathFacts self)
+    {
+        if (self.SegmentStart >= self.End)
+        {
+            return 0;
+        }
+
+        return self.End - self.SegmentStart;
+    }
+
+    inline finite law ascii FileName(borrow PathFacts self)
+    {
+        if (self.SegmentStart >= self.End)
+        {
+            return "";
+        }
+
+        return self.Path[self.SegmentStart, self.End - self.SegmentStart];
+    }
+
     inline finite law i64[min max] DirectoryNameLength(borrow PathFacts self)
     {
         return self.DirectoryLength;
@@ -2204,6 +2224,18 @@ public finite law ascii ExtensionConst(const ascii path)
 {
     stack PathFacts facts = GetConstFacts(path);
     return facts.Extension();
+}
+
+public finite law ascii FileName(ascii path)
+{
+    stack PathFacts facts = GetFacts(path);
+    return facts.FileName();
+}
+
+public finite law ascii FileNameConst(const ascii path)
+{
+    stack PathFacts facts = GetConstFacts(path);
+    return facts.FileName();
 }
 
 public finite law ascii BaseName(ascii path)

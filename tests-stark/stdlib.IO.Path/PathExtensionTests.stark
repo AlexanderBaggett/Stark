@@ -1,4 +1,5 @@
 import System.Testing
+import System.Text
 import System.IO.Path
 [Collection("io-path")]
 module PathExtensionTests
@@ -9,6 +10,11 @@ module PathExtensionTests
 // back from the segment end only at positions STRICTLY after the segment start.
 // A leading-dot dotfile name like ".gitignore" therefore has NO extension: its
 // only dot sits at the segment start, so the whole name is the base name.
+//
+// Harness note: to assert on an `ascii` accessor result at RUNTIME (e.g. the
+// FileName facts below), compare with the named `System.Text.Equals(a, b)` law,
+// NOT `==` — `==` text equality is a compile-time (CTFE) facility and is not the
+// runtime comparison surface. That is why this module imports `System.Text`.
 
 [Fact]
 fn bool HasExtensionTrueForDottedFile()
@@ -40,4 +46,64 @@ fn bool HasExtensionFalseForLeadingDotFile()
 fn bool HasExtensionConstMatchesRuntime()
 {
     return HasExtensionConst("file.md") && !HasExtensionConst(".gitignore");
+}
+
+// FileName returns the WHOLE last path segment (including any extension),
+// scanning back from the trimmed end to the last directory separator. Unlike
+// BaseName, it keeps the extension; unlike DirectoryName, it drops the parent.
+// Trailing separators are trimmed before the segment is taken, and a root-only
+// path ("/") has an empty file name because its segment range is empty.
+
+[Fact]
+fn bool FileNameKeepsExtensionForNestedFile()
+{
+    return System.Text.Equals(FileName("a/b/c.txt"), "c.txt");
+}
+
+[Fact]
+fn bool FileNameForExtensionlessSegment()
+{
+    return System.Text.Equals(FileName("a/b"), "b");
+}
+
+// A leading-dot dotfile is its own file name in full: HasExtension is false for
+// ".gitignore" (the only dot sits at the segment start), so FileName returns the
+// entire ".gitignore" name.
+[Fact]
+fn bool FileNameKeepsLeadingDotDotfile()
+{
+    return System.Text.Equals(FileName(".gitignore"), ".gitignore");
+}
+
+// Multi-dot name: only the LAST dot starts the extension, so the file name is
+// the complete "file.tar.gz" (BaseName would be "file.tar", Extension ".gz").
+[Fact]
+fn bool FileNameKeepsAllDotsForMultiExtension()
+{
+    return System.Text.Equals(FileName("file.tar.gz"), "file.tar.gz");
+}
+
+// Root-only path: after the separator trim the segment range is empty, so the
+// file name is the empty string.
+[Fact]
+fn bool FileNameEmptyForRootOnlyPath()
+{
+    return System.Text.Equals(FileName("/"), "");
+}
+
+// FileName differs from BaseName exactly when there is an extension: for a
+// nested dotted file the full segment keeps ".txt" while BaseName strips it.
+[Fact]
+fn bool FileNameDiffersFromBaseNameWhenExtensionPresent()
+{
+    return System.Text.Equals(FileName("a/b/c.txt"), "c.txt")
+        && System.Text.Equals(BaseName("a/b/c.txt"), "c");
+}
+
+[Fact]
+fn bool FileNameConstMatchesRuntime()
+{
+    return System.Text.Equals(FileNameConst("a/b/c.txt"), "c.txt")
+        && System.Text.Equals(FileNameConst(".gitignore"), ".gitignore")
+        && System.Text.Equals(FileNameConst("/"), "");
 }

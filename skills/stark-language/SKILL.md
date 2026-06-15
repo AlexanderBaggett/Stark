@@ -752,7 +752,7 @@ Traits name behavior contracts. A `struct`/`record` implements a trait with a ba
 
 Every local names its storage class: `stack` (the default choice), `heap` (global-allocator-backed owned storage; never manually freed), or `register` (scalar locals with no source-visible address — `&local`, slices, and address-requiring APIs are rejected; use `stack` when an address matters). `arena` is reserved and not yet a valid executable local storage class; function-local `static` is invalid (use a top-level global). `dynamic T` is a value type, not a storage class — the owner local still says `stack`/`heap`.
 
-Globals come in three forms: `const Name = ...;` (deeply frozen reachable object graph — strongest), `static T Name = ...;` (immutable binding; the value may still have interior mutability), and `static mut T Name = ...;` (rebindable). Scalar integer consts omit the type so the compiler derives the smallest width (`const PageSize = 2 ** 12;`); an explicit type must be the canonical bare width (`const u8 Count = 80;` is accepted, `const i32 Count = 80;` is rejected).
+Globals come in three forms: `const Name = ...;` (deeply frozen reachable object graph — strongest), `static T Name = ...;` (immutable binding; the value may still have interior mutability), and `static mut T Name = ...;` (rebindable). Scalar integer consts omit the type so the compiler derives the smallest width (`const PageSize = 2 ** 12;`); an explicit type must be the canonical bare width (`const u8 Count = 80;` is accepted, `const i32 Count = 80;` is rejected). A fixed-array constant puts the dimension on the **type**, not the name (the grammar is `type variableDeclarators`): `const f64[4] Weights = { 1.0, 0.5, 0.25, 0.125 };` — not the C-style `const f64 Weights[4]`.
 
 ## Ownership And Borrows
 
@@ -784,7 +784,13 @@ law-predicate family as `Transferable(T)`; checked at call sites with
 field-chain diagnostics, forwarded by declaring the same bound). `[Copyable]`
 on a struct/record/enum asserts structural copyability at the definition
 (STK3051 with the responsible field chain when violated); it takes no
-arguments, and Copyable cannot be granted or denied with attributes.
+arguments, and Copyable cannot be granted or denied with attributes. A
+`where Copyable(T)` bound also lets a generic take a parameter **by value**
+(`finite law bool ContainsElement<T>(borrow T[] values, T expected) where Copyable(T)`)
+instead of `borrow T`: prefer the by-value form for small copyable element types
+so callers can still pass a literal — a `borrow T` parameter rejects a literal
+argument with STK3002 and additionally imposes a `where overlap(...)` obligation
+on callers.
 
 Borrow escape classes:
 
@@ -1169,8 +1175,8 @@ Public modules:
 - `System.Net` / `System.Net.Tcp`: network result types, IPv4 endpoints, TCP clients/listeners
 - `System.Process`: process id/exit, Linux/macOS-backed command spawn with optional stdin, timeout, and stdout/stderr/exit-code capture, live environment reads, child environment mutation, cwd get/set, and argv/argc access
 - `System.Runtime.Buffer`: fixed and dynamic byte buffers
-- `System.Testing`: explicit test helpers with finite-law boolean/equality, text contains/starts/ends/occurrence counts, range, slice/List shape, root `Option`/`Result` shape predicates, structured diagnostic predicates, compile-time type assertion predicates, process output assertions/counts, effectful run-match/timeout helpers, temp fixture helpers, snapshot/golden text helpers, status, and `RunFact`/`SkipFact`/exit-code helpers used by generated `[Fact]` / `[Theory]` runners with inline data, typed indexed member-data providers, build-time platform gates, and serial collection grouping. Pure local test predicates and pure `[Fact]` / `[Theory]` bodies should also be `finite law`; keep fixture IO, process execution, output, and owned result consumption as plain `fn` unless their full callees and ownership effects justify stronger contracts.
-- `System.Text`: owned text, text contains/starts/ends/occurrence scans, byte-slice-to-ASCII scans, encoding conversion, parsing, formatting, string-literal escaping and ordinary/raw string + character literal decoding
+- `System.Testing`: explicit test helpers with finite-law boolean/equality (incl. exact f64 `Equal` and relative-epsilon `ApproxEqual`, and the generic `ContainsElement<T>`/`SequenceEqual<T>` over DictionaryKey-supported element types), text contains/starts/ends/occurrence counts, range, slice/List shape, root `Option`/`Result` shape predicates, structured diagnostic predicates, compile-time type assertion predicates, process output assertions/counts, effectful run-match/timeout helpers, temp fixture helpers, snapshot/golden text helpers, status, and `RunFact`/`SkipFact`/exit-code helpers used by generated `[Fact]` / `[Theory]` runners with inline data, typed indexed member-data providers, build-time platform gates, and serial collection grouping. Pure local test predicates and pure `[Fact]` / `[Theory]` bodies should also be `finite law`; keep fixture IO, process execution, output, and owned result consumption as plain `fn` unless their full callees and ownership effects justify stronger contracts.
+- `System.Text`: owned text, text contains/starts/ends/occurrence scans, byte-slice-to-ASCII scans, encoding conversion, integer parsing, correctly-rounded `ParseF64Ascii`/`ParseF32Ascii` (+ `Unicode` twins) over their exact window (significand `<= 2**53`, base-10 exponent `|exp10| <= 22`; outside the window returns `TextError.Overflow` rather than mis-rounding), formatting, string-literal escaping and ordinary/raw string + character literal decoding
 - `System.Text.Interning`: compiler ID model — `SymbolId`/`TypeId`/`ModuleId`/`PackageId` (distinct u32 wrappers with static `Hash`/`Equals`/`Compare`) plus `AsciiInterner` and per-ID interners (`TryGet(name, out id)`, `Intern(name)`, `CopyName(id)` reverse lookup, insertion-order preserved). Intern stable names once at source/package boundaries; compare typed IDs in hot paths; never depend on hash-iteration order for deterministic output
 - `System.Threading`: no-payload and explicit payload thread starts (`Thread.Start<T>(entry, payload) where Transferable(T)`), joins, detach, yield, sleep; atomic types (`AtomicBool`, `AtomicI8`…`AtomicI1024`, `AtomicU8`…`AtomicU1024`) for safe seq-cst counters/flags; `Synchronized<T>` / `Locked<T>` for explicit guarded shared mutable state; MPSC channels (`Channel<T>.CreateSender()`/`.CreateReceiver()`, `Sender<T>.Send(value)` moving a `Transferable` payload, `Receiver<T>.Receive()`, sender close/drop signals completion) for worker→driver event publication
 

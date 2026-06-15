@@ -194,6 +194,30 @@ public struct JsonDocument
         }
     }
 
+    // Reads a Number node as f64. JSON numbers carry an optional leading '-', a
+    // fraction, and an exponent, all of which the shared correctly-rounded ascii
+    // parser handles directly off the raw token text. ParseF64Ascii signals
+    // Overflow for tokens outside its exact window (significand above 2**53 or
+    // |exp10| > 22) and InvalidFormat for malformed tokens; both surface here as
+    // InvalidNumber. (The JSON tokenizer never emits underscores or inf/nan, so
+    // the parser accepting those forms is harmless here.)
+    public finite JsonResult<f64> F64At(mut borrow JsonDocument self, u64[0 2 ** 63 - 1] node)
+    {
+        if (self.KindAt(node) != JsonKind.Number)
+        {
+            return JsonResult<f64>.Err(JsonError.WrongKind);
+        }
+
+        stack System.Text.TextResult<f64> parsed = System.Text.ParseF64Ascii(self.TextAt(node));
+        switch (parsed)
+        {
+            case System.Text.TextResult<f64>.Err(var error):
+                return JsonResult<f64>.Err(JsonError.InvalidNumber);
+            case System.Text.TextResult<f64>.Ok(var value):
+                return JsonResult<f64>.Ok(value);
+        }
+    }
+
     // Finds the value node of an object member by exact key bytes.
     public finite bool TryFindMember(
         borrow JsonDocument self,
@@ -708,8 +732,9 @@ internal unsafe fn JsonStatus ParseNumber(
         return JsonStatus.Err(JsonError.InvalidNumber);
     }
 
-    // Accept fraction/exponent tails so well-formed documents parse; the typed
-    // accessors only expose integers for now.
+    // Accept fraction/exponent tails so well-formed documents parse; I64At reads
+    // the integer projection and F64At reads the full number through the shared
+    // correctly-rounded ascii parser.
     if (cursor.Position < source.Length && source[cursor.Position] == 46)
     {
         cursor.Position += 1;
