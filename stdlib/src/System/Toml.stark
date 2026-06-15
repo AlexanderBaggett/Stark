@@ -11,11 +11,19 @@ module System.Toml
 // System.Json's proven shape, plus line/column spans on every node.
 //
 // Staged subset (tracked under doc 21 as temporary implementation work, not
-// the design target): bare/basic/literal keys and strings, dotted keys, table
-// headers, inline tables, arrays, decimal integers with underscores, booleans,
-// comments, and \b \t \n \f \r \" \\ \uXXXX escapes. Multiline strings,
-// arrays of tables, floats, date/times, hex/octal/binary integers, and \U
-// escapes report UnsupportedValue/InvalidEscape diagnostics with their span.
+// the design target): bare/basic/literal keys and strings, multiline basic
+// (`"""..."""`) and multiline literal (`'''...'''`) strings, dotted keys,
+// table headers, inline tables, arrays, decimal and 0x/0o/0b integers with
+// underscores, decimal floats (fractional and/or exponent, underscores
+// stripped), booleans, comments, and \b \t \n \f \r \" \\ \uXXXX escapes.
+// Float values read through F64At, which defers to the correctly-rounded
+// System.Text.ParseF64Ascii exact window: a significand of at most 2**53 and a
+// base-10 exponent with |exp10| <= 22 convert with a single correctly-rounded
+// IEEE operation; anything outside that window (more significant digits than fit
+// in 2**53, or |exp10| > 22) surfaces as InvalidNumber rather than mis-rounding,
+// so float reads are honest about the supported subset.
+// Arrays of tables, date/times, and \U escapes still report
+// UnsupportedValue/InvalidEscape diagnostics with their span.
 
 public enum TomlKind
 {
@@ -23,6 +31,7 @@ public enum TomlKind
     Array,
     Text,
     Integer,
+    Float,
     True,
     False,
 }
@@ -168,6 +177,8 @@ public struct TomlDocument
                 return TomlKind.Text;
             case TomlKind.Integer:
                 return TomlKind.Integer;
+            case TomlKind.Float:
+                return TomlKind.Float;
             case TomlKind.True:
                 return TomlKind.True;
             case TomlKind.False:
@@ -277,6 +288,35 @@ public struct TomlDocument
                 });
             case System.Text.TextResult<i64[min max]>.Ok(var value):
                 return TomlResult<i64[min max]>.Ok(value);
+        }
+    }
+
+    // Reads a Float node (or widens an Integer node) to f64. The stored token is
+    // already normalized (underscores stripped at parse time), so it defers to
+    // the shared correctly-rounded ascii parser. ParseF64Ascii signals Overflow
+    // for tokens outside its exact window (significand above 2**53 or
+    // |exp10| > 22); those surface here as InvalidNumber with the node's span.
+    public finite TomlResult<f64> F64At(mut borrow TomlDocument self, u64[0 2 ** 63 - 1] node)
+    {
+        stack TomlKind kind = self.KindAt(node);
+        if (kind != TomlKind.Float && kind != TomlKind.Integer)
+        {
+            return TomlResult<f64>.Err(TomlError.InvalidNumber
+            {
+                Line: self.LineAt(node), Column: self.ColumnAt(node)
+            });
+        }
+
+        stack System.Text.TextResult<f64> parsed = System.Text.ParseF64Ascii(self.TextAt(node));
+        switch (parsed)
+        {
+            case System.Text.TextResult<f64>.Err(var error):
+                return TomlResult<f64>.Err(TomlError.InvalidNumber
+                {
+                    Line: self.LineAt(node), Column: self.ColumnAt(node)
+                });
+            case System.Text.TextResult<f64>.Ok(var value):
+                return TomlResult<f64>.Ok(value);
         }
     }
 
@@ -1469,7 +1509,8 @@ internal fn TomlStatus ParseBasicString(
     out u64[0 2 ** 63 - 1] textStart,
     out u64[0 2 ** 63 - 1] textLength)
 {
-    textStart = document.DecodedText.Length;
+    stack u64[0 2 ** 63 - 1] startOffset = document.DecodedText.Length;
+    textStart = startOffset;
     textLength = 0;
     stack u32[0 max] openLine = cursor.Line;
     stack u32[0 max] openColumn = cursor.Column;
@@ -1477,15 +1518,15 @@ internal fn TomlStatus ParseBasicString(
     // Consume the opening quote.
     Advance(source, cursor);
 
-    // A third quote would start a multiline string, which stays unsupported.
+    // A third quote opens a multiline basic string `"""..."""`.
     if (cursor.Position + 1 < source.Length
         && source[cursor.Position] == 34
         && source[(u64[0 2 ** 63 - 1])(cursor.Position + 1)] == 34)
     {
-        return TomlStatus.Err(TomlError.UnsupportedValue
-        {
-            Line: openLine, Column: openColumn
-        });
+        // Consume the second and third opening quotes, then decode the body.
+        Advance(source, cursor);
+        Advance(source, cursor);
+        return ParseMultilineBasicStringBody(document, source, cursor, openLine, openColumn, startOffset, textLength);
     }
 
     while willexit (true)
@@ -1704,7 +1745,8 @@ internal fn TomlStatus ParseLiteralString(
     out u64[0 2 ** 63 - 1] textStart,
     out u64[0 2 ** 63 - 1] textLength)
 {
-    textStart = document.DecodedText.Length;
+    stack u64[0 2 ** 63 - 1] startOffset = document.DecodedText.Length;
+    textStart = startOffset;
     textLength = 0;
     stack u32[0 max] openLine = cursor.Line;
     stack u32[0 max] openColumn = cursor.Column;
@@ -1712,14 +1754,15 @@ internal fn TomlStatus ParseLiteralString(
     // Consume the opening quote.
     Advance(source, cursor);
 
+    // A third quote opens a multiline literal string `'''...'''`.
     if (cursor.Position + 1 < source.Length
         && source[cursor.Position] == 39
         && source[(u64[0 2 ** 63 - 1])(cursor.Position + 1)] == 39)
     {
-        return TomlStatus.Err(TomlError.UnsupportedValue
-        {
-            Line: openLine, Column: openColumn
-        });
+        // Consume the second and third opening quotes, then decode the body.
+        Advance(source, cursor);
+        Advance(source, cursor);
+        return ParseMultilineLiteralStringBody(document, source, cursor, openLine, openColumn, startOffset, textLength);
     }
 
     while willexit (true)
@@ -1748,6 +1791,271 @@ internal fn TomlStatus ParseLiteralString(
             });
         }
 
+        stack TomlStatus appended = AppendDecodedByte(document, value);
+        switch (appended)
+        {
+            case TomlStatus.Err(var error):
+                return TomlStatus.Err(error);
+            case TomlStatus.Ok:
+        }
+
+        Advance(source, cursor);
+    }
+}
+
+// Decodes the body of a multiline basic string `"""..."""` after the opening
+// delimiter has been consumed, appending decoded bytes into DecodedText.
+//
+// TOML 1.0 rules applied here:
+//   - a single newline immediately after the opening delimiter is trimmed
+//     (both `\n` and `\r\n`);
+//   - the standard basic-string escapes apply (`\b \t \n \f \r \" \\ \uXXXX`);
+//   - a `\` whose rest of the line is only whitespace before a newline is a
+//     line continuation: the backslash, the trailing whitespace, the newline,
+//     and the leading whitespace of the next line are all trimmed;
+//   - literal newlines inside the body are kept verbatim;
+//   - embedded `"` and `""` are allowed; the closing delimiter is `"""`, and a
+//     run of N consecutive quotes contributes N - 3 literal quotes before the
+//     close.
+internal fn TomlStatus ParseMultilineBasicStringBody(
+    mut borrow TomlDocument document,
+    borrow i8[min max][] source,
+    mut borrow TomlCursor cursor,
+    u32[0 max] openLine,
+    u32[0 max] openColumn,
+    u64[0 2 ** 63 - 1] textStart,
+    out u64[0 2 ** 63 - 1] textLength)
+{
+    textLength = 0;
+
+    // Trim a single newline immediately after the opening delimiter.
+    if (cursor.Position < source.Length && source[cursor.Position] == 13)
+    {
+        Advance(source, cursor);
+    }
+
+    if (cursor.Position < source.Length && source[cursor.Position] == 10)
+    {
+        Advance(source, cursor);
+    }
+
+    while willexit (true)
+    {
+        if (cursor.Position >= source.Length)
+        {
+            return TomlStatus.Err(TomlError.UnterminatedString
+            {
+                Line: openLine, Column: openColumn
+            });
+        }
+
+        stack i8[min max] value = source[cursor.Position];
+
+        // A run of quotes: 3 close the string, any extra (N - 3, up to two)
+        // are literal content quotes emitted before the close.
+        if (value == 34)
+        {
+            stack mut u64[0 2 ** 63 - 1] runStart = cursor.Position;
+            stack mut u64[0 2 ** 63 - 1] runLength = 0;
+            while willexit (cursor.Position < source.Length && source[cursor.Position] == 34)
+            {
+                runLength += 1;
+                Advance(source, cursor);
+            }
+
+            if (runLength < 3)
+            {
+                // Fewer than three quotes are all literal content.
+                for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < runLength; index += 1)
+                {
+                    stack TomlStatus quoteAppended = AppendDecodedByte(document, 34);
+                    switch (quoteAppended)
+                    {
+                        case TomlStatus.Err(var quoteError):
+                            return TomlStatus.Err(quoteError);
+                        case TomlStatus.Ok:
+                    }
+                }
+
+                continue;
+            }
+
+            // Three or more quotes: emit (runLength - 3) literal quotes, then
+            // the final three are the closing delimiter.
+            stack u64[0 2 ** 63 - 1] contentQuotes = (u64[0 2 ** 63 - 1])(runLength - 3);
+            for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < contentQuotes; index += 1)
+            {
+                stack TomlStatus contentAppended = AppendDecodedByte(document, 34);
+                switch (contentAppended)
+                {
+                    case TomlStatus.Err(var contentError):
+                        return TomlStatus.Err(contentError);
+                    case TomlStatus.Ok:
+                }
+            }
+
+            textLength = (u64[0 2 ** 63 - 1])(document.DecodedText.Length - textStart);
+            return TomlStatus.Ok;
+        }
+
+        if (value == 92)
+        {
+            // A line continuation is `\` followed by only whitespace until a
+            // newline. Peek past the backslash to classify without consuming it
+            // when it is an ordinary escape.
+            if (IsLineContinuation(source, cursor.Position))
+            {
+                // Consume the backslash, any trailing spaces/tabs, then all the
+                // following whitespace (spaces, tabs, and newlines) until the
+                // next non-whitespace byte or the closing delimiter.
+                Advance(source, cursor);
+                while willexit (cursor.Position < source.Length && IsMultilineTrimByte(source[cursor.Position]))
+                {
+                    Advance(source, cursor);
+                }
+
+                continue;
+            }
+
+            stack TomlStatus escaped = ParseEscape(document, source, cursor);
+            switch (escaped)
+            {
+                case TomlStatus.Err(var escapeError):
+                    return TomlStatus.Err(escapeError);
+                case TomlStatus.Ok:
+            }
+
+            continue;
+        }
+
+        // Any other byte, including literal newlines, is kept verbatim.
+        stack TomlStatus appended = AppendDecodedByte(document, value);
+        switch (appended)
+        {
+            case TomlStatus.Err(var error):
+                return TomlStatus.Err(error);
+            case TomlStatus.Ok:
+        }
+
+        Advance(source, cursor);
+    }
+}
+
+// True when the backslash at `position` begins a line continuation: it is
+// followed only by spaces/tabs and then a newline (or `\r\n`).
+internal finite law bool IsLineContinuation(borrow i8[min max][] source, u64[0 2 ** 63 - 1] position)
+{
+    stack mut u64[0 2 ** 63 - 1] scan = (u64[0 2 ** 63 - 1])(position + 1);
+    while willexit (scan < source.Length)
+    {
+        stack i8[min max] value = source[scan];
+        if (value == 32 || value == 9)
+        {
+            scan += 1;
+            continue;
+        }
+
+        if (value == 13)
+        {
+            stack u64[0 2 ** 63 - 1] next = (u64[0 2 ** 63 - 1])(scan + 1);
+            return next < source.Length && source[next] == 10;
+        }
+
+        return value == 10;
+    }
+
+    return false;
+}
+
+// True for the whitespace bytes a line continuation trims (spaces, tabs, and
+// newline bytes).
+internal finite law bool IsMultilineTrimByte(i8[min max] value)
+{
+    return value == 32 || value == 9 || value == 10 || value == 13;
+}
+
+// Decodes the body of a multiline literal string `'''...'''` after the opening
+// delimiter has been consumed. Verbatim: no escapes and no line continuation;
+// only a single leading newline (after the opening delimiter) is trimmed. The
+// closing delimiter is `'''`, and a run of N consecutive quotes contributes
+// N - 3 literal quotes before the close.
+internal fn TomlStatus ParseMultilineLiteralStringBody(
+    mut borrow TomlDocument document,
+    borrow i8[min max][] source,
+    mut borrow TomlCursor cursor,
+    u32[0 max] openLine,
+    u32[0 max] openColumn,
+    u64[0 2 ** 63 - 1] textStart,
+    out u64[0 2 ** 63 - 1] textLength)
+{
+    textLength = 0;
+
+    // Trim a single newline immediately after the opening delimiter.
+    if (cursor.Position < source.Length && source[cursor.Position] == 13)
+    {
+        Advance(source, cursor);
+    }
+
+    if (cursor.Position < source.Length && source[cursor.Position] == 10)
+    {
+        Advance(source, cursor);
+    }
+
+    while willexit (true)
+    {
+        if (cursor.Position >= source.Length)
+        {
+            return TomlStatus.Err(TomlError.UnterminatedString
+            {
+                Line: openLine, Column: openColumn
+            });
+        }
+
+        stack i8[min max] value = source[cursor.Position];
+
+        if (value == 39)
+        {
+            stack mut u64[0 2 ** 63 - 1] runLength = 0;
+            while willexit (cursor.Position < source.Length && source[cursor.Position] == 39)
+            {
+                runLength += 1;
+                Advance(source, cursor);
+            }
+
+            if (runLength < 3)
+            {
+                for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < runLength; index += 1)
+                {
+                    stack TomlStatus quoteAppended = AppendDecodedByte(document, 39);
+                    switch (quoteAppended)
+                    {
+                        case TomlStatus.Err(var quoteError):
+                            return TomlStatus.Err(quoteError);
+                        case TomlStatus.Ok:
+                    }
+                }
+
+                continue;
+            }
+
+            stack u64[0 2 ** 63 - 1] contentQuotes = (u64[0 2 ** 63 - 1])(runLength - 3);
+            for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < contentQuotes; index += 1)
+            {
+                stack TomlStatus contentAppended = AppendDecodedByte(document, 39);
+                switch (contentAppended)
+                {
+                    case TomlStatus.Err(var contentError):
+                        return TomlStatus.Err(contentError);
+                    case TomlStatus.Ok:
+                }
+            }
+
+            textLength = (u64[0 2 ** 63 - 1])(document.DecodedText.Length - textStart);
+            return TomlStatus.Ok;
+        }
+
+        // Everything else, including backslashes and literal newlines, is
+        // verbatim.
         stack TomlStatus appended = AppendDecodedByte(document, value);
         switch (appended)
         {
@@ -1949,9 +2257,24 @@ internal fn TomlStatus ParseInteger(
             continue;
         }
 
-        // Floats, exponents, and date/times stay unsupported in the staged
-        // subset; reject them with their span instead of misreading them.
-        if (value == 46 || value == 101 || value == 69 || value == 58)
+        // A fractional point or exponent marker turns this token into a float;
+        // hand the rest of the token (plus the digits already decoded) to the
+        // float accumulator. A digit must precede the '.'/'e'/'E'.
+        if (value == 46 || value == 101 || value == 69)
+        {
+            if (!lastWasDigit)
+            {
+                return TomlStatus.Err(TomlError.InvalidNumber
+                {
+                    Line: valueLine, Column: valueColumn
+                });
+            }
+
+            return ParseFloatTail(document, source, cursor, parentPlusOne, hasKey, keyStart, keyLength, textStart, valueLine, valueColumn);
+        }
+
+        // ':' marks a time-of-day, which stays unsupported in the staged subset.
+        if (value == 58)
         {
             return TomlStatus.Err(TomlError.UnsupportedValue
             {
@@ -1981,6 +2304,148 @@ internal fn TomlStatus ParseInteger(
 
     stack u64[0 2 ** 63 - 1] textLength = (u64[0 2 ** 63 - 1])(document.DecodedText.Length - textStart);
     return AppendNode(document, TomlKind.Integer, parentPlusOne, hasKey, keyStart, keyLength, textStart, textLength, valueLine, valueColumn);
+}
+
+// Continues a numeric token as a float once a '.'/'e'/'E' is seen. The integer
+// digits (and any leading sign) are already in DecodedText starting at
+// textStart, and the cursor points at the '.'/'e'/'E' marker. Appends the
+// fractional and exponent characters (skipping underscores, which a later
+// ParseF64Ascii would otherwise reject) and stores the normalized token as a
+// Float node. Underscores must sit between digits, mirroring the integer loop.
+internal fn TomlStatus ParseFloatTail(
+    mut borrow TomlDocument document,
+    borrow i8[min max][] source,
+    mut borrow TomlCursor cursor,
+    u64[0 2 ** 63 - 1] parentPlusOne,
+    bool hasKey,
+    u64[0 2 ** 63 - 1] keyStart,
+    u64[0 2 ** 63 - 1] keyLength,
+    u64[0 2 ** 63 - 1] textStart,
+    u32[0 max] valueLine,
+    u32[0 max] valueColumn)
+{
+    // ParseFloatTail is only entered once a digit has been decoded, so the
+    // mantissa already ends on a digit when the '.'/'e'/'E' marker is reached.
+    stack mut bool sawDot = false;
+    stack mut bool sawExponent = false;
+    stack mut bool lastWasDigit = true;
+    stack mut bool expectDigit = false;
+    while willexit (cursor.Position < source.Length)
+    {
+        stack i8[min max] value = source[cursor.Position];
+        if (IsDigitByte(value))
+        {
+            stack TomlStatus appended = AppendDecodedByte(document, value);
+            switch (appended)
+            {
+                case TomlStatus.Err(var error):
+                    return TomlStatus.Err(error);
+                case TomlStatus.Ok:
+            }
+
+            lastWasDigit = true;
+            expectDigit = false;
+            Advance(source, cursor);
+            continue;
+        }
+
+        // Underscores separate digits and are dropped from the stored token.
+        if (value == 95)
+        {
+            if (!lastWasDigit)
+            {
+                return TomlStatus.Err(TomlError.InvalidNumber
+                {
+                    Line: valueLine, Column: valueColumn
+                });
+            }
+
+            lastWasDigit = false;
+            Advance(source, cursor);
+            continue;
+        }
+
+        // A single fractional point, only before any exponent.
+        if (value == 46)
+        {
+            if (sawDot || sawExponent || !lastWasDigit)
+            {
+                return TomlStatus.Err(TomlError.InvalidNumber
+                {
+                    Line: valueLine, Column: valueColumn
+                });
+            }
+
+            stack TomlStatus appended = AppendDecodedByte(document, value);
+            switch (appended)
+            {
+                case TomlStatus.Err(var error):
+                    return TomlStatus.Err(error);
+                case TomlStatus.Ok:
+            }
+
+            sawDot = true;
+            lastWasDigit = false;
+            expectDigit = true;
+            Advance(source, cursor);
+            continue;
+        }
+
+        // A single exponent marker with an optional sign right after it.
+        if (value == 101 || value == 69)
+        {
+            if (sawExponent || !lastWasDigit)
+            {
+                return TomlStatus.Err(TomlError.InvalidNumber
+                {
+                    Line: valueLine, Column: valueColumn
+                });
+            }
+
+            stack TomlStatus marker = AppendDecodedByte(document, value);
+            switch (marker)
+            {
+                case TomlStatus.Err(var error):
+                    return TomlStatus.Err(error);
+                case TomlStatus.Ok:
+            }
+
+            sawExponent = true;
+            lastWasDigit = false;
+            expectDigit = true;
+            Advance(source, cursor);
+
+            if (cursor.Position < source.Length
+                && (source[cursor.Position] == 43 || source[cursor.Position] == 45))
+            {
+                stack TomlStatus sign = AppendDecodedByte(document, source[cursor.Position]);
+                switch (sign)
+                {
+                    case TomlStatus.Err(var error):
+                        return TomlStatus.Err(error);
+                    case TomlStatus.Ok:
+                }
+
+                Advance(source, cursor);
+            }
+
+            continue;
+        }
+
+        break;
+    }
+
+    // The token must end on a digit: a trailing '.', 'e', or sign is malformed.
+    if (!lastWasDigit || expectDigit)
+    {
+        return TomlStatus.Err(TomlError.InvalidNumber
+        {
+            Line: valueLine, Column: valueColumn
+        });
+    }
+
+    stack u64[0 2 ** 63 - 1] textLength = (u64[0 2 ** 63 - 1])(document.DecodedText.Length - textStart);
+    return AppendNode(document, TomlKind.Float, parentPlusOne, hasKey, keyStart, keyLength, textStart, textLength, valueLine, valueColumn);
 }
 
 // Maps an ASCII byte to its value under the given radix (2, 8, or 16), or
@@ -2811,6 +3276,19 @@ internal fn TomlStatus WriteValue(
             }
 
             return writer.AppendText(integerText.View());
+        case TomlKind.Float:
+            stack u64[0 2 ** 63 - 1] floatStart = nodes[node].TextStart;
+            stack u64[0 2 ** 63 - 1] floatLength = nodes[node].TextLength;
+            stack mut OwnedAscii floatText = new();
+            stack TomlStatus floatBuilt = AppendRangeBytes(document, floatStart, floatLength, floatText);
+            switch (floatBuilt)
+            {
+                case TomlStatus.Err(var floatError):
+                    return TomlStatus.Err(floatError);
+                case TomlStatus.Ok:
+            }
+
+            return writer.AppendText(floatText.View());
         case TomlKind.True:
             return writer.AppendText("true");
         case TomlKind.False:

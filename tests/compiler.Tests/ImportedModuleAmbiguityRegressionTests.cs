@@ -74,11 +74,17 @@ public sealed class ImportedModuleAmbiguityRegressionTests
                 && diagnostic.Message.Contains("'Shared' is ambiguous", StringComparison.Ordinal)
                 && diagnostic.Message.Contains("ModA.Shared", StringComparison.Ordinal)
                 && diagnostic.Message.Contains("ModB.Shared", StringComparison.Ordinal));
-        // The diagnostic is attributed to the imported module, not the root file.
+        // The diagnostic is located (file + line), not an unlocated crash. NOTE: it is
+        // attributed to the build's root input file rather than the imported module —
+        // per-module diagnostic attribution for non-root bodies was reverted because it
+        // changed record file paths the package-image template member-call serialization
+        // depends on (an app-side imported-generic member call stopped binding to its
+        // serialized ordinal). Restoring per-module attribution needs a serialization-safe
+        // approach that does not alter record locations.
         Assert.Contains(
             result.Diagnostics,
             diagnostic => diagnostic.Code == "STK3022"
-                && diagnostic.Location?.FilePath?.EndsWith("Mid.stark", StringComparison.Ordinal) == true);
+                && !string.IsNullOrEmpty(diagnostic.Location?.FilePath));
     }
 
     [Fact]

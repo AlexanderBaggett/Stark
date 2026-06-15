@@ -19,23 +19,11 @@ internal sealed partial class LlvmFunctionBodyEmitter
                 $"Unable to parse floating-point literal '{floating.LiteralText}' for LLVM emission.");
         }
 
-        if (double.IsNaN(parsed) || double.IsInfinity(parsed))
-        {
-            var bits = floating.Type.BitWidth == 32
-                ? BitConverter.DoubleToUInt64Bits((double)(float)parsed)
-                : BitConverter.DoubleToUInt64Bits(parsed);
-            return $"0x{bits:X16}";
-        }
-
-        var rendered = floating.Type.BitWidth == 32
-            ? ((double)(float)parsed).ToString("R", CultureInfo.InvariantCulture)
-            : parsed.ToString("R", CultureInfo.InvariantCulture);
-
-        return rendered.Contains('.', StringComparison.Ordinal)
-            || rendered.Contains('E', StringComparison.Ordinal)
-            || rendered.Contains('e', StringComparison.Ordinal)
-            ? rendered
-            : rendered + ".0";
+        // Emit every value (integral, scientific, subnormal, inf, nan) as a
+        // bit-exact hex float. Decimal "R" formatting drops the fractional
+        // point for integral values and emits bare scientific notation
+        // (1E+17) for large magnitudes, both of which LLVM rejects.
+        return LlvmFloatLiteral.Render(parsed, floating.Type.BitWidth ?? 64);
     }
 
     private string RenderDirectArgument(

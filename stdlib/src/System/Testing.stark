@@ -3,6 +3,7 @@ import System.FileSystem
 import System.IO
 import System.IO.File
 import System.IO.Path
+import System.Math
 import System.Memory
 import System.Process
 import System.Text
@@ -679,6 +680,45 @@ public finite law bool NotEqual(unicode expected, unicode actual)
     return expected != actual;
 }
 
+// EXACT bit-equality for f64. f64 `==` is a valid runtime scalar comparison, so
+// this mirrors the other Equal overloads: it accepts only values that are
+// bit-for-bit identical (NaN never compares equal, +0.0 == -0.0 per IEEE-754).
+public finite law bool Equal(f64 expected, f64 actual)
+{
+    return expected == actual;
+}
+
+// Tolerant f64 comparison within `ulps` units in the last place (approximation).
+//
+// Stark has no f64 bit-reinterpret / ToBits, so a true ULP comparison (counting
+// representable steps between the two values) is not directly expressible. This
+// is a documented relative-epsilon approximation: a value one ULP apart differs
+// by roughly `epsilon * max(|expected|, |actual|)`, where `epsilon` is the f64
+// machine epsilon (2 ** -52 ~= 2.220446049250313e-16). We therefore accept when
+//   |expected - actual| <= ulps * epsilon * max(|expected|, |actual|, epsilon)
+// The trailing `epsilon` floor keeps the tolerance non-zero near zero so values
+// straddling zero (or both denormal/tiny) still compare within `ulps`. Exact
+// equality short-circuits first. There is no System.Math.Abs(f64), so magnitudes
+// use the stdlib `v < 0.0 ? 0.0 - v : v` idiom.
+public finite law bool ApproxEqual(f64 expected, f64 actual, u32[0 max] ulps)
+{
+    if (expected == actual)
+    {
+        return true;
+    }
+
+    stack f64 epsilon = 2.220446049250313e-16;
+    stack f64 difference = expected - actual;
+    stack f64 absoluteDifference = difference < 0.0 ? 0.0 - difference : difference;
+    stack f64 expectedMagnitude = expected < 0.0 ? 0.0 - expected : expected;
+    stack f64 actualMagnitude = actual < 0.0 ? 0.0 - actual : actual;
+    stack f64 scale = System.Math.Max(
+        System.Math.Max(expectedMagnitude, actualMagnitude),
+        epsilon);
+    stack f64 tolerance = (f64)ulps * epsilon * scale;
+    return absoluteDifference <= tolerance;
+}
+
 public finite law bool InRange(i32[min max] min, i32[min max] max, i32[min max] actual)
 {
     return min <= actual && actual <= max;
@@ -779,12 +819,21 @@ public finite law bool Count<T>(u64[0 2 ** 63 - 1] expected, borrow System.Colle
     return values.Count() == expected;
 }
 
-public finite law bool ContainsElement(borrow i32[min max][] values, i32[min max] expected)
+// A single generic over any DictionaryKey-supported element type collapses the
+// former per-primitive overloads (i32/i64/u32/u64/ascii). Equality routes
+// through the System.Collections.DictionaryKey doctrine, whose compiler-known
+// machinery synthesizes element equality for bool, the Stark integer types,
+// ascii, and unicode (the same path Dictionary/HashSet key comparisons use).
+// `expected` is taken by value under `where Copyable(T)` so callers can still
+// pass a literal (e.g. ContainsElement(xs, 20)); a borrowed `expected` would
+// reject literals with STK3002 and force an `overlap` obligation on callers.
+public finite law bool ContainsElement<T>(borrow T[] values, T expected)
+    where Copyable(T)
 {
     stack mut u64[0 2 ** 63 - 1] index = 0;
     while willexit (index < values.Length)
     {
-        if (values[index] == expected)
+        if (System.Collections.DictionaryKey.Equals(values[index], expected))
         {
             return true;
         }
@@ -795,72 +844,10 @@ public finite law bool ContainsElement(borrow i32[min max][] values, i32[min max
     return false;
 }
 
-public finite law bool ContainsElement(borrow i64[min max][] values, i64[min max] expected)
-{
-    stack mut u64[0 2 ** 63 - 1] index = 0;
-    while willexit (index < values.Length)
-    {
-        if (values[index] == expected)
-        {
-            return true;
-        }
-
-        index += 1;
-    }
-
-    return false;
-}
-
-public finite law bool ContainsElement(borrow u32[0 max][] values, u32[0 max] expected)
-{
-    stack mut u64[0 2 ** 63 - 1] index = 0;
-    while willexit (index < values.Length)
-    {
-        if (values[index] == expected)
-        {
-            return true;
-        }
-
-        index += 1;
-    }
-
-    return false;
-}
-
-public finite law bool ContainsElement(borrow u64[0 max][] values, u64[0 max] expected)
-{
-    stack mut u64[0 2 ** 63 - 1] index = 0;
-    while willexit (index < values.Length)
-    {
-        if (values[index] == expected)
-        {
-            return true;
-        }
-
-        index += 1;
-    }
-
-    return false;
-}
-
-public finite law bool ContainsElement(borrow ascii[] values, ascii expected)
-    where overlap(values, expected)
-{
-    stack mut u64[0 2 ** 63 - 1] index = 0;
-    while willexit (index < values.Length)
-    {
-        if (values[index] == expected)
-        {
-            return true;
-        }
-
-        index += 1;
-    }
-
-    return false;
-}
-
-public finite law bool SequenceEqual(borrow i32[min max][] expected, borrow i32[min max][] actual)
+// A single generic collapses the former per-primitive SequenceEqual overloads
+// (i32/i64/u32/u64). Element equality routes through the
+// System.Collections.DictionaryKey doctrine's compiler-known machinery.
+public finite law bool SequenceEqual<T>(borrow T[] expected, borrow T[] actual)
     where overlap(expected, actual)
 {
     if (expected.Length != actual.Length)
@@ -871,73 +858,7 @@ public finite law bool SequenceEqual(borrow i32[min max][] expected, borrow i32[
     stack mut u64[0 2 ** 63 - 1] index = 0;
     while willexit (index < expected.Length)
     {
-        if (expected[index] != actual[index])
-        {
-            return false;
-        }
-
-        index += 1;
-    }
-
-    return true;
-}
-
-public finite law bool SequenceEqual(borrow i64[min max][] expected, borrow i64[min max][] actual)
-    where overlap(expected, actual)
-{
-    if (expected.Length != actual.Length)
-    {
-        return false;
-    }
-
-    stack mut u64[0 2 ** 63 - 1] index = 0;
-    while willexit (index < expected.Length)
-    {
-        if (expected[index] != actual[index])
-        {
-            return false;
-        }
-
-        index += 1;
-    }
-
-    return true;
-}
-
-public finite law bool SequenceEqual(borrow u32[0 max][] expected, borrow u32[0 max][] actual)
-    where overlap(expected, actual)
-{
-    if (expected.Length != actual.Length)
-    {
-        return false;
-    }
-
-    stack mut u64[0 2 ** 63 - 1] index = 0;
-    while willexit (index < expected.Length)
-    {
-        if (expected[index] != actual[index])
-        {
-            return false;
-        }
-
-        index += 1;
-    }
-
-    return true;
-}
-
-public finite law bool SequenceEqual(borrow u64[0 max][] expected, borrow u64[0 max][] actual)
-    where overlap(expected, actual)
-{
-    if (expected.Length != actual.Length)
-    {
-        return false;
-    }
-
-    stack mut u64[0 2 ** 63 - 1] index = 0;
-    while willexit (index < expected.Length)
-    {
-        if (expected[index] != actual[index])
+        if (!System.Collections.DictionaryKey.Equals(expected[index], actual[index]))
         {
             return false;
         }

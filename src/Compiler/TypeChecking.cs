@@ -14662,7 +14662,10 @@ internal sealed class TypeChecker
 
         if (target.Function is null)
         {
-            ReportError("STK3008", $"{DescribeExpressionTarget(target)} is not callable.", arguments);
+            var notCallableMessage = target.ShadowedMethodName is { } shadowedMethodName
+                ? $"{DescribeExpressionTarget(target)} is not callable; a field named '{shadowedMethodName}' shadows a same-named method — rename one to disambiguate."
+                : $"{DescribeExpressionTarget(target)} is not callable.";
+            ReportError("STK3008", notCallableMessage, arguments);
             return new ExpressionBinding(StarkTypeSymbols.Error);
         }
 
@@ -14739,11 +14742,23 @@ internal sealed class TypeChecker
                 arguments);
         }
 
+        var calleeTemplate = TryGetCallTemplateSignature(target.Function);
         for (var index = 0; index < Math.Min(explicitParameterCount, argumentTypes.Length); index++)
         {
             var parameter = target.Function.Parameters[index + receiverOffset];
             var argument = argumentBindings[index];
-            EnsureCallArgumentCompatible(target.Function.DisplaySourceName, index + receiverOffset + 1, parameter, argument, arguments.argument(index).expression());
+            var templateParameterType = calleeTemplate is { } template
+                && index + receiverOffset < template.Parameters.Count
+                    ? template.Parameters[index + receiverOffset].Type
+                    : null;
+            EnsureCallArgumentCompatible(
+                target.Function.DisplaySourceName,
+                index + receiverOffset + 1,
+                parameter,
+                argument,
+                arguments.argument(index).expression(),
+                calleeTemplate?.GenericParameterNames,
+                templateParameterType);
         }
 
         ValidateBoundedRawPointerCallArguments(
@@ -17450,7 +17465,10 @@ internal sealed class TypeChecker
                     : null,
                 MemoryRootIsIndependentStorage: target.MemoryRootIsIndependentStorage,
                 IsMisalignedFieldProjection: target.IsMisalignedFieldProjection
-                    || IsMisalignedLayoutFieldProjection(namedType, field.Name));
+                    || IsMisalignedLayoutFieldProjection(namedType, field.Name),
+                ShadowedMethodName: DeclaresSameNamedShadowedMethod(namedType, memberName)
+                    ? memberName
+                    : null);
         }
 
         var methodSourceName = $"{StarkTypeSymbols.GetGenericBaseName(namedType.Name)}.{memberName}";
@@ -18479,6 +18497,19 @@ internal sealed class TypeChecker
     private bool TryGetFunctionOverloads(string sourceName, out IReadOnlyList<TypedFunctionSignature> overloads)
     {
         return TryGetFunctionOverloads(sourceName, CurrentFunctionModuleName, out overloads);
+    }
+
+    /// <summary>
+    /// Determines whether <paramref name="namedType"/> declares an instance method or
+    /// finite-law accessor whose name collides with the field <paramref name="memberName"/>.
+    /// Field access binds before the method table is consulted, so such a method is shadowed
+    /// by the field; reporting it lets a "field is not callable" diagnostic name the cause.
+    /// </summary>
+    private bool DeclaresSameNamedShadowedMethod(NamedTypeSymbol namedType, string memberName)
+    {
+        var methodSourceName = $"{StarkTypeSymbols.GetGenericBaseName(namedType.Name)}.{memberName}";
+        return TryGetFunctionOverloads(methodSourceName, out var methods)
+            && methods.Any(static method => !method.IsStatic);
     }
 
     private bool TryGetFunctionOverloads(
@@ -21895,7 +21926,9 @@ internal sealed class TypeChecker
         int position,
         TypedParameterSymbol parameter,
         ExpressionBinding argument,
-        ParserRuleContext context)
+        ParserRuleContext context,
+        IReadOnlyList<string>? calleeGenericParameterNames = null,
+        StarkTypeSymbol? calleeTemplateParameterType = null)
     {
         var parameterType = parameter.Type;
         if (parameter.IsConst)
@@ -21964,9 +21997,12 @@ internal sealed class TypeChecker
         {
             if (!argument.IsAddressable)
             {
+                var borrowFromHint = IsBorrowedGenericTypeParameter(calleeTemplateParameterType ?? parameterType, calleeGenericParameterNames)
+                    ? " (if the parameter is a generic `T`, declaring it by value as `T` under `where Copyable(T)` lets callers pass a literal)."
+                    : string.Empty;
                 ReportError(
                     "STK3002",
-                    $"Argument {position} for '{functionName}' must be an addressable storage location because parameter type '{parameterType.DisplayName}' borrows from it.",
+                    $"Argument {position} for '{functionName}' must be an addressable storage location because parameter type '{parameterType.DisplayName}' borrows from it.{borrowFromHint}",
                     context);
                 return;
             }
@@ -22008,6 +22044,49 @@ internal sealed class TypeChecker
             "STK3002",
             $"Argument {position} for '{functionName}' expects '{parameterType.DisplayName}' but found '{argumentType.DisplayName}'.{GetExplicitConversionHint(parameterType, argumentType)}",
             context);
+    }
+
+    // Recovers the open (pre-substitution) template signature for a resolved call target so
+    // the STK3002 hint can inspect the original parameter types and generic parameter names.
+    // After overload resolution a generic callee is monomorphized: its parameter types are
+    // substituted and GenericParameterNames is cleared, but TemplateName still points back at
+    // the template registered in _functions. When the callee is not an instantiation, it is
+    // already its own (possibly generic) template.
+    private TypedFunctionSignature? TryGetCallTemplateSignature(TypedFunctionSignature function)
+    {
+        if (function.TemplateName is { } templateName
+            && _functions.TryGetValue(templateName, out var template))
+        {
+            return template;
+        }
+
+        return function.GenericParameterNames is { Count: > 0 } ? function : null;
+    }
+
+    // True when the borrowed parameter type is, at its core, one of the callee's own
+    // generic type parameters (`borrow T` where `T` is a generic parameter of the callee).
+    // In that case the by-value + `where Copyable(T)` shape lets callers pass a literal,
+    // so the STK3002 diagnostic appends that fix-it hint.
+    private static bool IsBorrowedGenericTypeParameter(
+        StarkTypeSymbol parameterType,
+        IReadOnlyList<string>? calleeGenericParameterNames)
+    {
+        if (calleeGenericParameterNames is not { Count: > 0 } genericNames)
+        {
+            return false;
+        }
+
+        var coreType = StarkTypeSymbols.WithQualifiers(
+            parameterType,
+            borrowKind: StarkBorrowKind.None,
+            accessKind: StarkAccessKind.None,
+            initializationKind: StarkInitializationKind.None,
+            isMutableView: false);
+
+        return coreType.Kind == StarkTypeKind.Named
+            && coreType.NamedType is { } name
+            && (coreType.TypeArguments is null || coreType.TypeArguments.Count == 0)
+            && genericNames.Contains(name);
     }
 
     private void EnsureConstCallArgumentCompatible(
@@ -24351,27 +24430,15 @@ internal sealed class TypeChecker
     {
         var resolvedStop = stop ?? start;
         var (endLine, endColumn) = GetTokenEndPosition(resolvedStop);
-        return new SourceLocation(CurrentModuleFilePath(), start.Line, start.Column + 1, endLine, endColumn);
-    }
-
-    // Diagnostics and typing records stamped while checking a body belong to the
-    // module being checked, not the build's root input file. In a whole-package
-    // (root=System) build every submodule is checked through this one TypeChecker, so
-    // a non-root source body's diagnostics — and its TryPropagationTypingRecords — must
-    // carry ITS file path, not the root's. Only non-root bodies are redirected; root
-    // bodies and any context with no current module keep the root input path exactly,
-    // so single-module builds are byte-for-byte unchanged.
-    private string? CurrentModuleFilePath()
-    {
-        if (_currentFunctionModuleName is { } moduleName
-            && _loadedModules.TryGet(moduleName, out var module)
-            && module is not null
-            && !module.Reference.IsRoot)
-        {
-            return module.Reference.FilePath;
-        }
-
-        return _context.Input.FilePath;
+        // NOTE: this MUST stamp the build's root input file path, not the per-module
+        // file of the body being checked. Location() feeds the BoundOperation / typed
+        // template-body records that the package-image template member-call serialization
+        // matches by location; redirecting it to the per-module path (the reverted "F2"
+        // change) desynced an app-side imported-generic member call (e.g. List<i32>.Push)
+        // from its serialized member-call ordinal, throwing STK9999 at lower-mir. Correct
+        // per-module diagnostic file paths for non-root bodies need a serialization-safe
+        // approach that does not change record locations.
+        return new SourceLocation(_context.Input.FilePath, start.Line, start.Column + 1, endLine, endColumn);
     }
 
     private static (int Line, int Column) GetTokenEndPosition(IToken token)
@@ -24443,7 +24510,8 @@ internal sealed class TypeChecker
         string? MemoryRootKey = null,
         bool MemoryRootIsIndependentStorage = false,
         bool IsMisalignedFieldProjection = false,
-        BigInteger? IntegerLiteralValue = null);
+        BigInteger? IntegerLiteralValue = null,
+        string? ShadowedMethodName = null);
 
     private sealed record TraversalSourceInfo(
         StarkTypeSymbol ElementType,

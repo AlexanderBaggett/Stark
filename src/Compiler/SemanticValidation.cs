@@ -5476,7 +5476,7 @@ internal sealed class SemanticValidator
                     && !IsEffectiveFinite(pendingCall.CalleeName, effectiveFinite)
                     && !(finiteCycles.Contains(summary.Name) && finiteCycles.Contains(pendingCall.CalleeName)))
                 {
-                    EffectError(summary, "STK4107", $"Finite function '{summary.Name}' may only call finite functions.", pendingCall.Location);
+                    EffectError(summary, "STK4107", $"Finite function '{summary.Name}' may only call finite functions, but calls non-finite function '{pendingCall.CalleeName}'.", pendingCall.Location);
                 }
             }
         }

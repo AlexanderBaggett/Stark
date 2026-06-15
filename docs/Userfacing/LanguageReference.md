@@ -1522,7 +1522,7 @@ Top level globals use dedicated global declaration forms. Globals are written as
 Stark has three classes of globals:
 
 * `const name = ...;` or `const T name = ...;`
-  A fully frozen global object graph. `const` is stronger than an immutable binding: the value and everything transitively reachable through it are deeply immutable for the lifetime of the program.
+  A fully frozen global object graph. `const` is stronger than an immutable binding: the value and everything transitively reachable through it are deeply immutable for the lifetime of the program. A typed `const` may be a fixed array, with the dimension written on the **type** (the grammar is `type variableDeclarators`), not the name: `const f64[4] Weights = { 1.0, 0.5, 0.25, 0.125 };` — not the C-style `const f64 Weights[4]`.
 * `static mut T name = ...;`
   A mutable global rebinding. The global binding itself may be reassigned after initialization.
 * `static T name = ...;`
