@@ -24351,27 +24351,15 @@ internal sealed class TypeChecker
     {
         var resolvedStop = stop ?? start;
         var (endLine, endColumn) = GetTokenEndPosition(resolvedStop);
-        return new SourceLocation(CurrentModuleFilePath(), start.Line, start.Column + 1, endLine, endColumn);
-    }
-
-    // Diagnostics and typing records stamped while checking a body belong to the
-    // module being checked, not the build's root input file. In a whole-package
-    // (root=System) build every submodule is checked through this one TypeChecker, so
-    // a non-root source body's diagnostics — and its TryPropagationTypingRecords — must
-    // carry ITS file path, not the root's. Only non-root bodies are redirected; root
-    // bodies and any context with no current module keep the root input path exactly,
-    // so single-module builds are byte-for-byte unchanged.
-    private string? CurrentModuleFilePath()
-    {
-        if (_currentFunctionModuleName is { } moduleName
-            && _loadedModules.TryGet(moduleName, out var module)
-            && module is not null
-            && !module.Reference.IsRoot)
-        {
-            return module.Reference.FilePath;
-        }
-
-        return _context.Input.FilePath;
+        // NOTE: this MUST stamp the build's root input file path, not the per-module
+        // file of the body being checked. Location() feeds the BoundOperation / typed
+        // template-body records that the package-image template member-call serialization
+        // matches by location; redirecting it to the per-module path (the reverted "F2"
+        // change) desynced an app-side imported-generic member call (e.g. List<i32>.Push)
+        // from its serialized member-call ordinal, throwing STK9999 at lower-mir. Correct
+        // per-module diagnostic file paths for non-root bodies need a serialization-safe
+        // approach that does not change record locations.
+        return new SourceLocation(_context.Input.FilePath, start.Line, start.Column + 1, endLine, endColumn);
     }
 
     private static (int Line, int Column) GetTokenEndPosition(IToken token)
