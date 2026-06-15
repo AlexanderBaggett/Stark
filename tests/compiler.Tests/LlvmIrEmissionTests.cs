@@ -3259,8 +3259,8 @@ public sealed class LlvmIrEmissionTests
     [Fact]
     public void IntegralAndScientificFloatConstantsEmitValidHexFloatLiterals()
     {
-        // Regression (BUGS.md "f64/f32 constant emission renders invalid LLVM
-        // IR"): integral f64 constants used to print as bare integers
+        // Regression: f64/f32 constant emission used to render invalid LLVM
+        // IR — integral f64 constants used to print as bare integers
         // (`double 1`, `double 10`) and >= 1e17 magnitudes as bare scientific
         // notation (`double 1E+17`); LLVM rejects both ("integer constant must
         // have integer type"). Both the global-initializer array path and the
@@ -5126,7 +5126,7 @@ public sealed class LlvmIrEmissionTests
 
         // f64 0.0 and 3.0 emit as bit-exact hex floats (0.0 = all-zero bits,
         // 3.0 = 0x4008...). The old bare-integer form (`double 0`, `double 3`)
-        // is invalid LLVM IR; see BUGS.md.
+        // is invalid LLVM IR.
         Assert.Contains("call fast fastcc double @Echo(double 0x0000000000000000)", llvm);
         Assert.Contains("fcmp fast one double %", llvm);
         Assert.Contains(", 0x0000000000000000", llvm);

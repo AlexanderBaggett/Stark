@@ -4,8 +4,7 @@ using System.Diagnostics;
 namespace compiler.Tests;
 
 /// <summary>
-/// End-to-end regression for the float-constant LLVM IR emission bug
-/// (BUGS.md "f64/f32 constant emission renders invalid LLVM IR"). An f64
+/// End-to-end regression for the float-constant LLVM IR emission bug. An f64
 /// fixed-array constant with integral elements used to emit `double 1` and
 /// scientific elements `double 1E+17`, and a scalar `1e17` return emitted
 /// `ret double 1E+17` — all rejected by the LLVM backend with
