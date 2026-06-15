@@ -771,9 +771,10 @@ public sealed class SystemTestingStandardLibraryTests : StandardLibraryTestSuite
         Assert.DoesNotContain("rawptr<", testingSource, StringComparison.Ordinal);
         Assert.DoesNotContain("rawmutptr<", testingSource, StringComparison.Ordinal);
         Assert.Contains("public finite law bool Equal(bool expected, bool actual)", testingSource, StringComparison.Ordinal);
+        Assert.Contains("public finite law bool Equal(f64 expected, f64 actual)", testingSource, StringComparison.Ordinal);
         Assert.Contains("public finite law bool Contains(ascii value, ascii expected)", testingSource, StringComparison.Ordinal);
-        Assert.Contains("public finite law bool ContainsElement(", testingSource, StringComparison.Ordinal);
-        Assert.Contains("public finite law bool SequenceEqual(borrow i32[min max][] expected, borrow i32[min max][] actual)", testingSource, StringComparison.Ordinal);
+        Assert.Contains("public finite law bool ContainsElement<T>(borrow T[] values, T expected)", testingSource, StringComparison.Ordinal);
+        Assert.Contains("public finite law bool SequenceEqual<T>(borrow T[] expected, borrow T[] actual)", testingSource, StringComparison.Ordinal);
         Assert.Contains("public finite law u64[0 2 ** 63 - 1] CountOccurrences(ascii value, ascii needle)", testingSource, StringComparison.Ordinal);
         Assert.Contains("public finite law bool Occurrences(u64[0 2 ** 63 - 1] expected, ascii value, ascii needle)", testingSource, StringComparison.Ordinal);
         Assert.Contains("public finite law bool OptionSome<T>(borrow System.Core.Option<T> value)", testingSource, StringComparison.Ordinal);

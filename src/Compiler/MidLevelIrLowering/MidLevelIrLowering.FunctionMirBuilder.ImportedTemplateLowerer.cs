@@ -413,7 +413,7 @@ internal sealed partial class MidLevelIrLowerer
                 {
                     throw LoweringInvariantViolation(
                         null,
-                        "Imported typed-template member-call statement was accepted but did not bind to serialized member-call facts.");
+                        DescribeImportedTemplateMemberCallBindingFailure(expression, "member-call statement"));
                 }
 
                 EmitEvaluateCallStatement(RenderImportedTypedTemplateExpressionCore(expression), memberCall);
@@ -685,7 +685,7 @@ internal sealed partial class MidLevelIrLowerer
                 {
                     throw LoweringInvariantViolation(
                         null,
-                        "Imported typed-template conditional member-call branch was accepted but did not bind to serialized member-call facts.");
+                        DescribeImportedTemplateMemberCallBindingFailure(expression, "conditional member-call branch"));
                 }
 
                 EmitEvaluateCallStatement(RenderImportedTypedTemplateExpressionCore(expression), memberCall);
@@ -2945,7 +2945,7 @@ internal sealed partial class MidLevelIrLowerer
                         {
                             throw LoweringInvariantViolation(
                                 null,
-                                "Imported typed-template member call was accepted but did not bind to serialized member-call facts.");
+                                DescribeImportedTemplateMemberCallBindingFailure(expression, "member call"));
                         }
 
                         if (memberCall.Type.Kind == StarkTypeKind.Void)
@@ -6776,6 +6776,26 @@ internal sealed partial class MidLevelIrLowerer
         {
             var index = name.LastIndexOf('.');
             return index >= 0 ? name[(index + 1)..] : name;
+        }
+
+        private string DescribeImportedTemplateMemberCallBindingFailure(
+            ImportedTemplateTypedBodyExpressionSummary expression,
+            string siteKind)
+        {
+            // Enumerate the RAW serialized member-call facts (NOT the
+            // CurrentImportedTemplateMemberCalls accessor): the failing builders
+            // TryBuildImportedTypedTemplateMemberCall(Statement) read this exact field,
+            // so the available-ordinal set reported here must match what they probed.
+            var availableOrdinals = _importedTemplateMemberCalls.Count == 0
+                ? "<none>"
+                : string.Join(", ", _importedTemplateMemberCalls.Keys.OrderBy(k => k));
+            return
+                $"Imported typed-template {siteKind} was accepted but did not bind to serialized member-call facts: " +
+                $"call site '{RenderImportedTypedTemplateExpressionCore(expression)}', " +
+                $"requested ordinal {expression.Ordinal?.ToString() ?? "<none>"} not bound " +
+                $"(or receiver/argument failed to lower); " +
+                $"receiver/argument count {expression.Args.Count}; " +
+                $"available ordinals: {availableOrdinals}.";
         }
 
         private bool TryBuildImportedTypedTemplateMemberCall(

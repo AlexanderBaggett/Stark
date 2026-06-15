@@ -402,3 +402,173 @@ fn bool SplitUnicodeRejectsEmptyDelimiter()
     return IsErr(SplitUnicode(segments, (unicode)"abc", (unicode)""));
 }
 
+
+// ----- ParseF64Ascii (correctly-rounded exact-window text->f64 parser) ------
+//
+// ParseF64Ascii returns a scalar f64, so these facts only call it and compare
+// the result with a Stark f64 literal. Both the parsed value and the literal go
+// through the same correctly-rounded text->f64 conversion, so equality is a
+// bit-exact check (no epsilon needed) inside the supported window. These facts
+// route through the `System.Testing.Equal(f64, f64)` overload, which performs
+// the exact bit-equality `==` on f64 scalars.
+
+fn bool ParseF64AsciiEquals(ascii source, f64 expected)
+{
+    switch (System.Text.ParseF64Ascii(source))
+    {
+        case System.Text.TextResult<f64>.Ok(var value):
+            return System.Testing.Equal(expected, value);
+        case System.Text.TextResult<f64>.Err(var error):
+            return false;
+    }
+}
+
+fn bool ParseF64AsciiOverflows(ascii source)
+{
+    switch (System.Text.ParseF64Ascii(source))
+    {
+        case System.Text.TextResult<f64>.Ok(var value):
+            return false;
+        case System.Text.TextResult<f64>.Err(var error):
+            switch (error)
+            {
+                case System.Text.TextError.Overflow:
+                    return true;
+                case System.Text.TextError.InvalidFormat:
+                    return false;
+            }
+    }
+}
+
+[Fact]
+fn bool ParseF64AsciiReadsHalf()
+{
+    return ParseF64AsciiEquals("1.5", 1.5);
+}
+
+[Fact]
+fn bool ParseF64AsciiReadsPi()
+{
+    return ParseF64AsciiEquals("3.14", 3.14);
+}
+
+[Fact]
+fn bool ParseF64AsciiReadsNegativeZero()
+{
+    return ParseF64AsciiEquals("-0.0", -0.0);
+}
+
+[Fact]
+fn bool ParseF64AsciiReadsTenth()
+{
+    return ParseF64AsciiEquals("0.1", 0.1);
+}
+
+[Fact]
+fn bool ParseF64AsciiReadsExponent()
+{
+    return ParseF64AsciiEquals("1e3", 1000.0);
+}
+
+[Fact]
+fn bool ParseF64AsciiReadsFractionalThousands()
+{
+    return ParseF64AsciiEquals("1234.5", 1234.5);
+}
+
+[Fact]
+fn bool ParseF64AsciiReadsNegative()
+{
+    return ParseF64AsciiEquals("-2.5", -2.5);
+}
+
+[Fact]
+fn bool ParseF64AsciiReadsUpperExponentWithSign()
+{
+    return ParseF64AsciiEquals("1.25E+2", 125.0);
+}
+
+[Fact]
+fn bool ParseF64AsciiRejectsGarbage()
+{
+    switch (System.Text.ParseF64Ascii("1.2.3"))
+    {
+        case System.Text.TextResult<f64>.Ok(var value):
+            return false;
+        case System.Text.TextResult<f64>.Err(var error):
+            return true;
+    }
+}
+
+[Fact]
+fn bool ParseF64AsciiOverflowsOutsideExponentWindow()
+{
+    // |exp10| > 22 is outside the correctly-rounded window and must signal
+    // Overflow rather than mis-round.
+    return ParseF64AsciiOverflows("1e40");
+}
+
+[Fact]
+fn bool ParseF64AsciiOverflowsTooManySignificantDigits()
+{
+    // A 20-digit significand exceeds 2**53 and must signal Overflow.
+    return ParseF64AsciiOverflows("12345678901234567890");
+}
+
+// ----- ParseF32Ascii (defers to ParseF64Ascii then range-checks) ------------
+
+fn bool ParseF32AsciiEquals(ascii source, f32 expected)
+{
+    switch (System.Text.ParseF32Ascii(source))
+    {
+        case System.Text.TextResult<f32>.Ok(var value):
+            return value == expected;
+        case System.Text.TextResult<f32>.Err(var error):
+            return false;
+    }
+}
+
+[Fact]
+fn bool ParseF32AsciiReadsHalf()
+{
+    return ParseF32AsciiEquals("1.5", 1.5f);
+}
+
+[Fact]
+fn bool ParseF32AsciiPropagatesOutOfWindowOverflow()
+{
+    // The f64 exact window caps magnitude at 10**22, which is below the f32
+    // maximum (~3.4e38), so the f32 range-check branch is unreachable for
+    // in-window inputs. What is observable is that an out-of-window f64 input
+    // (|exp10| > 22) propagates its Overflow through the f32 delegation.
+    switch (System.Text.ParseF32Ascii("1e40"))
+    {
+        case System.Text.TextResult<f32>.Ok(var value):
+            return false;
+        case System.Text.TextResult<f32>.Err(var error):
+            return true;
+    }
+}
+
+// System.Testing.ApproxEqual coverage. `0.1 + 0.2` rounds to 0.30000000000000004,
+// one ULP off the literal 0.3 — exact Equal is false, but ApproxEqual within a few
+// ULPs accepts it. These exercise the relative-epsilon tolerance directly (the
+// ParseF64Ascii facts above only ever assert bit-exact Equal).
+[Fact]
+fn bool ApproxEqualAcceptsOneUlpRoundingError()
+{
+    return !System.Testing.Equal(0.3, 0.1 + 0.2)
+        && System.Testing.ApproxEqual(0.3, 0.1 + 0.2, 4);
+}
+
+[Fact]
+fn bool ApproxEqualRejectsFarApartValues()
+{
+    return !System.Testing.ApproxEqual(1.0, 1.5, 4);
+}
+
+[Fact]
+fn bool ApproxEqualExactValuesMatchWithZeroTolerance()
+{
+    return System.Testing.ApproxEqual(2.5, 2.5, 0);
+}
