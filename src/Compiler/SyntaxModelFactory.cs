@@ -806,9 +806,12 @@ internal static class SyntaxModelFactory
         var lawName = predicate.Identifier().GetText();
         if (!IsThreadSafetyLawName(lawName))
         {
+            var message = IsKnownDoctrineName(lawName)
+                ? $"'{lawName}' is a doctrine, not a `where` law predicate. Call its static members directly on an unbounded generic (e.g. `{lawName}.Equals(a, b)`) instead of using it as a `where` bound. Supported `where` laws are Transferable and Shareable."
+                : $"Unknown thread-safety law predicate '{lawName}' on {targetDescription}. Supported laws are Transferable and Shareable.";
             diagnostics.Add(new SyntaxModelDiagnostic(
                 "STK3050",
-                $"Unknown thread-safety law predicate '{lawName}' on {targetDescription}. Supported laws are Transferable and Shareable.",
+                message,
                 predicate.Identifier().Symbol.Line,
                 predicate.Identifier().Symbol.Column + 1));
             return null;
@@ -846,6 +849,16 @@ internal static class SyntaxModelFactory
         return string.Equals(lawName, "Transferable", StringComparison.Ordinal)
             || string.Equals(lawName, "Shareable", StringComparison.Ordinal)
             || string.Equals(lawName, "Copyable", StringComparison.Ordinal);
+    }
+
+    // Recognizes well-known doctrine names so a `where DoctrineName(T)` clause can be
+    // explained as a misuse (doctrines expose static members; they are not `where` law
+    // predicates). This single-module syntactic pass cannot see doctrines declared in
+    // other modules (e.g. the stdlib), so the set is a curated list of stable doctrine
+    // names rather than a full cross-module lookup.
+    private static bool IsKnownDoctrineName(string lawName)
+    {
+        return string.Equals(lawName, "DictionaryKey", StringComparison.Ordinal);
     }
 
     private static ModuleBackendOptimizationMode ResolveBackendOptimizationMode(

@@ -1292,6 +1292,10 @@ public sealed class SemanticValidationTests
 
         Assert.False(result.Succeeded);
         AssertDiagnostic(result, "STK4107");
+        Assert.Contains(
+            result.Diagnostics,
+            diagnostic => diagnostic.Code == "STK4107"
+                && diagnostic.Message.Contains("Maybe", StringComparison.Ordinal));
     }
 
     [Fact]

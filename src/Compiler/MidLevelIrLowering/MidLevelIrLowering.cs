@@ -11,7 +11,7 @@ namespace Stark.Compiler;
 internal sealed partial class MidLevelIrLowerer
 {
     private static readonly int[] SupportedConstIntegerWidths = [8, 16, 24, 32, 48, 64, 96, 128, 192, 256, 384, 512, 768, 1024];
-    private readonly record struct BoundOperationKey(string? FunctionName, string? FilePath, int Line, int Column);
+    private readonly record struct BoundOperationKey(string? FunctionName, int Line, int Column);
 
     private sealed record BoundOperationIndex(
         IReadOnlyDictionary<BoundOperationKey, BoundDirectCallOperation> DirectCalls,
@@ -137,7 +137,6 @@ internal sealed partial class MidLevelIrLowerer
             .OfType<TOperation>()
             .GroupBy(static operation => new BoundOperationKey(
                 operation.EnclosingFunctionName,
-                operation.Location.FilePath,
                 operation.Location.Line,
                 operation.Location.Column))
             .ToDictionary(static group => group.Key, static group => group.Last());

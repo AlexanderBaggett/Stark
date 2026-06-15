@@ -92,4 +92,80 @@ public sealed class LoweringContractFactKeyRegressionTests
             result.Succeeded,
             string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
     }
+
+    /// <summary>
+    /// Lock-in for cross-module imported-generic member-call lowering. Compiling a
+    /// root module that calls an imported generic instance method (List&lt;i32&gt;.Push-style,
+    /// resolved from a dependency module through <see cref="InMemoryModuleResolver"/>) and
+    /// stopping at "lower-mir" must succeed. The in-process binding for an imported
+    /// generic member call matches the per-module loweringContext.FilePath against the
+    /// BoundOperationKey.FilePath stamped by TypeChecker.Location(). That coupling is
+    /// fragile: it works only because Location() uniformly stamps the single root input
+    /// path. Any future "F2"-class change that desyncs that stamped path would make this
+    /// binding miss and surface a bare STK9999 instead of a clean lowering. This test
+    /// fails LOUDLY if that regression returns, rather than letting STK9999 leak out.
+    /// </summary>
+    [Fact]
+    public void ImportedGenericMemberCallLowersAcrossModulesWithoutInvariantViolation()
+    {
+        var dependencySource = string.Join('\n',
+            "module Dep",
+            "",
+            "public struct Bag<T>",
+            "{",
+            "    i32[min max] Count;",
+            "",
+            "    public finite Bag<T> Push(borrow Bag<T> self, T item)",
+            "    {",
+            "        return new Bag<T>()",
+            "        {",
+            "            Count = self.Count + 1",
+            "        };",
+            "    }",
+            "",
+            "    public finite law i32[min max] Size(borrow Bag<T> self)",
+            "    {",
+            "        return self.Count;",
+            "    }",
+            "}",
+            "",
+            "public finite Bag<T> NewBag<T>()",
+            "{",
+            "    return new Bag<T>()",
+            "    {",
+            "        Count = 0",
+            "    };",
+            "}",
+            "");
+
+        var rootSource = string.Join('\n',
+            "import Dep",
+            "module Demo",
+            "",
+            "export fn i32[min max] main()",
+            "{",
+            "    stack Dep.Bag<i32[min max]> bag = Dep.NewBag<i32[min max]>();",
+            "    stack Dep.Bag<i32[min max]> pushed = bag.Push(7);",
+            "    return pushed.Size();",
+            "}",
+            "");
+
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(rootSource),
+            new CompilerOptions(
+                StopAfterPassId: "lower-mir",
+                ModuleResolver: new InMemoryModuleResolver(
+                [
+                    (
+                        new ResolvedModuleReference("Dep", "/virtual/Dep.stark", IsExternal: false),
+                        dependencySource,
+                        "/virtual/Dep.stark"
+                    )
+                ])));
+
+        Assert.True(
+            result.Succeeded,
+            string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.DoesNotContain(result.Diagnostics, static diagnostic => diagnostic.Code == "STK9999");
+    }
 }

@@ -3257,6 +3257,59 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
+    public void IntegralAndScientificFloatConstantsEmitValidHexFloatLiterals()
+    {
+        // Regression (BUGS.md "f64/f32 constant emission renders invalid LLVM
+        // IR"): integral f64 constants used to print as bare integers
+        // (`double 1`, `double 10`) and >= 1e17 magnitudes as bare scientific
+        // notation (`double 1E+17`); LLVM rejects both ("integer constant must
+        // have integer type"). Both the global-initializer array path and the
+        // function-body scalar path now emit bit-exact hex floats (`double
+        // 0xH...`), which round-trip every value.
+        var result = Compile(
+            """
+            module Demo
+
+            const f64[23] Pow10 =
+            {
+                1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11,
+                1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18, 1e19, 1e20, 1e21, 1e22
+            };
+
+            unsafe finite f64 ScalarScientific()
+            {
+                return 1e17;
+            }
+
+            unsafe finite f64 Run()
+            {
+                return Pow10[17] + ScalarScientific();
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvm(result);
+
+        // The array constant must render every element as a hex float, in
+        // particular the integral elements (1e0 = double 1) and the scientific
+        // ones (1e17 .. 1e22). 1e0 = 0x3FF0..., 1e1 = 0x4024..., 1e17 = 0x4376....
+        Assert.Contains(
+            "@Pow10 = local_unnamed_addr constant [23 x double] [double 0x3FF0000000000000, double 0x4024000000000000",
+            llvm);
+        Assert.Contains("double 0x4376345785D8A000", llvm); // 1e17 element
+        Assert.Contains("double 0x4480F0CF064DD592", llvm); // 1e22 element (largest)
+
+        // The scalar scientific return must also be a hex float, not `1E+17`.
+        Assert.Contains("ret double 0x4376345785D8A000", llvm);
+
+        // No bug-form float literal survives anywhere: a `double`/`float`
+        // constant operand that is a bare integer or bare scientific form.
+        Assert.False(
+            Regex.IsMatch(llvm, @"\b(?:double|float)\s+-?\d+(?:[eE][+-]?\d+)?(?=[\s,\]\)])"),
+            $"Emitted IR still contains an invalid bare-integer / scientific float literal:{Environment.NewLine}{llvm}");
+    }
+
+    [Fact]
     public void GlobalsAndUnicodeStringConstantsEmitConcreteAlignment()
     {
         var result = Compile(
@@ -3370,8 +3423,9 @@ public sealed class LlvmIrEmissionTests
         var llvm = GetLlvm(result);
 
         Assert.Contains("@Bits = local_unnamed_addr constant i8 7", llvm);
-        Assert.Contains("@Value = local_unnamed_addr constant double 3.5, align 4", llvm);
-        Assert.Contains("@FloatValue = local_unnamed_addr constant float 3.5, align 4", llvm);
+        // f64/f32 3.5 both emit as the bit-exact hex float 0x400C000000000000.
+        Assert.Contains("@Value = local_unnamed_addr constant double 0x400C000000000000, align 4", llvm);
+        Assert.Contains("@FloatValue = local_unnamed_addr constant float 0x400C000000000000, align 4", llvm);
         Assert.Contains("@Buffer = local_unnamed_addr constant ptr null, align 4", llvm);
         Assert.Contains("@Label = local_unnamed_addr constant %stark_ascii", llvm);
         Assert.Contains("i64 2 }, align 4", llvm);
@@ -4988,7 +5042,8 @@ public sealed class LlvmIrEmissionTests
         var llvm = GetLlvm(result);
 
         Assert.Contains("define fastcc float @Run()", llvm);
-        Assert.Contains("ret float 8", llvm);
+        // 2.0 ** 3.0 folds to 8.0; f32 8.0 emits as a bit-exact hex float.
+        Assert.Contains("ret float 0x4020000000000000", llvm);
         Assert.DoesNotContain("@llvm.pow.f32", llvm);
     }
 
@@ -5039,7 +5094,7 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
-    public void FloatLiteralArgumentsEmitLlvmDecimalConstants()
+    public void FloatLiteralArgumentsEmitValidHexFloatConstants()
     {
         var result = Compile(
             """
@@ -5069,13 +5124,17 @@ public sealed class LlvmIrEmissionTests
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
 
-        Assert.Contains("call fast fastcc double @Echo(double 0.0)", llvm);
+        // f64 0.0 and 3.0 emit as bit-exact hex floats (0.0 = all-zero bits,
+        // 3.0 = 0x4008...). The old bare-integer form (`double 0`, `double 3`)
+        // is invalid LLVM IR; see BUGS.md.
+        Assert.Contains("call fast fastcc double @Echo(double 0x0000000000000000)", llvm);
         Assert.Contains("fcmp fast one double %", llvm);
-        Assert.Contains(", 0.0", llvm);
-        Assert.Contains("call fast fastcc double @Echo(double 3.0)", llvm);
-        Assert.Contains(", 3.0", llvm);
+        Assert.Contains(", 0x0000000000000000", llvm);
+        Assert.Contains("call fast fastcc double @Echo(double 0x4008000000000000)", llvm);
+        Assert.Contains(", 0x4008000000000000", llvm);
         Assert.DoesNotContain("call fast fastcc double @Echo(double 0)", llvm);
         Assert.DoesNotContain("call fast fastcc double @Echo(double 3)", llvm);
+        Assert.DoesNotContain("double 3.0", llvm);
     }
 
     [Fact]

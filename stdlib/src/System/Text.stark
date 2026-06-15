@@ -5812,6 +5812,417 @@ public finite TextResult<u64[0 max]> ParseU64Unicode(unicode source)
     }
 }
 
+// 10**exponent for exponent in 0..22. Every value is exactly representable in
+// f64 (10**0..10**22 all round-trip), so indexing this table introduces no
+// rounding before the caller's single IEEE multiply/divide.
+const f64[23] ParseF64Pow10 =
+{
+    1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11,
+    1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18, 1e19, 1e20, 1e21, 1e22
+};
+
+// Largest mantissa that is exactly representable in f64 (2**53). Significands at
+// or below this value convert to f64 with no rounding.
+const ParseF64MantissaLimit = (u64[0 max])(2 ** 53);
+
+// Combines an exactly-representable mantissa with a base-10 exponent inside the
+// Clinger exact window. Returns Overflow for anything outside the window so the
+// parser never silently mis-rounds.
+finite TextResult<f64> FinishParsedF64(bool negative, u64[0 max] mantissa, bool tooManyDigits, i64[min max] exp10)
+{
+    if (tooManyDigits || mantissa > ParseF64MantissaLimit)
+    {
+        return TextResult<f64>.Err(TextError.Overflow);
+    }
+
+    stack mut f64 magnitude = 0.0;
+    if (exp10 >= 0 && exp10 <= 22)
+    {
+        magnitude = (f64)mantissa * ParseF64Pow10[(u8[0 22])exp10];
+    }
+    else if (exp10 < 0 && exp10 >= -22)
+    {
+        magnitude = (f64)mantissa / ParseF64Pow10[(u8[0 22])(0 - exp10)];
+    }
+    else
+    {
+        return TextResult<f64>.Err(TextError.Overflow);
+    }
+
+    if (negative)
+    {
+        return TextResult<f64>.Ok(0.0 - magnitude);
+    }
+
+    return TextResult<f64>.Ok(magnitude);
+}
+
+public finite TextResult<f64> ParseF64Ascii(ascii source)
+{
+    unsafe
+    {
+        stack i64[min max] length = AsciiLength(source);
+        if (length <= 0)
+        {
+            return TextResult<f64>.Err(TextError.InvalidFormat);
+        }
+
+        stack rawptr<i8[min max]> data = AsciiData(source);
+        if (data == null)
+        {
+            return TextResult<f64>.Err(TextError.InvalidFormat);
+        }
+
+        stack mut i64[min max] index = 0;
+        stack mut bool negative = false;
+        if (*(&data[0]) == (i8[min max])43)
+        {
+            index = 1;
+        }
+        else if (*(&data[0]) == (i8[min max])45)
+        {
+            negative = true;
+            index = 1;
+        }
+
+        stack i64[min max] tokenLength = length - index;
+        if (tokenLength == 3)
+        {
+            if (*(&data[index]) == (i8[min max])105
+                && *(&data[index + 1]) == (i8[min max])110
+                && *(&data[index + 2]) == (i8[min max])102)
+            {
+                if (negative)
+                {
+                    return TextResult<f64>.Ok(0.0 - F64Infinity());
+                }
+
+                return TextResult<f64>.Ok(F64Infinity());
+            }
+
+            if (*(&data[index]) == (i8[min max])110
+                && *(&data[index + 1]) == (i8[min max])97
+                && *(&data[index + 2]) == (i8[min max])110)
+            {
+                return TextResult<f64>.Ok(F64NaN());
+            }
+        }
+
+        stack mut u64[0 max] mantissa = 0;
+        stack mut bool tooManyDigits = false;
+        stack mut i64[min max] exp10 = 0;
+        stack mut bool sawDigit = false;
+        stack mut bool sawDot = false;
+        while willexit (index < length)
+        {
+            stack i8[-1 9] digit = AsciiDecimalDigitAt(data, index);
+            if (digit >= 0)
+            {
+                sawDigit = true;
+                if (mantissa > ParseF64MantissaLimit)
+                {
+                    tooManyDigits = true;
+                }
+                else
+                {
+                    mantissa = (mantissa * (u64[0 max])10) + (u64[0 max])(u8[0 9])digit;
+                }
+
+                if (sawDot)
+                {
+                    exp10 -= 1;
+                }
+
+                index += 1;
+                continue;
+            }
+
+            if (*(&data[index]) == (i8[min max])46 && !sawDot)
+            {
+                sawDot = true;
+                index += 1;
+                continue;
+            }
+
+            break;
+        }
+
+        if (!sawDigit)
+        {
+            return TextResult<f64>.Err(TextError.InvalidFormat);
+        }
+
+        if (index < length
+            && (*(&data[index]) == (i8[min max])101 || *(&data[index]) == (i8[min max])69))
+        {
+            index += 1;
+            stack mut bool expNegative = false;
+            if (index < length && *(&data[index]) == (i8[min max])43)
+            {
+                index += 1;
+            }
+            else if (index < length && *(&data[index]) == (i8[min max])45)
+            {
+                expNegative = true;
+                index += 1;
+            }
+
+            stack mut bool sawExpDigit = false;
+            stack mut i64[min max] expValue = 0;
+            while willexit (index < length)
+            {
+                stack i8[-1 9] expDigit = AsciiDecimalDigitAt(data, index);
+                if (expDigit < 0)
+                {
+                    return TextResult<f64>.Err(TextError.InvalidFormat);
+                }
+
+                sawExpDigit = true;
+                if (expValue > (i64[min max])1000)
+                {
+                    expValue = (i64[min max])1000;
+                }
+                else
+                {
+                    expValue = (expValue * (i64[min max])10) + (i64[min max])(u8[0 9])expDigit;
+                }
+
+                index += 1;
+            }
+
+            if (!sawExpDigit)
+            {
+                return TextResult<f64>.Err(TextError.InvalidFormat);
+            }
+
+            if (expNegative)
+            {
+                exp10 -= expValue;
+            }
+            else
+            {
+                exp10 += expValue;
+            }
+        }
+
+        if (index != length)
+        {
+            return TextResult<f64>.Err(TextError.InvalidFormat);
+        }
+
+        return FinishParsedF64(negative, mantissa, tooManyDigits, exp10);
+    }
+}
+
+public finite TextResult<f64> ParseF64Unicode(unicode source)
+{
+    unsafe
+    {
+        stack i64[min max] length = UnicodeLength(source);
+        if (length <= 0)
+        {
+            return TextResult<f64>.Err(TextError.InvalidFormat);
+        }
+
+        stack rawptr<i32[min max]> data = UnicodeData(source);
+        if (data == null)
+        {
+            return TextResult<f64>.Err(TextError.InvalidFormat);
+        }
+
+        stack mut i64[min max] index = 0;
+        stack mut bool negative = false;
+        if (*(&data[0]) == 43)
+        {
+            index = 1;
+        }
+        else if (*(&data[0]) == 45)
+        {
+            negative = true;
+            index = 1;
+        }
+
+        stack i64[min max] tokenLength = length - index;
+        if (tokenLength == 3)
+        {
+            if (*(&data[index]) == 105
+                && *(&data[index + 1]) == 110
+                && *(&data[index + 2]) == 102)
+            {
+                if (negative)
+                {
+                    return TextResult<f64>.Ok(0.0 - F64Infinity());
+                }
+
+                return TextResult<f64>.Ok(F64Infinity());
+            }
+
+            if (*(&data[index]) == 110
+                && *(&data[index + 1]) == 97
+                && *(&data[index + 2]) == 110)
+            {
+                return TextResult<f64>.Ok(F64NaN());
+            }
+        }
+
+        stack mut u64[0 max] mantissa = 0;
+        stack mut bool tooManyDigits = false;
+        stack mut i64[min max] exp10 = 0;
+        stack mut bool sawDigit = false;
+        stack mut bool sawDot = false;
+        while willexit (index < length)
+        {
+            stack i8[-1 9] digit = UnicodeDecimalDigitAt(data, index);
+            if (digit >= 0)
+            {
+                sawDigit = true;
+                if (mantissa > ParseF64MantissaLimit)
+                {
+                    tooManyDigits = true;
+                }
+                else
+                {
+                    mantissa = (mantissa * (u64[0 max])10) + (u64[0 max])(u8[0 9])digit;
+                }
+
+                if (sawDot)
+                {
+                    exp10 -= 1;
+                }
+
+                index += 1;
+                continue;
+            }
+
+            if (*(&data[index]) == 46 && !sawDot)
+            {
+                sawDot = true;
+                index += 1;
+                continue;
+            }
+
+            break;
+        }
+
+        if (!sawDigit)
+        {
+            return TextResult<f64>.Err(TextError.InvalidFormat);
+        }
+
+        if (index < length
+            && (*(&data[index]) == 101 || *(&data[index]) == 69))
+        {
+            index += 1;
+            stack mut bool expNegative = false;
+            if (index < length && *(&data[index]) == 43)
+            {
+                index += 1;
+            }
+            else if (index < length && *(&data[index]) == 45)
+            {
+                expNegative = true;
+                index += 1;
+            }
+
+            stack mut bool sawExpDigit = false;
+            stack mut i64[min max] expValue = 0;
+            while willexit (index < length)
+            {
+                stack i8[-1 9] expDigit = UnicodeDecimalDigitAt(data, index);
+                if (expDigit < 0)
+                {
+                    return TextResult<f64>.Err(TextError.InvalidFormat);
+                }
+
+                sawExpDigit = true;
+                if (expValue > (i64[min max])1000)
+                {
+                    expValue = (i64[min max])1000;
+                }
+                else
+                {
+                    expValue = (expValue * (i64[min max])10) + (i64[min max])(u8[0 9])expDigit;
+                }
+
+                index += 1;
+            }
+
+            if (!sawExpDigit)
+            {
+                return TextResult<f64>.Err(TextError.InvalidFormat);
+            }
+
+            if (expNegative)
+            {
+                exp10 -= expValue;
+            }
+            else
+            {
+                exp10 += expValue;
+            }
+        }
+
+        if (index != length)
+        {
+            return TextResult<f64>.Err(TextError.InvalidFormat);
+        }
+
+        return FinishParsedF64(negative, mantissa, tooManyDigits, exp10);
+    }
+}
+
+public finite TextResult<f32> ParseF32Ascii(ascii source)
+{
+    stack TextResult<f64> parsed = ParseF64Ascii(source);
+    switch (parsed)
+    {
+        case TextResult<f64>.Ok(var value):
+            return NarrowParsedF32(value);
+        case TextResult<f64>.Err(var error):
+            return TextResult<f32>.Err(error);
+    }
+}
+
+public finite TextResult<f32> ParseF32Unicode(unicode source)
+{
+    stack TextResult<f64> parsed = ParseF64Unicode(source);
+    switch (parsed)
+    {
+        case TextResult<f64>.Ok(var value):
+            return NarrowParsedF32(value);
+        case TextResult<f64>.Err(var error):
+            return TextResult<f32>.Err(error);
+    }
+}
+
+// Narrows a parsed f64 magnitude into f32, rejecting finite values whose
+// magnitude exceeds the f32 maximum (~3.40282347e38). NaN (value != value) and
+// the infinities produced by inf tokens are themselves not greater than the f32
+// max under IEEE comparison rules, so they pass straight through.
+finite TextResult<f32> NarrowParsedF32(f64 value)
+{
+    stack f64 magnitude = value < 0.0 ? 0.0 - value : value;
+    if (magnitude != F64Infinity() && magnitude > 3.40282347e38)
+    {
+        return TextResult<f32>.Err(TextError.Overflow);
+    }
+
+    return TextResult<f32>.Ok((f32)value);
+}
+
+// IEEE-754 positive infinity for f64, produced without a bit reinterpret by
+// overflowing a finite multiply. Used for inf tokens and f32 range checks.
+internal finite law f64 F64Infinity()
+{
+    return 1e308 * 1e308;
+}
+
+// IEEE-754 quiet NaN for f64, produced as infinity minus infinity.
+internal finite law f64 F64NaN()
+{
+    return F64Infinity() - F64Infinity();
+}
+
 public finite TextResult<i8[min max]> ParseI8Ascii(ascii source)
 {
     stack TextResult<i64[min max]> parsed = ParseI64Ascii(source);
