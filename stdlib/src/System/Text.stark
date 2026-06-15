@@ -3295,6 +3295,53 @@ public fn System.Memory.MemoryStatus RepeatUnicodeChar(
     return status;
 }
 
+// Build a fresh OwnedUnicode from `source`, then append the [offset, count) slice
+// of that same source onto a fresh destination, exercising the
+// AppendOwnedUnicodeRange path through an owned-result convenience so callers can
+// drive it without mutating `dynamic` storage themselves.
+public fn System.Memory.MemoryStatus AppendUnicodeRangeFrom(
+    out OwnedUnicode result,
+    unicode source,
+    u64[0 2 ** 63 - 1] offset,
+    u64[0 2 ** 63 - 1] count)
+{
+    stack mut OwnedUnicode origin = new();
+    stack System.Memory.MemoryStatus originStatus = origin.AppendUnicode(source);
+    switch (originStatus)
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            result = new();
+            return System.Memory.MemoryStatus.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    stack mut OwnedUnicode builder = new();
+    stack System.Memory.MemoryStatus status = AppendOwnedUnicodeRange(builder, origin, offset, count);
+    result = builder;
+    return status;
+}
+
+// Build a fresh OwnedUnicode from `source`, then compare its [offset, count)
+// slice against `expected` through OwnedUnicodeRangeEqualsUnicode. All `dynamic`
+// building stays inside the stdlib; callers only read the returned bool.
+public fn bool UnicodeRangeEqualsFrom(
+    unicode source,
+    u64[0 2 ** 63 - 1] offset,
+    u64[0 2 ** 63 - 1] count,
+    unicode expected)
+{
+    stack mut OwnedUnicode origin = new();
+    stack System.Memory.MemoryStatus originStatus = origin.AppendUnicode(source);
+    switch (originStatus)
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return false;
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    return OwnedUnicodeRangeEqualsUnicode(origin, offset, count, expected);
+}
+
 // Build a fresh OwnedAscii holding the decimal text of `value`, exercising the
 // AppendU64 builder path through an owned-result convenience.
 public fn System.Memory.MemoryStatus DecimalU64Ascii(out OwnedAscii result, u64[0 max] value)
@@ -4537,6 +4584,102 @@ public fn System.Memory.MemoryStatus AppendOwnedAsciiRange(
         {
             stack i8[min max] value = *(&sourceData[sourceIndex]);
             init destination.Bytes[destination.Bytes.Length] = value;
+            sourceIndex += 1;
+        }
+
+        return System.Memory.MemoryStatus.Ok;
+    }
+}
+
+public finite law bool OwnedUnicodeRangeEqualsUnicode(
+    borrow OwnedUnicode left,
+    u64[0 2 ** 63 - 1] offset,
+    u64[0 2 ** 63 - 1] count,
+    unicode right)
+    where overlap(left, right)
+{
+    unsafe
+    {
+        if (offset > left.Length() || count > left.Length() - offset)
+        {
+            return false;
+        }
+
+        stack i64[min max] signedRightLength = UnicodeLength(right);
+        if (signedRightLength < 0)
+        {
+            return false;
+        }
+
+        stack u64[0 2 ** 63 - 1] rightLength = (u64[0 2 ** 63 - 1])signedRightLength;
+        if (rightLength != count)
+        {
+            return false;
+        }
+
+        if (count == 0)
+        {
+            return true;
+        }
+
+        stack rawptr<i32[min max]> rightData = UnicodeData(right);
+        if (rightData == null)
+        {
+            return false;
+        }
+
+        stack i32[min max][] leftCodePoints = left.AsSlice();
+        for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+        {
+            if (leftCodePoints[offset + index] != *(&rightData[index]))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+}
+
+public fn System.Memory.MemoryStatus AppendOwnedUnicodeRange(
+    mut borrow OwnedUnicode destination,
+    mut borrow OwnedUnicode source,
+    u64[0 2 ** 63 - 1] offset,
+    u64[0 2 ** 63 - 1] count)
+    where overlap(destination, source)
+{
+    if (offset > source.Length() || count > source.Length() - offset)
+    {
+        return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
+    }
+
+    if (count == 0)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack System.Memory.MemoryStatus status = destination.Reserve(count);
+    switch (status)
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryStatus.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    unsafe
+    {
+        stack unicode sourceView = source.View();
+        stack rawptr<i32[min max]> sourceData = UnicodeData(sourceView);
+        if (sourceData == null)
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
+        }
+
+        stack mut u64[0 2 ** 63 - 1] sourceIndex = offset;
+        for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+        {
+            stack i32[min max] value = *(&sourceData[sourceIndex]);
+            init destination.CodePoints[destination.CodePoints.Length] = value;
             sourceIndex += 1;
         }
 

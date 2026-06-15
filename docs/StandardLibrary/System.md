@@ -31,6 +31,10 @@ types directly should import `System.Runtime.Buffer`.
 by `System` because its current low-level caller-buffer APIs expose explicit
 unsafe raw pointers. Code that needs text helpers should import `System.Text`
 directly.
+`System.Text.Interning` is likewise a public, explicit-import-only module: it
+provides the compiler string-interning surface (typed IDs plus matching
+interners) and is imported by `System` at build time but not re-exported. Code
+that needs interning should import `System.Text.Interning` directly.
 `System.Testing` is also explicit-import only so assertion helpers stay in test
 projects instead of the ordinary root namespace.
 

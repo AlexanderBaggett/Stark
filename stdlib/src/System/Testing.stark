@@ -779,6 +779,175 @@ public finite law bool Count<T>(u64[0 2 ** 63 - 1] expected, borrow System.Colle
     return values.Count() == expected;
 }
 
+public finite law bool ContainsElement(borrow i32[min max][] values, i32[min max] expected)
+{
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < values.Length)
+    {
+        if (values[index] == expected)
+        {
+            return true;
+        }
+
+        index += 1;
+    }
+
+    return false;
+}
+
+public finite law bool ContainsElement(borrow i64[min max][] values, i64[min max] expected)
+{
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < values.Length)
+    {
+        if (values[index] == expected)
+        {
+            return true;
+        }
+
+        index += 1;
+    }
+
+    return false;
+}
+
+public finite law bool ContainsElement(borrow u32[0 max][] values, u32[0 max] expected)
+{
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < values.Length)
+    {
+        if (values[index] == expected)
+        {
+            return true;
+        }
+
+        index += 1;
+    }
+
+    return false;
+}
+
+public finite law bool ContainsElement(borrow u64[0 max][] values, u64[0 max] expected)
+{
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < values.Length)
+    {
+        if (values[index] == expected)
+        {
+            return true;
+        }
+
+        index += 1;
+    }
+
+    return false;
+}
+
+public finite law bool ContainsElement(borrow ascii[] values, ascii expected)
+    where overlap(values, expected)
+{
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < values.Length)
+    {
+        if (values[index] == expected)
+        {
+            return true;
+        }
+
+        index += 1;
+    }
+
+    return false;
+}
+
+public finite law bool SequenceEqual(borrow i32[min max][] expected, borrow i32[min max][] actual)
+    where overlap(expected, actual)
+{
+    if (expected.Length != actual.Length)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < expected.Length)
+    {
+        if (expected[index] != actual[index])
+        {
+            return false;
+        }
+
+        index += 1;
+    }
+
+    return true;
+}
+
+public finite law bool SequenceEqual(borrow i64[min max][] expected, borrow i64[min max][] actual)
+    where overlap(expected, actual)
+{
+    if (expected.Length != actual.Length)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < expected.Length)
+    {
+        if (expected[index] != actual[index])
+        {
+            return false;
+        }
+
+        index += 1;
+    }
+
+    return true;
+}
+
+public finite law bool SequenceEqual(borrow u32[0 max][] expected, borrow u32[0 max][] actual)
+    where overlap(expected, actual)
+{
+    if (expected.Length != actual.Length)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < expected.Length)
+    {
+        if (expected[index] != actual[index])
+        {
+            return false;
+        }
+
+        index += 1;
+    }
+
+    return true;
+}
+
+public finite law bool SequenceEqual(borrow u64[0 max][] expected, borrow u64[0 max][] actual)
+    where overlap(expected, actual)
+{
+    if (expected.Length != actual.Length)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < expected.Length)
+    {
+        if (expected[index] != actual[index])
+        {
+            return false;
+        }
+
+        index += 1;
+    }
+
+    return true;
+}
+
 public finite law bool Contains(ascii value, ascii expected)
     where overlap(value, expected)
 {

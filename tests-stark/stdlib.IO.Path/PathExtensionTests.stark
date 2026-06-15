@@ -1,0 +1,43 @@
+import System.Testing
+import System.IO.Path
+[Collection("io-path")]
+module PathExtensionTests
+
+// Stark-native tests for the System.IO.Path HasExtension surface (the public
+// accessors that mirror the existing IsRooted surface). HasExtension reports
+// whether the final path segment carries a `.`-prefixed extension, scanning
+// back from the segment end only at positions STRICTLY after the segment start.
+// A leading-dot dotfile name like ".gitignore" therefore has NO extension: its
+// only dot sits at the segment start, so the whole name is the base name.
+
+[Fact]
+fn bool HasExtensionTrueForDottedFile()
+{
+    return HasExtension("a/b.txt");
+}
+
+[Fact]
+fn bool HasExtensionTrueForMarkdownFile()
+{
+    return HasExtension("file.md");
+}
+
+[Fact]
+fn bool HasExtensionFalseForNoDot()
+{
+    return !HasExtension("a/b");
+}
+
+// Leading-dot dotfile: the only dot is at the segment start, which the scan
+// excludes, so HasExtension is FALSE for ".gitignore".
+[Fact]
+fn bool HasExtensionFalseForLeadingDotFile()
+{
+    return !HasExtension(".gitignore");
+}
+
+[Fact]
+fn bool HasExtensionConstMatchesRuntime()
+{
+    return HasExtensionConst("file.md") && !HasExtensionConst(".gitignore");
+}

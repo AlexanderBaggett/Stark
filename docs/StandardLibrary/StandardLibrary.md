@@ -71,6 +71,7 @@ The current public module references live here:
 - [System.Testing](./System.Testing.md)
 - [System.Threading](./System.Threading.md)
 - [System.Text](./System.Text.md)
+- [System.Text.Interning](./System.Text.Interning.md)
 - [System.Toml](./System.Toml.md)
 
 ## Module Layout
@@ -91,6 +92,7 @@ Repository source layout:
 - `stdlib/src/System/IO/File.stark`
 - `stdlib/src/System/IO/Path.stark`
 - `stdlib/src/System/Text.stark`
+- `stdlib/src/System/Text/Interning.stark`
 - `stdlib/src/System/Math.stark`
 - `stdlib/src/System/Memory.stark`
 - `stdlib/src/System/Net.stark`
@@ -127,6 +129,7 @@ Current public module surface:
 - `System.Runtime.Buffer`
 - `System.Testing`
 - `System.Text`
+- `System.Text.Interning`
 - `System.Math`
 - `System.Threading`
 

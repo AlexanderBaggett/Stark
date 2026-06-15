@@ -272,6 +272,11 @@ public struct PathFacts
         return self.RootLength > 0;
     }
 
+    inline finite law bool HasExtension(borrow PathFacts self)
+    {
+        return self.HasExtension;
+    }
+
     inline finite law bool IsAbsolute(borrow PathFacts self)
     {
         return self.Absolute;
@@ -2247,6 +2252,21 @@ public finite law bool IsRootedConst(const ascii path)
 {
     stack PathFacts facts = GetConstFacts(path);
     return facts.IsRooted();
+}
+
+public finite law bool HasExtension(ascii path)
+{
+    stack PathFacts facts = GetFacts(path);
+    // `facts.HasExtension` is the PathFacts field; reading it directly is
+    // equivalent to the HasExtension() accessor and avoids the field/method
+    // name collision (member access resolves the same-named field first).
+    return facts.HasExtension;
+}
+
+public finite law bool HasExtensionConst(const ascii path)
+{
+    stack PathFacts facts = GetConstFacts(path);
+    return facts.HasExtension;
 }
 
 public finite law bool IsAbsolute(ascii path)
