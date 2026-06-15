@@ -270,6 +270,50 @@ fn bool RepeatUnicodeCharRejectsInvalidScalar()
     return IsErr(s);
 }
 
+// ----- Unicode range helpers (AppendOwnedUnicodeRange / RangeEquals) -------
+
+[Fact]
+fn bool AppendUnicodeRangeCopiesMiddleSlice()
+{
+    stack mut OwnedUnicode result = new();
+    stack System.Memory.MemoryStatus s = AppendUnicodeRangeFrom(result, (unicode)"hello", (u64[0 2 ** 63 - 1])1, (u64[0 2 ** 63 - 1])3);
+    return IsOk(s) && System.Testing.Equal((unicode)"ell", result.View());
+}
+
+[Fact]
+fn bool AppendUnicodeRangeZeroCountIsEmpty()
+{
+    stack mut OwnedUnicode result = new();
+    stack System.Memory.MemoryStatus s = AppendUnicodeRangeFrom(result, (unicode)"hello", (u64[0 2 ** 63 - 1])1, (u64[0 2 ** 63 - 1])0);
+    return IsOk(s) && result.IsEmpty();
+}
+
+[Fact]
+fn bool AppendUnicodeRangeOutOfBoundsErrs()
+{
+    stack mut OwnedUnicode result = new();
+    stack System.Memory.MemoryStatus s = AppendUnicodeRangeFrom(result, (unicode)"hello", (u64[0 2 ** 63 - 1])3, (u64[0 2 ** 63 - 1])5);
+    return IsErr(s);
+}
+
+[Fact]
+fn bool UnicodeRangeEqualsMatchingSlice()
+{
+    return UnicodeRangeEqualsFrom((unicode)"hello", (u64[0 2 ** 63 - 1])1, (u64[0 2 ** 63 - 1])3, (unicode)"ell");
+}
+
+[Fact]
+fn bool UnicodeRangeEqualsLengthMismatchIsFalse()
+{
+    return !UnicodeRangeEqualsFrom((unicode)"hello", (u64[0 2 ** 63 - 1])1, (u64[0 2 ** 63 - 1])3, (unicode)"ello");
+}
+
+[Fact]
+fn bool UnicodeRangeEqualsOutOfBoundsIsFalse()
+{
+    return !UnicodeRangeEqualsFrom((unicode)"hello", (u64[0 2 ** 63 - 1])3, (u64[0 2 ** 63 - 1])5, (unicode)"hello");
+}
+
 // ----- Unicode Split ------------------------------------------------------
 
 [Fact]

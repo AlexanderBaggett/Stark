@@ -18,7 +18,11 @@ public enum IOError
     InvalidPath,
     BrokenPipe,
     DiskFull,
-    Unknown(i32),
+    NotADirectory,
+    IsADirectory,
+    DirectoryNotEmpty,
+    TooManyLinks,
+    Unknown(i32[min max]),
 }
 
 public enum IOResult<T>

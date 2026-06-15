@@ -78,6 +78,10 @@ public fn System.IO.IOResult<bool> IsFile(ascii path);
 public fn System.IO.IOResult<bool> IsDirectory(ascii path);
 public fn System.IO.IOStatus Move(ascii oldPath, ascii newPath);
 public fn System.IO.IOResult<FileMetadata> Metadata(ascii path);
+public fn System.IO.IOResult<FileMetadata> LinkMetadata(ascii path);
+public fn System.IO.IOResult<bool> IsSymlink(ascii path);
+public fn System.IO.IOStatus CreateSymlink(ascii target, ascii linkPath);
+public fn System.IO.IOResult<System.Text.OwnedAscii> ReadSymlink(ascii path);
 public fn System.IO.IOResult<System.Text.OwnedAscii> CreateTempDirectoryIn(ascii parent, ascii prefix);
 public fn System.IO.IOResult<System.Text.OwnedAscii> CreateTempDirectory(ascii prefix);
 public fn System.IO.IOStatus WalkRecursive(ascii root, inline closure<fn System.IO.IOStatus(ascii, FileSystemEntryKind)> visitor);
@@ -93,6 +97,27 @@ single path. Linux and macOS preserve POSIX mode permission bits. Windows maps
 read-only/directory attributes into POSIX-like read/write/execute bits so shared
 compiler logic can make deterministic permission checks. The internal platform
 metadata boundary maps common OS errors into `IOError` values.
+
+## Symlinks
+
+`LinkMetadata`, `IsSymlink`, `CreateSymlink`, and `ReadSymlink` provide explicit
+symbolic-link operations that never silently resolve the final link.
+
+`LinkMetadata` reads metadata for a path *without* following a final symbolic
+link (`lstat` semantics): when the path is itself a symlink, the returned `Kind`
+is `FileSystemEntryKind.Symlink`. This contrasts with `Metadata`, which follows
+the link and reports the target's kind instead. `IsSymlink` is the small helper
+built on top of `LinkMetadata`; it likewise does not follow the link and simply
+reports whether the path itself is a symbolic link.
+
+`CreateSymlink(target, linkPath)` creates a symbolic link at `linkPath` that
+points at `target`. The `target` is stored verbatim and may be relative to the
+link's own directory; the standard library does not resolve, normalize, or
+validate it. `ReadSymlink` returns the raw link contents as an owned
+`System.Text.OwnedAscii`, i.e. the exact stored target path, again without
+resolving it to an absolute path. Reading a link whose stored target exactly
+fills the internal read buffer is rejected as a possibly truncated result with
+`IOError.InvalidPath`.
 
 ## Directory Listing
 
@@ -232,5 +257,8 @@ split.
 - `Directory` is an owned handle with best-effort close-on-drop cleanup.
 - `FileSystemEntry.Name` is owned entry-name storage, so callers are not tied to
   the directory iterator's internal buffer.
-- Metadata behavior is implemented for Linux, macOS, and Windows. Symlink
-  target reads and richer path errors remain tracked under self-host prep.
+- Metadata behavior is implemented for Linux, macOS, and Windows.
+- Symbolic-link operations are available: `LinkMetadata` (`lstat`-style metadata
+  that does not follow the final link), `IsSymlink`, `CreateSymlink` (target
+  stored verbatim, may be relative), and `ReadSymlink` (raw, unresolved link
+  target).

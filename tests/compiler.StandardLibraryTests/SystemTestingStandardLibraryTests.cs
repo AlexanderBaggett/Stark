@@ -58,6 +58,14 @@ public sealed class SystemTestingStandardLibraryTests : StandardLibraryTestSuite
                             return false;
                         case System.IO.IOError.DiskFull:
                             return false;
+                        case System.IO.IOError.NotADirectory:
+                            return false;
+                        case System.IO.IOError.IsADirectory:
+                            return false;
+                        case System.IO.IOError.DirectoryNotEmpty:
+                            return false;
+                        case System.IO.IOError.TooManyLinks:
+                            return false;
                         case System.IO.IOError.Unknown(var code):
                             return false;
                     }
@@ -173,6 +181,8 @@ public sealed class SystemTestingStandardLibraryTests : StandardLibraryTestSuite
             stack System.Core.Option<i32[min max]> noneValue = System.Core.Option<i32[min max]>.None;
             stack System.Core.Result<i32[min max], i32[min max]> okValue = System.Core.Result<i32[min max], i32[min max]>.Ok(11);
             stack System.Core.Result<i32[min max], i32[min max]> errValue = System.Core.Result<i32[min max], i32[min max]>.Err(13);
+            stack i32[min max][] pairSlice = pair.AsSlice();
+            stack i32[min max][] oneSlice = oneValue.AsSlice();
 
             return System.Testing.NotEqual(4, 5)
                 && oneStatus == System.Memory.MemoryStatus.Ok
@@ -203,7 +213,11 @@ public sealed class SystemTestingStandardLibraryTests : StandardLibraryTestSuite
                 && System.Testing.ResultOk(okValue)
                 && !System.Testing.ResultErr(okValue)
                 && System.Testing.ResultErr(errValue)
-                && !System.Testing.ResultOk(errValue);
+                && !System.Testing.ResultOk(errValue)
+                && System.Testing.ContainsElement(pairSlice, 20)
+                && !System.Testing.ContainsElement(pairSlice, 30)
+                && System.Testing.SequenceEqual(pairSlice, pairSlice)
+                && !System.Testing.SequenceEqual(pairSlice, oneSlice);
         }
 
         finite law bool DiagnosticCountAssertionsWork(borrow System.Testing.Diagnostic[] diagnosticSlice)
@@ -758,6 +772,8 @@ public sealed class SystemTestingStandardLibraryTests : StandardLibraryTestSuite
         Assert.DoesNotContain("rawmutptr<", testingSource, StringComparison.Ordinal);
         Assert.Contains("public finite law bool Equal(bool expected, bool actual)", testingSource, StringComparison.Ordinal);
         Assert.Contains("public finite law bool Contains(ascii value, ascii expected)", testingSource, StringComparison.Ordinal);
+        Assert.Contains("public finite law bool ContainsElement(", testingSource, StringComparison.Ordinal);
+        Assert.Contains("public finite law bool SequenceEqual(borrow i32[min max][] expected, borrow i32[min max][] actual)", testingSource, StringComparison.Ordinal);
         Assert.Contains("public finite law u64[0 2 ** 63 - 1] CountOccurrences(ascii value, ascii needle)", testingSource, StringComparison.Ordinal);
         Assert.Contains("public finite law bool Occurrences(u64[0 2 ** 63 - 1] expected, ascii value, ascii needle)", testingSource, StringComparison.Ordinal);
         Assert.Contains("public finite law bool OptionSome<T>(borrow System.Core.Option<T> value)", testingSource, StringComparison.Ordinal);
