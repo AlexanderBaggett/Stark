@@ -762,8 +762,7 @@ public sealed class SystemProcessStandardLibraryTests : StandardLibraryTestSuite
         var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-process-package-");
         var packageDirectory = await SharedStdlibPackage.GetDirectoryAsync();
 
-        var libraryFileName = OperatingSystem.IsWindows() ? "System.lib" : "libSystem.a";
-        var manifestPath = Path.Combine(packageDirectory, Path.GetFileNameWithoutExtension(libraryFileName) + ".starkpkg");
+        var manifestPath = Path.Combine(packageDirectory, "libSystem.starkpkg");
         var appPath = Path.Combine(tempDirectory.FullName, "App.stark");
 
         try
