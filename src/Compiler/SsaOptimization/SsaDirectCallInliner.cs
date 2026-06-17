@@ -834,10 +834,25 @@ internal sealed class SsaDirectCallInliner
 
     private static bool IsParameterAddressTaken(InlineCandidate candidate, string parameterName)
     {
-        return candidate.Instructions
-            .OfType<SsaValueInstruction>()
+        return EnumerateCandidateValueInstructions(candidate)
             .Any(instruction => instruction.Value is SsaAddressOfParameterRValue addressOfParameter
                 && string.Equals(addressOfParameter.ParameterName, parameterName, StringComparison.Ordinal));
+    }
+
+    // An inline candidate carries its body in `Blocks`; the flat `Instructions`
+    // list is only populated for single-block candidates. Scan the full block set
+    // so address-of-parameter detection -- which gates spilling a by-value
+    // argument into an addressable slot and remapping the callee's
+    // `&parameter` to it -- is not blind to multi-block bodies. Without this, a
+    // generic predicate with a loop that borrows a by-value `where Copyable(T)`
+    // parameter (e.g. `System.Testing.ContainsElement`) inlines its `&expected`
+    // node into the caller unremapped, which validate-ssa rejects with STK5002
+    // "address-of references unknown parameter".
+    private static IEnumerable<SsaValueInstruction> EnumerateCandidateValueInstructions(InlineCandidate candidate)
+    {
+        return candidate.Function.Blocks
+            .SelectMany(static block => block.Instructions)
+            .OfType<SsaValueInstruction>();
     }
 
     private static bool TryCreateArgumentReferenceAddressReplacement(
@@ -991,8 +1006,7 @@ internal sealed class SsaDirectCallInliner
 
     private static bool CanReplaceParameterAddressLoadsWithValue(InlineCandidate candidate, string parameterName)
     {
-        var addressResultNames = candidate.Instructions
-            .OfType<SsaValueInstruction>()
+        var addressResultNames = EnumerateCandidateValueInstructions(candidate)
             .Where(instruction => instruction.Value is SsaAddressOfParameterRValue addressOfParameter
                 && string.Equals(addressOfParameter.ParameterName, parameterName, StringComparison.Ordinal))
             .Select(static instruction => instruction.ResultName)

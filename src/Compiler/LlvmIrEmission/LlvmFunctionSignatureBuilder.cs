@@ -129,9 +129,12 @@ internal sealed class LlvmFunctionSignatureBuilder
             return "internal";
         }
 
-        return specializationLinkage == MonomorphizationLinkageKind.LinkOnceOdrComdat
-            ? "linkonce_odr"
-            : null;
+        return specializationLinkage switch
+        {
+            MonomorphizationLinkageKind.LinkOnceOdrComdat => "linkonce_odr",
+            MonomorphizationLinkageKind.WeakOdrPreserved => "weak_odr",
+            _ => null
+        };
     }
 
     private static string? ResolveDefinitionPreemptionKeyword(
@@ -152,9 +155,12 @@ internal sealed class LlvmFunctionSignatureBuilder
             return "unnamed_addr";
         }
 
-        return specializationLinkage == MonomorphizationLinkageKind.LinkOnceOdrComdat
-            ? "local_unnamed_addr"
-            : null;
+        return specializationLinkage switch
+        {
+            MonomorphizationLinkageKind.LinkOnceOdrComdat => "local_unnamed_addr",
+            MonomorphizationLinkageKind.WeakOdrPreserved => "unnamed_addr",
+            _ => null
+        };
     }
 
     private static string EscapeIdentifier(string identifier)

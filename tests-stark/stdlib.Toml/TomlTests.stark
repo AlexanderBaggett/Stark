@@ -966,19 +966,543 @@ x = 0x_DE
 }
 
 [Fact]
-fn bool ArraysOfTablesAreUnsupportedForNow()
+fn bool ArraysOfTablesParse()
 {
     unsafe
     {
         switch (ParseText(raw"""
 [[bin]]
 name = "tool"
+
+[[bin]]
+name = "helper"
 """))
         {
             case TomlResult<TomlDocument>.Err(var error):
-                return IsUnsupportedValue(error);
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                stack mut TomlDocument document = value;
+                stack mut u64[0 2 ** 63 - 1] bin = 0;
+                if (!document.TryFindMember(TomlRootNode, "bin", bin))
+                {
+                    return false;
+                }
+
+                if (document.KindAt(bin) != TomlKind.Array || document.ChildCountAt(bin) != 2)
+                {
+                    return false;
+                }
+
+                stack mut u64[0 2 ** 63 - 1] first = 0;
+                stack mut u64[0 2 ** 63 - 1] firstName = 0;
+                if (!document.TryChildAt(bin, 0, first)
+                    || !document.TryFindMember(first, "name", firstName)
+                    || document.TextAt(firstName) != "tool")
+                {
+                    return false;
+                }
+
+                stack mut u64[0 2 ** 63 - 1] second = 0;
+                stack mut u64[0 2 ** 63 - 1] secondName = 0;
+                if (!document.TryChildAt(bin, 1, second)
+                    || !document.TryFindMember(second, "name", secondName)
+                    || document.TextAt(secondName) != "helper")
+                {
+                    return false;
+                }
+
+                return true;
+        }
+    }
+}
+
+[Fact]
+fn bool ArrayOfTablesSubTableReopensLastElement()
+{
+    // `[a.b]` after `[[a]]` must add `b` under the most recent `a` element.
+    unsafe
+    {
+        switch (ParseText(raw"""
+[[product]]
+sku = 1
+
+[product.meta]
+color = "red"
+"""))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                stack mut TomlDocument document = value;
+                stack mut u64[0 2 ** 63 - 1] product = 0;
+                stack mut u64[0 2 ** 63 - 1] element = 0;
+                stack mut u64[0 2 ** 63 - 1] meta = 0;
+                stack mut u64[0 2 ** 63 - 1] color = 0;
+                if (!document.TryFindMember(TomlRootNode, "product", product)
+                    || document.ChildCountAt(product) != 1
+                    || !document.TryChildAt(product, 0, element)
+                    || !document.TryFindMember(element, "meta", meta)
+                    || !document.TryFindMember(meta, "color", color))
+                {
+                    return false;
+                }
+
+                return document.TextAt(color) == "red";
+        }
+    }
+}
+
+[Fact]
+fn bool DatetimeValuesParse()
+{
+    unsafe
+    {
+        switch (ParseText(raw"""
+odt = 1979-05-27T07:32:00Z
+ldt = 1979-05-27T07:32:00
+ld = 1979-05-27
+lt = 07:32:00.999
+spaced = 1979-05-27 07:32:00-07:00
+"""))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                stack mut TomlDocument document = value;
+                stack mut u64[0 2 ** 63 - 1] odt = 0;
+                stack mut u64[0 2 ** 63 - 1] ldt = 0;
+                stack mut u64[0 2 ** 63 - 1] ld = 0;
+                stack mut u64[0 2 ** 63 - 1] lt = 0;
+                stack mut u64[0 2 ** 63 - 1] spaced = 0;
+                if (!document.TryFindMember(TomlRootNode, "odt", odt)
+                    || !document.TryFindMember(TomlRootNode, "ldt", ldt)
+                    || !document.TryFindMember(TomlRootNode, "ld", ld)
+                    || !document.TryFindMember(TomlRootNode, "lt", lt)
+                    || !document.TryFindMember(TomlRootNode, "spaced", spaced))
+                {
+                    return false;
+                }
+
+                if (document.KindAt(odt) != TomlKind.Datetime
+                    || document.KindAt(ldt) != TomlKind.Datetime
+                    || document.KindAt(ld) != TomlKind.Datetime
+                    || document.KindAt(lt) != TomlKind.Datetime
+                    || document.KindAt(spaced) != TomlKind.Datetime)
+                {
+                    return false;
+                }
+
+                return document.DatetimeAt(odt) == "1979-05-27T07:32:00Z"
+                    && document.DatetimeAt(ldt) == "1979-05-27T07:32:00"
+                    && document.DatetimeAt(ld) == "1979-05-27"
+                    && document.DatetimeAt(lt) == "07:32:00.999"
+                    && document.DatetimeAt(spaced) == "1979-05-27 07:32:00-07:00";
+        }
+    }
+}
+
+[Fact]
+fn bool MalformedDatetimeIsRejected()
+{
+    // A time-of-day requires seconds; `12:34` is not a valid local time.
+    unsafe
+    {
+        switch (ParseText("t = 12:34\n"))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return true;
             case TomlResult<TomlDocument>.Ok(var value):
                 return false;
+        }
+    }
+}
+
+// True when `toml` fails to parse (used for calendar-rejection facts).
+unsafe fn bool DatetimeRejected(ascii toml)
+{
+    switch (ParseText(toml))
+    {
+        case TomlResult<TomlDocument>.Err(var error):
+            return true;
+        case TomlResult<TomlDocument>.Ok(var value):
+            return false;
+    }
+}
+
+[Fact]
+fn bool DateTimeAtDecodesOffsetDateTime()
+{
+    unsafe
+    {
+        switch (ParseText("a = 1979-05-27T07:32:00Z\n"))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                stack mut TomlDocument document = value;
+                stack mut u64[0 2 ** 63 - 1] a = 0;
+                if (!document.TryFindMember(TomlRootNode, "a", a))
+                {
+                    return false;
+                }
+
+                switch (document.DateTimeAt(a))
+                {
+                    case TomlResult<TomlDateTime>.Err(var dtError):
+                        return false;
+                    case TomlResult<TomlDateTime>.Ok(var dt):
+                        return dt.Kind == TomlDateTimeKind.OffsetDateTime
+                            && dt.Year == 1979
+                            && dt.Month == 5
+                            && dt.Day == 27
+                            && dt.Hour == 7
+                            && dt.Minute == 32
+                            && dt.Second == 0
+                            && dt.Nanosecond == 0
+                            && dt.HasOffset
+                            && dt.OffsetMinutes == 0;
+                }
+        }
+    }
+}
+
+[Fact]
+fn bool DateTimeAtDecodesNegativeOffsetAndFraction()
+{
+    unsafe
+    {
+        // `.999999` is six fractional digits -> 999999000 ns; `-07:00` -> -420.
+        switch (ParseText("a = 1979-05-27T00:32:00.999999-07:00\n"))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                stack mut TomlDocument document = value;
+                stack mut u64[0 2 ** 63 - 1] a = 0;
+                if (!document.TryFindMember(TomlRootNode, "a", a))
+                {
+                    return false;
+                }
+
+                switch (document.DateTimeAt(a))
+                {
+                    case TomlResult<TomlDateTime>.Err(var dtError):
+                        return false;
+                    case TomlResult<TomlDateTime>.Ok(var dt):
+                        return dt.Kind == TomlDateTimeKind.OffsetDateTime
+                            && dt.Hour == 0
+                            && dt.Minute == 32
+                            && dt.Nanosecond == 999999000
+                            && dt.HasOffset
+                            && dt.OffsetMinutes == -420;
+                }
+        }
+    }
+}
+
+[Fact]
+fn bool DateTimeAtDecodesLocalDateAndLocalTime()
+{
+    unsafe
+    {
+        switch (ParseText("d = 1979-05-27\nt = 07:32:00.5\n"))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                stack mut TomlDocument document = value;
+                stack mut u64[0 2 ** 63 - 1] d = 0;
+                stack mut u64[0 2 ** 63 - 1] t = 0;
+                if (!document.TryFindMember(TomlRootNode, "d", d)
+                    || !document.TryFindMember(TomlRootNode, "t", t))
+                {
+                    return false;
+                }
+
+                stack mut bool dateOk = false;
+                switch (document.DateTimeAt(d))
+                {
+                    case TomlResult<TomlDateTime>.Err(var dError):
+                        return false;
+                    case TomlResult<TomlDateTime>.Ok(var dt):
+                        dateOk = dt.Kind == TomlDateTimeKind.LocalDate
+                            && dt.Year == 1979
+                            && dt.Month == 5
+                            && dt.Day == 27
+                            && dt.Hour == 0
+                            && dt.Second == 0
+                            && !dt.HasOffset;
+                }
+
+                switch (document.DateTimeAt(t))
+                {
+                    case TomlResult<TomlDateTime>.Err(var tError):
+                        return false;
+                    case TomlResult<TomlDateTime>.Ok(var tt):
+                        return dateOk
+                            && tt.Kind == TomlDateTimeKind.LocalTime
+                            && tt.Year == 0
+                            && tt.Month == 0
+                            && tt.Hour == 7
+                            && tt.Minute == 32
+                            && tt.Second == 0
+                            && tt.Nanosecond == 500000000
+                            && !tt.HasOffset;
+                }
+        }
+    }
+}
+
+[Fact]
+fn bool DateTimeAtAcceptsLeapDays()
+{
+    unsafe
+    {
+        // 2020 and 2000 are leap years (2000 via the 400-year rule); Feb 29 is
+        // valid in both.
+        switch (ParseText("a = 2020-02-29\nb = 2000-02-29\n"))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                stack mut TomlDocument document = value;
+                stack mut u64[0 2 ** 63 - 1] a = 0;
+                stack mut u64[0 2 ** 63 - 1] b = 0;
+                if (!document.TryFindMember(TomlRootNode, "a", a)
+                    || !document.TryFindMember(TomlRootNode, "b", b))
+                {
+                    return false;
+                }
+
+                stack mut bool firstOk = false;
+                switch (document.DateTimeAt(a))
+                {
+                    case TomlResult<TomlDateTime>.Err(var aError):
+                        return false;
+                    case TomlResult<TomlDateTime>.Ok(var dt):
+                        firstOk = dt.Month == 2 && dt.Day == 29;
+                }
+
+                switch (document.DateTimeAt(b))
+                {
+                    case TomlResult<TomlDateTime>.Err(var bError):
+                        return false;
+                    case TomlResult<TomlDateTime>.Ok(var dt):
+                        return firstOk && dt.Month == 2 && dt.Day == 29;
+                }
+        }
+    }
+}
+
+[Fact]
+fn bool InvalidCalendarDatetimeIsRejected()
+{
+    unsafe
+    {
+        // Day-of-month past the month length (with leap-year and century rules),
+        // out-of-range month/hour/minute/second, and an out-of-range zone offset
+        // are all rejected even though each is structurally well-formed.
+        return DatetimeRejected("d = 2020-02-30\n")
+            && DatetimeRejected("d = 2021-02-29\n")
+            && DatetimeRejected("d = 1900-02-29\n")
+            && DatetimeRejected("d = 2021-04-31\n")
+            && DatetimeRejected("d = 2021-13-01\n")
+            && DatetimeRejected("d = 2021-00-01\n")
+            && DatetimeRejected("d = 2021-01-00\n")
+            && DatetimeRejected("t = 24:00:00\n")
+            && DatetimeRejected("t = 07:60:00\n")
+            && DatetimeRejected("a = 1979-05-27T07:32:00+24:00\n");
+    }
+}
+
+[Fact]
+fn bool DateTimeAtAllowsLeapSecondAndMaxOffset()
+{
+    unsafe
+    {
+        // RFC 3339 permits a leap second (`:60`); `+23:59` is the largest offset.
+        switch (ParseText("a = 1990-12-31T23:59:60+23:59\n"))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                stack mut TomlDocument document = value;
+                stack mut u64[0 2 ** 63 - 1] a = 0;
+                if (!document.TryFindMember(TomlRootNode, "a", a))
+                {
+                    return false;
+                }
+
+                switch (document.DateTimeAt(a))
+                {
+                    case TomlResult<TomlDateTime>.Err(var dtError):
+                        return false;
+                    case TomlResult<TomlDateTime>.Ok(var dt):
+                        return dt.Kind == TomlDateTimeKind.OffsetDateTime
+                            && dt.Hour == 23
+                            && dt.Minute == 59
+                            && dt.Second == 60
+                            && dt.HasOffset
+                            && dt.OffsetMinutes == 1439;
+                }
+        }
+    }
+}
+
+[Fact]
+fn bool DateTimeAtTruncatesExcessFractionalDigits()
+{
+    unsafe
+    {
+        // More than nanosecond precision is truncated, not rounded: the tenth
+        // fractional digit (`0`) is dropped, leaving 123456789 ns.
+        switch (ParseText("a = 00:00:00.1234567890\n"))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                stack mut TomlDocument document = value;
+                stack mut u64[0 2 ** 63 - 1] a = 0;
+                if (!document.TryFindMember(TomlRootNode, "a", a))
+                {
+                    return false;
+                }
+
+                switch (document.DateTimeAt(a))
+                {
+                    case TomlResult<TomlDateTime>.Err(var dtError):
+                        return false;
+                    case TomlResult<TomlDateTime>.Ok(var dt):
+                        return dt.Kind == TomlDateTimeKind.LocalTime
+                            && dt.Nanosecond == 123456789;
+                }
+        }
+    }
+}
+
+[Fact]
+fn bool DateTimeAtRejectsNonDatetimeNode()
+{
+    unsafe
+    {
+        switch (ParseText("a = 42\n"))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                stack mut TomlDocument document = value;
+                stack mut u64[0 2 ** 63 - 1] a = 0;
+                if (!document.TryFindMember(TomlRootNode, "a", a))
+                {
+                    return false;
+                }
+
+                switch (document.DateTimeAt(a))
+                {
+                    case TomlResult<TomlDateTime>.Err(var dtError):
+                        return true;
+                    case TomlResult<TomlDateTime>.Ok(var dt):
+                        return false;
+                }
+        }
+    }
+}
+
+[Fact]
+fn bool EightDigitUnicodeEscapeDecodes()
+{
+    // `\U0001F600` is U+1F600 (a supplementary-plane scalar), encoded as four
+    // UTF-8 bytes; `é` is U+00E9 (é), encoded as two. The escape decoder
+    // must produce the right byte counts for both widths.
+    unsafe
+    {
+        switch (ParseText("wide = \"\\U0001F600\"\nbmp = \"\\u00E9\"\n"))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                stack mut TomlDocument document = value;
+                stack mut u64[0 2 ** 63 - 1] wide = 0;
+                stack mut u64[0 2 ** 63 - 1] bmp = 0;
+                if (!document.TryFindMember(TomlRootNode, "wide", wide)
+                    || !document.TryFindMember(TomlRootNode, "bmp", bmp))
+                {
+                    return false;
+                }
+
+                return System.Text.AsciiLength(document.TextAt(wide)) == 4
+                    && System.Text.AsciiLength(document.TextAt(bmp)) == 2;
+        }
+    }
+}
+
+[Fact]
+fn bool InvalidUnicodeEscapeIsRejected()
+{
+    // A surrogate code point (U+D800) is not a Unicode scalar value.
+    unsafe
+    {
+        switch (ParseText("s = \"\\uD800\"\n"))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return true;
+            case TomlResult<TomlDocument>.Ok(var value):
+                return false;
+        }
+    }
+}
+
+[Fact]
+fn bool DatetimeAndArrayOfTablesRoundTrip()
+{
+    // Parse -> emit -> parse must preserve datetimes and array-of-tables shape.
+    unsafe
+    {
+        stack mut TomlDocument first = new();
+        switch (ParseText(raw"""
+when = 1979-05-27T07:32:00Z
+
+[[entry]]
+id = 1
+
+[[entry]]
+id = 2
+"""))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                first = value;
+        }
+
+        stack mut System.Text.OwnedAscii emitted = new();
+        switch (Emit(first))
+        {
+            case TomlResult<System.Text.OwnedAscii>.Err(var emitError):
+                return false;
+            case TomlResult<System.Text.OwnedAscii>.Ok(var emittedText):
+                emitted = emittedText;
+        }
+
+        switch (ParseText(emitted.View()))
+        {
+            case TomlResult<TomlDocument>.Err(var reparseError):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var reparsed):
+                stack mut TomlDocument document = reparsed;
+                stack mut u64[0 2 ** 63 - 1] whenNode = 0;
+                stack mut u64[0 2 ** 63 - 1] entry = 0;
+                if (!document.TryFindMember(TomlRootNode, "when", whenNode)
+                    || document.KindAt(whenNode) != TomlKind.Datetime
+                    || document.DatetimeAt(whenNode) != "1979-05-27T07:32:00Z"
+                    || !document.TryFindMember(TomlRootNode, "entry", entry)
+                    || document.KindAt(entry) != TomlKind.Array
+                    || document.ChildCountAt(entry) != 2)
+                {
+                    return false;
+                }
+
+                return true;
         }
     }
 }

@@ -1,0 +1,269 @@
+import System.Testing
+import System.Testing.HostCompiler
+import System.Text
+module SsaTestSupport
+
+// Trimmed host-compile harness for the ported SSA tests. Compiles a small
+// Stark source program against the current C# host compiler through the host
+// test protocol and exposes the rendered `ssa` / `optimized-ssa` artifact text
+// and the structured diagnostics for assertions. Stark-side port of the
+// source-driven subset of tests/compiler.Tests/SsaLoweringTests.cs and the
+// source-driven parts of SsaOptimizationTests.cs. Requires STARK_HOST_COMPILER
+// to point at the host compiler executable; the original C# tests remain the
+// oracle until cutover.
+//
+// The hand-built-SsaFunction object-model facts in SsaIrValidationTests.cs and
+// most of SsaOptimizationTests.cs are NOT portable through this source-in /
+// artifact-text-out bridge and are intentionally omitted.
+
+const HostTimeoutMilliseconds = 180000;
+
+// One host compile attempt. `Ok` means the transport and protocol succeeded;
+// SSA assertions also require `Outcome.CompileSucceeded()`.
+public struct SsaCompile
+{
+    HostCompileOutcome Outcome;
+    bool Ok;
+
+    SsaCompile()
+    {
+        self.Outcome = new();
+        self.Ok = false;
+    }
+}
+
+// Compiles `source` stopping after the raw SSA lowering pass ("lower-ssa") and
+// requests the textual `ssa` artifact (the host's `lowering.ssa` artifact, the
+// same one the C# GetSsa helper reads). `Ok` additionally requires the compile
+// itself to succeed.
+public unsafe fn SsaCompile CompileSsa(ascii id, ascii source)
+{
+    stack mut SsaCompile compiled = RunHostCompileSsa(id, source, "lower-ssa", "ssa");
+    if (compiled.Ok && !compiled.Outcome.CompileSucceeded())
+    {
+        compiled.Ok = false;
+    }
+
+    return compiled;
+}
+
+// Compiles `source` stopping after a named SSA pass and requests the textual
+// `ssa` artifact, for facts that need a later (post-cleanup) snapshot. `Ok`
+// additionally requires the compile itself to succeed.
+public unsafe fn SsaCompile CompileSsaAfter(ascii id, ascii source, ascii stopAfterPassId)
+{
+    stack mut SsaCompile compiled = RunHostCompileSsa(id, source, stopAfterPassId, "ssa");
+    if (compiled.Ok && !compiled.Outcome.CompileSucceeded())
+    {
+        compiled.Ok = false;
+    }
+
+    return compiled;
+}
+
+// Compiles `source` through the full pipeline and requests the textual
+// `optimized-ssa` artifact (the host's `lowering.ssa.optimized` artifact, the
+// same one the C# GetOptimizedSsa helper reads). `Ok` additionally requires the
+// compile itself to succeed.
+public unsafe fn SsaCompile CompileOptimizedSsa(ascii id, ascii source)
+{
+    stack mut SsaCompile compiled = RunHostCompileSsa(id, source, "", "optimized-ssa");
+    if (compiled.Ok && !compiled.Outcome.CompileSucceeded())
+    {
+        compiled.Ok = false;
+    }
+
+    return compiled;
+}
+
+// True when the transport succeeded and the compile reported success.
+public unsafe fn bool Succeeds(mut borrow SsaCompile compiled)
+{
+    return compiled.Ok && compiled.Outcome.CompileSucceeded();
+}
+
+// Returns the rendered SSA artifact text of a successful compile, or empty.
+public unsafe fn ascii SsaText(mut borrow SsaCompile compiled)
+{
+    return compiled.Outcome.ArtifactText("ssa");
+}
+
+// Returns the rendered optimized-SSA artifact text of a successful compile, or
+// empty.
+public unsafe fn ascii OptimizedSsaText(mut borrow SsaCompile compiled)
+{
+    return compiled.Outcome.ArtifactText("optimized-ssa");
+}
+
+// True when the compile succeeded and the rendered SSA text contains every one
+// of the supplied fragments. The `ssa`-artifact variant.
+public unsafe fn bool SsaContainsAll2(mut borrow SsaCompile compiled, ascii first, ascii second)
+{
+    if (!Succeeds(compiled))
+    {
+        return false;
+    }
+
+    stack ascii text = compiled.Outcome.ArtifactText("ssa");
+    return System.Testing.Contains(text, first) && System.Testing.Contains(text, second);
+}
+
+public unsafe fn bool SsaContainsAll3(mut borrow SsaCompile compiled, ascii first, ascii second, ascii third)
+{
+    if (!Succeeds(compiled))
+    {
+        return false;
+    }
+
+    stack ascii text = compiled.Outcome.ArtifactText("ssa");
+    return System.Testing.Contains(text, first)
+        && System.Testing.Contains(text, second)
+        && System.Testing.Contains(text, third);
+}
+
+// True when the compile succeeded, the rendered SSA text contains `present`,
+// and does NOT contain `absent`.
+public unsafe fn bool SsaContainsButNot(mut borrow SsaCompile compiled, ascii present, ascii absent)
+{
+    if (!Succeeds(compiled))
+    {
+        return false;
+    }
+
+    stack ascii text = compiled.Outcome.ArtifactText("ssa");
+    return System.Testing.Contains(text, present) && !System.Testing.Contains(text, absent);
+}
+
+// True when the compile succeeded and the rendered SSA text contains `fragment`.
+public unsafe fn bool SsaContains(mut borrow SsaCompile compiled, ascii fragment)
+{
+    if (!Succeeds(compiled))
+    {
+        return false;
+    }
+
+    return System.Testing.Contains(compiled.Outcome.ArtifactText("ssa"), fragment);
+}
+
+// True when the compile succeeded and the rendered optimized-SSA text contains
+// `fragment`.
+public unsafe fn bool OptimizedSsaContains(mut borrow SsaCompile compiled, ascii fragment)
+{
+    if (!Succeeds(compiled))
+    {
+        return false;
+    }
+
+    return System.Testing.Contains(compiled.Outcome.ArtifactText("optimized-ssa"), fragment);
+}
+
+// True when the compile succeeded, the rendered optimized-SSA text contains
+// `present`, and does NOT contain `absent`.
+public unsafe fn bool OptimizedSsaContainsButNot(mut borrow SsaCompile compiled, ascii present, ascii absent)
+{
+    if (!Succeeds(compiled))
+    {
+        return false;
+    }
+
+    stack ascii text = compiled.Outcome.ArtifactText("optimized-ssa");
+    return System.Testing.Contains(text, present) && !System.Testing.Contains(text, absent);
+}
+
+// True when the compile succeeded and the rendered optimized-SSA text does NOT
+// contain `absent`.
+public unsafe fn bool OptimizedSsaLacks(mut borrow SsaCompile compiled, ascii absent)
+{
+    if (!Succeeds(compiled))
+    {
+        return false;
+    }
+
+    return !System.Testing.Contains(compiled.Outcome.ArtifactText("optimized-ssa"), absent);
+}
+
+// Counts the number of non-overlapping occurrences of `fragment` in the
+// rendered SSA text. 0 when the compile did not succeed.
+//
+// Regression guard: this helper (and OptimizedSsaOccurrences below) calls the
+// thin public forwarder `System.Testing.CountOccurrences`, which nothing in the
+// stdlib's own reachable graph references, so it is pruned from the emitted
+// stdlib package. Reached only from this non-fact helper inside the large
+// `System.Testing.HostCompiler` import graph, the forwarder stays off the test
+// runner's owned hot-path emission surface, so the consumer used to emit only a
+// declaration and the link failed with `undefined symbol:
+// System_Testing_CountOccurrences__ascii_ascii_`. The compiler now emits a
+// weak_odr fallback body for such referenced-but-pruned imports; without that
+// fix this suite fails to link.
+public unsafe fn u64[0 2 ** 63 - 1] SsaOccurrences(mut borrow SsaCompile compiled, ascii fragment)
+{
+    if (!Succeeds(compiled))
+    {
+        return 0;
+    }
+
+    return System.Testing.CountOccurrences(compiled.Outcome.ArtifactText("ssa"), fragment);
+}
+
+// Counts the number of non-overlapping occurrences of `fragment` in the
+// rendered optimized-SSA text. 0 when the compile did not succeed.
+public unsafe fn u64[0 2 ** 63 - 1] OptimizedSsaOccurrences(mut borrow SsaCompile compiled, ascii fragment)
+{
+    if (!Succeeds(compiled))
+    {
+        return 0;
+    }
+
+    return System.Testing.CountOccurrences(compiled.Outcome.ArtifactText("optimized-ssa"), fragment);
+}
+
+internal unsafe fn SsaCompile RunHostCompileSsa(
+    ascii id,
+    ascii source,
+    ascii stopAfterPassId,
+    ascii artifactName)
+{
+    stack mut OwnedAscii compilerPath = new();
+    stack mut bool havePath = false;
+    switch (CompilerPathFromEnvironment())
+    {
+        case HostResult<OwnedAscii>.Err(var pathError):
+            havePath = false;
+        case HostResult<OwnedAscii>.Ok(var path):
+            compilerPath = path;
+            havePath = true;
+    }
+
+    stack mut HostCompileOutcome outcome = new();
+    stack mut bool transportOk = false;
+    if (havePath)
+    {
+        switch (CompileOnceArtifactIn(
+            compilerPath.View(),
+            id,
+            source,
+            stopAfterPassId,
+            artifactName,
+            "",
+            0,
+            HostTimeoutMilliseconds))
+        {
+            case HostResult<HostCompileOutcome>.Err(var error):
+                transportOk = false;
+            case HostResult<HostCompileOutcome>.Ok(var captured):
+                outcome = captured;
+                transportOk = true;
+        }
+    }
+
+    stack mut bool ok = false;
+    if (transportOk)
+    {
+        ok = !outcome.HadProtocolError();
+    }
+
+    stack mut SsaCompile compiled = new();
+    compiled.Ok = ok;
+    compiled.Outcome = outcome;
+    return compiled;
+}

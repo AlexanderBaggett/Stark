@@ -1,0 +1,17 @@
+[project]
+name = "stdlib-testing-tests"
+version = "0.1.0"
+kind = "test"
+
+[test]
+root = "TestingAssertionTests.stark"
+output = "stdlib-testing-tests"
+
+[dependencies]
+stdlib = { path = "../../stdlib" }
+
+[profiles.dev]
+opt = 0
+
+[profiles.release]
+opt = 3

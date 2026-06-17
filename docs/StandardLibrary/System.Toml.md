@@ -24,8 +24,10 @@ public enum TomlKind
     Array,
     Text,
     Integer,
+    Float,
     True,
     False,
+    Datetime,
 }
 
 public enum TomlError
@@ -36,6 +38,7 @@ public enum TomlError
     InvalidEscape       { Line, Column },
     UnterminatedString  { Line, Column },
     InvalidNumber       { Line, Column },
+    InvalidDatetime     { Line, Column },
     DuplicateKey        { Line, Column },
     UnsupportedValue    { Line, Column },
     DepthExceeded       { Line, Column },
@@ -45,6 +48,32 @@ public enum TomlStatus;            // [Ok] Ok | [Err] Err(TomlError)
 public enum TomlResult<T>;         // [Ok] Ok(T) | [Err] Err(TomlError)
 
 public const TomlRootNode = 0;
+
+// Which RFC 3339 shape a decoded TomlDateTime carries.
+public enum TomlDateTimeKind
+{
+    OffsetDateTime,    // YYYY-MM-DDTHH:MM:SS[.fff](Z|+HH:MM|-HH:MM)
+    LocalDateTime,     // YYYY-MM-DDTHH:MM:SS[.fff]
+    LocalDate,         // YYYY-MM-DD
+    LocalTime,         // HH:MM:SS[.fff]
+}
+
+// A decoded, calendar-validated RFC 3339 date-time. Fields absent for the
+// `Kind` are zero; `HasOffset` is true only for `OffsetDateTime`, where
+// `OffsetMinutes` is signed minutes east of UTC (`Z` decodes as 0).
+public struct TomlDateTime
+{
+    TomlDateTimeKind Kind;
+    u16[0 9999]      Year;
+    u8[0 12]         Month;
+    u8[0 31]         Day;
+    u8[0 23]         Hour;
+    u8[0 59]         Minute;
+    u8[0 60]         Second;       // 60 permits an RFC 3339 leap second
+    u32[0 999999999] Nanosecond;
+    bool             HasOffset;
+    i16[-1439 1439]  OffsetMinutes;
+}
 
 public struct TomlDocument
 {
@@ -56,7 +85,10 @@ public struct TomlDocument
     public finite law u32 ColumnAt(borrow TomlDocument self, u64 node);
     public finite ascii TextAt(mut borrow TomlDocument self, u64 node);
     public finite ascii KeyAt(mut borrow TomlDocument self, u64 node);
+    public finite ascii DatetimeAt(mut borrow TomlDocument self, u64 node);   // verbatim token
     public finite TomlResult<i64> I64At(mut borrow TomlDocument self, u64 node);
+    public finite TomlResult<f64> F64At(mut borrow TomlDocument self, u64 node);
+    public finite TomlResult<TomlDateTime> DateTimeAt(mut borrow TomlDocument self, u64 node);
 
     public finite bool TryFindMember(
         borrow TomlDocument self, u64 tableNode, ascii name, out u64 member);
@@ -118,12 +150,22 @@ key, and either decoded scalar text or a child count.
   as an `ascii` view (escapes already applied for strings; the normalized digit
   token for integers).
 - `BoolAt(node)` returns `true` only when the node's kind is `True`.
-- `I64At(node)` decodes an `Integer` node through `System.Text.ParseI64Ascii`,
-  returning `TomlResult<i64>`; a non-integer node or an out-of-range value yields
-  `Err(InvalidNumber)` with the node's span.
+- `I64At(node)` decodes an `Integer` node through `System.Text.ParseI64Ascii`
+  (or the `0x`/`0o`/`0b` radix decoder), returning `TomlResult<i64>`; a
+  non-integer node or an out-of-range value yields `Err(InvalidNumber)` with the
+  node's span.
+- `F64At(node)` reads a `Float` (or widens an `Integer`) node to `f64` through
+  the correctly-rounded `System.Text.ParseF64Ascii`, returning `TomlResult<f64>`.
+- `DatetimeAt(node)` returns a `Datetime` node's verbatim RFC 3339 token as an
+  `ascii` view (the original spelling), or `""` for any other kind.
+- `DateTimeAt(node)` decodes a `Datetime` node into a calendar-validated
+  `TomlDateTime` (typed components plus a `TomlDateTimeKind`), returning
+  `TomlResult<TomlDateTime>`; a non-datetime node yields `Err(InvalidDatetime)`.
+  The reader already rejects out-of-range calendar fields at parse time, so a
+  parsed `Datetime` node always decodes successfully.
 
-`KeyAt` and `TextAt` take `mut borrow` because they project an `ascii` view over
-the document's decoded-text storage.
+`KeyAt`, `TextAt`, and `DatetimeAt` take `mut borrow` because they project an
+`ascii` view over the document's decoded-text storage.
 
 ### Lookup
 

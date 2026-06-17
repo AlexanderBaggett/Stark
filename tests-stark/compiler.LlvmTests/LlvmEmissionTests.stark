@@ -1,0 +1,1258 @@
+import LlvmTestSupport
+import System.Testing
+[Collection("compiler", "llvm")]
+module LlvmEmissionTests
+
+// Ported slice of tests/compiler.Tests LLVM IR emission tests, running against
+// the current C# host compiler through the host test protocol. Each fact
+// compiles a small source program, requests the rendered `llvm` artifact, and
+// asserts on raw LLVM-IR substrings / structure with System.Testing text
+// helpers. Requires STARK_HOST_COMPILER to point at the host compiler
+// executable. The original C# tests remain in tests/compiler.Tests as the
+// oracle until cutover.
+//
+// The host bridge renders the RAW optimized LLVM (no `noundef`-stripping or
+// whitespace normalization), matching the C# `GetLlvmRaw`. Facts that the C#
+// suite asserted over the whitespace-normalized `GetLlvm` text are re-expressed
+// here over the equivalent raw body-instruction substrings.
+
+// ---------------------------------------------------------------------------
+// LlvmIrEmissionTests
+// ---------------------------------------------------------------------------
+
+// Ported from StraightLineFunctionEmitsOptimizedLlvmBody.
+[Fact]
+fn bool StraightLineFunctionEmitsOptimizedLlvmBody()
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = CompileLlvm(
+            "llvm-straight-line",
+            raw"""
+module Demo
+
+unsafe finite law i32[min max] Run()
+{
+    stack mut i32[min max] value = 1;
+    value = value + 1;
+    return value;
+}
+""");
+        if (!Succeeds(compiled))
+        {
+            return false;
+        }
+
+        stack ascii llvm = Llvm(compiled);
+        return Contains(llvm, "define fastcc noundef i32 @Run()")
+            && Contains(llvm, "ret i32 2")
+            && DoesNotContain(llvm, "add i32")
+            && DoesNotContain(llvm, "alloca i32")
+            && DoesNotContain(llvm, "declare fastcc i32 @Run()");
+    }
+}
+
+// Ported from FunctionPointerCallsEmitFastccIndirectCall. The long divide chain
+// keeps Add above the inliner threshold so the call survives.
+[Fact]
+[Collection("closures")]
+fn bool FunctionPointerCallsEmitFastccIndirectCall()
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = CompileLlvm(
+            "llvm-fnptr-indirect-call",
+            raw"""
+module Demo
+
+unsafe fn i32[min max] Add(i32[min max] left, i32[min max] right)
+{
+    stack i32[min max] a = left + (right / 3);
+    stack i32[min max] b = a - (a / 5);
+    stack i32[min max] c = b + (b / 7);
+    stack i32[min max] d = c - (c / 11);
+    stack i32[min max] e = d + (d / 13);
+    stack i32[min max] f = e - (e / 17);
+    stack i32[min max] g = f + (f / 19);
+    stack i32[min max] h = g - (g / 23);
+    stack i32[min max] i = h + (h / 29);
+    stack i32[min max] j = i - (i / 31);
+    stack i32[min max] k = j + (j / 37);
+    stack i32[min max] l = k - (k / 41);
+    stack i32[min max] m = l + (l / 43);
+    return m;
+}
+
+unsafe fn i32[min max] Run()
+{
+    stack fnptr<unsafe fn i32[min max](i32[min max], i32[min max])> op = Add;
+    return op(40, 2);
+}
+""");
+        if (!Succeeds(compiled))
+        {
+            return false;
+        }
+
+        stack ascii llvm = Llvm(compiled);
+        return Contains(llvm, "call fastcc i32 @Add(");
+    }
+}
+
+// Ported from DynTraitObjectDispatchLoadsVtableSlotAndCallsIndirectly.
+[Fact]
+[Collection("traits")]
+fn bool DynTraitObjectDispatchLoadsVtableSlotAndCallsIndirectly()
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = CompileLlvm(
+            "llvm-dyn-trait-dispatch",
+            raw"""
+module Demo
+
+dyn trait Speaker
+{
+    finite law i32[min max] Speak(borrow Self self);
+}
+
+struct Dog : Speaker
+{
+    i32[min max] Volume;
+
+    finite law i32[min max] Speak(borrow Dog self)
+    {
+        return self.Volume;
+    }
+}
+
+export fn i32[min max] Announce(borrow dyn Speaker speaker)
+{
+    return speaker.Speak();
+}
+
+export fn i32[min max] main()
+{
+    stack Dog d = new Dog() { Volume = 7 };
+    stack borrow dyn Speaker s = d;
+    return Announce(s);
+}
+""");
+        if (!Succeeds(compiled))
+        {
+            return false;
+        }
+
+        stack ascii llvm = Llvm(compiled);
+        stack ascii announceBody = LlvmDefinitionBody(llvm, "Announce");
+        return Contains(llvm, "@__stark_vtable_Dog__Speaker")
+            && Contains(announceBody, "getelementptr ptr,")
+            && Contains(announceBody, "load ptr,")
+            && Contains(announceBody, "call fastcc i32 %")
+            && Contains(announceBody, "nosync nofree");
+    }
+}
+
+// Ported from NonCapturingClosureValuesLowerToInvokeAndEnvironmentPair. The
+// closure crosses an export boundary so the devirtualizer cannot collapse the
+// invoke-pointer call to a direct lambda call.
+[Fact]
+[Collection("closures")]
+fn bool NonCapturingClosureValuesLowerToInvokeAndEnvironmentPair()
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = CompileLlvm(
+            "llvm-noncapturing-closure-pair",
+            raw"""
+module Demo
+
+export fn i32[min max] Apply(closure<finite law i32[min max](i32[min max])> op)
+{
+    stack i32[min max] r = op(41);
+    stack i32[min max] a = r + (r / 3);
+    stack i32[min max] b = a - (a / 5);
+    stack i32[min max] c = b + (b / 7);
+    stack i32[min max] d = c - (c / 11);
+    stack i32[min max] e = d + (d / 13);
+    stack i32[min max] f = e - (e / 17);
+    stack i32[min max] g = f + (f / 19);
+    stack i32[min max] h = g - (g / 23);
+    stack i32[min max] i = h + (h / 29);
+    stack i32[min max] j = i - (i / 31);
+    stack i32[min max] k = j + (j / 37);
+    stack i32[min max] l = k - (k / 41);
+    stack i32[min max] m = l + (l / 43);
+    return m;
+}
+
+fn i32[min max] Run()
+{
+    stack closure<finite law i32[min max](i32[min max])> op =
+        (i32[min max] value) => value + 1;
+
+    return Apply(op);
+}
+""");
+        if (!Succeeds(compiled))
+        {
+            return false;
+        }
+
+        stack ascii llvm = Llvm(compiled);
+        stack ascii applyBody = LlvmDefinitionBody(llvm, "Apply");
+        return Contains(llvm, "{ ptr @Run___lambda_")
+            && Contains(llvm, "ptr null")
+            && Contains(applyBody, "extractvalue { ptr, ptr }")
+            && Contains(applyBody, "call fastcc i32 %")
+            && Contains(applyBody, "willreturn")
+            && Contains(applyBody, "mustprogress");
+    }
+}
+
+// Ported from OptimizedFunctionItemClosurePromotionDevirtualizesAndPrunesAdapter.
+[Fact]
+[Collection("closures")]
+fn bool OptimizedFunctionItemClosurePromotionDevirtualizesAndPrunesAdapter()
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = CompileLlvm(
+            "llvm-closure-promotion-devirt",
+            raw"""
+module Demo
+
+fn i32[min max] AddOne(i32[min max] value)
+{
+    return value + 1;
+}
+
+fn i32[min max] Apply(borrow closure<fn i32[min max](i32[min max])> op, i32[min max] value)
+{
+    return op(value);
+}
+
+fn i32[min max] Run()
+{
+    return Apply(AddOne, 41);
+}
+""");
+        if (!Succeeds(compiled))
+        {
+            return false;
+        }
+
+        stack ascii llvm = Llvm(compiled);
+        stack ascii runBody = LlvmDefinitionBody(llvm, "Run");
+        return Contains(runBody, "ret i32 42")
+            && DoesNotContain(llvm, "closure_adapter")
+            && DoesNotContain(runBody, "alloca { ptr, ptr }")
+            && DoesNotContain(runBody, "extractvalue { ptr, ptr }")
+            && DoesNotContain(runBody, "call fastcc");
+    }
+}
+
+// Ported from SmallRangeUnsignedIntegerOperationsUseUnsignedLlvmOpcodes.
+[Fact]
+[Collection("integers")]
+fn bool SmallRangeUnsignedIntegerOperationsUseUnsignedLlvmOpcodes()
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = CompileLlvm(
+            "llvm-small-unsigned-opcodes",
+            raw"""
+module Demo
+
+unsafe fn bool Less(u8[0 127] left, u8[0 127] right)
+{
+    return left < right;
+}
+
+unsafe fn u8[0 127] Divide(u8[0 127] left, u8[0 127] right)
+{
+    return left / right;
+}
+
+unsafe fn u8[0 127] Remainder(u8[0 127] left, u8[0 127] right)
+{
+    return left % right;
+}
+
+unsafe fn u8[0 127] ShiftDown(u8[0 127] left, u8[0 127] right)
+{
+    return left >> right;
+}
+""");
+        if (!Succeeds(compiled))
+        {
+            return false;
+        }
+
+        stack ascii llvm = Llvm(compiled);
+        return Contains(llvm, "icmp ult i8")
+            && Contains(llvm, "udiv i8")
+            && Contains(llvm, "urem i8")
+            && Contains(llvm, "lshr i8")
+            && DoesNotContain(llvm, "icmp slt i8")
+            && DoesNotContain(llvm, "sdiv i8")
+            && DoesNotContain(llvm, "srem i8")
+            && DoesNotContain(llvm, "ashr i8");
+    }
+}
+
+// Ported from NonCapturingLambdaArgumentsLowerToFunctionPointers. The long body
+// keeps Apply opaque so the lambda stays a function-pointer argument.
+[Fact]
+[Collection("closures")]
+fn bool NonCapturingLambdaArgumentsLowerToFunctionPointers()
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = CompileLlvm(
+            "llvm-lambda-arg-fnptr",
+            raw"""
+module Demo
+
+unsafe fn i32[min max] Apply(fnptr<fn i32[min max](i32[min max])> op)
+{
+    stack i32[min max] r = op(41);
+    stack i32[min max] a = r + (r / 3);
+    stack i32[min max] b = a - (a / 5);
+    stack i32[min max] c = b + (b / 7);
+    stack i32[min max] d = c - (c / 11);
+    stack i32[min max] e = d + (d / 13);
+    stack i32[min max] f = e - (e / 17);
+    stack i32[min max] g = f + (f / 19);
+    stack i32[min max] h = g - (g / 23);
+    stack i32[min max] i = h + (h / 29);
+    stack i32[min max] j = i - (i / 31);
+    stack i32[min max] k = j + (j / 37);
+    stack i32[min max] l = k - (k / 41);
+    stack i32[min max] m = l + (l / 43);
+    return m;
+}
+
+unsafe fn i32[min max] Run()
+{
+    return Apply((i32[min max] value) => value + 1);
+}
+""");
+        if (!Succeeds(compiled))
+        {
+            return false;
+        }
+
+        stack ascii llvm = Llvm(compiled);
+        return Contains(llvm, "; synthetic definition: Run.__lambda_")
+            && Contains(llvm, "call fastcc i32 @Apply(ptr nonnull @Run___lambda_");
+    }
+}
+
+// Ported from GenericSizeofAndAlignofLowerAfterConcreteInstantiation.
+[Fact]
+[Collection("comptime")]
+fn bool GenericSizeofAndAlignofLowerAfterConcreteInstantiation()
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = CompileLlvm(
+            "llvm-generic-sizeof-alignof",
+            raw"""
+module Demo
+
+unsafe fn i64[min max] Layout<T>(T value)
+{
+    return sizeof(T) + alignof(T);
+}
+
+unsafe fn i64[min max] Run()
+{
+    return Layout(1);
+}
+""");
+        if (!Succeeds(compiled))
+        {
+            return false;
+        }
+
+        stack ascii llvm = Llvm(compiled);
+        stack ascii runBody = LlvmDefinitionBody(llvm, "Run");
+        return Contains(runBody, "ret i64 2")
+            && DoesNotContain(llvm, "LLVM body emission fallback");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Integer arithmetic and operators
+// ---------------------------------------------------------------------------
+
+// Ported from BitwiseXorEmitsConcreteLlvmXorInstruction (header re-expressed
+// over the raw `@Run(` symbol form; the C# version asserted the
+// whitespace-normalized header).
+[Fact]
+[Collection("integers")]
+fn bool BitwiseXorEmitsConcreteLlvmXorInstruction()
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = CompileLlvm(
+            "llvm-bitwise-xor",
+            raw"""
+module Demo
+
+unsafe fn i32[min max] Run(i32[min max] left, i32[min max] right)
+{
+    return left ^ right;
+}
+""");
+        if (!Succeeds(compiled))
+        {
+            return false;
+        }
+
+        stack ascii llvm = Llvm(compiled);
+        return Contains(llvm, "@Run(i32 noundef %arg_left, i32 noundef %arg_right)")
+            && Contains(llvm, "xor i32");
+    }
+}
+
+// Ported from BitwiseAndShiftExpressionsEmitConcreteLlvmInstructions.
+[Fact]
+[Collection("integers")]
+fn bool BitwiseAndShiftExpressionsEmitConcreteLlvmInstructions()
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = CompileLlvm(
+            "llvm-bitwise-shift",
+            raw"""
+module Demo
+
+unsafe fn i32[min max] Run(i32[min max] left, i32[min max] middle, i32[min max] right, i32[min max] mask)
+{
+    return left | middle ^ right & mask << 1 >> 1;
+}
+""");
+        if (!Succeeds(compiled))
+        {
+            return false;
+        }
+
+        stack ascii llvm = Llvm(compiled);
+        return Contains(llvm, "shl i32")
+            && Contains(llvm, "ashr exact i32")
+            && Contains(llvm, "and i32")
+            && Contains(llvm, "xor i32")
+            && Contains(llvm, "or i32");
+    }
+}
+
+// Ported from IntegerAndBoolUnaryOperatorsEmitConcreteLlvmInstructions.
+[Fact]
+[Collection("integers")]
+fn bool IntegerAndBoolUnaryOperatorsEmitConcreteLlvmInstructions()
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = CompileLlvm(
+            "llvm-unary-operators",
+            raw"""
+module Demo
+
+unsafe fn i32[min max] Negate(i32[min max] value)
+{
+    return -value;
+}
+
+unsafe fn bool LogicalNot(bool value)
+{
+    return !value;
+}
+
+unsafe fn i32[min max] BitwiseNot(i32[min max] value)
+{
+    return ~value;
+}
+""");
+        if (!Succeeds(compiled))
+        {
+            return false;
+        }
+
+        stack ascii llvm = Llvm(compiled);
+        return Contains(llvm, "sub i32 0, %arg_value")
+            && Contains(llvm, "xor i1 %arg_value, true")
+            && Contains(llvm, "xor i32 %arg_value, -1")
+            && DoesNotContain(llvm, "; LLVM body emission fallback");
+    }
+}
+
+// Ported from OrdinaryIntegerArithmeticEmitsSignedNoWrapFlags.
+[Fact]
+[Collection("integers")]
+fn bool OrdinaryIntegerArithmeticEmitsSignedNoWrapFlags()
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = CompileLlvm(
+            "llvm-arith-nsw",
+            raw"""
+module Demo
+
+unsafe fn i32[min max] Add(i32[min max] left, i32[min max] right)
+{
+    return left + right;
+}
+
+unsafe fn i32[min max] Sub(i32[min max] left, i32[min max] right)
+{
+    return left - right;
+}
+
+unsafe fn i32[min max] Mul(i32[min max] left, i32[min max] right)
+{
+    return left * right;
+}
+""");
+        if (!Succeeds(compiled))
+        {
+            return false;
+        }
+
+        stack ascii llvm = Llvm(compiled);
+        return Contains(llvm, "add nsw i32")
+            && Contains(llvm, "sub nsw i32")
+            && Contains(llvm, "mul nsw i32")
+            && DoesNotContain(llvm, "add nuw")
+            && DoesNotContain(llvm, "sub nuw")
+            && DoesNotContain(llvm, "mul nuw");
+    }
+}
+
+// Ported from UnconstrainedUnsignedOrdinaryArithmeticEmitsUnsignedNoWrapByContract.
+[Fact]
+[Collection("integers")]
+fn bool UnconstrainedUnsignedOrdinaryArithmeticEmitsUnsignedNoWrapByContract()
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = CompileLlvm(
+            "llvm-arith-nuw",
+            raw"""
+module Demo
+
+unsafe fn u32[0 max] Add(u32[0 max] left, u32[0 max] right)
+{
+    return left + right;
+}
+
+unsafe fn u32[0 max] Sub(u32[0 max] left, u32[0 max] right)
+{
+    return left - right;
+}
+
+unsafe fn u32[0 max] Mul(u32[0 max] left, u32[0 max] right)
+{
+    return left * right;
+}
+""");
+        if (!Succeeds(compiled))
+        {
+            return false;
+        }
+
+        stack ascii llvm = Llvm(compiled);
+        return Contains(llvm, "add nuw i32")
+            && Contains(llvm, "sub nuw i32")
+            && Contains(llvm, "mul nuw i32")
+            && DoesNotContain(llvm, "add nuw nsw i32")
+            && DoesNotContain(llvm, "sub nuw nsw i32")
+            && DoesNotContain(llvm, "mul nuw nsw i32");
+    }
+}
+
+// Ported from NonNegativeConstrainedOrdinaryArithmeticEmitsUnsignedNoWrapWhenProven.
+[Fact]
+[Collection("integers")]
+fn bool NonNegativeConstrainedOrdinaryArithmeticEmitsUnsignedNoWrapWhenProven()
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = CompileLlvm(
+            "llvm-arith-nuw-nsw-proven",
+            raw"""
+module Demo
+
+unsafe fn i32[min max] Add(u8[0 10] left, u8[0 20] right)
+{
+    return left + right;
+}
+
+unsafe fn i32[min max] Sub(u8[20 30] left, u8[0 10] right)
+{
+    return left - right;
+}
+
+unsafe fn i32[min max] Mul(u8[0 10] left, u8[0 5] right)
+{
+    return left * right;
+}
+""");
+        if (!Succeeds(compiled))
+        {
+            return false;
+        }
+
+        stack ascii llvm = Llvm(compiled);
+        return Contains(llvm, "add nuw nsw i8")
+            && Contains(llvm, "sub nuw nsw i8")
+            && Contains(llvm, "mul nuw nsw i32");
+    }
+}
+
+// Ported from WrappingArithmeticEmitsConcreteLlvmInstructions.
+[Fact]
+[Collection("integers")]
+fn bool WrappingArithmeticEmitsConcreteLlvmInstructions()
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = CompileLlvm(
+            "llvm-wrapping-arith",
+            raw"""
+module Demo
+
+unsafe fn i32[min max] Run(i32[min max] left, i32[min max] right)
+{
+    return -%left +% right *% 2 -% right;
+}
+""");
+        if (!Succeeds(compiled))
+        {
+            return false;
+        }
+
+        stack ascii llvm = Llvm(compiled);
+        return Contains(llvm, "sub i32 0, %arg_left")
+            && Contains(llvm, "mul i32")
+            && Contains(llvm, "add i32")
+            && DoesNotContain(llvm, "sub nsw")
+            && DoesNotContain(llvm, "sub nuw")
+            && DoesNotContain(llvm, "mul nsw")
+            && DoesNotContain(llvm, "mul nuw")
+            && DoesNotContain(llvm, "add nsw")
+            && DoesNotContain(llvm, "add nuw");
+    }
+}
+
+// Ported from SaturatingArithmeticEmitsWideClampSequence.
+[Fact]
+[Collection("integers")]
+fn bool SaturatingArithmeticEmitsWideClampSequence()
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = CompileLlvm(
+            "llvm-saturating-arith",
+            raw"""
+module Demo
+
+unsafe fn i32[min max] Run(i32[min max] left, i32[min max] right)
+{
+    return left +| right *| 2 -| 1;
+}
+""");
+        if (!Succeeds(compiled))
+        {
+            return false;
+        }
+
+        stack ascii llvm = Llvm(compiled);
+        return Contains(llvm, "sext i32")
+            && Contains(llvm, "mul i64")
+            && Contains(llvm, "add i64")
+            && Contains(llvm, "sub i64")
+            && Contains(llvm, "icmp sgt i64")
+            && Contains(llvm, "icmp slt i64")
+            && Contains(llvm, "select i1")
+            && Contains(llvm, "trunc i64")
+            && DoesNotContain(llvm, "add nsw i64")
+            && DoesNotContain(llvm, "add nuw i64")
+            && DoesNotContain(llvm, "sub nsw i64")
+            && DoesNotContain(llvm, "mul nsw i64");
+    }
+}
+
+// Ported from ExplicitWrappingAndSaturatingArithmeticStayFlagFreeEvenWhenOrdinaryProofsExist.
+[Fact]
+[Collection("integers")]
+fn bool ExplicitWrappingAndSaturatingArithmeticStayFlagFree()
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = CompileLlvm(
+            "llvm-explicit-arith-flag-free",
+            raw"""
+module Demo
+
+unsafe fn i32[min max] Wrap(u8[0 10] left, u8[0 5] right)
+{
+    return left +% right *% 2 -% 1;
+}
+
+unsafe fn i32[min max] Sat(u8[0 10] left, u8[0 5] right)
+{
+    return left +| right *| 2 -| 1;
+}
+""");
+        if (!Succeeds(compiled))
+        {
+            return false;
+        }
+
+        stack ascii llvm = Llvm(compiled);
+        return Contains(llvm, "mul i8")
+            && Contains(llvm, "add i8")
+            && Contains(llvm, "sub i8")
+            && Contains(llvm, "mul i16")
+            && Contains(llvm, "add i16")
+            && Contains(llvm, "sub i16")
+            && DoesNotContain(llvm, "nuw")
+            && DoesNotContain(llvm, "nsw")
+            && DoesNotContain(llvm, "exact");
+    }
+}
+
+// Ported from ExplicitIntegerArithmeticConstantsFoldBeforeLlvmEmission. The
+// final Assert.Equal(2, ...) count is re-expressed with CountOccurrences.
+[Fact]
+[Collection("integers")]
+fn bool ExplicitIntegerArithmeticConstantsFoldBeforeLlvmEmission()
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = CompileLlvm(
+            "llvm-explicit-arith-const-fold",
+            raw"""
+module Demo
+
+unsafe fn i32[min max] Wrap()
+{
+    return 2147483647 +% 1;
+}
+
+unsafe fn i32[min max] SatAdd()
+{
+    return 2147483647 +| 1;
+}
+
+unsafe fn i32[min max] SatMul()
+{
+    return 1073741824 *| 4;
+}
+""");
+        if (!Succeeds(compiled))
+        {
+            return false;
+        }
+
+        stack ascii llvm = Llvm(compiled);
+        return Contains(llvm, "@Wrap()")
+            && Contains(llvm, "ret i32 -2147483648")
+            && Contains(llvm, "@SatAdd()")
+            && Contains(llvm, "@SatMul()")
+            && CountOccurrences(llvm, "ret i32 2147483647") == 2;
+    }
+}
+
+// Ported from FloatLiteralArgumentsEmitValidHexFloatConstants.
+[Fact]
+[Collection("floats")]
+fn bool FloatLiteralArgumentsEmitValidHexFloatConstants()
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = CompileLlvm(
+            "llvm-float-hex-constants",
+            raw"""
+module Demo
+
+noinline unsafe fn f64 Echo(f64 value)
+{
+    return value;
+}
+
+unsafe fn i32[min max] Run()
+{
+    if (Echo(0.0) != 0.0)
+    {
+        return 1;
+    }
+
+    if (Echo(3.0) != 3.0)
+    {
+        return 2;
+    }
+
+    return 0;
+}
+""");
+        if (!Succeeds(compiled))
+        {
+            return false;
+        }
+
+        stack ascii llvm = Llvm(compiled);
+        return Contains(llvm, "call fast fastcc double @Echo(double 0x0000000000000000)")
+            && Contains(llvm, "fcmp fast one double %")
+            && Contains(llvm, ", 0x0000000000000000")
+            && Contains(llvm, "call fast fastcc double @Echo(double 0x4008000000000000)")
+            && Contains(llvm, ", 0x4008000000000000")
+            && DoesNotContain(llvm, "call fast fastcc double @Echo(double 0)")
+            && DoesNotContain(llvm, "call fast fastcc double @Echo(double 3)")
+            && DoesNotContain(llvm, "double 3.0");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Control flow and switches
+// ---------------------------------------------------------------------------
+
+// Ported from LoopHeaderEmitsBackedgePhi.
+[Fact]
+[Collection("control-flow")]
+fn bool LoopHeaderEmitsBackedgePhi()
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = CompileLlvm(
+            "llvm-loop-backedge-phi",
+            raw"""
+module Demo
+
+unsafe fn i32[min max] Run()
+{
+    stack mut i32[min max] i = 0;
+    while willexit (i < 4)
+    {
+        i = i + 1;
+    }
+
+    return i;
+}
+""");
+        if (!Succeeds(compiled))
+        {
+            return false;
+        }
+
+        stack ascii llvm = Llvm(compiled);
+        return Contains(llvm, "phi i32")
+            && Contains(llvm, "%bb2")
+            && Contains(llvm, "icmp slt i32");
+    }
+}
+
+// Ported from GuardedSwitchBodyEmitsCompareAndGuardBranches.
+[Fact]
+[Collection("control-flow", "patterns")]
+fn bool GuardedSwitchBodyEmitsCompareAndGuardBranches()
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = CompileLlvm(
+            "llvm-guarded-switch",
+            raw"""
+module Demo
+
+unsafe fn i32[min max] Run(i32[min max] value, bool allow)
+{
+    switch (value)
+    {
+        case 1 when allow:
+            return 1;
+        default:
+            return 2;
+    }
+}
+""");
+        if (!Succeeds(compiled))
+        {
+            return false;
+        }
+
+        stack ascii llvm = Llvm(compiled);
+        return Contains(llvm, "@Run(i32")
+            && Contains(llvm, "icmp eq i32")
+            && Contains(llvm, "select i1 %arg_allow, i32 1, i32 2")
+            && DoesNotContain(llvm, "declare fastcc i32 @Run(i32, i1)");
+    }
+}
+
+// Ported from OrPatternLiteralSwitchPreservesNativeSwitchLowering.
+[Fact]
+[Collection("control-flow", "patterns")]
+fn bool OrPatternLiteralSwitchPreservesNativeSwitchLowering()
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = CompileLlvm(
+            "llvm-orpattern-native-switch",
+            raw"""
+module Demo
+
+unsafe fn i32[min max] Run(u8[0 3] value)
+{
+    switch (value)
+    {
+        case 0 | 2:
+            return 10;
+        case 1 | 3:
+            return 20;
+    }
+}
+""");
+        if (!Succeeds(compiled))
+        {
+            return false;
+        }
+
+        stack ascii llvm = Llvm(compiled);
+        return Contains(llvm, "switch i8 %arg_value")
+            && Contains(llvm, "i8 0, label")
+            && Contains(llvm, "i8 1, label")
+            && Contains(llvm, "i8 2, label")
+            && Contains(llvm, "i8 3, label")
+            && DoesNotContain(llvm, "declare fastcc i32 @Run(i8)");
+    }
+}
+
+// Ported from RangePatternIntegerSwitchEmitsGuardedComparisons.
+[Fact]
+[Collection("control-flow", "patterns")]
+fn bool RangePatternIntegerSwitchEmitsGuardedComparisons()
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = CompileLlvm(
+            "llvm-range-pattern-int-switch",
+            raw"""
+module Demo
+
+unsafe fn i32[min max] Run(u8[0 30] value)
+{
+    switch (value)
+    {
+        case 0..9:
+            return 10;
+        case 12..20:
+            return 20;
+        default:
+            return 30;
+    }
+}
+""");
+        if (!Succeeds(compiled))
+        {
+            return false;
+        }
+
+        stack ascii llvm = Llvm(compiled);
+        return DoesNotContain(llvm, "switch i8 %arg_value")
+            && Contains(llvm, "icmp ule i8 %arg_value, 9")
+            && Contains(llvm, "icmp uge i8 %arg_value, 12")
+            && DoesNotContain(llvm, "declare fastcc i32 @Run(i8)");
+    }
+}
+
+// Ported from RangePatternEnumPayloadSwitchEmitsPayloadComparison.
+[Fact]
+[Collection("control-flow", "patterns")]
+fn bool RangePatternEnumPayloadSwitchEmitsPayloadComparison()
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = CompileLlvm(
+            "llvm-range-pattern-enum-switch",
+            raw"""
+module Demo
+
+enum Token
+{
+    Number(i32[min max]),
+    End,
+}
+
+unsafe fn i32[min max] Run(Token token)
+{
+    switch (token)
+    {
+        case Token.Number(0..9):
+            return 1;
+        case Token.Number(_):
+            return 2;
+        case Token.End:
+            return 0;
+    }
+}
+""");
+        if (!Succeeds(compiled))
+        {
+            return false;
+        }
+
+        stack ascii llvm = Llvm(compiled);
+        return Contains(llvm, "@Run(%Token")
+            && Contains(llvm, "icmp eq i8")
+            && Contains(llvm, "icmp sge i32")
+            && Contains(llvm, "icmp sle i32")
+            && DoesNotContain(llvm, "declare fastcc i32 @Run(%Token)");
+    }
+}
+
+// Ported from OrPatternEnumCapturesShareBodyLocal.
+[Fact]
+[Collection("control-flow", "patterns")]
+fn bool OrPatternEnumCapturesShareBodyLocal()
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = CompileLlvm(
+            "llvm-orpattern-enum-capture",
+            raw"""
+module Demo
+
+enum Token
+{
+    Left(i32[min max]),
+    Right(i32[min max]),
+    End,
+}
+
+unsafe fn i32[min max] Run(Token token)
+{
+    switch (token)
+    {
+        case Token.Left(var value) | Token.Right(var value):
+            return value;
+        case Token.End:
+            return 0;
+    }
+}
+""");
+        if (!Succeeds(compiled))
+        {
+            return false;
+        }
+
+        stack ascii llvm = Llvm(compiled);
+        return Contains(llvm, "@Run(%Token")
+            && Contains(llvm, "icmp eq i8")
+            && Contains(llvm, "ret i32")
+            && DoesNotContain(llvm, "declare fastcc i32 @Run(%Token)");
+    }
+}
+
+// Ported from ComparisonChainEmitsShortCircuitBranchesAndSingleSharedEvaluation.
+// The C# Assert.Equal counts are re-expressed with CountOccurrences.
+[Fact]
+[Collection("control-flow")]
+fn bool ComparisonChainEmitsShortCircuitBranchesAndSingleSharedEvaluation()
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = CompileLlvm(
+            "llvm-comparison-chain",
+            raw"""
+module Demo
+
+noinline unsafe fn i32[min max] Next()
+{
+    return 1;
+}
+
+unsafe fn bool Run()
+{
+    return 0 < Next() < 3;
+}
+""");
+        if (!Succeeds(compiled))
+        {
+            return false;
+        }
+
+        stack ascii llvm = Llvm(compiled);
+        return CountOccurrences(llvm, "call fastcc i32 @Next()") == 1
+            && CountOccurrences(llvm, "icmp slt i32") == 2
+            && Contains(llvm, "br i1")
+            && DoesNotContain(llvm, "declare fastcc i1 @Run()");
+    }
+}
+
+// Ported from FloatComparisonChainsUseOrderedPredicates.
+[Fact]
+[Collection("control-flow", "floats")]
+fn bool FloatComparisonChainsUseOrderedPredicates()
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = CompileLlvm(
+            "llvm-float-comparison-chain",
+            raw"""
+module Demo
+
+unsafe fn bool Run(f32 low, f32 value, f32 high)
+{
+    return low < value <= high;
+}
+""");
+        if (!Succeeds(compiled))
+        {
+            return false;
+        }
+
+        stack ascii llvm = Llvm(compiled);
+        return Contains(llvm, "fcmp fast olt float")
+            && Contains(llvm, "fcmp fast ole float")
+            && Contains(llvm, "br i1");
+    }
+}
+
+// Ported from TextLiteralSwitchEmitsLengthAndByteComparisons.
+[Fact]
+[Collection("control-flow", "text")]
+fn bool TextLiteralSwitchEmitsLengthAndByteComparisons()
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = CompileLlvm(
+            "llvm-text-literal-switch",
+            raw"""
+module Demo
+
+unsafe fn i32[min max] Run(ascii value, bool allow)
+{
+    switch (value)
+    {
+        case "ab":
+            return 1;
+        case "cd" when allow:
+            return 2;
+        default:
+            return 3;
+    }
+}
+""");
+        if (!Succeeds(compiled))
+        {
+            return false;
+        }
+
+        stack ascii llvm = Llvm(compiled);
+        return Contains(llvm, "extractvalue %stark_ascii %arg_value, 0")
+            && Contains(llvm, "extractvalue %stark_ascii %arg_value, 1")
+            && Contains(llvm, "icmp eq i64")
+            && Contains(llvm, "load i8, ptr")
+            && Contains(llvm, "select i1 %arg_allow")
+            && DoesNotContain(llvm, "switch %stark_ascii")
+            && DoesNotContain(llvm, "declare fastcc i32 @Run(%stark_ascii, i1)");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// FFI
+// ---------------------------------------------------------------------------
+
+// Ported from HelloWorldStyleFfiPutsEmitsStringGlobalAndMainBody. The C#
+// `define i32 @main()` header (over normalized text) is re-expressed as the raw
+// `@main() nounwind` substring.
+[Fact]
+[Collection("ffi")]
+fn bool HelloWorldStyleFfiPutsEmitsStringGlobalAndMainBody()
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = CompileLlvm(
+            "llvm-ffi-puts-hello-world",
+            raw"""
+module Hello
+
+unsafe ffi fn i32[min max] puts(ascii text);
+export unsafe fn i32[min max] main()
+{
+    puts("Hello, world!\n");
+    return 0;
+}
+""");
+        if (!Succeeds(compiled))
+        {
+            return false;
+        }
+
+        stack ascii llvm = Llvm(compiled);
+        return Contains(llvm, "@.str.0 = private unnamed_addr constant")
+            && Contains(llvm, "%stark_ascii = type { ptr, i64 }")
+            && Contains(llvm, "declare i32 @puts(ptr readonly) nounwind")
+            && Contains(llvm, "@main() nounwind")
+            && Contains(llvm, "call i32 @puts(ptr getelementptr inbounds nuw ([15 x i8], ptr @.str.0, i32 0, i32 0))")
+            && DoesNotContain(llvm, "invoke i32 @puts");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// LlvmTextOrderedComparisonEmissionTests
+// ---------------------------------------------------------------------------
+
+// Ported from TextOrderedComparisonsEmitLexicographicHelperCalls.
+[Fact]
+[Collection("text")]
+fn bool TextOrderedComparisonsEmitLexicographicHelperCalls()
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = CompileLlvm(
+            "llvm-text-ordered-comparisons",
+            raw"""
+module Demo
+
+unsafe fn bool LessAscii(ascii left, ascii right)
+{
+    return left < right;
+}
+
+unsafe fn bool GreaterOrEqualUnicode(unicode left, unicode right)
+{
+    return left >= right;
+}
+
+unsafe fn bool BoolLess(bool left, bool right)
+{
+    return left < right;
+}
+
+unsafe fn bool PointerLess(rawptr<i32[min max]> left, rawptr<i32[min max]> right)
+{
+    return left < right;
+}
+""");
+        if (!Succeeds(compiled))
+        {
+            return false;
+        }
+
+        stack ascii llvm = Llvm(compiled);
+        return Contains(llvm, "define internal dso_local i32 @__stark_ascii_compare(%stark_ascii %left, %stark_ascii %right)")
+            && Contains(llvm, "define internal dso_local i32 @__stark_unicode_compare(%stark_unicode %left, %stark_unicode %right)")
+            && Contains(llvm, "call i32 @__stark_ascii_compare(%stark_ascii %arg_left, %stark_ascii %arg_right)")
+            && Contains(llvm, "call i32 @__stark_unicode_compare(%stark_unicode %arg_left, %stark_unicode %arg_right)")
+            && Contains(llvm, "icmp slt i32")
+            && Contains(llvm, "icmp sge i32")
+            && Contains(llvm, "icmp ult i1")
+            && Contains(llvm, "icmp ult ptr")
+            && DoesNotContain(llvm, "; LLVM body emission fallback for LessAscii")
+            && DoesNotContain(llvm, "; LLVM body emission fallback for GreaterOrEqualUnicode")
+            && DoesNotContain(llvm, "; LLVM body emission fallback for BoolLess")
+            && DoesNotContain(llvm, "; LLVM body emission fallback for PointerLess");
+    }
+}

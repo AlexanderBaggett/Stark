@@ -1,0 +1,629 @@
+import SsaTestSupport
+import System.Testing
+[Collection("compiler-ssa")]
+module SsaTests
+
+// Ported slice of the SOURCE-DRIVEN SSA tests from tests/compiler.Tests
+// (SsaLoweringTests.cs and the source-driven parts of SsaOptimizationTests.cs),
+// running against the current C# host compiler through the host test protocol.
+// Each fact compiles a small Stark program and asserts on the rendered `ssa`
+// (raw `lower-ssa`) or `optimized-ssa` artifact text. Requires
+// STARK_HOST_COMPILER to point at the host compiler executable.
+//
+// NOT ported (object-model facts): the bulk of SsaIrValidationTests.cs and the
+// SsaOptimizationTests.cs Cleanup*/ValueFacts*/AliasAware*/ScalarReplacement*
+// families build SsaFunction / SsaIrModule IR objects by hand and call the
+// validator/optimizer directly. The source-in / artifact-text-out host bridge
+// cannot construct those inputs, so they stay in C# until cutover.
+
+// ---------------------------------------------------------------------------
+// SsaLoweringTests (source-driven, rendered-ssa-text)
+// ---------------------------------------------------------------------------
+
+// Ported from SsaLoweringTests.BranchJoinProducesPhiForMergedLocal: a value
+// mutated on both arms of an if/else joins through a phi node at the if-join
+// block.
+[Fact]
+fn bool BranchJoinProducesPhiForMergedLocal()
+{
+    unsafe
+    {
+        stack mut SsaCompile compiled = CompileSsa(
+            "ssa-branch-join-phi",
+            raw"""
+module Demo
+
+fn i32[min max] Choose(bool flag)
+{
+    stack mut i32[min max] value = 0;
+    if (flag)
+    {
+        value = 1;
+    }
+    else
+    {
+        value = 2;
+    }
+
+    return value;
+}
+""");
+        return SsaContainsAll3(compiled, "bb3_if_join:", "= phi i32", "[1 from bb1], [2 from bb2]");
+    }
+}
+
+// Ported from SsaLoweringTests.LoopHeaderProducesPhiForBackedgeValue: a
+// for-willexit loop header carries phi nodes for the values updated on the
+// backedge.
+[Fact]
+[Collection("loops")]
+fn bool LoopHeaderProducesPhiForBackedgeValue()
+{
+    unsafe
+    {
+        stack mut SsaCompile compiled = CompileSsa(
+            "ssa-loop-header-phi",
+            raw"""
+module Demo
+
+fn i32[min max] Sum(i32[min max] count)
+{
+    stack mut i32[min max] total = 0;
+    for willexit (stack mut i32[min max] i = 0; i < count; i += 1)
+    {
+        total += i;
+    }
+
+    return total;
+}
+""");
+        return SsaContains(compiled, "bb1_for_willexit_cond:")
+            && SsaOccurrences(compiled, "= phi i32") >= 2;
+    }
+}
+
+// Ported from SsaLoweringTests.VoidCallStatementsLowerToStatementOnlySsaInstructions:
+// a void call lowers to a statement-only `call` instruction (no result name).
+[Fact]
+fn bool VoidCallStatementsLowerToStatementOnlyInstructions()
+{
+    unsafe
+    {
+        stack mut SsaCompile compiled = CompileSsa(
+            "ssa-void-call-statement",
+            raw"""
+module Demo
+
+unsafe fn void Drop(borrow i32[min max] value)
+{
+    return;
+}
+
+unsafe fn void Run(i32[min max] value)
+{
+    Drop(value);
+    return;
+}
+""");
+        return SsaContainsAll2(compiled, "call Drop(value)", "return <none>");
+    }
+}
+
+// Ported from SsaLoweringTests.OrdinaryMutableSliceAssignmentKeepsReplacementWriteKindInSsa:
+// an ordinary mutable slice element assignment lowers to a replacement `store`
+// (not an `init-store`).
+[Fact]
+fn bool MutableSliceAssignmentKeepsReplacementStore()
+{
+    unsafe
+    {
+        stack mut SsaCompile compiled = CompileSsa(
+            "ssa-slice-replacement-store",
+            raw"""
+module Demo
+
+unsafe fn void Replace(borrow mut u32[0 max][] destination)
+{
+    destination[0] = 7;
+    return;
+}
+""");
+        return SsaContainsButNot(compiled, "store 7 ->", "init-store");
+    }
+}
+
+// Ported from SsaLoweringTests.InitAndOutAssignmentsCarryInitializationWriteKindInSsa:
+// writing through an `out` parameter carries the initialization write kind and
+// renders as `init-store`.
+[Fact]
+fn bool OutParameterAssignmentCarriesInitializationStore()
+{
+    unsafe
+    {
+        stack mut SsaCompile compiled = CompileSsa(
+            "ssa-out-init-store",
+            raw"""
+module Demo
+
+fn void Write(out i32[min max] value)
+{
+    value = 7;
+    return;
+}
+""");
+        return SsaContains(compiled, "init-store 7 ->");
+    }
+}
+
+// Ported from SsaLoweringTests.HeapObjectCreationUsesStorageBackedSsaLocalWithoutStackLifetimeMarkers:
+// a heap object creation uses a storage-backed local (`alloca[heap]` /
+// `dealloc[heap]`) and an init-store, without stack lifetime markers.
+[Fact]
+[Collection("memory")]
+fn bool HeapObjectCreationUsesStorageBackedLocal()
+{
+    unsafe
+    {
+        stack mut SsaCompile compiled = CompileSsa(
+            "ssa-heap-object-storage",
+            raw"""
+module Demo
+
+struct Box
+{
+    i32[min max] Value;
+}
+
+unsafe fn i32[min max] Run()
+{
+    heap Box box = new Box()
+    {
+        Value = 7
+    };
+    return box.Value;
+}
+""");
+        return SsaContains(compiled, "alloca[heap] box")
+            && SsaContains(compiled, "dealloc[heap] box")
+            && SsaContains(compiled, "init-store")
+            && SsaContainsButNot(compiled, "alloca[heap] box", "lifetime.start box");
+    }
+}
+
+// Ported from SsaLoweringTests.HeapFixedArrayElementInitializationUsesAddressStores:
+// a heap fixed-array initializer lowers to a heap allocation plus an init-store
+// of the assembled array.
+[Fact]
+[Collection("memory")]
+fn bool HeapFixedArrayInitializationUsesHeapStorage()
+{
+    unsafe
+    {
+        stack mut SsaCompile compiled = CompileSsa(
+            "ssa-heap-fixed-array",
+            raw"""
+module Demo
+
+unsafe fn i32[min max] Run()
+{
+    heap i32[min max][2] values =
+    {
+        1, 2
+    };
+    return values[0];
+}
+""");
+        return SsaContains(compiled, "alloca[heap] values")
+            && SsaContains(compiled, "dealloc[heap] values")
+            && SsaContains(compiled, "init-store");
+    }
+}
+
+// Ported from SsaLoweringTests.RegisterScalarInitializerRemainsDirectSsaValue:
+// a register scalar local does not materialize an addressable slot
+// (`alloca`/store/lifetime markers) in SSA.
+[Fact]
+fn bool RegisterScalarInitializerRemainsDirectValue()
+{
+    unsafe
+    {
+        stack mut SsaCompile compiled = CompileSsa(
+            "ssa-register-scalar",
+            raw"""
+module Demo
+
+fn i32[min max] Run()
+{
+    register i32[min max] value = 41 + 1;
+    return value;
+}
+""");
+        return Succeeds(compiled)
+            && !SsaContains(compiled, "alloca")
+            && !SsaContains(compiled, "lifetime.start value");
+    }
+}
+
+// Ported from SsaLoweringTests.ExplicitPointerOperatorsAndConversionsLowerToSsa:
+// a raw-pointer dereference lowers to an SSA load value (`*source`).
+[Fact]
+[Collection("ffi")]
+fn bool ExplicitPointerDereferenceLowersToSsaLoad()
+{
+    unsafe
+    {
+        stack mut SsaCompile compiled = CompileSsa(
+            "ssa-pointer-deref",
+            raw"""
+module Demo
+
+unsafe fn i32[min max] Run(rawptr<i32[min max]> source)
+{
+    stack i32[min max] value = *source;
+    return value;
+}
+""");
+        return SsaContains(compiled, "= *source");
+    }
+}
+
+// Ported from SsaLoweringTests.TextSlicesLowerToSsaViewOperations: a text slice
+// lowers to an SSA view operation over the text and its (start, length).
+[Fact]
+[Collection("text")]
+fn bool TextSliceLowersToViewOperation()
+{
+    unsafe
+    {
+        stack mut SsaCompile compiled = CompileSsa(
+            "ssa-text-slice-view",
+            raw"""
+module Demo
+
+unsafe fn ascii Head(ascii text)
+{
+    return text[0, 2];
+}
+""");
+        return SsaContains(compiled, "text[0, 2]");
+    }
+}
+
+// Ported from SsaLoweringTests.ExplicitAsciiLiteralToUnicodeConversionLowersToUnicodeConstantInSsa:
+// an explicit ascii->unicode literal conversion folds to a unicode constant in
+// the SSA return.
+[Fact]
+[Collection("text")]
+fn bool ExplicitAsciiToUnicodeLiteralFoldsToConstant()
+{
+    unsafe
+    {
+        stack mut SsaCompile compiled = CompileSsa(
+            "ssa-ascii-to-unicode",
+            raw"""
+module Demo
+
+fn unicode Run()
+{
+    return (unicode)"hi";
+}
+""");
+        return SsaContains(compiled, "fn Run() -> unicode")
+            && SsaContains(compiled, "return \"hi\"");
+    }
+}
+
+// Ported from the SsaLoweringTests UnreachableJoinBlocksArePrunedFromSsa shape:
+// an if/else where both arms return leaves no join block in the SSA CFG.
+[Fact]
+fn bool BothArmsReturningLeavesNoJoinBlock()
+{
+    unsafe
+    {
+        stack mut SsaCompile compiled = CompileSsa(
+            "ssa-no-join-block",
+            raw"""
+module Demo
+
+fn i32[min max] Run(bool flag)
+{
+    if (flag)
+    {
+        return 1;
+    }
+    else
+    {
+        return 2;
+    }
+}
+""");
+        return Succeeds(compiled)
+            && SsaContains(compiled, "branch arg_flag")
+            && !SsaContains(compiled, "if_join");
+    }
+}
+
+// Ported from SsaLoweringTests.AggregateByValueCallInvalidatesMovedAddressableSource:
+// passing an owned aggregate by value lowers to a `call` carrying the moved
+// source argument.
+[Fact]
+[Collection("memory")]
+fn bool AggregateByValueCallLowersToCall()
+{
+    unsafe
+    {
+        stack mut SsaCompile compiled = CompileSsa(
+            "ssa-aggregate-by-value-call",
+            raw"""
+module Demo
+
+struct Box
+{
+    i32[min max] Value;
+
+    drop
+    {
+    }
+}
+
+fn void Touch(Box value)
+{
+    return;
+}
+
+fn void Run(Box source)
+{
+    Touch(source);
+    return;
+}
+""");
+        return SsaContains(compiled, "call Touch(source)");
+    }
+}
+
+// FFI/declaration-only functions render a body-less SSA function that does not
+// support direct code generation. Derived from the SSA renderer's declaration
+// fields exercised across SsaLoweringTests.
+[Fact]
+[Collection("ffi")]
+fn bool DeclarationOnlyFunctionRendersWithoutBody()
+{
+    unsafe
+    {
+        stack mut SsaCompile compiled = CompileSsa(
+            "ssa-declaration-only",
+            raw"""
+module Demo
+
+public unsafe ffi fn void Touch(rawmutptr<i32[min max]> data);
+""");
+        return SsaContains(compiled, "has-body: false")
+            && SsaContains(compiled, "body-kind: DeclarationOnly")
+            && SsaContains(compiled, "direct-codegen: false");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SsaOptimizationTests (source-driven, rendered-optimized-ssa-text)
+// ---------------------------------------------------------------------------
+
+// Ported from SsaOptimizationTests.OptimizedSsaFoldsConstantArithmetic: a
+// fully-constant arithmetic body folds to a single constant return in the
+// optimized SSA, with no remaining block instructions.
+[Fact]
+[Collection("optimization")]
+fn bool OptimizedSsaFoldsConstantArithmetic()
+{
+    unsafe
+    {
+        stack mut SsaCompile compiled = CompileOptimizedSsa(
+            "ssa-opt-fold-arithmetic",
+            raw"""
+module Demo
+
+fn i32[min max] Run()
+{
+    return (1 + 2) * 3;
+}
+""");
+        return OptimizedSsaContains(compiled, "return 9");
+    }
+}
+
+// Ported from SsaOptimizationTests.OptimizedSsaFoldsConstantAggregateInitializerAccesses:
+// constant aggregate-initializer field reads fold to a single constant return.
+[Fact]
+[Collection("optimization")]
+fn bool OptimizedSsaFoldsConstantAggregateInitializerAccesses()
+{
+    unsafe
+    {
+        stack mut SsaCompile compiled = CompileOptimizedSsa(
+            "ssa-opt-fold-aggregate",
+            raw"""
+module Demo
+
+struct Pair
+{
+    i32[min max] Left;
+    i32[min max] Right;
+}
+
+fn i32[min max] Run()
+{
+    stack Pair pair = new Pair()
+    {
+        Left = 1 + 2, Right = 3 * 4
+    };
+    return pair.Left + pair.Right;
+}
+""");
+        return OptimizedSsaContains(compiled, "return 15")
+            && OptimizedSsaLacks(compiled, ".Left")
+            && OptimizedSsaLacks(compiled, ".Right");
+    }
+}
+
+// Ported from SsaOptimizationTests.OptimizedSsaCanonicalizesBooleanCompareBranches:
+// an `if (flag == true)` diamond canonicalizes to a `select` with no surviving
+// equality compare.
+[Fact]
+[Collection("optimization")]
+fn bool OptimizedSsaCanonicalizesBooleanCompareToSelect()
+{
+    unsafe
+    {
+        stack mut SsaCompile compiled = CompileOptimizedSsa(
+            "ssa-opt-bool-compare-select",
+            raw"""
+module Demo
+
+fn i32[min max] Run(bool flag)
+{
+    if (flag == true)
+    {
+        return 1;
+    }
+
+    return 2;
+}
+""");
+        return OptimizedSsaContainsButNot(compiled, "= select", " == ");
+    }
+}
+
+// Ported from SsaOptimizationTests.OptimizedSsaCanonicalizesReturnPhiJoinsBeforeLlvmEmission:
+// an if/else that updates a local then returns it canonicalizes so each arm
+// returns directly and no phi survives.
+[Fact]
+[Collection("optimization")]
+fn bool OptimizedSsaCanonicalizesReturnPhiJoins()
+{
+    unsafe
+    {
+        stack mut SsaCompile compiled = CompileOptimizedSsa(
+            "ssa-opt-return-phi-join",
+            raw"""
+module Demo
+
+fn i32[min max] Run(bool flag, i32[min max] value)
+{
+    stack mut i32[min max] result = value;
+    if (flag)
+    {
+        result = result + 1;
+    }
+    else
+    {
+        result = result + 2;
+    }
+
+    return result;
+}
+""");
+        return Succeeds(compiled)
+            && OptimizedSsaLacks(compiled, "= phi ")
+            && OptimizedSsaOccurrences(compiled, "return ") >= 2;
+    }
+}
+
+// Ported from SsaOptimizationTests.OptimizedSsaRemovesLoopInvariantHeaderPhisBeforeLlvmEmission:
+// a while-willexit accumulator loop keeps its loop-carried header phis but no
+// self-referential (loop-invariant) phi survives.
+[Fact]
+[Collection("optimization", "loops")]
+fn bool OptimizedSsaKeepsLoopCarriedHeaderPhis()
+{
+    unsafe
+    {
+        stack mut SsaCompile compiled = CompileOptimizedSsa(
+            "ssa-opt-loop-header-phi",
+            raw"""
+module Demo
+
+fn i32[min max] Run(i32[min max] n)
+{
+    stack mut i32[min max] sum = 0;
+    stack mut i32[min max] i = 0;
+    while willexit (i < n)
+    {
+        sum = sum + i;
+        i = i + 1;
+    }
+
+    return sum;
+}
+""");
+        return OptimizedSsaContains(compiled, "bb1_while_willexit_cond:")
+            && OptimizedSsaOccurrences(compiled, "= phi i32") == 2;
+    }
+}
+
+// Ported from SsaOptimizationTests.OptimizedSsaKeepsDenseFourWaySwitchForLlvmLowering:
+// a dense contiguous switch retains its `switch` terminator for LLVM lowering.
+[Fact]
+[Collection("optimization")]
+fn bool OptimizedSsaKeepsDenseSwitch()
+{
+    unsafe
+    {
+        stack mut SsaCompile compiled = CompileOptimizedSsa(
+            "ssa-opt-dense-switch",
+            raw"""
+module Demo
+
+fn i32[min max] Run(i32[min max] value)
+{
+    switch (value)
+    {
+        case 1:
+            return 10;
+        case 2:
+            return 20;
+        case 3:
+            return 30;
+        case 4:
+            return 40;
+        default:
+            return 0;
+    }
+}
+""");
+        return OptimizedSsaContains(compiled, "switch arg_value default");
+    }
+}
+
+// Ported from SsaOptimizationTests.OptimizedSsaNormalizesSmallSparseSwitchToCompareChainBeforeLlvmEmission:
+// a small sparse switch normalizes to a compare/branch chain with no surviving
+// `switch` terminator.
+[Fact]
+[Collection("optimization")]
+fn bool OptimizedSsaNormalizesSparseSwitchToCompareChain()
+{
+    unsafe
+    {
+        stack mut SsaCompile compiled = CompileOptimizedSsa(
+            "ssa-opt-sparse-switch",
+            raw"""
+module Demo
+
+fn i32[min max] Run(i32[min max] value)
+{
+    switch (value)
+    {
+        case 9:
+            return 90;
+        case 1:
+            return 10;
+        case 5:
+            return 50;
+        default:
+            return 0;
+    }
+}
+""");
+        return Succeeds(compiled)
+            && OptimizedSsaContains(compiled, "branch ")
+            && OptimizedSsaLacks(compiled, "switch arg_value");
+    }
+}

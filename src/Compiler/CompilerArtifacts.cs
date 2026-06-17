@@ -3585,7 +3585,14 @@ public enum MonomorphizationCodeSizeHeuristic
 public enum MonomorphizationLinkageKind
 {
     InternalSingleOwner,
-    LinkOnceOdrComdat
+    LinkOnceOdrComdat,
+
+    // A globally-visible, deduplicated definition that the optimizer must NOT
+    // discard even when it has no in-module references (unlike linkonce_odr,
+    // which GlobalDCE/ThinLTO may drop). Used to emit a fallback body for an
+    // imported function whose owning package pruned the symbol, so cross-module
+    // callers still resolve while a real strong definition elsewhere still wins.
+    WeakOdrPreserved
 }
 
 public sealed record EnumLayoutModel(

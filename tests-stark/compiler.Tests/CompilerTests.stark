@@ -1,4 +1,5 @@
 import CompilerTestSupport
+import HostDiagnosticAdapterTests
 import System.Testing
 [Collection("compiler")]
 module CompilerTests
@@ -11811,5 +11812,91 @@ fn i32[min max] GoodBoolean(i32[min max] n)
 }
 """);
         return Succeeds(compiled);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// HostDiagnosticAdapterTests (TEST-06b)
+// ---------------------------------------------------------------------------
+
+// Adapts a host-compiled bad program's first diagnostic into a
+// System.Testing.Diagnostic and asserts it through the structured predicates.
+[Fact]
+[Collection("diagnostics")]
+fn bool HostMissingSemicolonDiagnosticAdaptsToStructuredDiagnostic()
+{
+    unsafe
+    {
+        return MissingSemicolonAdaptsToStructuredDiagnosticImpl();
+    }
+}
+
+// The host severity-string -> DiagnosticSeverity mapping is total and stable.
+[Fact]
+fn bool HostSeverityMappingCoversKnownTokens()
+{
+    unsafe
+    {
+        return SeverityMappingCoversKnownTokensImpl();
+    }
+}
+
+// TEST-06c: a passed search directory makes a sibling-module import resolve;
+// omitting it fails the same compile.
+[Fact]
+[Collection("modules")]
+fn bool HostSearchDirectoryResolvesSiblingModule()
+{
+    unsafe
+    {
+        return SearchDirectoryResolvesSiblingModuleImpl();
+    }
+}
+
+// TEST-06 (item 3): CompileAssertClean / CompileAssertHasCode convenience
+// helpers over the adapter.
+[Fact]
+[Collection("diagnostics")]
+fn bool HostCompileConvenienceHelpersBehave()
+{
+    unsafe
+    {
+        return ConvenienceHelpersBehaveImpl();
+    }
+}
+
+// TEST-07: typed result accessors RootModuleName / LoadedModuleCount /
+// PassExecuted over a 2-module host compile.
+[Fact]
+[Collection("modules")]
+fn bool HostTypedResultAccessorsReportModulesAndPasses()
+{
+    unsafe
+    {
+        return TypedResultAccessorsReportModulesAndPassesImpl();
+    }
+}
+
+// TEST-06e: artifactOutputDirectory writes a requested artifact to disk; the
+// path is reported and reads back the expected token.
+[Fact]
+[Collection("modules")]
+fn bool HostArtifactFileOutputWritesAndReadsBack()
+{
+    unsafe
+    {
+        return ArtifactFileOutputWritesAndReadsBackImpl();
+    }
+}
+
+// TEST-06d: a single batched round-trip exposes per-response success and
+// diagnostic codes.
+[Fact]
+[Collection("diagnostics")]
+fn bool HostRequestBatchingReportsPerResponseResults()
+{
+    unsafe
+    {
+        return RequestBatchingReportsPerResponseResultsImpl();
     }
 }

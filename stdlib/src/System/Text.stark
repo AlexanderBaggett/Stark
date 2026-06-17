@@ -10057,3 +10057,493 @@ internal unsafe fn bool TryConvertUtf16ToAscii(
     };
     return true;
 }
+
+// ===========================================================================
+// Compiler-grade diagnostic source-caret rendering (stdlib gap S02).
+//
+// Renders the source line(s) under a diagnostic span with a caret underline,
+// matching the host compiler's text diagnostic format:
+//
+//     12 |     return Foo(bar);
+//        |     ^^^^^^^^^^^^^^^^
+//
+// Tabs in the source expand to 4-column stops so carets stay aligned, and a
+// multi-line span underlines each covered line. The full diagnostic header
+// (`path:line:col: severity CODE: message`) is rendered separately by callers
+// (e.g. System.Testing.AppendDiagnostic); these helpers render only the
+// snippet block, with no leading or trailing newline.
+// ===========================================================================
+
+const DiagnosticTabWidth = 4;
+
+// The display width of a tab beginning at 0-based `displayColumn`: the distance
+// to the next 4-column tab stop (1..4).
+internal finite law u32[0 max] TabDisplayWidth(u32[0 max] displayColumn)
+{
+    stack u8[0 4 - 1] remainder = (u8[0 4 - 1])(displayColumn % DiagnosticTabWidth);
+    if (remainder == 0)
+    {
+        return DiagnosticTabWidth;
+    }
+
+    return (u32[0 max])(DiagnosticTabWidth - remainder);
+}
+
+// Number of decimal digits needed to spell `value` (at least 1).
+internal finite law u32[0 max] DiagnosticDigitCount(u32[0 max] value)
+{
+    stack mut u32[0 max] count = 1;
+    stack mut u32[0 max] remaining = value;
+    while willexit (remaining >= 10)
+    {
+        remaining = (u32[0 max])(remaining / 10);
+        count = (u32[0 max])(count + 1);
+    }
+
+    return count;
+}
+
+// Counts the source lines in `source`, where lines are separated by `\n`, `\r`,
+// or `\r\n` (matching the host's normalize-then-split). Empty input is 1 line.
+internal finite law u32[0 max] DiagnosticLineCount(borrow i8[min max][] source)
+{
+    stack mut u32[0 max] count = 1;
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < source.Length)
+    {
+        stack i8[min max] value = source[index];
+        if (value == 10 || value == 13)
+        {
+            count = (u32[0 max])(count + 1);
+            stack mut u64[0 2 ** 63 - 1] next = (u64[0 2 ** 63 - 1])(index + 1);
+            if (value == 13 && next < source.Length && source[next] == 10)
+            {
+                next = (u64[0 2 ** 63 - 1])(next + 1);
+            }
+
+            index = next;
+            continue;
+        }
+
+        index = (u64[0 2 ** 63 - 1])(index + 1);
+    }
+
+    return count;
+}
+
+// Resolves the byte range [start, end) of the 1-based `lineNumber` in `source`,
+// excluding the line terminator. Returns false when `lineNumber` is 0 or beyond
+// the last line.
+internal fn bool DiagnosticLineRange(
+    borrow i8[min max][] source,
+    u32[0 max] lineNumber,
+    out u64[0 2 ** 63 - 1] start,
+    out u64[0 2 ** 63 - 1] end)
+{
+    start = 0;
+    end = 0;
+    if (lineNumber == 0)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] currentLine = 1;
+    stack mut u64[0 2 ** 63 - 1] lineStart = 0;
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < source.Length)
+    {
+        stack i8[min max] value = source[index];
+        if (value == 10 || value == 13)
+        {
+            if (currentLine == lineNumber)
+            {
+                start = lineStart;
+                end = index;
+                return true;
+            }
+
+            stack mut u64[0 2 ** 63 - 1] next = (u64[0 2 ** 63 - 1])(index + 1);
+            if (value == 13 && next < source.Length && source[next] == 10)
+            {
+                next = (u64[0 2 ** 63 - 1])(next + 1);
+            }
+
+            currentLine = (u32[0 max])(currentLine + 1);
+            lineStart = next;
+            index = next;
+            continue;
+        }
+
+        index = (u64[0 2 ** 63 - 1])(index + 1);
+    }
+
+    if (currentLine == lineNumber)
+    {
+        start = lineStart;
+        end = source.Length;
+        return true;
+    }
+
+    return false;
+}
+
+// Total display width of the source bytes in [lineStart, lineEnd), expanding
+// tabs to 4-column stops.
+internal finite law u32[0 max] DiagnosticExpandedWidth(
+    borrow i8[min max][] source,
+    u64[0 2 ** 63 - 1] lineStart,
+    u64[0 2 ** 63 - 1] lineEnd)
+{
+    stack mut u32[0 max] displayColumn = 0;
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = lineStart; index < lineEnd; index += 1)
+    {
+        if (source[index] == 9)
+        {
+            displayColumn = (u32[0 max])(displayColumn + TabDisplayWidth(displayColumn));
+        }
+        else
+        {
+            displayColumn = (u32[0 max])(displayColumn + 1);
+        }
+    }
+
+    return displayColumn;
+}
+
+// The display column (0-based) of the 1-based source `column` within the line
+// bytes [lineStart, lineEnd), expanding tabs. Columns past the end of the line
+// extend one display column per missing character (matching the host).
+internal finite law u32[0 max] DiagnosticDisplayColumn(
+    borrow i8[min max][] source,
+    u64[0 2 ** 63 - 1] lineStart,
+    u64[0 2 ** 63 - 1] lineEnd,
+    u32[0 max] column)
+{
+    if (column <= 1)
+    {
+        return 0;
+    }
+
+    stack u64[0 2 ** 63 - 1] lineLength = (u64[0 2 ** 63 - 1])(lineEnd - lineStart);
+    stack u64[0 2 ** 63 - 1] characterCount = (u64[0 2 ** 63 - 1])(column - 1);
+    stack u64[0 2 ** 63 - 1] bounded = characterCount < lineLength ? characterCount : lineLength;
+    stack mut u32[0 max] displayColumn = 0;
+    for willexit (stack mut u64[0 2 ** 63 - 1] offset = 0; offset < bounded; offset += 1)
+    {
+        if (source[(u64[0 2 ** 63 - 1])(lineStart + offset)] == 9)
+        {
+            displayColumn = (u32[0 max])(displayColumn + TabDisplayWidth(displayColumn));
+        }
+        else
+        {
+            displayColumn = (u32[0 max])(displayColumn + 1);
+        }
+    }
+
+    if (characterCount > lineLength)
+    {
+        displayColumn = (u32[0 max])(displayColumn + (u32[0 max])(characterCount - lineLength));
+    }
+
+    return displayColumn;
+}
+
+// Appends the source bytes [lineStart, lineEnd) to `writer`, expanding tabs.
+internal fn System.Memory.MemoryStatus AppendDiagnosticExpandedLine(
+    mut borrow OwnedAscii writer,
+    borrow i8[min max][] source,
+    u64[0 2 ** 63 - 1] lineStart,
+    u64[0 2 ** 63 - 1] lineEnd)
+{
+    stack mut u32[0 max] displayColumn = 0;
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = lineStart; index < lineEnd; index += 1)
+    {
+        stack i8[min max] value = source[index];
+        if (value == 9)
+        {
+            stack u32[0 max] width = TabDisplayWidth(displayColumn);
+            switch (writer.AppendRepeatedByte(32, (u64[0 2 ** 63 - 1])width))
+            {
+                case System.Memory.MemoryStatus.Err(var error):
+                    return System.Memory.MemoryStatus.Err(error);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            displayColumn = (u32[0 max])(displayColumn + width);
+        }
+        else
+        {
+            switch (writer.AppendByte(value))
+            {
+                case System.Memory.MemoryStatus.Err(var error):
+                    return System.Memory.MemoryStatus.Err(error);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            displayColumn = (u32[0 max])(displayColumn + 1);
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+// The caret underline width (at least 1) for the line `current` of a span,
+// mirroring the host's per-line span rules.
+internal finite law u32[0 max] DiagnosticSpanCaretWidth(
+    borrow i8[min max][] source,
+    u64[0 2 ** 63 - 1] lineStart,
+    u64[0 2 ** 63 - 1] lineEnd,
+    u32[0 max] spanStartLine,
+    u32[0 max] spanEndLine,
+    u32[0 max] current,
+    u32[0 max] column,
+    u32[0 max] endColumn,
+    u32[0 max] caretStart,
+    u32[0 max] expandedWidth)
+{
+    if (current == spanStartLine && current == spanEndLine)
+    {
+        stack mut u32[0 max] effectiveEnd = endColumn;
+        if (effectiveEnd < column)
+        {
+            effectiveEnd = column;
+        }
+
+        stack u32[0 max] endExclusive = DiagnosticDisplayColumn(
+            source, lineStart, lineEnd, (u32[0 max])(effectiveEnd + 1));
+        if (endExclusive > caretStart)
+        {
+            return (u32[0 max])(endExclusive - caretStart);
+        }
+
+        return 1;
+    }
+
+    if (current == spanStartLine)
+    {
+        if (expandedWidth > caretStart)
+        {
+            return (u32[0 max])(expandedWidth - caretStart);
+        }
+
+        return 1;
+    }
+
+    if (current == spanEndLine)
+    {
+        stack mut u32[0 max] effectiveEnd = endColumn;
+        if (effectiveEnd < 1)
+        {
+            effectiveEnd = 1;
+        }
+
+        stack u32[0 max] endExclusive = DiagnosticDisplayColumn(
+            source, lineStart, lineEnd, (u32[0 max])(effectiveEnd + 1));
+        if (endExclusive > 0)
+        {
+            return endExclusive;
+        }
+
+        return 1;
+    }
+
+    if (expandedWidth > 0)
+    {
+        return expandedWidth;
+    }
+
+    return 1;
+}
+
+// Appends the source-caret snippet for the inclusive 1-based span
+// [line:column .. endLine:endColumn] of `source` (a byte slice) to `writer`, in
+// the host compiler's diagnostic format. `endLine` / `endColumn` of 0 mean
+// "same as line / column" (a single-point span). The span is clamped to the
+// available lines. When `line` is 0 or beyond the last source line, nothing is
+// appended (the caller renders only the diagnostic header). No leading or
+// trailing newline is emitted.
+public fn System.Memory.MemoryStatus AppendSourceCaret(
+    mut borrow OwnedAscii writer,
+    borrow i8[min max][] source,
+    u32[0 max] line,
+    u32[0 max] column,
+    u32[0 max] endLine,
+    u32[0 max] endColumn)
+{
+    if (line == 0)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack u32[0 max] totalLines = DiagnosticLineCount(source);
+    if (line > totalLines)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack mut u32[0 max] spanEndLine = endLine;
+    if (spanEndLine < line)
+    {
+        spanEndLine = line;
+    }
+
+    if (spanEndLine > totalLines)
+    {
+        spanEndLine = totalLines;
+    }
+
+    stack u32[0 max] gutterWidth = DiagnosticDigitCount(spanEndLine);
+
+    for willexit (stack mut u32[0 max] current = line; current <= spanEndLine; current += 1)
+    {
+        stack mut u64[0 2 ** 63 - 1] lineStart = 0;
+        stack mut u64[0 2 ** 63 - 1] lineEnd = 0;
+        if (!DiagnosticLineRange(source, current, lineStart, lineEnd))
+        {
+            break;
+        }
+
+        stack mut u32[0 max] caretStart = 0;
+        if (current == line)
+        {
+            caretStart = DiagnosticDisplayColumn(source, lineStart, lineEnd, column);
+        }
+
+        stack u32[0 max] expandedWidth = DiagnosticExpandedWidth(source, lineStart, lineEnd);
+        stack u32[0 max] caretWidth = DiagnosticSpanCaretWidth(
+            source, lineStart, lineEnd, line, spanEndLine, current, column, endColumn, caretStart, expandedWidth);
+
+        // Source line: "  <lineNumber> | <expanded source>".
+        switch (writer.AppendAscii("  "))
+        {
+            case System.Memory.MemoryStatus.Err(var error):
+                return System.Memory.MemoryStatus.Err(error);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        stack u32[0 max] currentDigits = DiagnosticDigitCount(current);
+        if (currentDigits < gutterWidth)
+        {
+            switch (writer.AppendRepeatedByte(32, (u64[0 2 ** 63 - 1])(gutterWidth - currentDigits)))
+            {
+                case System.Memory.MemoryStatus.Err(var error):
+                    return System.Memory.MemoryStatus.Err(error);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+
+        switch (writer.AppendU64((u64[0 max])current))
+        {
+            case System.Memory.MemoryStatus.Err(var error):
+                return System.Memory.MemoryStatus.Err(error);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        switch (writer.AppendAscii(" | "))
+        {
+            case System.Memory.MemoryStatus.Err(var error):
+                return System.Memory.MemoryStatus.Err(error);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        switch (AppendDiagnosticExpandedLine(writer, source, lineStart, lineEnd))
+        {
+            case System.Memory.MemoryStatus.Err(var error):
+                return System.Memory.MemoryStatus.Err(error);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        switch (writer.AppendByte(10))
+        {
+            case System.Memory.MemoryStatus.Err(var error):
+                return System.Memory.MemoryStatus.Err(error);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        // Caret line: "  <pad> | <spaces><carets>".
+        switch (writer.AppendAscii("  "))
+        {
+            case System.Memory.MemoryStatus.Err(var error):
+                return System.Memory.MemoryStatus.Err(error);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        switch (writer.AppendRepeatedByte(32, (u64[0 2 ** 63 - 1])gutterWidth))
+        {
+            case System.Memory.MemoryStatus.Err(var error):
+                return System.Memory.MemoryStatus.Err(error);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        switch (writer.AppendAscii(" | "))
+        {
+            case System.Memory.MemoryStatus.Err(var error):
+                return System.Memory.MemoryStatus.Err(error);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        if (caretStart > 0)
+        {
+            switch (writer.AppendRepeatedByte(32, (u64[0 2 ** 63 - 1])caretStart))
+            {
+                case System.Memory.MemoryStatus.Err(var error):
+                    return System.Memory.MemoryStatus.Err(error);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+
+        switch (writer.AppendRepeatedByte(94, (u64[0 2 ** 63 - 1])caretWidth))
+        {
+            case System.Memory.MemoryStatus.Err(var error):
+                return System.Memory.MemoryStatus.Err(error);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        if (current < spanEndLine)
+        {
+            switch (writer.AppendByte(10))
+            {
+                case System.Memory.MemoryStatus.Err(var error):
+                    return System.Memory.MemoryStatus.Err(error);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+// Convenience over `AppendSourceCaret` taking an `ascii` source view.
+public unsafe fn System.Memory.MemoryStatus AppendSourceCaretText(
+    mut borrow OwnedAscii writer,
+    ascii source,
+    u32[0 max] line,
+    u32[0 max] column,
+    u32[0 max] endLine,
+    u32[0 max] endColumn)
+{
+    stack i64[min max] signedLength = AsciiLength(source);
+    if (signedLength < 0 || line == 0)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    // An empty source still renders like the host (`SplitLines("")` is a single
+    // empty line), so feed `AppendSourceCaret` a zero-length slice rather than
+    // bailing. A non-empty source with no backing buffer is genuinely invalid.
+    stack rawptr<i8[min max]> data = AsciiData(source);
+    if (data == null && signedLength > 0)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    if (data == null)
+    {
+        stack i8[min max] anchor = 0;
+        stack i8[min max][] empty = slice(&anchor, 0);
+        return AppendSourceCaret(writer, empty, line, column, endLine, endColumn);
+    }
+
+    stack i8[min max][] bytes = slice(data, (u64[0 2 ** 63 - 1])signedLength);
+    return AppendSourceCaret(writer, bytes, line, column, endLine, endColumn);
+}

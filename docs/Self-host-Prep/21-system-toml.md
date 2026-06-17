@@ -121,20 +121,33 @@ often enough that the parser should not be casually wasteful.
       False) with line/column spans on every node, span-carrying `TomlError`
       variants, `TomlStatus`/`TomlResult<T>`, and Json-parity lookup helpers
       (`TryFindMember`, `TryChildAt`, `TryFindMemberOfKind`, `TextAt`/`KeyAt`/
-      `I64At`/`BoolAt`/`LineAt`/`ColumnAt`). Datetime types and richer typed
-      projection helpers remain.
-- [~] Implement the TOML reader for the chosen standard baseline: lexer,
+      `I64At`/`BoolAt`/`LineAt`/`ColumnAt`). A `Datetime` value kind with
+      verbatim `DatetimeAt` access has landed, as has typed date/time
+      projection: `DateTimeAt` decodes a Datetime node into a calendar-validated
+      `TomlDateTime` (a `TomlDateTimeKind` discriminant — offset/local
+      date-time, local date, local time — plus year/month/day/hour/minute/
+      second/nanosecond fields and signed `OffsetMinutes`). The remaining typed
+      projection helper is typed manifest record decoding.
+- [x] Implement the TOML reader for the chosen standard baseline: lexer,
       parser, duplicate-key/table validation, dotted keys, inline tables,
       arrays, arrays of tables, strings/multiline strings, numeric/boolean
       values, date/time/datetime values, and useful malformed-input diagnostics.
-      Landed (staged manifest subset, tracked here as temporary): bare/basic/
-      literal keys and strings with \b \t \n \f \r \" \\ \uXXXX escapes,
-      dotted keys, table headers, inline tables, arrays, decimal integers with
-      underscore validation, booleans, comments, duplicate-key rejection, and
-      span-carrying diagnostics; 17 facts in `tests-stark/stdlib.Toml` include
-      decoding the repo's real manifest shape. Remaining: multiline strings,
-      arrays of tables, floats, date/times, hex/octal/binary integers, and \U
-      escapes (currently explicit UnsupportedValue/InvalidEscape diagnostics).
+      Landed: bare/basic/literal keys and strings, multiline basic/literal
+      strings, the `\b \t \n \f \r \" \\ \uXXXX \UXXXXXXXX` escapes (with
+      Unicode-scalar-value validation), dotted keys, table headers, arrays of
+      tables (`[[name]]`, dotted paths, sub-table re-opening of the last
+      element), inline tables, arrays, decimal/`0x`/`0o`/`0b` integers with
+      underscore validation, decimal floats (via the correctly-rounded
+      `ParseF64Ascii` window), RFC 3339 date-times (offset/local date-time,
+      local date, local time; structurally validated and read back verbatim
+      through `DatetimeAt`), booleans, comments, duplicate-key rejection, and
+      span-carrying diagnostics, covered by 55 facts in `tests-stark/stdlib.Toml`
+      including the repo's real manifest shape, datetime/array-of-tables
+      round-trips, and malformed-input rejection. The reader now validates
+      date-time calendar ranges as well as structure: month 1-12, day-of-month
+      with proleptic-Gregorian leap-year and century rules, hour 0-23, minute
+      0-59, second 0-60 (RFC 3339 leap second), and zone offset hour/minute,
+      rejecting out-of-range fields with a span-carrying `InvalidDatetime`.
 - [x] Implement deterministic TOML writing and file helpers that compose
       `System.IO.File` with `System.Toml` without hiding IO failures.
       Landed: `TomlWriter` sink plus `Write`/`Emit` produce canonical TOML with
@@ -158,11 +171,13 @@ often enough that the parser should not be casually wasteful.
       `Stark.solution.toml`, and `Stark.user.toml`.
 - [~] Add TOML conformance, emitter, malformed-input, source-span, manifest
       decoder, and project-driver error-location tests.
-      Landed: conformance, malformed-input, source-span, and real-manifest
-      decoding facts (17) plus emitter determinism/round-trip and file-helper
-      facts (9) in `tests-stark/stdlib.Toml`. Remaining: manifest decoder and
-      project-driver error-location tests (follow the `SimpleToml` replacement
-      work item).
+      Landed: conformance, malformed-input, source-span, real-manifest
+      decoding, emitter determinism/round-trip, file-helper, arrays-of-tables,
+      RFC 3339 date-time (verbatim and typed-`DateTimeAt` projection, calendar
+      range/leap-year rejection, leap second, max offset, fractional-second
+      truncation), and `\U`/surrogate-escape facts (55 total) in
+      `tests-stark/stdlib.Toml`. Remaining: manifest decoder and project-driver
+      error-location tests (follow the `SimpleToml` replacement work item).
 
 ## 8. Documentation Work
 

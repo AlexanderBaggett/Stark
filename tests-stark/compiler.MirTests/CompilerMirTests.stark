@@ -1,0 +1,260 @@
+import CompilerMirTestSupport
+import System.Testing
+[Collection("compiler-mir")]
+module CompilerMirTests
+
+// Ported slice of tests/compiler.Tests/MidLevelIrLowering and
+// tests/compiler.Tests/MidLevelIrDynamicFixedArrayIndexingTests, running
+// against the current C# host compiler through the host test protocol. Each
+// fact compiles a small program stopping after the "lower-mir" pass and asserts
+// over the rendered `mir` artifact text. Requires STARK_HOST_COMPILER to point
+// at the host compiler executable. The runner collects [Fact]s from this root
+// file only; the bodies live in CompilerMirTestSupport.
+//
+// Object-model-only C# tests (those that build MidLevelIr/Ssa objects directly
+// or assert over the typed object graph rather than source->text) are NOT
+// ported; see the agent report for the skip list.
+
+// --- control flow ----------------------------------------------------------
+
+[Fact]
+fn bool IfStatementsLowerToBranchingBlocks()
+{
+    unsafe
+    {
+        return IfStatementsLowerToBranchingBlocksBody();
+    }
+}
+
+[Fact]
+fn bool WhileLoopsLowerToBackedgeControlFlow()
+{
+    unsafe
+    {
+        return WhileLoopsLowerToBackedgeControlFlowBody();
+    }
+}
+
+[Fact]
+fn bool ForLoopsProduceConditionIteratorAndExitBlocks()
+{
+    unsafe
+    {
+        return ForLoopsProduceConditionIteratorAndExitBlocksBody();
+    }
+}
+
+[Fact]
+fn bool LabeledBreakAndContinueLowerThroughNestedLoops()
+{
+    unsafe
+    {
+        return LabeledBreakAndContinueLowerThroughNestedLoopsBody();
+    }
+}
+
+[Fact]
+fn bool ConditionalExpressionLowersToJoinableBlocks()
+{
+    unsafe
+    {
+        return ConditionalExpressionLowersToJoinableBlocksBody();
+    }
+}
+
+[Fact]
+fn bool VoidConditionalCallStatementsLowerToJoinableBlocks()
+{
+    unsafe
+    {
+        return VoidConditionalCallStatementsLowerToJoinableBlocksBody();
+    }
+}
+
+[Fact]
+fn bool ShortCircuitOrLowersToMultipleBlocks()
+{
+    unsafe
+    {
+        return ShortCircuitOrLowersToMultipleBlocksBody();
+    }
+}
+
+[Fact]
+fn bool ComparisonChainsLowerToShortCircuitBlocks()
+{
+    unsafe
+    {
+        return ComparisonChainsLowerToShortCircuitBlocksBody();
+    }
+}
+
+[Fact]
+fn bool ComparisonChainsReuseSharedOperand()
+{
+    unsafe
+    {
+        return ComparisonChainsReuseSharedOperandBody();
+    }
+}
+
+// --- enums -----------------------------------------------------------------
+
+[Fact]
+fn bool EnumConstructorsLowerToDirectTagFieldInserts()
+{
+    unsafe
+    {
+        return EnumConstructorsLowerToDirectTagFieldInsertsBody();
+    }
+}
+
+[Fact]
+fn bool PayloadEnumConstructorCallsLowerDirectly()
+{
+    unsafe
+    {
+        return PayloadEnumConstructorCallsLowerDirectlyBody();
+    }
+}
+
+// --- locals, calls, aggregates ---------------------------------------------
+
+[Fact]
+fn bool LocalDeclarationsAndAssignmentsLowerToMirStatements()
+{
+    unsafe
+    {
+        return LocalDeclarationsAndAssignmentsLowerToMirStatementsBody();
+    }
+}
+
+[Fact]
+fn bool VoidFunctionPointerCallsLowerAsStatementOnly()
+{
+    unsafe
+    {
+        return VoidFunctionPointerCallsLowerAsStatementOnlyBody();
+    }
+}
+
+[Fact]
+fn bool ObjectCreationAndFieldAccessLowerToAggregateOperations()
+{
+    unsafe
+    {
+        return ObjectCreationAndFieldAccessLowerToAggregateOperationsBody();
+    }
+}
+
+[Fact]
+fn bool PrimaryRecordConstructorArgumentsLowerInEvaluationOrder()
+{
+    unsafe
+    {
+        return PrimaryRecordConstructorArgumentsLowerInEvaluationOrderBody();
+    }
+}
+
+[Fact]
+fn bool MemberCallsEvaluateReceiverBeforeArguments()
+{
+    unsafe
+    {
+        return MemberCallsEvaluateReceiverBeforeArgumentsBody();
+    }
+}
+
+[Fact]
+fn bool RegisterObjectCreationKeepsValueStyleLocal()
+{
+    unsafe
+    {
+        return RegisterObjectCreationKeepsValueStyleLocalBody();
+    }
+}
+
+[Fact]
+fn bool HeapObjectCreationMarksLocalAsAddressable()
+{
+    unsafe
+    {
+        return HeapObjectCreationMarksLocalAsAddressableBody();
+    }
+}
+
+[Fact]
+fn bool DynamicIndexingOnFixedArrayTemporaryLowers()
+{
+    unsafe
+    {
+        return DynamicIndexingOnFixedArrayTemporaryLowersBody();
+    }
+}
+
+// --- operators & constants -------------------------------------------------
+
+[Fact]
+fn bool SizeofAndAlignofLower()
+{
+    unsafe
+    {
+        return SizeofAndAlignofLowerBody();
+    }
+}
+
+[Fact]
+fn bool BitwiseXorExpressionLowersToMirBinaryOperation()
+{
+    unsafe
+    {
+        return BitwiseXorExpressionLowersToMirBinaryOperationBody();
+    }
+}
+
+[Fact]
+fn bool BitwiseAndShiftChainsRespectPrecedence()
+{
+    unsafe
+    {
+        return BitwiseAndShiftChainsRespectPrecedenceBody();
+    }
+}
+
+[Fact]
+fn bool WrappingAndSaturatingArithmeticLowerToDistinctOperators()
+{
+    unsafe
+    {
+        return WrappingAndSaturatingArithmeticLowerToDistinctOperatorsBody();
+    }
+}
+
+[Fact]
+fn bool ExponentExpressionLowersToMirBinaryOperation()
+{
+    unsafe
+    {
+        return ExponentExpressionLowersToMirBinaryOperationBody();
+    }
+}
+
+[Fact]
+fn bool CharacterLiteralsLowerToMirStringConstants()
+{
+    unsafe
+    {
+        return CharacterLiteralsLowerToMirStringConstantsBody();
+    }
+}
+
+// --- lowering invariant ----------------------------------------------------
+
+[Fact]
+fn bool AcceptedBoundOperationsLowerWithoutFallback()
+{
+    unsafe
+    {
+        return AcceptedBoundOperationsLowerWithoutFallbackBody();
+    }
+}

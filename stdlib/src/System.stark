@@ -3,6 +3,7 @@ import System.Syscall
 import System.Core
 import System.Testing
 import System.Testing.HostCompiler
+import System.Testing.HostCompilerDiagnostics
 import System.Compiler.IntegerFacts
 import System.Text.Interning
 export import System.Console
