@@ -342,3 +342,154 @@ fn bool MetadataThroughFileComponentMapsToNotADirectory()
             return false;
     }
 }
+
+// Resolves a temp-dir fixture and writes `name` with `content`, returning the
+// absolute path. Returns an empty OwnedAscii on any setup failure.
+fn System.Text.OwnedAscii WriteFixtureFile(mut borrow System.Testing.TempDirectory fixture, ascii name, ascii content)
+{
+    switch (fixture.WriteText(name, content))
+    {
+        case System.IO.IOStatus.Err(var writeError):
+            return new();
+        case System.IO.IOStatus.Ok:
+    }
+
+    switch (fixture.PathFor(name))
+    {
+        case System.IO.IOResult<System.Text.OwnedAscii>.Err(var pathError):
+            return new();
+        case System.IO.IOResult<System.Text.OwnedAscii>.Ok(var value):
+            return value;
+    }
+}
+
+// The execute state of `path`: -1 metadata error, 0 not executable, 1
+// executable. Centralizing the `Metadata` switch keeps each fact's body free of
+// repeated `var metadata` bindings (which collide in SSA local allocation).
+fn i32[min max] PathExecState(ascii path)
+{
+    switch (System.FileSystem.Metadata(path))
+    {
+        case System.IO.IOResult<System.FileSystem.FileMetadata>.Err(var error):
+            return -1;
+        case System.IO.IOResult<System.FileSystem.FileMetadata>.Ok(var metadata):
+            if (metadata.IsExecutable())
+            {
+                return 1;
+            }
+
+            return 0;
+    }
+}
+
+// MakeExecutable adds the execute bit to a freshly written (non-executable)
+// file, matching `chmod +x`.
+[Fact]
+fn bool MakeExecutableAddsExecuteBit()
+{
+    stack mut System.Testing.TempDirectory fixture = new();
+    switch (System.Testing.CreateTempDirectory("stark-fs-perm"))
+    {
+        case System.IO.IOResult<System.Testing.TempDirectory>.Err(var error):
+            return false;
+        case System.IO.IOResult<System.Testing.TempDirectory>.Ok(var value):
+            fixture = value;
+    }
+
+    stack mut System.Text.OwnedAscii path = WriteFixtureFile(fixture, "tool", "#!/bin/sh\n");
+    if (System.Text.AsciiLength(path.View()) == 0)
+    {
+        return false;
+    }
+
+    // A regular written file starts non-executable.
+    if (PathExecState(path.View()) != 0)
+    {
+        return false;
+    }
+
+    switch (System.FileSystem.MakeExecutable(path.View()))
+    {
+        case System.IO.IOStatus.Err(var error):
+            return false;
+        case System.IO.IOStatus.Ok:
+    }
+
+    return PathExecState(path.View()) == 1;
+}
+
+// SetPermissions applies an explicit mode: 0o644 leaves the file
+// non-executable, 0o755 makes it executable.
+[Fact]
+fn bool SetPermissionsAppliesExplicitMode()
+{
+    stack mut System.Testing.TempDirectory fixture = new();
+    switch (System.Testing.CreateTempDirectory("stark-fs-perm"))
+    {
+        case System.IO.IOResult<System.Testing.TempDirectory>.Err(var error):
+            return false;
+        case System.IO.IOResult<System.Testing.TempDirectory>.Ok(var value):
+            fixture = value;
+    }
+
+    stack mut System.Text.OwnedAscii path = WriteFixtureFile(fixture, "data", "x");
+    if (System.Text.AsciiLength(path.View()) == 0)
+    {
+        return false;
+    }
+
+    // 0o644 == 420: rw-r--r--, no execute.
+    switch (System.FileSystem.SetPermissions(path.View(), 420))
+    {
+        case System.IO.IOStatus.Err(var error):
+            return false;
+        case System.IO.IOStatus.Ok:
+    }
+
+    if (PathExecState(path.View()) != 0)
+    {
+        return false;
+    }
+
+    // 0o755 == 493: rwxr-xr-x.
+    switch (System.FileSystem.SetPermissions(path.View(), 493))
+    {
+        case System.IO.IOStatus.Err(var error):
+            return false;
+        case System.IO.IOStatus.Ok:
+    }
+
+    return PathExecState(path.View()) == 1;
+}
+
+// MakeExecutable on a missing path surfaces the metadata lookup failure rather
+// than silently succeeding.
+[Fact]
+fn bool MakeExecutableOnMissingPathFails()
+{
+    stack mut System.Testing.TempDirectory fixture = new();
+    switch (System.Testing.CreateTempDirectory("stark-fs-perm"))
+    {
+        case System.IO.IOResult<System.Testing.TempDirectory>.Err(var error):
+            return false;
+        case System.IO.IOResult<System.Testing.TempDirectory>.Ok(var value):
+            fixture = value;
+    }
+
+    stack mut System.Text.OwnedAscii missing = new();
+    switch (fixture.PathFor("does-not-exist"))
+    {
+        case System.IO.IOResult<System.Text.OwnedAscii>.Err(var error):
+            return false;
+        case System.IO.IOResult<System.Text.OwnedAscii>.Ok(var value):
+            missing = value;
+    }
+
+    switch (System.FileSystem.MakeExecutable(missing.View()))
+    {
+        case System.IO.IOStatus.Err(var error):
+            return true;
+        case System.IO.IOStatus.Ok:
+            return false;
+    }
+}

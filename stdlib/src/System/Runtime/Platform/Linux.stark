@@ -879,6 +879,7 @@ const LinuxSymlinkAtSyscallNumber = 266;
 const LinuxAtSymlinkNoFollowFlag = 256;
 const LinuxOpenAtSyscallNumber = 257;
 const LinuxMkdirAtSyscallNumber = 258;
+const LinuxFchmodatSyscallNumber = 268;
 const LinuxRenameAtSyscallNumber = 264;
 const LinuxUnlinkAtSyscallNumber = 263;
 const LinuxGetDents64SyscallNumber = 217;
@@ -2866,6 +2867,32 @@ internal fn i32[min max] CreateSymlink(ascii target, ascii linkPath)
             preparedTarget.Data,
             LinuxAtFdcwd,
             preparedLink.Data);
+    }
+}
+
+internal fn i32[min max] SetPermissions(ascii path, i32[min max] mode)
+{
+    unsafe
+    {
+        stack mut System.Runtime.Buffer.FixedByteBuffer4096 pathBuffer = new System.Runtime.Buffer.FixedByteBuffer4096();
+        stack mut Ascii preparedPath = new Ascii();
+        preparedPath.Data = pathBuffer.WritePointer();
+        preparedPath.Length = 0;
+        preparedPath.Capacity = pathBuffer.Writable();
+
+        if (!TryBuildLinuxPath(&preparedPath, path))
+        {
+            return -1;
+        }
+
+        // fchmodat(AT_FDCWD, path, mode, 0). The (dirfd, path, int, int)
+        // register layout matches openat, so it routes through the same wrapper.
+        return (i32[min max])LinuxSyscall4OpenAt(
+            LinuxFchmodatSyscallNumber,
+            LinuxAtFdcwd,
+            preparedPath.Data,
+            (i64[min max])mode,
+            0);
     }
 }
 

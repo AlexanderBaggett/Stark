@@ -195,16 +195,40 @@ validation before facts enter compiler tables.
 
 - [x] Decide OQ-16/S17: arena/table storage with typed handles is the blessed IR
       memory model for self-hosting.
-- [ ] Define and implement the shared typed-handle/table model: naming,
+- [~] Define and implement the shared typed-handle/table model: naming,
       visibility, invalid-handle policy, optional generation counters,
       ownership scopes for each compiler phase, and the `System.Memory` support
       needed for compiler-owned arenas/tables, bulk release, and fast dense
       storage.
-- [ ] Define and implement the first-class fact model: categories for values,
+      Landed: the generic generational-arena substrate `System.Collections.Arena`
+      (`Arena<T>` + `ArenaHandle`). `ArenaHandle` is a Copyable `{ Index,
+      Generation }` value; `Arena<T>` gives O(1) `Insert` (returns a handle),
+      `Remove`, `Contains`, and `Get` (returning `System.Core.Option<T>`), with a
+      free list recycling tombstoned slots and an advancing per-slot generation
+      so a handle to a removed entry never aliases a later occupant
+      (invalid-handle policy = silent `None`/`false`, never UB). Built over
+      `List<T>`/`List<u32>`/`List<bool>` parallel arrays; `T` must be `Copyable`
+      (the case for ids and IR facts; owned payloads live out-of-line). Verified
+      by 5 facts in `tests-stark/stdlib.Collections.Arena`. Remaining: per-IR
+      typed handle newtypes (`MirValueId`/`SsaValueId`/`TypeId`/`SymbolId`) over
+      `ArenaHandle`, dense iteration over live slots, bulk-release/ownership
+      scopes per phase, and the `System.Memory` arena allocator integration.
+- [~] Define and implement the first-class fact model: categories for values,
       functions, blocks, types, symbols, packages, diagnostics, alias proofs,
       ABI, layout, alignment, integer ranges, ownership/drop facts, durability
       classes, and the lowering policy table from HIR through package-image
       write/load.
+      Landed: the generic side-table substrate `System.Collections.Arena.SideTable<F>`
+      — a dense, `ArenaHandle`-keyed store attaching an optional Copyable fact
+      `F` to each arena entry out-of-line (`Set`/`Get`/`Contains`/`Remove`/
+      `Inherit`/`Clear`). It records the handle generation each fact was written
+      under, guaranteeing no cross-generation bleed when slots recycle (a
+      recycled handle never reads the prior occupant's fact, and an old-
+      generation handle misses once the slot is re-facted); the `Inherit(dst,
+      src)` method is the doc-5 fact-transfer builder primitive. Verified by 3
+      facts in `tests-stark/stdlib.Collections.Arena`. Remaining: the concrete
+      fact category records and their attach-point/phase/durability declarations,
+      the lowering-policy table, and `forbid-drop`/`recompute` enforcement.
 - [ ] Add low-friction fact-transfer helpers and phase-boundary validation so IR
       builders can preserve/translate facts explicitly, detect dropped
       `forbid-drop` facts, and reject stale or wrong-handle use.

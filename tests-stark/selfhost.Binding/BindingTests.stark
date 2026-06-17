@@ -1,0 +1,1255 @@
+import Compiler.Binding
+import Compiler.Parsing
+import Compiler.Lexing
+import System.Testing
+import System.Text
+[Collection("binding")]
+module BindingTests
+
+fn bool LexOk(LexResult<TokenStream> result, out TokenStream stream)
+{
+    switch (result)
+    {
+        case LexResult<TokenStream>.Err(var error):
+            stream = new();
+            return false;
+        case LexResult<TokenStream>.Ok(var value):
+            stream = value;
+            return true;
+    }
+}
+
+[Fact]
+fn bool BuildsAndLooksUpDeclarations()
+{
+    stack ascii source = "struct Widget { }\nfn i32 compute() { }\nconst Limit = 5;\n";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    stack mut DeclarationList decls = new();
+    switch (ParseDeclarations(stream, 0))
+    {
+        case ParseResult<DeclarationList>.Err(var declError):
+            return false;
+        case ParseResult<DeclarationList>.Ok(var value):
+            decls = value;
+    }
+
+    stack mut DeclarationTable table = new();
+    switch (BuildDeclarationTable(source, stream, decls))
+    {
+        case BindResult<DeclarationTable>.Err(var bindError):
+            return false;
+        case BindResult<DeclarationTable>.Ok(var built):
+            table = built;
+    }
+
+    // All three named declarations are recorded and resolvable by name; an
+    // unknown name resolves to nothing, and no name collides.
+    return table.Count() == 3
+        && LookupDeclaration(table, source, stream, "Widget") != 0
+        && LookupDeclaration(table, source, stream, "compute") != 0
+        && LookupDeclaration(table, source, stream, "Limit") != 0
+        && LookupDeclaration(table, source, stream, "Missing") == 0
+        && !HasDuplicateDeclaration(table, source, stream);
+}
+
+[Fact]
+fn bool DetectsDuplicateDeclaration()
+{
+    stack ascii source = "struct Foo { }\nstruct Foo { }\nfn void Foo() { }\n";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    stack mut DeclarationList decls = new();
+    switch (ParseDeclarations(stream, 0))
+    {
+        case ParseResult<DeclarationList>.Err(var declError):
+            return false;
+        case ParseResult<DeclarationList>.Ok(var value):
+            decls = value;
+    }
+
+    stack mut DeclarationTable table = new();
+    switch (BuildDeclarationTable(source, stream, decls))
+    {
+        case BindResult<DeclarationTable>.Err(var bindError):
+            return false;
+        case BindResult<DeclarationTable>.Ok(var built):
+            table = built;
+    }
+
+    // Three declarations all named `Foo` — a redefinition the binder flags.
+    return table.Count() == 3
+        && HasDuplicateDeclaration(table, source, stream)
+        && LookupDeclaration(table, source, stream, "Foo") != 0;
+}
+
+// Finds the keyword token of the sole function declaration in an already-lexed
+// stream. False when the stream is not a single function.
+fn bool FirstFunctionKeyword(borrow TokenStream stream, out u32[0 max] fnKeyword)
+{
+    fnKeyword = 0;
+    switch (ParseDeclarations(stream, 0))
+    {
+        case ParseResult<DeclarationList>.Err(var declError):
+            return false;
+        case ParseResult<DeclarationList>.Ok(var decls):
+            if (decls.Count() == 1)
+            {
+                stack DeclItem only = decls.ItemAt(0);
+                if (only.Kind == DeclarationKind.Function)
+                {
+                    fnKeyword = only.KeywordToken;
+                    return true;
+                }
+            }
+
+            return false;
+    }
+}
+
+[Fact]
+fn bool BuildsFunctionScopeWithParamsAndLocals()
+{
+    stack ascii source = "fn void f(i32 a, i32 b) { stack u32 x = 0; stack u32 y = 1; }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] fnKeyword = 0;
+    if (!FirstFunctionKeyword(stream, fnKeyword))
+    {
+        return false;
+    }
+
+    switch (ParseFunctionSignature(stream, fnKeyword))
+    {
+        case ParseResult<FunctionSignature>.Err(var sigError):
+            return false;
+        case ParseResult<FunctionSignature>.Ok(var signature):
+            switch (ParseFunctionBody(stream, fnKeyword))
+            {
+                case ParseResult<StatementList>.Err(var bodyError):
+                    return false;
+                case ParseResult<StatementList>.Ok(var body):
+                    switch (BuildFunctionScope(signature, body))
+                    {
+                        case BindResult<FunctionScope>.Err(var scopeError):
+                            return false;
+                        case BindResult<FunctionScope>.Ok(var scope):
+                            // Two params + two locals, all resolvable; an unknown
+                            // name does not resolve; no parameter clash or shadow.
+                            return scope.Count() == 4
+                                && LookupSymbol(scope, source, stream, "a") != 0
+                                && LookupSymbol(scope, source, stream, "b") != 0
+                                && LookupSymbol(scope, source, stream, "x") != 0
+                                && LookupSymbol(scope, source, stream, "y") != 0
+                                && LookupSymbol(scope, source, stream, "missing") == 0
+                                && !HasDuplicateParameter(scope, source, stream)
+                                && !LocalShadowsParameter(scope, source, stream);
+                    }
+            }
+    }
+}
+
+[Fact]
+fn bool DetectsDuplicateParameter()
+{
+    stack ascii source = "fn void f(i32 a, i32 a) { }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] fnKeyword = 0;
+    if (!FirstFunctionKeyword(stream, fnKeyword))
+    {
+        return false;
+    }
+
+    switch (ParseFunctionSignature(stream, fnKeyword))
+    {
+        case ParseResult<FunctionSignature>.Err(var sigError):
+            return false;
+        case ParseResult<FunctionSignature>.Ok(var signature):
+            switch (ParseFunctionBody(stream, fnKeyword))
+            {
+                case ParseResult<StatementList>.Err(var bodyError):
+                    return false;
+                case ParseResult<StatementList>.Ok(var body):
+                    switch (BuildFunctionScope(signature, body))
+                    {
+                        case BindResult<FunctionScope>.Err(var scopeError):
+                            return false;
+                        case BindResult<FunctionScope>.Ok(var scope):
+                            // Both parameters are named `a` — a redefinition.
+                            return scope.Count() == 2
+                                && HasDuplicateParameter(scope, source, stream);
+                    }
+            }
+    }
+}
+
+[Fact]
+fn bool DetectsLocalShadowingParameter()
+{
+    stack ascii source = "fn void f(i32 count) { stack u32 count = 0; }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] fnKeyword = 0;
+    if (!FirstFunctionKeyword(stream, fnKeyword))
+    {
+        return false;
+    }
+
+    switch (ParseFunctionSignature(stream, fnKeyword))
+    {
+        case ParseResult<FunctionSignature>.Err(var sigError):
+            return false;
+        case ParseResult<FunctionSignature>.Ok(var signature):
+            switch (ParseFunctionBody(stream, fnKeyword))
+            {
+                case ParseResult<StatementList>.Err(var bodyError):
+                    return false;
+                case ParseResult<StatementList>.Ok(var body):
+                    switch (BuildFunctionScope(signature, body))
+                    {
+                        case BindResult<FunctionScope>.Err(var scopeError):
+                            return false;
+                        case BindResult<FunctionScope>.Ok(var scope):
+                            // The local `count` shadows the parameter `count`, and
+                            // a name lookup resolves to the local (last declared).
+                            return LocalShadowsParameter(scope, source, stream)
+                                && !HasDuplicateParameter(scope, source, stream)
+                                && LookupSymbol(scope, source, stream, "count") == 2
+                                && scope.KindAt(1) == SymbolKind.Local;
+                    }
+            }
+    }
+}
+
+[Fact]
+fn bool DistinctDeclarationsHaveNoDuplicate()
+{
+    stack ascii source = "struct A { }\nstruct B { }\nfn void c() { }\n";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    stack mut DeclarationList decls = new();
+    switch (ParseDeclarations(stream, 0))
+    {
+        case ParseResult<DeclarationList>.Err(var declError):
+            return false;
+        case ParseResult<DeclarationList>.Ok(var value):
+            decls = value;
+    }
+
+    stack mut DeclarationTable table = new();
+    switch (BuildDeclarationTable(source, stream, decls))
+    {
+        case BindResult<DeclarationTable>.Err(var bindError):
+            return false;
+        case BindResult<DeclarationTable>.Ok(var built):
+            table = built;
+    }
+
+    return table.Count() == 3
+        && !HasDuplicateDeclaration(table, source, stream);
+}
+
+[Fact]
+fn bool ResolvesBodyReferences()
+{
+    // `a` (parameter) and `b` (local) both resolve, so the body has no unbound
+    // references.
+    stack ascii source = "fn void f(i32 a) { stack u32 b = 0; a + b; }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    stack mut DeclarationList decls = new();
+    switch (ParseDeclarations(stream, 0))
+    {
+        case ParseResult<DeclarationList>.Err(var declError):
+            return false;
+        case ParseResult<DeclarationList>.Ok(var value):
+            decls = value;
+    }
+
+    stack mut DeclarationTable table = new();
+    switch (BuildDeclarationTable(source, stream, decls))
+    {
+        case BindResult<DeclarationTable>.Err(var tableError):
+            return false;
+        case BindResult<DeclarationTable>.Ok(var built):
+            table = built;
+    }
+
+    if (decls.Count() != 1)
+    {
+        return false;
+    }
+
+    stack DeclItem fnDecl = decls.ItemAt(0);
+    if (fnDecl.Kind != DeclarationKind.Function)
+    {
+        return false;
+    }
+
+    switch (ParseFunctionSignature(stream, fnDecl.KeywordToken))
+    {
+        case ParseResult<FunctionSignature>.Err(var sigError):
+            return false;
+        case ParseResult<FunctionSignature>.Ok(var signature):
+            switch (ParseFunctionBody(stream, fnDecl.KeywordToken))
+            {
+                case ParseResult<StatementList>.Err(var bodyError):
+                    return false;
+                case ParseResult<StatementList>.Ok(var body):
+                    switch (BuildFunctionScope(signature, body))
+                    {
+                        case BindResult<FunctionScope>.Err(var scopeError):
+                            return false;
+                        case BindResult<FunctionScope>.Ok(var scope):
+                            return CountUnresolvedReferences(scope, table, source, stream, body) == 0;
+                    }
+            }
+    }
+}
+
+[Fact]
+fn bool FlagsUnboundReference()
+{
+    // `a` resolves (parameter) but `zzz` is bound nowhere — exactly one unbound
+    // reference.
+    stack ascii source = "fn void f(i32 a) { a + zzz; }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    stack mut DeclarationList decls = new();
+    switch (ParseDeclarations(stream, 0))
+    {
+        case ParseResult<DeclarationList>.Err(var declError):
+            return false;
+        case ParseResult<DeclarationList>.Ok(var value):
+            decls = value;
+    }
+
+    stack mut DeclarationTable table = new();
+    switch (BuildDeclarationTable(source, stream, decls))
+    {
+        case BindResult<DeclarationTable>.Err(var tableError):
+            return false;
+        case BindResult<DeclarationTable>.Ok(var built):
+            table = built;
+    }
+
+    if (decls.Count() != 1)
+    {
+        return false;
+    }
+
+    stack DeclItem fnDecl = decls.ItemAt(0);
+    if (fnDecl.Kind != DeclarationKind.Function)
+    {
+        return false;
+    }
+
+    switch (ParseFunctionSignature(stream, fnDecl.KeywordToken))
+    {
+        case ParseResult<FunctionSignature>.Err(var sigError):
+            return false;
+        case ParseResult<FunctionSignature>.Ok(var signature):
+            switch (ParseFunctionBody(stream, fnDecl.KeywordToken))
+            {
+                case ParseResult<StatementList>.Err(var bodyError):
+                    return false;
+                case ParseResult<StatementList>.Ok(var body):
+                    switch (BuildFunctionScope(signature, body))
+                    {
+                        case BindResult<FunctionScope>.Err(var scopeError):
+                            return false;
+                        case BindResult<FunctionScope>.Ok(var scope):
+                            return CountUnresolvedReferences(scope, table, source, stream, body) == 1;
+                    }
+            }
+    }
+}
+
+// Finds the keyword token of the first function declaration in an already-lexed
+// stream that may contain several declarations. False when there is none.
+fn bool FunctionKeywordIn(borrow TokenStream stream, out u32[0 max] fnKeyword)
+{
+    fnKeyword = 0;
+    switch (ParseDeclarations(stream, 0))
+    {
+        case ParseResult<DeclarationList>.Err(var declError):
+            return false;
+        case ParseResult<DeclarationList>.Ok(var decls):
+            stack mut bool found = false;
+            stack u64[0 2 ** 63 - 1] count = decls.Count();
+            for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+            {
+                stack DeclItem item = decls.ItemAt(index);
+                if (!found && item.Kind == DeclarationKind.Function)
+                {
+                    fnKeyword = item.KeywordToken;
+                    found = true;
+                }
+            }
+
+            return found;
+    }
+}
+
+// Counts the `Local` statements in a parsed function body's flat statement list.
+fn u64[0 2 ** 63 - 1] CountLocals(borrow StatementList body)
+{
+    stack mut u64[0 2 ** 63 - 1] locals = 0;
+    stack u64[0 2 ** 63 - 1] count = body.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] i = 0; i < count; i += 1)
+    {
+        stack StatementItem si = body.ItemAt(i);
+        if (si.Kind == StatementKind.Local)
+        {
+            locals = (u64[0 2 ** 63 - 1])(locals + 1);
+        }
+    }
+
+    return locals;
+}
+
+// True when some reference named `expectedName` resolved to `expectedKind`.
+fn bool RefHasKind(borrow ReferenceTable refs, ascii source, borrow TokenStream stream, ascii expectedName, ReferenceKind expectedKind)
+{
+    stack mut bool matched = false;
+    stack u64[0 2 ** 63 - 1] count = refs.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (!matched)
+        {
+            stack ascii refName = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])refs.NameTokenAt(index));
+            if (System.Text.Equals(refName, expectedName) && refs.KindAt(index) == expectedKind)
+            {
+                matched = true;
+            }
+        }
+    }
+
+    return matched;
+}
+
+[Fact]
+fn bool ResolvesReferencesByKind()
+{
+    // `a`→parameter, `b`→local, `G`→top-level declaration, `zzz`→unbound.
+    stack ascii source = "const G = 5;\nfn void f(i32 a) { stack u32 b = 0; a + b + G + zzz; }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    stack mut DeclarationList decls = new();
+    switch (ParseDeclarations(stream, 0))
+    {
+        case ParseResult<DeclarationList>.Err(var declError):
+            return false;
+        case ParseResult<DeclarationList>.Ok(var value):
+            decls = value;
+    }
+
+    stack mut DeclarationTable table = new();
+    switch (BuildDeclarationTable(source, stream, decls))
+    {
+        case BindResult<DeclarationTable>.Err(var tableError):
+            return false;
+        case BindResult<DeclarationTable>.Ok(var built):
+            table = built;
+    }
+
+    stack mut u32[0 max] fnKeyword = 0;
+    if (!FunctionKeywordIn(stream, fnKeyword))
+    {
+        return false;
+    }
+
+    switch (ParseFunctionSignature(stream, fnKeyword))
+    {
+        case ParseResult<FunctionSignature>.Err(var sigError):
+            return false;
+        case ParseResult<FunctionSignature>.Ok(var signature):
+            switch (ParseFunctionBody(stream, fnKeyword))
+            {
+                case ParseResult<StatementList>.Err(var bodyError):
+                    return false;
+                case ParseResult<StatementList>.Ok(var body):
+                    switch (BuildFunctionScope(signature, body))
+                    {
+                        case BindResult<FunctionScope>.Err(var scopeError):
+                            return false;
+                        case BindResult<FunctionScope>.Ok(var scope):
+                            switch (ResolveReferences(scope, table, source, stream, body))
+                            {
+                                case BindResult<ReferenceTable>.Err(var refError):
+                                    return false;
+                                case BindResult<ReferenceTable>.Ok(var refs):
+                                    return refs.Count() == 4
+                                        && refs.UnboundCount() == 1
+                                        && RefHasKind(refs, source, stream, "a", ReferenceKind.Parameter)
+                                        && RefHasKind(refs, source, stream, "b", ReferenceKind.Local)
+                                        && RefHasKind(refs, source, stream, "G", ReferenceKind.Declaration)
+                                        && RefHasKind(refs, source, stream, "zzz", ReferenceKind.Unbound);
+                            }
+                    }
+            }
+    }
+}
+
+[Fact]
+fn bool ResolvesShadowedReferenceToInnermostLocal()
+{
+    // `count` is both a parameter and a local; references resolve to the local
+    // (the innermost binding, scope index 2), never the parameter.
+    stack ascii source = "fn void f(i32 count) { stack u32 count = 0; count + count; }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    stack mut DeclarationList decls = new();
+    switch (ParseDeclarations(stream, 0))
+    {
+        case ParseResult<DeclarationList>.Err(var declError):
+            return false;
+        case ParseResult<DeclarationList>.Ok(var value):
+            decls = value;
+    }
+
+    stack mut DeclarationTable table = new();
+    switch (BuildDeclarationTable(source, stream, decls))
+    {
+        case BindResult<DeclarationTable>.Err(var tableError):
+            return false;
+        case BindResult<DeclarationTable>.Ok(var built):
+            table = built;
+    }
+
+    stack mut u32[0 max] fnKeyword = 0;
+    if (!FunctionKeywordIn(stream, fnKeyword))
+    {
+        return false;
+    }
+
+    switch (ParseFunctionSignature(stream, fnKeyword))
+    {
+        case ParseResult<FunctionSignature>.Err(var sigError):
+            return false;
+        case ParseResult<FunctionSignature>.Ok(var signature):
+            switch (ParseFunctionBody(stream, fnKeyword))
+            {
+                case ParseResult<StatementList>.Err(var bodyError):
+                    return false;
+                case ParseResult<StatementList>.Ok(var body):
+                    switch (BuildFunctionScope(signature, body))
+                    {
+                        case BindResult<FunctionScope>.Err(var scopeError):
+                            return false;
+                        case BindResult<FunctionScope>.Ok(var scope):
+                            switch (ResolveReferences(scope, table, source, stream, body))
+                            {
+                                case BindResult<ReferenceTable>.Err(var refError):
+                                    return false;
+                                case BindResult<ReferenceTable>.Ok(var refs):
+                                    return refs.Count() == 2
+                                        && refs.UnboundCount() == 0
+                                        && refs.KindAt(0) == ReferenceKind.Local
+                                        && refs.TargetAt(0) == 2
+                                        && refs.KindAt(1) == ReferenceKind.Local
+                                        && !RefHasKind(refs, source, stream, "count", ReferenceKind.Parameter);
+                            }
+                    }
+            }
+    }
+}
+
+[Fact]
+fn bool ProbeSiblingBlockShadowTarget()
+{
+    // PROBE: `x` is referenced inside the FIRST if-block, where the only `x` in
+    // scope is the first block's local (scope index 1). A second sibling block
+    // declares another `x` (scope index 2) that is NOT in scope at the reference.
+    // Correct (host/lexical) resolution: the reference's first (and only) result
+    // is the FIRST-block local, target == 1. This probe records what the binder
+    // actually computes for that reference's TargetAt.
+    stack ascii source = "fn void f() { if (a) { stack u32 x = 0; x; } if (b) { stack u32 x = 1; } }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    stack mut DeclarationList decls = new();
+    switch (ParseDeclarations(stream, 0))
+    {
+        case ParseResult<DeclarationList>.Err(var declError):
+            return false;
+        case ParseResult<DeclarationList>.Ok(var value):
+            decls = value;
+    }
+
+    stack mut DeclarationTable table = new();
+    switch (BuildDeclarationTable(source, stream, decls))
+    {
+        case BindResult<DeclarationTable>.Err(var tableError):
+            return false;
+        case BindResult<DeclarationTable>.Ok(var built):
+            table = built;
+    }
+
+    stack mut u32[0 max] fnKeyword = 0;
+    if (!FunctionKeywordIn(stream, fnKeyword))
+    {
+        return false;
+    }
+
+    switch (ParseFunctionSignature(stream, fnKeyword))
+    {
+        case ParseResult<FunctionSignature>.Err(var sigError):
+            return false;
+        case ParseResult<FunctionSignature>.Ok(var signature):
+            switch (ParseFunctionBody(stream, fnKeyword))
+            {
+                case ParseResult<StatementList>.Err(var bodyError):
+                    return false;
+                case ParseResult<StatementList>.Ok(var body):
+                    switch (BuildFunctionScope(signature, body))
+                    {
+                        case BindResult<FunctionScope>.Err(var scopeError):
+                            return false;
+                        case BindResult<FunctionScope>.Ok(var scope):
+                            switch (ResolveReferences(scope, table, source, stream, body))
+                            {
+                                case BindResult<ReferenceTable>.Err(var refError):
+                                    return false;
+                                case BindResult<ReferenceTable>.Ok(var refs):
+                                    // Find the `x` reference and report its target.
+                                    // Two `x` locals exist in scope (indices 1,2).
+                                    // Host says the in-block reference must resolve
+                                    // to target 1. We assert that here: this FACT
+                                    // FAILS if the binder picks 2 (the bug).
+                                    stack mut u32[0 max] xTarget = 0;
+                                    stack u64[0 2 ** 63 - 1] rcount = refs.Count();
+                                    for willexit (stack mut u64[0 2 ** 63 - 1] i = 0; i < rcount; i += 1)
+                                    {
+                                        stack ascii rn = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])refs.NameTokenAt(i));
+                                        if (System.Text.Equals(rn, "x"))
+                                        {
+                                            xTarget = refs.TargetAt(i);
+                                        }
+                                    }
+
+                                    // Correct lexical resolution: the in-block `x`
+                                    // reference binds to the FIRST block's local
+                                    // (target 1); the sibling block's local (index 2)
+                                    // is out of scope and never leaks in.
+                                    return scope.Count() == 2
+                                        && refs.Count() == 3
+                                        && xTarget == 1;
+                            }
+                    }
+            }
+    }
+}
+
+[Fact]
+fn bool DetectsSameBlockLocalRedefinition()
+{
+    // Two locals named `x` in the same block — a redefinition.
+    stack ascii source = "fn void f() { stack u32 x = 0; stack u32 x = 1; }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] fnKeyword = 0;
+    if (!FirstFunctionKeyword(stream, fnKeyword))
+    {
+        return false;
+    }
+
+    switch (ParseFunctionBody(stream, fnKeyword))
+    {
+        case ParseResult<StatementList>.Err(var bodyError):
+            return false;
+        case ParseResult<StatementList>.Ok(var body):
+            return HasDuplicateLocalInBlock(source, stream, body);
+    }
+}
+
+[Fact]
+fn bool AllowsShadowingLocalInNestedBlock()
+{
+    // The inner `x` (depth 1) shadows the outer `x` (depth 0): different blocks,
+    // so it is not a redefinition.
+    stack ascii source = "fn void f() { stack u32 x = 0; if (c) { stack u32 x = 1; } }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] fnKeyword = 0;
+    if (!FirstFunctionKeyword(stream, fnKeyword))
+    {
+        return false;
+    }
+
+    switch (ParseFunctionBody(stream, fnKeyword))
+    {
+        case ParseResult<StatementList>.Err(var bodyError):
+            return false;
+        case ParseResult<StatementList>.Ok(var body):
+            return !HasDuplicateLocalInBlock(source, stream, body);
+    }
+}
+
+[Fact]
+fn bool AllowsSameNameLocalsInSiblingBlocks()
+{
+    // Two locals named `x`, each in its own sibling `if` block (separated by a
+    // depth-0 statement) — legal, not a redefinition.
+    stack ascii source = "fn void f() { if (a) { stack u32 x = 0; } if (b) { stack u32 x = 1; } }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] fnKeyword = 0;
+    if (!FirstFunctionKeyword(stream, fnKeyword))
+    {
+        return false;
+    }
+
+    switch (ParseFunctionBody(stream, fnKeyword))
+    {
+        case ParseResult<StatementList>.Err(var bodyError):
+            return false;
+        case ParseResult<StatementList>.Ok(var body):
+            return !HasDuplicateLocalInBlock(source, stream, body);
+    }
+}
+
+[Fact]
+fn bool ResolvesSignatureTypes()
+{
+    // Return type `Foo` and parameter type `Bar` are both declared; `i32` is
+    // built-in (head 0, skipped). No unresolved signature types.
+    stack ascii source = "struct Foo { }\nstruct Bar { }\nfn Foo make(Bar a, i32 b) { }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    stack mut DeclarationList decls = new();
+    switch (ParseDeclarations(stream, 0))
+    {
+        case ParseResult<DeclarationList>.Err(var declError):
+            return false;
+        case ParseResult<DeclarationList>.Ok(var value):
+            decls = value;
+    }
+
+    stack mut DeclarationTable table = new();
+    switch (BuildDeclarationTable(source, stream, decls))
+    {
+        case BindResult<DeclarationTable>.Err(var tableError):
+            return false;
+        case BindResult<DeclarationTable>.Ok(var built):
+            table = built;
+    }
+
+    stack mut u32[0 max] fnKeyword = 0;
+    if (!FunctionKeywordIn(stream, fnKeyword))
+    {
+        return false;
+    }
+
+    switch (ParseFunctionSignature(stream, fnKeyword))
+    {
+        case ParseResult<FunctionSignature>.Err(var sigError):
+            return false;
+        case ParseResult<FunctionSignature>.Ok(var signature):
+            return CountUnresolvedSignatureTypes(signature, table, source, stream) == 0;
+    }
+}
+
+[Fact]
+fn bool FlagsUnresolvedSignatureTypes()
+{
+    // Neither `Bar` (return) nor `Foo` (parameter) is declared — two unresolved
+    // signature types.
+    stack ascii source = "fn Bar g(Foo x) { }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    stack mut DeclarationList decls = new();
+    switch (ParseDeclarations(stream, 0))
+    {
+        case ParseResult<DeclarationList>.Err(var declError):
+            return false;
+        case ParseResult<DeclarationList>.Ok(var value):
+            decls = value;
+    }
+
+    stack mut DeclarationTable table = new();
+    switch (BuildDeclarationTable(source, stream, decls))
+    {
+        case BindResult<DeclarationTable>.Err(var tableError):
+            return false;
+        case BindResult<DeclarationTable>.Ok(var built):
+            table = built;
+    }
+
+    stack mut u32[0 max] fnKeyword = 0;
+    if (!FunctionKeywordIn(stream, fnKeyword))
+    {
+        return false;
+    }
+
+    switch (ParseFunctionSignature(stream, fnKeyword))
+    {
+        case ParseResult<FunctionSignature>.Err(var sigError):
+            return false;
+        case ParseResult<FunctionSignature>.Ok(var signature):
+            return CountUnresolvedSignatureTypes(signature, table, source, stream) == 2;
+    }
+}
+
+// TEMP PROBE helper: true iff ResolveReferences marks some `zzz` ref as Local.
+fn bool BindResultResolvesZzzAsLocal(borrow FunctionScope scope, borrow DeclarationTable table, ascii source, borrow TokenStream stream, borrow StatementList body)
+{
+    switch (ResolveReferences(scope, table, source, stream, body))
+    {
+        case BindResult<ReferenceTable>.Err(var refError):
+            return false;
+        case BindResult<ReferenceTable>.Ok(var refs):
+            return RefHasKind(refs, source, stream, "zzz", ReferenceKind.Local)
+                && !RefHasKind(refs, source, stream, "zzz", ReferenceKind.Unbound);
+    }
+}
+
+// Out-of-scope local: `zzz` is declared only inside the if-block (depth 1) and
+// referenced at body depth 0, where its block has closed. Lexical resolution
+// leaves the trailing `zzz` unbound (1 unresolved) and never binds it to the
+// dead inner local.
+[Fact]
+fn bool ProbeOutOfScopeLocal()
+{
+    stack ascii source = "fn void f(i32 a) { if (a) { stack u32 zzz = 0; } zzz; }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    stack mut DeclarationList decls = new();
+    switch (ParseDeclarations(stream, 0))
+    {
+        case ParseResult<DeclarationList>.Err(var declError):
+            return false;
+        case ParseResult<DeclarationList>.Ok(var value):
+            decls = value;
+    }
+
+    stack mut DeclarationTable table = new();
+    switch (BuildDeclarationTable(source, stream, decls))
+    {
+        case BindResult<DeclarationTable>.Err(var tableError):
+            return false;
+        case BindResult<DeclarationTable>.Ok(var built):
+            table = built;
+    }
+
+    stack mut u32[0 max] fnKeyword = 0;
+    if (!FunctionKeywordIn(stream, fnKeyword))
+    {
+        return false;
+    }
+
+    switch (ParseFunctionSignature(stream, fnKeyword))
+    {
+        case ParseResult<FunctionSignature>.Err(var sigError):
+            return false;
+        case ParseResult<FunctionSignature>.Ok(var signature):
+            switch (ParseFunctionBody(stream, fnKeyword))
+            {
+                case ParseResult<StatementList>.Err(var bodyError):
+                    return false;
+                case ParseResult<StatementList>.Ok(var body):
+                    switch (BuildFunctionScope(signature, body))
+                    {
+                        case BindResult<FunctionScope>.Err(var scopeError):
+                            return false;
+                        case BindResult<FunctionScope>.Ok(var scope):
+                            // Correct lexical scoping: trailing `zzz` is unbound (1
+                            // unresolved) and is NOT resolved to the dead inner local.
+                            return CountUnresolvedReferences(scope, table, source, stream, body) == 1
+                                && !BindResultResolvesZzzAsLocal(scope, table, source, stream, body);
+                    }
+            }
+    }
+}
+
+// ADVERSARIAL VERIFICATION (temporary). Finding's EXACT input: two `x` locals
+// Both `x` locals are directly under one `case A:` section (one section scope per
+// grammar `switchSection: switchLabel+ statement*`), so the parser records 2
+// locals and the same-block rule flags the redefinition.
+[Fact]
+fn bool SwitchSectionLocalRedefinitionIsFlagged()
+{
+    stack ascii source = "fn void f() { switch (e) { case A: stack u32 x = 0; stack u32 x = 1; } }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] fnKeyword = 0;
+    if (!FirstFunctionKeyword(stream, fnKeyword))
+    {
+        return false;
+    }
+
+    switch (ParseFunctionBody(stream, fnKeyword))
+    {
+        case ParseResult<StatementList>.Err(var bodyError):
+            return false;
+        case ParseResult<StatementList>.Ok(var body):
+            return CountLocals(body) == 2
+                && HasDuplicateLocalInBlock(source, stream, body);
+    }
+}
+
+// The else-arm body is sub-parsed (not dropped), so both `x` locals in it are
+// recorded and the same-block redefinition is flagged.
+[Fact]
+fn bool ElseArmLocalRedefinitionIsFlagged()
+{
+    stack ascii source = "fn void f() { if (c) { } else { stack u32 x = 0; stack u32 x = 1; } }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] fnKeyword = 0;
+    if (!FirstFunctionKeyword(stream, fnKeyword))
+    {
+        return false;
+    }
+
+    switch (ParseFunctionBody(stream, fnKeyword))
+    {
+        case ParseResult<StatementList>.Err(var bodyError):
+            return false;
+        case ParseResult<StatementList>.Ok(var body):
+            return CountLocals(body) == 2
+                && HasDuplicateLocalInBlock(source, stream, body);
+    }
+}
+
+[Fact]
+fn bool ResolvesDottedAndRangedSignatureTypes()
+{
+    // `System.Foo` resolves on its rightmost segment `Foo` (declared); the
+    // ranged-int parameter `i32[0 max] n` is a built-in (head 0, skipped). No
+    // unresolved signature types.
+    stack ascii source = "struct Foo { }\nfn System.Foo g(i32[0 max] n) { }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    stack mut DeclarationList decls = new();
+    switch (ParseDeclarations(stream, 0))
+    {
+        case ParseResult<DeclarationList>.Err(var declError):
+            return false;
+        case ParseResult<DeclarationList>.Ok(var value):
+            decls = value;
+    }
+
+    stack mut DeclarationTable table = new();
+    switch (BuildDeclarationTable(source, stream, decls))
+    {
+        case BindResult<DeclarationTable>.Err(var tableError):
+            return false;
+        case BindResult<DeclarationTable>.Ok(var built):
+            table = built;
+    }
+
+    stack mut u32[0 max] fnKeyword = 0;
+    if (!FunctionKeywordIn(stream, fnKeyword))
+    {
+        return false;
+    }
+
+    switch (ParseFunctionSignature(stream, fnKeyword))
+    {
+        case ParseResult<FunctionSignature>.Err(var sigError):
+            return false;
+        case ParseResult<FunctionSignature>.Ok(var signature):
+            return CountUnresolvedSignatureTypes(signature, table, source, stream) == 0;
+    }
+}
+
+[Fact]
+fn bool BareBlockLocalRedefinitionIsFlagged()
+{
+    // A bare `{ ... }` block is its own scope; both `x` locals in it are recorded
+    // and the same-block redefinition is flagged.
+    stack ascii source = "fn void f() { { stack u32 x = 0; stack u32 x = 1; } }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] fnKeyword = 0;
+    if (!FirstFunctionKeyword(stream, fnKeyword))
+    {
+        return false;
+    }
+
+    switch (ParseFunctionBody(stream, fnKeyword))
+    {
+        case ParseResult<StatementList>.Err(var bodyError):
+            return false;
+        case ParseResult<StatementList>.Ok(var body):
+            return CountLocals(body) == 2
+                && HasDuplicateLocalInBlock(source, stream, body);
+    }
+}
+
+[Fact]
+fn bool HeaderBraceDoesNotDeriveBody()
+{
+    // A brace inside the `while` condition (an object initializer) must not be
+    // mistaken for the body: the real body's two `a` locals are recorded and the
+    // redefinition flagged.
+    stack ascii source = "fn void f(u32 p) { while (p == new Point { x: 1 }) { stack u32 a = 0; stack u32 a = 1; } }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] fnKeyword = 0;
+    if (!FirstFunctionKeyword(stream, fnKeyword))
+    {
+        return false;
+    }
+
+    switch (ParseFunctionBody(stream, fnKeyword))
+    {
+        case ParseResult<StatementList>.Err(var bodyError):
+            return false;
+        case ParseResult<StatementList>.Ok(var body):
+            return CountLocals(body) == 2
+                && HasDuplicateLocalInBlock(source, stream, body);
+    }
+}
+
+[Fact]
+fn bool ForBodyLocalsAreNotDropped()
+{
+    // The for-header's `;` separators must not truncate the statement: the for
+    // body's two `x` locals are recorded and the redefinition flagged.
+    stack ascii source = "fn void f(u32 n) { for (stack mut u32 i = 0; i < n; i += 1) { stack u32 x = 0; stack u32 x = 1; } }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] fnKeyword = 0;
+    if (!FirstFunctionKeyword(stream, fnKeyword))
+    {
+        return false;
+    }
+
+    switch (ParseFunctionBody(stream, fnKeyword))
+    {
+        case ParseResult<StatementList>.Err(var bodyError):
+            return false;
+        case ParseResult<StatementList>.Ok(var body):
+            return CountLocals(body) == 2
+                && HasDuplicateLocalInBlock(source, stream, body);
+    }
+}
+
+[Fact]
+fn bool BindsCleanUnitWithNoDiagnostics()
+{
+    // Foo resolves as a parameter type; `a` and `x` resolve; no redefinitions.
+    stack ascii source = "struct Foo { }\nfn void f(Foo a) { stack u32 x = 0; a; x; }\n";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.Count() == 0;
+    }
+}
+
+[Fact]
+fn bool BindCompilationUnitCollectsEveryDiagnosticKind()
+{
+    // Duplicate `Foo` declaration; function `g` with a duplicate parameter `a`, a
+    // duplicate local `x`, an undeclared return type `Bar`, and an unbound
+    // reference `zzz` — one diagnostic of each kind.
+    stack ascii source = "struct Foo { }\nstruct Foo { }\nfn Bar g(i32 a, i32 a) { stack u32 x = 0; stack u32 x = 1; zzz; }\n";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.CountOf(BindDiagnosticCode.DuplicateDeclaration) == 1
+                && diags.CountOf(BindDiagnosticCode.DuplicateParameter) == 1
+                && diags.CountOf(BindDiagnosticCode.DuplicateLocalInBlock) == 1
+                && diags.CountOf(BindDiagnosticCode.UnresolvedType) == 1
+                && diags.CountOf(BindDiagnosticCode.UnresolvedReference) == 1
+                && diags.Count() == 5;
+    }
+}
+
+[Fact]
+fn bool FlagsNonBooleanIdentifierCondition()
+{
+    // `if (n)` where `n` is an i32 is a non-boolean condition (flagged via the
+    // parameter's declared type); `if (b)` (bool) and `if (n < n)` (comparison)
+    // are boolean — so exactly one NonBooleanCondition diagnostic.
+    stack ascii source = "fn void f(i32 n, bool b) { if (n) { } if (b) { } if (n < n) { } }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.CountOf(BindDiagnosticCode.NonBooleanCondition) == 1
+                && diags.Count() == 1;
+    }
+}
+
+[Fact]
+fn bool LocalTypedConditionIsFlagged()
+{
+    // A local `stack u32 count = 0;` gives `count` an integer type, so
+    // `while (count)` is a non-boolean condition.
+    stack ascii source = "fn void f() { stack u32 count = 0; while (count) { } }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.CountOf(BindDiagnosticCode.NonBooleanCondition) == 1;
+    }
+}
+
+[Fact]
+fn bool FlagsNonBooleanLogicalOperand()
+{
+    // `flag && n`: `flag` is bool (ok) but `n` is i32 — a non-boolean operand of
+    // a logical operator. The `&&` result is still bool, so the condition itself
+    // is fine: exactly one NonBooleanOperand and no NonBooleanCondition.
+    stack ascii source = "fn void f(bool flag, i32 n) { if (flag && n) { } }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.CountOf(BindDiagnosticCode.NonBooleanOperand) == 1
+                && diags.CountOf(BindDiagnosticCode.NonBooleanCondition) == 0
+                && diags.Count() == 1;
+    }
+}
+
+[Fact]
+fn bool BooleanLogicalOperandsAreAccepted()
+{
+    // Both operands of `&&` are bool — no diagnostics.
+    stack ascii source = "fn void f(bool a, bool b) { if (a && b) { } }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.Count() == 0;
+    }
+}

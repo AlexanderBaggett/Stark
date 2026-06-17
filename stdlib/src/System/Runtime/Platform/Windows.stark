@@ -3318,6 +3318,13 @@ internal unsafe fn i64[min max] ReadSymlinkInto(
     return -50;
 }
 
+internal fn i32[min max] SetPermissions(ascii path, i32[min max] mode)
+{
+    // Windows has no POSIX permission bits; executability is determined by the
+    // file extension, so adjusting a mode is a successful no-op.
+    return 0;
+}
+
 internal fn i32[min max] CreateSymlink(ascii target, ascii linkPath)
 {
     return -50;
