@@ -10,20 +10,21 @@ module System.Toml
 // flat node table with parent links and decoded text storage, mirroring
 // System.Json's proven shape, plus line/column spans on every node.
 //
-// Staged subset (tracked under doc 21 as temporary implementation work, not
-// the design target): bare/basic/literal keys and strings, multiline basic
+// Supported surface: bare/basic/literal keys and strings, multiline basic
 // (`"""..."""`) and multiline literal (`'''...'''`) strings, dotted keys,
-// table headers, inline tables, arrays, decimal and 0x/0o/0b integers with
-// underscores, decimal floats (fractional and/or exponent, underscores
-// stripped), booleans, comments, and \b \t \n \f \r \" \\ \uXXXX escapes.
+// table headers, arrays of tables (`[[name]]`), inline tables, arrays, decimal
+// and 0x/0o/0b integers with underscores, decimal floats (fractional and/or
+// exponent, underscores stripped), RFC 3339 date-times (offset/local date-time,
+// local date, local time, read back verbatim through DatetimeAt), booleans,
+// comments, and the `\b \t \n \f \r \" \\ \uXXXX \UXXXXXXXX` escapes (with
+// Unicode-scalar-value validation rejecting surrogates and code points beyond
+// U+10FFFF).
 // Float values read through F64At, which defers to the correctly-rounded
 // System.Text.ParseF64Ascii exact window: a significand of at most 2**53 and a
 // base-10 exponent with |exp10| <= 22 convert with a single correctly-rounded
 // IEEE operation; anything outside that window (more significant digits than fit
 // in 2**53, or |exp10| > 22) surfaces as InvalidNumber rather than mis-rounding,
 // so float reads are honest about the supported subset.
-// Arrays of tables, date/times, and \U escapes still report
-// UnsupportedValue/InvalidEscape diagnostics with their span.
 
 public enum TomlKind
 {
@@ -34,6 +35,57 @@ public enum TomlKind
     Float,
     True,
     False,
+    // RFC 3339 offset/local date-time, local date, or local time. The original
+    // token text is stored verbatim and read back through DatetimeAt.
+    Datetime,
+}
+
+// Which RFC 3339 shape a `TomlDateTime` carries. Distinguishes the four TOML
+// date-time forms so callers know which component fields are meaningful.
+public enum TomlDateTimeKind
+{
+    // `YYYY-MM-DDTHH:MM:SS[.fff](Z|+HH:MM|-HH:MM)` — date, time, and zone offset.
+    OffsetDateTime,
+    // `YYYY-MM-DDTHH:MM:SS[.fff]` — date and time, no zone offset.
+    LocalDateTime,
+    // `YYYY-MM-DD` — date only; the time and offset fields are unset (zero).
+    LocalDate,
+    // `HH:MM:SS[.fff]` — time only; the date and offset fields are unset (zero).
+    LocalTime,
+}
+
+// A decoded, calendar-validated RFC 3339 date-time. Produced by
+// `TomlDocument.DateTimeAt`; the verbatim spelling stays available through
+// `DatetimeAt`. Fields not present for the `Kind` are zero (e.g. a `LocalTime`
+// has `Year`/`Month`/`Day` == 0; a `LocalDate` has `Hour`/`Minute`/`Second`
+// == 0). `HasOffset` is true only for `OffsetDateTime`, where `OffsetMinutes`
+// is the signed minutes east of UTC (`Z` decodes as 0).
+public struct TomlDateTime
+{
+    TomlDateTimeKind Kind;
+    u16[0 9999] Year;
+    u8[0 12] Month;
+    u8[0 31] Day;
+    u8[0 23] Hour;
+    u8[0 59] Minute;
+    u8[0 60] Second;
+    u32[0 999999999] Nanosecond;
+    bool HasOffset;
+    i16[-1439 1439] OffsetMinutes;
+
+    TomlDateTime()
+    {
+        self.Kind = TomlDateTimeKind.LocalDate;
+        self.Year = 0;
+        self.Month = 0;
+        self.Day = 0;
+        self.Hour = 0;
+        self.Minute = 0;
+        self.Second = 0;
+        self.Nanosecond = 0;
+        self.HasOffset = false;
+        self.OffsetMinutes = 0;
+    }
 }
 
 public enum TomlError
@@ -56,6 +108,13 @@ public enum TomlError
         Line: u32[0 max], Column: u32[0 max]
     },
     InvalidNumber
+    {
+        Line: u32[0 max], Column: u32[0 max]
+    },
+    // A date-time that is structurally well-formed but carries an out-of-range
+    // calendar field (month, day-of-month including leap years, hour, minute,
+    // second, or zone offset).
+    InvalidDatetime
     {
         Line: u32[0 max], Column: u32[0 max]
     },
@@ -183,6 +242,8 @@ public struct TomlDocument
                 return TomlKind.True;
             case TomlKind.False:
                 return TomlKind.False;
+            case TomlKind.Datetime:
+                return TomlKind.Datetime;
         }
     }
 
@@ -234,6 +295,55 @@ public struct TomlDocument
         {
             return self.ViewRange(textStart, textLength);
         }
+    }
+
+    // The verbatim RFC 3339 token of a Datetime node (e.g. "1979-05-27T07:32:00Z"),
+    // or "" for any other node kind. Datetimes keep their original spelling.
+    public finite ascii DatetimeAt(mut borrow TomlDocument self, u64[0 2 ** 63 - 1] node)
+    {
+        if (node >= self.Nodes.Length)
+        {
+            return "";
+        }
+
+        if (self.Nodes[node].Kind != TomlKind.Datetime)
+        {
+            return "";
+        }
+
+        stack u64[0 2 ** 63 - 1] textStart = self.Nodes[node].TextStart;
+        stack u64[0 2 ** 63 - 1] textLength = self.Nodes[node].TextLength;
+        unsafe
+        {
+            return self.ViewRange(textStart, textLength);
+        }
+    }
+
+    // Decodes a Datetime node's verbatim token into calendar-validated typed
+    // components (`TomlDateTime`). Returns InvalidDatetime for any other node
+    // kind. The original spelling stays available through `DatetimeAt`.
+    public finite TomlResult<TomlDateTime> DateTimeAt(mut borrow TomlDocument self, u64[0 2 ** 63 - 1] node)
+    {
+        if (node >= self.Nodes.Length)
+        {
+            return TomlResult<TomlDateTime>.Err(TomlError.InvalidDatetime
+            {
+                Line: 0, Column: 0
+            });
+        }
+
+        if (self.Nodes[node].Kind != TomlKind.Datetime)
+        {
+            return TomlResult<TomlDateTime>.Err(TomlError.InvalidDatetime
+            {
+                Line: self.LineAt(node), Column: self.ColumnAt(node)
+            });
+        }
+
+        stack u64[0 2 ** 63 - 1] textStart = self.Nodes[node].TextStart;
+        stack u64[0 2 ** 63 - 1] textLength = self.Nodes[node].TextLength;
+        stack i8[min max][] decoded = self.DecodedSlice();
+        return DecodeDatetimeToken(decoded, textStart, textLength, self.LineAt(node), self.ColumnAt(node));
     }
 
     public finite ascii KeyAt(mut borrow TomlDocument self, u64[0 2 ** 63 - 1] node)
@@ -1024,15 +1134,26 @@ internal fn TomlResult<u64[0 2 ** 63 - 1]> ResolveChildTable(
         if (document.KeyRangeEquals(index, keyStart, keyLength))
         {
             stack TomlKind kind = document.KindAt(index);
-            if (kind != TomlKind.Table)
+            if (kind == TomlKind.Table)
             {
-                return TomlResult<u64[0 2 ** 63 - 1]>.Err(TomlError.DuplicateKey
-                {
-                    Line: line, Column: column
-                });
+                return TomlResult<u64[0 2 ** 63 - 1]>.Ok(index);
             }
 
-            return TomlResult<u64[0 2 ** 63 - 1]>.Ok(index);
+            // A dotted path may descend through an array of tables: `[a.b]` or
+            // `a.b = ...` after `[[a]]` targets the most recent `a` element.
+            if (kind == TomlKind.Array)
+            {
+                stack i64[min max] element = LastArrayTableElement(document, index);
+                if (element >= 0)
+                {
+                    return TomlResult<u64[0 2 ** 63 - 1]>.Ok((u64[0 2 ** 63 - 1])element);
+                }
+            }
+
+            return TomlResult<u64[0 2 ** 63 - 1]>.Err(TomlError.DuplicateKey
+            {
+                Line: line, Column: column
+            });
         }
     }
 
@@ -1056,6 +1177,94 @@ internal fn TomlResult<u64[0 2 ** 63 - 1]> ResolveChildTable(
     }
 
     return TomlResult<u64[0 2 ** 63 - 1]>.Ok(created);
+}
+
+// Returns the index of the last table element of an array-of-tables node, or -1
+// when the array carries no table element (e.g. an inline value array).
+internal finite law i64[min max] LastArrayTableElement(
+    borrow TomlDocument document,
+    u64[0 2 ** 63 - 1] arrayNode)
+{
+    stack u64[0 2 ** 63 - 1] parentPlusOne = (u64[0 2 ** 63 - 1])(arrayNode + 1);
+    stack mut i64[min max] found = -1;
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = parentPlusOne; index < document.Nodes.Length; index += 1)
+    {
+        if (document.Nodes[index].ParentPlusOne == parentPlusOne
+            && document.KindAt(index) == TomlKind.Table)
+        {
+            found = (i64[min max])index;
+        }
+    }
+
+    return found;
+}
+
+// Resolves the final segment of a `[[array.of.tables]]` header under `parent`:
+// finds or creates the array-of-tables container, appends a fresh (keyless)
+// table element to it, and returns that element as the new current table.
+internal fn TomlResult<u64[0 2 ** 63 - 1]> ResolveArrayOfTablesEntry(
+    mut borrow TomlDocument document,
+    u64[0 2 ** 63 - 1] parent,
+    u64[0 2 ** 63 - 1] keyStart,
+    u64[0 2 ** 63 - 1] keyLength,
+    u32[0 max] line,
+    u32[0 max] column)
+{
+    stack u64[0 2 ** 63 - 1] parentPlusOne = (u64[0 2 ** 63 - 1])(parent + 1);
+    stack mut i64[min max] arrayNode = -1;
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = parentPlusOne; index < document.Nodes.Length; index += 1)
+    {
+        if (document.Nodes[index].ParentPlusOne != parentPlusOne)
+        {
+            continue;
+        }
+
+        if (!document.Nodes[index].HasKey)
+        {
+            continue;
+        }
+
+        if (document.KeyRangeEquals(index, keyStart, keyLength))
+        {
+            if (document.KindAt(index) != TomlKind.Array)
+            {
+                return TomlResult<u64[0 2 ** 63 - 1]>.Err(TomlError.DuplicateKey
+                {
+                    Line: line, Column: column
+                });
+            }
+
+            arrayNode = (i64[min max])index;
+        }
+    }
+
+    if (arrayNode < 0)
+    {
+        stack u64[0 2 ** 63 - 1] createdArray = document.Nodes.Length;
+        stack TomlStatus arrayAppended = AppendNode(
+            document, TomlKind.Array, parentPlusOne, true, keyStart, keyLength, 0, 0, line, column);
+        switch (arrayAppended)
+        {
+            case TomlStatus.Err(var error):
+                return TomlResult<u64[0 2 ** 63 - 1]>.Err(error);
+            case TomlStatus.Ok:
+        }
+
+        arrayNode = (i64[min max])createdArray;
+    }
+
+    stack u64[0 2 ** 63 - 1] arrayPlusOne = (u64[0 2 ** 63 - 1])((u64[0 2 ** 63 - 1])arrayNode + 1);
+    stack u64[0 2 ** 63 - 1] element = document.Nodes.Length;
+    stack TomlStatus elementAppended = AppendNode(
+        document, TomlKind.Table, arrayPlusOne, false, 0, 0, 0, 0, line, column);
+    switch (elementAppended)
+    {
+        case TomlStatus.Err(var error):
+            return TomlResult<u64[0 2 ** 63 - 1]>.Err(error);
+        case TomlStatus.Ok:
+    }
+
+    return TomlResult<u64[0 2 ** 63 - 1]>.Ok(element);
 }
 
 // Returns true when a member with the decoded key range already exists.
@@ -1093,18 +1302,13 @@ internal fn TomlResult<u64[0 2 ** 63 - 1]> ParseTableHeader(
     borrow i8[min max][] source,
     mut borrow TomlCursor cursor)
 {
-    stack u32[0 max] headerLine = cursor.Line;
-    stack u32[0 max] headerColumn = cursor.Column;
-
-    // Consume '['.
+    // Consume '['. A second '[' opens an array-of-tables header `[[name]]`.
     Advance(source, cursor);
+    stack mut bool isArrayOfTables = false;
     if (cursor.Position < source.Length && source[cursor.Position] == 91)
     {
-        // Arrays of tables are not part of the staged manifest subset yet.
-        return TomlResult<u64[0 2 ** 63 - 1]>.Err(TomlError.UnsupportedValue
-        {
-            Line: headerLine, Column: headerColumn
-        });
+        isArrayOfTables = true;
+        Advance(source, cursor);
     }
 
     stack mut u64[0 2 ** 63 - 1] table = TomlRootNode;
@@ -1121,16 +1325,6 @@ internal fn TomlResult<u64[0 2 ** 63 - 1]> ParseTableHeader(
             case TomlStatus.Ok:
         }
 
-        stack TomlResult<u64[0 2 ** 63 - 1]> resolved =
-            ResolveChildTable(document, table, keyStart, keyLength, cursor.Line, cursor.Column);
-        switch (resolved)
-        {
-            case TomlResult<u64[0 2 ** 63 - 1]>.Err(var error):
-                return TomlResult<u64[0 2 ** 63 - 1]>.Err(error);
-            case TomlResult<u64[0 2 ** 63 - 1]>.Ok(var node):
-                table = node;
-        }
-
         SkipSpaces(source, cursor);
         if (cursor.Position >= source.Length)
         {
@@ -1140,16 +1334,42 @@ internal fn TomlResult<u64[0 2 ** 63 - 1]> ParseTableHeader(
             });
         }
 
+        // An intermediate dotted segment: descend through (or create) the table.
         if (source[cursor.Position] == 46)
         {
             Advance(source, cursor);
+            stack TomlResult<u64[0 2 ** 63 - 1]> descended =
+                ResolveChildTable(document, table, keyStart, keyLength, cursor.Line, cursor.Column);
+            switch (descended)
+            {
+                case TomlResult<u64[0 2 ** 63 - 1]>.Err(var error):
+                    return TomlResult<u64[0 2 ** 63 - 1]>.Err(error);
+                case TomlResult<u64[0 2 ** 63 - 1]>.Ok(var node):
+                    table = node;
+            }
+
             continue;
         }
 
+        // The final segment, terminated by ']' (or ']]' for an array of tables).
         if (source[cursor.Position] == 93)
         {
             Advance(source, cursor);
-            return TomlResult<u64[0 2 ** 63 - 1]>.Ok(table);
+            if (isArrayOfTables)
+            {
+                if (cursor.Position >= source.Length || source[cursor.Position] != 93)
+                {
+                    return TomlResult<u64[0 2 ** 63 - 1]>.Err(TomlError.UnexpectedCharacter
+                    {
+                        Line: cursor.Line, Column: cursor.Column
+                    });
+                }
+
+                Advance(source, cursor);
+                return ResolveArrayOfTablesEntry(document, table, keyStart, keyLength, cursor.Line, cursor.Column);
+            }
+
+            return ResolveChildTable(document, table, keyStart, keyLength, cursor.Line, cursor.Column);
         }
 
         return TomlResult<u64[0 2 ** 63 - 1]>.Err(TomlError.UnexpectedCharacter
@@ -1305,6 +1525,14 @@ internal fn TomlStatus ParseValue(
     if (first == 116 || first == 102)
     {
         return ParseBoolean(document, source, cursor, parentPlusOne, hasKey, keyStart, keyLength);
+    }
+
+    // RFC 3339 date-times are digit-led, so detect them before the numeric
+    // parser: a well-formed date/date-time/time token routes to ParseDatetime,
+    // otherwise the value falls through to the integer/float parser.
+    if (IsDigitByte(first) && MeasureDatetime(source, cursor.Position) > 0)
+    {
+        return ParseDatetime(document, source, cursor, parentPlusOne, hasKey, keyStart, keyLength);
     }
 
     if (first == 43 || first == 45 || IsDigitByte(first))
@@ -1639,7 +1867,13 @@ internal fn TomlStatus ParseEscape(
     if (value == 117)
     {
         Advance(source, cursor);
-        return ParseUnicodeEscape(document, source, cursor, escapeLine, escapeColumn);
+        return ParseUnicodeEscape(document, source, cursor, escapeLine, escapeColumn, 4);
+    }
+
+    if (value == 85)
+    {
+        Advance(source, cursor);
+        return ParseUnicodeEscape(document, source, cursor, escapeLine, escapeColumn, 8);
     }
 
     return TomlStatus.Err(TomlError.InvalidEscape
@@ -1668,16 +1902,20 @@ internal finite law i32[min max] HexDigitValue(i8[min max] value)
     return -1;
 }
 
-// Decodes `\uXXXX` (basic multilingual plane) as UTF-8 bytes.
+// Decodes a `\uXXXX` (4-digit, basic multilingual plane) or `\UXXXXXXXX`
+// (8-digit, full Unicode) escape as UTF-8 bytes. `digitCount` is 4 or 8.
+// Code points must be Unicode scalar values: at most U+10FFFF and not in the
+// surrogate range U+D800..U+DFFF, otherwise the escape is rejected.
 internal fn TomlStatus ParseUnicodeEscape(
     mut borrow TomlDocument document,
     borrow i8[min max][] source,
     mut borrow TomlCursor cursor,
     u32[0 max] escapeLine,
-    u32[0 max] escapeColumn)
+    u32[0 max] escapeColumn,
+    u8[0 8] digitCount)
 {
     stack mut u64[0 2 ** 63 - 1] codePoint = 0;
-    for willexit (stack mut u8[0 4] count = 0; count < 4; count += 1)
+    for willexit (stack mut u8[0 8] count = 0; count < digitCount; count += 1)
     {
         if (cursor.Position >= source.Length)
         {
@@ -1700,6 +1938,16 @@ internal fn TomlStatus ParseUnicodeEscape(
         Advance(source, cursor);
     }
 
+    // Reject non-scalar code points (UTF-16 surrogates and beyond U+10FFFF).
+    if (codePoint > 1114111
+        || (codePoint >= 55296 && codePoint <= 57343))
+    {
+        return TomlStatus.Err(TomlError.InvalidEscape
+        {
+            Line: escapeLine, Column: escapeColumn
+        });
+    }
+
     if (codePoint < 128)
     {
         return AppendDecodedByte(document, (i8[min max])codePoint);
@@ -1718,16 +1966,46 @@ internal fn TomlStatus ParseUnicodeEscape(
         return AppendDecodedByte(document, (i8[min max])(128 +% (codePoint % 64)));
     }
 
-    stack TomlStatus first = AppendDecodedByte(document, (i8[min max])(224 +% (codePoint / 4096)));
-    switch (first)
+    if (codePoint < 65536)
+    {
+        stack TomlStatus first = AppendDecodedByte(document, (i8[min max])(224 +% (codePoint / 4096)));
+        switch (first)
+        {
+            case TomlStatus.Err(var error):
+                return TomlStatus.Err(error);
+            case TomlStatus.Ok:
+        }
+
+        stack TomlStatus second = AppendDecodedByte(document, (i8[min max])(128 +% ((codePoint / 64) % 64)));
+        switch (second)
+        {
+            case TomlStatus.Err(var error):
+                return TomlStatus.Err(error);
+            case TomlStatus.Ok:
+        }
+
+        return AppendDecodedByte(document, (i8[min max])(128 +% (codePoint % 64)));
+    }
+
+    // Four-byte UTF-8 for supplementary-plane code points (U+10000..U+10FFFF).
+    stack TomlStatus lead = AppendDecodedByte(document, (i8[min max])(240 +% (codePoint / 262144)));
+    switch (lead)
     {
         case TomlStatus.Err(var error):
             return TomlStatus.Err(error);
         case TomlStatus.Ok:
     }
 
-    stack TomlStatus second = AppendDecodedByte(document, (i8[min max])(128 +% ((codePoint / 64) % 64)));
-    switch (second)
+    stack TomlStatus continuation1 = AppendDecodedByte(document, (i8[min max])(128 +% ((codePoint / 4096) % 64)));
+    switch (continuation1)
+    {
+        case TomlStatus.Err(var error):
+            return TomlStatus.Err(error);
+        case TomlStatus.Ok:
+    }
+
+    stack TomlStatus continuation2 = AppendDecodedByte(document, (i8[min max])(128 +% ((codePoint / 64) % 64)));
+    switch (continuation2)
     {
         case TomlStatus.Err(var error):
             return TomlStatus.Err(error);
@@ -2162,6 +2440,484 @@ internal fn void AdvanceBy(
 
 // Parses a decimal integer with optional sign and underscore separators into
 // a normalized token (sign and digits only) in DecodedText.
+// True when `index` is in range and holds an ASCII digit.
+internal finite law bool IsDigitAt(borrow i8[min max][] source, u64[0 2 ** 63 - 1] index)
+{
+    return index < source.Length && IsDigitByte(source[index]);
+}
+
+// True when `index` is in range and holds `expected`.
+internal finite law bool ByteEquals(borrow i8[min max][] source, u64[0 2 ** 63 - 1] index, i8[min max] expected)
+{
+    return index < source.Length && source[index] == expected;
+}
+
+// Returns the end offset (one past the last byte) of a `YYYY-MM-DD` full date at
+// `start`, or -1 when the bytes are not a full date. Validates structure
+// (separators and digit positions), not calendar ranges.
+internal finite law i64[min max] MeasureDate(borrow i8[min max][] source, u64[0 2 ** 63 - 1] start)
+{
+    if (IsDigitAt(source, start)
+        && IsDigitAt(source, (u64[0 2 ** 63 - 1])(start + 1))
+        && IsDigitAt(source, (u64[0 2 ** 63 - 1])(start + 2))
+        && IsDigitAt(source, (u64[0 2 ** 63 - 1])(start + 3))
+        && ByteEquals(source, (u64[0 2 ** 63 - 1])(start + 4), 45)
+        && IsDigitAt(source, (u64[0 2 ** 63 - 1])(start + 5))
+        && IsDigitAt(source, (u64[0 2 ** 63 - 1])(start + 6))
+        && ByteEquals(source, (u64[0 2 ** 63 - 1])(start + 7), 45)
+        && IsDigitAt(source, (u64[0 2 ** 63 - 1])(start + 8))
+        && IsDigitAt(source, (u64[0 2 ** 63 - 1])(start + 9)))
+    {
+        return (i64[min max])(start + 10);
+    }
+
+    return -1;
+}
+
+// Returns the end offset of a `HH:MM:SS` partial time (with an optional
+// `.` fractional-seconds run) at `start`, or -1 when it is not a partial time.
+internal finite law i64[min max] MeasureTime(borrow i8[min max][] source, u64[0 2 ** 63 - 1] start)
+{
+    if (!IsDigitAt(source, start)
+        || !IsDigitAt(source, (u64[0 2 ** 63 - 1])(start + 1))
+        || !ByteEquals(source, (u64[0 2 ** 63 - 1])(start + 2), 58)
+        || !IsDigitAt(source, (u64[0 2 ** 63 - 1])(start + 3))
+        || !IsDigitAt(source, (u64[0 2 ** 63 - 1])(start + 4))
+        || !ByteEquals(source, (u64[0 2 ** 63 - 1])(start + 5), 58)
+        || !IsDigitAt(source, (u64[0 2 ** 63 - 1])(start + 6))
+        || !IsDigitAt(source, (u64[0 2 ** 63 - 1])(start + 7)))
+    {
+        return -1;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] pos = (u64[0 2 ** 63 - 1])(start + 8);
+    if (ByteEquals(source, pos, 46))
+    {
+        pos = (u64[0 2 ** 63 - 1])(pos + 1);
+        if (!IsDigitAt(source, pos))
+        {
+            return -1;
+        }
+
+        while willexit (IsDigitAt(source, pos))
+        {
+            pos = (u64[0 2 ** 63 - 1])(pos + 1);
+        }
+    }
+
+    return (i64[min max])pos;
+}
+
+// Returns the end offset of a time zone offset (`Z`, `z`, or `(+|-)HH:MM`) at
+// `start`. When no offset byte is present, returns `start` (a zero-length, valid
+// "no offset"); -1 marks a malformed numeric offset.
+internal finite law i64[min max] MeasureOffset(borrow i8[min max][] source, u64[0 2 ** 63 - 1] start)
+{
+    if (start >= source.Length)
+    {
+        return (i64[min max])start;
+    }
+
+    stack i8[min max] marker = source[start];
+    if (marker == 90 || marker == 122)
+    {
+        return (i64[min max])(start + 1);
+    }
+
+    if (marker == 43 || marker == 45)
+    {
+        if (IsDigitAt(source, (u64[0 2 ** 63 - 1])(start + 1))
+            && IsDigitAt(source, (u64[0 2 ** 63 - 1])(start + 2))
+            && ByteEquals(source, (u64[0 2 ** 63 - 1])(start + 3), 58)
+            && IsDigitAt(source, (u64[0 2 ** 63 - 1])(start + 4))
+            && IsDigitAt(source, (u64[0 2 ** 63 - 1])(start + 5)))
+        {
+            return (i64[min max])(start + 6);
+        }
+
+        return -1;
+    }
+
+    return (i64[min max])start;
+}
+
+// Returns the byte length of a complete RFC 3339 date-time token at `start`
+// (local time, local date, local date-time, or offset date-time), or -1 when
+// the bytes are not a valid date-time. A single space may separate the date and
+// time only when a time digit follows it.
+internal finite law i64[min max] MeasureDatetime(borrow i8[min max][] source, u64[0 2 ** 63 - 1] start)
+{
+    // Time-led `HH:MM:SS` is a local time.
+    if (IsDigitAt(source, start)
+        && IsDigitAt(source, (u64[0 2 ** 63 - 1])(start + 1))
+        && ByteEquals(source, (u64[0 2 ** 63 - 1])(start + 2), 58))
+    {
+        stack i64[min max] timeEnd = MeasureTime(source, start);
+        if (timeEnd < 0)
+        {
+            return -1;
+        }
+
+        return (i64[min max])(timeEnd - (i64[min max])start);
+    }
+
+    // Date-led: a full date, optionally followed by a time and offset.
+    stack i64[min max] dateEnd = MeasureDate(source, start);
+    if (dateEnd < 0)
+    {
+        return -1;
+    }
+
+    stack u64[0 2 ** 63 - 1] afterDate = (u64[0 2 ** 63 - 1])dateEnd;
+    if (afterDate >= source.Length)
+    {
+        return (i64[min max])((i64[min max])afterDate - (i64[min max])start);
+    }
+
+    stack i8[min max] separator = source[afterDate];
+    stack mut bool hasTime = separator == 84 || separator == 116;
+    if (separator == 32 && IsDigitAt(source, (u64[0 2 ** 63 - 1])(afterDate + 1)))
+    {
+        hasTime = true;
+    }
+
+    if (!hasTime)
+    {
+        return (i64[min max])((i64[min max])afterDate - (i64[min max])start);
+    }
+
+    stack i64[min max] timeEnd = MeasureTime(source, (u64[0 2 ** 63 - 1])(afterDate + 1));
+    if (timeEnd < 0)
+    {
+        return -1;
+    }
+
+    stack i64[min max] offsetEnd = MeasureOffset(source, (u64[0 2 ** 63 - 1])timeEnd);
+    if (offsetEnd < 0)
+    {
+        return -1;
+    }
+
+    return (i64[min max])(offsetEnd - (i64[min max])start);
+}
+
+// Reads the byte at `index` widened to i32, or -1 when `index` is out of range.
+internal finite law i32[min max] DatetimeByteAt(borrow i8[min max][] source, u64[0 2 ** 63 - 1] index)
+{
+    if (index >= source.Length)
+    {
+        return -1;
+    }
+
+    return (i32[min max])source[index];
+}
+
+// The decimal value (0-9) of the digit byte at `index`, or -1 when the byte is
+// missing or not a digit.
+internal finite law i8[-1 9] DatetimeDigitAt(borrow i8[min max][] source, u64[0 2 ** 63 - 1] index)
+{
+    stack i32[min max] value = DatetimeByteAt(source, index);
+    if (value < 48 || value > 57)
+    {
+        return -1;
+    }
+
+    return (i8[-1 9])(value - 48);
+}
+
+// The two-digit decimal value at `index`, or -1 when either byte is not a digit.
+internal finite law i8[-1 99] DatetimeTwoDigit(borrow i8[min max][] source, u64[0 2 ** 63 - 1] index)
+{
+    stack i8[-1 9] high = DatetimeDigitAt(source, index);
+    stack i8[-1 9] low = DatetimeDigitAt(source, (u64[0 2 ** 63 - 1])(index + 1));
+    if (high < 0 || low < 0)
+    {
+        return -1;
+    }
+
+    return (i8[-1 99])(high * 10 + low);
+}
+
+// The four-digit decimal value at `index`, or -1 when any byte is not a digit.
+internal finite law i16[-1 9999] DatetimeFourDigit(borrow i8[min max][] source, u64[0 2 ** 63 - 1] index)
+{
+    stack i8[-1 99] high = DatetimeTwoDigit(source, index);
+    stack i8[-1 99] low = DatetimeTwoDigit(source, (u64[0 2 ** 63 - 1])(index + 2));
+    if (high < 0 || low < 0)
+    {
+        return -1;
+    }
+
+    // Widen before `* 100`: the i8 operand range would overflow on the multiply.
+    return (i16[-1 9999])((i32[min max])high * 100 + (i32[min max])low);
+}
+
+// Proleptic Gregorian leap-year test used for day-of-month validation.
+internal finite law bool DatetimeIsLeapYear(i32[min max] year)
+{
+    if (year % 4 != 0)
+    {
+        return false;
+    }
+
+    if (year % 100 != 0)
+    {
+        return true;
+    }
+
+    return year % 400 == 0;
+}
+
+// Days in `month` (1-12) of `year`, or 0 for an out-of-range month.
+internal finite law u8[0 31] DatetimeDaysInMonth(i32[min max] year, i32[min max] month)
+{
+    switch (month)
+    {
+        case 1:
+            return 31;
+        case 2:
+            if (DatetimeIsLeapYear(year))
+            {
+                return 29;
+            }
+
+            return 28;
+        case 3:
+            return 31;
+        case 4:
+            return 30;
+        case 5:
+            return 31;
+        case 6:
+            return 30;
+        case 7:
+            return 31;
+        case 8:
+            return 31;
+        case 9:
+            return 30;
+        case 10:
+            return 31;
+        case 11:
+            return 30;
+        case 12:
+            return 31;
+        default:
+            return 0;
+    }
+}
+
+// Decodes the structurally well-formed RFC 3339 token in
+// `source[start, start + length)` into a calendar-validated `TomlDateTime`.
+// Enforces calendar ranges (month, day-of-month with leap years, hour, minute,
+// second, and zone offset) and rejects out-of-range fields as InvalidDatetime
+// at `line`/`column`. Shared by the parser (to reject invalid date-times) and
+// `DateTimeAt` (to project the stored token into typed components).
+internal finite law TomlResult<TomlDateTime> DecodeDatetimeToken(
+    borrow i8[min max][] source,
+    u64[0 2 ** 63 - 1] start,
+    u64[0 2 ** 63 - 1] length,
+    u32[0 max] line,
+    u32[0 max] column)
+{
+    stack mut TomlDateTime result = new();
+    stack u64[0 2 ** 63 - 1] end = (u64[0 2 ** 63 - 1])(start + length);
+    stack mut u64[0 2 ** 63 - 1] timeOffset = start;
+    stack mut bool dateLed = false;
+
+    // Time-led `HH:MM:SS` (a ':' in the third byte) is a local time; otherwise
+    // the token is date-led.
+    if (length >= 3 && DatetimeByteAt(source, (u64[0 2 ** 63 - 1])(start + 2)) == 58)
+    {
+        result.Kind = TomlDateTimeKind.LocalTime;
+        timeOffset = start;
+    }
+    else
+    {
+        dateLed = true;
+        stack i16[-1 9999] year = DatetimeFourDigit(source, start);
+        stack i8[-1 99] month = DatetimeTwoDigit(source, (u64[0 2 ** 63 - 1])(start + 5));
+        stack i8[-1 99] day = DatetimeTwoDigit(source, (u64[0 2 ** 63 - 1])(start + 8));
+        if (year < 0 || month < 1 || month > 12 || day < 1 || day > 31)
+        {
+            return TomlResult<TomlDateTime>.Err(TomlError.InvalidDatetime
+            {
+                Line: line, Column: column
+            });
+        }
+
+        if (day > DatetimeDaysInMonth((i32[min max])year, (i32[min max])month))
+        {
+            return TomlResult<TomlDateTime>.Err(TomlError.InvalidDatetime
+            {
+                Line: line, Column: column
+            });
+        }
+
+        result.Year = (u16[0 9999])year;
+        result.Month = (u8[0 12])month;
+        result.Day = (u8[0 31])day;
+
+        if (length == 10)
+        {
+            result.Kind = TomlDateTimeKind.LocalDate;
+            return TomlResult<TomlDateTime>.Ok(result);
+        }
+
+        // A separator (T/t/space) sits at offset 10; the time starts at 11.
+        result.Kind = TomlDateTimeKind.LocalDateTime;
+        timeOffset = (u64[0 2 ** 63 - 1])(start + 11);
+    }
+
+    stack i8[-1 99] hour = DatetimeTwoDigit(source, timeOffset);
+    stack i8[-1 99] minute = DatetimeTwoDigit(source, (u64[0 2 ** 63 - 1])(timeOffset + 3));
+    stack i8[-1 99] second = DatetimeTwoDigit(source, (u64[0 2 ** 63 - 1])(timeOffset + 6));
+    if (hour < 0 || hour > 23 || minute < 0 || minute > 59 || second < 0 || second > 60)
+    {
+        return TomlResult<TomlDateTime>.Err(TomlError.InvalidDatetime
+        {
+            Line: line, Column: column
+        });
+    }
+
+    result.Hour = (u8[0 23])hour;
+    result.Minute = (u8[0 59])minute;
+    result.Second = (u8[0 60])second;
+
+    // Optional fractional seconds. Accumulate the first nine digits as
+    // nanoseconds (modular u64[0 max] arithmetic; values never exceed 1e9);
+    // any further precision is consumed and truncated per the TOML spec.
+    stack mut u64[0 2 ** 63 - 1] cursor = (u64[0 2 ** 63 - 1])(timeOffset + 8);
+    if (DatetimeByteAt(source, cursor) == 46)
+    {
+        cursor = (u64[0 2 ** 63 - 1])(cursor + 1);
+        stack mut u64[0 max] nanos = 0;
+        stack mut u64[0 max] scale = 100000000;
+        while willexit (cursor < end)
+        {
+            stack i8[-1 9] digit = DatetimeDigitAt(source, cursor);
+            if (digit < 0)
+            {
+                break;
+            }
+
+            if (scale > 0)
+            {
+                nanos = nanos + (u64[0 max])digit * scale;
+                scale = scale / 10;
+            }
+
+            cursor = (u64[0 2 ** 63 - 1])(cursor + 1);
+        }
+
+        if (nanos > 999999999)
+        {
+            nanos = 999999999;
+        }
+
+        result.Nanosecond = (u32[0 999999999])nanos;
+    }
+
+    // Local time and a no-offset local date-time carry no zone offset.
+    if (!dateLed || cursor >= end)
+    {
+        return TomlResult<TomlDateTime>.Ok(result);
+    }
+
+    stack i32[min max] marker = DatetimeByteAt(source, cursor);
+    if (marker == 90 || marker == 122)
+    {
+        result.Kind = TomlDateTimeKind.OffsetDateTime;
+        result.HasOffset = true;
+        result.OffsetMinutes = 0;
+        return TomlResult<TomlDateTime>.Ok(result);
+    }
+
+    if (marker == 43 || marker == 45)
+    {
+        stack i8[-1 99] offsetHour = DatetimeTwoDigit(source, (u64[0 2 ** 63 - 1])(cursor + 1));
+        stack i8[-1 99] offsetMinute = DatetimeTwoDigit(source, (u64[0 2 ** 63 - 1])(cursor + 4));
+        if (offsetHour < 0 || offsetHour > 23 || offsetMinute < 0 || offsetMinute > 59)
+        {
+            return TomlResult<TomlDateTime>.Err(TomlError.InvalidDatetime
+            {
+                Line: line, Column: column
+            });
+        }
+
+        // Widen before `* 60`: the i8 operand range would overflow on the multiply.
+        stack u16[0 1439] total = (u16[0 1439])((i32[min max])offsetHour * 60 + (i32[min max])offsetMinute);
+        result.Kind = TomlDateTimeKind.OffsetDateTime;
+        result.HasOffset = true;
+        if (marker == 45)
+        {
+            result.OffsetMinutes = (i16[-1439 1439])(0 - (i32[min max])total);
+        }
+        else
+        {
+            result.OffsetMinutes = (i16[-1439 1439])total;
+        }
+
+        return TomlResult<TomlDateTime>.Ok(result);
+    }
+
+    return TomlResult<TomlDateTime>.Err(TomlError.InvalidDatetime
+    {
+        Line: line, Column: column
+    });
+}
+
+// Parses an RFC 3339 date-time value, storing its original token bytes verbatim
+// in a Datetime node read back through DatetimeAt.
+internal fn TomlStatus ParseDatetime(
+    mut borrow TomlDocument document,
+    borrow i8[min max][] source,
+    mut borrow TomlCursor cursor,
+    u64[0 2 ** 63 - 1] parentPlusOne,
+    bool hasKey,
+    u64[0 2 ** 63 - 1] keyStart,
+    u64[0 2 ** 63 - 1] keyLength)
+{
+    stack u32[0 max] valueLine = cursor.Line;
+    stack u32[0 max] valueColumn = cursor.Column;
+    stack u64[0 2 ** 63 - 1] textStart = document.DecodedText.Length;
+
+    stack i64[min max] measured = MeasureDatetime(source, cursor.Position);
+    if (measured <= 0)
+    {
+        return TomlStatus.Err(TomlError.InvalidNumber
+        {
+            Line: valueLine, Column: valueColumn
+        });
+    }
+
+    stack u64[0 2 ** 63 - 1] length = (u64[0 2 ** 63 - 1])measured;
+
+    // The token is structurally valid; reject out-of-range calendar fields
+    // (e.g. month 13, day 30 of February, hour 24) before storing it.
+    switch (DecodeDatetimeToken(source, cursor.Position, length, valueLine, valueColumn))
+    {
+        case TomlResult<TomlDateTime>.Err(var error):
+            return TomlStatus.Err(error);
+        case TomlResult<TomlDateTime>.Ok(_):
+    }
+
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < length; index += 1)
+    {
+        stack TomlStatus appended = AppendDecodedByte(document, source[cursor.Position]);
+        switch (appended)
+        {
+            case TomlStatus.Err(var error):
+                return TomlStatus.Err(error);
+            case TomlStatus.Ok:
+        }
+
+        Advance(source, cursor);
+    }
+
+    return AppendNode(document, TomlKind.Datetime, parentPlusOne, hasKey, keyStart, keyLength, textStart, length, valueLine, valueColumn);
+}
+
 internal fn TomlStatus ParseInteger(
     mut borrow TomlDocument document,
     borrow i8[min max][] source,
@@ -3289,6 +4045,19 @@ internal fn TomlStatus WriteValue(
             }
 
             return writer.AppendText(floatText.View());
+        case TomlKind.Datetime:
+            stack u64[0 2 ** 63 - 1] datetimeStart = nodes[node].TextStart;
+            stack u64[0 2 ** 63 - 1] datetimeLength = nodes[node].TextLength;
+            stack mut OwnedAscii datetimeText = new();
+            stack TomlStatus datetimeBuilt = AppendRangeBytes(document, datetimeStart, datetimeLength, datetimeText);
+            switch (datetimeBuilt)
+            {
+                case TomlStatus.Err(var datetimeError):
+                    return TomlStatus.Err(datetimeError);
+                case TomlStatus.Ok:
+            }
+
+            return writer.AppendText(datetimeText.View());
         case TomlKind.True:
             return writer.AppendText("true");
         case TomlKind.False:

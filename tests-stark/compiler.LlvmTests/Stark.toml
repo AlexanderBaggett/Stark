@@ -1,0 +1,17 @@
+[project]
+name = "compiler-llvm-tests"
+version = "0.1.0"
+kind = "test"
+
+[test]
+root = "LlvmEmissionTests.stark"
+output = "compiler-llvm-tests"
+
+[dependencies]
+stdlib = { path = "../../stdlib" }
+
+[profiles.dev]
+opt = 0
+
+[profiles.release]
+opt = 3

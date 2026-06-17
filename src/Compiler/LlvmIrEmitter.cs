@@ -311,6 +311,44 @@ internal sealed class LlvmIrEmitter
             if (_ownedFunctionDefinitionFilter is not null
                 && !_ownedFunctionDefinitionFilter.Contains(resolvedName))
             {
+                // This function is outside this module's owned (hot-path) emission
+                // surface, so we would normally emit only a declaration and rely on the
+                // linked dependency to provide the body. But if the dependency pruned
+                // this symbol from its own emission (e.g. a `public` helper that nothing
+                // in the dependency's reachable graph references, such as a
+                // `System.Testing` text forwarder used only by test code), that bare
+                // declaration links to nothing. When the body was lowered into this
+                // module, emit it as a `linkonce_odr` (weak, deduplicated) definition
+                // instead: a real strong definition in any linked object still wins, but
+                // otherwise the weak copy keeps cross-module calls resolvable. Weak
+                // definitions that get fully inlined are discarded, so this does not
+                // bloat the common case.
+                if (function.HasBody
+                    && ssaFunction is { SupportsDirectCodeGeneration: true })
+                {
+                    try
+                    {
+                        EmitFunctionDefinition(
+                            builder,
+                            internalize: false,
+                            availableExternally: false,
+                            signature,
+                            abiSignature,
+                            effects,
+                            memoryEffects,
+                            ssaFunction,
+                            parameterEffects,
+                            resolveCallAbi,
+                            specializationLinkage: MonomorphizationLinkageKind.WeakOdrPreserved);
+                        builder.AppendLine();
+                        continue;
+                    }
+                    catch (UnsupportedBodyEmissionException)
+                    {
+                        // Fall through to the pruned-declaration path below.
+                    }
+                }
+
                 builder.AppendLine($"; source dependency body pruned: {resolvedName}");
                 builder.AppendLine(BuildDeclarationSignature(false, signature, abiSignature, effects, memoryEffects, parameterEffects));
                 builder.AppendLine();

@@ -1,5 +1,6 @@
 import System.Json
 import System.Process
+import System.Testing
 import System.Text
 module System.Testing.HostCompiler
 
@@ -43,6 +44,14 @@ public struct HostCompileOutcome
     internal bool HasDiagnostics;
     internal u64[0 2 ** 63 - 1] ArtifactTextsNode;
     internal bool HasArtifactTexts;
+    internal u64[0 2 ** 63 - 1] LoadedModulesNode;
+    internal bool HasLoadedModules;
+    internal u64[0 2 ** 63 - 1] ExecutionsNode;
+    internal bool HasExecutions;
+    internal u64[0 2 ** 63 - 1] ArtifactFilesNode;
+    internal bool HasArtifactFiles;
+    internal u64[0 2 ** 63 - 1] RootModuleNode;
+    internal bool HasRootModule;
     bool Succeeded;
     i64[min max] ErrorCount;
     bool HasProtocolError;
@@ -55,6 +64,14 @@ public struct HostCompileOutcome
         self.HasDiagnostics = false;
         self.ArtifactTextsNode = 0;
         self.HasArtifactTexts = false;
+        self.LoadedModulesNode = 0;
+        self.HasLoadedModules = false;
+        self.ExecutionsNode = 0;
+        self.HasExecutions = false;
+        self.ArtifactFilesNode = 0;
+        self.HasArtifactFiles = false;
+        self.RootModuleNode = 0;
+        self.HasRootModule = false;
         self.Succeeded = false;
         self.ErrorCount = 0;
         self.HasProtocolError = false;
@@ -103,6 +120,93 @@ public struct HostCompileOutcome
     public unsafe fn ascii DiagnosticStageAt(mut borrow HostCompileOutcome self, u64[0 2 ** 63 - 1] index)
     {
         return self.DiagnosticTextField(index, "stage");
+    }
+
+    // Materializes the location of diagnostic `index` as a
+    // System.Testing.DiagnosticLocation. HasValue reflects whether a `location`
+    // object was present; HasEndValue reflects whether it carried both endLine
+    // and endColumn. A null/absent filePath becomes empty ascii. The returned
+    // FilePath view borrows this outcome's document buffer.
+    public unsafe fn DiagnosticLocation DiagnosticLocationAt(
+        mut borrow HostCompileOutcome self,
+        u64[0 2 ** 63 - 1] index)
+    {
+        stack mut DiagnosticLocation location = new DiagnosticLocation()
+        {
+            HasValue = false,
+            FilePath = "",
+            Line = 0,
+            Column = 0,
+            HasEndValue = false,
+            EndLine = 0,
+            EndColumn = 0
+        };
+
+        if (!self.HasDiagnostics)
+        {
+            return location;
+        }
+
+        stack mut u64[0 2 ** 63 - 1] entry = 0;
+        if (!self.Document.TryChildAt(self.DiagnosticsNode, index, entry))
+        {
+            return location;
+        }
+
+        stack mut u64[0 2 ** 63 - 1] locationNode = 0;
+        if (!self.Document.TryFindMemberOfKind(entry, "location", JsonKind.Object, locationNode))
+        {
+            return location;
+        }
+
+        location.HasValue = true;
+        location.Line = self.LocationNumberField(locationNode, "line");
+        location.Column = self.LocationNumberField(locationNode, "column");
+
+        stack mut u64[0 2 ** 63 - 1] filePathNode = 0;
+        if (self.Document.TryFindMemberOfKind(locationNode, "filePath", JsonKind.Text, filePathNode))
+        {
+            location.FilePath = self.Document.TextAt(filePathNode);
+        }
+
+        stack mut u64[0 2 ** 63 - 1] endLineNode = 0;
+        stack mut u64[0 2 ** 63 - 1] endColumnNode = 0;
+        if (self.Document.TryFindMemberOfKind(locationNode, "endLine", JsonKind.Number, endLineNode)
+            && self.Document.TryFindMemberOfKind(locationNode, "endColumn", JsonKind.Number, endColumnNode))
+        {
+            location.HasEndValue = true;
+            location.EndLine = self.LocationNumberField(locationNode, "endLine");
+            location.EndColumn = self.LocationNumberField(locationNode, "endColumn");
+        }
+
+        return location;
+    }
+
+    // Reads a non-negative integer member of a location object, or 0 when the
+    // member is absent, the wrong kind, or negative.
+    internal unsafe fn u64[0 2 ** 63 - 1] LocationNumberField(
+        mut borrow HostCompileOutcome self,
+        u64[0 2 ** 63 - 1] locationNode,
+        ascii field)
+    {
+        stack mut u64[0 2 ** 63 - 1] valueNode = 0;
+        if (!self.Document.TryFindMemberOfKind(locationNode, field, JsonKind.Number, valueNode))
+        {
+            return 0;
+        }
+
+        switch (self.Document.I64At(valueNode))
+        {
+            case JsonResult<i64[min max]>.Err(var error):
+                return 0;
+            case JsonResult<i64[min max]>.Ok(var value):
+                if (value < 0)
+                {
+                    return 0;
+                }
+
+                return (u64[0 2 ** 63 - 1])value;
+        }
     }
 
     // True when any reported diagnostic carries the exact code.
@@ -161,6 +265,123 @@ public struct HostCompileOutcome
         return "";
     }
 
+    // TEST-07: the root module's declared name (the `module X` of the compiled
+    // source), or empty ascii when the response carried no `rootModuleName`
+    // (for example a failed parse). The returned view borrows this outcome's
+    // document buffer.
+    public unsafe fn ascii RootModuleName(mut borrow HostCompileOutcome self)
+    {
+        if (!self.HasRootModule)
+        {
+            return "";
+        }
+
+        return self.Document.TextAt(self.RootModuleNode);
+    }
+
+    // TEST-07: number of modules the host loaded for this compile (root plus
+    // every resolved import). Zero when the response carried no `loadedModules`.
+    public finite law u64[0 2 ** 63 - 1] LoadedModuleCount(borrow HostCompileOutcome self)
+    {
+        if (!self.HasLoadedModules)
+        {
+            return 0;
+        }
+
+        return self.Document.ChildCountAt(self.LoadedModulesNode);
+    }
+
+    // TEST-07: the loaded module name at `index` (sorted ordinal by the host),
+    // or empty ascii when out of range. The returned view borrows this
+    // outcome's document buffer.
+    public unsafe fn ascii LoadedModuleNameAt(mut borrow HostCompileOutcome self, u64[0 2 ** 63 - 1] index)
+    {
+        if (!self.HasLoadedModules)
+        {
+            return "";
+        }
+
+        stack mut u64[0 2 ** 63 - 1] entry = 0;
+        if (!self.Document.TryChildAt(self.LoadedModulesNode, index, entry))
+        {
+            return "";
+        }
+
+        return self.Document.TextAt(entry);
+    }
+
+    // TEST-07: true when the pass pipeline ran a pass whose id equals `passId`
+    // (the `executions[].passId` tokens, for example "type-check"). Always
+    // false when executions were not materialized in the response.
+    public unsafe fn bool PassExecuted(mut borrow HostCompileOutcome self, ascii passId)
+    {
+        if (!self.HasExecutions)
+        {
+            return false;
+        }
+
+        stack u64[0 2 ** 63 - 1] count = self.Document.ChildCountAt(self.ExecutionsNode);
+        for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+        {
+            stack mut u64[0 2 ** 63 - 1] entry = 0;
+            if (!self.Document.TryChildAt(self.ExecutionsNode, index, entry))
+            {
+                continue;
+            }
+
+            stack mut u64[0 2 ** 63 - 1] passNode = 0;
+            if (!self.Document.TryFindMember(entry, "passId", passNode))
+            {
+                continue;
+            }
+
+            if (AsciiEquals(self.Document.TextAt(passNode), passId))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    // TEST-06e: number of artifact files the host wrote for this compile
+    // (driven by request `artifactOutputDirectory`). Zero when the response
+    // carried no `artifactFiles`.
+    public finite law u64[0 2 ** 63 - 1] ArtifactFileCount(borrow HostCompileOutcome self)
+    {
+        if (!self.HasArtifactFiles)
+        {
+            return 0;
+        }
+
+        return self.Document.ChildCountAt(self.ArtifactFilesNode);
+    }
+
+    // TEST-06e: absolute path of the artifact file at `index`, or empty ascii
+    // when out of range or absent. The returned view borrows this outcome's
+    // document buffer; copy it before the outcome drops.
+    public unsafe fn ascii ArtifactFilePathAt(mut borrow HostCompileOutcome self, u64[0 2 ** 63 - 1] index)
+    {
+        if (!self.HasArtifactFiles)
+        {
+            return "";
+        }
+
+        stack mut u64[0 2 ** 63 - 1] entry = 0;
+        if (!self.Document.TryChildAt(self.ArtifactFilesNode, index, entry))
+        {
+            return "";
+        }
+
+        stack mut u64[0 2 ** 63 - 1] pathNode = 0;
+        if (!self.Document.TryFindMember(entry, "path", pathNode))
+        {
+            return "";
+        }
+
+        return self.Document.TextAt(pathNode);
+    }
+
     internal unsafe fn ascii DiagnosticTextField(
         mut borrow HostCompileOutcome self,
         u64[0 2 ** 63 - 1] index,
@@ -184,6 +405,167 @@ public struct HostCompileOutcome
         }
 
         return self.Document.TextAt(valueNode);
+    }
+}
+
+// TEST-06d: result of a batched compile — one server round-trip carrying
+// several sources, owning the parsed `responses[]` document. Per-index
+// accessors borrow the owned buffer, so the batch must outlive any view (the
+// ascii returned by FirstDiagnosticCodeAt) it produces.
+public struct HostBatchOutcome
+{
+    internal JsonDocument Document;
+    internal u64[0 2 ** 63 - 1] ResponsesNode;
+    internal bool HasResponses;
+    internal bool HasProtocolError;
+
+    HostBatchOutcome()
+    {
+        self.Document = new();
+        self.ResponsesNode = 0;
+        self.HasResponses = false;
+        self.HasProtocolError = false;
+    }
+
+    // True when the document-level `protocolError` field was present (a malformed
+    // or rejected batch request); in that case ResponseCount is 0.
+    public inline finite law bool HadProtocolError(borrow HostBatchOutcome self)
+    {
+        return self.HasProtocolError;
+    }
+
+    // Number of per-source responses the server returned, in request order.
+    public finite law u64[0 2 ** 63 - 1] ResponseCount(borrow HostBatchOutcome self)
+    {
+        if (!self.HasResponses)
+        {
+            return 0;
+        }
+
+        return self.Document.ChildCountAt(self.ResponsesNode);
+    }
+
+    // True when the compile for the source at `index` succeeded. False when out
+    // of range or when that response carried `succeeded:false`.
+    public unsafe fn bool SucceededAt(mut borrow HostBatchOutcome self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u64[0 2 ** 63 - 1] response = 0;
+        if (!self.TryResponseAt(index, response))
+        {
+            return false;
+        }
+
+        stack mut u64[0 2 ** 63 - 1] succeeded = 0;
+        if (!self.Document.TryFindMember(response, "succeeded", succeeded))
+        {
+            return false;
+        }
+
+        return self.Document.BoolAt(succeeded);
+    }
+
+    // Number of diagnostics on the response at `index`; 0 when out of range or
+    // when that response carried no `diagnostics` array.
+    public unsafe fn u64[0 2 ** 63 - 1] DiagnosticCountAt(mut borrow HostBatchOutcome self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u64[0 2 ** 63 - 1] response = 0;
+        if (!self.TryResponseAt(index, response))
+        {
+            return 0;
+        }
+
+        stack mut u64[0 2 ** 63 - 1] diagnostics = 0;
+        if (!self.Document.TryFindMemberOfKind(response, "diagnostics", JsonKind.Array, diagnostics))
+        {
+            return 0;
+        }
+
+        return self.Document.ChildCountAt(diagnostics);
+    }
+
+    // The `code` of the first diagnostic on the response at `index`, or empty
+    // ascii when out of range or when that response has no diagnostics. The
+    // returned view borrows this batch's document buffer.
+    public unsafe fn ascii FirstDiagnosticCodeAt(mut borrow HostBatchOutcome self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u64[0 2 ** 63 - 1] response = 0;
+        if (!self.TryResponseAt(index, response))
+        {
+            return "";
+        }
+
+        stack mut u64[0 2 ** 63 - 1] diagnostics = 0;
+        if (!self.Document.TryFindMemberOfKind(response, "diagnostics", JsonKind.Array, diagnostics))
+        {
+            return "";
+        }
+
+        stack mut u64[0 2 ** 63 - 1] entry = 0;
+        if (!self.Document.TryChildAt(diagnostics, 0, entry))
+        {
+            return "";
+        }
+
+        stack mut u64[0 2 ** 63 - 1] codeNode = 0;
+        if (!self.Document.TryFindMember(entry, "code", codeNode))
+        {
+            return "";
+        }
+
+        return self.Document.TextAt(codeNode);
+    }
+
+    // True when the response at `index` reports a diagnostic carrying `code`.
+    public unsafe fn bool HasDiagnosticCodeAt(mut borrow HostBatchOutcome self, u64[0 2 ** 63 - 1] index, ascii code)
+    {
+        stack mut u64[0 2 ** 63 - 1] response = 0;
+        if (!self.TryResponseAt(index, response))
+        {
+            return false;
+        }
+
+        stack mut u64[0 2 ** 63 - 1] diagnostics = 0;
+        if (!self.Document.TryFindMemberOfKind(response, "diagnostics", JsonKind.Array, diagnostics))
+        {
+            return false;
+        }
+
+        stack u64[0 2 ** 63 - 1] count = self.Document.ChildCountAt(diagnostics);
+        for willexit (stack mut u64[0 2 ** 63 - 1] entryIndex = 0; entryIndex < count; entryIndex += 1)
+        {
+            stack mut u64[0 2 ** 63 - 1] entry = 0;
+            if (!self.Document.TryChildAt(diagnostics, entryIndex, entry))
+            {
+                continue;
+            }
+
+            stack mut u64[0 2 ** 63 - 1] codeNode = 0;
+            if (!self.Document.TryFindMember(entry, "code", codeNode))
+            {
+                continue;
+            }
+
+            if (AsciiEquals(self.Document.TextAt(codeNode), code))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    internal unsafe fn bool TryResponseAt(
+        mut borrow HostBatchOutcome self,
+        u64[0 2 ** 63 - 1] index,
+        out u64[0 2 ** 63 - 1] response)
+    {
+        response = 0;
+        if (!self.HasResponses)
+        {
+            return false;
+        }
+
+        return self.Document.TryChildAt(self.ResponsesNode, index, response);
     }
 }
 
@@ -248,8 +630,43 @@ public unsafe fn HostResult<HostCompileOutcome> CompileOnceArtifactIn(
     u32[0 2 ** 31 - 1] maximumComptimeLoopIterations,
     u32[0 2 ** 31 - 1] timeoutMilliseconds)
 {
+    return CompileOnceArtifactToDirectory(
+        compilerPath,
+        id,
+        sourceText,
+        stopAfterPassId,
+        artifactName,
+        searchDirectory,
+        "",
+        maximumComptimeLoopIterations,
+        timeoutMilliseconds);
+}
+
+// TEST-06e: as CompileOnceArtifactIn, additionally asking the host to write
+// each requested artifact into `artifactOutputDirectory` (empty to skip). The
+// written paths are reported on the outcome via ArtifactFileCount /
+// ArtifactFilePathAt; the textual artifact is still available via ArtifactText.
+public unsafe fn HostResult<HostCompileOutcome> CompileOnceArtifactToDirectory(
+    ascii compilerPath,
+    ascii id,
+    ascii sourceText,
+    ascii stopAfterPassId,
+    ascii artifactName,
+    ascii searchDirectory,
+    ascii artifactOutputDirectory,
+    u32[0 2 ** 31 - 1] maximumComptimeLoopIterations,
+    u32[0 2 ** 31 - 1] timeoutMilliseconds)
+{
     stack mut JsonWriter writer = new();
-    try WriteCompileRequest(writer, id, sourceText, stopAfterPassId, artifactName, searchDirectory, maximumComptimeLoopIterations);
+    try WriteCompileRequestTo(
+        writer,
+        id,
+        sourceText,
+        stopAfterPassId,
+        artifactName,
+        searchDirectory,
+        artifactOutputDirectory,
+        maximumComptimeLoopIterations);
     try AppendShutdownLine(writer);
 
     stack mut ProcessCommand server = try Command(compilerPath);
@@ -269,6 +686,123 @@ public unsafe fn HostResult<HostCompileOutcome> CompileOnceArtifactIn(
     return ParseFirstResponse(output.StdoutSlice());
 }
 
+// TEST-06d: compiles two sources in ONE server round-trip (a document-level
+// `requests` array) and returns the batch outcome. Each source runs the full
+// pipeline with no artifacts and no module resolution; per-source results are
+// read via the HostBatchOutcome accessors in request order.
+public unsafe fn HostResult<HostBatchOutcome> CompileBatch2(
+    ascii compilerPath,
+    ascii id1,
+    ascii source1,
+    ascii id2,
+    ascii source2,
+    u32[0 2 ** 31 - 1] timeoutMilliseconds)
+{
+    stack mut JsonWriter writer = new();
+    try writer.BeginObject();
+    try writer.Key("protocolVersion");
+    try writer.I64Value(1);
+    try writer.Key("requests");
+    try writer.BeginArray();
+    try WriteRequestBody(writer, id1, source1, "", "", "", "", 0);
+    try WriteRequestBody(writer, id2, source2, "", "", "", "", 0);
+    try writer.EndArray();
+    try writer.EndObject();
+    return RunBatch(compilerPath, writer, timeoutMilliseconds);
+}
+
+// TEST-06d: three-source variant of CompileBatch2.
+public unsafe fn HostResult<HostBatchOutcome> CompileBatch3(
+    ascii compilerPath,
+    ascii id1,
+    ascii source1,
+    ascii id2,
+    ascii source2,
+    ascii id3,
+    ascii source3,
+    u32[0 2 ** 31 - 1] timeoutMilliseconds)
+{
+    stack mut JsonWriter writer = new();
+    try writer.BeginObject();
+    try writer.Key("protocolVersion");
+    try writer.I64Value(1);
+    try writer.Key("requests");
+    try writer.BeginArray();
+    try WriteRequestBody(writer, id1, source1, "", "", "", "", 0);
+    try WriteRequestBody(writer, id2, source2, "", "", "", "", 0);
+    try WriteRequestBody(writer, id3, source3, "", "", "", "", 0);
+    try writer.EndArray();
+    try writer.EndObject();
+    return RunBatch(compilerPath, writer, timeoutMilliseconds);
+}
+
+// Sends a fully-written batch document (in `writer`) plus the shutdown line to
+// the host server and parses the first line into a HostBatchOutcome.
+internal unsafe fn HostResult<HostBatchOutcome> RunBatch(
+    ascii compilerPath,
+    mut borrow JsonWriter writer,
+    u32[0 2 ** 31 - 1] timeoutMilliseconds)
+{
+    try AppendShutdownLine(writer);
+
+    stack mut ProcessCommand server = try Command(compilerPath);
+    try server.AddArgument("--host-test-server");
+
+    stack ProcessOutput output = try RunCaptureWithInputTimeout(server, writer.View(), timeoutMilliseconds);
+    if (output.WasTimedOut())
+    {
+        return HostResult<HostBatchOutcome>.Err(HostError.ServerTimedOut);
+    }
+
+    if (output.ExitCode != 0)
+    {
+        return HostResult<HostBatchOutcome>.Err(HostError.ServerFailed(output.ExitCode));
+    }
+
+    return ParseBatchResponse(output.StdoutSlice());
+}
+
+internal unsafe fn HostResult<HostBatchOutcome> ParseBatchResponse(borrow i8[min max][] stdoutBytes)
+{
+    stack mut u64[0 2 ** 63 - 1] lineLength = 0;
+    while willexit (lineLength < stdoutBytes.Length)
+    {
+        if (stdoutBytes[lineLength] == 10 || stdoutBytes[lineLength] == 13)
+        {
+            break;
+        }
+
+        lineLength += 1;
+    }
+
+    if (lineLength == 0)
+    {
+        return HostResult<HostBatchOutcome>.Err(HostError.MissingResponse);
+    }
+
+    stack i8[min max][] line = slice(&stdoutBytes[0], lineLength);
+    stack JsonDocument document = try Parse(line);
+    stack mut HostBatchOutcome outcome = new();
+    outcome.Document = document;
+
+    stack mut u64[0 2 ** 63 - 1] documentProtocolError = 0;
+    if (outcome.Document.TryFindMemberOfKind(0, "protocolError", JsonKind.Text, documentProtocolError))
+    {
+        outcome.HasProtocolError = true;
+        return HostResult<HostBatchOutcome>.Ok(outcome);
+    }
+
+    stack mut u64[0 2 ** 63 - 1] responses = 0;
+    if (!outcome.Document.TryFindMemberOfKind(0, "responses", JsonKind.Array, responses))
+    {
+        return HostResult<HostBatchOutcome>.Err(HostError.Protocol);
+    }
+
+    outcome.ResponsesNode = responses;
+    outcome.HasResponses = true;
+    return HostResult<HostBatchOutcome>.Ok(outcome);
+}
+
 internal unsafe fn JsonStatus WriteCompileRequest(
     mut borrow JsonWriter writer,
     ascii id,
@@ -278,10 +812,60 @@ internal unsafe fn JsonStatus WriteCompileRequest(
     ascii searchDirectory,
     u32[0 2 ** 31 - 1] maximumComptimeLoopIterations)
 {
+    return WriteCompileRequestTo(
+        writer,
+        id,
+        sourceText,
+        stopAfterPassId,
+        artifactName,
+        searchDirectory,
+        "",
+        maximumComptimeLoopIterations);
+}
+
+// Writes a full single-request document
+// ({"protocolVersion":1,"request":{...}}). `artifactOutputDirectory` (empty to
+// skip) drives the host to write requested artifacts to disk and report them
+// under `artifactFiles`.
+internal unsafe fn JsonStatus WriteCompileRequestTo(
+    mut borrow JsonWriter writer,
+    ascii id,
+    ascii sourceText,
+    ascii stopAfterPassId,
+    ascii artifactName,
+    ascii searchDirectory,
+    ascii artifactOutputDirectory,
+    u32[0 2 ** 31 - 1] maximumComptimeLoopIterations)
+{
     try writer.BeginObject();
     try writer.Key("protocolVersion");
     try writer.I64Value(1);
     try writer.Key("request");
+    try WriteRequestBody(
+        writer,
+        id,
+        sourceText,
+        stopAfterPassId,
+        artifactName,
+        searchDirectory,
+        artifactOutputDirectory,
+        maximumComptimeLoopIterations);
+    try writer.EndObject();
+    return JsonStatus.Ok;
+}
+
+// Writes one request object ({...}) — the shape that appears both as the
+// document-level `request` and as each element of the batched `requests` array.
+internal unsafe fn JsonStatus WriteRequestBody(
+    mut borrow JsonWriter writer,
+    ascii id,
+    ascii sourceText,
+    ascii stopAfterPassId,
+    ascii artifactName,
+    ascii searchDirectory,
+    ascii artifactOutputDirectory,
+    u32[0 2 ** 31 - 1] maximumComptimeLoopIterations)
+{
     try writer.BeginObject();
     try writer.Key("id");
     try writer.TextValue(id);
@@ -318,9 +902,14 @@ internal unsafe fn JsonStatus WriteCompileRequest(
         try writer.BoolValue(true);
     }
 
+    if (AsciiLength(artifactOutputDirectory) > 0)
+    {
+        try writer.Key("artifactOutputDirectory");
+        try writer.TextValue(artifactOutputDirectory);
+    }
+
     try writer.Key("includeExecutions");
-    try writer.BoolValue(false);
-    try writer.EndObject();
+    try writer.BoolValue(true);
     try writer.EndObject();
     return JsonStatus.Ok;
 }
@@ -376,47 +965,85 @@ internal unsafe fn HostResult<HostCompileOutcome> ParseFirstResponse(borrow i8[m
             return HostResult<HostCompileOutcome>.Err(HostError.MissingResponse);
         }
 
-        outcome.ResponseNode = response;
-
-        stack mut u64[0 2 ** 63 - 1] responseProtocolError = 0;
-        if (outcome.Document.TryFindMemberOfKind(response, "protocolError", JsonKind.Text, responseProtocolError))
-        {
-            outcome.HasProtocolError = true;
-        }
-
-        stack mut u64[0 2 ** 63 - 1] succeeded = 0;
-        if (outcome.Document.TryFindMember(response, "succeeded", succeeded))
-        {
-            outcome.Succeeded = outcome.Document.BoolAt(succeeded);
-        }
-
-        stack mut u64[0 2 ** 63 - 1] summary = 0;
-        if (outcome.Document.TryFindMemberOfKind(response, "diagnosticSummary", JsonKind.Object, summary))
-        {
-            stack mut u64[0 2 ** 63 - 1] errorCount = 0;
-            if (outcome.Document.TryFindMember(summary, "errorCount", errorCount))
-            {
-                stack i64[min max] countValue = try outcome.Document.I64At(errorCount);
-                outcome.ErrorCount = countValue;
-            }
-        }
-
-        stack mut u64[0 2 ** 63 - 1] diagnostics = 0;
-        if (outcome.Document.TryFindMemberOfKind(response, "diagnostics", JsonKind.Array, diagnostics))
-        {
-            outcome.DiagnosticsNode = diagnostics;
-            outcome.HasDiagnostics = true;
-        }
-
-        stack mut u64[0 2 ** 63 - 1] artifactTexts = 0;
-        if (outcome.Document.TryFindMemberOfKind(response, "artifactTexts", JsonKind.Array, artifactTexts))
-        {
-            outcome.ArtifactTextsNode = artifactTexts;
-            outcome.HasArtifactTexts = true;
-        }
+        try BindResponseNode(outcome, response);
     }
 
     return HostResult<HostCompileOutcome>.Ok(outcome);
+}
+
+// Populates the response-scoped fields of `outcome` from the response object at
+// `response` in `outcome.Document`. Shared by the single-response and batched
+// parse paths so they read the protocol identically.
+internal unsafe fn HostStatus BindResponseNode(mut borrow HostCompileOutcome outcome, u64[0 2 ** 63 - 1] response)
+{
+    outcome.ResponseNode = response;
+
+    stack mut u64[0 2 ** 63 - 1] responseProtocolError = 0;
+    if (outcome.Document.TryFindMemberOfKind(response, "protocolError", JsonKind.Text, responseProtocolError))
+    {
+        outcome.HasProtocolError = true;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] succeeded = 0;
+    if (outcome.Document.TryFindMember(response, "succeeded", succeeded))
+    {
+        outcome.Succeeded = outcome.Document.BoolAt(succeeded);
+    }
+
+    stack mut u64[0 2 ** 63 - 1] summary = 0;
+    if (outcome.Document.TryFindMemberOfKind(response, "diagnosticSummary", JsonKind.Object, summary))
+    {
+        stack mut u64[0 2 ** 63 - 1] errorCount = 0;
+        if (outcome.Document.TryFindMember(summary, "errorCount", errorCount))
+        {
+            stack i64[min max] countValue = try outcome.Document.I64At(errorCount);
+            outcome.ErrorCount = countValue;
+        }
+    }
+
+    stack mut u64[0 2 ** 63 - 1] diagnostics = 0;
+    if (outcome.Document.TryFindMemberOfKind(response, "diagnostics", JsonKind.Array, diagnostics))
+    {
+        outcome.DiagnosticsNode = diagnostics;
+        outcome.HasDiagnostics = true;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] artifactTexts = 0;
+    if (outcome.Document.TryFindMemberOfKind(response, "artifactTexts", JsonKind.Array, artifactTexts))
+    {
+        outcome.ArtifactTextsNode = artifactTexts;
+        outcome.HasArtifactTexts = true;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] artifactFiles = 0;
+    if (outcome.Document.TryFindMemberOfKind(response, "artifactFiles", JsonKind.Array, artifactFiles))
+    {
+        outcome.ArtifactFilesNode = artifactFiles;
+        outcome.HasArtifactFiles = true;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] loadedModules = 0;
+    if (outcome.Document.TryFindMemberOfKind(response, "loadedModules", JsonKind.Array, loadedModules))
+    {
+        outcome.LoadedModulesNode = loadedModules;
+        outcome.HasLoadedModules = true;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] executions = 0;
+    if (outcome.Document.TryFindMemberOfKind(response, "executions", JsonKind.Array, executions))
+    {
+        outcome.ExecutionsNode = executions;
+        outcome.HasExecutions = true;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] rootModule = 0;
+    if (outcome.Document.TryFindMemberOfKind(response, "rootModuleName", JsonKind.Text, rootModule))
+    {
+        outcome.RootModuleNode = rootModule;
+        outcome.HasRootModule = true;
+    }
+
+    return HostStatus.Ok;
 }
 
 internal unsafe fn bool AsciiEquals(ascii left, ascii right)

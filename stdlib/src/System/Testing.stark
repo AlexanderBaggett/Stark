@@ -6,6 +6,7 @@ import System.IO.Path
 import System.Math
 import System.Memory
 import System.Process
+import System.Runtime.Platform
 import System.Text
 import System.Collections
 import System.Core
@@ -844,6 +845,33 @@ public finite law bool ContainsElement<T>(borrow T[] values, T expected)
     return false;
 }
 
+// The element-shape mirrors of ContainsElement: same by-value `expected` under
+// `where Copyable(T)` (so callers can still pass a literal) and the same
+// DictionaryKey equality routing. DoesNotContainElement is the simple negation;
+// SingleEquals fuses the Single shape check with a head-element equality.
+public finite law bool DoesNotContainElement<T>(borrow T[] values, T expected)
+    where Copyable(T)
+{
+    return !ContainsElement(values, expected);
+}
+
+public finite law bool SingleEquals<T>(borrow T[] values, T expected)
+    where Copyable(T)
+{
+    return values.Length == 1
+        && System.Collections.DictionaryKey.Equals(values[0], expected);
+}
+
+// List<T> mirror, matching the Single<T>/Count<T> List overloads above. The
+// head element is read through the finite-law AsSlice() view (List.Get is plain
+// `law`, too weak for a finite law); routing the equality through the array
+// SingleEquals keeps one source of truth.
+public finite law bool SingleEquals<T>(borrow System.Collections.List<T> values, T expected)
+    where Copyable(T)
+{
+    return SingleEquals(values.AsSlice(), expected);
+}
+
 // A single generic collapses the former per-primitive SequenceEqual overloads
 // (i32/i64/u32/u64). Element equality routes through the
 // System.Collections.DictionaryKey doctrine's compiler-known machinery.
@@ -1372,6 +1400,256 @@ public finite law bool DiagnosticsHaveErrors(borrow Diagnostic[] diagnostics)
     return DiagnosticsErrorCount(diagnostics) != 0;
 }
 
+// Lowercase severity label for rendering, mirroring DiagnosticSeverityRank's
+// switch shape. Returns a static ascii literal, so it stays finite law.
+internal finite ascii DiagnosticSeverityLabel(DiagnosticSeverity severity)
+{
+    switch (severity)
+    {
+        case DiagnosticSeverity.Info:
+            return "info";
+        case DiagnosticSeverity.Warning:
+            return "warning";
+        case DiagnosticSeverity.Error:
+            return "error";
+    }
+
+    return "error";
+}
+
+// Render one diagnostic as `<severity> <code>: <message>`, appending
+// ` at <FilePath>:<Line>:<Column>` when the location is present and
+// `-<EndLine>:<EndColumn>` when it carries an end. Threads MemoryStatus through
+// every append exactly like AppendSnapshotDifference, early-returning on Err.
+public fn System.Memory.MemoryStatus AppendDiagnostic(
+    mut borrow System.Text.OwnedAscii writer,
+    borrow Diagnostic d)
+{
+    switch (writer.AppendAscii(DiagnosticSeverityLabel(d.Severity)))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryStatus.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    switch (writer.AppendAscii(" "))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryStatus.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    switch (writer.AppendAscii(d.Code))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryStatus.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    switch (writer.AppendAscii(": "))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryStatus.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    switch (writer.AppendAscii(d.Message))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryStatus.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    if (!d.Location.HasValue)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    switch (writer.AppendAscii(" at "))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryStatus.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    switch (writer.AppendAscii(d.Location.FilePath))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryStatus.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    switch (writer.AppendAscii(":"))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryStatus.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    switch (writer.AppendU64(d.Location.Line))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryStatus.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    switch (writer.AppendAscii(":"))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryStatus.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    switch (writer.AppendU64(d.Location.Column))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryStatus.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    if (!d.Location.HasEndValue)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    switch (writer.AppendAscii("-"))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryStatus.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    switch (writer.AppendU64(d.Location.EndLine))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryStatus.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    switch (writer.AppendAscii(":"))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryStatus.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    return writer.AppendU64(d.Location.EndColumn);
+}
+
+// Render every diagnostic in order, one per line. Threads MemoryStatus through
+// each AppendDiagnostic and the newline separator, early-returning on Err.
+public fn System.Memory.MemoryStatus AppendDiagnostics(
+    mut borrow System.Text.OwnedAscii writer,
+    borrow Diagnostic[] diagnostics)
+{
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < diagnostics.Length)
+    {
+        switch (AppendDiagnostic(writer, diagnostics[index]))
+        {
+            case System.Memory.MemoryStatus.Err(var error):
+                return System.Memory.MemoryStatus.Err(error);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        switch (writer.AppendAscii("\n"))
+        {
+            case System.Memory.MemoryStatus.Err(var error):
+                return System.Memory.MemoryStatus.Err(error);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        index += 1;
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+// Render a two-line expected/actual block for a diagnostic that failed to match.
+// The expected line echoes the matcher inputs (the same shape as
+// DiagnosticMatches); the actual line reuses AppendDiagnostic. Threads
+// MemoryStatus exactly like AppendSnapshotDifference.
+public fn System.Memory.MemoryStatus AppendDiagnosticMismatch(
+    mut borrow System.Text.OwnedAscii writer,
+    ascii expectedCode,
+    DiagnosticSeverity expectedSeverity,
+    ascii expectedStage,
+    ascii expectedMessageContains,
+    borrow Diagnostic actual)
+    where overlap(writer, expectedCode),
+          overlap(writer, expectedStage),
+          overlap(writer, expectedMessageContains),
+          overlap(writer, actual),
+          overlap(expectedCode, expectedStage),
+          overlap(expectedCode, expectedMessageContains),
+          overlap(expectedStage, expectedMessageContains)
+{
+    switch (writer.AppendAscii("expected: "))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryStatus.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    switch (writer.AppendAscii(DiagnosticSeverityLabel(expectedSeverity)))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryStatus.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    switch (writer.AppendAscii(" "))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryStatus.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    switch (writer.AppendAscii(expectedCode))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryStatus.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    switch (writer.AppendAscii(" ["))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryStatus.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    switch (writer.AppendAscii(expectedStage))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryStatus.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    switch (writer.AppendAscii("]: "))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryStatus.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    switch (writer.AppendAscii(expectedMessageContains))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryStatus.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    switch (writer.AppendAscii("\nactual: "))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryStatus.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    return AppendDiagnostic(writer, actual);
+}
+
 public finite law bool TypeIs<TActual, TExpected>()
 {
     return comptime System.Compiler.TypeUnqualifiedTypeIs<TActual, TExpected>();
@@ -1566,6 +1844,47 @@ public finite law bool ResultErr<T, E>(borrow System.Core.Result<T, E> value)
             return false;
         case System.Core.Result<T, E>.Err(_):
             return true;
+    }
+}
+
+// Value-carrying companions to the OptionSome/None and ResultOk/Err shape
+// predicates above. They check both the variant AND the payload, routing payload
+// equality through the System.Collections.DictionaryKey doctrine exactly like
+// ContainsElement. `expected` is taken by value under `where Copyable(...)` so a
+// literal still binds (e.g. OptionSomeEquals(opt, 5)).
+public finite law bool OptionSomeEquals<T>(borrow System.Core.Option<T> value, T expected)
+    where Copyable(T)
+{
+    switch (value)
+    {
+        case System.Core.Option<T>.Some(var v):
+            return System.Collections.DictionaryKey.Equals(v, expected);
+        case System.Core.Option<T>.None:
+            return false;
+    }
+}
+
+public finite law bool ResultOkEquals<T, E>(borrow System.Core.Result<T, E> value, T expected)
+    where Copyable(T)
+{
+    switch (value)
+    {
+        case System.Core.Result<T, E>.Ok(var v):
+            return System.Collections.DictionaryKey.Equals(v, expected);
+        case System.Core.Result<T, E>.Err(_):
+            return false;
+    }
+}
+
+public finite law bool ResultErrEquals<T, E>(borrow System.Core.Result<T, E> value, E expected)
+    where Copyable(E)
+{
+    switch (value)
+    {
+        case System.Core.Result<T, E>.Ok(_):
+            return false;
+        case System.Core.Result<T, E>.Err(var e):
+            return System.Collections.DictionaryKey.Equals(e, expected);
     }
 }
 
@@ -1957,4 +2276,120 @@ public finite law i32[min max] ExitCode(u32[0 2 ** 31 - 1] failureCount)
 public fn void Exit(u32[0 2 ** 31 - 1] failureCount)
 {
     System.Process.Exit(ExitCode(failureCount));
+}
+
+// Benchmark/regression gate: the threshold compare at the heart of a regression
+// harness. `measured` passes when it is no slower than `tolerancePercent`% over
+// `baseline` (measured <= baseline + baseline*tolerancePercent/100). Faster
+// runs (measured < baseline) always pass. Arithmetic is widened to u128 so the
+// `baseline * tolerancePercent` product cannot overflow for full-range u64
+// inputs.
+public finite law bool WithinRegression(
+    u64[0 max] baseline,
+    u64[0 max] measured,
+    u64[0 max] tolerancePercent)
+{
+    if (measured <= baseline)
+    {
+        return true;
+    }
+
+    stack u128[0 max] allowance =
+        (u128[0 max])baseline
+        + (u128[0 max])baseline * (u128[0 max])tolerancePercent / (u128[0 max])100;
+    return (u128[0 max])measured <= allowance;
+}
+
+// ---------------------------------------------------------------------------
+// TEST-10 benchmark timing
+// ---------------------------------------------------------------------------
+// A SAFE monotonic clock accessor for benchmark harnesses. The only monotonic
+// primitive is the per-OS `internal unsafe fn i64[min max] MonotonicMilliseconds()`
+// dispatched through System.Runtime.Platform; that surface is intentionally kept
+// `internal unsafe` (it returns a raw error-coded i64, negative on clock failure)
+// rather than promoted to a public platform clock. This wrapper is the minimal
+// safe exposure: it lives in System.Testing where the benchmark harness lives,
+// wraps the existing call in an `unsafe { }` block (no new raw pointers), and
+// folds the error case into a clean monotonic u64 by clamping a negative reading
+// (clock failure) to 0. Reads never decrease, so ElapsedSince stays well-defined.
+public fn u64[0 max] MonotonicMilliseconds()
+{
+    unsafe
+    {
+        stack i64[min max] raw = System.Runtime.Platform.MonotonicMilliseconds();
+        if (raw < 0)
+        {
+            return (u64[0 max])0;
+        }
+
+        return (u64[0 max])raw;
+    }
+}
+
+// Elapsed milliseconds since a prior MonotonicMilliseconds() reading. A monotonic
+// clock never runs backwards, but if `start` somehow exceeds `now` (e.g. a clamped
+// failure reading) the result is defined as 0 rather than wrapping.
+public finite law u64[0 max] ElapsedSince(u64[0 max] start, u64[0 max] now)
+{
+    if (now <= start)
+    {
+        return (u64[0 max])0;
+    }
+
+    return now - start;
+}
+
+// A minimal stopwatch over the monotonic clock. Start() captures a reading and
+// Elapsed() reports milliseconds since that capture; both route through the safe
+// MonotonicMilliseconds()/ElapsedSince helpers above.
+public struct Stopwatch
+{
+    internal u64[0 max] StartedAt;
+
+    Stopwatch()
+    {
+        self.StartedAt = (u64[0 max])0;
+    }
+
+    fn void Start(mut borrow Stopwatch self)
+    {
+        self.StartedAt = MonotonicMilliseconds();
+    }
+
+    fn u64[0 max] Elapsed(borrow Stopwatch self)
+    {
+        return ElapsedSince(self.StartedAt, MonotonicMilliseconds());
+    }
+}
+
+// ---------------------------------------------------------------------------
+// TEST-02 AllDistinct
+// ---------------------------------------------------------------------------
+// True iff no two elements are equal. O(n^2) pairwise comparison routed through
+// the System.Collections.DictionaryKey doctrine, matching ContainsElement. Empty
+// and singleton slices are trivially distinct. `T` is compared by value, so the
+// inner element is rebound to a `needle` local before being borrowed for
+// DictionaryKey.Equals (see ContainsElement for the STK5002 address-of workaround).
+public finite law bool AllDistinct<T>(borrow T[] values)
+    where Copyable(T)
+{
+    stack mut u64[0 2 ** 63 - 1] outer = 0;
+    while willexit (outer < values.Length)
+    {
+        stack T needle = values[outer];
+        stack mut u64[0 2 ** 63 - 1] inner = outer + 1;
+        while willexit (inner < values.Length)
+        {
+            if (System.Collections.DictionaryKey.Equals(values[inner], needle))
+            {
+                return false;
+            }
+
+            inner += 1;
+        }
+
+        outer += 1;
+    }
+
+    return true;
 }
