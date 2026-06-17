@@ -1,0 +1,314 @@
+import System.Testing
+import System.Collections.Arena
+import System.Core
+import System.Memory
+module ArenaTests
+
+// Inserts `value`, reporting success and binding the handle.
+fn bool TryInsert(mut borrow Arena<u32[0 max]> store, u32[0 max] value, out ArenaHandle handle)
+{
+    handle = new();
+    switch (store.Insert(value, handle))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return false;
+        case System.Memory.MemoryStatus.Ok:
+            return true;
+    }
+}
+
+// The value behind `handle`, or `fallback` if the handle is stale.
+fn u32[0 max] ValueOr(borrow Arena<u32[0 max]> store, ArenaHandle handle, u32[0 max] fallback)
+{
+    switch (store.Get(handle))
+    {
+        case System.Core.Option<u32[0 max]>.None:
+            return fallback;
+        case System.Core.Option<u32[0 max]>.Some(var value):
+            return value;
+    }
+}
+
+[Fact]
+fn bool InsertAndGetRoundTrips()
+{
+    stack mut Arena<u32[0 max]> store = new();
+    stack mut ArenaHandle a = new();
+    stack mut ArenaHandle b = new();
+    if (!TryInsert(store, 11, a) || !TryInsert(store, 22, b))
+    {
+        return false;
+    }
+
+    return store.Count() == 2
+        && store.Contains(a)
+        && store.Contains(b)
+        && ValueOr(store, a, 0) == 11
+        && ValueOr(store, b, 0) == 22;
+}
+
+[Fact]
+fn bool RemoveMakesHandleStale()
+{
+    stack mut Arena<u32[0 max]> store = new();
+    stack mut ArenaHandle a = new();
+    if (!TryInsert(store, 42, a))
+    {
+        return false;
+    }
+
+    if (!store.Remove(a))
+    {
+        return false;
+    }
+
+    // Count drops, the handle no longer resolves, and a second remove is a
+    // no-op that reports false rather than corrupting state.
+    return store.Count() == 0
+        && !store.Contains(a)
+        && ValueOr(store, a, 999) == 999
+        && !store.Remove(a);
+}
+
+[Fact]
+fn bool RecycledSlotGetsNewGeneration()
+{
+    stack mut Arena<u32[0 max]> store = new();
+    stack mut ArenaHandle a = new();
+    if (!TryInsert(store, 1, a))
+    {
+        return false;
+    }
+
+    if (!store.Remove(a))
+    {
+        return false;
+    }
+
+    stack mut ArenaHandle b = new();
+    if (!TryInsert(store, 2, b))
+    {
+        return false;
+    }
+
+    // The freed slot index is reused, but with a fresh generation, so the old
+    // handle stays stale while the new one resolves.
+    return b.Index == a.Index
+        && !b.Equals(a)
+        && ValueOr(store, a, 999) == 999
+        && ValueOr(store, b, 0) == 2;
+}
+
+[Fact]
+fn bool RemovingOneKeepsOthersLive()
+{
+    stack mut Arena<u32[0 max]> store = new();
+    stack mut ArenaHandle a = new();
+    stack mut ArenaHandle b = new();
+    stack mut ArenaHandle c = new();
+    if (!TryInsert(store, 10, a) || !TryInsert(store, 20, b) || !TryInsert(store, 30, c))
+    {
+        return false;
+    }
+
+    if (!store.Remove(b))
+    {
+        return false;
+    }
+
+    // Three physical slots remain (the middle one tombstoned), the survivors
+    // still resolve, and the removed entry does not.
+    return store.Count() == 2
+        && store.SlotCount() == 3
+        && ValueOr(store, a, 0) == 10
+        && ValueOr(store, b, 999) == 999
+        && ValueOr(store, c, 0) == 30;
+}
+
+[Fact]
+fn bool IterateLiveSlotsVisitsLiveEntries()
+{
+    stack mut Arena<u32[0 max]> store = new();
+    stack mut ArenaHandle a = new();
+    stack mut ArenaHandle b = new();
+    stack mut ArenaHandle c = new();
+    if (!TryInsert(store, 10, a) || !TryInsert(store, 20, b) || !TryInsert(store, 30, c))
+    {
+        return false;
+    }
+
+    if (!store.Remove(b))
+    {
+        return false;
+    }
+
+    // Walking every physical slot and keeping the `Some` handles enumerates the
+    // live entries (a and c), skipping the tombstoned middle slot.
+    stack mut u32[0 max] sum = 0;
+    stack mut u64[0 2 ** 63 - 1] live = 0;
+    for willexit (stack mut u64[0 2 ** 63 - 1] i = 0; i < store.SlotCount(); i += 1)
+    {
+        switch (store.HandleAt(i))
+        {
+            case System.Core.Option<ArenaHandle>.None:
+                continue;
+            case System.Core.Option<ArenaHandle>.Some(var handle):
+                sum = (u32[0 max])(sum + ValueOr(store, handle, 0));
+                live = (u64[0 2 ** 63 - 1])(live + 1);
+        }
+    }
+
+    return live == 2 && sum == 40;
+}
+
+[Fact]
+fn bool ClearEmptiesArena()
+{
+    stack mut Arena<u32[0 max]> store = new();
+    stack mut ArenaHandle a = new();
+    stack mut ArenaHandle b = new();
+    if (!TryInsert(store, 5, a) || !TryInsert(store, 6, b))
+    {
+        return false;
+    }
+
+    store.Clear();
+    return store.Count() == 0
+        && store.IsEmpty()
+        && !store.Contains(a)
+        && !store.Contains(b);
+}
+
+// Sets a fact, reporting success.
+fn bool TrySetFact(mut borrow SideTable<u32[0 max]> facts, ArenaHandle handle, u32[0 max] fact)
+{
+    switch (facts.Set(handle, fact))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return false;
+        case System.Memory.MemoryStatus.Ok:
+            return true;
+    }
+}
+
+// The fact attached to `handle`, or `fallback` if absent/stale.
+fn u32[0 max] FactOr(borrow SideTable<u32[0 max]> facts, ArenaHandle handle, u32[0 max] fallback)
+{
+    switch (facts.Get(handle))
+    {
+        case System.Core.Option<u32[0 max]>.None:
+            return fallback;
+        case System.Core.Option<u32[0 max]>.Some(var value):
+            return value;
+    }
+}
+
+[Fact]
+fn bool SideTableAttachesAndReadsFacts()
+{
+    stack mut Arena<u32[0 max]> store = new();
+    stack mut SideTable<u32[0 max]> facts = new();
+    stack mut ArenaHandle a = new();
+    stack mut ArenaHandle b = new();
+    if (!TryInsert(store, 1, a) || !TryInsert(store, 2, b))
+    {
+        return false;
+    }
+
+    if (!TrySetFact(facts, a, 100))
+    {
+        return false;
+    }
+
+    // `a` carries a fact; `b` was never given one.
+    return facts.Contains(a)
+        && !facts.Contains(b)
+        && FactOr(facts, a, 0) == 100
+        && FactOr(facts, b, 999) == 999;
+}
+
+[Fact]
+fn bool SideTableRejectsStaleHandle()
+{
+    stack mut Arena<u32[0 max]> store = new();
+    stack mut SideTable<u32[0 max]> facts = new();
+    stack mut ArenaHandle a = new();
+    if (!TryInsert(store, 1, a))
+    {
+        return false;
+    }
+
+    if (!TrySetFact(facts, a, 100))
+    {
+        return false;
+    }
+
+    if (!store.Remove(a))
+    {
+        return false;
+    }
+
+    stack mut ArenaHandle b = new();
+    if (!TryInsert(store, 2, b))
+    {
+        return false;
+    }
+
+    // `b` recycles `a`'s physical slot. Before `b` is given a fact, it must not
+    // observe `a`'s fact (no cross-generation bleed).
+    if (b.Index != a.Index || FactOr(facts, b, 777) != 777)
+    {
+        return false;
+    }
+
+    // Re-facting the slot under `b`'s generation makes the stale old-generation
+    // handle `a` miss, while `b` sees its own fact.
+    if (!TrySetFact(facts, b, 200))
+    {
+        return false;
+    }
+
+    return FactOr(facts, b, 0) == 200
+        && FactOr(facts, a, 999) == 999;
+}
+
+[Fact]
+fn bool SideTableInheritAndRemove()
+{
+    stack mut Arena<u32[0 max]> store = new();
+    stack mut SideTable<u32[0 max]> facts = new();
+    stack mut ArenaHandle a = new();
+    stack mut ArenaHandle b = new();
+    if (!TryInsert(store, 1, a) || !TryInsert(store, 2, b))
+    {
+        return false;
+    }
+
+    if (!TrySetFact(facts, a, 55))
+    {
+        return false;
+    }
+
+    switch (facts.Inherit(b, a))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return false;
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    if (FactOr(facts, b, 0) != 55)
+    {
+        return false;
+    }
+
+    if (!facts.Remove(a))
+    {
+        return false;
+    }
+
+    // After removal `a` has no fact, `b` keeps its inherited copy, and a second
+    // remove reports false.
+    return FactOr(facts, a, 999) == 999
+        && FactOr(facts, b, 0) == 55
+        && !facts.Remove(a);
+}

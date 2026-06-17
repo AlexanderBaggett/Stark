@@ -605,6 +605,30 @@ public fn System.IO.IOStatus Move(ascii oldPath, ascii newPath)
     return StatusFromPlatformResult(System.Runtime.Platform.MoveFile(oldPath, newPath));
 }
 
+// Sets the permission bits of `path` (the low 12 mode bits: setuid/setgid/sticky
+// plus rwxrwxrwx). On Windows, where executability is determined by extension,
+// this is a successful no-op.
+public fn System.IO.IOStatus SetPermissions(ascii path, u16[0 4095] mode)
+{
+    return StatusFromPlatformResult(System.Runtime.Platform.SetPermissions(path, (i32[min max])mode));
+}
+
+// Adds the execute bits (`u+x,g+x,o+x`) to `path`, preserving its other
+// permission bits — the equivalent of `chmod +x`. Used to mark a freshly linked
+// output runnable. On Windows this is a successful no-op.
+public fn System.IO.IOStatus MakeExecutable(ascii path)
+{
+    switch (Metadata(path))
+    {
+        case System.IO.IOResult<FileMetadata>.Err(var error):
+            return System.IO.IOStatus.Err(error);
+        case System.IO.IOResult<FileMetadata>.Ok(var metadata):
+            stack u16[0 4095] mode =
+                (u16[0 4095])((metadata.Permissions | (u32[0 max])73) & (u32[0 max])4095);
+            return SetPermissions(path, mode);
+    }
+}
+
 internal unsafe fn FileMetadata DecodeMetadataBuffer(rawptr<i8[min max]> metadataData)
 {
     stack rawptr<i32[min max]> kindPointer = (rawptr<i32[min max]>)(&metadataData[FileSystemMetadataKindOffset]);

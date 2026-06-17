@@ -296,6 +296,11 @@ internal fn i32[min max] MoveFile(ascii oldPath, ascii newPath)
     return System.Runtime.Platform.MacOS.MoveFile(oldPath, newPath);
 }
 
+internal fn i32[min max] SetPermissions(ascii path, i32[min max] mode)
+{
+    return System.Runtime.Platform.MacOS.SetPermissions(path, mode);
+}
+
 internal fn bool FileExists(ascii path)
 {
     return System.Runtime.Platform.MacOS.FileExists(path);

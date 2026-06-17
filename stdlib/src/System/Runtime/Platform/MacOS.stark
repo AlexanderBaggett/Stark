@@ -66,6 +66,7 @@ internal unsafe ffi fn i64[min max] readlink(rawptr<i8[min max]> path, rawmutptr
 internal unsafe ffi fn i32[min max] symlink(rawptr<i8[min max]> target, rawptr<i8[min max]> linkPath)
     where overlap(target, linkPath);
 internal unsafe ffi fn i32[min max] mkdir(rawptr<i8[min max]> path, i32[min max] mode);
+internal unsafe ffi fn i32[min max] chmod(rawptr<i8[min max]> path, i32[min max] mode);
 internal unsafe ffi fn i32[min max] rmdir(rawptr<i8[min max]> path);
 internal unsafe ffi fn rawmutptr<i8[min max]> getcwd(rawmutptr<i8[min max]> buffer, u64[0 2 ** 63 - 1] size);
 internal unsafe ffi fn i32[min max] isatty(i32[min max] fileDescriptor);
@@ -1540,6 +1541,30 @@ internal fn i32[min max] CreateSymlink(ascii target, ascii linkPath)
         }
 
         if (symlink(preparedTarget.Data, preparedLink.Data) == 0)
+        {
+            return 0;
+        }
+
+        return NegativeErrno();
+    }
+}
+
+internal fn i32[min max] SetPermissions(ascii path, i32[min max] mode)
+{
+    unsafe
+    {
+        stack mut System.Runtime.Buffer.FixedByteBuffer4096 pathBuffer = new System.Runtime.Buffer.FixedByteBuffer4096();
+        stack mut Ascii preparedPath = new Ascii();
+        preparedPath.Data = pathBuffer.WritePointer();
+        preparedPath.Length = 0;
+        preparedPath.Capacity = pathBuffer.Writable();
+
+        if (!TryBuildMacOSPath(&preparedPath, path))
+        {
+            return -1;
+        }
+
+        if (chmod(preparedPath.Data, mode) == 0)
         {
             return 0;
         }

@@ -1,0 +1,17 @@
+[project]
+name = "stdlib-collections-arena-tests"
+version = "0.1.0"
+kind = "test"
+
+[test]
+root = "ArenaTests.stark"
+output = "stdlib-collections-arena-tests"
+
+[dependencies]
+stdlib = { path = "../../stdlib" }
+
+[profiles.dev]
+opt = 0
+
+[profiles.release]
+opt = 3
