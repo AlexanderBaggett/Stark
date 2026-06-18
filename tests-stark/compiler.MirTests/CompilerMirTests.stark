@@ -1,5 +1,21 @@
 import CompilerMirTestSupport
 import System.Testing
+import CompilerCliTestsP1
+import CompilerPipelineEnumLayoutTestsP1
+import CompilerPipelineFullIntegrationTestsP1
+import CompilerPipelineLowerAbiTestsP1
+import CompilerPipelineLowerHirTestsP1
+import CompilerPipelineLowerMirTestsP1
+import GenericUseSiteInstantiationRegressionTestsP1
+import LoweringContractFactKeyRegressionTestsP1
+import MidLevelIrDynamicFixedArrayIndexingTestsP1
+import MidLevelIrLoweringTests_CompileTimeEvaluatorP1
+import MidLevelIrLoweringTests_CoreP1
+import MidLevelIrLoweringTests_LoweringInvariantP1
+import MidLevelIrLoweringTests_PlaceLowererP1
+import MidLevelIrLoweringTests_RuntimeDropLowererP1
+import MidLevelIrLoweringTests_SwitchPatternLowererP1
+import RawSingleLineLiteralRegressionTestsP1
 [Collection("compiler-mir")]
 module CompilerMirTests
 
@@ -258,3 +274,1007 @@ fn bool AcceptedBoundOperationsLowerWithoutFallback()
         return AcceptedBoundOperationsLowerWithoutFallbackBody();
     }
 }
+
+
+// ---------------------------------------------------------------------------
+// Auto-wired [Fact] wrappers for ported C# tests (bodies in imported companions).
+// ---------------------------------------------------------------------------
+[Fact]
+fn bool EmitMirModePrintsMirModule()
+{
+    unsafe
+    {
+        return EmitMirModePrintsMirModuleImpl();
+    }
+}
+
+[Fact]
+fn bool EmitMirModeSupportsOutputPath()
+{
+    unsafe
+    {
+        return EmitMirModeSupportsOutputPathImpl();
+    }
+}
+
+[Fact]
+fn bool EnumLayoutsUseSmallestSoundTagWidths()
+{
+    unsafe
+    {
+        return EnumLayoutsUseSmallestSoundTagWidthsImpl();
+    }
+}
+
+[Fact]
+fn bool EnumPayloadLayoutsUseTargetSoundAlignmentForNonStandardAndWideIntegers()
+{
+    unsafe
+    {
+        return EnumPayloadLayoutsUseTargetSoundAlignmentForNonStandardAndWideIntegersImpl();
+    }
+}
+
+[Fact]
+fn bool PipelinePreservesMirSwitchBreakShapeAndNormalizesOptimizedSsaControlFlow()
+{
+    unsafe
+    {
+        return PipelinePreservesMirSwitchBreakShapeAndNormalizesOptimizedSsaControlFlowImpl();
+    }
+}
+
+[Fact]
+fn bool PipelineCarriesSourceLocationsThroughMirAndSsaArtifacts()
+{
+    unsafe
+    {
+        return PipelineCarriesSourceLocationsThroughMirAndSsaArtifactsImpl();
+    }
+}
+
+[Fact]
+fn bool ImportedAsmDeclarationsFlowThroughHirMirAndSsaAsExplicitBypassFunctions()
+{
+    unsafe
+    {
+        return ImportedAsmDeclarationsFlowThroughHirMirAndSsaAsExplicitBypassFunctionsImpl();
+    }
+}
+
+[Fact]
+fn bool ImportedModulePrivateLawHelpersFlowIntoHirMirAndSsa()
+{
+    unsafe
+    {
+        return ImportedModulePrivateLawHelpersFlowIntoHirMirAndSsaImpl();
+    }
+}
+
+[Fact]
+fn bool ImportedSourceModulesFlowIntoHirMirAndSsaArtifacts()
+{
+    unsafe
+    {
+        return ImportedSourceModulesFlowIntoHirMirAndSsaArtifactsImpl();
+    }
+}
+
+[Fact]
+fn bool ImportedSourceModulesWithPrivateHelpersAndStringLiteralsLowerIntoMirAndSsa()
+{
+    unsafe
+    {
+        return ImportedSourceModulesWithPrivateHelpersAndStringLiteralsLowerIntoMirAndSsaImpl();
+    }
+}
+
+[Fact]
+fn bool OverloadedMethodsResolveThroughSemanticValidationAndMirLowering()
+{
+    unsafe
+    {
+        return OverloadedMethodsResolveThroughSemanticValidationAndMirLoweringImpl();
+    }
+}
+
+[Fact]
+fn bool MonomorphizedGenericFunctionsReceiveExplicitAbiLowering()
+{
+    unsafe
+    {
+        return MonomorphizedGenericFunctionsReceiveExplicitAbiLoweringImpl();
+    }
+}
+
+[Fact]
+fn bool NestedGenericCallsMaterializeTransitiveSpecializationsIntoHighLevelIr()
+{
+    unsafe
+    {
+        return NestedGenericCallsMaterializeTransitiveSpecializationsIntoHighLevelIrImpl();
+    }
+}
+
+[Fact]
+fn bool LowerHirMaterializesSourceBackedMonomorphizedGenericFunctions()
+{
+    unsafe
+    {
+        return LowerHirMaterializesSourceBackedMonomorphizedGenericFunctionsImpl();
+    }
+}
+
+[Fact]
+fn bool ExplicitConstructorBodiesLowerIntoObjectCreation()
+{
+    unsafe
+    {
+        return ExplicitConstructorBodiesLowerIntoObjectCreationImpl();
+    }
+}
+
+[Fact]
+fn bool LowerMirSubstitutesConcreteTypesInsideMaterializedGenericBodies()
+{
+    unsafe
+    {
+        return LowerMirSubstitutesConcreteTypesInsideMaterializedGenericBodiesImpl();
+    }
+}
+
+[Fact]
+fn bool LowerMirRewritesGenericCallsToMaterializedSpecializationSymbols()
+{
+    unsafe
+    {
+        return LowerMirRewritesGenericCallsToMaterializedSpecializationSymbolsImpl();
+    }
+}
+
+[Fact]
+fn bool NestedGenericTypeLayoutsAreDiscoveredFromSourceUseSites()
+{
+    unsafe
+    {
+        return NestedGenericTypeLayoutsAreDiscoveredFromSourceUseSitesImpl();
+    }
+}
+
+[Fact]
+fn bool MemberCallsDoNotCollideWithImportedConstructorCallsAtTheSameCoordinates()
+{
+    unsafe
+    {
+        return MemberCallsDoNotCollideWithImportedConstructorCallsAtTheSameCoordinatesImpl();
+    }
+}
+
+[Fact]
+fn bool ImportedGenericMemberCallLowersAcrossModulesWithoutInvariantViolation()
+{
+    unsafe
+    {
+        return ImportedGenericMemberCallLowersAcrossModulesWithoutInvariantViolationImpl();
+    }
+}
+
+[Fact]
+fn bool DynamicIndexingOnFixedArrayTemporaryLowersWithoutUnsupportedFallback()
+{
+    unsafe
+    {
+        return DynamicIndexingOnFixedArrayTemporaryLowersWithoutUnsupportedFallbackImpl();
+    }
+}
+
+[Fact]
+fn bool PureConstantArithmeticReturnsFoldedMirConstant()
+{
+    unsafe
+    {
+        return PureConstantArithmeticReturnsFoldedMirConstantImpl();
+    }
+}
+
+[Fact]
+fn bool ConstantIntegerExponentComparisonOperandFoldsBeforeMirWidthSelection()
+{
+    unsafe
+    {
+        return ConstantIntegerExponentComparisonOperandFoldsBeforeMirWidthSelectionImpl();
+    }
+}
+
+[Fact]
+fn bool ConstantLawCallsFoldToMirConstants()
+{
+    unsafe
+    {
+        return ConstantLawCallsFoldToMirConstantsImpl();
+    }
+}
+
+[Fact]
+fn bool BackendOpaqueLawCallsDoNotFoldToMirConstants()
+{
+    unsafe
+    {
+        return BackendOpaqueLawCallsDoNotFoldToMirConstantsImpl();
+    }
+}
+
+[Fact]
+fn bool FixedArrayArithmeticIndexStillLowersToAggregateIndexOperations()
+{
+    unsafe
+    {
+        return FixedArrayArithmeticIndexStillLowersToAggregateIndexOperationsImpl();
+    }
+}
+
+[Fact]
+fn bool PayloadEnumConstructorCallsDoNotProduceIndirectCallProbeDiagnostics()
+{
+    unsafe
+    {
+        return PayloadEnumConstructorCallsDoNotProduceIndirectCallProbeDiagnosticsImpl();
+    }
+}
+
+[Fact]
+fn bool ComparisonChainsLowerToShortCircuitBlocksAndReuseSharedOperands()
+{
+    unsafe
+    {
+        return ComparisonChainsLowerToShortCircuitBlocksAndReuseSharedOperandsImpl();
+    }
+}
+
+[Fact]
+fn bool ShortCircuitOrLowersToMultipleBlocksAndDirectCodegen()
+{
+    unsafe
+    {
+        return ShortCircuitOrLowersToMultipleBlocksAndDirectCodegenImpl();
+    }
+}
+
+[Fact]
+fn bool VoidFunctionPointerCallsLowerAsStatementOnlyOperations()
+{
+    unsafe
+    {
+        return VoidFunctionPointerCallsLowerAsStatementOnlyOperationsImpl();
+    }
+}
+
+[Fact]
+fn bool SizeofAndAlignofLowerToConcreteIntegerConstants()
+{
+    unsafe
+    {
+        return SizeofAndAlignofLowerToConcreteIntegerConstantsImpl();
+    }
+}
+
+[Fact]
+fn bool HugeCompileTimeIntegerConversionMaterializesConcreteMirConstant()
+{
+    unsafe
+    {
+        return HugeCompileTimeIntegerConversionMaterializesConcreteMirConstantImpl();
+    }
+}
+
+[Fact]
+fn bool ConstantNarrowingConversionMaterializesWrappedMirConstant()
+{
+    unsafe
+    {
+        return ConstantNarrowingConversionMaterializesWrappedMirConstantImpl();
+    }
+}
+
+[Fact]
+fn bool BitwiseXorAssignmentLowersToMirBinaryOperation()
+{
+    unsafe
+    {
+        return BitwiseXorAssignmentLowersToMirBinaryOperationImpl();
+    }
+}
+
+[Fact]
+fn bool BitwiseAndShiftChainsRespectPrecedenceAndAssociativity()
+{
+    unsafe
+    {
+        return BitwiseAndShiftChainsRespectPrecedenceAndAssociativityImpl();
+    }
+}
+
+[Fact]
+fn bool WrappingAndSaturatingArithmeticLowerToDistinctMirOperators()
+{
+    unsafe
+    {
+        return WrappingAndSaturatingArithmeticLowerToDistinctMirOperatorsImpl();
+    }
+}
+
+[Fact]
+fn bool IntegerExponentExpressionLowersToMirBinaryOperation()
+{
+    unsafe
+    {
+        return IntegerExponentExpressionLowersToMirBinaryOperationImpl();
+    }
+}
+
+[Fact]
+fn bool FloatingPointArithmeticChainsLowerToFloatMirBinaryOperations()
+{
+    unsafe
+    {
+        return FloatingPointArithmeticChainsLowerToFloatMirBinaryOperationsImpl();
+    }
+}
+
+[Fact]
+fn bool ExplicitAsciiLiteralToUnicodeConversionLowersToUnicodeStringConstant()
+{
+    unsafe
+    {
+        return ExplicitAsciiLiteralToUnicodeConversionLowersToUnicodeStringConstantImpl();
+    }
+}
+
+[Fact]
+fn bool ConstructorInitializerCombinationAppliesInitializerAfterConstructorFields()
+{
+    unsafe
+    {
+        return ConstructorInitializerCombinationAppliesInitializerAfterConstructorFieldsImpl();
+    }
+}
+
+[Fact]
+fn bool NestedObjectAndArrayInitializersLowerRecursivelyInSourceOrder()
+{
+    unsafe
+    {
+        return NestedObjectAndArrayInitializersLowerRecursivelyInSourceOrderImpl();
+    }
+}
+
+[Fact]
+fn bool MemberCallsEvaluateReceiverBeforeExplicitArguments()
+{
+    unsafe
+    {
+        return MemberCallsEvaluateReceiverBeforeExplicitArgumentsImpl();
+    }
+}
+
+[Fact]
+fn bool TargetTypedObjectCreationLowersWithDestinationType()
+{
+    unsafe
+    {
+        return TargetTypedObjectCreationLowersWithDestinationTypeImpl();
+    }
+}
+
+[Fact]
+fn bool RegisterObjectCreationKeepsValueStyleLocalLowering()
+{
+    unsafe
+    {
+        return RegisterObjectCreationKeepsValueStyleLocalLoweringImpl();
+    }
+}
+
+[Fact]
+fn bool HeapObjectCreationMarksLocalAsAddressableStorage()
+{
+    unsafe
+    {
+        return HeapObjectCreationMarksLocalAsAddressableStorageImpl();
+    }
+}
+
+[Fact]
+fn bool AcceptedBoundOperationsDoNotProduceNullMirArtifacts()
+{
+    unsafe
+    {
+        return AcceptedBoundOperationsDoNotProduceNullMirArtifactsImpl();
+    }
+}
+
+[Fact]
+fn bool FieldAssignmentLowersToAggregateUpdate()
+{
+    unsafe
+    {
+        return FieldAssignmentLowersToAggregateUpdateImpl();
+    }
+}
+
+[Fact]
+fn bool FieldCompoundAssignmentLowersToAggregateReadModifyWrite()
+{
+    unsafe
+    {
+        return FieldCompoundAssignmentLowersToAggregateReadModifyWriteImpl();
+    }
+}
+
+[Fact]
+fn bool FixedArrayInitializerAndConstantIndexLowerToAggregateIndexOperations()
+{
+    unsafe
+    {
+        return FixedArrayInitializerAndConstantIndexLowerToAggregateIndexOperationsImpl();
+    }
+}
+
+[Fact]
+fn bool PartialFixedArrayInitializersInsideObjectInitializersLowerWithZeroFilledTails()
+{
+    unsafe
+    {
+        return PartialFixedArrayInitializersInsideObjectInitializersLowerWithZeroFilledTailsImpl();
+    }
+}
+
+[Fact]
+fn bool FixedArrayElementAssignmentLowersToAggregateIndexUpdate()
+{
+    unsafe
+    {
+        return FixedArrayElementAssignmentLowersToAggregateIndexUpdateImpl();
+    }
+}
+
+[Fact]
+fn bool LargeFixedArrayConstantIndexReadsAndWritesUseAddressBasedMemoryAccess()
+{
+    unsafe
+    {
+        return LargeFixedArrayConstantIndexReadsAndWritesUseAddressBasedMemoryAccessImpl();
+    }
+}
+
+[Fact]
+fn bool LargeAggregateFieldAndConstantIndexReadsAndWritesUseAddressBasedMemoryAccess()
+{
+    unsafe
+    {
+        return LargeAggregateFieldAndConstantIndexReadsAndWritesUseAddressBasedMemoryAccessImpl();
+    }
+}
+
+[Fact]
+fn bool LocalFixedArrayCanLowerToSliceAndDynamicSliceRead()
+{
+    unsafe
+    {
+        return LocalFixedArrayCanLowerToSliceAndDynamicSliceReadImpl();
+    }
+}
+
+[Fact]
+fn bool InitSliceElementAssignmentCarriesInitializationWriteKindInMir()
+{
+    unsafe
+    {
+        return InitSliceElementAssignmentCarriesInitializationWriteKindInMirImpl();
+    }
+}
+
+[Fact]
+fn bool OutParameterAssignmentCarriesInitializationWriteKindInMir()
+{
+    unsafe
+    {
+        return OutParameterAssignmentCarriesInitializationWriteKindInMirImpl();
+    }
+}
+
+[Fact]
+fn bool TextSlicesLowerToViewProducingMir()
+{
+    unsafe
+    {
+        return TextSlicesLowerToViewProducingMirImpl();
+    }
+}
+
+[Fact]
+fn bool EmptyTextSlicesLowerToIdentityTextOperands()
+{
+    unsafe
+    {
+        return EmptyTextSlicesLowerToIdentityTextOperandsImpl();
+    }
+}
+
+[Fact]
+fn bool SingleElementTextIndexingLowersToUnitLengthTextViews()
+{
+    unsafe
+    {
+        return SingleElementTextIndexingLowersToUnitLengthTextViewsImpl();
+    }
+}
+
+[Fact]
+fn bool DynamicFixedArrayIndexMutationUsesAddressBasedMemoryAccess()
+{
+    unsafe
+    {
+        return DynamicFixedArrayIndexMutationUsesAddressBasedMemoryAccessImpl();
+    }
+}
+
+[Fact]
+fn bool FixedArrayParameterDynamicIndexUsesAddressBasedMemoryAccess()
+{
+    unsafe
+    {
+        return FixedArrayParameterDynamicIndexUsesAddressBasedMemoryAccessImpl();
+    }
+}
+
+[Fact]
+fn bool NestedLvalueChainsWithDynamicIndexCompoundAssignmentsUseAddressBasedMemoryAccess()
+{
+    unsafe
+    {
+        return NestedLvalueChainsWithDynamicIndexCompoundAssignmentsUseAddressBasedMemoryAccessImpl();
+    }
+}
+
+[Fact]
+fn bool SliceMutationUsesAddressBasedMemoryAccess()
+{
+    unsafe
+    {
+        return SliceMutationUsesAddressBasedMemoryAccessImpl();
+    }
+}
+
+[Fact]
+fn bool MixedCallMemberAndIndexPostfixChainsLowerToMir()
+{
+    unsafe
+    {
+        return MixedCallMemberAndIndexPostfixChainsLowerToMirImpl();
+    }
+}
+
+[Fact]
+fn bool ExplicitPointerOperatorsAndConversionsLowerToMir()
+{
+    unsafe
+    {
+        return ExplicitPointerOperatorsAndConversionsLowerToMirImpl();
+    }
+}
+
+[Fact]
+fn bool FieldAndGlobalAddressExpressionsLowerToMirAddresses()
+{
+    unsafe
+    {
+        return FieldAndGlobalAddressExpressionsLowerToMirAddressesImpl();
+    }
+}
+
+[Fact]
+fn bool IndexedFieldAddressBehindRawPointerLowersToParameterBackedMirAddresses()
+{
+    unsafe
+    {
+        return IndexedFieldAddressBehindRawPointerLowersToParameterBackedMirAddressesImpl();
+    }
+}
+
+[Fact]
+fn bool ImmutableGlobalAddressesLowerToReadonlyMirAddresses()
+{
+    unsafe
+    {
+        return ImmutableGlobalAddressesLowerToReadonlyMirAddressesImpl();
+    }
+}
+
+[Fact]
+fn bool ConstGlobalAddressesLowerToFrozenMirAddresses()
+{
+    unsafe
+    {
+        return ConstGlobalAddressesLowerToFrozenMirAddressesImpl();
+    }
+}
+
+[Fact]
+fn bool ConstParameterAddressesLowerToFrozenMirAddresses()
+{
+    unsafe
+    {
+        return ConstParameterAddressesLowerToFrozenMirAddressesImpl();
+    }
+}
+
+[Fact]
+fn bool ConstProvenanceLocalsAreMarkedInMir()
+{
+    unsafe
+    {
+        return ConstProvenanceLocalsAreMarkedInMirImpl();
+    }
+}
+
+[Fact]
+fn bool FrozenSliceAddressesLowerToReadonlyMirAddresses()
+{
+    unsafe
+    {
+        return FrozenSliceAddressesLowerToReadonlyMirAddressesImpl();
+    }
+}
+
+[Fact]
+fn bool DestructorBlocksLowerBeforeStorageDeadAtScopeExit()
+{
+    unsafe
+    {
+        return DestructorBlocksLowerBeforeStorageDeadAtScopeExitImpl();
+    }
+}
+
+[Fact]
+fn bool WholeLocalDestructorDropsInPlaceWithoutCopyingToDropTemporary()
+{
+    unsafe
+    {
+        return WholeLocalDestructorDropsInPlaceWithoutCopyingToDropTemporaryImpl();
+    }
+}
+
+[Fact]
+fn bool EarlyReturnBranchDropDoesNotSuppressFallthroughScopeDrop()
+{
+    unsafe
+    {
+        return EarlyReturnBranchDropDoesNotSuppressFallthroughScopeDropImpl();
+    }
+}
+
+[Fact]
+fn bool ReassigningADestructibleLocalLowersTheOldDropBeforeOverwrite()
+{
+    unsafe
+    {
+        return ReassigningADestructibleLocalLowersTheOldDropBeforeOverwriteImpl();
+    }
+}
+
+[Fact]
+fn bool DynamicStorageDropsInitializedElementsBeforeFreeingBackingStorage()
+{
+    unsafe
+    {
+        return DynamicStorageDropsInitializedElementsBeforeFreeingBackingStorageImpl();
+    }
+}
+
+[Fact]
+fn bool EnumPayloadCaptureDropsMovedPayloadOnlyOnce()
+{
+    unsafe
+    {
+        return EnumPayloadCaptureDropsMovedPayloadOnlyOnceImpl();
+    }
+}
+
+[Fact]
+fn bool LargeEnumPayloadCaptureDropsMovedPayloadOnlyOnce()
+{
+    unsafe
+    {
+        return LargeEnumPayloadCaptureDropsMovedPayloadOnlyOnceImpl();
+    }
+}
+
+[Fact]
+fn bool LargeEnumPayloadCaptureEarlyReturnKeepsDropCleanup()
+{
+    unsafe
+    {
+        return LargeEnumPayloadCaptureEarlyReturnKeepsDropCleanupImpl();
+    }
+}
+
+[Fact]
+fn bool LargeEnumPayloadReassignmentDropsOldAndReplacementOnce()
+{
+    unsafe
+    {
+        return LargeEnumPayloadReassignmentDropsOldAndReplacementOnceImpl();
+    }
+}
+
+[Fact]
+fn bool PrimaryConstructorArgumentsMoveIntoReturnedOwnerDropState()
+{
+    unsafe
+    {
+        return PrimaryConstructorArgumentsMoveIntoReturnedOwnerDropStateImpl();
+    }
+}
+
+[Fact]
+fn bool ExplicitConstructorArgumentsMoveIntoReturnedOwnerDropState()
+{
+    unsafe
+    {
+        return ExplicitConstructorArgumentsMoveIntoReturnedOwnerDropStateImpl();
+    }
+}
+
+[Fact]
+fn bool FixedArrayElementsCascadeRuntimeDrops()
+{
+    unsafe
+    {
+        return FixedArrayElementsCascadeRuntimeDropsImpl();
+    }
+}
+
+[Fact]
+fn bool HeapBackedFixedArrayElementsDropBeforeStorageDead()
+{
+    unsafe
+    {
+        return HeapBackedFixedArrayElementsDropBeforeStorageDeadImpl();
+    }
+}
+
+[Fact]
+fn bool ImportedTypeDestructorsResolveHelpersInTheirDefiningModule()
+{
+    unsafe
+    {
+        return ImportedTypeDestructorsResolveHelpersInTheirDefiningModuleImpl();
+    }
+}
+
+[Fact]
+fn bool EnumPayloadDropsLowerThroughActiveTagDispatch()
+{
+    unsafe
+    {
+        return EnumPayloadDropsLowerThroughActiveTagDispatchImpl();
+    }
+}
+
+[Fact]
+fn bool LiteralSwitchLowersToMirSwitchTerminator()
+{
+    unsafe
+    {
+        return LiteralSwitchLowersToMirSwitchTerminatorImpl();
+    }
+}
+
+[Fact]
+fn bool SwitchSectionsCanAssignAndBreakToSharedExit()
+{
+    unsafe
+    {
+        return SwitchSectionsCanAssignAndBreakToSharedExitImpl();
+    }
+}
+
+[Fact]
+fn bool GuardedSwitchLowersToBranchBasedCfg()
+{
+    unsafe
+    {
+        return GuardedSwitchLowersToBranchBasedCfgImpl();
+    }
+}
+
+[Fact]
+fn bool GuardedDiscardSwitchLowersToBranchBasedCfg()
+{
+    unsafe
+    {
+        return GuardedDiscardSwitchLowersToBranchBasedCfgImpl();
+    }
+}
+
+[Fact]
+fn bool MultiLabelSectionWithGuardedDiscardLowersInOrder()
+{
+    unsafe
+    {
+        return MultiLabelSectionWithGuardedDiscardLowersInOrderImpl();
+    }
+}
+
+[Fact]
+fn bool MultiLabelSectionsNormalizeIntoSectionDecisionTrees()
+{
+    unsafe
+    {
+        return MultiLabelSectionsNormalizeIntoSectionDecisionTreesImpl();
+    }
+}
+
+[Fact]
+fn bool CaptureSwitchPatternLowersToMatchLocalAndBody()
+{
+    unsafe
+    {
+        return CaptureSwitchPatternLowersToMatchLocalAndBodyImpl();
+    }
+}
+
+[Fact]
+fn bool AggregateSwitchPatternBindsScalarFieldsAfterPatternSelection()
+{
+    unsafe
+    {
+        return AggregateSwitchPatternBindsScalarFieldsAfterPatternSelectionImpl();
+    }
+}
+
+[Fact]
+fn bool AggregatePropertySwitchPatternBindsNamedFieldsAfterPatternSelection()
+{
+    unsafe
+    {
+        return AggregatePropertySwitchPatternBindsNamedFieldsAfterPatternSelectionImpl();
+    }
+}
+
+[Fact]
+fn bool ListSwitchPatternBindsFixedArrayElementsAfterPatternSelection()
+{
+    unsafe
+    {
+        return ListSwitchPatternBindsFixedArrayElementsAfterPatternSelectionImpl();
+    }
+}
+
+[Fact]
+fn bool AggregateWholeValueSwitchPatternBindsMatchLocalAfterPatternSelection()
+{
+    unsafe
+    {
+        return AggregateWholeValueSwitchPatternBindsMatchLocalAfterPatternSelectionImpl();
+    }
+}
+
+[Fact]
+fn bool NestedAggregateWholeValueSwitchPatternBindsMatchLocalAfterPatternSelection()
+{
+    unsafe
+    {
+        return NestedAggregateWholeValueSwitchPatternBindsMatchLocalAfterPatternSelectionImpl();
+    }
+}
+
+[Fact]
+fn bool EnumWholeValueSwitchPatternBindsMatchLocalAfterTagSelection()
+{
+    unsafe
+    {
+        return EnumWholeValueSwitchPatternBindsMatchLocalAfterTagSelectionImpl();
+    }
+}
+
+[Fact]
+fn bool NestedAggregateSwitchPatternBindsScalarLeavesAfterPatternSelection()
+{
+    unsafe
+    {
+        return NestedAggregateSwitchPatternBindsScalarLeavesAfterPatternSelectionImpl();
+    }
+}
+
+[Fact]
+fn bool EnumSwitchPatternsLowerToTagTestsAndActivePayloadExtractions()
+{
+    unsafe
+    {
+        return EnumSwitchPatternsLowerToTagTestsAndActivePayloadExtractionsImpl();
+    }
+}
+
+[Fact]
+fn bool EnumSwitchExpressionCallIsLoweredOnceInMir()
+{
+    unsafe
+    {
+        return EnumSwitchExpressionCallIsLoweredOnceInMirImpl();
+    }
+}
+
+[Fact]
+fn bool TextLiteralSwitchLowersToBranchBasedComparisonTree()
+{
+    unsafe
+    {
+        return TextLiteralSwitchLowersToBranchBasedComparisonTreeImpl();
+    }
+}
+
+[Fact]
+fn bool LargeTextLiteralSwitchLowersThroughLengthPartitioning()
+{
+    unsafe
+    {
+        return LargeTextLiteralSwitchLowersThroughLengthPartitioningImpl();
+    }
+}
+
+[Fact]
+fn bool UnicodeTextLiteralSwitchLowersSuccessfully()
+{
+    unsafe
+    {
+        return UnicodeTextLiteralSwitchLowersSuccessfullyImpl();
+    }
+}
+
+[Fact]
+fn bool FloatLiteralSwitchLowersToBranchBasedCfg()
+{
+    unsafe
+    {
+        return FloatLiteralSwitchLowersToBranchBasedCfgImpl();
+    }
+}
+
+[Fact]
+fn bool RawPointerNullSwitchLowersToBranchBasedCfg()
+{
+    unsafe
+    {
+        return RawPointerNullSwitchLowersToBranchBasedCfgImpl();
+    }
+}
+
+[Fact]
+fn bool AggregateSwitchPatternsCanMatchAndCaptureTextLeaves()
+{
+    unsafe
+    {
+        return AggregateSwitchPatternsCanMatchAndCaptureTextLeavesImpl();
+    }
+}
+
+[Fact]
+fn bool EnumSwitchPatternsCanMatchAndCaptureTextLeaves()
+{
+    unsafe
+    {
+        return EnumSwitchPatternsCanMatchAndCaptureTextLeavesImpl();
+    }
+}
+
+[Fact]
+fn bool RawSingleLineLiteralsLowerAsComparisonOperands()
+{
+    unsafe
+    {
+        return RawSingleLineLiteralsLowerAsComparisonOperandsImpl();
+    }
+}
+

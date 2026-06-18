@@ -1,0 +1,1088 @@
+import CompilerTestSupport
+import System.Testing
+
+module TypeCheckingTests_DIAGP1
+
+// Ported slice of tests/compiler.Tests/TypeCheckingTests.cs.
+// Each Impl runs the embedded Stark program (kept verbatim from the C# raw
+// string) through the closest compile helper and returns true when the original
+// xUnit assertions would hold. The C# facts stop after the "type-check" pass;
+// CompileTypeCheck mirrors that. TypeCheckModel probes (promotions,
+// address-taken functions, capture facts) are not expressible via the compile
+// helpers, so PORT-NOTE comments flag where assertions were reduced to the
+// nearest diagnostic / Succeeds signal. Methods that compile several programs
+// are reproduced as several compiles combined with `&&`.
+
+// Ported from TypeCheckingTests.CompileTimeStructuralFactsCannotPromoteToRuntimeCallableValues.
+public unsafe fn bool CompileTimeStructuralFactsCannotPromoteToRuntimeCallableValuesImpl()
+{
+    stack mut LlvmCompile pointerResult = CompileTypeCheck(
+        "diagp1-comptime-fact-no-runtime-pointer",
+        raw"""
+module Demo
+
+finite law void Run()
+{
+    stack fnptr<finite law bool()> fact = System.Compiler.IsInteger<i32[min max]>;
+    return;
+}
+""");
+
+    stack mut LlvmCompile closureResult = CompileTypeCheck(
+        "diagp1-comptime-fact-no-runtime-closure",
+        raw"""
+module Demo
+
+finite law void Run()
+{
+    stack closure<finite law bool()> fact = System.Compiler.IsInteger<i32[min max]>;
+    return;
+}
+""");
+
+    return FailsWithDiagnosticMessage(pointerResult, "STK3054", "may only be used inside a `comptime` expression or block")
+        && FailsWithDiagnosticMessage(closureResult, "STK3054", "may only be used inside a `comptime` expression or block");
+}
+
+// Ported from TypeCheckingTests.FunctionPointerAbiIsPartOfTypeIdentity.
+public unsafe fn bool FunctionPointerAbiIsPartOfTypeIdentityImpl()
+{
+    // PORT-NOTE: the C# fact compiles with TargetInfo "x86_64-pc-windows-msvc";
+    // the compile helpers do not thread a target triple, so the embedded
+    // program runs against the default target. The asserted diagnostic
+    // (mismatched fnptr ABIs) is target-independent. Two message fragments are
+    // asserted in C#; reduced here to STK3002 plus the dominant fragment.
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-fnptr-abi-type-identity",
+        raw"""
+module Demo
+
+unsafe ffi(c) fn i32[min max] CRead();
+unsafe ffi(win64) fn i32[min max] WinRead();
+
+unsafe fn void Run()
+{
+    stack mut fnptr<unsafe ffi(c) fn i32[min max]()> cReader = CRead;
+    stack fnptr<unsafe ffi(win64) fn i32[min max]()> winReader = WinRead;
+    cReader = winReader;
+    return;
+}
+""");
+
+    return FailsWithDiagnostic(compiled, "STK3002")
+        && AnyDiagnosticMessageContains(compiled, "fnptr<unsafe ffi(c) fn")
+        && AnyDiagnosticMessageContains(compiled, "fnptr<unsafe ffi(win64) fn");
+}
+
+// Ported from TypeCheckingTests.SystemCCVoidIsValidOnlyBehindRawPointers.
+public unsafe fn bool SystemCCVoidIsValidOnlyBehindRawPointersImpl()
+{
+    // PORT-NOTE: the C# fact additionally probes the TypeCheckModel via
+    // AssertRawPointerToCVoid on each function's parameter/return types. Those
+    // raw-pointer-to-c_void shape facts are not expressible through the compile
+    // helpers, so the positive case reduces to "the program type-checks".
+    stack mut LlvmCompile good = CompileTypeCheck(
+        "diagp1-cvoid-behind-rawptr-good",
+        raw"""
+module Demo
+
+unsafe ffi(c) fn rawmutptr<System.C.c_void> Allocate(System.C.c_size_t bytes);
+unsafe ffi(c) fn void Free(rawmutptr<System.C.c_void> ptr);
+
+unsafe fn rawptr<System.C.c_void> Identity(rawptr<System.C.c_void> ptr)
+{
+    return ptr;
+}
+""");
+
+    stack mut LlvmCompile bad = CompileTypeCheck(
+        "diagp1-cvoid-behind-rawptr-bad",
+        raw"""
+module Demo
+
+unsafe ffi(c) fn System.C.c_void BadReturn();
+
+struct BadField
+{
+    System.C.c_void Value;
+}
+
+unsafe fn void BadLocal()
+{
+    stack System.C.c_void value;
+    return;
+}
+""");
+
+    return Succeeds(good)
+        && FailsWithDiagnostic(bad, "STK3050")
+        && AnyDiagnosticMessageContains(bad, "System.C.c_void")
+        && AnyDiagnosticMessageContains(bad, "rawptr<System.C.c_void>");
+}
+
+// Ported from TypeCheckingTests.StructLayoutDiagnosticsRejectInvalidLayoutShapes.
+public unsafe fn bool StructLayoutDiagnosticsRejectInvalidLayoutShapesImpl()
+{
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-struct-layout-invalid-shapes",
+        raw"""
+module Demo
+
+[StructLayout(C), Pack(3)]
+struct BadPack
+{
+    u32[0 max] Value;
+}
+
+[StructLayout(C)]
+struct BadField
+{
+    ascii Text;
+}
+
+[StructLayout(Explicit)]
+struct MissingOffset
+{
+    u32[0 max] Value;
+}
+""");
+
+    return FailsWithDiagnosticMessage(compiled, "STK3048", "[Pack(N)] requires a positive power-of-two integer literal")
+        && FailsWithDiagnosticMessage(compiled, "STK3049", "not FFI-layout safe")
+        && FailsWithDiagnosticMessage(compiled, "STK3048", "Every field in [StructLayout(Explicit)]");
+}
+
+// Ported from TypeCheckingTests.SafeBorrowsRejectMisalignedPackedFields.
+public unsafe fn bool SafeBorrowsRejectMisalignedPackedFieldsImpl()
+{
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-safe-borrow-misaligned-packed",
+        raw"""
+module Demo
+
+[StructLayout(C), Pack(1)]
+struct Packet
+{
+    u8[0 max] Tag;
+    u32[0 max] Value;
+}
+
+fn void Touch(borrow u32[0 max] value)
+{
+    return;
+}
+
+fn void Run(borrow Packet packet)
+{
+    Touch(packet.Value);
+    return;
+}
+""");
+
+    return FailsWithDiagnosticMessage(compiled, "STK3049", "cannot form a safe borrow to member 'Value'");
+}
+
+// Ported from TypeCheckingTests.FunctionPointerOverlapTargetRejectsDefaultDisjointFunctionItems.
+public unsafe fn bool FunctionPointerOverlapTargetRejectsDefaultDisjointFunctionItemsImpl()
+{
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-fnptr-overlap-rejects-disjoint",
+        raw"""
+module Demo
+
+struct Box
+{
+    i32[min max] Value;
+}
+
+fn void Touch(borrow mut Box left, borrow mut Box right)
+{
+    return;
+}
+
+fn void Run()
+{
+    stack fnptr<fn void(borrow mut Box, borrow mut Box) where overlap(arg0, arg1)> op = Touch;
+    return;
+}
+""");
+
+    return FailsWithDiagnostic(compiled, "STK3002")
+        && AnyDiagnosticMessageContains(compiled, "cannot be promoted")
+        && AnyDiagnosticMessageContains(compiled, "where overlap(arg0, arg1)");
+}
+
+// Ported from TypeCheckingTests.LawClosureTypesRejectMutableOrOnceCapabilities.
+public unsafe fn bool LawClosureTypesRejectMutableOrOnceCapabilitiesImpl()
+{
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-law-closure-rejects-mut-once",
+        raw"""
+module Demo
+
+fn void RegisterMutableLaw(inline closure<mut law void()> body);
+fn void RegisterOnceLaw(heap closure<once finite law void()> body);
+""");
+
+    // C# asserts exactly two STK3014 diagnostics with the same message fragment.
+    return !Succeeds(compiled)
+        && CountDiagnosticsWithCodeAndMessage(
+            compiled,
+            "STK3014",
+            "Law and finite law closure signatures cannot use 'mut' or 'once'") == 2;
+}
+
+// Ported from TypeCheckingTests.FunctionItemPromotionRejectsUnsatisfiedFunctionKindObligations.
+public unsafe fn bool FunctionItemPromotionRejectsUnsatisfiedFunctionKindObligationsImpl()
+{
+    // PORT-NOTE: the C# fact also asserts TypeCheckModel.AddressTakenFunctions
+    // is empty; that model probe is not expressible via the compile helpers and
+    // is dropped. The four STK3002 promotion-rejection diagnostics are checked.
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-fn-promotion-unsatisfied-kinds",
+        raw"""
+module Demo
+
+fn i32[min max] Plain()
+{
+    return 1;
+}
+
+finite i32[min max] FiniteOnly()
+{
+    return 2;
+}
+
+law i32[min max] LawOnly()
+{
+    return 3;
+}
+
+fn void Run()
+{
+    stack fnptr<finite i32[min max]()> needsFinite = Plain;
+    stack fnptr<law i32[min max]()> needsLaw = Plain;
+    stack fnptr<finite law i32[min max]()> needsBothFromFinite = FiniteOnly;
+    stack fnptr<finite law i32[min max]()> needsBothFromLaw = LawOnly;
+    return;
+}
+""");
+
+    return FailsWithDiagnostic(compiled, "STK3002")
+        && CountDiagnosticsWithCodeAndMessage(compiled, "STK3002", "Function item 'Plain' cannot be promoted") >= 2
+        && AnyDiagnosticMessageContains(compiled, "Function item 'FiniteOnly' cannot be promoted")
+        && AnyDiagnosticMessageContains(compiled, "Function item 'LawOnly' cannot be promoted")
+        && AnyDiagnosticMessageContains(compiled, "finite law");
+}
+
+// Ported from TypeCheckingTests.FunctionPointerPromotionRejectsAbiMismatchedFunctionItems.
+public unsafe fn bool FunctionPointerPromotionRejectsAbiMismatchedFunctionItemsImpl()
+{
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-fnptr-promotion-abi-mismatch",
+        raw"""
+module Demo
+
+fn i64[min max] Wide(i64[min max] value)
+{
+    return value;
+}
+
+fn void Run()
+{
+    stack fnptr<fn i32[min max](i32[min max])> op = Wide;
+    return;
+}
+""");
+
+    return FailsWithDiagnosticMessage(compiled, "STK3002", "cannot be promoted");
+}
+
+// Ported from TypeCheckingTests.MutableClosureCallsRequireMutableClosureAccess.
+public unsafe fn bool MutableClosureCallsRequireMutableClosureAccessImpl()
+{
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-mut-closure-call-requires-mut-access",
+        raw"""
+module Demo
+
+fn void Run(borrow closure<mut fn void()> op)
+{
+    op();
+    return;
+}
+""");
+
+    return FailsWithDiagnosticMessage(compiled, "STK3008", "requires mutable access to the closure value");
+}
+
+// Ported from TypeCheckingTests.HeapClosureLambdasRequireHeapPrefixAndHeapSafeCaptures.
+public unsafe fn bool HeapClosureLambdasRequireHeapPrefixAndHeapSafeCapturesImpl()
+{
+    stack mut LlvmCompile missingPrefix = CompileTypeCheck(
+        "diagp1-heap-closure-missing-prefix",
+        raw"""
+module Demo
+
+fn heap closure<fn i32[min max](i32[min max])> Bad(i32[min max] offset)
+{
+    return capture(copy offset) (i32[min max] value) => value + offset;
+}
+""");
+
+    stack mut LlvmCompile borrowedCapture = CompileTypeCheck(
+        "diagp1-heap-closure-borrowed-capture",
+        raw"""
+module Demo
+
+fn heap closure<fn i32[min max]()> Bad(i32[min max] value)
+{
+    return heap capture(read value) () => value;
+}
+""");
+
+    stack mut LlvmCompile nonEscapingBorrowCapture = CompileTypeCheck(
+        "diagp1-heap-closure-non-escaping-borrow",
+        raw"""
+module Demo
+
+fn heap closure<fn i32[min max]()> Bad(borrow closure<fn i32[min max]()> op)
+{
+    return heap capture(copy op) () => op();
+}
+""");
+
+    return FailsWithDiagnosticMessage(missingPrefix, "STK3008", "must use the explicit 'heap' lambda prefix")
+        && FailsWithDiagnosticMessage(borrowedCapture, "STK3008", "Heap closure capture mode 'read'")
+        && FailsWithDiagnosticMessage(nonEscapingBorrowCapture, "STK3008", "non-escaping type 'borrow closure");
+}
+
+// Ported from TypeCheckingTests.InlineClosureTypesAreOnlyValidAsParameters.
+public unsafe fn bool InlineClosureTypesAreOnlyValidAsParametersImpl()
+{
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-inline-closure-only-parameters",
+        raw"""
+module Demo
+
+fn inline closure<fn void()> BadReturn()
+{
+    return () =>
+    {
+        return;
+    };
+}
+
+fn void BadLocal()
+{
+    stack inline closure<fn void()> local = () =>
+    {
+        return;
+    };
+    return;
+}
+
+struct BadField
+{
+    inline closure<fn void()> Callback;
+}
+
+fn void BadNestedParameter(fnptr<fn void(inline closure<fn void()>)> callback)
+{
+    return;
+}
+""");
+
+    // C# asserts at least three STK3008 diagnostics naming the inline-closure-
+    // position restriction.
+    return !Succeeds(compiled)
+        && CountDiagnosticsWithCodeAndMessage(
+            compiled,
+            "STK3008",
+            "only valid as a function parameter directly") >= 3;
+}
+
+// Ported from TypeCheckingTests.NonCapturingLambdasCannotUseOuterLocalsWithoutCaptureList.
+public unsafe fn bool NonCapturingLambdasCannotUseOuterLocalsWithoutCaptureListImpl()
+{
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-noncapturing-lambda-outer-local",
+        raw"""
+module Demo
+
+fn void Run()
+{
+    stack i32[min max] offset = 1;
+    stack fnptr<fn i32[min max](i32[min max])> increment = (i32[min max] value) => value + offset;
+    return;
+}
+""");
+
+    return FailsWithDiagnosticMessage(compiled, "STK3003", "Unknown symbol 'offset'");
+}
+
+// Ported from TypeCheckingTests.CapturingLambdaSyntaxIsCheckedButNotLoweredYet.
+public unsafe fn bool CapturingLambdaSyntaxIsCheckedButNotLoweredYetImpl()
+{
+    // PORT-NOTE: the C# fact asserts a diagnostic matched by the local
+    // IsFunctionPointerCaptureDiagnostic predicate ("function pointer ...
+    // capture not lowered yet"). The exact code is not visible from the helper
+    // surface, so this reduces to "the program fails to type-check".
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-capturing-lambda-not-lowered",
+        raw"""
+module Demo
+
+fn void Run()
+{
+    stack i32[min max] offset = 1;
+    stack fnptr<fn i32[min max](i32[min max])> increment = capture(copy offset) (i32[min max] value) => value + offset;
+    return;
+}
+""");
+
+    return !Succeeds(compiled);
+}
+
+// Ported from TypeCheckingTests.ExplicitCaptureListDoesNotExposeUnlistedOuterLocals.
+public unsafe fn bool ExplicitCaptureListDoesNotExposeUnlistedOuterLocalsImpl()
+{
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-capture-list-hides-unlisted-locals",
+        raw"""
+module Demo
+
+fn void Run()
+{
+    stack i32[min max] offset = 1;
+    stack i32[min max] secret = 2;
+    stack fnptr<fn i32[min max](i32[min max])> increment = capture(copy offset) (i32[min max] value) => value + secret;
+    return;
+}
+""");
+
+    return FailsWithDiagnosticMessage(compiled, "STK3003", "Unknown symbol 'secret'");
+}
+
+// Ported from TypeCheckingTests.ExplicitCaptureListsRejectDuplicateCapturedLocals.
+public unsafe fn bool ExplicitCaptureListsRejectDuplicateCapturedLocalsImpl()
+{
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-capture-list-duplicate-locals",
+        raw"""
+module Demo
+
+fn void Run()
+{
+    stack i32[min max] value = 1;
+    stack fnptr<fn i32[min max]()> callback = capture(copy value, read value) () => value;
+    return;
+}
+""");
+
+    return FailsWithDiagnosticMessage(compiled, "STK3006", "Lambda capture 'value' is listed more than once");
+}
+
+// Ported from TypeCheckingTests.LambdaParametersCannotReuseCapturedNames.
+public unsafe fn bool LambdaParametersCannotReuseCapturedNamesImpl()
+{
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-lambda-param-reuses-captured-name",
+        raw"""
+module Demo
+
+fn i32[min max] Apply(
+    borrow closure<fn i32[min max](i32[min max])> op,
+    i32[min max] value)
+    {
+        return op(value);
+}
+
+fn i32[min max] Run()
+{
+    stack i32[min max] value = 1;
+    return Apply(
+        capture(copy value) (i32[min max] value) => value + 1,
+        41);
+}
+""");
+
+    return FailsWithDiagnosticMessage(compiled, "STK3006", "Lambda parameter 'value' reuses a captured name");
+}
+
+// Ported from TypeCheckingTests.ExplicitCaptureListsReportUnknownClauseNamesAndModes.
+public unsafe fn bool ExplicitCaptureListsReportUnknownClauseNamesAndModesImpl()
+{
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-capture-unknown-clause-and-mode",
+        raw"""
+module Demo
+
+fn void Run()
+{
+    stack i32[min max] value = 1;
+    stack fnptr<fn i32[min max]()> wrongClause = captures(copy value) () => value;
+    stack fnptr<fn i32[min max]()> wrongMode = capture(clone value) () => value;
+    return;
+}
+""");
+
+    return FailsWithDiagnosticMessage(compiled, "STK3008", "Unknown lambda capture clause 'captures'")
+        && FailsWithDiagnosticMessage(compiled, "STK3008", "Unknown lambda capture mode 'clone'");
+}
+
+// Ported from TypeCheckingTests.UnsafeLambdaCaptureModesRequireUnsafeContext.
+public unsafe fn bool UnsafeLambdaCaptureModesRequireUnsafeContextImpl()
+{
+    // PORT-NOTE: the `good` program is expected NOT to succeed but to be free of
+    // STK3024 (the unsafe-context check) while still reporting the
+    // function-pointer-capture-not-lowered diagnostic. Absence of a code is not
+    // expressible via the helpers, so `good` reduces to "fails to type-check
+    // without raising STK3024".
+    stack mut LlvmCompile bad = CompileTypeCheck(
+        "diagp1-unsafe-capture-requires-unsafe-bad",
+        raw"""
+module Demo
+
+fn void Run(i32[min max] token)
+{
+    stack fnptr<fn i32[min max]()> callback = capture(unsafe addr token) () => 1;
+    return;
+}
+""");
+
+    stack mut LlvmCompile good = CompileTypeCheck(
+        "diagp1-unsafe-capture-requires-unsafe-good",
+        raw"""
+module Demo
+
+fn void Run(i32[min max] token, i32[min max] sharedState)
+{
+    unsafe
+    {
+        stack fnptr<fn i32[min max]()> callback = capture(unsafe addr token, unsafe shared sharedState) () => 1;
+    }
+
+    return;
+}
+""");
+
+    return FailsWithDiagnosticMessage(bad, "STK3024", "requires an unsafe context")
+        && !Succeeds(good)
+        && !HasDiagnostic(good, "STK3024");
+}
+
+// Ported from TypeCheckingTests.UnsafeLambdaCaptureModesRequireExplicitUnsafeMarkerAndRejectSafeModeMarkers.
+public unsafe fn bool UnsafeLambdaCaptureModesRequireExplicitUnsafeMarkerAndRejectSafeModeMarkersImpl()
+{
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-unsafe-capture-explicit-marker",
+        raw"""
+module Demo
+
+fn void Run(
+    i32[min max] token,
+    i32[min max] sharedState,
+    i32[min max] copyValue)
+    {
+        unsafe
+    {
+        stack fnptr<fn i32[min max]()> byAddress = capture(addr token) () => 1;
+        stack fnptr<fn i32[min max]()> sharedCallback = capture(shared sharedState) () => 2;
+        stack fnptr<fn i32[min max]()> copied = capture(unsafe copy copyValue) () => 3;
+    }
+
+    return;
+}
+""");
+
+    return FailsWithDiagnosticMessage(compiled, "STK3024", "Capture mode 'addr' must be written as 'unsafe addr'")
+        && FailsWithDiagnosticMessage(compiled, "STK3024", "Capture mode 'shared' must be written as 'unsafe shared'")
+        && FailsWithDiagnosticMessage(compiled, "STK3024", "Only 'addr' and 'shared' capture modes may be marked unsafe");
+}
+
+// Ported from TypeCheckingTests.CopyLambdaCapturesRejectMoveOnlyBindings.
+public unsafe fn bool CopyLambdaCapturesRejectMoveOnlyBindingsImpl()
+{
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-copy-capture-rejects-move-only",
+        raw"""
+module Demo
+
+struct Token
+{
+    i32[min max] Value;
+}
+
+fn void Run()
+{
+    stack Token token = new Token()
+    {
+        Value = 1
+    };
+    stack fnptr<fn i32[min max]()> callback =
+        capture(copy token) () => token.Value;
+    return;
+}
+""");
+
+    return FailsWithDiagnostic(compiled, "STK3002")
+        && AnyDiagnosticMessageContains(compiled, "Capture mode 'copy' cannot copy 'token'")
+        && AnyDiagnosticMessageContains(compiled, "Use 'move' to transfer ownership");
+}
+
+// Ported from TypeCheckingTests.CopyLambdaCapturesAllowTextViews.
+public unsafe fn bool CopyLambdaCapturesAllowTextViewsImpl()
+{
+    // PORT-NOTE: the C# fact asserts the program does NOT report the
+    // "Capture mode 'copy' cannot copy" STK3002 (text views are copyable) while
+    // still reporting the function-pointer-capture-not-lowered diagnostic.
+    // Absence of a specific message is not expressible via the helpers, so this
+    // reduces to "fails to type-check, but not with the copy-rejection message".
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-copy-capture-allows-text-views",
+        raw"""
+module Demo
+
+fn void Run()
+{
+    stack ascii label = "Score: ";
+    stack unicode word = "Ready";
+    stack fnptr<fn i32[min max]()> callback =
+        capture(copy label, copy word) () => 1;
+    return;
+}
+""");
+
+    return !Succeeds(compiled)
+        && !AnyDiagnosticMessageContains(compiled, "Capture mode 'copy' cannot copy");
+}
+
+// Ported from TypeCheckingTests.ReadAndCopyLambdaCapturesDoNotExposeWritableBindings.
+public unsafe fn bool ReadAndCopyLambdaCapturesDoNotExposeWritableBindingsImpl()
+{
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-read-copy-capture-readonly",
+        raw"""
+module Demo
+
+fn void Run()
+{
+    stack mut i32[min max] readValue = 1;
+    stack mut i32[min max] copyValue = 2;
+    stack fnptr<fn void()> readCallback = capture(read readValue) () =>
+    {
+        readValue = 3;
+        return;
+    };
+    stack fnptr<fn void()> copyCallback = capture(copy copyValue) () =>
+    {
+        copyValue = 4;
+        return;
+    };
+    return;
+}
+""");
+
+    return FailsWithDiagnosticMessage(compiled, "STK3007", "Cannot assign to immutable local 'readValue'")
+        && FailsWithDiagnosticMessage(compiled, "STK3007", "Cannot assign to immutable local 'copyValue'");
+}
+
+// Ported from TypeCheckingTests.MutLambdaCapturesExposeWritableBindingsInLambdaBody.
+public unsafe fn bool MutLambdaCapturesExposeWritableBindingsInLambdaBodyImpl()
+{
+    // PORT-NOTE: the C# fact asserts the program does NOT report any STK3007
+    // (the mut capture exposes a writable binding) while still reporting the
+    // function-pointer-capture-not-lowered diagnostic. This reduces to "fails to
+    // type-check, without any STK3007".
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-mut-capture-writable-body",
+        raw"""
+module Demo
+
+fn void Run()
+{
+    stack mut i32[min max] value = 1;
+    stack fnptr<fn void()> callback = capture(mut value) () =>
+    {
+        value = 2;
+        return;
+    };
+    return;
+}
+""");
+
+    return !Succeeds(compiled)
+        && !HasDiagnostic(compiled, "STK3007");
+}
+
+// Ported from TypeCheckingTests.OutAndInitLambdaCapturesRejectReadsInLambdaBody.
+public unsafe fn bool OutAndInitLambdaCapturesRejectReadsInLambdaBodyImpl()
+{
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-out-init-capture-reject-reads",
+        raw"""
+module Demo
+
+fn void Run()
+{
+    stack mut i32[min max] outValue = 1;
+    stack mut i32[min max] initValue = 2;
+    stack fnptr<fn void()> outCallback = capture(out outValue) () =>
+    {
+        stack i32[min max] readOut = outValue;
+        return;
+    };
+    stack fnptr<fn void()> initCallback = capture(init initValue) () =>
+    {
+        stack i32[min max] readInit = initValue;
+        return;
+    };
+    return;
+}
+""");
+
+    return FailsWithDiagnostic(compiled, "STK3002")
+        && AnyDiagnosticMessageContains(compiled, "out i32")
+        && AnyDiagnosticMessageContains(compiled, "init i32");
+}
+
+// Ported from TypeCheckingTests.OutAndInitLambdaCapturesAllowWritesInLambdaBody.
+public unsafe fn bool OutAndInitLambdaCapturesAllowWritesInLambdaBodyImpl()
+{
+    // PORT-NOTE: the C# fact asserts the program reports neither STK3002 nor
+    // STK3007 (out/init captures permit writes) while still reporting the
+    // function-pointer-capture-not-lowered diagnostic. This reduces to "fails to
+    // type-check, without STK3002 or STK3007".
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-out-init-capture-allow-writes",
+        raw"""
+module Demo
+
+fn void Run()
+{
+    stack mut i32[min max] outValue = 1;
+    stack mut i32[min max] initValue = 2;
+    stack fnptr<fn void()> callback = capture(out outValue, init initValue) () =>
+    {
+        outValue = 3;
+        initValue = 4;
+        return;
+    };
+    return;
+}
+""");
+
+    return !Succeeds(compiled)
+        && !HasDiagnostic(compiled, "STK3002")
+        && !HasDiagnostic(compiled, "STK3007");
+}
+
+// Ported from TypeCheckingTests.UnsafeAddrLambdaCapturesExposeReadonlyAddressNotCapturedValue.
+public unsafe fn bool UnsafeAddrLambdaCapturesExposeReadonlyAddressNotCapturedValueImpl()
+{
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-unsafe-addr-capture-readonly-address",
+        raw"""
+module Demo
+
+fn void Run(i32[min max] token)
+{
+    unsafe
+    {
+        stack fnptr<fn void()> badRead = capture(unsafe addr token) () =>
+        {
+            stack i32[min max] value = token;
+            return;
+        };
+
+        stack fnptr<fn void()> goodAddress = capture(unsafe addr token) () =>
+        {
+            stack rawptr<frozen i32[min max]> address = token;
+            return;
+        };
+    }
+
+    return;
+}
+""");
+
+    return FailsWithDiagnostic(compiled, "STK3002")
+        && AnyDiagnosticMessageContains(compiled, "rawptr<frozen i32");
+}
+
+// Ported from TypeCheckingTests.UnsafeSharedLambdaCapturesExposeSharedReadOnlyBindings.
+public unsafe fn bool UnsafeSharedLambdaCapturesExposeSharedReadOnlyBindingsImpl()
+{
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-unsafe-shared-capture-readonly",
+        raw"""
+module Demo
+
+fn void Run(i32[min max] sharedValue)
+{
+    unsafe
+    {
+        stack fnptr<fn void()> callback = capture(unsafe shared sharedValue) () =>
+        {
+            stack shared i32[min max] value = sharedValue;
+            sharedValue = 3;
+            return;
+        };
+    }
+
+    return;
+}
+""");
+
+    return FailsWithDiagnosticMessage(compiled, "STK3007", "Cannot assign to immutable local 'sharedValue'");
+}
+
+// Ported from TypeCheckingTests.WritableLambdaCaptureModesRequireWritableBindings.
+public unsafe fn bool WritableLambdaCaptureModesRequireWritableBindingsImpl()
+{
+    // PORT-NOTE: the `good` program is expected NOT to succeed but to be free of
+    // STK3002 (the captured bindings are writable) while still reporting the
+    // function-pointer-capture-not-lowered diagnostic. This reduces to "fails to
+    // type-check without raising STK3002".
+    stack mut LlvmCompile bad = CompileTypeCheck(
+        "diagp1-writable-capture-requires-writable-bad",
+        raw"""
+module Demo
+
+fn void Run(
+    i32[min max] mutValue,
+    i32[min max] outValue,
+    i32[min max] initValue)
+    {
+        stack fnptr<fn i32[min max]()> callback =
+        capture(mut mutValue, out outValue, init initValue) () => 1;
+    return;
+}
+""");
+
+    stack mut LlvmCompile good = CompileTypeCheck(
+        "diagp1-writable-capture-requires-writable-good",
+        raw"""
+module Demo
+
+fn void Run()
+{
+    stack mut i32[min max] mutValue = 1;
+    stack mut i32[min max] outValue = 2;
+    stack mut i32[min max] initValue = 3;
+    stack fnptr<fn i32[min max]()> callback =
+        capture(mut mutValue, out outValue, init initValue) () => 1;
+    return;
+}
+""");
+
+    return FailsWithDiagnostic(bad, "STK3002")
+        && AnyDiagnosticMessageContains(bad, "Capture mode 'mut' needs 'mutValue'")
+        && AnyDiagnosticMessageContains(bad, "Capture mode 'out' needs 'outValue'")
+        && AnyDiagnosticMessageContains(bad, "Capture mode 'init' needs 'initValue'")
+        && !Succeeds(good)
+        && !HasDiagnostic(good, "STK3002");
+}
+
+// Ported from TypeCheckingTests.UnsafeFunctionsRequireUnsafeContextDuringTypeChecking.
+public unsafe fn bool UnsafeFunctionsRequireUnsafeContextDuringTypeCheckingImpl()
+{
+    stack mut LlvmCompile bad = CompileTypeCheck(
+        "diagp1-unsafe-fn-requires-unsafe-bad",
+        raw"""
+module Demo
+
+unsafe fn void Touch();
+
+fn void Run()
+{
+    Touch();
+    return;
+}
+""");
+
+    stack mut LlvmCompile good = CompileTypeCheck(
+        "diagp1-unsafe-fn-requires-unsafe-good",
+        raw"""
+module Demo
+
+unsafe fn void Touch();
+
+fn void Run()
+{
+    unsafe
+    {
+        Touch();
+    }
+
+    return;
+}
+""");
+
+    return FailsWithDiagnosticMessage(bad, "STK3024", "Unsafe function 'Touch' requires an unsafe context")
+        && Succeeds(good);
+}
+
+// Ported from TypeCheckingTests.RawPointerSignaturesRequireUnsafeFunctions.
+public unsafe fn bool RawPointerSignaturesRequireUnsafeFunctionsImpl()
+{
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-rawptr-signature-requires-unsafe",
+        raw"""
+module Demo
+
+fn void Touch(rawptr<i32[min max]> pointer);
+""");
+
+    return FailsWithDiagnosticMessage(compiled, "STK3024", "uses raw pointer types and must be declared 'unsafe'");
+}
+
+// Ported from TypeCheckingTests.RawPointerLocalOperationsRequireUnsafeContext.
+public unsafe fn bool RawPointerLocalOperationsRequireUnsafeContextImpl()
+{
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-rawptr-local-ops-require-unsafe",
+        raw"""
+module Demo
+
+fn void Run()
+{
+    stack mut i32[min max] value = 1;
+    stack rawmutptr<i32[min max]> pointer = &value;
+    *pointer = 2;
+    return;
+}
+""");
+
+    return FailsWithDiagnostic(compiled, "STK3024")
+        && AnyDiagnosticMessageContains(compiled, "local raw pointer declarations")
+        && AnyDiagnosticMessageContains(compiled, "Raw pointer address-of operator")
+        && AnyDiagnosticMessageContains(compiled, "Raw pointer dereference operator");
+}
+
+// Ported from TypeCheckingTests.FfiDeclarationsRequireUnsafeModifier.
+public unsafe fn bool FfiDeclarationsRequireUnsafeModifierImpl()
+{
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-ffi-requires-unsafe-modifier",
+        raw"""
+module Demo
+
+ffi fn void NativeCall();
+""");
+
+    return FailsWithDiagnosticMessage(compiled, "STK3024", "FFI and assembly function 'NativeCall' must be declared 'unsafe'");
+}
+
+// Ported from TypeCheckingTests.UnsafeFunctionItemsDoNotPromoteToOrdinaryFunctionPointers.
+public unsafe fn bool UnsafeFunctionItemsDoNotPromoteToOrdinaryFunctionPointersImpl()
+{
+    // PORT-NOTE: the C# fact also asserts TypeCheckModel.AddressTakenFunctions
+    // is empty for each compile; that model probe is not expressible via the
+    // compile helpers and is dropped. The STK3024 promotion-rejection
+    // diagnostics are checked for both the outside- and inside-unsafe programs.
+    stack mut LlvmCompile outsideUnsafe = CompileTypeCheck(
+        "diagp1-unsafe-fn-no-ordinary-promote-outside",
+        raw"""
+module Demo
+
+unsafe fn i32[min max] Touch()
+{
+    return 1;
+}
+
+fn void Run()
+{
+    stack fnptr<fn i32[min max]()> callback = Touch;
+    return;
+}
+""");
+
+    stack mut LlvmCompile insideUnsafe = CompileTypeCheck(
+        "diagp1-unsafe-fn-no-ordinary-promote-inside",
+        raw"""
+module Demo
+
+unsafe fn i32[min max] Touch()
+{
+    return 1;
+}
+
+fn void Run()
+{
+    unsafe
+    {
+        stack fnptr<fn i32[min max]()> callback = Touch;
+    }
+
+    return;
+}
+""");
+
+    return FailsWithDiagnosticMessage(outsideUnsafe, "STK3024", "cannot be promoted to ordinary function pointer")
+        && FailsWithDiagnosticMessage(insideUnsafe, "STK3024", "cannot be promoted to ordinary function pointer");
+}
+
+// Ported from TypeCheckingTests.UnsafeFunctionItemsPromoteToUnsafeFunctionPointersAndCallsRequireUnsafeContext.
+public unsafe fn bool UnsafeFunctionItemsPromoteToUnsafeFunctionPointersAndCallsRequireUnsafeContextImpl()
+{
+    // PORT-NOTE: the `promotion` program's TypeCheckModel probes (the promotion
+    // targets an unsafe function pointer; a single address-taken function) are
+    // not expressible via the compile helpers, so that case reduces to "the
+    // program type-checks successfully".
+    stack mut LlvmCompile promotion = CompileTypeCheck(
+        "diagp1-unsafe-fn-promote-unsafe-ptr",
+        raw"""
+module Demo
+
+unsafe fn i32[min max] Touch()
+{
+    return 1;
+}
+
+fn void Register()
+{
+    stack fnptr<unsafe fn i32[min max]()> callback = Touch;
+    return;
+}
+""");
+
+    stack mut LlvmCompile outsideUnsafeCall = CompileTypeCheck(
+        "diagp1-unsafe-fnptr-call-outside-unsafe",
+        raw"""
+module Demo
+
+unsafe fn i32[min max] Touch()
+{
+    return 1;
+}
+
+fn i32[min max] Run()
+{
+    stack fnptr<unsafe fn i32[min max]()> callback = Touch;
+    return callback();
+}
+""");
+
+    stack mut LlvmCompile insideUnsafeCall = CompileTypeCheck(
+        "diagp1-unsafe-fnptr-call-inside-unsafe",
+        raw"""
+module Demo
+
+unsafe fn i32[min max] Touch()
+{
+    return 1;
+}
+
+unsafe fn i32[min max] Run()
+{
+    stack fnptr<unsafe fn i32[min max]()> callback = Touch;
+    return callback();
+}
+""");
+
+    return Succeeds(promotion)
+        && FailsWithDiagnosticMessage(outsideUnsafeCall, "STK3024", "Unsafe function pointer")
+        && Succeeds(insideUnsafeCall);
+}

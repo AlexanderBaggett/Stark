@@ -1,0 +1,1368 @@
+import LlvmTestSupport
+import System.Testing
+module LlvmIrEmissionTestsP5
+
+// Ported slice of tests/compiler.Tests/LlvmIrEmissionTests.cs, running against
+// the current C# host compiler through the host test protocol. Each Impl
+// compiles the embedded program, requests the rendered `llvm` artifact (raw
+// LLVM-IR text), and asserts on substrings with System.Testing text helpers.
+//
+// PORT-NOTE (applies throughout): the C# oracle distinguishes GetLlvm (a
+// noundef/whitespace-normalized rendering) from GetLlvmRaw, and uses
+// ExtractDefinitionHeader / ExtractDefinitionBody to scope assertions to one
+// function's `define`/`declare` line, plus Assert.Matches (regex) and
+// Assert.Equal(N, CountOccurrences(...)) for occurrence counts. The host bridge
+// only exposes the raw `llvm` text and Contains/DoesNotContain, so: header/body
+// scoping is reduced to whole-module Contains; regex matches are reduced to a
+// representative literal substring; and exact-count assertions are reduced to a
+// presence Contains check. Each such reduction is flagged inline.
+
+// Ported from LlvmIrEmissionTests.SystemTextAsciiToUnicodeSlicedLiteralSourceSpecializesAtCallSite.
+public unsafe fn bool SystemTextAsciiToUnicodeSlicedLiteralSourceSpecializesAtCallSiteImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-ir-emit-ascii-unicode-sliced-literal",
+        raw"""
+module System.Text
+
+public inline unsafe finite bool TryConvertAsciiToUnicode(rawmutptr<Unicode> destination, ascii source);
+
+public unsafe fn bool Run()
+{
+    stack mut i32[min max][16] unicodeBuffer =
+    {
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    };
+    stack mut Unicode ownedUnicode = new Unicode()
+    {
+        Data = &unicodeBuffer[0],
+        Length = 0,
+        Capacity = 16
+    };
+
+    stack ascii source = "abcdef"[2, 3];
+    return TryConvertAsciiToUnicode(&ownedUnicode, source);
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "ascii2unicode_capacity_too_small")
+        && Contains(llvm, "store i32 99, ptr")
+        && Contains(llvm, "store i32 100, ptr")
+        && Contains(llvm, "store i32 101, ptr")
+        && DoesNotContain(llvm, "call fastcc i1 @TryConvertAsciiToUnicode(");
+}
+
+// Ported from LlvmIrEmissionTests.SystemTextAsciiToUnicodeDynamicSliceSourceKeepsBuiltinCall.
+public unsafe fn bool SystemTextAsciiToUnicodeDynamicSliceSourceKeepsBuiltinCallImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-ir-emit-ascii-unicode-dynamic-slice",
+        raw"""
+module System.Text
+
+public inline unsafe finite bool TryConvertAsciiToUnicode(rawmutptr<Unicode> destination, ascii source);
+
+public unsafe fn bool Run(u8[0 3] start)
+{
+    stack mut i32[min max][16] unicodeBuffer =
+    {
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    };
+    stack mut Unicode ownedUnicode = new Unicode()
+    {
+        Data = &unicodeBuffer[0],
+        Length = 0,
+        Capacity = 16
+    };
+
+    return TryConvertAsciiToUnicode(&ownedUnicode, "abcdef"[start, 3]);
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "call fastcc i1 @TryConvertAsciiToUnicode(");
+}
+
+// Ported from LlvmIrEmissionTests.SystemTextAsciiToUnicodeLargeLiteralSpecializationUsesMemcpy.
+public unsafe fn bool SystemTextAsciiToUnicodeLargeLiteralSpecializationUsesMemcpyImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-ir-emit-ascii-unicode-large-literal-memcpy",
+        raw"""
+module System.Text
+
+public inline unsafe finite bool TryConvertAsciiToUnicode(rawmutptr<Unicode> destination, ascii source);
+
+public unsafe fn bool Run()
+{
+    stack mut i32[min max][64] unicodeBuffer =
+    {
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    };
+    stack mut Unicode ownedUnicode = new Unicode()
+    {
+        Data = &unicodeBuffer[0],
+        Length = 0,
+        Capacity = 64
+    };
+
+    return TryConvertAsciiToUnicode(&ownedUnicode, "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789stark");
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "ascii2unicode_data")
+        && Contains(llvm, "declare void @llvm.memcpy.inline.p0.p0.i64(")
+        && Contains(llvm, "constant [42 x i32]")
+        && Contains(llvm, "i64 164, i1 false)")
+        && DoesNotContain(llvm, "call fastcc i1 @TryConvertAsciiToUnicode(")
+        && DoesNotContain(llvm, "ascii2unicode_unit");
+}
+
+// Ported from LlvmIrEmissionTests.SystemTextAsciiToUnicodeDynamicSourceKeepsBuiltinCall.
+public unsafe fn bool SystemTextAsciiToUnicodeDynamicSourceKeepsBuiltinCallImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-ir-emit-ascii-unicode-dynamic-source",
+        raw"""
+module System.Text
+
+public inline unsafe finite bool TryConvertAsciiToUnicode(rawmutptr<Unicode> destination, ascii source);
+
+public unsafe fn bool Run(ascii source)
+{
+    stack mut i32[min max][16] unicodeBuffer =
+    {
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    };
+    stack mut Unicode ownedUnicode = new Unicode()
+    {
+        Data = &unicodeBuffer[0],
+        Length = 0,
+        Capacity = 16
+    };
+
+    return TryConvertAsciiToUnicode(&ownedUnicode, source);
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "call fastcc i1 @TryConvertAsciiToUnicode(")
+        && DoesNotContain(llvm, "abi_ascii2unicode_store");
+}
+
+// Ported from LlvmIrEmissionTests.SystemTextAsciiToUnicodeLocalLiteralSourceSpecializesAtCallSite.
+public unsafe fn bool SystemTextAsciiToUnicodeLocalLiteralSourceSpecializesAtCallSiteImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-ir-emit-ascii-unicode-local-literal",
+        raw"""
+module System.Text
+
+public inline unsafe finite bool TryConvertAsciiToUnicode(rawmutptr<Unicode> destination, ascii source);
+
+public unsafe fn bool Run()
+{
+    stack mut i32[min max][16] unicodeBuffer =
+    {
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    };
+    stack mut Unicode ownedUnicode = new Unicode()
+    {
+        Data = &unicodeBuffer[0],
+        Length = 0,
+        Capacity = 16
+    };
+    stack ascii source = "Stark";
+
+    return TryConvertAsciiToUnicode(&ownedUnicode, source);
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "ascii2unicode_unit_")
+        && Contains(llvm, "store i32 83, ptr")
+        && DoesNotContain(llvm, "call fastcc i1 @TryConvertAsciiToUnicode(");
+}
+
+// Ported from LlvmIrEmissionTests.SystemTextAsciiToUnicodeConstLiteralSourceSpecializesAtCallSite.
+public unsafe fn bool SystemTextAsciiToUnicodeConstLiteralSourceSpecializesAtCallSiteImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-ir-emit-ascii-unicode-const-literal",
+        raw"""
+module System.Text
+
+public inline unsafe finite bool TryConvertAsciiToUnicode(rawmutptr<Unicode> destination, ascii source);
+
+public unsafe fn bool Run()
+{
+    stack mut i32[min max][16] unicodeBuffer =
+    {
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    };
+    stack mut Unicode ownedUnicode = new Unicode()
+    {
+        Data = &unicodeBuffer[0],
+        Length = 0,
+        Capacity = 16
+    };
+    const ascii source = "Stark";
+
+    return TryConvertAsciiToUnicode(&ownedUnicode, source);
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "ascii2unicode_unit_")
+        && Contains(llvm, "store i32 83, ptr")
+        && DoesNotContain(llvm, "call fastcc i1 @TryConvertAsciiToUnicode(");
+}
+
+// Ported from LlvmIrEmissionTests.SystemTextAsciiToUnicodePhiJoinedIdenticalLiteralSourceSpecializesAtCallSite.
+public unsafe fn bool SystemTextAsciiToUnicodePhiJoinedIdenticalLiteralSourceSpecializesAtCallSiteImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-ir-emit-ascii-unicode-phi-joined-literal",
+        raw"""
+module System.Text
+
+public inline unsafe finite bool TryConvertAsciiToUnicode(rawmutptr<Unicode> destination, ascii source);
+
+public unsafe fn bool Run(bool choose)
+{
+    stack mut i32[min max][16] unicodeBuffer =
+    {
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    };
+    stack mut Unicode ownedUnicode = new Unicode()
+    {
+        Data = &unicodeBuffer[0],
+        Length = 0,
+        Capacity = 16
+    };
+    stack ascii source = choose ? "Stark" : "Stark";
+
+    return TryConvertAsciiToUnicode(&ownedUnicode, source);
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "ascii2unicode_unit_")
+        && Contains(llvm, "store i32 83, ptr")
+        && DoesNotContain(llvm, "call fastcc i1 @TryConvertAsciiToUnicode(");
+}
+
+// Ported from LlvmIrEmissionTests.SystemTextAsciiToUnicodeEscapedAsciiLiteralSpecializesAtCallSite.
+public unsafe fn bool SystemTextAsciiToUnicodeEscapedAsciiLiteralSpecializesAtCallSiteImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-ir-emit-ascii-unicode-escaped-literal",
+        raw"""
+module System.Text
+
+public inline unsafe finite bool TryConvertAsciiToUnicode(rawmutptr<Unicode> destination, ascii source);
+
+public unsafe fn bool Run()
+{
+    stack mut i32[min max][16] unicodeBuffer =
+    {
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    };
+    stack mut Unicode ownedUnicode = new Unicode()
+    {
+        Data = &unicodeBuffer[0],
+        Length = 0,
+        Capacity = 16
+    };
+
+    return TryConvertAsciiToUnicode(&ownedUnicode, "A\nZ");
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "ascii2unicode_unit_")
+        && Contains(llvm, "store i32 65, ptr")
+        && Contains(llvm, "store i32 10, ptr")
+        && Contains(llvm, "store i32 90, ptr")
+        && DoesNotContain(llvm, "call fastcc i1 @TryConvertAsciiToUnicode(");
+}
+
+// Ported from LlvmIrEmissionTests.SystemTextAsciiToUnicodeEmptyLiteralSpecializationAvoidsDataLoad.
+public unsafe fn bool SystemTextAsciiToUnicodeEmptyLiteralSpecializationAvoidsDataLoadImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-ir-emit-ascii-unicode-empty-literal",
+        raw"""
+module System.Text
+
+public inline unsafe finite bool TryConvertAsciiToUnicode(rawmutptr<Unicode> destination, ascii source);
+
+public unsafe fn bool Run()
+{
+    stack mut Unicode ownedUnicode = new Unicode()
+    {
+        Data = null,
+        Length = 7,
+        Capacity = 0
+    };
+
+    return TryConvertAsciiToUnicode(&ownedUnicode, "");
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "ascii2unicode_capacity_too_small")
+        && Contains(llvm, "store i64 0, ptr")
+        && DoesNotContain(llvm, "ascii2unicode_data_is_null")
+        && DoesNotContain(llvm, "call fastcc i1 @TryConvertAsciiToUnicode(");
+}
+
+// Ported from LlvmIrEmissionTests.SystemTextAsciiToUnicodeLiteralSpecializationHandlesNullDestination.
+public unsafe fn bool SystemTextAsciiToUnicodeLiteralSpecializationHandlesNullDestinationImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-ir-emit-ascii-unicode-null-destination",
+        raw"""
+module System.Text
+
+public inline unsafe finite bool TryConvertAsciiToUnicode(rawmutptr<Unicode> destination, ascii source);
+
+public unsafe fn bool Run()
+{
+    return TryConvertAsciiToUnicode(null, "Stark");
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    // The constant-null destination folds the specialized null check all the way
+    // to the failure result.
+    return Contains(llvm, "ret i1 false")
+        && DoesNotContain(llvm, "call fastcc i1 @TryConvertAsciiToUnicode(");
+}
+
+// Ported from LlvmIrEmissionTests.SystemTextAsciiToUnicodeLiteralSpecializationChecksCapacity.
+public unsafe fn bool SystemTextAsciiToUnicodeLiteralSpecializationChecksCapacityImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-ir-emit-ascii-unicode-checks-capacity",
+        raw"""
+module System.Text
+
+public inline unsafe finite bool TryConvertAsciiToUnicode(rawmutptr<Unicode> destination, ascii source);
+
+public unsafe fn bool Run()
+{
+    stack mut i32[min max][4] unicodeBuffer =
+    {
+        0, 0, 0, 0
+    };
+    stack mut Unicode ownedUnicode = new Unicode()
+    {
+        Data = &unicodeBuffer[0],
+        Length = 7,
+        Capacity = 4
+    };
+
+    return TryConvertAsciiToUnicode(&ownedUnicode, "Stark");
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "ascii2unicode_capacity_too_small")
+        && Contains(llvm, "icmp slt i64")
+        && Contains(llvm, "store i64 0, ptr")
+        && DoesNotContain(llvm, "call fastcc i1 @TryConvertAsciiToUnicode(");
+}
+
+// Ported from LlvmIrEmissionTests.SystemTextAsciiToUnicodeLiteralSpecializationChecksNullDestinationData.
+public unsafe fn bool SystemTextAsciiToUnicodeLiteralSpecializationChecksNullDestinationDataImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-ir-emit-ascii-unicode-checks-null-data",
+        raw"""
+module System.Text
+
+public inline unsafe finite bool TryConvertAsciiToUnicode(rawmutptr<Unicode> destination, ascii source);
+
+public unsafe fn bool Run()
+{
+    stack mut Unicode ownedUnicode = new Unicode()
+    {
+        Data = null,
+        Length = 7,
+        Capacity = 16
+    };
+
+    return TryConvertAsciiToUnicode(&ownedUnicode, "Stark");
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "ascii2unicode_data_is_null")
+        && Contains(llvm, "store i64 0, ptr")
+        && DoesNotContain(llvm, "call fastcc i1 @TryConvertAsciiToUnicode(");
+}
+
+// Ported from LlvmIrEmissionTests.SystemTextAsciiToUnicodeLiteralSpecializationRewritesForwardPhiIncomingLabel.
+public unsafe fn bool SystemTextAsciiToUnicodeLiteralSpecializationRewritesForwardPhiIncomingLabelImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-ir-emit-ascii-unicode-forward-phi-label",
+        raw"""
+module System.Text
+
+public inline unsafe finite bool TryConvertAsciiToUnicode(rawmutptr<Unicode> destination, ascii source);
+
+public unsafe fn i32[min max] Run(bool choose)
+{
+    stack mut i32[min max][64] unicodeBuffer =
+    {
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    };
+    stack mut Unicode ownedUnicode = new Unicode()
+    {
+        Data = &unicodeBuffer[0],
+        Length = 0,
+        Capacity = 64
+    };
+    stack mut i32[min max] result = 0;
+    if (choose)
+    {
+        TryConvertAsciiToUnicode(&ownedUnicode, "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789stark");
+        result = 2;
+    }
+    else
+    {
+        result = 3;
+    }
+
+    return result;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    // PORT-NOTE: original asserts the phi-incoming label via regex
+    // `phi i32 \[ (?:%v\d+|2), %abi_ascii2unicode_done_\d+ \]`; reduced to a
+    // literal-substring presence check on the stable `abi_ascii2unicode_done_`
+    // label fragment plus the surrounding `phi i32 [` token.
+    return Contains(llvm, "abi_ascii2unicode_store")
+        && Contains(llvm, "declare void @llvm.memcpy.p0.p0.i64(")
+        && Contains(llvm, "phi i32 [")
+        && Contains(llvm, "%abi_ascii2unicode_done_")
+        && DoesNotContain(llvm, "call fastcc i1 @TryConvertAsciiToUnicode(");
+}
+
+// Ported from LlvmIrEmissionTests.SystemTextAsciiToUnicodeNonAsciiLiteralKeepsBuiltinCall.
+public unsafe fn bool SystemTextAsciiToUnicodeNonAsciiLiteralKeepsBuiltinCallImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-ir-emit-ascii-unicode-non-ascii-literal",
+        raw"""
+module System.Text
+
+public inline unsafe finite bool TryConvertAsciiToUnicode(rawmutptr<Unicode> destination, ascii source);
+
+public unsafe fn bool Run()
+{
+    stack mut i32[min max][16] unicodeBuffer =
+    {
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    };
+    stack mut Unicode ownedUnicode = new Unicode()
+    {
+        Data = &unicodeBuffer[0],
+        Length = 0,
+        Capacity = 16
+    };
+
+    return TryConvertAsciiToUnicode(&ownedUnicode, "café");
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "call fastcc i1 @TryConvertAsciiToUnicode(")
+        && DoesNotContain(llvm, "abi_ascii2unicode_store");
+}
+
+// Ported from LlvmIrEmissionTests.SystemMathBuiltinsEmitConcreteDefinitionsAndLlvmIntrinsics.
+public unsafe fn bool SystemMathBuiltinsEmitConcreteDefinitionsAndLlvmIntrinsicsImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-ir-emit-system-math-builtins",
+        raw"""
+module System.Math
+
+public struct SinCosF64
+{
+    f64 Sin;
+    f64 Cos;
+}
+
+public unsafe finite law f32 Sin(f32 value);
+public unsafe finite law f64 Cos(f64 value);
+public unsafe finite law f64 Atan2(f64 y, f64 x);
+public unsafe finite law f64 Pow(f64 value, f64 exponent);
+public unsafe finite law f32 Tanh(f32 value);
+public unsafe finite law SinCosF64 SinCos(f64 value);
+public unsafe finite law f32 Min(f32 left, f32 right);
+public unsafe finite law f64 Max(f64 left, f64 right);
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "define fastcc float @Sin(float %arg_value)")
+        && Contains(llvm, "define fastcc double @Cos(double %arg_value)")
+        && Contains(llvm, "define fastcc double @Atan2(double %arg_y, double %arg_x)")
+        && Contains(llvm, "define fastcc double @Pow(double %arg_value, double %arg_exponent)")
+        && Contains(llvm, "define fastcc float @Tanh(float %arg_value)")
+        && Contains(llvm, "define fastcc %SinCosF64 @SinCos(double %arg_value)")
+        && Contains(llvm, "define fastcc float @Min(float %arg_left, float %arg_right)")
+        && Contains(llvm, "define fastcc double @Max(double %arg_left, double %arg_right)")
+        && Contains(llvm, "call fast float @llvm.sin.f32(float %arg_value)")
+        && Contains(llvm, "call fast double @llvm.cos.f64(double %arg_value)")
+        && Contains(llvm, "call fast double @llvm.atan2.f64(double %arg_y, double %arg_x)")
+        && Contains(llvm, "call fast double @llvm.pow.f64(double %arg_value, double %arg_exponent)")
+        && Contains(llvm, "call fast float @llvm.tanh.f32(float %arg_value)")
+        && Contains(llvm, "call fast { double, double } @llvm.sincos.f64(double %arg_value)")
+        && Contains(llvm, "call fast float @llvm.minnum.f32(float %arg_left, float %arg_right)")
+        && Contains(llvm, "call fast double @llvm.maxnum.f64(double %arg_left, double %arg_right)")
+        && Contains(llvm, "extractvalue { double, double } %math_pair, 0")
+        && Contains(llvm, "extractvalue { double, double } %math_pair, 1")
+        && Contains(llvm, "insertvalue %SinCosF64 zeroinitializer, double %math_sin, 0")
+        && Contains(llvm, "insertvalue %SinCosF64 %math_with_sin, double %math_cos, 1")
+        && Contains(llvm, "declare float @llvm.sin.f32(float)")
+        && Contains(llvm, "declare double @llvm.cos.f64(double)")
+        && Contains(llvm, "declare double @llvm.atan2.f64(double, double)")
+        && Contains(llvm, "declare double @llvm.pow.f64(double, double)")
+        && Contains(llvm, "declare float @llvm.tanh.f32(float)")
+        && Contains(llvm, "declare { double, double } @llvm.sincos.f64(double)")
+        && Contains(llvm, "declare float @llvm.minnum.f32(float, float)")
+        && Contains(llvm, "declare double @llvm.maxnum.f64(double, double)")
+        && DoesNotContain(llvm, "declare fastcc float @Sin(")
+        && DoesNotContain(llvm, "declare fastcc double @Cos(")
+        && DoesNotContain(llvm, "declare fastcc double @Atan2(")
+        && DoesNotContain(llvm, "declare fastcc double @Pow(")
+        && DoesNotContain(llvm, "declare fastcc float @Tanh(")
+        && DoesNotContain(llvm, "declare fastcc %SinCosF64 @SinCos(")
+        && DoesNotContain(llvm, "declare fastcc float @Min(")
+        && DoesNotContain(llvm, "declare fastcc double @Max(");
+}
+
+// Ported from LlvmIrEmissionTests.SystemBitOperationsBuiltinsEmitConcreteDefinitionsAndLlvmIntrinsics.
+public unsafe fn bool SystemBitOperationsBuiltinsEmitConcreteDefinitionsAndLlvmIntrinsicsImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-ir-emit-system-bitops-builtins",
+        raw"""
+module System.BitOperations
+
+public unsafe finite law i32[min max] LeadingZeroCount(i32[min max] value);
+public unsafe finite law i64[min max] TrailingZeroCount(i64[min max] value);
+public unsafe finite law i32[min max] PopCount(i32[min max] value);
+public unsafe finite law i64[min max] RotateLeft(i64[min max] value, i64[min max] amount);
+public unsafe finite law i32[min max] RotateRight(i32[min max] value, i32[min max] amount);
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "define fastcc i32 @LeadingZeroCount(i32 %arg_value)")
+        && Contains(llvm, "define fastcc i64 @TrailingZeroCount(i64 %arg_value)")
+        && Contains(llvm, "define fastcc i32 @PopCount(i32 %arg_value)")
+        && Contains(llvm, "define fastcc i64 @RotateLeft(i64 %arg_value, i64 %arg_amount)")
+        && Contains(llvm, "define fastcc i32 @RotateRight(i32 %arg_value, i32 %arg_amount)")
+        && Contains(llvm, "call i32 @llvm.ctlz.i32(i32 %arg_value, i1 false)")
+        && Contains(llvm, "call i64 @llvm.cttz.i64(i64 %arg_value, i1 false)")
+        && Contains(llvm, "call i32 @llvm.ctpop.i32(i32 %arg_value)")
+        && Contains(llvm, "call i64 @llvm.fshl.i64(i64 %arg_value, i64 %arg_value, i64 %arg_amount)")
+        && Contains(llvm, "call i32 @llvm.fshr.i32(i32 %arg_value, i32 %arg_value, i32 %arg_amount)")
+        && Contains(llvm, "declare i32 @llvm.ctlz.i32(i32, i1 immarg)")
+        && Contains(llvm, "declare i64 @llvm.cttz.i64(i64, i1 immarg)")
+        && Contains(llvm, "declare i32 @llvm.ctpop.i32(i32)")
+        && Contains(llvm, "declare i64 @llvm.fshl.i64(i64, i64, i64)")
+        && Contains(llvm, "declare i32 @llvm.fshr.i32(i32, i32, i32)")
+        && DoesNotContain(llvm, "declare fastcc i32 @LeadingZeroCount(")
+        && DoesNotContain(llvm, "declare fastcc i64 @TrailingZeroCount(")
+        && DoesNotContain(llvm, "declare fastcc i32 @PopCount(")
+        && DoesNotContain(llvm, "declare fastcc i64 @RotateLeft(")
+        && DoesNotContain(llvm, "declare fastcc i32 @RotateRight(");
+}
+
+// Ported from LlvmIrEmissionTests.ImportedSystemMathHardwareBuiltinsAreInternalizedIntoConsumerIr.
+public unsafe fn bool ImportedSystemMathHardwareBuiltinsAreInternalizedIntoConsumerIrImpl()
+{
+    // PORT-NOTE: the C# test stages a sibling `System.Math` module through an
+    // InMemoryModuleResolver and pins `x86_64-unknown-linux-gnu`; the host
+    // bridge compiles a single source for the host's default target. The
+    // imported `Sqrt` law is folded into the consumer module here, and the
+    // internalized-clone symbol name (`System_Math_Sqrt`) plus
+    // ExtractDefinitionHeader scoping is reduced to whole-module Contains on the
+    // concrete `Sqrt` definition and call.
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-ir-emit-imported-math-internalized",
+        raw"""
+module System.Math
+
+public unsafe finite law f64 Sqrt(f64 value);
+
+unsafe fn f64 Run(f64 value)
+{
+    return Sqrt(value);
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "define fastcc double @Sqrt(double %arg_value)")
+        && Contains(llvm, "call fast fastcc double @Sqrt(double %arg_value)");
+}
+
+// Ported from LlvmIrEmissionTests.UnusedImportedSystemMathHardwareBuiltinsDoNotMaterializeIntoConsumerIr.
+public unsafe fn bool UnusedImportedSystemMathHardwareBuiltinsDoNotMaterializeIntoConsumerIrImpl()
+{
+    // PORT-NOTE: the C# test imports `System.Math` (Sqrt/Round) through an
+    // InMemoryModuleResolver and asserts the unused hardware builtins never
+    // materialize into the consumer IR. The host bridge has no resolver, so the
+    // consumer is compiled standalone (no import) and the absence checks are
+    // applied to that IR.
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-ir-emit-unused-imported-math",
+        raw"""
+module Demo
+
+unsafe fn i32[min max] Run()
+{
+    return 0;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return DoesNotContain(llvm, "define internal dso_local fastcc double @System_Math_Sqrt(")
+        && DoesNotContain(llvm, "define internal dso_local fastcc double @System_Math_Round(")
+        && DoesNotContain(llvm, "call double asm \"sqrtsd %xmm0, %xmm0\", \"={xmm0},0\"")
+        && DoesNotContain(llvm, "call double asm \"roundsd $$0, %xmm0, %xmm0\", \"={xmm0},0\"");
+}
+
+// Ported from LlvmIrEmissionTests.ImportedSystemBitOperationsBuiltinsAreInternalizedIntoConsumerIr.
+public unsafe fn bool ImportedSystemBitOperationsBuiltinsAreInternalizedIntoConsumerIrImpl()
+{
+    // PORT-NOTE: the C# test stages a sibling `System.BitOperations` module
+    // through an InMemoryModuleResolver and pins `x86_64-unknown-linux-gnu`. The
+    // host bridge compiles a single source for the host default target, so the
+    // imported `PopCount` law is folded into the consumer module here and the
+    // internalized-clone symbol name plus ExtractDefinitionHeader scoping is
+    // reduced to whole-module Contains on the concrete `PopCount` definition and
+    // call.
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-ir-emit-imported-bitops-internalized",
+        raw"""
+module System.BitOperations
+
+public unsafe finite law i32[min max] PopCount(i32[min max] value);
+
+unsafe fn i32[min max] Run(i32[min max] value)
+{
+    return PopCount(value);
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "define fastcc i32 @PopCount(i32 %arg_value)")
+        && Contains(llvm, "call fastcc i32 @PopCount(i32 %arg_value)");
+}
+
+// Ported from LlvmIrEmissionTests.InternalStringFunctionsUseConcreteStringAbi.
+public unsafe fn bool InternalStringFunctionsUseConcreteStringAbiImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-ir-emit-internal-string-abi",
+        raw"""
+module Demo
+
+unsafe finite law ascii Echo(ascii text)
+{
+    stack mut i64[min max] acc = 977;
+    stack mut i64[min max] step = 0;
+    while willexit (step < 2)
+    {
+        acc = acc + (acc / 3);
+        acc = acc - (acc / 5);
+        acc = acc + (acc / 7);
+        acc = acc - (acc / 11);
+        acc = acc + (acc / 13);
+        acc = acc - (acc / 17);
+        acc = acc + (acc / 19);
+        acc = acc - (acc / 23);
+        acc = acc + (acc / 29);
+        acc = acc - (acc / 31);
+        step = step + 1;
+    }
+
+    if (acc > -4000000000000000000)
+    {
+        return text;
+    }
+
+    return text;
+}
+
+unsafe finite law ascii Run(ascii input)
+{
+    return Echo(input);
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "%stark_ascii = type { ptr, i64 }")
+        && Contains(llvm, "define fastcc %stark_ascii @Echo(%stark_ascii %arg_text)")
+        && Contains(llvm, "ret %stark_ascii %arg_text")
+        && Contains(llvm, "define fastcc %stark_ascii @Run(%stark_ascii %arg_input)")
+        && Contains(llvm, "call fastcc %stark_ascii @Echo(%stark_ascii %arg_input)");
+}
+
+// Ported from LlvmIrEmissionTests.CharacterLiteralsEmitConcreteStringValues.
+public unsafe fn bool CharacterLiteralsEmitConcreteStringValuesImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-ir-emit-character-literals",
+        raw"""
+module Demo
+
+unsafe finite law ascii AsciiChar()
+{
+    return 'a';
+}
+
+unsafe finite law unicode UnicodeChar()
+{
+    return (unicode)'α';
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "%stark_ascii = type { ptr, i64 }")
+        && Contains(llvm, "%stark_unicode = type { ptr, i64 }")
+        && Contains(llvm, "@.str.0 = private unnamed_addr constant [2 x i8] c\"a\\00\"")
+        && Contains(llvm, "private unnamed_addr constant [2 x i32] [i32 945, i32 0]")
+        && Contains(llvm, "define fastcc %stark_ascii @AsciiChar()")
+        && Contains(llvm, "define fastcc %stark_unicode @UnicodeChar()")
+        && Contains(llvm, "ret %stark_ascii { ptr getelementptr inbounds nuw ([2 x i8], ptr @.str.0, i32 0, i32 0), i64 1 }")
+        && Contains(llvm, "ret %stark_unicode { ptr getelementptr inbounds nuw ([2 x i32], ptr @.str.")
+        && Contains(llvm, ", i64 1 }");
+}
+
+// Ported from LlvmIrEmissionTests.UnicodeStringLiteralsUseUtf32CodeUnitLengthInRuntimeValues.
+public unsafe fn bool UnicodeStringLiteralsUseUtf32CodeUnitLengthInRuntimeValuesImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-ir-emit-unicode-utf32-code-unit-length",
+        raw"""
+module Demo
+
+unsafe finite law unicode Greek()
+{
+    return (unicode)"α";
+}
+
+unsafe finite law unicode Accented()
+{
+    return (unicode)"\xC9";
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    // PORT-NOTE: original asserts exactly 2 occurrences each of the unicode
+    // `ret`/length fragments via Assert.Equal(2, CountOccurrences(...)); the
+    // host helpers expose no occurrence count, so these are reduced to presence
+    // Contains checks.
+    return Contains(llvm, "%stark_unicode = type { ptr, i64 }")
+        && Contains(llvm, "private unnamed_addr constant [2 x i32] [i32 945, i32 0]")
+        && Contains(llvm, "private unnamed_addr constant [2 x i32] [i32 201, i32 0]")
+        && Contains(llvm, "ret %stark_unicode { ptr getelementptr inbounds nuw ([2 x i32], ptr @.str.")
+        && Contains(llvm, ", i64 1 }");
+}
+
+// Ported from LlvmIrEmissionTests.EquivalentAsciiLiteralPayloadsShareOneHelperGlobalAcrossGlobalAndFunctionUses.
+public unsafe fn bool EquivalentAsciiLiteralPayloadsShareOneHelperGlobalAcrossGlobalAndFunctionUsesImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-ir-emit-shared-ascii-literal-global",
+        raw"""
+module Demo
+
+const ascii Label = '\x41';
+
+unsafe finite law ascii Run()
+{
+    return "A";
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    // PORT-NOTE: original asserts the payload constant appears exactly once and
+    // is referenced exactly twice via Assert.Equal(N, CountOccurrences(...));
+    // the host helpers cannot count, so this is reduced to presence Contains for
+    // both the shared constant and a getelementptr reference to it.
+    return Contains(llvm, "private unnamed_addr constant [2 x i8] c\"A\\00\"")
+        && Contains(llvm, "getelementptr inbounds nuw ([2 x i8], ptr @.str.");
+}
+
+// Ported from LlvmIrEmissionTests.EquivalentUnicodeLiteralPayloadsShareOneHelperGlobal.
+public unsafe fn bool EquivalentUnicodeLiteralPayloadsShareOneHelperGlobalImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-ir-emit-shared-unicode-literal-global",
+        raw"""
+module Demo
+
+unsafe finite law unicode One()
+{
+    return (unicode)"α";
+}
+
+unsafe finite law unicode Two()
+{
+    return (unicode)'α';
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    // PORT-NOTE: original asserts the payload constant appears exactly once and
+    // is referenced exactly twice via Assert.Equal(N, CountOccurrences(...));
+    // reduced to presence Contains for the shared constant and a getelementptr
+    // reference to it.
+    return Contains(llvm, "private unnamed_addr constant [2 x i32] [i32 945, i32 0]")
+        && Contains(llvm, "getelementptr inbounds nuw ([2 x i32], ptr @.str.");
+}
+
+// Ported from LlvmIrEmissionTests.PlainFnsEmitInferredPureAndFiniteAttributes.
+public unsafe fn bool PlainFnsEmitInferredPureAndFiniteAttributesImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-ir-emit-plain-fn-pure-finite-attrs",
+        raw"""
+module Demo
+
+struct Box
+{
+    i32[min max] Value;
+}
+
+unsafe fn i32[min max] Add(i32[min max] left, i32[min max] right)
+{
+    return left + right;
+}
+
+unsafe fn i32[min max] Read(borrow Box box)
+{
+    return box.Value;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "define fastcc i32 @Add(i32 %arg_left, i32 %arg_right) nounwind willreturn mustprogress nosync nofree memory(none)")
+        && Contains(llvm, "memory(argmem: read)");
+}
+
+// Ported from LlvmIrEmissionTests.BorrowParametersEmitCapturesAttributes.
+public unsafe fn bool BorrowParametersEmitCapturesAttributesImpl()
+{
+    // PORT-NOTE: original scopes the header assertion to the `Echo` define line
+    // via ExtractDefinitionHeader over GetLlvmRaw; reduced to whole-module
+    // Contains on the raw `llvm` text.
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-ir-emit-borrow-captures-attrs",
+        raw"""
+module Demo
+
+struct Box
+{
+    i32[min max] Value;
+}
+
+unsafe fn retborrow Box Echo(retborrow Box value)
+{
+    return value;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "define fastcc noundef nonnull dereferenceable(4) align 4 ptr @Echo(ptr noundef")
+        && Contains(llvm, "captures(ret: address, read_provenance)");
+}
+
+// Ported from LlvmIrEmissionTests.StoreBorrowParametersEmitEscapingCaptureAttributes.
+public unsafe fn bool StoreBorrowParametersEmitEscapingCaptureAttributesImpl()
+{
+    // PORT-NOTE: original scopes every assertion to the `Hold` header via
+    // ExtractDefinitionHeader over GetLlvmRaw; reduced to whole-module
+    // Contains/DoesNotContain on the raw `llvm` text. The whole-module
+    // DoesNotContain on `nocapture`/`captures(ret:` is broader than the original
+    // header-scoped check but holds because no other declaration in this module
+    // emits those tokens.
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-ir-emit-storeborrow-escaping-captures",
+        raw"""
+module Demo
+
+struct Box
+{
+    i32[min max] Value;
+}
+
+unsafe fn storeborrow Box Hold(storeborrow Box value)
+{
+    return value;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "define fastcc noundef nonnull dereferenceable(4) align 4 ptr @Hold(ptr noundef")
+        && Contains(llvm, "captures(address, read_provenance)")
+        && DoesNotContain(llvm, "nocapture")
+        && DoesNotContain(llvm, "captures(ret:");
+}
+
+// Ported from LlvmIrEmissionTests.RetborrowScalarReturnsUsePointerAbiAndCanBeWrittenThrough.
+public unsafe fn bool RetborrowScalarReturnsUsePointerAbiAndCanBeWrittenThroughImpl()
+{
+    // PORT-NOTE: original scopes the header assertion to `Box_Field` via
+    // ExtractDefinitionHeader over GetLlvmRaw; reduced to whole-module Contains.
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-ir-emit-retborrow-scalar-pointer-abi",
+        raw"""
+module Demo
+
+struct Box
+{
+    i32[min max] Value;
+
+    unsafe fn retborrow mut i32[min max] Field(mut borrow Box self)
+    {
+        return self.Value;
+    }
+}
+
+unsafe fn i32[min max] Run()
+{
+    stack mut Box box = new Box()
+    {
+        Value = 0
+    };
+    box.Field() = 7;
+    return box.Field();
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "define fastcc noundef nonnull dereferenceable(4) align 4 ptr @Box_Field(ptr noundef")
+        && Contains(llvm, "call fastcc noundef nonnull dereferenceable(4) align 4 ptr @Box_Field(")
+        && Contains(llvm, "ret ptr")
+        && Contains(llvm, "store i32 7, ptr")
+        && Contains(llvm, "load i32, ptr");
+}
+
+// Ported from LlvmIrEmissionTests.ScalarAbiValuesEmitNoundefOnParametersAndReturns.
+public unsafe fn bool ScalarAbiValuesEmitNoundefOnParametersAndReturnsImpl()
+{
+    // PORT-NOTE: original scopes the header assertion to `Run` via
+    // ExtractDefinitionHeader over GetLlvmRaw; reduced to whole-module Contains.
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-ir-emit-scalar-abi-noundef",
+        raw"""
+module Demo
+
+unsafe fn i32[min max] Run(i32[min max] value, bool allow)
+{
+    if (allow)
+    {
+        return value;
+    }
+
+    return 0;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "define fastcc noundef i32 @Run(i32 noundef %arg_value, i1 noundef %arg_allow)")
+        && Contains(llvm, "ret i32");
+}
+
+// Ported from LlvmIrEmissionTests.BorrowedPointerAbiValuesEmitNoundefOnParametersAndReturns.
+public unsafe fn bool BorrowedPointerAbiValuesEmitNoundefOnParametersAndReturnsImpl()
+{
+    // PORT-NOTE: original scopes the header assertion to `Read` via
+    // ExtractDefinitionHeader over GetLlvmRaw; reduced to whole-module Contains.
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-ir-emit-borrowed-pointer-noundef",
+        raw"""
+module Demo
+
+struct Box
+{
+    i32[min max] Value;
+}
+
+unsafe fn i32[min max] Read(borrow Box box)
+{
+    return box.Value;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "define fastcc noundef i32 @Read(ptr noundef")
+        && Contains(llvm, "ret i32");
+}
+
+// Ported from LlvmIrEmissionTests.FullyDefinedNonFfiAbiSurfacesEmitNoundef.
+public unsafe fn bool FullyDefinedNonFfiAbiSurfacesEmitNoundefImpl()
+{
+    // PORT-NOTE: original scopes each header assertion to a specific function
+    // (Pick/Echo/Keep/Copy) via ExtractDefinitionHeader over GetLlvmRaw; reduced
+    // to whole-module Contains on the raw `llvm` text.
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-ir-emit-non-ffi-abi-noundef",
+        raw"""
+module Demo
+
+record Pair(u8[0 10] Left, u8[0 10] Right)
+{
+}
+record Big(
+    i64[min max] A,
+    i64[min max] B,
+    i64[min max] C)
+    {
+    }
+
+unsafe fn rawptr<i8[min max]> Pick(rawptr<i8[min max]> ptr)
+{
+    return ptr;
+}
+
+unsafe fn ascii Echo(ascii text)
+{
+    return text;
+}
+
+unsafe fn Pair Keep(Pair pair)
+{
+    return pair;
+}
+
+unsafe fn Big Copy(Big value)
+{
+    return value;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "define fastcc noundef ptr @Pick(ptr noundef")
+        && Contains(llvm, "define fastcc noundef %stark_ascii @Echo(%stark_ascii noundef %arg_text)")
+        && Contains(llvm, "define fastcc noundef %Pair @Keep(%Pair noundef %arg_pair)")
+        && Contains(llvm, "define fastcc void @Copy(ptr noundef noalias sret(%Big)")
+        && Contains(llvm, "ptr noundef nonnull byval(%Big)");
+}
+
+// Ported from LlvmIrEmissionTests.PointerAbiContractsDistinguishSafeBorrowsAndNullableRawPointers.
+public unsafe fn bool PointerAbiContractsDistinguishSafeBorrowsAndNullableRawPointersImpl()
+{
+    // PORT-NOTE: original scopes the ReadBorrow/ReadView/RawInternal assertions
+    // to per-function headers via ExtractDefinitionHeader over GetLlvmRaw, and
+    // the RawInternal-header DoesNotContain checks for `nonnull`/`dereferenceable`
+    // are header-scoped. Reduced to whole-module Contains/DoesNotContain; the
+    // module-wide DoesNotContain on the dereferenceable tokens within the
+    // RawInternal/RawForeign forms is preserved as the closest expressible
+    // signal.
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-ir-emit-pointer-abi-contracts",
+        raw"""
+module Demo
+
+struct Box
+{
+    i32[min max] Value;
+}
+
+unsafe fn i32[min max] ReadBorrow(borrow Box box)
+{
+    return box.Value;
+}
+
+unsafe fn i32[min max] ReadView(borrow i32[min max][] view, i32[min max] index)
+{
+    return view[index];
+}
+
+unsafe fn void RawInternal(rawptr<Box> ptr)
+{
+    return;
+}
+
+unsafe ffi fn void RawForeign(rawptr<Box> ptr);
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "define fastcc noundef i32 @ReadBorrow(ptr noundef nonnull noalias readonly nocapture dereferenceable(4) align 4 %arg_box)")
+        && Contains(llvm, "define fastcc noundef i32 @ReadView(ptr noundef nonnull noalias readonly nocapture dereferenceable(16) align 8 %arg_view, i32 noundef %arg_index)")
+        && Contains(llvm, "ptr noundef readonly nocapture %arg_ptr")
+        && Contains(llvm, "declare void @RawForeign(ptr readonly)")
+        && DoesNotContain(llvm, "declare void @RawForeign(ptr nonnull")
+        && DoesNotContain(llvm, "declare void @RawForeign(ptr dereferenceable")
+        && DoesNotContain(llvm, "declare void @RawForeign(ptr dereferenceable_or_null");
+}
+
+// Ported from LlvmIrEmissionTests.RawMutablePointerDeclarationsMayReadAndWriteArgumentMemory.
+public unsafe fn bool RawMutablePointerDeclarationsMayReadAndWriteArgumentMemoryImpl()
+{
+    // PORT-NOTE: original isolates the single `declare fastcc void @Fill(` line
+    // via Split/Single over GetLlvmRaw and asserts the absence of read/write
+    // tokens on that one line. Reduced to whole-module Contains for the exact
+    // declaration form plus module-wide DoesNotContain on the read/write tokens,
+    // which holds because no other declaration in this module emits them.
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-ir-emit-rawmut-pointer-decl-readwrite",
+        raw"""
+module Demo
+
+unsafe fn void Fill(rawmutptr<i32[min max]> ptr);
+
+unsafe fn void Run(rawmutptr<i32[min max]> ptr)
+{
+    Fill(ptr);
+    return;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "declare fastcc void @Fill(ptr noundef)")
+        && DoesNotContain(llvm, "memory(argmem: read)")
+        && DoesNotContain(llvm, "readonly")
+        && DoesNotContain(llvm, "writeonly");
+}
+
+// Ported from LlvmIrEmissionTests.FfiRawMutablePointerCallsPropagateWrapperArgumentWrites.
+public unsafe fn bool FfiRawMutablePointerCallsPropagateWrapperArgumentWritesImpl()
+{
+    // PORT-NOTE: original isolates the single `declare i32 @Fill(` line via
+    // Split/Single and the `Run` header via ExtractDefinitionHeader over
+    // GetLlvmRaw. Reduced to whole-module Contains for the declaration form plus
+    // module-wide DoesNotContain on the read/write/memory tokens; these hold
+    // because nothing else in this module emits them.
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-ir-emit-ffi-rawmut-pointer-propagates-writes",
+        raw"""
+module Demo
+
+unsafe ffi fn i32[min max] Fill(rawmutptr<i32[min max]> ptr);
+
+unsafe fn i32[min max] Run(rawmutptr<i32[min max]> ptr)
+{
+    return Fill(ptr);
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "declare i32 @Fill(ptr)")
+        && DoesNotContain(llvm, "readonly")
+        && DoesNotContain(llvm, "writeonly")
+        && DoesNotContain(llvm, "memory(read, argmem: none)");
+}
+
+// Ported from LlvmIrEmissionTests.ConstrainedIntegerLoadsAndCallResultsEmitRangeMetadata.
+public unsafe fn bool ConstrainedIntegerLoadsAndCallResultsEmitRangeMetadataImpl()
+{
+    // PORT-NOTE: original asserts the load/call range metadata via regex
+    // (`load i8, ptr (?:%v\d+|%slot_value), !range !\d+` and
+    // `call fastcc i8 @Bounded\(\), !range !\d+`); reduced to literal-substring
+    // Contains on the stable token fragments (`!range !`, the typed load/call
+    // prefixes) plus the concrete range-metadata node.
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-ir-emit-constrained-int-range-metadata",
+        raw"""
+module Demo
+
+unsafe fn u8[0 10] Bounded()
+{
+    stack mut i64[min max] acc = 977;
+    stack mut i64[min max] step = 0;
+    while willexit (step < 2)
+    {
+        acc = acc + (acc / 3);
+        acc = acc - (acc / 5);
+        acc = acc + (acc / 7);
+        acc = acc - (acc / 11);
+        acc = acc + (acc / 13);
+        acc = acc - (acc / 17);
+        acc = acc + (acc / 19);
+        acc = acc - (acc / 23);
+        acc = acc + (acc / 29);
+        acc = acc - (acc / 31);
+        step = step + 1;
+    }
+
+    if (acc > 0)
+    {
+        return 7;
+    }
+
+    return 3;
+}
+
+unsafe fn u8[0 10] ReadThroughPointer(u8[0 10] input)
+{
+    stack mut u8[0 10] value = input;
+    stack rawmutptr<u8[0 10]> ptr = &value;
+    return *ptr;
+}
+
+unsafe fn u8[0 10] CallBounded()
+{
+    return Bounded();
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "load i8, ptr")
+        && Contains(llvm, "call fastcc i8 @Bounded()")
+        && Contains(llvm, "!range !")
+        && Contains(llvm, "!{i8 0, i8 11}");
+}

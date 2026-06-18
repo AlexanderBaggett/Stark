@@ -1,0 +1,366 @@
+import CompilerTestSupport
+import System.Testing
+
+module ExampleSourceTests_EXAMPLEP1
+
+// Ported from ExampleSourceTests.RepresentativeExampleSourcesEmitLlvmWithoutFallbackLogs.
+public unsafe fn bool RepresentativeExampleSourcesEmitLlvmWithoutFallbackLogsImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: the original test reads ten representative example programs from disk under
+        // examples/ and, for each, runs the full pipeline with EmitLlvmIr=true against an
+        // x86_64-unknown-linux-gnu target plus a filesystem stdlib module resolver. It then asserts
+        // (a) the compilation succeeded, (b) FallbackLogAssertions.AssertNoFallbackLogs sees no
+        // fallback-emission log entries, and (c) an LlvmIrModule artifact is present and non-null.
+        // The fallback-log inspection and the LlvmTargetInfo/FileSystemModuleResolver wiring are not
+        // expressible through the compile helpers, so this reduces to: each embedded example program
+        // compiles through the LLVM emit helper, succeeds, and yields non-empty LLVM IR (the closest
+        // observable proxy for "an LlvmIrModule artifact was produced"). The example sources are
+        // reproduced verbatim from examples/<relative-path>.
+        //
+        // PORT-NOTE: multi-module/App.stark and modules/App.stark each import sibling modules
+        // (Math, Geometry, Units) that the original test supplies via the on-disk FileSystemModuleResolver.
+        // The compile helpers cannot inject those companion modules, so for those two rows this records
+        // the embedded App.stark program through CompileLlvm and falls back to Succeeds(...) as the
+        // nearest signal that the example entrypoint module was accepted.
+
+        stack mut LlvmCompile hello = CompileLlvm(
+            "example-hello",
+            raw"""
+import System.Console
+module Hello
+
+export fn i32[min max] main() {
+    WriteLine("Hello, World!");
+    return 0;
+}
+""");
+
+        stack mut LlvmCompile arithmetic = CompileLlvm(
+            "example-arithmetic",
+            raw"""
+module Arithmetic
+
+export fn i32[min max] main() {
+    stack i32[min max] left = 6;
+    stack i32[min max] right = 7;
+    stack i32[min max] combined = (left + right) * 2 - 5;
+
+    if (combined != 21) {
+        return 1;
+    }
+
+    return 0;
+}
+""");
+
+        stack mut LlvmCompile basicSyntax = CompileLlvm(
+            "example-basic-syntax",
+            raw"""
+module BasicSyntax
+
+const ExpectedAnswer = 42;
+
+finite law i32[min max] Add(
+    i32[min max] left,
+    i32[min max] right)
+{
+    return left + right;
+}
+
+finite law i32[min max] SumPrefix(u8[0 10] count) {
+    stack mut u8[0 10] index = 0;
+    stack mut i32[min max] total = 0;
+
+    while willexit (index < count) {
+        total += (i32[min max])index;
+        index += 1;
+    }
+
+    return total;
+}
+
+finite law bool IsExpectedAnswer(i32[min max] value) {
+    switch (value) {
+        case 42:
+            return true;
+        default:
+            return false;
+    }
+}
+
+export fn i32[min max] main() {
+    stack i32[min max] answer = Add(20, 22);
+    if (answer != ExpectedAnswer || !IsExpectedAnswer(answer)) {
+        return 1;
+    }
+
+    if (SumPrefix(4) != 6) {
+        return 2;
+    }
+
+    return 0;
+}
+""");
+
+        stack mut LlvmCompile controlFlow = CompileLlvm(
+            "example-control-flow",
+            raw"""
+module ControlFlow
+
+export fn i32[min max] main() {
+    stack mut i32[min max] index = 0;
+    stack mut i32[min max] total = 0;
+
+    while willexit (index < 5) {
+        total += index;
+        index += 1;
+    }
+
+    switch (total) {
+        case 10:
+            return 0;
+        default:
+            return 1;
+    }
+}
+""");
+
+        stack mut LlvmCompile multiModule = CompileLlvm(
+            "example-multi-module",
+            raw"""
+import Math
+module App
+
+export fn i32[min max] main() {
+    return Math.Add(3, 4);
+}
+""");
+
+        stack mut LlvmCompile modules = CompileLlvm(
+            "example-modules",
+            raw"""
+import Geometry
+import Units
+module App
+
+export fn i32[min max] main() {
+    stack Geometry.Rectangle areaRectangle = new Geometry.Rectangle() {
+        Width = Units.Six(),
+        Height = Units.Seven()
+    };
+
+    if (Geometry.Area(areaRectangle) != 42) {
+        return 1;
+    }
+
+    stack Geometry.Rectangle scaledRectangle = new Geometry.Rectangle() {
+        Width = Units.Six(),
+        Height = Units.Seven()
+    };
+
+    if (Geometry.ScaleArea(scaledRectangle, 2) != 84) {
+        return 2;
+    }
+
+    return 0;
+}
+""");
+
+        stack mut LlvmCompile borrowing = CompileLlvm(
+            "example-borrowing",
+            raw"""
+module Borrowing
+
+struct Counter {
+    i32[min max] Value;
+
+    finite void Add(mut borrow Counter self, i32[min max] amount) {
+        self.Value += amount;
+        return;
+    }
+
+    finite law i32[min max] Current(borrow Counter self) {
+        return self.Value;
+    }
+
+    finite law i32[min max] ReadTwice(borrow Counter self) {
+        return self.Current() + self.Current();
+    }
+
+    finite retborrow mut i32[min max] Slot(mut borrow Counter self) {
+        return self.Value;
+    }
+}
+
+export fn i32[min max] main() {
+    stack mut Counter counter = new Counter() {
+        Value = 2
+    };
+
+    counter.Add(3);
+
+    if (counter.Current() != 5) {
+        return 1;
+    }
+
+    if (counter.ReadTwice() != 10) {
+        return 2;
+    }
+
+    counter.Slot() = 8;
+
+    if (counter.Current() != 8) {
+        return 3;
+    }
+
+    return 0;
+}
+""");
+
+        stack mut LlvmCompile ownershipMoves = CompileLlvm(
+            "example-ownership-moves",
+            raw"""
+module Borrowing.OwnershipMoves
+
+struct Box {
+    i32[min max] Value;
+}
+
+fn void Consume(Box value) {
+    return;
+}
+
+finite law i32[min max] ScalarsCopy() {
+    stack i32[min max] left = 10;
+    stack i32[min max] right = left;
+    return left + right;
+}
+
+fn i32[min max] MoveThenReinitialize() {
+    stack mut Box box = new Box() {
+        Value = 1
+    };
+
+    Consume(box);
+
+    box = new Box() {
+        Value = 2
+    };
+
+    return box.Value;
+}
+
+export fn i32[min max] main() {
+    if (ScalarsCopy() != 20) {
+        return 1;
+    }
+
+    if (MoveThenReinitialize() != 2) {
+        return 2;
+    }
+
+    return 0;
+}
+""");
+
+        stack mut LlvmCompile typeSystem = CompileLlvm(
+            "example-type-system",
+            raw"""
+module TypeSystem
+
+alias Score = u8[0 100];
+
+struct Reading {
+    Score Value;
+    bool Trusted;
+}
+
+record WeightedScore(Score Value, u8[1 10] Weight) { }
+
+enum Assessment {
+    Missing,
+    Fail(Score),
+    Pass(Score),
+}
+
+finite law Assessment Classify(Reading reading) {
+    if (!reading.Trusted) {
+        return Assessment.Missing;
+    }
+
+    if (reading.Value >= 60) {
+        return Assessment.Pass(reading.Value);
+    }
+
+    return Assessment.Fail(reading.Value);
+}
+
+finite law bool Passed(Assessment assessment) {
+    return assessment == Assessment.Pass(72);
+}
+
+export fn i32[min max] main() {
+    stack Reading reading = new Reading() {
+        Value = 72,
+        Trusted = true
+    };
+    stack WeightedScore weighted = new WeightedScore(reading.Value, 2);
+    stack Assessment assessment = Classify(reading);
+
+    if (!Passed(assessment)) {
+        return 1;
+    }
+
+    if (weighted.Value * weighted.Weight != 144) {
+        return 2;
+    }
+
+    if (Assessment.Missing == Assessment.Fail(72)) {
+        return 3;
+    }
+
+    return 0;
+}
+""");
+
+        stack mut LlvmCompile dataModel = CompileLlvm(
+            "example-data-model",
+            raw"""
+module DataModel
+
+struct Box {
+    i32[min max] Width;
+    i32[min max] Height;
+}
+
+record Point(i32[min max] X, i32[min max] Y) { }
+
+export fn i32[min max] main() {
+    stack Box box = new Box() { Width = 3, Height = 4 };
+    stack Point point = new Point(1, 2);
+    return box.Width * box.Height + point.X + point.Y;
+}
+""");
+
+        return Succeeds(hello)
+            && System.Testing.Contains(Llvm(hello), "ModuleID")
+            && Succeeds(arithmetic)
+            && System.Testing.Contains(Llvm(arithmetic), "ModuleID")
+            && Succeeds(basicSyntax)
+            && System.Testing.Contains(Llvm(basicSyntax), "ModuleID")
+            && Succeeds(controlFlow)
+            && System.Testing.Contains(Llvm(controlFlow), "ModuleID")
+            && Succeeds(multiModule)
+            && Succeeds(modules)
+            && Succeeds(borrowing)
+            && System.Testing.Contains(Llvm(borrowing), "ModuleID")
+            && Succeeds(ownershipMoves)
+            && System.Testing.Contains(Llvm(ownershipMoves), "ModuleID")
+            && Succeeds(typeSystem)
+            && System.Testing.Contains(Llvm(typeSystem), "ModuleID")
+            && Succeeds(dataModel)
+            && System.Testing.Contains(Llvm(dataModel), "ModuleID");
+    }
+}

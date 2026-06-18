@@ -1,0 +1,300 @@
+import CompilerTestSupport
+import System.Testing
+
+module FunctionSemanticsTests_TYPECHKP1
+
+// Ported slice of tests/compiler.Tests/FunctionSemanticsTests.cs.
+// Each Impl runs the embedded Stark program (kept verbatim from the C# raw
+// string) through the closest compile helper and returns true when the original
+// xUnit assertions would hold. PORT-NOTE comments flag assertions the helpers
+// cannot express (SemanticValidationModel / TypeCheckModel probes -- declared
+// and effective function kinds, CanStrengthenKind, per-function lambda
+// summaries, IsStatic) that were reduced to the nearest signal.
+
+// Ported from FunctionSemanticsTests.PlainFnsReportEffectiveKindsWhenTheyCanBeStrengthened.
+public unsafe fn bool PlainFnsReportEffectiveKindsWhenTheyCanBeStrengthenedImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: the original asserts result.Succeeded, then probes the
+        // SemanticValidationModel: Add (DeclaredKind == Fn, EffectiveKind ==
+        // FiniteLaw, CanStrengthenKind) and Touch (DeclaredKind == Fn,
+        // EffectiveKind == Finite, CanStrengthenKind). Declared/effective
+        // function-kind facts are not expressible via the compile helpers, so
+        // this reduces to "the embedded program type-checks successfully".
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp1-plain-fns-report-effective-kinds",
+            raw"""
+module Demo
+
+struct Box
+{
+    i32[min max] Value;
+}
+
+unsafe fn i32[min max] Add(i32[min max] left, i32[min max] right)
+{
+    return left + right;
+}
+
+unsafe fn void Touch(borrow mut Box box)
+{
+    box.Value = 1;
+    return;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from FunctionSemanticsTests.PlainFnsWithWillexitLoopsCanStillStrengthenToFiniteKinds.
+public unsafe fn bool PlainFnsWithWillexitLoopsCanStillStrengthenToFiniteKindsImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: the original asserts result.Succeeded, then probes the
+        // SemanticValidationModel for Count (DeclaredKind == Fn, EffectiveKind ==
+        // FiniteLaw, CanStrengthenKind). Declared/effective function-kind facts
+        // are not expressible via the compile helpers, so this reduces to "the
+        // embedded program type-checks successfully".
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp1-plain-fns-willexit-strengthen-finite",
+            raw"""
+module Demo
+
+unsafe fn i32[min max] Count()
+{
+    stack mut i32[min max] value = 0;
+
+    while willexit (value < 3)
+    {
+        value += 1;
+    }
+
+    return value;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from FunctionSemanticsTests.FunctionKindObligationsAllowMatchingFunctionPointerCalls.
+public unsafe fn bool FunctionKindObligationsAllowMatchingFunctionPointerCallsImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: the original asserts result.Succeeded, then probes the
+        // SemanticValidationModel for the DeclaredKind of UseFinite (Finite),
+        // UseLaw (Law), and UseStrict (FiniteLaw). Declared function-kind facts
+        // are not expressible via the compile helpers, so this reduces to "the
+        // embedded program type-checks successfully".
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp1-fn-kind-obligations-fnptr-calls",
+            raw"""
+module Demo
+
+unsafe finite i32[min max] UseFinite(fnptr<finite i32[min max]()> op)
+{
+    return op();
+}
+
+unsafe law i32[min max] UseLaw(fnptr<law i32[min max]()> op)
+{
+    return op();
+}
+
+unsafe finite law i32[min max] UseStrict(fnptr<finite law i32[min max]()> op)
+{
+    return op();
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from FunctionSemanticsTests.FunctionKindObligationsAllowMatchingClosureCalls.
+public unsafe fn bool FunctionKindObligationsAllowMatchingClosureCallsImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: the original compiles with StopAfterPassId
+        // "semantic-validate", asserts result.Succeeded, then probes the
+        // SemanticValidationModel for the DeclaredKind of UseFinite (Finite),
+        // UseLaw (Law), and UseStrict (FiniteLaw). The stop-after pass selector
+        // maps to CompileTypeCheck (stops after type/semantic checking); the
+        // declared function-kind facts are not expressible via the compile
+        // helpers, so this reduces to "the embedded program type-checks
+        // successfully".
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp1-fn-kind-obligations-closure-calls",
+            raw"""
+module Demo
+
+unsafe finite i32[min max] UseFinite(borrow closure<finite i32[min max]()> op)
+{
+    return op();
+}
+
+unsafe law i32[min max] UseLaw(borrow closure<law i32[min max]()> op)
+{
+    return op();
+}
+
+unsafe finite law i32[min max] UseStrict(borrow closure<finite law i32[min max]()> op)
+{
+    return op();
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from FunctionSemanticsTests.NonCapturingLawLambdasGetSeparateSemanticSummaries.
+public unsafe fn bool NonCapturingLawLambdasGetSeparateSemanticSummariesImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: the original asserts result.Succeeded, then probes the
+        // SemanticValidationModel for the single function whose Name starts with
+        // "Run.__lambda_", checking DeclaredKind == Law and EffectiveKind is Law
+        // or FiniteLaw. Per-lambda semantic summaries are not expressible via the
+        // compile helpers, so this reduces to "the embedded program type-checks
+        // successfully".
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp1-noncapturing-law-lambdas-summaries",
+            raw"""
+module Demo
+
+unsafe fn i32[min max] Pure()
+{
+    return 1;
+}
+
+unsafe fn i32[min max] Run()
+{
+    stack fnptr<law i32[min max]()> op = () => Pure();
+    return op();
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from FunctionSemanticsTests.LawsCanCallPlainFnsThatInferAsLaws.
+public unsafe fn bool LawsCanCallPlainFnsThatInferAsLawsImpl()
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp1-laws-call-plain-fns-infer-laws",
+            raw"""
+module Demo
+
+unsafe fn i32[min max] Add(i32[min max] left, i32[min max] right)
+{
+    return left + right;
+}
+
+unsafe law i32[min max] Use()
+{
+    return Add(1, 2);
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from FunctionSemanticsTests.FiniteFunctionsCanCallPlainFnsThatInferAsFinite.
+public unsafe fn bool FiniteFunctionsCanCallPlainFnsThatInferAsFiniteImpl()
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp1-finite-fns-call-plain-fns-infer-finite",
+            raw"""
+module Demo
+
+unsafe fn i32[min max] Step(i32[min max] value)
+{
+    return value + 1;
+}
+
+unsafe finite i32[min max] Use(i32[min max] value)
+{
+    return Step(value);
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from FunctionSemanticsTests.StaticMemberFunctionsTypeCheckAndPreserveFunctionKinds.
+public unsafe fn bool StaticMemberFunctionsTypeCheckAndPreserveFunctionKindsImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: the original asserts result.Succeeded, then probes the
+        // TypeCheckModel (Functions["Allocator.Default"].IsStatic) and the
+        // SemanticValidationModel (Allocator.Default DeclaredKind == FiniteLaw
+        // and EffectiveKind == FiniteLaw). IsStatic and declared/effective
+        // function-kind facts are not expressible via the compile helpers, so
+        // this reduces to "the embedded program type-checks successfully".
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp1-static-member-fns-preserve-kinds",
+            raw"""
+module Demo
+
+struct Allocator
+{
+    static unsafe finite law Allocator Default()
+    {
+        return new();
+    }
+
+    unsafe finite law bool IsDefault(borrow Allocator self)
+    {
+        return true;
+    }
+}
+
+unsafe fn Allocator UseDefault()
+{
+    return Allocator.Default();
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from FunctionSemanticsTests.LawBodiesAllowImplicitDropThatOnlyMutatesDroppedValue.
+public unsafe fn bool LawBodiesAllowImplicitDropThatOnlyMutatesDroppedValueImpl()
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp1-law-bodies-allow-self-mutating-drop",
+            raw"""
+module Demo
+
+struct Resource
+{
+    i32[min max] Value;
+
+    mut drop
+    {
+        self.Value = 0;
+    }
+}
+
+unsafe law void Good()
+{
+    stack Resource resource = new Resource()
+    {
+        Value = 1
+    };
+    return;
+}
+""");
+        return Succeeds(compiled);
+    }
+}

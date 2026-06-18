@@ -1,0 +1,62 @@
+import CompilerTestSupport
+import System.Testing
+
+module PackageImageTypedObjectInitializerLocalDeclarationIntegrationTests_PKGIMGP1
+
+// Ported from PackageImageTypedObjectInitializerLocalDeclarationIntegrationTests.ManifestBackedTypedObjectInitializerLocalDeclarationsCompileAndRunWithoutSyntheticSource.
+public unsafe fn bool ManifestBackedTypedObjectInitializerLocalDeclarationsCompileAndRunWithoutSyntheticSourceImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: The original first builds `Facade` (a `record Pair` plus a
+        // generic `Observe<T>` whose body uses a `stack Pair pair = { ... }` typed
+        // object initializer local) into a static library via the `--emit-lib -o`
+        // CLI path, asserting exit code 0, stdout "Emitted static library:", empty
+        // stderr, and the on-disk `.a`/`.lib` and `.starkpkg` manifest existing. It
+        // then loads the manifest and probes the `Facade` module's generic template
+        // for `Facade.Observe`, asserting `BodyText` is null but `TypedBody` is not,
+        // rewrites the manifest to a typed-only (sourceless) form, deletes
+        // `Facade.stark`, compiles a `Demo` module that `import Facade` via the
+        // `--emit-exe -o -I` CLI path (asserting exit code 0, stdout "Emitted
+        // executable:", empty stderr, and the executable existing), then runs the
+        // built program and asserts empty stdout/stderr and process exit code 15.
+        // The compile helpers cannot express the CLI emit-lib/emit-exe builds,
+        // package-image manifest contents (BodyText/TypedBody) or typed-only
+        // rewriting, source-file deletion / manifest-backed (sourceless)
+        // resolution, or runtime process stdout/exit code, so this is reduced to
+        // compiling the same `Demo` root program with the `Facade` module available
+        // as a sibling source module through the LLVM pipeline and asserting it
+        // succeeds (the closest observable signal that `Facade.Observe` resolves and
+        // the typed object initializer local lowers).
+        stack mut LlvmCompile compiled = CompileLlvmWithModule(
+            "manifest-backed-typed-object-initializer-local-declarations",
+            raw"""
+import Facade
+module Demo
+
+export fn i32[min max] main()
+{
+    return Facade.Observe(7, 0);
+}
+""",
+            "",
+            "Facade.stark",
+            raw"""
+module Facade
+
+public record Pair(i32[min max] First, i32[min max] Second)
+{
+}
+
+public fn i32[min max] Observe<T>(i32[min max] value, T tag)
+{
+    stack Pair pair =
+    {
+        First = value, Second = value + 1
+    };
+    return pair.First + pair.Second;
+}
+""");
+        return Succeeds(compiled);
+    }
+}

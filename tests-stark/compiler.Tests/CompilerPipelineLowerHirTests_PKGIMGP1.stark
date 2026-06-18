@@ -1,0 +1,155 @@
+import CompilerTestSupport
+import System.Testing
+
+module CompilerPipelineLowerHirTests_PKGIMGP1
+
+// Ported from CompilerPipelineLowerHirTests.ManifestBackedGenericFunctionsMaterializeConcreteBodiesFromPackageImageTemplates.
+public unsafe fn bool ManifestBackedGenericFunctionsMaterializeConcreteBodiesFromPackageImageTemplatesImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: The original compiles a `Facade` library, builds a package image via
+        // PackageImageBuilder.Create, strips its source-backed Functions/Types/Globals/TypeAliases
+        // down to a typed-only manifest (keeping TypedInterface/CompilerFacts/GenericTemplates),
+        // verifies PackageImageLoader.TryBuildModuleSource emits a body-less
+        // "public fn T Identity<T>(T value);" surface (and NOT the "stack T copy = value;" body),
+        // writes that manifest, deletes the Facade source, then runs the `Demo` consumer through
+        // `lower-hir` against a FileSystemModuleResolver and probes artifacts: LoadedModules has
+        // an imported `Facade` whose Identity declaration HasBody, and the HighLevelIr artifact
+        // contains the monomorphized `__stark_mono_fn_Demo__Facade_Identity__i32` function with a
+        // StarkCfg body, TemplateName/BodyTemplateName "Facade.Identity", and a {"T" -> "i32"}
+        // generic substitution. Package-image manifest construction, manifest mutation /
+        // typed-only loading, sourceless module resolution, and per-function HIR probing are not
+        // expressible via the compile helpers, so this reduces to compiling the same `Demo`
+        // consumer program against a sibling `Facade` source module (carrying the same generic
+        // `Identity<T>` template) through type-check (the closest stage to `lower-hir`) and
+        // asserting it succeeds.
+        stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+            "manifest-backed-generic-functions-materialize-concrete-bodies-from-package-image-templates",
+            raw"""
+import Facade
+module Demo
+
+fn i32[min max] Run(i32[min max] value)
+{
+    return Facade.Identity(value);
+}
+""",
+            "",
+            "Facade.stark",
+            raw"""
+module Facade
+
+public fn T Identity<T>(T value)
+{
+    stack T copy = value;
+    return copy;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from CompilerPipelineLowerHirTests.ManifestBackedEnumWholeCaptureGenericBodiesPreserveTypedTemplateFactsIntoHighLevelIr.
+public unsafe fn bool ManifestBackedEnumWholeCaptureGenericBodiesPreserveTypedTemplateFactsIntoHighLevelIrImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: The original compiles a `Facade` library with a generic enum `Wrapped<T>` and
+        // a `ReadEnumWhole<T>` that switches on a whole-capture `Wrapped<T>.Pair` case, builds a
+        // package image, strips it to a typed-only manifest (retaining
+        // TypedInterface/CompilerFacts/GenericTemplates plus the CompilerSections and an
+        // empty-surface SourceSurface section), writes the manifest, deletes the source, then runs
+        // the `Demo` consumer through `lower-hir` against a FileSystemModuleResolver. It then
+        // probes: LoadedModules has an imported `Facade` with HasPublishedTypedTemplateBodies, a
+        // "Facade.ReadEnumWhole" FunctionTemplate whose TypedBody is non-null, the ReadEnumWhole
+        // declaration HasBody, and the HighLevelIr artifact contains specialized
+        // `__stark_mono_fn_Demo__Facade_ReadEnumWhole__i32` with a StarkCfg body and
+        // TemplateName/BodyTemplateName "Facade.ReadEnumWhole". Package-image manifest
+        // construction, typed-template publishing, sourceless resolution, and per-function HIR
+        // probing are not expressible via the compile helpers, so this reduces to compiling the
+        // same `Demo` consumer against a sibling `Facade` source module (carrying the same generic
+        // enum and `ReadEnumWhole<T>` template) through type-check (the closest stage to
+        // `lower-hir`) and asserting it succeeds.
+        stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+            "manifest-backed-enum-whole-capture-generic-bodies-preserve-typed-template-facts-into-high-level-ir",
+            raw"""
+import Facade
+module Demo
+
+fn i32[min max] Run(i32[min max] value)
+{
+    stack i32[min max] tag = 0;
+    return Facade.ReadEnumWhole(Facade.Wrapped<i32[min max]>.Pair(2, 3), tag);
+}
+""",
+            "",
+            "Facade.stark",
+            raw"""
+module Facade
+
+public enum Wrapped<T>
+{
+    None,
+    Pair(i32[min max], i32[min max]),
+}
+
+public fn i32[min max] ReadEnumWhole<T>(Wrapped<T> wrapped, T tag)
+{
+    switch (wrapped)
+    {
+        case Wrapped<T>.Pair capture:
+            return 5;
+        default:
+            return -2;
+    }
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from CompilerPipelineLowerHirTests.LowerMirUsesPublishedTemplateObjectCreationFactsForImportedGenericBodies.
+public unsafe fn bool LowerMirUsesPublishedTemplateObjectCreationFactsForImportedGenericBodiesImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: The original compiles a self-contained `Demo` module (a `Counter` record and a
+        // generic `MakeFlag<T>` that constructs `new Counter(0)`), builds a package image, loads
+        // its package-image facts, remaps the "Demo.MakeFlag" template's object-creation
+        // CreatedType from "Demo.Counter" to a bare "Counter" symbol, then runs the same source
+        // through `lower-hir`. It synthesizes a "PkgFacts" loaded module carrying the remapped
+        // facts, prunes the MakeFlag ObjectCreations out of the TypeCheckModel, and drives a
+        // MidLevelIrLowerer directly over the HIR/loaded-modules/module-graph/pruned
+        // type-model/enum-layout to assert the specialized MIR
+        // `__stark_mono_fn_Demo__MakeFlag__i32` supports direct code generation and emits a
+        // MidLevelIrInsertFieldRValue (i.e. MIR lowering used the published template object-
+        // creation facts rather than the pruned local ones). Package-image fact loading/remapping,
+        // synthetic loaded-module injection, TypeCheckModel pruning, and direct
+        // MidLevelIrLowerer.Lower probing are not expressible via the compile helpers, so this
+        // reduces to compiling the same self-contained `Demo` program through MIR lowering and
+        // asserting it succeeds (the closest observable signal that the generic body lowers and
+        // the `new Counter(0)` object creation materializes into MIR).
+        stack mut LlvmCompile compiled = CompileMir(
+            "lower-mir-uses-published-template-object-creation-facts-for-imported-generic-bodies",
+            raw"""
+module Demo
+
+public record Counter(i32[min max] Value)
+{
+}
+
+public fn i32[min max] MakeFlag<T>(T value)
+{
+    stack Counter counter = new Counter(0);
+    return 1;
+}
+
+fn i32[min max] Run(i32[min max] value)
+{
+    return MakeFlag(value);
+}
+""");
+        return Succeeds(compiled);
+    }
+}

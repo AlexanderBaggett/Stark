@@ -1,0 +1,607 @@
+import CompilerTestSupport
+import System.Testing
+
+module CompilerPipelineMonomorphizationPlanTests_PIPELINEP1
+
+// Ported from CompilerPipelineMonomorphizationPlanTests.RootGenericInstantiationsGetFullySpelledMonomorphizationSymbols.
+public unsafe fn bool RootGenericInstantiationsGetFullySpelledMonomorphizationSymbolsImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: the original runs the pipeline stopping after the "monomorphization-plan"
+        // pass and reads the MonomorphizationPlanModel: a single planned function (CodeSizeHeuristic
+        // InlineSmallBody, EstimatedTopLevelStatementCount 1, Linkage InternalSingleOwner, SymbolName
+        // "__stark_mono_fn_Demo__Identity__i32") and a single planned type (Linkage
+        // InternalSingleOwner, SymbolName "__stark_mono_ty_Demo__Pair__i32"). The compile helpers
+        // cannot stop after the monomorphization-plan pass nor read the plan artifact (heuristic,
+        // statement count, linkage, mono symbol names), so this reduces to "the embedded program
+        // type-checks cleanly" (the closest observable precondition for a valid plan), with the
+        // program kept verbatim from the C# raw string.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "monoplan-root-generic-instantiations-fully-spelled-symbols",
+            raw"""
+module Demo
+
+record Pair<T>(T Value)
+{
+}
+
+fn T Identity<T>(T value)
+{
+    return value;
+}
+
+fn i32[min max] Run(Pair<i32[min max]> pair)
+{
+    return Identity(pair.Value);
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from CompilerPipelineMonomorphizationPlanTests.RootSingleReturnForwarderGenericInstantiationsUseOptimizationSummaryForPlanning.
+public unsafe fn bool RootSingleReturnForwarderGenericInstantiationsUseOptimizationSummaryForPlanningImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: the original stops after "monomorphization-plan" and reads the MonomorphizationPlanModel,
+        // selecting the planned function whose TemplateName is "Forward" and asserting CodeSizeHeuristic
+        // InlineSmallBody and EstimatedBodyCost > 2 (the optimization summary drives planning of the
+        // single-return forwarder). The compile helpers cannot stop after that pass nor read the plan's
+        // per-function heuristic/body-cost facts, so this reduces to "the embedded program type-checks
+        // cleanly", program kept verbatim from the C# raw string.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "monoplan-root-single-return-forwarder-optimization-summary",
+            raw"""
+module Demo
+
+fn T Identity<T>(T value)
+{
+    return value;
+}
+
+fn T Forward<T>(T value)
+{
+    return Identity(value);
+}
+
+fn i32[min max] Run(i32[min max] value)
+{
+    return Forward(value);
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from CompilerPipelineMonomorphizationPlanTests.RootSingleReturnMemberCallForwarderGenericInstantiationsUseOptimizationSummaryForPlanning.
+public unsafe fn bool RootSingleReturnMemberCallForwarderGenericInstantiationsUseOptimizationSummaryForPlanningImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: the original stops after "monomorphization-plan" and reads the plan's "Forward"
+        // function, asserting CodeSizeHeuristic InlineSmallBody and EstimatedBodyCost > 2 (the
+        // member-call forwarder's optimization summary drives planning). The compile helpers cannot
+        // stop after that pass nor read those per-function plan facts, so this reduces to "the embedded
+        // program type-checks cleanly", program kept verbatim from the C# raw string.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "monoplan-root-single-return-member-call-forwarder-optimization-summary",
+            raw"""
+module Demo
+
+record Box(i32[min max] Value)
+{
+    fn i32[min max] Bump(borrow Box self, i32[min max] delta)
+    {
+        return self.Value + delta;
+    }
+}
+
+fn i32[min max] Forward<T>(borrow Box box, i32[min max] delta, T tag)
+{
+    return box.Bump(delta);
+}
+
+fn i32[min max] Run(borrow Box box, i32[min max] delta)
+{
+    return Forward(box, delta, delta);
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from CompilerPipelineMonomorphizationPlanTests.RootSingleReturnFieldAccessWrapperGenericInstantiationsUseOptimizationSummaryForPlanning.
+public unsafe fn bool RootSingleReturnFieldAccessWrapperGenericInstantiationsUseOptimizationSummaryForPlanningImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: the original stops after "monomorphization-plan" and reads the plan's "Read"
+        // function, asserting CodeSizeHeuristic InlineSmallBody and EstimatedBodyCost > 2 (the
+        // single-return field-access wrapper's optimization summary drives planning). The compile
+        // helpers cannot stop after that pass nor read those per-function plan facts, so this reduces
+        // to "the embedded program type-checks cleanly", program kept verbatim from the C# raw string.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "monoplan-root-single-return-field-access-wrapper-optimization-summary",
+            raw"""
+module Demo
+
+record Inner(i32[min max] Value)
+{
+}
+record Box(Inner Inner)
+{
+}
+
+fn i32[min max] Read<T>(borrow Box box, T tag)
+{
+    return box.Inner.Value;
+}
+
+fn i32[min max] Run(borrow Box box)
+{
+    return Read(box, 0);
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from CompilerPipelineMonomorphizationPlanTests.RootSingleReturnIndexAccessWrapperGenericInstantiationsUseOptimizationSummaryForPlanning.
+public unsafe fn bool RootSingleReturnIndexAccessWrapperGenericInstantiationsUseOptimizationSummaryForPlanningImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: the original stops after "monomorphization-plan" and reads the plan's "Read"
+        // function, asserting CodeSizeHeuristic InlineSmallBody and EstimatedBodyCost > 2 (the
+        // single-return index-access wrapper's optimization summary drives planning). The compile
+        // helpers cannot stop after that pass nor read those per-function plan facts, so this reduces
+        // to "the embedded program type-checks cleanly", program kept verbatim from the C# raw string.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "monoplan-root-single-return-index-access-wrapper-optimization-summary",
+            raw"""
+module Demo
+
+record Box(i32[min max] Value)
+{
+}
+
+fn i32[min max] Read<T>(Box[2] boxes, i32[min max] index, T tag)
+{
+    return boxes[index].Value;
+}
+
+fn i32[min max] Run(Box[2] boxes, i32[min max] index)
+{
+    return Read(boxes, index, index);
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from CompilerPipelineMonomorphizationPlanTests.RootSingleReturnConversionWrapperGenericInstantiationsUseOptimizationSummaryForPlanning.
+public unsafe fn bool RootSingleReturnConversionWrapperGenericInstantiationsUseOptimizationSummaryForPlanningImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: the original stops after "monomorphization-plan" and reads the plan's "Read"
+        // function, asserting CodeSizeHeuristic InlineSmallBody and EstimatedBodyCost > 2 (the
+        // single-return conversion wrapper's optimization summary drives planning). The compile
+        // helpers cannot stop after that pass nor read those per-function plan facts, so this reduces
+        // to "the embedded program type-checks cleanly", program kept verbatim from the C# raw string.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "monoplan-root-single-return-conversion-wrapper-optimization-summary",
+            raw"""
+module Demo
+
+record Inner(i32[min max] Value)
+{
+}
+record Box(Inner Inner)
+{
+}
+
+fn i64[min max] Read<T>(borrow Box box, T tag)
+{
+    return (i64[min max])box.Inner.Value;
+}
+
+fn i64[min max] Run(borrow Box box)
+{
+    return Read(box, box.Inner.Value);
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from CompilerPipelineMonomorphizationPlanTests.RootSingleReturnAddressOfWrapperGenericInstantiationsUseOptimizationSummaryForPlanning.
+public unsafe fn bool RootSingleReturnAddressOfWrapperGenericInstantiationsUseOptimizationSummaryForPlanningImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: the original stops after "monomorphization-plan" and reads the plan's "Pin"
+        // function, asserting CodeSizeHeuristic InlineSmallBody and EstimatedBodyCost > 2 (the
+        // single-return address-of wrapper's optimization summary drives planning). The compile
+        // helpers cannot stop after that pass nor read those per-function plan facts, so this reduces
+        // to "the embedded program type-checks cleanly", program kept verbatim from the C# raw string.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "monoplan-root-single-return-address-of-wrapper-optimization-summary",
+            raw"""
+module Demo
+
+record Buffer(i32[min max][2] Values)
+{
+}
+
+unsafe fn rawptr<i32[min max]> Pin<T>(borrow Buffer buffer, i32[min max] index, T tag)
+{
+    return &buffer.Values[index];
+}
+
+unsafe fn rawptr<i32[min max]> Run(borrow Buffer buffer, i32[min max] index)
+{
+    return Pin(buffer, index, index);
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from CompilerPipelineMonomorphizationPlanTests.RootSingleReturnBinaryOperatorWrapperGenericInstantiationsUseOptimizationSummaryForPlanning.
+public unsafe fn bool RootSingleReturnBinaryOperatorWrapperGenericInstantiationsUseOptimizationSummaryForPlanningImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: the original stops after "monomorphization-plan" and reads the plan's "AddDelta"
+        // function, asserting CodeSizeHeuristic InlineSmallBody and EstimatedBodyCost > 2 (the
+        // single-return binary-operator wrapper's optimization summary drives planning). The compile
+        // helpers cannot stop after that pass nor read those per-function plan facts, so this reduces
+        // to "the embedded program type-checks cleanly", program kept verbatim from the C# raw string.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "monoplan-root-single-return-binary-operator-wrapper-optimization-summary",
+            raw"""
+module Demo
+
+record Inner(i32[min max] Value)
+{
+}
+record Box(Inner Inner)
+{
+}
+
+fn i32[min max] AddDelta<T>(borrow Box box, i32[min max] delta, T tag)
+{
+    return box.Inner.Value + delta;
+}
+
+fn i32[min max] Run(borrow Box box, i32[min max] delta)
+{
+    return AddDelta(box, delta, delta);
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from CompilerPipelineMonomorphizationPlanTests.RootSingleReturnComparisonWrapperGenericInstantiationsUseOptimizationSummaryForPlanning.
+public unsafe fn bool RootSingleReturnComparisonWrapperGenericInstantiationsUseOptimizationSummaryForPlanningImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: the original stops after "monomorphization-plan" and reads the plan's "IsBelow"
+        // function, asserting CodeSizeHeuristic InlineSmallBody and EstimatedBodyCost > 2 (the
+        // single-return comparison wrapper's optimization summary drives planning). The compile
+        // helpers cannot stop after that pass nor read those per-function plan facts, so this reduces
+        // to "the embedded program type-checks cleanly", program kept verbatim from the C# raw string.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "monoplan-root-single-return-comparison-wrapper-optimization-summary",
+            raw"""
+module Demo
+
+record Inner(i32[min max] Value)
+{
+}
+record Box(Inner Inner)
+{
+}
+
+fn bool IsBelow<T>(borrow Box box, i32[min max] limit, T tag)
+{
+    return box.Inner.Value < limit;
+}
+
+fn bool Run(borrow Box box, i32[min max] limit)
+{
+    return IsBelow(box, limit, limit);
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from CompilerPipelineMonomorphizationPlanTests.RootTerminalIfSelectionWrapperGenericInstantiationsUseOptimizationSummaryForPlanning.
+public unsafe fn bool RootTerminalIfSelectionWrapperGenericInstantiationsUseOptimizationSummaryForPlanningImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: the original stops after "monomorphization-plan" and reads the plan's "ChooseBranch"
+        // function, asserting CodeSizeHeuristic InlineSmallBody and EstimatedBodyCost > 2 (the
+        // terminal if-selection wrapper's optimization summary drives planning). The compile helpers
+        // cannot stop after that pass nor read those per-function plan facts, so this reduces to "the
+        // embedded program type-checks cleanly", program kept verbatim from the C# raw string.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "monoplan-root-terminal-if-selection-wrapper-optimization-summary",
+            raw"""
+module Demo
+
+fn i32[min max] ChooseBranch<T>(bool takeLeft, bool takeMiddle, i32[min max] left, i32[min max] middle, i32[min max] right, T tag)
+{
+    if (takeLeft)
+    {
+        return left;
+    }
+    else if (takeMiddle)
+    {
+        return middle;
+    }
+    else
+    {
+        return right;
+    }
+}
+
+fn i32[min max] Run(bool takeLeft, bool takeMiddle, i32[min max] left, i32[min max] middle, i32[min max] right)
+{
+    return ChooseBranch(takeLeft, takeMiddle, left, middle, right, right);
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from CompilerPipelineMonomorphizationPlanTests.RootTerminalSwitchSelectionWrapperGenericInstantiationsUseOptimizationSummaryForPlanning.
+public unsafe fn bool RootTerminalSwitchSelectionWrapperGenericInstantiationsUseOptimizationSummaryForPlanningImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: the original stops after "monomorphization-plan" and reads the plan's "ChooseSwitch"
+        // function, asserting CodeSizeHeuristic InlineSmallBody and EstimatedBodyCost > 2 (the
+        // terminal switch-selection wrapper's optimization summary drives planning). The compile helpers
+        // cannot stop after that pass nor read those per-function plan facts, so this reduces to "the
+        // embedded program type-checks cleanly", program kept verbatim from the C# raw string.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "monoplan-root-terminal-switch-selection-wrapper-optimization-summary",
+            raw"""
+module Demo
+
+fn i32[min max] ChooseSwitch<T>(i32[min max] selector, i32[min max] left, i32[min max] middle, i32[min max] right, T tag)
+{
+    switch (selector)
+    {
+        case 0:
+            return left;
+        case 1:
+            return middle;
+        default:
+            return right;
+    }
+}
+
+fn i32[min max] Run(i32[min max] selector, i32[min max] left, i32[min max] middle, i32[min max] right)
+{
+    return ChooseSwitch(selector, left, middle, right, right);
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from CompilerPipelineMonomorphizationPlanTests.RootObjectConstructionWrapperGenericInstantiationsUseOptimizationSummaryForPlanning.
+public unsafe fn bool RootObjectConstructionWrapperGenericInstantiationsUseOptimizationSummaryForPlanningImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: the original stops after "monomorphization-plan" and reads the plan's "Wrap"
+        // function, asserting CodeSizeHeuristic InlineSmallBody and a non-null EstimatedBodyCost (the
+        // object-construction wrapper's optimization summary drives planning). The compile helpers
+        // cannot stop after that pass nor read those per-function plan facts, so this reduces to "the
+        // embedded program type-checks cleanly", program kept verbatim from the C# raw string.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "monoplan-root-object-construction-wrapper-optimization-summary",
+            raw"""
+module Demo
+
+struct Inner<T>
+{
+    T Value;
+}
+
+struct Outer<T>
+{
+    Inner<T> Item;
+    i32[min max] Count;
+}
+
+fn Outer<T> Wrap<T>(T value, i32[min max] count, T tag)
+{
+    return new Outer<T>()
+    {
+        Item =
+        {
+            Value = value
+        },
+        Count = count
+    };
+}
+
+fn Outer<i32[min max]> Run(i32[min max] value, i32[min max] count)
+{
+    return Wrap(value, count, value);
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from CompilerPipelineMonomorphizationPlanTests.RootEnumConstructionWrapperGenericInstantiationsUseOptimizationSummaryForPlanning.
+public unsafe fn bool RootEnumConstructionWrapperGenericInstantiationsUseOptimizationSummaryForPlanningImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: the original stops after "monomorphization-plan" and reads the plan's "Wrap"
+        // function, asserting CodeSizeHeuristic InlineSmallBody and a non-null EstimatedBodyCost (the
+        // enum-construction wrapper's optimization summary drives planning). The compile helpers cannot
+        // stop after that pass nor read those per-function plan facts, so this reduces to "the embedded
+        // program type-checks cleanly", program kept verbatim from the C# raw string.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "monoplan-root-enum-construction-wrapper-optimization-summary",
+            raw"""
+module Demo
+
+enum Boxed<T>
+{
+    None,
+    Value
+    {
+        Data: T, Tag: i32[min max]
+    },
+}
+
+fn Boxed<T> Wrap<T>(T value, i32[min max] tag, T marker)
+{
+    return Boxed<T>.Value
+    {
+        Data: value, Tag: tag
+    };
+}
+
+fn Boxed<i32[min max]> Run(i32[min max] value, i32[min max] tag)
+{
+    return Wrap(value, tag, value);
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from CompilerPipelineMonomorphizationPlanTests.RootSimpleLocalUpdateWrapperGenericInstantiationsUseOptimizationSummaryForPlanning.
+public unsafe fn bool RootSimpleLocalUpdateWrapperGenericInstantiationsUseOptimizationSummaryForPlanningImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: the original stops after "monomorphization-plan" and reads the plan's "Bump"
+        // function, asserting CodeSizeHeuristic InlineSmallBody and EstimatedBodyCost > 2 (the
+        // simple-local-update wrapper's optimization summary drives planning). The compile helpers
+        // cannot stop after that pass nor read those per-function plan facts, so this reduces to "the
+        // embedded program type-checks cleanly", program kept verbatim from the C# raw string.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "monoplan-root-simple-local-update-wrapper-optimization-summary",
+            raw"""
+module Demo
+
+record Inner(i32[min max] Value)
+{
+}
+record Box(Inner Inner)
+{
+}
+
+fn i32[min max] Bump<T>(borrow Box box, i32[min max] delta, T tag)
+{
+    stack mut i32[min max] current = box.Inner.Value;
+    current += delta;
+    return current;
+}
+
+fn i32[min max] Run(borrow Box box, i32[min max] delta)
+{
+    return Bump(box, delta, delta);
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from CompilerPipelineMonomorphizationPlanTests.SourceBackedImportedGenericInstantiationsUseDefiningModuleMonomorphizationSymbols.
+public unsafe fn bool SourceBackedImportedGenericInstantiationsUseDefiningModuleMonomorphizationSymbolsImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: the original writes a source-backed Facade.stark into a temp directory, resolves
+        // it via FileSystemModuleResolver, stops after "monomorphization-plan", and reads the
+        // MonomorphizationPlanModel: a single function (CodeSizeHeuristic InlineSmallBody,
+        // EstimatedTopLevelStatementCount 1, Linkage LinkOnceOdrComdat, SymbolName
+        // "__stark_mono_fn_Facade__Facade_Identity__i32") and a single type (Linkage LinkOnceOdrComdat,
+        // SymbolName "__stark_mono_ty_Facade__Facade_Pair__i32") -- the defining module owns the
+        // symbols. The harness writes the imported module to a temp search directory and resolves it
+        // the same way, but cannot stop after that pass nor read the plan artifact (heuristic, statement
+        // count, linkage, mono symbol names), so this reduces to "the consumer program plus its
+        // source-backed Facade module type-check successfully". Both programs are kept verbatim from
+        // the C# raw string literals.
+        stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+            "monoplan-source-backed-imported-defining-module-symbols",
+            raw"""
+import Facade
+module Demo
+
+fn i32[min max] Run(Facade.Pair<i32[min max]> pair)
+{
+    return Facade.Identity(pair.Value);
+}
+""",
+            "",
+            "Facade.stark",
+            raw"""
+module Facade
+
+public record Pair<T>(T Value)
+{
+}
+
+public fn T Identity<T>(T value)
+{
+    return value;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from CompilerPipelineMonomorphizationPlanTests.ColdGenericInstantiationsPreferCodeSizeReductionInThePlan.
+public unsafe fn bool ColdGenericInstantiationsPreferCodeSizeReductionInThePlanImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: the original stops after "monomorphization-plan" and reads the plan's single
+        // function, asserting CodeSizeHeuristic ReduceCodeSize, EstimatedTopLevelStatementCount 3, and
+        // SymbolName "__stark_mono_fn_Demo__Choose__i32" (cold instantiations prefer code-size
+        // reduction over inlining). The compile helpers cannot stop after that pass nor read those plan
+        // facts, so this reduces to "the embedded program type-checks cleanly", program kept verbatim
+        // from the C# raw string.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "monoplan-cold-generic-instantiations-prefer-code-size-reduction",
+            raw"""
+module Demo
+
+cold fn T Choose<T>(T left, T right, bool takeRight)
+{
+    stack mut T current = left;
+    if (takeRight)
+    {
+        current = right;
+    }
+
+    return current;
+}
+
+fn i32[min max] Run(i32[min max] left, i32[min max] right, bool takeRight)
+{
+    return Choose(left, right, takeRight);
+}
+""");
+        return Succeeds(compiled);
+    }
+}

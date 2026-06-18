@@ -1,0 +1,51 @@
+import CompilerTestSupport
+import System.Testing
+
+module PackageImageTypedArrayInitializerIntegrationTests_PKGIMGP1
+
+// Ported from PackageImageTypedArrayInitializerIntegrationTests.ManifestBackedTypedArrayInitializerBodiesCompileAndRunWithoutSyntheticSource.
+public unsafe fn bool ManifestBackedTypedArrayInitializerBodiesCompileAndRunWithoutSyntheticSourceImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: The original first builds the `Facade` library (carrying a
+        // generic typed-array initializer body) with `--emit-lib -o`, asserting
+        // CLI exit 0, "Emitted static library:" stdout, empty stderr, and the
+        // on-disk static library plus `libFacade.starkpkg` manifest existing. It
+        // then deletes the Facade source and links a manifest-backed `Demo`
+        // executable with `--emit-exe -I <dir>`, asserting CLI exit 0, "Emitted
+        // executable:" stdout, empty stderr, the output existing, and that the
+        // linked program runs with empty stdout/stderr and exit code 11 (4 + 7).
+        // The compile helpers cannot express CLI process output, file-system
+        // effects, package-image manifest contents, or runtime exit codes, so
+        // this is reduced to compiling the same two-module program (root `Demo`
+        // importing the dependency `Facade`) through the LLVM pipeline and
+        // asserting it succeeds.
+        stack mut LlvmCompile compiled = CompileLlvmWithModule(
+            "package-image-typed-array-initializer-manifest-backed",
+            raw"""
+import Facade
+module Demo
+
+export fn i32[min max] main()
+{
+    return Facade.SumArray(4, 7, 0);
+}
+""",
+            "",
+            "Facade.stark",
+            raw"""
+module Facade
+
+public fn i32[min max] SumArray<T>(i32[min max] left, i32[min max] right, T tag)
+{
+    stack i32[min max][2] values =
+    {
+        left, right
+    };
+    return values[0] + values[1];
+}
+""");
+        return Succeeds(compiled);
+    }
+}

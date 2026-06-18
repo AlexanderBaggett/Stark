@@ -1,0 +1,726 @@
+import StdlibPortSupport
+import System.Testing
+module SystemTextInterningStandardLibraryTestsP1
+
+// Ported from SystemTextInterningStandardLibraryTests.StdLibSourceTextInterningSurfaceCompiles.
+public unsafe fn bool StdLibSourceTextInterningSurfaceCompilesImpl()
+{
+    stack mut ProgramCompile c = CompileProgram("stdlib-text-interning-surface", raw"""
+import System.Collections
+import System.Memory
+import System.Text
+import System.Text.Interning
+module Demo
+
+fn bool Ok(System.Memory.MemoryStatus status)
+{
+    switch (status)
+    {
+        case System.Memory.MemoryStatus.Ok:
+            return true;
+        case System.Memory.MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+fn bool ReadTypeId(System.Text.Interning.TextInternerResult<System.Text.Interning.TypeId> result)
+{
+    switch (result)
+    {
+        case System.Text.Interning.TextInternerResult<System.Text.Interning.TypeId>.Err(var error):
+            return false;
+        case System.Text.Interning.TextInternerResult<System.Text.Interning.TypeId>.Ok(var value):
+            return value.Index() == 0;
+    }
+}
+
+fn bool ReadModuleId(System.Text.Interning.TextInternerResult<System.Text.Interning.ModuleId> result)
+{
+    switch (result)
+    {
+        case System.Text.Interning.TextInternerResult<System.Text.Interning.ModuleId>.Err(var error):
+            return false;
+        case System.Text.Interning.TextInternerResult<System.Text.Interning.ModuleId>.Ok(var value):
+            return value.Index() == 0;
+    }
+}
+
+fn bool ReadPackageId(System.Text.Interning.TextInternerResult<System.Text.Interning.PackageId> result)
+{
+    switch (result)
+    {
+        case System.Text.Interning.TextInternerResult<System.Text.Interning.PackageId>.Err(var error):
+            return false;
+        case System.Text.Interning.TextInternerResult<System.Text.Interning.PackageId>.Ok(var value):
+            return value.Index() == 0;
+    }
+}
+
+fn bool ReadFieldId(System.Text.Interning.TextInternerResult<System.Text.Interning.FieldId> result)
+{
+    switch (result)
+    {
+        case System.Text.Interning.TextInternerResult<System.Text.Interning.FieldId>.Err(var error):
+            return false;
+        case System.Text.Interning.TextInternerResult<System.Text.Interning.FieldId>.Ok(var value):
+            return value.Index() == 0;
+    }
+}
+
+fn bool ReadMemberId(System.Text.Interning.TextInternerResult<System.Text.Interning.MemberId> result)
+{
+    switch (result)
+    {
+        case System.Text.Interning.TextInternerResult<System.Text.Interning.MemberId>.Err(var error):
+            return false;
+        case System.Text.Interning.TextInternerResult<System.Text.Interning.MemberId>.Ok(var value):
+            return value.Index() == 0;
+    }
+}
+
+fn bool ReadArtifactKeyId(System.Text.Interning.TextInternerResult<System.Text.Interning.ArtifactKeyId> result)
+{
+    switch (result)
+    {
+        case System.Text.Interning.TextInternerResult<System.Text.Interning.ArtifactKeyId>.Err(var error):
+            return false;
+        case System.Text.Interning.TextInternerResult<System.Text.Interning.ArtifactKeyId>.Ok(var value):
+            return value.Index() == 0;
+    }
+}
+
+fn i32[min max] UseOwnedAsciiRangeCopy()
+{
+    stack mut System.Text.OwnedAscii source = new();
+    stack System.Memory.MemoryStatus sourceStatus = source.AppendAscii("zzalphazz");
+    if (!Ok(sourceStatus))
+    {
+        return 201;
+    }
+
+    stack i8[min max][] sourceBytes = source.AsSlice();
+    if (sourceBytes[2] != 97)
+    {
+        return 210;
+    }
+
+    if (sourceBytes[3] != 108)
+    {
+        return 211;
+    }
+
+    stack mut System.Text.OwnedAscii copy = new();
+    stack System.Memory.MemoryStatus copyStatus = System.Text.AppendOwnedAsciiRange(copy, source, 2, 5);
+    if (!Ok(copyStatus))
+    {
+        return 202;
+    }
+
+    if (copy.Length() != 5)
+    {
+        return 203;
+    }
+
+    stack i8[min max][] copiedBytes = copy.AsSlice();
+    if (copiedBytes[0] != 97)
+    {
+        return 204;
+    }
+
+    if (copiedBytes[1] != 108)
+    {
+        return 205;
+    }
+
+    if (copiedBytes[2] != 112)
+    {
+        return 206;
+    }
+
+    if (copiedBytes[3] != 104)
+    {
+        return 207;
+    }
+
+    if (copiedBytes[4] != 97)
+    {
+        return 208;
+    }
+
+    if (!System.Text.Equals(copy.View(), "alpha"))
+    {
+        return 209;
+    }
+
+    return 0;
+}
+
+fn i32[min max] UseSymbolInterner()
+{
+    stack mut System.Text.Interning.SymbolInterner symbols = new();
+    if (!symbols.IsEmpty())
+    {
+        return 10;
+    }
+
+    stack System.Text.Interning.TextInternerResult<System.Text.Interning.SymbolId> firstResult =
+        symbols.Intern("alpha");
+    switch (firstResult)
+    {
+        case System.Text.Interning.TextInternerResult<System.Text.Interning.SymbolId>.Err(var firstError):
+            return 11;
+        case System.Text.Interning.TextInternerResult<System.Text.Interning.SymbolId>.Ok(var first):
+            stack System.Text.Interning.TextInternerResult<System.Text.Interning.SymbolId> secondResult =
+                symbols.Intern("alpha");
+            switch (secondResult)
+            {
+                case System.Text.Interning.TextInternerResult<System.Text.Interning.SymbolId>.Err(var secondError):
+                    return 12;
+                case System.Text.Interning.TextInternerResult<System.Text.Interning.SymbolId>.Ok(var second):
+                    stack System.Text.Interning.TextInternerResult<System.Text.Interning.SymbolId> betaResult =
+                        symbols.Intern("beta");
+                    switch (betaResult)
+                    {
+                        case System.Text.Interning.TextInternerResult<System.Text.Interning.SymbolId>.Err(var betaError):
+                            return 13;
+                        case System.Text.Interning.TextInternerResult<System.Text.Interning.SymbolId>.Ok(var beta):
+                            stack mut System.Text.Interning.SymbolId found = first;
+                            stack mut u32[0 max] payload = 0;
+                            stack mut System.Collections.Dictionary<System.Text.Interning.SymbolId, u32[0 max]> map = new();
+
+                            if (first.Index() != 0)
+                            {
+                                return 14;
+                            }
+
+                            if (second.Index() != 0)
+                            {
+                                return 15;
+                            }
+
+                            if (beta.Index() != 1)
+                            {
+                                return 16;
+                            }
+
+                            if (!System.Text.Interning.SymbolId.Equals(first, second))
+                            {
+                                return 17;
+                            }
+
+                            if (System.Text.Interning.SymbolId.Equals(first, beta))
+                            {
+                                return 18;
+                            }
+
+                            if (System.Text.Interning.SymbolId.Compare(first, beta) != System.Collections.Ordering.Less)
+                            {
+                                return 19;
+                            }
+
+                            if (symbols.Count() != 2)
+                            {
+                                return 20;
+                            }
+
+                            if (!symbols.Contains("alpha") || !symbols.Contains("beta") || symbols.Contains("missing"))
+                            {
+                                return 21;
+                            }
+
+                            if (!symbols.TryGet("alpha", found) || !System.Text.Interning.SymbolId.Equals(found, first))
+                            {
+                                return 22;
+                            }
+
+                            stack System.Text.Interning.TextInternerResult<System.Text.OwnedAscii> copiedNameResult =
+                                symbols.CopyName(first);
+                            switch (copiedNameResult)
+                            {
+                                case System.Text.Interning.TextInternerResult<System.Text.OwnedAscii>.Err(var copyError):
+                                    return 230;
+                                case System.Text.Interning.TextInternerResult<System.Text.OwnedAscii>.Ok(var copiedNameValue):
+                                    stack mut System.Text.OwnedAscii copiedName = copiedNameValue;
+                                    if (copiedName.Length() != 5)
+                                    {
+                                        return 231;
+                                    }
+
+                                    stack i8[min max][] copiedBytes = copiedName.AsSlice();
+                                    if (copiedBytes[0] != 97)
+                                    {
+                                        return 233;
+                                    }
+
+                                    if (copiedBytes[1] != 108)
+                                    {
+                                        return 234;
+                                    }
+
+                                    if (copiedBytes[2] != 112)
+                                    {
+                                        return 235;
+                                    }
+
+                                    if (copiedBytes[3] != 104)
+                                    {
+                                        return 236;
+                                    }
+
+                                    if (copiedBytes[4] != 97)
+                                    {
+                                        return 237;
+                                    }
+
+                                    if (!System.Text.Equals(copiedName.View(), "alpha"))
+                                    {
+                                        return 232;
+                                    }
+                            }
+
+                            if (!Ok(map.Set(first, 77)))
+                            {
+                                return 24;
+                            }
+
+                            if (!map.TryGet(found, payload))
+                            {
+                                return 25;
+                            }
+
+                            if (payload != 77)
+                            {
+                                return 26;
+                            }
+
+                            return 0;
+                    }
+            }
+    }
+}
+
+fn bool UseOtherInternerDomains()
+{
+    stack mut System.Text.Interning.TypeInterner types = new();
+    stack mut System.Text.Interning.ModuleInterner modules = new();
+    stack mut System.Text.Interning.PackageInterner packages = new();
+    stack mut System.Text.Interning.FieldInterner fields = new();
+    stack mut System.Text.Interning.MemberInterner members = new();
+    stack mut System.Text.Interning.ArtifactKeyInterner artifacts = new();
+
+    return ReadTypeId(types.Intern("Widget"))
+        && ReadModuleId(modules.Intern("Core.Text"))
+        && ReadPackageId(packages.Intern("System"))
+        && ReadFieldId(fields.Intern("Length"))
+        && ReadMemberId(members.Intern("Format"))
+        && ReadArtifactKeyId(artifacts.Intern("libSystem.starkpkg"));
+}
+
+export fn i32[min max] main()
+{
+    stack i32[min max] rangeCopyStatus = UseOwnedAsciiRangeCopy();
+    if (rangeCopyStatus != 0)
+    {
+        return rangeCopyStatus;
+    }
+
+    stack i32[min max] symbolStatus = UseSymbolInterner();
+    if (symbolStatus != 0)
+    {
+        return symbolStatus;
+    }
+
+    if (!UseOtherInternerDomains())
+    {
+        return 100;
+    }
+
+    return 0;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return DoesNotContain(llvm, "; LLVM body emission fallback");
+}
+
+// Ported from SystemTextInterningStandardLibraryTests.StdLibSourceTextInternerIdsAreNominallyDistinct.
+// PORT-NOTE: The C# original stops after type-check and asserts the compile FAILS with a
+// diagnostic whose message mentions both "TypeId" and "SymbolId" (a nominal id-mismatch
+// rejection: a TypeId cannot be passed where a SymbolId is expected). The compile-only
+// bridge cannot inspect individual diagnostic messages, so the expected-rejection check is
+// reduced to asserting the program does NOT compile (!Succeeds).
+public unsafe fn bool StdLibSourceTextInternerIdsAreNominallyDistinctImpl()
+{
+    stack mut ProgramCompile c = CompileProgram("stdlib-text-interner-id-mismatch", raw"""
+import System.Text.Interning
+module Demo
+
+fn void AcceptSymbol(SymbolId id)
+{
+    return;
+}
+
+fn void Use()
+{
+    stack mut TypeInterner types = new();
+    stack TextInternerResult<TypeId> result = types.Intern("Widget");
+    switch (result)
+    {
+        case TextInternerResult<TypeId>.Err(var error):
+            return;
+        case TextInternerResult<TypeId>.Ok(var typeId):
+            AcceptSymbol(typeId);
+            return;
+    }
+}
+""");
+    return !Succeeds(c);
+}
+
+// Ported from SystemTextInterningStandardLibraryTests.SourceStdLibTextInterningExecutableRuns.
+// PORT-NOTE: The C# original builds the embedded program into a native executable through the
+// CLI (--emit-exe), runs it, and asserts exit code 0 with empty stdout/stderr. The compile-only
+// bridge cannot link or execute native binaries, so the embedded program is compiled through
+// CompileProgram and only Succeeds is asserted. The runtime exit-code / empty-stdout /
+// empty-stderr checks are reduced to a compile-success check.
+public unsafe fn bool SourceStdLibTextInterningExecutableRunsImpl()
+{
+    stack mut ProgramCompile c = CompileProgram("stdlib-text-interning-executable-runs", raw"""
+import System.Collections
+import System.Memory
+import System.Text
+import System.Text.Interning
+module Demo
+
+fn bool Ok(System.Memory.MemoryStatus status)
+{
+    switch (status)
+    {
+        case System.Memory.MemoryStatus.Ok:
+            return true;
+        case System.Memory.MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+fn bool ReadTypeId(System.Text.Interning.TextInternerResult<System.Text.Interning.TypeId> result)
+{
+    switch (result)
+    {
+        case System.Text.Interning.TextInternerResult<System.Text.Interning.TypeId>.Err(var error):
+            return false;
+        case System.Text.Interning.TextInternerResult<System.Text.Interning.TypeId>.Ok(var value):
+            return value.Index() == 0;
+    }
+}
+
+fn bool ReadModuleId(System.Text.Interning.TextInternerResult<System.Text.Interning.ModuleId> result)
+{
+    switch (result)
+    {
+        case System.Text.Interning.TextInternerResult<System.Text.Interning.ModuleId>.Err(var error):
+            return false;
+        case System.Text.Interning.TextInternerResult<System.Text.Interning.ModuleId>.Ok(var value):
+            return value.Index() == 0;
+    }
+}
+
+fn bool ReadPackageId(System.Text.Interning.TextInternerResult<System.Text.Interning.PackageId> result)
+{
+    switch (result)
+    {
+        case System.Text.Interning.TextInternerResult<System.Text.Interning.PackageId>.Err(var error):
+            return false;
+        case System.Text.Interning.TextInternerResult<System.Text.Interning.PackageId>.Ok(var value):
+            return value.Index() == 0;
+    }
+}
+
+fn bool ReadFieldId(System.Text.Interning.TextInternerResult<System.Text.Interning.FieldId> result)
+{
+    switch (result)
+    {
+        case System.Text.Interning.TextInternerResult<System.Text.Interning.FieldId>.Err(var error):
+            return false;
+        case System.Text.Interning.TextInternerResult<System.Text.Interning.FieldId>.Ok(var value):
+            return value.Index() == 0;
+    }
+}
+
+fn bool ReadMemberId(System.Text.Interning.TextInternerResult<System.Text.Interning.MemberId> result)
+{
+    switch (result)
+    {
+        case System.Text.Interning.TextInternerResult<System.Text.Interning.MemberId>.Err(var error):
+            return false;
+        case System.Text.Interning.TextInternerResult<System.Text.Interning.MemberId>.Ok(var value):
+            return value.Index() == 0;
+    }
+}
+
+fn bool ReadArtifactKeyId(System.Text.Interning.TextInternerResult<System.Text.Interning.ArtifactKeyId> result)
+{
+    switch (result)
+    {
+        case System.Text.Interning.TextInternerResult<System.Text.Interning.ArtifactKeyId>.Err(var error):
+            return false;
+        case System.Text.Interning.TextInternerResult<System.Text.Interning.ArtifactKeyId>.Ok(var value):
+            return value.Index() == 0;
+    }
+}
+
+fn i32[min max] UseOwnedAsciiRangeCopy()
+{
+    stack mut System.Text.OwnedAscii source = new();
+    stack System.Memory.MemoryStatus sourceStatus = source.AppendAscii("zzalphazz");
+    if (!Ok(sourceStatus))
+    {
+        return 201;
+    }
+
+    stack i8[min max][] sourceBytes = source.AsSlice();
+    if (sourceBytes[2] != 97)
+    {
+        return 210;
+    }
+
+    if (sourceBytes[3] != 108)
+    {
+        return 211;
+    }
+
+    stack mut System.Text.OwnedAscii copy = new();
+    stack System.Memory.MemoryStatus copyStatus = System.Text.AppendOwnedAsciiRange(copy, source, 2, 5);
+    if (!Ok(copyStatus))
+    {
+        return 202;
+    }
+
+    if (copy.Length() != 5)
+    {
+        return 203;
+    }
+
+    stack i8[min max][] copiedBytes = copy.AsSlice();
+    if (copiedBytes[0] != 97)
+    {
+        return 204;
+    }
+
+    if (copiedBytes[1] != 108)
+    {
+        return 205;
+    }
+
+    if (copiedBytes[2] != 112)
+    {
+        return 206;
+    }
+
+    if (copiedBytes[3] != 104)
+    {
+        return 207;
+    }
+
+    if (copiedBytes[4] != 97)
+    {
+        return 208;
+    }
+
+    if (!System.Text.Equals(copy.View(), "alpha"))
+    {
+        return 209;
+    }
+
+    return 0;
+}
+
+fn i32[min max] UseSymbolInterner()
+{
+    stack mut System.Text.Interning.SymbolInterner symbols = new();
+    if (!symbols.IsEmpty())
+    {
+        return 10;
+    }
+
+    stack System.Text.Interning.TextInternerResult<System.Text.Interning.SymbolId> firstResult =
+        symbols.Intern("alpha");
+    switch (firstResult)
+    {
+        case System.Text.Interning.TextInternerResult<System.Text.Interning.SymbolId>.Err(var firstError):
+            return 11;
+        case System.Text.Interning.TextInternerResult<System.Text.Interning.SymbolId>.Ok(var first):
+            stack System.Text.Interning.TextInternerResult<System.Text.Interning.SymbolId> secondResult =
+                symbols.Intern("alpha");
+            switch (secondResult)
+            {
+                case System.Text.Interning.TextInternerResult<System.Text.Interning.SymbolId>.Err(var secondError):
+                    return 12;
+                case System.Text.Interning.TextInternerResult<System.Text.Interning.SymbolId>.Ok(var second):
+                    stack System.Text.Interning.TextInternerResult<System.Text.Interning.SymbolId> betaResult =
+                        symbols.Intern("beta");
+                    switch (betaResult)
+                    {
+                        case System.Text.Interning.TextInternerResult<System.Text.Interning.SymbolId>.Err(var betaError):
+                            return 13;
+                        case System.Text.Interning.TextInternerResult<System.Text.Interning.SymbolId>.Ok(var beta):
+                            stack mut System.Text.Interning.SymbolId found = first;
+                            stack mut u32[0 max] payload = 0;
+                            stack mut System.Collections.Dictionary<System.Text.Interning.SymbolId, u32[0 max]> map = new();
+
+                            if (first.Index() != 0)
+                            {
+                                return 14;
+                            }
+
+                            if (second.Index() != 0)
+                            {
+                                return 15;
+                            }
+
+                            if (beta.Index() != 1)
+                            {
+                                return 16;
+                            }
+
+                            if (!System.Text.Interning.SymbolId.Equals(first, second))
+                            {
+                                return 17;
+                            }
+
+                            if (System.Text.Interning.SymbolId.Equals(first, beta))
+                            {
+                                return 18;
+                            }
+
+                            if (System.Text.Interning.SymbolId.Compare(first, beta) != System.Collections.Ordering.Less)
+                            {
+                                return 19;
+                            }
+
+                            if (symbols.Count() != 2)
+                            {
+                                return 20;
+                            }
+
+                            if (!symbols.Contains("alpha") || !symbols.Contains("beta") || symbols.Contains("missing"))
+                            {
+                                return 21;
+                            }
+
+                            if (!symbols.TryGet("alpha", found) || !System.Text.Interning.SymbolId.Equals(found, first))
+                            {
+                                return 22;
+                            }
+
+                            stack System.Text.Interning.TextInternerResult<System.Text.OwnedAscii> copiedNameResult =
+                                symbols.CopyName(first);
+                            switch (copiedNameResult)
+                            {
+                                case System.Text.Interning.TextInternerResult<System.Text.OwnedAscii>.Err(var copyError):
+                                    return 230;
+                                case System.Text.Interning.TextInternerResult<System.Text.OwnedAscii>.Ok(var copiedNameValue):
+                                    stack mut System.Text.OwnedAscii copiedName = copiedNameValue;
+                                    if (copiedName.Length() != 5)
+                                    {
+                                        return 231;
+                                    }
+
+                                    stack i8[min max][] copiedBytes = copiedName.AsSlice();
+                                    if (copiedBytes[0] != 97)
+                                    {
+                                        return 233;
+                                    }
+
+                                    if (copiedBytes[1] != 108)
+                                    {
+                                        return 234;
+                                    }
+
+                                    if (copiedBytes[2] != 112)
+                                    {
+                                        return 235;
+                                    }
+
+                                    if (copiedBytes[3] != 104)
+                                    {
+                                        return 236;
+                                    }
+
+                                    if (copiedBytes[4] != 97)
+                                    {
+                                        return 237;
+                                    }
+
+                                    if (!System.Text.Equals(copiedName.View(), "alpha"))
+                                    {
+                                        return 232;
+                                    }
+                            }
+
+                            if (!Ok(map.Set(first, 77)))
+                            {
+                                return 24;
+                            }
+
+                            if (!map.TryGet(found, payload))
+                            {
+                                return 25;
+                            }
+
+                            if (payload != 77)
+                            {
+                                return 26;
+                            }
+
+                            return 0;
+                    }
+            }
+    }
+}
+
+fn bool UseOtherInternerDomains()
+{
+    stack mut System.Text.Interning.TypeInterner types = new();
+    stack mut System.Text.Interning.ModuleInterner modules = new();
+    stack mut System.Text.Interning.PackageInterner packages = new();
+    stack mut System.Text.Interning.FieldInterner fields = new();
+    stack mut System.Text.Interning.MemberInterner members = new();
+    stack mut System.Text.Interning.ArtifactKeyInterner artifacts = new();
+
+    return ReadTypeId(types.Intern("Widget"))
+        && ReadModuleId(modules.Intern("Core.Text"))
+        && ReadPackageId(packages.Intern("System"))
+        && ReadFieldId(fields.Intern("Length"))
+        && ReadMemberId(members.Intern("Format"))
+        && ReadArtifactKeyId(artifacts.Intern("libSystem.starkpkg"));
+}
+
+export fn i32[min max] main()
+{
+    stack i32[min max] rangeCopyStatus = UseOwnedAsciiRangeCopy();
+    if (rangeCopyStatus != 0)
+    {
+        return rangeCopyStatus;
+    }
+
+    stack i32[min max] symbolStatus = UseSymbolInterner();
+    if (symbolStatus != 0)
+    {
+        return symbolStatus;
+    }
+
+    if (!UseOtherInternerDomains())
+    {
+        return 100;
+    }
+
+    return 0;
+}
+""");
+    return Succeeds(c);
+}

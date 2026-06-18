@@ -8119,6 +8119,130 @@ fn bool BaseListRejectsImportedTraitMethodSignatureMismatch()
             "semval-imported-trait-mismatch",
             raw"""
 import Contracts
+import BorrowLivenessValidationTests_OWNERP1
+import CompilerCliTests_CLIP1
+import CompilerCliTests_PIPELINEP1
+import CompilerCliTests_PKGIMGP1
+import CompilerCliTests_RUNTIMEP1
+import CompilerPipelineEnumLayoutTests_PKGIMGP1
+import CompilerPipelineFullIntegrationTests_DIAGP1
+import CompilerPipelineFullIntegrationTests_OTHERP1
+import CompilerPipelineFullIntegrationTests_PARSE_ERRP1
+import CompilerPipelineFullIntegrationTests_PARSE_OKP1
+import CompilerPipelineFullIntegrationTests_PIPELINEP1
+import CompilerPipelineFullIntegrationTests_PKGIMGP1
+import CompilerPipelineFullIntegrationTests_PKGIMGP2
+import CompilerPipelineFullIntegrationTests_TYPECHKP1
+import CompilerPipelineFunctionEffectsTests_PKGIMGP1
+import CompilerPipelineInstantiationOwnershipTests_OWNERP1
+import CompilerPipelineIntegrationTests_PKGIMGP1
+import CompilerPipelineLoadModulesTests_PIPELINEP1
+import CompilerPipelineLoadModulesTests_PKGIMGP1
+import CompilerPipelineLowerAbiTests_PKGIMGP1
+import CompilerPipelineLowerHirTests_PKGIMGP1
+import CompilerPipelineLowerMirTests_PKGIMGP1
+import CompilerPipelineLowerMirTests_PKGIMGP2
+import CompilerPipelineLowerMirTests_PKGIMGP3
+import CompilerPipelineMonomorphizationPlanTests_PIPELINEP1
+import CompilerPipelineMonomorphizationPlanTests_PKGIMGP1
+import CompilerPipelineOptimizeSsaTests_PIPELINEP1
+import CompilerPipelineOptimizeSsaTests_PKGIMGP1
+import CompilerPipelineSemanticValidateTests_PKGIMGP1
+import CompilerPipelineSpecializationCodegenStrategyTests_PIPELINEP1
+import CompilerPipelineSpecializationPlanTests_DIAGP1
+import CompilerPipelineSpecializationPlanTests_PIPELINEP1
+import CompilerPipelineSpecializationPlanTests_PKGIMGP1
+import CompilerPipelineSyntaxModelTests_DIAGP1
+import CompilerPipelineSyntaxModelTests_PARSE_OKP1
+import CompilerPipelineSyntaxModelTests_PIPELINEP1
+import CompilerPipelineTypeCheckTests_PKGIMGP1
+import ConstructorFieldReadRegressionTests_OWNERP1
+import CopyableDoctrineTests_DIAGP1
+import CopyableDoctrineTests_OWNERP1
+import CopyableDoctrineTests_PKGIMGP1
+import DiagnosticRegressionTests_DIAGP1
+import DiagnosticRegressionTests_OWNERP1
+import DiagnosticRegressionTests_TYPECHKP1
+import DynTraitObjectRuntimeTests_RUNTIMEP1
+import DynamicFixedArrayElementRuntimeTests_RUNTIMEP1
+import EqualityGuardFlowFactTests_OWNERP1
+import ExampleSourceTests_EXAMPLEP1
+import ExamplesCompileRunTests_EXAMPLEP1
+import FixedArrayOrderedComparisonRuntimeTests_RUNTIMEP1
+import FloatConstantEmissionRuntimeTests_RUNTIMEP1
+import FunctionSemanticsTests_DIAGP1
+import FunctionSemanticsTests_OWNERP1
+import FunctionSemanticsTests_PARSE_OKP1
+import FunctionSemanticsTests_TYPECHKP1
+import GenericUseSiteInstantiationIntegrationTests_PKGIMGP1
+import GenericUseSiteInstantiationIntegrationTests_RUNTIMEP1
+import GenericUseSiteInstantiationRegressionTests_PKGIMGP1
+import IfWhilePatternRuntimeTests_RUNTIMEP1
+import ImportedModuleAmbiguityRegressionTests_DIAGP1
+import InitializedReadFlowFactTests_OWNERP1
+import IntegerExponentRuntimeTests_RUNTIMEP1
+import IntegerLiteralTypingRegressionTests_DIAGP1
+import IntegerLiteralTypingRegressionTests_TYPECHKP1
+import LargeOwnedAggregateRuntimeTests_RUNTIMEP1
+import LoweringContractValidationTests_DIAGP1
+import LoweringContractValidationTests_PIPELINEP1
+import MethodSyntaxHintRegressionTests_DIAGP1
+import MidLevelIrDynamicFixedArrayIndexingRuntimeTests_RUNTIMEP1
+import MidLevelIrRuntimeTests_RUNTIMEP1
+import MidLevelIrRuntimeTests_RUNTIMEP2
+import ModulePrivacyEnforcementTests_DIAGP1
+import MultiFileIntegrationTests_CLIP1
+import MultiFileIntegrationTests_DIAGP1
+import MultiFileIntegrationTests_RUNTIMEP1
+import OwnershipBranchJoinRegressionTests_OWNERP1
+import OwnershipFieldReadAfterMoveRegressionTests_OWNERP1
+import OwnershipRoadmapRegressionTests_OWNERP1
+import OwnershipValidationTests_OWNERP1
+import PackageImageArchitectureTests_PKGIMGP1
+import PackageImageCallableValueTests_DIAGP1
+import PackageImageCallableValueTests_PKGIMGP1
+import PackageImageCliToolingTests_PKGIMGP1
+import PackageImageCliToolingTests_RUNTIMEP1
+import PackageImageGenericMemberSmokeTests_PKGIMGP1
+import PackageImageOptimizationSummaryWrapperIntegrationTests_PKGIMGP1
+import PackageImageTryPropagationIntegrationTests_PKGIMGP1
+import PackageImageTypedArrayInitializerIntegrationTests_PKGIMGP1
+import PackageImageTypedArrayInitializerTests_PKGIMGP1
+import PackageImageTypedAssignmentExpressionIntegrationTests_PKGIMGP1
+import PackageImageTypedComparisonChainIntegrationTests_PKGIMGP1
+import PackageImageTypedDiscardedExpressionIntegrationTests_PKGIMGP1
+import PackageImageTypedGroupedLocalDeclarationIntegrationTests_PKGIMGP1
+import PackageImageTypedNestedObjectCreationIntegrationTests_PKGIMGP1
+import PackageImageTypedObjectInitializerLocalDeclarationIntegrationTests_PKGIMGP1
+import PackageImageTypedPowerIntegrationTests_PKGIMGP1
+import PackageImageTypedRawPointerDereferenceIntegrationTests_PKGIMGP1
+import PackageImageTypedSwitchPatternIntegrationTests_PKGIMGP1
+import PackageImageTypedTerminalIfIntegrationTests_PKGIMGP1
+import PackageImageTypedTextFullViewIntegrationTests_PKGIMGP1
+import PackageImageTypedUninitializedLocalDeclarationIntegrationTests_PKGIMGP1
+import ParserConformanceTests_PARSE_ERRP1
+import ParserConformanceTests_PARSE_OKP1
+import ParserEdgeCaseTests_PARSE_ERRP1
+import ParserEdgeCaseTests_PARSE_OKP1
+import ParserSmokeTests_PARSE_ERRP1
+import ParserSmokeTests_PARSE_OKP1
+import ProjectCliTests_CLIP1
+import ProjectCliTests_RUNTIMEP1
+import RawMultilineStringParityTests_PARSE_ERRP1
+import SemanticValidationTests_OWNERP1
+import StandardLibrarySourceTests_EXAMPLEP1
+import StructLayoutInteropRuntimeTests_RUNTIMEP1
+import TextOrderedComparisonRuntimeTests_RUNTIMEP1
+import TryPropagationRuntimeTests_RUNTIMEP1
+import TypeCheckingTests_DIAGP1
+import TypeCheckingTests_DIAGP2
+import TypeCheckingTests_TYPECHKP1
+import TypeCheckingTests_TYPECHKP2
+import TypeCheckingTests_TYPECHKP3
+import TypeTypingExpressionFamilyTests_TYPECHKP1
+import UnsignedIntegerRuntimeTests_RUNTIMEP1
+import ValueContractTests_DIAGP1
+import WideEnumTagRegressionTests_PIPELINEP1
 module Demo
 
 struct Widget : Contracts.Drawable
@@ -11900,3 +12024,7316 @@ fn bool HostRequestBatchingReportsPerResponseResults()
         return RequestBatchingReportsPerResponseResultsImpl();
     }
 }
+
+
+// ---------------------------------------------------------------------------
+// Auto-wired [Fact] wrappers for ported C# tests (bodies in imported companions).
+// ---------------------------------------------------------------------------
+[Fact]
+fn bool MoveConflictIsReportedWhenBorrowRemainsLive()
+{
+    unsafe
+    {
+        return MoveConflictIsReportedWhenBorrowRemainsLiveImpl();
+    }
+}
+
+[Fact]
+fn bool MoveAfterLastUseIsAllowed()
+{
+    unsafe
+    {
+        return MoveAfterLastUseIsAllowedImpl();
+    }
+}
+
+[Fact]
+fn bool OverwriteConflictIsReportedWhenBorrowRemainsLive()
+{
+    unsafe
+    {
+        return OverwriteConflictIsReportedWhenBorrowRemainsLiveImpl();
+    }
+}
+
+[Fact]
+fn bool BranchLastUseAllowsMoveAtMerge()
+{
+    unsafe
+    {
+        return BranchLastUseAllowsMoveAtMergeImpl();
+    }
+}
+
+[Fact]
+fn bool BranchLiveBorrowBlocksMoveAtMerge()
+{
+    unsafe
+    {
+        return BranchLiveBorrowBlocksMoveAtMergeImpl();
+    }
+}
+
+[Fact]
+fn bool CheckModeReportsSuccess()
+{
+    unsafe
+    {
+        return CheckModeReportsSuccessImpl();
+    }
+}
+
+[Fact]
+fn bool PackageImageOutputRejectsExecutableEmission()
+{
+    unsafe
+    {
+        return PackageImageOutputRejectsExecutableEmissionImpl();
+    }
+}
+
+[Fact]
+fn bool CheckModeRejectsPositiveSignedRangesByDefault()
+{
+    unsafe
+    {
+        return CheckModeRejectsPositiveSignedRangesByDefaultImpl();
+    }
+}
+
+[Fact]
+fn bool StrictIntegerRangeFlagRejectsPositiveSignedRanges()
+{
+    unsafe
+    {
+        return StrictIntegerRangeFlagRejectsPositiveSignedRangesImpl();
+    }
+}
+
+[Fact]
+fn bool JsonDiagnosticFormatEmitsStableMachineReadableDocument()
+{
+    unsafe
+    {
+        return JsonDiagnosticFormatEmitsStableMachineReadableDocumentImpl();
+    }
+}
+
+[Fact]
+fn bool TextDiagnosticsRenderSingleLineSourceSnippets()
+{
+    unsafe
+    {
+        return TextDiagnosticsRenderSingleLineSourceSnippetsImpl();
+    }
+}
+
+[Fact]
+fn bool TextDiagnosticsExpandTabsBeforeRenderingCarets()
+{
+    unsafe
+    {
+        return TextDiagnosticsExpandTabsBeforeRenderingCaretsImpl();
+    }
+}
+
+[Fact]
+fn bool TextDiagnosticsRenderMultilineSpansAcrossSourceLines()
+{
+    unsafe
+    {
+        return TextDiagnosticsRenderMultilineSpansAcrossSourceLinesImpl();
+    }
+}
+
+[Fact]
+fn bool TextDiagnosticsGroupCrossCodeNotesUnderTheirPrimaryDiagnostic()
+{
+    unsafe
+    {
+        return TextDiagnosticsGroupCrossCodeNotesUnderTheirPrimaryDiagnosticImpl();
+    }
+}
+
+[Fact]
+fn bool LogLevelFilterCanSuppressInformationalPassLogs()
+{
+    unsafe
+    {
+        return LogLevelFilterCanSuppressInformationalPassLogsImpl();
+    }
+}
+
+[Fact]
+fn bool SuccessfulChecksPrintWarningsAndTextSummary()
+{
+    unsafe
+    {
+        return SuccessfulChecksPrintWarningsAndTextSummaryImpl();
+    }
+}
+
+[Fact]
+fn bool TextDiagnosticsRenderSourceSnippetsForInfoNotesToo()
+{
+    unsafe
+    {
+        return TextDiagnosticsRenderSourceSnippetsForInfoNotesTooImpl();
+    }
+}
+
+[Fact]
+fn bool TextDiagnosticsDoNotRepeatTheSameOwnershipMoveError()
+{
+    unsafe
+    {
+        return TextDiagnosticsDoNotRepeatTheSameOwnershipMoveErrorImpl();
+    }
+}
+
+[Fact]
+fn bool EmitMirModeReportsTypeErrorsInsteadOfLoweringWarningsForVoidCallsUsedAsValues()
+{
+    unsafe
+    {
+        return EmitMirModeReportsTypeErrorsInsteadOfLoweringWarningsForVoidCallsUsedAsValuesImpl();
+    }
+}
+
+[Fact]
+fn bool EmitLlvmModeFailsWithTypeDiagnosticForVoidCallsUsedAsValues()
+{
+    unsafe
+    {
+        return EmitLlvmModeFailsWithTypeDiagnosticForVoidCallsUsedAsValuesImpl();
+    }
+}
+
+[Fact]
+fn bool CheckModeResolvesSourceImportsFromConfiguredSearchPath()
+{
+    unsafe
+    {
+        return CheckModeResolvesSourceImportsFromConfiguredSearchPathImpl();
+    }
+}
+
+[Fact]
+fn bool CheckModeCanUseStarkPathAndCanDisableIt()
+{
+    unsafe
+    {
+        return CheckModeCanUseStarkPathAndCanDisableItImpl();
+    }
+}
+
+[Fact]
+fn bool EmitExecutableModeReportsFriendlyMissingNativeLibraryDiagnostic()
+{
+    unsafe
+    {
+        return EmitExecutableModeReportsFriendlyMissingNativeLibraryDiagnosticImpl();
+    }
+}
+
+[Fact]
+fn bool VerboseLogVerbosityRequiresExplicitInfoLogLevelForPipelineLifecycleEvents()
+{
+    unsafe
+    {
+        return VerboseLogVerbosityRequiresExplicitInfoLogLevelForPipelineLifecycleEventsImpl();
+    }
+}
+
+[Fact]
+fn bool ExplicitInfoLogLevelPrintsPipelineLifecycleEvents()
+{
+    unsafe
+    {
+        return ExplicitInfoLogLevelPrintsPipelineLifecycleEventsImpl();
+    }
+}
+
+[Fact]
+fn bool EmitLibraryModeBuildsStaticLibraryAndManifest()
+{
+    unsafe
+    {
+        return EmitLibraryModeBuildsStaticLibraryAndManifestImpl();
+    }
+}
+
+[Fact]
+fn bool DefaultModeInfersExecutableFromExportedMain()
+{
+    unsafe
+    {
+        return DefaultModeInfersExecutableFromExportedMainImpl();
+    }
+}
+
+[Fact]
+fn bool DefaultModeInfersLibraryWhenRootHasNoExportedMain()
+{
+    unsafe
+    {
+        return DefaultModeInfersLibraryWhenRootHasNoExportedMainImpl();
+    }
+}
+
+[Fact]
+fn bool EmitObjectModeWritesObjectFile()
+{
+    unsafe
+    {
+        return EmitObjectModeWritesObjectFileImpl();
+    }
+}
+
+[Fact]
+fn bool CompileOnlyAliasWritesObjectFile()
+{
+    unsafe
+    {
+        return CompileOnlyAliasWritesObjectFileImpl();
+    }
+}
+
+[Fact]
+fn bool EmitExecutableModeBuildsImportedAggregateDependencies()
+{
+    unsafe
+    {
+        return EmitExecutableModeBuildsImportedAggregateDependenciesImpl();
+    }
+}
+
+[Fact]
+fn bool EmitExecutableModeLinksManifestBackedLibrariesWithoutSource()
+{
+    unsafe
+    {
+        return EmitExecutableModeLinksManifestBackedLibrariesWithoutSourceImpl();
+    }
+}
+
+[Fact]
+fn bool EmitExecutableModeLinksManifestBackedOverloadedLibrariesWithoutSource()
+{
+    unsafe
+    {
+        return EmitExecutableModeLinksManifestBackedOverloadedLibrariesWithoutSourceImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedModulesPreservePublishedLayoutFactsFromCompilerFactSections()
+{
+    unsafe
+    {
+        return ManifestBackedModulesPreservePublishedLayoutFactsFromCompilerFactSectionsImpl();
+    }
+}
+
+[Fact]
+fn bool PackageImagesPreserveGenericResultAndStatusEnumLayouts()
+{
+    unsafe
+    {
+        return PackageImagesPreserveGenericResultAndStatusEnumLayoutsImpl();
+    }
+}
+
+[Fact]
+fn bool AsmDeclarationsReportMissingTargetMatchesAndRejectUnsupportedV1Shapes()
+{
+    unsafe
+    {
+        return AsmDeclarationsReportMissingTargetMatchesAndRejectUnsupportedV1ShapesImpl();
+    }
+}
+
+[Fact]
+fn bool AsmDeclarationsReportMultipleMatchingTargetSpecificDefinitions()
+{
+    unsafe
+    {
+        return AsmDeclarationsReportMultipleMatchingTargetSpecificDefinitionsImpl();
+    }
+}
+
+[Fact]
+fn bool AsmDeclarationsRejectInvalidRegistersAndOperandBindingConflicts()
+{
+    unsafe
+    {
+        return AsmDeclarationsRejectInvalidRegistersAndOperandBindingConflictsImpl();
+    }
+}
+
+[Fact]
+fn bool VoidCallsUsedAsValuesFailDuringTypeCheckingBeforeMirLowering()
+{
+    unsafe
+    {
+        return VoidCallsUsedAsValuesFailDuringTypeCheckingBeforeMirLoweringImpl();
+    }
+}
+
+[Fact]
+fn bool EmitLlvmModesReportTypeDiagnosticsBeforeLoweringForVoidCallsUsedAsValues()
+{
+    unsafe
+    {
+        return EmitLlvmModesReportTypeDiagnosticsBeforeLoweringForVoidCallsUsedAsValuesImpl();
+    }
+}
+
+[Fact]
+fn bool PrivateTransitiveImportsDoNotBecomeVisibleToTheRootModule()
+{
+    unsafe
+    {
+        return PrivateTransitiveImportsDoNotBecomeVisibleToTheRootModuleImpl();
+    }
+}
+
+[Fact]
+fn bool UnresolvedImportsFailBeforeTypingAndLowering()
+{
+    unsafe
+    {
+        return UnresolvedImportsFailBeforeTypingAndLoweringImpl();
+    }
+}
+
+[Fact]
+fn bool InvalidTypedAssignmentsProduceTypeDiagnostics()
+{
+    unsafe
+    {
+        return InvalidTypedAssignmentsProduceTypeDiagnosticsImpl();
+    }
+}
+
+[Fact]
+fn bool FunctionKindsAndModifiersDeriveExpectedEffectProfiles()
+{
+    unsafe
+    {
+        return FunctionKindsAndModifiersDeriveExpectedEffectProfilesImpl();
+    }
+}
+
+[Fact]
+fn bool AsmDeclarationsFlowIntoConservativeEffectsAndAbiLowering()
+{
+    unsafe
+    {
+        return AsmDeclarationsFlowIntoConservativeEffectsAndAbiLoweringImpl();
+    }
+}
+
+[Fact]
+fn bool LargeAggregateAbiUsesIndirectByValueParametersAndSRetReturns()
+{
+    unsafe
+    {
+        return LargeAggregateAbiUsesIndirectByValueParametersAndSRetReturnsImpl();
+    }
+}
+
+[Fact]
+fn bool PlainFnsRefineToStrongerEffectProfilesFromSemanticAnalysis()
+{
+    unsafe
+    {
+        return PlainFnsRefineToStrongerEffectProfilesFromSemanticAnalysisImpl();
+    }
+}
+
+[Fact]
+fn bool ClosedWorldModulePrivateLawHelpersInferAlwaysInline()
+{
+    unsafe
+    {
+        return ClosedWorldModulePrivateLawHelpersInferAlwaysInlineImpl();
+    }
+}
+
+[Fact]
+fn bool ClosedWorldLawInliningRespectsExplicitHintsAndSkipsRecursiveHelpers()
+{
+    unsafe
+    {
+        return ClosedWorldLawInliningRespectsExplicitHintsAndSkipsRecursiveHelpersImpl();
+    }
+}
+
+[Fact]
+fn bool ClosedWorldImportedModulePrivateLawHelpersInferAlwaysInline()
+{
+    unsafe
+    {
+        return ClosedWorldImportedModulePrivateLawHelpersInferAlwaysInlineImpl();
+    }
+}
+
+[Fact]
+fn bool ClosedWorldRootLawCallersCanInlineImportedNonExportLawChains()
+{
+    unsafe
+    {
+        return ClosedWorldRootLawCallersCanInlineImportedNonExportLawChainsImpl();
+    }
+}
+
+[Fact]
+fn bool ImportedLawEntrypointsWithMixedLawAndNonLawCallersStayInlineHintGlobally()
+{
+    unsafe
+    {
+        return ImportedLawEntrypointsWithMixedLawAndNonLawCallersStayInlineHintGloballyImpl();
+    }
+}
+
+[Fact]
+fn bool ImportedModulesResolveThroughTheConfiguredResolver()
+{
+    unsafe
+    {
+        return ImportedModulesResolveThroughTheConfiguredResolverImpl();
+    }
+}
+
+[Fact]
+fn bool ClosedWorldOptimizationModelCapturesTraitAndDoctrineRules()
+{
+    unsafe
+    {
+        return ClosedWorldOptimizationModelCapturesTraitAndDoctrineRulesImpl();
+    }
+}
+
+[Fact]
+fn bool ClosedWorldOptimizationModelCapturesImportedTopLevelLawRules()
+{
+    unsafe
+    {
+        return ClosedWorldOptimizationModelCapturesImportedTopLevelLawRulesImpl();
+    }
+}
+
+[Fact]
+fn bool ClosedWorldOptimizationModelKeepsOpaqueImportedLawsAtAbiBoundary()
+{
+    unsafe
+    {
+        return ClosedWorldOptimizationModelKeepsOpaqueImportedLawsAtAbiBoundaryImpl();
+    }
+}
+
+[Fact]
+fn bool DoctrineMethodsUseModuleQualifiedSymbolsWhenEmittingLibraries()
+{
+    unsafe
+    {
+        return DoctrineMethodsUseModuleQualifiedSymbolsWhenEmittingLibrariesImpl();
+    }
+}
+
+[Fact]
+fn bool DeclaredFunctionSyntaxCollectorMatchesPublishedOverloadKeysFromTypedInterfaceSyntaxModels()
+{
+    unsafe
+    {
+        return DeclaredFunctionSyntaxCollectorMatchesPublishedOverloadKeysFromTypedInterfaceSyntaxModelsImpl();
+    }
+}
+
+[Fact]
+fn bool PublishedOverloadKeysDriveResolvedNamesForPackageDeclarations()
+{
+    unsafe
+    {
+        return PublishedOverloadKeysDriveResolvedNamesForPackageDeclarationsImpl();
+    }
+}
+
+[Fact]
+fn bool ParseErrorsPreventLaterPassesFromRunning()
+{
+    unsafe
+    {
+        return ParseErrorsPreventLaterPassesFromRunningImpl();
+    }
+}
+
+[Fact]
+fn bool AsmDeclarationsSelectTheMatchingTargetAndPreserveSyntaxMetadata()
+{
+    unsafe
+    {
+        return AsmDeclarationsSelectTheMatchingTargetAndPreserveSyntaxMetadataImpl();
+    }
+}
+
+[Fact]
+fn bool MinimalModuleRunsThroughTheFullPipeline()
+{
+    unsafe
+    {
+        return MinimalModuleRunsThroughTheFullPipelineImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedAsmLibrariesResolveWithoutSourceFilesAndStayAbiDeclarations()
+{
+    unsafe
+    {
+        return ManifestBackedAsmLibrariesResolveWithoutSourceFilesAndStayAbiDeclarationsImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedAsmLibrariesRejectMismatchedTargetArchitectures()
+{
+    unsafe
+    {
+        return ManifestBackedAsmLibrariesRejectMismatchedTargetArchitecturesImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedStrictFpFunctionsPreserveModifierAndEffects()
+{
+    unsafe
+    {
+        return ManifestBackedStrictFpFunctionsPreserveModifierAndEffectsImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedDoctrineLibrariesResolveWithoutSourceFiles()
+{
+    unsafe
+    {
+        return ManifestBackedDoctrineLibrariesResolveWithoutSourceFilesImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedDoctrineMethodsResolveFromPackageImageFactsWhenBridgeSignatureSourceIsCorrupted()
+{
+    unsafe
+    {
+        return ManifestBackedDoctrineMethodsResolveFromPackageImageFactsWhenBridgeSignatureSourceIsCorruptedImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedTraitLibrariesResolveWithoutSourceFiles()
+{
+    unsafe
+    {
+        return ManifestBackedTraitLibrariesResolveWithoutSourceFilesImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedTraitMethodsResolveFromPackageImageFactsWhenBridgeSignatureSourceIsCorrupted()
+{
+    unsafe
+    {
+        return ManifestBackedTraitMethodsResolveFromPackageImageFactsWhenBridgeSignatureSourceIsCorruptedImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedTraitAndDoctrineOptimizationRulesStayAbiBounded()
+{
+    unsafe
+    {
+        return ManifestBackedTraitAndDoctrineOptimizationRulesStayAbiBoundedImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedEnumsPreserveVariantShapesWithoutSourceFiles()
+{
+    unsafe
+    {
+        return ManifestBackedEnumsPreserveVariantShapesWithoutSourceFilesImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedThreadSafetyLawAttributesFeedComptimeStructuralFactsWithoutSourceFiles()
+{
+    unsafe
+    {
+        return ManifestBackedThreadSafetyLawAttributesFeedComptimeStructuralFactsWithoutSourceFilesImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedMethodThreadSafetyLawPredicatesFeedComptimeStructuralFactsWithoutSourceFiles()
+{
+    unsafe
+    {
+        return ManifestBackedMethodThreadSafetyLawPredicatesFeedComptimeStructuralFactsWithoutSourceFilesImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedGenericEnumsCanBeInstantiatedWithoutSourceFiles()
+{
+    unsafe
+    {
+        return ManifestBackedGenericEnumsCanBeInstantiatedWithoutSourceFilesImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedOverloadedFunctionsResolveWithoutSourceFiles()
+{
+    unsafe
+    {
+        return ManifestBackedOverloadedFunctionsResolveWithoutSourceFilesImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedGenericFunctionsPreserveTypeParametersWithoutSourceFiles()
+{
+    unsafe
+    {
+        return ManifestBackedGenericFunctionsPreserveTypeParametersWithoutSourceFilesImpl();
+    }
+}
+
+[Fact]
+fn bool PackageManifestIncludesStructuredTypedInterfaceSections()
+{
+    unsafe
+    {
+        return PackageManifestIncludesStructuredTypedInterfaceSectionsImpl();
+    }
+}
+
+[Fact]
+fn bool PackageManifestIncludesExplicitSourceSurfaceSections()
+{
+    unsafe
+    {
+        return PackageManifestIncludesExplicitSourceSurfaceSectionsImpl();
+    }
+}
+
+[Fact]
+fn bool PackageManifestIncludesExplicitCompilerSections()
+{
+    unsafe
+    {
+        return PackageManifestIncludesExplicitCompilerSectionsImpl();
+    }
+}
+
+[Fact]
+fn bool PackageImageSourceBridgeKeepsSupportedGenericTemplateBodiesDeclarationOnlyWhenTypedInterfaceIsPresent()
+{
+    unsafe
+    {
+        return PackageImageSourceBridgeKeepsSupportedGenericTemplateBodiesDeclarationOnlyWhenTypedInterfaceIsPresentImpl();
+    }
+}
+
+[Fact]
+fn bool StructuredPackageImageDocumentsKeepTypedLoopControlGenericDeclarationsWhenBodyTextIsCorrupted()
+{
+    unsafe
+    {
+        return StructuredPackageImageDocumentsKeepTypedLoopControlGenericDeclarationsWhenBodyTextIsCorruptedImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedModulesCanBeReconstructedFromStructuredTypedInterfaceSections()
+{
+    unsafe
+    {
+        return ManifestBackedModulesCanBeReconstructedFromStructuredTypedInterfaceSectionsImpl();
+    }
+}
+
+[Fact]
+fn bool PackageManifestIncludesStructuredFunctionEffectFacts()
+{
+    unsafe
+    {
+        return PackageManifestIncludesStructuredFunctionEffectFactsImpl();
+    }
+}
+
+[Fact]
+fn bool PackageManifestIncludesStructuredAbiFacts()
+{
+    unsafe
+    {
+        return PackageManifestIncludesStructuredAbiFactsImpl();
+    }
+}
+
+[Fact]
+fn bool PackageManifestIncludesStructuredLayoutFacts()
+{
+    unsafe
+    {
+        return PackageManifestIncludesStructuredLayoutFactsImpl();
+    }
+}
+
+[Fact]
+fn bool PackageManifestIncludesStructuredSemanticBorrowFacts()
+{
+    unsafe
+    {
+        return PackageManifestIncludesStructuredSemanticBorrowFactsImpl();
+    }
+}
+
+[Fact]
+fn bool PackageManifestIncludesStructuredSemanticCallFacts()
+{
+    unsafe
+    {
+        return PackageManifestIncludesStructuredSemanticCallFactsImpl();
+    }
+}
+
+[Fact]
+fn bool PackageManifestPublishesOnlyApiVisibleGenericTemplateBodies()
+{
+    unsafe
+    {
+        return PackageManifestPublishesOnlyApiVisibleGenericTemplateBodiesImpl();
+    }
+}
+
+[Fact]
+fn bool PackageManifestIncludesGenericTemplateBodySections()
+{
+    unsafe
+    {
+        return PackageManifestIncludesGenericTemplateBodySectionsImpl();
+    }
+}
+
+[Fact]
+fn bool PackageManifestPublishesTypedTemplateBodiesForMethodsOnGenericTypes()
+{
+    unsafe
+    {
+        return PackageManifestPublishesTypedTemplateBodiesForMethodsOnGenericTypesImpl();
+    }
+}
+
+[Fact]
+fn bool PackageManifestIncludesGenericTemplateSemanticSummaries()
+{
+    unsafe
+    {
+        return PackageManifestIncludesGenericTemplateSemanticSummariesImpl();
+    }
+}
+
+[Fact]
+fn bool PackageManifestIncludesGenericTemplateSemanticCallFacts()
+{
+    unsafe
+    {
+        return PackageManifestIncludesGenericTemplateSemanticCallFactsImpl();
+    }
+}
+
+[Fact]
+fn bool PackageManifestIncludesGenericTemplateEffectiveKindsInSemanticSummaries()
+{
+    unsafe
+    {
+        return PackageManifestIncludesGenericTemplateEffectiveKindsInSemanticSummariesImpl();
+    }
+}
+
+[Fact]
+fn bool PackageManifestPublishesGroupedLocalDeclarationTypedTemplateBodies()
+{
+    unsafe
+    {
+        return PackageManifestPublishesGroupedLocalDeclarationTypedTemplateBodiesImpl();
+    }
+}
+
+[Fact]
+fn bool PackageManifestPublishesDiscardedExpressionStatementTypedTemplateBodies()
+{
+    unsafe
+    {
+        return PackageManifestPublishesDiscardedExpressionStatementTypedTemplateBodiesImpl();
+    }
+}
+
+[Fact]
+fn bool PackageManifestPublishesUninitializedLocalDeclarationTypedTemplateBodies()
+{
+    unsafe
+    {
+        return PackageManifestPublishesUninitializedLocalDeclarationTypedTemplateBodiesImpl();
+    }
+}
+
+[Fact]
+fn bool PackageManifestPublishesObjectInitializerLocalDeclarationTypedTemplateBodies()
+{
+    unsafe
+    {
+        return PackageManifestPublishesObjectInitializerLocalDeclarationTypedTemplateBodiesImpl();
+    }
+}
+
+[Fact]
+fn bool PackageManifestPublishesEmptyBlockAndOpenEndedLoopTypedTemplateBodies()
+{
+    unsafe
+    {
+        return PackageManifestPublishesEmptyBlockAndOpenEndedLoopTypedTemplateBodiesImpl();
+    }
+}
+
+[Fact]
+fn bool PackageManifestPublishesNestedInitializerObjectCreationTypedTemplateBodies()
+{
+    unsafe
+    {
+        return PackageManifestPublishesNestedInitializerObjectCreationTypedTemplateBodiesImpl();
+    }
+}
+
+[Fact]
+fn bool PackageManifestPublishesAssignmentExpressionTypedTemplateBodies()
+{
+    unsafe
+    {
+        return PackageManifestPublishesAssignmentExpressionTypedTemplateBodiesImpl();
+    }
+}
+
+[Fact]
+fn bool PackageManifestPublishesRawPointerDereferenceTypedTemplateBodies()
+{
+    unsafe
+    {
+        return PackageManifestPublishesRawPointerDereferenceTypedTemplateBodiesImpl();
+    }
+}
+
+[Fact]
+fn bool PackageManifestPublishesProjectedRawPointerDereferenceTypedTemplateBodies()
+{
+    unsafe
+    {
+        return PackageManifestPublishesProjectedRawPointerDereferenceTypedTemplateBodiesImpl();
+    }
+}
+
+[Fact]
+fn bool PackageManifestPublishesAddressOfTypedTemplateBodies()
+{
+    unsafe
+    {
+        return PackageManifestPublishesAddressOfTypedTemplateBodiesImpl();
+    }
+}
+
+[Fact]
+fn bool PackageManifestPublishesPowerTypedTemplateBodies()
+{
+    unsafe
+    {
+        return PackageManifestPublishesPowerTypedTemplateBodiesImpl();
+    }
+}
+
+[Fact]
+fn bool PackageManifestPublishesComparisonChainTypedTemplateBodies()
+{
+    unsafe
+    {
+        return PackageManifestPublishesComparisonChainTypedTemplateBodiesImpl();
+    }
+}
+
+[Fact]
+fn bool PackageManifestIncludesTypedGenericTemplateObjectCreationFacts()
+{
+    unsafe
+    {
+        return PackageManifestIncludesTypedGenericTemplateObjectCreationFactsImpl();
+    }
+}
+
+[Fact]
+fn bool PackageManifestIncludesTargetTypedDefaultObjectCreationFacts()
+{
+    unsafe
+    {
+        return PackageManifestIncludesTargetTypedDefaultObjectCreationFactsImpl();
+    }
+}
+
+[Fact]
+fn bool PackageManifestIncludesTypedGenericTemplateObjectInitializerMemberFacts()
+{
+    unsafe
+    {
+        return PackageManifestIncludesTypedGenericTemplateObjectInitializerMemberFactsImpl();
+    }
+}
+
+[Fact]
+fn bool PackageManifestIncludesTypedGenericTemplateLocalDeclarationFacts()
+{
+    unsafe
+    {
+        return PackageManifestIncludesTypedGenericTemplateLocalDeclarationFactsImpl();
+    }
+}
+
+[Fact]
+fn bool PackageManifestIncludesFirstTypedGenericTemplateBodySubset()
+{
+    unsafe
+    {
+        return PackageManifestIncludesFirstTypedGenericTemplateBodySubsetImpl();
+    }
+}
+
+[Fact]
+fn bool PackageManifestIncludesTypedSwitchTemplateBodySubset()
+{
+    unsafe
+    {
+        return PackageManifestIncludesTypedSwitchTemplateBodySubsetImpl();
+    }
+}
+
+[Fact]
+fn bool PackageManifestIncludesTypedGenericTemplateConversionFacts()
+{
+    unsafe
+    {
+        return PackageManifestIncludesTypedGenericTemplateConversionFactsImpl();
+    }
+}
+
+[Fact]
+fn bool PackageManifestIncludesTypedGenericTemplateEnumConstructorFacts()
+{
+    unsafe
+    {
+        return PackageManifestIncludesTypedGenericTemplateEnumConstructorFactsImpl();
+    }
+}
+
+[Fact]
+fn bool PackageManifestIncludesTypedGenericTemplateEnumCallFacts()
+{
+    unsafe
+    {
+        return PackageManifestIncludesTypedGenericTemplateEnumCallFactsImpl();
+    }
+}
+
+[Fact]
+fn bool PackageManifestIncludesTypedGenericTemplateEnumValueFacts()
+{
+    unsafe
+    {
+        return PackageManifestIncludesTypedGenericTemplateEnumValueFactsImpl();
+    }
+}
+
+[Fact]
+fn bool PackageManifestIncludesTypedGenericTemplateEnumPatternFacts()
+{
+    unsafe
+    {
+        return PackageManifestIncludesTypedGenericTemplateEnumPatternFactsImpl();
+    }
+}
+
+[Fact]
+fn bool PackageManifestIncludesTypedGenericTemplateEnumPatternMemberFacts()
+{
+    unsafe
+    {
+        return PackageManifestIncludesTypedGenericTemplateEnumPatternMemberFactsImpl();
+    }
+}
+
+[Fact]
+fn bool PackageManifestIncludesTypedGenericTemplateAggregatePatternFacts()
+{
+    unsafe
+    {
+        return PackageManifestIncludesTypedGenericTemplateAggregatePatternFactsImpl();
+    }
+}
+
+[Fact]
+fn bool PackageManifestIncludesTypedGenericTemplateDirectCallFacts()
+{
+    unsafe
+    {
+        return PackageManifestIncludesTypedGenericTemplateDirectCallFactsImpl();
+    }
+}
+
+[Fact]
+fn bool PackageManifestIncludesTypedGenericTemplateFieldAccessFacts()
+{
+    unsafe
+    {
+        return PackageManifestIncludesTypedGenericTemplateFieldAccessFactsImpl();
+    }
+}
+
+[Fact]
+fn bool PackageManifestIncludesTypedGenericTemplateMemberCallFacts()
+{
+    unsafe
+    {
+        return PackageManifestIncludesTypedGenericTemplateMemberCallFactsImpl();
+    }
+}
+
+[Fact]
+fn bool PackageManifestPreservesRecordPrimaryConstructorParameters()
+{
+    unsafe
+    {
+        return PackageManifestPreservesRecordPrimaryConstructorParametersImpl();
+    }
+}
+
+[Fact]
+fn bool PackageManifestIncludesDeferredGenericInstantiationPatterns()
+{
+    unsafe
+    {
+        return PackageManifestIncludesDeferredGenericInstantiationPatternsImpl();
+    }
+}
+
+[Fact]
+fn bool PackageManifestIncludesDeferredGenericTypeInstantiationPatterns()
+{
+    unsafe
+    {
+        return PackageManifestIncludesDeferredGenericTypeInstantiationPatternsImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedGenericMethodsPreserveTypeParametersWithoutSourceFiles()
+{
+    unsafe
+    {
+        return ManifestBackedGenericMethodsPreserveTypeParametersWithoutSourceFilesImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedTypeAliasesRoundTripWithoutSourceFiles()
+{
+    unsafe
+    {
+        return ManifestBackedTypeAliasesRoundTripWithoutSourceFilesImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedTypeAliasesResolveFromPackageImageFactsWhenBridgeAliasSourceIsCorrupted()
+{
+    unsafe
+    {
+        return ManifestBackedTypeAliasesResolveFromPackageImageFactsWhenBridgeAliasSourceIsCorruptedImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedAliasDoctrineAndTraitImportsResolveFromPackageImageFactsWhenImportedParseTreeIsEmpty()
+{
+    unsafe
+    {
+        return ManifestBackedAliasDoctrineAndTraitImportsResolveFromPackageImageFactsWhenImportedParseTreeIsEmptyImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedInternalTypeAliasesRemainHiddenFromConsumers()
+{
+    unsafe
+    {
+        return ManifestBackedInternalTypeAliasesRemainHiddenFromConsumersImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedTypeDestructorsRoundTripWithoutSourceFiles()
+{
+    unsafe
+    {
+        return ManifestBackedTypeDestructorsRoundTripWithoutSourceFilesImpl();
+    }
+}
+
+[Fact]
+fn bool ImportedFunctionsFromLoadedModulesParticipateInTypingAndEffects()
+{
+    unsafe
+    {
+        return ImportedFunctionsFromLoadedModulesParticipateInTypingAndEffectsImpl();
+    }
+}
+
+[Fact]
+fn bool DoctrineDeclarationsFlowIntoSyntaxTypeAndSemanticModels()
+{
+    unsafe
+    {
+        return DoctrineDeclarationsFlowIntoSyntaxTypeAndSemanticModelsImpl();
+    }
+}
+
+[Fact]
+fn bool TraitDeclarationsFlowIntoSyntaxTypeAndEffectModels()
+{
+    unsafe
+    {
+        return TraitDeclarationsFlowIntoSyntaxTypeAndEffectModelsImpl();
+    }
+}
+
+[Fact]
+fn bool ImportedDoctrineMembersFromLoadedModulesParticipateInTypingAndEffects()
+{
+    unsafe
+    {
+        return ImportedDoctrineMembersFromLoadedModulesParticipateInTypingAndEffectsImpl();
+    }
+}
+
+[Fact]
+fn bool ImportedTraitMembersFromLoadedModulesParticipateInTypingAndEffects()
+{
+    unsafe
+    {
+        return ImportedTraitMembersFromLoadedModulesParticipateInTypingAndEffectsImpl();
+    }
+}
+
+[Fact]
+fn bool PublicReExportsMakeTransitiveModulesVisibleToTheRootModule()
+{
+    unsafe
+    {
+        return PublicReExportsMakeTransitiveModulesVisibleToTheRootModuleImpl();
+    }
+}
+
+[Fact]
+fn bool LiteralTypingAndBodyCheckingProduceTypedArtifacts()
+{
+    unsafe
+    {
+        return LiteralTypingAndBodyCheckingProduceTypedArtifactsImpl();
+    }
+}
+
+[Fact]
+fn bool EnumDeclarationsFlowIntoSyntaxAndTypeModels()
+{
+    unsafe
+    {
+        return EnumDeclarationsFlowIntoSyntaxAndTypeModelsImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedModulesPreserveImportedFunctionEffectsFromCompilerFactSections()
+{
+    unsafe
+    {
+        return ManifestBackedModulesPreserveImportedFunctionEffectsFromCompilerFactSectionsImpl();
+    }
+}
+
+[Fact]
+fn bool RootGenericInstantiationsStayOwnedByTheRootModule()
+{
+    unsafe
+    {
+        return RootGenericInstantiationsStayOwnedByTheRootModuleImpl();
+    }
+}
+
+[Fact]
+fn bool SourceBackedImportedGenericInstantiationsStayOwnedByTheDefiningModule()
+{
+    unsafe
+    {
+        return SourceBackedImportedGenericInstantiationsStayOwnedByTheDefiningModuleImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedGenericInstantiationsFallBackToTheRootConsumerModule()
+{
+    unsafe
+    {
+        return ManifestBackedGenericInstantiationsFallBackToTheRootConsumerModuleImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedLibrariesResolveWithoutSourceFiles()
+{
+    unsafe
+    {
+        return ManifestBackedLibrariesResolveWithoutSourceFilesImpl();
+    }
+}
+
+[Fact]
+fn bool LoadModulesReusesSourceParsesDiscoveredByModuleGraph()
+{
+    unsafe
+    {
+        return LoadModulesReusesSourceParsesDiscoveredByModuleGraphImpl();
+    }
+}
+
+[Fact]
+fn bool FileSystemResolverDoesNotLetNestedStarkBuildManifestsShadowExplicitSourceRoots()
+{
+    unsafe
+    {
+        return FileSystemResolverDoesNotLetNestedStarkBuildManifestsShadowExplicitSourceRootsImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedModulesPreservePublishedSemanticFactsFromCompilerFactSections()
+{
+    unsafe
+    {
+        return ManifestBackedModulesPreservePublishedSemanticFactsFromCompilerFactSectionsImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedModulesPreservePublishedSemanticCallFactsFromCompilerFactSections()
+{
+    unsafe
+    {
+        return ManifestBackedModulesPreservePublishedSemanticCallFactsFromCompilerFactSectionsImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedModulesPreservePublishedOwnershipFactsFromCompilerFactSections()
+{
+    unsafe
+    {
+        return ManifestBackedModulesPreservePublishedOwnershipFactsFromCompilerFactSectionsImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedModulesPreservePublishedGenericTemplateSemanticCallFacts()
+{
+    unsafe
+    {
+        return ManifestBackedModulesPreservePublishedGenericTemplateSemanticCallFactsImpl();
+    }
+}
+
+[Fact]
+fn bool PackageImageDocumentResolversLoadStructuredImportsWithoutAnySourceText()
+{
+    unsafe
+    {
+        return PackageImageDocumentResolversLoadStructuredImportsWithoutAnySourceTextImpl();
+    }
+}
+
+[Fact]
+fn bool PackageImageDocumentResolversLoadNonReExportImportsWithoutAnySourceText()
+{
+    unsafe
+    {
+        return PackageImageDocumentResolversLoadNonReExportImportsWithoutAnySourceTextImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedModulesPreserveOptimizationReadyGenericTemplateFacts()
+{
+    unsafe
+    {
+        return ManifestBackedModulesPreserveOptimizationReadyGenericTemplateFactsImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedModulesPreservePublishedAbiFactsFromCompilerFactSections()
+{
+    unsafe
+    {
+        return ManifestBackedModulesPreservePublishedAbiFactsFromCompilerFactSectionsImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedMethodsPreservePublishedAbiFactsFromCompilerFactSections()
+{
+    unsafe
+    {
+        return ManifestBackedMethodsPreservePublishedAbiFactsFromCompilerFactSectionsImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedGenericFunctionsMaterializeConcreteBodiesFromPackageImageTemplates()
+{
+    unsafe
+    {
+        return ManifestBackedGenericFunctionsMaterializeConcreteBodiesFromPackageImageTemplatesImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedEnumWholeCaptureGenericBodiesPreserveTypedTemplateFactsIntoHighLevelIr()
+{
+    unsafe
+    {
+        return ManifestBackedEnumWholeCaptureGenericBodiesPreserveTypedTemplateFactsIntoHighLevelIrImpl();
+    }
+}
+
+[Fact]
+fn bool LowerMirUsesPublishedTemplateObjectCreationFactsForImportedGenericBodies()
+{
+    unsafe
+    {
+        return LowerMirUsesPublishedTemplateObjectCreationFactsForImportedGenericBodiesImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedTypedTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecialization()
+{
+    unsafe
+    {
+        return ManifestBackedTypedTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecializationImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedTypedTemplateBodiesLowerFromPackageImageFactsWhenImportedDeclarationSyntaxIsCorrupted()
+{
+    unsafe
+    {
+        return ManifestBackedTypedTemplateBodiesLowerFromPackageImageFactsWhenImportedDeclarationSyntaxIsCorruptedImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedTypedTemplateBodiesLowerFromPackageImageFactsWhenImportedParseTreeIsEmpty()
+{
+    unsafe
+    {
+        return ManifestBackedTypedTemplateBodiesLowerFromPackageImageFactsWhenImportedParseTreeIsEmptyImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedTypedGroupedLocalDeclarationTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecialization()
+{
+    unsafe
+    {
+        return ManifestBackedTypedGroupedLocalDeclarationTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecializationImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedTypedUninitializedLocalDeclarationTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecialization()
+{
+    unsafe
+    {
+        return ManifestBackedTypedUninitializedLocalDeclarationTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecializationImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedTypedDiscardedExpressionTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecialization()
+{
+    unsafe
+    {
+        return ManifestBackedTypedDiscardedExpressionTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecializationImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedTypedConversionTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecialization()
+{
+    unsafe
+    {
+        return ManifestBackedTypedConversionTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecializationImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedTypedAssignmentTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecialization()
+{
+    unsafe
+    {
+        return ManifestBackedTypedAssignmentTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecializationImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedTypedIfTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecialization()
+{
+    unsafe
+    {
+        return ManifestBackedTypedIfTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecializationImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedTypedTerminalIfTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecialization()
+{
+    unsafe
+    {
+        return ManifestBackedTypedTerminalIfTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecializationImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedTypedWhileTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecialization()
+{
+    unsafe
+    {
+        return ManifestBackedTypedWhileTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecializationImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedTypedPatternConditionTemplateBodiesPublishAndImportForGenericSpecialization()
+{
+    unsafe
+    {
+        return ManifestBackedTypedPatternConditionTemplateBodiesPublishAndImportForGenericSpecializationImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedTypedForTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecialization()
+{
+    unsafe
+    {
+        return ManifestBackedTypedForTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecializationImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedTypedLoopControlTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecialization()
+{
+    unsafe
+    {
+        return ManifestBackedTypedLoopControlTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecializationImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedTypedGenericMethodBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecialization()
+{
+    unsafe
+    {
+        return ManifestBackedTypedGenericMethodBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecializationImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedTypedTemplateBodiesForMethodsOnGenericTypesLowerWithoutBridgeBodyText()
+{
+    unsafe
+    {
+        return ManifestBackedTypedTemplateBodiesForMethodsOnGenericTypesLowerWithoutBridgeBodyTextImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedTypedComparisonChainTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecialization()
+{
+    unsafe
+    {
+        return ManifestBackedTypedComparisonChainTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecializationImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedTypedRawPointerDereferenceTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecialization()
+{
+    unsafe
+    {
+        return ManifestBackedTypedRawPointerDereferenceTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecializationImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedTypedProjectedRawPointerDereferenceTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecialization()
+{
+    unsafe
+    {
+        return ManifestBackedTypedProjectedRawPointerDereferenceTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecializationImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedTypedAddressOfTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecialization()
+{
+    unsafe
+    {
+        return ManifestBackedTypedAddressOfTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecializationImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedTypedPowerTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecialization()
+{
+    unsafe
+    {
+        return ManifestBackedTypedPowerTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecializationImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedTypedAssignmentExpressionTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecialization()
+{
+    unsafe
+    {
+        return ManifestBackedTypedAssignmentExpressionTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecializationImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedTypedObjectInitializerLocalDeclarationTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecialization()
+{
+    unsafe
+    {
+        return ManifestBackedTypedObjectInitializerLocalDeclarationTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecializationImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedEmptyBlockAndOpenEndedLoopTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecialization()
+{
+    unsafe
+    {
+        return ManifestBackedEmptyBlockAndOpenEndedLoopTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecializationImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedGenericBodiesCanConstructImportedPrimaryConstructorTypes()
+{
+    unsafe
+    {
+        return ManifestBackedGenericBodiesCanConstructImportedPrimaryConstructorTypesImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedGenericBodiesUsePublishedLocalDeclarationTypesWhenBridgeSourceIsCorrupted()
+{
+    unsafe
+    {
+        return ManifestBackedGenericBodiesUsePublishedLocalDeclarationTypesWhenBridgeSourceIsCorruptedImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedGenericOwnershipFactsAreSubstitutedForImportedTypedTemplateBodies()
+{
+    unsafe
+    {
+        return ManifestBackedGenericOwnershipFactsAreSubstitutedForImportedTypedTemplateBodiesImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedGenericBodiesPreferTypedTemplateBodiesWhenBridgeSourceIsCorrupted()
+{
+    unsafe
+    {
+        return ManifestBackedGenericBodiesPreferTypedTemplateBodiesWhenBridgeSourceIsCorruptedImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedGenericBodiesPreferTypedConstTemplateBodiesWhenBridgeSourceIsCorrupted()
+{
+    unsafe
+    {
+        return ManifestBackedGenericBodiesPreferTypedConstTemplateBodiesWhenBridgeSourceIsCorruptedImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedGenericBodiesPreserveConstProvenanceLocalsWhenBridgeSourceIsCorrupted()
+{
+    unsafe
+    {
+        return ManifestBackedGenericBodiesPreserveConstProvenanceLocalsWhenBridgeSourceIsCorruptedImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedGenericBodiesPreferTypedMultiLocalTemplateBodiesWhenBridgeSourceIsCorrupted()
+{
+    unsafe
+    {
+        return ManifestBackedGenericBodiesPreferTypedMultiLocalTemplateBodiesWhenBridgeSourceIsCorruptedImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedGenericBodiesPreferTypedConditionalTemplateBodiesWhenBridgeSourceIsCorrupted()
+{
+    unsafe
+    {
+        return ManifestBackedGenericBodiesPreferTypedConditionalTemplateBodiesWhenBridgeSourceIsCorruptedImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedGenericBodiesPreferTypedBinaryTemplateBodiesWhenBridgeSourceIsCorrupted()
+{
+    unsafe
+    {
+        return ManifestBackedGenericBodiesPreferTypedBinaryTemplateBodiesWhenBridgeSourceIsCorruptedImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedGenericBodiesPreferTypedShortCircuitTemplateBodiesWhenBridgeSourceIsCorrupted()
+{
+    unsafe
+    {
+        return ManifestBackedGenericBodiesPreferTypedShortCircuitTemplateBodiesWhenBridgeSourceIsCorruptedImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedGenericBodiesPreferTypedComparisonConditionsWhenBridgeSourceIsCorrupted()
+{
+    unsafe
+    {
+        return ManifestBackedGenericBodiesPreferTypedComparisonConditionsWhenBridgeSourceIsCorruptedImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedGenericImportsCanLoadFromExplicitCompilerSectionsWhenLegacyFieldsAreMissing()
+{
+    unsafe
+    {
+        return ManifestBackedGenericImportsCanLoadFromExplicitCompilerSectionsWhenLegacyFieldsAreMissingImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedGenericImportsPreferExplicitCompilerSectionsOverConflictingLegacyFields()
+{
+    unsafe
+    {
+        return ManifestBackedGenericImportsPreferExplicitCompilerSectionsOverConflictingLegacyFieldsImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedGenericBodiesPreferTypedFieldAccessTemplateBodiesWhenBridgeSourceIsCorrupted()
+{
+    unsafe
+    {
+        return ManifestBackedGenericBodiesPreferTypedFieldAccessTemplateBodiesWhenBridgeSourceIsCorruptedImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedGenericBodiesPreferTypedMemberCallTemplateBodiesWhenBridgeSourceIsCorrupted()
+{
+    unsafe
+    {
+        return ManifestBackedGenericBodiesPreferTypedMemberCallTemplateBodiesWhenBridgeSourceIsCorruptedImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedGenericBodiesPreferTypedChainedMemberCallTemplateBodiesWhenBridgeSourceIsCorrupted()
+{
+    unsafe
+    {
+        return ManifestBackedGenericBodiesPreferTypedChainedMemberCallTemplateBodiesWhenBridgeSourceIsCorruptedImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedGenericBodiesPreferTypedDirectCallReceiverMemberCallTemplateBodiesWhenBridgeSourceIsCorrupted()
+{
+    unsafe
+    {
+        return ManifestBackedGenericBodiesPreferTypedDirectCallReceiverMemberCallTemplateBodiesWhenBridgeSourceIsCorruptedImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedGenericBodiesPreferTypedObjectCreationReceiverMemberCallTemplateBodiesWhenBridgeSourceIsCorrupted()
+{
+    unsafe
+    {
+        return ManifestBackedGenericBodiesPreferTypedObjectCreationReceiverMemberCallTemplateBodiesWhenBridgeSourceIsCorruptedImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedGenericBodiesPreferTypedGroupedConditionalReceiverMemberCallTemplateBodiesWhenBridgeSourceIsCorrupted()
+{
+    unsafe
+    {
+        return ManifestBackedGenericBodiesPreferTypedGroupedConditionalReceiverMemberCallTemplateBodiesWhenBridgeSourceIsCorruptedImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedGenericBodiesPreferTypedVoidDirectCallStatementTemplateBodiesWhenBridgeSourceIsCorrupted()
+{
+    unsafe
+    {
+        return ManifestBackedGenericBodiesPreferTypedVoidDirectCallStatementTemplateBodiesWhenBridgeSourceIsCorruptedImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedGenericBodiesPreferTypedVoidMemberCallStatementTemplateBodiesWhenBridgeSourceIsCorrupted()
+{
+    unsafe
+    {
+        return ManifestBackedGenericBodiesPreferTypedVoidMemberCallStatementTemplateBodiesWhenBridgeSourceIsCorruptedImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedGenericBodiesPreferTypedConditionalCallStatementTemplateBodiesWhenBridgeSourceIsCorrupted()
+{
+    unsafe
+    {
+        return ManifestBackedGenericBodiesPreferTypedConditionalCallStatementTemplateBodiesWhenBridgeSourceIsCorruptedImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedGenericBodiesPreferTypedFieldAndIndexAssignmentTemplateBodiesWhenBridgeSourceIsCorrupted()
+{
+    unsafe
+    {
+        return ManifestBackedGenericBodiesPreferTypedFieldAndIndexAssignmentTemplateBodiesWhenBridgeSourceIsCorruptedImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedGenericBodiesPreferTypedCompoundFieldAndIndexAssignmentTemplateBodiesWhenBridgeSourceIsCorrupted()
+{
+    unsafe
+    {
+        return ManifestBackedGenericBodiesPreferTypedCompoundFieldAndIndexAssignmentTemplateBodiesWhenBridgeSourceIsCorruptedImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedGenericBodiesPreferTypedIndexAccessTemplateBodiesWhenBridgeSourceIsCorrupted()
+{
+    unsafe
+    {
+        return ManifestBackedGenericBodiesPreferTypedIndexAccessTemplateBodiesWhenBridgeSourceIsCorruptedImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedGenericBodiesPreferTypedFullViewTextSliceTemplateBodiesWhenBridgeSourceIsCorrupted()
+{
+    unsafe
+    {
+        return ManifestBackedGenericBodiesPreferTypedFullViewTextSliceTemplateBodiesWhenBridgeSourceIsCorruptedImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedGenericBodiesPublishAndLowerRetborrowTypedTemplateBodiesWhenBridgeSourceIsCorrupted()
+{
+    unsafe
+    {
+        return ManifestBackedGenericBodiesPublishAndLowerRetborrowTypedTemplateBodiesWhenBridgeSourceIsCorruptedImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedGenericBodiesPreferTypedTextSliceTemplateBodiesWhenBridgeSourceIsCorrupted()
+{
+    unsafe
+    {
+        return ManifestBackedGenericBodiesPreferTypedTextSliceTemplateBodiesWhenBridgeSourceIsCorruptedImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedGenericBodiesPreferTypedSingleElementTextIndexTemplateBodiesWhenBridgeSourceIsCorrupted()
+{
+    unsafe
+    {
+        return ManifestBackedGenericBodiesPreferTypedSingleElementTextIndexTemplateBodiesWhenBridgeSourceIsCorruptedImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedGenericBodiesPreferTypedChainedFieldIndexTemplateBodiesWhenBridgeSourceIsCorrupted()
+{
+    unsafe
+    {
+        return ManifestBackedGenericBodiesPreferTypedChainedFieldIndexTemplateBodiesWhenBridgeSourceIsCorruptedImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedGenericBodiesPreferTypedVoidReturnTemplateBodiesWhenBridgeSourceIsCorrupted()
+{
+    unsafe
+    {
+        return ManifestBackedGenericBodiesPreferTypedVoidReturnTemplateBodiesWhenBridgeSourceIsCorruptedImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedGenericBodiesPreferTypedObjectCreationTemplateBodiesWhenBridgeSourceIsCorrupted()
+{
+    unsafe
+    {
+        return ManifestBackedGenericBodiesPreferTypedObjectCreationTemplateBodiesWhenBridgeSourceIsCorruptedImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedTypedNestedInitializerObjectCreationTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecialization()
+{
+    unsafe
+    {
+        return ManifestBackedTypedNestedInitializerObjectCreationTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecializationImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedGenericBodiesPreferTypedEnumCallTemplateBodiesWhenBridgeSourceIsCorrupted()
+{
+    unsafe
+    {
+        return ManifestBackedGenericBodiesPreferTypedEnumCallTemplateBodiesWhenBridgeSourceIsCorruptedImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedGenericBodiesPreferTypedTryPropagationTemplateBodiesWhenBridgeSourceIsCorrupted()
+{
+    unsafe
+    {
+        return ManifestBackedGenericBodiesPreferTypedTryPropagationTemplateBodiesWhenBridgeSourceIsCorruptedImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedGenericBodiesPreferTypedEnumValueTemplateBodiesWhenBridgeSourceIsCorrupted()
+{
+    unsafe
+    {
+        return ManifestBackedGenericBodiesPreferTypedEnumValueTemplateBodiesWhenBridgeSourceIsCorruptedImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedGenericBodiesPreferTypedLiteralTemplateBodiesWhenBridgeSourceIsCorrupted()
+{
+    unsafe
+    {
+        return ManifestBackedGenericBodiesPreferTypedLiteralTemplateBodiesWhenBridgeSourceIsCorruptedImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedGenericBodiesPreferTypedEnumConstructorTemplateBodiesWhenBridgeSourceIsCorrupted()
+{
+    unsafe
+    {
+        return ManifestBackedGenericBodiesPreferTypedEnumConstructorTemplateBodiesWhenBridgeSourceIsCorruptedImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedGenericBodiesUsePublishedConversionTargetsWhenBridgeSourceIsCorrupted()
+{
+    unsafe
+    {
+        return ManifestBackedGenericBodiesUsePublishedConversionTargetsWhenBridgeSourceIsCorruptedImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedGenericBodiesUsePublishedEnumConstructorFactsWhenBridgeSourceIsCorrupted()
+{
+    unsafe
+    {
+        return ManifestBackedGenericBodiesUsePublishedEnumConstructorFactsWhenBridgeSourceIsCorruptedImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedGenericBodiesUsePublishedEnumCallFactsWhenBridgeSourceIsCorrupted()
+{
+    unsafe
+    {
+        return ManifestBackedGenericBodiesUsePublishedEnumCallFactsWhenBridgeSourceIsCorruptedImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedGenericBodiesUsePublishedEnumValueFactsWhenBridgeSourceIsCorrupted()
+{
+    unsafe
+    {
+        return ManifestBackedGenericBodiesUsePublishedEnumValueFactsWhenBridgeSourceIsCorruptedImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedGenericBodiesUsePublishedEnumPatternFactsWhenBridgeSourceIsCorrupted()
+{
+    unsafe
+    {
+        return ManifestBackedGenericBodiesUsePublishedEnumPatternFactsWhenBridgeSourceIsCorruptedImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedGenericBodiesUsePublishedEnumPatternMemberFactsWhenBridgeSourceIsCorrupted()
+{
+    unsafe
+    {
+        return ManifestBackedGenericBodiesUsePublishedEnumPatternMemberFactsWhenBridgeSourceIsCorruptedImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedGenericBodiesUsePublishedAggregatePatternFactsWhenBridgeSourceIsCorrupted()
+{
+    unsafe
+    {
+        return ManifestBackedGenericBodiesUsePublishedAggregatePatternFactsWhenBridgeSourceIsCorruptedImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedGenericBodiesUsePublishedNestedAndLiteralSwitchPatternFactsWhenBridgeSourceIsCorrupted()
+{
+    unsafe
+    {
+        return ManifestBackedGenericBodiesUsePublishedNestedAndLiteralSwitchPatternFactsWhenBridgeSourceIsCorruptedImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedGenericBodiesUsePublishedEnumWholeCaptureSwitchPatternFactsWithoutBridgeBodyText()
+{
+    unsafe
+    {
+        return ManifestBackedGenericBodiesUsePublishedEnumWholeCaptureSwitchPatternFactsWithoutBridgeBodyTextImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedGenericBodiesUsePublishedLiteralAndGuardedSwitchFactsWhenBridgeSourceIsCorrupted()
+{
+    unsafe
+    {
+        return ManifestBackedGenericBodiesUsePublishedLiteralAndGuardedSwitchFactsWhenBridgeSourceIsCorruptedImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedGenericBodiesFoldComptimeStructuralFactsInMir()
+{
+    unsafe
+    {
+        return ManifestBackedGenericBodiesFoldComptimeStructuralFactsInMirImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedGenericBodiesUsePublishedObjectInitializerMembersWhenBridgeSourceIsCorrupted()
+{
+    unsafe
+    {
+        return ManifestBackedGenericBodiesUsePublishedObjectInitializerMembersWhenBridgeSourceIsCorruptedImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedGenericBodiesUsePublishedObjectCreationTypesWhenBridgeSourceIsCorrupted()
+{
+    unsafe
+    {
+        return ManifestBackedGenericBodiesUsePublishedObjectCreationTypesWhenBridgeSourceIsCorruptedImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedGenericBodiesUsePublishedDirectCallTargetsWhenBridgeSourceIsCorrupted()
+{
+    unsafe
+    {
+        return ManifestBackedGenericBodiesUsePublishedDirectCallTargetsWhenBridgeSourceIsCorruptedImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedGenericBodiesUsePublishedFieldAccessFactsWhenBridgeSourceIsCorrupted()
+{
+    unsafe
+    {
+        return ManifestBackedGenericBodiesUsePublishedFieldAccessFactsWhenBridgeSourceIsCorruptedImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedGenericBodiesUsePublishedMemberCallTargetsWhenBridgeSourceIsCorrupted()
+{
+    unsafe
+    {
+        return ManifestBackedGenericBodiesUsePublishedMemberCallTargetsWhenBridgeSourceIsCorruptedImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedGenericBodiesPreserveTransitiveImportedModuleSurfaceAcrossPackageImages()
+{
+    unsafe
+    {
+        return ManifestBackedGenericBodiesPreserveTransitiveImportedModuleSurfaceAcrossPackageImagesImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedConcreteGenericAliasesMaterializeObjectInitializersAndGroupedConditionalsInMir()
+{
+    unsafe
+    {
+        return ManifestBackedConcreteGenericAliasesMaterializeObjectInitializersAndGroupedConditionalsInMirImpl();
+    }
+}
+
+[Fact]
+fn bool RootGenericInstantiationsGetFullySpelledMonomorphizationSymbols()
+{
+    unsafe
+    {
+        return RootGenericInstantiationsGetFullySpelledMonomorphizationSymbolsImpl();
+    }
+}
+
+[Fact]
+fn bool RootSingleReturnForwarderGenericInstantiationsUseOptimizationSummaryForPlanning()
+{
+    unsafe
+    {
+        return RootSingleReturnForwarderGenericInstantiationsUseOptimizationSummaryForPlanningImpl();
+    }
+}
+
+[Fact]
+fn bool RootSingleReturnMemberCallForwarderGenericInstantiationsUseOptimizationSummaryForPlanning()
+{
+    unsafe
+    {
+        return RootSingleReturnMemberCallForwarderGenericInstantiationsUseOptimizationSummaryForPlanningImpl();
+    }
+}
+
+[Fact]
+fn bool RootSingleReturnFieldAccessWrapperGenericInstantiationsUseOptimizationSummaryForPlanning()
+{
+    unsafe
+    {
+        return RootSingleReturnFieldAccessWrapperGenericInstantiationsUseOptimizationSummaryForPlanningImpl();
+    }
+}
+
+[Fact]
+fn bool RootSingleReturnIndexAccessWrapperGenericInstantiationsUseOptimizationSummaryForPlanning()
+{
+    unsafe
+    {
+        return RootSingleReturnIndexAccessWrapperGenericInstantiationsUseOptimizationSummaryForPlanningImpl();
+    }
+}
+
+[Fact]
+fn bool RootSingleReturnConversionWrapperGenericInstantiationsUseOptimizationSummaryForPlanning()
+{
+    unsafe
+    {
+        return RootSingleReturnConversionWrapperGenericInstantiationsUseOptimizationSummaryForPlanningImpl();
+    }
+}
+
+[Fact]
+fn bool RootSingleReturnAddressOfWrapperGenericInstantiationsUseOptimizationSummaryForPlanning()
+{
+    unsafe
+    {
+        return RootSingleReturnAddressOfWrapperGenericInstantiationsUseOptimizationSummaryForPlanningImpl();
+    }
+}
+
+[Fact]
+fn bool RootSingleReturnBinaryOperatorWrapperGenericInstantiationsUseOptimizationSummaryForPlanning()
+{
+    unsafe
+    {
+        return RootSingleReturnBinaryOperatorWrapperGenericInstantiationsUseOptimizationSummaryForPlanningImpl();
+    }
+}
+
+[Fact]
+fn bool RootSingleReturnComparisonWrapperGenericInstantiationsUseOptimizationSummaryForPlanning()
+{
+    unsafe
+    {
+        return RootSingleReturnComparisonWrapperGenericInstantiationsUseOptimizationSummaryForPlanningImpl();
+    }
+}
+
+[Fact]
+fn bool RootTerminalIfSelectionWrapperGenericInstantiationsUseOptimizationSummaryForPlanning()
+{
+    unsafe
+    {
+        return RootTerminalIfSelectionWrapperGenericInstantiationsUseOptimizationSummaryForPlanningImpl();
+    }
+}
+
+[Fact]
+fn bool RootTerminalSwitchSelectionWrapperGenericInstantiationsUseOptimizationSummaryForPlanning()
+{
+    unsafe
+    {
+        return RootTerminalSwitchSelectionWrapperGenericInstantiationsUseOptimizationSummaryForPlanningImpl();
+    }
+}
+
+[Fact]
+fn bool RootObjectConstructionWrapperGenericInstantiationsUseOptimizationSummaryForPlanning()
+{
+    unsafe
+    {
+        return RootObjectConstructionWrapperGenericInstantiationsUseOptimizationSummaryForPlanningImpl();
+    }
+}
+
+[Fact]
+fn bool RootEnumConstructionWrapperGenericInstantiationsUseOptimizationSummaryForPlanning()
+{
+    unsafe
+    {
+        return RootEnumConstructionWrapperGenericInstantiationsUseOptimizationSummaryForPlanningImpl();
+    }
+}
+
+[Fact]
+fn bool RootSimpleLocalUpdateWrapperGenericInstantiationsUseOptimizationSummaryForPlanning()
+{
+    unsafe
+    {
+        return RootSimpleLocalUpdateWrapperGenericInstantiationsUseOptimizationSummaryForPlanningImpl();
+    }
+}
+
+[Fact]
+fn bool SourceBackedImportedGenericInstantiationsUseDefiningModuleMonomorphizationSymbols()
+{
+    unsafe
+    {
+        return SourceBackedImportedGenericInstantiationsUseDefiningModuleMonomorphizationSymbolsImpl();
+    }
+}
+
+[Fact]
+fn bool ColdGenericInstantiationsPreferCodeSizeReductionInThePlan()
+{
+    unsafe
+    {
+        return ColdGenericInstantiationsPreferCodeSizeReductionInThePlanImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedGenericInstantiationsUseRootOwnedMonomorphizationSymbols()
+{
+    unsafe
+    {
+        return ManifestBackedGenericInstantiationsUseRootOwnedMonomorphizationSymbolsImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedColdGenericInstantiationsPreservePackageImagePlanningFacts()
+{
+    unsafe
+    {
+        return ManifestBackedColdGenericInstantiationsPreservePackageImagePlanningFactsImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedTerminalSelectionGenericBodiesUseOptimizationSummaryForPlanning()
+{
+    unsafe
+    {
+        return ManifestBackedTerminalSelectionGenericBodiesUseOptimizationSummaryForPlanningImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedGenericPlanningUsesPublishedTemplateSummaryWhenImportedBridgeBodyIsCorrupted()
+{
+    unsafe
+    {
+        return ManifestBackedGenericPlanningUsesPublishedTemplateSummaryWhenImportedBridgeBodyIsCorruptedImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedSingleReturnForwarderGenericBodiesUseOptimizationSummaryForPlanning()
+{
+    unsafe
+    {
+        return ManifestBackedSingleReturnForwarderGenericBodiesUseOptimizationSummaryForPlanningImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedLargeAggregateGenericInstantiationsPreferCodeSizeReductionFromPublishedLayoutFacts()
+{
+    unsafe
+    {
+        return ManifestBackedLargeAggregateGenericInstantiationsPreferCodeSizeReductionFromPublishedLayoutFactsImpl();
+    }
+}
+
+[Fact]
+fn bool RepeatedManifestBackedNestedGenericInstantiationsStayRootOwnedAndDeduplicatedInMonomorphizationPlan()
+{
+    unsafe
+    {
+        return RepeatedManifestBackedNestedGenericInstantiationsStayRootOwnedAndDeduplicatedInMonomorphizationPlanImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedNestedGenericPlanningUsesPublishedDeferredTriggers()
+{
+    unsafe
+    {
+        return ManifestBackedNestedGenericPlanningUsesPublishedDeferredTriggersImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedNestedGenericTypePlanningUsesPublishedDeferredTypeTriggers()
+{
+    unsafe
+    {
+        return ManifestBackedNestedGenericTypePlanningUsesPublishedDeferredTypeTriggersImpl();
+    }
+}
+
+[Fact]
+fn bool AliasAwareMemoryOptimizationRunsBeforeAbiLowering()
+{
+    unsafe
+    {
+        return AliasAwareMemoryOptimizationRunsBeforeAbiLoweringImpl();
+    }
+}
+
+[Fact]
+fn bool ArithmeticFoldSsaOptimizesImportedGenericTypedTemplateAfterSourceBodyRemoval()
+{
+    unsafe
+    {
+        return ArithmeticFoldSsaOptimizesImportedGenericTypedTemplateAfterSourceBodyRemovalImpl();
+    }
+}
+
+[Fact]
+fn bool DynamicStorageSsaPreservesCapacityFactsAcrossImportedReadOnlyLawCall()
+{
+    unsafe
+    {
+        return DynamicStorageSsaPreservesCapacityFactsAcrossImportedReadOnlyLawCallImpl();
+    }
+}
+
+[Fact]
+fn bool DynamicStorageSsaPreservesFactsAcrossImportedGenericInlineHelper()
+{
+    unsafe
+    {
+        return DynamicStorageSsaPreservesFactsAcrossImportedGenericInlineHelperImpl();
+    }
+}
+
+[Fact]
+fn bool ConstLookupTableOptimizationFoldsPackageConstFixedArrayIndexFromTypedInitializer()
+{
+    unsafe
+    {
+        return ConstLookupTableOptimizationFoldsPackageConstFixedArrayIndexFromTypedInitializerImpl();
+    }
+}
+
+[Fact]
+fn bool ConstLookupTableOptimizationFoldsPackageConstLookupHelperFromTypedInitializer()
+{
+    unsafe
+    {
+        return ConstLookupTableOptimizationFoldsPackageConstLookupHelperFromTypedInitializerImpl();
+    }
+}
+
+[Fact]
+fn bool ConstLookupTableOptimizationKeepsConstLookupHelperWithRuntimeIndexAsLoad()
+{
+    unsafe
+    {
+        return ConstLookupTableOptimizationKeepsConstLookupHelperWithRuntimeIndexAsLoadImpl();
+    }
+}
+
+[Fact]
+fn bool ConstLookupTableOptimizationKeepsStaticFixedArrayIndexAsGlobalLoad()
+{
+    unsafe
+    {
+        return ConstLookupTableOptimizationKeepsStaticFixedArrayIndexAsGlobalLoadImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedSemanticValidationUsesPublishedBorrowFactsFromCompilerFactSections()
+{
+    unsafe
+    {
+        return ManifestBackedSemanticValidationUsesPublishedBorrowFactsFromCompilerFactSectionsImpl();
+    }
+}
+
+[Fact]
+fn bool RootGenericInstantiationsChooseOwnedBodyCodegenStrategy()
+{
+    unsafe
+    {
+        return RootGenericInstantiationsChooseOwnedBodyCodegenStrategyImpl();
+    }
+}
+
+[Fact]
+fn bool SourceBackedImportedLawGenericsChooseLawCloneAwareCodegenStrategy()
+{
+    unsafe
+    {
+        return SourceBackedImportedLawGenericsChooseLawCloneAwareCodegenStrategyImpl();
+    }
+}
+
+[Fact]
+fn bool ColdImportedLawGenericsUseAbiFallbackOnlyCodegenStrategy()
+{
+    unsafe
+    {
+        return ColdImportedLawGenericsUseAbiFallbackOnlyCodegenStrategyImpl();
+    }
+}
+
+[Fact]
+fn bool DeclarationOnlyImportedGenericInstantiationsChooseAbiFallbackOnlyCodegenStrategy()
+{
+    unsafe
+    {
+        return DeclarationOnlyImportedGenericInstantiationsChooseAbiFallbackOnlyCodegenStrategyImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedImportedGenericsWithoutPublishedAbiFactsDoNotClaimAbiFallbackInCodegenStrategy()
+{
+    unsafe
+    {
+        return ManifestBackedImportedGenericsWithoutPublishedAbiFactsDoNotClaimAbiFallbackInCodegenStrategyImpl();
+    }
+}
+
+[Fact]
+fn bool ConflictingSpecializationSymbolPlansReportAmbiguityDiagnostics()
+{
+    unsafe
+    {
+        return ConflictingSpecializationSymbolPlansReportAmbiguityDiagnosticsImpl();
+    }
+}
+
+[Fact]
+fn bool RootGenericInstantiationsPreferOwnedConcreteBodiesInSpecializationPlan()
+{
+    unsafe
+    {
+        return RootGenericInstantiationsPreferOwnedConcreteBodiesInSpecializationPlanImpl();
+    }
+}
+
+[Fact]
+fn bool SourceBackedImportedLawGenericsPreferCallerCloneBeforeOwnedBodyInSpecializationPlan()
+{
+    unsafe
+    {
+        return SourceBackedImportedLawGenericsPreferCallerCloneBeforeOwnedBodyInSpecializationPlanImpl();
+    }
+}
+
+[Fact]
+fn bool SourceBackedImportedTopLevelLawGenericsPreferCallerCloneBeforeOwnedBodyInSpecializationPlan()
+{
+    unsafe
+    {
+        return SourceBackedImportedTopLevelLawGenericsPreferCallerCloneBeforeOwnedBodyInSpecializationPlanImpl();
+    }
+}
+
+[Fact]
+fn bool ColdImportedLawGenericsPreferAbiFallbackOverCallerCloneInSpecializationPlan()
+{
+    unsafe
+    {
+        return ColdImportedLawGenericsPreferAbiFallbackOverCallerCloneInSpecializationPlanImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedImportedLawGenericsPreferCallerCloneWhenTemplateSemanticsSurviveWithoutFunctionSemantics()
+{
+    unsafe
+    {
+        return ManifestBackedImportedLawGenericsPreferCallerCloneWhenTemplateSemanticsSurviveWithoutFunctionSemanticsImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedImportedPlainFnGenericsThatStrengthenToLawPreferCallerCloneWhenTemplateSemanticsSurviveWithoutFunctionSemantics()
+{
+    unsafe
+    {
+        return ManifestBackedImportedPlainFnGenericsThatStrengthenToLawPreferCallerCloneWhenTemplateSemanticsSurviveWithoutFunctionSemanticsImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedRecursiveImportedLawGenericsDoNotPreferCallerCloneWhenTemplateSemanticsSurviveWithoutFunctionSemantics()
+{
+    unsafe
+    {
+        return ManifestBackedRecursiveImportedLawGenericsDoNotPreferCallerCloneWhenTemplateSemanticsSurviveWithoutFunctionSemanticsImpl();
+    }
+}
+
+[Fact]
+fn bool DeclarationOnlyImportedGenericInstantiationsFallBackToAbiOnlySpecializationPlan()
+{
+    unsafe
+    {
+        return DeclarationOnlyImportedGenericInstantiationsFallBackToAbiOnlySpecializationPlanImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedImportedGenericsWithoutPublishedAbiFactsPreferOwnedBodyOnlyInSpecializationPlan()
+{
+    unsafe
+    {
+        return ManifestBackedImportedGenericsWithoutPublishedAbiFactsPreferOwnedBodyOnlyInSpecializationPlanImpl();
+    }
+}
+
+[Fact]
+fn bool UnsupportedModuleAttributesReportSyntaxModelDiagnostics()
+{
+    unsafe
+    {
+        return UnsupportedModuleAttributesReportSyntaxModelDiagnosticsImpl();
+    }
+}
+
+[Fact]
+fn bool BackendOpaqueCallableAttributesRejectConflictingModifiers()
+{
+    unsafe
+    {
+        return BackendOpaqueCallableAttributesRejectConflictingModifiersImpl();
+    }
+}
+
+[Fact]
+fn bool BackendOpaqueCallableAttributesRejectDuplicates()
+{
+    unsafe
+    {
+        return BackendOpaqueCallableAttributesRejectDuplicatesImpl();
+    }
+}
+
+[Fact]
+fn bool BackendOpaqueTypeAndContractAttributesReportDiagnostics()
+{
+    unsafe
+    {
+        return BackendOpaqueTypeAndContractAttributesReportDiagnosticsImpl();
+    }
+}
+
+[Fact]
+fn bool MalformedThreadSafetyLawSurfaceReportsSyntaxModelDiagnostics()
+{
+    unsafe
+    {
+        return MalformedThreadSafetyLawSurfaceReportsSyntaxModelDiagnosticsImpl();
+    }
+}
+
+[Fact]
+fn bool BackendOpaqueModuleAttributeFlowsIntoSyntaxModel()
+{
+    unsafe
+    {
+        return BackendOpaqueModuleAttributeFlowsIntoSyntaxModelImpl();
+    }
+}
+
+[Fact]
+fn bool TestingCallableAttributesFlowIntoSyntaxModelAsMetadata()
+{
+    unsafe
+    {
+        return TestingCallableAttributesFlowIntoSyntaxModelAsMetadataImpl();
+    }
+}
+
+[Fact]
+fn bool BackendOpaqueAttributesFlowIntoCallableAndTypeSyntaxModels()
+{
+    unsafe
+    {
+        return BackendOpaqueAttributesFlowIntoCallableAndTypeSyntaxModelsImpl();
+    }
+}
+
+[Fact]
+fn bool ThreadSafetyLawPredicatesAndAttributesFlowIntoSyntaxModel()
+{
+    unsafe
+    {
+        return ThreadSafetyLawPredicatesAndAttributesFlowIntoSyntaxModelImpl();
+    }
+}
+
+[Fact]
+fn bool StructAndRecordDestructorsFlowIntoSyntaxModel()
+{
+    unsafe
+    {
+        return StructAndRecordDestructorsFlowIntoSyntaxModelImpl();
+    }
+}
+
+[Fact]
+fn bool TypeAliasDeclarationsFlowIntoSyntaxModel()
+{
+    unsafe
+    {
+        return TypeAliasDeclarationsFlowIntoSyntaxModelImpl();
+    }
+}
+
+[Fact]
+fn bool GenericFunctionDeclarationsCarryTypeParametersIntoSyntaxModel()
+{
+    unsafe
+    {
+        return GenericFunctionDeclarationsCarryTypeParametersIntoSyntaxModelImpl();
+    }
+}
+
+[Fact]
+fn bool BackendOpaqueCallableAttributeForcesNoInlineEffect()
+{
+    unsafe
+    {
+        return BackendOpaqueCallableAttributeForcesNoInlineEffectImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedGenericEnumsRecordTypeInstantiationTriggersWithoutSourceFiles()
+{
+    unsafe
+    {
+        return ManifestBackedGenericEnumsRecordTypeInstantiationTriggersWithoutSourceFilesImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedGenericFunctionsRecordInstantiationTriggersWithoutSourceFiles()
+{
+    unsafe
+    {
+        return ManifestBackedGenericFunctionsRecordInstantiationTriggersWithoutSourceFilesImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedStaticMemberFunctionsPreserveStaticAndFunctionKindContracts()
+{
+    unsafe
+    {
+        return ManifestBackedStaticMemberFunctionsPreserveStaticAndFunctionKindContractsImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedMemberFunctionsPreserveVisibility()
+{
+    unsafe
+    {
+        return ManifestBackedMemberFunctionsPreserveVisibilityImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedGlobalsResolveFromPackageImageFactsWhenBridgeGlobalSourceIsCorrupted()
+{
+    unsafe
+    {
+        return ManifestBackedGlobalsResolveFromPackageImageFactsWhenBridgeGlobalSourceIsCorruptedImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedNamedTypeShapeResolvesFromPackageImageFactsWhenBridgeTypeSourceIsCorrupted()
+{
+    unsafe
+    {
+        return ManifestBackedNamedTypeShapeResolvesFromPackageImageFactsWhenBridgeTypeSourceIsCorruptedImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedRecordPrimaryConstructorsResolveFromPackageImageFactsWhenBridgeTypeSourceIsCorrupted()
+{
+    unsafe
+    {
+        return ManifestBackedRecordPrimaryConstructorsResolveFromPackageImageFactsWhenBridgeTypeSourceIsCorruptedImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedExplicitStructConstructorsResolveFromPackageImageFactsWithoutBridgeDeclarations()
+{
+    unsafe
+    {
+        return ManifestBackedExplicitStructConstructorsResolveFromPackageImageFactsWithoutBridgeDeclarationsImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedExplicitRecordConstructorsResolveFromPackageImageFactsWithoutBridgeDeclarations()
+{
+    unsafe
+    {
+        return ManifestBackedExplicitRecordConstructorsResolveFromPackageImageFactsWithoutBridgeDeclarationsImpl();
+    }
+}
+
+[Fact]
+fn bool ReadingDynamicFieldBeforeAssignmentIsRejected()
+{
+    unsafe
+    {
+        return ReadingDynamicFieldBeforeAssignmentIsRejectedImpl();
+    }
+}
+
+[Fact]
+fn bool IndexingIntoUnassignedDynamicFieldIsRejected()
+{
+    unsafe
+    {
+        return IndexingIntoUnassignedDynamicFieldIsRejectedImpl();
+    }
+}
+
+[Fact]
+fn bool ReadingAnotherUnassignedOwningFieldIsRejected()
+{
+    unsafe
+    {
+        return ReadingAnotherUnassignedOwningFieldIsRejectedImpl();
+    }
+}
+
+[Fact]
+fn bool ReadingDynamicFieldAfterAssignmentIsAllowed()
+{
+    unsafe
+    {
+        return ReadingDynamicFieldAfterAssignmentIsAllowedImpl();
+    }
+}
+
+[Fact]
+fn bool WritingFixedArrayElementsIsNotAFieldRead()
+{
+    unsafe
+    {
+        return WritingFixedArrayElementsIsNotAFieldReadImpl();
+    }
+}
+
+[Fact]
+fn bool ReadingScalarFieldBeforeAssignmentIsAllowed()
+{
+    unsafe
+    {
+        return ReadingScalarFieldBeforeAssignmentIsAllowedImpl();
+    }
+}
+
+[Fact]
+fn bool FieldAssignedOnAnyEarlierPathIsNotFlagged()
+{
+    unsafe
+    {
+        return FieldAssignedOnAnyEarlierPathIsNotFlaggedImpl();
+    }
+}
+
+[Fact]
+fn bool WhereCopyableBoundAcceptsCopyableAndRejectsOwningOrDestructorTypes()
+{
+    unsafe
+    {
+        return WhereCopyableBoundAcceptsCopyableAndRejectsOwningOrDestructorTypesImpl();
+    }
+}
+
+[Fact]
+fn bool CopyableAssertionAttributeChecksStructurallyAtTheDefinition()
+{
+    unsafe
+    {
+        return CopyableAssertionAttributeChecksStructurallyAtTheDefinitionImpl();
+    }
+}
+
+[Fact]
+fn bool FixedArrayOfMoveOnlyElementsStaysMoveOnly()
+{
+    unsafe
+    {
+        return FixedArrayOfMoveOnlyElementsStaysMoveOnlyImpl();
+    }
+}
+
+[Fact]
+fn bool TagEnumAndStructOfTagEnumCopyOutOfPlacesAndKeepTheSourceUsable()
+{
+    unsafe
+    {
+        return TagEnumAndStructOfTagEnumCopyOutOfPlacesAndKeepTheSourceUsableImpl();
+    }
+}
+
+[Fact]
+fn bool EnumsWithOwningPayloadsStayMoveOnlyAtIndexedPlaces()
+{
+    unsafe
+    {
+        return EnumsWithOwningPayloadsStayMoveOnlyAtIndexedPlacesImpl();
+    }
+}
+
+[Fact]
+fn bool ComptimeEvaluationCopiesCopyableValuesConsistently()
+{
+    unsafe
+    {
+        return ComptimeEvaluationCopiesCopyableValuesConsistentlyImpl();
+    }
+}
+
+[Fact]
+fn bool StructsWithDestructorsStayMoveOnly()
+{
+    unsafe
+    {
+        return StructsWithDestructorsStayMoveOnlyImpl();
+    }
+}
+
+[Fact]
+fn bool FixedArrayOfCopyableElementsIsCopyable()
+{
+    unsafe
+    {
+        return FixedArrayOfCopyableElementsIsCopyableImpl();
+    }
+}
+
+[Fact]
+fn bool SliceAndFunctionPointerFieldsAreCopyable()
+{
+    unsafe
+    {
+        return SliceAndFunctionPointerFieldsAreCopyableImpl();
+    }
+}
+
+[Fact]
+fn bool DestructorFlagRoundTripsThroughPackageImageFacts()
+{
+    unsafe
+    {
+        return DestructorFlagRoundTripsThroughPackageImageFactsImpl();
+    }
+}
+
+[Fact]
+fn bool WhereDoctrinePredicateExplainsDoctrineMisuse()
+{
+    unsafe
+    {
+        return WhereDoctrinePredicateExplainsDoctrineMisuseImpl();
+    }
+}
+
+[Fact]
+fn bool WhereUnknownLawPredicateKeepsOriginalMessage()
+{
+    unsafe
+    {
+        return WhereUnknownLawPredicateKeepsOriginalMessageImpl();
+    }
+}
+
+[Fact]
+fn bool BorrowedGenericParameterLiteralArgumentHintsByValueCopyableFix()
+{
+    unsafe
+    {
+        return BorrowedGenericParameterLiteralArgumentHintsByValueCopyableFixImpl();
+    }
+}
+
+[Fact]
+fn bool BorrowedConcreteParameterLiteralArgumentDoesNotHintGenericFix()
+{
+    unsafe
+    {
+        return BorrowedConcreteParameterLiteralArgumentDoesNotHintGenericFixImpl();
+    }
+}
+
+[Fact]
+fn bool CallingAFieldThatShadowsASameNamedMethodNamesTheShadow()
+{
+    unsafe
+    {
+        return CallingAFieldThatShadowsASameNamedMethodNamesTheShadowImpl();
+    }
+}
+
+[Fact]
+fn bool BorrowDynTraitObjectDispatchesPolymorphicallyAtRuntime()
+{
+    unsafe
+    {
+        return BorrowDynTraitObjectDispatchesPolymorphicallyAtRuntimeImpl();
+    }
+}
+
+[Fact]
+fn bool OwnedHeapDynTraitObjectAllocatesDispatchesAndDrops()
+{
+    unsafe
+    {
+        return OwnedHeapDynTraitObjectAllocatesDispatchesAndDropsImpl();
+    }
+}
+
+[Fact]
+fn bool DynamicOfFixedArrayWritesReadsAndSlicesPreserveRows()
+{
+    unsafe
+    {
+        return DynamicOfFixedArrayWritesReadsAndSlicesPreserveRowsImpl();
+    }
+}
+
+[Fact]
+fn bool InequalityEarlyReturnGuardProvesConstantIndexOnSurvivingPath()
+{
+    unsafe
+    {
+        return InequalityEarlyReturnGuardProvesConstantIndexOnSurvivingPathImpl();
+    }
+}
+
+[Fact]
+fn bool EqualityTrueBranchProvesConstantIndices()
+{
+    unsafe
+    {
+        return EqualityTrueBranchProvesConstantIndicesImpl();
+    }
+}
+
+[Fact]
+fn bool NonEmptyInequalityProvesIndexZero()
+{
+    unsafe
+    {
+        return NonEmptyInequalityProvesIndexZeroImpl();
+    }
+}
+
+[Fact]
+fn bool EqualityGuardDoesNotProveOutOfBoundsIndex()
+{
+    unsafe
+    {
+        return EqualityGuardDoesNotProveOutOfBoundsIndexImpl();
+    }
+}
+
+[Fact]
+fn bool EqualityFactDiesOnMutatingUse()
+{
+    unsafe
+    {
+        return EqualityFactDiesOnMutatingUseImpl();
+    }
+}
+
+[Fact]
+fn bool RepresentativeExampleSourcesEmitLlvmWithoutFallbackLogs()
+{
+    unsafe
+    {
+        return RepresentativeExampleSourcesEmitLlvmWithoutFallbackLogsImpl();
+    }
+}
+
+[Fact]
+fn bool HelloExampleCompilesAndRunsWithStdlibPackage()
+{
+    unsafe
+    {
+        return HelloExampleCompilesAndRunsWithStdlibPackageImpl();
+    }
+}
+
+[Fact]
+fn bool MultiModuleExampleCompilesAndRuns()
+{
+    unsafe
+    {
+        return MultiModuleExampleCompilesAndRunsImpl();
+    }
+}
+
+[Fact]
+fn bool BasicSyntaxExampleCompilesAndRuns()
+{
+    unsafe
+    {
+        return BasicSyntaxExampleCompilesAndRunsImpl();
+    }
+}
+
+[Fact]
+fn bool TypeSystemExampleCompilesAndRuns()
+{
+    unsafe
+    {
+        return TypeSystemExampleCompilesAndRunsImpl();
+    }
+}
+
+[Fact]
+fn bool ModulesExampleCompilesAndRuns()
+{
+    unsafe
+    {
+        return ModulesExampleCompilesAndRunsImpl();
+    }
+}
+
+[Fact]
+fn bool BorrowingExamplesCompileAndRun()
+{
+    unsafe
+    {
+        return BorrowingExamplesCompileAndRunImpl();
+    }
+}
+
+[Fact]
+fn bool FfiExampleCompilesAndRuns()
+{
+    unsafe
+    {
+        return FfiExampleCompilesAndRunsImpl();
+    }
+}
+
+[Fact]
+fn bool StandardLibraryExampleCompilesAndRunsWithStdlibPackage()
+{
+    unsafe
+    {
+        return StandardLibraryExampleCompilesAndRunsWithStdlibPackageImpl();
+    }
+}
+
+[Fact]
+fn bool BuildYourOwnGitExamplesInitializeWriteCommitUpdateRefListInspectAndReportStatusWithStdlibPackage()
+{
+    unsafe
+    {
+        return BuildYourOwnGitExamplesInitializeWriteCommitUpdateRefListInspectAndReportStatusWithStdlibPackageImpl();
+    }
+}
+
+[Fact]
+fn bool NeuralNetworkExampleCompilesAndRuns()
+{
+    unsafe
+    {
+        return NeuralNetworkExampleCompilesAndRunsImpl();
+    }
+}
+
+[Fact]
+fn bool SimpleDatabaseExampleCompilesAndRuns()
+{
+    unsafe
+    {
+        return SimpleDatabaseExampleCompilesAndRunsImpl();
+    }
+}
+
+[Fact]
+fn bool BitTorrentTrackerResponseExampleCompilesAndRuns()
+{
+    unsafe
+    {
+        return BitTorrentTrackerResponseExampleCompilesAndRunsImpl();
+    }
+}
+
+[Fact]
+fn bool BitTorrentHandshakeExampleCompilesAndRuns()
+{
+    unsafe
+    {
+        return BitTorrentHandshakeExampleCompilesAndRunsImpl();
+    }
+}
+
+[Fact]
+fn bool BreakoutCoreExampleCompilesAndRuns()
+{
+    unsafe
+    {
+        return BreakoutCoreExampleCompilesAndRunsImpl();
+    }
+}
+
+[Fact]
+fn bool RaylibStarkModulesCheckWithoutNativeExecution()
+{
+    unsafe
+    {
+        return RaylibStarkModulesCheckWithoutNativeExecutionImpl();
+    }
+}
+
+[Fact]
+fn bool DataModelExampleCompilesAndRuns()
+{
+    unsafe
+    {
+        return DataModelExampleCompilesAndRunsImpl();
+    }
+}
+
+[Fact]
+fn bool ArithmeticExampleCompilesAndRuns()
+{
+    unsafe
+    {
+        return ArithmeticExampleCompilesAndRunsImpl();
+    }
+}
+
+[Fact]
+fn bool ControlFlowExampleCompilesAndRuns()
+{
+    unsafe
+    {
+        return ControlFlowExampleCompilesAndRunsImpl();
+    }
+}
+
+[Fact]
+fn bool StaticLibraryExampleBuildsAndRunsFromPackage()
+{
+    unsafe
+    {
+        return StaticLibraryExampleBuildsAndRunsFromPackageImpl();
+    }
+}
+
+[Fact]
+fn bool FixedArrayOrderedComparisonsAreLexicographicAtRuntime()
+{
+    unsafe
+    {
+        return FixedArrayOrderedComparisonsAreLexicographicAtRuntimeImpl();
+    }
+}
+
+[Fact]
+fn bool IntegralAndScientificFloatConstantsBuildAndRunThroughLlvmBackend()
+{
+    unsafe
+    {
+        return IntegralAndScientificFloatConstantsBuildAndRunThroughLlvmBackendImpl();
+    }
+}
+
+[Fact]
+fn bool LawFunctionsRejectPlainFunctionPointerCalls()
+{
+    unsafe
+    {
+        return LawFunctionsRejectPlainFunctionPointerCallsImpl();
+    }
+}
+
+[Fact]
+fn bool LawFunctionsRejectPlainClosureCalls()
+{
+    unsafe
+    {
+        return LawFunctionsRejectPlainClosureCallsImpl();
+    }
+}
+
+[Fact]
+fn bool NonCapturingLawLambdaBodiesRejectNonLawCalls()
+{
+    unsafe
+    {
+        return NonCapturingLawLambdaBodiesRejectNonLawCallsImpl();
+    }
+}
+
+[Fact]
+fn bool RuntimeTextConcatenationPreservesFunctionKindObligations()
+{
+    unsafe
+    {
+        return RuntimeTextConcatenationPreservesFunctionKindObligationsImpl();
+    }
+}
+
+[Fact]
+fn bool PureCallsInheritExternallyVisibleSliceWrites()
+{
+    unsafe
+    {
+        return PureCallsInheritExternallyVisibleSliceWritesImpl();
+    }
+}
+
+[Fact]
+fn bool InstanceMemberFunctionsCannotBeCalledThroughTypeName()
+{
+    unsafe
+    {
+        return InstanceMemberFunctionsCannotBeCalledThroughTypeNameImpl();
+    }
+}
+
+[Fact]
+fn bool StaticMemberFunctionsCannotBeCalledThroughInstance()
+{
+    unsafe
+    {
+        return StaticMemberFunctionsCannotBeCalledThroughInstanceImpl();
+    }
+}
+
+[Fact]
+fn bool StaticModifierIsRejectedOutsideStructAndRecordMemberFunctions()
+{
+    unsafe
+    {
+        return StaticModifierIsRejectedOutsideStructAndRecordMemberFunctionsImpl();
+    }
+}
+
+[Fact]
+fn bool LawBodiesRejectMutableExternalStateObservationAllocationAndVisibleWrites()
+{
+    unsafe
+    {
+        return LawBodiesRejectMutableExternalStateObservationAllocationAndVisibleWritesImpl();
+    }
+}
+
+[Fact]
+fn bool LawBodiesRejectExternallyVisibleImplicitDropEffects()
+{
+    unsafe
+    {
+        return LawBodiesRejectExternallyVisibleImplicitDropEffectsImpl();
+    }
+}
+
+[Fact]
+fn bool LawBodiesRejectExternallyVisibleImplicitDropEffectsThroughDestructorCalls()
+{
+    unsafe
+    {
+        return LawBodiesRejectExternallyVisibleImplicitDropEffectsThroughDestructorCallsImpl();
+    }
+}
+
+[Fact]
+fn bool MemberFunctionVisibilityCannotExceedEnclosingTypeVisibility()
+{
+    unsafe
+    {
+        return MemberFunctionVisibilityCannotExceedEnclosingTypeVisibilityImpl();
+    }
+}
+
+[Fact]
+fn bool ExportMemberFunctionsRequireExportEnclosingTypes()
+{
+    unsafe
+    {
+        return ExportMemberFunctionsRequireExportEnclosingTypesImpl();
+    }
+}
+
+[Fact]
+fn bool SemanticValidationSummariesCaptureParameterGuaranteesAndReturnCaptures()
+{
+    unsafe
+    {
+        return SemanticValidationSummariesCaptureParameterGuaranteesAndReturnCapturesImpl();
+    }
+}
+
+[Fact]
+fn bool SemanticValidationSummariesDeriveConcreteLayoutFactsForPaddedAggregates()
+{
+    unsafe
+    {
+        return SemanticValidationSummariesDeriveConcreteLayoutFactsForPaddedAggregatesImpl();
+    }
+}
+
+[Fact]
+fn bool DefaultNonOverlapParameterContractsFlowIntoSemanticNoAliasFacts()
+{
+    unsafe
+    {
+        return DefaultNonOverlapParameterContractsFlowIntoSemanticNoAliasFactsImpl();
+    }
+}
+
+[Fact]
+fn bool DefaultNonOverlapAndOverlapContractsFlowIntoSemanticNoAliasFacts()
+{
+    unsafe
+    {
+        return DefaultNonOverlapAndOverlapContractsFlowIntoSemanticNoAliasFactsImpl();
+    }
+}
+
+[Fact]
+fn bool ConstParameterQualifierFlowsIntoSemanticReadonlyFacts()
+{
+    unsafe
+    {
+        return ConstParameterQualifierFlowsIntoSemanticReadonlyFactsImpl();
+    }
+}
+
+[Fact]
+fn bool TransitiveCallEffectsFlowIntoSemanticSummaries()
+{
+    unsafe
+    {
+        return TransitiveCallEffectsFlowIntoSemanticSummariesImpl();
+    }
+}
+
+[Fact]
+fn bool SemanticValidationSummariesDistinguishArgumentAndOtherMemory()
+{
+    unsafe
+    {
+        return SemanticValidationSummariesDistinguishArgumentAndOtherMemoryImpl();
+    }
+}
+
+[Fact]
+fn bool SystemMemoryAllocatorDeclarationSummariesIncludeAllocatorState()
+{
+    unsafe
+    {
+        return SystemMemoryAllocatorDeclarationSummariesIncludeAllocatorStateImpl();
+    }
+}
+
+[Fact]
+fn bool DynamicStorageOperationsOnBorrowedParametersWriteArgumentMemory()
+{
+    unsafe
+    {
+        return DynamicStorageOperationsOnBorrowedParametersWriteArgumentMemoryImpl();
+    }
+}
+
+[Fact]
+fn bool MemberFunctionVisibilityInheritsNarrowsAndAvoidsAccidentalExport()
+{
+    unsafe
+    {
+        return MemberFunctionVisibilityInheritsNarrowsAndAvoidsAccidentalExportImpl();
+    }
+}
+
+[Fact]
+fn bool PlainFnsReportEffectiveKindsWhenTheyCanBeStrengthened()
+{
+    unsafe
+    {
+        return PlainFnsReportEffectiveKindsWhenTheyCanBeStrengthenedImpl();
+    }
+}
+
+[Fact]
+fn bool PlainFnsWithWillexitLoopsCanStillStrengthenToFiniteKinds()
+{
+    unsafe
+    {
+        return PlainFnsWithWillexitLoopsCanStillStrengthenToFiniteKindsImpl();
+    }
+}
+
+[Fact]
+fn bool FunctionKindObligationsAllowMatchingFunctionPointerCalls()
+{
+    unsafe
+    {
+        return FunctionKindObligationsAllowMatchingFunctionPointerCallsImpl();
+    }
+}
+
+[Fact]
+fn bool FunctionKindObligationsAllowMatchingClosureCalls()
+{
+    unsafe
+    {
+        return FunctionKindObligationsAllowMatchingClosureCallsImpl();
+    }
+}
+
+[Fact]
+fn bool NonCapturingLawLambdasGetSeparateSemanticSummaries()
+{
+    unsafe
+    {
+        return NonCapturingLawLambdasGetSeparateSemanticSummariesImpl();
+    }
+}
+
+[Fact]
+fn bool LawsCanCallPlainFnsThatInferAsLaws()
+{
+    unsafe
+    {
+        return LawsCanCallPlainFnsThatInferAsLawsImpl();
+    }
+}
+
+[Fact]
+fn bool FiniteFunctionsCanCallPlainFnsThatInferAsFinite()
+{
+    unsafe
+    {
+        return FiniteFunctionsCanCallPlainFnsThatInferAsFiniteImpl();
+    }
+}
+
+[Fact]
+fn bool StaticMemberFunctionsTypeCheckAndPreserveFunctionKinds()
+{
+    unsafe
+    {
+        return StaticMemberFunctionsTypeCheckAndPreserveFunctionKindsImpl();
+    }
+}
+
+[Fact]
+fn bool LawBodiesAllowImplicitDropThatOnlyMutatesDroppedValue()
+{
+    unsafe
+    {
+        return LawBodiesAllowImplicitDropThatOnlyMutatesDroppedValueImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedNestedGenericTypePlanningDiscoversNestedLayoutsFromImportedUseSites()
+{
+    unsafe
+    {
+        return ManifestBackedNestedGenericTypePlanningDiscoversNestedLayoutsFromImportedUseSitesImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedGenericMethodsAndNestedGenericTypesLowerThroughImportedTemplateBodies()
+{
+    unsafe
+    {
+        return ManifestBackedGenericMethodsAndNestedGenericTypesLowerThroughImportedTemplateBodiesImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedGenericMethodsLoadDirectlyFromStructuredPackageImageFactsEvenWhenBodyTextIsCorrupted()
+{
+    unsafe
+    {
+        return ManifestBackedGenericMethodsLoadDirectlyFromStructuredPackageImageFactsEvenWhenBodyTextIsCorruptedImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedLoopControlGenericMethodsLoadDirectlyFromStructuredPackageImageFactsEvenWhenBodyTextIsCorrupted()
+{
+    unsafe
+    {
+        return ManifestBackedLoopControlGenericMethodsLoadDirectlyFromStructuredPackageImageFactsEvenWhenBodyTextIsCorruptedImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedBridgeGenericBodiesLoadWithoutSourceSurfaceFunctionEntriesWhenTypedInterfaceCarriesOverloadKeys()
+{
+    unsafe
+    {
+        return ManifestBackedBridgeGenericBodiesLoadWithoutSourceSurfaceFunctionEntriesWhenTypedInterfaceCarriesOverloadKeysImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedRecursiveGenericPlanningFallsBackToPublishedCallSummariesWithoutDeferredFunctionTriggers()
+{
+    unsafe
+    {
+        return ManifestBackedRecursiveGenericPlanningFallsBackToPublishedCallSummariesWithoutDeferredFunctionTriggersImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedGenericTypePlanningFallsBackToPublishedTemplateFactsWithoutDeferredTypeTriggers()
+{
+    unsafe
+    {
+        return ManifestBackedGenericTypePlanningFallsBackToPublishedTemplateFactsWithoutDeferredTypeTriggersImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedTypedInterfaceModifiersWithoutCompilerFactsStillSpecializeAndRun()
+{
+    unsafe
+    {
+        return ManifestBackedTypedInterfaceModifiersWithoutCompilerFactsStillSpecializeAndRunImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedGenericMethodsAndNestedGenericTypesMaterializeFromPublishedTemplateBodies()
+{
+    unsafe
+    {
+        return ManifestBackedGenericMethodsAndNestedGenericTypesMaterializeFromPublishedTemplateBodiesImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedRecursiveGenericPlanningFallsBackToPublishedCallSummariesWhenDeferredFunctionTriggersAreMissing()
+{
+    unsafe
+    {
+        return ManifestBackedRecursiveGenericPlanningFallsBackToPublishedCallSummariesWhenDeferredFunctionTriggersAreMissingImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedGenericTypePlanningFallsBackToPublishedTemplateFactsWhenDeferredTypeTriggersAreMissing()
+{
+    unsafe
+    {
+        return ManifestBackedGenericTypePlanningFallsBackToPublishedTemplateFactsWhenDeferredTypeTriggersAreMissingImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedDictionaryKeyConstraintRejectsUnprovenKeyTypes()
+{
+    unsafe
+    {
+        return ManifestBackedDictionaryKeyConstraintRejectsUnprovenKeyTypesImpl();
+    }
+}
+
+[Fact]
+fn bool IfPatternBindsOnMatchAndTakesElseOnMismatch()
+{
+    unsafe
+    {
+        return IfPatternBindsOnMatchAndTakesElseOnMismatchImpl();
+    }
+}
+
+[Fact]
+fn bool WhilePatternDrainsUntilNoMatch()
+{
+    unsafe
+    {
+        return WhilePatternDrainsUntilNoMatchImpl();
+    }
+}
+
+[Fact]
+fn bool IfPatternSupportsResultNestedStructAndLiteralPatterns()
+{
+    unsafe
+    {
+        return IfPatternSupportsResultNestedStructAndLiteralPatternsImpl();
+    }
+}
+
+[Fact]
+fn bool IfAndWhilePatternsDropOwnedCapturesExactlyOnce()
+{
+    unsafe
+    {
+        return IfAndWhilePatternsDropOwnedCapturesExactlyOnceImpl();
+    }
+}
+
+[Fact]
+fn bool BareNameAmbiguousAcrossImportsReportsLocatedDiagnosticInsteadOfCrashing()
+{
+    unsafe
+    {
+        return BareNameAmbiguousAcrossImportsReportsLocatedDiagnosticInsteadOfCrashingImpl();
+    }
+}
+
+[Fact]
+fn bool QualifyingTheAmbiguousNameCompilesCleanly()
+{
+    unsafe
+    {
+        return QualifyingTheAmbiguousNameCompilesCleanlyImpl();
+    }
+}
+
+[Fact]
+fn bool LocalShadowingAnAmbiguousNameIsNotFlagged()
+{
+    unsafe
+    {
+        return LocalShadowingAnAmbiguousNameIsNotFlaggedImpl();
+    }
+}
+
+[Fact]
+fn bool GuardThenReadProvesDirectAndProjectedReadsInFreeFunctions()
+{
+    unsafe
+    {
+        return GuardThenReadProvesDirectAndProjectedReadsInFreeFunctionsImpl();
+    }
+}
+
+[Fact]
+fn bool UnguardedFieldProjectionsThroughDynamicSlotsAreNowChecked()
+{
+    unsafe
+    {
+        return UnguardedFieldProjectionsThroughDynamicSlotsAreNowCheckedImpl();
+    }
+}
+
+[Fact]
+fn bool WritingToTheIndexInvalidatesTheFact()
+{
+    unsafe
+    {
+        return WritingToTheIndexInvalidatesTheFactImpl();
+    }
+}
+
+[Fact]
+fn bool NonStrictComparisonsAndNonTerminatingGuardsProveNothing()
+{
+    unsafe
+    {
+        return NonStrictComparisonsAndNonTerminatingGuardsProveNothingImpl();
+    }
+}
+
+[Fact]
+fn bool MutBorrowingTheStorageOwnerInvalidatesTheFact()
+{
+    unsafe
+    {
+        return MutBorrowingTheStorageOwnerInvalidatesTheFactImpl();
+    }
+}
+
+[Fact]
+fn bool IntegerExponentiationRunsAtRuntime()
+{
+    unsafe
+    {
+        return IntegerExponentiationRunsAtRuntimeImpl();
+    }
+}
+
+[Fact]
+fn bool NonFittingLiteralStillRequiresExplicitCast()
+{
+    unsafe
+    {
+        return NonFittingLiteralStillRequiresExplicitCastImpl();
+    }
+}
+
+[Fact]
+fn bool NegativeLiteralIntoUnsignedOperandStillRequiresExplicitCast()
+{
+    unsafe
+    {
+        return NegativeLiteralIntoUnsignedOperandStillRequiresExplicitCastImpl();
+    }
+}
+
+[Fact]
+fn bool AdditiveLiteralAdoptsRangedUnsignedOperandType()
+{
+    unsafe
+    {
+        return AdditiveLiteralAdoptsRangedUnsignedOperandTypeImpl();
+    }
+}
+
+[Fact]
+fn bool MultiplicativeLiteralAdoptsRangedUnsignedOperandType()
+{
+    unsafe
+    {
+        return MultiplicativeLiteralAdoptsRangedUnsignedOperandTypeImpl();
+    }
+}
+
+[Fact]
+fn bool BitwiseLiteralAdoptsRangedUnsignedOperandType()
+{
+    unsafe
+    {
+        return BitwiseLiteralAdoptsRangedUnsignedOperandTypeImpl();
+    }
+}
+
+[Fact]
+fn bool LiteralAdoptsSignedRangedOperandType()
+{
+    unsafe
+    {
+        return LiteralAdoptsSignedRangedOperandTypeImpl();
+    }
+}
+
+[Fact]
+fn bool LiteralAdoptionStripsQualifiersFromTheAnchorOperand()
+{
+    unsafe
+    {
+        return LiteralAdoptionStripsQualifiersFromTheAnchorOperandImpl();
+    }
+}
+
+[Fact]
+fn bool LargeEnumPayloadMovesPreserveSingleOwnerDropSemantics()
+{
+    unsafe
+    {
+        return LargeEnumPayloadMovesPreserveSingleOwnerDropSemanticsImpl();
+    }
+}
+
+[Fact]
+fn bool MutableGlobalReloadsAfterDestructorBackedCall()
+{
+    unsafe
+    {
+        return MutableGlobalReloadsAfterDestructorBackedCallImpl();
+    }
+}
+
+[Fact]
+fn bool MissingBoundCallOperationFactsFailBeforeMir()
+{
+    unsafe
+    {
+        return MissingBoundCallOperationFactsFailBeforeMirImpl();
+    }
+}
+
+[Fact]
+fn bool MissingBoundIndexOperationFactsFailBeforeMir()
+{
+    unsafe
+    {
+        return MissingBoundIndexOperationFactsFailBeforeMirImpl();
+    }
+}
+
+[Fact]
+fn bool MissingBoundObjectCreationOperationFactsFailBeforeMir()
+{
+    unsafe
+    {
+        return MissingBoundObjectCreationOperationFactsFailBeforeMirImpl();
+    }
+}
+
+[Fact]
+fn bool MissingBoundDynamicStorageOperationFactsFailBeforeMir()
+{
+    unsafe
+    {
+        return MissingBoundDynamicStorageOperationFactsFailBeforeMirImpl();
+    }
+}
+
+[Fact]
+fn bool MissingBoundTextOperationFactsFailBeforeMir()
+{
+    unsafe
+    {
+        return MissingBoundTextOperationFactsFailBeforeMirImpl();
+    }
+}
+
+[Fact]
+fn bool MissingBoundSwitchOperationFactsFailBeforeMir()
+{
+    unsafe
+    {
+        return MissingBoundSwitchOperationFactsFailBeforeMirImpl();
+    }
+}
+
+[Fact]
+fn bool MissingTypedCallFactsFailBeforeMir()
+{
+    unsafe
+    {
+        return MissingTypedCallFactsFailBeforeMirImpl();
+    }
+}
+
+[Fact]
+fn bool MissingTypedIndexFactsFailBeforeMir()
+{
+    unsafe
+    {
+        return MissingTypedIndexFactsFailBeforeMirImpl();
+    }
+}
+
+[Fact]
+fn bool MissingDynamicStorageOperationFactsFailBeforeMir()
+{
+    unsafe
+    {
+        return MissingDynamicStorageOperationFactsFailBeforeMirImpl();
+    }
+}
+
+[Fact]
+fn bool MissingSwitchFactsFailBeforeMir()
+{
+    unsafe
+    {
+        return MissingSwitchFactsFailBeforeMirImpl();
+    }
+}
+
+[Fact]
+fn bool MissingEnumPatternFactsFailBeforeMir()
+{
+    unsafe
+    {
+        return MissingEnumPatternFactsFailBeforeMirImpl();
+    }
+}
+
+[Fact]
+fn bool CorruptedDirectCallArityFactsFailBeforeMir()
+{
+    unsafe
+    {
+        return CorruptedDirectCallArityFactsFailBeforeMirImpl();
+    }
+}
+
+[Fact]
+fn bool CorruptedDirectCallArgumentAddressFactsFailBeforeMir()
+{
+    unsafe
+    {
+        return CorruptedDirectCallArgumentAddressFactsFailBeforeMirImpl();
+    }
+}
+
+[Fact]
+fn bool CorruptedMemberCallExplicitArgumentAddressFactsFailBeforeMir()
+{
+    unsafe
+    {
+        return CorruptedMemberCallExplicitArgumentAddressFactsFailBeforeMirImpl();
+    }
+}
+
+[Fact]
+fn bool CorruptedIndirectCallArgumentAddressFactsFailBeforeMir()
+{
+    unsafe
+    {
+        return CorruptedIndirectCallArgumentAddressFactsFailBeforeMirImpl();
+    }
+}
+
+[Fact]
+fn bool CorruptedIndexArityFactsFailBeforeMir()
+{
+    unsafe
+    {
+        return CorruptedIndexArityFactsFailBeforeMirImpl();
+    }
+}
+
+[Fact]
+fn bool CorruptedDynamicStorageOperationNameFactsFailBeforeMir()
+{
+    unsafe
+    {
+        return CorruptedDynamicStorageOperationNameFactsFailBeforeMirImpl();
+    }
+}
+
+[Fact]
+fn bool CorruptedDynamicStorageReceiverAddressFactsFailBeforeMir()
+{
+    unsafe
+    {
+        return CorruptedDynamicStorageReceiverAddressFactsFailBeforeMirImpl();
+    }
+}
+
+[Fact]
+fn bool CorruptedLayoutQueryTargetFactsFailBeforeMir()
+{
+    unsafe
+    {
+        return CorruptedLayoutQueryTargetFactsFailBeforeMirImpl();
+    }
+}
+
+[Fact]
+fn bool CorruptedSwitchFamilyFactsFailBeforeMir()
+{
+    unsafe
+    {
+        return CorruptedSwitchFamilyFactsFailBeforeMirImpl();
+    }
+}
+
+[Fact]
+fn bool ValidateLoweringContractRunsBeforeHirAndAcceptsTypedOperationFacts()
+{
+    unsafe
+    {
+        return ValidateLoweringContractRunsBeforeHirAndAcceptsTypedOperationFactsImpl();
+    }
+}
+
+[Fact]
+fn bool FreeFunctionCalledWithMethodSyntaxSuggestsTheFreeCallForm()
+{
+    unsafe
+    {
+        return FreeFunctionCalledWithMethodSyntaxSuggestsTheFreeCallFormImpl();
+    }
+}
+
+[Fact]
+fn bool GenuinelyMissingMemberHasNoFreeFunctionHint()
+{
+    unsafe
+    {
+        return GenuinelyMissingMemberHasNoFreeFunctionHintImpl();
+    }
+}
+
+[Fact]
+fn bool DynamicIndexingOnFixedArrayTemporaryCompilesAndRuns()
+{
+    unsafe
+    {
+        return DynamicIndexingOnFixedArrayTemporaryCompilesAndRunsImpl();
+    }
+}
+
+[Fact]
+fn bool NonAsciiTextLiteralsPreferAsciiOverloadsAtRuntime()
+{
+    unsafe
+    {
+        return NonAsciiTextLiteralsPreferAsciiOverloadsAtRuntimeImpl();
+    }
+}
+
+[Fact]
+fn bool CompileTimeTextConcatenationMatchesSingleLiteralAtRuntime()
+{
+    unsafe
+    {
+        return CompileTimeTextConcatenationMatchesSingleLiteralAtRuntimeImpl();
+    }
+}
+
+[Fact]
+fn bool FixedCapacityTextConcatenationCopiesIntoStackStorageAtRuntime()
+{
+    unsafe
+    {
+        return FixedCapacityTextConcatenationCopiesIntoStackStorageAtRuntimeImpl();
+    }
+}
+
+[Fact]
+fn bool TextConcatenationRejectsNegativeDestinationCapacityAtRuntime()
+{
+    unsafe
+    {
+        return TextConcatenationRejectsNegativeDestinationCapacityAtRuntimeImpl();
+    }
+}
+
+[Fact]
+fn bool FixedCapacityInterpolatedTextFormatsIntoStackStorageAtRuntime()
+{
+    unsafe
+    {
+        return FixedCapacityInterpolatedTextFormatsIntoStackStorageAtRuntimeImpl();
+    }
+}
+
+[Fact]
+fn bool FixedCapacityUnicodeInterpolatedTextFormatsIntoStackStorageAtRuntime()
+{
+    unsafe
+    {
+        return FixedCapacityUnicodeInterpolatedTextFormatsIntoStackStorageAtRuntimeImpl();
+    }
+}
+
+[Fact]
+fn bool CompileTimeInterpolatedTextMatchesSingleLiteralAtRuntime()
+{
+    unsafe
+    {
+        return CompileTimeInterpolatedTextMatchesSingleLiteralAtRuntimeImpl();
+    }
+}
+
+[Fact]
+fn bool StrictFpFunctionsCompileAndRunAtRuntime()
+{
+    unsafe
+    {
+        return StrictFpFunctionsCompileAndRunAtRuntimeImpl();
+    }
+}
+
+[Fact]
+fn bool FloatingPointArithmeticChainsCompileAndRunAtRuntime()
+{
+    unsafe
+    {
+        return FloatingPointArithmeticChainsCompileAndRunAtRuntimeImpl();
+    }
+}
+
+[Fact]
+fn bool HeapStorageUsesAllocatorLoweringAtRuntime()
+{
+    unsafe
+    {
+        return HeapStorageUsesAllocatorLoweringAtRuntimeImpl();
+    }
+}
+
+[Fact]
+fn bool SystemMemoryReallocatePreservesAllocatorProvenanceAtRuntime()
+{
+    unsafe
+    {
+        return SystemMemoryReallocatePreservesAllocatorProvenanceAtRuntimeImpl();
+    }
+}
+
+[Fact]
+fn bool FixedArrayParameterDynamicIndexReadsAtRuntime()
+{
+    unsafe
+    {
+        return FixedArrayParameterDynamicIndexReadsAtRuntimeImpl();
+    }
+}
+
+[Fact]
+fn bool PartialFixedArrayInitializersInsideObjectInitializersZeroFillTrailingElementsAtRuntime()
+{
+    unsafe
+    {
+        return PartialFixedArrayInitializersInsideObjectInitializersZeroFillTrailingElementsAtRuntimeImpl();
+    }
+}
+
+[Fact]
+fn bool SingleElementAsciiTextIndexReadsAtRuntime()
+{
+    unsafe
+    {
+        return SingleElementAsciiTextIndexReadsAtRuntimeImpl();
+    }
+}
+
+[Fact]
+fn bool EmptyTextSlicesPreserveFullViewAtRuntime()
+{
+    unsafe
+    {
+        return EmptyTextSlicesPreserveFullViewAtRuntimeImpl();
+    }
+}
+
+[Fact]
+fn bool RecordEqualityAndInequalityCompareScalarFieldsAtRuntime()
+{
+    unsafe
+    {
+        return RecordEqualityAndInequalityCompareScalarFieldsAtRuntimeImpl();
+    }
+}
+
+[Fact]
+fn bool RecordOrderedComparisonsAreLexicographicAtRuntime()
+{
+    unsafe
+    {
+        return RecordOrderedComparisonsAreLexicographicAtRuntimeImpl();
+    }
+}
+
+[Fact]
+fn bool FixedArrayEqualityAndInequalityCompareScalarElementsAtRuntime()
+{
+    unsafe
+    {
+        return FixedArrayEqualityAndInequalityCompareScalarElementsAtRuntimeImpl();
+    }
+}
+
+[Fact]
+fn bool VoidConditionalMemberCallStatementsExecuteAtRuntime()
+{
+    unsafe
+    {
+        return VoidConditionalMemberCallStatementsExecuteAtRuntimeImpl();
+    }
+}
+
+[Fact]
+fn bool EnumEqualityAndInequalityCompareTagAndPayloadAtRuntime()
+{
+    unsafe
+    {
+        return EnumEqualityAndInequalityCompareTagAndPayloadAtRuntimeImpl();
+    }
+}
+
+[Fact]
+fn bool EnumOrderedComparisonsAreLexicographicAtRuntime()
+{
+    unsafe
+    {
+        return EnumOrderedComparisonsAreLexicographicAtRuntimeImpl();
+    }
+}
+
+[Fact]
+fn bool LargerScalarizableAggregatesCompareAtRuntime()
+{
+    unsafe
+    {
+        return LargerScalarizableAggregatesCompareAtRuntimeImpl();
+    }
+}
+
+[Fact]
+fn bool TextAndAggregateTextEqualityCompareContentsAtRuntime()
+{
+    unsafe
+    {
+        return TextAndAggregateTextEqualityCompareContentsAtRuntimeImpl();
+    }
+}
+
+[Fact]
+fn bool SliceAndAggregateSliceEqualityCompareViewIdentityAtRuntime()
+{
+    unsafe
+    {
+        return SliceAndAggregateSliceEqualityCompareViewIdentityAtRuntimeImpl();
+    }
+}
+
+[Fact]
+fn bool ReassigningEnumDropsOnlyThePreviousActivePayloadAtRuntime()
+{
+    unsafe
+    {
+        return ReassigningEnumDropsOnlyThePreviousActivePayloadAtRuntimeImpl();
+    }
+}
+
+[Fact]
+fn bool NestedAggregateDropsCascadeThroughStructFieldsAndEnumPayloadsAtRuntime()
+{
+    unsafe
+    {
+        return NestedAggregateDropsCascadeThroughStructFieldsAndEnumPayloadsAtRuntimeImpl();
+    }
+}
+
+[Fact]
+fn bool SwitchPatternCaptureDropsMovedEnumPayloadAtRuntime()
+{
+    unsafe
+    {
+        return SwitchPatternCaptureDropsMovedEnumPayloadAtRuntimeImpl();
+    }
+}
+
+[Fact]
+fn bool MutableBorrowReceiverCallsObserveSharedStateAtRuntime()
+{
+    unsafe
+    {
+        return MutableBorrowReceiverCallsObserveSharedStateAtRuntimeImpl();
+    }
+}
+
+[Fact]
+fn bool NestedMutableBorrowReceiverCallsMutateStoredFieldAtRuntime()
+{
+    unsafe
+    {
+        return NestedMutableBorrowReceiverCallsMutateStoredFieldAtRuntimeImpl();
+    }
+}
+
+[Fact]
+fn bool StoreBorrowFieldsMutateOriginalOwnerAtRuntime()
+{
+    unsafe
+    {
+        return StoreBorrowFieldsMutateOriginalOwnerAtRuntimeImpl();
+    }
+}
+
+[Fact]
+fn bool OutArgumentsWriteBackToCallerLocalsAtRuntime()
+{
+    unsafe
+    {
+        return OutArgumentsWriteBackToCallerLocalsAtRuntimeImpl();
+    }
+}
+
+[Fact]
+fn bool SwitchExpressionCallOnEnumIsEvaluatedOnceAtRuntime()
+{
+    unsafe
+    {
+        return SwitchExpressionCallOnEnumIsEvaluatedOnceAtRuntimeImpl();
+    }
+}
+
+[Fact]
+fn bool AggregateAndEnumSwitchPatternsMatchTextLeavesAtRuntime()
+{
+    unsafe
+    {
+        return AggregateAndEnumSwitchPatternsMatchTextLeavesAtRuntimeImpl();
+    }
+}
+
+[Fact]
+fn bool RawPointerIndexedFieldAddressesObserveSharedStateAtRuntime()
+{
+    unsafe
+    {
+        return RawPointerIndexedFieldAddressesObserveSharedStateAtRuntimeImpl();
+    }
+}
+
+[Fact]
+fn bool RawPointerIndexedElementsObserveSharedStateAtRuntime()
+{
+    unsafe
+    {
+        return RawPointerIndexedElementsObserveSharedStateAtRuntimeImpl();
+    }
+}
+
+[Fact]
+fn bool BorrowReceiverIndexedFieldAddressesObserveSharedStateAtRuntime()
+{
+    unsafe
+    {
+        return BorrowReceiverIndexedFieldAddressesObserveSharedStateAtRuntimeImpl();
+    }
+}
+
+[Fact]
+fn bool LargeAggregateByValueCallsAndReturnsWorkAtRuntime()
+{
+    unsafe
+    {
+        return LargeAggregateByValueCallsAndReturnsWorkAtRuntimeImpl();
+    }
+}
+
+[Fact]
+fn bool LabeledBreakAndContinueTargetOuterLoopsAtRuntime()
+{
+    unsafe
+    {
+        return LabeledBreakAndContinueTargetOuterLoopsAtRuntimeImpl();
+    }
+}
+
+[Fact]
+fn bool SiblingCallingModulePrivateFunctionIsRejected()
+{
+    unsafe
+    {
+        return SiblingCallingModulePrivateFunctionIsRejectedImpl();
+    }
+}
+
+[Fact]
+fn bool SiblingCallingPublicFunctionSucceeds()
+{
+    unsafe
+    {
+        return SiblingCallingPublicFunctionSucceedsImpl();
+    }
+}
+
+[Fact]
+fn bool SiblingCallingInternalFunctionInSamePackageSucceeds()
+{
+    unsafe
+    {
+        return SiblingCallingInternalFunctionInSamePackageSucceedsImpl();
+    }
+}
+
+[Fact]
+fn bool SameModulePrivateAccessStillCompiles()
+{
+    unsafe
+    {
+        return SameModulePrivateAccessStillCompilesImpl();
+    }
+}
+
+[Fact]
+fn bool SiblingReadingModulePrivateGlobalIsRejected()
+{
+    unsafe
+    {
+        return SiblingReadingModulePrivateGlobalIsRejectedImpl();
+    }
+}
+
+[Fact]
+fn bool SiblingReadingPublicGlobalSucceeds()
+{
+    unsafe
+    {
+        return SiblingReadingPublicGlobalSucceedsImpl();
+    }
+}
+
+[Fact]
+fn bool SiblingNamingModulePrivateTypeInAnnotationIsRejected()
+{
+    unsafe
+    {
+        return SiblingNamingModulePrivateTypeInAnnotationIsRejectedImpl();
+    }
+}
+
+[Fact]
+fn bool SiblingNamingPublicTypeInAnnotationSucceeds()
+{
+    unsafe
+    {
+        return SiblingNamingPublicTypeInAnnotationSucceedsImpl();
+    }
+}
+
+[Fact]
+fn bool SiblingModulesResolveThroughTheSourceSearchPath()
+{
+    unsafe
+    {
+        return SiblingModulesResolveThroughTheSourceSearchPathImpl();
+    }
+}
+
+[Fact]
+fn bool ExportedReExportsMakeTransitiveModulesAvailableToConsumingApps()
+{
+    unsafe
+    {
+        return ExportedReExportsMakeTransitiveModulesAvailableToConsumingAppsImpl();
+    }
+}
+
+[Fact]
+fn bool ModuleQualifiedEnumCasesResolveThroughImportedEnumTypes()
+{
+    unsafe
+    {
+        return ModuleQualifiedEnumCasesResolveThroughImportedEnumTypesImpl();
+    }
+}
+
+[Fact]
+fn bool ModulePrivateDeclarationsStayHiddenAcrossModuleBoundaries()
+{
+    unsafe
+    {
+        return ModulePrivateDeclarationsStayHiddenAcrossModuleBoundariesImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedLibrariesCanBeConsumedWithoutSourceFiles()
+{
+    unsafe
+    {
+        return ManifestBackedLibrariesCanBeConsumedWithoutSourceFilesImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedPublicGlobalsLinkAcrossPackageBoundaries()
+{
+    unsafe
+    {
+        return ManifestBackedPublicGlobalsLinkAcrossPackageBoundariesImpl();
+    }
+}
+
+[Fact]
+fn bool SystemTextSourceModuleSupportsRuntimeAsciiUnicodeConversionHelpers()
+{
+    unsafe
+    {
+        return SystemTextSourceModuleSupportsRuntimeAsciiUnicodeConversionHelpersImpl();
+    }
+}
+
+[Fact]
+fn bool SystemTextSourceModuleSupportsRuntimeUtf16ConversionHelpers()
+{
+    unsafe
+    {
+        return SystemTextSourceModuleSupportsRuntimeUtf16ConversionHelpersImpl();
+    }
+}
+
+[Fact]
+fn bool EarlyReturnMoveInThenBranchDoesNotPoisonTheFallThroughJoin()
+{
+    unsafe
+    {
+        return EarlyReturnMoveInThenBranchDoesNotPoisonTheFallThroughJoinImpl();
+    }
+}
+
+[Fact]
+fn bool EarlyReturnMoveThenFieldReassignmentAndAggregateReturnValidates()
+{
+    unsafe
+    {
+        return EarlyReturnMoveThenFieldReassignmentAndAggregateReturnValidatesImpl();
+    }
+}
+
+[Fact]
+fn bool SwitchArmEarlyReturnMoveDoesNotPoisonTheFallThroughJoin()
+{
+    unsafe
+    {
+        return SwitchArmEarlyReturnMoveDoesNotPoisonTheFallThroughJoinImpl();
+    }
+}
+
+[Fact]
+fn bool ConditionalMoveWithoutReturnStillErrorsOnLaterUse()
+{
+    unsafe
+    {
+        return ConditionalMoveWithoutReturnStillErrorsOnLaterUseImpl();
+    }
+}
+
+[Fact]
+fn bool MoveBeforeBreakStaysVisibleAfterTheLoop()
+{
+    unsafe
+    {
+        return MoveBeforeBreakStaysVisibleAfterTheLoopImpl();
+    }
+}
+
+[Fact]
+fn bool ElseBranchMoveSurvivesWhenThenBranchReturns()
+{
+    unsafe
+    {
+        return ElseBranchMoveSurvivesWhenThenBranchReturnsImpl();
+    }
+}
+
+[Fact]
+fn bool SwitchFallThroughArmMoveStillErrors()
+{
+    unsafe
+    {
+        return SwitchFallThroughArmMoveStillErrorsImpl();
+    }
+}
+
+[Fact]
+fn bool DynamicLengthReadOnDefinitelyMovedRootErrors()
+{
+    unsafe
+    {
+        return DynamicLengthReadOnDefinitelyMovedRootErrorsImpl();
+    }
+}
+
+[Fact]
+fn bool DynamicCapacityReadOnDefinitelyMovedRootErrors()
+{
+    unsafe
+    {
+        return DynamicCapacityReadOnDefinitelyMovedRootErrorsImpl();
+    }
+}
+
+[Fact]
+fn bool DynamicLengthReadOnMaybeMovedRootErrors()
+{
+    unsafe
+    {
+        return DynamicLengthReadOnMaybeMovedRootErrorsImpl();
+    }
+}
+
+[Fact]
+fn bool DynamicMemberCallOnMovedReceiverErrors()
+{
+    unsafe
+    {
+        return DynamicMemberCallOnMovedReceiverErrorsImpl();
+    }
+}
+
+[Fact]
+fn bool ScalarFieldReadOnMovedRootErrors()
+{
+    unsafe
+    {
+        return ScalarFieldReadOnMovedRootErrorsImpl();
+    }
+}
+
+[Fact]
+fn bool ConstructorReadsAssignedDynamicFieldHeaderLegally()
+{
+    unsafe
+    {
+        return ConstructorReadsAssignedDynamicFieldHeaderLegallyImpl();
+    }
+}
+
+[Fact]
+fn bool OwnershipSummaryExposesTypedRootEventsForOptimization()
+{
+    unsafe
+    {
+        return OwnershipSummaryExposesTypedRootEventsForOptimizationImpl();
+    }
+}
+
+[Fact]
+fn bool OwnershipSummaryExposesPartialFieldMovesForOptimization()
+{
+    unsafe
+    {
+        return OwnershipSummaryExposesPartialFieldMovesForOptimizationImpl();
+    }
+}
+
+[Fact]
+fn bool RuntimeTextConcatenationConsumesOwnedTextResult()
+{
+    unsafe
+    {
+        return RuntimeTextConcatenationConsumesOwnedTextResultImpl();
+    }
+}
+
+[Fact]
+fn bool PackageImagePreservesAssociatedTypesAcrossTypedInterfaceSourceBridgeAndFacts()
+{
+    unsafe
+    {
+        return PackageImagePreservesAssociatedTypesAcrossTypedInterfaceSourceBridgeAndFactsImpl();
+    }
+}
+
+[Fact]
+fn bool PackageImagePreservesMethodStructuralFactsAcrossTypedInterfaceSourceBridgeAndFacts()
+{
+    unsafe
+    {
+        return PackageImagePreservesMethodStructuralFactsAcrossTypedInterfaceSourceBridgeAndFactsImpl();
+    }
+}
+
+[Fact]
+fn bool PackageImagePreservesVisibilityStructuralFactsAcrossTypedInterfaceSourceBridgeAndFacts()
+{
+    unsafe
+    {
+        return PackageImagePreservesVisibilityStructuralFactsAcrossTypedInterfaceSourceBridgeAndFactsImpl();
+    }
+}
+
+[Fact]
+fn bool PackageImagePreservesEnumErrorFunnelsAcrossTypedInterfaceSourceBridgeAndFacts()
+{
+    unsafe
+    {
+        return PackageImagePreservesEnumErrorFunnelsAcrossTypedInterfaceSourceBridgeAndFactsImpl();
+    }
+}
+
+[Fact]
+fn bool PackageImagePreservesFieldAndPayloadTypePredicatesAcrossTypedInterfaceSourceBridgeAndFacts()
+{
+    unsafe
+    {
+        return PackageImagePreservesFieldAndPayloadTypePredicatesAcrossTypedInterfaceSourceBridgeAndFactsImpl();
+    }
+}
+
+[Fact]
+fn bool PackageImageConsumerLowersImportedGenericForTraversalTypedBody()
+{
+    unsafe
+    {
+        return PackageImageConsumerLowersImportedGenericForTraversalTypedBodyImpl();
+    }
+}
+
+[Fact]
+fn bool PackageImagePreservesLabeledLoopControlInImportedGenericTypedBody()
+{
+    unsafe
+    {
+        return PackageImagePreservesLabeledLoopControlInImportedGenericTypedBodyImpl();
+    }
+}
+
+[Fact]
+fn bool PackageImagePreservesFunctionPointerStructuralFactsAcrossTypedInterfaceSourceBridgeAndFacts()
+{
+    unsafe
+    {
+        return PackageImagePreservesFunctionPointerStructuralFactsAcrossTypedInterfaceSourceBridgeAndFactsImpl();
+    }
+}
+
+[Fact]
+fn bool PackageImagePreservesDynTraitStructuralFactsAcrossTypedInterfaceSourceBridgeAndFacts()
+{
+    unsafe
+    {
+        return PackageImagePreservesDynTraitStructuralFactsAcrossTypedInterfaceSourceBridgeAndFactsImpl();
+    }
+}
+
+[Fact]
+fn bool PackageImagePreservesFieldAndEnumPayloadQualifierFactsAcrossTypedInterfaceSourceBridgeAndFacts()
+{
+    unsafe
+    {
+        return PackageImagePreservesFieldAndEnumPayloadQualifierFactsAcrossTypedInterfaceSourceBridgeAndFactsImpl();
+    }
+}
+
+[Fact]
+fn bool PackageImagePreservesComptimeGenericDeclarationsAndSymbolicTemplateCalls()
+{
+    unsafe
+    {
+        return PackageImagePreservesComptimeGenericDeclarationsAndSymbolicTemplateCallsImpl();
+    }
+}
+
+[Fact]
+fn bool PackageImageConsumerLowersImportedComptimeGenericTemplateTypedBody()
+{
+    unsafe
+    {
+        return PackageImageConsumerLowersImportedComptimeGenericTemplateTypedBodyImpl();
+    }
+}
+
+[Fact]
+fn bool PackageImageConsumerLowersImportedOrdinaryComptimeTemplateTypedBody()
+{
+    unsafe
+    {
+        return PackageImageConsumerLowersImportedOrdinaryComptimeTemplateTypedBodyImpl();
+    }
+}
+
+[Fact]
+fn bool PackageImageConsumerLowersImportedComptimeGenericArithmeticTemplateTypedBody()
+{
+    unsafe
+    {
+        return PackageImageConsumerLowersImportedComptimeGenericArithmeticTemplateTypedBodyImpl();
+    }
+}
+
+[Fact]
+fn bool PackageImageConsumerFoldsImportedComptimeTemplateCallWithStatementBody()
+{
+    unsafe
+    {
+        return PackageImageConsumerFoldsImportedComptimeTemplateCallWithStatementBodyImpl();
+    }
+}
+
+[Fact]
+fn bool PackageImageConsumerFoldsImportedComptimeTemplateCallWithMemberCalls()
+{
+    unsafe
+    {
+        return PackageImageConsumerFoldsImportedComptimeTemplateCallWithMemberCallsImpl();
+    }
+}
+
+[Fact]
+fn bool PackageImageConsumerFoldsImportedComptimeTemplateCallWithObjectInitializers()
+{
+    unsafe
+    {
+        return PackageImageConsumerFoldsImportedComptimeTemplateCallWithObjectInitializersImpl();
+    }
+}
+
+[Fact]
+fn bool PackageImageConsumerFoldsImportedComptimeTemplateCallWithTextConstants()
+{
+    unsafe
+    {
+        return PackageImageConsumerFoldsImportedComptimeTemplateCallWithTextConstantsImpl();
+    }
+}
+
+[Fact]
+fn bool PackageImageConsumerFoldsImportedComptimeTemplateCallWithPatterns()
+{
+    unsafe
+    {
+        return PackageImageConsumerFoldsImportedComptimeTemplateCallWithPatternsImpl();
+    }
+}
+
+[Fact]
+fn bool PackageImageBackedDefaultNonOverlapCallsRejectOverlappingArguments()
+{
+    unsafe
+    {
+        return PackageImageBackedDefaultNonOverlapCallsRejectOverlappingArgumentsImpl();
+    }
+}
+
+[Fact]
+fn bool PackageImageBackedWhereOverlapCallsAllowOverlappingArguments()
+{
+    unsafe
+    {
+        return PackageImageBackedWhereOverlapCallsAllowOverlappingArgumentsImpl();
+    }
+}
+
+[Fact]
+fn bool PackageImageBackedSubregionDisjointContractsRejectOverlappingImportedCalls()
+{
+    unsafe
+    {
+        return PackageImageBackedSubregionDisjointContractsRejectOverlappingImportedCallsImpl();
+    }
+}
+
+[Fact]
+fn bool PackageImageBackedRetborrowDynamicIndexTemplatesReturnElementAddresses()
+{
+    unsafe
+    {
+        return PackageImageBackedRetborrowDynamicIndexTemplatesReturnElementAddressesImpl();
+    }
+}
+
+[Fact]
+fn bool PackageImageGenericTemplatesPublishAllBoundOperationFamilies()
+{
+    unsafe
+    {
+        return PackageImageGenericTemplatesPublishAllBoundOperationFamiliesImpl();
+    }
+}
+
+[Fact]
+fn bool PackageImageGenericTemplatesPreservePropertyAndListSwitchPatterns()
+{
+    unsafe
+    {
+        return PackageImageGenericTemplatesPreservePropertyAndListSwitchPatternsImpl();
+    }
+}
+
+[Fact]
+fn bool PackageImageConsumerLowersImportedGenericTypedBodyAfterSourceAndBodyTextAreRemoved()
+{
+    unsafe
+    {
+        return PackageImageConsumerLowersImportedGenericTypedBodyAfterSourceAndBodyTextAreRemovedImpl();
+    }
+}
+
+[Fact]
+fn bool PackageImagePreservesTraitConformanceMetadata()
+{
+    unsafe
+    {
+        return PackageImagePreservesTraitConformanceMetadataImpl();
+    }
+}
+
+[Fact]
+fn bool PackageImagePreservesSystemCTypedInterfaceSurface()
+{
+    unsafe
+    {
+        return PackageImagePreservesSystemCTypedInterfaceSurfaceImpl();
+    }
+}
+
+[Fact]
+fn bool PackageImageBackedLawFunctionPointerParametersValidateLambdaBodies()
+{
+    unsafe
+    {
+        return PackageImageBackedLawFunctionPointerParametersValidateLambdaBodiesImpl();
+    }
+}
+
+[Fact]
+fn bool PackageImageBackedFunctionItemsPreserveFunctionKindObligationRejections()
+{
+    unsafe
+    {
+        return PackageImageBackedFunctionItemsPreserveFunctionKindObligationRejectionsImpl();
+    }
+}
+
+[Fact]
+fn bool PackageImageBackedUnsafeFunctionItemsDoNotPromoteToOrdinaryFunctionPointers()
+{
+    unsafe
+    {
+        return PackageImageBackedUnsafeFunctionItemsDoNotPromoteToOrdinaryFunctionPointersImpl();
+    }
+}
+
+[Fact]
+fn bool PackageImageBackedUnsafeFunctionCallsRequireUnsafeContext()
+{
+    unsafe
+    {
+        return PackageImageBackedUnsafeFunctionCallsRequireUnsafeContextImpl();
+    }
+}
+
+[Fact]
+fn bool PackageImagePreservesFunctionPointerTypesAndUnsafeFunctionFacts()
+{
+    unsafe
+    {
+        return PackageImagePreservesFunctionPointerTypesAndUnsafeFunctionFactsImpl();
+    }
+}
+
+[Fact]
+fn bool PackageImagePreservesDynTraitVtablePointerTypes()
+{
+    unsafe
+    {
+        return PackageImagePreservesDynTraitVtablePointerTypesImpl();
+    }
+}
+
+[Fact]
+fn bool PackageImagePreservesTargetSelectedPlatformAbiInTypedTemplateStructuralFacts()
+{
+    unsafe
+    {
+        return PackageImagePreservesTargetSelectedPlatformAbiInTypedTemplateStructuralFactsImpl();
+    }
+}
+
+[Fact]
+fn bool PackageImagePreservesTargetSelectedPlatformAbiInTypedConstructorParameters()
+{
+    unsafe
+    {
+        return PackageImagePreservesTargetSelectedPlatformAbiInTypedConstructorParametersImpl();
+    }
+}
+
+[Fact]
+fn bool PackageImagePreservesClosureTypes()
+{
+    unsafe
+    {
+        return PackageImagePreservesClosureTypesImpl();
+    }
+}
+
+[Fact]
+fn bool PackageImageBackedExplicitConstructorWithAliasCallableParameterLowersWithoutSource()
+{
+    unsafe
+    {
+        return PackageImageBackedExplicitConstructorWithAliasCallableParameterLowersWithoutSourceImpl();
+    }
+}
+
+[Fact]
+fn bool PackageImageBackedCallableAliasPreservesFiniteLawFunctionPointerKind()
+{
+    unsafe
+    {
+        return PackageImageBackedCallableAliasPreservesFiniteLawFunctionPointerKindImpl();
+    }
+}
+
+[Fact]
+fn bool PackageImageBackedQualifiedFunctionItemsPromoteToOrdinaryFunctionPointers()
+{
+    unsafe
+    {
+        return PackageImageBackedQualifiedFunctionItemsPromoteToOrdinaryFunctionPointersImpl();
+    }
+}
+
+[Fact]
+fn bool PackageImageBackedFunctionItemsPromoteFromEachDeclaredFunctionKind()
+{
+    unsafe
+    {
+        return PackageImageBackedFunctionItemsPromoteFromEachDeclaredFunctionKindImpl();
+    }
+}
+
+[Fact]
+fn bool PackageImageBackedOverloadedFunctionItemsPreserveDistinctAddressTakenFacts()
+{
+    unsafe
+    {
+        return PackageImageBackedOverloadedFunctionItemsPreserveDistinctAddressTakenFactsImpl();
+    }
+}
+
+[Fact]
+fn bool EmitPackageModeWritesPackageImageWithRequestedLibraryFileName()
+{
+    unsafe
+    {
+        return EmitPackageModeWritesPackageImageWithRequestedLibraryFileNameImpl();
+    }
+}
+
+[Fact]
+fn bool EmitPackageModeWritesNativeDependencyMetadata()
+{
+    unsafe
+    {
+        return EmitPackageModeWritesNativeDependencyMetadataImpl();
+    }
+}
+
+[Fact]
+fn bool EmitPackageModeStoresAbsoluteNativeSourcePathRelativeToPackageImage()
+{
+    unsafe
+    {
+        return EmitPackageModeStoresAbsoluteNativeSourcePathRelativeToPackageImageImpl();
+    }
+}
+
+[Fact]
+fn bool InspectPackageModePrintsReadableSummaryForValidPackageImage()
+{
+    unsafe
+    {
+        return InspectPackageModePrintsReadableSummaryForValidPackageImageImpl();
+    }
+}
+
+[Fact]
+fn bool InspectPackageModeReportsValidationDiagnosticsForMalformedContent()
+{
+    unsafe
+    {
+        return InspectPackageModeReportsValidationDiagnosticsForMalformedContentImpl();
+    }
+}
+
+[Fact]
+fn bool EmitExecutableLinksImportedPackageNativeSources()
+{
+    unsafe
+    {
+        return EmitExecutableLinksImportedPackageNativeSourcesImpl();
+    }
+}
+
+[Fact]
+fn bool EmitExecutableUsesPackageNativePkgConfigMetadata()
+{
+    unsafe
+    {
+        return EmitExecutableUsesPackageNativePkgConfigMetadataImpl();
+    }
+}
+
+[Fact]
+fn bool GenericInstanceMemberCallBindsThroughPackageImage()
+{
+    unsafe
+    {
+        return GenericInstanceMemberCallBindsThroughPackageImageImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedAggregateConstructionWrapperBodiesCompileAndRunWithoutTopLevelFunctionSemantics()
+{
+    unsafe
+    {
+        return ManifestBackedAggregateConstructionWrapperBodiesCompileAndRunWithoutTopLevelFunctionSemanticsImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedLocalUpdateWrapperBodiesCompileAndRunWithoutTopLevelFunctionSemantics()
+{
+    unsafe
+    {
+        return ManifestBackedLocalUpdateWrapperBodiesCompileAndRunWithoutTopLevelFunctionSemanticsImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedTerminalSelectionWrapperBodiesCompileAndRunWithoutTopLevelFunctionSemantics()
+{
+    unsafe
+    {
+        return ManifestBackedTerminalSelectionWrapperBodiesCompileAndRunWithoutTopLevelFunctionSemanticsImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedBinaryAndComparisonWrapperBodiesCompileAndRunWithoutTopLevelFunctionSemantics()
+{
+    unsafe
+    {
+        return ManifestBackedBinaryAndComparisonWrapperBodiesCompileAndRunWithoutTopLevelFunctionSemanticsImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedConversionWrapperBodiesCompileAndRunWithoutTopLevelFunctionSemantics()
+{
+    unsafe
+    {
+        return ManifestBackedConversionWrapperBodiesCompileAndRunWithoutTopLevelFunctionSemanticsImpl();
+    }
+}
+
+[Fact]
+fn bool PackageImageRoleAnnotatedEnumsPropagateWithTryAtRuntime()
+{
+    unsafe
+    {
+        return PackageImageRoleAnnotatedEnumsPropagateWithTryAtRuntimeImpl();
+    }
+}
+
+[Fact]
+fn bool PackageImageTypedOnlyManifestCarriesPropagationRolesAndFunnels()
+{
+    unsafe
+    {
+        return PackageImageTypedOnlyManifestCarriesPropagationRolesAndFunnelsImpl();
+    }
+}
+
+[Fact]
+fn bool PackageImageExportedGenericTemplateWithTrySpecializesDownstream()
+{
+    unsafe
+    {
+        return PackageImageExportedGenericTemplateWithTrySpecializesDownstreamImpl();
+    }
+}
+
+[Fact]
+fn bool PackageImagePublishesTryPropagationFactsForExportedTemplates()
+{
+    unsafe
+    {
+        return PackageImagePublishesTryPropagationFactsForExportedTemplatesImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedTypedArrayInitializerBodiesCompileAndRunWithoutSyntheticSource()
+{
+    unsafe
+    {
+        return ManifestBackedTypedArrayInitializerBodiesCompileAndRunWithoutSyntheticSourceImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedTypedArrayInitializerBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecialization()
+{
+    unsafe
+    {
+        return ManifestBackedTypedArrayInitializerBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecializationImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedTypedAssignmentExpressionsCompileAndRunWithoutSyntheticSource()
+{
+    unsafe
+    {
+        return ManifestBackedTypedAssignmentExpressionsCompileAndRunWithoutSyntheticSourceImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedTypedComparisonChainBodiesCompileAndRunWithoutSyntheticSource()
+{
+    unsafe
+    {
+        return ManifestBackedTypedComparisonChainBodiesCompileAndRunWithoutSyntheticSourceImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedTypedDiscardedExpressionBodiesCompileAndRunWithoutSyntheticSource()
+{
+    unsafe
+    {
+        return ManifestBackedTypedDiscardedExpressionBodiesCompileAndRunWithoutSyntheticSourceImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedTypedGroupedLocalDeclarationsCompileAndRunWithoutSyntheticSource()
+{
+    unsafe
+    {
+        return ManifestBackedTypedGroupedLocalDeclarationsCompileAndRunWithoutSyntheticSourceImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedTypedNestedObjectCreationBodiesCompileAndRunWithoutSyntheticSource()
+{
+    unsafe
+    {
+        return ManifestBackedTypedNestedObjectCreationBodiesCompileAndRunWithoutSyntheticSourceImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedTypedObjectInitializerLocalDeclarationsCompileAndRunWithoutSyntheticSource()
+{
+    unsafe
+    {
+        return ManifestBackedTypedObjectInitializerLocalDeclarationsCompileAndRunWithoutSyntheticSourceImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedTypedPowerBodiesCompileAndRunWithoutSyntheticSource()
+{
+    unsafe
+    {
+        return ManifestBackedTypedPowerBodiesCompileAndRunWithoutSyntheticSourceImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedTypedRawPointerDereferenceBodiesCompileAndRunWithoutSyntheticSource()
+{
+    unsafe
+    {
+        return ManifestBackedTypedRawPointerDereferenceBodiesCompileAndRunWithoutSyntheticSourceImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedTypedProjectedRawPointerDereferenceBodiesCompileAndRunWithoutSyntheticSource()
+{
+    unsafe
+    {
+        return ManifestBackedTypedProjectedRawPointerDereferenceBodiesCompileAndRunWithoutSyntheticSourceImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedTypedAddressOfBodiesCompileAndRunWithoutSyntheticSource()
+{
+    unsafe
+    {
+        return ManifestBackedTypedAddressOfBodiesCompileAndRunWithoutSyntheticSourceImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedTypedNestedAndLiteralSwitchPatternsCompileAndRunWithoutSyntheticSource()
+{
+    unsafe
+    {
+        return ManifestBackedTypedNestedAndLiteralSwitchPatternsCompileAndRunWithoutSyntheticSourceImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedTypedRangeSwitchPatternsCompileAndRunWithoutSyntheticSource()
+{
+    unsafe
+    {
+        return ManifestBackedTypedRangeSwitchPatternsCompileAndRunWithoutSyntheticSourceImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedTypedAggregateWholeCapturePatternsCompileAndRunWithoutSyntheticSource()
+{
+    unsafe
+    {
+        return ManifestBackedTypedAggregateWholeCapturePatternsCompileAndRunWithoutSyntheticSourceImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedTypedEnumWholeCapturePatternsCompileAndRunWithoutSyntheticSource()
+{
+    unsafe
+    {
+        return ManifestBackedTypedEnumWholeCapturePatternsCompileAndRunWithoutSyntheticSourceImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedTypedTerminalIfBodiesCompileAndRunWithoutSyntheticSource()
+{
+    unsafe
+    {
+        return ManifestBackedTypedTerminalIfBodiesCompileAndRunWithoutSyntheticSourceImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedTypedFullViewTextBodiesCompileAndRunWithoutSyntheticSource()
+{
+    unsafe
+    {
+        return ManifestBackedTypedFullViewTextBodiesCompileAndRunWithoutSyntheticSourceImpl();
+    }
+}
+
+[Fact]
+fn bool ManifestBackedTypedUninitializedLocalDeclarationsCompileAndRunWithoutSyntheticSource()
+{
+    unsafe
+    {
+        return ManifestBackedTypedUninitializedLocalDeclarationsCompileAndRunWithoutSyntheticSourceImpl();
+    }
+}
+
+[Fact]
+fn bool InvalidProgramsDoNotParse()
+{
+    unsafe
+    {
+        return InvalidProgramsDoNotParseImpl();
+    }
+}
+
+[Fact]
+fn bool ValidProgramsParse()
+{
+    unsafe
+    {
+        return ValidProgramsParseImpl();
+    }
+}
+
+[Fact]
+fn bool ParserEdgeCaseTests_InvalidProgramsDoNotParse()
+{
+    unsafe
+    {
+        return InvalidProgramsDoNotParseImpl();
+    }
+}
+
+[Fact]
+fn bool ParserEdgeCaseTests_ValidProgramsParse()
+{
+    unsafe
+    {
+        return ValidProgramsParseImpl();
+    }
+}
+
+[Fact]
+fn bool ParserSmokeTests_InvalidProgramsDoNotParse()
+{
+    unsafe
+    {
+        return InvalidProgramsDoNotParseImpl();
+    }
+}
+
+[Fact]
+fn bool ParserSmokeTests_ValidProgramsParse()
+{
+    unsafe
+    {
+        return ValidProgramsParseImpl();
+    }
+}
+
+[Fact]
+fn bool BuildBuildsCurrentProjectFromManifest()
+{
+    unsafe
+    {
+        return BuildBuildsCurrentProjectFromManifestImpl();
+    }
+}
+
+[Fact]
+fn bool BuildUsesStageLocalStdlibSearchDirectory()
+{
+    unsafe
+    {
+        return BuildUsesStageLocalStdlibSearchDirectoryImpl();
+    }
+}
+
+[Fact]
+fn bool BuildUsesRepoStdlibSourceTreeDiscovery()
+{
+    unsafe
+    {
+        return BuildUsesRepoStdlibSourceTreeDiscoveryImpl();
+    }
+}
+
+[Fact]
+fn bool BuildUsesInstalledBundledStdlibPackageWhenNoRepoStdlibExists()
+{
+    unsafe
+    {
+        return BuildUsesInstalledBundledStdlibPackageWhenNoRepoStdlibExistsImpl();
+    }
+}
+
+[Fact]
+fn bool BuildReportsStdlibDiscoveryPathsForMissingSystemImport()
+{
+    unsafe
+    {
+        return BuildReportsStdlibDiscoveryPathsForMissingSystemImportImpl();
+    }
+}
+
+[Fact]
+fn bool ProjectBuildDoesNotUseStarkPathAsHiddenStdlibDiscovery()
+{
+    unsafe
+    {
+        return ProjectBuildDoesNotUseStarkPathAsHiddenStdlibDiscoveryImpl();
+    }
+}
+
+[Fact]
+fn bool BuildRejectsUnavailableCompilerStage()
+{
+    unsafe
+    {
+        return BuildRejectsUnavailableCompilerStageImpl();
+    }
+}
+
+[Fact]
+fn bool BuildBuildsSolutionDefaultTargetAndPathDependencies()
+{
+    unsafe
+    {
+        return BuildBuildsSolutionDefaultTargetAndPathDependenciesImpl();
+    }
+}
+
+[Fact]
+fn bool TestRejectsFilterWhenNoGeneratedFactsExist()
+{
+    unsafe
+    {
+        return TestRejectsFilterWhenNoGeneratedFactsExistImpl();
+    }
+}
+
+[Fact]
+fn bool TestRejectsExplicitMainWhenFactRunnerIsGenerated()
+{
+    unsafe
+    {
+        return TestRejectsExplicitMainWhenFactRunnerIsGeneratedImpl();
+    }
+}
+
+[Fact]
+fn bool RunPrefersRepoStdlibDistPackageBeforeRepoSource()
+{
+    unsafe
+    {
+        return RunPrefersRepoStdlibDistPackageBeforeRepoSourceImpl();
+    }
+}
+
+[Fact]
+fn bool RunUsesSolutionDefaultRunTarget()
+{
+    unsafe
+    {
+        return RunUsesSolutionDefaultRunTargetImpl();
+    }
+}
+
+[Fact]
+fn bool TestRunsCurrentTestProjectFromManifest()
+{
+    unsafe
+    {
+        return TestRunsCurrentTestProjectFromManifestImpl();
+    }
+}
+
+[Fact]
+fn bool TestGeneratesFactRunnerFromMetadataAndAppliesFilter()
+{
+    unsafe
+    {
+        return TestGeneratesFactRunnerFromMetadataAndAppliesFilterImpl();
+    }
+}
+
+[Fact]
+fn bool TestGeneratedFactRunnerAppliesPlatformGatesFromTargetTriple()
+{
+    unsafe
+    {
+        return TestGeneratedFactRunnerAppliesPlatformGatesFromTargetTripleImpl();
+    }
+}
+
+[Fact]
+fn bool TestGeneratedFactRunnerAppliesSerialCollections()
+{
+    unsafe
+    {
+        return TestGeneratedFactRunnerAppliesSerialCollectionsImpl();
+    }
+}
+
+[Fact]
+fn bool TestGeneratedFactRunnerExpandsInlineDataTheories()
+{
+    unsafe
+    {
+        return TestGeneratedFactRunnerExpandsInlineDataTheoriesImpl();
+    }
+}
+
+[Fact]
+fn bool TestGeneratedFactRunnerExpandsMemberDataTheories()
+{
+    unsafe
+    {
+        return TestGeneratedFactRunnerExpandsMemberDataTheoriesImpl();
+    }
+}
+
+[Fact]
+fn bool TestGeneratedFactRunnerReportsFailingFactThroughExitCode()
+{
+    unsafe
+    {
+        return TestGeneratedFactRunnerReportsFailingFactThroughExitCodeImpl();
+    }
+}
+
+[Fact]
+fn bool TestReturnsFailureWhenTestExecutableFails()
+{
+    unsafe
+    {
+        return TestReturnsFailureWhenTestExecutableFailsImpl();
+    }
+}
+
+[Fact]
+fn bool TestRunsSolutionDefaultTestTargetAndPathDependencies()
+{
+    unsafe
+    {
+        return TestRunsSolutionDefaultTestTargetAndPathDependenciesImpl();
+    }
+}
+
+[Fact]
+fn bool ContentOnTheOpeningQuoteLineIsDiagnosed()
+{
+    unsafe
+    {
+        return ContentOnTheOpeningQuoteLineIsDiagnosedImpl();
+    }
+}
+
+[Fact]
+fn bool LinesIndentedLessThanTheClosingQuotesAreDiagnosed()
+{
+    unsafe
+    {
+        return LinesIndentedLessThanTheClosingQuotesAreDiagnosedImpl();
+    }
+}
+
+[Fact]
+fn bool ContentBeforeTheClosingQuotesOnTheirLineIsDiagnosed()
+{
+    unsafe
+    {
+        return ContentBeforeTheClosingQuotesOnTheirLineIsDiagnosedImpl();
+    }
+}
+
+[Fact]
+fn bool RetborrowsCanBeUsedLocallyAndReturned()
+{
+    unsafe
+    {
+        return RetborrowsCanBeUsedLocallyAndReturnedImpl();
+    }
+}
+
+[Fact]
+fn bool StandardLibraryRootEmitsLlvmWithoutFallbackLogs()
+{
+    unsafe
+    {
+        return StandardLibraryRootEmitsLlvmWithoutFallbackLogsImpl();
+    }
+}
+
+[Fact]
+fn bool CStructLayoutAttributesMatchNativeCFixturesAtRuntime()
+{
+    unsafe
+    {
+        return CStructLayoutAttributesMatchNativeCFixturesAtRuntimeImpl();
+    }
+}
+
+[Fact]
+fn bool TextOrderedComparisonsAreLexicographicAtRuntime()
+{
+    unsafe
+    {
+        return TextOrderedComparisonsAreLexicographicAtRuntimeImpl();
+    }
+}
+
+[Fact]
+fn bool TrySameErrorTypePropagatesAndUnwrapsAtRuntime()
+{
+    unsafe
+    {
+        return TrySameErrorTypePropagatesAndUnwrapsAtRuntimeImpl();
+    }
+}
+
+[Fact]
+fn bool TryFromConversionAndUnitFailurePropagateOnBothPathsAtRuntime()
+{
+    unsafe
+    {
+        return TryFromConversionAndUnitFailurePropagateOnBothPathsAtRuntimeImpl();
+    }
+}
+
+[Fact]
+fn bool TryStdlibIOResultPropagatesIntoUserEnumThroughFunnelAtRuntime()
+{
+    unsafe
+    {
+        return TryStdlibIOResultPropagatesIntoUserEnumThroughFunnelAtRuntimeImpl();
+    }
+}
+
+[Fact]
+fn bool TryDropsOwnedPayloadsExactlyOnceThroughFromConversionAtRuntime()
+{
+    unsafe
+    {
+        return TryDropsOwnedPayloadsExactlyOnceThroughFromConversionAtRuntimeImpl();
+    }
+}
+
+[Fact]
+fn bool CompileTimeStructuralFactsCannotPromoteToRuntimeCallableValues()
+{
+    unsafe
+    {
+        return CompileTimeStructuralFactsCannotPromoteToRuntimeCallableValuesImpl();
+    }
+}
+
+[Fact]
+fn bool FunctionPointerAbiIsPartOfTypeIdentity()
+{
+    unsafe
+    {
+        return FunctionPointerAbiIsPartOfTypeIdentityImpl();
+    }
+}
+
+[Fact]
+fn bool SystemCCVoidIsValidOnlyBehindRawPointers()
+{
+    unsafe
+    {
+        return SystemCCVoidIsValidOnlyBehindRawPointersImpl();
+    }
+}
+
+[Fact]
+fn bool StructLayoutDiagnosticsRejectInvalidLayoutShapes()
+{
+    unsafe
+    {
+        return StructLayoutDiagnosticsRejectInvalidLayoutShapesImpl();
+    }
+}
+
+[Fact]
+fn bool SafeBorrowsRejectMisalignedPackedFields()
+{
+    unsafe
+    {
+        return SafeBorrowsRejectMisalignedPackedFieldsImpl();
+    }
+}
+
+[Fact]
+fn bool FunctionPointerOverlapTargetRejectsDefaultDisjointFunctionItems()
+{
+    unsafe
+    {
+        return FunctionPointerOverlapTargetRejectsDefaultDisjointFunctionItemsImpl();
+    }
+}
+
+[Fact]
+fn bool LawClosureTypesRejectMutableOrOnceCapabilities()
+{
+    unsafe
+    {
+        return LawClosureTypesRejectMutableOrOnceCapabilitiesImpl();
+    }
+}
+
+[Fact]
+fn bool FunctionItemPromotionRejectsUnsatisfiedFunctionKindObligations()
+{
+    unsafe
+    {
+        return FunctionItemPromotionRejectsUnsatisfiedFunctionKindObligationsImpl();
+    }
+}
+
+[Fact]
+fn bool FunctionPointerPromotionRejectsAbiMismatchedFunctionItems()
+{
+    unsafe
+    {
+        return FunctionPointerPromotionRejectsAbiMismatchedFunctionItemsImpl();
+    }
+}
+
+[Fact]
+fn bool MutableClosureCallsRequireMutableClosureAccess()
+{
+    unsafe
+    {
+        return MutableClosureCallsRequireMutableClosureAccessImpl();
+    }
+}
+
+[Fact]
+fn bool HeapClosureLambdasRequireHeapPrefixAndHeapSafeCaptures()
+{
+    unsafe
+    {
+        return HeapClosureLambdasRequireHeapPrefixAndHeapSafeCapturesImpl();
+    }
+}
+
+[Fact]
+fn bool InlineClosureTypesAreOnlyValidAsParameters()
+{
+    unsafe
+    {
+        return InlineClosureTypesAreOnlyValidAsParametersImpl();
+    }
+}
+
+[Fact]
+fn bool NonCapturingLambdasCannotUseOuterLocalsWithoutCaptureList()
+{
+    unsafe
+    {
+        return NonCapturingLambdasCannotUseOuterLocalsWithoutCaptureListImpl();
+    }
+}
+
+[Fact]
+fn bool CapturingLambdaSyntaxIsCheckedButNotLoweredYet()
+{
+    unsafe
+    {
+        return CapturingLambdaSyntaxIsCheckedButNotLoweredYetImpl();
+    }
+}
+
+[Fact]
+fn bool ExplicitCaptureListDoesNotExposeUnlistedOuterLocals()
+{
+    unsafe
+    {
+        return ExplicitCaptureListDoesNotExposeUnlistedOuterLocalsImpl();
+    }
+}
+
+[Fact]
+fn bool ExplicitCaptureListsRejectDuplicateCapturedLocals()
+{
+    unsafe
+    {
+        return ExplicitCaptureListsRejectDuplicateCapturedLocalsImpl();
+    }
+}
+
+[Fact]
+fn bool LambdaParametersCannotReuseCapturedNames()
+{
+    unsafe
+    {
+        return LambdaParametersCannotReuseCapturedNamesImpl();
+    }
+}
+
+[Fact]
+fn bool ExplicitCaptureListsReportUnknownClauseNamesAndModes()
+{
+    unsafe
+    {
+        return ExplicitCaptureListsReportUnknownClauseNamesAndModesImpl();
+    }
+}
+
+[Fact]
+fn bool UnsafeLambdaCaptureModesRequireUnsafeContext()
+{
+    unsafe
+    {
+        return UnsafeLambdaCaptureModesRequireUnsafeContextImpl();
+    }
+}
+
+[Fact]
+fn bool UnsafeLambdaCaptureModesRequireExplicitUnsafeMarkerAndRejectSafeModeMarkers()
+{
+    unsafe
+    {
+        return UnsafeLambdaCaptureModesRequireExplicitUnsafeMarkerAndRejectSafeModeMarkersImpl();
+    }
+}
+
+[Fact]
+fn bool CopyLambdaCapturesRejectMoveOnlyBindings()
+{
+    unsafe
+    {
+        return CopyLambdaCapturesRejectMoveOnlyBindingsImpl();
+    }
+}
+
+[Fact]
+fn bool CopyLambdaCapturesAllowTextViews()
+{
+    unsafe
+    {
+        return CopyLambdaCapturesAllowTextViewsImpl();
+    }
+}
+
+[Fact]
+fn bool ReadAndCopyLambdaCapturesDoNotExposeWritableBindings()
+{
+    unsafe
+    {
+        return ReadAndCopyLambdaCapturesDoNotExposeWritableBindingsImpl();
+    }
+}
+
+[Fact]
+fn bool MutLambdaCapturesExposeWritableBindingsInLambdaBody()
+{
+    unsafe
+    {
+        return MutLambdaCapturesExposeWritableBindingsInLambdaBodyImpl();
+    }
+}
+
+[Fact]
+fn bool OutAndInitLambdaCapturesRejectReadsInLambdaBody()
+{
+    unsafe
+    {
+        return OutAndInitLambdaCapturesRejectReadsInLambdaBodyImpl();
+    }
+}
+
+[Fact]
+fn bool OutAndInitLambdaCapturesAllowWritesInLambdaBody()
+{
+    unsafe
+    {
+        return OutAndInitLambdaCapturesAllowWritesInLambdaBodyImpl();
+    }
+}
+
+[Fact]
+fn bool UnsafeAddrLambdaCapturesExposeReadonlyAddressNotCapturedValue()
+{
+    unsafe
+    {
+        return UnsafeAddrLambdaCapturesExposeReadonlyAddressNotCapturedValueImpl();
+    }
+}
+
+[Fact]
+fn bool UnsafeSharedLambdaCapturesExposeSharedReadOnlyBindings()
+{
+    unsafe
+    {
+        return UnsafeSharedLambdaCapturesExposeSharedReadOnlyBindingsImpl();
+    }
+}
+
+[Fact]
+fn bool WritableLambdaCaptureModesRequireWritableBindings()
+{
+    unsafe
+    {
+        return WritableLambdaCaptureModesRequireWritableBindingsImpl();
+    }
+}
+
+[Fact]
+fn bool UnsafeFunctionsRequireUnsafeContextDuringTypeChecking()
+{
+    unsafe
+    {
+        return UnsafeFunctionsRequireUnsafeContextDuringTypeCheckingImpl();
+    }
+}
+
+[Fact]
+fn bool RawPointerSignaturesRequireUnsafeFunctions()
+{
+    unsafe
+    {
+        return RawPointerSignaturesRequireUnsafeFunctionsImpl();
+    }
+}
+
+[Fact]
+fn bool RawPointerLocalOperationsRequireUnsafeContext()
+{
+    unsafe
+    {
+        return RawPointerLocalOperationsRequireUnsafeContextImpl();
+    }
+}
+
+[Fact]
+fn bool FfiDeclarationsRequireUnsafeModifier()
+{
+    unsafe
+    {
+        return FfiDeclarationsRequireUnsafeModifierImpl();
+    }
+}
+
+[Fact]
+fn bool UnsafeFunctionItemsDoNotPromoteToOrdinaryFunctionPointers()
+{
+    unsafe
+    {
+        return UnsafeFunctionItemsDoNotPromoteToOrdinaryFunctionPointersImpl();
+    }
+}
+
+[Fact]
+fn bool UnsafeFunctionItemsPromoteToUnsafeFunctionPointersAndCallsRequireUnsafeContext()
+{
+    unsafe
+    {
+        return UnsafeFunctionItemsPromoteToUnsafeFunctionPointersAndCallsRequireUnsafeContextImpl();
+    }
+}
+
+[Fact]
+fn bool UnsafeFunctionItemsDoNotPromoteInReturnOrArgumentTargetPositions()
+{
+    unsafe
+    {
+        return UnsafeFunctionItemsDoNotPromoteInReturnOrArgumentTargetPositionsImpl();
+    }
+}
+
+[Fact]
+fn bool StrictIntegerRangesRejectExplicitScalarConstWrongWidthOrSign()
+{
+    unsafe
+    {
+        return StrictIntegerRangesRejectExplicitScalarConstWrongWidthOrSignImpl();
+    }
+}
+
+[Fact]
+fn bool ScalarConstDeclarationsReportFriendlyNumericTypeDiagnostics()
+{
+    unsafe
+    {
+        return ScalarConstDeclarationsReportFriendlyNumericTypeDiagnosticsImpl();
+    }
+}
+
+[Fact]
+fn bool HugeCompileTimeIntegerConstCannotBecomeRuntimeStorage()
+{
+    unsafe
+    {
+        return HugeCompileTimeIntegerConstCannotBecomeRuntimeStorageImpl();
+    }
+}
+
+[Fact]
+fn bool HugeCompileTimeIntegerConversionReportsConcreteTargetOverflow()
+{
+    unsafe
+    {
+        return HugeCompileTimeIntegerConversionReportsConcreteTargetOverflowImpl();
+    }
+}
+
+[Fact]
+fn bool DictionaryRejectsUnprovenKeyTypes()
+{
+    unsafe
+    {
+        return DictionaryRejectsUnprovenKeyTypesImpl();
+    }
+}
+
+[Fact]
+fn bool HashSetRequiresExplicitHashEqualsKeyContractForNonPrimitiveKeys()
+{
+    unsafe
+    {
+        return HashSetRequiresExplicitHashEqualsKeyContractForNonPrimitiveKeysImpl();
+    }
+}
+
+[Fact]
+fn bool DictionaryRejectsStaticHashEqualsContractWithoutOverlap()
+{
+    unsafe
+    {
+        return DictionaryRejectsStaticHashEqualsContractWithoutOverlapImpl();
+    }
+}
+
+[Fact]
+fn bool DictionaryRejectsStaticHashEqualsContractWithWrongHashReturn()
+{
+    unsafe
+    {
+        return DictionaryRejectsStaticHashEqualsContractWithWrongHashReturnImpl();
+    }
+}
+
+[Fact]
+fn bool DictionaryRejectsStaticHashEqualsContractMissingEquals()
+{
+    unsafe
+    {
+        return DictionaryRejectsStaticHashEqualsContractMissingEqualsImpl();
+    }
+}
+
+[Fact]
+fn bool HashSetRejectsStaticHashEqualsContractWithWrongEqualsReturn()
+{
+    unsafe
+    {
+        return HashSetRejectsStaticHashEqualsContractWithWrongEqualsReturnImpl();
+    }
+}
+
+[Fact]
+fn bool DictionaryRejectsUnprovenKeyTypesAfterGenericMonomorphization()
+{
+    unsafe
+    {
+        return DictionaryRejectsUnprovenKeyTypesAfterGenericMonomorphizationImpl();
+    }
+}
+
+[Fact]
+fn bool AmbiguousImportedTypeFinalNamesRequireQualification()
+{
+    unsafe
+    {
+        return AmbiguousImportedTypeFinalNamesRequireQualificationImpl();
+    }
+}
+
+[Fact]
+fn bool StrictIntegerRangesRejectSignedEndpointsOutsideBaseType()
+{
+    unsafe
+    {
+        return StrictIntegerRangesRejectSignedEndpointsOutsideBaseTypeImpl();
+    }
+}
+
+[Fact]
+fn bool UnsupportedIntegerRangeEndpointIdentifiersAreRejected()
+{
+    unsafe
+    {
+        return UnsupportedIntegerRangeEndpointIdentifiersAreRejectedImpl();
+    }
+}
+
+[Fact]
+fn bool ManualFullWidthIntegerRangeEndpointsAreRejectedInFavorOfMinMax()
+{
+    unsafe
+    {
+        return ManualFullWidthIntegerRangeEndpointsAreRejectedInFavorOfMinMaxImpl();
+    }
+}
+
+[Fact]
+fn bool ConstantArithmeticIntegerRangeEndpointOverflowIsRejected()
+{
+    unsafe
+    {
+        return ConstantArithmeticIntegerRangeEndpointOverflowIsRejectedImpl();
+    }
+}
+
+[Fact]
+fn bool ConstantArithmeticIntegerRangeEndpointDivisionByZeroIsRejected()
+{
+    unsafe
+    {
+        return ConstantArithmeticIntegerRangeEndpointDivisionByZeroIsRejectedImpl();
+    }
+}
+
+[Fact]
+fn bool ReversedTypeRelativeIntegerRangeEndpointsAreRejected()
+{
+    unsafe
+    {
+        return ReversedTypeRelativeIntegerRangeEndpointsAreRejectedImpl();
+    }
+}
+
+[Fact]
+fn bool UnsignedIntegerRangeEndpointsBelowZeroAreRejected()
+{
+    unsafe
+    {
+        return UnsignedIntegerRangeEndpointsBelowZeroAreRejectedImpl();
+    }
+}
+
+[Fact]
+fn bool ReversedConstantArithmeticIntegerRangeEndpointsAreRejected()
+{
+    unsafe
+    {
+        return ReversedConstantArithmeticIntegerRangeEndpointsAreRejectedImpl();
+    }
+}
+
+[Fact]
+fn bool TypeRelativeIntegerEndpointNamesAreRejectedOutsideIntegerRanges()
+{
+    unsafe
+    {
+        return TypeRelativeIntegerEndpointNamesAreRejectedOutsideIntegerRangesImpl();
+    }
+}
+
+[Fact]
+fn bool BitwiseXorRequiresIntegerOperands()
+{
+    unsafe
+    {
+        return BitwiseXorRequiresIntegerOperandsImpl();
+    }
+}
+
+[Fact]
+fn bool GenericTypeWithWrongArgCountIsAnError()
+{
+    unsafe
+    {
+        return GenericTypeWithWrongArgCountIsAnErrorImpl();
+    }
+}
+
+[Fact]
+fn bool NonGenericTypeWithTypeArgumentsIsAnError()
+{
+    unsafe
+    {
+        return NonGenericTypeWithTypeArgumentsIsAnErrorImpl();
+    }
+}
+
+[Fact]
+fn bool TargetTypedObjectCreationRequiresNamedDestinationType()
+{
+    unsafe
+    {
+        return TargetTypedObjectCreationRequiresNamedDestinationTypeImpl();
+    }
+}
+
+[Fact]
+fn bool DynamicStorageReserveRequiresMutableOwnerAndNonNegativeAdditionalCapacity()
+{
+    unsafe
+    {
+        return DynamicStorageReserveRequiresMutableOwnerAndNonNegativeAdditionalCapacityImpl();
+    }
+}
+
+[Fact]
+fn bool DynamicStorageMoveLastRequiresMutableOwnerAndNoArguments()
+{
+    unsafe
+    {
+        return DynamicStorageMoveLastRequiresMutableOwnerAndNoArgumentsImpl();
+    }
+}
+
+[Fact]
+fn bool DynamicStorageMoveAtRequiresMutableOwnerOneIntegerArgument()
+{
+    unsafe
+    {
+        return DynamicStorageMoveAtRequiresMutableOwnerOneIntegerArgumentImpl();
+    }
+}
+
+[Fact]
+fn bool DynamicStorageReserveOperationsRequireMutableOwnerAndOneIntegerArgument()
+{
+    unsafe
+    {
+        return DynamicStorageReserveOperationsRequireMutableOwnerAndOneIntegerArgumentImpl();
+    }
+}
+
+[Fact]
+fn bool DynamicStorageOperationsRequireAddressableOwner()
+{
+    unsafe
+    {
+        return DynamicStorageOperationsRequireAddressableOwnerImpl();
+    }
+}
+
+[Fact]
+fn bool InitSliceElementsAreWriteOnlyUntilInitialized()
+{
+    unsafe
+    {
+        return InitSliceElementsAreWriteOnlyUntilInitializedImpl();
+    }
+}
+
+[Fact]
+fn bool IntegerExponentiationTypeChecks()
+{
+    unsafe
+    {
+        return IntegerExponentiationTypeChecksImpl();
+    }
+}
+
+[Fact]
+fn bool FunctionItemsPromoteToExplicitFunctionPointersAndIndirectCallsTypeCheck()
+{
+    unsafe
+    {
+        return FunctionItemsPromoteToExplicitFunctionPointersAndIndirectCallsTypeCheckImpl();
+    }
+}
+
+[Fact]
+fn bool ExplicitFfiFunctionPointerAbiPromotesMatchingForeignFunctionItems()
+{
+    unsafe
+    {
+        return ExplicitFfiFunctionPointerAbiPromotesMatchingForeignFunctionItemsImpl();
+    }
+}
+
+[Fact]
+fn bool StructLayoutAttributesProduceConcreteFieldLayoutFacts()
+{
+    unsafe
+    {
+        return StructLayoutAttributesProduceConcreteFieldLayoutFactsImpl();
+    }
+}
+
+[Fact]
+fn bool SystemCPrimitiveAliasesResolveForTargetDataModel()
+{
+    unsafe
+    {
+        return SystemCPrimitiveAliasesResolveForTargetDataModelImpl();
+    }
+}
+
+[Fact]
+fn bool SystemCAliasesParticipateInCStructLayout()
+{
+    unsafe
+    {
+        return SystemCAliasesParticipateInCStructLayoutImpl();
+    }
+}
+
+[Fact]
+fn bool SystemCCharSignednessIsCompileTimeTargetFact()
+{
+    unsafe
+    {
+        return SystemCCharSignednessIsCompileTimeTargetFactImpl();
+    }
+}
+
+[Fact]
+fn bool FunctionPointerOverlapContractsAllowAliasingIndirectCalls()
+{
+    unsafe
+    {
+        return FunctionPointerOverlapContractsAllowAliasingIndirectCallsImpl();
+    }
+}
+
+[Fact]
+fn bool FunctionPointerSameTargetsAcceptOverlapFunctionsAndRequireSameArguments()
+{
+    unsafe
+    {
+        return FunctionPointerSameTargetsAcceptOverlapFunctionsAndRequireSameArgumentsImpl();
+    }
+}
+
+[Fact]
+fn bool ClosureTypesResolveInFunctionSignatures()
+{
+    unsafe
+    {
+        return ClosureTypesResolveInFunctionSignaturesImpl();
+    }
+}
+
+[Fact]
+fn bool FunctionItemPromotionPreservesFunctionKindFacts()
+{
+    unsafe
+    {
+        return FunctionItemPromotionPreservesFunctionKindFactsImpl();
+    }
+}
+
+[Fact]
+fn bool FunctionItemsPromoteFromEachDeclaredFunctionKind()
+{
+    unsafe
+    {
+        return FunctionItemsPromoteFromEachDeclaredFunctionKindImpl();
+    }
+}
+
+[Fact]
+fn bool FunctionItemsPromoteInReturnAndArgumentTargetPositions()
+{
+    unsafe
+    {
+        return FunctionItemsPromoteInReturnAndArgumentTargetPositionsImpl();
+    }
+}
+
+[Fact]
+fn bool OverloadedFunctionItemPromotionsPreserveDistinctAddressTakenFacts()
+{
+    unsafe
+    {
+        return OverloadedFunctionItemPromotionsPreserveDistinctAddressTakenFactsImpl();
+    }
+}
+
+[Fact]
+fn bool NonCapturingLambdasTypeCheckAsExplicitFunctionPointers()
+{
+    unsafe
+    {
+        return NonCapturingLambdasTypeCheckAsExplicitFunctionPointersImpl();
+    }
+}
+
+[Fact]
+fn bool LambdasTypeCheckAsExplicitClosureTargets()
+{
+    unsafe
+    {
+        return LambdasTypeCheckAsExplicitClosureTargetsImpl();
+    }
+}
+
+[Fact]
+fn bool FunctionItemsPromoteToExplicitClosureTargets()
+{
+    unsafe
+    {
+        return FunctionItemsPromoteToExplicitClosureTargetsImpl();
+    }
+}
+
+[Fact]
+fn bool ClosureCallsTypeCheckAndRecordArgumentFacts()
+{
+    unsafe
+    {
+        return ClosureCallsTypeCheckAndRecordArgumentFactsImpl();
+    }
+}
+
+[Fact]
+fn bool LambdaCaptureModeFactsArePreservedInTypeCheckModel()
+{
+    unsafe
+    {
+        return LambdaCaptureModeFactsArePreservedInTypeCheckModelImpl();
+    }
+}
+
+[Fact]
+fn bool UnsafeBlocksPermitRawPointerLocalOperations()
+{
+    unsafe
+    {
+        return UnsafeBlocksPermitRawPointerLocalOperationsImpl();
+    }
+}
+
+[Fact]
+fn bool TypeRelativeIntegerRangeEndpointsResolveAgainstContainingIntegerType()
+{
+    unsafe
+    {
+        return TypeRelativeIntegerRangeEndpointsResolveAgainstContainingIntegerTypeImpl();
+    }
+}
+
+[Fact]
+fn bool ImportedModulePublicMembersResolveByFinalName()
+{
+    unsafe
+    {
+        return ImportedModulePublicMembersResolveByFinalNameImpl();
+    }
+}
+
+[Fact]
+fn bool ScalarConstDeclarationsInferSmallestExactNumericTypes()
+{
+    unsafe
+    {
+        return ScalarConstDeclarationsInferSmallestExactNumericTypesImpl();
+    }
+}
+
+[Fact]
+fn bool CompileTimeUnaryIntegerConstantsReinferExactResultStorage()
+{
+    unsafe
+    {
+        return CompileTimeUnaryIntegerConstantsReinferExactResultStorageImpl();
+    }
+}
+
+[Fact]
+fn bool DictionaryAllowsCompilerProvenKeyTypes()
+{
+    unsafe
+    {
+        return DictionaryAllowsCompilerProvenKeyTypesImpl();
+    }
+}
+
+[Fact]
+fn bool DictionaryAllowsExplicitStaticHashEqualsKeyContract()
+{
+    unsafe
+    {
+        return DictionaryAllowsExplicitStaticHashEqualsKeyContractImpl();
+    }
+}
+
+[Fact]
+fn bool HashSetAllowsExplicitStaticHashEqualsKeyContract()
+{
+    unsafe
+    {
+        return HashSetAllowsExplicitStaticHashEqualsKeyContractImpl();
+    }
+}
+
+[Fact]
+fn bool ConstantArithmeticIntegerRangeEndpointsResolveAtCompileTime()
+{
+    unsafe
+    {
+        return ConstantArithmeticIntegerRangeEndpointsResolveAtCompileTimeImpl();
+    }
+}
+
+[Fact]
+fn bool UnsignedIntegerRangeLowerBoundMayUseZeroInsteadOfMin()
+{
+    unsafe
+    {
+        return UnsignedIntegerRangeLowerBoundMayUseZeroInsteadOfMinImpl();
+    }
+}
+
+[Fact]
+fn bool ExplicitArithmeticOperatorsTypeCheckWithoutPlaceholderDiagnostics()
+{
+    unsafe
+    {
+        return ExplicitArithmeticOperatorsTypeCheckWithoutPlaceholderDiagnosticsImpl();
+    }
+}
+
+[Fact]
+fn bool StrictFpModifierTypeChecksNowThatLoweringExists()
+{
+    unsafe
+    {
+        return StrictFpModifierTypeChecksNowThatLoweringExistsImpl();
+    }
+}
+
+[Fact]
+fn bool FloatingPointArithmeticChainsTypeCheckAcrossMixedNumericOperands()
+{
+    unsafe
+    {
+        return FloatingPointArithmeticChainsTypeCheckAcrossMixedNumericOperandsImpl();
+    }
+}
+
+[Fact]
+fn bool ExplicitConversionsPointerOperatorsAndSliceViewsTypeCheck()
+{
+    unsafe
+    {
+        return ExplicitConversionsPointerOperatorsAndSliceViewsTypeCheckImpl();
+    }
+}
+
+[Fact]
+fn bool TextEscapeLiteralsPreferUtf8BackedAsciiUnlessExplicitlyConverted()
+{
+    unsafe
+    {
+        return TextEscapeLiteralsPreferUtf8BackedAsciiUnlessExplicitlyConvertedImpl();
+    }
+}
+
+[Fact]
+fn bool RawAndMultilineTextLiteralsTypeCheckAsTextLiterals()
+{
+    unsafe
+    {
+        return RawAndMultilineTextLiteralsTypeCheckAsTextLiteralsImpl();
+    }
+}
+
+[Fact]
+fn bool ConstGlobalAggregateProjectionsCanBindToFrozenParameters()
+{
+    unsafe
+    {
+        return ConstGlobalAggregateProjectionsCanBindToFrozenParametersImpl();
+    }
+}
+
+[Fact]
+fn bool ExplicitLiteralTextConversionsTypeCheck()
+{
+    unsafe
+    {
+        return ExplicitLiteralTextConversionsTypeCheckImpl();
+    }
+}
+
+[Fact]
+fn bool CompileTimeTextConcatenationTypeChecksAsTextLiteral()
+{
+    unsafe
+    {
+        return CompileTimeTextConcatenationTypeChecksAsTextLiteralImpl();
+    }
+}
+
+[Fact]
+fn bool CompileTimeInterpolatedTextTypeChecksAsTextLiteral()
+{
+    unsafe
+    {
+        return CompileTimeInterpolatedTextTypeChecksAsTextLiteralImpl();
+    }
+}
+
+[Fact]
+fn bool FixedCapacityRuntimeInterpolatedTextTypeChecksWithKnownFormatter()
+{
+    unsafe
+    {
+        return FixedCapacityRuntimeInterpolatedTextTypeChecksWithKnownFormatterImpl();
+    }
+}
+
+[Fact]
+fn bool FixedCapacityTextConcatenationTypeChecksForAsciiAndUnicodeBuffers()
+{
+    unsafe
+    {
+        return FixedCapacityTextConcatenationTypeChecksForAsciiAndUnicodeBuffersImpl();
+    }
+}
+
+[Fact]
+fn bool EmptyTextSlicesTypeCheckAsSameTextKind()
+{
+    unsafe
+    {
+        return EmptyTextSlicesTypeCheckAsSameTextKindImpl();
+    }
+}
+
+[Fact]
+fn bool FixedArrayLengthsAcceptConstantArithmeticExpressions()
+{
+    unsafe
+    {
+        return FixedArrayLengthsAcceptConstantArithmeticExpressionsImpl();
+    }
+}
+
+[Fact]
+fn bool FixedArrayInitializersCanOmitTrailingElements()
+{
+    unsafe
+    {
+        return FixedArrayInitializersCanOmitTrailingElementsImpl();
+    }
+}
+
+[Fact]
+fn bool ScalarizableNamedAggregatesAreOrderedComparable()
+{
+    unsafe
+    {
+        return ScalarizableNamedAggregatesAreOrderedComparableImpl();
+    }
+}
+
+[Fact]
+fn bool ScalarizableEnumsAreOrderedComparable()
+{
+    unsafe
+    {
+        return ScalarizableEnumsAreOrderedComparableImpl();
+    }
+}
+
+[Fact]
+fn bool ExplicitNonAsciiLiteralToAsciiConversionTypeChecks()
+{
+    unsafe
+    {
+        return ExplicitNonAsciiLiteralToAsciiConversionTypeChecksImpl();
+    }
+}
+
+[Fact]
+fn bool FrozenReachableViewsTypeCheckAsReadonlyAliases()
+{
+    unsafe
+    {
+        return FrozenReachableViewsTypeCheckAsReadonlyAliasesImpl();
+    }
+}
+
+[Fact]
+fn bool ConstParameterProvenanceTypeChecksAsReadonlyAliases()
+{
+    unsafe
+    {
+        return ConstParameterProvenanceTypeChecksAsReadonlyAliasesImpl();
+    }
+}
+
+[Fact]
+fn bool ConstParametersCanBeForwardedToConstParameters()
+{
+    unsafe
+    {
+        return ConstParametersCanBeForwardedToConstParametersImpl();
+    }
+}
+
+[Fact]
+fn bool ConstRawPointerProvenanceFlowsThroughImmutableLocal()
+{
+    unsafe
+    {
+        return ConstRawPointerProvenanceFlowsThroughImmutableLocalImpl();
+    }
+}
+
+[Fact]
+fn bool GenericConstRawPointerCallsInferFromConstProvenanceView()
+{
+    unsafe
+    {
+        return GenericConstRawPointerCallsInferFromConstProvenanceViewImpl();
+    }
+}
+
+[Fact]
+fn bool ConstRawSliceProvenanceFlowsThroughImmutableLocal()
+{
+    unsafe
+    {
+        return ConstRawSliceProvenanceFlowsThroughImmutableLocalImpl();
+    }
+}
+
+[Fact]
+fn bool AggregateSwitchPatternsTypeCheckOnScalarFields()
+{
+    unsafe
+    {
+        return AggregateSwitchPatternsTypeCheckOnScalarFieldsImpl();
+    }
+}
+
+[Fact]
+fn bool AggregatePropertySwitchPatternsTypeCheckOnNamedFields()
+{
+    unsafe
+    {
+        return AggregatePropertySwitchPatternsTypeCheckOnNamedFieldsImpl();
+    }
+}
+
+[Fact]
+fn bool ListSwitchPatternsTypeCheckOnFixedArrays()
+{
+    unsafe
+    {
+        return ListSwitchPatternsTypeCheckOnFixedArraysImpl();
+    }
+}
+
+[Fact]
+fn bool ListSwitchPatternsTypeCheckOnSlices()
+{
+    unsafe
+    {
+        return ListSwitchPatternsTypeCheckOnSlicesImpl();
+    }
+}
+
+[Fact]
+fn bool NamedAggregateWholeValueSwitchCapturesTypeCheck()
+{
+    unsafe
+    {
+        return NamedAggregateWholeValueSwitchCapturesTypeCheckImpl();
+    }
+}
+
+[Fact]
+fn bool NestedAggregateWholeValueSwitchCapturesTypeCheck()
+{
+    unsafe
+    {
+        return NestedAggregateWholeValueSwitchCapturesTypeCheckImpl();
+    }
+}
+
+[Fact]
+fn bool EnumWholeValueSwitchCapturesTypeCheck()
+{
+    unsafe
+    {
+        return EnumWholeValueSwitchCapturesTypeCheckImpl();
+    }
+}
+
+[Fact]
+fn bool GuardedSwitchLabelsDoNotContributeToReachabilityCoverage()
+{
+    unsafe
+    {
+        return GuardedSwitchLabelsDoNotContributeToReachabilityCoverageImpl();
+    }
+}
+
+[Fact]
+fn bool NestedAggregateSwitchPatternsTypeCheckOnScalarLeaves()
+{
+    unsafe
+    {
+        return NestedAggregateSwitchPatternsTypeCheckOnScalarLeavesImpl();
+    }
+}
+
+[Fact]
+fn bool EnumSwitchPatternsTypeCheckOnCasePayloadCaptures()
+{
+    unsafe
+    {
+        return EnumSwitchPatternsTypeCheckOnCasePayloadCapturesImpl();
+    }
+}
+
+[Fact]
+fn bool GenericEnumInstantiationTypeChecks()
+{
+    unsafe
+    {
+        return GenericEnumInstantiationTypeChecksImpl();
+    }
+}
+
+[Fact]
+fn bool GenericRecordInstantiationTypeChecks()
+{
+    unsafe
+    {
+        return GenericRecordInstantiationTypeChecksImpl();
+    }
+}
+
+[Fact]
+fn bool GenericRecordPrimaryConstructorInstantiationTypeChecks()
+{
+    unsafe
+    {
+        return GenericRecordPrimaryConstructorInstantiationTypeChecksImpl();
+    }
+}
+
+[Fact]
+fn bool GenericTypeUsesRecordConcreteInstantiationTriggers()
+{
+    unsafe
+    {
+        return GenericTypeUsesRecordConcreteInstantiationTriggersImpl();
+    }
+}
+
+[Fact]
+fn bool NestedGenericTypesInsideContainersMonomorphizeAndRecordTriggers()
+{
+    unsafe
+    {
+        return NestedGenericTypesInsideContainersMonomorphizeAndRecordTriggersImpl();
+    }
+}
+
+[Fact]
+fn bool GenericFunctionBodiesCanUseTheirTypeParametersInLocalTypes()
+{
+    unsafe
+    {
+        return GenericFunctionBodiesCanUseTheirTypeParametersInLocalTypesImpl();
+    }
+}
+
+[Fact]
+fn bool GenericMethodBodiesCanUseTheirTypeParametersInLocalTypes()
+{
+    unsafe
+    {
+        return GenericMethodBodiesCanUseTheirTypeParametersInLocalTypesImpl();
+    }
+}
+
+[Fact]
+fn bool GenericFunctionCallsRecordConcreteInstantiationTriggers()
+{
+    unsafe
+    {
+        return GenericFunctionCallsRecordConcreteInstantiationTriggersImpl();
+    }
+}
+
+[Fact]
+fn bool GenericMethodCallsRecordConcreteInstantiationTriggers()
+{
+    unsafe
+    {
+        return GenericMethodCallsRecordConcreteInstantiationTriggersImpl();
+    }
+}
+
+[Fact]
+fn bool GenericMethodsOnGenericTypesRecordConcreteInstantiationTriggers()
+{
+    unsafe
+    {
+        return GenericMethodsOnGenericTypesRecordConcreteInstantiationTriggersImpl();
+    }
+}
+
+[Fact]
+fn bool GenericNestedMemberOutCallsInferStorageType()
+{
+    unsafe
+    {
+        return GenericNestedMemberOutCallsInferStorageTypeImpl();
+    }
+}
+
+[Fact]
+fn bool RepeatedGenericFunctionCallsReuseOneCachedInstantiationTrigger()
+{
+    unsafe
+    {
+        return RepeatedGenericFunctionCallsReuseOneCachedInstantiationTriggerImpl();
+    }
+}
+
+[Fact]
+fn bool RepeatedGenericTypeUsesReuseOneCachedInstantiationTrigger()
+{
+    unsafe
+    {
+        return RepeatedGenericTypeUsesReuseOneCachedInstantiationTriggerImpl();
+    }
+}
+
+[Fact]
+fn bool ConcreteOverloadsBeatMatchingGenericInstantiationTriggers()
+{
+    unsafe
+    {
+        return ConcreteOverloadsBeatMatchingGenericInstantiationTriggersImpl();
+    }
+}
+
+[Fact]
+fn bool TypeAliasesResolveToTheirUnderlyingTypes()
+{
+    unsafe
+    {
+        return TypeAliasesResolveToTheirUnderlyingTypesImpl();
+    }
+}
+
+[Fact]
+fn bool GenericTypeAliasesSubstituteIntoTheirUnderlyingTypes()
+{
+    unsafe
+    {
+        return GenericTypeAliasesSubstituteIntoTheirUnderlyingTypesImpl();
+    }
+}
+
+[Fact]
+fn bool GenericTypeAliasesSubstituteIntoClosureSignatures()
+{
+    unsafe
+    {
+        return GenericTypeAliasesSubstituteIntoClosureSignaturesImpl();
+    }
+}
+
+[Fact]
+fn bool GenericEnumAliasesCanQualifyVariants()
+{
+    unsafe
+    {
+        return GenericEnumAliasesCanQualifyVariantsImpl();
+    }
+}
+
+[Fact]
+fn bool GenericEnumVariantFieldTypeIsSubstituted()
+{
+    unsafe
+    {
+        return GenericEnumVariantFieldTypeIsSubstitutedImpl();
+    }
+}
+
+[Fact]
+fn bool TopLevelOverloadGroupsRegisterDistinctFunctionsAndResolveCalls()
+{
+    unsafe
+    {
+        return TopLevelOverloadGroupsRegisterDistinctFunctionsAndResolveCallsImpl();
+    }
+}
+
+[Fact]
+fn bool NumericOverloadResolutionPrefersExactAndNarrowSafeMatches()
+{
+    unsafe
+    {
+        return NumericOverloadResolutionPrefersExactAndNarrowSafeMatchesImpl();
+    }
+}
+
+[Fact]
+fn bool MethodOverloadGroupsRegisterDistinctFunctionsAndResolveCalls()
+{
+    unsafe
+    {
+        return MethodOverloadGroupsRegisterDistinctFunctionsAndResolveCallsImpl();
+    }
+}
+
+[Fact]
+fn bool TargetTypedObjectCreationResolvesFromDestinationType()
+{
+    unsafe
+    {
+        return TargetTypedObjectCreationResolvesFromDestinationTypeImpl();
+    }
+}
+
+[Fact]
+fn bool TargetTypedObjectCreationResolvesAllocatorTakingConstructorOverload()
+{
+    unsafe
+    {
+        return TargetTypedObjectCreationResolvesAllocatorTakingConstructorOverloadImpl();
+    }
+}
+
+[Fact]
+fn bool DynamicStorageCreationCapacityAndInitIndexTypeCheck()
+{
+    unsafe
+    {
+        return DynamicStorageCreationCapacityAndInitIndexTypeCheckImpl();
+    }
+}
+
+[Fact]
+fn bool DynamicStorageTryReserveReturnsBool()
+{
+    unsafe
+    {
+        return DynamicStorageTryReserveReturnsBoolImpl();
+    }
+}
+
+[Fact]
+fn bool DynamicStorageTryReserveCapacityReturnsBool()
+{
+    unsafe
+    {
+        return DynamicStorageTryReserveCapacityReturnsBoolImpl();
+    }
+}
+
+[Fact]
+fn bool DynamicStorageMoveLastReturnsElementType()
+{
+    unsafe
+    {
+        return DynamicStorageMoveLastReturnsElementTypeImpl();
+    }
+}
+
+[Fact]
+fn bool DynamicStorageMoveAtReturnsElementType()
+{
+    unsafe
+    {
+        return DynamicStorageMoveAtReturnsElementTypeImpl();
+    }
+}
+
+[Fact]
+fn bool DynamicStorageSpareRangeCanBindInitSliceView()
+{
+    unsafe
+    {
+        return DynamicStorageSpareRangeCanBindInitSliceViewImpl();
+    }
+}
+
+[Fact]
+fn bool TextLiteralsHaveConstProvenanceForConstParameters()
+{
+    unsafe
+    {
+        return TextLiteralsHaveConstProvenanceForConstParametersImpl();
+    }
+}
+
+[Fact]
+fn bool AssignmentExpressionsTypeCheck()
+{
+    unsafe
+    {
+        return AssignmentExpressionsTypeCheckImpl();
+    }
+}
+
+[Fact]
+fn bool UnaryAndExponentExpressionsTypeCheck()
+{
+    unsafe
+    {
+        return UnaryAndExponentExpressionsTypeCheckImpl();
+    }
+}
+
+[Fact]
+fn bool MultiplicativeAdditiveAndShiftExpressionsTypeCheck()
+{
+    unsafe
+    {
+        return MultiplicativeAdditiveAndShiftExpressionsTypeCheckImpl();
+    }
+}
+
+[Fact]
+fn bool BitwiseComparisonLogicalAndConditionalExpressionsTypeCheck()
+{
+    unsafe
+    {
+        return BitwiseComparisonLogicalAndConditionalExpressionsTypeCheckImpl();
+    }
+}
+
+[Fact]
+fn bool ComparisonChainsTypeCheck()
+{
+    unsafe
+    {
+        return ComparisonChainsTypeCheckImpl();
+    }
+}
+
+[Fact]
+fn bool PostfixCallsIndexesMembersAndObjectCreationTypeCheck()
+{
+    unsafe
+    {
+        return PostfixCallsIndexesMembersAndObjectCreationTypeCheckImpl();
+    }
+}
+
+[Fact]
+fn bool UnsignedSmallMediumAndWideIntegerOperationsRunCorrectly()
+{
+    unsafe
+    {
+        return UnsignedSmallMediumAndWideIntegerOperationsRunCorrectlyImpl();
+    }
+}
+
+[Fact]
+fn bool ContractsSeedEntryFactsAndDischargeByGuardOrForwardedContract()
+{
+    unsafe
+    {
+        return ContractsSeedEntryFactsAndDischargeByGuardOrForwardedContractImpl();
+    }
+}
+
+[Fact]
+fn bool UnprovenCallSitesAreDiagnosedWithTheSubstitutedObligation()
+{
+    unsafe
+    {
+        return UnprovenCallSitesAreDiagnosedWithTheSubstitutedObligationImpl();
+    }
+}
+
+[Fact]
+fn bool ConstantArgumentsDischargePureValueComparisons()
+{
+    unsafe
+    {
+        return ConstantArgumentsDischargePureValueComparisonsImpl();
+    }
+}
+
+[Fact]
+fn bool MirroredComparisonsNormalizeBetweenContractAndCaller()
+{
+    unsafe
+    {
+        return MirroredComparisonsNormalizeBetweenContractAndCallerImpl();
+    }
+}
+
+[Fact]
+fn bool ContractFactsDoNotLeakToUnrelatedIndexes()
+{
+    unsafe
+    {
+        return ContractFactsDoNotLeakToUnrelatedIndexesImpl();
+    }
+}
+
+[Fact]
+fn bool ArithmeticPropagationProvesComputedOffsetReads()
+{
+    unsafe
+    {
+        return ArithmeticPropagationProvesComputedOffsetReadsImpl();
+    }
+}
+
+[Fact]
+fn bool ComputedOffsetReadsWithoutTheContractStayRejected()
+{
+    unsafe
+    {
+        return ComputedOffsetReadsWithoutTheContractStayRejectedImpl();
+    }
+}
+
+[Fact]
+fn bool EnumsWithMoreThan128VariantsCompileThroughTheWholePipeline()
+{
+    unsafe
+    {
+        return EnumsWithMoreThan128VariantsCompileThroughTheWholePipelineImpl();
+    }
+}
+

@@ -1,0 +1,101 @@
+import CompilerTestSupport
+import System.Testing
+
+module ImportedModuleAmbiguityRegressionTests_DIAGP1
+
+// Each Impl ports a fact from ImportedModuleAmbiguityRegressionTests.cs. The C#
+// `Run` helper writes ModA.stark, ModB.stark, Mid.stark and Main.stark to a temp
+// directory and compiles the Main app against them through a
+// FileSystemModuleResolver. The single-source compile helpers cannot express the
+// four-file resolver wiring, so each Impl compiles only the `midSource` program
+// (the Mid module, which is the one carrying the ambiguous `Shared` reference)
+// kept verbatim from the C# raw string, through the closest helper. The asserted
+// diagnostics (STK3022 / STK3003 ambiguity, plus the absence of the STK9999
+// crash) surface during type-check on this module on its own, so CompileTypeCheck
+// is used.
+
+// Ported from ImportedModuleAmbiguityRegressionTests.BareNameAmbiguousAcrossImportsReportsLocatedDiagnosticInsteadOfCrashing.
+public unsafe fn bool BareNameAmbiguousAcrossImportsReportsLocatedDiagnosticInsteadOfCrashingImpl()
+{
+    // PORT-NOTE: the C# `Run(ambiguousMid, emitLlvm: true)` writes ModA/ModB/Mid/Main
+    // to a temp dir and runs the full LLVM pipeline against Main through a
+    // FileSystemModuleResolver. Only the Mid module (the ambiguous body) is compiled
+    // here, kept verbatim, via CompileTypeCheck. The original asserts:
+    // result.Succeeded == false; no STK9999 (the old lower-mir crash); no STK3003
+    // (the workaround scan no longer double-reports calls); and a STK3022 whose
+    // message says "'Shared' is ambiguous" and names both candidate overloads
+    // ModA.Shared and ModB.Shared. The final "located diagnostic" assert
+    // (STK3022 with a non-empty Location.FilePath) cannot be expressed by the
+    // helpers, so it is reduced to requiring the STK3022 diagnostic to be present.
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-imported-ambiguity-bare-name",
+        raw"""
+import ModA
+import ModB
+
+module Mid
+
+public fn i32[min max] UseShared()
+{
+    return Shared();
+}
+""");
+    return !Succeeds(compiled)
+        && !HasDiagnostic(compiled, "STK9999")
+        && !HasDiagnostic(compiled, "STK3003")
+        && HasDiagnostic(compiled, "STK3022")
+        && AnyDiagnosticMessageContains(compiled, "'Shared' is ambiguous")
+        && AnyDiagnosticMessageContains(compiled, "ModA.Shared")
+        && AnyDiagnosticMessageContains(compiled, "ModB.Shared");
+}
+
+// Ported from ImportedModuleAmbiguityRegressionTests.QualifyingTheAmbiguousNameCompilesCleanly.
+public unsafe fn bool QualifyingTheAmbiguousNameCompilesCleanlyImpl()
+{
+    // PORT-NOTE: the C# `Run(qualifiedMid, emitLlvm: true)` compiles Main against the
+    // four temp-dir modules through a FileSystemModuleResolver and asserts
+    // result.Succeeded. Only the Mid module (with the name qualified as ModA.Shared)
+    // is compiled here, kept verbatim. CompileTypeCheck cannot resolve the imported
+    // ModA module on its own, so the cross-module qualification cannot be fully
+    // reproduced; the clean-compile signal is reduced to Succeeds(...).
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-imported-ambiguity-qualified-name",
+        raw"""
+import ModA
+import ModB
+
+module Mid
+
+public fn i32[min max] UseShared()
+{
+    return ModA.Shared();
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from ImportedModuleAmbiguityRegressionTests.LocalShadowingAnAmbiguousNameIsNotFlagged.
+public unsafe fn bool LocalShadowingAnAmbiguousNameIsNotFlaggedImpl()
+{
+    // PORT-NOTE: the C# `Run(shadowedMid, emitLlvm: false)` compiles Main against the
+    // four temp-dir modules through a FileSystemModuleResolver and asserts that no
+    // STK3003 diagnostic is produced (the local `Shared` shadows the ambiguous
+    // import, so the ambiguity scan must not flag it). Only the Mid module is
+    // compiled here, kept verbatim, via CompileTypeCheck; the assertion is
+    // translated as the absence of STK3003.
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-imported-ambiguity-local-shadow",
+        raw"""
+import ModA
+import ModB
+
+module Mid
+
+public fn i32[min max] UseShared()
+{
+    stack i32[min max] Shared = 7;
+    return Shared;
+}
+""");
+    return !HasDiagnostic(compiled, "STK3003");
+}

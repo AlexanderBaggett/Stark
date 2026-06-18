@@ -1,0 +1,43 @@
+import CompilerMirTestSupport
+import System.Testing
+module RawSingleLineLiteralRegressionTestsP1
+
+// Ported slice of tests/compiler.Tests/RawSingleLineLiteralRegressionTests.cs.
+// The C# original runs the embedded program through DefaultCompilerPipeline with
+// EmitLlvmIr and asserts only result.Succeeded (the regression was a crash in
+// CreateLiteralOperand when a single-line raw"..." literal was used as a plain
+// comparison operand). The MIR helpers compile a single source and expose the
+// success signal, so the port runs the verbatim program through CompileMir and
+// returns Succeeds(...).
+
+// Ported from RawSingleLineLiteralRegressionTests.RawSingleLineLiteralsLowerAsComparisonOperands.
+// PORT-NOTE: reduced from a DefaultCompilerPipeline run with EmitLlvmIr=true
+// (asserting result.Succeeded over the emitted LLVM IR path) to a single-source
+// MIR compile; the CompileMir helper does not emit LLVM IR, so the assertion is
+// reduced to the nearest signal, Succeeds(c), over the same verbatim program.
+public unsafe fn bool RawSingleLineLiteralsLowerAsComparisonOperandsImpl()
+{
+    stack mut MirCompile c = CompileMir(
+        "raw-single-line-literals-comparison-operands",
+        raw"""
+module Demo
+
+export fn i32[min max] main()
+{
+    stack ascii value = "abc";
+    if (value == raw"abc")
+    {
+        return 0;
+    }
+
+    stack ascii pattern = raw"\d+\.\d+";
+    if (pattern == raw"\d+\.\d+")
+    {
+        return 1;
+    }
+
+    return 2;
+}
+""");
+    return Succeeds(c);
+}

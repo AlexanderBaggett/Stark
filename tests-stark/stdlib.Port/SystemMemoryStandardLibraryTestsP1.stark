@@ -1,0 +1,516 @@
+import StdlibPortSupport
+import System.Testing
+module SystemMemoryStandardLibraryTestsP1
+
+// Ported from SystemMemoryStandardLibraryTests.StdLibSourceMemoryModuleSupportsDefaultAllocatorSurface.
+public unsafe fn bool StdLibSourceMemoryModuleSupportsDefaultAllocatorSurfaceImpl()
+{
+    stack mut ProgramCompile c = CompileProgram("stdlib-memory-default-allocator-surface", raw"""
+        import System
+        module Demo
+
+        fn bool UseDefaultAllocator()
+        {
+            stack System.Memory.Allocator allocator = System.Memory.Allocator.Default();
+            return allocator.IsDefault();
+        }
+
+        fn bool MemoryOk(System.Memory.MemoryStatus status)
+        {
+            switch (status)
+            {
+                case System.Memory.MemoryStatus.Ok:
+                    return true;
+                case System.Memory.MemoryStatus.Err(var error):
+                    return false;
+            }
+        }
+
+        fn bool UsePromotedDynamicMemory()
+        {
+            stack mut dynamic i8[min max] bytes = new();
+            stack mut i8[min max][4] source =
+            {
+                1, 2, 3, 4
+            };
+            stack u64[0 2 ** 63 - 1] four = 4;
+            if (!MemoryOk(System.Memory.ReserveBytes(bytes, four)))
+            {
+                return false;
+            }
+
+            if (!MemoryOk(System.Memory.AppendBytes(bytes, source, four)))
+            {
+                return false;
+            }
+
+            if (!MemoryOk(System.Memory.AppendFillBytes(bytes, 9, four)))
+            {
+                return false;
+            }
+
+            if (!MemoryOk(System.Memory.MoveBytes(bytes[2, four], bytes[0, four], four)))
+            {
+                return false;
+            }
+
+            return bytes.Length == 8;
+        }
+        """);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemMemoryStandardLibraryTests.StdLibSourceMemoryAllocatorBuiltinsExposeFactsThroughInlineWrappers.
+public unsafe fn bool StdLibSourceMemoryAllocatorBuiltinsExposeFactsThroughInlineWrappersImpl()
+{
+    // PORT-NOTE: the C# original compiles with EmitLlvmIr against a linux target and
+    // checks via FindRequiredLine that the System_Memory_Allocate/Reallocate/Free
+    // define lines carry `alwaysinline`. The compile-only host bridge has no target
+    // parameter, so the inline-wrapper line checks are expressed with
+    // AnyLineContainsBoth against the rendered llvm artifact, and the runtime alloc
+    // call-site checks with Contains.
+    stack mut ProgramCompile c = CompileProgram("stdlib-memory-allocator-inline-wrappers", raw"""
+        import System.Memory
+        module Demo
+
+        unsafe fn bool ExerciseAllocatorBoundary()
+        {
+            stack System.Memory.Allocator allocator = System.Memory.Allocator.Default();
+            stack mut System.Memory.Allocation allocation = System.Memory.Allocate(allocator, 32, 8);
+            if (allocation.Pointer == null)
+            {
+                return false;
+            }
+
+            allocation = System.Memory.Reallocate(allocation, 64, 8);
+            System.Memory.Free(allocation);
+            return true;
+        }
+        """);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    if (!AnyLineContainsBoth(llvm, "define internal dso_local fastcc void @System_Memory_Allocate(", "alwaysinline")
+        || !AnyLineContainsBoth(llvm, "define internal dso_local fastcc void @System_Memory_Reallocate(", "alwaysinline")
+        || !AnyLineContainsBoth(llvm, "define internal dso_local fastcc void @System_Memory_Free(", "alwaysinline"))
+    {
+        return false;
+    }
+
+    if (!Contains(llvm, "call noalias nonnull noundef ptr @__stark_runtime_alloc(")
+        || !Contains(llvm, "call nonnull noundef ptr @__stark_runtime_realloc(")
+        || !Contains(llvm, "call void @__stark_runtime_free("))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemMemoryStandardLibraryTests.StdLibSourceMemoryModuleUsesWindowsHeapAllocatorForWindowsTarget.
+public unsafe fn bool StdLibSourceMemoryModuleUsesWindowsHeapAllocatorForWindowsTargetImpl()
+{
+    // PORT-NOTE: the C# original reads stdlib/src/System/Memory.stark off disk and
+    // compiles it with EmitLlvmIr against an x86_64-pc-windows-msvc target, then uses
+    // Contains/DoesNotContain to assert the emitted IR uses the Windows heap allocator
+    // (GetProcessHeap/HeapAlloc/HeapReAlloc/HeapFree, the os_allocate/os_reallocate
+    // shims, the realloc fallback blocks, the thread-local alloc bucket) and never
+    // references libc malloc/realloc/free or raw syscall asm. The compile-only host
+    // bridge cannot read the stdlib source off disk and cannot select a Windows
+    // target, so this reduces to compiling a program that imports System.Memory
+    // (transitively pulling in the host stdlib's Memory.stark) and asserting success.
+    stack mut ProgramCompile c = CompileProgram("stdlib-memory-windows-heap-allocator", raw"""
+        import System.Memory
+        module Demo
+
+        unsafe fn bool UseAllocator()
+        {
+            stack System.Memory.Allocator allocator = System.Memory.Allocator.Default();
+            stack mut System.Memory.Allocation allocation = System.Memory.Allocate(allocator, 32, 8);
+            if (allocation.Pointer == null)
+            {
+                return false;
+            }
+
+            allocation = System.Memory.Reallocate(allocation, 64, 8);
+            System.Memory.Free(allocation);
+            return true;
+        }
+        """);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemMemoryStandardLibraryTests.SourceWindowsMemoryReallocateExecutablePreservesContentsAcrossHeapAndFallbackPaths.
+public unsafe fn bool SourceWindowsMemoryReallocateExecutablePreservesContentsAcrossHeapAndFallbackPathsImpl()
+{
+    // PORT-NOTE: original is Windows-only, builds the embedded program into an
+    // executable via the CLI (--emit-exe --target <windows triple>), runs it, and
+    // asserts process exit code 0 with empty stdout/stderr (the program returns 0
+    // only when heap and bucket realloc paths, including the fallback path, preserve
+    // byte contents). The compile-only host bridge cannot select a Windows target,
+    // link, or run the produced binary, so this reduces to compiling the embedded
+    // program and asserting it succeeds.
+    stack mut ProgramCompile c = CompileProgram("source-windows-memory-realloc-preserves-contents", raw"""
+        module System.Memory
+
+        public struct Allocator
+        {
+            u8[0 2 ** 7 - 1] Kind;
+
+            static finite law Allocator Default()
+            {
+                return new Allocator()
+                {
+                    Kind = 0
+                };
+            }
+        }
+
+        internal struct Allocation
+        {
+            rawmutptr<i8[min max]> Pointer;
+            u64[0 2 ** 63 - 1] ByteLength;
+            u64[1 2 ** 63 - 1] Alignment;
+            Allocator Allocator;
+        }
+
+        internal fn Allocation Allocate(Allocator allocator, u64[0 2 ** 63 - 1] byteLength, u64[1 2 ** 63 - 1] alignment);
+        internal fn Allocation Reallocate(Allocation allocation, u64[0 2 ** 63 - 1] byteLength, u64[1 2 ** 63 - 1] alignment);
+        internal fn void Free(Allocation allocation);
+
+        unsafe fn void Fill(borrow Allocation allocation, u64[0 2 ** 63 - 1] count, i8[min max] value)
+        {
+            stack rawmutptr<i8[min max]> data = allocation.Pointer;
+            for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+            {
+                *(&data[index]) = value;
+            }
+        }
+
+        unsafe fn bool AllEqual(borrow Allocation allocation, u64[0 2 ** 63 - 1] count, i8[min max] value)
+        {
+            stack rawmutptr<i8[min max]> data = allocation.Pointer;
+            for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+            {
+                if (*(&data[index]) != value)
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        export unsafe fn i32[min max] main()
+        {
+            stack mut Allocation large = Allocate(Allocator.Default(), 5000, 8);
+            if (large.Pointer == null)
+            {
+                return 1;
+            }
+
+            Fill(large, 5000, 3);
+            large = Reallocate(large, 9000, 8);
+            if (large.Pointer == null || !AllEqual(large, 5000, 3))
+            {
+                return 2;
+            }
+
+            large = Reallocate(large, 4097, 8);
+            if (large.Pointer == null || !AllEqual(large, 4097, 3))
+            {
+                return 3;
+            }
+
+            large = Reallocate(large, 4097, 8);
+            if (large.Pointer == null || !AllEqual(large, 4097, 3))
+            {
+                return 4;
+            }
+
+            Free(large);
+
+            stack mut Allocation bucket = Allocate(Allocator.Default(), 16, 8);
+            if (bucket.Pointer == null)
+            {
+                return 5;
+            }
+
+            Fill(bucket, 16, 11);
+            bucket = Reallocate(bucket, 12, 8);
+            if (bucket.Pointer == null || !AllEqual(bucket, 12, 11))
+            {
+                return 6;
+            }
+
+            bucket = Reallocate(bucket, 8, 8);
+            if (bucket.Pointer == null || !AllEqual(bucket, 8, 11))
+            {
+                return 7;
+            }
+
+            Free(bucket);
+
+            stack mut Allocation bucketFallback = Allocate(Allocator.Default(), 16, 8);
+            if (bucketFallback.Pointer == null)
+            {
+                return 8;
+            }
+
+            Fill(bucketFallback, 16, 21);
+            bucketFallback = Reallocate(bucketFallback, 5000, 8);
+            if (bucketFallback.Pointer == null || !AllEqual(bucketFallback, 16, 21))
+            {
+                return 9;
+            }
+
+            Free(bucketFallback);
+
+            stack mut Allocation overAligned = Allocate(Allocator.Default(), 512, 64);
+            if (overAligned.Pointer == null)
+            {
+                return 10;
+            }
+
+            Fill(overAligned, 512, 31);
+            overAligned = Reallocate(overAligned, 1024, 64);
+            if (overAligned.Pointer == null || !AllEqual(overAligned, 512, 31))
+            {
+                return 11;
+            }
+
+            Free(overAligned);
+            return 0;
+        }
+        """);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemMemoryStandardLibraryTests.SourceImportedStdLibAllocatorExecutableHasNoExplicitCAllocatorSymbolReferences.
+public unsafe fn bool SourceImportedStdLibAllocatorExecutableHasNoExplicitCAllocatorSymbolReferencesImpl()
+{
+    // PORT-NOTE: original writes an allocator-audit app (WriteAllocatorAuditAppAsync),
+    // builds it into an executable via the CLI (--emit-exe -I <source stdlib>), then
+    // runs `nm`/`llvm-nm` over the produced binary and asserts the symbol table has no
+    // explicit libc allocator references (malloc/realloc/free). The exact body of the
+    // allocator-audit app is generated by a private helper not present in this file, so
+    // a faithful allocator-exercising program is embedded here. The compile-only host
+    // bridge cannot link or run `nm` over a binary, so this reduces to compiling the
+    // embedded program and asserting it succeeds; the no-libc-allocator property is
+    // additionally checked against the rendered llvm artifact via DoesNotContain.
+    stack mut ProgramCompile c = CompileProgram("source-imported-stdlib-allocator-no-c-symbols", raw"""
+        import System
+        import System.Memory
+        module App
+
+        fn bool MemoryOk(System.Memory.MemoryStatus status)
+        {
+            switch (status)
+            {
+                case System.Memory.MemoryStatus.Ok:
+                    return true;
+                case System.Memory.MemoryStatus.Err(var error):
+                    return false;
+            }
+        }
+
+        export unsafe fn i32[min max] main()
+        {
+            stack System.Memory.Allocator allocator = System.Memory.Allocator.Default();
+            stack mut System.Memory.Allocation allocation = System.Memory.Allocate(allocator, 32, 8);
+            if (allocation.Pointer == null)
+            {
+                return 1;
+            }
+
+            allocation = System.Memory.Reallocate(allocation, 64, 8);
+            if (allocation.Pointer == null)
+            {
+                return 2;
+            }
+
+            System.Memory.Free(allocation);
+
+            stack mut dynamic i8[min max] bytes = new();
+            stack u64[0 2 ** 63 - 1] four = 4;
+            if (!MemoryOk(System.Memory.ReserveBytes(bytes, four)))
+            {
+                return 3;
+            }
+
+            return 0;
+        }
+        """);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    if (Contains(llvm, "@malloc(")
+        || Contains(llvm, "@realloc(")
+        || Contains(llvm, "@free("))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemMemoryStandardLibraryTests.PackagedStdLibAllocatorExecutableHasNoExplicitCAllocatorSymbolReferences.
+public unsafe fn bool PackagedStdLibAllocatorExecutableHasNoExplicitCAllocatorSymbolReferencesImpl()
+{
+    // PORT-NOTE: original writes the same allocator-audit app, builds it into an
+    // executable via the CLI against the packaged stdlib image (--emit-exe -I
+    // <packaged stdlib>), then runs `nm`/`llvm-nm` over the produced binary and
+    // asserts the symbol table has no explicit libc allocator references
+    // (malloc/realloc/free). The compile-only host bridge cannot select a packaged
+    // image, link, or run `nm` over a binary, so this reduces to compiling a faithful
+    // allocator-exercising program (the audit-app body is generated by a private
+    // helper not present in this file) and asserting it succeeds; the
+    // no-libc-allocator property is additionally checked against the rendered llvm
+    // artifact via DoesNotContain.
+    stack mut ProgramCompile c = CompileProgram("packaged-stdlib-allocator-no-c-symbols", raw"""
+        import System
+        import System.Memory
+        module App
+
+        fn bool MemoryOk(System.Memory.MemoryStatus status)
+        {
+            switch (status)
+            {
+                case System.Memory.MemoryStatus.Ok:
+                    return true;
+                case System.Memory.MemoryStatus.Err(var error):
+                    return false;
+            }
+        }
+
+        export unsafe fn i32[min max] main()
+        {
+            stack System.Memory.Allocator allocator = System.Memory.Allocator.Default();
+            stack mut System.Memory.Allocation allocation = System.Memory.Allocate(allocator, 32, 8);
+            if (allocation.Pointer == null)
+            {
+                return 1;
+            }
+
+            allocation = System.Memory.Reallocate(allocation, 64, 8);
+            if (allocation.Pointer == null)
+            {
+                return 2;
+            }
+
+            System.Memory.Free(allocation);
+
+            stack mut dynamic i8[min max] bytes = new();
+            stack u64[0 2 ** 63 - 1] four = 4;
+            if (!MemoryOk(System.Memory.ReserveBytes(bytes, four)))
+            {
+                return 3;
+            }
+
+            return 0;
+        }
+        """);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    if (Contains(llvm, "@malloc(")
+        || Contains(llvm, "@realloc(")
+        || Contains(llvm, "@free("))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemMemoryStandardLibraryTests.PackagedImportSystemConsoleExecutableDoesNotPullUnusedAllocatorCSymbols.
+public unsafe fn bool PackagedImportSystemConsoleExecutableDoesNotPullUnusedAllocatorCSymbolsImpl()
+{
+    // PORT-NOTE: original first builds System.stark into a static library via the CLI
+    // (--emit-lib), then builds the import-System-Console app against that packaged
+    // library (--emit-exe -I <package dir>), and finally runs `nm`/`llvm-nm` over the
+    // produced binary to assert it pulls in no unused libc allocator symbols
+    // (malloc/realloc/free). The compile-only host bridge cannot emit a static library,
+    // link against it, or run `nm` over a binary, so this reduces to compiling the
+    // import-System-Console app (WriteImportSystemConsoleAppAsync) and asserting it
+    // succeeds; the no-libc-allocator property is additionally checked against the
+    // rendered llvm artifact via DoesNotContain.
+    stack mut ProgramCompile c = CompileProgram("packaged-import-console-no-unused-allocator-c-symbols", raw"""
+        import System
+        module App
+
+        export fn i32[min max] main()
+        {
+            System.Console.WriteLine("allocator stays unused");
+            return 0;
+        }
+        """);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    if (Contains(llvm, "@malloc(")
+        || Contains(llvm, "@realloc(")
+        || Contains(llvm, "@free("))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemMemoryStandardLibraryTests.SourceImportedImportSystemConsoleExecutableDoesNotEmitUnusedMemoryObjects.
+public unsafe fn bool SourceImportedImportSystemConsoleExecutableDoesNotEmitUnusedMemoryObjectsImpl()
+{
+    // PORT-NOTE: original builds the import-System-Console app against the source
+    // stdlib via the CLI (--emit-exe -I <source stdlib> --save-temps <dir>), runs the
+    // produced binary asserting exit code 0 with stdout "allocator stays unused\n" and
+    // empty stderr, then enumerates the saved intermediate object files and asserts no
+    // unused memory object (no *Memory*.o/.obj) and no System_FileSystem object were
+    // emitted. The compile-only host bridge cannot link, run the binary, or save and
+    // enumerate intermediate object files, so this reduces to compiling the
+    // import-System-Console app (WriteImportSystemConsoleAppAsync) and asserting it
+    // succeeds.
+    stack mut ProgramCompile c = CompileProgram("source-imported-import-console-no-unused-memory-objects", raw"""
+        import System
+        module App
+
+        export fn i32[min max] main()
+        {
+            System.Console.WriteLine("allocator stays unused");
+            return 0;
+        }
+        """);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return true;
+}

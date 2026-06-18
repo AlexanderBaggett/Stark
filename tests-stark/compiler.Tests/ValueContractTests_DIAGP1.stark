@@ -1,0 +1,235 @@
+import CompilerTestSupport
+import System.Testing
+
+module ValueContractTests_DIAGP1
+
+// Ported from ValueContractTests.ContractsSeedEntryFactsAndDischargeByGuardOrForwardedContract.
+public unsafe fn bool ContractsSeedEntryFactsAndDischargeByGuardOrForwardedContractImpl()
+{
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "valuecontract-diagp1-seed-entry-facts-guard-or-forwarded",
+        raw"""module Demo
+
+struct Table
+{
+    dynamic i64[min max] Items;
+
+    finite law i64[min max] At(borrow Table self, u64[0 2 ** 63 - 1] index)
+        where index < self.Items.Length
+    {
+        return self.Items[index];
+    }
+}
+
+finite law i64[min max] Forwarded(borrow Table table, u64[0 2 ** 63 - 1] index)
+    where index < table.Items.Length
+{
+    return table.At(index);
+}
+
+finite law i64[min max] Guarded(borrow Table table, u64[0 2 ** 63 - 1] index)
+{
+    if (index >= table.Items.Length)
+    {
+        return 0;
+    }
+
+    return table.At(index);
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from ValueContractTests.UnprovenCallSitesAreDiagnosedWithTheSubstitutedObligation.
+public unsafe fn bool UnprovenCallSitesAreDiagnosedWithTheSubstitutedObligationImpl()
+{
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "valuecontract-diagp1-unproven-call-site-substituted-obligation",
+        raw"""module Demo
+
+struct Table
+{
+    dynamic i64[min max] Items;
+
+    finite law i64[min max] At(borrow Table self, u64[0 2 ** 63 - 1] index)
+        where index < self.Items.Length
+    {
+        return self.Items[index];
+    }
+}
+
+finite law i64[min max] Unproven(borrow Table table, u64[0 2 ** 63 - 1] index)
+{
+    return table.At(index);
+}
+""");
+    return FailsWithDiagnostic(compiled, "STK4206")
+        && AnyDiagnosticMessageContains(compiled, "index < self.Items.Length")
+        && AnyDiagnosticMessageContains(compiled, "index < table.Items.Length");
+}
+
+// Ported from ValueContractTests.ConstantArgumentsDischargePureValueComparisons.
+public unsafe fn bool ConstantArgumentsDischargePureValueComparisonsImpl()
+{
+    stack mut LlvmCompile inRange = CompileTypeCheck(
+        "valuecontract-diagp1-constant-arguments-in-range",
+        raw"""module Demo
+
+finite law u32[0 max] Pick(u32[0 max] count)
+    where count < 64
+{
+    return count;
+}
+
+finite law u32[0 max] InRange()
+{
+    return Pick(16);
+}
+""");
+
+    stack mut LlvmCompile outOfRange = CompileTypeCheck(
+        "valuecontract-diagp1-constant-arguments-out-of-range",
+        raw"""module Demo
+
+finite law u32[0 max] Pick(u32[0 max] count)
+    where count < 64
+{
+    return count;
+}
+
+finite law u32[0 max] OutOfRange()
+{
+    return Pick(99);
+}
+""");
+
+    return Succeeds(inRange)
+        && FailsWithDiagnosticMessage(outOfRange, "STK4206", "99 < 64");
+}
+
+// Ported from ValueContractTests.MirroredComparisonsNormalizeBetweenContractAndCaller.
+public unsafe fn bool MirroredComparisonsNormalizeBetweenContractAndCallerImpl()
+{
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "valuecontract-diagp1-mirrored-comparisons-normalize",
+        raw"""module Demo
+
+struct Table
+{
+    dynamic i64[min max] Items;
+
+    finite law i64[min max] At(borrow Table self, u64[0 2 ** 63 - 1] index)
+        where index < self.Items.Length
+    {
+        return self.Items[index];
+    }
+}
+
+finite law i64[min max] Mirrored(borrow Table table, u64[0 2 ** 63 - 1] index)
+    where table.Items.Length > index
+{
+    return table.At(index);
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from ValueContractTests.ContractFactsDoNotLeakToUnrelatedIndexes.
+public unsafe fn bool ContractFactsDoNotLeakToUnrelatedIndexesImpl()
+{
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "valuecontract-diagp1-contract-facts-do-not-leak",
+        raw"""module Demo
+
+struct Table
+{
+    dynamic i64[min max] Items;
+
+    finite law i64[min max] At(borrow Table self, u64[0 2 ** 63 - 1] index)
+        where index < self.Items.Length
+    {
+        return self.Items[index];
+    }
+}
+
+finite law i64[min max] WrongIndex(borrow Table table, u64[0 2 ** 63 - 1] index, u64[0 2 ** 63 - 1] other)
+    where index < table.Items.Length
+{
+    return table.At(other);
+}
+""");
+    return FailsWithDiagnosticMessage(compiled, "STK4206", "other < table.Items.Length");
+}
+
+// Ported from ValueContractTests.ArithmeticPropagationProvesComputedOffsetReads.
+public unsafe fn bool ArithmeticPropagationProvesComputedOffsetReadsImpl()
+{
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "valuecontract-diagp1-arithmetic-propagation-proves-offset",
+        raw"""module Demo
+
+struct Doc
+{
+    dynamic i8[min max] Bytes;
+}
+
+fn bool RangeIsZero(borrow Doc self, u64[0 2 ** 63 - 1] start, u64[0 2 ** 63 - 1] length)
+    where start + length <= self.Bytes.Length
+{
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < length)
+    {
+        if (self.Bytes[start + index] != 0)
+        {
+            return false;
+        }
+
+        index = (u64[0 2 ** 63 - 1])(index + 1);
+    }
+
+    return true;
+}
+
+fn bool GuardSpelledInline(borrow Doc self, u64[0 2 ** 63 - 1] start, u64[0 2 ** 63 - 1] length)
+{
+    if (start + length <= self.Bytes.Length)
+    {
+        return RangeIsZero(self, start, length);
+    }
+
+    return false;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from ValueContractTests.ComputedOffsetReadsWithoutTheContractStayRejected.
+public unsafe fn bool ComputedOffsetReadsWithoutTheContractStayRejectedImpl()
+{
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "valuecontract-diagp1-computed-offset-without-contract-rejected",
+        raw"""module Demo
+
+struct Doc
+{
+    dynamic i8[min max] Bytes;
+}
+
+fn bool NoContract(borrow Doc self, u64[0 2 ** 63 - 1] start, u64[0 2 ** 63 - 1] length)
+{
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < length)
+    {
+        if (self.Bytes[start + index] != 0)
+        {
+            return false;
+        }
+
+        index = (u64[0 2 ** 63 - 1])(index + 1);
+    }
+
+    return true;
+}
+""");
+    return FailsWithDiagnosticMessage(compiled, "STK4205", "self.Bytes[start+index]");
+}

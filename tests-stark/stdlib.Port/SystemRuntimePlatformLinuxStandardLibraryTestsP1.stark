@@ -1,0 +1,478 @@
+import StdlibPortSupport
+import System.Testing
+module SystemRuntimePlatformLinuxStandardLibraryTestsP1
+
+// Ported from SystemRuntimePlatformLinuxStandardLibraryTests.StdLibSourceCurrentDirectoryUsesSyscallBackedLinuxPath.
+public unsafe fn bool StdLibSourceCurrentDirectoryUsesSyscallBackedLinuxPathImpl()
+{
+    // PORT-NOTE: the C# original reads stdlib/src/System/Runtime/Platform/Linux.stark
+    // off disk and compiles it directly with a x86_64-unknown-linux-gnu triple and a
+    // FileSystemModuleResolver, then asserts the emitted LLVM defines/calls the
+    // syscall-backed helpers (@LinuxSyscall2PathBuffer, @TryTempDirectory) and never
+    // touches libc (@getcwd, @strlen). The compile-only host bridge cannot read the
+    // on-disk platform module nor pin a Linux target triple, so this reduces to
+    // compiling a probe program that imports the System.Runtime.Platform facade and
+    // asserting it succeeds.
+    stack mut ProgramCompile c = CompileProgram("linux-currentdir-syscall-path", raw"""
+        import System.Runtime.Platform
+        module App
+
+        export unsafe fn i32[min max] main()
+        {
+            stack mut System.Text.OwnedAscii dir = new();
+            if (System.Runtime.Platform.TryTempDirectory(&dir))
+            {
+                return 0;
+            }
+
+            return 1;
+        }
+        """);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemRuntimePlatformLinuxStandardLibraryTests.StdLibSourceConsoleAsciiWritesUseSyscallBackedLinuxPath.
+public unsafe fn bool StdLibSourceConsoleAsciiWritesUseSyscallBackedLinuxPathImpl()
+{
+    // PORT-NOTE: the C# original compiles the on-disk Linux platform module against a
+    // x86_64-unknown-linux-gnu triple and asserts the emitted LLVM defines
+    // @WriteAsciiToHandle, routes through @LinuxSyscall3HandleBuffer, and encodes the
+    // stdout/stderr fds with `inttoptr i8 1/2 to ptr`. The compile-only host bridge
+    // cannot read the on-disk module nor pin the Linux triple, so this reduces to
+    // compiling a probe that drives the ascii console-write facade and asserting it
+    // succeeds.
+    stack mut ProgramCompile c = CompileProgram("linux-console-ascii-syscall-path", raw"""
+        import System
+        module App
+
+        export fn i32[min max] main()
+        {
+            System.Console.Write("ascii");
+            System.Console.WriteLine("line");
+            System.Console.WriteError("error");
+            return 0;
+        }
+        """);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemRuntimePlatformLinuxStandardLibraryTests.StdLibSourceConsoleUnicodeWritesUseSyscallBackedLinuxPath.
+public unsafe fn bool StdLibSourceConsoleUnicodeWritesUseSyscallBackedLinuxPathImpl()
+{
+    // PORT-NOTE: the C# original compiles the on-disk Linux platform module against a
+    // x86_64-unknown-linux-gnu triple and asserts the emitted LLVM defines
+    // @WriteUnicodeToHandle, routes through @LinuxSyscall3HandleBuffer, and never calls
+    // libc @fputws. The compile-only host bridge cannot read the on-disk module nor pin
+    // the Linux triple, so this reduces to compiling a probe that drives the unicode
+    // console-write facade and asserting it succeeds.
+    stack mut ProgramCompile c = CompileProgram("linux-console-unicode-syscall-path", raw"""
+        import System
+        module App
+
+        export fn i32[min max] main()
+        {
+            System.Console.Write((unicode)"ascii");
+            System.Console.WriteLine((unicode)"line");
+            System.Console.WriteError((unicode)"error");
+            return 0;
+        }
+        """);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemRuntimePlatformLinuxStandardLibraryTests.StdLibSourceLinuxFileOperationsUseSyscallBackedPath.
+public unsafe fn bool StdLibSourceLinuxFileOperationsUseSyscallBackedPathImpl()
+{
+    // PORT-NOTE: the C# original compiles the on-disk Linux platform module against a
+    // x86_64-unknown-linux-gnu triple and asserts the emitted LLVM defines
+    // @OpenFileRead/@CloseFile/@ReadFile/@WriteFile, routes through the openat/read/
+    // write/rename syscall shims (@LinuxSyscall4OpenAt, @LinuxSyscall1Handle,
+    // @LinuxSyscall3HandleBuffer, @LinuxSyscall3AtPath, @LinuxSyscall4RenameAt), and
+    // never calls libc stdio (@fopen/@fclose/@fread/@fwrite/@remove/@rename). The
+    // compile-only host bridge cannot read the on-disk module nor pin the Linux triple,
+    // so this reduces to compiling a probe that drives the file facade and asserting it
+    // succeeds.
+    stack mut ProgramCompile c = CompileProgram("linux-file-ops-syscall-path", raw"""
+        import System
+        module App
+
+        export fn bool Use()
+        {
+            switch (System.IO.File.Exists("input.txt"))
+            {
+                case System.IO.PathQuery.Err(var error):
+                    return false;
+                case System.IO.PathQuery.Ok(var exists):
+                    return exists;
+            }
+        }
+        """);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemRuntimePlatformLinuxStandardLibraryTests.StdLibSourceLinuxFileExistsUsesStatSyscallPath.
+public unsafe fn bool StdLibSourceLinuxFileExistsUsesStatSyscallPathImpl()
+{
+    // PORT-NOTE: the C# original compiles the on-disk Linux platform module against a
+    // x86_64-unknown-linux-gnu triple and walks the emitted LLVM: @FileExists delegates
+    // to @PathExists, which delegates to @TryReadPathMode, which delegates to the shared
+    // @StatPathInto helper that issues the statat syscall (@LinuxSyscall4StatAt with the
+    // comptime-folded number 262 and AT_FDCWD -100) rather than open/close or libc
+    // @stat/@fstatat. The compile-only host bridge cannot read the on-disk module, pin
+    // the Linux triple, nor extract balanced function bodies from the LLVM text, so this
+    // reduces to compiling a probe that drives the path-existence facade and asserting it
+    // succeeds.
+    stack mut ProgramCompile c = CompileProgram("linux-file-exists-stat-syscall-path", raw"""
+        import System
+        module App
+
+        export fn bool Use()
+        {
+            switch (System.IO.Path.Exists("probe"))
+            {
+                case System.IO.PathQuery.Err(var error):
+                    return false;
+                case System.IO.PathQuery.Ok(var exists):
+                    return exists;
+            }
+        }
+        """);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemRuntimePlatformLinuxStandardLibraryTests.StdLibSourceLinuxTerminalDetectionUsesIoctlSyscallPath.
+public unsafe fn bool StdLibSourceLinuxTerminalDetectionUsesIoctlSyscallPathImpl()
+{
+    // PORT-NOTE: the C# original compiles the on-disk Linux platform module against a
+    // x86_64-unknown-linux-gnu triple and asserts the emitted LLVM defines the ioctl
+    // shim @LinuxSyscall3HandleRequestPointer and @IsTerminal routes through it rather
+    // than libc @isatty. The compile-only host bridge cannot read the on-disk module nor
+    // pin the Linux triple, so this reduces to compiling a probe that drives the
+    // terminal-detection facade and asserting it succeeds.
+    stack mut ProgramCompile c = CompileProgram("linux-terminal-detect-ioctl-syscall-path", raw"""
+        import System.Runtime.Platform
+        module App
+
+        export unsafe fn i32[min max] main()
+        {
+            if (System.Runtime.Platform.IsTerminal((rawptr<i8[min max]>)1))
+            {
+                return 1;
+            }
+
+            return 0;
+        }
+        """);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemRuntimePlatformLinuxStandardLibraryTests.SourceStdLibBuildRoutesPlatformCallsThroughLinuxModuleForLinuxTargets.
+public unsafe fn bool SourceStdLibBuildRoutesPlatformCallsThroughLinuxModuleForLinuxTargetsImpl()
+{
+    // PORT-NOTE: the C# original compiles the on-disk System.stark root against a
+    // x86_64-unknown-linux-gnu triple through a TargetAwareStdLibModuleResolver and
+    // inspects the resulting module graph: System.Runtime.Platform and its .Linux
+    // submodule are loaded, while .Windows and .MacOS are not, and the emitted LLVM
+    // references @LinuxSyscall but neither @GetStdHandle nor @CreateFileW. The
+    // compile-only host bridge cannot pin a Linux target triple, drive the
+    // target-aware resolver, nor read the module graph artifact, so this reduces to
+    // compiling a probe that drives the platform facade and asserting it succeeds.
+    stack mut ProgramCompile c = CompileProgram("stdlib-build-routes-linux-platform", raw"""
+        import System
+        module App
+
+        export fn i32[min max] main()
+        {
+            System.Console.WriteLine("routes through platform");
+            return 0;
+        }
+        """);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemRuntimePlatformLinuxStandardLibraryTests.SourceRuntimePlatformTerminalDetectionSeesRedirectedStdoutAsNonTerminal.
+public unsafe fn bool SourceRuntimePlatformTerminalDetectionSeesRedirectedStdoutAsNonTerminalImpl()
+{
+    // PORT-NOTE: the C# original (Linux-only; skipped on Windows/macOS) writes the
+    // embedded App below to disk, builds it with the CLI (--emit-exe), runs the binary
+    // with stdout/stderr redirected, and asserts the process exits 0 (both fd 1 and fd 2
+    // detected as non-terminals) with empty stdout/stderr. The compile-only host bridge
+    // cannot link, run, or redirect the produced binary, so this reduces to compiling the
+    // embedded program verbatim and asserting it succeeds.
+    stack mut ProgramCompile c = CompileProgram("runtime-terminal-detect-redirected-stdout", raw"""
+        import System.Runtime.Platform
+        module App
+
+        export unsafe fn i32[min max] main()
+        {
+            if (System.Runtime.Platform.IsTerminal((rawptr<i8[min max]>)1))
+            {
+                return 1;
+            }
+
+            if (System.Runtime.Platform.IsTerminal((rawptr<i8[min max]>)2))
+            {
+                return 2;
+            }
+
+            return 0;
+        }
+        """);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemRuntimePlatformLinuxStandardLibraryTests.StdLibSourceLinuxProcessHelpersUseSyscallBackedPath.
+public unsafe fn bool StdLibSourceLinuxProcessHelpersUseSyscallBackedPathImpl()
+{
+    // PORT-NOTE: the C# original compiles the on-disk Linux platform module against a
+    // x86_64-unknown-linux-gnu triple and asserts the emitted LLVM defines @ExitProcess
+    // and @ProcessId routed through the exit_group / getpid syscall numbers
+    // (@LinuxExitGroupSyscallNumber, @LinuxGetPidSyscallNumber) via
+    // @LinuxSyscall1Integer, and never calls libc @exit/@getpid. The compile-only host
+    // bridge cannot read the on-disk module nor pin the Linux triple, so this reduces to
+    // compiling a probe that drives the process facade and asserting it succeeds.
+    stack mut ProgramCompile c = CompileProgram("linux-process-helpers-syscall-path", raw"""
+        import System.Runtime.Platform
+        module App
+
+        export fn i32[min max] main()
+        {
+            if (System.Runtime.Platform.ProcessId() <= 0)
+            {
+                return 3;
+            }
+
+            System.Runtime.Platform.ExitProcess(23);
+            return 4;
+        }
+        """);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemRuntimePlatformLinuxStandardLibraryTests.StdLibSourceLinuxEventWaitingUsesEpollSyscallPath.
+public unsafe fn bool StdLibSourceLinuxEventWaitingUsesEpollSyscallPathImpl()
+{
+    // PORT-NOTE: the C# original compiles the on-disk Linux platform module against a
+    // x86_64-unknown-linux-gnu triple and asserts the emitted LLVM defines
+    // @WriteEpollEvent/@WaitForEvents/@WaitReadable/@WaitWritable, references the epoll
+    // syscall numbers and event masks (@LinuxEpollCreate1SyscallNumber,
+    // @LinuxEpollCtlSyscallNumber, @LinuxEpollWaitSyscallNumber,
+    // @LinuxEpollReadableEvent, @LinuxEpollWritableEvent), routes through
+    // @LinuxSyscall1Integer / @LinuxSyscall4HandlePointersInteger, and that the wait
+    // function bodies never call libc @poll nor @epoll_wait. The compile-only host
+    // bridge cannot read the on-disk module, pin the Linux triple, nor extract balanced
+    // function bodies from the LLVM text, so this reduces to compiling a probe that
+    // drives the epoll-backed wait facade and asserting it succeeds.
+    stack mut ProgramCompile c = CompileProgram("linux-event-waiting-epoll-syscall-path", raw"""
+        import System.Runtime.Platform
+        module App
+
+        export unsafe fn i32[min max] main()
+        {
+            if (System.Runtime.Platform.WaitReadable((rawptr<i8[min max]>)1, 0) <= 0)
+            {
+                return 1;
+            }
+
+            if (System.Runtime.Platform.WaitWritable((rawptr<i8[min max]>)1, 0) <= 0)
+            {
+                return 2;
+            }
+
+            return 0;
+        }
+        """);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemRuntimePlatformLinuxStandardLibraryTests.SourceRuntimePlatformWaitWritableUsesLinuxEpoll.
+public unsafe fn bool SourceRuntimePlatformWaitWritableUsesLinuxEpollImpl()
+{
+    // PORT-NOTE: the C# original (Linux-only; skipped when no native toolchain or off
+    // Linux) writes the embedded App below to disk, builds it with the CLI (--emit-exe
+    // against the detected target), runs the binary, and asserts it exits 0 (WaitWritable
+    // returned a positive readiness count via epoll) with empty stdout/stderr. The
+    // compile-only host bridge cannot link, run, or inspect the produced binary, so this
+    // reduces to compiling the embedded program verbatim and asserting it succeeds.
+    stack mut ProgramCompile c = CompileProgram("runtime-waitwritable-linux-epoll", raw"""
+        import System.Runtime.Platform
+        module App
+
+        export unsafe fn i32[min max] main()
+        {
+            if (System.Runtime.Platform.WaitWritable((rawptr<i8[min max]>)1, 0) <= 0)
+            {
+                return 1;
+            }
+
+            return 0;
+        }
+        """);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemRuntimePlatformLinuxStandardLibraryTests.StdLibSourceLinuxFutexSynchronizationUsesSyscallPath.
+public unsafe fn bool StdLibSourceLinuxFutexSynchronizationUsesSyscallPathImpl()
+{
+    // PORT-NOTE: the C# original compiles the on-disk Linux platform module against a
+    // x86_64-unknown-linux-gnu triple and asserts the emitted LLVM defines
+    // @FutexWait/@FutexWake routed through the futex syscall number and private
+    // wait/wake operation constants (@LinuxFutexSyscallNumber,
+    // @LinuxFutexWaitPrivateOperation, @LinuxFutexWakePrivateOperation) via
+    // @LinuxSyscall4HandlePointersInteger, and never calls a libc @futex. The
+    // compile-only host bridge cannot read the on-disk module nor pin the Linux triple,
+    // so this reduces to compiling a probe that drives the futex facade and asserting it
+    // succeeds.
+    stack mut ProgramCompile c = CompileProgram("linux-futex-sync-syscall-path", raw"""
+        import System.Runtime.Platform
+        module App
+
+        export unsafe fn i32[min max] main()
+        {
+            stack mut i32[min max] state = 1;
+            if (System.Runtime.Platform.FutexWait(&state, 2) != -11)
+            {
+                return 1;
+            }
+
+            if (System.Runtime.Platform.FutexWake(&state, 1) < 0)
+            {
+                return 2;
+            }
+
+            return 0;
+        }
+        """);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemRuntimePlatformLinuxStandardLibraryTests.SourceRuntimePlatformFutexWaitWakeUseLinuxSyscall.
+public unsafe fn bool SourceRuntimePlatformFutexWaitWakeUseLinuxSyscallImpl()
+{
+    // PORT-NOTE: the C# original (Linux-only; skipped when no native toolchain or off
+    // Linux) writes the embedded App below to disk, builds it with the CLI (--emit-exe
+    // against the detected target), runs the binary, and asserts it exits 0 (FutexWait
+    // returns -EAGAIN/-11 on a mismatched value and FutexWake returns a non-negative
+    // count) with empty stdout/stderr. The compile-only host bridge cannot link, run, or
+    // inspect the produced binary, so this reduces to compiling the embedded program
+    // verbatim and asserting it succeeds.
+    stack mut ProgramCompile c = CompileProgram("runtime-futex-waitwake-linux-syscall", raw"""
+        import System.Runtime.Platform
+        module App
+
+        export unsafe fn i32[min max] main()
+        {
+            stack mut i32[min max] state = 1;
+            if (System.Runtime.Platform.FutexWait(&state, 2) != -11)
+            {
+                return 1;
+            }
+
+            if (System.Runtime.Platform.FutexWake(&state, 1) < 0)
+            {
+                return 2;
+            }
+
+            return 0;
+        }
+        """);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemRuntimePlatformLinuxStandardLibraryTests.SourceRuntimePlatformProcessExitUsesLinuxExitGroup.
+public unsafe fn bool SourceRuntimePlatformProcessExitUsesLinuxExitGroupImpl()
+{
+    // PORT-NOTE: the C# original (Linux-only; skipped when no native toolchain or off
+    // Linux) writes the embedded App below to disk, builds it with the CLI (--emit-exe
+    // against the detected target), runs the binary, and asserts the process exits 23 via
+    // the Linux exit_group syscall (with ProcessId() returning a positive pid first) and
+    // empty stdout/stderr. The compile-only host bridge cannot link, run, or observe the
+    // exit code of the produced binary, so this reduces to compiling the embedded program
+    // verbatim and asserting it succeeds.
+    stack mut ProgramCompile c = CompileProgram("runtime-processexit-linux-exitgroup", raw"""
+        import System.Runtime.Platform
+        module App
+
+        export fn i32[min max] main()
+        {
+            if (System.Runtime.Platform.ProcessId() <= 0)
+            {
+                return 3;
+            }
+
+            System.Runtime.Platform.ExitProcess(23);
+            return 4;
+        }
+        """);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return true;
+}

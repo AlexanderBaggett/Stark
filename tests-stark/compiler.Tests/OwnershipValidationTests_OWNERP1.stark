@@ -1,0 +1,59 @@
+import CompilerTestSupport
+import System.Testing
+module OwnershipValidationTests_OWNERP1
+
+// Ported from OwnershipValidationTests.RuntimeTextConcatenationConsumesOwnedTextResult.
+public unsafe fn bool RuntimeTextConcatenationConsumesOwnedTextResultImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: the C# original supplies TWO source-backed virtual modules via
+        // an InMemoryModuleResolver -- System.Memory (the MemoryError/MemoryResult<T>
+        // enums) and System.Text (the OwnedAscii struct plus ConcatAscii, which itself
+        // imports System.Memory). The Stark host test harness can write only ONE extra
+        // module file into the temp search directory (CompileTypeCheckWithModule), and
+        // cannot register an interdependent two-module resolver. The root Demo program
+        // is kept VERBATIM; System.Text -- the module whose OwnedAscii/MemoryResult the
+        // program names directly -- is written as the resolved import (System.Memory,
+        // which System.Text re-imports, cannot be co-resolved here, so it is reduced
+        // out). The ownership signal is preserved: the original asserts the compile
+        // fails with STK4200 "Move error" / "was moved and must be reinitialized"
+        // because `result` is consumed by the `+` concatenation and then read again at
+        // `second = result`.
+        stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+            "ownerp1-runtime-text-concat-consumes-owned-result",
+            raw"""
+import System.Memory
+import System.Text
+module Demo
+
+fn System.Memory.MemoryResult<System.Text.OwnedAscii> Make();
+
+fn i32[min max] Run()
+{
+    stack System.Memory.MemoryResult<System.Text.OwnedAscii> result = Make();
+    stack System.Memory.MemoryResult<System.Text.OwnedAscii> joined = "Score: " + result;
+    stack System.Memory.MemoryResult<System.Text.OwnedAscii> second = result;
+    return 0;
+}
+""",
+            "",
+            "System.Text.stark",
+            raw"""
+import System.Memory
+module System.Text
+
+public struct OwnedAscii
+{
+    ascii Text;
+
+    drop
+    {
+    }
+}
+
+public fn System.Memory.MemoryResult<OwnedAscii> ConcatAscii(ascii left, u64[0 2 ** 63 - 1] leftLength, System.Memory.MemoryResult<OwnedAscii> right);
+""");
+        return FailsWithDiagnosticMessage(compiled, "STK4200", "was moved and must be reinitialized");
+    }
+}

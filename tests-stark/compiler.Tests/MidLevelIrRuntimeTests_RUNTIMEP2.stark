@@ -1,0 +1,151 @@
+import CompilerTestSupport
+import System.Testing
+module MidLevelIrRuntimeTests_RUNTIMEP2
+
+// Ported slice of tests/compiler.IntegrationTests/MidLevelIrRuntimeTests.cs. Each
+// original test compiles the embedded program with the native toolchain, runs the
+// linked executable, and asserts a specific process exit code. The Stark compile
+// helpers cannot link or observe a runtime exit code, so each Impl reduces to
+// driving the embedded program through the full pipeline and returning the nearest
+// available success signal. See per-method `// PORT-NOTE:` comments.
+
+// Ported from MidLevelIrRuntimeTests.BorrowReceiverIndexedFieldAddressesObserveSharedStateAtRuntime.
+public unsafe fn bool BorrowReceiverIndexedFieldAddressesObserveSharedStateAtRuntimeImpl()
+{
+    // PORT-NOTE: original compiles and runs the program, asserting the process
+    // exit code is 65 (the value written through a borrow-receiver indexed field
+    // address and read back). The compile helpers cannot observe a runtime exit
+    // code; reduced to a full-pipeline compile returning Succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "mir-borrow-receiver-indexed-field-addresses",
+        raw"""
+module Demo
+
+struct Buffer
+{
+    i8[min max][16] Storage;
+
+    unsafe fn void Put(borrow mut Buffer self, u8[0 15] index, i8[min max] value)
+    {
+        *(&self.Storage[index]) = value;
+        return;
+    }
+
+    unsafe fn i32[min max] Read(borrow Buffer self, u8[0 15] index)
+    {
+        return (i32[min max])*(&self.Storage[index]);
+    }
+}
+
+export unsafe fn i32[min max] main()
+{
+    stack mut Buffer buffer = new Buffer();
+    buffer.Put(5, (i8[min max])65);
+    return buffer.Read(5);
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from MidLevelIrRuntimeTests.LargeAggregateByValueCallsAndReturnsWorkAtRuntime.
+public unsafe fn bool LargeAggregateByValueCallsAndReturnsWorkAtRuntimeImpl()
+{
+    // PORT-NOTE: original compiles and runs the program, asserting the process
+    // exit code is 42 (a large by-value aggregate passed and returned across
+    // calls). The compile helpers cannot observe a runtime exit code; reduced to
+    // a full-pipeline compile returning Succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "mir-large-aggregate-by-value-calls-returns",
+        raw"""
+module Demo
+
+struct Big
+{
+    i64[min max] A;
+    i64[min max] B;
+    i64[min max] C;
+}
+
+fn Big Make(i64[min max] seed)
+{
+    return new Big()
+    {
+        A = seed, B = seed + 1, C = seed + 2
+    };
+}
+
+fn i32[min max] Read(Big value)
+{
+    return (i32[min max])(value.A + value.C);
+}
+
+export fn i32[min max] main()
+{
+    return Read(Make(20));
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from MidLevelIrRuntimeTests.LabeledBreakAndContinueTargetOuterLoopsAtRuntime.
+public unsafe fn bool LabeledBreakAndContinueTargetOuterLoopsAtRuntimeImpl()
+{
+    // PORT-NOTE: original compiles and runs the program, asserting the process
+    // exit code is 138 (the accumulated total produced by labeled break/continue
+    // targeting the outer loop and a labeled switch break). The compile helpers
+    // cannot observe a runtime exit code; reduced to a full-pipeline compile
+    // returning Succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "mir-labeled-break-continue-outer-loops",
+        raw"""
+module Demo
+
+export fn i32[min max] main()
+{
+    stack mut i32[min max] total = 0;
+    stack mut i32[min max] outer = 0;
+    outerLoop: while willexit (outer < 4)
+    {
+        outer += 1;
+        stack mut i32[min max] inner = 0;
+        while willexit (inner < 4)
+        {
+            inner += 1;
+            if (inner == 1)
+            {
+                continue;
+            }
+
+            gate: switch (inner)
+            {
+                default:
+                    if (inner == 2)
+                    {
+                        break gate;
+                    }
+
+                    total += 0;
+            }
+
+            if (outer == 2)
+            {
+                if (inner == 2)
+                {
+                    continue outerLoop;
+                }
+            }
+
+            if (outer == 4)
+            {
+                break outerLoop;
+            }
+
+            total += outer * 10 + inner;
+        }
+    }
+
+    return total;
+}
+""");
+    return Succeeds(compiled);
+}

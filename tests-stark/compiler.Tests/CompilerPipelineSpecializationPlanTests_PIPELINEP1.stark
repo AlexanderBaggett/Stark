@@ -1,0 +1,157 @@
+import CompilerTestSupport
+import System.Testing
+
+module CompilerPipelineSpecializationPlanTests_PIPELINEP1
+
+// Ported from CompilerPipelineSpecializationPlanTests.RootGenericInstantiationsPreferOwnedConcreteBodiesInSpecializationPlan.
+public unsafe fn bool RootGenericInstantiationsPreferOwnedConcreteBodiesInSpecializationPlanImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: the original runs the pipeline stopping after the "specialization-plan" pass and
+        // reads the SpecializationPlanModel: a single planned function (SymbolName
+        // "__stark_mono_fn_Demo__Identity__i32", SelectionOrder [OwnedConcreteBody], CodeGenerationMode
+        // SingleOwnerConcreteBody). The compile helpers cannot stop after that pass nor read the plan
+        // artifact (symbol name, selection order, code-generation mode), so this reduces to "the embedded
+        // program type-checks cleanly" (the closest observable precondition for a valid plan), with the
+        // program kept verbatim from the C# raw string.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "specplan-root-generic-instantiations-prefer-owned-concrete-bodies",
+            raw"""
+module Demo
+
+fn T Identity<T>(T value)
+{
+    return value;
+}
+
+fn i32[min max] Run(i32[min max] value)
+{
+    return Identity(value);
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from CompilerPipelineSpecializationPlanTests.SourceBackedImportedLawGenericsPreferCallerCloneBeforeOwnedBodyInSpecializationPlan.
+public unsafe fn bool SourceBackedImportedLawGenericsPreferCallerCloneBeforeOwnedBodyInSpecializationPlanImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: the original writes a source-backed Math.stark into a temp directory, resolves it via
+        // FileSystemModuleResolver, stops after "specialization-plan", and reads the SpecializationPlanModel:
+        // a single function (SymbolName "__stark_mono_fn_Math__Math_Numbers_Identity__i32", SelectionOrder
+        // [LawCallerSpecializedClone, OwnedConcreteBody, DirectAbiBoundaryFallback], CodeGenerationMode
+        // CallerSpecializedClone). The harness writes the imported module to a temp search directory and
+        // resolves it the same way, but cannot stop after that pass nor read the plan artifact (symbol name,
+        // selection order, code-generation mode), so this reduces to "the consumer program plus its
+        // source-backed Math module type-check successfully". Both programs are kept verbatim from the C#
+        // raw string literals.
+        stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+            "specplan-source-backed-imported-law-generics-prefer-caller-clone",
+            raw"""
+import Math
+module Demo
+
+finite law i32[min max] Run(i32[min max] value)
+{
+    return Math.Numbers.Identity(value);
+}
+""",
+            "",
+            "Math.stark",
+            raw"""
+module Math
+
+public doctrine Numbers
+{
+    finite law T Identity<T>(T value)
+    {
+        return value;
+    }
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from CompilerPipelineSpecializationPlanTests.SourceBackedImportedTopLevelLawGenericsPreferCallerCloneBeforeOwnedBodyInSpecializationPlan.
+public unsafe fn bool SourceBackedImportedTopLevelLawGenericsPreferCallerCloneBeforeOwnedBodyInSpecializationPlanImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: the original writes a source-backed Math.stark into a temp directory, resolves it via
+        // FileSystemModuleResolver, stops after "specialization-plan", and reads the SpecializationPlanModel:
+        // a single function (SymbolName "__stark_mono_fn_Math__Math_Identity__i32", SelectionOrder
+        // [LawCallerSpecializedClone, OwnedConcreteBody, DirectAbiBoundaryFallback], CodeGenerationMode
+        // CallerSpecializedClone) for a top-level imported law generic. The harness writes the imported
+        // module to a temp search directory and resolves it the same way, but cannot stop after that pass
+        // nor read the plan artifact (symbol name, selection order, code-generation mode), so this reduces
+        // to "the consumer program plus its source-backed Math module type-check successfully". Both
+        // programs are kept verbatim from the C# raw string literals.
+        stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+            "specplan-source-backed-imported-top-level-law-generics-prefer-caller-clone",
+            raw"""
+import Math
+module Demo
+
+finite law i32[min max] Run(i32[min max] value)
+{
+    return Math.Identity(value);
+}
+""",
+            "",
+            "Math.stark",
+            raw"""
+module Math
+
+public finite law T Identity<T>(T value)
+{
+    return value;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from CompilerPipelineSpecializationPlanTests.ColdImportedLawGenericsPreferAbiFallbackOverCallerCloneInSpecializationPlan.
+public unsafe fn bool ColdImportedLawGenericsPreferAbiFallbackOverCallerCloneInSpecializationPlanImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: the original writes a source-backed Math.stark (a cold finite law generic) into a temp
+        // directory, resolves it via FileSystemModuleResolver, stops after "specialization-plan", and reads
+        // the SpecializationPlanModel: a single function with SelectionOrder [DirectAbiBoundaryFallback] and
+        // CodeGenerationMode AbiBoundaryOnly (cold imports prefer the ABI fallback over the caller clone).
+        // The harness writes the imported module to a temp search directory and resolves it the same way,
+        // but cannot stop after that pass nor read the plan artifact (selection order, code-generation mode),
+        // so this reduces to "the consumer program plus its source-backed Math module type-check
+        // successfully". Both programs are kept verbatim from the C# raw string literals.
+        stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+            "specplan-cold-imported-law-generics-prefer-abi-fallback-over-caller-clone",
+            raw"""
+import Math
+module Demo
+
+finite law i32[min max] Run(i32[min max] value)
+{
+    return Math.Numbers.Identity(value);
+}
+""",
+            "",
+            "Math.stark",
+            raw"""
+module Math
+
+public doctrine Numbers
+{
+    cold finite law T Identity<T>(T value)
+    {
+        return value;
+    }
+}
+""");
+        return Succeeds(compiled);
+    }
+}

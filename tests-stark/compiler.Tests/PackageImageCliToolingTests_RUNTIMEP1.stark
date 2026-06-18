@@ -1,0 +1,70 @@
+import CompilerTestSupport
+import System.Testing
+module PackageImageCliToolingTests_RUNTIMEP1
+
+// Ported slice of tests/compiler.IntegrationTests/PackageImageCliToolingTests.cs.
+// These are CLI integration tests whose original assertions cover --emit-lib /
+// --emit-exe exit codes, emitted-executable existence, CLI stdout text, the
+// linked program's runtime exit code, and pkg-config / linker log file contents.
+// The Stark compile helpers cannot observe those effects, so each Impl reduces
+// to driving the embedded package program through the closest compile helper and
+// asserting the nearest available success signal. See per-method `// PORT-NOTE:`.
+
+// Ported from PackageImageCliToolingTests.EmitExecutableLinksImportedPackageNativeSources.
+public unsafe fn bool EmitExecutableLinksImportedPackageNativeSourcesImpl()
+{
+    // PORT-NOTE: original emits a NativeDemo package (--emit-lib with a C
+    // --native-source), deletes the package source, links an App that imports the
+    // manifest-backed package (--emit-exe -I), then runs the executable and
+    // asserts exit code 42. The compile helpers cannot model native-source
+    // linking, the sibling App module, or runtime exit codes; reduced to
+    // compiling the NativeDemo package program through the full pipeline and
+    // returning Succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "pkg-native-link-imported-sources",
+        raw"""
+module NativeDemo
+
+unsafe ffi fn i32[min max] stark_native_value();
+
+public fn i32[min max] GetValue()
+{
+    unsafe
+    {
+        return stark_native_value();
+    }
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from PackageImageCliToolingTests.EmitExecutableUsesPackageNativePkgConfigMetadata.
+public unsafe fn bool EmitExecutableUsesPackageNativePkgConfigMetadataImpl()
+{
+    // PORT-NOTE: original emits a NativePkgDemo package (--emit-lib with a C
+    // --native-source and --native-pkg-config native-demo), deletes the package
+    // source, links an App importing the package (--emit-exe -I with a capture
+    // --linker), and asserts CLI exit 0, "Emitted executable:" stdout, the output
+    // exists, the pkg-config log contains --cflags/--libs/native-demo, and the
+    // linker log contains the library directory, -lNativeDemoSystem and -pthread.
+    // The compile helpers cannot model pkg-config invocation, native-source
+    // linking, the sibling App module, or log file contents; reduced to compiling
+    // the NativePkgDemo package program through the full pipeline and returning
+    // Succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "pkg-native-pkg-config-metadata",
+        raw"""
+module NativePkgDemo
+
+unsafe ffi fn i32[min max] stark_native_value();
+
+public fn i32[min max] GetValue()
+{
+    unsafe
+    {
+        return stark_native_value();
+    }
+}
+""");
+    return Succeeds(compiled);
+}

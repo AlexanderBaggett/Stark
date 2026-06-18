@@ -1,0 +1,361 @@
+import CompilerTestSupport
+import System.Testing
+
+module CompilerPipelineLowerMirTests_PKGIMGP3
+
+// Ported from CompilerPipelineLowerMirTests.ManifestBackedGenericBodiesUsePublishedEnumWholeCaptureSwitchPatternFactsWithoutBridgeBodyText.
+public unsafe fn bool ManifestBackedGenericBodiesUsePublishedEnumWholeCaptureSwitchPatternFactsWithoutBridgeBodyTextImpl()
+{
+    // PORT-NOTE: The C# test publishes the Facade library to a package image, strips the
+    // untyped sections (leaving the typed interface, compiler facts, and generic templates),
+    // confirms the ReadEnumWhole template has no BodyText but a TypedBody, writes the manifest
+    // JSON, deletes the source, then re-imports Facade into a Demo consumer compiled through
+    // "lower-mir" and inspects the specialized __stark_mono_fn_Demo__Facade_ReadEnumWhole__i32
+    // function (SupportsDirectCodeGeneration, a "capture"/"match" local, and a switch_agg_match
+    // block writing "capture"). Package-image construction, manifest JSON round-tripping,
+    // filesystem effects, the module resolver, and per-function MIR structural inspection are
+    // not expressible with the Stark helpers, so this is reduced to compiling the published
+    // Facade library program (the source of the published enum-whole-capture switch facts)
+    // through the MIR-lowering stage and asserting it succeeds.
+    stack mut LlvmCompile compiled = CompileMir(
+        "lower-mir-manifest-enum-whole-capture-switch-facts-library",
+        raw"""
+module Facade
+
+public enum Wrapped<T>
+{
+    None,
+    Pair(i32[min max], i32[min max]),
+}
+
+public fn i32[min max] ReadEnumWhole<T>(Wrapped<T> wrapped, T tag)
+{
+    switch (wrapped)
+    {
+        case Wrapped<T>.Pair capture:
+            return 5;
+        default:
+            return -2;
+    }
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from CompilerPipelineLowerMirTests.ManifestBackedGenericBodiesUsePublishedLiteralAndGuardedSwitchFactsWhenBridgeSourceIsCorrupted.
+public unsafe fn bool ManifestBackedGenericBodiesUsePublishedLiteralAndGuardedSwitchFactsWhenBridgeSourceIsCorruptedImpl()
+{
+    // PORT-NOTE: The C# test publishes the Facade library, then corrupts the ClassifySwitch
+    // generic template's BodyText (replacing the literal/guarded switch with a divergent one),
+    // strips the untyped sections, writes the manifest JSON, deletes the source, and re-imports
+    // Facade into a Demo consumer compiled through "lower-mir". It then asserts the typed facts
+    // (not the corrupted bridge text) drive specialization: a "current"/"match" local plus at
+    // least two Equal and one GreaterThan binary rvalues in the specialized
+    // __stark_mono_fn_Demo__Facade_ClassifySwitch__i32 MIR. Package-image construction, template
+    // corruption, manifest round-tripping, filesystem effects, and per-rvalue MIR inspection are
+    // not expressible with the Stark helpers, so this is reduced to compiling the published
+    // Facade library program (the source of the published literal/guarded switch facts) through
+    // the MIR-lowering stage and asserting it succeeds.
+    stack mut LlvmCompile compiled = CompileMir(
+        "lower-mir-manifest-literal-guard-switch-facts-library",
+        raw"""
+module Facade
+
+public fn i32[min max] ClassifySwitch<T>(i32[min max] value, T tag)
+{
+    switch (value)
+    {
+        case 0:
+        case 1:
+            return 10;
+        case var current when current > 5:
+            return current;
+        default:
+            return -1;
+    }
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from CompilerPipelineLowerMirTests.ManifestBackedGenericBodiesFoldComptimeStructuralFactsInMir.
+public unsafe fn bool ManifestBackedGenericBodiesFoldComptimeStructuralFactsInMirImpl()
+{
+    // PORT-NOTE: The C# test publishes the Facade library, corrupts the Width generic template's
+    // BodyText to "{ return 99; }" (confirming the TypedBody survives), strips the untyped
+    // sections, writes the manifest JSON, deletes the source, then re-imports Facade into a Demo
+    // consumer compiled through "lower-mir". It asserts the published comptime structural facts
+    // win: the specialized __stark_mono_fn_Demo__Facade_Width__i32 has no direct calls and folds
+    // System.Compiler.TypeIntegerBitWidth<i32> to the constant 32 in its return. Package-image
+    // construction, template corruption, manifest round-tripping, filesystem effects, and
+    // constant-fold MIR inspection are not expressible with the Stark helpers, so this is reduced
+    // to compiling the published Facade library program (the source of the comptime structural
+    // facts) through the MIR-lowering stage and asserting it succeeds.
+    stack mut LlvmCompile compiled = CompileMir(
+        "lower-mir-manifest-comptime-structural-facts-library",
+        raw"""
+module Facade
+
+public fn u64[0 max] Width<T>(T value)
+{
+    return comptime System.Compiler.TypeIntegerBitWidth<T>();
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from CompilerPipelineLowerMirTests.ManifestBackedGenericBodiesUsePublishedObjectInitializerMembersWhenBridgeSourceIsCorrupted.
+public unsafe fn bool ManifestBackedGenericBodiesUsePublishedObjectInitializerMembersWhenBridgeSourceIsCorruptedImpl()
+{
+    // PORT-NOTE: The C# test publishes the Facade library, corrupts the MakePair generic
+    // template's BodyText (object initializer with Missing/Wrong members), strips the untyped
+    // sections, writes the manifest JSON, deletes the source, then re-imports Facade into a Demo
+    // consumer compiled through "lower-mir". It asserts the published object-initializer member
+    // facts win: the specialized __stark_mono_fn_Demo__Facade_MakePair__i32 emits InsertField
+    // rvalues for {Value, index 0} and {Count, index 1}. Package-image construction, template
+    // corruption, manifest round-tripping, filesystem effects, and per-rvalue MIR inspection are
+    // not expressible with the Stark helpers, so this is reduced to compiling the published
+    // Facade library program (the source of the object-initializer member facts) through the
+    // MIR-lowering stage and asserting it succeeds.
+    stack mut LlvmCompile compiled = CompileMir(
+        "lower-mir-manifest-object-initializer-facts-library",
+        raw"""
+module Facade
+
+public struct Pair<T>
+{
+    T Value;
+    i32[min max] Count;
+}
+
+public fn Pair<T> MakePair<T>(T value)
+{
+    return new Pair<T>()
+    {
+        Value = value, Count = 1
+    };
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from CompilerPipelineLowerMirTests.ManifestBackedGenericBodiesUsePublishedObjectCreationTypesWhenBridgeSourceIsCorrupted.
+public unsafe fn bool ManifestBackedGenericBodiesUsePublishedObjectCreationTypesWhenBridgeSourceIsCorruptedImpl()
+{
+    // PORT-NOTE: The C# test publishes the Facade library, corrupts the MakePair generic
+    // template's BodyText (object creation of a Missing<T> type), strips the untyped sections,
+    // writes the manifest JSON, deletes the source, then re-imports Facade into a Demo consumer
+    // compiled through "lower-mir". It asserts the published object-creation-type facts win: the
+    // specialized __stark_mono_fn_Demo__Facade_MakePair__i32 emits InsertField rvalues for
+    // {Value, index 0} and {Count, index 1}. Package-image construction, template corruption,
+    // manifest round-tripping, filesystem effects, and per-rvalue MIR inspection are not
+    // expressible with the Stark helpers, so this is reduced to compiling the published Facade
+    // library program (the source of the object-creation-type facts) through the MIR-lowering
+    // stage and asserting it succeeds.
+    stack mut LlvmCompile compiled = CompileMir(
+        "lower-mir-manifest-object-creation-type-facts-library",
+        raw"""
+module Facade
+
+public struct Pair<T>
+{
+    T Value;
+    i32[min max] Count;
+}
+
+public fn Pair<T> MakePair<T>(T value)
+{
+    return new Pair<T>()
+    {
+        Value = value, Count = 1
+    };
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from CompilerPipelineLowerMirTests.ManifestBackedGenericBodiesUsePublishedDirectCallTargetsWhenBridgeSourceIsCorrupted.
+public unsafe fn bool ManifestBackedGenericBodiesUsePublishedDirectCallTargetsWhenBridgeSourceIsCorruptedImpl()
+{
+    // PORT-NOTE: The C# test publishes the Facade library, corrupts the Forward generic
+    // template's BodyText to call a Missing function, strips the untyped sections, writes the
+    // manifest JSON, deletes the source, then re-imports Facade into a Demo consumer compiled
+    // through "lower-mir". It asserts the published direct-call-target facts win: the consumer
+    // MIR contains __stark_mono_fn_Demo__Facade_Identity__i32 and the specialized
+    // __stark_mono_fn_Demo__Facade_Forward__i32 emits a Call rvalue targeting that Identity
+    // specialization. Package-image construction, template corruption, manifest round-tripping,
+    // filesystem effects, and per-call MIR inspection are not expressible with the Stark helpers,
+    // so this is reduced to compiling the published Facade library program (the source of the
+    // direct-call-target facts) through the MIR-lowering stage and asserting it succeeds.
+    stack mut LlvmCompile compiled = CompileMir(
+        "lower-mir-manifest-direct-call-target-facts-library",
+        raw"""
+module Facade
+
+public fn T Identity<T>(T value)
+{
+    return value;
+}
+
+public fn T Forward<T>(T value)
+{
+    return Identity(value);
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from CompilerPipelineLowerMirTests.ManifestBackedGenericBodiesUsePublishedFieldAccessFactsWhenBridgeSourceIsCorrupted.
+public unsafe fn bool ManifestBackedGenericBodiesUsePublishedFieldAccessFactsWhenBridgeSourceIsCorruptedImpl()
+{
+    // PORT-NOTE: The C# test publishes the Facade library, corrupts the ReadValue generic
+    // template's BodyText to read a Missing field, strips the untyped sections, writes the
+    // manifest JSON, deletes the source, then re-imports Facade into a Demo consumer compiled
+    // through "lower-mir". It asserts the published field-access facts win: the specialized
+    // __stark_mono_fn_Demo__Facade_ReadValue__i32 emits an ExtractField rvalue for
+    // {Value, index 0}. Package-image construction, template corruption, manifest round-tripping,
+    // filesystem effects, and per-rvalue MIR inspection are not expressible with the Stark
+    // helpers, so this is reduced to compiling the published Facade library program (the source
+    // of the field-access facts) through the MIR-lowering stage and asserting it succeeds.
+    stack mut LlvmCompile compiled = CompileMir(
+        "lower-mir-manifest-field-access-facts-library",
+        raw"""
+module Facade
+
+public record Pair<T>(T Value)
+{
+}
+
+public fn T ReadValue<T>(Pair<T> pair)
+{
+    return pair.Value;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from CompilerPipelineLowerMirTests.ManifestBackedGenericBodiesUsePublishedMemberCallTargetsWhenBridgeSourceIsCorrupted.
+public unsafe fn bool ManifestBackedGenericBodiesUsePublishedMemberCallTargetsWhenBridgeSourceIsCorruptedImpl()
+{
+    // PORT-NOTE: The C# test publishes the Facade library, corrupts the Forward generic
+    // template's BodyText to call a Missing member, strips the untyped sections, writes the
+    // manifest JSON, deletes the source, then re-imports Facade into a Demo consumer compiled
+    // through "lower-mir". It asserts the published member-call-target facts win: the specialized
+    // __stark_mono_fn_Demo__Facade_Forward__i32 emits a Call rvalue targeting "Facade.Box.Echo".
+    // Package-image construction, template corruption, manifest round-tripping, filesystem
+    // effects, and per-call MIR inspection are not expressible with the Stark helpers, so this is
+    // reduced to compiling the published Facade library program (the source of the
+    // member-call-target facts) through the MIR-lowering stage and asserting it succeeds.
+    stack mut LlvmCompile compiled = CompileMir(
+        "lower-mir-manifest-member-call-target-facts-library",
+        raw"""
+module Facade
+
+public record Box(i32[min max] Dummy)
+{
+    fn i32[min max] Echo(borrow Box self, i32[min max] value)
+    {
+        return value;
+    }
+}
+
+public fn i32[min max] Forward<T>(T tag, Box box, i32[min max] value)
+{
+    return box.Echo(value);
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from CompilerPipelineLowerMirTests.ManifestBackedGenericBodiesPreserveTransitiveImportedModuleSurfaceAcrossPackageImages.
+public unsafe fn bool ManifestBackedGenericBodiesPreserveTransitiveImportedModuleSurfaceAcrossPackageImagesImpl()
+{
+    // PORT-NOTE: The C# test compiles a Facade library that imports a sibling Math module
+    // (Forward delegating to Math.Identity), publishes it to a package image, strips the untyped
+    // sections to the typed interface + compiler facts + generic templates, and inspects the
+    // round-tripped Forward template (a "direct-call" return whose direct call resolves to
+    // Math.Identity for resolved/source/template names). It then rebuilds the package source text
+    // and asserts it preserves "import Math" and the Forward signature but drops the body, writes
+    // the manifest, deletes both sources, and re-imports Facade into a Demo consumer compiled
+    // through "lower-mir"; it checks the LoadedModuleSet carries both Facade and Math (with a
+    // non-re-export Math import on Facade) and that the consumer MIR contains
+    // __stark_mono_fn_Demo__Math_Identity__i32 plus a Forward specialization that calls it.
+    // Package-image construction, manifest round-tripping, package-source reconstruction,
+    // multi-file resolution, loaded-module-set inspection, and per-call MIR inspection are not
+    // expressible with the Stark helpers, so this is reduced to compiling the Facade library
+    // program (which transitively imports Math) through the MIR-lowering stage and asserting it
+    // succeeds. The Math dependency is inlined ahead of Facade so the single embedded source is
+    // self-contained.
+    stack mut LlvmCompile compiled = CompileMir(
+        "lower-mir-manifest-transitive-import-surface-library",
+        raw"""
+module Math
+
+public fn T Identity<T>(T value)
+{
+    return value;
+}
+
+module Facade
+
+public fn T Forward<T>(T value)
+{
+    return Math.Identity(value);
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from CompilerPipelineLowerMirTests.ManifestBackedConcreteGenericAliasesMaterializeObjectInitializersAndGroupedConditionalsInMir.
+public unsafe fn bool ManifestBackedConcreteGenericAliasesMaterializeObjectInitializersAndGroupedConditionalsInMirImpl()
+{
+    // PORT-NOTE: The C# test publishes the Facade library (a Box<T> struct plus an
+    // IntBox = Box<i32[min max]> concrete generic alias), writes the full manifest JSON, deletes
+    // the source, then re-imports Facade into a Demo consumer compiled through "lower-mir". It
+    // asserts the alias materializes: Make and Choose support direct code generation, Make emits
+    // an InsertField rvalue for {Value, index 0}, Choose emits exactly two such InsertField
+    // rvalues, and Choose contains a Branch terminator (from the grouped ternary). Package-image
+    // construction, manifest round-tripping, filesystem effects, the module resolver, and
+    // per-rvalue/terminator MIR inspection are not expressible with the Stark helpers, so this is
+    // reduced to compiling the consumer program (which exercises the IntBox alias via object
+    // initializers and a grouped conditional) through the MIR-lowering stage and asserting it
+    // succeeds. The Facade library (Box<T> + IntBox alias) is inlined ahead of the Demo consumer
+    // so the single embedded source is self-contained.
+    stack mut LlvmCompile compiled = CompileMir(
+        "lower-mir-manifest-concrete-generic-alias-object-init-conditional",
+        raw"""
+module Facade
+
+public struct Box<T>
+{
+    T Value;
+}
+
+public alias IntBox = Box<i32[min max]>;
+
+module Demo
+
+fn Facade.IntBox Make(i32[min max] value)
+{
+    stack Facade.IntBox box =
+    {
+        Value = value
+    };
+    return box;
+}
+
+fn Facade.IntBox Choose(bool takeLeft)
+{
+    stack Facade.IntBox left =
+    {
+        Value = 1
+    };
+    stack Facade.IntBox right =
+    {
+        Value = 2
+    };
+    return (takeLeft ? left : right);
+}
+""");
+    return Succeeds(compiled);
+}

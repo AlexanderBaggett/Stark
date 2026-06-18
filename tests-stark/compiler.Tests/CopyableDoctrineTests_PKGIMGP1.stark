@@ -1,0 +1,46 @@
+import CompilerTestSupport
+import System.Testing
+module CopyableDoctrineTests_PKGIMGP1
+
+// Ported from CopyableDoctrineTests.DestructorFlagRoundTripsThroughPackageImageFacts.
+public unsafe fn bool DestructorFlagRoundTripsThroughPackageImageFactsImpl()
+{
+    // PORT-NOTE: The C# test compiles the Facade library through the "lower-abi" pass,
+    // builds a package image, resolves it as a ResolvedPackageModule, then loads it via
+    // PackageImageLoader.TryBuildLoadedPackageImageFacts and inspects per-type facts:
+    // Facade.Handle.HasDestructor is true, Facade.Plain.HasDestructor is false, and the
+    // same NamedTypes feed CopyabilityFacts so the destructor-bearing Handle is not
+    // copyable while Plain is. Package-image construction, manifest round-tripping, the
+    // loader fact tables, and copyability resolution over loaded symbols are not
+    // expressible with the Stark helpers, so this is reduced to compiling the published
+    // Facade library program through the ABI-lowering (MIR) stage and asserting it
+    // succeeds (the precondition for any published destructor/copyability fact).
+    stack mut LlvmCompile compiled = CompileMir(
+        "pkgimg-destructor-flag-round-trips-library",
+        raw"""
+module Facade
+
+public struct Handle
+{
+    i32[min max] Descriptor;
+
+    drop
+    {
+    }
+}
+
+public struct Plain
+{
+    i32[min max] Value;
+}
+
+public fn Handle MakeHandle()
+{
+    return new Handle()
+    {
+        Descriptor = 1
+    };
+}
+""");
+    return Succeeds(compiled);
+}

@@ -1,0 +1,29 @@
+import CompilerTestSupport
+import System.Testing
+
+module CompilerPipelineFullIntegrationTests_PIPELINEP1
+
+// Ported from CompilerPipelineFullIntegrationTests.MinimalModuleRunsThroughTheFullPipeline.
+public unsafe fn bool MinimalModuleRunsThroughTheFullPipelineImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: the original asserts the full pipeline succeeded, then probes a long list of
+        // intermediate artifacts (SyntaxModel with ModuleName "Demo", SemanticValidation,
+        // SpecializationPlan, SpecializationCodegenStrategy, OwnershipValidation,
+        // LoweringContractValidation, AbiModel, SsaIr, OptimizedSsaIr), that exactly 43 passes
+        // Executed, and that a verbose "pass-completed" pipeline log was emitted for stage
+        // "emit-llvm". Per-artifact presence, pass-execution counts, and pipeline lifecycle logs
+        // are not expressible via the compile helpers, so this reduces to "the embedded program
+        // compiles through the full pipeline and the emitted LLVM IR carries the Demo module id"
+        // (the closest observable signals: full-pipeline success plus the ModuleID LLVM artifact
+        // substring the original checks via llvmModule.Text).
+        stack mut LlvmCompile compiled = CompileLlvm(
+            "minimal-module-runs-through-the-full-pipeline",
+            raw"""
+module Demo
+""");
+        return Succeeds(compiled)
+            && System.Testing.Contains(Llvm(compiled), "ModuleID = 'Demo'");
+    }
+}

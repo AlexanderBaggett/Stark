@@ -1,0 +1,219 @@
+import CompilerTestSupport
+import System.Testing
+
+module GenericUseSiteInstantiationRegressionTests_PKGIMGP1
+
+// Ported from GenericUseSiteInstantiationRegressionTests.ManifestBackedGenericMethodsAndNestedGenericTypesMaterializeFromPublishedTemplateBodies.
+public unsafe fn bool ManifestBackedGenericMethodsAndNestedGenericTypesMaterializeFromPublishedTemplateBodiesImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: The C# test compiles the `Facade` library, builds it into a package
+        // image via PackageImageBuilder.Create, rewrites the manifest down to its typed
+        // interface + compiler facts + generic templates (stripping Functions/Types/Globals/
+        // TypeAliases), writes the .starkpkg.json manifest + static library, deletes the
+        // source, then re-imports `Facade` into a `Demo` consumer (StopAfterPassId
+        // "monomorphization-plan") and probes the MonomorphizationPlan artifact: a planned
+        // generic-method instantiation (template "Facade.Box.MakePair", type args [i32],
+        // owner module "Demo"), a planned function (template "Facade.Relay", type args
+        // [i32], owner "Demo"), and a planned nested generic type (template "Facade.Pair",
+        // instantiated "Facade.Pair<i32>", symbol "__stark_mono_ty_Demo__Facade_Pair__i32").
+        // Package-image construction, manifest stripping/round-tripping, source deletion, and
+        // MonomorphizationPlan symbol probing are not expressible with the Stark helpers, so
+        // this is reduced to compiling the same `Demo` consumer with the `Facade` library
+        // available as a sibling source module through type-check and asserting it succeeds
+        // (the precondition for the generic method/type instantiations to be planned at all).
+        stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+            "gen-usesite-manifest-method-nested-generic",
+            raw"""
+import Facade
+module Demo
+
+fn Facade.Pair<i32[min max]> Run(Facade.Box box, i32[min max] value)
+{
+    return Facade.Relay(box, value);
+}
+""",
+            "",
+            "Facade.stark",
+            raw"""
+module Facade
+
+public record Pair<T>(T Value)
+{
+}
+
+public record Box(i32[min max] Dummy)
+{
+    fn Pair<T> MakePair<T>(borrow Box self, T value)
+    {
+        stack Pair<T> pair = new Pair<T>(value);
+        return pair;
+    }
+}
+
+public fn Pair<T> Relay<T>(Box box, T value)
+{
+    return box.MakePair(value);
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from GenericUseSiteInstantiationRegressionTests.ManifestBackedRecursiveGenericPlanningFallsBackToPublishedCallSummariesWhenDeferredFunctionTriggersAreMissing.
+public unsafe fn bool ManifestBackedRecursiveGenericPlanningFallsBackToPublishedCallSummariesWhenDeferredFunctionTriggersAreMissingImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: The C# test compiles the `Facade` library (Identity/Forward/Relay
+        // generic forwarders), builds it into a package image, then rewrites the typed-only
+        // manifest: strips each template's DeferredFunctionInstantiations/
+        // DeferredTypeInstantiations and overwrites the Facade.Forward and Facade.Relay
+        // BodyText with "{ return value; }" so the recursive call triggers are missing. It
+        // writes the manifest, deletes the source, then re-imports `Facade` into a `Demo`
+        // consumer calling Facade.Relay twice (StopAfterPassId "monomorphization-plan") and
+        // probes that the MonomorphizationPlan still recovers all 3 functions from the
+        // published call summaries: "__stark_mono_fn_Demo__Facade_Relay__i32",
+        // "__stark_mono_fn_Demo__Facade_Forward__i32",
+        // "__stark_mono_fn_Demo__Facade_Identity__i32". Package-image construction, manifest
+        // body/deferred-trigger rewriting, manifest round-tripping, source deletion, and
+        // MonomorphizationPlan probing are not expressible with the Stark helpers, so this is
+        // reduced to compiling the `Demo` consumer with the (unrewritten) `Facade` library
+        // available as a sibling source module through type-check and asserting it succeeds.
+        stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+            "gen-usesite-manifest-recursive-call-summary-fallback",
+            raw"""
+import Facade
+module Demo
+
+fn i32[min max] Run(i32[min max] left, i32[min max] right)
+{
+    return Facade.Relay(left) + Facade.Relay(right);
+}
+""",
+            "",
+            "Facade.stark",
+            raw"""
+module Facade
+
+public fn T Identity<T>(T value)
+{
+    return value;
+}
+
+public fn T Forward<T>(T value)
+{
+    return Identity(value);
+}
+
+public fn T Relay<T>(T value)
+{
+    return Forward(value);
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from GenericUseSiteInstantiationRegressionTests.ManifestBackedGenericTypePlanningFallsBackToPublishedTemplateFactsWhenDeferredTypeTriggersAreMissing.
+public unsafe fn bool ManifestBackedGenericTypePlanningFallsBackToPublishedTemplateFactsWhenDeferredTypeTriggersAreMissingImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: The C# test compiles the `Facade` library (Pair<A,B> + MakePair/Relay
+        // generic forwarders), builds it into a package image, then rewrites the typed-only
+        // manifest: strips each template's DeferredFunctionInstantiations/
+        // DeferredTypeInstantiations and overwrites the Facade.Relay BodyText with
+        // "{ return flag ? 1 : 0; }" so the deferred type trigger for Pair<T,bool> is
+        // missing. It writes the manifest, deletes the source, then re-imports `Facade` into
+        // a `Demo` consumer (StopAfterPassId "monomorphization-plan") and probes that the
+        // MonomorphizationPlan still recovers the functions
+        // "__stark_mono_fn_Demo__Facade_Relay__i32" and
+        // "__stark_mono_fn_Demo__Facade_MakePair__i32" plus the nested generic type
+        // "__stark_mono_ty_Demo__Facade_Pair__i32__bool" from the published template facts.
+        // Package-image construction, manifest body/deferred-trigger rewriting, manifest
+        // round-tripping, source deletion, and MonomorphizationPlan probing are not
+        // expressible with the Stark helpers, so this is reduced to compiling the `Demo`
+        // consumer with the (unrewritten) `Facade` library available as a sibling source
+        // module through type-check and asserting it succeeds.
+        stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+            "gen-usesite-manifest-type-template-facts-fallback",
+            raw"""
+import Facade
+module Demo
+
+fn i32[min max] Run(i32[min max] value, bool flag)
+{
+    return Facade.Relay(value, flag);
+}
+""",
+            "",
+            "Facade.stark",
+            raw"""
+module Facade
+
+public record Pair<A, B>(A First, B Second)
+{
+}
+
+public fn Pair<T, bool> MakePair<T>(T value, bool flag)
+{
+    stack Pair<T, bool> pair = new Pair<T, bool>(value, flag);
+    return pair;
+}
+
+public fn i32[min max] Relay<T>(T value, bool flag)
+{
+    stack Pair<T, bool> pair = MakePair(value, flag);
+    return pair.Second ? 1 : 0;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from GenericUseSiteInstantiationRegressionTests.ManifestBackedDictionaryKeyConstraintRejectsUnprovenKeyTypes.
+public unsafe fn bool ManifestBackedDictionaryKeyConstraintRejectsUnprovenKeyTypesImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: The C# test compiles the `System.Collections` library (a generic
+        // Dictionary<K, V> struct) into a package image, writes the .starkpkg.json manifest +
+        // static library, deletes the source, then re-imports `System.Collections` into a
+        // `Demo` consumer (StopAfterPassId "type-check") that uses Dictionary<Box, ...> with
+        // an unproven key type `Box` and asserts the compile fails with STK3023. Package-image
+        // construction, manifest round-tripping, and source deletion are not expressible with
+        // the Stark helpers, so this is reduced to compiling the same `Demo` consumer with the
+        // `System.Collections` library available as a sibling source module (under the System
+        // directory) through type-check and asserting it fails with STK3023.
+        stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+            "gen-usesite-manifest-dictionary-key-constraint",
+            raw"""
+import System.Collections
+module Demo
+
+struct Box
+{
+    u32[0 2 ** 31 - 1] Value;
+}
+
+fn void Use(Dictionary<Box, u32[0 2 ** 31 - 1]> boxes)
+{
+    return;
+}
+""",
+            "System",
+            "Collections.stark",
+            raw"""
+module System.Collections
+
+public struct Dictionary<K, V>
+{
+    K Key;
+    V Value;
+}
+""");
+        return FailsWithDiagnostic(compiled, "STK3023");
+    }
+}

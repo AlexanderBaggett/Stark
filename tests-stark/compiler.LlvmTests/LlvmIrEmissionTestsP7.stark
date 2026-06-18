@@ -1,0 +1,1630 @@
+import LlvmTestSupport
+import System.Testing
+module LlvmIrEmissionTestsP7
+
+// Ported from LlvmIrEmissionTests.ScalarizableEnumOrderedComparisonsEmitScalarLeafLexicographicHelperCalls.
+public unsafe fn bool ScalarizableEnumOrderedComparisonsEmitScalarLeafLexicographicHelperCallsImpl()
+{
+    // PORT-NOTE: the C# oracle uses CountOccurrences(>= 1) for the i32 leaf
+    // compares; the host bridge exposes only substring presence, so the count
+    // assertions are reduced to plain Contains checks.
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-scalarizable-enum-ordered-comparisons",
+        raw"""
+module Demo
+
+enum Token
+{
+    None,
+    Many(i32[min max], i32[min max], i32[min max], i32[min max], i32[min max]),
+}
+
+unsafe fn bool Less(Token left, Token right)
+{
+    return left < right;
+}
+
+unsafe fn bool LessOrEqual(Token left, Token right)
+{
+    return left <= right;
+}
+
+unsafe fn bool Greater(Token left, Token right)
+{
+    return left > right;
+}
+
+unsafe fn bool GreaterOrEqual(Token left, Token right)
+{
+    return left >= right;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "define internal dso_local i32 @__stark_named_compare_")
+        && Contains(llvm, "call i32 @__stark_named_compare_")
+        && Contains(llvm, "icmp slt i8")
+        && Contains(llvm, "icmp sgt i8")
+        && Contains(llvm, "icmp slt i32")
+        && Contains(llvm, "icmp sgt i32")
+        && Contains(llvm, "icmp sle i32")
+        && Contains(llvm, "icmp sge i32")
+        && DoesNotContain(llvm, "; LLVM body emission fallback for Less")
+        && DoesNotContain(llvm, "; LLVM body emission fallback for LessOrEqual")
+        && DoesNotContain(llvm, "; LLVM body emission fallback for Greater")
+        && DoesNotContain(llvm, "; LLVM body emission fallback for GreaterOrEqual");
+}
+
+// Ported from LlvmIrEmissionTests.LargerFixedArrayEqualityAndInequalityEmitScalarLeafComparisons.
+public unsafe fn bool LargerFixedArrayEqualityAndInequalityEmitScalarLeafComparisonsImpl()
+{
+    // PORT-NOTE: the C# oracle counts exactly one Equal/NotEqual definition and
+    // requires >= 5 leaf compares plus >= 4 and/or combinators; the host bridge
+    // exposes only substring presence, so the count assertions are reduced to
+    // Contains checks.
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-larger-fixed-array-equality",
+        raw"""
+module Demo
+
+unsafe fn bool Equal(i32[min max][5] left, i32[min max][5] right)
+{
+    return left == right;
+}
+
+unsafe fn bool NotEqual(i32[min max][5] left, i32[min max][5] right)
+{
+    return left != right;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "define fastcc i1 @Equal(")
+        && Contains(llvm, "define fastcc i1 @NotEqual(")
+        && Contains(llvm, "icmp eq i32")
+        && Contains(llvm, "icmp ne i32")
+        && Contains(llvm, "and i1")
+        && Contains(llvm, "or i1")
+        && DoesNotContain(llvm, "; LLVM body emission fallback for Equal")
+        && DoesNotContain(llvm, "; LLVM body emission fallback for NotEqual");
+}
+
+// Ported from LlvmIrEmissionTests.LargerEnumEqualityAndInequalityEmitScalarLeafComparisons.
+public unsafe fn bool LargerEnumEqualityAndInequalityEmitScalarLeafComparisonsImpl()
+{
+    // PORT-NOTE: the C# oracle counts exactly one Equal/NotEqual definition and
+    // requires >= 5 leaf compares plus >= 5 and/or combinators; reduced to
+    // substring presence because the host bridge exposes no occurrence counter.
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-larger-enum-equality",
+        raw"""
+module Demo
+
+enum Token
+{
+    None,
+    Many(i32[min max], i32[min max], i32[min max], i32[min max], i32[min max]),
+}
+
+unsafe fn bool Equal(Token left, Token right)
+{
+    return left == right;
+}
+
+unsafe fn bool NotEqual(Token left, Token right)
+{
+    return left != right;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "define fastcc i1 @Equal(")
+        && Contains(llvm, "define fastcc i1 @NotEqual(")
+        && Contains(llvm, "icmp eq i8")
+        && Contains(llvm, "icmp ne i8")
+        && Contains(llvm, "icmp eq i32")
+        && Contains(llvm, "icmp ne i32")
+        && Contains(llvm, "and i1")
+        && Contains(llvm, "or i1")
+        && DoesNotContain(llvm, "; LLVM body emission fallback for Equal")
+        && DoesNotContain(llvm, "; LLVM body emission fallback for NotEqual");
+}
+
+// Ported from LlvmIrEmissionTests.TextEqualityAndInequalityEmitHelperCalls.
+public unsafe fn bool TextEqualityAndInequalityEmitHelperCallsImpl()
+{
+    // PORT-NOTE: the C# oracle extracts the helper definition headers via
+    // ExtractDefinitionHeader and asserts the header substrings within that
+    // slice; the host bridge exposes only the whole-module text, so the header
+    // substring checks are applied to the full LLVM output instead.
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-text-equality-inequality",
+        raw"""
+module Demo
+
+unsafe fn bool SameAscii(ascii left, ascii right)
+{
+    return left == right;
+}
+
+unsafe fn bool DifferentUnicode(unicode left, unicode right)
+{
+    return left != right;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "define internal dso_local i1 @__stark_ascii_equal(%stark_ascii %left, %stark_ascii %right)")
+        && Contains(llvm, "define internal dso_local i1 @__stark_unicode_equal(%stark_unicode %left, %stark_unicode %right)")
+        && Contains(llvm, "unnamed_addr")
+        && Contains(llvm, "call i1 @__stark_ascii_equal(%stark_ascii %arg_left, %stark_ascii %arg_right)")
+        && Contains(llvm, "call i1 @__stark_unicode_equal(%stark_unicode %arg_left, %stark_unicode %arg_right)")
+        && Contains(llvm, "getelementptr inbounds nuw i8, ptr %left_data, i64 %textcmp_index")
+        && Contains(llvm, "getelementptr inbounds nuw i32, ptr %left_data, i64 %textcmp_index")
+        && Contains(llvm, "xor i1")
+        && DoesNotContain(llvm, "; LLVM body emission fallback for SameAscii")
+        && DoesNotContain(llvm, "; LLVM body emission fallback for DifferentUnicode");
+}
+
+// Ported from LlvmIrEmissionTests.AggregatesWithTextFieldsEmitScalarLeafTextComparisons.
+public unsafe fn bool AggregatesWithTextFieldsEmitScalarLeafTextComparisonsImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-aggregate-text-fields",
+        raw"""
+module Demo
+
+record Label(ascii Tag, unicode Word)
+{
+}
+
+unsafe fn bool Same(Label left, Label right)
+{
+    return left == right;
+}
+
+unsafe fn bool Different(Label left, Label right)
+{
+    return left != right;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "call i1 @__stark_ascii_equal(")
+        && Contains(llvm, "call i1 @__stark_unicode_equal(")
+        && Contains(llvm, "and i1")
+        && Contains(llvm, "or i1")
+        && DoesNotContain(llvm, "; LLVM body emission fallback for Same")
+        && DoesNotContain(llvm, "; LLVM body emission fallback for Different");
+}
+
+// Ported from LlvmIrEmissionTests.SliceEqualityAndInequalityEmitPointerAndLengthComparisons.
+public unsafe fn bool SliceEqualityAndInequalityEmitPointerAndLengthComparisonsImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-slice-equality-inequality",
+        raw"""
+module Demo
+
+unsafe fn bool Same(i32[min max][] left, i32[min max][] right)
+{
+    return left == right;
+}
+
+unsafe fn bool Different(i32[min max][] left, i32[min max][] right)
+{
+    return left != right;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "define fastcc i1 @Same({ ptr, i64 } %arg_left, { ptr, i64 } %arg_right)")
+        && Contains(llvm, "define fastcc i1 @Different({ ptr, i64 } %arg_left, { ptr, i64 } %arg_right)")
+        && Contains(llvm, "extractvalue { ptr, i64 } %arg_left, 0")
+        && Contains(llvm, "extractvalue { ptr, i64 } %arg_right, 1")
+        && Contains(llvm, "icmp eq ptr")
+        && Contains(llvm, "icmp eq i64")
+        && Contains(llvm, "icmp ne ptr")
+        && Contains(llvm, "icmp ne i64")
+        && Contains(llvm, "and i1")
+        && Contains(llvm, "or i1")
+        && DoesNotContain(llvm, "; LLVM body emission fallback for Same")
+        && DoesNotContain(llvm, "; LLVM body emission fallback for Different");
+}
+
+// Ported from LlvmIrEmissionTests.AggregatesWithSliceFieldsEmitScalarLeafSliceComparisons.
+public unsafe fn bool AggregatesWithSliceFieldsEmitScalarLeafSliceComparisonsImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-aggregate-slice-fields",
+        raw"""
+module Demo
+
+record Window(i32[min max][] Items, i32[min max] Count)
+{
+}
+
+unsafe fn bool Same(Window left, Window right)
+{
+    return left == right;
+}
+
+unsafe fn bool Different(Window left, Window right)
+{
+    return left != right;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "icmp eq ptr")
+        && Contains(llvm, "icmp eq i64")
+        && Contains(llvm, "icmp eq i32")
+        && Contains(llvm, "icmp ne ptr")
+        && Contains(llvm, "icmp ne i64")
+        && Contains(llvm, "icmp ne i32")
+        && Contains(llvm, "and i1")
+        && Contains(llvm, "or i1")
+        && DoesNotContain(llvm, "; LLVM body emission fallback for Same")
+        && DoesNotContain(llvm, "; LLVM body emission fallback for Different");
+}
+
+// Ported from LlvmIrEmissionTests.MixedCallMemberAndIndexPostfixChainsEmitCallAndExtracts.
+public unsafe fn bool MixedCallMemberAndIndexPostfixChainsEmitCallAndExtractsImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-mixed-call-member-index-chain",
+        raw"""
+module Demo
+
+struct Cell
+{
+    i32[min max] Value;
+}
+
+struct Holder
+{
+    Cell[2] Cells;
+}
+
+unsafe fn Holder Make()
+{
+    return new Holder()
+    {
+        Cells =
+        {
+            new Cell()
+            {
+                Value = 3
+            },
+            new Cell()
+            {
+                Value = 5
+            }
+        }
+    };
+}
+
+unsafe fn i32[min max] Run()
+{
+    return Make().Cells[1].Value;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "%Cell = type { i32 }")
+        && Contains(llvm, "%Holder = type { [2 x %Cell] }")
+        && Contains(llvm, "call fastcc %Holder @Make()")
+        && Contains(llvm, "extractvalue %Holder")
+        && Contains(llvm, "extractvalue [2 x %Cell]")
+        && Contains(llvm, "extractvalue %Cell");
+}
+
+// Ported from LlvmIrEmissionTests.RecordTypeUsesConcreteAggregateLayoutAndCanFoldFieldReads.
+public unsafe fn bool RecordTypeUsesConcreteAggregateLayoutAndCanFoldFieldReadsImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-record-concrete-layout-fold",
+        raw"""
+module Demo
+
+record Point(i32[min max] X, i32[min max] Y)
+{
+}
+
+unsafe fn i32[min max] Run()
+{
+    stack Point point = new Point(3, 4);
+    return point.Y;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "%Point = type { i32, i32 }")
+        && Contains(llvm, "ret i32 4");
+}
+
+// Ported from LlvmIrEmissionTests.PlainObjectCreationWithoutInitializerReturnsZeroInitializedAggregate.
+public unsafe fn bool PlainObjectCreationWithoutInitializerReturnsZeroInitializedAggregateImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-plain-object-creation-zeroinit",
+        raw"""
+module Demo
+
+struct Box
+{
+    i32[min max] Value;
+}
+
+unsafe fn Box Make()
+{
+    return new Box();
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "define fastcc %Box @Make()")
+        && Contains(llvm, "ret %Box zeroinitializer");
+}
+
+// Ported from LlvmIrEmissionTests.PrimaryRecordConstructorArgumentsEmitOrderedAggregateUpdates.
+public unsafe fn bool PrimaryRecordConstructorArgumentsEmitOrderedAggregateUpdatesImpl()
+{
+    // PORT-NOTE: the C# oracle requires >= 2 `insertvalue %Point` updates; the
+    // host bridge exposes no occurrence counter, so that is reduced to substring
+    // presence.
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-primary-record-ordered-updates",
+        raw"""
+module Demo
+
+record Point(i32[min max] X)
+{
+    i32[min max] Y;
+}
+
+unsafe fn Point Make()
+{
+    return new Point(3)
+    {
+        Y = 9
+    };
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "%Point = type { i32, i32 }")
+        && Contains(llvm, "insertvalue %Point")
+        && Contains(llvm, "ret %Point")
+        && DoesNotContain(llvm, "declare fastcc %Point @Make()");
+}
+
+// Ported from LlvmIrEmissionTests.InternalAggregateParameterUsesDirectValueAbi.
+public unsafe fn bool InternalAggregateParameterUsesDirectValueAbiImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-internal-aggregate-param-direct-abi",
+        raw"""
+module Demo
+
+struct Box
+{
+    i32[min max] Value;
+}
+
+unsafe fn i32[min max] Read(Box box)
+{
+    stack i32[min max] a = box.Value + (box.Value / 3);
+    stack i32[min max] b = a - (a / 5);
+    stack i32[min max] c = b + (b / 7);
+    stack i32[min max] d = c - (c / 11);
+    stack i32[min max] e = d + (d / 13);
+    stack i32[min max] f = e - (e / 17);
+    stack i32[min max] g = f + (f / 19);
+    stack i32[min max] h = g - (g / 23);
+    stack i32[min max] i = h + (h / 29);
+    stack i32[min max] j = i - (i / 31);
+    stack i32[min max] k = j + (j / 37);
+    stack i32[min max] l = k - (k / 41);
+    stack i32[min max] m = l + (l / 43);
+    return m;
+}
+
+unsafe fn i32[min max] Run()
+{
+    return Read(new Box()
+    {
+        Value = 7
+    });
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "define fastcc i32 @Read(%Box %arg_box)")
+        && Contains(llvm, "extractvalue %Box %arg_box, 0")
+        && Contains(llvm, "call fastcc i32 @Read(%Box")
+        && DoesNotContain(llvm, "load %Box, ptr %arg_box");
+}
+
+// Ported from LlvmIrEmissionTests.BorrowedPaddedAggregateEmitsDerivedAlignmentAndLayoutFacts.
+public unsafe fn bool BorrowedPaddedAggregateEmitsDerivedAlignmentAndLayoutFactsImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-borrowed-padded-aggregate-layout",
+        raw"""
+module Demo
+
+struct Pair
+{
+    i8[min max] Tag;
+    i32[min max] Value;
+}
+
+unsafe fn void Touch(borrow Pair pair)
+{
+    return;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "define fastcc void @Touch(ptr nonnull noalias readonly nocapture dereferenceable(8) align 4 %arg_pair)");
+}
+
+// Ported from LlvmIrEmissionTests.PackedCStructLayoutEmitsPackedPhysicalTypeAndUnalignedFieldAccess.
+public unsafe fn bool PackedCStructLayoutEmitsPackedPhysicalTypeAndUnalignedFieldAccessImpl()
+{
+    // PORT-NOTE: the C# oracle slices Read's header/body via
+    // ExtractDefinitionHeader/ExtractDefinitionBody and asserts substrings
+    // within those slices; the host bridge exposes only the whole-module text,
+    // so the header/body substring checks are applied to the full LLVM output.
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-packed-cstruct-layout",
+        raw"""
+module Demo
+
+[StructLayout(C), Pack(1)]
+struct Packet
+{
+    u8[0 max] Tag;
+    i32[min max] Value;
+}
+
+unsafe fn i32[min max] Read(borrow Packet packet)
+{
+    return packet.Value;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "%Packet = type <{ i8, i32 }>")
+        && Contains(llvm, "dereferenceable(5)")
+        && Contains(llvm, "getelementptr inbounds nuw i8, ptr %")
+        && Contains(llvm, ", i64 1")
+        && Contains(llvm, "load i32, ptr")
+        && Contains(llvm, "align 1");
+}
+
+// Ported from LlvmIrEmissionTests.ExplicitStructLayoutEmitsByteStorageAndFieldOffsetAccess.
+public unsafe fn bool ExplicitStructLayoutEmitsByteStorageAndFieldOffsetAccessImpl()
+{
+    // PORT-NOTE: the C# oracle slices ReadHigh's header/body via
+    // ExtractDefinitionHeader/ExtractDefinitionBody; the host bridge exposes only
+    // the whole-module text, so the header/body substring checks are applied to
+    // the full LLVM output.
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-explicit-struct-layout-field-offset",
+        raw"""
+module Demo
+
+[StructLayout(Explicit), Align(4)]
+struct WordParts
+{
+    [FieldOffset(0)] u32[0 max] Whole;
+    [FieldOffset(0)] u16[0 max] Low;
+    [FieldOffset(2)] u16[0 max] High;
+}
+
+unsafe fn u16[0 max] ReadHigh(borrow WordParts value)
+{
+    return value.High;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "%WordParts = type { [4 x i8] }")
+        && Contains(llvm, "dereferenceable(4)")
+        && Contains(llvm, "align 4")
+        && Contains(llvm, "getelementptr inbounds nuw i8, ptr %")
+        && Contains(llvm, ", i64 2")
+        && Contains(llvm, "load i16, ptr")
+        && Contains(llvm, "align 2");
+}
+
+// Ported from LlvmIrEmissionTests.TypeAliasesPreserveTheUnderlyingAggregateAbi.
+public unsafe fn bool TypeAliasesPreserveTheUnderlyingAggregateAbiImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-type-alias-aggregate-abi",
+        raw"""
+module Demo
+
+struct Pair
+{
+    i64[min max] Left;
+    i64[min max] Right;
+}
+
+alias PairAlias = Pair;
+
+unsafe fn PairAlias Step(PairAlias value)
+{
+    return value;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "%Pair = type { i64, i64 }")
+        && Contains(llvm, "define fastcc %Pair @Step(%Pair %arg_value)")
+        && DoesNotContain(llvm, "sret(%Pair)")
+        && DoesNotContain(llvm, "byval(%Pair)");
+}
+
+// Ported from LlvmIrEmissionTests.SmallPackedAddressableAggregateCopyUsesScalarFieldLoadsAndStores.
+public unsafe fn bool SmallPackedAddressableAggregateCopyUsesScalarFieldLoadsAndStoresImpl()
+{
+    // PORT-NOTE: the C# oracle counts exactly two scalar field loads and two
+    // scalar field stores; the host bridge exposes no occurrence counter, so the
+    // count assertions are reduced to substring presence.
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-small-packed-aggregate-copy-scalar",
+        raw"""
+module Demo
+
+struct Pair
+{
+    i32[min max] Left;
+    i32[min max] Right;
+}
+
+unsafe fn i32[min max] Run()
+{
+    stack mut Pair source = new Pair()
+    {
+        Left = 1, Right = 2
+    };
+    stack mut Pair dest = new Pair()
+    {
+        Left = 0, Right = 0
+    };
+    stack rawptr<Pair> sourcePtr = &source;
+    stack rawptr<Pair> destPtr = &dest;
+    dest = source;
+    return dest.Right;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "%Pair = type { i32, i32 }")
+        && Contains(llvm, "load i32, ptr %abi_copy_src_")
+        && Contains(llvm, "store i32 %abi_copy_scalar_load_")
+        && DoesNotContain(llvm, "load %Pair, ptr %v")
+        && DoesNotContain(llvm, "store %Pair %abi_copy_load_")
+        && DoesNotContain(llvm, "@llvm.memcpy.p0.p0.i64");
+}
+
+// Ported from LlvmIrEmissionTests.SmallPaddedAggregateCopyPreservesWholeAggregateTransfer.
+public unsafe fn bool SmallPaddedAggregateCopyPreservesWholeAggregateTransferImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-small-padded-aggregate-copy-whole",
+        raw"""
+module Demo
+
+struct Pair
+{
+    i8[min max] Tag;
+    i32[min max] Value;
+}
+
+unsafe fn i32[min max] Run()
+{
+    stack Pair source = new Pair()
+    {
+        Tag = 1, Value = 2
+    };
+    stack mut Pair dest = new Pair()
+    {
+        Tag = 0, Value = 0
+    };
+    stack rawptr<Pair> sourcePtr = &source;
+    stack rawptr<Pair> destPtr = &dest;
+    dest = source;
+    return dest.Value;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "%Pair = type { i8, i32 }")
+        && Contains(llvm, "load %Pair, ptr %slot_source")
+        && Contains(llvm, "store %Pair %abi_copy_load_")
+        && DoesNotContain(llvm, "@llvm.memcpy.p0.p0.i64");
+}
+
+// Ported from LlvmIrEmissionTests.LargeAddressableAggregateCopyUsesInlineMemcpy.
+public unsafe fn bool LargeAddressableAggregateCopyUsesInlineMemcpyImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-large-aggregate-copy-inline-memcpy",
+        raw"""
+module Demo
+
+struct Large
+{
+    i32[min max] A0;
+    i32[min max] A1;
+    i32[min max] A2;
+    i32[min max] A3;
+    i32[min max] A4;
+    i32[min max] A5;
+    i32[min max] A6;
+    i32[min max] A7;
+    i32[min max] A8;
+}
+
+unsafe fn i32[min max] Run()
+{
+    stack Large source = new Large()
+    {
+        A0 = 1,
+        A1 = 2,
+        A2 = 3,
+        A3 = 4,
+        A4 = 5,
+        A5 = 6,
+        A6 = 7,
+        A7 = 8,
+        A8 = 9
+    };
+    stack mut Large dest = new Large()
+    {
+        A0 = 0,
+        A1 = 0,
+        A2 = 0,
+        A3 = 0,
+        A4 = 0,
+        A5 = 0,
+        A6 = 0,
+        A7 = 0,
+        A8 = 0
+    };
+    stack rawptr<Large> sourcePtr = &source;
+    stack rawptr<Large> destPtr = &dest;
+    dest = source;
+    return dest.A8;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "declare void @llvm.memcpy.inline.p0.p0.i64")
+        && Contains(llvm, "call void @llvm.memcpy.inline.p0.p0.i64(ptr align 4 %slot_dest, ptr align 4 %slot_source")
+        && Contains(llvm, "i64 36, i1 false)");
+}
+
+// Ported from LlvmIrEmissionTests.VeryLargeAddressableAggregateCopyUsesRegularMemcpy.
+public unsafe fn bool VeryLargeAddressableAggregateCopyUsesRegularMemcpyImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-very-large-aggregate-copy-regular-memcpy",
+        raw"""
+module Demo
+
+struct Big
+{
+    i32[min max][128] Data;
+}
+
+unsafe ffi fn void Consume(rawptr<Big> value);
+
+unsafe fn void Run()
+{
+    stack Big source = new Big();
+    stack mut Big dest = new Big();
+    Consume(&source);
+    dest = source;
+    Consume(&dest);
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "declare void @llvm.memcpy.p0.p0.i64")
+        && Contains(llvm, "call void @llvm.memcpy.p0.p0.i64(")
+        && Contains(llvm, "i64 512, i1 false)")
+        && DoesNotContain(llvm, "@llvm.memcpy.inline.p0.p0.i64");
+}
+
+// Ported from LlvmIrEmissionTests.LargeLocalFixedArrayConstantIndexUpdateUsesScalarProjectionAccess.
+public unsafe fn bool LargeLocalFixedArrayConstantIndexUpdateUsesScalarProjectionAccessImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-large-local-fixed-array-scalar-projection",
+        raw"""
+module Demo
+
+unsafe fn i8[min max] Run(i8[min max] seed, u8[0 max] index)
+{
+    stack mut i8[min max][256] values;
+    values[7] = seed;
+    return values[index];
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "%slot_values = alloca [256 x i8]")
+        && Contains(llvm, "getelementptr inbounds nuw [256 x i8], ptr %slot_values, i32 0")
+        && Contains(llvm, "getelementptr inbounds nuw [256 x i8], ptr %slot_values, i32 0, i32 7")
+        && Contains(llvm, "i32 7")
+        && Contains(llvm, "store i8")
+        && Contains(llvm, "load i8")
+        && DoesNotContain(llvm, "store [256 x i8]")
+        && DoesNotContain(llvm, "load [256 x i8]");
+}
+
+// Ported from LlvmIrEmissionTests.LargeEnumPayloadProjectionIntoAddressableLocalUsesAddressCopy.
+public unsafe fn bool LargeEnumPayloadProjectionIntoAddressableLocalUsesAddressCopyImpl()
+{
+    // PORT-NOTE: the C# oracle pins the memcpy with a regex over the generated
+    // abi temp name (`%abi_...`); the host bridge has no regex matcher, so that
+    // is reduced to the stable substring prefix/suffix of the same call.
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-large-enum-payload-projection-address-copy",
+        raw"""
+module Demo
+
+struct Big
+{
+    i8[min max][512] Data;
+    i64[min max] Len;
+}
+
+enum Result
+{
+    Ok(Big),
+    Err(i32[min max])
+}
+
+unsafe ffi fn void Touch(rawptr<Big> value);
+
+unsafe fn Result Make()
+{
+    stack mut i64[min max] acc = 977;
+    stack mut i64[min max] step = 0;
+    while willexit (step < 2)
+    {
+        acc = acc + (acc / 3);
+        acc = acc - (acc / 5);
+        acc = acc + (acc / 7);
+        acc = acc - (acc / 11);
+        acc = acc + (acc / 13);
+        acc = acc - (acc / 17);
+        acc = acc + (acc / 19);
+        acc = acc - (acc / 23);
+        acc = acc + (acc / 29);
+        acc = acc - (acc / 31);
+        step = step + 1;
+    }
+
+    stack mut Big value = new Big();
+    value.Len = acc;
+    return Result.Ok(value);
+}
+
+unsafe fn i64[min max] Use()
+{
+    stack Result result = Make();
+    switch (result)
+    {
+        case Result.Ok(var payload):
+            stack mut Big local = payload;
+            Touch(&local);
+            return local.Len;
+        case Result.Err(var code):
+            return code;
+    }
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "declare void @llvm.memcpy.p0.p0.i64")
+        && Contains(llvm, "call void @llvm.memcpy.p0.p0.i64(ptr align 8 %slot_local, ptr align 8 %abi_")
+        && Contains(llvm, ", i64 520, i1 false)")
+        && DoesNotContain(llvm, "load %Big, ptr %abi_extract_field_load_")
+        && DoesNotContain(llvm, "store %Big %v")
+        && DoesNotContain(llvm, "extractvalue %Big");
+}
+
+// Ported from LlvmIrEmissionTests.LargeEnumPayloadImmediateMoveIntoMethodLocalAliasesPayloadStorage.
+public unsafe fn bool LargeEnumPayloadImmediateMoveIntoMethodLocalAliasesPayloadStorageImpl()
+{
+    // PORT-NOTE: the C# oracle slices the @Use body via regex and asserts the
+    // absence of a %slot_local alloca / memcpy / aggregate load and the presence
+    // of a method call forwarding the payload field address. The host bridge
+    // exposes only the whole-module text and no regex matcher, so the body-scoped
+    // negative checks are applied to the full LLVM output, and the positive
+    // method-call assertion is reduced to its stable substring prefix.
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-large-enum-payload-immediate-move-alias",
+        raw"""
+module Demo
+
+struct Big
+{
+    i8[min max][512] Data;
+    i64[min max] Len;
+
+    fn i64[min max] ReadLen(mut borrow Big self)
+    {
+        stack i64[min max] a = self.Len + (self.Len / 3);
+        stack i64[min max] b = a - (a / 5);
+        stack i64[min max] c = b + (b / 7);
+        stack i64[min max] d = c - (c / 11);
+        stack i64[min max] e = d + (d / 13);
+        stack i64[min max] f = e - (e / 17);
+        stack i64[min max] g = f + (f / 19);
+        stack i64[min max] h = g - (g / 23);
+        stack i64[min max] i = h + (h / 29);
+        stack i64[min max] j = i - (i / 31);
+        stack i64[min max] k = j + (j / 37);
+        stack i64[min max] l = k - (k / 41);
+        stack i64[min max] m = l + (l / 43);
+        return m;
+    }
+}
+
+enum Result
+{
+    Ok(Big),
+    Err(i32[min max])
+}
+
+unsafe fn Result Make()
+{
+    stack mut i64[min max] acc = 977;
+    stack mut i64[min max] step = 0;
+    while willexit (step < 2)
+    {
+        acc = acc + (acc / 3);
+        acc = acc - (acc / 5);
+        acc = acc + (acc / 7);
+        acc = acc - (acc / 11);
+        acc = acc + (acc / 13);
+        acc = acc - (acc / 17);
+        acc = acc + (acc / 19);
+        acc = acc - (acc / 23);
+        acc = acc + (acc / 29);
+        acc = acc - (acc / 31);
+        step = step + 1;
+    }
+
+    stack mut Big value = new Big();
+    value.Len = acc;
+    return Result.Ok(value);
+}
+
+unsafe fn i64[min max] Use()
+{
+    stack Result result = Make();
+    switch (result)
+    {
+        case Result.Ok(var payload):
+            stack mut Big local = payload;
+            return local.ReadLen();
+        case Result.Err(var code):
+            return code;
+    }
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "call fastcc i64 @Big_ReadLen(ptr")
+        && Contains(llvm, "%abi_aggregate_source_field_")
+        && DoesNotContain(llvm, "%slot_local = alloca %Big");
+}
+
+// Ported from LlvmIrEmissionTests.LargeLocalAggregateInsertedIntoEnumPayloadUsesAddressCopy.
+public unsafe fn bool LargeLocalAggregateInsertedIntoEnumPayloadUsesAddressCopyImpl()
+{
+    // PORT-NOTE: the C# oracle pins the memcpy with a regex over the generated
+    // `%abi_insert_field_store_` temp; the host bridge has no regex matcher, so
+    // that is reduced to the stable substring prefix/suffix of the same call.
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-large-local-aggregate-into-enum-payload",
+        raw"""
+module Demo
+
+struct Big
+{
+    i8[min max][512] Data;
+    i64[min max] Len;
+}
+
+enum Result
+{
+    Ok(Big),
+    Err(i32[min max])
+}
+
+unsafe ffi fn void Touch(rawptr<Big> value);
+
+unsafe fn Result Make(i64[min max] seed)
+{
+    stack mut Big value = new Big();
+    value.Len = seed;
+    Touch(&value);
+    return Result.Ok(value);
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "call void @llvm.memcpy.p0.p0.i64(ptr align 8 %abi_insert_field_store_")
+        && Contains(llvm, ", ptr align 8 %slot_value, i64 520, i1 false)")
+        && DoesNotContain(llvm, ", ptr %abi_insert_field_store_");
+}
+
+// Ported from LlvmIrEmissionTests.SmallEnumPayloadProjectionKeepsScalarLowering.
+public unsafe fn bool SmallEnumPayloadProjectionKeepsScalarLoweringImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-small-enum-payload-scalar-lowering",
+        raw"""
+module Demo
+
+struct Pair
+{
+    i32[min max] Left;
+    i32[min max] Right;
+}
+
+enum Result
+{
+    Ok(Pair),
+    Err(i32[min max])
+}
+
+unsafe fn i32[min max] Use(Result result)
+{
+    switch (result)
+    {
+        case Result.Ok(var payload):
+            stack Pair local = payload;
+            return local.Left + local.Right;
+        case Result.Err(var code):
+            return code;
+    }
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return DoesNotContain(llvm, "@llvm.memcpy")
+        && Contains(llvm, "%Pair");
+}
+
+// Ported from LlvmIrEmissionTests.AddressForwardedAggregateStoreDoesNotReadEndedLocalLifetime.
+public unsafe fn bool AddressForwardedAggregateStoreDoesNotReadEndedLocalLifetimeImpl()
+{
+    // PORT-NOTE: the C# oracle compares the byte offsets of the forwarded copy
+    // and the lifetime.end marker to prove the copy reads the slot before its
+    // LLVM lifetime ends. The host bridge exposes no index/ordering query, so the
+    // ordering invariant is reduced to the substring presence of the forwarded
+    // `%slot_inner` copy operand.
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-address-forwarded-store-lifetime",
+        raw"""
+module Demo
+
+struct Inner
+{
+    i64[min max] A;
+    i64[min max] B;
+    i64[min max] C;
+}
+
+struct Outer
+{
+    Inner Payload;
+    i64[min max] Kind;
+}
+
+enum Result
+{
+    Ok(Outer),
+    Err,
+}
+
+unsafe ffi fn void Touch(rawptr<Inner> value);
+
+unsafe fn Result Make(i64[min max] seed)
+{
+    stack mut Inner inner = new Inner()
+    {
+        A = seed, B = seed + 1, C = seed + 2
+    };
+    Touch(&inner);
+    stack Outer outer = new Outer()
+    {
+        Payload = inner, Kind = seed
+    };
+    return Result.Ok(outer);
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "ptr align 8 %slot_inner");
+}
+
+// Ported from LlvmIrEmissionTests.LargeZeroInitializedAggregateStoresUseInlineMemset.
+public unsafe fn bool LargeZeroInitializedAggregateStoresUseInlineMemsetImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-large-zeroinit-aggregate-memset",
+        raw"""
+module Demo
+
+struct Buffer
+{
+    i32[min max][16] Data;
+}
+
+unsafe ffi fn void Consume(rawptr<Buffer> buffer);
+
+unsafe fn void Run()
+{
+    stack mut Buffer buffer = new Buffer();
+    Consume(&buffer);
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "declare void @llvm.memset.inline.p0.i64")
+        && Contains(llvm, "call void @llvm.memset.inline.p0.i64(ptr align 4 %slot_buffer, i8 0, i64 64, i1 false)")
+        && DoesNotContain(llvm, "store %Buffer zeroinitializer");
+}
+
+// Ported from LlvmIrEmissionTests.AggregateMoveInvalidatesAddressableSourceStorage.
+public unsafe fn bool AggregateMoveInvalidatesAddressableSourceStorageImpl()
+{
+    // PORT-NOTE: the C# oracle counts exactly two `store i32 undef, ptr
+    // %abi_store_dest_` invalidation stores; the host bridge exposes no
+    // occurrence counter, so that is reduced to substring presence.
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-aggregate-move-invalidates-source",
+        raw"""
+module Demo
+
+struct Pair
+{
+    i32[min max] Left;
+    i32[min max] Right;
+
+    drop
+    {
+    }
+}
+
+unsafe fn i32[min max] Run()
+{
+    stack mut Pair source = new Pair()
+    {
+        Left = 1, Right = 2
+    };
+    stack mut Pair dest = new Pair()
+    {
+        Left = 0, Right = 0
+    };
+    stack rawptr<Pair> sourcePtr = &source;
+    stack rawptr<Pair> destPtr = &dest;
+    dest = source;
+    source = new Pair()
+    {
+        Left = 3, Right = 4
+    };
+    return source.Right + dest.Right;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "store i32 undef, ptr %abi_store_dest_");
+}
+
+// Ported from LlvmIrEmissionTests.AddressableAggregateConditionalUsesSingleAggregateAlloca.
+public unsafe fn bool AddressableAggregateConditionalUsesSingleAggregateAllocaImpl()
+{
+    // PORT-NOTE: the C# oracle counts exactly one `alloca %Pair`; the host bridge
+    // exposes no occurrence counter, so that is reduced to substring presence.
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-addressable-aggregate-conditional-single-alloca",
+        raw"""
+module Demo
+
+struct Pair
+{
+    i32[min max] Left;
+    i32[min max] Right;
+}
+
+unsafe fn i32[min max] Run(bool flag)
+{
+    stack Pair value = flag ? new Pair()
+    {
+        Left = 1, Right = 2
+    }:
+    new Pair()
+    {
+        Left = 3, Right = 4
+    };
+    stack rawptr<Pair> ptr = &value;
+    return value.Right;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "alloca %Pair")
+        && DoesNotContain(llvm, "slot__tmp");
+}
+
+// Ported from LlvmIrEmissionTests.InternalAggregateReturnUsesDirectValueAbi.
+public unsafe fn bool InternalAggregateReturnUsesDirectValueAbiImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-internal-aggregate-return-direct-abi",
+        raw"""
+module Demo
+
+struct Box
+{
+    i32[min max] Value;
+}
+
+unsafe fn Box Make()
+{
+    stack mut i32[min max] acc = 977;
+    stack mut i32[min max] step = 0;
+    while willexit (step < 2)
+    {
+        acc = acc + (acc / 3);
+        acc = acc - (acc / 5);
+        acc = acc + (acc / 7);
+        acc = acc - (acc / 11);
+        acc = acc + (acc / 13);
+        acc = acc - (acc / 17);
+        acc = acc + (acc / 19);
+        acc = acc - (acc / 23);
+        acc = acc + (acc / 29);
+        acc = acc - (acc / 31);
+        step = step + 1;
+    }
+
+    return new Box()
+    {
+        Value = acc
+    };
+}
+
+unsafe fn i32[min max] Run()
+{
+    stack Box box = Make();
+    return box.Value;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "define fastcc %Box @Make()")
+        && Contains(llvm, "ret %Box")
+        && Contains(llvm, "call fastcc %Box @Make()")
+        && DoesNotContain(llvm, "sret(%Box)");
+}
+
+// Ported from LlvmIrEmissionTests.LargeAggregateReturnUsesSRetAbi.
+public unsafe fn bool LargeAggregateReturnUsesSRetAbiImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-large-aggregate-return-sret",
+        raw"""
+module Demo
+
+struct Big
+{
+    i64[min max] A;
+    i64[min max] B;
+    i64[min max] C;
+}
+
+unsafe fn Big Make()
+{
+    stack mut i64[min max] acc = 977;
+    stack mut i64[min max] step = 0;
+    while willexit (step < 2)
+    {
+        acc = acc + (acc / 3);
+        acc = acc - (acc / 5);
+        acc = acc + (acc / 7);
+        acc = acc - (acc / 11);
+        acc = acc + (acc / 13);
+        acc = acc - (acc / 17);
+        acc = acc + (acc / 19);
+        acc = acc - (acc / 23);
+        acc = acc + (acc / 29);
+        acc = acc - (acc / 31);
+        step = step + 1;
+    }
+
+    return new Big()
+    {
+        A = acc, B = acc + 1, C = acc + 2
+    };
+}
+
+unsafe fn i64[min max] Run()
+{
+    stack Big value = Make();
+    return (i64[min max])value.C;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "define fastcc void @Make(ptr noalias sret(%Big) nonnull dereferenceable(24) align 8 %ret)")
+        && Contains(llvm, "call fastcc void @Make(ptr noalias sret(%Big)")
+        && DoesNotContain(llvm, "define fastcc %Big @Make()")
+        && DoesNotContain(llvm, "call fastcc %Big @Make()");
+}
+
+// Ported from LlvmIrEmissionTests.LargeAggregateReturnedThroughSRetMaterializesBeforeNestedInsert.
+public unsafe fn bool LargeAggregateReturnedThroughSRetMaterializesBeforeNestedInsertImpl()
+{
+    // PORT-NOTE: the C# oracle slices the @DefaultMaterialMap body via
+    // ExtractDefinitionBody and pins the materialize/insert pair with regexes
+    // over generated temp names. The host bridge exposes only the whole-module
+    // text and no regex matcher, so the body-scoped regex assertions are reduced
+    // to the stable substring prefixes of the same load/insertvalue sequence.
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-large-aggregate-sret-materialize-before-insert",
+        raw"""
+module Demo
+
+struct Texture
+{
+    i32[min max] Id;
+    i32[min max] Width;
+    i32[min max] Height;
+    i32[min max] Mipmaps;
+    i32[min max] Format;
+}
+
+struct MaterialMap
+{
+    Texture Texture;
+    i32[min max] Color;
+    i32[min max] Value;
+}
+
+unsafe fn Texture DefaultTexture()
+{
+    stack mut i32[min max] acc = 977;
+    stack mut i32[min max] step = 0;
+    while willexit (step < 2)
+    {
+        acc = acc + (acc / 3);
+        acc = acc - (acc / 5);
+        acc = acc + (acc / 7);
+        acc = acc - (acc / 11);
+        acc = acc + (acc / 13);
+        acc = acc - (acc / 17);
+        acc = acc + (acc / 19);
+        acc = acc - (acc / 23);
+        acc = acc + (acc / 29);
+        acc = acc - (acc / 31);
+        step = step + 1;
+    }
+
+    return new Texture()
+    {
+        Id = acc,
+        Width = acc + 1,
+        Height = acc + 2,
+        Mipmaps = acc + 3,
+        Format = acc + 4
+    };
+}
+
+unsafe fn MaterialMap DefaultMaterialMap()
+{
+    return new MaterialMap()
+    {
+        Texture = DefaultTexture(),
+        Color = 1,
+        Value = 2
+    };
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "call fastcc void @DefaultTexture(ptr noalias sret(%Texture)")
+        && Contains(llvm, "load %Texture, ptr %")
+        && Contains(llvm, "insertvalue %MaterialMap zeroinitializer, %Texture %");
+}
+
+// Ported from LlvmIrEmissionTests.LargeAggregateInitializerReturnMaterializesDirectlyIntoSRetBuffer.
+public unsafe fn bool LargeAggregateInitializerReturnMaterializesDirectlyIntoSRetBufferImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-large-aggregate-initializer-return-sret",
+        raw"""
+module Demo
+
+struct Big
+{
+    i64[min max] A;
+    i64[min max] B;
+    i64[min max] C;
+}
+
+unsafe fn Big Make()
+{
+    return new Big()
+    {
+        A = 1, B = 2, C = 3
+    };
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "define fastcc void @Make(ptr noalias sret(%Big) nonnull dereferenceable(24) align 8 %ret)")
+        && Contains(llvm, "call void @llvm.memset.inline.p0.i64(ptr align 8 %ret, i8 0, i64 24, i1 false)")
+        && Contains(llvm, "store i64 1, ptr %abi_insert_field_store_")
+        && Contains(llvm, "store i64 2, ptr %abi_insert_field_store_")
+        && Contains(llvm, "store i64 3, ptr %abi_insert_field_store_")
+        && DoesNotContain(llvm, "store %Big");
+}
+
+// Ported from LlvmIrEmissionTests.LargeGenericEnumAggregateReturnMaterializesDirectlyIntoSRetBuffer.
+public unsafe fn bool LargeGenericEnumAggregateReturnMaterializesDirectlyIntoSRetBufferImpl()
+{
+    // PORT-NOTE: the C# oracle slices the @Make body via ExtractDefinitionBody
+    // and asserts the body-scoped substrings; the host bridge exposes only the
+    // whole-module text, so the body checks are applied to the full LLVM output.
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-large-generic-enum-aggregate-return-sret",
+        raw"""
+module Demo
+
+struct Big
+{
+    i8[min max][512] Data;
+    i64[min max] Len;
+}
+
+enum IOResult<T>
+{
+    Ok(T),
+    Err(i64[min max])
+}
+
+unsafe fn IOResult<Big> Make()
+{
+    return IOResult<Big>.Ok(new Big()
+    {
+        Len = 7
+    });
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "define fastcc void @Make(ptr noalias sret(%IOResult_Big_) nonnull dereferenceable(536) align 8 %ret)")
+        && Contains(llvm, "call void @llvm.memset.inline.p0.i64(ptr align 8 %ret, i8 0, i64 536, i1 false)")
+        && Contains(llvm, "getelementptr inbounds nuw %IOResult_Big_, ptr %ret, i32 0, i32 1")
+        && Contains(llvm, "store i64 7, ptr %abi_insert_field_store_")
+        && DoesNotContain(llvm, "insertvalue %IOResult_Big_")
+        && DoesNotContain(llvm, "insertvalue %Big")
+        && DoesNotContain(llvm, "store %IOResult_Big_")
+        && DoesNotContain(llvm, "store %Big");
+}
+
+// Ported from LlvmIrEmissionTests.LargeAggregateForwardReturnForwardsDirectCallIntoSRetBuffer.
+public unsafe fn bool LargeAggregateForwardReturnForwardsDirectCallIntoSRetBufferImpl()
+{
+    // PORT-NOTE: the C# oracle slices the @Forward body via regex and asserts the
+    // forwarded sret call plus the absence of a callret slot / memcpy / aggregate
+    // load/store within that slice. The host bridge exposes only the whole-module
+    // text and no regex matcher, so the body-scoped negative checks are applied
+    // to the full LLVM output.
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-large-aggregate-forward-return-sret",
+        raw"""
+module Demo
+
+struct Big
+{
+    i64[min max] A;
+    i64[min max] B;
+    i64[min max] C;
+    i64[min max] D;
+    i64[min max] E;
+}
+
+unsafe fn Big Make()
+{
+    stack mut i64[min max] acc = 977;
+    stack mut i64[min max] step = 0;
+    while willexit (step < 2)
+    {
+        acc = acc + (acc / 3);
+        acc = acc - (acc / 5);
+        acc = acc + (acc / 7);
+        acc = acc - (acc / 11);
+        acc = acc + (acc / 13);
+        acc = acc - (acc / 17);
+        acc = acc + (acc / 19);
+        acc = acc - (acc / 23);
+        acc = acc + (acc / 29);
+        acc = acc - (acc / 31);
+        step = step + 1;
+    }
+
+    return new Big()
+    {
+        A = acc, B = acc + 1, C = acc + 2, D = acc + 3, E = acc + 4
+    };
+}
+
+unsafe fn Big Forward()
+{
+    return Make();
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "define fastcc void @Forward(ptr noalias sret(%Big) nonnull dereferenceable(40) align 8 %ret)")
+        && Contains(llvm, "call fastcc void @Make(ptr noalias sret(%Big) nonnull dereferenceable(40) align 8 %ret)")
+        && DoesNotContain(llvm, "%abi_callret_slot_")
+        && DoesNotContain(llvm, "call void @llvm.memcpy.inline.p0.p0.i64(ptr align 8 %ret")
+        && DoesNotContain(llvm, "load %Big, ptr %abi_callret_slot_");
+}
