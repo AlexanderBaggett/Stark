@@ -89,6 +89,10 @@ public struct MirInstruction
     MirOp Op;
     u32[0 max] AIndex;
     u32[0 max] BIndex;
+    // Extra operand slots for calls with three or four arguments (0 = unused). A call's
+    // arguments ride in operands A/B/C/D; ordinary instructions use only A/B.
+    u32[0 max] CIndex;
+    u32[0 max] DIndex;
     i64[min max] Imm;
     MirType ResType;
 
@@ -97,6 +101,8 @@ public struct MirInstruction
         self.Op = MirOp.ConstInt;
         self.AIndex = 0;
         self.BIndex = 0;
+        self.CIndex = 0;
+        self.DIndex = 0;
         self.Imm = 0;
         self.ResType = MirType.I64;
     }
@@ -119,6 +125,16 @@ public struct MirInstruction
     public inline finite law u32[0 max] OperandBIndex(borrow MirInstruction self)
     {
         return self.BIndex;
+    }
+
+    public inline finite law u32[0 max] OperandCIndex(borrow MirInstruction self)
+    {
+        return self.CIndex;
+    }
+
+    public inline finite law u32[0 max] OperandDIndex(borrow MirInstruction self)
+    {
+        return self.DIndex;
     }
 
     public inline finite law i64[min max] Immediate(borrow MirInstruction self)
@@ -427,6 +443,31 @@ public fn MirValueId MirCall1(mut borrow IrTable<MirInstruction> instrs, MirFunc
 public fn MirValueId MirCall2(mut borrow IrTable<MirInstruction> instrs, MirFuncId callee, MirValueId arg0, MirValueId arg1)
 {
     return MirEmit(instrs, MirOp.Call, arg0.Index(), arg1.Index(), (i64[min max])callee.Index());
+}
+
+// Emits a three-argument call `callee(arg0, arg1, arg2)`; the arguments ride in A/B/C.
+public fn MirValueId MirCall3(mut borrow IrTable<MirInstruction> instrs, MirFuncId callee, MirValueId arg0, MirValueId arg1, MirValueId arg2)
+{
+    stack mut MirInstruction instr = new();
+    instr.Op = MirOp.Call;
+    instr.AIndex = arg0.Index();
+    instr.BIndex = arg1.Index();
+    instr.CIndex = arg2.Index();
+    instr.Imm = (i64[min max])callee.Index();
+    return MirValueIdOf(instrs.Add(instr));
+}
+
+// Emits a four-argument call `callee(arg0, arg1, arg2, arg3)`; the arguments ride in A/B/C/D.
+public fn MirValueId MirCall4(mut borrow IrTable<MirInstruction> instrs, MirFuncId callee, MirValueId arg0, MirValueId arg1, MirValueId arg2, MirValueId arg3)
+{
+    stack mut MirInstruction instr = new();
+    instr.Op = MirOp.Call;
+    instr.AIndex = arg0.Index();
+    instr.BIndex = arg1.Index();
+    instr.CIndex = arg2.Index();
+    instr.DIndex = arg3.Index();
+    instr.Imm = (i64[min max])callee.Index();
+    return MirValueIdOf(instrs.Add(instr));
 }
 
 // The callee of the call instruction naming `value` (invalid when not a call /
@@ -791,6 +832,88 @@ public fn bool MirFunctionOwnsValue(borrow IrTable<MirFunction> funcs, MirFuncId
     return idx >= first && idx < first + count;
 }
 
+// === Phase-boundary MIR verification (doc 24, toward #30) ===
+// A structural well-formedness check over a function's owned MIR before a later phase (e.g.
+// codegen) consumes it: the block/instruction ranges lie within the tables, the entry block
+// is one the function owns, every owned instruction's operands name values that EXIST (no
+// dangling/out-of-range reference), and every owned block is TERMINATED and names only
+// in-range values (a Return / CondBranch condition) and blocks (Branch / CondBranch targets).
+// This catches the structural-corruption class (a 0 or out-of-range slot) at a phase
+// boundary, independent of the emitter — the kind of invariant a real compiler asserts
+// between passes. (Operand 0 is the "unused" sentinel and is allowed; a phi's forward
+// back-edge reference is in-range by construction, so the bound is the value table size.)
+internal fn bool MirFunctionWellFormed(borrow IrTable<MirInstruction> instrs, borrow IrTable<MirBlock> blocks, borrow MirFunction func)
+{
+    stack u32[0 max] instrTotal = (u32[0 max])instrs.Count();
+    stack u32[0 max] blockTotal = (u32[0 max])blocks.Count();
+
+    // (1) The block range lies within the block table.
+    if (func.OwnedBlockCount() == 0 || func.FirstBlockIndex() == 0 || func.FirstBlockIndex() + func.OwnedBlockCount() - 1 > blockTotal)
+    {
+        return false;
+    }
+
+    // (2) The entry block is one the function owns.
+    if (func.EntryIndex() < func.FirstBlockIndex() || func.EntryIndex() > func.FirstBlockIndex() + func.OwnedBlockCount() - 1)
+    {
+        return false;
+    }
+
+    // (3) The instruction range lies within the value table (a function may own none).
+    if (func.OwnedInstrCount() > 0 && (func.FirstInstrIndex() == 0 || func.FirstInstrIndex() + func.OwnedInstrCount() - 1 > instrTotal))
+    {
+        return false;
+    }
+
+    // (4) Every owned instruction names existing values (operand 0 = unused is fine).
+    stack mut u32[0 max] vi = func.FirstInstrIndex();
+    stack mut u32[0 max] viRemaining = func.OwnedInstrCount();
+    while willexit (viRemaining > 0)
+    {
+        stack MirInstruction instr = instrs.Get(vi);
+        if (instr.OperandAIndex() > instrTotal || instr.OperandBIndex() > instrTotal || instr.OperandCIndex() > instrTotal || instr.OperandDIndex() > instrTotal)
+        {
+            return false;
+        }
+
+        vi = vi + 1;
+        viRemaining = viRemaining - 1;
+    }
+
+    // (5) Every owned block is terminated and names in-range values/blocks.
+    stack mut u32[0 max] bi = func.FirstBlockIndex();
+    stack mut u32[0 max] biRemaining = func.OwnedBlockCount();
+    while willexit (biRemaining > 0)
+    {
+        stack MirBlock blk = blocks.Get(bi);
+        switch (blk.Terminator())
+        {
+            case MirTermKind.Unterminated:
+                return false;
+            case MirTermKind.Return:
+                if (blk.Slot0Index() == 0 || blk.Slot0Index() > instrTotal)
+                {
+                    return false;
+                }
+            case MirTermKind.Branch:
+                if (blk.Slot0Index() == 0 || blk.Slot0Index() > blockTotal)
+                {
+                    return false;
+                }
+            case MirTermKind.CondBranch:
+                if (blk.Slot0Index() == 0 || blk.Slot0Index() > instrTotal || blk.Slot1Index() == 0 || blk.Slot1Index() > blockTotal || blk.Slot2Index() == 0 || blk.Slot2Index() > blockTotal)
+                {
+                    return false;
+                }
+        }
+
+        bi = bi + 1;
+        biRemaining = biRemaining - 1;
+    }
+
+    return true;
+}
+
 // === LLVM textual IR emission (first backend lowering, step toward #31) ===
 // A first lowering of the integer MIR subset to LLVM textual IR. Each MIR value
 // `%vN` (N = its 1-based instruction index) becomes a NAMED LLVM SSA register, so
@@ -829,18 +952,34 @@ internal fn MemoryStatus EmitLlvmOperand(borrow IrTable<MirInstruction> instrs, 
 // Appends an LLVM call argument list `(i64 <a>, i64 <b>)` for the up-to-two operand
 // slots (0 = absent): `()`, `(i64 <a>)`, or `(i64 <a>, i64 <b>)`. Each argument is a
 // value reference (`%vN` or `%pK`).
-internal fn MemoryStatus EmitLlvmCallArgs(borrow IrTable<MirInstruction> instrs, mut borrow OwnedAscii sink, u32[0 max] a, u32[0 max] b)
+internal fn MemoryStatus EmitLlvmCallArgs(borrow IrTable<MirInstruction> instrs, mut borrow OwnedAscii sink, u32[0 max] a, u32[0 max] b, u32[0 max] c, u32[0 max] d)
 {
+    // Arguments are contiguous (a, then b, c, d, with 0 = absent in the trailing slots), so
+    // each non-zero slot after the first is preceded by an existing argument — the `, `
+    // separator never produces a leading comma.
     try sink.AppendConstAscii("(");
     if (a != 0)
     {
         try sink.AppendConstAscii("i64 ");
         try EmitLlvmOperand(instrs, sink, a);
-        if (b != 0)
-        {
-            try sink.AppendConstAscii(", i64 ");
-            try EmitLlvmOperand(instrs, sink, b);
-        }
+    }
+
+    if (b != 0)
+    {
+        try sink.AppendConstAscii(", i64 ");
+        try EmitLlvmOperand(instrs, sink, b);
+    }
+
+    if (c != 0)
+    {
+        try sink.AppendConstAscii(", i64 ");
+        try EmitLlvmOperand(instrs, sink, c);
+    }
+
+    if (d != 0)
+    {
+        try sink.AppendConstAscii(", i64 ");
+        try EmitLlvmOperand(instrs, sink, d);
     }
 
     try sink.AppendConstAscii(")");
@@ -963,7 +1102,7 @@ internal fn MemoryStatus EmitLlvmInstruction(borrow IrTable<MirInstruction> inst
             try EmitLlvmRegister(sink, index);
             try sink.AppendConstAscii(" = call i64 @f");
             try sink.AppendI64(instr.Immediate());
-            try EmitLlvmCallArgs(instrs, sink, instr.OperandAIndex(), instr.OperandBIndex());
+            try EmitLlvmCallArgs(instrs, sink, instr.OperandAIndex(), instr.OperandBIndex(), instr.OperandCIndex(), instr.OperandDIndex());
             try sink.AppendConstAscii("\n");
         case MirOp.Return:
             try sink.AppendConstAscii("  ret i64 ");
@@ -1180,6 +1319,29 @@ public fn MemoryStatus EmitLlvmBlocks(borrow IrTable<MirInstruction> instrs, bor
     return MemoryStatus.Ok;
 }
 
+// Like `EmitLlvmBlocks` but emits a NUMBERED function name `@<prefix><number>` (e.g. `@f3`)
+// instead of a fixed name — the multi-block counterpart of `EmitLlvmNumberedFunction`, so a
+// module function (`@fN`) can have an arbitrary block list (a branch, a loop), not just one
+// block.
+public fn MemoryStatus EmitLlvmBlocksNumbered(borrow IrTable<MirInstruction> instrs, borrow IrTable<MirBlock> blocks, const ascii prefix, u32[0 max] number, u32[0 max] paramCount, borrow IrTable<BlockEmit> ranges, mut borrow OwnedAscii sink)
+{
+    try sink.AppendConstAscii("define i64 @");
+    try sink.AppendConstAscii(prefix);
+    try sink.AppendU64((u64[0 max])number);
+    try EmitLlvmParamList(paramCount, sink);
+    try sink.AppendConstAscii(" {\n");
+    stack u64[0 2 ** 63 - 1] total = ranges.Count();
+    stack mut u32[0 max] i = 1;
+    while willexit ((u64[0 2 ** 63 - 1])i <= total)
+    {
+        try EmitLlvmLabeledBlock(instrs, blocks, ranges.Get(i).BlockIndex, ranges.Get(i).First, ranges.Get(i).Count, sink);
+        i = i + 1;
+    }
+
+    try sink.AppendConstAscii("}\n");
+    return MemoryStatus.Ok;
+}
+
 public fn MemoryStatus EmitLlvmDiamond(borrow IrTable<MirInstruction> instrs, borrow IrTable<MirBlock> blocks, const ascii name, u32[0 max] paramCount, u32[0 max] entryBlock, u32[0 max] entryFirst, u32[0 max] entryCount, u32[0 max] thenBlock, u32[0 max] thenFirst, u32[0 max] thenCount, u32[0 max] elseBlock, u32[0 max] elseFirst, u32[0 max] elseCount, u32[0 max] mergeBlock, u32[0 max] mergeFirst, u32[0 max] mergeCount, mut borrow OwnedAscii sink)
 {
     try sink.AppendConstAscii("define i64 @");
@@ -1231,6 +1393,36 @@ public fn MemoryStatus EmitLlvmModule(borrow IrTable<MirInstruction> instrs, bor
     }
 
     return MemoryStatus.Ok;
+}
+
+// Verify-then-emit: a phase-boundary gate that runs `MirFunctionWellFormed` over EVERY
+// function in the module and emits the LLVM ONLY if all are structurally well-formed. A
+// malformed function (a dangling reference, an unterminated block) is rejected before any
+// output, so the back end never emits corrupt IR. Returns false on a malformed module OR an
+// emit failure; true on a clean emit — the canonical "validate at the phase boundary, then
+// lower" shape for the MIR-function-table codegen path.
+public fn bool EmitLlvmModuleVerified(borrow IrTable<MirInstruction> instrs, borrow IrTable<MirBlock> blocks, borrow IrTable<MirFunction> funcs, mut borrow OwnedAscii sink)
+{
+    stack u64[0 2 ** 63 - 1] count = funcs.Count();
+    stack mut u32[0 max] id = 1;
+    while willexit ((u64[0 2 ** 63 - 1])id <= count)
+    {
+        stack MirFunction f = funcs.Get(id);
+        if (!MirFunctionWellFormed(instrs, blocks, f))
+        {
+            return false;
+        }
+
+        id = id + 1;
+    }
+
+    switch (EmitLlvmModule(instrs, blocks, funcs, sink))
+    {
+        case MemoryStatus.Ok:
+            return true;
+        case MemoryStatus.Err(var error):
+            return false;
+    }
 }
 
 // === Module-level globals ===
@@ -1537,7 +1729,7 @@ internal fn MemoryStatus EmitMirInstruction(borrow IrTable<MirInstruction> instr
             try EmitMirValue(sink, index);
             try sink.AppendConstAscii(" = call f");
             try sink.AppendI64(instr.Immediate());
-            try EmitMirCallArgs(instrs, sink, instr.OperandAIndex(), instr.OperandBIndex());
+            try EmitMirCallArgs(instrs, sink, instr.OperandAIndex(), instr.OperandBIndex(), instr.OperandCIndex(), instr.OperandDIndex());
             try sink.AppendConstAscii("\n");
         case MirOp.Return:
             try sink.AppendConstAscii("ret ");
@@ -1549,17 +1741,30 @@ internal fn MemoryStatus EmitMirInstruction(borrow IrTable<MirInstruction> instr
 }
 
 // Appends a MIR call argument list `(vA, vB)` for the up-to-two operand slots.
-internal fn MemoryStatus EmitMirCallArgs(borrow IrTable<MirInstruction> instrs, mut borrow OwnedAscii sink, u32[0 max] a, u32[0 max] b)
+internal fn MemoryStatus EmitMirCallArgs(borrow IrTable<MirInstruction> instrs, mut borrow OwnedAscii sink, u32[0 max] a, u32[0 max] b, u32[0 max] c, u32[0 max] d)
 {
     try sink.AppendConstAscii("(");
     if (a != 0)
     {
         try EmitMirValue(sink, a);
-        if (b != 0)
-        {
-            try sink.AppendConstAscii(", ");
-            try EmitMirValue(sink, b);
-        }
+    }
+
+    if (b != 0)
+    {
+        try sink.AppendConstAscii(", ");
+        try EmitMirValue(sink, b);
+    }
+
+    if (c != 0)
+    {
+        try sink.AppendConstAscii(", ");
+        try EmitMirValue(sink, c);
+    }
+
+    if (d != 0)
+    {
+        try sink.AppendConstAscii(", ");
+        try EmitMirValue(sink, d);
     }
 
     try sink.AppendConstAscii(")");
@@ -1639,9 +1844,11 @@ public fn i64[min max] ReadI64(borrow IrTable<u8[0 max]> buf, u32[0 max] at)
 }
 
 // === MIR instruction serialization (toward binary package images, #32) ===
-// A serialized instruction is a fixed 18-byte record: opcode (1) + result type (1) +
-// operand A (4 LE) + operand B (4 LE) + immediate (8 LE). An instruction stream is a
-// u32 count followed by that many records. Round-trips through the byte buffer above.
+// A serialized instruction is a fixed 26-byte record: opcode (1) + result type (1) +
+// operands A/B/C/D (4 LE each) + immediate (8 LE). An instruction stream is a u32 count
+// followed by that many records. Round-trips through the byte buffer above — INCLUDING a
+// call's third/fourth arguments (the C/D operand slots), so a 3-or-4-argument call survives
+// a package-image round-trip intact.
 
 // Opcode <-> byte (explicit both ways; no reliance on enum-ordinal casts).
 internal fn u8[0 max] MirOpToByte(MirOp op)
@@ -1744,6 +1951,8 @@ public fn void SerializeInstructions(borrow IrTable<MirInstruction> instrs, u32[
             stack u32[0 max] wType = buf.Add(MirTypeToByte(instr.ResultType()));
             WriteU32(buf, instr.OperandAIndex());
             WriteU32(buf, instr.OperandBIndex());
+            WriteU32(buf, instr.OperandCIndex());
+            WriteU32(buf, instr.OperandDIndex());
             WriteI64(buf, instr.Immediate());
         }
 
@@ -1767,13 +1976,23 @@ public fn void DeserializeInstructionsAt(borrow IrTable<u8[0 max]> buf, u32[0 ma
     stack mut u32[0 max] i = 0;
     while willexit (i < count)
     {
-        stack u32[0 max] recordBase = startOffset + 4 + i * 18;
+        stack u32[0 max] recordBase = startOffset + 4 + i * 26;
         stack u8[0 max] opByte = buf.Get(recordBase);
         stack u8[0 max] typeByte = buf.Get(recordBase + 1);
         stack u32[0 max] a = ReadU32(buf, recordBase + 2);
         stack u32[0 max] b = ReadU32(buf, recordBase + 6);
-        stack i64[min max] imm = ReadI64(buf, recordBase + 10);
-        stack MirValueId v = MirEmitTyped(outInstrs, MirOpFromByte(opByte), MirTypeFromByte(typeByte), a, b, imm);
+        stack u32[0 max] c = ReadU32(buf, recordBase + 10);
+        stack u32[0 max] d = ReadU32(buf, recordBase + 14);
+        stack i64[min max] imm = ReadI64(buf, recordBase + 18);
+        stack mut MirInstruction instr = new();
+        instr.Op = MirOpFromByte(opByte);
+        instr.ResType = MirTypeFromByte(typeByte);
+        instr.AIndex = a;
+        instr.BIndex = b;
+        instr.CIndex = c;
+        instr.DIndex = d;
+        instr.Imm = imm;
+        stack u32[0 max] added = outInstrs.Add(instr);
         i = i + 1;
     }
 }
@@ -2291,6 +2510,48 @@ public fn bool CompileEmittedLlvmProducesObject(borrow IrTable<MirInstruction> i
     return RunClang(llPath.View(), objPath.View());
 }
 
+// Writes already-emitted LLVM text to a temp `.ll` and runs `clang -c` on it — proving the
+// IR is LLVM-VERIFIER-VALID native code, not merely text matching a hand-predicted string.
+// clang's verifier independently rejects malformed IR (e.g. an `i1` flowing into an `i64`
+// operand — the recurring trap), so this is a stronger check than `LlvmTextEquals`. Tolerant
+// of a missing toolchain (RunClang passes when clang cannot be spawned) so the suite stays
+// portable. The shared verifier-level check behind every AST-codegen clang fact.
+public fn bool ClangVerifiesLlvmText(borrow OwnedAscii text)
+{
+    stack mut OwnedAscii dir = new();
+    if (!MakeTempDir(dir))
+    {
+        return false;
+    }
+
+    stack mut OwnedAscii llPath = new();
+    stack System.Memory.MemoryStatus la = llPath.AppendAscii(dir.View());
+    stack System.Memory.MemoryStatus lb = llPath.AppendConstAscii("/unit.ll");
+    stack mut OwnedAscii objPath = new();
+    stack System.Memory.MemoryStatus oa = objPath.AppendAscii(dir.View());
+    stack System.Memory.MemoryStatus ob = objPath.AppendConstAscii("/unit.o");
+
+    if (!WriteAsciiFile(llPath.View(), text))
+    {
+        return false;
+    }
+
+    return RunClang(llPath.View(), objPath.View());
+}
+
+// Compiles a multi-function module SOURCE through the AST path and clang-verifies the emitted
+// LLVM (see ClangVerifiesLlvmText). Returns false if the source does not compile.
+public fn bool CompileModuleSourceProducesObject(ascii source)
+{
+    stack mut OwnedAscii text = new();
+    if (!CompileModuleFromAst(source, text))
+    {
+        return false;
+    }
+
+    return ClangVerifiesLlvmText(text);
+}
+
 // === FFI capability probe (foundation for a libLLVM C-API binding, #31 direct) ===
 // The libLLVM direct-C-API route is `ffi fn` declarations of the LLVM C API linked
 // against libLLVM. As a foundation check that the self-hosted compiler package can
@@ -2710,6 +2971,19 @@ internal fn MirValueId LowerBinOp(mut borrow IrTable<MirInstruction> instrs, Tok
         return MirMul(instrs, a, b);
     }
 
+    // Division and modulo must route to their own opcodes — defaulting them to `add`
+    // silently miscompiles `/`/`%` (an AST-lowering path passes every product operator,
+    // not just `*`, through here).
+    if (op == TokenKind.Div)
+    {
+        return MirSDiv(instrs, a, b);
+    }
+
+    if (op == TokenKind.Mod)
+    {
+        return MirSRem(instrs, a, b);
+    }
+
     return MirAdd(instrs, a, b);
 }
 
@@ -2765,9 +3039,33 @@ internal fn i64[min max] FirstPrimaryIndexAfter(borrow TokenStream stream, u64[0
 // Lowers a `<`/`>` comparison to its signed MIR comparison (`<` is the default).
 internal fn MirValueId LowerComparison(mut borrow IrTable<MirInstruction> instrs, TokenKind op, MirValueId a, MirValueId b)
 {
+    // Every comparison operator must route to its own opcode. Defaulting the four
+    // non-`<`/`>` operators to `slt` silently miscompiles them — the AST path passes all
+    // six comparison operators through here (the positional lowering only ever passes
+    // `<`/`>`, which is why this was latent).
     if (op == TokenKind.Gt)
     {
         return MirCmpGt(instrs, a, b);
+    }
+
+    if (op == TokenKind.Lte)
+    {
+        return MirCmpLe(instrs, a, b);
+    }
+
+    if (op == TokenKind.Gte)
+    {
+        return MirCmpGe(instrs, a, b);
+    }
+
+    if (op == TokenKind.EqEq)
+    {
+        return MirCmpEq(instrs, a, b);
+    }
+
+    if (op == TokenKind.Neq)
+    {
+        return MirCmpNe(instrs, a, b);
     }
 
     return MirCmpLt(instrs, a, b);
@@ -2979,6 +3277,119 @@ public fn bool LowerIfToLlvm(ascii source, mut borrow OwnedAscii sink)
     }
 }
 
+// Lowers a one-level else-if chain `if <a> <cmp> <b> <then1> else if <c> <cmp> <d>
+// <then2> else <else>` (single-primary comparison operands; arm values are folded
+// expressions) to a seven-block CFG of two composed diamonds, emitted through the
+// general `EmitLlvmBlocks`. Requires the token after the first `else` to be `if`.
+internal fn bool LowerNestedIfStream(borrow TokenStream stream, borrow i8[min max][] source, mut borrow OwnedAscii sink)
+{
+    stack i64[min max] ifIndex = FirstTokenOfKind(stream, TokenKind.If);
+    stack i64[min max] else1 = FirstTokenOfKind(stream, TokenKind.Else);
+    if (ifIndex < 0 || else1 < 0)
+    {
+        return false;
+    }
+
+    // The else arm must itself open with `if` (the chained `else if`).
+    stack u64[0 2 ** 63 - 1] innerIf = (u64[0 2 ** 63 - 1])else1 + 1;
+    if (stream.KindAt(innerIf) != TokenKind.If)
+    {
+        return false;
+    }
+
+    stack i64[min max] else2 = FirstTokenOfKindAfter(stream, TokenKind.Else, innerIf);
+    if (else2 < 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] base = (u64[0 2 ** 63 - 1])ifIndex;
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<ParamName> params = new();
+    BuildParamTable(stream, source, params);
+    stack mut IrTable<LocalBinding> locals = new();
+
+    // Entry block (b1): outer comparison `<a> <cmp> <b>`.
+    stack MirValueId lhs1 = LowerPrimary(stream, source, params, locals, instrs, base + 1);
+    stack MirValueId rhs1 = LowerPrimary(stream, source, params, locals, instrs, base + 3);
+    stack MirValueId cond1 = LowerComparison(instrs, stream.KindAt(base + 2), lhs1, rhs1);
+    stack u32[0 max] entryCount = (u32[0 max])instrs.Count();
+
+    // then1 block (b2): the first arm value (folded, stops at `else`).
+    stack u32[0 max] then1First = entryCount + 1;
+    stack MirValueId then1Value = FoldExpr(stream, source, params, locals, instrs, base + 4);
+    stack u32[0 max] then1Count = (u32[0 max])instrs.Count() - entryCount;
+
+    // inner-entry block (b3): inner comparison `<c> <cmp> <d>` after the chained `if`.
+    stack u32[0 max] innerEntryFirst = (u32[0 max])instrs.Count() + 1;
+    stack MirValueId lhs2 = LowerPrimary(stream, source, params, locals, instrs, innerIf + 1);
+    stack MirValueId rhs2 = LowerPrimary(stream, source, params, locals, instrs, innerIf + 3);
+    stack MirValueId cond2 = LowerComparison(instrs, stream.KindAt(innerIf + 2), lhs2, rhs2);
+    stack u32[0 max] innerEntryCount = (u32[0 max])instrs.Count() - (innerEntryFirst - 1);
+
+    // then2 block (b4): the second arm value (folded, stops at `else`).
+    stack u32[0 max] then2First = (u32[0 max])instrs.Count() + 1;
+    stack MirValueId then2Value = FoldExpr(stream, source, params, locals, instrs, innerIf + 4);
+    stack u32[0 max] then2Count = (u32[0 max])instrs.Count() - (then2First - 1);
+
+    // else2 block (b5): the final else value.
+    stack i64[min max] elseArm = FirstPrimaryIndexAfter(stream, (u64[0 2 ** 63 - 1])else2);
+    stack u32[0 max] else2First = (u32[0 max])instrs.Count() + 1;
+    stack MirValueId elseValue = FoldExpr(stream, source, params, locals, instrs, (u64[0 2 ** 63 - 1])elseArm);
+    stack u32[0 max] else2Count = (u32[0 max])instrs.Count() - (else2First - 1);
+
+    // inner-merge block (b6): phi over the inner diamond, then branch to the outer merge.
+    stack u32[0 max] innerMergeFirst = (u32[0 max])instrs.Count() + 1;
+    stack MirValueId innerPhi = MirPhi2(instrs, then2Value, MirBlockIdOf(4), elseValue, MirBlockIdOf(5));
+    // outer-merge block (b7): phi selecting then1 vs the inner result, then return.
+    stack u32[0 max] outerMergeFirst = (u32[0 max])instrs.Count() + 1;
+    stack MirValueId outerPhi = MirPhi2(instrs, then1Value, MirBlockIdOf(2), innerPhi, MirBlockIdOf(6));
+
+    // Blocks in order b1..b7.
+    stack MirBlockId entry = MirCondBlock(blocks, cond1, MirBlockIdOf(2), MirBlockIdOf(3));
+    stack MirBlockId then1 = MirBranchBlock(blocks, MirBlockIdOf(7));
+    stack MirBlockId innerEntry = MirCondBlock(blocks, cond2, MirBlockIdOf(4), MirBlockIdOf(5));
+    stack MirBlockId then2 = MirBranchBlock(blocks, MirBlockIdOf(6));
+    stack MirBlockId else2Block = MirBranchBlock(blocks, MirBlockIdOf(6));
+    stack MirBlockId innerMerge = MirBranchBlock(blocks, MirBlockIdOf(7));
+    stack MirBlockId outerMerge = MirReturnBlock(blocks, outerPhi);
+
+    stack mut IrTable<BlockEmit> ranges = new();
+    stack u32[0 max] r1 = ranges.Add(MakeBlockEmit(entry.Index(), 1, entryCount));
+    stack u32[0 max] r2 = ranges.Add(MakeBlockEmit(then1.Index(), then1First, then1Count));
+    stack u32[0 max] r3 = ranges.Add(MakeBlockEmit(innerEntry.Index(), innerEntryFirst, innerEntryCount));
+    stack u32[0 max] r4 = ranges.Add(MakeBlockEmit(then2.Index(), then2First, then2Count));
+    stack u32[0 max] r5 = ranges.Add(MakeBlockEmit(else2Block.Index(), else2First, else2Count));
+    stack u32[0 max] r6 = ranges.Add(MakeBlockEmit(innerMerge.Index(), innerMergeFirst, 1));
+    stack u32[0 max] r7 = ranges.Add(MakeBlockEmit(outerMerge.Index(), outerMergeFirst, 1));
+
+    stack u32[0 max] paramCount = (u32[0 max])params.Count();
+    switch (EmitLlvmBlocks(instrs, blocks, "main", paramCount, ranges, sink))
+    {
+        case MemoryStatus.Ok:
+            return true;
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+// Lexes and lowers an `if … else if … else …` one-level chain to a branching `@main`.
+public fn bool LowerNestedIfToLlvm(ascii source, mut borrow OwnedAscii sink)
+{
+    stack mut OwnedAscii sourceText = new();
+    stack System.Memory.MemoryStatus copyStatus = sourceText.AppendAscii(source);
+    stack i8[min max][] sourceBytes = sourceText.AsSlice();
+
+    switch (Lex(sourceBytes))
+    {
+        case LexResult<TokenStream>.Ok(var stream):
+            return LowerNestedIfStream(stream, sourceBytes, sink);
+        case LexResult<TokenStream>.Err(var lexError):
+            return false;
+    }
+}
+
 // === Multi-function modules + cross-function calls (toward bootstrap, #33) ===
 // Lowers `(fn <name>() { return <body> })+` to an LLVM module with one function per
 // definition. A body is either an arithmetic expression or a call `<name>()` to
@@ -3147,6 +3558,2289 @@ public fn bool LowerCountingLoopToLlvm(ascii source, mut borrow OwnedAscii sink)
     {
         case LexResult<TokenStream>.Ok(var stream):
             return LowerCountingLoopStream(stream, sourceBytes, sink);
+        case LexResult<TokenStream>.Err(var lexError):
+            return false;
+    }
+}
+
+// Lowers a TWO-variable accumulator loop with a multi-statement body — the canonical
+// shape `var i = <iInit>; var s = <sInit>; while i < <bound> { s = s <op> i; i = i
+// <op2> <step> } return s` — to the four-block loop CFG whose header carries TWO
+// induction phis (counter `i` and accumulator `s`), each fed by the preheader and a
+// body back-edge. The two body statements feed the two phis; `s`'s update reads both
+// loop variables. Operators (`<op>`, `<op2>`) and all four literals come from source;
+// the structure (which var is counter vs accumulator, condition uses the counter) is
+// the fixed canonical layout. Both updates are single-assignment in SSA.
+internal fn bool LowerAccumulatorLoopStream(borrow TokenStream stream, borrow i8[min max][] source, mut borrow OwnedAscii sink)
+{
+    stack i64[min max] whileIdx = FirstTokenOfKind(stream, TokenKind.While);
+    stack i64[min max] cmpIdx = FirstComparisonIndex(stream);
+    stack i64[min max] iInitIdx = FirstIntLiteralIndex(stream);
+    stack i64[min max] firstAssign = FirstTokenOfKind(stream, TokenKind.Assign);
+    stack i64[min max] lbraceIdx = FirstTokenOfKind(stream, TokenKind.LBrace);
+    if (whileIdx < 0 || cmpIdx < 0 || iInitIdx < 0 || firstAssign < 0 || lbraceIdx < 0)
+    {
+        return false;
+    }
+
+    // Second `var` init `s = <sInit>`: the `=` after the first, its operand the literal.
+    stack i64[min max] secondAssign = FirstTokenOfKindAfter(stream, TokenKind.Assign, (u64[0 2 ** 63 - 1])firstAssign);
+    // Body assignments: `s = s <op> i` then `i = i <op2> <step>` (both after `{`).
+    stack i64[min max] accAssign = FirstTokenOfKindAfter(stream, TokenKind.Assign, (u64[0 2 ** 63 - 1])lbraceIdx);
+    if (secondAssign < 0 || accAssign < 0)
+    {
+        return false;
+    }
+
+    stack i64[min max] countAssign = FirstTokenOfKindAfter(stream, TokenKind.Assign, (u64[0 2 ** 63 - 1])accAssign);
+    if (countAssign < 0)
+    {
+        return false;
+    }
+
+    stack TokenKind cmpOp = stream.KindAt((u64[0 2 ** 63 - 1])cmpIdx);
+    stack TokenKind accOp = stream.KindAt((u64[0 2 ** 63 - 1])accAssign + 2);
+    stack TokenKind countOp = stream.KindAt((u64[0 2 ** 63 - 1])countAssign + 2);
+    stack i64[min max] iInit = ParseDigitSpan(source, stream.StartAt((u64[0 2 ** 63 - 1])iInitIdx), stream.LengthAt((u64[0 2 ** 63 - 1])iInitIdx));
+    stack i64[min max] sInit = ParseDigitSpan(source, stream.StartAt((u64[0 2 ** 63 - 1])secondAssign + 1), stream.LengthAt((u64[0 2 ** 63 - 1])secondAssign + 1));
+    stack i64[min max] bound = ParseDigitSpan(source, stream.StartAt((u64[0 2 ** 63 - 1])cmpIdx + 1), stream.LengthAt((u64[0 2 ** 63 - 1])cmpIdx + 1));
+    stack i64[min max] step = ParseDigitSpan(source, stream.StartAt((u64[0 2 ** 63 - 1])countAssign + 3), stream.LengthAt((u64[0 2 ** 63 - 1])countAssign + 3));
+
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+
+    // Preheader constants (%v1..%v4).
+    stack MirValueId iInitConst = MirConstInt(instrs, iInit);
+    stack MirValueId sInitConst = MirConstInt(instrs, sInit);
+    stack MirValueId boundConst = MirConstInt(instrs, bound);
+    stack MirValueId stepConst = MirConstInt(instrs, step);
+    // Header: i-phi (%v5) back-edges iNext(%v9); s-phi (%v6) back-edges sNext(%v8).
+    stack MirValueId iVar = MirPhi2(instrs, iInitConst, MirBlockIdOf(1), MirValueIdOf(9), MirBlockIdOf(3));
+    stack MirValueId sVar = MirPhi2(instrs, sInitConst, MirBlockIdOf(1), MirValueIdOf(8), MirBlockIdOf(3));
+    stack MirValueId cond = LowerComparison(instrs, cmpOp, iVar, boundConst);
+    // Body: sNext = s <op> i (%v8) ; iNext = i <op2> step (%v9).
+    stack MirValueId sNext = LowerBinOp(instrs, accOp, sVar, iVar);
+    stack MirValueId iNext = LowerBinOp(instrs, countOp, iVar, stepConst);
+
+    stack MirBlockId entry = MirBranchBlock(blocks, MirBlockIdOf(2));
+    stack MirBlockId header = MirCondBlock(blocks, cond, MirBlockIdOf(3), MirBlockIdOf(4));
+    stack MirBlockId body = MirBranchBlock(blocks, MirBlockIdOf(2));
+    stack MirBlockId exit = MirReturnBlock(blocks, sVar);
+
+    stack mut IrTable<BlockEmit> ranges = new();
+    stack u32[0 max] r1 = ranges.Add(MakeBlockEmit(entry.Index(), 1, 4));
+    stack u32[0 max] r2 = ranges.Add(MakeBlockEmit(header.Index(), 5, 3));
+    stack u32[0 max] r3 = ranges.Add(MakeBlockEmit(body.Index(), 8, 2));
+    stack u32[0 max] r4 = ranges.Add(MakeBlockEmit(exit.Index(), 10, 0));
+
+    switch (EmitLlvmBlocks(instrs, blocks, "sum", 0, ranges, sink))
+    {
+        case MemoryStatus.Ok:
+            return true;
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+// Lexes and lowers a two-variable accumulator loop to a branching LLVM `@sum`.
+public fn bool LowerAccumulatorLoopToLlvm(ascii source, mut borrow OwnedAscii sink)
+{
+    stack mut OwnedAscii sourceText = new();
+    stack System.Memory.MemoryStatus copyStatus = sourceText.AppendAscii(source);
+    stack i8[min max][] sourceBytes = sourceText.AsSlice();
+
+    switch (Lex(sourceBytes))
+    {
+        case LexResult<TokenStream>.Ok(var stream):
+            return LowerAccumulatorLoopStream(stream, sourceBytes, sink);
+        case LexResult<TokenStream>.Err(var lexError):
+            return false;
+    }
+}
+
+// Lowers a SELF-RECURSIVE single-parameter function `fn <name>(<p>) { if <p> <cmp>
+// <a> return <base> else return <p> <op> <name>(<p> <op2> <step>) }` to the recursive
+// `@f1` — an entry block branching on the comparison to a base-case return or a
+// recursive block that decrements the parameter, calls the function's OWN id, combines
+// with the parameter, and returns. The single parameter is referenced directly as
+// `%p0` throughout; literals/operators come from source, the structure is the fixed
+// factorial shape. (Demonstrates source -> recursion end to end.)
+internal fn bool LowerRecursiveFactorialStream(borrow TokenStream stream, borrow i8[min max][] source, mut borrow OwnedAscii sink)
+{
+    stack i64[min max] ifIdx = FirstTokenOfKind(stream, TokenKind.If);
+    stack i64[min max] cmpIdx = FirstComparisonIndex(stream);
+    stack i64[min max] firstReturn = FirstTokenOfKind(stream, TokenKind.Return);
+    if (ifIdx < 0 || cmpIdx < 0 || firstReturn < 0)
+    {
+        return false;
+    }
+
+    stack i64[min max] secondReturn = FirstTokenOfKindAfter(stream, TokenKind.Return, (u64[0 2 ** 63 - 1])firstReturn);
+    if (secondReturn < 0)
+    {
+        return false;
+    }
+
+    // The recursive call's `(` is the first LParen after the second `return`; its `n -
+    // 1` operands follow.
+    stack i64[min max] callLParen = FirstTokenOfKindAfter(stream, TokenKind.LParen, (u64[0 2 ** 63 - 1])secondReturn);
+    if (callLParen < 0)
+    {
+        return false;
+    }
+
+    stack TokenKind cmpOp = stream.KindAt((u64[0 2 ** 63 - 1])cmpIdx);
+    stack TokenKind mulOp = stream.KindAt((u64[0 2 ** 63 - 1])secondReturn + 2);
+    stack TokenKind subOp = stream.KindAt((u64[0 2 ** 63 - 1])callLParen + 2);
+    stack i64[min max] condRhs = ParseDigitSpan(source, stream.StartAt((u64[0 2 ** 63 - 1])cmpIdx + 1), stream.LengthAt((u64[0 2 ** 63 - 1])cmpIdx + 1));
+    stack i64[min max] baseValue = ParseDigitSpan(source, stream.StartAt((u64[0 2 ** 63 - 1])firstReturn + 1), stream.LengthAt((u64[0 2 ** 63 - 1])firstReturn + 1));
+    stack i64[min max] subStep = ParseDigitSpan(source, stream.StartAt((u64[0 2 ** 63 - 1])callLParen + 3), stream.LengthAt((u64[0 2 ** 63 - 1])callLParen + 3));
+
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+
+    // Entry block: the base-vs-recurse comparison `<p> <cmp> <a>`.
+    stack MirValueId p = MirParam(instrs, 0);
+    stack MirValueId condRhsConst = MirConstInt(instrs, condRhs);
+    stack MirValueId cond = LowerComparison(instrs, cmpOp, p, condRhsConst);
+    // Base block: `return <base>`.
+    stack MirValueId baseConst = MirConstInt(instrs, baseValue);
+    // Recursive block: `<p> <op> <name>(<p> <op2> <step>)`.
+    stack MirValueId subConst = MirConstInt(instrs, subStep);
+    stack MirValueId reduced = LowerBinOp(instrs, subOp, p, subConst);
+    stack MirValueId recursive = MirCall1(instrs, MirFuncIdOf(1), reduced);
+    stack MirValueId result = LowerBinOp(instrs, mulOp, p, recursive);
+
+    stack MirBlockId entry = MirCondBlock(blocks, cond, MirBlockIdOf(2), MirBlockIdOf(3));
+    stack MirBlockId base = MirReturnBlock(blocks, baseConst);
+    stack MirBlockId recurse = MirReturnBlock(blocks, result);
+
+    stack mut IrTable<BlockEmit> ranges = new();
+    stack u32[0 max] r1 = ranges.Add(MakeBlockEmit(entry.Index(), 1, 3));
+    stack u32[0 max] r2 = ranges.Add(MakeBlockEmit(base.Index(), 4, 1));
+    stack u32[0 max] r3 = ranges.Add(MakeBlockEmit(recurse.Index(), 5, 4));
+
+    switch (EmitLlvmBlocks(instrs, blocks, "f1", 1, ranges, sink))
+    {
+        case MemoryStatus.Ok:
+            return true;
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+// Lexes and lowers a self-recursive factorial-shaped function to the recursive `@f1`.
+public fn bool LowerRecursiveFactorialToLlvm(ascii source, mut borrow OwnedAscii sink)
+{
+    stack mut OwnedAscii sourceText = new();
+    stack System.Memory.MemoryStatus copyStatus = sourceText.AppendAscii(source);
+    stack i8[min max][] sourceBytes = sourceText.AsSlice();
+
+    switch (Lex(sourceBytes))
+    {
+        case LexResult<TokenStream>.Ok(var stream):
+            return LowerRecursiveFactorialStream(stream, sourceBytes, sink);
+        case LexResult<TokenStream>.Err(var lexError):
+            return false;
+    }
+}
+
+// === Name resolution (toward the binder, #33) ===
+// A first semantic-analysis pass over the lexed token stream — beyond lexing/lowering:
+// it answers "does every identifier USE refer to something declared?" without emitting
+// any code. Declared names are the identifiers introduced by `var` (and any function
+// parameters between `fn <name> (` and `)`). A use-position identifier that resolves to
+// none of them is an unbound name — the canonical first binder diagnostic.
+
+// True when token `index` is in a DECLARING position: right after `var` (a local) or a
+// parameter name inside the `( … )` that follows `fn <name>` (so it is being introduced,
+// not used).
+internal fn bool IsDeclaringIdentifier(borrow TokenStream stream, u64[0 2 ** 63 - 1] index)
+{
+    if (index == 0)
+    {
+        return false;
+    }
+
+    stack TokenKind prev = stream.KindAt(index - 1);
+    if (prev == TokenKind.Var)
+    {
+        return true;
+    }
+
+    // A function name: the identifier introduced right after `fn` (also a callable name,
+    // so references to it elsewhere resolve).
+    if (prev == TokenKind.Fn)
+    {
+        return true;
+    }
+
+    // A parameter: the identifier sits after `fn <name> (` and before the matching `)`,
+    // i.e. the nearest preceding bracket-relevant token is `(` or a `,` following the
+    // function name. Approximate with: previous token is `(` or `,` AND a `fn` precedes
+    // the opening paren on this declaration.
+    if (prev == TokenKind.LParen || prev == TokenKind.Comma)
+    {
+        // Walk back to the matching `(`; if a `fn` sits two tokens before it, this is a
+        // parameter-list identifier.
+        stack mut i64[min max] k = (i64[min max])index - 1;
+        while willexit (k >= 0)
+        {
+            if (stream.KindAt((u64[0 2 ** 63 - 1])k) == TokenKind.LParen)
+            {
+                return k >= 2 && stream.KindAt((u64[0 2 ** 63 - 1])k - 2) == TokenKind.Fn;
+            }
+
+            k = k - 1;
+        }
+    }
+
+    return false;
+}
+
+// True when the identifier at `index` is a function name (introduced right after `fn`).
+// Function names live in MODULE scope — callable from any function body.
+internal fn bool IsFunctionNameIdentifier(borrow TokenStream stream, u64[0 2 ** 63 - 1] index)
+{
+    return index > 0 && stream.KindAt(index - 1) == TokenKind.Fn;
+}
+
+// Resolves names within ONE scope [start, end): every use-position identifier must bind
+// to a name declared IN THIS SCOPE (a `var` local or this function's parameters/name) or
+// to a MODULE-level function name (visible everywhere). Params/locals of OTHER functions
+// are NOT visible here.
+internal fn bool ScopeNamesResolve(borrow TokenStream stream, borrow i8[min max][] source, u64[0 2 ** 63 - 1] start, u64[0 2 ** 63 - 1] end, borrow IrTable<ParamName> funcNames)
+{
+    stack mut IrTable<ParamName> declared = new();
+    stack mut u64[0 2 ** 63 - 1] i = start;
+    while willexit (i < end)
+    {
+        if (stream.KindAt(i) == TokenKind.Identifier && IsDeclaringIdentifier(stream, i))
+        {
+            stack mut ParamName name = new();
+            name.Start = stream.StartAt(i);
+            name.Length = stream.LengthAt(i);
+            stack u32[0 max] added = declared.Add(name);
+        }
+
+        i = i + 1;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] j = start;
+    while willexit (j < end)
+    {
+        if (stream.KindAt(j) == TokenKind.Identifier && !IsDeclaringIdentifier(stream, j))
+        {
+            stack u64[0 2 ** 63 - 1] useStart = stream.StartAt(j);
+            stack u64[0 2 ** 63 - 1] useLength = stream.LengthAt(j);
+            stack i64[min max] localIdx = ParamIndexOf(declared, source, useStart, useLength);
+            stack i64[min max] funcIdx = ParamIndexOf(funcNames, source, useStart, useLength);
+            if (localIdx < 0 && funcIdx < 0)
+            {
+                return false;
+            }
+        }
+
+        j = j + 1;
+    }
+
+    return true;
+}
+
+internal fn bool NamesResolveStream(borrow TokenStream stream, borrow i8[min max][] source)
+{
+    stack u64[0 2 ** 63 - 1] count = stream.Count();
+
+    // Module scope: every function name (visible from any function body).
+    stack mut IrTable<ParamName> funcNames = new();
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < count)
+    {
+        if (stream.KindAt(i) == TokenKind.Identifier && IsFunctionNameIdentifier(stream, i))
+        {
+            stack mut ParamName name = new();
+            name.Start = stream.StartAt(i);
+            name.Length = stream.LengthAt(i);
+            stack u32[0 max] added = funcNames.Add(name);
+        }
+
+        i = i + 1;
+    }
+
+    stack i64[min max] firstFn = FirstTokenOfKind(stream, TokenKind.Fn);
+
+    // No functions: the whole program is one scope.
+    if (firstFn < 0)
+    {
+        return ScopeNamesResolve(stream, source, 0, count, funcNames);
+    }
+
+    // Any top-level region before the first function is its own scope.
+    if (firstFn > 0 && !ScopeNamesResolve(stream, source, 0, (u64[0 2 ** 63 - 1])firstFn, funcNames))
+    {
+        return false;
+    }
+
+    // Each function spans from its `fn` to the next `fn` (or end) — a separate scope.
+    stack mut u64[0 2 ** 63 - 1] f = (u64[0 2 ** 63 - 1])firstFn;
+    while willexit (f < count)
+    {
+        if (stream.KindAt(f) == TokenKind.Fn)
+        {
+            stack i64[min max] nextFn = FirstTokenOfKindAfter(stream, TokenKind.Fn, f);
+            stack mut u64[0 2 ** 63 - 1] scopeEnd = count;
+            if (nextFn >= 0)
+            {
+                scopeEnd = (u64[0 2 ** 63 - 1])nextFn;
+            }
+
+            if (!ScopeNamesResolve(stream, source, f, scopeEnd, funcNames))
+            {
+                return false;
+            }
+        }
+
+        f = f + 1;
+    }
+
+    return true;
+}
+
+// Lexes a program and returns true iff every identifier USE resolves to a declared
+// name (a `var` local or a function parameter). The first binder check: unbound-name
+// detection over the lexed token stream.
+public fn bool ProgramNamesResolve(ascii source)
+{
+    stack mut OwnedAscii sourceText = new();
+    stack System.Memory.MemoryStatus copyStatus = sourceText.AppendAscii(source);
+    stack i8[min max][] sourceBytes = sourceText.AsSlice();
+
+    switch (Lex(sourceBytes))
+    {
+        case LexResult<TokenStream>.Ok(var stream):
+            return NamesResolveStream(stream, sourceBytes);
+        case LexResult<TokenStream>.Err(var lexError):
+            return false;
+    }
+}
+
+// === Call arity checking (toward the typer, #33) ===
+// A function name paired with its declared parameter count. The next semantic check
+// after name resolution: a call must pass exactly as many arguments as its function
+// declares — the first ARITY/TYPE consistency rule.
+public struct FuncArity
+{
+    u64[0 2 ** 63 - 1] Start;
+    u64[0 2 ** 63 - 1] Length;
+    i64[min max] Arity;
+
+    FuncArity()
+    {
+        self.Start = 0;
+        self.Length = 0;
+        self.Arity = 0;
+    }
+}
+
+// The arity delimited by the `(` at `lparenIndex` and its matching `)`: 0 for an empty
+// `()`, else (top-level commas) + 1. Emptiness is decided by the token immediately after
+// the `(` — so a SINGLE argument that is itself parenthesized (`f((5))`) still counts as
+// one. Paren NESTING is tracked by depth, so a comma inside a nested argument call
+// (`f(g(a, b), c)`) is not miscounted as a top-level separator.
+internal fn i64[min max] CountArgsBetweenParens(borrow TokenStream stream, u64[0 2 ** 63 - 1] lparenIndex)
+{
+    stack u64[0 2 ** 63 - 1] count = stream.Count();
+
+    // Empty argument list: `(` immediately followed by `)`.
+    if (lparenIndex + 1 < count && stream.KindAt(lparenIndex + 1) == TokenKind.RParen)
+    {
+        return 0;
+    }
+
+    // Non-empty: count top-level commas, then add one for the final argument.
+    stack mut i64[min max] depth = 0;
+    stack mut i64[min max] commas = 0;
+    stack mut u64[0 2 ** 63 - 1] k = lparenIndex;
+    while willexit (k < count)
+    {
+        stack TokenKind kind = stream.KindAt(k);
+        if (kind == TokenKind.LParen)
+        {
+            depth = depth + 1;
+        }
+        else if (kind == TokenKind.RParen)
+        {
+            depth = depth - 1;
+            if (depth == 0)
+            {
+                k = count;
+            }
+        }
+        else if (depth == 1 && kind == TokenKind.Comma)
+        {
+            commas = commas + 1;
+        }
+
+        k = k + 1;
+    }
+
+    return commas + 1;
+}
+
+// The declared arity for the function-name span [start, start+length), or -1 if absent.
+internal fn i64[min max] FuncArityOf(borrow IrTable<FuncArity> funcs, borrow i8[min max][] source, u64[0 2 ** 63 - 1] start, u64[0 2 ** 63 - 1] length)
+{
+    stack u64[0 2 ** 63 - 1] count = funcs.Count();
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < count)
+    {
+        stack FuncArity existing = funcs.Get((u32[0 max])(i + 1));
+        if (SpanEquals(source, existing.Start, existing.Length, start, length))
+        {
+            return existing.Arity;
+        }
+
+        i = i + 1;
+    }
+
+    return -1;
+}
+
+internal fn bool CallAritiesMatchStream(borrow TokenStream stream, borrow i8[min max][] source)
+{
+    stack u64[0 2 ** 63 - 1] count = stream.Count();
+
+    // Build the fn -> declared-arity table from each `fn <name> ( … )` header.
+    stack mut IrTable<FuncArity> funcs = new();
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < count)
+    {
+        if (stream.KindAt(i) == TokenKind.Fn && i + 2 < count && stream.KindAt(i + 1) == TokenKind.Identifier && stream.KindAt(i + 2) == TokenKind.LParen)
+        {
+            stack mut FuncArity fa = new();
+            fa.Start = stream.StartAt(i + 1);
+            fa.Length = stream.LengthAt(i + 1);
+            fa.Arity = CountArgsBetweenParens(stream, i + 2);
+            stack u32[0 max] added = funcs.Add(fa);
+        }
+
+        i = i + 1;
+    }
+
+    // Each call site `<name> ( … )` (an identifier+`(` not preceded by `fn`) must pass
+    // exactly the function's declared number of arguments.
+    stack mut u64[0 2 ** 63 - 1] j = 0;
+    while willexit (j < count)
+    {
+        stack bool isCall = stream.KindAt(j) == TokenKind.Identifier && j + 1 < count && stream.KindAt(j + 1) == TokenKind.LParen;
+        stack bool isDef = j > 0 && stream.KindAt(j - 1) == TokenKind.Fn;
+        if (isCall && !isDef)
+        {
+            stack i64[min max] declaredArity = FuncArityOf(funcs, source, stream.StartAt(j), stream.LengthAt(j));
+            if (declaredArity >= 0)
+            {
+                stack i64[min max] callArity = CountArgsBetweenParens(stream, j + 1);
+                if (callArity != declaredArity)
+                {
+                    return false;
+                }
+            }
+        }
+
+        j = j + 1;
+    }
+
+    return true;
+}
+
+// Lexes a module and returns true iff every call to a defined function passes exactly
+// that function's declared number of arguments. The first arity/type consistency check.
+public fn bool ProgramCallAritiesMatch(ascii source)
+{
+    stack mut OwnedAscii sourceText = new();
+    stack System.Memory.MemoryStatus copyStatus = sourceText.AppendAscii(source);
+    stack i8[min max][] sourceBytes = sourceText.AsSlice();
+
+    switch (Lex(sourceBytes))
+    {
+        case LexResult<TokenStream>.Ok(var stream):
+            return CallAritiesMatchStream(stream, sourceBytes);
+        case LexResult<TokenStream>.Err(var lexError):
+            return false;
+    }
+}
+
+// === Redeclaration checking (toward the binder, #33) ===
+// The third semantic check: within ONE scope no name may be declared twice. Scopes are
+// per-function — the same parameter name in two different functions is fine, but a
+// duplicate parameter or a local redeclared in the same function is an error.
+
+// True iff the declared names (params + `fn` name + `var` locals) in the half-open token
+// range [start, end) are all distinct.
+internal fn bool ScopeDeclarationsUnique(borrow TokenStream stream, borrow i8[min max][] source, u64[0 2 ** 63 - 1] start, u64[0 2 ** 63 - 1] end)
+{
+    stack mut IrTable<ParamName> declared = new();
+    stack mut u64[0 2 ** 63 - 1] i = start;
+    while willexit (i < end)
+    {
+        // The function's OWN name lives in MODULE scope, not its local scope — so a
+        // parameter or local may legally share it; only params + locals are checked here.
+        if (stream.KindAt(i) == TokenKind.Identifier && IsDeclaringIdentifier(stream, i) && !IsFunctionNameIdentifier(stream, i))
+        {
+            stack u64[0 2 ** 63 - 1] nameStart = stream.StartAt(i);
+            stack u64[0 2 ** 63 - 1] nameLength = stream.LengthAt(i);
+            if (ParamIndexOf(declared, source, nameStart, nameLength) >= 0)
+            {
+                return false;
+            }
+
+            stack mut ParamName name = new();
+            name.Start = nameStart;
+            name.Length = nameLength;
+            stack u32[0 max] added = declared.Add(name);
+        }
+
+        i = i + 1;
+    }
+
+    return true;
+}
+
+internal fn bool DeclarationsUniqueStream(borrow TokenStream stream, borrow i8[min max][] source)
+{
+    stack u64[0 2 ** 63 - 1] count = stream.Count();
+    stack i64[min max] firstFn = FirstTokenOfKind(stream, TokenKind.Fn);
+
+    // No functions: the whole program is one scope.
+    if (firstFn < 0)
+    {
+        return ScopeDeclarationsUnique(stream, source, 0, count);
+    }
+
+    // Any top-level region before the first function is its own scope.
+    if (firstFn > 0 && !ScopeDeclarationsUnique(stream, source, 0, (u64[0 2 ** 63 - 1])firstFn))
+    {
+        return false;
+    }
+
+    // Each function spans from its `fn` to the next `fn` (or end) — a separate scope.
+    stack mut u64[0 2 ** 63 - 1] f = (u64[0 2 ** 63 - 1])firstFn;
+    while willexit (f < count)
+    {
+        if (stream.KindAt(f) == TokenKind.Fn)
+        {
+            stack i64[min max] nextFn = FirstTokenOfKindAfter(stream, TokenKind.Fn, f);
+            stack mut u64[0 2 ** 63 - 1] scopeEnd = count;
+            if (nextFn >= 0)
+            {
+                scopeEnd = (u64[0 2 ** 63 - 1])nextFn;
+            }
+
+            if (!ScopeDeclarationsUnique(stream, source, f, scopeEnd))
+            {
+                return false;
+            }
+        }
+
+        f = f + 1;
+    }
+
+    return true;
+}
+
+// Lexes a program and returns true iff no scope declares the same name twice (a
+// duplicate parameter, or a local/parameter redeclared within one function). The same
+// name in DIFFERENT functions is allowed. The redeclaration diagnostic.
+public fn bool ProgramDeclarationsUnique(ascii source)
+{
+    stack mut OwnedAscii sourceText = new();
+    stack System.Memory.MemoryStatus copyStatus = sourceText.AppendAscii(source);
+    stack i8[min max][] sourceBytes = sourceText.AsSlice();
+
+    switch (Lex(sourceBytes))
+    {
+        case LexResult<TokenStream>.Ok(var stream):
+            return DeclarationsUniqueStream(stream, sourceBytes);
+        case LexResult<TokenStream>.Err(var lexError):
+            return false;
+    }
+}
+
+// === Module-scope function-name uniqueness (toward the binder, #33) ===
+// The per-function redeclaration pass deliberately leaves the MODULE scope unchecked
+// (each function name lives there). This pass closes that gap — the gap an adversarial
+// review flagged — by rejecting two functions defined with the same name, the way two
+// parameters or two locals in one function are already rejected.
+internal fn bool FunctionNamesUniqueStream(borrow TokenStream stream, borrow i8[min max][] source)
+{
+    stack u64[0 2 ** 63 - 1] count = stream.Count();
+    stack mut IrTable<ParamName> seen = new();
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < count)
+    {
+        if (stream.KindAt(i) == TokenKind.Identifier && IsFunctionNameIdentifier(stream, i))
+        {
+            stack u64[0 2 ** 63 - 1] nameStart = stream.StartAt(i);
+            stack u64[0 2 ** 63 - 1] nameLength = stream.LengthAt(i);
+            if (ParamIndexOf(seen, source, nameStart, nameLength) >= 0)
+            {
+                return false;
+            }
+
+            stack mut ParamName name = new();
+            name.Start = nameStart;
+            name.Length = nameLength;
+            stack u32[0 max] added = seen.Add(name);
+        }
+
+        i = i + 1;
+    }
+
+    return true;
+}
+
+// Lexes a module and returns true iff no two functions are defined with the same name.
+public fn bool ProgramFunctionNamesUnique(ascii source)
+{
+    stack mut OwnedAscii sourceText = new();
+    stack System.Memory.MemoryStatus copyStatus = sourceText.AppendAscii(source);
+    stack i8[min max][] sourceBytes = sourceText.AsSlice();
+
+    switch (Lex(sourceBytes))
+    {
+        case LexResult<TokenStream>.Ok(var stream):
+            return FunctionNamesUniqueStream(stream, sourceBytes);
+        case LexResult<TokenStream>.Err(var lexError):
+            return false;
+    }
+}
+
+// === Expression type inference (toward the typer, #33) ===
+// The first step that reasons about TYPES, not names. This integer grammar has two value
+// types: an integer (`Int`, lowered to LLVM `i64`) and a boolean (`Bool`, an `i1` produced
+// by a comparison). An expression's type is decided by its top operator: a comparison
+// (`<`/`>`) yields `Bool`, anything else yields `Int`. A second comparison makes the
+// expression compare a boolean (`a < b < c`) — ill-typed in this grammar, so `Error`.
+public enum ExprType
+{
+    IntType,
+    BoolType,
+    ErrorType,
+}
+
+// True for EVERY comparison operator the lexer can produce — `<` `>` `<=` `>=` `==` `!=`.
+// (The Lt/Gt-only `FirstComparisonIndex` used by the LOWERING is deliberately narrower,
+// because `LowerComparison` only emits signed `slt`/`sgt`; type inference must recognize
+// the full set so a `<=`/`==`/`!=` expression is correctly typed boolean.)
+internal fn bool IsComparisonOperator(TokenKind k)
+{
+    return k == TokenKind.Lt
+        || k == TokenKind.Gt
+        || k == TokenKind.Lte
+        || k == TokenKind.Gte
+        || k == TokenKind.EqEq
+        || k == TokenKind.Neq;
+}
+
+// Infers the type of the expression in the half-open token range [start, end). Only
+// TOP-LEVEL (paren-depth 0) comparisons decide the type — a comparison nested in
+// parentheses belongs to an inner expression (a call argument `f(a < b)`, a grouped
+// sub-expression), so it does NOT make the whole expression boolean. This is a token
+// approximation: it does not strip redundant outer parens, so a fully-parenthesized
+// comparison `(a < b)` reads as `Int` (its `<` is at depth 1) — a real structural typer
+// is the #33 work; bare conditions / single-primary comparisons are the supported shape.
+internal fn ExprType InferTypeInRange(borrow TokenStream stream, u64[0 2 ** 63 - 1] start, u64[0 2 ** 63 - 1] end)
+{
+    stack mut i64[min max] depth = 0;
+    stack mut u64[0 2 ** 63 - 1] comparisons = 0;
+    stack mut u64[0 2 ** 63 - 1] i = start;
+    while willexit (i < end)
+    {
+        stack TokenKind k = stream.KindAt(i);
+        if (k == TokenKind.LParen)
+        {
+            depth = depth + 1;
+        }
+        else if (k == TokenKind.RParen)
+        {
+            depth = depth - 1;
+        }
+        else if (depth == 0 && IsComparisonOperator(k))
+        {
+            comparisons = comparisons + 1;
+        }
+
+        i = i + 1;
+    }
+
+    // Two or more comparisons compare a boolean operand — ill-typed.
+    if (comparisons >= 2)
+    {
+        return ExprType.ErrorType;
+    }
+
+    // Exactly one comparison yields a boolean; none yields an integer.
+    if (comparisons == 1)
+    {
+        return ExprType.BoolType;
+    }
+
+    return ExprType.IntType;
+}
+
+internal fn ExprType InferTypeStream(borrow TokenStream stream)
+{
+    return InferTypeInRange(stream, 0, stream.Count());
+}
+
+// Lexes one expression and infers its type: `Int` for arithmetic / a literal / a
+// variable / a call, `Bool` for a single comparison, `Error` for a chained comparison.
+public fn ExprType InferExpressionType(ascii source)
+{
+    stack mut OwnedAscii sourceText = new();
+    stack System.Memory.MemoryStatus copyStatus = sourceText.AppendAscii(source);
+    stack i8[min max][] sourceBytes = sourceText.AsSlice();
+
+    switch (Lex(sourceBytes))
+    {
+        case LexResult<TokenStream>.Ok(var stream):
+            return InferTypeStream(stream);
+        case LexResult<TokenStream>.Err(var lexError):
+            return ExprType.ErrorType;
+    }
+}
+
+// A statement-level type rule: a `while` condition must be a boolean. The condition spans
+// from `while` to its loop body's `{`; it is well-typed only if it infers to `BoolType`
+// (exactly one comparison) — a bare integer (`while i`) or a chained comparison
+// (`while a < b < c`) is a type error.
+internal fn bool WhileConditionsAreBooleanStream(borrow TokenStream stream)
+{
+    stack u64[0 2 ** 63 - 1] count = stream.Count();
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < count)
+    {
+        if (stream.KindAt(i) == TokenKind.While)
+        {
+            stack i64[min max] brace = FirstTokenOfKindAfter(stream, TokenKind.LBrace, i);
+            if (brace < 0)
+            {
+                return false;
+            }
+
+            stack ExprType conditionType = InferTypeInRange(stream, i + 1, (u64[0 2 ** 63 - 1])brace);
+            if (conditionType == ExprType.BoolType)
+            {
+                // Well-typed condition; keep scanning.
+            }
+            else
+            {
+                return false;
+            }
+        }
+
+        i = i + 1;
+    }
+
+    return true;
+}
+
+// Lexes a program and returns true iff every `while` condition has boolean type.
+public fn bool ProgramWhileConditionsAreBoolean(ascii source)
+{
+    stack mut OwnedAscii sourceText = new();
+    stack System.Memory.MemoryStatus copyStatus = sourceText.AppendAscii(source);
+    stack i8[min max][] sourceBytes = sourceText.AsSlice();
+
+    switch (Lex(sourceBytes))
+    {
+        case LexResult<TokenStream>.Ok(var stream):
+            return WhileConditionsAreBooleanStream(stream);
+        case LexResult<TokenStream>.Err(var lexError):
+            return false;
+    }
+}
+
+// The same statement-level rule for `if` conditions. In this grammar an `if` condition is
+// a single-primary comparison `<a> <cmp> <b>` — the three tokens at `if`+1..`if`+3, the
+// exact positions the `if`/`else if` lowering parses — so it is well-typed only if those
+// tokens infer to `BoolType`. A non-comparison condition (`if x ...`) is a type error; so
+// is a CHAINED comparison (`if a < b < c ...`), detected because a single-primary
+// condition is followed by its then-value (a primary), whereas a chained comparison puts
+// a comparison operator at `if`+4. (This positional check supports only bare single-primary
+// conditions; a structural typer for parenthesized/nested conditions is the #33 work.)
+internal fn bool IfConditionsAreBooleanStream(borrow TokenStream stream)
+{
+    stack u64[0 2 ** 63 - 1] count = stream.Count();
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < count)
+    {
+        if (stream.KindAt(i) == TokenKind.If)
+        {
+            stack ExprType conditionType = InferTypeInRange(stream, i + 1, i + 4);
+            stack bool chained = IsComparisonOperator(stream.KindAt(i + 4));
+            if (conditionType == ExprType.BoolType && !chained)
+            {
+                // Well-typed boolean condition; keep scanning.
+            }
+            else
+            {
+                return false;
+            }
+        }
+
+        i = i + 1;
+    }
+
+    return true;
+}
+
+// Lexes a program and returns true iff every `if` condition has boolean type.
+public fn bool ProgramIfConditionsAreBoolean(ascii source)
+{
+    stack mut OwnedAscii sourceText = new();
+    stack System.Memory.MemoryStatus copyStatus = sourceText.AppendAscii(source);
+    stack i8[min max][] sourceBytes = sourceText.AsSlice();
+
+    switch (Lex(sourceBytes))
+    {
+        case LexResult<TokenStream>.Ok(var stream):
+            return IfConditionsAreBooleanStream(stream);
+        case LexResult<TokenStream>.Err(var lexError):
+            return false;
+    }
+}
+
+// An operand-type rule: a comparison yields a boolean, and a boolean is never a valid
+// operand of arithmetic or a function argument in this integer grammar. The ONLY way a
+// comparison's result becomes such an operand is by parenthesizing it — `(a < b) + 1`,
+// `f(a < b)` — i.e. a comparison operator appearing at paren-depth >= 1. A comparison at
+// paren-depth 0 is the top-level operator of its expression (a condition / return value)
+// and is fine, even when an OPERAND is parenthesized arithmetic (`(a + b) < c`).
+internal fn bool NoBooleanOperandStream(borrow TokenStream stream)
+{
+    stack u64[0 2 ** 63 - 1] count = stream.Count();
+    stack mut i64[min max] depth = 0;
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < count)
+    {
+        stack TokenKind k = stream.KindAt(i);
+        if (k == TokenKind.LParen)
+        {
+            depth = depth + 1;
+        }
+        else if (k == TokenKind.RParen)
+        {
+            depth = depth - 1;
+        }
+        else if (depth >= 1 && IsComparisonOperator(k))
+        {
+            // A comparison nested in parentheses feeds its boolean result into an
+            // arithmetic or call context that expects an integer — a type error.
+            return false;
+        }
+
+        i = i + 1;
+    }
+
+    return true;
+}
+
+// Lexes a program and returns true iff no comparison's boolean result is used as an
+// arithmetic / call operand (no comparison nested inside parentheses).
+public fn bool ProgramNoBooleanOperand(ascii source)
+{
+    stack mut OwnedAscii sourceText = new();
+    stack System.Memory.MemoryStatus copyStatus = sourceText.AppendAscii(source);
+    stack i8[min max][] sourceBytes = sourceText.AsSlice();
+
+    switch (Lex(sourceBytes))
+    {
+        case LexResult<TokenStream>.Ok(var stream):
+            return NoBooleanOperandStream(stream);
+        case LexResult<TokenStream>.Err(var lexError):
+            return false;
+    }
+}
+
+// === Composed semantic-analysis gate (toward the binder/typer, #33) ===
+// The front-end's single "is this program well-formed?" verdict: every binder and typer
+// pass run over ONE lex. A program is semantically valid only if all hold — names bind,
+// calls match arity, no scope redeclares, function names are unique, every condition is
+// boolean, and no comparison's boolean result is used as an integer operand.
+internal fn bool SemanticallyValidStream(borrow TokenStream stream, borrow i8[min max][] source)
+{
+    return NamesResolveStream(stream, source)
+        && CallAritiesMatchStream(stream, source)
+        && DeclarationsUniqueStream(stream, source)
+        && FunctionNamesUniqueStream(stream, source)
+        && WhileConditionsAreBooleanStream(stream)
+        && IfConditionsAreBooleanStream(stream)
+        && NoBooleanOperandStream(stream);
+}
+
+// Lexes a program once and returns true iff it passes EVERY binder and typer check.
+public fn bool ProgramSemanticallyValid(ascii source)
+{
+    stack mut OwnedAscii sourceText = new();
+    stack System.Memory.MemoryStatus copyStatus = sourceText.AppendAscii(source);
+    stack i8[min max][] sourceBytes = sourceText.AsSlice();
+
+    switch (Lex(sourceBytes))
+    {
+        case LexResult<TokenStream>.Ok(var stream):
+            return SemanticallyValidStream(stream, sourceBytes);
+        case LexResult<TokenStream>.Err(var lexError):
+            return false;
+    }
+}
+
+// The CHECKED compile path: the front-end semantic gate guards the back-end codegen —
+// the canonical pipeline (lex → analyze → lower), where analysis gates lowering. A
+// module is lowered to LLVM ONLY if it passes every binder/typer check; a semantically
+// invalid program (an unbound name, a wrong-arity call, a duplicate function, …) emits
+// NOTHING and returns false, so codegen never produces wrong output for a bad program.
+// Lexes once and shares the token stream between the check and the lowering.
+public fn bool CompileModuleChecked(ascii source, mut borrow OwnedAscii sink)
+{
+    stack mut OwnedAscii sourceText = new();
+    stack System.Memory.MemoryStatus copyStatus = sourceText.AppendAscii(source);
+    stack i8[min max][] sourceBytes = sourceText.AsSlice();
+
+    switch (Lex(sourceBytes))
+    {
+        case LexResult<TokenStream>.Ok(var stream):
+            if (!SemanticallyValidStream(stream, sourceBytes))
+            {
+                return false;
+            }
+
+            return LowerModuleStream(stream, sourceBytes, sink);
+        case LexResult<TokenStream>.Err(var lexError):
+            return false;
+    }
+}
+
+// === Structural expression typer (toward the real typer, #33) ===
+// The token-counting type inference (InferExpressionType) has a structural ceiling — it
+// cannot see expression shape, so it mis-types a comparison inside a call argument, a
+// parenthesized comparison, or a chained comparison. The fix is a real expression AST
+// and a typer that recurses over it. This is that AST: a FLAT node table (free functions
+// over a directly-owned `IrTable<ExprNode>`, per the host-codegen discipline — no wrapper
+// struct, no nested generic field). Each node is one of five kinds; Binary/Compare carry
+// an operator and two child node ids; a Call carries its (single) argument node id;
+// parentheses are a parser concern and produce no node (the inner expression stands in).
+public enum ExprKind
+{
+    IntLitExpr,
+    NameExpr,
+    BinaryExpr,
+    CompareExpr,
+    CallExpr,
+}
+
+public struct ExprNode
+{
+    ExprKind Kind;
+    TokenKind Op;
+    u32[0 max] Left;
+    u32[0 max] Right;
+    // A call's 2nd/3rd/4th argument nodes (0 = none); unused by the other node kinds. The
+    // AST call model carries up to four arguments (Right = first, Arg2/Arg3/Arg4 = the rest).
+    u32[0 max] Arg2;
+    u32[0 max] Arg3;
+    u32[0 max] Arg4;
+    i64[min max] Imm;
+
+    ExprNode()
+    {
+        self.Kind = ExprKind.IntLitExpr;
+        self.Op = TokenKind.Plus;
+        self.Left = 0;
+        self.Right = 0;
+        self.Arg2 = 0;
+        self.Arg3 = 0;
+        self.Arg4 = 0;
+        self.Imm = 0;
+    }
+}
+
+// Node builders — each appends one node and returns its 1-based id.
+public fn u32[0 max] MakeIntLit(mut borrow IrTable<ExprNode> nodes, i64[min max] value)
+{
+    stack mut ExprNode node = new();
+    node.Kind = ExprKind.IntLitExpr;
+    node.Imm = value;
+    return nodes.Add(node);
+}
+
+public fn u32[0 max] MakeName(mut borrow IrTable<ExprNode> nodes, u32[0 max] paramIndex)
+{
+    stack mut ExprNode node = new();
+    node.Kind = ExprKind.NameExpr;
+    node.Left = paramIndex;
+    return nodes.Add(node);
+}
+
+public fn u32[0 max] MakeBinary(mut borrow IrTable<ExprNode> nodes, TokenKind op, u32[0 max] left, u32[0 max] right)
+{
+    stack mut ExprNode node = new();
+    node.Kind = ExprKind.BinaryExpr;
+    node.Op = op;
+    node.Left = left;
+    node.Right = right;
+    return nodes.Add(node);
+}
+
+public fn u32[0 max] MakeCompare(mut borrow IrTable<ExprNode> nodes, TokenKind op, u32[0 max] left, u32[0 max] right)
+{
+    stack mut ExprNode node = new();
+    node.Kind = ExprKind.CompareExpr;
+    node.Op = op;
+    node.Left = left;
+    node.Right = right;
+    return nodes.Add(node);
+}
+
+// A call node. `callee` is the resolved function id (0 = unresolved, filled in once the
+// parser threads a function-name table); `argCount` is the number of arguments WRITTEN at
+// the call site (checked against the callee's declared arity); `arg1`..`arg4` are the up-to-
+// four argument nodes the AST model carries (0 = none, filled contiguously — so 0-, 1-, 2-,
+// 3-, and 4-argument calls lower).
+public fn u32[0 max] MakeCall(mut borrow IrTable<ExprNode> nodes, u32[0 max] callee, u32[0 max] argCount, u32[0 max] arg1, u32[0 max] arg2, u32[0 max] arg3, u32[0 max] arg4)
+{
+    stack mut ExprNode node = new();
+    node.Kind = ExprKind.CallExpr;
+    node.Left = callee;
+    node.Imm = (i64[min max])argCount;
+    node.Right = arg1;
+    node.Arg2 = arg2;
+    node.Arg3 = arg3;
+    node.Arg4 = arg4;
+    return nodes.Add(node);
+}
+
+// The STRUCTURAL type of the expression rooted at `id`, recursing over the AST. A literal,
+// a variable, and a call are integers; an arithmetic node is an integer ONLY if both
+// operands are integers (else a type error — a boolean fed to arithmetic, e.g.
+// `(a < b) + 1`); a comparison is a boolean ONLY if both operands are integers (else a
+// type error — a boolean compared, e.g. the chained `a < b < c` = compare(compare(a,b),c)).
+// Unlike the token heuristic, this is correct on calls, parens, and chains by construction.
+// As `TypeOfNode`, but a name's type comes from `localTypes` (a per-index type table:
+// entry `index+1` is 1 for a BOOLEAN local, anything else — including absent — is integer,
+// covering parameters and integer locals). This lets a `var` local carry its initializer's
+// type, so a boolean local returns correctly (zero-extended) yet `bool + int` is a type
+// error. An empty `localTypes` recovers the param-only behavior (every name is integer).
+public fn ExprType TypeOfNodeWithLocals(borrow IrTable<ExprNode> nodes, u32[0 max] id, borrow IrTable<u32[0 max]> localTypes)
+{
+    if (!nodes.Contains(id))
+    {
+        return ExprType.ErrorType;
+    }
+
+    stack ExprNode node = nodes.Get(id);
+    switch (node.Kind)
+    {
+        case ExprKind.IntLitExpr:
+            return ExprType.IntType;
+        case ExprKind.NameExpr:
+            if (localTypes.Contains(node.Left + 1) && localTypes.Get(node.Left + 1) == 1)
+            {
+                return ExprType.BoolType;
+            }
+
+            return ExprType.IntType;
+        case ExprKind.CallExpr:
+            return ExprType.IntType;
+        case ExprKind.BinaryExpr:
+            if (TypeOfNodeWithLocals(nodes, node.Left, localTypes) == ExprType.IntType && TypeOfNodeWithLocals(nodes, node.Right, localTypes) == ExprType.IntType)
+            {
+                return ExprType.IntType;
+            }
+
+            return ExprType.ErrorType;
+        case ExprKind.CompareExpr:
+            if (TypeOfNodeWithLocals(nodes, node.Left, localTypes) == ExprType.IntType && TypeOfNodeWithLocals(nodes, node.Right, localTypes) == ExprType.IntType)
+            {
+                return ExprType.BoolType;
+            }
+
+            return ExprType.ErrorType;
+    }
+}
+
+// Types an expression where every name is a parameter (integer) — the common case.
+public fn ExprType TypeOfNode(borrow IrTable<ExprNode> nodes, u32[0 max] id)
+{
+    stack mut IrTable<u32[0 max]> noLocalTypes = new();
+    return TypeOfNodeWithLocals(nodes, id, noLocalTypes);
+}
+
+// === Recursive-descent expression parser (toward the real typer, #33) ===
+// Builds the `ExprNode` AST from source. Stark has no mutable-borrow cursor (an in-out
+// primitive index is the write-only `out` mode), so each parser THREADS the cursor by
+// RETURN VALUE: it takes a cursor by value and returns the node it built plus the next
+// cursor. Recursion (parentheses, call arguments) composes through these returns. Grammar,
+// lowest precedence first: compare := add ((< > <= >= == !=) add)* ; add := mul ((+ -) mul)* ;
+// mul := primary ((* / %) primary)* ; primary := int | name | name(args) | ( compare ).
+// Left-associative folding makes a chained comparison a nested Compare node, which the
+// structural typer then flags.
+public struct ParseResult
+{
+    u32[0 max] NodeId;
+    u64[0 2 ** 63 - 1] Next;
+
+    ParseResult()
+    {
+        self.NodeId = 0;
+        self.Next = 0;
+    }
+}
+
+internal fn ParseResult MakeParseResult(u32[0 max] nodeId, u64[0 2 ** 63 - 1] next)
+{
+    stack mut ParseResult result = new();
+    result.NodeId = nodeId;
+    result.Next = next;
+    return result;
+}
+
+// Resolves an identifier span to a 0-based parameter index in first-appearance order,
+// appending it to `params` the first time it is seen (so `a + b` makes `a`->0, `b`->1,
+// and a reused name maps to the same index).
+internal fn u32[0 max] ResolveParam(mut borrow IrTable<ParamName> params, borrow i8[min max][] source, u64[0 2 ** 63 - 1] start, u64[0 2 ** 63 - 1] length)
+{
+    stack i64[min max] existing = ParamIndexOf(params, source, start, length);
+    if (existing >= 0)
+    {
+        return (u32[0 max])existing;
+    }
+
+    stack mut ParamName name = new();
+    name.Start = start;
+    name.Length = length;
+    stack u32[0 max] added = params.Add(name);
+    return added - 1;
+}
+
+internal fn ParseResult ParsePrimaryIn(borrow TokenStream stream, borrow i8[min max][] source, mut borrow IrTable<ExprNode> nodes, mut borrow IrTable<ParamName> params, borrow IrTable<ParamName> funcNames, u64[0 2 ** 63 - 1] cursor)
+{
+    stack TokenKind k = stream.KindAt(cursor);
+    if (k == TokenKind.IntegerLiteral)
+    {
+        stack i64[min max] value = ParseDigitSpan(source, stream.StartAt(cursor), stream.LengthAt(cursor));
+        return MakeParseResult(MakeIntLit(nodes, value), cursor + 1);
+    }
+
+    if (k == TokenKind.Minus)
+    {
+        // Unary minus: `-<primary>` lowers as `0 - <primary>`. It binds at the PRIMARY level
+        // (tighter than the binary operators), so `-x * y` parses as `(-x) * y` and `2 - -3`
+        // as `2 - (-3)`. A leading `-` is unambiguously unary here (a binary `-` is consumed
+        // between terms by ParseAdd, never at the start of a primary).
+        stack ParseResult operand = ParsePrimaryIn(stream, source, nodes, params, funcNames, cursor + 1);
+        stack u32[0 max] zero = MakeIntLit(nodes, 0);
+        stack u32[0 max] negated = MakeBinary(nodes, TokenKind.Minus, zero, operand.NodeId);
+        return MakeParseResult(negated, operand.Next);
+    }
+
+    if (k == TokenKind.LParen)
+    {
+        // Parenthesized sub-expression: parse it, then skip the matching `)`.
+        stack ParseResult inner = ParseExprIn(stream, source, nodes, params, funcNames, cursor + 1);
+        return MakeParseResult(inner.NodeId, inner.Next + 1);
+    }
+
+    if (k == TokenKind.Identifier && stream.KindAt(cursor + 1) == TokenKind.LParen)
+    {
+        // A call `name ( args )`. The callee NAME at `cursor` resolves against the
+        // function-name table to its 1-based function id (0 = unresolved — e.g. a call in a
+        // single-function context, whose table is empty, or a call to an unknown function).
+        stack i64[min max] calleeIndex = ParamIndexOf(funcNames, source, stream.StartAt(cursor), stream.LengthAt(cursor));
+        stack mut u32[0 max] callee = 0;
+        if (calleeIndex >= 0)
+        {
+            callee = (u32[0 max])(calleeIndex + 1);
+        }
+
+        // Empty args -> a 0-argument call.
+        if (stream.KindAt(cursor + 2) == TokenKind.RParen)
+        {
+            return MakeParseResult(MakeCall(nodes, callee, 0, 0, 0, 0, 0), cursor + 3);
+        }
+
+        // Parse the first argument, then consume any further comma-separated arguments,
+        // CAPTURING up to four and COUNTING the total — the count is checked against the
+        // callee's arity at validation (the AST model lowers up to four arguments, so a wider
+        // call is rejected by the count, not silently truncated).
+        stack ParseResult firstArg = ParseExprIn(stream, source, nodes, params, funcNames, cursor + 2);
+        stack mut u64[0 2 ** 63 - 1] argCursor = firstArg.Next;
+        stack mut u32[0 max] argCount = 1;
+        stack mut u32[0 max] secondArg = 0;
+        stack mut u32[0 max] thirdArg = 0;
+        stack mut u32[0 max] fourthArg = 0;
+        while willexit (stream.KindAt(argCursor) == TokenKind.Comma)
+        {
+            stack ParseResult more = ParseExprIn(stream, source, nodes, params, funcNames, argCursor + 1);
+            if (argCount == 1)
+            {
+                secondArg = more.NodeId;
+            }
+            else if (argCount == 2)
+            {
+                thirdArg = more.NodeId;
+            }
+            else if (argCount == 3)
+            {
+                fourthArg = more.NodeId;
+            }
+
+            argCursor = more.Next;
+            argCount = argCount + 1;
+        }
+
+        return MakeParseResult(MakeCall(nodes, callee, argCount, firstArg.NodeId, secondArg, thirdArg, fourthArg), argCursor + 1);
+    }
+
+    // A bare name: resolve it to a parameter index (first-appearance order).
+    stack u32[0 max] paramIndex = ResolveParam(params, source, stream.StartAt(cursor), stream.LengthAt(cursor));
+    return MakeParseResult(MakeName(nodes, paramIndex), cursor + 1);
+}
+
+internal fn ParseResult ParseMulIn(borrow TokenStream stream, borrow i8[min max][] source, mut borrow IrTable<ExprNode> nodes, mut borrow IrTable<ParamName> params, borrow IrTable<ParamName> funcNames, u64[0 2 ** 63 - 1] cursor)
+{
+    stack mut ParseResult left = ParsePrimaryIn(stream, source, nodes, params, funcNames, cursor);
+    while willexit (IsProductOpToken(stream.KindAt(left.Next)))
+    {
+        stack TokenKind op = stream.KindAt(left.Next);
+        stack ParseResult right = ParsePrimaryIn(stream, source, nodes, params, funcNames, left.Next + 1);
+        left.NodeId = MakeBinary(nodes, op, left.NodeId, right.NodeId);
+        left.Next = right.Next;
+    }
+
+    return left;
+}
+
+internal fn ParseResult ParseAddIn(borrow TokenStream stream, borrow i8[min max][] source, mut borrow IrTable<ExprNode> nodes, mut borrow IrTable<ParamName> params, borrow IrTable<ParamName> funcNames, u64[0 2 ** 63 - 1] cursor)
+{
+    stack mut ParseResult left = ParseMulIn(stream, source, nodes, params, funcNames, cursor);
+    while willexit (IsAddSubToken(stream.KindAt(left.Next)))
+    {
+        stack TokenKind op = stream.KindAt(left.Next);
+        stack ParseResult right = ParseMulIn(stream, source, nodes, params, funcNames, left.Next + 1);
+        left.NodeId = MakeBinary(nodes, op, left.NodeId, right.NodeId);
+        left.Next = right.Next;
+    }
+
+    return left;
+}
+
+// The full expression parser, parameterized by a function-name table so a call's callee
+// resolves to its function id. `ParseExpr` below is the thin wrapper used by the
+// single-function/expression paths (which pass an empty table — their calls, if any,
+// resolve to the 0 sentinel); the multi-function module compiler calls this directly.
+internal fn ParseResult ParseExprIn(borrow TokenStream stream, borrow i8[min max][] source, mut borrow IrTable<ExprNode> nodes, mut borrow IrTable<ParamName> params, borrow IrTable<ParamName> funcNames, u64[0 2 ** 63 - 1] cursor)
+{
+    stack mut ParseResult left = ParseAddIn(stream, source, nodes, params, funcNames, cursor);
+    while willexit (IsComparisonOperator(stream.KindAt(left.Next)))
+    {
+        stack TokenKind op = stream.KindAt(left.Next);
+        stack ParseResult right = ParseAddIn(stream, source, nodes, params, funcNames, left.Next + 1);
+        left.NodeId = MakeCompare(nodes, op, left.NodeId, right.NodeId);
+        left.Next = right.Next;
+    }
+
+    return left;
+}
+
+// Single-function/expression entry: no cross-function call resolution (an empty
+// function-name table), so an unqualified `name(args)` keeps the 0 callee sentinel.
+internal fn ParseResult ParseExpr(borrow TokenStream stream, borrow i8[min max][] source, mut borrow IrTable<ExprNode> nodes, mut borrow IrTable<ParamName> params, u64[0 2 ** 63 - 1] cursor)
+{
+    stack mut IrTable<ParamName> noFuncs = new();
+    return ParseExprIn(stream, source, nodes, params, noFuncs, cursor);
+}
+
+// Lexes ONE expression, parses it into the AST, and returns the STRUCTURAL type of the
+// root — the correct successor to the token-counting `InferExpressionType`.
+public fn ExprType InferSourceExpressionType(ascii source)
+{
+    stack mut OwnedAscii sourceText = new();
+    stack System.Memory.MemoryStatus copyStatus = sourceText.AppendAscii(source);
+    stack i8[min max][] sourceBytes = sourceText.AsSlice();
+
+    switch (Lex(sourceBytes))
+    {
+        case LexResult<TokenStream>.Ok(var stream):
+            stack mut IrTable<ExprNode> nodes = new();
+            stack mut IrTable<ParamName> params = new();
+            stack ParseResult root = ParseExpr(stream, sourceBytes, nodes, params, 0);
+            return TypeOfNode(nodes, root.NodeId);
+        case LexResult<TokenStream>.Err(var lexError):
+            return ExprType.ErrorType;
+    }
+}
+
+// Lowers an expression AST node to MIR, recursing over its children — the bridge from
+// the parser/AST front-end to the existing MIR/codegen back end. A literal becomes a MIR
+// constant; an arithmetic node its `add`/`sub`/… over the lowered operands; a comparison
+// its `icmp`. A name lowers to a parameter (`%pK`) UNLESS its index has a `localOverrides`
+// entry — a `var` local's index is redirected to the SSA value its initializer produced,
+// so locals and parameters share one index space but lower to different values. The
+// override table is positional: entry at index `paramIndex + 1` holds the local's MIR
+// value id (0 = a real parameter, no override). A `call` lowers to a placeholder callee
+// (callee resolution is later #33 work).
+public fn MirValueId LowerExprNodeWithLocals(borrow IrTable<ExprNode> nodes, u32[0 max] id, mut borrow IrTable<MirInstruction> instrs, borrow IrTable<u32[0 max]> localOverrides)
+{
+    if (!nodes.Contains(id))
+    {
+        return MirConstInt(instrs, 0);
+    }
+
+    stack ExprNode node = nodes.Get(id);
+    switch (node.Kind)
+    {
+        case ExprKind.IntLitExpr:
+            return MirConstInt(instrs, node.Imm);
+        case ExprKind.NameExpr:
+            stack u32[0 max] paramIndex = node.Left;
+            if (localOverrides.Contains(paramIndex + 1))
+            {
+                stack u32[0 max] override = localOverrides.Get(paramIndex + 1);
+                if (override != 0)
+                {
+                    return MirValueIdOf(override);
+                }
+            }
+
+            return MirParam(instrs, paramIndex);
+        case ExprKind.CallExpr:
+            if (node.Arg4 != 0)
+            {
+                stack MirValueId a0 = LowerExprNodeWithLocals(nodes, node.Right, instrs, localOverrides);
+                stack MirValueId a1 = LowerExprNodeWithLocals(nodes, node.Arg2, instrs, localOverrides);
+                stack MirValueId a2 = LowerExprNodeWithLocals(nodes, node.Arg3, instrs, localOverrides);
+                stack MirValueId a3 = LowerExprNodeWithLocals(nodes, node.Arg4, instrs, localOverrides);
+                return MirCall4(instrs, MirFuncIdOf(node.Left), a0, a1, a2, a3);
+            }
+
+            if (node.Arg3 != 0)
+            {
+                stack MirValueId b0 = LowerExprNodeWithLocals(nodes, node.Right, instrs, localOverrides);
+                stack MirValueId b1 = LowerExprNodeWithLocals(nodes, node.Arg2, instrs, localOverrides);
+                stack MirValueId b2 = LowerExprNodeWithLocals(nodes, node.Arg3, instrs, localOverrides);
+                return MirCall3(instrs, MirFuncIdOf(node.Left), b0, b1, b2);
+            }
+
+            if (node.Arg2 != 0)
+            {
+                stack MirValueId firstCallArg = LowerExprNodeWithLocals(nodes, node.Right, instrs, localOverrides);
+                stack MirValueId secondCallArg = LowerExprNodeWithLocals(nodes, node.Arg2, instrs, localOverrides);
+                return MirCall2(instrs, MirFuncIdOf(node.Left), firstCallArg, secondCallArg);
+            }
+
+            if (node.Right != 0)
+            {
+                stack MirValueId callArgument = LowerExprNodeWithLocals(nodes, node.Right, instrs, localOverrides);
+                return MirCall1(instrs, MirFuncIdOf(node.Left), callArgument);
+            }
+
+            return MirCall(instrs, MirFuncIdOf(node.Left));
+        case ExprKind.BinaryExpr:
+            stack MirValueId binLeft = LowerExprNodeWithLocals(nodes, node.Left, instrs, localOverrides);
+            stack MirValueId binRight = LowerExprNodeWithLocals(nodes, node.Right, instrs, localOverrides);
+            return LowerBinOp(instrs, node.Op, binLeft, binRight);
+        case ExprKind.CompareExpr:
+            stack MirValueId cmpLeft = LowerExprNodeWithLocals(nodes, node.Left, instrs, localOverrides);
+            stack MirValueId cmpRight = LowerExprNodeWithLocals(nodes, node.Right, instrs, localOverrides);
+            return LowerComparison(instrs, node.Op, cmpLeft, cmpRight);
+    }
+}
+
+// Lowers an expression with NO locals (every name is a parameter) — the common case.
+public fn MirValueId LowerExprNode(borrow IrTable<ExprNode> nodes, u32[0 max] id, mut borrow IrTable<MirInstruction> instrs)
+{
+    stack mut IrTable<u32[0 max]> noOverrides = new();
+    return LowerExprNodeWithLocals(nodes, id, instrs, noOverrides);
+}
+
+// The unified front-to-back path for a single expression: lex -> parse to AST -> lower
+// the AST to MIR -> emit an LLVM `@main` that returns the expression's value. This wires
+// the recursive-descent parser to the MIR/codegen back end (source -> AST -> MIR -> LLVM).
+public fn bool CompileExpressionToLlvm(ascii source, mut borrow OwnedAscii sink)
+{
+    stack mut OwnedAscii sourceText = new();
+    stack System.Memory.MemoryStatus copyStatus = sourceText.AppendAscii(source);
+    stack i8[min max][] sourceBytes = sourceText.AsSlice();
+
+    switch (Lex(sourceBytes))
+    {
+        case LexResult<TokenStream>.Ok(var stream):
+            stack mut IrTable<ExprNode> nodes = new();
+            stack mut IrTable<ParamName> params = new();
+            stack ParseResult root = ParseExpr(stream, sourceBytes, nodes, params, 0);
+            // Type-gate codegen: an ill-typed expression (a chained comparison, a boolean
+            // fed to arithmetic) produces no output.
+            stack ExprType rootType = TypeOfNode(nodes, root.NodeId);
+            if (rootType == ExprType.ErrorType)
+            {
+                return false;
+            }
+
+            stack mut IrTable<MirInstruction> instrs = new();
+            stack mut IrTable<MirBlock> blocks = new();
+            stack MirValueId value = LowerExprNode(nodes, root.NodeId, instrs);
+            // A boolean expression is an `i1`; zero-extend it to `i64` for the return.
+            stack mut MirValueId returnValue = value;
+            if (rootType == ExprType.BoolType)
+            {
+                returnValue = MirZExt(instrs, value);
+            }
+
+            stack MirBlockId entry = MirReturnBlock(blocks, returnValue);
+            stack u32[0 max] instrCount = (u32[0 max])instrs.Count();
+            stack u32[0 max] paramCount = (u32[0 max])params.Count();
+            switch (EmitLlvmDefinitionWithParams(instrs, blocks, "main", paramCount, entry.Index(), 1, instrCount, sink))
+            {
+                case MemoryStatus.Ok:
+                    return true;
+                case MemoryStatus.Err(var error):
+                    return false;
+            }
+        case LexResult<TokenStream>.Err(var lexError):
+            return false;
+    }
+}
+
+// Seeds the symbol table with the parameters declared in a `( … )` signature, in
+// DECLARATION order — so the parameter index is fixed by the signature, not by which name
+// the body happens to reference first.
+internal fn void SeedSignatureParams(borrow TokenStream stream, borrow i8[min max][] source, u64[0 2 ** 63 - 1] lparenIndex, mut borrow IrTable<ParamName> params)
+{
+    stack u64[0 2 ** 63 - 1] count = stream.Count();
+    stack mut u64[0 2 ** 63 - 1] cursor = lparenIndex + 1;
+    while willexit (cursor < count && stream.KindAt(cursor) != TokenKind.RParen)
+    {
+        if (stream.KindAt(cursor) == TokenKind.Identifier)
+        {
+            stack u32[0 max] index = ResolveParam(params, source, stream.StartAt(cursor), stream.LengthAt(cursor));
+        }
+
+        cursor = cursor + 1;
+    }
+}
+
+// The unified front-to-back path for a single FUNCTION declaration `fn <name>(<params>)
+// { return <expr> }`: lex -> seed the symbol table from the SIGNATURE (so parameter order
+// is authoritative) -> parse the return expression (names resolve to signature params) ->
+// lower to MIR -> emit `@main`. The next step up from `CompileExpressionToLlvm`, where
+// parameters come from a real declaration instead of first-appearance in an expression.
+public fn bool CompileFunctionToLlvm(ascii source, mut borrow OwnedAscii sink)
+{
+    stack mut OwnedAscii sourceText = new();
+    stack System.Memory.MemoryStatus copyStatus = sourceText.AppendAscii(source);
+    stack i8[min max][] sourceBytes = sourceText.AsSlice();
+
+    switch (Lex(sourceBytes))
+    {
+        case LexResult<TokenStream>.Ok(var stream):
+            stack i64[min max] fnIndex = FirstTokenOfKind(stream, TokenKind.Fn);
+            stack i64[min max] returnIndex = FirstTokenOfKind(stream, TokenKind.Return);
+            if (fnIndex < 0 || returnIndex < 0)
+            {
+                return false;
+            }
+
+            // The signature's `(` follows `fn <name>`.
+            stack mut IrTable<ParamName> params = new();
+            SeedSignatureParams(stream, sourceBytes, (u64[0 2 ** 63 - 1])fnIndex + 2, params);
+
+            // Freeze the declared arity: the body may only reference the signature's
+            // parameters. If parsing the body APPENDS a name (an undeclared identifier),
+            // that is an unbound reference — reject rather than emit a phantom parameter.
+            stack u64[0 2 ** 63 - 1] signatureParamCount = params.Count();
+            stack mut IrTable<ExprNode> nodes = new();
+            stack ParseResult root = ParseExpr(stream, sourceBytes, nodes, params, (u64[0 2 ** 63 - 1])returnIndex + 1);
+            if (params.Count() != signatureParamCount)
+            {
+                return false;
+            }
+
+            // Type-gate codegen: an ill-typed return expression produces no output.
+            stack ExprType rootType = TypeOfNode(nodes, root.NodeId);
+            if (rootType == ExprType.ErrorType)
+            {
+                return false;
+            }
+
+            stack mut IrTable<MirInstruction> instrs = new();
+            stack mut IrTable<MirBlock> blocks = new();
+            stack MirValueId value = LowerExprNode(nodes, root.NodeId, instrs);
+            // A boolean return expression is an `i1`; zero-extend it to `i64`.
+            stack mut MirValueId returnValue = value;
+            if (rootType == ExprType.BoolType)
+            {
+                returnValue = MirZExt(instrs, value);
+            }
+
+            stack MirBlockId entry = MirReturnBlock(blocks, returnValue);
+            stack u32[0 max] instrCount = (u32[0 max])instrs.Count();
+            stack u32[0 max] paramCount = (u32[0 max])signatureParamCount;
+            switch (EmitLlvmDefinitionWithParams(instrs, blocks, "main", paramCount, entry.Index(), 1, instrCount, sink))
+            {
+                case MemoryStatus.Ok:
+                    return true;
+                case MemoryStatus.Err(var error):
+                    return false;
+            }
+        case LexResult<TokenStream>.Err(var lexError):
+            return false;
+    }
+}
+
+// True iff every CALL node in the AST is well-formed against the module: (1) its callee
+// resolved to a defined function (a non-0 1-based id — a 0 would emit an invalid `@f0`);
+// (2) its argument count is at most four (the AST call model carries up to four arguments,
+// so a wider call cannot be lowered); (3) that count matches the callee's declared parameter
+// count (an arity mismatch would emit a `call` LLVM rejects); and (4) each present argument
+// is integer-typed (a boolean `i1` argument would be passed as an `i64` call operand —
+// invalid LLVM, since parameters are `i64`). `funcParamCounts` is indexed by 1-based id.
+// `localTypes` records each name index's type (1 = boolean), so a boolean LOCAL passed as a
+// call argument (`var c = a < b; f(c)`) is caught too — `TypeOfNode` alone is locals-blind
+// and would mis-type that local as an integer.
+internal fn bool ValidateModuleCalls(borrow IrTable<ExprNode> nodes, borrow IrTable<u32[0 max]> funcParamCounts, borrow IrTable<u32[0 max]> localTypes)
+{
+    stack u64[0 2 ** 63 - 1] count = nodes.Count();
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < count)
+    {
+        stack ExprNode node = nodes.Get((u32[0 max])(i + 1));
+        if (node.Kind == ExprKind.CallExpr)
+        {
+            if (node.Left == 0)
+            {
+                return false;
+            }
+
+            if (node.Imm > 4)
+            {
+                return false;
+            }
+
+            if (node.Imm != (i64[min max])funcParamCounts.Get(node.Left))
+            {
+                return false;
+            }
+
+            if (node.Right != 0 && TypeOfNodeWithLocals(nodes, node.Right, localTypes) != ExprType.IntType)
+            {
+                return false;
+            }
+
+            if (node.Arg2 != 0 && TypeOfNodeWithLocals(nodes, node.Arg2, localTypes) != ExprType.IntType)
+            {
+                return false;
+            }
+
+            if (node.Arg3 != 0 && TypeOfNodeWithLocals(nodes, node.Arg3, localTypes) != ExprType.IntType)
+            {
+                return false;
+            }
+
+            if (node.Arg4 != 0 && TypeOfNodeWithLocals(nodes, node.Arg4, localTypes) != ExprType.IntType)
+            {
+                return false;
+            }
+        }
+
+        i = i + 1;
+    }
+
+    return true;
+}
+
+// The result of lowering a function body: whether it was well-formed, its entry block's
+// 1-based index, and its declared parameter count (the emit caller turns these into a
+// `define`). Ok = false means the body was malformed / ill-typed / had an invalid call.
+public struct LoweredBody
+{
+    bool Ok;
+    u32[0 max] EntryBlock;
+    u32[0 max] ParamCount;
+
+    LoweredBody()
+    {
+        self.Ok = false;
+        self.EntryBlock = 0;
+        self.ParamCount = 0;
+    }
+}
+
+// Lowers ONE function body — `fn <name>(<params>) { (var <n> = <expr>;)* return <expr> }` —
+// through the AST path into caller-owned `instrs`/`blocks`, returning the entry block + the
+// declared parameter count (or `Ok = false` on any malformed/ill-typed/invalid-call body).
+// Parameters and `var` locals share one index space: the signature seeds the parameters;
+// each `var` appends its name (so later statements resolve it) and at lower time its index is
+// REDIRECTED — via `localOverrides` — to the SSA value its initializer produced (computed
+// once, reused). The body is parsed against `funcNames` so a call resolves to its callee id,
+// and `ValidateModuleCalls` enforces the call model against `funcParamCounts`. SHARED by the
+// single-function path (`CompileFunctionWithLocalsToLlvm`) and the multi-function module path
+// (`EmitModuleFunctionAst`), so a module function gets `var` locals just like a top-level one.
+internal fn LoweredBody LowerFunctionWithLocals(borrow TokenStream stream, borrow i8[min max][] source, borrow IrTable<ParamName> funcNames, borrow IrTable<u32[0 max]> funcParamCounts, u64[0 2 ** 63 - 1] fnIndex, mut borrow IrTable<MirInstruction> instrs, mut borrow IrTable<MirBlock> blocks)
+{
+    stack mut LoweredBody result = new();
+
+    stack i64[min max] braceIndex = FirstTokenOfKindAfter(stream, TokenKind.LBrace, fnIndex);
+    stack i64[min max] returnIndex = FirstTokenOfKindAfter(stream, TokenKind.Return, fnIndex);
+    if (braceIndex < 0 || returnIndex < 0)
+    {
+        return result;
+    }
+
+    // The brace/return search scans to end-of-stream, so a function with NO body brace or NO
+    // return of its OWN would silently borrow a LATER function's. Bound them to this function:
+    // if either falls at or beyond the next `fn`, this function is malformed — reject it
+    // rather than fabricate a body from the next function's tokens.
+    stack i64[min max] nextFnIndex = FirstTokenOfKindAfter(stream, TokenKind.Fn, fnIndex);
+    if (nextFnIndex >= 0 && (braceIndex >= nextFnIndex || returnIndex >= nextFnIndex))
+    {
+        return result;
+    }
+
+    stack mut IrTable<ParamName> params = new();
+    SeedSignatureParams(stream, source, fnIndex + 2, params);
+    stack u64[0 2 ** 63 - 1] signatureParamCount = params.Count();
+
+    // Per-index types (1 = boolean, 0 = integer/parameter); signature parameters are integer.
+    stack mut IrTable<ExprNode> nodes = new();
+    stack mut IrTable<u32[0 max]> varRoots = new();
+    stack mut IrTable<u32[0 max]> localTypes = new();
+    stack mut u64[0 2 ** 63 - 1] seedT = 0;
+    while willexit (seedT < signatureParamCount)
+    {
+        stack u32[0 max] paramTypeSlot = localTypes.Add(0);
+        seedT = seedT + 1;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] cursor = (u64[0 2 ** 63 - 1])braceIndex + 1;
+    while willexit (stream.KindAt(cursor) == TokenKind.Var)
+    {
+        stack u64[0 2 ** 63 - 1] nameStart = stream.StartAt(cursor + 1);
+        stack u64[0 2 ** 63 - 1] nameLength = stream.LengthAt(cursor + 1);
+
+        // A local must not redeclare a parameter or earlier local (the override scheme needs
+        // each local a fresh, distinct index).
+        if (ParamIndexOf(params, source, nameStart, nameLength) >= 0)
+        {
+            return result;
+        }
+
+        // The initializer may reference only ALREADY-declared names — reject if parsing it
+        // grew the table (an undeclared/forward/self reference inserts a phantom index).
+        stack u64[0 2 ** 63 - 1] beforeInit = params.Count();
+        stack ParseResult varExpr = ParseExprIn(stream, source, nodes, params, funcNames, cursor + 3);
+        if (params.Count() != beforeInit)
+        {
+            return result;
+        }
+
+        stack ExprType varType = TypeOfNodeWithLocals(nodes, varExpr.NodeId, localTypes);
+        if (varType == ExprType.ErrorType)
+        {
+            return result;
+        }
+
+        stack u32[0 max] addedRoot = varRoots.Add(varExpr.NodeId);
+        stack u32[0 max] localIndex = ResolveParam(params, source, nameStart, nameLength);
+        if (varType == ExprType.BoolType)
+        {
+            stack u32[0 max] boolSlot = localTypes.Add(1);
+        }
+        else
+        {
+            stack u32[0 max] intSlot = localTypes.Add(0);
+        }
+
+        cursor = varExpr.Next + 1;
+    }
+
+    stack ParseResult returnRoot = ParseExprIn(stream, source, nodes, params, funcNames, (u64[0 2 ** 63 - 1])returnIndex + 1);
+
+    // Every body name must be a parameter or a declared local — no phantom names.
+    if (params.Count() != signatureParamCount + varRoots.Count())
+    {
+        return result;
+    }
+
+    // Every call must be well-formed against the module (resolved callee, matching arity,
+    // integer arguments — typed WITH the locals so a boolean local argument is caught —
+    // within the model's argument limit).
+    if (!ValidateModuleCalls(nodes, funcParamCounts, localTypes))
+    {
+        return result;
+    }
+
+    stack ExprType rootType = TypeOfNodeWithLocals(nodes, returnRoot.NodeId, localTypes);
+    if (rootType == ExprType.ErrorType)
+    {
+        return result;
+    }
+
+    // Build the override table: signature parameters have no override (0); each local lowers
+    // (seeing earlier locals) and appends its value.
+    stack mut IrTable<u32[0 max]> localOverrides = new();
+    stack mut u64[0 2 ** 63 - 1] p = 0;
+    while willexit (p < signatureParamCount)
+    {
+        stack u32[0 max] zero = localOverrides.Add(0);
+        p = p + 1;
+    }
+
+    stack u64[0 2 ** 63 - 1] varCount = varRoots.Count();
+    stack mut u64[0 2 ** 63 - 1] v = 0;
+    while willexit (v < varCount)
+    {
+        stack u32[0 max] varRoot = varRoots.Get((u32[0 max])(v + 1));
+        stack MirValueId varValue = LowerExprNodeWithLocals(nodes, varRoot, instrs, localOverrides);
+        stack u32[0 max] addedOverride = localOverrides.Add(varValue.Index());
+        v = v + 1;
+    }
+
+    stack MirValueId value = LowerExprNodeWithLocals(nodes, returnRoot.NodeId, instrs, localOverrides);
+    stack mut MirValueId returnValue = value;
+    if (rootType == ExprType.BoolType)
+    {
+        returnValue = MirZExt(instrs, value);
+    }
+
+    stack MirBlockId entry = MirReturnBlock(blocks, returnValue);
+    result.Ok = true;
+    result.EntryBlock = entry.Index();
+    result.ParamCount = (u32[0 max])signatureParamCount;
+    return result;
+}
+
+// Parses + lowers a BRANCH-bodied module function `fn <name>(<params>) { if <cond> return
+// <then> else return <else> }` into a three-block CFG — an entry that conditionally branches
+// to a then-block (returns `<then>`) or an else-block (returns `<else>`), no merge — and
+// emits `@f<functionNumber>`. The arms are full expressions parsed against `funcNames`, so a
+// return arm may CALL another function, INCLUDING THE FUNCTION ITSELF (the first pass put
+// every name in `funcNames`): that is RECURSION through the AST path (e.g. factorial). The
+// condition must be boolean and both returned arms integer. Returns false if the body is not
+// this shape, or is malformed / ill-typed / has an invalid call.
+internal fn bool EmitModuleIfReturnFunction(borrow TokenStream stream, borrow i8[min max][] source, borrow IrTable<ParamName> funcNames, borrow IrTable<u32[0 max]> funcParamCounts, u64[0 2 ** 63 - 1] fnIndex, u32[0 max] functionNumber, mut borrow OwnedAscii sink)
+{
+    stack i64[min max] braceIndex = FirstTokenOfKindAfter(stream, TokenKind.LBrace, fnIndex);
+    if (braceIndex < 0 || stream.KindAt((u64[0 2 ** 63 - 1])braceIndex + 1) != TokenKind.If)
+    {
+        return false;
+    }
+
+    stack mut IrTable<ParamName> params = new();
+    SeedSignatureParams(stream, source, fnIndex + 2, params);
+    stack u64[0 2 ** 63 - 1] signatureParamCount = params.Count();
+
+    // `if <cond> return <then> else return <else>`.
+    stack mut IrTable<ExprNode> nodes = new();
+    stack u64[0 2 ** 63 - 1] ifIndex = (u64[0 2 ** 63 - 1])braceIndex + 1;
+    stack ParseResult condResult = ParseExprIn(stream, source, nodes, params, funcNames, ifIndex + 1);
+    if (stream.KindAt(condResult.Next) != TokenKind.Return)
+    {
+        return false;
+    }
+
+    stack ParseResult thenResult = ParseExprIn(stream, source, nodes, params, funcNames, condResult.Next + 1);
+    if (stream.KindAt(thenResult.Next) != TokenKind.Else || stream.KindAt(thenResult.Next + 1) != TokenKind.Return)
+    {
+        return false;
+    }
+
+    stack ParseResult elseResult = ParseExprIn(stream, source, nodes, params, funcNames, thenResult.Next + 2);
+
+    // Only the signature parameters may be referenced (no undeclared name appended).
+    if (params.Count() != signatureParamCount)
+    {
+        return false;
+    }
+
+    // Calls (including the self-call) must be well-formed. No locals here, so an empty types
+    // table — a parameter argument types Int, a boolean argument is rejected.
+    stack mut IrTable<u32[0 max]> noLocalTypes = new();
+    if (!ValidateModuleCalls(nodes, funcParamCounts, noLocalTypes))
+    {
+        return false;
+    }
+
+    // Condition boolean; both returned arms integer (each becomes an `i64` return).
+    if (TypeOfNode(nodes, condResult.NodeId) != ExprType.BoolType)
+    {
+        return false;
+    }
+
+    if (TypeOfNode(nodes, thenResult.NodeId) != ExprType.IntType || TypeOfNode(nodes, elseResult.NodeId) != ExprType.IntType)
+    {
+        return false;
+    }
+
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+
+    // Entry block: lower the condition (i1).
+    stack MirValueId condValue = LowerExprNode(nodes, condResult.NodeId, instrs);
+    stack u32[0 max] entryCount = (u32[0 max])instrs.Count();
+    // Then block: lower + return the first arm.
+    stack u32[0 max] thenFirst = (u32[0 max])instrs.Count() + 1;
+    stack MirValueId thenValue = LowerExprNode(nodes, thenResult.NodeId, instrs);
+    stack u32[0 max] thenCount = (u32[0 max])instrs.Count() - (thenFirst - 1);
+    // Else block: lower + return the second arm.
+    stack u32[0 max] elseFirst = (u32[0 max])instrs.Count() + 1;
+    stack MirValueId elseValue = LowerExprNode(nodes, elseResult.NodeId, instrs);
+    stack u32[0 max] elseCount = (u32[0 max])instrs.Count() - (elseFirst - 1);
+
+    stack MirBlockId entry = MirCondBlock(blocks, condValue, MirBlockIdOf(2), MirBlockIdOf(3));
+    stack MirBlockId thenBlock = MirReturnBlock(blocks, thenValue);
+    stack MirBlockId elseBlock = MirReturnBlock(blocks, elseValue);
+
+    stack mut IrTable<BlockEmit> ranges = new();
+    stack u32[0 max] r1 = ranges.Add(MakeBlockEmit(entry.Index(), 1, entryCount));
+    stack u32[0 max] r2 = ranges.Add(MakeBlockEmit(thenBlock.Index(), thenFirst, thenCount));
+    stack u32[0 max] r3 = ranges.Add(MakeBlockEmit(elseBlock.Index(), elseFirst, elseCount));
+
+    stack u32[0 max] paramCount = (u32[0 max])signatureParamCount;
+    switch (EmitLlvmBlocksNumbered(instrs, blocks, "f", functionNumber, paramCount, ranges, sink))
+    {
+        case MemoryStatus.Ok:
+            return true;
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+// Parses + lowers ONE function of a module through the AST path and emits
+// `define i64 @f<functionNumber>(…) { … }` with per-function value numbering. A function
+// whose body begins with `if` is a BRANCH-bodied function (`if … return … else return …`,
+// which may RECURSE) and routes to `EmitModuleIfReturnFunction`; otherwise it is the shared
+// `var`-locals-then-`return` body. Returns false on any malformed/ill-typed/invalid function.
+internal fn bool EmitModuleFunctionAst(borrow TokenStream stream, borrow i8[min max][] source, borrow IrTable<ParamName> funcNames, borrow IrTable<u32[0 max]> funcParamCounts, u64[0 2 ** 63 - 1] fnIndex, u32[0 max] functionNumber, mut borrow OwnedAscii sink)
+{
+    stack i64[min max] bodyBrace = FirstTokenOfKindAfter(stream, TokenKind.LBrace, fnIndex);
+    if (bodyBrace >= 0 && stream.KindAt((u64[0 2 ** 63 - 1])bodyBrace + 1) == TokenKind.If)
+    {
+        return EmitModuleIfReturnFunction(stream, source, funcNames, funcParamCounts, fnIndex, functionNumber, sink);
+    }
+
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack LoweredBody body = LowerFunctionWithLocals(stream, source, funcNames, funcParamCounts, fnIndex, instrs, blocks);
+    if (!body.Ok)
+    {
+        return false;
+    }
+
+    stack u32[0 max] instrCount = (u32[0 max])instrs.Count();
+    switch (EmitLlvmNumberedFunction(instrs, blocks, "f", functionNumber, body.ParamCount, body.EntryBlock, 1, instrCount, sink))
+    {
+        case MemoryStatus.Ok:
+            return true;
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+// Compiles a MULTI-FUNCTION module `(fn <name>(<params>) { return <expr> })+` through the
+// AST path: a first pass builds the function-name table (definition order = 1-based id
+// order), then each function's return body is parsed against that table — so a call
+// `<name>(<args>)` resolves its callee NAME to the right `@fN` — lowered, and emitted. This
+// is the AST counterpart of the positional `LowerModuleStream`, but a call's callee comes
+// from real name resolution, not a positional scan, and arguments flow through the AST.
+internal fn bool CompileModuleFromAstStream(borrow TokenStream stream, borrow i8[min max][] source, mut borrow OwnedAscii sink)
+{
+    stack u64[0 2 ** 63 - 1] tokenCount = stream.Count();
+
+    // Function-name table and parallel parameter-count table (definition order = 1-based id
+    // order, built in lockstep so a callee id indexes both). The name follows `fn`; the
+    // signature's `(` is at the fn index + 2.
+    stack mut IrTable<ParamName> funcNames = new();
+    stack mut IrTable<u32[0 max]> funcParamCounts = new();
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < tokenCount)
+    {
+        if (stream.KindAt(i) == TokenKind.Fn)
+        {
+            stack mut ParamName name = new();
+            name.Start = stream.StartAt(i + 1);
+            name.Length = stream.LengthAt(i + 1);
+            stack u32[0 max] added = funcNames.Add(name);
+
+            stack i64[min max] paramCount = CountArgsBetweenParens(stream, i + 2);
+            stack mut u32[0 max] paramCountValue = 0;
+            if (paramCount > 0)
+            {
+                paramCountValue = (u32[0 max])paramCount;
+            }
+
+            stack u32[0 max] addedCount = funcParamCounts.Add(paramCountValue);
+        }
+
+        i = i + 1;
+    }
+
+    if (funcNames.Count() == 0)
+    {
+        return false;
+    }
+
+    // Lower + emit each function in definition order.
+    stack mut u32[0 max] functionNumber = 0;
+    stack mut u64[0 2 ** 63 - 1] f = 0;
+    while willexit (f < tokenCount)
+    {
+        if (stream.KindAt(f) == TokenKind.Fn)
+        {
+            functionNumber = functionNumber + 1;
+            if (!EmitModuleFunctionAst(stream, source, funcNames, funcParamCounts, f, functionNumber, sink))
+            {
+                return false;
+            }
+        }
+
+        f = f + 1;
+    }
+
+    return true;
+}
+
+// Lexes a multi-function module and compiles it through the AST path (see
+// `CompileModuleFromAstStream`).
+public fn bool CompileModuleFromAst(ascii source, mut borrow OwnedAscii sink)
+{
+    stack mut OwnedAscii sourceText = new();
+    stack System.Memory.MemoryStatus copyStatus = sourceText.AppendAscii(source);
+    stack i8[min max][] sourceBytes = sourceText.AsSlice();
+
+    switch (Lex(sourceBytes))
+    {
+        case LexResult<TokenStream>.Ok(var stream):
+            return CompileModuleFromAstStream(stream, sourceBytes, sink);
+        case LexResult<TokenStream>.Err(var lexError):
+            return false;
+    }
+}
+
+// The CHECKED AST module path: the full front-end semantic gate (`SemanticallyValidStream`
+// — names bind, calls match arity, no scope redeclares, function names are unique, every
+// condition is boolean, no comparison feeds an integer operand) guards the AST module
+// codegen, so a module is lowered ONLY if it passes. This is the canonical lex → analyze →
+// lower pipeline for the AST path (the counterpart of the positional `CompileModuleChecked`,
+// but lowering through `CompileModuleFromAstStream`). The gate catches a BROADER class than
+// the AST path's own `ValidateModuleCalls` (e.g. a duplicate function name, an unbound name
+// outside a call), while `ValidateModuleCalls` still enforces the lowering model's limit
+// (at most one argument); together they reject every malformed module. Lexes once.
+public fn bool CompileModuleFromAstChecked(ascii source, mut borrow OwnedAscii sink)
+{
+    stack mut OwnedAscii sourceText = new();
+    stack System.Memory.MemoryStatus copyStatus = sourceText.AppendAscii(source);
+    stack i8[min max][] sourceBytes = sourceText.AsSlice();
+
+    switch (Lex(sourceBytes))
+    {
+        case LexResult<TokenStream>.Ok(var stream):
+            if (!SemanticallyValidStream(stream, sourceBytes))
+            {
+                return false;
+            }
+
+            return CompileModuleFromAstStream(stream, sourceBytes, sink);
+        case LexResult<TokenStream>.Err(var lexError):
+            return false;
+    }
+}
+
+// The unified path for a MULTI-STATEMENT function body `fn <name>(<params>) { (var <n> =
+// <expr>;)* return <expr> }`. Parameters and `var` locals share one index space: the
+// signature seeds the parameters; each `var` appends its name (so later statements resolve
+// it), and at lower time its index is REDIRECTED — via `localOverrides` — to the SSA value
+// its initializer produced (computed once, reused on each reference). The emitted function
+// declares only the SIGNATURE parameters; locals are interior values, not parameters.
+public fn bool CompileFunctionWithLocalsToLlvm(ascii source, mut borrow OwnedAscii sink)
+{
+    stack mut OwnedAscii sourceText = new();
+    stack System.Memory.MemoryStatus copyStatus = sourceText.AppendAscii(source);
+    stack i8[min max][] sourceBytes = sourceText.AsSlice();
+
+    switch (Lex(sourceBytes))
+    {
+        case LexResult<TokenStream>.Ok(var stream):
+            stack i64[min max] fnIndex = FirstTokenOfKind(stream, TokenKind.Fn);
+            if (fnIndex < 0)
+            {
+                return false;
+            }
+
+            // The same body lowering the module path uses, with EMPTY function tables (a
+            // single function has no cross-function calls — any call resolves to 0 and is
+            // rejected by the shared `ValidateModuleCalls`). Emitted as `@main`.
+            stack mut IrTable<ParamName> noFuncs = new();
+            stack mut IrTable<u32[0 max]> noFuncCounts = new();
+            stack mut IrTable<MirInstruction> instrs = new();
+            stack mut IrTable<MirBlock> blocks = new();
+            stack LoweredBody body = LowerFunctionWithLocals(stream, sourceBytes, noFuncs, noFuncCounts, (u64[0 2 ** 63 - 1])fnIndex, instrs, blocks);
+            if (!body.Ok)
+            {
+                return false;
+            }
+
+            stack u32[0 max] instrCount = (u32[0 max])instrs.Count();
+            switch (EmitLlvmDefinitionWithParams(instrs, blocks, "main", body.ParamCount, body.EntryBlock, 1, instrCount, sink))
+            {
+                case MemoryStatus.Ok:
+                    return true;
+                case MemoryStatus.Err(var error):
+                    return false;
+            }
+        case LexResult<TokenStream>.Err(var lexError):
+            return false;
+    }
+}
+
+// Lowers an `if <cond> <then> else <else>` EXPRESSION to a branching `@main` (a diamond
+// CFG with a phi merge) through the AST path. Each of the three parts is parsed as a full
+// expression (the parser's left-to-right fold delimits them: the condition ends where a
+// non-operator begins; `else` separates the arms), so — unlike the positional
+// `LowerIfToLlvm` — the condition and arms may be arbitrary parenthesized/arithmetic
+// expressions, not just single primaries. The condition must be boolean.
+public fn bool CompileIfExpressionToLlvm(ascii source, mut borrow OwnedAscii sink)
+{
+    stack mut OwnedAscii sourceText = new();
+    stack System.Memory.MemoryStatus copyStatus = sourceText.AppendAscii(source);
+    stack i8[min max][] sourceBytes = sourceText.AsSlice();
+
+    switch (Lex(sourceBytes))
+    {
+        case LexResult<TokenStream>.Ok(var stream):
+            stack i64[min max] ifIndex = FirstTokenOfKind(stream, TokenKind.If);
+            if (ifIndex < 0)
+            {
+                return false;
+            }
+
+            stack mut IrTable<ExprNode> nodes = new();
+            stack mut IrTable<ParamName> params = new();
+            // Condition (ends at the first non-operator token), then the two arms split by
+            // `else`.
+            stack ParseResult condResult = ParseExpr(stream, sourceBytes, nodes, params, (u64[0 2 ** 63 - 1])ifIndex + 1);
+            if (TypeOfNode(nodes, condResult.NodeId) == ExprType.BoolType)
+            {
+                // A boolean condition; continue.
+            }
+            else
+            {
+                return false;
+            }
+
+            stack ParseResult thenResult = ParseExpr(stream, sourceBytes, nodes, params, condResult.Next);
+            if (stream.KindAt(thenResult.Next) != TokenKind.Else)
+            {
+                return false;
+            }
+
+            stack ParseResult elseResult = ParseExpr(stream, sourceBytes, nodes, params, thenResult.Next + 1);
+
+            // Both arms must have the SAME type — both integer (i64) or both boolean (i1) —
+            // since the phi merges them: mismatched arms (one i64, one i1) would emit invalid
+            // LLVM. A BOOLEAN-valued if-expression is supported by zero-extending each i1 arm
+            // to i64 in its block, so the phi and the i64 return stay well-typed.
+            stack ExprType thenType = TypeOfNode(nodes, thenResult.NodeId);
+            stack ExprType elseType = TypeOfNode(nodes, elseResult.NodeId);
+            stack bool bothInt = thenType == ExprType.IntType && elseType == ExprType.IntType;
+            stack bool bothBool = thenType == ExprType.BoolType && elseType == ExprType.BoolType;
+            if (!bothInt && !bothBool)
+            {
+                return false;
+            }
+
+            stack mut IrTable<MirInstruction> instrs = new();
+            stack mut IrTable<MirBlock> blocks = new();
+
+            // Entry block: lower the condition (a comparison -> i1).
+            stack MirValueId condValue = LowerExprNode(nodes, condResult.NodeId, instrs);
+            stack u32[0 max] entryCount = (u32[0 max])instrs.Count();
+            // Then block: the first arm.
+            stack u32[0 max] thenFirst = (u32[0 max])instrs.Count() + 1;
+            stack MirValueId thenValue = LowerExprNode(nodes, thenResult.NodeId, instrs);
+            // A boolean arm is an i1; zero-extend it to i64 IN ITS BLOCK so the phi merges
+            // two i64 values (the zext is part of the then arm's instruction range).
+            stack mut MirValueId thenPhiValue = thenValue;
+            if (bothBool)
+            {
+                thenPhiValue = MirZExt(instrs, thenValue);
+            }
+
+            stack u32[0 max] thenCount = (u32[0 max])instrs.Count() - (thenFirst - 1);
+            // Else block: the second arm.
+            stack u32[0 max] elseFirst = (u32[0 max])instrs.Count() + 1;
+            stack MirValueId elseValue = LowerExprNode(nodes, elseResult.NodeId, instrs);
+            stack mut MirValueId elsePhiValue = elseValue;
+            if (bothBool)
+            {
+                elsePhiValue = MirZExt(instrs, elseValue);
+            }
+
+            stack u32[0 max] elseCount = (u32[0 max])instrs.Count() - (elseFirst - 1);
+            // Merge block: a phi over the two arms (zero-extended when boolean), then return.
+            stack MirValueId phi = MirPhi2(instrs, thenPhiValue, MirBlockIdOf(2), elsePhiValue, MirBlockIdOf(3));
+
+            stack MirBlockId entry = MirCondBlock(blocks, condValue, MirBlockIdOf(2), MirBlockIdOf(3));
+            stack MirBlockId thenBlock = MirBranchBlock(blocks, MirBlockIdOf(4));
+            stack MirBlockId elseBlock = MirBranchBlock(blocks, MirBlockIdOf(4));
+            stack MirBlockId mergeBlock = MirReturnBlock(blocks, phi);
+
+            stack u32[0 max] paramCount = (u32[0 max])params.Count();
+            switch (EmitLlvmDiamond(instrs, blocks, "main", paramCount, entry.Index(), 1, entryCount, thenBlock.Index(), thenFirst, thenCount, elseBlock.Index(), elseFirst, elseCount, mergeBlock.Index(), phi.Index(), 1, sink))
+            {
+                case MemoryStatus.Ok:
+                    return true;
+                case MemoryStatus.Err(var error):
+                    return false;
+            }
+        case LexResult<TokenStream>.Err(var lexError):
+            return false;
+    }
+}
+
+// Lowers a counting `while` loop `var i = <init>; while i < <bound> { i = i <op> <step> }
+// return i` to a back-edge loop CFG through the AST path. The loop variable `i` is an
+// induction phi (its preheader value and its body update are the two incomings); the
+// condition, body update, and bound are full parsed expressions. The phi FORWARD-references
+// its body update, whose instruction index is not known until the body is lowered — so the
+// condition and body are first lowered into SCRATCH tables to COUNT their instructions
+// (the loop variable resolves through an override either way, so the counts match), the
+// update's future index is computed, the phi is built with that forward reference, and the
+// real condition/body are lowered in place.
+public fn bool CompileWhileLoopToLlvm(ascii source, mut borrow OwnedAscii sink)
+{
+    stack mut OwnedAscii sourceText = new();
+    stack System.Memory.MemoryStatus copyStatus = sourceText.AppendAscii(source);
+    stack i8[min max][] sourceBytes = sourceText.AsSlice();
+
+    switch (Lex(sourceBytes))
+    {
+        case LexResult<TokenStream>.Ok(var stream):
+            stack i64[min max] varIndex = FirstTokenOfKind(stream, TokenKind.Var);
+            stack i64[min max] whileIndex = FirstTokenOfKind(stream, TokenKind.While);
+            stack i64[min max] braceIndex = FirstTokenOfKind(stream, TokenKind.LBrace);
+            stack i64[min max] returnIndex = FirstTokenOfKind(stream, TokenKind.Return);
+            if (varIndex < 0 || whileIndex < 0 || braceIndex < 0 || returnIndex < 0)
+            {
+                return false;
+            }
+
+            stack i64[min max] bodyAssign = FirstTokenOfKindAfter(stream, TokenKind.Assign, (u64[0 2 ** 63 - 1])braceIndex);
+            if (bodyAssign < 0)
+            {
+                return false;
+            }
+
+            // Parse the four sub-expressions: the init, the condition, the body update
+            // (the right side of `i = …`), and the return. The loop variable `i` is the
+            // first name resolved, so it takes index 0.
+            stack mut IrTable<ExprNode> nodes = new();
+            stack mut IrTable<ParamName> params = new();
+            stack ParseResult initResult = ParseExpr(stream, sourceBytes, nodes, params, (u64[0 2 ** 63 - 1])varIndex + 3);
+            stack u32[0 max] loopVarIndex = ResolveParam(params, sourceBytes, stream.StartAt((u64[0 2 ** 63 - 1])varIndex + 1), stream.LengthAt((u64[0 2 ** 63 - 1])varIndex + 1));
+            stack ParseResult condResult = ParseExpr(stream, sourceBytes, nodes, params, (u64[0 2 ** 63 - 1])whileIndex + 1);
+            if (TypeOfNode(nodes, condResult.NodeId) == ExprType.BoolType)
+            {
+                // A boolean loop condition; continue.
+            }
+            else
+            {
+                return false;
+            }
+
+            stack ParseResult updateResult = ParseExpr(stream, sourceBytes, nodes, params, (u64[0 2 ** 63 - 1])bodyAssign + 1);
+            stack ParseResult retResult = ParseExpr(stream, sourceBytes, nodes, params, (u64[0 2 ** 63 - 1])returnIndex + 1);
+
+            // The supported shape is a SELF-CONTAINED counting loop: the only name anywhere
+            // (init, condition, update, return) is the loop variable. That guarantees the
+            // loop variable is index 0 (so the override binds it, not a name the init pulled
+            // in first) AND that no free name/parameter is referenced (which would emit an
+            // undeclared `%pK`, since `@main` is declared with no parameters).
+            if (params.Count() != 1)
+            {
+                return false;
+            }
+
+            // The body must assign to the loop variable, as a SINGLE statement: the token
+            // after `{` is the loop variable, and the update expression ends at `}`.
+            if (SpanEquals(sourceBytes, stream.StartAt((u64[0 2 ** 63 - 1])braceIndex + 1), stream.LengthAt((u64[0 2 ** 63 - 1])braceIndex + 1), stream.StartAt((u64[0 2 ** 63 - 1])varIndex + 1), stream.LengthAt((u64[0 2 ** 63 - 1])varIndex + 1)))
+            {
+                // The body assigns to the loop variable; continue.
+            }
+            else
+            {
+                return false;
+            }
+
+            if (stream.KindAt(updateResult.Next) != TokenKind.RBrace)
+            {
+                return false;
+            }
+
+            stack mut IrTable<MirInstruction> instrs = new();
+            stack mut IrTable<MirBlock> blocks = new();
+
+            // Preheader: lower the initializer (no reference to the loop variable yet).
+            stack mut IrTable<u32[0 max]> noOverride = new();
+            stack MirValueId initValue = LowerExprNodeWithLocals(nodes, initResult.NodeId, instrs, noOverride);
+            stack u32[0 max] initCount = (u32[0 max])instrs.Count();
+
+            // Measure the condition and body instruction counts in scratch tables (the loop
+            // variable resolves through an override, so the count is independent of it).
+            stack mut IrTable<u32[0 max]> measureOverride = new();
+            stack u32[0 max] measureSlot = measureOverride.Add(initValue.Index());
+            stack mut IrTable<MirInstruction> scratchCond = new();
+            stack MirValueId scratchCondValue = LowerExprNodeWithLocals(nodes, condResult.NodeId, scratchCond, measureOverride);
+            stack u32[0 max] condCount = (u32[0 max])scratchCond.Count();
+            stack mut IrTable<MirInstruction> scratchBody = new();
+            stack MirValueId scratchBodyValue = LowerExprNodeWithLocals(nodes, updateResult.NodeId, scratchBody, measureOverride);
+            stack u32[0 max] bodyCount = (u32[0 max])scratchBody.Count();
+
+            // The body update's value lands at this index: init + the phi + cond + body.
+            stack u32[0 max] updateIndex = initCount + 1 + condCount + bodyCount;
+
+            // Header phi: `i = phi [ init, preheader(b1) ], [ update(forward), body(b3) ]`.
+            stack MirValueId loopPhi = MirPhi2(instrs, initValue, MirBlockIdOf(1), MirValueIdOf(updateIndex), MirBlockIdOf(3));
+            stack mut IrTable<u32[0 max]> loopOverride = new();
+            stack u32[0 max] loopSlot = loopOverride.Add(loopPhi.Index());
+
+            // Header: the condition (referencing the phi). Body: the update (referencing it).
+            stack MirValueId condValue = LowerExprNodeWithLocals(nodes, condResult.NodeId, instrs, loopOverride);
+            stack u32[0 max] headerEnd = (u32[0 max])instrs.Count();
+            stack u32[0 max] bodyFirst = (u32[0 max])instrs.Count() + 1;
+            stack MirValueId updateValue = LowerExprNodeWithLocals(nodes, updateResult.NodeId, instrs, loopOverride);
+            stack u32[0 max] bodyEnd = (u32[0 max])instrs.Count();
+
+            // Blocks: preheader(b1) → header(b2); header cond-branches to body(b3)/exit(b4);
+            // body branches back to the header; exit returns the loop variable.
+            stack MirBlockId entry = MirBranchBlock(blocks, MirBlockIdOf(2));
+            stack MirBlockId header = MirCondBlock(blocks, condValue, MirBlockIdOf(3), MirBlockIdOf(4));
+            stack MirBlockId body = MirBranchBlock(blocks, MirBlockIdOf(2));
+            stack MirBlockId exit = MirReturnBlock(blocks, loopPhi);
+
+            stack mut IrTable<BlockEmit> ranges = new();
+            stack u32[0 max] r1 = ranges.Add(MakeBlockEmit(entry.Index(), 1, initCount));
+            stack u32[0 max] r2 = ranges.Add(MakeBlockEmit(header.Index(), initCount + 1, headerEnd - initCount));
+            stack u32[0 max] r3 = ranges.Add(MakeBlockEmit(body.Index(), bodyFirst, bodyEnd - bodyFirst + 1));
+            stack u32[0 max] r4 = ranges.Add(MakeBlockEmit(exit.Index(), bodyEnd + 1, 0));
+
+            switch (EmitLlvmBlocks(instrs, blocks, "main", 0, ranges, sink))
+            {
+                case MemoryStatus.Ok:
+                    return true;
+                case MemoryStatus.Err(var error):
+                    return false;
+            }
         case LexResult<TokenStream>.Err(var lexError):
             return false;
     }
