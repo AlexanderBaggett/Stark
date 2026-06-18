@@ -1,4 +1,5 @@
 import Compiler.Ir
+import Compiler.Lexing
 import System.Memory
 import System.Text
 import System.Runtime.Buffer
@@ -51,6 +52,8 @@ public enum MirOp
     CmpLe,
     CmpGt,
     CmpGe,
+    // Zero-extends operand A (an i1, e.g. a comparison result) to i64.
+    ZExt,
     // Loads the i64 value of module global `@gN` (N = the global id in the immediate);
     // its result is the value naming this instruction.
     LoadGlobal,
@@ -289,6 +292,12 @@ public fn MirValueId MirCmpGt(mut borrow IrTable<MirInstruction> instrs, MirValu
 public fn MirValueId MirCmpGe(mut borrow IrTable<MirInstruction> instrs, MirValueId a, MirValueId b)
 {
     return MirEmit(instrs, MirOp.CmpGe, a.Index(), b.Index(), 0);
+}
+
+// Zero-extends `value` (an i1) to i64.
+public fn MirValueId MirZExt(mut borrow IrTable<MirInstruction> instrs, MirValueId value)
+{
+    return MirEmit(instrs, MirOp.ZExt, value.Index(), 0, 0);
 }
 
 public fn MirValueId MirReturn(mut borrow IrTable<MirInstruction> instrs, MirValueId value)
@@ -929,6 +938,12 @@ internal fn MemoryStatus EmitLlvmInstruction(borrow IrTable<MirInstruction> inst
             try EmitLlvmBinary(instrs, sink, index, "icmp sgt", instr.OperandAIndex(), instr.OperandBIndex());
         case MirOp.CmpGe:
             try EmitLlvmBinary(instrs, sink, index, "icmp sge", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.ZExt:
+            try sink.AppendConstAscii("  ");
+            try EmitLlvmRegister(sink, index);
+            try sink.AppendConstAscii(" = zext i1 ");
+            try EmitLlvmOperand(instrs, sink, instr.OperandAIndex());
+            try sink.AppendConstAscii(" to i64\n");
         case MirOp.LoadGlobal:
             try sink.AppendConstAscii("  ");
             try EmitLlvmRegister(sink, index);
@@ -1104,6 +1119,77 @@ public fn MemoryStatus EmitLlvmDefinitionWithParams(borrow IrTable<MirInstructio
     try EmitLlvmParamList(paramCount, sink);
     try sink.AppendConstAscii(" {\n");
     try EmitLlvmLabeledBlock(instrs, blocks, entryBlockIndex, firstInstr, instrCount, sink);
+    try sink.AppendConstAscii("}\n");
+    return MemoryStatus.Ok;
+}
+
+// Emits a multi-block diamond-CFG function `define i64 @name(...) { … }`: an entry
+// block (ending in a conditional branch to the then/else blocks), then/else blocks
+// (each over its own instruction range — the branch-arm computation — ending in an
+// unconditional branch to the merge block), and a merge block (its instruction range,
+// typically a phi, ending in a return). Each block emits over the (first, count)
+// instruction range it is given. Real branching control flow with a phi merge, built
+// by composing `EmitLlvmLabeledBlock`; the block terminators come from `blocks`.
+// One block's emission descriptor: which block, and the contiguous instruction range
+// (1-based first index + count) it owns. A sequence of these is a whole function body
+// for an arbitrary CFG shape (diamond, loop, nested-if, switch, …).
+public struct BlockEmit
+{
+    u32[0 max] BlockIndex;
+    u32[0 max] First;
+    u32[0 max] Count;
+
+    BlockEmit()
+    {
+        self.BlockIndex = 0;
+        self.First = 0;
+        self.Count = 0;
+    }
+}
+
+// Builds a `BlockEmit` descriptor.
+internal fn BlockEmit MakeBlockEmit(u32[0 max] blockIndex, u32[0 max] first, u32[0 max] count)
+{
+    stack mut BlockEmit be = new();
+    be.BlockIndex = blockIndex;
+    be.First = first;
+    be.Count = count;
+    return be;
+}
+
+// Emits `define i64 @name(<params>) { <block>* }` over an arbitrary ordered list of
+// blocks — the general form behind `EmitLlvmDiamond` (4 blocks) and the loop/nested-if
+// shapes (any number). Each descriptor's terminator comes from the block table, so any
+// CFG (branches, back-edges, multi-way merges) emits as long as the blocks carry the
+// right terminators and the descriptors list them in the desired output order.
+public fn MemoryStatus EmitLlvmBlocks(borrow IrTable<MirInstruction> instrs, borrow IrTable<MirBlock> blocks, const ascii name, u32[0 max] paramCount, borrow IrTable<BlockEmit> ranges, mut borrow OwnedAscii sink)
+{
+    try sink.AppendConstAscii("define i64 @");
+    try sink.AppendConstAscii(name);
+    try EmitLlvmParamList(paramCount, sink);
+    try sink.AppendConstAscii(" {\n");
+    stack u64[0 2 ** 63 - 1] total = ranges.Count();
+    stack mut u32[0 max] i = 1;
+    while willexit ((u64[0 2 ** 63 - 1])i <= total)
+    {
+        try EmitLlvmLabeledBlock(instrs, blocks, ranges.Get(i).BlockIndex, ranges.Get(i).First, ranges.Get(i).Count, sink);
+        i = i + 1;
+    }
+
+    try sink.AppendConstAscii("}\n");
+    return MemoryStatus.Ok;
+}
+
+public fn MemoryStatus EmitLlvmDiamond(borrow IrTable<MirInstruction> instrs, borrow IrTable<MirBlock> blocks, const ascii name, u32[0 max] paramCount, u32[0 max] entryBlock, u32[0 max] entryFirst, u32[0 max] entryCount, u32[0 max] thenBlock, u32[0 max] thenFirst, u32[0 max] thenCount, u32[0 max] elseBlock, u32[0 max] elseFirst, u32[0 max] elseCount, u32[0 max] mergeBlock, u32[0 max] mergeFirst, u32[0 max] mergeCount, mut borrow OwnedAscii sink)
+{
+    try sink.AppendConstAscii("define i64 @");
+    try sink.AppendConstAscii(name);
+    try EmitLlvmParamList(paramCount, sink);
+    try sink.AppendConstAscii(" {\n");
+    try EmitLlvmLabeledBlock(instrs, blocks, entryBlock, entryFirst, entryCount, sink);
+    try EmitLlvmLabeledBlock(instrs, blocks, thenBlock, thenFirst, thenCount, sink);
+    try EmitLlvmLabeledBlock(instrs, blocks, elseBlock, elseFirst, elseCount, sink);
+    try EmitLlvmLabeledBlock(instrs, blocks, mergeBlock, mergeFirst, mergeCount, sink);
     try sink.AppendConstAscii("}\n");
     return MemoryStatus.Ok;
 }
@@ -1420,6 +1506,11 @@ internal fn MemoryStatus EmitMirInstruction(borrow IrTable<MirInstruction> instr
             try EmitMirBinaryLine(sink, index, "sgt", instr.OperandAIndex(), instr.OperandBIndex());
         case MirOp.CmpGe:
             try EmitMirBinaryLine(sink, index, "sge", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.ZExt:
+            try EmitMirValue(sink, index);
+            try sink.AppendConstAscii(" = zext ");
+            try EmitMirValue(sink, instr.OperandAIndex());
+            try sink.AppendConstAscii("\n");
         case MirOp.LoadGlobal:
             try EmitMirValue(sink, index);
             try sink.AppendConstAscii(" = load g");
@@ -1581,6 +1672,7 @@ internal fn u8[0 max] MirOpToByte(MirOp op)
         case MirOp.Phi: return 21;
         case MirOp.Call: return 22;
         case MirOp.Return: return 23;
+        case MirOp.ZExt: return 24;
     }
 }
 
@@ -1611,6 +1703,7 @@ internal fn MirOp MirOpFromByte(u8[0 max] b)
         case 21: return MirOp.Phi;
         case 22: return MirOp.Call;
         case 23: return MirOp.Return;
+        case 24: return MirOp.ZExt;
         default: return MirOp.ConstInt;
     }
 }
@@ -2214,5 +2307,863 @@ public fn i32[min max] AbsViaFfi(i32[min max] value)
     unsafe
     {
         return abs(value);
+    }
+}
+
+// === Minimal source -> MIR -> LLVM thread (toward bootstrap, #33) ===
+// Connects the front end (lexer) to the back end (MIR + codegen) for a trivial
+// `return <int>` program: lex the source, find the first integer literal, parse its
+// value from the source span, build a MIR `const`+`return`, and emit the LLVM. This
+// is the first source-to-codegen thread — a minimal but real bootstrap-direction
+// slice (a full Stark-source -> MIR translator is the multi-session capstone).
+
+// Parses the decimal digits at [start, start+length) of `source` into an integer.
+internal fn i64[min max] ParseDigitSpan(borrow i8[min max][] source, u64[0 2 ** 63 - 1] start, u64[0 2 ** 63 - 1] length)
+{
+    stack mut i64[min max] value = 0;
+    stack mut u64[0 2 ** 63 - 1] j = 0;
+    while willexit (j < length)
+    {
+        stack i8[min max] digitByte = source[start + j];
+        stack i64[min max] digit = (i64[min max])digitByte - 48;
+        value = value * 10 + digit;
+        j = j + 1;
+    }
+
+    return value;
+}
+
+// The value of the first IntegerLiteral token in `stream` (parsed from `source`), or
+// -1 if there is none.
+internal fn i64[min max] FirstIntLiteralValue(borrow TokenStream stream, borrow i8[min max][] source)
+{
+    stack u64[0 2 ** 63 - 1] count = stream.Count();
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < count)
+    {
+        if (stream.KindAt(i) == TokenKind.IntegerLiteral)
+        {
+            return ParseDigitSpan(source, stream.StartAt(i), stream.LengthAt(i));
+        }
+
+        i = i + 1;
+    }
+
+    return -1;
+}
+
+// Lexes a trivial `return <int>` source, lowers it to MIR, and emits the LLVM function
+// `@main` into `sink`. Returns false if the source has no integer literal or fails to
+// lex.
+public fn bool LowerReturnIntToLlvm(ascii source, mut borrow OwnedAscii sink)
+{
+    stack mut OwnedAscii sourceText = new();
+    stack System.Memory.MemoryStatus copyStatus = sourceText.AppendAscii(source);
+    stack i8[min max][] sourceBytes = sourceText.AsSlice();
+
+    switch (Lex(sourceBytes))
+    {
+        case LexResult<TokenStream>.Ok(var stream):
+            stack i64[min max] value = FirstIntLiteralValue(stream, sourceBytes);
+            if (value < 0)
+            {
+                return false;
+            }
+
+            stack mut IrTable<MirInstruction> instrs = new();
+            stack mut IrTable<MirBlock> blocks = new();
+            stack MirValueId v = MirConstInt(instrs, value);
+            stack MirBlockId entry = MirReturnBlock(blocks, v);
+            stack System.Memory.MemoryStatus emitStatus = EmitLlvmDefinition(instrs, blocks, "main", entry.Index(), 1, 1, sink);
+            return true;
+        case LexResult<TokenStream>.Err(var lexError):
+            return false;
+    }
+}
+
+// Extends the source thread to a binary expression `return <int> <op> <int>` (and the
+// single-constant case): finds the first integer literal, and if a `+`/`-`/`*` token
+// follows with another literal, lowers to MIR `add`/`sub`/`mul`.
+
+// The token index of the first IntegerLiteral in `stream`, or -1 if none.
+internal fn i64[min max] FirstIntLiteralIndex(borrow TokenStream stream)
+{
+    stack u64[0 2 ** 63 - 1] count = stream.Count();
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < count)
+    {
+        if (stream.KindAt(i) == TokenKind.IntegerLiteral)
+        {
+            return (i64[min max])i;
+        }
+
+        i = i + 1;
+    }
+
+    return -1;
+}
+
+// A "primary" expression token: an integer literal or an identifier (a parameter).
+internal fn bool IsPrimaryToken(TokenKind k)
+{
+    return k == TokenKind.IntegerLiteral || k == TokenKind.Identifier;
+}
+
+// The token index of the first primary (literal or identifier), or -1 if none. The
+// `return` keyword lexes as `TokenKind.Return`, so it is never mistaken for a primary.
+internal fn i64[min max] FirstPrimaryIndex(borrow TokenStream stream)
+{
+    stack u64[0 2 ** 63 - 1] count = stream.Count();
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < count)
+    {
+        if (IsPrimaryToken(stream.KindAt(i)))
+        {
+            return (i64[min max])i;
+        }
+
+        i = i + 1;
+    }
+
+    return -1;
+}
+
+// True when `stream` contains any identifier token (so the function takes a parameter).
+internal fn bool StreamHasIdentifier(borrow TokenStream stream)
+{
+    stack u64[0 2 ** 63 - 1] count = stream.Count();
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < count)
+    {
+        if (stream.KindAt(i) == TokenKind.Identifier)
+        {
+            return true;
+        }
+
+        i = i + 1;
+    }
+
+    return false;
+}
+
+// A parameter name as a source span, stored in a symbol table whose row order is the
+// parameter index (so the Kth distinct identifier is parameter K = `%pK`).
+public struct ParamName
+{
+    u64[0 2 ** 63 - 1] Start;
+    u64[0 2 ** 63 - 1] Length;
+
+    ParamName()
+    {
+        self.Start = 0;
+        self.Length = 0;
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] StartIndex(borrow ParamName self)
+    {
+        return self.Start;
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] LengthValue(borrow ParamName self)
+    {
+        return self.Length;
+    }
+}
+
+// True when the two source spans contain the same bytes.
+internal fn bool SpanEquals(borrow i8[min max][] source, u64[0 2 ** 63 - 1] aStart, u64[0 2 ** 63 - 1] aLength, u64[0 2 ** 63 - 1] bStart, u64[0 2 ** 63 - 1] bLength)
+{
+    if (aLength != bLength)
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] k = 0;
+    while willexit (k < aLength)
+    {
+        if (source[aStart + k] != source[bStart + k])
+        {
+            return false;
+        }
+
+        k = k + 1;
+    }
+
+    return true;
+}
+
+// The 0-based parameter index for the name span [start, start+length), or -1 if the
+// name is not yet in the table.
+internal fn i64[min max] ParamIndexOf(borrow IrTable<ParamName> params, borrow i8[min max][] source, u64[0 2 ** 63 - 1] start, u64[0 2 ** 63 - 1] length)
+{
+    stack u64[0 2 ** 63 - 1] count = params.Count();
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < count)
+    {
+        stack ParamName existing = params.Get((u32[0 max])(i + 1));
+        if (SpanEquals(source, existing.StartIndex(), existing.LengthValue(), start, length))
+        {
+            return (i64[min max])i;
+        }
+
+        i = i + 1;
+    }
+
+    return -1;
+}
+
+// Builds the parameter symbol table from the distinct identifiers in `stream`, in
+// first-appearance order.
+internal fn void BuildParamTable(borrow TokenStream stream, borrow i8[min max][] source, mut borrow IrTable<ParamName> params)
+{
+    stack u64[0 2 ** 63 - 1] count = stream.Count();
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < count)
+    {
+        if (stream.KindAt(i) == TokenKind.Identifier)
+        {
+            stack u64[0 2 ** 63 - 1] start = stream.StartAt(i);
+            stack u64[0 2 ** 63 - 1] length = stream.LengthAt(i);
+            if (ParamIndexOf(params, source, start, length) < 0)
+            {
+                stack mut ParamName name = new();
+                name.Start = start;
+                name.Length = length;
+                stack u32[0 max] added = params.Add(name);
+            }
+        }
+
+        i = i + 1;
+    }
+}
+
+// A local variable binding: a name span and the MIR value it is bound to.
+public struct LocalBinding
+{
+    u64[0 2 ** 63 - 1] Start;
+    u64[0 2 ** 63 - 1] Length;
+    u32[0 max] ValueIndex;
+
+    LocalBinding()
+    {
+        self.Start = 0;
+        self.Length = 0;
+        self.ValueIndex = 0;
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] StartIndex(borrow LocalBinding self)
+    {
+        return self.Start;
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] LengthValue(borrow LocalBinding self)
+    {
+        return self.Length;
+    }
+
+    public inline finite law u32[0 max] BoundValueIndex(borrow LocalBinding self)
+    {
+        return self.ValueIndex;
+    }
+}
+
+// The 1-based MIR value index a local name span is bound to, or -1 if not a local.
+internal fn i64[min max] LocalValueOf(borrow IrTable<LocalBinding> locals, borrow i8[min max][] source, u64[0 2 ** 63 - 1] start, u64[0 2 ** 63 - 1] length)
+{
+    stack u64[0 2 ** 63 - 1] count = locals.Count();
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < count)
+    {
+        stack LocalBinding binding = locals.Get((u32[0 max])(i + 1));
+        if (SpanEquals(source, binding.StartIndex(), binding.LengthValue(), start, length))
+        {
+            return (i64[min max])binding.BoundValueIndex();
+        }
+
+        i = i + 1;
+    }
+
+    return -1;
+}
+
+// The token index of the first token of kind `kind`, or -1 if absent.
+internal fn i64[min max] FirstTokenOfKind(borrow TokenStream stream, TokenKind kind)
+{
+    stack u64[0 2 ** 63 - 1] count = stream.Count();
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < count)
+    {
+        if (stream.KindAt(i) == kind)
+        {
+            return (i64[min max])i;
+        }
+
+        i = i + 1;
+    }
+
+    return -1;
+}
+
+// The token index of the first token of kind `kind` strictly after `after`, or -1.
+internal fn i64[min max] FirstTokenOfKindAfter(borrow TokenStream stream, TokenKind kind, u64[0 2 ** 63 - 1] after)
+{
+    stack u64[0 2 ** 63 - 1] count = stream.Count();
+    stack mut u64[0 2 ** 63 - 1] i = after + 1;
+    while willexit (i < count)
+    {
+        if (stream.KindAt(i) == kind)
+        {
+            return (i64[min max])i;
+        }
+
+        i = i + 1;
+    }
+
+    return -1;
+}
+
+// Emits `define i64 @<prefix><number>(<params>) { <entry block> }`.
+internal fn MemoryStatus EmitLlvmNumberedFunction(borrow IrTable<MirInstruction> instrs, borrow IrTable<MirBlock> blocks, const ascii prefix, u32[0 max] number, u32[0 max] paramCount, u32[0 max] entryBlock, u32[0 max] firstInstr, u32[0 max] instrCount, mut borrow OwnedAscii sink)
+{
+    try sink.AppendConstAscii("define i64 @");
+    try sink.AppendConstAscii(prefix);
+    try sink.AppendU64((u64[0 max])number);
+    try EmitLlvmParamList(paramCount, sink);
+    try sink.AppendConstAscii(" {\n");
+    try EmitLlvmLabeledBlock(instrs, blocks, entryBlock, firstInstr, instrCount, sink);
+    try sink.AppendConstAscii("}\n");
+    return MemoryStatus.Ok;
+}
+
+// Lowers the primary at token `index` to a value: an integer literal becomes a MIR
+// constant; an identifier resolves to a local binding (its bound value) if present,
+// otherwise to the parameter named by its source span.
+internal fn MirValueId LowerPrimary(borrow TokenStream stream, borrow i8[min max][] source, borrow IrTable<ParamName> params, borrow IrTable<LocalBinding> locals, mut borrow IrTable<MirInstruction> instrs, u64[0 2 ** 63 - 1] index)
+{
+    if (stream.KindAt(index) == TokenKind.IntegerLiteral)
+    {
+        return MirConstInt(instrs, ParseDigitSpan(source, stream.StartAt(index), stream.LengthAt(index)));
+    }
+
+    stack u64[0 2 ** 63 - 1] start = stream.StartAt(index);
+    stack u64[0 2 ** 63 - 1] length = stream.LengthAt(index);
+    stack i64[min max] localValue = LocalValueOf(locals, source, start, length);
+    if (localValue >= 0)
+    {
+        return MirValueIdOf((u32[0 max])localValue);
+    }
+
+    stack i64[min max] paramIndex = ParamIndexOf(params, source, start, length);
+    if (paramIndex < 0)
+    {
+        return MirParam(instrs, 0);
+    }
+
+    return MirParam(instrs, (u32[0 max])paramIndex);
+}
+
+// Folds a `term (('+'|'-') term)*` (sum of products) expression starting at the
+// primary under `startCursor`, returning the resulting MIR value. The fold stops at
+// the first token that is not a continuation (e.g. `;`, `return`, end of stream), so
+// it lowers exactly one expression. Identifiers resolve through `locals` then `params`.
+internal fn MirValueId FoldExpr(borrow TokenStream stream, borrow i8[min max][] source, borrow IrTable<ParamName> params, borrow IrTable<LocalBinding> locals, mut borrow IrTable<MirInstruction> instrs, u64[0 2 ** 63 - 1] startCursor)
+{
+    stack mut u64[0 2 ** 63 - 1] cursor = startCursor;
+    stack mut MirValueId acc = LowerPrimary(stream, source, params, locals, instrs, cursor);
+    while willexit (IsProductOpToken(stream.KindAt(cursor + 1)) && IsPrimaryToken(stream.KindAt(cursor + 2)))
+    {
+        stack TokenKind productOp = stream.KindAt(cursor + 1);
+        stack MirValueId factor = LowerPrimary(stream, source, params, locals, instrs, cursor + 2);
+        acc = LowerProductOp(instrs, productOp, acc, factor);
+        cursor = cursor + 2;
+    }
+
+    while willexit (IsAddSubToken(stream.KindAt(cursor + 1)) && IsPrimaryToken(stream.KindAt(cursor + 2)))
+    {
+        stack TokenKind op = stream.KindAt(cursor + 1);
+        cursor = cursor + 2;
+        stack mut MirValueId term = LowerPrimary(stream, source, params, locals, instrs, cursor);
+        while willexit (IsProductOpToken(stream.KindAt(cursor + 1)) && IsPrimaryToken(stream.KindAt(cursor + 2)))
+        {
+            stack TokenKind productOp = stream.KindAt(cursor + 1);
+            stack MirValueId factor = LowerPrimary(stream, source, params, locals, instrs, cursor + 2);
+            term = LowerProductOp(instrs, productOp, term, factor);
+            cursor = cursor + 2;
+        }
+
+        acc = LowerBinOp(instrs, op, acc, term);
+    }
+
+    return acc;
+}
+
+// Lowers a binary op token to the matching MIR instruction (Plus is the default).
+internal fn MirValueId LowerBinOp(mut borrow IrTable<MirInstruction> instrs, TokenKind op, MirValueId a, MirValueId b)
+{
+    if (op == TokenKind.Minus)
+    {
+        return MirSub(instrs, a, b);
+    }
+
+    if (op == TokenKind.Star)
+    {
+        return MirMul(instrs, a, b);
+    }
+
+    return MirAdd(instrs, a, b);
+}
+
+// True when `k` is a `+`/`-` additive operator token.
+internal fn bool IsAddSubToken(TokenKind k)
+{
+    return k == TokenKind.Plus || k == TokenKind.Minus;
+}
+
+// True when `k` is a `*`/`/`/`%` multiplicative operator token.
+internal fn bool IsProductOpToken(TokenKind k)
+{
+    return k == TokenKind.Star || k == TokenKind.Div || k == TokenKind.Mod;
+}
+
+// The token index of the first `<`/`>` comparison operator, or -1 if absent.
+internal fn i64[min max] FirstComparisonIndex(borrow TokenStream stream)
+{
+    stack u64[0 2 ** 63 - 1] count = stream.Count();
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < count)
+    {
+        stack TokenKind k = stream.KindAt(i);
+        if (k == TokenKind.Lt || k == TokenKind.Gt)
+        {
+            return (i64[min max])i;
+        }
+
+        i = i + 1;
+    }
+
+    return -1;
+}
+
+// The token index of the first primary strictly after `after`, or -1 if none.
+internal fn i64[min max] FirstPrimaryIndexAfter(borrow TokenStream stream, u64[0 2 ** 63 - 1] after)
+{
+    stack u64[0 2 ** 63 - 1] count = stream.Count();
+    stack mut u64[0 2 ** 63 - 1] i = after + 1;
+    while willexit (i < count)
+    {
+        if (IsPrimaryToken(stream.KindAt(i)))
+        {
+            return (i64[min max])i;
+        }
+
+        i = i + 1;
+    }
+
+    return -1;
+}
+
+// Lowers a `<`/`>` comparison to its signed MIR comparison (`<` is the default).
+internal fn MirValueId LowerComparison(mut borrow IrTable<MirInstruction> instrs, TokenKind op, MirValueId a, MirValueId b)
+{
+    if (op == TokenKind.Gt)
+    {
+        return MirCmpGt(instrs, a, b);
+    }
+
+    return MirCmpLt(instrs, a, b);
+}
+
+// Lowers a multiplicative op token to its MIR instruction (`*` is the default).
+internal fn MirValueId LowerProductOp(mut borrow IrTable<MirInstruction> instrs, TokenKind op, MirValueId a, MirValueId b)
+{
+    if (op == TokenKind.Div)
+    {
+        return MirSDiv(instrs, a, b);
+    }
+
+    if (op == TokenKind.Mod)
+    {
+        return MirSRem(instrs, a, b);
+    }
+
+    return MirMul(instrs, a, b);
+}
+
+// Lowers a `return <expr>` where `<expr>` is a sum of products: `term (('+'|'-') term)*`
+// and `term` is `int ('*' int)*`. `*` binds tighter than `+`/`-` (real precedence);
+// each tier folds left-associatively (the product fold is inlined for the first term
+// and again per additive term). `2 + 3 * 4` lowers as `2 + (3 * 4)`.
+internal fn bool LowerExprStream(borrow TokenStream stream, borrow i8[min max][] source, mut borrow OwnedAscii sink)
+{
+    stack i64[min max] firstIndex = FirstPrimaryIndex(stream);
+    if (firstIndex < 0)
+    {
+        return false;
+    }
+
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<ParamName> params = new();
+    BuildParamTable(stream, source, params);
+    stack mut IrTable<LocalBinding> locals = new();
+
+    // A single optional comparison binds below `+`/`-`: `<sum> (('<'|'>') <sum>)?`. The
+    // i1 result is zero-extended to i64 so the function can return it.
+    stack mut MirValueId acc = FoldExpr(stream, source, params, locals, instrs, (u64[0 2 ** 63 - 1])firstIndex);
+    stack i64[min max] comparisonIndex = FirstComparisonIndex(stream);
+    if (comparisonIndex >= 0)
+    {
+        stack i64[min max] rhsIndex = FirstPrimaryIndexAfter(stream, (u64[0 2 ** 63 - 1])comparisonIndex);
+        if (rhsIndex >= 0)
+        {
+            stack MirValueId rhs = FoldExpr(stream, source, params, locals, instrs, (u64[0 2 ** 63 - 1])rhsIndex);
+            stack MirValueId comparison = LowerComparison(instrs, stream.KindAt((u64[0 2 ** 63 - 1])comparisonIndex), acc, rhs);
+            acc = MirZExt(instrs, comparison);
+        }
+    }
+
+    stack MirBlockId entry = MirReturnBlock(blocks, acc);
+    stack u32[0 max] count = (u32[0 max])instrs.Count();
+    stack u32[0 max] paramCount = (u32[0 max])params.Count();
+    stack System.Memory.MemoryStatus emitStatus = EmitLlvmDefinitionWithParams(instrs, blocks, "main", paramCount, entry.Index(), 1, count, sink);
+    return true;
+}
+
+// Lowers a program `(var <name> = <expr>;)* return <expr>` to LLVM: each `var` binds a
+// local to its expression's value (earlier locals are visible to later ones), and the
+// `return` expression may reference any of them by name. No parameters in this mode.
+// A `var` statement is `var Id = <expr> ;`, so its name is at the var token + 1 and its
+// expression begins at + 3 (after `=`).
+internal fn bool LowerProgramStream(borrow TokenStream stream, borrow i8[min max][] source, mut borrow OwnedAscii sink)
+{
+    stack i64[min max] returnIndex = FirstTokenOfKind(stream, TokenKind.Return);
+    if (returnIndex < 0)
+    {
+        return false;
+    }
+
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<ParamName> params = new();
+    stack mut IrTable<LocalBinding> locals = new();
+
+    // Bind every `var` declaration, in source order.
+    stack u64[0 2 ** 63 - 1] tokenCount = stream.Count();
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < tokenCount)
+    {
+        if (stream.KindAt(i) == TokenKind.Var)
+        {
+            stack u64[0 2 ** 63 - 1] nameStart = stream.StartAt(i + 1);
+            stack u64[0 2 ** 63 - 1] nameLength = stream.LengthAt(i + 1);
+            stack MirValueId boundValue = FoldExpr(stream, source, params, locals, instrs, i + 3);
+            stack mut LocalBinding binding = new();
+            binding.Start = nameStart;
+            binding.Length = nameLength;
+            binding.ValueIndex = boundValue.Index();
+            stack u32[0 max] addedLocal = locals.Add(binding);
+        }
+
+        i = i + 1;
+    }
+
+    // `return <expr>`: expression begins at returnIndex + 1.
+    stack MirValueId resultValue = FoldExpr(stream, source, params, locals, instrs, (u64[0 2 ** 63 - 1])returnIndex + 1);
+
+    stack MirBlockId entry = MirReturnBlock(blocks, resultValue);
+    stack u32[0 max] count = (u32[0 max])instrs.Count();
+    stack System.Memory.MemoryStatus emitStatus = EmitLlvmDefinitionWithParams(instrs, blocks, "main", 0, entry.Index(), 1, count, sink);
+    return true;
+}
+
+// Lexes and lowers a `var <name> = <expr>; return <expr>` program to LLVM `@main`.
+public fn bool LowerProgramToLlvm(ascii source, mut borrow OwnedAscii sink)
+{
+    stack mut OwnedAscii sourceText = new();
+    stack System.Memory.MemoryStatus copyStatus = sourceText.AppendAscii(source);
+    stack i8[min max][] sourceBytes = sourceText.AsSlice();
+
+    switch (Lex(sourceBytes))
+    {
+        case LexResult<TokenStream>.Ok(var stream):
+            return LowerProgramStream(stream, sourceBytes, sink);
+        case LexResult<TokenStream>.Err(var lexError):
+            return false;
+    }
+}
+
+// Lexes a `return <int>` or `return <int> <+|-|*> <int>` source, lowers it to MIR, and
+// emits the LLVM `@main` function into `sink`.
+public fn bool LowerReturnExprToLlvm(ascii source, mut borrow OwnedAscii sink)
+{
+    stack mut OwnedAscii sourceText = new();
+    stack System.Memory.MemoryStatus copyStatus = sourceText.AppendAscii(source);
+    stack i8[min max][] sourceBytes = sourceText.AsSlice();
+
+    switch (Lex(sourceBytes))
+    {
+        case LexResult<TokenStream>.Ok(var stream):
+            return LowerExprStream(stream, sourceBytes, sink);
+        case LexResult<TokenStream>.Err(var lexError):
+            return false;
+    }
+}
+
+// === If-from-source -> branching control flow (toward bootstrap, #33) ===
+// Lowers `if <a> <cmp> <b> <then> else <else>` (single-primary operands) to a real
+// diamond CFG: compare a/b, conditionally branch, and merge the then/else values with
+// a phi. This wires the front end's `if` to the multi-block back end emitter.
+
+internal fn bool LowerIfStream(borrow TokenStream stream, borrow i8[min max][] source, mut borrow OwnedAscii sink)
+{
+    stack i64[min max] ifIndex = FirstTokenOfKind(stream, TokenKind.If);
+    stack i64[min max] elseKeyword = FirstTokenOfKind(stream, TokenKind.Else);
+    if (ifIndex < 0 || elseKeyword < 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] base = (u64[0 2 ** 63 - 1])ifIndex;
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<ParamName> params = new();
+    BuildParamTable(stream, source, params);
+    stack mut IrTable<LocalBinding> locals = new();
+
+    // Entry block: `<lhs> <cmp> <rhs>` (single-primary operands), ending in a compare.
+    stack MirValueId lhs = LowerPrimary(stream, source, params, locals, instrs, base + 1);
+    stack MirValueId rhs = LowerPrimary(stream, source, params, locals, instrs, base + 3);
+    stack MirValueId comparison = LowerComparison(instrs, stream.KindAt(base + 2), lhs, rhs);
+    stack u32[0 max] entryCount = (u32[0 max])instrs.Count();
+
+    // Then arm: the expression after the comparison; its instructions form the then
+    // block. `FoldExpr` stops at `else`.
+    stack u32[0 max] thenFirst = entryCount + 1;
+    stack MirValueId thenValue = FoldExpr(stream, source, params, locals, instrs, base + 4);
+    stack u32[0 max] thenCount = (u32[0 max])instrs.Count() - entryCount;
+
+    // Else arm: the expression after `else`; its instructions form the else block.
+    stack i64[min max] elseArm = FirstPrimaryIndexAfter(stream, (u64[0 2 ** 63 - 1])elseKeyword);
+    stack u32[0 max] elseFirst = (u32[0 max])instrs.Count() + 1;
+    stack MirValueId elseValue = FoldExpr(stream, source, params, locals, instrs, (u64[0 2 ** 63 - 1])elseArm);
+    stack u32[0 max] elseCount = (u32[0 max])instrs.Count() - (elseFirst - 1);
+
+    // Merge block: a phi selecting the then/else value, then a return.
+    stack MirValueId phi = MirPhi2(instrs, thenValue, MirBlockIdOf(2), elseValue, MirBlockIdOf(3));
+
+    // Blocks, created in order so their ids are b1..b4.
+    stack MirBlockId entry = MirCondBlock(blocks, comparison, MirBlockIdOf(2), MirBlockIdOf(3));
+    stack MirBlockId thenBlock = MirBranchBlock(blocks, MirBlockIdOf(4));
+    stack MirBlockId elseBlock = MirBranchBlock(blocks, MirBlockIdOf(4));
+    stack MirBlockId mergeBlock = MirReturnBlock(blocks, phi);
+
+    stack u32[0 max] paramCount = (u32[0 max])params.Count();
+    stack System.Memory.MemoryStatus emitStatus = EmitLlvmDiamond(instrs, blocks, "main", paramCount, entry.Index(), 1, entryCount, thenBlock.Index(), thenFirst, thenCount, elseBlock.Index(), elseFirst, elseCount, mergeBlock.Index(), phi.Index(), 1, sink);
+    return true;
+}
+
+// Lexes and lowers an `if <a> <cmp> <b> <then> else <else>` program to a branching
+// LLVM `@main` (with a phi merge).
+public fn bool LowerIfToLlvm(ascii source, mut borrow OwnedAscii sink)
+{
+    stack mut OwnedAscii sourceText = new();
+    stack System.Memory.MemoryStatus copyStatus = sourceText.AppendAscii(source);
+    stack i8[min max][] sourceBytes = sourceText.AsSlice();
+
+    switch (Lex(sourceBytes))
+    {
+        case LexResult<TokenStream>.Ok(var stream):
+            return LowerIfStream(stream, sourceBytes, sink);
+        case LexResult<TokenStream>.Err(var lexError):
+            return false;
+    }
+}
+
+// === Multi-function modules + cross-function calls (toward bootstrap, #33) ===
+// Lowers `(fn <name>() { return <body> })+` to an LLVM module with one function per
+// definition. A body is either an arithmetic expression or a call `<name>()` to
+// another function in the module (resolved by name to its id), demonstrating
+// cross-function calls. Functions emit as `@fN` in definition order.
+
+// Lowers a function body's `return` expression starting at the primary `exprStart`:
+// an `<identifier> (` is a call to the named function (looked up in `funcNames`);
+// otherwise it is an arithmetic expression.
+internal fn MirValueId LowerReturnBody(borrow TokenStream stream, borrow i8[min max][] source, borrow IrTable<ParamName> funcNames, borrow IrTable<ParamName> params, mut borrow IrTable<MirInstruction> instrs, u64[0 2 ** 63 - 1] exprStart)
+{
+    // `<identifier> (` is a call to a named function (optionally with one argument).
+    if (stream.KindAt(exprStart) == TokenKind.Identifier && stream.KindAt(exprStart + 1) == TokenKind.LParen)
+    {
+        stack i64[min max] calleeIndex = ParamIndexOf(funcNames, source, stream.StartAt(exprStart), stream.LengthAt(exprStart));
+        if (calleeIndex >= 0)
+        {
+            stack mut IrTable<LocalBinding> noLocals = new();
+            if (IsPrimaryToken(stream.KindAt(exprStart + 2)))
+            {
+                stack MirValueId argument = LowerPrimary(stream, source, params, noLocals, instrs, exprStart + 2);
+                return MirCall1(instrs, MirFuncIdOf((u32[0 max])(calleeIndex + 1)), argument);
+            }
+
+            return MirCall(instrs, MirFuncIdOf((u32[0 max])(calleeIndex + 1)));
+        }
+    }
+
+    stack mut IrTable<LocalBinding> bodyLocals = new();
+    return FoldExpr(stream, source, params, bodyLocals, instrs, exprStart);
+}
+
+internal fn bool LowerModuleStream(borrow TokenStream stream, borrow i8[min max][] source, mut borrow OwnedAscii sink)
+{
+    stack u64[0 2 ** 63 - 1] tokenCount = stream.Count();
+
+    // Function name table (definition order = id order). The name follows `fn`.
+    stack mut IrTable<ParamName> funcNames = new();
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < tokenCount)
+    {
+        if (stream.KindAt(i) == TokenKind.Fn)
+        {
+            stack mut ParamName name = new();
+            name.Start = stream.StartAt(i + 1);
+            name.Length = stream.LengthAt(i + 1);
+            stack u32[0 max] added = funcNames.Add(name);
+        }
+
+        i = i + 1;
+    }
+
+    if (funcNames.Count() == 0)
+    {
+        return false;
+    }
+
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+
+    // Lower + emit each function in definition order. Layout: `fn <name> ( <param>? )
+    // { return <body> }` — so the optional parameter is the token at the fn index + 3.
+    stack mut u32[0 max] functionNumber = 0;
+    stack mut u64[0 2 ** 63 - 1] f = 0;
+    while willexit (f < tokenCount)
+    {
+        if (stream.KindAt(f) == TokenKind.Fn)
+        {
+            functionNumber = functionNumber + 1;
+
+            stack mut IrTable<ParamName> params = new();
+            if (stream.KindAt(f + 3) == TokenKind.Identifier)
+            {
+                stack mut ParamName param = new();
+                param.Start = stream.StartAt(f + 3);
+                param.Length = stream.LengthAt(f + 3);
+                stack u32[0 max] addedParam = params.Add(param);
+            }
+
+            stack u32[0 max] paramCount = (u32[0 max])params.Count();
+            stack i64[min max] returnIndex = FirstTokenOfKindAfter(stream, TokenKind.Return, f);
+            if (returnIndex >= 0)
+            {
+                stack i64[min max] exprStart = FirstPrimaryIndexAfter(stream, (u64[0 2 ** 63 - 1])returnIndex);
+                if (exprStart >= 0)
+                {
+                    stack u32[0 max] firstInstr = (u32[0 max])instrs.Count() + 1;
+                    stack MirValueId value = LowerReturnBody(stream, source, funcNames, params, instrs, (u64[0 2 ** 63 - 1])exprStart);
+                    stack MirBlockId entry = MirReturnBlock(blocks, value);
+                    stack u32[0 max] instrCount = (u32[0 max])instrs.Count() - (firstInstr - 1);
+                    stack System.Memory.MemoryStatus emitStatus = EmitLlvmNumberedFunction(instrs, blocks, "f", functionNumber, paramCount, entry.Index(), firstInstr, instrCount, sink);
+                }
+            }
+        }
+
+        f = f + 1;
+    }
+
+    return true;
+}
+
+// Lowers a counting loop `var <i> = <init>; while <i> <cmp> <bound> { <i> = <i> <op>
+// <step> } return <i>` to a four-block loop CFG (preheader, header with an induction
+// phi, body, exit). The loop variable is single-assignment in SSA: its preheader value
+// feeds one phi incoming, its body update (`<i> <op> <step>`) the other (back-edge).
+internal fn bool LowerCountingLoopStream(borrow TokenStream stream, borrow i8[min max][] source, mut borrow OwnedAscii sink)
+{
+    stack i64[min max] whileIdx = FirstTokenOfKind(stream, TokenKind.While);
+    stack i64[min max] cmpIdx = FirstComparisonIndex(stream);
+    stack i64[min max] initIdx = FirstIntLiteralIndex(stream);
+    if (whileIdx < 0 || cmpIdx < 0 || initIdx < 0)
+    {
+        return false;
+    }
+
+    // The `=` inside the body follows `while`; its RHS is `<i> <op> <step>`.
+    stack i64[min max] bodyAssign = FirstTokenOfKindAfter(stream, TokenKind.Assign, (u64[0 2 ** 63 - 1])whileIdx);
+    if (bodyAssign < 0)
+    {
+        return false;
+    }
+
+    stack TokenKind cmpOp = stream.KindAt((u64[0 2 ** 63 - 1])cmpIdx);
+    stack TokenKind updateOp = stream.KindAt((u64[0 2 ** 63 - 1])bodyAssign + 2);
+    stack i64[min max] loopInit = ParseDigitSpan(source, stream.StartAt((u64[0 2 ** 63 - 1])initIdx), stream.LengthAt((u64[0 2 ** 63 - 1])initIdx));
+    stack i64[min max] bound = ParseDigitSpan(source, stream.StartAt((u64[0 2 ** 63 - 1])cmpIdx + 1), stream.LengthAt((u64[0 2 ** 63 - 1])cmpIdx + 1));
+    stack i64[min max] step = ParseDigitSpan(source, stream.StartAt((u64[0 2 ** 63 - 1])bodyAssign + 3), stream.LengthAt((u64[0 2 ** 63 - 1])bodyAssign + 3));
+
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+
+    // Preheader constants (%v1..%v3); all loop-invariant.
+    stack MirValueId initConst = MirConstInt(instrs, loopInit);
+    stack MirValueId boundConst = MirConstInt(instrs, bound);
+    stack MirValueId stepConst = MirConstInt(instrs, step);
+    // Header: induction phi (%v4) — [ init, preheader(b1) ], [ iNext(%v6), body(b3) ] —
+    // then the comparison (%v5). iNext is forward-referenced (it lives in the body).
+    stack MirValueId iVar = MirPhi2(instrs, initConst, MirBlockIdOf(1), MirValueIdOf(6), MirBlockIdOf(3));
+    stack MirValueId cond = LowerComparison(instrs, cmpOp, iVar, boundConst);
+    // Body: the update (%v6).
+    stack MirValueId iNext = LowerBinOp(instrs, updateOp, iVar, stepConst);
+
+    // Blocks: entry(b1), header(b2), body(b3), exit(b4).
+    stack MirBlockId entry = MirBranchBlock(blocks, MirBlockIdOf(2));
+    stack MirBlockId header = MirCondBlock(blocks, cond, MirBlockIdOf(3), MirBlockIdOf(4));
+    stack MirBlockId body = MirBranchBlock(blocks, MirBlockIdOf(2));
+    stack MirBlockId exit = MirReturnBlock(blocks, iVar);
+
+    switch (EmitLlvmDiamond(instrs, blocks, "main", 0, entry.Index(), 1, 3, header.Index(), 4, 2, body.Index(), 6, 1, exit.Index(), 8, 0, sink))
+    {
+        case MemoryStatus.Ok:
+            return true;
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+// Lexes and lowers a counting-loop program to a branching LLVM `@main` function.
+public fn bool LowerCountingLoopToLlvm(ascii source, mut borrow OwnedAscii sink)
+{
+    stack mut OwnedAscii sourceText = new();
+    stack System.Memory.MemoryStatus copyStatus = sourceText.AppendAscii(source);
+    stack i8[min max][] sourceBytes = sourceText.AsSlice();
+
+    switch (Lex(sourceBytes))
+    {
+        case LexResult<TokenStream>.Ok(var stream):
+            return LowerCountingLoopStream(stream, sourceBytes, sink);
+        case LexResult<TokenStream>.Err(var lexError):
+            return false;
+    }
+}
+
+// Lexes and lowers a `(fn <name>() { return <body> })+` program to an LLVM module.
+public fn bool LowerModuleToLlvm(ascii source, mut borrow OwnedAscii sink)
+{
+    stack mut OwnedAscii sourceText = new();
+    stack System.Memory.MemoryStatus copyStatus = sourceText.AppendAscii(source);
+    stack i8[min max][] sourceBytes = sourceText.AsSlice();
+
+    switch (Lex(sourceBytes))
+    {
+        case LexResult<TokenStream>.Ok(var stream):
+            return LowerModuleStream(stream, sourceBytes, sink);
+        case LexResult<TokenStream>.Err(var lexError):
+            return false;
     }
 }
