@@ -1,0 +1,849 @@
+import CompilerMirTestSupport
+import System.Testing
+module MidLevelIrLoweringTests_RuntimeDropLowererP1
+
+// Ported from MidLevelIrLoweringTests.RuntimeDropLowerer.DestructorBlocksLowerBeforeStorageDeadAtScopeExit.
+// PORT-NOTE: the C# original walks the typed MIR statement list of `Run`, finds
+// the index of the direct `Bump` call statement and the index of the
+// `StorageDead` statement targeting `box`, and asserts the call comes strictly
+// before storage-dead. The text helpers cannot index statements or read the
+// StorageDead statement kind, so this is reduced to the rendered MIR text: the
+// program lowers cleanly, the destructor `Bump` call is emitted, and the
+// `box` storage-dead marker is present. Strict ordering of the two cannot be
+// expressed over the flat text contains-check.
+public unsafe fn bool DestructorBlocksLowerBeforeStorageDeadAtScopeExitImpl()
+{
+    stack mut MirCompile c = CompileMir(
+        "mir-runtimedrop-p1-destructor-before-storagedead",
+        raw"""
+        module Demo
+
+        static mut i32[min max] Counter = 0;
+
+        unsafe fn void Bump(i32[min max] value)
+        {
+            Counter = Counter + value;
+            return;
+        }
+
+        struct Buffer
+        {
+            i32[min max] Value;
+
+            drop
+            {
+                Bump(self.Value);
+            }
+        }
+
+        unsafe fn void Run()
+        {
+            stack Buffer box = new Buffer()
+            {
+                Value = 4
+            };
+            return;
+        }
+        """);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return MirContains(c, "eval Bump(")
+        && MirContains(c, "storage-dead box");
+}
+
+// Ported from MidLevelIrLoweringTests.RuntimeDropLowerer.WholeLocalDestructorDropsInPlaceWithoutCopyingToDropTemporary.
+// PORT-NOTE: the C# original asserts the `Run` statement list contains a direct
+// `Bump` call and does NOT contain any Assign statement whose target name
+// includes "_drop" (i.e. the whole-local drop runs in place, not via a copied
+// drop temporary). The text helpers cannot read statement kinds or target
+// names, so this is reduced to: the destructor `Bump` call is present and the
+// rendered text contains no "_drop" temporary assignment.
+public unsafe fn bool WholeLocalDestructorDropsInPlaceWithoutCopyingToDropTemporaryImpl()
+{
+    stack mut MirCompile c = CompileMir(
+        "mir-runtimedrop-p1-whole-local-in-place",
+        raw"""
+        module Demo
+
+        unsafe fn void Bump(i32[min max] value)
+        {
+            return;
+        }
+
+        struct Buffer
+        {
+            i8[min max][512] Data;
+            i32[min max] Value;
+
+            mut drop
+            {
+                self.Value = 0;
+                Bump(1);
+            }
+        }
+
+        unsafe fn void Run()
+        {
+            stack mut Buffer buffer = new Buffer();
+            return;
+        }
+        """);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return MirContains(c, "eval Bump(")
+        && MirDoesNotContain(c, "_drop = ");
+}
+
+// Ported from MidLevelIrLoweringTests.RuntimeDropLowerer.EarlyReturnBranchDropDoesNotSuppressFallthroughScopeDrop.
+// PORT-NOTE: the C# original counts the direct `Bump` call statements across all
+// of `Run`'s blocks and asserts exactly 2 (one on the early-return branch, one
+// on fallthrough). The text helpers approximate the per-statement call count by
+// counting occurrences of the call-statement rendering `eval Bump(` in the MIR
+// text.
+public unsafe fn bool EarlyReturnBranchDropDoesNotSuppressFallthroughScopeDropImpl()
+{
+    stack mut MirCompile c = CompileMir(
+        "mir-runtimedrop-p1-earlyreturn-fallthrough",
+        raw"""
+        module Demo
+
+        static mut i32[min max] Counter = 0;
+
+        unsafe fn void Bump(i32[min max] value)
+        {
+            Counter = Counter + value;
+            return;
+        }
+
+        struct Buffer
+        {
+            i32[min max] Value;
+
+            drop
+            {
+                Bump(self.Value);
+            }
+        }
+
+        unsafe fn void Run(bool fail)
+        {
+            stack Buffer box = new Buffer()
+            {
+                Value = 4
+            };
+            if (fail)
+            {
+                return;
+            }
+
+            return;
+        }
+        """);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return MirOccurrences(c, "eval Bump(") == 2;
+}
+
+// Ported from MidLevelIrLoweringTests.RuntimeDropLowerer.ReassigningADestructibleLocalLowersTheOldDropBeforeOverwrite.
+// PORT-NOTE: the C# original collects the indexed Assign statements targeting
+// `box` (asserting exactly 2) and the indexed direct `Bump` call statements
+// (asserting >= 2), then checks the first drop call falls strictly between the
+// first and second `box` assignment. The text helpers cannot index statements
+// or read Assign target names, so this is reduced to: two `box` assignments and
+// at least two destructor `Bump` calls appear in the rendered text. The
+// interleaving order constraint cannot be expressed over the flat text.
+public unsafe fn bool ReassigningADestructibleLocalLowersTheOldDropBeforeOverwriteImpl()
+{
+    stack mut MirCompile c = CompileMir(
+        "mir-runtimedrop-p1-reassign-old-drop",
+        raw"""
+        module Demo
+
+        static mut i32[min max] Counter = 0;
+
+        unsafe fn void Bump(i32[min max] value)
+        {
+            Counter = Counter + value;
+            return;
+        }
+
+        struct Buffer
+        {
+            i32[min max] Value;
+
+            drop
+            {
+                Bump(self.Value);
+            }
+        }
+
+        unsafe fn void Run()
+        {
+            stack mut Buffer box = new Buffer()
+            {
+                Value = 1
+            };
+            box = new Buffer()
+            {
+                Value = 7
+            };
+            return;
+        }
+        """);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return MirOccurrences(c, "box = ") == 2
+        && MirOccurrences(c, "eval Bump(") >= 2;
+}
+
+// Ported from MidLevelIrLoweringTests.RuntimeDropLowerer.DynamicStorageDropsInitializedElementsBeforeFreeingBackingStorage.
+// PORT-NOTE: the C# original asserts `Run` has blocks labeled
+// "dynamic_drop_cond" and "dynamic_drop_body", contains a direct `Bump` call
+// statement, and contains a statement whose value is a
+// MidLevelIrDynamicStorageFreeRValue (the backing-store free). The text helpers
+// cannot read the typed rvalue object, so the free check is reduced to the
+// rendered block labels plus the destructor `Bump` call and a "dynamic-free"
+// text marker for the backing-storage free.
+public unsafe fn bool DynamicStorageDropsInitializedElementsBeforeFreeingBackingStorageImpl()
+{
+    stack mut MirCompile c = CompileMir(
+        "mir-runtimedrop-p1-dynamic-drop-then-free",
+        raw"""
+        module Demo
+
+        static mut i32[min max] Counter = 0;
+
+        unsafe fn void Bump(i32[min max] value)
+        {
+            Counter = Counter + value;
+            return;
+        }
+
+        struct Token
+        {
+            i32[min max] Value;
+
+            drop
+            {
+                Bump(self.Value);
+            }
+        }
+
+        unsafe fn void Run()
+        {
+            stack mut dynamic Token values = new(2);
+            init values[0] = new Token()
+            {
+                Value = 1
+            };
+            init values[1] = new Token()
+            {
+                Value = 2
+            };
+            return;
+        }
+        """);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return MirContainsAll2(c, "dynamic_drop_cond", "dynamic_drop_body")
+        && MirContains(c, "eval Bump(")
+        && MirContains(c, "dynamic-free");
+}
+
+// Ported from MidLevelIrLoweringTests.RuntimeDropLowerer.EnumPayloadCaptureDropsMovedPayloadOnlyOnce.
+// PORT-NOTE: the C# original counts direct `Bump` call statements in `Run` and
+// asserts exactly 1 (the moved enum payload is dropped once, through the capture
+// binding, not also at the enum's scope). Reduced to counting `eval Bump(`
+// occurrences in the rendered MIR text.
+public unsafe fn bool EnumPayloadCaptureDropsMovedPayloadOnlyOnceImpl()
+{
+    stack mut MirCompile c = CompileMir(
+        "mir-runtimedrop-p1-enum-payload-once",
+        raw"""
+        module Demo
+
+        static mut i32[min max] Counter = 0;
+
+        unsafe fn void Bump(i32[min max] value)
+        {
+            Counter = Counter + value;
+            return;
+        }
+
+        struct Resource
+        {
+            i32[min max] Value;
+
+            drop
+            {
+                Bump(self.Value);
+            }
+        }
+
+        enum Slot
+        {
+            Free,
+            Occupied(Resource),
+        }
+
+        unsafe fn void Run()
+        {
+            stack Slot slot = Slot.Occupied(new Resource()
+            {
+                Value = 7
+            });
+            switch (slot)
+            {
+                case Slot.Occupied(var payload):
+                    stack Resource value = payload;
+                case Slot.Free:
+            }
+
+            return;
+        }
+        """);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return MirOccurrences(c, "eval Bump(") == 1;
+}
+
+// Ported from MidLevelIrLoweringTests.RuntimeDropLowerer.LargeEnumPayloadCaptureDropsMovedPayloadOnlyOnce.
+// PORT-NOTE: the C# original counts direct `Bump` call statements in `Run` and
+// asserts exactly 1 for a large (out-of-line) enum payload moved into a capture
+// binding. Reduced to counting `eval Bump(` occurrences in the rendered MIR
+// text.
+public unsafe fn bool LargeEnumPayloadCaptureDropsMovedPayloadOnlyOnceImpl()
+{
+    stack mut MirCompile c = CompileMir(
+        "mir-runtimedrop-p1-large-enum-payload-once",
+        raw"""
+        module Demo
+
+        unsafe fn void Bump(i32[min max] value)
+        {
+            return;
+        }
+
+        struct LargeResource
+        {
+            i8[min max][512] Data;
+            i32[min max] Value;
+
+            drop
+            {
+                Bump(self.Value);
+            }
+        }
+
+        enum Result
+        {
+            Ok(LargeResource),
+            Err(i32[min max])
+        }
+
+        unsafe fn Result MakeOk()
+        {
+            stack mut LargeResource resource = new LargeResource();
+            resource.Value = 7;
+            return Result.Ok(resource);
+        }
+
+        unsafe fn void Run()
+        {
+            stack Result result = MakeOk();
+            switch (result)
+            {
+                case Result.Ok(var payload):
+                    stack LargeResource value = payload;
+                case Result.Err(var code):
+            }
+
+            return;
+        }
+        """);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return MirOccurrences(c, "eval Bump(") == 1;
+}
+
+// Ported from MidLevelIrLoweringTests.RuntimeDropLowerer.LargeEnumPayloadCaptureEarlyReturnKeepsDropCleanup.
+// PORT-NOTE: the C# original counts direct `Bump` call statements in `Run` and
+// asserts at least 1 survives even when each switch arm returns early. Reduced
+// to counting `eval Bump(` occurrences in the rendered MIR text.
+public unsafe fn bool LargeEnumPayloadCaptureEarlyReturnKeepsDropCleanupImpl()
+{
+    stack mut MirCompile c = CompileMir(
+        "mir-runtimedrop-p1-large-enum-earlyreturn-cleanup",
+        raw"""
+        module Demo
+
+        unsafe fn void Bump(i32[min max] value)
+        {
+            return;
+        }
+
+        struct LargeResource
+        {
+            i8[min max][512] Data;
+            i32[min max] Value;
+
+            drop
+            {
+                Bump(self.Value);
+            }
+        }
+
+        enum Result
+        {
+            Ok(LargeResource),
+            Err(i32[min max])
+        }
+
+        unsafe fn Result MakeOk()
+        {
+            stack mut LargeResource resource = new LargeResource();
+            resource.Value = 7;
+            return Result.Ok(resource);
+        }
+
+        unsafe fn void Run()
+        {
+            stack Result result = MakeOk();
+            switch (result)
+            {
+                case Result.Ok(var payload):
+                    stack LargeResource value = payload;
+                    return;
+                case Result.Err(var code):
+                    return;
+            }
+        }
+        """);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return MirOccurrences(c, "eval Bump(") >= 1;
+}
+
+// Ported from MidLevelIrLoweringTests.RuntimeDropLowerer.LargeEnumPayloadReassignmentDropsOldAndReplacementOnce.
+// PORT-NOTE: the C# original counts direct `Bump` call statements in `Run` and
+// asserts exactly 2 (the old captured payload and the reassigned replacement are
+// each dropped once). Reduced to counting `eval Bump(` occurrences in the
+// rendered MIR text.
+public unsafe fn bool LargeEnumPayloadReassignmentDropsOldAndReplacementOnceImpl()
+{
+    stack mut MirCompile c = CompileMir(
+        "mir-runtimedrop-p1-large-enum-reassign-twice",
+        raw"""
+        module Demo
+
+        unsafe fn void Bump(i32[min max] value)
+        {
+            return;
+        }
+
+        struct LargeResource
+        {
+            i8[min max][512] Data;
+            i32[min max] Value;
+
+            drop
+            {
+                Bump(self.Value);
+            }
+        }
+
+        enum Result
+        {
+            Ok(LargeResource),
+            Err(i32[min max])
+        }
+
+        unsafe fn LargeResource MakeResource(i32[min max] value)
+        {
+            stack mut LargeResource resource = new LargeResource();
+            resource.Value = value;
+            return resource;
+        }
+
+        unsafe fn Result MakeOk()
+        {
+            stack LargeResource resource = MakeResource(7);
+            return Result.Ok(resource);
+        }
+
+        unsafe fn void Run()
+        {
+            stack Result result = MakeOk();
+            switch (result)
+            {
+                case Result.Ok(var payload):
+                    stack mut LargeResource value = payload;
+                    value = MakeResource(11);
+                case Result.Err(var code):
+            }
+
+            return;
+        }
+        """);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return MirOccurrences(c, "eval Bump(") == 2;
+}
+
+// Ported from MidLevelIrLoweringTests.RuntimeDropLowerer.PrimaryConstructorArgumentsMoveIntoReturnedOwnerDropState.
+// PORT-NOTE: the C# original counts direct `Bump` call statements in `Run` and
+// asserts exactly 1 (the resource is moved into the record's primary-constructor
+// field and dropped once through the owning `box`, not also through `owned`).
+// Reduced to counting `eval Bump(` occurrences in the rendered MIR text.
+public unsafe fn bool PrimaryConstructorArgumentsMoveIntoReturnedOwnerDropStateImpl()
+{
+    stack mut MirCompile c = CompileMir(
+        "mir-runtimedrop-p1-primary-ctor-move-owner",
+        raw"""
+        module Demo
+
+        static mut i32[min max] Counter = 0;
+
+        unsafe fn void Bump(i32[min max] value)
+        {
+            Counter = Counter + value;
+            return;
+        }
+
+        struct Resource
+        {
+            i32[min max] Value;
+
+            drop
+            {
+                Bump(self.Value);
+            }
+        }
+
+        record Box(Resource Item)
+        {
+        }
+
+        unsafe fn void Run()
+        {
+            stack Resource owned = new Resource()
+            {
+                Value = 5
+            };
+            stack Box box = new Box(owned);
+            return;
+        }
+        """);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return MirOccurrences(c, "eval Bump(") == 1;
+}
+
+// Ported from MidLevelIrLoweringTests.RuntimeDropLowerer.ExplicitConstructorArgumentsMoveIntoReturnedOwnerDropState.
+// PORT-NOTE: the C# original counts direct `Bump` call statements in `Run` and
+// asserts exactly 1 (the resource is moved into the struct's explicit
+// constructor field and dropped once through the owning `box`). Reduced to
+// counting `eval Bump(` occurrences in the rendered MIR text.
+public unsafe fn bool ExplicitConstructorArgumentsMoveIntoReturnedOwnerDropStateImpl()
+{
+    stack mut MirCompile c = CompileMir(
+        "mir-runtimedrop-p1-explicit-ctor-move-owner",
+        raw"""
+        module Demo
+
+        static mut i32[min max] Counter = 0;
+
+        unsafe fn void Bump(i32[min max] value)
+        {
+            Counter = Counter + value;
+            return;
+        }
+
+        struct Resource
+        {
+            i32[min max] Value;
+
+            drop
+            {
+                Bump(self.Value);
+            }
+        }
+
+        struct Box
+        {
+            Resource Item;
+
+            Box(Resource item)
+            {
+                self.Item = item;
+            }
+        }
+
+        unsafe fn void Run()
+        {
+            stack Resource owned = new Resource()
+            {
+                Value = 5
+            };
+            stack Box box = new Box(owned);
+            return;
+        }
+        """);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return MirOccurrences(c, "eval Bump(") == 1;
+}
+
+// Ported from MidLevelIrLoweringTests.RuntimeDropLowerer.FixedArrayElementsCascadeRuntimeDrops.
+// PORT-NOTE: the C# original counts direct `Bump` call statements in `Run` and
+// asserts exactly 2 (each fixed-array element runs its destructor as the array
+// goes out of scope). Reduced to counting `eval Bump(` occurrences in the
+// rendered MIR text.
+public unsafe fn bool FixedArrayElementsCascadeRuntimeDropsImpl()
+{
+    stack mut MirCompile c = CompileMir(
+        "mir-runtimedrop-p1-fixed-array-cascade",
+        raw"""
+        module Demo
+
+        static mut i32[min max] Counter = 0;
+
+        unsafe fn void Bump(i32[min max] value)
+        {
+            Counter = Counter + value;
+            return;
+        }
+
+        struct Resource
+        {
+            i32[min max] Value;
+
+            drop
+            {
+                Bump(self.Value);
+            }
+        }
+
+        unsafe fn void Run()
+        {
+            stack Resource first = new Resource()
+            {
+                Value = 1
+            };
+            stack Resource second = new Resource()
+            {
+                Value = 2
+            };
+            stack Resource[2] resources =
+            {
+                first, second
+            };
+            return;
+        }
+        """);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return MirOccurrences(c, "eval Bump(") == 2;
+}
+
+// Ported from MidLevelIrLoweringTests.RuntimeDropLowerer.HeapBackedFixedArrayElementsDropBeforeStorageDead.
+// PORT-NOTE: the C# original collects the indexed direct `Bump` call statements
+// in `Run` (asserting exactly 2) and the index of the `StorageDead` statement
+// targeting `resources`, then asserts storage-dead comes strictly after the last
+// drop call. The text helpers cannot index statements or read the StorageDead
+// statement kind, so this is reduced to: exactly two destructor `Bump` calls and
+// a `resources` storage-dead marker in the rendered text. The strict ordering of
+// the free relative to the drops cannot be expressed over the flat text.
+public unsafe fn bool HeapBackedFixedArrayElementsDropBeforeStorageDeadImpl()
+{
+    stack mut MirCompile c = CompileMir(
+        "mir-runtimedrop-p1-heap-fixed-array-before-storagedead",
+        raw"""
+        module Demo
+
+        static mut i32[min max] Counter = 0;
+
+        unsafe fn void Bump(i32[min max] value)
+        {
+            Counter = Counter + value;
+            return;
+        }
+
+        struct Resource
+        {
+            i32[min max] Value;
+
+            drop
+            {
+                Bump(self.Value);
+            }
+        }
+
+        unsafe fn void Run()
+        {
+            stack Resource first = new Resource()
+            {
+                Value = 1
+            };
+            stack Resource second = new Resource()
+            {
+                Value = 2
+            };
+            heap Resource[2] resources =
+            {
+                first, second
+            };
+            return;
+        }
+        """);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return MirOccurrences(c, "eval Bump(") == 2
+        && MirContains(c, "storage-dead resources");
+}
+
+// Ported from MidLevelIrLoweringTests.RuntimeDropLowerer.ImportedTypeDestructorsResolveHelpersInTheirDefiningModule.
+// PORT-NOTE: the C# original drives a two-module compile via an in-memory module
+// resolver (Demo importing Lib) and asserts `Run`'s statement list contains a
+// direct call to the cross-module-qualified helper "Lib.Bump" (the imported
+// type's destructor resolves its helper in Lib, not Demo). The MIR text harness
+// here drives a single source through CompileMir and cannot inject a second
+// resolved module, so the multi-module setup is reduced to the closest single
+// signal: the program is concatenated into one module and we assert it lowers
+// cleanly and emits the destructor `Bump` call. The cross-module
+// helper-resolution qualification ("Lib.Bump") cannot be reproduced without the
+// module resolver.
+public unsafe fn bool ImportedTypeDestructorsResolveHelpersInTheirDefiningModuleImpl()
+{
+    stack mut MirCompile c = CompileMir(
+        "mir-runtimedrop-p1-imported-destructor-helper",
+        raw"""
+        module Demo
+
+        unsafe fn void Bump(i32[min max] value)
+        {
+            return;
+        }
+
+        public struct Buffer
+        {
+            i32[min max] Value;
+
+            drop
+            {
+                Bump(self.Value);
+            }
+        }
+
+        unsafe fn void Run()
+        {
+            stack Buffer box = new Buffer()
+            {
+                Value = 4
+            };
+            return;
+        }
+        """);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return MirContains(c, "eval Bump(");
+}
+
+// Ported from MidLevelIrLoweringTests.RuntimeDropLowerer.EnumPayloadDropsLowerThroughActiveTagDispatch.
+// PORT-NOTE: the C# original asserts `Run` has a block whose label contains
+// "enum_drop_" (the per-tag drop dispatch), contains a direct `Bump` call
+// statement, and contains a `StorageDead` statement targeting `token`. The text
+// helpers cannot read the StorageDead statement kind, so that check is reduced
+// to the `token` storage-dead text marker alongside the enum-drop block label
+// and the destructor `Bump` call.
+public unsafe fn bool EnumPayloadDropsLowerThroughActiveTagDispatchImpl()
+{
+    stack mut MirCompile c = CompileMir(
+        "mir-runtimedrop-p1-enum-active-tag-dispatch",
+        raw"""
+        module Demo
+
+        static mut i32[min max] Counter = 0;
+
+        unsafe fn void Bump(i32[min max] value)
+        {
+            Counter = Counter + value;
+            return;
+        }
+
+        struct Resource
+        {
+            i32[min max] Value;
+
+            drop
+            {
+                Bump(self.Value);
+            }
+        }
+
+        enum Token
+        {
+            End,
+            Text(Resource),
+        }
+
+        unsafe fn void Run()
+        {
+            stack Token token = Token.Text(new Resource()
+            {
+                Value = 4
+            });
+            return;
+        }
+        """);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return MirContains(c, "enum_drop_")
+        && MirContains(c, "eval Bump(")
+        && MirContains(c, "storage-dead token");
+}

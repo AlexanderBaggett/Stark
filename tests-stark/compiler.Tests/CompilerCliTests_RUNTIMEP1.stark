@@ -1,0 +1,174 @@
+import CompilerTestSupport
+import System.Testing
+module CompilerCliTests_RUNTIMEP1
+
+// Ported slice of tests/compiler.IntegrationTests/CompilerCliTests.cs. These are
+// CLI integration tests whose original assertions cover runtime exit codes,
+// emitted-file existence, package-image bytes, and CLI stdout text. The Stark
+// compile helpers cannot observe those effects, so each Impl reduces to driving
+// the embedded program(s) through the closest compile helper and asserting the
+// nearest available success signal. See per-method `// PORT-NOTE:` comments.
+
+// Ported from CompilerCliTests.DefaultModeInfersExecutableFromExportedMain.
+public unsafe fn bool DefaultModeInfersExecutableFromExportedMainImpl()
+{
+    // PORT-NOTE: original asserts CLI exit 0, "Emitted executable:" stdout, the
+    // output file exists, and the linked program exits with code 7. Reduced to a
+    // full-pipeline compile of the embedded program returning Succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "cli-default-exe-from-main",
+        raw"""
+module App
+
+export fn i32[min max] main()
+{
+    return 7;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from CompilerCliTests.DefaultModeInfersLibraryWhenRootHasNoExportedMain.
+public unsafe fn bool DefaultModeInfersLibraryWhenRootHasNoExportedMainImpl()
+{
+    // PORT-NOTE: original asserts CLI exit 0, "Emitted static library:" and
+    // "Emitted package image:" stdout, and that both the .a/.lib and .starkpkg
+    // files exist. Reduced to a full-pipeline compile of the embedded program
+    // returning Succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "cli-default-lib-no-main",
+        raw"""
+module Facade
+
+public finite law i32[min max] Double(i32[min max] value)
+{
+    return value + value;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from CompilerCliTests.EmitObjectModeWritesObjectFile.
+public unsafe fn bool EmitObjectModeWritesObjectFileImpl()
+{
+    // PORT-NOTE: original asserts --emit-obj exit 0, "Emitted object file:"
+    // stdout, and a non-empty object file on disk. Reduced to a full-pipeline
+    // compile of the embedded program returning Succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "cli-emit-obj-writes-object",
+        raw"""
+module Demo
+
+fn i32[min max] Run()
+{
+    return 7;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from CompilerCliTests.CompileOnlyAliasWritesObjectFile.
+public unsafe fn bool CompileOnlyAliasWritesObjectFileImpl()
+{
+    // PORT-NOTE: original asserts the --compile-only alias behaves like
+    // --emit-obj: exit 0, "Emitted object file:" stdout, and a non-empty object
+    // file on disk. Reduced to a full-pipeline compile of the embedded program
+    // returning Succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "cli-compile-only-writes-object",
+        raw"""
+module Demo
+
+fn i32[min max] Run()
+{
+    return 7;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from CompilerCliTests.EmitExecutableModeBuildsImportedAggregateDependencies.
+public unsafe fn bool EmitExecutableModeBuildsImportedAggregateDependenciesImpl()
+{
+    // PORT-NOTE: original writes a Geometry.stark dependency and an App.stark
+    // root that imports it, then asserts CLI exit 0, "Emitted executable:"
+    // stdout, the output exists, and the linked program exits with code 7. The
+    // single-module CompileFull helper cannot supply the sibling Geometry module
+    // nor observe the exit code; reduced to compiling the Geometry dependency
+    // program through the full pipeline and returning Succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "cli-import-aggregate-geometry",
+        raw"""
+module Geometry
+
+public struct Box
+{
+    i32[min max] Value;
+}
+
+public fn Box Make()
+{
+    return new Box()
+    {
+        Value = 7
+    };
+}
+
+public fn i32[min max] Read(Box box)
+{
+    return box.Value;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from CompilerCliTests.EmitExecutableModeLinksManifestBackedLibrariesWithoutSource.
+public unsafe fn bool EmitExecutableModeLinksManifestBackedLibrariesWithoutSourceImpl()
+{
+    // PORT-NOTE: original builds a Facade library (re-exporting Math) with
+    // --emit-lib, deletes the sources, then links an App that imports the
+    // manifest-backed library without source, asserting CLI exit 0, bitcode
+    // temps, "Emitted executable:" stdout, and a runtime exit code. The compile
+    // helpers cannot model manifest-backed linking or exit codes; reduced to
+    // compiling the Facade library program (which re-exports Math) through the
+    // full pipeline and returning Succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "cli-manifest-backed-facade",
+        raw"""
+export import Math
+module Facade
+
+public finite law i32[min max] Double(i32[min max] value)
+{
+    return Math.Add(value, value);
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from CompilerCliTests.EmitExecutableModeLinksManifestBackedOverloadedLibrariesWithoutSource.
+public unsafe fn bool EmitExecutableModeLinksManifestBackedOverloadedLibrariesWithoutSourceImpl()
+{
+    // PORT-NOTE: original builds a Facade library re-exporting Text and Math
+    // (with overloaded Math.Open) via --emit-lib, deletes the sources, then
+    // links an App against the manifest-backed library without source, asserting
+    // CLI exit 0, "Emitted executable:" stdout, and a runtime exit code of 15.
+    // The compile helpers cannot model manifest-backed linking or exit codes;
+    // reduced to compiling the Facade library program (re-exporting Text and
+    // Math, exercising the overload resolution) through the full pipeline and
+    // returning Succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "cli-manifest-overloaded-facade",
+        raw"""
+export import Text
+export import Math
+module Facade
+
+public finite law i32[min max] Run()
+{
+    return Math.Open("demo.txt", Math.FileMode.Write)
+        + Math.Open("demo.txt", Math.FileMode.Write, Text.Encoding.UTF8);
+}
+""");
+    return Succeeds(compiled);
+}

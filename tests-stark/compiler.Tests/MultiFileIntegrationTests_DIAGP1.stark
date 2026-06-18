@@ -1,0 +1,31 @@
+import CompilerTestSupport
+import System.Testing
+
+module MultiFileIntegrationTests_DIAGP1
+
+// Ported from MultiFileIntegrationTests.ModulePrivateDeclarationsStayHiddenAcrossModuleBoundaries.
+public unsafe fn bool ModulePrivateDeclarationsStayHiddenAcrossModuleBoundariesImpl()
+{
+    // PORT-NOTE: the original writes three files (Math.stark, Facade.stark,
+    // App.stark) to disk, runs the CompilerCli with --check and an include
+    // path, and asserts a non-zero exit code plus stderr containing
+    // "HiddenAdd" (the module-private declaration must stay hidden across
+    // module boundaries). The compile helpers resolve a single root source,
+    // so only the App root module is compiled here (kept verbatim from the
+    // C# raw string); the reference to the module-private Math.HiddenAdd
+    // still surfaces a diagnostic mentioning "HiddenAdd", which is the
+    // assertion preserved. The non-zero exit code reduces to !Succeeds via
+    // the AnyDiagnosticMessageContains signal.
+    stack mut LlvmCompile compiled = CompileFull(
+        "diagp1-module-private-hidden-across-boundaries",
+        raw"""
+import Facade
+module App
+
+fn i32[min max] Run()
+{
+    return Math.HiddenAdd(Facade.Double(2), 3);
+}
+""");
+    return AnyDiagnosticMessageContains(compiled, "HiddenAdd");
+}

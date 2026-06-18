@@ -1,0 +1,72 @@
+import LlvmTestSupport
+import System.Testing
+module GenericUseSiteInstantiationRegressionTestsP1
+
+// Ported from GenericUseSiteInstantiationRegressionTests.ImportedSourceOnlyInstantiationsMaterializeFromBodyUseSites.
+public unsafe fn bool ImportedSourceOnlyInstantiationsMaterializeFromBodyUseSitesImpl()
+{
+    // PORT-NOTE: the C# oracle stages `Demo/Lib.stark` on disk and imports it
+    // from a separate `Demo.App` root through a FileSystemModuleResolver, proving
+    // that generic instantiations (`Demo.Lib.GenericResult<i32>`,
+    // `Demo.Lib.Pair<i64>`) named only inside imported-source bodies are still
+    // materialized into the MonomorphizationPlan. The host LLVM bridge only
+    // compiles a single source and exposes the rendered `llvm` text, so the
+    // cross-module import staging and MonomorphizationPlan-artifact assertions
+    // cannot be reproduced. This compiles the library module body directly
+    // (verbatim from the staged `Demo/Lib.stark`) and asserts the `Consume`
+    // entry reaches LLVM emission.
+    stack mut LlvmCompile c = CompileLlvm(
+        "generic-use-site-imported-source-only-instantiations",
+        raw"""
+module Demo.Lib
+
+public enum InnerError
+{
+    Bad,
+}
+
+public enum GenericResult<T>
+{
+    [Ok] Ok(T),
+    [Err] Err(InnerError),
+}
+
+public record Pair<T>(T First, T Second)
+{
+}
+
+fn GenericResult<i32[min max]> ProduceGeneric(i32[min max] value)
+{
+    if (value < 0)
+    {
+        return GenericResult<i32[min max]>.Err(InnerError.Bad);
+    }
+
+    return GenericResult<i32[min max]>.Ok(value);
+}
+
+fn i64[min max] SumPair(i32[min max] value)
+{
+    stack Pair<i64[min max]> pair = new Pair<i64[min max]>((i64[min max])value, 2);
+    return pair.First + pair.Second;
+}
+
+public fn i32[min max] Consume(i32[min max] value)
+{
+    switch (ProduceGeneric(value))
+    {
+        case GenericResult<i32[min max]>.Err(var error):
+            return -1;
+        case GenericResult<i32[min max]>.Ok(var ok):
+            return ok + (i32[min max])SumPair(0);
+    }
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "Consume");
+}

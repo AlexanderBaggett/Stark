@@ -1,0 +1,242 @@
+import LlvmTestSupport
+import System.Testing
+module PackageImageCallableValueTestsP1
+
+// Ported slice of tests/compiler.Tests/PackageImageCallableValueTests.cs. Each
+// original C# test builds a Facade *library*, packages it into a package-image
+// manifest, deletes the Facade source, then compiles a Demo *consumer* that
+// `import Facade`s the package image and inspects the consumer's LLVM/IR. The
+// host text helper exposed here (CompileLlvm / Succeeds / Llvm) drives a single
+// in-memory compile and cannot perform the library-build -> PackageImageBuilder
+// -> manifest-on-disk -> FileSystemModuleResolver round-trip, nor can it reach
+// the structured artifacts (TypeCheckModel, HighLevelIr/MidLevelIr/SsaIr lambda
+// and address-taken fact tables) the C# asserts on.
+//
+// PORT-NOTE (applies to every Impl below): the package-image round-trip is
+// reduced. The embedded Facade *library* program is kept verbatim and compiled
+// through CompileLlvm to confirm the library still builds; the embedded Demo
+// *consumer* program is also kept verbatim, but because `import Facade` cannot
+// resolve a package image through this single-compile helper, the consumer is
+// driven through CompileLlvm and its raw LLVM text is inspected for the same
+// substrings the C# asserts on. Where the C# matched an indirect-call line with
+// a Regex and asserted attribute substrings on that line, the port reduces the
+// body-scoped regex to plain Contains over the whole LLVM text (each attribute
+// token appears on the relevant call line). Structured-artifact assertions
+// (lambda FunctionPointerKind, AddressTakenFunctions across HIR/MIR/SSA, and the
+// "no fallback logs" gate) cannot be expressed by the text helpers and are
+// reduced to the LLVM-text and Succeeds signals noted inline.
+
+// Ported from PackageImageCallableValueTests.PackageImageBackedCallableAliasDrivesIndirectCallSiteEffectAttributes.
+public unsafe fn bool PackageImageBackedCallableAliasDrivesIndirectCallSiteEffectAttributesImpl()
+{
+    // PORT-NOTE: library build of the Facade alias kept verbatim; its only role
+    // here is to confirm the alias-only library still compiles (the C# asserts
+    // libraryResult.Succeeded plus AssertNoFallbackLogs, the latter unavailable
+    // here).
+    stack mut LlvmCompile library = CompileLlvm(
+        "pkgimg-callable-alias-indirect-lib",
+        raw"""
+module Facade
+
+public alias StrictTransform = fnptr<finite law i32[min max](i32[min max])>;
+""");
+    if (!Succeeds(library))
+    {
+        return false;
+    }
+
+    // PORT-NOTE: consumer kept verbatim. The C# extracted the
+    // `call fastcc i32 %arg_transform(...)` indirect-call line via Regex and
+    // asserted the willreturn / mustprogress / nosync / nofree / memory(none)
+    // effect attributes on it; reduced here to Contains over the whole LLVM text.
+    stack mut LlvmCompile c = CompileLlvm(
+        "pkgimg-callable-alias-indirect-consumer",
+        raw"""
+import Facade
+module Demo
+
+finite law i32[min max] Apply(Facade.StrictTransform transform, i32[min max] value)
+{
+    return transform(value);
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "call fastcc i32 %arg_transform(")
+        && Contains(llvm, "willreturn")
+        && Contains(llvm, "mustprogress")
+        && Contains(llvm, "nosync")
+        && Contains(llvm, "nofree")
+        && Contains(llvm, "memory(none)");
+}
+
+// Ported from PackageImageCallableValueTests.PackageImageBackedGenericTemplateFnptrCallKeepsKindedIndirectCallAttributes.
+public unsafe fn bool PackageImageBackedGenericTemplateFnptrCallKeepsKindedIndirectCallAttributesImpl()
+{
+    // PORT-NOTE: library build of the generic Facade.Apply template kept
+    // verbatim; confirms the template library still compiles (the C# also runs
+    // AssertNoFallbackLogs, unavailable here).
+    stack mut LlvmCompile library = CompileLlvm(
+        "pkgimg-generic-fnptr-kind-lib",
+        raw"""
+module Facade
+
+public finite law T Apply<T>(fnptr<finite law T(T)> transform, T value)
+{
+    return transform(value);
+}
+""");
+    if (!Succeeds(library))
+    {
+        return false;
+    }
+
+    // PORT-NOTE: consumer kept verbatim. As above, the Regex-extracted
+    // `call fastcc i32 %arg_transform(...)` line and its effect-attribute
+    // assertions are reduced to Contains over the whole LLVM text.
+    stack mut LlvmCompile c = CompileLlvm(
+        "pkgimg-generic-fnptr-kind-consumer",
+        raw"""
+import Facade
+module Demo
+
+finite law i32[min max] Double(i32[min max] value)
+{
+    return value * 2;
+}
+
+fn i32[min max] Run(i32[min max] value)
+{
+    stack fnptr<finite law i32[min max](i32[min max])> transform = Double;
+    return Facade.Apply(transform, value);
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "call fastcc i32 %arg_transform(")
+        && Contains(llvm, "willreturn")
+        && Contains(llvm, "mustprogress")
+        && Contains(llvm, "nosync")
+        && Contains(llvm, "nofree")
+        && Contains(llvm, "memory(none)");
+}
+
+// Ported from PackageImageCallableValueTests.PackageImageBackedFunctionPointerParametersTargetTypeNonCapturingLambdas.
+public unsafe fn bool PackageImageBackedFunctionPointerParametersTargetTypeNonCapturingLambdasImpl()
+{
+    // PORT-NOTE: library declaration of Facade.Apply kept verbatim; confirms the
+    // fnptr-parameter library still compiles (the C# also runs
+    // AssertNoFallbackLogs, unavailable here).
+    stack mut LlvmCompile library = CompileLlvm(
+        "pkgimg-fnptr-lambda-lib",
+        raw"""
+module Facade
+
+public fn i32[min max] Apply(
+    fnptr<finite law i32[min max](i32[min max])> callback,
+    i32[min max] value);
+""");
+    if (!Succeeds(library))
+    {
+        return false;
+    }
+
+    // PORT-NOTE: consumer kept verbatim. The C# asserts on structured artifacts
+    // (a single TypeCheckModel lambda with FunctionPointerKind == FiniteLaw, and
+    // the synthesized lambda appearing as the single AddressTakenFunction across
+    // HIR/MIR/SSA/OptimizedSSA/LLVM). Those fact tables are not reachable through
+    // the text helpers and are reduced to the two LLVM-text matches the C# also
+    // asserts: the synthetic-definition comment and the synthesized lambda
+    // definition/call. The C# `Assert.Matches` regexes
+    // (`define internal dso_local fastcc noundef(?: range(...))? i32 @Run___lambda_`
+    // and `call fastcc i32 @Facade_Apply(ptr (noundef )?nonnull @Run___lambda_`)
+    // are reduced to their stable literal substrings.
+    stack mut LlvmCompile c = CompileLlvm(
+        "pkgimg-fnptr-lambda-consumer",
+        raw"""
+import Facade
+module Demo
+
+fn i32[min max] Run()
+{
+    return Facade.Apply((i32[min max] value) => value + 1, 41);
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "; synthetic definition: Run.__lambda_")
+        && Contains(llvm, "define internal dso_local fastcc noundef")
+        && Contains(llvm, "i32 @Run___lambda_")
+        && Contains(llvm, "call fastcc i32 @Facade_Apply(ptr ")
+        && Contains(llvm, "@Run___lambda_");
+}
+
+// Ported from PackageImageCallableValueTests.PackageImageBackedAcceptedProgramEmitsLlvmWithoutFallbackLogs.
+public unsafe fn bool PackageImageBackedAcceptedProgramEmitsLlvmWithoutFallbackLogsImpl()
+{
+    // PORT-NOTE: Facade library (generic Choose plus Twice) kept verbatim; the
+    // C# builds it with EmitLlvmIr and asserts Succeeded plus
+    // AssertNoFallbackLogs. The fallback-log gate is not observable through the
+    // text helpers, so it is reduced to the compile succeeding.
+    stack mut LlvmCompile library = CompileLlvm(
+        "pkgimg-fallback-gate-lib",
+        raw"""
+module Facade
+
+public fn T Choose<T>(T left, T right, bool takeRight)
+{
+    stack mut T current = left;
+    if (takeRight)
+    {
+        current = right;
+    }
+
+    return current;
+}
+
+public fn i32[min max] Twice(i32[min max] value)
+{
+    return value + value;
+}
+""");
+    if (!Succeeds(library))
+    {
+        return false;
+    }
+
+    // PORT-NOTE: consumer kept verbatim. The C# asserts Succeeded,
+    // AssertNoFallbackLogs, and that an LlvmIrModule artifact exists. Reduced to
+    // the consumer compiling successfully and producing a non-empty LLVM render
+    // (Contains for the module's `define` is the closest observable signal that
+    // an LLVM module was emitted).
+    stack mut LlvmCompile c = CompileLlvm(
+        "pkgimg-fallback-gate-consumer",
+        raw"""
+import Facade
+module Demo
+
+fn i32[min max] Run(i32[min max] left, i32[min max] right, bool takeRight)
+{
+    return Facade.Choose(left, right, takeRight) + Facade.Twice(5);
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "define");
+}

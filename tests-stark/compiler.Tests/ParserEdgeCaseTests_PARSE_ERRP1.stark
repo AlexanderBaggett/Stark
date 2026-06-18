@@ -1,0 +1,113 @@
+import CompilerTestSupport
+import System.Testing
+
+module ParserEdgeCaseTests_PARSE_ERRP1
+
+// Ported from ParserEdgeCaseTests.InvalidProgramsDoNotParse.
+public unsafe fn bool InvalidProgramsDoNotParseImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: the original is a [Theory] over the InvalidPrograms MemberData rows. Each row is
+        // parsed via StarkSyntax.ParseCompilationUnit and asserts result.Succeeded is false AND
+        // result.SyntaxErrorCount > 0. The compile helpers expose neither a standalone parse entry point
+        // nor a syntax-error count, so each row is run through CompileFull and reduced to "the embedded
+        // program does not compile" (the parse-error signal); the Impl returns true only if every row
+        // fails. Row scenarios inlined verbatim from the C# MemberData.
+
+        // "argument lists still reject doubled separators"
+        stack mut LlvmCompile doubledSeparators = CompileFull(
+            "invalid-programs-doubled-separators",
+            raw"""
+module Demo
+
+fn void Write(i32[min max] left, i32[min max] right)
+{
+    return;
+}
+
+fn void Run()
+{
+    Write(1, 2,,);
+}
+""");
+
+        // "nested generic brackets must balance"
+        stack mut LlvmCompile unbalancedGenerics = CompileFull(
+            "invalid-programs-unbalanced-generics",
+            raw"""
+module Demo
+
+unsafe fn void Run(rawptr<rawmutptr<i8[min max]> value)
+{
+    return;
+}
+""");
+
+        // "range constraints must contain exactly two bounds"
+        stack mut LlvmCompile threeBoundRange = CompileFull(
+            "invalid-programs-three-bound-range",
+            raw"""
+module Demo
+
+fn void Run(i32[min max][-10 10 20] value)
+{
+    return;
+}
+""");
+
+        // "postfix chains cannot contain empty member segments"
+        stack mut LlvmCompile emptyMemberSegment = CompileFull(
+            "invalid-programs-empty-member-segment",
+            raw"""
+module Demo
+
+fn void Run()
+{
+    return new Node()..Value;
+}
+""");
+
+        // "loop behavior spellings are tokenized not identifier based"
+        stack mut LlvmCompile loopBehaviorSpelling = CompileFull(
+            "invalid-programs-loop-behavior-spelling",
+            raw"""
+module Demo
+
+fn void Run(bool flag)
+{
+    while non_deterministic (flag)
+    {
+        break;
+    }
+}
+""");
+
+        // "object initializer members still require a single expression"
+        stack mut LlvmCompile doubledInitializerSeparator = CompileFull(
+            "invalid-programs-doubled-initializer-separator",
+            raw"""
+module Demo
+
+struct Item
+{
+    i32[min max] Value;
+}
+
+fn void Run()
+{
+    stack Item item = new Item()
+    {
+        Value = 1,,
+    };
+}
+""");
+
+        return !Succeeds(doubledSeparators)
+            and !Succeeds(unbalancedGenerics)
+            and !Succeeds(threeBoundRange)
+            and !Succeeds(emptyMemberSegment)
+            and !Succeeds(loopBehaviorSpelling)
+            and !Succeeds(doubledInitializerSeparator);
+    }
+}

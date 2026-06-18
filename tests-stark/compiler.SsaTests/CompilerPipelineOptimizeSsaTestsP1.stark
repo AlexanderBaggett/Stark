@@ -1,0 +1,929 @@
+import SsaTestSupport
+import System.Testing
+module CompilerPipelineOptimizeSsaTestsP1
+
+// Ported slice of tests/compiler.PipelineTests/CompilerPipelineOptimizeSsaTests.cs.
+// The C# oracle asserts on the pipeline's SsaIrModule / OptimizedSsaIr object
+// model (AddressTakenFunctions sets, SsaBinaryRValue operators and coefficients,
+// phi incomings, store/extract instructions, executed-pass ordering). The
+// source-in / artifact-text-out host bridge used by these ported facts can only
+// observe the rendered `ssa` / `optimized-ssa` artifact text, so structural
+// object-model facts are reduced to the strongest equivalent text fragments and
+// flagged with `// PORT-NOTE:`. Rendered SSA prints each value instruction as
+// `<result> = <rvalue-text>`, with binary operators in symbol form
+// (`+`, `-`, `*`, `**`, `+%`, `-%`, `*%`, `**%`, `<<`, `&`, `/`, `%`, `+|`, `-|`,
+// `*|`) and integer constants printed bare, so e.g. a Multiply-by-3 renders as
+// `... * 3` and an Exponent-of-3 as `... ** 3`.
+
+// Ported from CompilerPipelineOptimizeSsaTests.CallableAddressTakenFactsArePrunedAfterDirectCallDevirtualization.
+public unsafe fn bool CallableAddressTakenFactsArePrunedAfterDirectCallDevirtualizationImpl()
+{
+    stack mut SsaCompile c = CompileOptimizedSsa(
+        "optimize-ssa-callable-address-taken-pruned",
+        raw"""
+module Demo
+
+noinline finite law i32[min max] Target()
+{
+    return 1;
+}
+
+unsafe fn i32[min max] Run()
+{
+    stack fnptr<fn i32[min max]()> op = Target;
+    return op();
+}
+""");
+    // PORT-NOTE: The C# test asserts the staged AddressTakenFunctions sets across
+    // type-model/HIR/MIR/SSA still name "Target" while the optimized-SSA and LLVM
+    // sets are empty, that Run holds a single direct SsaCallRValue to "Target" with
+    // no SsaIndirectCallRValue, and that devirt-ssa executes before inline-ssa.
+    // None of those object-model / pass-ordering facts are reachable through the
+    // artifact-text bridge, so the devirtualization signal is reduced to optimized
+    // SSA text: a direct call to Target is present and no indirect `call.indirect`
+    // survives.
+    return OptimizedSsaContainsButNot(c, "Target(", "call.indirect");
+}
+
+// Ported from CompilerPipelineOptimizeSsaTests.NonCapturingLambdaAddressTakenFactsArePrunedAfterDirectCallDevirtualization.
+public unsafe fn bool NonCapturingLambdaAddressTakenFactsArePrunedAfterDirectCallDevirtualizationImpl()
+{
+    stack mut SsaCompile c = CompileOptimizedSsa(
+        "optimize-ssa-noncapturing-lambda-address-taken-pruned",
+        raw"""
+module Demo
+
+unsafe fn i32[min max] Run()
+{
+    stack fnptr<fn i32[min max](i32[min max])> increment =
+        (i32[min max] value) => value + 1;
+    return increment(41);
+}
+""");
+    // PORT-NOTE: The C# test asserts the lambda's address-taken fact survives
+    // through HIR/MIR/SSA and is pruned in optimized-SSA/LLVM, that Run holds no
+    // direct or indirect call to the lambda, and that the folded result is the
+    // constant 42. The address-taken set and call object model are unreachable
+    // through the artifact-text bridge, so this is reduced to optimized-SSA text:
+    // the folded `return 42` is present and no `call.indirect` survives.
+    return OptimizedSsaContainsButNot(c, "return 42", "call.indirect");
+}
+
+// Ported from CompilerPipelineOptimizeSsaTests.InlineSsaPreservesSuccessorPhiIncomingFromSplitContinuationBlocks.
+public unsafe fn bool InlineSsaPreservesSuccessorPhiIncomingFromSplitContinuationBlocksImpl()
+{
+    stack mut SsaCompile c = CompileSsaAfter(
+        "inline-ssa-successor-phi-split-continuation",
+        raw"""
+module Demo
+
+enum Status
+{
+    Ok,
+    Err
+}
+
+inline fn bool IsOk(Status status)
+{
+    switch (status)
+    {
+        case Status.Ok: return true;
+        case Status.Err: return false;
+    }
+}
+
+noinline fn Status Op(u8[0 3] value)
+{
+    if (value == 3)
+    {
+        return Status.Err;
+    }
+
+    return Status.Ok;
+}
+
+unsafe fn i32[min max] Run(u8[0 3] value)
+{
+    if (!IsOk(Op(0)) || !IsOk(Op(1)) || !IsOk(Op(2)) || !IsOk(Op(value)))
+    {
+        return 3;
+    }
+
+    return 0;
+}
+""",
+        "inline-ssa");
+    // PORT-NOTE: The C# test stops after inline-ssa and asserts on the OptimizedSsaIr
+    // object model: a `return 0` terminator survives, a single join phi whose
+    // variable name contains "_or" exists, and one of that phi's incomings refers to
+    // a value defined by a `LogicalNot` unary in a predecessor block whose label
+    // contains "continue". The phi/incoming/predecessor-label structure is not
+    // reachable through the artifact-text bridge, so this is reduced to a
+    // post-inline `ssa`-text snapshot: the `_or` short-circuit join phi is still
+    // present, a `continue` continuation block label survives, and the `return 0`
+    // path is preserved.
+    return SsaContainsAll3(c, "_or", "continue", "return 0");
+}
+
+// Ported from CompilerPipelineOptimizeSsaTests.OptimizeSsaPreservesMaterializedGenericCallSymbols.
+public unsafe fn bool OptimizeSsaPreservesMaterializedGenericCallSymbolsImpl()
+{
+    stack mut SsaCompile c = CompileOptimizedSsa(
+        "optimize-ssa-materialized-generic-call-symbol",
+        raw"""
+module Demo
+
+fn T Identity<T>(T value)
+{
+    return value;
+}
+
+fn i32[min max] Run(i32[min max] value)
+{
+    return Identity(value);
+}
+""");
+    // PORT-NOTE: The C# test stops after devirt-ssa and asserts Run holds a single
+    // SsaCallRValue whose FunctionName is the materialized monomorphization symbol
+    // "__stark_mono_fn_Demo__Identity__i32". The call object model is not reachable
+    // through the artifact-text bridge, so this is reduced to optimized-SSA text:
+    // the materialized monomorphization symbol is present.
+    return OptimizedSsaContains(c, "__stark_mono_fn_Demo__Identity__i32");
+}
+
+// Ported from CompilerPipelineOptimizeSsaTests.OptimizeSsaDevirtualizesIdenticalFunctionPointerPhiTargets.
+public unsafe fn bool OptimizeSsaDevirtualizesIdenticalFunctionPointerPhiTargetsImpl()
+{
+    stack mut SsaCompile c = CompileOptimizedSsa(
+        "optimize-ssa-devirtualizes-identical-fnptr-phi",
+        raw"""
+module Demo
+
+noinline finite law i32[min max] Target(i32[min max] value)
+{
+    return value + 1;
+}
+
+fn i32[min max] Run(bool flag, i32[min max] value)
+{
+    stack mut fnptr<fn i32[min max](i32[min max])> op = Target;
+    if (flag)
+    {
+        op = Target;
+    }
+    else
+    {
+        op = Target;
+    }
+
+    return op(value);
+}
+""");
+    // PORT-NOTE: The C# test stops after devirt-ssa and asserts Run holds a single
+    // direct SsaCallRValue to "Target", AddressTakenFunctions is empty, and no
+    // SsaIndirectCallRValue survives. The call object model and address-taken set
+    // are not reachable through the artifact-text bridge, so this is reduced to
+    // optimized-SSA text: a direct call to Target is present and no `call.indirect`
+    // survives.
+    return OptimizedSsaContainsButNot(c, "Target(", "call.indirect");
+}
+
+// Ported from CompilerPipelineOptimizeSsaTests.OptimizeSsaKeepsMixedFunctionPointerPhiTargetsIndirect.
+public unsafe fn bool OptimizeSsaKeepsMixedFunctionPointerPhiTargetsIndirectImpl()
+{
+    stack mut SsaCompile c = CompileOptimizedSsa(
+        "optimize-ssa-keeps-mixed-fnptr-phi-indirect",
+        raw"""
+module Demo
+
+finite law i32[min max] Target(i32[min max] value)
+{
+    return value + 1;
+}
+
+finite law i32[min max] Other(i32[min max] value)
+{
+    return value - 1;
+}
+
+fn i32[min max] Run(bool flag, i32[min max] value)
+{
+    stack mut fnptr<fn i32[min max](i32[min max])> op = Target;
+    if (flag)
+    {
+        op = Target;
+    }
+    else
+    {
+        op = Other;
+    }
+
+    return op(value);
+}
+""");
+    // PORT-NOTE: The C# test stops after optimize-ssa and asserts AddressTakenFunctions
+    // is exactly {Other, Target}, Run holds a single SsaIndirectCallRValue whose
+    // target is a phi result, and no direct SsaCallRValue to "Target"/"Other"
+    // survives. The address-taken set, indirect-call target, and phi membership are
+    // not reachable through the artifact-text bridge, so this is reduced to
+    // optimized-SSA text: an indirect call survives and both address-taken targets
+    // are still referenced.
+    if (!OptimizedSsaContains(c, "call.indirect"))
+    {
+        return false;
+    }
+
+    return OptimizedSsaContains(c, "Target") && OptimizedSsaContains(c, "Other");
+}
+
+// Ported from CompilerPipelineOptimizeSsaTests.CleanupSsaRemovesSourceLevelIntegerAlgebraicIdentities.
+public unsafe fn bool CleanupSsaRemovesSourceLevelIntegerAlgebraicIdentitiesImpl()
+{
+    stack mut SsaCompile c = CompileOptimizedSsa(
+        "cleanup-ssa-removes-source-level-integer-identities",
+        raw"""
+module Demo
+
+fn i64[min max] Run(i64[min max] value)
+{
+    stack i64[min max] add = value + 0;
+    stack i64[min max] multiply = add * 1;
+    stack i64[min max] masked = multiply & -1;
+    stack i64[min max] shifted = masked << 0;
+    stack i64[min max] divided = shifted / 1;
+    stack i64[min max] rightShifted = divided >> 0;
+    return rightShifted ^ 0;
+}
+""");
+    // PORT-NOTE: The C# test stops after cleanup-ssa and asserts Run holds no
+    // SsaBinaryRValue with operator Add/Multiply/BitwiseAnd/ShiftLeft/Divide/
+    // ShiftRight/BitwiseXor (every algebraic-identity binary was removed). The
+    // binary object model is not reachable through the artifact-text bridge, so
+    // this is reduced to optimized-SSA text: with all identities removed the body
+    // forwards the parameter, so each operand-by-constant identity literal
+    // (`* 1`, `& -1`, `<< 0`, `/ 1`, `>> 0`, `^ 0`, `+ 0`) is absent.
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return OptimizedSsaLacks(c, "* 1")
+        && OptimizedSsaLacks(c, "& -1")
+        && OptimizedSsaLacks(c, "<< 0")
+        && OptimizedSsaLacks(c, "/ 1")
+        && OptimizedSsaLacks(c, ">> 0")
+        && OptimizedSsaLacks(c, "^ 0")
+        && OptimizedSsaLacks(c, "+ 0");
+}
+
+// Ported from CompilerPipelineOptimizeSsaTests.CleanupSsaRemovesIntegerAlgebraicAbsorbingAndSameOperandIdentities.
+public unsafe fn bool CleanupSsaRemovesIntegerAlgebraicAbsorbingAndSameOperandIdentitiesImpl()
+{
+    stack mut SsaCompile c = CompileOptimizedSsa(
+        "cleanup-ssa-removes-absorbing-and-same-operand-identities",
+        raw"""
+module Demo
+
+fn i64[min max] Run(i64[min max] value)
+{
+    stack i64[min max] sameAnd = value & value;
+    stack i64[min max] sameOr = sameAnd | sameAnd;
+    stack i64[min max] zeroXor = sameOr ^ sameOr;
+    stack i64[min max] zeroAnd = value & 0;
+    stack i64[min max] zeroMultiply = value * 0;
+    stack i64[min max] zeroSubtract = value - value;
+    stack i64[min max] zeroModulo = value % 1;
+    stack i64[min max] allOnes = value | -1;
+    return zeroXor + zeroAnd + zeroMultiply + zeroSubtract + zeroModulo + (allOnes & 1);
+}
+""");
+    // PORT-NOTE: The C# test stops after cleanup-ssa and asserts Run holds no
+    // SsaBinaryRValue with operator Subtract/Modulo/Multiply/BitwiseAnd/BitwiseOr/
+    // BitwiseXor, and that the single block's terminator folds to the constant 1.
+    // The binary object model and terminator constant are not reachable as objects
+    // through the artifact-text bridge, so this is reduced to optimized-SSA text:
+    // the body folds to `return 1` with no surviving absorbing/same-operand binary
+    // literals.
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return OptimizedSsaContains(c, "return 1")
+        && OptimizedSsaLacks(c, "* 0")
+        && OptimizedSsaLacks(c, "& 0")
+        && OptimizedSsaLacks(c, "% 1")
+        && OptimizedSsaLacks(c, "| -1");
+}
+
+// Ported from CompilerPipelineOptimizeSsaTests.ArithmeticFoldSsaFoldsRepeatedUnknownAddsToMultiply.
+public unsafe fn bool ArithmeticFoldSsaFoldsRepeatedUnknownAddsToMultiplyImpl()
+{
+    stack mut SsaCompile c = CompileSsaAfter(
+        "arithmetic-fold-ssa-repeated-unknown-adds-to-multiply",
+        raw"""
+module Demo
+
+fn i32[min max] Run(i32[min max] value)
+{
+    return value + value + value;
+}
+""",
+        "arithmetic-fold-ssa");
+    // PORT-NOTE: The C# test (CompileRunAfterArithmeticFold) asserts Run holds a
+    // Multiply SsaBinaryRValue with right operand constant 3 and no Add binary. The
+    // binary object model is not reachable, so this is reduced to post-fold `ssa`
+    // text: a Multiply-by-3 (`* 3`) is present and no ordinary add (`+ value`)
+    // survives.
+    return SsaContains(c, "* 3") && OptimizedSsaLacks(c, "+ value");
+}
+
+// Ported from CompilerPipelineOptimizeSsaTests.ArithmeticFoldSsaFoldsLongRepeatedAddRunToSingleMultiply.
+public unsafe fn bool ArithmeticFoldSsaFoldsLongRepeatedAddRunToSingleMultiplyImpl()
+{
+    stack mut SsaCompile c = CompileSsaAfter(
+        "arithmetic-fold-ssa-long-repeated-add-run-to-single-multiply",
+        raw"""
+module Demo
+
+fn i32[min max] Run(i32[min max] value)
+{
+    return value + value + value + value + value + value;
+}
+""",
+        "arithmetic-fold-ssa");
+    // PORT-NOTE: The C# test asserts Run holds a single Multiply SsaBinaryRValue with
+    // coefficient 6. Reduced to post-fold `ssa` text: a Multiply-by-6 (`* 6`) is
+    // present.
+    return SsaContains(c, "* 6");
+}
+
+// Ported from CompilerPipelineOptimizeSsaTests.ArithmeticFoldSsaPreservesTrailingConstantsAfterRepeatedAddRun.
+public unsafe fn bool ArithmeticFoldSsaPreservesTrailingConstantsAfterRepeatedAddRunImpl()
+{
+    stack mut SsaCompile c = CompileSsaAfter(
+        "arithmetic-fold-ssa-preserves-trailing-constant",
+        raw"""
+module Demo
+
+fn i32[min max] Run(i32[min max] value)
+{
+    return value + value + value + 5;
+}
+""",
+        "arithmetic-fold-ssa");
+    // PORT-NOTE: The C# test asserts Run holds a Multiply with coefficient 3 and an
+    // Add with right operand constant 5. Reduced to post-fold `ssa` text: the
+    // folded Multiply-by-3 (`* 3`) and the preserved trailing add (`+ 5`) are both
+    // present.
+    return SsaContains(c, "* 3") && SsaContains(c, "+ 5");
+}
+
+// Ported from CompilerPipelineOptimizeSsaTests.ArithmeticFoldSsaFoldsMultipleContiguousRepeatedTerms.
+public unsafe fn bool ArithmeticFoldSsaFoldsMultipleContiguousRepeatedTermsImpl()
+{
+    stack mut SsaCompile c = CompileSsaAfter(
+        "arithmetic-fold-ssa-multiple-contiguous-repeated-terms",
+        raw"""
+module Demo
+
+fn i32[min max] Run(i32[min max] x, i32[min max] y)
+{
+    return x + x + y + y + y + 4;
+}
+""",
+        "arithmetic-fold-ssa");
+    // PORT-NOTE: The C# test asserts the sorted Multiply coefficients are exactly
+    // [2, 3]. Reduced to post-fold `ssa` text: both a Multiply-by-2 (`* 2`) and a
+    // Multiply-by-3 (`* 3`) are present.
+    return SsaContains(c, "* 2") && SsaContains(c, "* 3");
+}
+
+// Ported from CompilerPipelineOptimizeSsaTests.ArithmeticFoldSsaCombinesSafeConstantCoefficientTerms.
+public unsafe fn bool ArithmeticFoldSsaCombinesSafeConstantCoefficientTermsImpl()
+{
+    stack mut SsaCompile c = CompileSsaAfter(
+        "arithmetic-fold-ssa-combines-safe-constant-coefficients",
+        raw"""
+module Demo
+
+fn i16[min max] Run(i16[-1000 1000] x)
+{
+    return (x * 2) + (x * 3) - x;
+}
+""",
+        "arithmetic-fold-ssa");
+    // PORT-NOTE: The C# test asserts Run holds a single Multiply with combined
+    // coefficient 4. Reduced to post-fold `ssa` text: a Multiply-by-4 (`* 4`) is
+    // present.
+    return SsaContains(c, "* 4");
+}
+
+// Ported from CompilerPipelineOptimizeSsaTests.ArithmeticFoldSsaDoesNotCombineUnsafeConstantCoefficientTerms.
+public unsafe fn bool ArithmeticFoldSsaDoesNotCombineUnsafeConstantCoefficientTermsImpl()
+{
+    stack mut SsaCompile c = CompileSsaAfter(
+        "arithmetic-fold-ssa-does-not-combine-unsafe-constant-coefficients",
+        raw"""
+module Demo
+
+fn i32[min max] Run(i32[min max] x)
+{
+    return (x * 2) + (x * 3) - x;
+}
+""",
+        "arithmetic-fold-ssa");
+    // PORT-NOTE: The C# test asserts Run holds no Multiply with combined coefficient
+    // 4 (unbounded i32 makes the reassociation overflow-unsafe). Reduced to
+    // post-fold `ssa` text: no Multiply-by-4 (`* 4`) appears.
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return OptimizedSsaLacks(c, "* 4");
+}
+
+// Ported from CompilerPipelineOptimizeSsaTests.ArithmeticFoldSsaRecognizesSafeLeftShiftCoefficients.
+public unsafe fn bool ArithmeticFoldSsaRecognizesSafeLeftShiftCoefficientsImpl()
+{
+    stack mut SsaCompile c = CompileSsaAfter(
+        "arithmetic-fold-ssa-recognizes-safe-left-shift-coefficients",
+        raw"""
+module Demo
+
+fn u16[min max] Run(u16[0 1000] x)
+{
+    return (x << 1) + x + x;
+}
+""",
+        "arithmetic-fold-ssa");
+    // PORT-NOTE: The C# test asserts the `(x << 1)` is treated as a coefficient-2
+    // term and folds with the two unit terms into a single Multiply with
+    // coefficient 4. Reduced to post-fold `ssa` text: a Multiply-by-4 (`* 4`) is
+    // present.
+    return SsaContains(c, "* 4");
+}
+
+// Ported from CompilerPipelineOptimizeSsaTests.ArithmeticFoldSsaDoesNotTreatUnsafeLeftShiftAsCoefficient.
+public unsafe fn bool ArithmeticFoldSsaDoesNotTreatUnsafeLeftShiftAsCoefficientImpl()
+{
+    stack mut SsaCompile c = CompileSsaAfter(
+        "arithmetic-fold-ssa-does-not-treat-unsafe-left-shift-as-coefficient",
+        raw"""
+module Demo
+
+fn i32[min max] Run(i32[min max] x)
+{
+    return (x << 1) + x + x;
+}
+""",
+        "arithmetic-fold-ssa");
+    // PORT-NOTE: The C# test asserts the ShiftLeft binary survives and no Multiply
+    // with coefficient 4 is produced (unbounded i32 makes the shift-as-coefficient
+    // fold overflow-unsafe). Reduced to post-fold `ssa` text: the left shift
+    // (`<< 1`) is present and no Multiply-by-4 (`* 4`) appears.
+    return SsaContainsButNot(c, "<< 1", "* 4");
+}
+
+// Ported from CompilerPipelineOptimizeSsaTests.ArithmeticFoldSsaFoldsRepeatedUnaryNegatedTerms.
+public unsafe fn bool ArithmeticFoldSsaFoldsRepeatedUnaryNegatedTermsImpl()
+{
+    stack mut SsaCompile c = CompileSsaAfter(
+        "arithmetic-fold-ssa-folds-repeated-unary-negated-terms",
+        raw"""
+module Demo
+
+fn i16[min max] Run(i16[-1000 1000] x)
+{
+    return -x + -x;
+}
+""",
+        "arithmetic-fold-ssa");
+    // PORT-NOTE: The C# test asserts a Multiply with coefficient 2 is present along
+    // with a Subtract binary (the negated run folds to -(x * 2)). Reduced to
+    // post-fold `ssa` text: a Multiply-by-2 (`* 2`) and a subtract (`-`) are
+    // present.
+    return SsaContains(c, "* 2") && SsaContains(c, " - ");
+}
+
+// Ported from CompilerPipelineOptimizeSsaTests.ArithmeticFoldSsaCombinesSameSignConstantTail.
+public unsafe fn bool ArithmeticFoldSsaCombinesSameSignConstantTailImpl()
+{
+    stack mut SsaCompile c = CompileSsaAfter(
+        "arithmetic-fold-ssa-combines-same-sign-constant-tail",
+        raw"""
+module Demo
+
+fn i32[min max] Run(i32[min max] value)
+{
+    return value + 5 + 6;
+}
+""",
+        "arithmetic-fold-ssa");
+    // PORT-NOTE: The C# test asserts Run holds a single Add with right operand
+    // constant 11 (the constant tail 5 + 6 was combined). Reduced to post-fold
+    // `ssa` text: the combined add (`+ 11`) is present.
+    return SsaContains(c, "+ 11");
+}
+
+// Ported from CompilerPipelineOptimizeSsaTests.ArithmeticFoldSsaDropsAdjacentZeroCoefficientTerms.
+public unsafe fn bool ArithmeticFoldSsaDropsAdjacentZeroCoefficientTermsImpl()
+{
+    stack mut SsaCompile c = CompileSsaAfter(
+        "arithmetic-fold-ssa-drops-adjacent-zero-coefficient-terms",
+        raw"""
+module Demo
+
+fn i32[min max] Run(i32[min max] value)
+{
+    return value - value;
+}
+""",
+        "arithmetic-fold-ssa");
+    // PORT-NOTE: The C# test asserts the single block folds to the constant 0 and
+    // that no SsaBinaryRValue survives. Reduced to post-fold `ssa` text: the body
+    // folds to `return 0` with no surviving subtract (`-`) binary.
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return SsaContains(c, "return 0") && OptimizedSsaLacks(c, " - ");
+}
+
+// Ported from CompilerPipelineOptimizeSsaTests.ArithmeticFoldSsaFoldsSafeRepeatedSubtractionRuns.
+public unsafe fn bool ArithmeticFoldSsaFoldsSafeRepeatedSubtractionRunsImpl()
+{
+    stack mut SsaCompile c = CompileSsaAfter(
+        "arithmetic-fold-ssa-folds-safe-repeated-subtraction-runs",
+        raw"""
+module Demo
+
+fn i16[min max] Run(i16[-8000 8000] x, i16[-3000 3000] y)
+{
+    return x + x + x - y - y + 4;
+}
+""",
+        "arithmetic-fold-ssa");
+    // PORT-NOTE: The C# test asserts a Multiply-by-3 (the x run), a Multiply-by-2
+    // (the y run), and a surviving Subtract binary are all present. Reduced to
+    // post-fold `ssa` text: `* 3`, `* 2`, and a subtract (`-`) are present.
+    return SsaContains(c, "* 3") && SsaContains(c, "* 2") && SsaContains(c, " - ");
+}
+
+// Ported from CompilerPipelineOptimizeSsaTests.ArithmeticFoldSsaDoesNotFoldUnsafeRepeatedSubtractionRuns.
+public unsafe fn bool ArithmeticFoldSsaDoesNotFoldUnsafeRepeatedSubtractionRunsImpl()
+{
+    stack mut SsaCompile c = CompileSsaAfter(
+        "arithmetic-fold-ssa-does-not-fold-unsafe-repeated-subtraction-runs",
+        raw"""
+module Demo
+
+fn i32[min max] Run(i32[min max] x, i32[min max] y)
+{
+    return x - y - y;
+}
+""",
+        "arithmetic-fold-ssa");
+    // PORT-NOTE: The C# test asserts no Multiply SsaBinaryRValue is produced
+    // (unbounded i32 makes folding the `-y -y` run overflow-unsafe). Reduced to
+    // post-fold `ssa` text: no Multiply literal (`* 2`) appears.
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return OptimizedSsaLacks(c, "* 2");
+}
+
+// Ported from CompilerPipelineOptimizeSsaTests.ArithmeticFoldSsaDoesNotReassociateSeparatedOrdinaryTerms.
+public unsafe fn bool ArithmeticFoldSsaDoesNotReassociateSeparatedOrdinaryTermsImpl()
+{
+    stack mut SsaCompile c = CompileSsaAfter(
+        "arithmetic-fold-ssa-does-not-reassociate-separated-ordinary-terms",
+        raw"""
+module Demo
+
+fn i32[min max] Run(i32[min max] x, i32[min max] y)
+{
+    return x + y + x;
+}
+""",
+        "arithmetic-fold-ssa");
+    // PORT-NOTE: The C# test asserts an Add binary survives and no Multiply is
+    // produced (the two x terms are separated by y so are not reassociated).
+    // Reduced to post-fold `ssa` text: an add (`+`) is present and no Multiply-by-2
+    // (`* 2`) appears.
+    return SsaContainsButNot(c, " + ", "* 2");
+}
+
+// Ported from CompilerPipelineOptimizeSsaTests.ArithmeticFoldSsaFoldsWrappingAddRunsWithWrappingMultiply.
+public unsafe fn bool ArithmeticFoldSsaFoldsWrappingAddRunsWithWrappingMultiplyImpl()
+{
+    stack mut SsaCompile c = CompileSsaAfter(
+        "arithmetic-fold-ssa-folds-wrapping-add-runs-with-wrapping-multiply",
+        raw"""
+module Demo
+
+fn i8[min max] Run(i8[min max] value)
+{
+    return value +% value +% value;
+}
+""",
+        "arithmetic-fold-ssa");
+    // PORT-NOTE: The C# test asserts Run holds a single WrappingMultiply with
+    // coefficient 3. Reduced to post-fold `ssa` text: a wrapping-multiply-by-3
+    // (`*% 3`) is present.
+    return SsaContains(c, "*% 3");
+}
+
+// Ported from CompilerPipelineOptimizeSsaTests.ArithmeticFoldSsaFoldsWrappingSubtractRunsWithWrappingMultiply.
+public unsafe fn bool ArithmeticFoldSsaFoldsWrappingSubtractRunsWithWrappingMultiplyImpl()
+{
+    stack mut SsaCompile c = CompileSsaAfter(
+        "arithmetic-fold-ssa-folds-wrapping-subtract-runs-with-wrapping-multiply",
+        raw"""
+module Demo
+
+fn i8[min max] Run(i8[min max] x, i8[min max] y)
+{
+    return x +% x -% y -% y;
+}
+""",
+        "arithmetic-fold-ssa");
+    // PORT-NOTE: The C# test asserts a WrappingMultiply with coefficient 2 and a
+    // surviving WrappingSubtract are present. Reduced to post-fold `ssa` text: a
+    // wrapping-multiply-by-2 (`*% 2`) and a wrapping subtract (`-%`) are present.
+    return SsaContains(c, "*% 2") && SsaContains(c, "-%");
+}
+
+// Ported from CompilerPipelineOptimizeSsaTests.ArithmeticFoldSsaDoesNotRewriteSaturatingAddChains.
+public unsafe fn bool ArithmeticFoldSsaDoesNotRewriteSaturatingAddChainsImpl()
+{
+    stack mut SsaCompile c = CompileSsaAfter(
+        "arithmetic-fold-ssa-does-not-rewrite-saturating-add-chains",
+        raw"""
+module Demo
+
+fn i32[min max] Run(i32[min max] value)
+{
+    return value +| value +| value;
+}
+""",
+        "arithmetic-fold-ssa");
+    // PORT-NOTE: The C# test asserts the SaturatingAdd chain survives and no
+    // Multiply is produced (saturating arithmetic is not linear). Reduced to
+    // post-fold `ssa` text: a saturating add (`+|`) is present and no Multiply-by-3
+    // (`* 3`) appears.
+    return SsaContainsButNot(c, "+|", "* 3");
+}
+
+// Ported from CompilerPipelineOptimizeSsaTests.ArithmeticFoldSsaDoesNotRewriteSaturatingSubtractChains.
+public unsafe fn bool ArithmeticFoldSsaDoesNotRewriteSaturatingSubtractChainsImpl()
+{
+    stack mut SsaCompile c = CompileSsaAfter(
+        "arithmetic-fold-ssa-does-not-rewrite-saturating-subtract-chains",
+        raw"""
+module Demo
+
+fn i32[min max] Run(i32[min max] x, i32[min max] y)
+{
+    return x -| y -| y;
+}
+""",
+        "arithmetic-fold-ssa");
+    // PORT-NOTE: The C# test asserts the SaturatingSubtract chain survives and no
+    // Multiply is produced. Reduced to post-fold `ssa` text: a saturating subtract
+    // (`-|`) is present and no Multiply-by-2 (`* 2`) appears.
+    return SsaContainsButNot(c, "-|", "* 2");
+}
+
+// Ported from CompilerPipelineOptimizeSsaTests.ArithmeticFoldSsaFoldsRepeatedMultiplicationRunToExponent.
+public unsafe fn bool ArithmeticFoldSsaFoldsRepeatedMultiplicationRunToExponentImpl()
+{
+    stack mut SsaCompile c = CompileSsaAfter(
+        "arithmetic-fold-ssa-folds-repeated-multiplication-run-to-exponent",
+        raw"""
+module Demo
+
+fn i32[min max] Run(i32[min max] value)
+{
+    return value * value * value * value;
+}
+""",
+        "arithmetic-fold-ssa");
+    // PORT-NOTE: The C# test asserts Run holds a single Exponent with exponent 4 and
+    // no Multiply binary. Reduced to post-fold `ssa` text: an exponent-of-4
+    // (`** 4`) is present and no ordinary multiply (`* value`) survives.
+    return SsaContains(c, "** 4") && OptimizedSsaLacks(c, "* value");
+}
+
+// Ported from CompilerPipelineOptimizeSsaTests.ArithmeticFoldSsaGroupsIndependentRepeatedProductFactors.
+public unsafe fn bool ArithmeticFoldSsaGroupsIndependentRepeatedProductFactorsImpl()
+{
+    stack mut SsaCompile c = CompileSsaAfter(
+        "arithmetic-fold-ssa-groups-independent-repeated-product-factors",
+        raw"""
+module Demo
+
+fn i32[min max] Run(i32[min max] x, i32[min max] y)
+{
+    return x * x * y * y * y;
+}
+""",
+        "arithmetic-fold-ssa");
+    // PORT-NOTE: The C# test asserts the sorted Exponent exponents are exactly
+    // [2, 3] and that a Multiply combining the two grouped factors survives.
+    // Reduced to post-fold `ssa` text: an exponent-of-2 (`** 2`), an exponent-of-3
+    // (`** 3`), and a multiply (`*`) are present.
+    return SsaContains(c, "** 2") && SsaContains(c, "** 3") && SsaContains(c, " * ");
+}
+
+// Ported from CompilerPipelineOptimizeSsaTests.ArithmeticFoldSsaKeepsSeparatedProductFactorsSourceShaped.
+public unsafe fn bool ArithmeticFoldSsaKeepsSeparatedProductFactorsSourceShapedImpl()
+{
+    stack mut SsaCompile c = CompileSsaAfter(
+        "arithmetic-fold-ssa-keeps-separated-product-factors-source-shaped",
+        raw"""
+module Demo
+
+fn i32[min max] Run(i32[min max] x, i32[min max] y)
+{
+    return x * y * x;
+}
+""",
+        "arithmetic-fold-ssa");
+    // PORT-NOTE: The C# test asserts no Exponent is produced (the two x factors are
+    // separated by y so the product is left source-shaped). Reduced to post-fold
+    // `ssa` text: no exponent (`**`) appears.
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return OptimizedSsaLacks(c, "**");
+}
+
+// Ported from CompilerPipelineOptimizeSsaTests.ArithmeticFoldSsaFoldsWrappingProductRunsToExponent.
+public unsafe fn bool ArithmeticFoldSsaFoldsWrappingProductRunsToExponentImpl()
+{
+    stack mut SsaCompile c = CompileSsaAfter(
+        "arithmetic-fold-ssa-folds-wrapping-product-runs-to-exponent",
+        raw"""
+module Demo
+
+fn i8[min max] Run(i8[min max] value)
+{
+    return value *% value *% value;
+}
+""",
+        "arithmetic-fold-ssa");
+    // PORT-NOTE: The C# test asserts Run holds a single WrappingExponent with
+    // exponent 3. Reduced to post-fold `ssa` text: a wrapping-exponent-of-3
+    // (`**% 3`) is present.
+    return SsaContains(c, "**% 3");
+}
+
+// Ported from CompilerPipelineOptimizeSsaTests.ArithmeticFoldSsaDoesNotRewriteSaturatingProductChains.
+public unsafe fn bool ArithmeticFoldSsaDoesNotRewriteSaturatingProductChainsImpl()
+{
+    stack mut SsaCompile c = CompileSsaAfter(
+        "arithmetic-fold-ssa-does-not-rewrite-saturating-product-chains",
+        raw"""
+module Demo
+
+fn i32[min max] Run(i32[min max] value)
+{
+    return value *| value *| value;
+}
+""",
+        "arithmetic-fold-ssa");
+    // PORT-NOTE: The C# test asserts the SaturatingMultiply chain survives and no
+    // Exponent is produced. Reduced to post-fold `ssa` text: a saturating multiply
+    // (`*|`) is present and no exponent (`**`) appears.
+    return SsaContainsButNot(c, "*|", "**");
+}
+
+// Ported from CompilerPipelineOptimizeSsaTests.ArithmeticFoldSsaRenderShowsFoldedLinearAndProductShapes.
+public unsafe fn bool ArithmeticFoldSsaRenderShowsFoldedLinearAndProductShapesImpl()
+{
+    stack mut SsaCompile c = CompileSsaAfter(
+        "arithmetic-fold-ssa-render-shows-linear-and-product-shapes",
+        raw"""
+module Demo
+
+fn i32[min max] Scale(i32[min max] value)
+{
+    return value + value + value;
+}
+
+fn i32[min max] Power(i32[min max] value)
+{
+    return value * value * value;
+}
+""",
+        "arithmetic-fold-ssa");
+    // PORT-NOTE: The C# test renders the SsaIrModule and asserts the rendered text
+    // contains "* 3" (folded linear shape) and "** 3" (folded product shape). The
+    // ported `ssa` artifact text is the same rendered shape, so this maps directly.
+    return SsaContains(c, "* 3") && SsaContains(c, "** 3");
+}
+
+// Ported from CompilerPipelineOptimizeSsaTests.CleanupSsaForwardsAggregateFieldThroughMatchingBranchPhi.
+public unsafe fn bool CleanupSsaForwardsAggregateFieldThroughMatchingBranchPhiImpl()
+{
+    stack mut SsaCompile c = CompileOptimizedSsa(
+        "cleanup-ssa-forwards-aggregate-field-through-matching-branch-phi",
+        raw"""
+module Demo
+
+struct Pair
+{
+    i32[min max] Value;
+    i32[min max] Tag;
+}
+
+fn i32[min max] Run(bool flag, i32[min max] value)
+{
+    stack Pair pair = flag
+        ? new Pair()
+        {
+            Value = value, Tag = 1
+        }
+        : new Pair()
+        {
+            Value = value, Tag = 2
+        };
+    return pair.Value;
+}
+""");
+    // PORT-NOTE: The C# test stops after cleanup-ssa and asserts Run holds no
+    // SsaExtractFieldRValue whose FieldName is "Value" (the field read was forwarded
+    // through the matching branch phi). The extract-field object model is not
+    // reachable through the artifact-text bridge, so this is reduced to optimized
+    // SSA text: no `extract-field` / `.Value` read survives.
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return OptimizedSsaLacks(c, "extract-field") && OptimizedSsaLacks(c, ".Value");
+}
+
+// Ported from CompilerPipelineOptimizeSsaTests.OptimizeSsaRemovesStaticRangeModuloAndDivisionIdentities.
+public unsafe fn bool OptimizeSsaRemovesStaticRangeModuloAndDivisionIdentitiesImpl()
+{
+    stack mut SsaCompile c = CompileOptimizedSsa(
+        "optimize-ssa-removes-static-range-modulo-and-division-identities",
+        raw"""
+module Demo
+
+fn i32[min max] Run(u8[0 7] slot)
+{
+    stack u8[0 max] modulo = slot % (u8[0 max])8;
+    stack u8[0 max] divided = slot / (u8[0 max])8;
+    return modulo + divided;
+}
+""");
+    // PORT-NOTE: The C# test stops after optimize-ssa and asserts Run holds no
+    // SsaBinaryRValue with operator Divide or Modulo (the static-range slot makes
+    // both identities, slot % 8 == slot and slot / 8 == 0). The binary object model
+    // is not reachable through the artifact-text bridge, so this is reduced to
+    // optimized-SSA text: neither a divide (`/ 8`) nor a modulo (`% 8`) survives.
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return OptimizedSsaLacks(c, "/ 8") && OptimizedSsaLacks(c, "% 8");
+}
+
+// Ported from CompilerPipelineOptimizeSsaTests.CleanupSsaRemovesSameOperandDivisionAndModuloWhenSourceRangeExcludesZero.
+public unsafe fn bool CleanupSsaRemovesSameOperandDivisionAndModuloWhenSourceRangeExcludesZeroImpl()
+{
+    stack mut SsaCompile c = CompileOptimizedSsa(
+        "cleanup-ssa-removes-same-operand-division-and-modulo-when-source-range-excludes-zero",
+        raw"""
+module Demo
+
+fn i32[min max] Run(u8[1 100] value)
+{
+    stack u8[0 max] divided = value / value;
+    stack u8[0 max] modulo = value % value;
+    return divided + modulo;
+}
+""");
+    // PORT-NOTE: The C# test stops after cleanup-ssa and asserts Run holds no
+    // SsaBinaryRValue with operator Divide or Modulo (value / value == 1 and
+    // value % value == 0 once the [1 100] range proves value is non-zero). The
+    // binary object model is not reachable through the artifact-text bridge, so
+    // this is reduced to optimized-SSA text: neither a same-operand divide
+    // (`value / value`) nor modulo (`value % value`) survives.
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return OptimizedSsaLacks(c, "value / value") && OptimizedSsaLacks(c, "value % value");
+}

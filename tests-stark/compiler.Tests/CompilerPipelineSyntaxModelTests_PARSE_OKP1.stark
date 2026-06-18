@@ -1,0 +1,272 @@
+import CompilerTestSupport
+import System.Testing
+
+module CompilerPipelineSyntaxModelTests_PARSE_OKP1
+
+// Ported slice of tests/compiler.PipelineTests/CompilerPipelineSyntaxModelTests.cs.
+// Each Impl runs the embedded Stark program (kept verbatim from the C# raw
+// string) through the closest compile helper and returns true when the original
+// xUnit assertions would hold. PORT-NOTE comments flag assertions the helpers
+// cannot express (SyntaxModel introspection: ModuleName/BackendOptimizationMode,
+// declaration attributes, thread-safety laws, destructors, type aliases, and
+// generic type parameters) that were reduced to the nearest signal.
+
+// Ported from CompilerPipelineSyntaxModelTests.BackendOpaqueModuleAttributeFlowsIntoSyntaxModel.
+public unsafe fn bool BackendOpaqueModuleAttributeFlowsIntoSyntaxModelImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: the original stops after the "syntax-model" pass and, beyond
+        // result.Succeeded, probes the SyntaxModel (ModuleName "Demo",
+        // BackendOptimizationMode Opaque, a single ModuleAttribute named "Backend"
+        // with arguments ["Opaque"]) and asserts CompilerCli.ShouldEnableRootModuleLto
+        // is false. SyntaxModel access and the LTO/CLI signal are not expressible via
+        // the compile helpers, so this reduces to "the embedded program type-checks
+        // successfully" (the result.Succeeded signal).
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "syntax-model-backend-opaque-module-attribute",
+            raw"""
+[Backend(Opaque)]
+module Demo
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from CompilerPipelineSyntaxModelTests.TestingCallableAttributesFlowIntoSyntaxModelAsMetadata.
+public unsafe fn bool TestingCallableAttributesFlowIntoSyntaxModelAsMetadataImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: the original stops after the "syntax-model" pass and, beyond
+        // result.Succeeded, probes the SyntaxModel declarations to confirm
+        // "AdditionWorks" carries a single attribute named "Fact" and "AdditionTheory"
+        // carries a single attribute named "Theory". Declaration-attribute access is
+        // not expressible via the compile helpers, so this reduces to "the embedded
+        // program type-checks successfully".
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "syntax-model-testing-callable-attributes-metadata",
+            raw"""
+module Demo
+
+[Fact]
+fn bool AdditionWorks()
+{
+    return true;
+}
+
+[Theory]
+fn bool AdditionTheory()
+{
+    return true;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from CompilerPipelineSyntaxModelTests.BackendOpaqueAttributesFlowIntoCallableAndTypeSyntaxModels.
+public unsafe fn bool BackendOpaqueAttributesFlowIntoCallableAndTypeSyntaxModelsImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: the original stops after the "syntax-model" pass and, beyond
+        // result.Succeeded, probes the SyntaxModel declarations to confirm the
+        // BackendOptimizationMode is Opaque on the Run function, the Box struct and its
+        // Box.Read method, the Cursor record and its Cursor.Read method, and the
+        // Numbers doctrine and its Numbers.Equals law (each including the nested
+        // Function!.BackendOptimizationMode). SyntaxModel declaration and
+        // backend-mode access is not expressible via the compile helpers, so this
+        // reduces to "the embedded program type-checks successfully".
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "syntax-model-backend-opaque-callable-and-type",
+            raw"""
+module Demo
+
+[Backend(Opaque)]
+fn void Run()
+{
+    ;
+}
+
+[Backend(Opaque)]
+struct Box
+{
+    i32[min max] Value;
+
+    fn i32[min max] Read()
+    {
+        return self.Value;
+    }
+}
+
+[Backend(Opaque)]
+record Cursor(i32[min max] Position)
+{
+    fn i32[min max] Read()
+    {
+        return self.Position;
+    }
+}
+
+[Backend(Opaque)]
+doctrine Numbers<T>
+{
+    finite law bool Equals(borrow T left, borrow T right);
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from CompilerPipelineSyntaxModelTests.ThreadSafetyLawPredicatesAndAttributesFlowIntoSyntaxModel.
+public unsafe fn bool ThreadSafetyLawPredicatesAndAttributesFlowIntoSyntaxModelImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: the original stops after the "syntax-model" pass and, beyond
+        // result.Succeeded, probes the SyntaxModel thread-safety laws: the Box struct
+        // carries a single Grant law on "Transferable" with a null Condition, the
+        // LocalOnly enum carries a single Deny law on "Transferable", the Move function
+        // carries laws ["Transferable", "Shareable"] each with TypeText "T", and the
+        // Holder.Relay function carries a single Transferable law with TypeText "T".
+        // Thread-safety-law model access is not expressible via the compile helpers,
+        // so this reduces to "the embedded program type-checks successfully".
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "syntax-model-thread-safety-law-predicates-attributes",
+            raw"""
+module Demo
+
+[Grant(Transferable)]
+struct Box<T>
+{
+    [Grant(Shareable) where Transferable(T)]
+    T Payload;
+}
+
+[Deny(Transferable)]
+enum LocalOnly
+{
+    None
+}
+
+fn T Move<T>(T value) where Transferable(T), Shareable(T)
+{
+    return value;
+}
+
+struct Holder
+{
+    fn T Relay<T>(T value) where Transferable(T)
+    {
+        return value;
+    }
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from CompilerPipelineSyntaxModelTests.StructAndRecordDestructorsFlowIntoSyntaxModel.
+public unsafe fn bool StructAndRecordDestructorsFlowIntoSyntaxModelImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: the original stops after the "syntax-model" pass and, beyond
+        // result.Succeeded, probes the SyntaxModel declarations to confirm the Buffer
+        // struct has a non-null, non-mutable Destructor and the Cursor record has a
+        // non-null, mutable Destructor. Destructor-model access is not expressible via
+        // the compile helpers, so this reduces to "the embedded program type-checks
+        // successfully".
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "syntax-model-struct-and-record-destructors",
+            raw"""
+module Demo
+
+struct Buffer
+{
+    i32[min max] Value;
+
+    drop
+    {
+        ;
+    }
+}
+
+record Cursor(i32[min max] Position)
+{
+    mut drop
+    {
+        self.Position = 0;
+    }
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from CompilerPipelineSyntaxModelTests.TypeAliasDeclarationsFlowIntoSyntaxModel.
+public unsafe fn bool TypeAliasDeclarationsFlowIntoSyntaxModelImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: the original stops after the "syntax-model" pass and, beyond
+        // result.Succeeded, probes the SyntaxModel TypeAlias declarations: "Byte" is
+        // Public with AliasedType "i8[minmax]" and no generic parameters, while
+        // "BufferView" is Module-visible with AliasedType "borrowT[]" and generic
+        // parameters ["T"]. TypeAlias-model access is not expressible via the compile
+        // helpers, so this reduces to "the embedded program type-checks successfully".
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "syntax-model-type-alias-declarations",
+            raw"""
+module Demo
+
+public alias Byte = i8[min max];
+alias BufferView<T> = borrow T[];
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from CompilerPipelineSyntaxModelTests.GenericFunctionDeclarationsCarryTypeParametersIntoSyntaxModel.
+public unsafe fn bool GenericFunctionDeclarationsCarryTypeParametersIntoSyntaxModelImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: the original stops after the "syntax-model" pass and, beyond
+        // result.Succeeded, probes the SyntaxModel declarations to confirm that
+        // Identity, Box.Echo, Reader.Read, and Projector.Project each carry a
+        // non-null Function that IsGeneric with GenericParams ["T"]. Function
+        // generic-parameter model access is not expressible via the compile helpers,
+        // so this reduces to "the embedded program type-checks successfully".
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "syntax-model-generic-function-type-parameters",
+            raw"""
+module Demo
+
+public fn T Identity<T>(T value)
+{
+    return value;
+}
+
+struct Box
+{
+    fn T Echo<T>(T value)
+    {
+        return value;
+    }
+}
+
+trait Reader
+{
+    law T Read<T>(T value);
+}
+
+doctrine Projector
+{
+    law T Project<T>(T value);
+}
+""");
+        return Succeeds(compiled);
+    }
+}

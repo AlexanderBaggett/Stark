@@ -1,0 +1,991 @@
+import LlvmTestSupport
+import System.Testing
+module BenchmarkSourceTestsP1
+
+// Ported slice of tests/compiler.Tests/BenchmarkSourceTests.cs, running against
+// the current C# host compiler through the host test protocol. Each Impl
+// compiles a benchmark source program, requests the rendered `llvm` artifact,
+// and asserts on raw LLVM-IR substrings with System.Testing text helpers.
+//
+// PORT-NOTE (applies to every case below): the C# oracle drives the
+// DefaultCompilerPipeline directly with an explicit LlvmTargetInfo (Linux or
+// Windows) and a TargetAwareStdLibModuleResolver rooted at stdlib/src, then
+// narrows substring assertions to a single function body extracted with
+// ExtractDefinedFunctionText (e.g. `@main`, `@EnumerateOnce`, the inline
+// clones). The host LLVM bridge only exposes a single-source compile and the
+// full rendered `llvm` text with no target selection and no function-body
+// slicing, so target-specific (Windows-only) codegen, body-scoped Contains
+// checks, regex DoesNotMatch assertions, native-object emission, and
+// filesystem benchmark enumeration are reduced to whole-module substring checks
+// over the available embedded sources. Per-case notes call out what was lost.
+
+// Ported from BenchmarkSourceTests.BenchmarkSourcesCompile.
+public unsafe fn bool BenchmarkSourcesCompileImpl()
+{
+    // PORT-NOTE: the C# oracle enumerates every `*.stark` under benchmarks/ from
+    // disk, asserts each compiles, has no fallback logs, emits an LlvmIrModule,
+    // and that the module text contains no `@malloc(`/`@realloc(`/`@free(`. The
+    // host bridge cannot walk the filesystem, so this is reduced to compiling a
+    // representative set of embedded benchmark sources and asserting success
+    // plus the same allocator-symbol absence over each rendered module.
+    stack mut LlvmCompile dictionary = CompileLlvm(
+        "benchmark-sources-compile-dictionary-insert",
+        raw"""
+import System.Collections
+import System.Memory
+module Benchmarks.Collections.DictionaryInsert
+
+unsafe finite law bool Ok(MemoryStatus status) {
+    switch (status) {
+        case MemoryStatus.Ok:
+            return true;
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+export unsafe ffi fn i32[min max] main() {
+    stack mut System.Collections.Dictionary<u32[0 max], u32[0 max]> values = new();
+    if (!Ok(values.Reserve(8192))) {
+        return 1;
+    }
+
+    stack mut i64[min max] checksum = 0;
+    for willexit (stack mut u16[0 8192] i = 0; i < 8192; i += 1) {
+        stack u32[0 max] value = (u32[0 max])(i * 7);
+        if (!Ok(values.Set(i, value))) {
+            return 2;
+        }
+
+        checksum += (i64[min max])value;
+    }
+
+    stack mut u32[0 max] found = 0;
+    stack u32[0 max] lastKey = 8191;
+    if (values.Count() != 8192 || !values.TryGet(lastKey, found) || found != 57337) {
+        return 3;
+    }
+
+    if (checksum != 234852352) {
+        return 4;
+    }
+
+    return 0;
+}
+""");
+    if (!Succeeds(dictionary))
+    {
+        return false;
+    }
+
+    stack ascii dictionaryLlvm = Llvm(dictionary);
+    if (!DoesNotContain(dictionaryLlvm, "@malloc(")
+        || !DoesNotContain(dictionaryLlvm, "@realloc(")
+        || !DoesNotContain(dictionaryLlvm, "@free("))
+    {
+        return false;
+    }
+
+    stack mut LlvmCompile constantInteger = CompileLlvm(
+        "benchmark-sources-compile-constant-integer-formatting",
+        raw"""
+import System.Text
+module Benchmarks.Text.ConstantIntegerFormatting
+
+const Iterations = 50;
+
+unsafe fn i64[min max] AsciiChecksum(borrow Ascii text) {
+    return text.Length
+        + (i64[min max])(*text.Data)
+        + (i64[min max])(*(&text.Data[text.Length - 1]));
+}
+
+export unsafe ffi fn i32[min max] main() {
+    stack mut i8[min max][320] storage;
+    stack mut Ascii text = new Ascii() {
+        Data = &storage[0],
+        Length = 0,
+        Capacity = 320
+    };
+    stack mut i64[min max] checksum = 0;
+
+    for willexit (stack mut u8[0 50] i = 0; i < Iterations; i += 1) {
+        if (!System.Text.TryFormatI64Ascii(&text, (i64[min max])(-(2 ** 63)))) {
+            return 1;
+        }
+        checksum += AsciiChecksum(text);
+
+        if (!System.Text.TryFormatU64Ascii(&text, (u64[0 max])(2 ** 64 - 1))) {
+            return 2;
+        }
+        checksum += AsciiChecksum(text);
+
+        if (!System.Text.TryFormatI1024Ascii(&text, (i1024[min max])(-(2 ** 1023)))) {
+            return 3;
+        }
+        checksum += AsciiChecksum(text);
+
+        if (!System.Text.TryFormatU1024Ascii(&text, (u1024[0 max])(2 ** 1024 - 1))) {
+            return 4;
+        }
+        checksum += AsciiChecksum(text);
+    }
+
+    if (checksum != 53200) {
+        return 5;
+    }
+
+    return 0;
+}
+""");
+    if (!Succeeds(constantInteger))
+    {
+        return false;
+    }
+
+    stack ascii constantIntegerLlvm = Llvm(constantInteger);
+    return DoesNotContain(constantIntegerLlvm, "@malloc(")
+        && DoesNotContain(constantIntegerLlvm, "@realloc(")
+        && DoesNotContain(constantIntegerLlvm, "@free(");
+}
+
+// Ported from BenchmarkSourceTests.MemoryCopyFillHotLoopUsesInfallibleHelpers.
+public unsafe fn bool MemoryCopyFillHotLoopUsesInfallibleHelpersImpl()
+{
+    // PORT-NOTE: the C# oracle slices `@main`, the code-point copy clone, the
+    // byte move clone, and the code-point move clone bodies out of the module
+    // and asserts within each. The host bridge exposes only whole-module text,
+    // so the body-scoped Contains/DoesNotContain checks (e.g. inline-clone calls
+    // appearing only inside @main, `mul i64 %arg_count, 4` only inside a
+    // particular clone) are applied over the full `llvm` text instead.
+    stack mut LlvmCompile c = CompileLlvm(
+        "benchmark-memory-copy-fill-infallible-helpers",
+        raw"""
+import System.Memory
+import System.Memory
+module Benchmarks.Allocator.MemoryCopyFill
+
+const Iterations = 10000;
+
+fn bool Ok(System.Memory.MemoryStatus status) {
+    switch (status) {
+        case System.Memory.MemoryStatus.Err(var error):
+            return false;
+        case System.Memory.MemoryStatus.Ok:
+            return true;
+    }
+}
+
+fn i64[min max] SumBytes(borrow i8[min max][] values, u64[0 2 ** 63 - 1] count) {
+    stack mut i64[min max] checksum = 0;
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1) {
+        checksum += (i64[min max])values[index];
+    }
+
+    return checksum;
+}
+
+fn i64[min max] SumCodePoints(borrow i32[min max][] values, u64[0 2 ** 63 - 1] count) {
+    stack mut i64[min max] checksum = 0;
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1) {
+        checksum += (i64[min max])values[index];
+    }
+
+    return checksum;
+}
+
+export unsafe ffi fn i32[min max] main() {
+    stack u64[0 2 ** 63 - 1] byteCount = 32;
+    stack u64[0 2 ** 61 - 1] codePointCount = 32;
+    stack u64[0 2 ** 61 - 1] moveCount = 16;
+    stack u64[0 2 ** 63 - 1] moveDestinationStart = 8;
+    stack mut i8[min max][32] byteSource = {
+        3, 3, 3, 3, 3, 3, 3, 3,
+        3, 3, 3, 3, 3, 3, 3, 3,
+        3, 3, 3, 3, 3, 3, 3, 3,
+        3, 3, 3, 3, 3, 3, 3, 3
+    };
+    stack mut i8[min max][32] byteDestination = {
+        0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0
+    };
+    stack mut dynamic i8[min max] byteMoveBuffer = new();
+    stack mut i32[min max][32] codePointSource = {
+        65, 65, 65, 65, 65, 65, 65, 65,
+        65, 65, 65, 65, 65, 65, 65, 65,
+        65, 65, 65, 65, 65, 65, 65, 65,
+        65, 65, 65, 65, 65, 65, 65, 65
+    };
+    stack mut i32[min max][32] codePointDestination = {
+        0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0
+    };
+    stack mut dynamic i32[min max] codePointMoveBuffer = new();
+    stack mut i64[min max] checksum = 0;
+    if (!Ok(System.Memory.ReserveBytes(byteMoveBuffer, byteCount))) {
+        return 1;
+    }
+
+    if (!Ok(System.Memory.ReserveCodePoints(codePointMoveBuffer, codePointCount))) {
+        return 1;
+    }
+
+    for willexit (stack mut u64[0 2 ** 63 - 1] initIndex = 0; initIndex < byteCount; initIndex += 1) {
+        init byteMoveBuffer[byteMoveBuffer.Length] = 0;
+        init codePointMoveBuffer[codePointMoveBuffer.Length] = 0;
+    }
+
+    for willexit (stack mut u16[0 10000] iteration = 0; iteration < Iterations; iteration += 1) {
+        System.Memory.CopyBytesDisjointInfallible(
+            byteSource,
+            byteDestination,
+            byteCount);
+
+        checksum += SumBytes(byteDestination, byteCount);
+
+        stack i8[min max] byteFill = (i8[min max])((iteration % 17) + 1);
+        System.Memory.FillInitializedBytesInfallible(byteDestination, byteFill, byteCount);
+
+        checksum += SumBytes(byteDestination, byteCount);
+
+        System.Memory.CopyCodePointsDisjointInfallible(
+            codePointSource,
+            codePointDestination,
+            codePointCount);
+
+        checksum += SumCodePoints(codePointDestination, codePointCount);
+
+        stack i32[min max] codePointFill = (i32[min max])(90 + (iteration % 11));
+        System.Memory.FillInitializedCodePointsInfallible(codePointDestination, codePointFill, codePointCount);
+
+        checksum += SumCodePoints(codePointDestination, codePointCount);
+
+        stack u64[0 2 ** 63 - 1] iteration64 = (u64[0 2 ** 63 - 1])iteration;
+        for willexit (stack mut u64[0 2 ** 63 - 1] setupIndex = 0; setupIndex < byteCount; setupIndex += 1) {
+            unsafe {
+                byteMoveBuffer[setupIndex] = (i8[min max])((setupIndex + iteration64) % 97);
+                codePointMoveBuffer[setupIndex] = (i32[min max])(65 + ((setupIndex + iteration64) % 17));
+            }
+        }
+
+        System.Memory.MoveBytesInfallible(
+            byteMoveBuffer[0, moveCount],
+            byteMoveBuffer[moveDestinationStart, moveCount],
+            moveCount);
+
+        checksum += SumBytes(byteMoveBuffer[0, byteMoveBuffer.Length], byteCount);
+
+        System.Memory.MoveCodePointsInfallible(
+            codePointMoveBuffer[0, moveCount],
+            codePointMoveBuffer[moveDestinationStart, moveCount],
+            moveCount);
+
+        checksum += SumCodePoints(codePointMoveBuffer[0, codePointMoveBuffer.Length], codePointCount);
+    }
+
+    if (checksum != 93749676) {
+        return 8;
+    }
+
+    return 0;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "@__stark_inline_clone_System_Memory_CopyBytesDisjointInfallible(")
+        && Contains(llvm, "@__stark_inline_clone_System_Memory_FillInitializedBytesInfallible(")
+        && Contains(llvm, "@__stark_inline_clone_System_Memory_CopyCodePointsDisjointInfallible(")
+        && Contains(llvm, "@__stark_inline_clone_System_Memory_FillInitializedCodePointsInfallible(")
+        && Contains(llvm, "@__stark_inline_clone_System_Memory_MoveBytesInfallible(")
+        && Contains(llvm, "@__stark_inline_clone_System_Memory_MoveCodePointsInfallible(")
+        && DoesNotContain(llvm, "@System_Memory_CopyBytesDisjointInfallible(")
+        && DoesNotContain(llvm, "@System_Memory_FillInitializedBytesInfallible(")
+        && DoesNotContain(llvm, "@System_Memory_CopyCodePointsDisjointInfallible(")
+        && DoesNotContain(llvm, "@System_Memory_FillInitializedCodePointsInfallible(")
+        && DoesNotContain(llvm, "@System_Memory_ReserveBytes(")
+        && DoesNotContain(llvm, "@System_Memory_ReserveCodePoints(")
+        && DoesNotContain(llvm, "@System_Memory_MoveBytesInfallible(")
+        && DoesNotContain(llvm, "@System_Memory_MoveCodePointsInfallible(")
+        && DoesNotContain(llvm, "@System_Memory_CopyBytesDisjoint(")
+        && DoesNotContain(llvm, "@System_Memory_FillInitializedBytes(")
+        && DoesNotContain(llvm, "@System_Memory_CopyCodePointsDisjoint(")
+        && DoesNotContain(llvm, "@System_Memory_FillInitializedCodePoints(")
+        && DoesNotContain(llvm, "@System_Memory_MoveBytes(")
+        && DoesNotContain(llvm, "@System_Memory_MoveCodePoints(")
+        && Contains(llvm, "; closed-world imported inline body: System.Memory.CopyBytesDisjointInfallible")
+        && Contains(llvm, "; closed-world imported inline body: System.Memory.MoveBytesInfallible")
+        && Contains(llvm, "@llvm.memcpy.p0.p0.i64")
+        && Contains(llvm, "mul i64 %arg_count, 4")
+        && Contains(llvm, "@llvm.memmove.p0.p0.i64");
+}
+
+// Ported from BenchmarkSourceTests.WindowsDirectoryEnumerationUsesAllocationFreeInfoPath.
+public unsafe fn bool WindowsDirectoryEnumerationUsesAllocationFreeInfoPathImpl()
+{
+    // PORT-NOTE: the C# oracle compiles against an explicit
+    // x86_64-pc-windows-msvc target and slices the `@EnumerateOnce` body before
+    // asserting the allocation-free info path. The host bridge has no target
+    // selection (compiles for the host default) and no body slicing, so the
+    // Windows-specific codegen requirement is reduced and the Contains/
+    // DoesNotContain checks are applied over the whole `llvm` module text.
+    stack mut LlvmCompile c = CompileLlvm(
+        "benchmark-windows-directory-enumeration-alloc-free",
+        raw"""
+import System.FileSystem
+import System.IO.File
+import System.Text
+import System.IO
+module Benchmarks.IO.DirectoryEnumeration
+
+const Entries = 128;
+const AsciiEntries = 120;
+const UnicodeEntries = 8;
+const Iterations = 128;
+const RootName = "dir-enum-bench";
+const PathLength = 28;
+const HundredsIndex = 21;
+const TensIndex = 22;
+const OnesIndex = 23;
+const ExpectedChecksum = 212992;
+
+ finite law bool IOOk(System.IO.IOStatus status) {
+    switch (status) {
+        case System.IO.IOStatus.Ok:
+            return true;
+        case System.IO.IOStatus.Err(var error):
+            return false;
+    }
+}
+
+unsafe fn void WriteAsciiEntryPath(rawmutptr<i8[min max]> data, u8[0 119] index) {
+    stack i32[min max] value = (i32[min max])index;
+    *(&data[HundredsIndex]) = (i8[min max])(48 + ((value / 100) % 10));
+    *(&data[TensIndex]) = (i8[min max])(48 + ((value / 10) % 10));
+    *(&data[OnesIndex]) = (i8[min max])(48 + (value % 10));
+}
+
+unsafe fn void WriteUnicodeEntryPath(rawmutptr<i8[min max]> data, u8[0 7] index) {
+    *(&data[OnesIndex]) = (i8[min max])(48 + (i32[min max])index);
+}
+
+fn bool CreateEntry(ascii path) {
+    stack System.IO.IOResult<System.IO.File.File> opened =
+        System.IO.File.Open(path, System.IO.File.FileMode.Write, System.IO.File.FileBuffering.None);
+    switch (opened) {
+        case System.IO.IOResult<System.IO.File.File>.Err(var openError):
+            return false;
+        case System.IO.IOResult<System.IO.File.File>.Ok(var fileValue):
+            stack mut System.IO.File.File file = fileValue;
+            return IOOk(file.Close());
+    }
+}
+
+unsafe fn void DeleteEntries() {
+    stack mut i8[min max][32] pathStorage = {
+        100, 105, 114, 45, 101, 110, 117, 109,
+        45, 98, 101, 110, 99, 104, 47, 101,
+        110, 116, 114, 121, 45, 48, 48, 48,
+        46, 116, 109, 112, 0, 0, 0, 0
+    };
+    stack mut Ascii path = new Ascii() {
+        Data = &pathStorage[0],
+        Length = PathLength,
+        Capacity = 32
+    };
+
+    for willexit (stack mut u8[0 120] index = 0; index < AsciiEntries; index += 1) {
+        WriteAsciiEntryPath(&pathStorage[0], (u8[0 119])index);
+        System.IO.File.Delete(System.Text.AsciiView(path));
+    }
+
+    stack mut i8[min max][32] unicodePathStorage = {
+        100, 105, 114, 45, 101, 110, 117, 109,
+        45, 98, 101, 110, 99, 104, 47, 119,
+        105, 100, 101, 45, -61, -87, 45, 48,
+        46, 116, 109, 112, 0, 0, 0, 0
+    };
+    stack mut Ascii unicodePath = new Ascii() {
+        Data = &unicodePathStorage[0],
+        Length = PathLength,
+        Capacity = 32
+    };
+
+    for willexit (stack mut u8[0 8] index = 0; index < UnicodeEntries; index += 1) {
+        WriteUnicodeEntryPath(&unicodePathStorage[0], (u8[0 7])index);
+        System.IO.File.Delete(System.Text.AsciiView(unicodePath));
+    }
+
+    System.FileSystem.DeleteDirectory(RootName);
+}
+
+unsafe fn bool CreateEntries() {
+    DeleteEntries();
+    if (!IOOk(System.FileSystem.CreateDirectory(RootName))) {
+        return false;
+    }
+
+    stack mut i8[min max][32] pathStorage = {
+        100, 105, 114, 45, 101, 110, 117, 109,
+        45, 98, 101, 110, 99, 104, 47, 101,
+        110, 116, 114, 121, 45, 48, 48, 48,
+        46, 116, 109, 112, 0, 0, 0, 0
+    };
+    stack mut Ascii path = new Ascii() {
+        Data = &pathStorage[0],
+        Length = PathLength,
+        Capacity = 32
+    };
+
+    for willexit (stack mut u8[0 120] index = 0; index < AsciiEntries; index += 1) {
+        WriteAsciiEntryPath(&pathStorage[0], (u8[0 119])index);
+        if (!CreateEntry(System.Text.AsciiView(path))) {
+            return false;
+        }
+    }
+
+    stack mut i8[min max][32] unicodePathStorage = {
+        100, 105, 114, 45, 101, 110, 117, 109,
+        45, 98, 101, 110, 99, 104, 47, 119,
+        105, 100, 101, 45, -61, -87, 45, 48,
+        46, 116, 109, 112, 0, 0, 0, 0
+    };
+    stack mut Ascii unicodePath = new Ascii() {
+        Data = &unicodePathStorage[0],
+        Length = PathLength,
+        Capacity = 32
+    };
+
+    for willexit (stack mut u8[0 8] index = 0; index < UnicodeEntries; index += 1) {
+        WriteUnicodeEntryPath(&unicodePathStorage[0], (u8[0 7])index);
+        if (!CreateEntry(System.Text.AsciiView(unicodePath))) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+unsafe fn i64[min max] EnumerateOnce() {
+    stack System.IO.IOResult<System.FileSystem.Directory> opened = System.FileSystem.OpenDirectory(RootName);
+    switch (opened) {
+        case System.IO.IOResult<System.FileSystem.Directory>.Err(var openError):
+            return -1;
+        case System.IO.IOResult<System.FileSystem.Directory>.Ok(var directoryValue):
+            stack mut System.FileSystem.Directory directory = directoryValue;
+            return directory.ReadRemainingNameLengthChecksumRaw(Entries);
+    }
+}
+
+export unsafe ffi fn i32[min max] main() {
+    if (!CreateEntries()) {
+        DeleteEntries();
+        return 1;
+    }
+
+    stack mut i64[min max] checksum = 0;
+    for willexit (stack mut u8[0 128] iteration = 0; iteration < Iterations; iteration += 1) {
+        stack i64[min max] iterationChecksum = EnumerateOnce();
+        if (iterationChecksum < 0) {
+            DeleteEntries();
+            return 2;
+        }
+
+        checksum += iterationChecksum;
+    }
+
+    DeleteEntries();
+    if (checksum != ExpectedChecksum) {
+        return 3;
+    }
+
+    return 0;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "ReadRemainingNameLengthChecksumRaw")
+        && DoesNotContain(llvm, "@System_FileSystem_Directory_ReadNextInfoRaw(")
+        && DoesNotContain(llvm, "@System_FileSystem_Directory_ReadNextInfo(")
+        && DoesNotContain(llvm, "@System_FileSystem_Directory_ReadNext(")
+        && DoesNotContain(llvm, "@System_Runtime_Buffer_FixedByteBuffer8192_WritePointer(")
+        && DoesNotContain(llvm, "@System_Runtime_Buffer_FixedByteBuffer8192_Capacity(")
+        && DoesNotContain(llvm, "System_FileSystem_DirectoryReadInfoResult")
+        && DoesNotContain(llvm, "__stark_runtime_alloc")
+        && DoesNotContain(llvm, "__stark_runtime_free")
+        && DoesNotContain(llvm, "i64 8192, i1 false")
+        && DoesNotContain(llvm, "i64 8240, i1 false");
+}
+
+// Ported from BenchmarkSourceTests.DirectoryEnumerationDoesNotExposeLargeDirectoryPayloadAsSsaValue.
+public unsafe fn bool DirectoryEnumerationDoesNotExposeLargeDirectoryPayloadAsSsaValueImpl()
+{
+    // PORT-NOTE: the C# oracle slices `@EnumerateOnce` and asserts a mix of
+    // substring and regex (DoesNotMatch) conditions plus a `< 16` count bound on
+    // `fca.<field>` field extractions. The host bridge offers neither body
+    // slicing nor regex/count helpers, so the regex DoesNotMatch checks (e.g.
+    // `store %System_FileSystem_Directory %vN, ptr %slot_directory`,
+    // `llvm.memcpy ... %slot_directory`, the 8248-byte drop memcpy) and the fca
+    // count bound are reduced to the literal-substring subset and applied over
+    // the whole `llvm` module text. The `%slot_directory = alloca` /
+    // `load %System_FileSystem_Directory` absence checks survive as plain
+    // DoesNotContain.
+    stack mut LlvmCompile c = CompileLlvm(
+        "benchmark-directory-enumeration-no-ssa-payload",
+        raw"""
+import System.FileSystem
+import System.IO.File
+import System.Text
+import System.IO
+module Benchmarks.IO.DirectoryEnumeration
+
+const Entries = 128;
+const AsciiEntries = 120;
+const UnicodeEntries = 8;
+const Iterations = 128;
+const RootName = "dir-enum-bench";
+const PathLength = 28;
+const HundredsIndex = 21;
+const TensIndex = 22;
+const OnesIndex = 23;
+const ExpectedChecksum = 212992;
+
+ finite law bool IOOk(System.IO.IOStatus status) {
+    switch (status) {
+        case System.IO.IOStatus.Ok:
+            return true;
+        case System.IO.IOStatus.Err(var error):
+            return false;
+    }
+}
+
+unsafe fn void WriteAsciiEntryPath(rawmutptr<i8[min max]> data, u8[0 119] index) {
+    stack i32[min max] value = (i32[min max])index;
+    *(&data[HundredsIndex]) = (i8[min max])(48 + ((value / 100) % 10));
+    *(&data[TensIndex]) = (i8[min max])(48 + ((value / 10) % 10));
+    *(&data[OnesIndex]) = (i8[min max])(48 + (value % 10));
+}
+
+unsafe fn void WriteUnicodeEntryPath(rawmutptr<i8[min max]> data, u8[0 7] index) {
+    *(&data[OnesIndex]) = (i8[min max])(48 + (i32[min max])index);
+}
+
+fn bool CreateEntry(ascii path) {
+    stack System.IO.IOResult<System.IO.File.File> opened =
+        System.IO.File.Open(path, System.IO.File.FileMode.Write, System.IO.File.FileBuffering.None);
+    switch (opened) {
+        case System.IO.IOResult<System.IO.File.File>.Err(var openError):
+            return false;
+        case System.IO.IOResult<System.IO.File.File>.Ok(var fileValue):
+            stack mut System.IO.File.File file = fileValue;
+            return IOOk(file.Close());
+    }
+}
+
+unsafe fn void DeleteEntries() {
+    stack mut i8[min max][32] pathStorage = {
+        100, 105, 114, 45, 101, 110, 117, 109,
+        45, 98, 101, 110, 99, 104, 47, 101,
+        110, 116, 114, 121, 45, 48, 48, 48,
+        46, 116, 109, 112, 0, 0, 0, 0
+    };
+    stack mut Ascii path = new Ascii() {
+        Data = &pathStorage[0],
+        Length = PathLength,
+        Capacity = 32
+    };
+
+    for willexit (stack mut u8[0 120] index = 0; index < AsciiEntries; index += 1) {
+        WriteAsciiEntryPath(&pathStorage[0], (u8[0 119])index);
+        System.IO.File.Delete(System.Text.AsciiView(path));
+    }
+
+    stack mut i8[min max][32] unicodePathStorage = {
+        100, 105, 114, 45, 101, 110, 117, 109,
+        45, 98, 101, 110, 99, 104, 47, 119,
+        105, 100, 101, 45, -61, -87, 45, 48,
+        46, 116, 109, 112, 0, 0, 0, 0
+    };
+    stack mut Ascii unicodePath = new Ascii() {
+        Data = &unicodePathStorage[0],
+        Length = PathLength,
+        Capacity = 32
+    };
+
+    for willexit (stack mut u8[0 8] index = 0; index < UnicodeEntries; index += 1) {
+        WriteUnicodeEntryPath(&unicodePathStorage[0], (u8[0 7])index);
+        System.IO.File.Delete(System.Text.AsciiView(unicodePath));
+    }
+
+    System.FileSystem.DeleteDirectory(RootName);
+}
+
+unsafe fn bool CreateEntries() {
+    DeleteEntries();
+    if (!IOOk(System.FileSystem.CreateDirectory(RootName))) {
+        return false;
+    }
+
+    stack mut i8[min max][32] pathStorage = {
+        100, 105, 114, 45, 101, 110, 117, 109,
+        45, 98, 101, 110, 99, 104, 47, 101,
+        110, 116, 114, 121, 45, 48, 48, 48,
+        46, 116, 109, 112, 0, 0, 0, 0
+    };
+    stack mut Ascii path = new Ascii() {
+        Data = &pathStorage[0],
+        Length = PathLength,
+        Capacity = 32
+    };
+
+    for willexit (stack mut u8[0 120] index = 0; index < AsciiEntries; index += 1) {
+        WriteAsciiEntryPath(&pathStorage[0], (u8[0 119])index);
+        if (!CreateEntry(System.Text.AsciiView(path))) {
+            return false;
+        }
+    }
+
+    stack mut i8[min max][32] unicodePathStorage = {
+        100, 105, 114, 45, 101, 110, 117, 109,
+        45, 98, 101, 110, 99, 104, 47, 119,
+        105, 100, 101, 45, -61, -87, 45, 48,
+        46, 116, 109, 112, 0, 0, 0, 0
+    };
+    stack mut Ascii unicodePath = new Ascii() {
+        Data = &unicodePathStorage[0],
+        Length = PathLength,
+        Capacity = 32
+    };
+
+    for willexit (stack mut u8[0 8] index = 0; index < UnicodeEntries; index += 1) {
+        WriteUnicodeEntryPath(&unicodePathStorage[0], (u8[0 7])index);
+        if (!CreateEntry(System.Text.AsciiView(unicodePath))) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+unsafe fn i64[min max] EnumerateOnce() {
+    stack System.IO.IOResult<System.FileSystem.Directory> opened = System.FileSystem.OpenDirectory(RootName);
+    switch (opened) {
+        case System.IO.IOResult<System.FileSystem.Directory>.Err(var openError):
+            return -1;
+        case System.IO.IOResult<System.FileSystem.Directory>.Ok(var directoryValue):
+            stack mut System.FileSystem.Directory directory = directoryValue;
+            return directory.ReadRemainingNameLengthChecksumRaw(Entries);
+    }
+}
+
+export unsafe ffi fn i32[min max] main() {
+    if (!CreateEntries()) {
+        DeleteEntries();
+        return 1;
+    }
+
+    stack mut i64[min max] checksum = 0;
+    for willexit (stack mut u8[0 128] iteration = 0; iteration < Iterations; iteration += 1) {
+        stack i64[min max] iterationChecksum = EnumerateOnce();
+        if (iterationChecksum < 0) {
+            DeleteEntries();
+            return 2;
+        }
+
+        checksum += iterationChecksum;
+    }
+
+    DeleteEntries();
+    if (checksum != ExpectedChecksum) {
+        return 3;
+    }
+
+    return 0;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return DoesNotContain(llvm, "%slot_directory = alloca")
+        && DoesNotContain(llvm, "load %System_FileSystem_Directory")
+        && Contains(llvm, "ReadRemainingNameLengthChecksumRaw")
+        && Contains(llvm, "ReadDirectoryNameLengthChecksum")
+        && DoesNotContain(llvm, "@System_FileSystem_Directory_ReadNextInfoRaw(")
+        && DoesNotContain(llvm, "@System_FileSystem_Directory_ReadNextInfo(")
+        && DoesNotContain(llvm, "@EntryLength(")
+        && DoesNotContain(llvm, "@IsEnd(")
+        && DoesNotContain(llvm, "@System_Runtime_Buffer_FixedByteBuffer8192_WritePointer(")
+        && DoesNotContain(llvm, "@System_Runtime_Buffer_FixedByteBuffer8192_Capacity(")
+        && DoesNotContain(llvm, "DirectoryEntryKindFromLinuxType")
+        && DoesNotContain(llvm, "ReadDirectoryEntryInfo")
+        && DoesNotContain(llvm, "System_FileSystem_DirectoryReadInfoResult")
+        && DoesNotContain(llvm, "@IOOk(");
+}
+
+// Ported from BenchmarkSourceTests.FileOpenDoesNotExposeLargeFilePayloadAsSsaValue.
+public unsafe fn bool FileOpenDoesNotExposeLargeFilePayloadAsSsaValueImpl()
+{
+    // PORT-NOTE: the C# oracle slices `@OpenAndClose` and mixes literal-substring
+    // DoesNotContain with regex DoesNotMatch checks (e.g.
+    // `store %System_IO_File_File %vN, ptr %slot_file`, `llvm.memcpy ...
+    // %slot_file`). The host bridge has no body slicing or regex helper, so the
+    // regex DoesNotMatch checks are reduced to their literal-substring subset and
+    // applied over the whole `llvm` module text; the plain DoesNotContain checks
+    // (`%slot_file = alloca`, `load %System_IO_File_File`,
+    // `@llvm.memcpy.inline.p0.p0.i64`) survive directly. The embedded program is
+    // kept verbatim from the C# raw string literal.
+    stack mut LlvmCompile c = CompileLlvm(
+        "benchmark-file-open-no-ssa-payload",
+        raw"""
+import System.IO
+import System.IO.File
+module Demo
+
+unsafe fn i32[min max] OpenAndClose()
+{
+    stack System.IO.IOResult<System.IO.File.File> opened =
+        System.IO.File.Open("large-file-payload-test.tmp", System.IO.File.FileMode.Write, System.IO.File.FileBuffering.None);
+    switch (opened)
+    {
+        case System.IO.IOResult<System.IO.File.File>.Err(var openError):
+            return 1;
+        case System.IO.IOResult<System.IO.File.File>.Ok(var fileValue):
+            stack mut System.IO.File.File file = fileValue;
+            switch (file.Close())
+            {
+                case System.IO.IOStatus.Ok:
+                    return 0;
+                case System.IO.IOStatus.Err(var closeError):
+                    return 2;
+            }
+    }
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return DoesNotContain(llvm, "%slot_file = alloca")
+        && DoesNotContain(llvm, "load %System_IO_File_File")
+        && DoesNotContain(llvm, "@llvm.memcpy.inline.p0.p0.i64");
+}
+
+// Ported from BenchmarkSourceTests.DictionaryInsertDropFieldUpdatesDoNotStoreDeferredAggregateValues.
+public unsafe fn bool DictionaryInsertDropFieldUpdatesDoNotStoreDeferredAggregateValuesImpl()
+{
+    // PORT-NOTE: the C# oracle slices `@main` for its store/insertvalue checks,
+    // uses regex DoesNotMatch / Matches for the deferred-aggregate store and the
+    // `store i64 0, ptr %...` field zeroing, and (when a native toolchain is
+    // present) emits an object file to validate the module assembles. The host
+    // bridge has no body slicing, regex helpers, or native-object emission, so
+    // the regex assertions are reduced to their literal-substring forms applied
+    // over the whole `llvm` text and the native-object emission step is dropped
+    // (the closest signal is the compile/LLVM-render succeeding).
+    stack mut LlvmCompile c = CompileLlvm(
+        "benchmark-dictionary-insert-no-deferred-aggregate-store",
+        raw"""
+import System.Collections
+import System.Memory
+module Benchmarks.Collections.DictionaryInsert
+
+unsafe finite law bool Ok(MemoryStatus status) {
+    switch (status) {
+        case MemoryStatus.Ok:
+            return true;
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+export unsafe ffi fn i32[min max] main() {
+    stack mut System.Collections.Dictionary<u32[0 max], u32[0 max]> values = new();
+    if (!Ok(values.Reserve(8192))) {
+        return 1;
+    }
+
+    stack mut i64[min max] checksum = 0;
+    for willexit (stack mut u16[0 8192] i = 0; i < 8192; i += 1) {
+        stack u32[0 max] value = (u32[0 max])(i * 7);
+        if (!Ok(values.Set(i, value))) {
+            return 2;
+        }
+
+        checksum += (i64[min max])value;
+    }
+
+    stack mut u32[0 max] found = 0;
+    stack u32[0 max] lastKey = 8191;
+    if (values.Count() != 8192 || !values.TryGet(lastKey, found) || found != 57337) {
+        return 3;
+    }
+
+    if (checksum != 234852352) {
+        return 4;
+    }
+
+    return 0;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return DoesNotContain(llvm, "insertvalue %System_Collections_Dictionary")
+        && Contains(llvm, "store ptr null, ptr %abi_insert_field_store_");
+}
+
+// Ported from BenchmarkSourceTests.TextFormattingBenchmarksSpecializeConstantIntegerFormatting.
+public unsafe fn bool TextFormattingBenchmarksSpecializeConstantIntegerFormattingImpl()
+{
+    // PORT-NOTE: the C# oracle slices each benchmark's `@main` body before
+    // asserting the constant-format specializations dropped the TryFormat*
+    // helper calls and that an `llvm.memcpy` survives. The host bridge has no
+    // body slicing, so the Contains/DoesNotContain checks are applied over each
+    // whole `llvm` module text instead of the `@main`-scoped body.
+    stack mut LlvmCompile integer = CompileLlvm(
+        "benchmark-text-constant-integer-formatting",
+        raw"""
+import System.Text
+module Benchmarks.Text.ConstantIntegerFormatting
+
+const Iterations = 50;
+
+unsafe fn i64[min max] AsciiChecksum(borrow Ascii text) {
+    return text.Length
+        + (i64[min max])(*text.Data)
+        + (i64[min max])(*(&text.Data[text.Length - 1]));
+}
+
+export unsafe ffi fn i32[min max] main() {
+    stack mut i8[min max][320] storage;
+    stack mut Ascii text = new Ascii() {
+        Data = &storage[0],
+        Length = 0,
+        Capacity = 320
+    };
+    stack mut i64[min max] checksum = 0;
+
+    for willexit (stack mut u8[0 50] i = 0; i < Iterations; i += 1) {
+        if (!System.Text.TryFormatI64Ascii(&text, (i64[min max])(-(2 ** 63)))) {
+            return 1;
+        }
+        checksum += AsciiChecksum(text);
+
+        if (!System.Text.TryFormatU64Ascii(&text, (u64[0 max])(2 ** 64 - 1))) {
+            return 2;
+        }
+        checksum += AsciiChecksum(text);
+
+        if (!System.Text.TryFormatI1024Ascii(&text, (i1024[min max])(-(2 ** 1023)))) {
+            return 3;
+        }
+        checksum += AsciiChecksum(text);
+
+        if (!System.Text.TryFormatU1024Ascii(&text, (u1024[0 max])(2 ** 1024 - 1))) {
+            return 4;
+        }
+        checksum += AsciiChecksum(text);
+    }
+
+    if (checksum != 53200) {
+        return 5;
+    }
+
+    return 0;
+}
+""");
+    if (!Succeeds(integer))
+    {
+        return false;
+    }
+
+    stack ascii integerLlvm = Llvm(integer);
+    if (!DoesNotContain(integerLlvm, "TryFormatI64Ascii")
+        || !DoesNotContain(integerLlvm, "TryFormatU64Ascii")
+        || !DoesNotContain(integerLlvm, "TryFormatI1024Ascii")
+        || !DoesNotContain(integerLlvm, "TryFormatU1024Ascii")
+        || !Contains(integerLlvm, "llvm.memcpy"))
+    {
+        return false;
+    }
+
+    stack mut LlvmCompile unicode = CompileLlvm(
+        "benchmark-text-unicode-formatting",
+        raw"""
+import System.Text
+module Benchmarks.Text.UnicodeFormatting
+
+const Iterations = 50;
+
+unsafe fn i64[min max] UnicodeChecksum(borrow Unicode text) {
+    return text.Length
+        + (i64[min max])(*text.Data)
+        + (i64[min max])(*(&text.Data[text.Length - 1]));
+}
+
+export unsafe ffi fn i32[min max] main() {
+    stack mut i32[min max][320] storage;
+    stack mut Unicode text = new Unicode() {
+        Data = &storage[0],
+        Length = 0,
+        Capacity = 320
+    };
+    stack mut i64[min max] checksum = 0;
+
+    for willexit (stack mut u8[0 50] i = 0; i < Iterations; i += 1) {
+        if (!System.Text.TryFormatEncodingUnicode(&text, System.Text.Encoding.UTF16)) {
+            return 1;
+        }
+        checksum += UnicodeChecksum(text);
+
+        if (!System.Text.TryFormatTextErrorUnicode(&text, System.Text.TextError.InvalidFormat)) {
+            return 2;
+        }
+        checksum += UnicodeChecksum(text);
+
+        if (!System.Text.TryFormatI1024Unicode(&text, (i1024[min max])(-(2 ** 1023)))) {
+            return 3;
+        }
+        checksum += UnicodeChecksum(text);
+
+        if (!System.Text.TryFormatU1024Unicode(&text, (u1024[0 max])(2 ** 1024 - 1))) {
+            return 4;
+        }
+        checksum += UnicodeChecksum(text);
+    }
+
+    if (checksum != 58350) {
+        return 5;
+    }
+
+    return 0;
+}
+""");
+    if (!Succeeds(unicode))
+    {
+        return false;
+    }
+
+    stack ascii unicodeLlvm = Llvm(unicode);
+    return DoesNotContain(unicodeLlvm, "TryFormatI1024Unicode")
+        && DoesNotContain(unicodeLlvm, "TryFormatU1024Unicode")
+        && Contains(unicodeLlvm, "llvm.memcpy");
+}

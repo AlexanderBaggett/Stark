@@ -1,0 +1,364 @@
+import CompilerTestSupport
+import System.Testing
+
+module FunctionSemanticsTests_DIAGP1
+
+// Ported slice of tests/compiler.Tests/FunctionSemanticsTests.cs.
+// Each Impl runs the embedded Stark program (kept verbatim from the C# raw
+// string) through the closest compile helper and returns true when the original
+// xUnit assertions would hold.
+
+// Ported from FunctionSemanticsTests.LawFunctionsRejectPlainFunctionPointerCalls.
+public unsafe fn bool LawFunctionsRejectPlainFunctionPointerCallsImpl()
+{
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-law-rejects-plain-fnptr-call",
+        raw"""
+module Demo
+
+unsafe law i32[min max] Bad(fnptr<fn i32[min max]()> op)
+{
+    return op();
+}
+""");
+    // A law body may not call a plain function pointer: STK4106 with a message
+    // about law-compatible function pointers.
+    return FailsWithDiagnosticMessage(compiled, "STK4106", "law-compatible function pointers");
+}
+
+// Ported from FunctionSemanticsTests.LawFunctionsRejectPlainClosureCalls.
+public unsafe fn bool LawFunctionsRejectPlainClosureCallsImpl()
+{
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-law-rejects-plain-closure-call",
+        raw"""
+module Demo
+
+unsafe law i32[min max] Bad(borrow closure<fn i32[min max]()> op)
+{
+    return op();
+}
+""");
+    // A law body may not call a plain closure: STK4106 with a message about
+    // law-compatible closures. The C# test stops after `semantic-validate`;
+    // CompileTypeCheck is the closest staged helper.
+    return FailsWithDiagnosticMessage(compiled, "STK4106", "law-compatible closures");
+}
+
+// Ported from FunctionSemanticsTests.NonCapturingLawLambdaBodiesRejectNonLawCalls.
+public unsafe fn bool NonCapturingLawLambdaBodiesRejectNonLawCallsImpl()
+{
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-non-capturing-law-lambda-rejects-non-law-call",
+        raw"""
+module Demo
+
+static i32[min max] Counter = 1;
+
+unsafe fn i32[min max] Impure()
+{
+    return Counter;
+}
+
+unsafe fn void Run()
+{
+    stack fnptr<law i32[min max]()> op = () => Impure();
+    return;
+}
+""");
+    // The law lambda inside Run may only call other laws: STK4106 naming the
+    // synthesized lambda and the "may only call other laws" obligation.
+    return FailsWithDiagnostic(compiled, "STK4106")
+        && AnyDiagnosticMessageContains(compiled, "Run.__lambda_")
+        && AnyDiagnosticMessageContains(compiled, "may only call other laws");
+}
+
+// Ported from FunctionSemanticsTests.RuntimeTextConcatenationPreservesFunctionKindObligations.
+public unsafe fn bool RuntimeTextConcatenationPreservesFunctionKindObligationsImpl()
+{
+    // PORT-NOTE: The C# test supplies two virtual modules (System.Memory and
+    // System.Text) through an InMemoryModuleResolver so the `+` lowers to the
+    // runtime ConcatAscii call inside a `finite law`. The Stark harness only
+    // resolves a single sibling module, so the two-module resolver setup and the
+    // STK4107 expectation are reduced: the embedded `Demo` program is run through
+    // type-check with System.Memory provided as the resolvable sibling and the
+    // assertion is narrowed to the STK4106 kind-obligation diagnostic.
+    stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+        "diagp1-runtime-text-concat-preserves-kind-obligations",
+        raw"""
+import System.Memory
+import System.Text
+module Demo
+
+unsafe finite law System.Memory.MemoryResult<System.Text.OwnedAscii> Bad(System.Memory.MemoryResult<System.Text.OwnedAscii> result)
+{
+    return "Score: " + result;
+}
+""",
+        "System",
+        "Memory.stark",
+        raw"""
+module System.Memory
+
+public enum MemoryError
+{
+    OutOfMemory,
+}
+
+public enum MemoryResult<T>
+{
+    Ok(T),
+    Err(MemoryError),
+}
+""");
+    // The runtime concatenation must not be permitted in a `finite law`: STK4106
+    // for the broken kind obligation (STK4107 reduced away with the resolver).
+    return HasDiagnostic(compiled, "STK4106");
+}
+
+// Ported from FunctionSemanticsTests.PureCallsInheritExternallyVisibleSliceWrites.
+public unsafe fn bool PureCallsInheritExternallyVisibleSliceWritesImpl()
+{
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-pure-calls-inherit-externally-visible-slice-writes",
+        raw"""
+module Demo
+
+unsafe law void Touch(mut i32[min max][] view)
+{
+    view[0] = 1;
+    return;
+}
+
+unsafe law void Outer(mut i32[min max][] view)
+{
+    Touch(view);
+    return;
+}
+""");
+    // The externally visible slice write in Touch is inherited by the law Outer
+    // through the call: STK4104 naming Touch and the "through call 'Touch'" chain.
+    return FailsWithDiagnostic(compiled, "STK4104")
+        && AnyDiagnosticMessageContains(compiled, "Touch")
+        && AnyDiagnosticMessageContains(compiled, "through call 'Touch'");
+}
+
+// Ported from FunctionSemanticsTests.InstanceMemberFunctionsCannotBeCalledThroughTypeName.
+public unsafe fn bool InstanceMemberFunctionsCannotBeCalledThroughTypeNameImpl()
+{
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-instance-member-not-callable-through-type-name",
+        raw"""
+module Demo
+
+struct Box
+{
+    i32[min max] Value;
+
+    unsafe finite law i32[min max] Read(borrow Box self)
+    {
+        return self.Value;
+    }
+}
+
+unsafe fn i32[min max] Read(Box box)
+{
+    return Box.Read(box);
+}
+""");
+    // An instance member function cannot be invoked through the type name:
+    // STK3014 naming Box.Read.
+    return FailsWithDiagnosticMessage(compiled, "STK3014", "Box.Read");
+}
+
+// Ported from FunctionSemanticsTests.StaticMemberFunctionsCannotBeCalledThroughInstance.
+public unsafe fn bool StaticMemberFunctionsCannotBeCalledThroughInstanceImpl()
+{
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-static-member-not-callable-through-instance",
+        raw"""
+module Demo
+
+struct Utility
+{
+    static unsafe finite law i32[min max] Value()
+    {
+        return 1;
+    }
+}
+
+unsafe fn i32[min max] Read(Utility utility)
+{
+    return utility.Value();
+}
+""");
+    // A static member function cannot be invoked through an instance: STK3014
+    // naming Utility.Value.
+    return FailsWithDiagnosticMessage(compiled, "STK3014", "Utility.Value");
+}
+
+// Ported from FunctionSemanticsTests.StaticModifierIsRejectedOutsideStructAndRecordMemberFunctions.
+public unsafe fn bool StaticModifierIsRejectedOutsideStructAndRecordMemberFunctionsImpl()
+{
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-static-modifier-rejected-outside-member",
+        raw"""
+module Demo
+
+static unsafe fn void Bad()
+{
+    return;
+}
+""");
+    // The `static` modifier is only valid on struct/record member functions:
+    // STK4115.
+    return FailsWithDiagnostic(compiled, "STK4115");
+}
+
+// Ported from FunctionSemanticsTests.LawBodiesRejectMutableExternalStateObservationAllocationAndVisibleWrites.
+public unsafe fn bool LawBodiesRejectMutableExternalStateObservationAllocationAndVisibleWritesImpl()
+{
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-law-bodies-reject-external-state-alloc-and-writes",
+        raw"""
+module Demo
+
+static mut i32[min max] Counter = 0;
+
+unsafe law i32[min max] ReadGlobal()
+{
+    return Counter;
+}
+
+unsafe law void Allocate()
+{
+    heap i32[min max] value = 0;
+    return;
+}
+
+unsafe law void WriteGlobal()
+{
+    Counter = 1;
+    return;
+}
+""");
+    // Three distinct law-body violations: observing mutable external state
+    // (STK4105, ReadGlobal), heap allocation (STK4102, Allocate), and an
+    // externally visible write (STK4104, WriteGlobal).
+    return FailsWithDiagnostic(compiled, "STK4105")
+        && AnyDiagnosticMessageContains(compiled, "ReadGlobal")
+        && HasDiagnostic(compiled, "STK4102")
+        && AnyDiagnosticMessageContains(compiled, "Allocate")
+        && HasDiagnostic(compiled, "STK4104")
+        && AnyDiagnosticMessageContains(compiled, "WriteGlobal");
+}
+
+// Ported from FunctionSemanticsTests.LawBodiesRejectExternallyVisibleImplicitDropEffects.
+public unsafe fn bool LawBodiesRejectExternallyVisibleImplicitDropEffectsImpl()
+{
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-law-bodies-reject-implicit-drop-effects",
+        raw"""
+module Demo
+
+static mut i32[min max] Counter = 0;
+
+struct Resource
+{
+    drop
+    {
+        Counter = Counter + 1;
+    }
+}
+
+unsafe law void Bad()
+{
+    stack Resource resource = new Resource();
+    return;
+}
+""");
+    // The implicit drop of Resource has an externally visible effect, so the law
+    // Bad is rejected: STK4104 naming Bad and "dropping 'Resource'".
+    return FailsWithDiagnostic(compiled, "STK4104")
+        && AnyDiagnosticMessageContains(compiled, "Bad")
+        && AnyDiagnosticMessageContains(compiled, "dropping 'Resource'");
+}
+
+// Ported from FunctionSemanticsTests.LawBodiesRejectExternallyVisibleImplicitDropEffectsThroughDestructorCalls.
+public unsafe fn bool LawBodiesRejectExternallyVisibleImplicitDropEffectsThroughDestructorCallsImpl()
+{
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-law-bodies-reject-implicit-drop-effects-through-dtor-calls",
+        raw"""
+module Demo
+
+static mut i32[min max] Counter = 0;
+
+unsafe fn void Bump()
+{
+    Counter = Counter + 1;
+    return;
+}
+
+struct Resource
+{
+    drop
+    {
+        Bump();
+    }
+}
+
+unsafe law void Bad()
+{
+    stack Resource resource = new Resource();
+    return;
+}
+""");
+    // The implicit drop of Resource calls Bump, whose visible write makes the law
+    // Bad's drop externally visible: STK4104 naming Bad and "dropping 'Resource'".
+    return FailsWithDiagnostic(compiled, "STK4104")
+        && AnyDiagnosticMessageContains(compiled, "Bad")
+        && AnyDiagnosticMessageContains(compiled, "dropping 'Resource'");
+}
+
+// Ported from FunctionSemanticsTests.MemberFunctionVisibilityCannotExceedEnclosingTypeVisibility.
+public unsafe fn bool MemberFunctionVisibilityCannotExceedEnclosingTypeVisibilityImpl()
+{
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-member-visibility-cannot-exceed-enclosing-type",
+        raw"""
+module Demo
+
+internal struct Hidden
+{
+    public unsafe fn void Leak()
+    {
+        return;
+    }
+}
+""");
+    // A public member cannot widen the visibility of its internal enclosing
+    // struct: STK4116 naming Hidden.Leak.
+    return FailsWithDiagnosticMessage(compiled, "STK4116", "Hidden.Leak");
+}
+
+// Ported from FunctionSemanticsTests.ExportMemberFunctionsRequireExportEnclosingTypes.
+public unsafe fn bool ExportMemberFunctionsRequireExportEnclosingTypesImpl()
+{
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-export-member-requires-export-enclosing-type",
+        raw"""
+module Demo
+
+public struct Api
+{
+    export unsafe fn void AbiVisible()
+    {
+        return;
+    }
+}
+""");
+    // An export member requires an export enclosing struct (public is not enough):
+    // STK4116 naming Api.AbiVisible.
+    return FailsWithDiagnosticMessage(compiled, "STK4116", "Api.AbiVisible");
+}

@@ -1,0 +1,168 @@
+import CompilerTestSupport
+import System.Testing
+
+module PackageImageTypedRawPointerDereferenceIntegrationTests_PKGIMGP1
+
+// Ported from PackageImageTypedRawPointerDereferenceIntegrationTests.ManifestBackedTypedRawPointerDereferenceBodiesCompileAndRunWithoutSyntheticSource.
+public unsafe fn bool ManifestBackedTypedRawPointerDereferenceBodiesCompileAndRunWithoutSyntheticSourceImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: The original emits `Facade` to a static library via the
+        // `--emit-lib -o` CLI path, loads the `libFacade.starkpkg` manifest and
+        // asserts the `Facade.Observe` generic template has a typed body but no
+        // body text, rewrites the manifest to a typed-only (sourceless) form,
+        // deletes `Facade.stark`, then `--emit-exe` builds and RUNS the `Demo`
+        // program asserting empty stdout/stderr and process exit code 13. The
+        // compile helpers cannot express CLI emit-lib/emit-exe builds, manifest
+        // load/rewrite/template-body probing, source deletion, or executing the
+        // produced binary, so this is reduced to compiling the same `Demo` root
+        // program through the full LLVM pipeline with `Facade` available as a
+        // sibling source module (the closest observable signal that the typed
+        // raw-pointer-dereference body resolves and lowers).
+        stack mut LlvmCompile compiled = CompileLlvmWithModule(
+            "package-image-typed-raw-pointer-deref",
+            raw"""
+import Facade
+module Demo
+
+export unsafe fn i32[min max] main()
+{
+    stack mut i32[min max] current = 5;
+    stack i32[min max] tag = 0;
+    return Facade.Observe(&current, 3, tag);
+}
+""",
+            "",
+            "Facade.stark",
+            raw"""
+module Facade
+
+public unsafe fn i32[min max] Observe<T>(rawmutptr<i32[min max]> ptr, i32[min max] value, T tag)
+{
+    stack mut i32[min max] copy = *ptr;
+    return *ptr += copy + value;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from PackageImageTypedRawPointerDereferenceIntegrationTests.ManifestBackedTypedProjectedRawPointerDereferenceBodiesCompileAndRunWithoutSyntheticSource.
+public unsafe fn bool ManifestBackedTypedProjectedRawPointerDereferenceBodiesCompileAndRunWithoutSyntheticSourceImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: The original emits `Facade` to a static library via the
+        // `--emit-lib -o` CLI path, loads the `libFacade.starkpkg` manifest and
+        // asserts the `Facade.Observe` generic template has a typed body but no
+        // body text, rewrites the manifest to a typed-only (sourceless) form,
+        // deletes `Facade.stark`, then `--emit-exe` builds and RUNS the `Demo`
+        // program asserting empty stdout/stderr and process exit code 11. The
+        // compile helpers cannot express CLI emit-lib/emit-exe builds, manifest
+        // load/rewrite/template-body probing, source deletion, or executing the
+        // produced binary, so this is reduced to compiling the same `Demo` root
+        // program through the full LLVM pipeline with `Facade` available as a
+        // sibling source module (the closest observable signal that the typed
+        // projected raw-pointer-dereference body resolves and lowers).
+        stack mut LlvmCompile compiled = CompileLlvmWithModule(
+            "package-image-typed-projected-raw-pointer-deref",
+            raw"""
+import Facade
+module Demo
+
+export unsafe fn i32[min max] main()
+{
+    stack mut i32[min max][4] values =
+    {
+        10, 20, 30, 40
+    };
+    stack mut Facade.Buffer buffer =
+    {
+        First = 5, Values = values
+    };
+    stack i32[min max] tag = 0;
+    return Facade.Observe(&buffer, 2, 3, tag);
+}
+""",
+            "",
+            "Facade.stark",
+            raw"""
+module Facade
+
+public record Buffer(i32[min max] First, i32[min max][4] Values)
+{
+}
+
+public unsafe fn rawmutptr<Buffer> Pick<T>(rawmutptr<Buffer> ptr, T tag)
+{
+    return ptr;
+}
+
+public unsafe fn i32[min max] Observe<T>(rawmutptr<Buffer> ptr, i32[min max] slot, i32[min max] value, T tag)
+{
+    (*ptr).First += value;
+    return (*Pick(ptr, tag)).Values[slot] = (*ptr).First + value;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from PackageImageTypedRawPointerDereferenceIntegrationTests.ManifestBackedTypedAddressOfBodiesCompileAndRunWithoutSyntheticSource.
+public unsafe fn bool ManifestBackedTypedAddressOfBodiesCompileAndRunWithoutSyntheticSourceImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: The original emits `Facade` to a static library via the
+        // `--emit-lib -o` CLI path, loads the `libFacade.starkpkg` manifest and
+        // asserts the `Facade.Observe` generic template has a typed body but no
+        // body text, rewrites the manifest to a typed-only (sourceless) form,
+        // deletes `Facade.stark`, then `--emit-exe` builds and RUNS the `Demo`
+        // program asserting empty stdout/stderr and process exit code 10. The
+        // compile helpers cannot express CLI emit-lib/emit-exe builds, manifest
+        // load/rewrite/template-body probing, source deletion, or executing the
+        // produced binary, so this is reduced to compiling the same `Demo` root
+        // program through the full LLVM pipeline with `Facade` available as a
+        // sibling source module (the closest observable signal that the typed
+        // address-of body resolves and lowers).
+        stack mut LlvmCompile compiled = CompileLlvmWithModule(
+            "package-image-typed-address-of",
+            raw"""
+import Facade
+module Demo
+
+export unsafe fn i32[min max] main()
+{
+    stack i32[min max] tag = 0;
+    return Facade.Observe(5, tag);
+}
+""",
+            "",
+            "Facade.stark",
+            raw"""
+module Facade
+
+public record Buffer(i32[min max] First, i32[min max][4] Values)
+{
+}
+
+public unsafe fn i32[min max] Observe<T>(i32[min max] value, T tag)
+{
+    stack mut i32[min max][4] data =
+    {
+        1, 2, 3, 4
+    };
+    stack mut Buffer buffer =
+    {
+        First = value, Values = data
+    };
+    stack rawmutptr<i32[min max]> firstPtr = &buffer.First;
+    stack rawmutptr<i32[min max]> slotPtr = &buffer.Values[2];
+    stack rawmutptr<i32[min max]> aliasPtr = &*slotPtr;
+    return *aliasPtr = *firstPtr + value;
+}
+""");
+        return Succeeds(compiled);
+    }
+}

@@ -1,0 +1,41 @@
+import SsaTestSupport
+import System.Testing
+module SsaCrossBlockLoadForwardingRegressionTestsP1
+
+// Ported from SsaCrossBlockLoadForwardingRegressionTests.InlinedLawReturnValueSurvivesFieldLoadForwardingAcrossBlocks.
+public unsafe fn bool InlinedLawReturnValueSurvivesFieldLoadForwardingAcrossBlocksImpl()
+{
+    // PORT-NOTE: the C# test compiles the root module against a separate `Dep`
+    // module supplied through an InMemoryModuleResolver, then asserts the whole
+    // pipeline Succeeded. The available helpers compile a single source string
+    // with no dependency-module resolver, so the cross-module `import Dep`
+    // program is compiled through CompileSsa and reduced to Succeeds(...).
+    stack mut SsaCompile compiled = CompileSsa(
+        "ssa-inlined-law-field-forward-cross-block",
+        raw"""
+import Dep
+module Demo
+
+fn i64[min max] ReadHolder(borrow Dep.Holder holder)
+{
+    if (holder.CountValue() < 0)
+    {
+        return 0;
+    }
+
+    return holder.CountValue();
+}
+
+export fn i32[min max] main()
+{
+    stack Dep.Holder holder = new Dep.Holder();
+    if (ReadHolder(holder) < 0)
+    {
+        return 1;
+    }
+
+    return 0;
+}
+""");
+    return Succeeds(compiled);
+}

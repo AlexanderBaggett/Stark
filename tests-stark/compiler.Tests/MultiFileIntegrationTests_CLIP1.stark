@@ -1,0 +1,122 @@
+import CompilerTestSupport
+import System.Testing
+module MultiFileIntegrationTests_CLIP1
+
+// Ported slice of tests/compiler.IntegrationTests/MultiFileIntegrationTests.cs (CLI part 1).
+// Each Impl runs the original embedded multi-file Stark program through the closest
+// compile helper and returns true when the original xUnit assertions would hold.
+// These tests originally write sibling/.../`-I` search-path source files and drive
+// `CompilerCli.RunAsync(... --check -I ...)`, asserting exit code 0, a "Check
+// succeeded." stdout line, and empty stderr. Multi-file `-I` source resolution and
+// CLI process effects (exit code, stdout text, empty-stderr log assertion) are not
+// expressible through the allowed helper set, so each module's declarations are
+// preserved verbatim and inlined into a single combined program ahead of the
+// consuming `App` module, then type-checked; the reduction is flagged with
+// `// PORT-NOTE:`.
+
+// Ported from MultiFileIntegrationTests.SiblingModulesResolveThroughTheSourceSearchPath.
+// PORT-NOTE: the original writes packages/Math.stark and app/App.stark and resolves
+// the sibling `Math` module via `-I packages` under `--check`, asserting exit 0,
+// "Check succeeded." on stdout, and empty stderr. Multi-file `-I` resolution and the
+// CLI stdout/exit/stderr assertions are not expressible here; the two source files
+// are inlined into one program (Math ahead of App, declarations verbatim) and the
+// combined program is type-checked.
+public unsafe fn bool SiblingModulesResolveThroughTheSourceSearchPathImpl()
+{
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "multifile-sibling-modules-resolve-source-search-path",
+        raw"""
+module Math
+
+public finite law i32[min max] Add(i32[min max] left, i32[min max] right)
+{
+    return left + right;
+}
+
+import Math
+module App
+
+fn i32[min max] Run()
+{
+    return Math.Add(3, 4);
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from MultiFileIntegrationTests.ExportedReExportsMakeTransitiveModulesAvailableToConsumingApps.
+// PORT-NOTE: the original writes packages/Math.stark, packages/Facade.stark (which
+// `export import Math`), and app/App.stark, resolving the transitive `Math` re-export
+// via `-I packages` under `--check`, asserting exit 0, "Check succeeded." on stdout,
+// and empty stderr. Multi-file `-I` resolution and the CLI stdout/exit/stderr
+// assertions are not expressible here; the three source files are inlined into one
+// program (Math, then Facade, then App, declarations verbatim) and the combined
+// program is type-checked.
+public unsafe fn bool ExportedReExportsMakeTransitiveModulesAvailableToConsumingAppsImpl()
+{
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "multifile-exported-reexports-transitive-modules",
+        raw"""
+module Math
+
+public finite law i32[min max] Add(i32[min max] left, i32[min max] right)
+{
+    return left + right;
+}
+
+export import Math
+module Facade
+
+public fn i32[min max] Double(i32[min max] value)
+{
+    return Math.Add(value, value);
+}
+
+import Facade
+module App
+
+fn i32[min max] Run()
+{
+    return Math.Add(Facade.Double(2), 3);
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from MultiFileIntegrationTests.ModuleQualifiedEnumCasesResolveThroughImportedEnumTypes.
+// PORT-NOTE: the original writes packages/System.stark (which `export import
+// System.Text`), packages/System/Text.stark (an `Encoding` enum), and app/App.stark,
+// resolving the module-qualified enum case via `-I packages` under `--check`,
+// asserting exit 0, "Check succeeded." on stdout, and empty stderr. Multi-file `-I`
+// resolution and the CLI stdout/exit/stderr assertions are not expressible here; the
+// three source files are inlined into one program (System.Text, then System, then
+// App, declarations verbatim) and the combined program is type-checked.
+public unsafe fn bool ModuleQualifiedEnumCasesResolveThroughImportedEnumTypesImpl()
+{
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "multifile-module-qualified-enum-cases-through-imports",
+        raw"""
+module System.Text
+
+public enum Encoding
+{
+    Binary,
+    UTF8,
+    UTF16,
+    UTF32,
+}
+
+export import System.Text
+module System
+
+import System
+module App
+
+fn i32[min max] Run()
+{
+    stack System.Text.Encoding encoding = System.Text.Encoding.UTF8;
+    return 0;
+}
+""");
+    return Succeeds(compiled);
+}

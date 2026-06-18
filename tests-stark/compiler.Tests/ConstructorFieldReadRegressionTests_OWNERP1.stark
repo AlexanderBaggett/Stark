@@ -1,0 +1,199 @@
+import CompilerTestSupport
+import System.Testing
+module ConstructorFieldReadRegressionTests_OWNERP1
+
+// Ported slice of tests/compiler.Tests/ConstructorFieldReadRegressionTests.cs.
+//
+// Regression for constructor definite-assignment of READS (STK3055): reading an
+// owning field (dynamic storage, owned text) before the constructor body assigns
+// it reads the pre-construction zero state. Each C# test embeds a Stark program
+// and routes it through the type-check pipeline; the rejection tests assert the
+// STK3055 diagnostic with a message fragment, the acceptance tests assert success
+// and absence of STK3055.
+
+// Ported from ConstructorFieldReadRegressionTests.ReadingDynamicFieldBeforeAssignmentIsRejected.
+public unsafe fn bool ReadingDynamicFieldBeforeAssignmentIsRejectedImpl()
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "ownerp1-read-dynamic-field-before-assignment",
+            raw"""
+module Demo
+
+struct Foo
+{
+    u64[0 2 ** 63 - 1] Count;
+    dynamic i32[min max] Items;
+
+    Foo()
+    {
+        self.Count = self.Items.Length;
+        self.Items = new();
+    }
+}
+""");
+        return FailsWithDiagnosticMessage(compiled, "STK3055", "field 'Items' of 'self' before it is assigned");
+    }
+}
+
+// Ported from ConstructorFieldReadRegressionTests.IndexingIntoUnassignedDynamicFieldIsRejected.
+public unsafe fn bool IndexingIntoUnassignedDynamicFieldIsRejectedImpl()
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "ownerp1-index-unassigned-dynamic-field",
+            raw"""
+module Demo
+
+struct Foo
+{
+    dynamic i32[min max] Items;
+
+    Foo()
+    {
+        self.Items[0] = 5;
+        self.Items = new();
+    }
+}
+""");
+        return FailsWithDiagnosticMessage(compiled, "STK3055", "field 'Items' of 'self' before it is assigned");
+    }
+}
+
+// Ported from ConstructorFieldReadRegressionTests.ReadingAnotherUnassignedOwningFieldIsRejected.
+public unsafe fn bool ReadingAnotherUnassignedOwningFieldIsRejectedImpl()
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "ownerp1-read-another-unassigned-owning-field",
+            raw"""
+module Demo
+
+struct Foo
+{
+    dynamic i32[min max] A;
+    dynamic i32[min max] B;
+
+    Foo()
+    {
+        self.A = self.B;
+        self.B = new();
+    }
+}
+""");
+        return FailsWithDiagnosticMessage(compiled, "STK3055", "field 'B' of 'self' before it is assigned");
+    }
+}
+
+// Ported from ConstructorFieldReadRegressionTests.ReadingDynamicFieldAfterAssignmentIsAllowed.
+public unsafe fn bool ReadingDynamicFieldAfterAssignmentIsAllowedImpl()
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "ownerp1-read-dynamic-field-after-assignment",
+            raw"""
+module Demo
+
+struct Foo
+{
+    dynamic i32[min max] Items;
+    u64[0 2 ** 63 - 1] Count;
+
+    Foo()
+    {
+        self.Items = new();
+        self.Count = self.Items.Length;
+    }
+}
+""");
+        return Succeeds(compiled) && !HasDiagnostic(compiled, "STK3055");
+    }
+}
+
+// Ported from ConstructorFieldReadRegressionTests.WritingFixedArrayElementsIsNotAFieldRead.
+public unsafe fn bool WritingFixedArrayElementsIsNotAFieldReadImpl()
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "ownerp1-write-fixed-array-elements",
+            raw"""
+module Demo
+
+struct Foo
+{
+    bool[64] Flags;
+
+    Foo()
+    {
+        self.Flags[0] = true;
+    }
+}
+""");
+        return Succeeds(compiled) && !HasDiagnostic(compiled, "STK3055");
+    }
+}
+
+// Ported from ConstructorFieldReadRegressionTests.ReadingScalarFieldBeforeAssignmentIsAllowed.
+public unsafe fn bool ReadingScalarFieldBeforeAssignmentIsAllowedImpl()
+{
+    unsafe
+    {
+        // Scalars have a valid zero state; only owning fields are flagged.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "ownerp1-read-scalar-field-before-assignment",
+            raw"""
+module Demo
+
+struct Foo
+{
+    u64[0 2 ** 63 - 1] A;
+    u64[0 2 ** 63 - 1] B;
+
+    Foo()
+    {
+        self.B = self.A;
+        self.A = 5;
+    }
+}
+""");
+        return Succeeds(compiled) && !HasDiagnostic(compiled, "STK3055");
+    }
+}
+
+// Ported from ConstructorFieldReadRegressionTests.FieldAssignedOnAnyEarlierPathIsNotFlagged.
+public unsafe fn bool FieldAssignedOnAnyEarlierPathIsNotFlaggedImpl()
+{
+    unsafe
+    {
+        // Monotonic union: a field assigned in a branch counts as assigned for the
+        // later read, so valid code is conservatively accepted.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "ownerp1-field-assigned-on-earlier-path",
+            raw"""
+module Demo
+
+struct Foo
+{
+    dynamic i32[min max] Items;
+    u64[0 2 ** 63 - 1] Count;
+
+    Foo()
+    {
+        if (1 < 2)
+        {
+            self.Items = new();
+        }
+
+        self.Count = self.Items.Length;
+        self.Items = new();
+    }
+}
+""");
+        return Succeeds(compiled) && !HasDiagnostic(compiled, "STK3055");
+    }
+}

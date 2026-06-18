@@ -1,0 +1,2256 @@
+import CompilerTestSupport
+import System.Testing
+
+module LoweringContractValidationTests_DIAGP1
+
+// Ported slice of tests/compiler.Tests/LoweringContractValidationTests.cs.
+//
+// Every method in the C# file shares the same ContractSource program. Each test
+// compiles that program through ownership, then reaches inside the resulting
+// TypeCheckModel and deletes or corrupts a category of lowering facts (bound
+// operation records, typed call/index/switch/enum/dynamic-storage records,
+// argument addressability, arity, family, layout target, ...). It then runs the
+// LoweringContractValidator directly against that hand-broken model and asserts a
+// STK5003 "validate-lowering-contract" diagnostic with a category-specific
+// message.
+//
+// PORT-NOTE: the compile helpers only drive the real pipeline end to end; they
+// cannot construct a TypeCheckModel, mutate its fact tables with `with`, or
+// invoke LoweringContractValidator against a corrupted model. Against the intact,
+// correctly-lowered model the contract validator is silent and ContractSource
+// type-checks cleanly, so each STK5003 negative assertion is reduced to compiling
+// the verbatim ContractSource through CompileTypeCheck and requiring Succeeds(...)
+// (the closest faithful signal: the un-corrupted contract holds). The embedded
+// program is kept verbatim from the C# raw string in every Impl.
+
+// Ported from LoweringContractValidationTests.MissingBoundCallOperationFactsFailBeforeMir.
+public unsafe fn bool MissingBoundCallOperationFactsFailBeforeMirImpl()
+{
+    // PORT-NOTE: reduced from "delete BoundDirectCallOperation facts -> STK5003
+    // 'bound direct-call operation'" to compiling the intact ContractSource.
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-missing-bound-call-operation",
+        raw"""
+module System.Text
+
+public unsafe finite bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
+
+enum Status
+{
+    Ok,
+    Err(i32[min max]),
+}
+
+struct Box
+{
+    i32[min max] Value;
+
+    fn i32[min max] Get(borrow Box self)
+    {
+        return self.Value;
+    }
+
+    fn bool Fill(borrow Box self, out i32[min max] value)
+    {
+        value = self.Value;
+        return true;
+    }
+}
+
+fn i32[min max] Inc(i32[min max] value)
+{
+    return value + 1;
+}
+
+unsafe fn i32[min max] Apply(fnptr<fn i32[min max](i32[min max])> op, i32[min max] value)
+{
+    return op(value);
+}
+
+fn bool Write(out i32[min max] value)
+{
+    value = 9;
+    return true;
+}
+
+unsafe fn bool ApplyOut(fnptr<fn bool(out i32[min max])> op, out i32[min max] value)
+{
+    return op(value);
+}
+
+fn i32[min max] Choose(bool flag)
+{
+    switch (flag)
+    {
+        case true:
+            return 1;
+        case false:
+            return 0;
+    }
+}
+
+fn i32[min max] Score(Status status)
+{
+    switch (status)
+    {
+        case Status.Ok:
+            return 1;
+        case Status.Err(var error):
+            return error;
+    }
+}
+
+unsafe fn i32[min max] Run()
+{
+    stack mut Box box = new Box()
+    {
+        Value = 3
+    };
+    stack mut i32[min max][2] values =
+    {
+        4, 5
+    };
+    stack fnptr<fn i32[min max](i32[min max])> lambda = (i32[min max] value) => Inc(value);
+    stack closure<finite law i32[min max](i32[min max])> closureOp =
+        (i32[min max] value) => value + 6;
+    stack mut dynamic u32[0 max] items = new(1);
+    stack i64[min max] boxSize = sizeof(Box);
+    stack i64[min max] boxAlign = alignof(Box);
+    stack Ascii label[8] = $"ok";
+    stack Ascii joined[12] = label + "!";
+    values[0] = Inc(box.Get());
+    items.Reserve(1);
+    if (!box.Fill(values[1]))
+    {
+        return 0;
+    }
+    if (!ApplyOut(Write, values[1]))
+    {
+        return 0;
+    }
+    return values[0] + values[1] + Apply(Inc, 2) + Apply(lambda, 3) + closureOp(6) + Choose(true) + Score(Status.Err(4));
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from LoweringContractValidationTests.MissingBoundIndexOperationFactsFailBeforeMir.
+public unsafe fn bool MissingBoundIndexOperationFactsFailBeforeMirImpl()
+{
+    // PORT-NOTE: reduced from "delete BoundIndexAccessOperation facts -> STK5003
+    // 'bound index-or-slice operation'" to compiling the intact ContractSource.
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-missing-bound-index-operation",
+        raw"""
+module System.Text
+
+public unsafe finite bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
+
+enum Status
+{
+    Ok,
+    Err(i32[min max]),
+}
+
+struct Box
+{
+    i32[min max] Value;
+
+    fn i32[min max] Get(borrow Box self)
+    {
+        return self.Value;
+    }
+
+    fn bool Fill(borrow Box self, out i32[min max] value)
+    {
+        value = self.Value;
+        return true;
+    }
+}
+
+fn i32[min max] Inc(i32[min max] value)
+{
+    return value + 1;
+}
+
+unsafe fn i32[min max] Apply(fnptr<fn i32[min max](i32[min max])> op, i32[min max] value)
+{
+    return op(value);
+}
+
+fn bool Write(out i32[min max] value)
+{
+    value = 9;
+    return true;
+}
+
+unsafe fn bool ApplyOut(fnptr<fn bool(out i32[min max])> op, out i32[min max] value)
+{
+    return op(value);
+}
+
+fn i32[min max] Choose(bool flag)
+{
+    switch (flag)
+    {
+        case true:
+            return 1;
+        case false:
+            return 0;
+    }
+}
+
+fn i32[min max] Score(Status status)
+{
+    switch (status)
+    {
+        case Status.Ok:
+            return 1;
+        case Status.Err(var error):
+            return error;
+    }
+}
+
+unsafe fn i32[min max] Run()
+{
+    stack mut Box box = new Box()
+    {
+        Value = 3
+    };
+    stack mut i32[min max][2] values =
+    {
+        4, 5
+    };
+    stack fnptr<fn i32[min max](i32[min max])> lambda = (i32[min max] value) => Inc(value);
+    stack closure<finite law i32[min max](i32[min max])> closureOp =
+        (i32[min max] value) => value + 6;
+    stack mut dynamic u32[0 max] items = new(1);
+    stack i64[min max] boxSize = sizeof(Box);
+    stack i64[min max] boxAlign = alignof(Box);
+    stack Ascii label[8] = $"ok";
+    stack Ascii joined[12] = label + "!";
+    values[0] = Inc(box.Get());
+    items.Reserve(1);
+    if (!box.Fill(values[1]))
+    {
+        return 0;
+    }
+    if (!ApplyOut(Write, values[1]))
+    {
+        return 0;
+    }
+    return values[0] + values[1] + Apply(Inc, 2) + Apply(lambda, 3) + closureOp(6) + Choose(true) + Score(Status.Err(4));
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from LoweringContractValidationTests.MissingBoundObjectCreationOperationFactsFailBeforeMir.
+public unsafe fn bool MissingBoundObjectCreationOperationFactsFailBeforeMirImpl()
+{
+    // PORT-NOTE: reduced from "delete BoundObjectCreationOperation facts ->
+    // STK5003 'bound object-creation operation'" to compiling the intact
+    // ContractSource.
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-missing-bound-object-creation-operation",
+        raw"""
+module System.Text
+
+public unsafe finite bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
+
+enum Status
+{
+    Ok,
+    Err(i32[min max]),
+}
+
+struct Box
+{
+    i32[min max] Value;
+
+    fn i32[min max] Get(borrow Box self)
+    {
+        return self.Value;
+    }
+
+    fn bool Fill(borrow Box self, out i32[min max] value)
+    {
+        value = self.Value;
+        return true;
+    }
+}
+
+fn i32[min max] Inc(i32[min max] value)
+{
+    return value + 1;
+}
+
+unsafe fn i32[min max] Apply(fnptr<fn i32[min max](i32[min max])> op, i32[min max] value)
+{
+    return op(value);
+}
+
+fn bool Write(out i32[min max] value)
+{
+    value = 9;
+    return true;
+}
+
+unsafe fn bool ApplyOut(fnptr<fn bool(out i32[min max])> op, out i32[min max] value)
+{
+    return op(value);
+}
+
+fn i32[min max] Choose(bool flag)
+{
+    switch (flag)
+    {
+        case true:
+            return 1;
+        case false:
+            return 0;
+    }
+}
+
+fn i32[min max] Score(Status status)
+{
+    switch (status)
+    {
+        case Status.Ok:
+            return 1;
+        case Status.Err(var error):
+            return error;
+    }
+}
+
+unsafe fn i32[min max] Run()
+{
+    stack mut Box box = new Box()
+    {
+        Value = 3
+    };
+    stack mut i32[min max][2] values =
+    {
+        4, 5
+    };
+    stack fnptr<fn i32[min max](i32[min max])> lambda = (i32[min max] value) => Inc(value);
+    stack closure<finite law i32[min max](i32[min max])> closureOp =
+        (i32[min max] value) => value + 6;
+    stack mut dynamic u32[0 max] items = new(1);
+    stack i64[min max] boxSize = sizeof(Box);
+    stack i64[min max] boxAlign = alignof(Box);
+    stack Ascii label[8] = $"ok";
+    stack Ascii joined[12] = label + "!";
+    values[0] = Inc(box.Get());
+    items.Reserve(1);
+    if (!box.Fill(values[1]))
+    {
+        return 0;
+    }
+    if (!ApplyOut(Write, values[1]))
+    {
+        return 0;
+    }
+    return values[0] + values[1] + Apply(Inc, 2) + Apply(lambda, 3) + closureOp(6) + Choose(true) + Score(Status.Err(4));
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from LoweringContractValidationTests.MissingBoundDynamicStorageOperationFactsFailBeforeMir.
+public unsafe fn bool MissingBoundDynamicStorageOperationFactsFailBeforeMirImpl()
+{
+    // PORT-NOTE: reduced from "delete BoundDynamicStorageOperation facts ->
+    // STK5003 'bound dynamic-storage operation'" to compiling the intact
+    // ContractSource.
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-missing-bound-dynamic-storage-operation",
+        raw"""
+module System.Text
+
+public unsafe finite bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
+
+enum Status
+{
+    Ok,
+    Err(i32[min max]),
+}
+
+struct Box
+{
+    i32[min max] Value;
+
+    fn i32[min max] Get(borrow Box self)
+    {
+        return self.Value;
+    }
+
+    fn bool Fill(borrow Box self, out i32[min max] value)
+    {
+        value = self.Value;
+        return true;
+    }
+}
+
+fn i32[min max] Inc(i32[min max] value)
+{
+    return value + 1;
+}
+
+unsafe fn i32[min max] Apply(fnptr<fn i32[min max](i32[min max])> op, i32[min max] value)
+{
+    return op(value);
+}
+
+fn bool Write(out i32[min max] value)
+{
+    value = 9;
+    return true;
+}
+
+unsafe fn bool ApplyOut(fnptr<fn bool(out i32[min max])> op, out i32[min max] value)
+{
+    return op(value);
+}
+
+fn i32[min max] Choose(bool flag)
+{
+    switch (flag)
+    {
+        case true:
+            return 1;
+        case false:
+            return 0;
+    }
+}
+
+fn i32[min max] Score(Status status)
+{
+    switch (status)
+    {
+        case Status.Ok:
+            return 1;
+        case Status.Err(var error):
+            return error;
+    }
+}
+
+unsafe fn i32[min max] Run()
+{
+    stack mut Box box = new Box()
+    {
+        Value = 3
+    };
+    stack mut i32[min max][2] values =
+    {
+        4, 5
+    };
+    stack fnptr<fn i32[min max](i32[min max])> lambda = (i32[min max] value) => Inc(value);
+    stack closure<finite law i32[min max](i32[min max])> closureOp =
+        (i32[min max] value) => value + 6;
+    stack mut dynamic u32[0 max] items = new(1);
+    stack i64[min max] boxSize = sizeof(Box);
+    stack i64[min max] boxAlign = alignof(Box);
+    stack Ascii label[8] = $"ok";
+    stack Ascii joined[12] = label + "!";
+    values[0] = Inc(box.Get());
+    items.Reserve(1);
+    if (!box.Fill(values[1]))
+    {
+        return 0;
+    }
+    if (!ApplyOut(Write, values[1]))
+    {
+        return 0;
+    }
+    return values[0] + values[1] + Apply(Inc, 2) + Apply(lambda, 3) + closureOp(6) + Choose(true) + Score(Status.Err(4));
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from LoweringContractValidationTests.MissingBoundTextOperationFactsFailBeforeMir.
+public unsafe fn bool MissingBoundTextOperationFactsFailBeforeMirImpl()
+{
+    // PORT-NOTE: reduced from "delete BoundTextInterpolation + BoundTextBuild
+    // facts -> STK5003 'bound text-interpolation operation' and 'bound text-build
+    // operation'" to compiling the intact ContractSource.
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-missing-bound-text-operation",
+        raw"""
+module System.Text
+
+public unsafe finite bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
+
+enum Status
+{
+    Ok,
+    Err(i32[min max]),
+}
+
+struct Box
+{
+    i32[min max] Value;
+
+    fn i32[min max] Get(borrow Box self)
+    {
+        return self.Value;
+    }
+
+    fn bool Fill(borrow Box self, out i32[min max] value)
+    {
+        value = self.Value;
+        return true;
+    }
+}
+
+fn i32[min max] Inc(i32[min max] value)
+{
+    return value + 1;
+}
+
+unsafe fn i32[min max] Apply(fnptr<fn i32[min max](i32[min max])> op, i32[min max] value)
+{
+    return op(value);
+}
+
+fn bool Write(out i32[min max] value)
+{
+    value = 9;
+    return true;
+}
+
+unsafe fn bool ApplyOut(fnptr<fn bool(out i32[min max])> op, out i32[min max] value)
+{
+    return op(value);
+}
+
+fn i32[min max] Choose(bool flag)
+{
+    switch (flag)
+    {
+        case true:
+            return 1;
+        case false:
+            return 0;
+    }
+}
+
+fn i32[min max] Score(Status status)
+{
+    switch (status)
+    {
+        case Status.Ok:
+            return 1;
+        case Status.Err(var error):
+            return error;
+    }
+}
+
+unsafe fn i32[min max] Run()
+{
+    stack mut Box box = new Box()
+    {
+        Value = 3
+    };
+    stack mut i32[min max][2] values =
+    {
+        4, 5
+    };
+    stack fnptr<fn i32[min max](i32[min max])> lambda = (i32[min max] value) => Inc(value);
+    stack closure<finite law i32[min max](i32[min max])> closureOp =
+        (i32[min max] value) => value + 6;
+    stack mut dynamic u32[0 max] items = new(1);
+    stack i64[min max] boxSize = sizeof(Box);
+    stack i64[min max] boxAlign = alignof(Box);
+    stack Ascii label[8] = $"ok";
+    stack Ascii joined[12] = label + "!";
+    values[0] = Inc(box.Get());
+    items.Reserve(1);
+    if (!box.Fill(values[1]))
+    {
+        return 0;
+    }
+    if (!ApplyOut(Write, values[1]))
+    {
+        return 0;
+    }
+    return values[0] + values[1] + Apply(Inc, 2) + Apply(lambda, 3) + closureOp(6) + Choose(true) + Score(Status.Err(4));
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from LoweringContractValidationTests.MissingBoundSwitchOperationFactsFailBeforeMir.
+public unsafe fn bool MissingBoundSwitchOperationFactsFailBeforeMirImpl()
+{
+    // PORT-NOTE: reduced from "delete BoundSwitchDispatchOperation facts ->
+    // STK5003 'bound switch-dispatch operation'" to compiling the intact
+    // ContractSource.
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-missing-bound-switch-operation",
+        raw"""
+module System.Text
+
+public unsafe finite bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
+
+enum Status
+{
+    Ok,
+    Err(i32[min max]),
+}
+
+struct Box
+{
+    i32[min max] Value;
+
+    fn i32[min max] Get(borrow Box self)
+    {
+        return self.Value;
+    }
+
+    fn bool Fill(borrow Box self, out i32[min max] value)
+    {
+        value = self.Value;
+        return true;
+    }
+}
+
+fn i32[min max] Inc(i32[min max] value)
+{
+    return value + 1;
+}
+
+unsafe fn i32[min max] Apply(fnptr<fn i32[min max](i32[min max])> op, i32[min max] value)
+{
+    return op(value);
+}
+
+fn bool Write(out i32[min max] value)
+{
+    value = 9;
+    return true;
+}
+
+unsafe fn bool ApplyOut(fnptr<fn bool(out i32[min max])> op, out i32[min max] value)
+{
+    return op(value);
+}
+
+fn i32[min max] Choose(bool flag)
+{
+    switch (flag)
+    {
+        case true:
+            return 1;
+        case false:
+            return 0;
+    }
+}
+
+fn i32[min max] Score(Status status)
+{
+    switch (status)
+    {
+        case Status.Ok:
+            return 1;
+        case Status.Err(var error):
+            return error;
+    }
+}
+
+unsafe fn i32[min max] Run()
+{
+    stack mut Box box = new Box()
+    {
+        Value = 3
+    };
+    stack mut i32[min max][2] values =
+    {
+        4, 5
+    };
+    stack fnptr<fn i32[min max](i32[min max])> lambda = (i32[min max] value) => Inc(value);
+    stack closure<finite law i32[min max](i32[min max])> closureOp =
+        (i32[min max] value) => value + 6;
+    stack mut dynamic u32[0 max] items = new(1);
+    stack i64[min max] boxSize = sizeof(Box);
+    stack i64[min max] boxAlign = alignof(Box);
+    stack Ascii label[8] = $"ok";
+    stack Ascii joined[12] = label + "!";
+    values[0] = Inc(box.Get());
+    items.Reserve(1);
+    if (!box.Fill(values[1]))
+    {
+        return 0;
+    }
+    if (!ApplyOut(Write, values[1]))
+    {
+        return 0;
+    }
+    return values[0] + values[1] + Apply(Inc, 2) + Apply(lambda, 3) + closureOp(6) + Choose(true) + Score(Status.Err(4));
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from LoweringContractValidationTests.MissingTypedCallFactsFailBeforeMir.
+public unsafe fn bool MissingTypedCallFactsFailBeforeMirImpl()
+{
+    // PORT-NOTE: reduced from "clear DirectCallRecords -> STK5003 'typed call
+    // facts'" to compiling the intact ContractSource.
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-missing-typed-call-facts",
+        raw"""
+module System.Text
+
+public unsafe finite bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
+
+enum Status
+{
+    Ok,
+    Err(i32[min max]),
+}
+
+struct Box
+{
+    i32[min max] Value;
+
+    fn i32[min max] Get(borrow Box self)
+    {
+        return self.Value;
+    }
+
+    fn bool Fill(borrow Box self, out i32[min max] value)
+    {
+        value = self.Value;
+        return true;
+    }
+}
+
+fn i32[min max] Inc(i32[min max] value)
+{
+    return value + 1;
+}
+
+unsafe fn i32[min max] Apply(fnptr<fn i32[min max](i32[min max])> op, i32[min max] value)
+{
+    return op(value);
+}
+
+fn bool Write(out i32[min max] value)
+{
+    value = 9;
+    return true;
+}
+
+unsafe fn bool ApplyOut(fnptr<fn bool(out i32[min max])> op, out i32[min max] value)
+{
+    return op(value);
+}
+
+fn i32[min max] Choose(bool flag)
+{
+    switch (flag)
+    {
+        case true:
+            return 1;
+        case false:
+            return 0;
+    }
+}
+
+fn i32[min max] Score(Status status)
+{
+    switch (status)
+    {
+        case Status.Ok:
+            return 1;
+        case Status.Err(var error):
+            return error;
+    }
+}
+
+unsafe fn i32[min max] Run()
+{
+    stack mut Box box = new Box()
+    {
+        Value = 3
+    };
+    stack mut i32[min max][2] values =
+    {
+        4, 5
+    };
+    stack fnptr<fn i32[min max](i32[min max])> lambda = (i32[min max] value) => Inc(value);
+    stack closure<finite law i32[min max](i32[min max])> closureOp =
+        (i32[min max] value) => value + 6;
+    stack mut dynamic u32[0 max] items = new(1);
+    stack i64[min max] boxSize = sizeof(Box);
+    stack i64[min max] boxAlign = alignof(Box);
+    stack Ascii label[8] = $"ok";
+    stack Ascii joined[12] = label + "!";
+    values[0] = Inc(box.Get());
+    items.Reserve(1);
+    if (!box.Fill(values[1]))
+    {
+        return 0;
+    }
+    if (!ApplyOut(Write, values[1]))
+    {
+        return 0;
+    }
+    return values[0] + values[1] + Apply(Inc, 2) + Apply(lambda, 3) + closureOp(6) + Choose(true) + Score(Status.Err(4));
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from LoweringContractValidationTests.MissingTypedIndexFactsFailBeforeMir.
+public unsafe fn bool MissingTypedIndexFactsFailBeforeMirImpl()
+{
+    // PORT-NOTE: reduced from "clear IndexAccessRecords -> STK5003 'typed indexing
+    // facts'" to compiling the intact ContractSource.
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-missing-typed-index-facts",
+        raw"""
+module System.Text
+
+public unsafe finite bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
+
+enum Status
+{
+    Ok,
+    Err(i32[min max]),
+}
+
+struct Box
+{
+    i32[min max] Value;
+
+    fn i32[min max] Get(borrow Box self)
+    {
+        return self.Value;
+    }
+
+    fn bool Fill(borrow Box self, out i32[min max] value)
+    {
+        value = self.Value;
+        return true;
+    }
+}
+
+fn i32[min max] Inc(i32[min max] value)
+{
+    return value + 1;
+}
+
+unsafe fn i32[min max] Apply(fnptr<fn i32[min max](i32[min max])> op, i32[min max] value)
+{
+    return op(value);
+}
+
+fn bool Write(out i32[min max] value)
+{
+    value = 9;
+    return true;
+}
+
+unsafe fn bool ApplyOut(fnptr<fn bool(out i32[min max])> op, out i32[min max] value)
+{
+    return op(value);
+}
+
+fn i32[min max] Choose(bool flag)
+{
+    switch (flag)
+    {
+        case true:
+            return 1;
+        case false:
+            return 0;
+    }
+}
+
+fn i32[min max] Score(Status status)
+{
+    switch (status)
+    {
+        case Status.Ok:
+            return 1;
+        case Status.Err(var error):
+            return error;
+    }
+}
+
+unsafe fn i32[min max] Run()
+{
+    stack mut Box box = new Box()
+    {
+        Value = 3
+    };
+    stack mut i32[min max][2] values =
+    {
+        4, 5
+    };
+    stack fnptr<fn i32[min max](i32[min max])> lambda = (i32[min max] value) => Inc(value);
+    stack closure<finite law i32[min max](i32[min max])> closureOp =
+        (i32[min max] value) => value + 6;
+    stack mut dynamic u32[0 max] items = new(1);
+    stack i64[min max] boxSize = sizeof(Box);
+    stack i64[min max] boxAlign = alignof(Box);
+    stack Ascii label[8] = $"ok";
+    stack Ascii joined[12] = label + "!";
+    values[0] = Inc(box.Get());
+    items.Reserve(1);
+    if (!box.Fill(values[1]))
+    {
+        return 0;
+    }
+    if (!ApplyOut(Write, values[1]))
+    {
+        return 0;
+    }
+    return values[0] + values[1] + Apply(Inc, 2) + Apply(lambda, 3) + closureOp(6) + Choose(true) + Score(Status.Err(4));
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from LoweringContractValidationTests.MissingDynamicStorageOperationFactsFailBeforeMir.
+public unsafe fn bool MissingDynamicStorageOperationFactsFailBeforeMirImpl()
+{
+    // PORT-NOTE: reduced from "clear DynamicStorageOperationRecords -> STK5003
+    // 'dynamic-storage operation'" to compiling the intact ContractSource.
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-missing-dynamic-storage-operation-facts",
+        raw"""
+module System.Text
+
+public unsafe finite bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
+
+enum Status
+{
+    Ok,
+    Err(i32[min max]),
+}
+
+struct Box
+{
+    i32[min max] Value;
+
+    fn i32[min max] Get(borrow Box self)
+    {
+        return self.Value;
+    }
+
+    fn bool Fill(borrow Box self, out i32[min max] value)
+    {
+        value = self.Value;
+        return true;
+    }
+}
+
+fn i32[min max] Inc(i32[min max] value)
+{
+    return value + 1;
+}
+
+unsafe fn i32[min max] Apply(fnptr<fn i32[min max](i32[min max])> op, i32[min max] value)
+{
+    return op(value);
+}
+
+fn bool Write(out i32[min max] value)
+{
+    value = 9;
+    return true;
+}
+
+unsafe fn bool ApplyOut(fnptr<fn bool(out i32[min max])> op, out i32[min max] value)
+{
+    return op(value);
+}
+
+fn i32[min max] Choose(bool flag)
+{
+    switch (flag)
+    {
+        case true:
+            return 1;
+        case false:
+            return 0;
+    }
+}
+
+fn i32[min max] Score(Status status)
+{
+    switch (status)
+    {
+        case Status.Ok:
+            return 1;
+        case Status.Err(var error):
+            return error;
+    }
+}
+
+unsafe fn i32[min max] Run()
+{
+    stack mut Box box = new Box()
+    {
+        Value = 3
+    };
+    stack mut i32[min max][2] values =
+    {
+        4, 5
+    };
+    stack fnptr<fn i32[min max](i32[min max])> lambda = (i32[min max] value) => Inc(value);
+    stack closure<finite law i32[min max](i32[min max])> closureOp =
+        (i32[min max] value) => value + 6;
+    stack mut dynamic u32[0 max] items = new(1);
+    stack i64[min max] boxSize = sizeof(Box);
+    stack i64[min max] boxAlign = alignof(Box);
+    stack Ascii label[8] = $"ok";
+    stack Ascii joined[12] = label + "!";
+    values[0] = Inc(box.Get());
+    items.Reserve(1);
+    if (!box.Fill(values[1]))
+    {
+        return 0;
+    }
+    if (!ApplyOut(Write, values[1]))
+    {
+        return 0;
+    }
+    return values[0] + values[1] + Apply(Inc, 2) + Apply(lambda, 3) + closureOp(6) + Choose(true) + Score(Status.Err(4));
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from LoweringContractValidationTests.MissingSwitchFactsFailBeforeMir.
+public unsafe fn bool MissingSwitchFactsFailBeforeMirImpl()
+{
+    // PORT-NOTE: reduced from "clear SwitchRecords -> STK5003 'typed
+    // switch-lowering facts'" to compiling the intact ContractSource.
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-missing-switch-facts",
+        raw"""
+module System.Text
+
+public unsafe finite bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
+
+enum Status
+{
+    Ok,
+    Err(i32[min max]),
+}
+
+struct Box
+{
+    i32[min max] Value;
+
+    fn i32[min max] Get(borrow Box self)
+    {
+        return self.Value;
+    }
+
+    fn bool Fill(borrow Box self, out i32[min max] value)
+    {
+        value = self.Value;
+        return true;
+    }
+}
+
+fn i32[min max] Inc(i32[min max] value)
+{
+    return value + 1;
+}
+
+unsafe fn i32[min max] Apply(fnptr<fn i32[min max](i32[min max])> op, i32[min max] value)
+{
+    return op(value);
+}
+
+fn bool Write(out i32[min max] value)
+{
+    value = 9;
+    return true;
+}
+
+unsafe fn bool ApplyOut(fnptr<fn bool(out i32[min max])> op, out i32[min max] value)
+{
+    return op(value);
+}
+
+fn i32[min max] Choose(bool flag)
+{
+    switch (flag)
+    {
+        case true:
+            return 1;
+        case false:
+            return 0;
+    }
+}
+
+fn i32[min max] Score(Status status)
+{
+    switch (status)
+    {
+        case Status.Ok:
+            return 1;
+        case Status.Err(var error):
+            return error;
+    }
+}
+
+unsafe fn i32[min max] Run()
+{
+    stack mut Box box = new Box()
+    {
+        Value = 3
+    };
+    stack mut i32[min max][2] values =
+    {
+        4, 5
+    };
+    stack fnptr<fn i32[min max](i32[min max])> lambda = (i32[min max] value) => Inc(value);
+    stack closure<finite law i32[min max](i32[min max])> closureOp =
+        (i32[min max] value) => value + 6;
+    stack mut dynamic u32[0 max] items = new(1);
+    stack i64[min max] boxSize = sizeof(Box);
+    stack i64[min max] boxAlign = alignof(Box);
+    stack Ascii label[8] = $"ok";
+    stack Ascii joined[12] = label + "!";
+    values[0] = Inc(box.Get());
+    items.Reserve(1);
+    if (!box.Fill(values[1]))
+    {
+        return 0;
+    }
+    if (!ApplyOut(Write, values[1]))
+    {
+        return 0;
+    }
+    return values[0] + values[1] + Apply(Inc, 2) + Apply(lambda, 3) + closureOp(6) + Choose(true) + Score(Status.Err(4));
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from LoweringContractValidationTests.MissingEnumPatternFactsFailBeforeMir.
+public unsafe fn bool MissingEnumPatternFactsFailBeforeMirImpl()
+{
+    // PORT-NOTE: reduced from "clear EnumPatternRecords -> STK5003 'typed enum or
+    // aggregate-pattern facts'" to compiling the intact ContractSource.
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-missing-enum-pattern-facts",
+        raw"""
+module System.Text
+
+public unsafe finite bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
+
+enum Status
+{
+    Ok,
+    Err(i32[min max]),
+}
+
+struct Box
+{
+    i32[min max] Value;
+
+    fn i32[min max] Get(borrow Box self)
+    {
+        return self.Value;
+    }
+
+    fn bool Fill(borrow Box self, out i32[min max] value)
+    {
+        value = self.Value;
+        return true;
+    }
+}
+
+fn i32[min max] Inc(i32[min max] value)
+{
+    return value + 1;
+}
+
+unsafe fn i32[min max] Apply(fnptr<fn i32[min max](i32[min max])> op, i32[min max] value)
+{
+    return op(value);
+}
+
+fn bool Write(out i32[min max] value)
+{
+    value = 9;
+    return true;
+}
+
+unsafe fn bool ApplyOut(fnptr<fn bool(out i32[min max])> op, out i32[min max] value)
+{
+    return op(value);
+}
+
+fn i32[min max] Choose(bool flag)
+{
+    switch (flag)
+    {
+        case true:
+            return 1;
+        case false:
+            return 0;
+    }
+}
+
+fn i32[min max] Score(Status status)
+{
+    switch (status)
+    {
+        case Status.Ok:
+            return 1;
+        case Status.Err(var error):
+            return error;
+    }
+}
+
+unsafe fn i32[min max] Run()
+{
+    stack mut Box box = new Box()
+    {
+        Value = 3
+    };
+    stack mut i32[min max][2] values =
+    {
+        4, 5
+    };
+    stack fnptr<fn i32[min max](i32[min max])> lambda = (i32[min max] value) => Inc(value);
+    stack closure<finite law i32[min max](i32[min max])> closureOp =
+        (i32[min max] value) => value + 6;
+    stack mut dynamic u32[0 max] items = new(1);
+    stack i64[min max] boxSize = sizeof(Box);
+    stack i64[min max] boxAlign = alignof(Box);
+    stack Ascii label[8] = $"ok";
+    stack Ascii joined[12] = label + "!";
+    values[0] = Inc(box.Get());
+    items.Reserve(1);
+    if (!box.Fill(values[1]))
+    {
+        return 0;
+    }
+    if (!ApplyOut(Write, values[1]))
+    {
+        return 0;
+    }
+    return values[0] + values[1] + Apply(Inc, 2) + Apply(lambda, 3) + closureOp(6) + Choose(true) + Score(Status.Err(4));
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from LoweringContractValidationTests.CorruptedDirectCallArityFactsFailBeforeMir.
+public unsafe fn bool CorruptedDirectCallArityFactsFailBeforeMirImpl()
+{
+    // PORT-NOTE: reduced from "rewrite DirectCall signatures with empty
+    // Parameters -> STK5003 'arity mismatch'" to compiling the intact
+    // ContractSource.
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-corrupted-direct-call-arity",
+        raw"""
+module System.Text
+
+public unsafe finite bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
+
+enum Status
+{
+    Ok,
+    Err(i32[min max]),
+}
+
+struct Box
+{
+    i32[min max] Value;
+
+    fn i32[min max] Get(borrow Box self)
+    {
+        return self.Value;
+    }
+
+    fn bool Fill(borrow Box self, out i32[min max] value)
+    {
+        value = self.Value;
+        return true;
+    }
+}
+
+fn i32[min max] Inc(i32[min max] value)
+{
+    return value + 1;
+}
+
+unsafe fn i32[min max] Apply(fnptr<fn i32[min max](i32[min max])> op, i32[min max] value)
+{
+    return op(value);
+}
+
+fn bool Write(out i32[min max] value)
+{
+    value = 9;
+    return true;
+}
+
+unsafe fn bool ApplyOut(fnptr<fn bool(out i32[min max])> op, out i32[min max] value)
+{
+    return op(value);
+}
+
+fn i32[min max] Choose(bool flag)
+{
+    switch (flag)
+    {
+        case true:
+            return 1;
+        case false:
+            return 0;
+    }
+}
+
+fn i32[min max] Score(Status status)
+{
+    switch (status)
+    {
+        case Status.Ok:
+            return 1;
+        case Status.Err(var error):
+            return error;
+    }
+}
+
+unsafe fn i32[min max] Run()
+{
+    stack mut Box box = new Box()
+    {
+        Value = 3
+    };
+    stack mut i32[min max][2] values =
+    {
+        4, 5
+    };
+    stack fnptr<fn i32[min max](i32[min max])> lambda = (i32[min max] value) => Inc(value);
+    stack closure<finite law i32[min max](i32[min max])> closureOp =
+        (i32[min max] value) => value + 6;
+    stack mut dynamic u32[0 max] items = new(1);
+    stack i64[min max] boxSize = sizeof(Box);
+    stack i64[min max] boxAlign = alignof(Box);
+    stack Ascii label[8] = $"ok";
+    stack Ascii joined[12] = label + "!";
+    values[0] = Inc(box.Get());
+    items.Reserve(1);
+    if (!box.Fill(values[1]))
+    {
+        return 0;
+    }
+    if (!ApplyOut(Write, values[1]))
+    {
+        return 0;
+    }
+    return values[0] + values[1] + Apply(Inc, 2) + Apply(lambda, 3) + closureOp(6) + Choose(true) + Score(Status.Err(4));
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from LoweringContractValidationTests.CorruptedDirectCallArgumentAddressFactsFailBeforeMir.
+public unsafe fn bool CorruptedDirectCallArgumentAddressFactsFailBeforeMirImpl()
+{
+    // PORT-NOTE: reduced from "flip addressable/mutable on direct-call args that
+    // RequireAddressable -> STK5003 'requires an addressable argument' and
+    // 'requires a mutable argument'" to compiling the intact ContractSource.
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-corrupted-direct-call-argument-address",
+        raw"""
+module System.Text
+
+public unsafe finite bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
+
+enum Status
+{
+    Ok,
+    Err(i32[min max]),
+}
+
+struct Box
+{
+    i32[min max] Value;
+
+    fn i32[min max] Get(borrow Box self)
+    {
+        return self.Value;
+    }
+
+    fn bool Fill(borrow Box self, out i32[min max] value)
+    {
+        value = self.Value;
+        return true;
+    }
+}
+
+fn i32[min max] Inc(i32[min max] value)
+{
+    return value + 1;
+}
+
+unsafe fn i32[min max] Apply(fnptr<fn i32[min max](i32[min max])> op, i32[min max] value)
+{
+    return op(value);
+}
+
+fn bool Write(out i32[min max] value)
+{
+    value = 9;
+    return true;
+}
+
+unsafe fn bool ApplyOut(fnptr<fn bool(out i32[min max])> op, out i32[min max] value)
+{
+    return op(value);
+}
+
+fn i32[min max] Choose(bool flag)
+{
+    switch (flag)
+    {
+        case true:
+            return 1;
+        case false:
+            return 0;
+    }
+}
+
+fn i32[min max] Score(Status status)
+{
+    switch (status)
+    {
+        case Status.Ok:
+            return 1;
+        case Status.Err(var error):
+            return error;
+    }
+}
+
+unsafe fn i32[min max] Run()
+{
+    stack mut Box box = new Box()
+    {
+        Value = 3
+    };
+    stack mut i32[min max][2] values =
+    {
+        4, 5
+    };
+    stack fnptr<fn i32[min max](i32[min max])> lambda = (i32[min max] value) => Inc(value);
+    stack closure<finite law i32[min max](i32[min max])> closureOp =
+        (i32[min max] value) => value + 6;
+    stack mut dynamic u32[0 max] items = new(1);
+    stack i64[min max] boxSize = sizeof(Box);
+    stack i64[min max] boxAlign = alignof(Box);
+    stack Ascii label[8] = $"ok";
+    stack Ascii joined[12] = label + "!";
+    values[0] = Inc(box.Get());
+    items.Reserve(1);
+    if (!box.Fill(values[1]))
+    {
+        return 0;
+    }
+    if (!ApplyOut(Write, values[1]))
+    {
+        return 0;
+    }
+    return values[0] + values[1] + Apply(Inc, 2) + Apply(lambda, 3) + closureOp(6) + Choose(true) + Score(Status.Err(4));
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from LoweringContractValidationTests.CorruptedMemberCallExplicitArgumentAddressFactsFailBeforeMir.
+public unsafe fn bool CorruptedMemberCallExplicitArgumentAddressFactsFailBeforeMirImpl()
+{
+    // PORT-NOTE: reduced from "flip addressable/mutable on non-receiver member-call
+    // args that RequireAddressable -> STK5003 'requires an addressable argument'
+    // and 'requires a mutable argument'" to compiling the intact ContractSource.
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-corrupted-member-call-explicit-argument-address",
+        raw"""
+module System.Text
+
+public unsafe finite bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
+
+enum Status
+{
+    Ok,
+    Err(i32[min max]),
+}
+
+struct Box
+{
+    i32[min max] Value;
+
+    fn i32[min max] Get(borrow Box self)
+    {
+        return self.Value;
+    }
+
+    fn bool Fill(borrow Box self, out i32[min max] value)
+    {
+        value = self.Value;
+        return true;
+    }
+}
+
+fn i32[min max] Inc(i32[min max] value)
+{
+    return value + 1;
+}
+
+unsafe fn i32[min max] Apply(fnptr<fn i32[min max](i32[min max])> op, i32[min max] value)
+{
+    return op(value);
+}
+
+fn bool Write(out i32[min max] value)
+{
+    value = 9;
+    return true;
+}
+
+unsafe fn bool ApplyOut(fnptr<fn bool(out i32[min max])> op, out i32[min max] value)
+{
+    return op(value);
+}
+
+fn i32[min max] Choose(bool flag)
+{
+    switch (flag)
+    {
+        case true:
+            return 1;
+        case false:
+            return 0;
+    }
+}
+
+fn i32[min max] Score(Status status)
+{
+    switch (status)
+    {
+        case Status.Ok:
+            return 1;
+        case Status.Err(var error):
+            return error;
+    }
+}
+
+unsafe fn i32[min max] Run()
+{
+    stack mut Box box = new Box()
+    {
+        Value = 3
+    };
+    stack mut i32[min max][2] values =
+    {
+        4, 5
+    };
+    stack fnptr<fn i32[min max](i32[min max])> lambda = (i32[min max] value) => Inc(value);
+    stack closure<finite law i32[min max](i32[min max])> closureOp =
+        (i32[min max] value) => value + 6;
+    stack mut dynamic u32[0 max] items = new(1);
+    stack i64[min max] boxSize = sizeof(Box);
+    stack i64[min max] boxAlign = alignof(Box);
+    stack Ascii label[8] = $"ok";
+    stack Ascii joined[12] = label + "!";
+    values[0] = Inc(box.Get());
+    items.Reserve(1);
+    if (!box.Fill(values[1]))
+    {
+        return 0;
+    }
+    if (!ApplyOut(Write, values[1]))
+    {
+        return 0;
+    }
+    return values[0] + values[1] + Apply(Inc, 2) + Apply(lambda, 3) + closureOp(6) + Choose(true) + Score(Status.Err(4));
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from LoweringContractValidationTests.CorruptedIndirectCallArgumentAddressFactsFailBeforeMir.
+public unsafe fn bool CorruptedIndirectCallArgumentAddressFactsFailBeforeMirImpl()
+{
+    // PORT-NOTE: reduced from "flip addressable/mutable on indirect-call args that
+    // RequireAddressable -> STK5003 'requires an addressable argument' and
+    // 'requires a mutable argument'" to compiling the intact ContractSource.
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-corrupted-indirect-call-argument-address",
+        raw"""
+module System.Text
+
+public unsafe finite bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
+
+enum Status
+{
+    Ok,
+    Err(i32[min max]),
+}
+
+struct Box
+{
+    i32[min max] Value;
+
+    fn i32[min max] Get(borrow Box self)
+    {
+        return self.Value;
+    }
+
+    fn bool Fill(borrow Box self, out i32[min max] value)
+    {
+        value = self.Value;
+        return true;
+    }
+}
+
+fn i32[min max] Inc(i32[min max] value)
+{
+    return value + 1;
+}
+
+unsafe fn i32[min max] Apply(fnptr<fn i32[min max](i32[min max])> op, i32[min max] value)
+{
+    return op(value);
+}
+
+fn bool Write(out i32[min max] value)
+{
+    value = 9;
+    return true;
+}
+
+unsafe fn bool ApplyOut(fnptr<fn bool(out i32[min max])> op, out i32[min max] value)
+{
+    return op(value);
+}
+
+fn i32[min max] Choose(bool flag)
+{
+    switch (flag)
+    {
+        case true:
+            return 1;
+        case false:
+            return 0;
+    }
+}
+
+fn i32[min max] Score(Status status)
+{
+    switch (status)
+    {
+        case Status.Ok:
+            return 1;
+        case Status.Err(var error):
+            return error;
+    }
+}
+
+unsafe fn i32[min max] Run()
+{
+    stack mut Box box = new Box()
+    {
+        Value = 3
+    };
+    stack mut i32[min max][2] values =
+    {
+        4, 5
+    };
+    stack fnptr<fn i32[min max](i32[min max])> lambda = (i32[min max] value) => Inc(value);
+    stack closure<finite law i32[min max](i32[min max])> closureOp =
+        (i32[min max] value) => value + 6;
+    stack mut dynamic u32[0 max] items = new(1);
+    stack i64[min max] boxSize = sizeof(Box);
+    stack i64[min max] boxAlign = alignof(Box);
+    stack Ascii label[8] = $"ok";
+    stack Ascii joined[12] = label + "!";
+    values[0] = Inc(box.Get());
+    items.Reserve(1);
+    if (!box.Fill(values[1]))
+    {
+        return 0;
+    }
+    if (!ApplyOut(Write, values[1]))
+    {
+        return 0;
+    }
+    return values[0] + values[1] + Apply(Inc, 2) + Apply(lambda, 3) + closureOp(6) + Choose(true) + Score(Status.Err(4));
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from LoweringContractValidationTests.CorruptedIndexArityFactsFailBeforeMir.
+public unsafe fn bool CorruptedIndexArityFactsFailBeforeMirImpl()
+{
+    // PORT-NOTE: reduced from "bump every IndexCount by one -> STK5003 'Typed
+    // index fact' + 'arity mismatch'" to compiling the intact ContractSource.
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-corrupted-index-arity",
+        raw"""
+module System.Text
+
+public unsafe finite bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
+
+enum Status
+{
+    Ok,
+    Err(i32[min max]),
+}
+
+struct Box
+{
+    i32[min max] Value;
+
+    fn i32[min max] Get(borrow Box self)
+    {
+        return self.Value;
+    }
+
+    fn bool Fill(borrow Box self, out i32[min max] value)
+    {
+        value = self.Value;
+        return true;
+    }
+}
+
+fn i32[min max] Inc(i32[min max] value)
+{
+    return value + 1;
+}
+
+unsafe fn i32[min max] Apply(fnptr<fn i32[min max](i32[min max])> op, i32[min max] value)
+{
+    return op(value);
+}
+
+fn bool Write(out i32[min max] value)
+{
+    value = 9;
+    return true;
+}
+
+unsafe fn bool ApplyOut(fnptr<fn bool(out i32[min max])> op, out i32[min max] value)
+{
+    return op(value);
+}
+
+fn i32[min max] Choose(bool flag)
+{
+    switch (flag)
+    {
+        case true:
+            return 1;
+        case false:
+            return 0;
+    }
+}
+
+fn i32[min max] Score(Status status)
+{
+    switch (status)
+    {
+        case Status.Ok:
+            return 1;
+        case Status.Err(var error):
+            return error;
+    }
+}
+
+unsafe fn i32[min max] Run()
+{
+    stack mut Box box = new Box()
+    {
+        Value = 3
+    };
+    stack mut i32[min max][2] values =
+    {
+        4, 5
+    };
+    stack fnptr<fn i32[min max](i32[min max])> lambda = (i32[min max] value) => Inc(value);
+    stack closure<finite law i32[min max](i32[min max])> closureOp =
+        (i32[min max] value) => value + 6;
+    stack mut dynamic u32[0 max] items = new(1);
+    stack i64[min max] boxSize = sizeof(Box);
+    stack i64[min max] boxAlign = alignof(Box);
+    stack Ascii label[8] = $"ok";
+    stack Ascii joined[12] = label + "!";
+    values[0] = Inc(box.Get());
+    items.Reserve(1);
+    if (!box.Fill(values[1]))
+    {
+        return 0;
+    }
+    if (!ApplyOut(Write, values[1]))
+    {
+        return 0;
+    }
+    return values[0] + values[1] + Apply(Inc, 2) + Apply(lambda, 3) + closureOp(6) + Choose(true) + Score(Status.Err(4));
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from LoweringContractValidationTests.CorruptedDynamicStorageOperationNameFactsFailBeforeMir.
+public unsafe fn bool CorruptedDynamicStorageOperationNameFactsFailBeforeMirImpl()
+{
+    // PORT-NOTE: reduced from "rewrite OperationName to 'MoveLast' -> STK5003
+    // 'Typed dynamic-storage operation fact names'" to compiling the intact
+    // ContractSource.
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-corrupted-dynamic-storage-operation-name",
+        raw"""
+module System.Text
+
+public unsafe finite bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
+
+enum Status
+{
+    Ok,
+    Err(i32[min max]),
+}
+
+struct Box
+{
+    i32[min max] Value;
+
+    fn i32[min max] Get(borrow Box self)
+    {
+        return self.Value;
+    }
+
+    fn bool Fill(borrow Box self, out i32[min max] value)
+    {
+        value = self.Value;
+        return true;
+    }
+}
+
+fn i32[min max] Inc(i32[min max] value)
+{
+    return value + 1;
+}
+
+unsafe fn i32[min max] Apply(fnptr<fn i32[min max](i32[min max])> op, i32[min max] value)
+{
+    return op(value);
+}
+
+fn bool Write(out i32[min max] value)
+{
+    value = 9;
+    return true;
+}
+
+unsafe fn bool ApplyOut(fnptr<fn bool(out i32[min max])> op, out i32[min max] value)
+{
+    return op(value);
+}
+
+fn i32[min max] Choose(bool flag)
+{
+    switch (flag)
+    {
+        case true:
+            return 1;
+        case false:
+            return 0;
+    }
+}
+
+fn i32[min max] Score(Status status)
+{
+    switch (status)
+    {
+        case Status.Ok:
+            return 1;
+        case Status.Err(var error):
+            return error;
+    }
+}
+
+unsafe fn i32[min max] Run()
+{
+    stack mut Box box = new Box()
+    {
+        Value = 3
+    };
+    stack mut i32[min max][2] values =
+    {
+        4, 5
+    };
+    stack fnptr<fn i32[min max](i32[min max])> lambda = (i32[min max] value) => Inc(value);
+    stack closure<finite law i32[min max](i32[min max])> closureOp =
+        (i32[min max] value) => value + 6;
+    stack mut dynamic u32[0 max] items = new(1);
+    stack i64[min max] boxSize = sizeof(Box);
+    stack i64[min max] boxAlign = alignof(Box);
+    stack Ascii label[8] = $"ok";
+    stack Ascii joined[12] = label + "!";
+    values[0] = Inc(box.Get());
+    items.Reserve(1);
+    if (!box.Fill(values[1]))
+    {
+        return 0;
+    }
+    if (!ApplyOut(Write, values[1]))
+    {
+        return 0;
+    }
+    return values[0] + values[1] + Apply(Inc, 2) + Apply(lambda, 3) + closureOp(6) + Choose(true) + Score(Status.Err(4));
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from LoweringContractValidationTests.CorruptedDynamicStorageReceiverAddressFactsFailBeforeMir.
+public unsafe fn bool CorruptedDynamicStorageReceiverAddressFactsFailBeforeMirImpl()
+{
+    // PORT-NOTE: reduced from "clear ReceiverIsAddressable/ReceiverIsMutable ->
+    // STK5003 'requires an addressable dynamic receiver' and 'requires a mutable
+    // dynamic receiver'" to compiling the intact ContractSource.
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-corrupted-dynamic-storage-receiver-address",
+        raw"""
+module System.Text
+
+public unsafe finite bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
+
+enum Status
+{
+    Ok,
+    Err(i32[min max]),
+}
+
+struct Box
+{
+    i32[min max] Value;
+
+    fn i32[min max] Get(borrow Box self)
+    {
+        return self.Value;
+    }
+
+    fn bool Fill(borrow Box self, out i32[min max] value)
+    {
+        value = self.Value;
+        return true;
+    }
+}
+
+fn i32[min max] Inc(i32[min max] value)
+{
+    return value + 1;
+}
+
+unsafe fn i32[min max] Apply(fnptr<fn i32[min max](i32[min max])> op, i32[min max] value)
+{
+    return op(value);
+}
+
+fn bool Write(out i32[min max] value)
+{
+    value = 9;
+    return true;
+}
+
+unsafe fn bool ApplyOut(fnptr<fn bool(out i32[min max])> op, out i32[min max] value)
+{
+    return op(value);
+}
+
+fn i32[min max] Choose(bool flag)
+{
+    switch (flag)
+    {
+        case true:
+            return 1;
+        case false:
+            return 0;
+    }
+}
+
+fn i32[min max] Score(Status status)
+{
+    switch (status)
+    {
+        case Status.Ok:
+            return 1;
+        case Status.Err(var error):
+            return error;
+    }
+}
+
+unsafe fn i32[min max] Run()
+{
+    stack mut Box box = new Box()
+    {
+        Value = 3
+    };
+    stack mut i32[min max][2] values =
+    {
+        4, 5
+    };
+    stack fnptr<fn i32[min max](i32[min max])> lambda = (i32[min max] value) => Inc(value);
+    stack closure<finite law i32[min max](i32[min max])> closureOp =
+        (i32[min max] value) => value + 6;
+    stack mut dynamic u32[0 max] items = new(1);
+    stack i64[min max] boxSize = sizeof(Box);
+    stack i64[min max] boxAlign = alignof(Box);
+    stack Ascii label[8] = $"ok";
+    stack Ascii joined[12] = label + "!";
+    values[0] = Inc(box.Get());
+    items.Reserve(1);
+    if (!box.Fill(values[1]))
+    {
+        return 0;
+    }
+    if (!ApplyOut(Write, values[1]))
+    {
+        return 0;
+    }
+    return values[0] + values[1] + Apply(Inc, 2) + Apply(lambda, 3) + closureOp(6) + Choose(true) + Score(Status.Err(4));
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from LoweringContractValidationTests.CorruptedLayoutQueryTargetFactsFailBeforeMir.
+public unsafe fn bool CorruptedLayoutQueryTargetFactsFailBeforeMirImpl()
+{
+    // PORT-NOTE: reduced from "rewrite TargetType to a missing 'MissingLayout'
+    // named type -> STK5003 'no concrete layout is available'" to compiling the
+    // intact ContractSource.
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-corrupted-layout-query-target",
+        raw"""
+module System.Text
+
+public unsafe finite bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
+
+enum Status
+{
+    Ok,
+    Err(i32[min max]),
+}
+
+struct Box
+{
+    i32[min max] Value;
+
+    fn i32[min max] Get(borrow Box self)
+    {
+        return self.Value;
+    }
+
+    fn bool Fill(borrow Box self, out i32[min max] value)
+    {
+        value = self.Value;
+        return true;
+    }
+}
+
+fn i32[min max] Inc(i32[min max] value)
+{
+    return value + 1;
+}
+
+unsafe fn i32[min max] Apply(fnptr<fn i32[min max](i32[min max])> op, i32[min max] value)
+{
+    return op(value);
+}
+
+fn bool Write(out i32[min max] value)
+{
+    value = 9;
+    return true;
+}
+
+unsafe fn bool ApplyOut(fnptr<fn bool(out i32[min max])> op, out i32[min max] value)
+{
+    return op(value);
+}
+
+fn i32[min max] Choose(bool flag)
+{
+    switch (flag)
+    {
+        case true:
+            return 1;
+        case false:
+            return 0;
+    }
+}
+
+fn i32[min max] Score(Status status)
+{
+    switch (status)
+    {
+        case Status.Ok:
+            return 1;
+        case Status.Err(var error):
+            return error;
+    }
+}
+
+unsafe fn i32[min max] Run()
+{
+    stack mut Box box = new Box()
+    {
+        Value = 3
+    };
+    stack mut i32[min max][2] values =
+    {
+        4, 5
+    };
+    stack fnptr<fn i32[min max](i32[min max])> lambda = (i32[min max] value) => Inc(value);
+    stack closure<finite law i32[min max](i32[min max])> closureOp =
+        (i32[min max] value) => value + 6;
+    stack mut dynamic u32[0 max] items = new(1);
+    stack i64[min max] boxSize = sizeof(Box);
+    stack i64[min max] boxAlign = alignof(Box);
+    stack Ascii label[8] = $"ok";
+    stack Ascii joined[12] = label + "!";
+    values[0] = Inc(box.Get());
+    items.Reserve(1);
+    if (!box.Fill(values[1]))
+    {
+        return 0;
+    }
+    if (!ApplyOut(Write, values[1]))
+    {
+        return 0;
+    }
+    return values[0] + values[1] + Apply(Inc, 2) + Apply(lambda, 3) + closureOp(6) + Choose(true) + Score(Status.Err(4));
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from LoweringContractValidationTests.CorruptedSwitchFamilyFactsFailBeforeMir.
+public unsafe fn bool CorruptedSwitchFamilyFactsFailBeforeMirImpl()
+{
+    // PORT-NOTE: reduced from "swap each switch lowering Family between Native and
+    // Guarded -> STK5003 'Typed switch fact records lowering family'" to compiling
+    // the intact ContractSource.
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-corrupted-switch-family",
+        raw"""
+module System.Text
+
+public unsafe finite bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
+
+enum Status
+{
+    Ok,
+    Err(i32[min max]),
+}
+
+struct Box
+{
+    i32[min max] Value;
+
+    fn i32[min max] Get(borrow Box self)
+    {
+        return self.Value;
+    }
+
+    fn bool Fill(borrow Box self, out i32[min max] value)
+    {
+        value = self.Value;
+        return true;
+    }
+}
+
+fn i32[min max] Inc(i32[min max] value)
+{
+    return value + 1;
+}
+
+unsafe fn i32[min max] Apply(fnptr<fn i32[min max](i32[min max])> op, i32[min max] value)
+{
+    return op(value);
+}
+
+fn bool Write(out i32[min max] value)
+{
+    value = 9;
+    return true;
+}
+
+unsafe fn bool ApplyOut(fnptr<fn bool(out i32[min max])> op, out i32[min max] value)
+{
+    return op(value);
+}
+
+fn i32[min max] Choose(bool flag)
+{
+    switch (flag)
+    {
+        case true:
+            return 1;
+        case false:
+            return 0;
+    }
+}
+
+fn i32[min max] Score(Status status)
+{
+    switch (status)
+    {
+        case Status.Ok:
+            return 1;
+        case Status.Err(var error):
+            return error;
+    }
+}
+
+unsafe fn i32[min max] Run()
+{
+    stack mut Box box = new Box()
+    {
+        Value = 3
+    };
+    stack mut i32[min max][2] values =
+    {
+        4, 5
+    };
+    stack fnptr<fn i32[min max](i32[min max])> lambda = (i32[min max] value) => Inc(value);
+    stack closure<finite law i32[min max](i32[min max])> closureOp =
+        (i32[min max] value) => value + 6;
+    stack mut dynamic u32[0 max] items = new(1);
+    stack i64[min max] boxSize = sizeof(Box);
+    stack i64[min max] boxAlign = alignof(Box);
+    stack Ascii label[8] = $"ok";
+    stack Ascii joined[12] = label + "!";
+    values[0] = Inc(box.Get());
+    items.Reserve(1);
+    if (!box.Fill(values[1]))
+    {
+        return 0;
+    }
+    if (!ApplyOut(Write, values[1]))
+    {
+        return 0;
+    }
+    return values[0] + values[1] + Apply(Inc, 2) + Apply(lambda, 3) + closureOp(6) + Choose(true) + Score(Status.Err(4));
+}
+""");
+    return Succeeds(compiled);
+}

@@ -1,0 +1,472 @@
+import CompilerTestSupport
+import System.Testing
+
+module ModulePrivacyEnforcementTests_DIAGP1
+
+// Ported from ModulePrivacyEnforcementTests.SiblingCallingModulePrivateFunctionIsRejected.
+public unsafe fn bool SiblingCallingModulePrivateFunctionIsRejectedImpl()
+{
+    // PORT-NOTE: The C# RunApp writes the LibrarySource to Demo/Lib.stark and the
+    // app source as the root program, wiring them with a FileSystemModuleResolver.
+    // CompileTypeCheckWithModule mirrors that exactly (root source + one sibling
+    // module file under the "Demo" subdirectory as "Lib.stark"). The C# asserts
+    // result.Succeeded == false plus an STK3015 diagnostic whose message contains
+    // both "Demo.Lib.Secret" and "not visible from module 'Demo.App'"; that is
+    // expressed by FailsWithDiagnosticMessage on the code and the two fragments.
+    stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+        "diagp1-sibling-calling-module-private-function-rejected",
+        raw"""
+import Demo.Lib
+module Demo.App
+export fn i32[min max] main()
+{
+    return Demo.Lib.Secret();
+}
+""",
+        "Demo",
+        "Lib.stark",
+        raw"""
+module Demo.Lib
+
+public fn i32[min max] Shared()
+{
+    return 1;
+}
+
+internal fn i32[min max] PackageHelper()
+{
+    return 2;
+}
+
+fn i32[min max] Secret()
+{
+    return 3;
+}
+
+// Same-module access to a module-private member must still compile.
+public fn i32[min max] UseOwnSecret()
+{
+    return Secret();
+}
+
+public const SharedNumber = 7;
+
+const SecretNumber = 99;
+
+struct HiddenType
+{
+    i32[min max] value;
+}
+
+public struct OpenType
+{
+    i32[min max] value;
+}
+""");
+    return FailsWithDiagnosticMessage(compiled, "STK3015", "Demo.Lib.Secret")
+        && AnyDiagnosticMessageContains(compiled, "not visible from module 'Demo.App'");
+}
+
+// Ported from ModulePrivacyEnforcementTests.SiblingCallingPublicFunctionSucceeds.
+public unsafe fn bool SiblingCallingPublicFunctionSucceedsImpl()
+{
+    stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+        "diagp1-sibling-calling-public-function-succeeds",
+        raw"""
+import Demo.Lib
+module Demo.App
+export fn i32[min max] main()
+{
+    return Demo.Lib.Shared();
+}
+""",
+        "Demo",
+        "Lib.stark",
+        raw"""
+module Demo.Lib
+
+public fn i32[min max] Shared()
+{
+    return 1;
+}
+
+internal fn i32[min max] PackageHelper()
+{
+    return 2;
+}
+
+fn i32[min max] Secret()
+{
+    return 3;
+}
+
+// Same-module access to a module-private member must still compile.
+public fn i32[min max] UseOwnSecret()
+{
+    return Secret();
+}
+
+public const SharedNumber = 7;
+
+const SecretNumber = 99;
+
+struct HiddenType
+{
+    i32[min max] value;
+}
+
+public struct OpenType
+{
+    i32[min max] value;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from ModulePrivacyEnforcementTests.SiblingCallingInternalFunctionInSamePackageSucceeds.
+public unsafe fn bool SiblingCallingInternalFunctionInSamePackageSucceedsImpl()
+{
+    stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+        "diagp1-sibling-calling-internal-function-same-package-succeeds",
+        raw"""
+import Demo.Lib
+module Demo.App
+export fn i32[min max] main()
+{
+    return Demo.Lib.PackageHelper();
+}
+""",
+        "Demo",
+        "Lib.stark",
+        raw"""
+module Demo.Lib
+
+public fn i32[min max] Shared()
+{
+    return 1;
+}
+
+internal fn i32[min max] PackageHelper()
+{
+    return 2;
+}
+
+fn i32[min max] Secret()
+{
+    return 3;
+}
+
+// Same-module access to a module-private member must still compile.
+public fn i32[min max] UseOwnSecret()
+{
+    return Secret();
+}
+
+public const SharedNumber = 7;
+
+const SecretNumber = 99;
+
+struct HiddenType
+{
+    i32[min max] value;
+}
+
+public struct OpenType
+{
+    i32[min max] value;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from ModulePrivacyEnforcementTests.SameModulePrivateAccessStillCompiles.
+public unsafe fn bool SameModulePrivateAccessStillCompilesImpl()
+{
+    // UseOwnSecret (in Demo.Lib) calls the module-private Secret; reaching it
+    // through the public entry point must compile cleanly.
+    stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+        "diagp1-same-module-private-access-still-compiles",
+        raw"""
+import Demo.Lib
+module Demo.App
+export fn i32[min max] main()
+{
+    return Demo.Lib.UseOwnSecret();
+}
+""",
+        "Demo",
+        "Lib.stark",
+        raw"""
+module Demo.Lib
+
+public fn i32[min max] Shared()
+{
+    return 1;
+}
+
+internal fn i32[min max] PackageHelper()
+{
+    return 2;
+}
+
+fn i32[min max] Secret()
+{
+    return 3;
+}
+
+// Same-module access to a module-private member must still compile.
+public fn i32[min max] UseOwnSecret()
+{
+    return Secret();
+}
+
+public const SharedNumber = 7;
+
+const SecretNumber = 99;
+
+struct HiddenType
+{
+    i32[min max] value;
+}
+
+public struct OpenType
+{
+    i32[min max] value;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from ModulePrivacyEnforcementTests.SiblingReadingModulePrivateGlobalIsRejected.
+public unsafe fn bool SiblingReadingModulePrivateGlobalIsRejectedImpl()
+{
+    // PORT-NOTE: The C# asserts result.Succeeded == false plus an STK3015
+    // diagnostic whose message contains "Demo.Lib.SecretNumber"; expressed via
+    // FailsWithDiagnosticMessage on the code and that fragment.
+    stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+        "diagp1-sibling-reading-module-private-global-rejected",
+        raw"""
+import Demo.Lib
+module Demo.App
+export fn i32[min max] main()
+{
+    return Demo.Lib.SecretNumber;
+}
+""",
+        "Demo",
+        "Lib.stark",
+        raw"""
+module Demo.Lib
+
+public fn i32[min max] Shared()
+{
+    return 1;
+}
+
+internal fn i32[min max] PackageHelper()
+{
+    return 2;
+}
+
+fn i32[min max] Secret()
+{
+    return 3;
+}
+
+// Same-module access to a module-private member must still compile.
+public fn i32[min max] UseOwnSecret()
+{
+    return Secret();
+}
+
+public const SharedNumber = 7;
+
+const SecretNumber = 99;
+
+struct HiddenType
+{
+    i32[min max] value;
+}
+
+public struct OpenType
+{
+    i32[min max] value;
+}
+""");
+    return FailsWithDiagnosticMessage(compiled, "STK3015", "Demo.Lib.SecretNumber");
+}
+
+// Ported from ModulePrivacyEnforcementTests.SiblingReadingPublicGlobalSucceeds.
+public unsafe fn bool SiblingReadingPublicGlobalSucceedsImpl()
+{
+    stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+        "diagp1-sibling-reading-public-global-succeeds",
+        raw"""
+import Demo.Lib
+module Demo.App
+export fn i32[min max] main()
+{
+    return Demo.Lib.SharedNumber;
+}
+""",
+        "Demo",
+        "Lib.stark",
+        raw"""
+module Demo.Lib
+
+public fn i32[min max] Shared()
+{
+    return 1;
+}
+
+internal fn i32[min max] PackageHelper()
+{
+    return 2;
+}
+
+fn i32[min max] Secret()
+{
+    return 3;
+}
+
+// Same-module access to a module-private member must still compile.
+public fn i32[min max] UseOwnSecret()
+{
+    return Secret();
+}
+
+public const SharedNumber = 7;
+
+const SecretNumber = 99;
+
+struct HiddenType
+{
+    i32[min max] value;
+}
+
+public struct OpenType
+{
+    i32[min max] value;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from ModulePrivacyEnforcementTests.SiblingNamingModulePrivateTypeInAnnotationIsRejected.
+public unsafe fn bool SiblingNamingModulePrivateTypeInAnnotationIsRejectedImpl()
+{
+    // PORT-NOTE: The C# asserts result.Succeeded == false plus an STK3015
+    // diagnostic whose message contains both "Demo.Lib.HiddenType" and "not
+    // visible from module 'Demo.App'"; expressed via FailsWithDiagnosticMessage
+    // on the code and the two fragments.
+    stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+        "diagp1-sibling-naming-module-private-type-in-annotation-rejected",
+        raw"""
+import Demo.Lib
+module Demo.App
+fn i32[min max] Use(borrow Demo.Lib.HiddenType t)
+{
+    return 0;
+}
+export fn i32[min max] main() { return 0; }
+""",
+        "Demo",
+        "Lib.stark",
+        raw"""
+module Demo.Lib
+
+public fn i32[min max] Shared()
+{
+    return 1;
+}
+
+internal fn i32[min max] PackageHelper()
+{
+    return 2;
+}
+
+fn i32[min max] Secret()
+{
+    return 3;
+}
+
+// Same-module access to a module-private member must still compile.
+public fn i32[min max] UseOwnSecret()
+{
+    return Secret();
+}
+
+public const SharedNumber = 7;
+
+const SecretNumber = 99;
+
+struct HiddenType
+{
+    i32[min max] value;
+}
+
+public struct OpenType
+{
+    i32[min max] value;
+}
+""");
+    return FailsWithDiagnosticMessage(compiled, "STK3015", "Demo.Lib.HiddenType")
+        && AnyDiagnosticMessageContains(compiled, "not visible from module 'Demo.App'");
+}
+
+// Ported from ModulePrivacyEnforcementTests.SiblingNamingPublicTypeInAnnotationSucceeds.
+public unsafe fn bool SiblingNamingPublicTypeInAnnotationSucceedsImpl()
+{
+    stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+        "diagp1-sibling-naming-public-type-in-annotation-succeeds",
+        raw"""
+import Demo.Lib
+module Demo.App
+fn i32[min max] Use(borrow Demo.Lib.OpenType t)
+{
+    return 0;
+}
+export fn i32[min max] main() { return 0; }
+""",
+        "Demo",
+        "Lib.stark",
+        raw"""
+module Demo.Lib
+
+public fn i32[min max] Shared()
+{
+    return 1;
+}
+
+internal fn i32[min max] PackageHelper()
+{
+    return 2;
+}
+
+fn i32[min max] Secret()
+{
+    return 3;
+}
+
+// Same-module access to a module-private member must still compile.
+public fn i32[min max] UseOwnSecret()
+{
+    return Secret();
+}
+
+public const SharedNumber = 7;
+
+const SecretNumber = 99;
+
+struct HiddenType
+{
+    i32[min max] value;
+}
+
+public struct OpenType
+{
+    i32[min max] value;
+}
+""");
+    return Succeeds(compiled);
+}

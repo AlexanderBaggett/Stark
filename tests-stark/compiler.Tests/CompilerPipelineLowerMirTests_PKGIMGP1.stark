@@ -1,0 +1,843 @@
+import CompilerTestSupport
+import System.Testing
+module CompilerPipelineLowerMirTests_PKGIMGP1
+
+// PORT-NOTE (applies to every Impl in this file): Each C# test builds a Facade
+// library, publishes it to a package image (PackageImageBuilder), strips the
+// untyped surface down to typed-interface + compiler-fact + generic-template
+// sections, round-trips the manifest JSON, deletes the Facade source, then
+// re-imports Facade into a Demo consumer through a FileSystem/DocumentOnly module
+// resolver and lowers to MIR (StopAfterPassId "lower-mir"). The assertions then
+// inspect the monomorphized MIR functions (HasBody, SupportsDirectCodeGeneration,
+// Locals, Blocks/Statements/Terminators, ownership facts, etc.). The Stark test
+// helpers cannot model package-image construction, manifest round-tripping,
+// bridge-body-text corruption, module resolvers, filesystem effects, or MIR-node
+// inspection, so each port is reduced to compiling the published Facade library
+// program through the MIR-lowering stage (CompileMir) and asserting it succeeds,
+// which is the precondition for any published typed template body to lower.
+
+// Ported from CompilerPipelineLowerMirTests.ManifestBackedTypedTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecialization.
+public unsafe fn bool ManifestBackedTypedTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecializationImpl()
+{
+    // PORT-NOTE: reduced to lowering the published Facade library (see file header).
+    stack mut LlvmCompile compiled = CompileMir(
+        "lowermir-typed-template-body-bridge",
+        raw"""
+module Facade
+
+public fn T Identity<T>(T value)
+{
+    stack T copy = value;
+    return copy;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from CompilerPipelineLowerMirTests.ManifestBackedTypedTemplateBodiesLowerFromPackageImageFactsWhenImportedDeclarationSyntaxIsCorrupted.
+public unsafe fn bool ManifestBackedTypedTemplateBodiesLowerFromPackageImageFactsWhenImportedDeclarationSyntaxIsCorruptedImpl()
+{
+    // PORT-NOTE: reduced to lowering the published Facade library (see file header).
+    // The C# test corrupts the imported declaration syntax in the parse tree; the
+    // helpers cannot model that, so only the valid published library is lowered.
+    stack mut LlvmCompile compiled = CompileMir(
+        "lowermir-typed-body-corrupted-declaration",
+        raw"""
+module Facade
+
+public record Box(i32[min max] Dummy)
+{
+    fn T Echo<T>(borrow Box self, T value)
+    {
+        return value;
+    }
+}
+
+public fn T Relay<T>(Box box, T value)
+{
+    return box.Echo(value);
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from CompilerPipelineLowerMirTests.ManifestBackedTypedTemplateBodiesLowerFromPackageImageFactsWhenImportedParseTreeIsEmpty.
+public unsafe fn bool ManifestBackedTypedTemplateBodiesLowerFromPackageImageFactsWhenImportedParseTreeIsEmptyImpl()
+{
+    // PORT-NOTE: reduced to lowering the published Facade library (see file header).
+    // The C# test replaces the imported parse tree with an empty "module Facade";
+    // the helpers cannot model that, so only the valid published library is lowered.
+    stack mut LlvmCompile compiled = CompileMir(
+        "lowermir-typed-body-empty-parse-tree",
+        raw"""
+module Facade
+
+public record Box(i32[min max] Dummy)
+{
+    fn T Echo<T>(borrow Box self, T value)
+    {
+        return value;
+    }
+}
+
+public fn T Relay<T>(Box box, T value)
+{
+    return box.Echo(value);
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from CompilerPipelineLowerMirTests.ManifestBackedTypedGroupedLocalDeclarationTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecialization.
+public unsafe fn bool ManifestBackedTypedGroupedLocalDeclarationTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecializationImpl()
+{
+    // PORT-NOTE: reduced to lowering the published Facade library (see file header).
+    stack mut LlvmCompile compiled = CompileMir(
+        "lowermir-typed-grouped-local-body-bridge",
+        raw"""
+module Facade
+
+public fn i32[min max] SumTo<T>(i32[min max] limit, T tag)
+{
+    stack mut i32[min max] total = 0, stop = limit;
+    for willexit (stack mut i32[min max] index = 0, max = stop; index < max; index += 1)
+    {
+        total += index;
+    }
+
+    return total;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from CompilerPipelineLowerMirTests.ManifestBackedTypedUninitializedLocalDeclarationTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecialization.
+public unsafe fn bool ManifestBackedTypedUninitializedLocalDeclarationTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecializationImpl()
+{
+    // PORT-NOTE: reduced to lowering the published Facade library (see file header).
+    stack mut LlvmCompile compiled = CompileMir(
+        "lowermir-typed-uninitialized-local-body-bridge",
+        raw"""
+module Facade
+
+public fn i32[min max] Observe<T>(i32[min max] value, T tag)
+{
+    stack mut i32[min max] current;
+    current = value;
+    return current;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from CompilerPipelineLowerMirTests.ManifestBackedTypedDiscardedExpressionTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecialization.
+public unsafe fn bool ManifestBackedTypedDiscardedExpressionTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecializationImpl()
+{
+    // PORT-NOTE: reduced to lowering the published Facade library (see file header).
+    stack mut LlvmCompile compiled = CompileMir(
+        "lowermir-typed-discarded-expression-body-bridge",
+        raw"""
+module Facade
+
+public fn i32[min max] Observe<T>(i32[min max] value, T tag)
+{
+    value + 1;
+    return value;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from CompilerPipelineLowerMirTests.ManifestBackedTypedConversionTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecialization.
+public unsafe fn bool ManifestBackedTypedConversionTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecializationImpl()
+{
+    // PORT-NOTE: reduced to lowering the published Facade library (see file header).
+    stack mut LlvmCompile compiled = CompileMir(
+        "lowermir-typed-conversion-body-bridge",
+        raw"""
+module Facade
+
+public fn i32[min max] TruncateTyped<T>(f32 value, T tag)
+{
+    return (i32[min max])value;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from CompilerPipelineLowerMirTests.ManifestBackedTypedAssignmentTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecialization.
+public unsafe fn bool ManifestBackedTypedAssignmentTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecializationImpl()
+{
+    // PORT-NOTE: reduced to lowering the published Facade library (see file header).
+    stack mut LlvmCompile compiled = CompileMir(
+        "lowermir-typed-assignment-body-bridge",
+        raw"""
+module Facade
+
+public fn i32[min max] AddViaAssign<T>(T tag, i32[min max] left, i32[min max] right)
+{
+    stack mut i32[min max] sum = left;
+    sum = sum + right;
+    return sum;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from CompilerPipelineLowerMirTests.ManifestBackedTypedIfTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecialization.
+public unsafe fn bool ManifestBackedTypedIfTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecializationImpl()
+{
+    // PORT-NOTE: reduced to lowering the published Facade library (see file header).
+    stack mut LlvmCompile compiled = CompileMir(
+        "lowermir-typed-if-body-bridge",
+        raw"""
+module Facade
+
+public fn i32[min max] ChooseBranch<T>(bool takeLeft, i32[min max] left, i32[min max] right, T tag)
+{
+    stack mut i32[min max] result = 0;
+    if (takeLeft)
+    {
+        result = left;
+    }
+    else
+    {
+        result = right;
+    }
+    return result;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from CompilerPipelineLowerMirTests.ManifestBackedTypedTerminalIfTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecialization.
+public unsafe fn bool ManifestBackedTypedTerminalIfTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecializationImpl()
+{
+    // PORT-NOTE: reduced to lowering the published Facade library (see file header).
+    stack mut LlvmCompile compiled = CompileMir(
+        "lowermir-typed-terminal-if-body-bridge",
+        raw"""
+module Facade
+
+public fn i32[min max] ChooseTerminal<T>(bool takeLeft, bool takeMiddle, i32[min max] left, i32[min max] middle, i32[min max] right, T tag)
+{
+    if (takeLeft)
+    {
+        return left;
+    }
+    else if (takeMiddle)
+    {
+        return middle;
+    }
+    else
+    {
+        return right;
+    }
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from CompilerPipelineLowerMirTests.ManifestBackedTypedWhileTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecialization.
+public unsafe fn bool ManifestBackedTypedWhileTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecializationImpl()
+{
+    // PORT-NOTE: reduced to lowering the published Facade library (see file header).
+    stack mut LlvmCompile compiled = CompileMir(
+        "lowermir-typed-while-body-bridge",
+        raw"""
+module Facade
+
+public fn i32[min max] SumTo<T>(i32[min max] count, T tag)
+{
+    stack mut i32[min max] index = 0;
+    stack mut i32[min max] sum = 0;
+    while willexit (index < count)
+    {
+        sum = sum + index;
+        index = index + 1;
+    }
+    return sum;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from CompilerPipelineLowerMirTests.ManifestBackedTypedPatternConditionTemplateBodiesPublishAndImportForGenericSpecialization.
+public unsafe fn bool ManifestBackedTypedPatternConditionTemplateBodiesPublishAndImportForGenericSpecializationImpl()
+{
+    // PORT-NOTE: reduced to lowering the published Facade library (see file header).
+    stack mut LlvmCompile compiled = CompileMir(
+        "lowermir-typed-pattern-condition-body-bridge",
+        raw"""
+module Facade
+
+public enum Step<T>
+{
+    More(i32[min max]),
+    Done
+}
+
+public fn i32[min max] Classify<T>(Step<T> step, T tag)
+{
+    if (step is Step<T>.More(var first))
+    {
+        return first;
+    }
+
+    while willexit (step is Step<T>.More(var value))
+    {
+        return value;
+    }
+
+    return 0;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from CompilerPipelineLowerMirTests.ManifestBackedTypedForTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecialization.
+public unsafe fn bool ManifestBackedTypedForTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecializationImpl()
+{
+    // PORT-NOTE: reduced to lowering the published Facade library (see file header).
+    stack mut LlvmCompile compiled = CompileMir(
+        "lowermir-typed-for-body-bridge",
+        raw"""
+module Facade
+
+public fn i32[min max] SumFor<T>(i32[min max] count, T tag)
+{
+    stack mut i32[min max] sum = 0;
+    for willexit (stack mut i32[min max] index = 0; index < count; index = index + 1)
+    {
+        sum = sum + index;
+    }
+    return sum;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from CompilerPipelineLowerMirTests.ManifestBackedTypedLoopControlTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecialization.
+public unsafe fn bool ManifestBackedTypedLoopControlTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecializationImpl()
+{
+    // PORT-NOTE: reduced to lowering the published Facade library (see file header).
+    stack mut LlvmCompile compiled = CompileMir(
+        "lowermir-typed-loop-control-body-bridge",
+        raw"""
+module Facade
+
+public fn i32[min max] SumForControl<T>(i32[min max] count, i32[min max] stopAt, T tag)
+{
+    stack mut i32[min max] sum = 0;
+    for willexit (stack mut i32[min max] index = 0; index < count; index = index + 1)
+    {
+        if (index < 2)
+        {
+            continue;
+        }
+        if (index == stopAt)
+        {
+            break;
+        }
+        sum = sum + index;
+    }
+    return sum;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from CompilerPipelineLowerMirTests.ManifestBackedTypedGenericMethodBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecialization.
+public unsafe fn bool ManifestBackedTypedGenericMethodBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecializationImpl()
+{
+    // PORT-NOTE: reduced to lowering the published Facade library (see file header).
+    stack mut LlvmCompile compiled = CompileMir(
+        "lowermir-typed-generic-method-body-bridge",
+        raw"""
+module Facade
+
+public record Box(i32[min max] Dummy)
+{
+    fn T Echo<T>(borrow Box self, T value)
+    {
+        stack T copy = value;
+        return copy;
+    }
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from CompilerPipelineLowerMirTests.ManifestBackedTypedTemplateBodiesForMethodsOnGenericTypesLowerWithoutBridgeBodyText.
+public unsafe fn bool ManifestBackedTypedTemplateBodiesForMethodsOnGenericTypesLowerWithoutBridgeBodyTextImpl()
+{
+    // PORT-NOTE: reduced to lowering the published Facade library (see file header).
+    stack mut LlvmCompile compiled = CompileMir(
+        "lowermir-typed-generic-type-method-body-bridge",
+        raw"""
+module Facade
+
+public struct Box<T>
+{
+    T Value;
+
+    fn T Echo(borrow Box<T> self, T fallback)
+    {
+        return self.Value;
+    }
+}
+
+public fn T Relay<T>(Box<T> box, T fallback)
+{
+    return box.Echo(fallback);
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from CompilerPipelineLowerMirTests.ManifestBackedTypedComparisonChainTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecialization.
+public unsafe fn bool ManifestBackedTypedComparisonChainTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecializationImpl()
+{
+    // PORT-NOTE: reduced to lowering the published Facade library (see file header).
+    stack mut LlvmCompile compiled = CompileMir(
+        "lowermir-typed-comparison-chain-body-bridge",
+        raw"""
+module Facade
+
+public fn i32[min max] NextOrdered()
+{
+    return 1;
+}
+
+public fn i32[min max] NextEquality()
+{
+    return 1;
+}
+
+public fn bool ObserveOrdered<T>(T tag)
+{
+    return 0 < NextOrdered() < 3;
+}
+
+public fn bool ObserveEquality<T>(T tag)
+{
+    return 1 == NextEquality() == 1;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from CompilerPipelineLowerMirTests.ManifestBackedTypedRawPointerDereferenceTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecialization.
+public unsafe fn bool ManifestBackedTypedRawPointerDereferenceTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecializationImpl()
+{
+    // PORT-NOTE: reduced to lowering the published Facade library (see file header).
+    stack mut LlvmCompile compiled = CompileMir(
+        "lowermir-typed-raw-pointer-deref-body-bridge",
+        raw"""
+module Facade
+
+public unsafe fn i32[min max] Observe<T>(rawmutptr<i32[min max]> ptr, i32[min max] value, T tag)
+{
+    stack mut i32[min max] copy = *ptr;
+    return *ptr += copy + value;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from CompilerPipelineLowerMirTests.ManifestBackedTypedProjectedRawPointerDereferenceTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecialization.
+public unsafe fn bool ManifestBackedTypedProjectedRawPointerDereferenceTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecializationImpl()
+{
+    // PORT-NOTE: reduced to lowering the published Facade library (see file header).
+    stack mut LlvmCompile compiled = CompileMir(
+        "lowermir-typed-projected-raw-pointer-deref-body-bridge",
+        raw"""
+module Facade
+
+public record Buffer(i32[min max] First, i32[min max][4] Values)
+{
+}
+
+public unsafe fn rawmutptr<Buffer> Pick<T>(rawmutptr<Buffer> ptr, T tag)
+{
+    return ptr;
+}
+
+public unsafe fn i32[min max] Observe<T>(rawmutptr<Buffer> ptr, i32[min max] slot, i32[min max] value, T tag)
+{
+    (*ptr).First += value;
+    return (*Pick(ptr, tag)).Values[slot] = (*ptr).First + value;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from CompilerPipelineLowerMirTests.ManifestBackedTypedAddressOfTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecialization.
+public unsafe fn bool ManifestBackedTypedAddressOfTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecializationImpl()
+{
+    // PORT-NOTE: reduced to lowering the published Facade library (see file header).
+    stack mut LlvmCompile compiled = CompileMir(
+        "lowermir-typed-address-of-body-bridge",
+        raw"""
+module Facade
+
+public record Buffer(i32[min max] First, i32[min max][4] Values)
+{
+}
+
+public unsafe fn i32[min max] Observe<T>(i32[min max] value, T tag)
+{
+    stack mut i32[min max][4] data =
+    {
+        1, 2, 3, 4
+    };
+    stack mut Buffer buffer =
+    {
+        First = value, Values = data
+    };
+    stack rawmutptr<i32[min max]> firstPtr = &buffer.First;
+    stack rawmutptr<i32[min max]> slotPtr = &buffer.Values[2];
+    stack rawmutptr<i32[min max]> aliasPtr = &*slotPtr;
+    return *aliasPtr = *firstPtr + value;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from CompilerPipelineLowerMirTests.ManifestBackedTypedPowerTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecialization.
+public unsafe fn bool ManifestBackedTypedPowerTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecializationImpl()
+{
+    // PORT-NOTE: reduced to lowering the published Facade library (see file header).
+    stack mut LlvmCompile compiled = CompileMir(
+        "lowermir-typed-power-body-bridge",
+        raw"""
+module Facade
+
+public fn i32[min max] Observe<T>(i32[min max] value, i32[min max] exponent, T tag)
+{
+    return value ** exponent;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from CompilerPipelineLowerMirTests.ManifestBackedTypedAssignmentExpressionTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecialization.
+public unsafe fn bool ManifestBackedTypedAssignmentExpressionTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecializationImpl()
+{
+    // PORT-NOTE: reduced to lowering the published Facade library (see file header).
+    stack mut LlvmCompile compiled = CompileMir(
+        "lowermir-typed-assignment-expression-body-bridge",
+        raw"""
+module Facade
+
+public fn i32[min max] Observe<T>(i32[min max] value, T tag)
+{
+    stack mut i32[min max] current = 1;
+    return current += value;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from CompilerPipelineLowerMirTests.ManifestBackedTypedObjectInitializerLocalDeclarationTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecialization.
+public unsafe fn bool ManifestBackedTypedObjectInitializerLocalDeclarationTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecializationImpl()
+{
+    // PORT-NOTE: reduced to lowering the published Facade library (see file header).
+    stack mut LlvmCompile compiled = CompileMir(
+        "lowermir-typed-object-initializer-local-body-bridge",
+        raw"""
+module Facade
+
+public record Pair(i32[min max] First, i32[min max] Second)
+{
+}
+
+public fn i32[min max] Observe<T>(i32[min max] value, T tag)
+{
+    stack Pair pair =
+    {
+        First = value, Second = value + 1
+    };
+    return pair.First + pair.Second;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from CompilerPipelineLowerMirTests.ManifestBackedEmptyBlockAndOpenEndedLoopTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecialization.
+public unsafe fn bool ManifestBackedEmptyBlockAndOpenEndedLoopTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecializationImpl()
+{
+    // PORT-NOTE: reduced to lowering the published Facade library (see file header).
+    stack mut LlvmCompile compiled = CompileMir(
+        "lowermir-empty-block-open-ended-loop-body-bridge",
+        raw"""
+module Facade
+
+public fn void NoOp<T>(T tag)
+{
+}
+
+public fn i32[min max] KeepValue<T>(i32[min max] value, T tag)
+{
+    ;
+    return value;
+}
+
+public fn i32[min max] NestedScope<T>(i32[min max] value, T tag)
+{
+    {
+        ;
+    }
+
+    return value;
+}
+
+public fn i32[min max] CountTo<T>(i32[min max] count, T tag)
+{
+    stack mut i32[min max] index = 0;
+    for willexit (;;)
+    {
+        if (index == count)
+        {
+            break;
+        }
+
+        index = index + 1;
+    }
+
+    return index;
+}
+
+public fn i32[min max] EmptySwitch<T>(i32[min max] value, T tag)
+{
+    switch (value)
+    {
+        case 0:
+        default:
+    }
+
+    return value;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from CompilerPipelineLowerMirTests.ManifestBackedGenericBodiesCanConstructImportedPrimaryConstructorTypes.
+public unsafe fn bool ManifestBackedGenericBodiesCanConstructImportedPrimaryConstructorTypesImpl()
+{
+    // PORT-NOTE: reduced to lowering the published Facade library (see file header).
+    stack mut LlvmCompile compiled = CompileMir(
+        "lowermir-imported-primary-ctor-generic-body",
+        raw"""
+module Facade
+
+public record Counter(i32[min max] Value)
+{
+}
+
+public fn i32[min max] MakeFlag<T>(T value)
+{
+    stack Counter counter = new Counter(1);
+    return counter.Value;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from CompilerPipelineLowerMirTests.ManifestBackedGenericBodiesUsePublishedLocalDeclarationTypesWhenBridgeSourceIsCorrupted.
+public unsafe fn bool ManifestBackedGenericBodiesUsePublishedLocalDeclarationTypesWhenBridgeSourceIsCorruptedImpl()
+{
+    // PORT-NOTE: reduced to lowering the published Facade library (see file header).
+    // The C# test corrupts the published BodyText (stack Missing copy = value;) and
+    // relies on the typed template body instead; the helpers cannot model the
+    // corruption, so only the valid published library is lowered.
+    stack mut LlvmCompile compiled = CompileMir(
+        "lowermir-local-type-facts-generic-body",
+        raw"""
+module Facade
+
+public fn T Identity<T>(T value)
+{
+    stack T copy = value;
+    return copy;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from CompilerPipelineLowerMirTests.ManifestBackedGenericOwnershipFactsAreSubstitutedForImportedTypedTemplateBodies.
+public unsafe fn bool ManifestBackedGenericOwnershipFactsAreSubstitutedForImportedTypedTemplateBodiesImpl()
+{
+    // PORT-NOTE: reduced to lowering the published Facade library (see file header).
+    // The C# test substitutes published ownership facts onto the corrupted body; the
+    // helpers cannot model ownership-fact substitution, so only the valid published
+    // library is lowered.
+    stack mut LlvmCompile compiled = CompileMir(
+        "lowermir-ownership-generic-body",
+        raw"""
+module Facade
+
+public fn T Identity<T>(T value)
+{
+    stack T copy = value;
+    return copy;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from CompilerPipelineLowerMirTests.ManifestBackedGenericBodiesPreferTypedTemplateBodiesWhenBridgeSourceIsCorrupted.
+public unsafe fn bool ManifestBackedGenericBodiesPreferTypedTemplateBodiesWhenBridgeSourceIsCorruptedImpl()
+{
+    // PORT-NOTE: reduced to lowering the published Facade library (see file header).
+    stack mut LlvmCompile compiled = CompileMir(
+        "lowermir-typed-body-generic-body",
+        raw"""
+module Facade
+
+public fn T Identity<T>(T value)
+{
+    stack T copy = value;
+    return copy;
+}
+
+public fn T Forward<T>(T value)
+{
+    return Identity(value);
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from CompilerPipelineLowerMirTests.ManifestBackedGenericBodiesPreferTypedConstTemplateBodiesWhenBridgeSourceIsCorrupted.
+public unsafe fn bool ManifestBackedGenericBodiesPreferTypedConstTemplateBodiesWhenBridgeSourceIsCorruptedImpl()
+{
+    // PORT-NOTE: reduced to lowering the published Facade library (see file header).
+    stack mut LlvmCompile compiled = CompileMir(
+        "lowermir-typed-const-generic-body",
+        raw"""
+module Facade
+
+public fn T ConstIdentity<T>(T value)
+{
+    const T copy = value;
+    return copy;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from CompilerPipelineLowerMirTests.ManifestBackedGenericBodiesPreserveConstProvenanceLocalsWhenBridgeSourceIsCorrupted.
+public unsafe fn bool ManifestBackedGenericBodiesPreserveConstProvenanceLocalsWhenBridgeSourceIsCorruptedImpl()
+{
+    // PORT-NOTE: reduced to lowering the published Facade library (see file header).
+    stack mut LlvmCompile compiled = CompileMir(
+        "lowermir-typed-const-provenance-local-generic-body",
+        raw"""
+module Facade
+
+public struct Box
+{
+    i32[min max] Value;
+}
+
+public fn i32[min max] Forward<T>(const Box box, T tag)
+{
+    stack frozen Box local = box;
+    return local.Value;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from CompilerPipelineLowerMirTests.ManifestBackedGenericBodiesPreferTypedMultiLocalTemplateBodiesWhenBridgeSourceIsCorrupted.
+public unsafe fn bool ManifestBackedGenericBodiesPreferTypedMultiLocalTemplateBodiesWhenBridgeSourceIsCorruptedImpl()
+{
+    // PORT-NOTE: reduced to lowering the published Facade library (see file header).
+    stack mut LlvmCompile compiled = CompileMir(
+        "lowermir-typed-multi-local-generic-body",
+        raw"""
+module Facade
+
+public fn T Identity<T>(T value)
+{
+    return value;
+}
+
+public fn T Relay<T>(T value)
+{
+    stack T copy = value;
+    stack T echoed = Identity(copy);
+    return echoed;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from CompilerPipelineLowerMirTests.ManifestBackedGenericBodiesPreferTypedConditionalTemplateBodiesWhenBridgeSourceIsCorrupted.
+public unsafe fn bool ManifestBackedGenericBodiesPreferTypedConditionalTemplateBodiesWhenBridgeSourceIsCorruptedImpl()
+{
+    // PORT-NOTE: reduced to lowering the published Facade library (see file header).
+    stack mut LlvmCompile compiled = CompileMir(
+        "lowermir-typed-conditional-generic-body",
+        raw"""
+module Facade
+
+public fn T Choose<T>(bool takeLeft, T left, T right)
+{
+    return takeLeft ? left : right;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from CompilerPipelineLowerMirTests.ManifestBackedGenericBodiesPreferTypedBinaryTemplateBodiesWhenBridgeSourceIsCorrupted.
+public unsafe fn bool ManifestBackedGenericBodiesPreferTypedBinaryTemplateBodiesWhenBridgeSourceIsCorruptedImpl()
+{
+    // PORT-NOTE: reduced to lowering the published Facade library (see file header).
+    stack mut LlvmCompile compiled = CompileMir(
+        "lowermir-typed-binary-generic-body",
+        raw"""
+module Facade
+
+public fn i32[min max] AddTagged<T>(T tag, i32[min max] left, i32[min max] right)
+{
+    return left + right;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from CompilerPipelineLowerMirTests.ManifestBackedGenericBodiesPreferTypedShortCircuitTemplateBodiesWhenBridgeSourceIsCorrupted.
+public unsafe fn bool ManifestBackedGenericBodiesPreferTypedShortCircuitTemplateBodiesWhenBridgeSourceIsCorruptedImpl()
+{
+    // PORT-NOTE: reduced to lowering the published Facade library (see file header).
+    stack mut LlvmCompile compiled = CompileMir(
+        "lowermir-typed-short-circuit-generic-body",
+        raw"""
+module Facade
+
+public fn bool Both<T>(T tag, bool left, bool right)
+{
+    return left && right;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from CompilerPipelineLowerMirTests.ManifestBackedGenericBodiesPreferTypedComparisonConditionsWhenBridgeSourceIsCorrupted.
+public unsafe fn bool ManifestBackedGenericBodiesPreferTypedComparisonConditionsWhenBridgeSourceIsCorruptedImpl()
+{
+    // PORT-NOTE: reduced to lowering the published Facade library (see file header).
+    stack mut LlvmCompile compiled = CompileMir(
+        "lowermir-typed-comparison-condition-generic-body",
+        raw"""
+module Facade
+
+public fn i32[min max] MinTagged<T>(T tag, i32[min max] left, i32[min max] right)
+{
+    return left < right ? left : right;
+}
+""");
+    return Succeeds(compiled);
+}

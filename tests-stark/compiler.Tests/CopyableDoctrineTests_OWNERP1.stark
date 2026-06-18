@@ -1,0 +1,317 @@
+import CompilerTestSupport
+import System.Testing
+module CopyableDoctrineTests_OWNERP1
+
+// Ported from CopyableDoctrineTests.TagEnumAndStructOfTagEnumCopyOutOfPlacesAndKeepTheSourceUsable.
+public unsafe fn bool TagEnumAndStructOfTagEnumCopyOutOfPlacesAndKeepTheSourceUsableImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: the original runs the full pipeline with EmitLlvmIr: true and
+        // only asserts result.Succeeded (no LLVM substring is read), so this uses
+        // CompileLlvm and reduces to Succeeds(...).
+        stack mut LlvmCompile compiled = CompileLlvm(
+            "ownerp1-tag-enum-struct-copy-out-of-places",
+            raw"""
+module Demo
+
+enum Kind
+{
+    Alpha,
+    Beta,
+    Gamma,
+}
+
+struct Item
+{
+    Kind Tag;
+    u64[0 2 ** 63 - 1] Start;
+}
+
+struct Table
+{
+    dynamic Item Items;
+
+    finite law Kind KindAt(borrow Table self, u64[0 2 ** 63 - 1] index)
+    {
+        if (index >= self.Items.Length)
+        {
+            return Kind.Alpha;
+        }
+
+        return self.Items[index].Tag;
+    }
+}
+
+fn bool Append(mut borrow Table table, Kind kind, u64[0 2 ** 63 - 1] start)
+{
+    if (!table.Items.TryReserve(1))
+    {
+        return false;
+    }
+
+    stack mut Item item = new();
+    item.Tag = kind;
+    item.Start = start;
+    init table.Items[table.Items.Length] = item;
+    return true;
+}
+
+export fn i32[min max] main()
+{
+    stack Kind a = Kind.Beta;
+    stack Kind b = a;
+    if (a != Kind.Beta)
+    {
+        return 1;
+    }
+
+    stack mut Item item = new();
+    item.Tag = Kind.Gamma;
+    stack Item copy = item;
+    if (item.Tag != Kind.Gamma)
+    {
+        return 2;
+    }
+
+    stack mut Table table = new();
+    if (!Append(table, Kind.Beta, 3))
+    {
+        return 3;
+    }
+
+    if (table.KindAt(0) != Kind.Beta)
+    {
+        return 4;
+    }
+
+    if (b != Kind.Beta || copy.Tag != Kind.Gamma)
+    {
+        return 5;
+    }
+
+    return 0;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from CopyableDoctrineTests.EnumsWithOwningPayloadsStayMoveOnlyAtIndexedPlaces.
+public unsafe fn bool EnumsWithOwningPayloadsStayMoveOnlyAtIndexedPlacesImpl()
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = CompileFull(
+            "ownerp1-enums-owning-payloads-move-only-indexed",
+            raw"""
+module Demo
+
+struct Payload
+{
+    dynamic i64[min max] Items;
+}
+
+enum Owning
+{
+    Empty,
+    Holding(Payload),
+}
+
+struct Row
+{
+    Owning State;
+}
+
+struct Rows
+{
+    dynamic Row Entries;
+
+    fn bool StateAtIsEmpty(borrow Rows self, u64[0 2 ** 63 - 1] index)
+    {
+        if (index >= self.Entries.Length)
+        {
+            return true;
+        }
+
+        stack Owning copied = self.Entries[index].State;
+        switch (copied)
+        {
+            case Owning.Empty:
+                return true;
+            case Owning.Holding(var payload):
+                return false;
+        }
+    }
+}
+
+export fn i32[min max] main()
+{
+    return 0;
+}
+""");
+        return FailsWithDiagnosticMessage(
+            compiled,
+            "STK4203",
+            "Cannot move a non-tail dynamic storage slot of type 'Owning'");
+    }
+}
+
+// Ported from CopyableDoctrineTests.ComptimeEvaluationCopiesCopyableValuesConsistently.
+public unsafe fn bool ComptimeEvaluationCopiesCopyableValuesConsistentlyImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: the original runs the full pipeline with EmitLlvmIr: true and
+        // only asserts result.Succeeded (no LLVM substring is read), so this uses
+        // CompileLlvm and reduces to Succeeds(...).
+        stack mut LlvmCompile compiled = CompileLlvm(
+            "ownerp1-comptime-copies-copyable-values-consistently",
+            raw"""
+module Demo
+
+enum Kind
+{
+    Alpha,
+    Beta,
+}
+
+struct Pair
+{
+    Kind First;
+    Kind Second;
+}
+
+const Pair Both = new Pair()
+{
+    First = Kind.Alpha,
+    Second = Kind.Beta
+};
+
+finite law bool ComptimeCopies()
+{
+    // Repeated reads of const-aggregate projections: each read
+    // is a copy and the source stays readable (const globals
+    // keep frozen provenance, so values compare in place).
+    return Both.First == Kind.Alpha
+        && Both.First == Kind.Alpha
+        && Both.Second == Kind.Beta
+        && Both.Second != Kind.Alpha;
+}
+
+export fn i32[min max] main()
+{
+    if (!ComptimeCopies())
+    {
+        return 1;
+    }
+
+    return 0;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from CopyableDoctrineTests.StructsWithDestructorsStayMoveOnly.
+public unsafe fn bool StructsWithDestructorsStayMoveOnlyImpl()
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = CompileFull(
+            "ownerp1-structs-with-destructors-move-only",
+            raw"""
+module Demo
+
+struct WithDtor
+{
+    i64[min max] Value;
+
+    drop
+    {
+    }
+}
+
+export fn i32[min max] main()
+{
+    stack WithDtor a = new();
+    stack WithDtor b = a;
+    if (a.Value != 0)
+    {
+        return 1;
+    }
+
+    return 0;
+}
+""");
+        return FailsWithDiagnosticMessage(compiled, "STK4200", "moved");
+    }
+}
+
+// Ported from CopyableDoctrineTests.FixedArrayOfCopyableElementsIsCopyable.
+public unsafe fn bool FixedArrayOfCopyableElementsIsCopyableImpl()
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "ownerp1-fixed-array-of-copyable-elements-is-copyable",
+            raw"""
+module Demo
+
+[Copyable]
+struct Board
+{
+    i32[min max][4] Cells;
+}
+
+finite law i32[min max] Sum(Board board)
+{
+    stack Board copy = board;
+    return board.Cells[0] + copy.Cells[0];
+}
+
+export fn i32[min max] main()
+{
+    return 0;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from CopyableDoctrineTests.SliceAndFunctionPointerFieldsAreCopyable.
+public unsafe fn bool SliceAndFunctionPointerFieldsAreCopyableImpl()
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "ownerp1-slice-and-function-pointer-fields-copyable",
+            raw"""
+module Demo
+
+[Copyable]
+struct View
+{
+    i32[min max][] Data;
+}
+
+[Copyable]
+struct Callback
+{
+    fnptr<fn i32[min max](i32[min max])> Fn;
+}
+
+finite law bool ReuseView(View view)
+{
+    stack View copy = view;
+    return view.Data.Length == copy.Data.Length;
+}
+
+export fn i32[min max] main()
+{
+    return 0;
+}
+""");
+        return Succeeds(compiled);
+    }
+}

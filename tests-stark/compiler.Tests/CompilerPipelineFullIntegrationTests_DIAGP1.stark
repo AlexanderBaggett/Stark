@@ -1,0 +1,200 @@
+import CompilerTestSupport
+import System.Testing
+
+module CompilerPipelineFullIntegrationTests_DIAGP1
+
+// Ported slice of tests/compiler.PipelineTests/CompilerPipelineFullIntegrationTests.cs.
+// Each Impl runs the embedded Stark program (kept verbatim from the C# raw
+// string) through the closest compile helper and returns true when the original
+// xUnit assertions would hold. PORT-NOTE comments flag assertions the helpers
+// cannot express (pass-execution status, artifact absence, structured logs,
+// multi-module in-memory resolution) that were reduced to the nearest signal.
+
+// Ported from CompilerPipelineFullIntegrationTests.AsmDeclarationsReportMissingTargetMatchesAndRejectUnsupportedV1Shapes.
+public unsafe fn bool AsmDeclarationsReportMissingTargetMatchesAndRejectUnsupportedV1ShapesImpl()
+{
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-asm-missing-target-v1-shapes",
+        raw"""
+module Demo
+
+public asm(x86_64) fn i64[min max] MissingFfi(i64[min max] number)
+    out("rax") return
+{
+    "syscall"
+}
+
+public unsafe ffi asm(aarch64) fn i64[min max] NoMatch(i64[min max] number)
+    out("x0") return
+{
+    "svc #0"
+}
+""");
+    // PORT-NOTE: original asserts result.Succeeded == false plus two
+    // code+message diagnostics; reduced to requiring both diagnostic
+    // code/message pairs to be present.
+    return CountDiagnosticsWithCodeAndMessage(compiled, "STK2105", "MissingFfi") > 0
+        && CountDiagnosticsWithCodeAndMessage(compiled, "STK2102", "NoMatch") > 0;
+}
+
+// Ported from CompilerPipelineFullIntegrationTests.AsmDeclarationsReportMultipleMatchingTargetSpecificDefinitions.
+public unsafe fn bool AsmDeclarationsReportMultipleMatchingTargetSpecificDefinitionsImpl()
+{
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-asm-multiple-matching-targets",
+        raw"""
+module Demo
+
+public unsafe ffi asm(x86_64) fn i64[min max] Syscall0()
+    out("rax") return
+{
+    "syscall"
+}
+
+public unsafe ffi asm(x86_64) fn i64[min max] Syscall0()
+    out("rax") return
+{
+    "syscall"
+}
+""");
+    return FailsWithDiagnosticMessage(compiled, "STK2103", "Syscall0");
+}
+
+// Ported from CompilerPipelineFullIntegrationTests.AsmDeclarationsRejectInvalidRegistersAndOperandBindingConflicts.
+public unsafe fn bool AsmDeclarationsRejectInvalidRegistersAndOperandBindingConflictsImpl()
+{
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-asm-invalid-registers-operand-conflicts",
+        raw"""
+module Demo
+
+public unsafe ffi asm(x86_64) fn i64[min max] Broken(i64[min max] number, out i64[min max] result)
+    in("x0") number,
+    in("rsi") result,
+    out("rax") result,
+    clobber("rax", "rax")
+{
+    "syscall"
+}
+""");
+    // PORT-NOTE: original asserts result.Succeeded == false plus three
+    // code+message diagnostics; reduced to requiring all three diagnostic
+    // code/message pairs to be present.
+    return CountDiagnosticsWithCodeAndMessage(compiled, "STK2106", "x0") > 0
+        && CountDiagnosticsWithCodeAndMessage(compiled, "STK2107", "out' or 'init' parameter") > 0
+        && CountDiagnosticsWithCodeAndMessage(compiled, "STK2108", "clobber register 'rax'") > 0;
+}
+
+// Ported from CompilerPipelineFullIntegrationTests.VoidCallsUsedAsValuesFailDuringTypeCheckingBeforeMirLowering.
+public unsafe fn bool VoidCallsUsedAsValuesFailDuringTypeCheckingBeforeMirLoweringImpl()
+{
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-void-calls-as-values-typecheck",
+        raw"""
+module Demo
+
+fn void A()
+{
+    return;
+}
+
+fn bool Run(bool flag)
+{
+    return (flag ? A() : A()) == (flag ? A() : A());
+    }
+""");
+    // PORT-NOTE: original also asserts the type-check stage and that no
+    // "unsupported-lowering" structured log was emitted at lower-mir; the
+    // structured-log check is not expressible, so stopping after type-check
+    // and matching STK3002 + message stands in for "fails before MIR lowering".
+    return FailsWithDiagnosticMessage(
+        compiled,
+        "STK3002",
+        "Operator '==' cannot compare 'void' and 'void'.");
+}
+
+// Ported from CompilerPipelineFullIntegrationTests.EmitLlvmModesReportTypeDiagnosticsBeforeLoweringForVoidCallsUsedAsValues.
+public unsafe fn bool EmitLlvmModesReportTypeDiagnosticsBeforeLoweringForVoidCallsUsedAsValuesImpl()
+{
+    stack mut LlvmCompile compiled = CompileLlvm(
+        "diagp1-emit-llvm-void-calls-as-values",
+        raw"""
+module Demo
+
+fn void A()
+{
+    return;
+}
+
+fn bool Run(bool flag)
+{
+    return (flag ? A() : A()) == (flag ? A() : A());
+}
+""");
+    // PORT-NOTE: original also asserts the LlvmIrModule artifact is absent
+    // (no LLVM emitted because type-check failed first); artifact-absence is
+    // not expressible, so matching STK3002 + message under an LLVM-emit
+    // compile stands in for "type diagnostics reported before lowering".
+    return FailsWithDiagnosticMessage(
+        compiled,
+        "STK3002",
+        "Operator '==' cannot compare 'void' and 'void'.");
+}
+
+// Ported from CompilerPipelineFullIntegrationTests.PrivateTransitiveImportsDoNotBecomeVisibleToTheRootModule.
+public unsafe fn bool PrivateTransitiveImportsDoNotBecomeVisibleToTheRootModuleImpl()
+{
+    // PORT-NOTE: original wires Facade and Math modules through an
+    // InMemoryModuleResolver and asserts on the ModuleGraph (Math loaded but
+    // not visible to the root). The compile helpers resolve a single root
+    // source, so only the root Demo module is compiled here; the unresolved
+    // private-transitive reference to Math still surfaces STK3003 mentioning
+    // "Math", which is the assertion preserved.
+    stack mut LlvmCompile compiled = CompileFull(
+        "diagp1-private-transitive-imports",
+        raw"""
+import Facade
+module Demo
+
+unsafe fn i32[min max] Run()
+{
+    return Math.Add(3, 4);
+}
+""");
+    return FailsWithDiagnosticMessage(compiled, "STK3003", "Math");
+}
+
+// Ported from CompilerPipelineFullIntegrationTests.UnresolvedImportsFailBeforeTypingAndLowering.
+public unsafe fn bool UnresolvedImportsFailBeforeTypingAndLoweringImpl()
+{
+    stack mut LlvmCompile compiled = CompileFull(
+        "diagp1-unresolved-imports-fail-early",
+        raw"""
+import Missing.Module
+module Demo
+
+fn void Run()
+{
+    return;
+}
+""");
+    // PORT-NOTE: original also asserts the TypeCheck/Semantic/Ownership
+    // artifacts are absent and that type-check, semantic-validate and
+    // ownership-validate passes are Skipped while module-graph Executed; pass
+    // execution status and artifact absence are not expressible, so the
+    // unresolved-import STK2000 failure stands in for "fails before typing".
+    return FailsWithDiagnostic(compiled, "STK2000");
+}
+
+// Ported from CompilerPipelineFullIntegrationTests.InvalidTypedAssignmentsProduceTypeDiagnostics.
+public unsafe fn bool InvalidTypedAssignmentsProduceTypeDiagnosticsImpl()
+{
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-invalid-typed-assignments",
+        raw"""
+module Demo
+
+public const i32[min max] Value = null;
+""");
+    return FailsWithDiagnostic(compiled, "STK3002");
+}

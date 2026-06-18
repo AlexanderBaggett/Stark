@@ -1,0 +1,1180 @@
+import CompilerTestSupport
+import System.Testing
+
+module TypeCheckingTests_TYPECHKP1
+
+// Ported slice of tests/compiler.Tests/TypeCheckingTests.cs.
+// Each Impl keeps the embedded Stark program verbatim from the C# raw string and
+// runs it through the closest compile helper, returning true when the original
+// xUnit assertions would hold. PORT-NOTE comments flag assertions the Stark
+// helpers cannot express (TypeCheckModel artifact probes: FunctionPointerPromotions,
+// AddressTakenFunctions, IndirectCalls, ClosureLambdas, LambdaCaptures, NamedTypes
+// layout facts, Globals types, integer-range endpoints, per-target data models)
+// that were reduced to the nearest succeed/diagnostic signal.
+
+// Ported from TypeCheckingTests.IntegerExponentiationTypeChecks.
+public unsafe fn bool IntegerExponentiationTypeChecksImpl()
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp1-integer-exponentiation",
+            raw"""
+module Demo
+
+finite law i32[min max] Run()
+{
+    return 2 ** 3;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeCheckingTests.FunctionItemsPromoteToExplicitFunctionPointersAndIndirectCallsTypeCheck.
+public unsafe fn bool FunctionItemsPromoteToExplicitFunctionPointersAndIndirectCallsTypeCheckImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: original also probes TypeCheckModel
+        // (FunctionPointerPromotions single "Add" with FunctionPointer target,
+        // AddressTakenFunctions single "Add" with kind Fn, IndirectCalls single
+        // with FunctionPointer kind). Artifact dictionaries are not expressible,
+        // so this reduces to the result.Succeeded signal.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp1-fnptr-promote-indirect-call",
+            raw"""
+module Demo
+
+fn i32[min max] Add(i32[min max] left, i32[min max] right)
+{
+    return left + right;
+}
+
+fn i32[min max] Run()
+{
+    stack fnptr<fn i32[min max](i32[min max], i32[min max])> op = Add;
+    return op(40, 2);
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeCheckingTests.ExplicitFfiFunctionPointerAbiPromotesMatchingForeignFunctionItems.
+public unsafe fn bool ExplicitFfiFunctionPointerAbiPromotesMatchingForeignFunctionItemsImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: original sets TargetInfo "x86_64-pc-windows-msvc" and probes
+        // TypeCheckModel (promotion "Read" with Win64 ABI and unsafe fnptr,
+        // IndirectCall with Win64 ABI/unsafe). Target selection and artifact
+        // probes are not expressible, so this reduces to result.Succeeded.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp1-ffi-fnptr-abi-promote",
+            raw"""
+module Demo
+
+unsafe ffi(win64) fn i32[min max] Read(i32[min max] value);
+
+unsafe fn i32[min max] Run(i32[min max] value)
+{
+    stack fnptr<unsafe ffi(win64) fn i32[min max](i32[min max])> reader = Read;
+    return reader(value);
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeCheckingTests.StructLayoutAttributesProduceConcreteFieldLayoutFacts.
+public unsafe fn bool StructLayoutAttributesProduceConcreteFieldLayoutFactsImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: original probes TypeCheckModel.NamedTypes["Packet"] layout
+        // (Kind C, Pack 1, Align 4) and ConcreteTypeLayoutHelper facts (size 8,
+        // alignment 4, Tag offset 0/align 1, Length offset 1/natural-align 4/
+        // effective-align 1/misaligned). Layout artifact probes are not
+        // expressible, so this reduces to result.Succeeded.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp1-struct-layout-field-facts",
+            raw"""
+module Demo
+
+[StructLayout(C), Pack(1), Align(4)]
+struct Packet
+{
+    u8[0 max] Tag;
+    u32[0 max] Length;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeCheckingTests.SystemCPrimitiveAliasesResolveForTargetDataModel.
+public unsafe fn bool SystemCPrimitiveAliasesResolveForTargetDataModelImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: [Theory] over four targets (linux-x86_64, windows-msvc,
+        // i686-linux, aarch64-linux) checking per-target c_long/c_size_t/
+        // c_ptrdiff_t widths, c_char signedness, and CSourceAliasName facts. The
+        // Stark helpers cannot select a TargetInfo nor probe the TypeCheckModel
+        // function/parameter types, so all rows collapse to a single
+        // default-target type-check of the embedded program (result.Succeeded).
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp1-systemc-primitive-aliases",
+            raw"""
+module Demo
+
+unsafe ffi(c) fn System.C.c_int Read(
+    System.C.c_long value,
+    System.C.c_ulong flags,
+    System.C.c_size_t bytes,
+    System.C.c_ptrdiff_t delta,
+    rawptr<System.C.c_char> text);
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeCheckingTests.SystemCAliasesParticipateInCStructLayout.
+public unsafe fn bool SystemCAliasesParticipateInCStructLayoutImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: [Theory] over three targets checking per-target struct
+        // size/alignment and Tag/Count/Bytes offsets via ConcreteTypeLayoutHelper.
+        // Target selection and layout artifact probes are not expressible, so all
+        // rows collapse to a single default-target type-check (result.Succeeded).
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp1-systemc-cstruct-layout",
+            raw"""
+module Demo
+
+[StructLayout(C)]
+struct NativeRecord
+{
+    System.C.c_char Tag;
+    System.C.c_long Count;
+    System.C.c_size_t Bytes;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeCheckingTests.SystemCCharSignednessIsCompileTimeTargetFact.
+public unsafe fn bool SystemCCharSignednessIsCompileTimeTargetFactImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: [Theory] over (x86_64-linux -> signed true, aarch64-linux ->
+        // signed false) probing Globals["PlainCharSigned"] IsConst/Bool/
+        // ConstantInitializer.BoolValue. Target selection and global artifact
+        // probes are not expressible, so both rows collapse to a single
+        // default-target type-check (result.Succeeded).
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp1-systemc-char-signedness",
+            raw"""
+module Demo
+
+const bool PlainCharSigned = System.C.c_char_is_signed;
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeCheckingTests.FunctionPointerOverlapContractsAllowAliasingIndirectCalls.
+public unsafe fn bool FunctionPointerOverlapContractsAllowAliasingIndirectCallsImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: original probes TypeCheckModel (single promotion "Touch",
+        // single IndirectCall whose fnptr overlap group is ["arg0", "arg1"]).
+        // Artifact probes are not expressible, so this reduces to result.Succeeded.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp1-fnptr-overlap-aliasing",
+            raw"""
+module Demo
+
+struct Box
+{
+    i32[min max] Value;
+}
+
+fn void Touch(borrow mut Box left, borrow mut Box right) where overlap(left, right)
+{
+    return;
+}
+
+fn void Run(borrow mut Box box)
+{
+    stack fnptr<fn void(borrow mut Box, borrow mut Box) where overlap(arg0, arg1)> op = Touch;
+    op(box, box);
+    return;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeCheckingTests.FunctionPointerSameTargetsAcceptOverlapFunctionsAndRequireSameArguments.
+public unsafe fn bool FunctionPointerSameTargetsAcceptOverlapFunctionsAndRequireSameArgumentsImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: original probes TypeCheckModel (single IndirectCall whose
+        // fnptr same group is ["arg0", "arg1"]). Artifact probes are not
+        // expressible, so this reduces to result.Succeeded.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp1-fnptr-same-targets",
+            raw"""
+module Demo
+
+struct Box
+{
+    i32[min max] Value;
+}
+
+fn void Touch(borrow mut Box left, borrow mut Box right) where overlap(left, right)
+{
+    return;
+}
+
+fn void Run(borrow mut Box box)
+{
+    stack fnptr<fn void(borrow mut Box, borrow mut Box) where same(arg0, arg1)> op = Touch;
+    op(box, box);
+    return;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeCheckingTests.ClosureTypesResolveInFunctionSignatures.
+public unsafe fn bool ClosureTypesResolveInFunctionSignaturesImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: original probes TypeCheckModel parameter/return closure facts
+        // (inline storage, borrow kind, mut/once call capability, function kind,
+        // overlap group ["arg0","arg1"], bounded raw-pointer count expr "arg1",
+        // heap return storage). Closure artifact probes are not expressible, so
+        // this reduces to result.Succeeded.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp1-closure-types-in-signatures",
+            raw"""
+module Demo
+
+struct Ui
+{
+    i32[min max] Frame;
+}
+
+struct Packet
+{
+    i32[min max] Code;
+}
+
+fn void RegisterInline(inline closure<fn void(borrow mut Ui)> body);
+fn void RegisterBorrow(borrow closure<fn void(borrow mut Ui)> body);
+fn void RegisterMut(mut borrow closure<mut fn void(i32[min max])> sink);
+fn void RegisterOnce(inline closure<once finite Packet()> producer);
+fn void RegisterOverlap(borrow closure<fn void(borrow mut Ui, borrow mut Ui) where overlap(arg0, arg1)> body);
+unsafe fn void RegisterBounded(borrow closure<finite void(rawptr<i32[min max]>[arg1], u8[1 10])> body);
+fn heap closure<fn i32[min max](i32[min max])> Factory(heap closure<fn i32[min max](i32[min max])> seed);
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeCheckingTests.FunctionItemPromotionPreservesFunctionKindFacts.
+public unsafe fn bool FunctionItemPromotionPreservesFunctionKindFactsImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: original probes TypeCheckModel (4 FunctionPointerPromotions
+        // all "Always", single AddressTakenFunction "Always" with kind FiniteLaw).
+        // Artifact probes are not expressible, so this reduces to result.Succeeded.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp1-promotion-preserves-kind",
+            raw"""
+module Demo
+
+finite law i32[min max] Always()
+{
+    return 7;
+}
+
+fn void Run()
+{
+    stack fnptr<fn i32[min max]()> plain = Always;
+    stack fnptr<finite i32[min max]()> finiteOnly = Always;
+    stack fnptr<law i32[min max]()> lawOnly = Always;
+    stack fnptr<finite law i32[min max]()> strict = Always;
+    return;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeCheckingTests.FunctionItemsPromoteFromEachDeclaredFunctionKind.
+public unsafe fn bool FunctionItemsPromoteFromEachDeclaredFunctionKindImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: original probes TypeCheckModel (4 promotions, 4
+        // AddressTakenFunctions matching Plain/FiniteOnly/LawOnly/Strict with
+        // kinds Fn/Finite/Law/FiniteLaw). Artifact probes are not expressible, so
+        // this reduces to result.Succeeded.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp1-promote-each-kind",
+            raw"""
+module Demo
+
+fn i32[min max] Plain()
+{
+    return 1;
+}
+
+finite i32[min max] FiniteOnly()
+{
+    return 2;
+}
+
+law i32[min max] LawOnly()
+{
+    return 3;
+}
+
+finite law i32[min max] Strict()
+{
+    return 4;
+}
+
+fn void Run()
+{
+    stack fnptr<fn i32[min max]()> plain = Plain;
+    stack fnptr<finite i32[min max]()> finiteOnly = FiniteOnly;
+    stack fnptr<law i32[min max]()> lawOnly = LawOnly;
+    stack fnptr<finite law i32[min max]()> strict = Strict;
+    return;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeCheckingTests.FunctionItemsPromoteInReturnAndArgumentTargetPositions.
+public unsafe fn bool FunctionItemsPromoteInReturnAndArgumentTargetPositionsImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: original probes TypeCheckModel (2 promotions all "Target",
+        // single AddressTakenFunction "Target" kind Fn, single IndirectCall with
+        // FunctionPointer kind). Artifact probes are not expressible, so this
+        // reduces to result.Succeeded.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp1-promote-return-and-argument",
+            raw"""
+module Demo
+
+fn i32[min max] Target()
+{
+    return 41;
+}
+
+fn fnptr<fn i32[min max]()> Factory()
+{
+    return Target;
+}
+
+fn i32[min max] Apply(fnptr<fn i32[min max]()> callback)
+{
+    return callback() + 1;
+}
+
+fn i32[min max] Run()
+{
+    return Apply(Target);
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeCheckingTests.OverloadedFunctionItemPromotionsPreserveDistinctAddressTakenFacts.
+public unsafe fn bool OverloadedFunctionItemPromotionsPreserveDistinctAddressTakenFactsImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: original probes TypeCheckModel (2 promotions and 2
+        // AddressTakenFunctions all displaying source name "Pick", but with 2
+        // distinct mangled names). Artifact probes are not expressible, so this
+        // reduces to result.Succeeded.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp1-overloaded-promotions-distinct",
+            raw"""
+module Demo
+
+fn i32[min max] Pick()
+{
+    return 1;
+}
+
+fn i32[min max] Pick(i32[min max] value)
+{
+    return value;
+}
+
+fn i32[min max] Run()
+{
+    stack fnptr<fn i32[min max]()> first = Pick;
+    stack fnptr<fn i32[min max](i32[min max])> second = Pick;
+    return first() + second(2);
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeCheckingTests.NonCapturingLambdasTypeCheckAsExplicitFunctionPointers.
+public unsafe fn bool NonCapturingLambdasTypeCheckAsExplicitFunctionPointersImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: original probes TypeCheckModel (2 Lambdas, both with
+        // FunctionPointerKind Fn). Lambda artifact probes are not expressible, so
+        // this reduces to result.Succeeded.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp1-noncapturing-lambda-fnptr",
+            raw"""
+module Demo
+
+fn i32[min max] Apply(fnptr<fn i32[min max](i32[min max])> op)
+{
+    return op(41);
+}
+
+fn i32[min max] Run()
+{
+    stack fnptr<fn i32[min max](i32[min max])> increment = (i32[min max] value) => value + 1;
+    return Apply((i32[min max] value) => value + 1);
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeCheckingTests.LambdasTypeCheckAsExplicitClosureTargets.
+public unsafe fn bool LambdasTypeCheckAsExplicitClosureTargetsImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: original probes TypeCheckModel (empty Lambdas, 3
+        // ClosureLambdas covering Inline/Borrow/Heap, capture "offset" mode
+        // "copy"). Closure-lambda/capture artifact probes are not expressible, so
+        // this reduces to result.Succeeded.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp1-lambdas-closure-targets",
+            raw"""
+module Demo
+
+fn i32[min max] ApplyBorrow(borrow closure<fn i32[min max](i32[min max])> op)
+{
+    return 0;
+}
+
+fn void ApplyInline(inline closure<fn void(i32[min max])> op)
+{
+    return;
+}
+
+fn heap closure<fn i32[min max](i32[min max])> MakeHeap(i32[min max] offset)
+{
+    return heap capture(copy offset) (i32[min max] value) => value + offset;
+}
+
+fn i32[min max] Run()
+{
+    stack i32[min max] offset = 1;
+    ApplyInline((i32[min max] value) =>
+    {
+        return;
+    });
+    return ApplyBorrow(capture(copy offset) (i32[min max] value) => value + offset);
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeCheckingTests.FunctionItemsPromoteToExplicitClosureTargets.
+public unsafe fn bool FunctionItemsPromoteToExplicitClosureTargetsImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: original probes TypeCheckModel (3 ClosureFunctionPromotions
+        // all "AddOne" covering Borrow/Inline/Heap closure types). Artifact probes
+        // are not expressible, so this reduces to result.Succeeded.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp1-fnitems-promote-closure-targets",
+            raw"""
+module Demo
+
+fn i32[min max] AddOne(i32[min max] value)
+{
+    return value + 1;
+}
+
+fn i32[min max] ApplyBorrow(borrow closure<fn i32[min max](i32[min max])> op, i32[min max] value)
+{
+    return op(value);
+}
+
+inline fn i32[min max] ApplyInline(inline closure<fn i32[min max](i32[min max])> op, i32[min max] value)
+{
+    return op(value);
+}
+
+fn heap closure<fn i32[min max](i32[min max])> Make()
+{
+    return AddOne;
+}
+
+fn i32[min max] Run()
+{
+    stack heap closure<fn i32[min max](i32[min max])> op = Make();
+    return ApplyBorrow(AddOne, 20) + ApplyInline(AddOne, 20) + op(0);
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeCheckingTests.ClosureCallsTypeCheckAndRecordArgumentFacts.
+public unsafe fn bool ClosureCallsTypeCheckAndRecordArgumentFactsImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: original stops after "validate-lowering-contract" and probes
+        // TypeCheckModel (2 ClosureCalls each with single argument; one Finite
+        // function kind, one Mut call capability). The Stark helper stops after
+        // "type-check" instead and closure-call artifact probes are not
+        // expressible, so this reduces to result.Succeeded.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp1-closure-calls-argument-facts",
+            raw"""
+module Demo
+
+fn i32[min max] Apply(borrow closure<finite i32[min max](i32[min max])> op, i32[min max] value)
+{
+    return op(value);
+}
+
+fn void Push(mut borrow closure<mut fn void(i32[min max])> sink)
+{
+    sink(7);
+    return;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeCheckingTests.LambdaCaptureModeFactsArePreservedInTypeCheckModel.
+public unsafe fn bool LambdaCaptureModeFactsArePreservedInTypeCheckModelImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: original asserts the compile fails with the
+        // function-pointer-capture diagnostic AND probes TypeCheckModel (5
+        // LambdaCaptures: copy/read/move/addr(unsafe)/shared(unsafe), all sharing
+        // one lambda location). Capture artifact probes are not expressible; the
+        // capturing-lambda-into-fnptr path is not lowered yet, so this reduces to
+        // "the embedded program does not type-check" via !Succeeds.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp1-lambda-capture-mode-facts",
+            raw"""
+module Demo
+
+fn void Run(
+    i32[min max] copyValue,
+    i32[min max] readValue,
+    i32[min max] moveValue,
+    i32[min max] addrValue,
+    i32[min max] sharedValue)
+    {
+        unsafe
+    {
+        stack fnptr<fn i32[min max]()> callback =
+            capture(copy copyValue, read readValue, move moveValue, unsafe addr addrValue, unsafe shared sharedValue) () => copyValue + readValue;
+    }
+
+    return;
+}
+""");
+        return !Succeeds(compiled);
+    }
+}
+
+// Ported from TypeCheckingTests.UnsafeBlocksPermitRawPointerLocalOperations.
+public unsafe fn bool UnsafeBlocksPermitRawPointerLocalOperationsImpl()
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp1-unsafe-rawptr-locals",
+            raw"""
+module Demo
+
+fn i32[min max] Run()
+{
+    stack mut i32[min max] value = 1;
+    unsafe
+    {
+        stack rawmutptr<i32[min max]> pointer = &value;
+        *pointer = 2;
+    }
+
+    return value;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeCheckingTests.TypeRelativeIntegerRangeEndpointsResolveAgainstContainingIntegerType.
+public unsafe fn bool TypeRelativeIntegerRangeEndpointsResolveAgainstContainingIntegerTypeImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: original probes TypeCheckModel function return/parameter
+        // integer ranges (i32[min max], i64[0 max], u8[0 127] with DisplayName
+        // "u8[0 127]"). Integer-range artifact probes are not expressible, so this
+        // reduces to result.Succeeded.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp1-type-relative-range-endpoints",
+            raw"""
+module Demo
+
+fn i32[min max] Signed(i32[min max] value)
+{
+    return value;
+}
+
+fn i64[0 max] NonNegative(i64[0 max] value)
+{
+    return value;
+}
+
+fn u8[min 127] BytePrefix(u8[min 127] value)
+{
+    return value;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeCheckingTests.ImportedModulePublicMembersResolveByFinalName.
+public unsafe fn bool ImportedModulePublicMembersResolveByFinalNameImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: original wires Lib.Foundation through an
+        // InMemoryModuleResolver and asserts result.Succeeded. Translated through
+        // CompileTypeCheckWithModule (Lib subdirectory + Foundation.stark).
+        stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+            "typechkp1-imported-public-members-final-name",
+            raw"""
+import Lib.Foundation
+module Demo
+
+fn u32[0 2147483647] Use()
+{
+    stack Box box = new()
+    {
+        Value = Identity(Answer)
+    };
+    stack Status status = Status.Ok;
+    switch (status)
+    {
+        case Status.Ok:
+            return box.Value;
+        case Status.Err:
+            return Worker.Value();
+    }
+}
+""",
+            "Lib",
+            "Foundation.stark",
+            raw"""
+module Lib.Foundation
+
+public const Answer = 41;
+
+public struct Box
+{
+    u32[0 2147483647] Value;
+}
+
+public enum Status
+{
+    Ok,
+    Err
+}
+
+public struct Worker
+{
+    static finite law u32[0 2147483647] Value()
+    {
+        return 7;
+    }
+}
+
+public fn u32[0 2147483647] Identity(u32[0 2147483647] value)
+{
+    return value;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeCheckingTests.ScalarConstDeclarationsInferSmallestExactNumericTypes.
+public unsafe fn bool ScalarConstDeclarationsInferSmallestExactNumericTypesImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: original probes TypeCheckModel.Globals integer/float types
+        // (smallest-exact widths, f32/f64 bit widths) and two narrowing warnings
+        // for ExplicitFloat/ExplicitSmallFloat. Global-type artifact probes and
+        // warning inspection beyond success are not expressible; the program is
+        // expected to type-check (warnings only), so this reduces to
+        // result.Succeeded.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp1-scalar-const-smallest-exact",
+            raw"""
+module Demo
+
+const BoardWidth = 80;
+const u8 BoardWidthTyped = 80;
+const BoardWidthWide = 80;
+const Negative = -129;
+const BigCount = 2 ** 16;
+const u8 UnsignedSmall = 80;
+const u32 UnsignedWide = 4294967295;
+const SmallFloat = 3.5;
+const FloatLiteral = 3.5f;
+const f32 ExplicitFloat = 3.5;
+const f64 ExplicitSmallFloat = 3.5f;
+
+finite law u8[0 max] UseBoardWidth()
+{
+    return BoardWidth;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeCheckingTests.CompileTimeUnaryIntegerConstantsReinferExactResultStorage.
+public unsafe fn bool CompileTimeUnaryIntegerConstantsReinferExactResultStorageImpl()
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp1-unary-const-reinfer-storage",
+            raw"""
+module Demo
+
+const MinI32 = -(2 ** 31);
+const MinusOne = ~0;
+
+fn i32[min max] ReadMin()
+{
+    return MinI32;
+}
+
+fn i8[min max] ReadMinusOne()
+{
+    return MinusOne;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeCheckingTests.DictionaryAllowsCompilerProvenKeyTypes.
+public unsafe fn bool DictionaryAllowsCompilerProvenKeyTypesImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: original wires System.Collections through an
+        // InMemoryModuleResolver, asserts result.Succeeded, and asserts no STK3023
+        // diagnostic. Translated through CompileTypeCheckWithModule (System
+        // subdirectory + Collections.stark); success implies the STK3023-free
+        // condition, so this reduces to result.Succeeded.
+        stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+            "typechkp1-dictionary-proven-key-types",
+            raw"""
+import System.Collections
+module Demo
+
+fn void Use(Dictionary<i32[0 max], bool> integers, Dictionary<bool, i32[0 max]> flags)
+{
+    return;
+}
+""",
+            "System",
+            "Collections.stark",
+            raw"""
+module System.Collections
+
+public struct Dictionary<K, V>
+{
+    K Key;
+    V Value;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeCheckingTests.DictionaryAllowsExplicitStaticHashEqualsKeyContract.
+public unsafe fn bool DictionaryAllowsExplicitStaticHashEqualsKeyContractImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: original wires System.Collections through an
+        // InMemoryModuleResolver, asserts result.Succeeded and no STK3023.
+        // Translated through CompileTypeCheckWithModule (System subdirectory +
+        // Collections.stark); success implies STK3023-free, so this reduces to
+        // result.Succeeded.
+        stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+            "typechkp1-dictionary-static-hash-equals",
+            raw"""
+import System.Collections
+module Demo
+
+struct Symbol
+{
+    u32[0 max] Id;
+
+    static finite law u64[0 max] Hash(borrow Symbol value)
+    {
+        return (u64[0 max])value.Id;
+    }
+
+    static finite law bool Equals(borrow Symbol left, borrow Symbol right)
+        where overlap(left, right)
+    {
+        return left.Id == right.Id;
+    }
+}
+
+fn void Use(Dictionary<Symbol, i32[0 max]> symbols)
+{
+    return;
+}
+""",
+            "System",
+            "Collections.stark",
+            raw"""
+module System.Collections
+
+public struct Dictionary<K, V>
+{
+    K Key;
+    V Value;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeCheckingTests.HashSetAllowsExplicitStaticHashEqualsKeyContract.
+public unsafe fn bool HashSetAllowsExplicitStaticHashEqualsKeyContractImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: original wires System.Collections through an
+        // InMemoryModuleResolver, asserts result.Succeeded and no STK3023.
+        // Translated through CompileTypeCheckWithModule (System subdirectory +
+        // Collections.stark); success implies STK3023-free, so this reduces to
+        // result.Succeeded.
+        stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+            "typechkp1-hashset-static-hash-equals",
+            raw"""
+import System.Collections
+module Demo
+
+struct Symbol
+{
+    u32[0 max] Id;
+
+    static finite law u64[0 max] Hash(borrow Symbol value)
+    {
+        return (u64[0 max])value.Id;
+    }
+
+    static finite law bool Equals(borrow Symbol left, borrow Symbol right)
+        where overlap(left, right)
+    {
+        return left.Id == right.Id;
+    }
+}
+
+fn void Use(HashSet<Symbol> symbols)
+{
+    return;
+}
+""",
+            "System",
+            "Collections.stark",
+            raw"""
+module System.Collections
+
+public struct HashSet<T>
+{
+    T Key;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeCheckingTests.ConstantArithmeticIntegerRangeEndpointsResolveAtCompileTime.
+public unsafe fn bool ConstantArithmeticIntegerRangeEndpointsResolveAtCompileTimeImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: original probes TypeCheckModel function ranges resolved from
+        // constant arithmetic endpoints (u48[100 10000000000], u24[16 65536],
+        // u32[1048576 1073741824], u8[9 11]). Integer-range artifact probes are
+        // not expressible, so this reduces to result.Succeeded.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp1-constant-arithmetic-range-endpoints",
+            raw"""
+module Demo
+
+fn u48[10 ** 2 10 ** 10] DecimalPowers(u48[10 ** 2 10 ** 10] value)
+{
+    return value;
+}
+
+fn u24[2 ** 4 2 ** 16] BinaryPowers(u24[2 ** 4 2 ** 16] value)
+{
+    return value;
+}
+
+fn u32[1024 * 1024 1024 * 1024 * 1024] Sizes(u32[1024 * 1024 1024 * 1024 * 1024] value)
+{
+    return value;
+}
+
+fn u8[(1 + 2) * 3 20 / 2 + 1] MixedArithmetic(u8[(1 + 2) * 3 20 / 2 + 1] value)
+{
+    return value;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeCheckingTests.UnsignedIntegerRangeLowerBoundMayUseZeroInsteadOfMin.
+public unsafe fn bool UnsignedIntegerRangeLowerBoundMayUseZeroInsteadOfMinImpl()
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp1-unsigned-range-zero-lower-bound",
+            raw"""
+module Demo
+
+fn u8[0 max] Good(u8[0 max] value)
+{
+    return value;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeCheckingTests.ExplicitArithmeticOperatorsTypeCheckWithoutPlaceholderDiagnostics.
+public unsafe fn bool ExplicitArithmeticOperatorsTypeCheckWithoutPlaceholderDiagnosticsImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: original asserts result.Succeeded and the absence of any
+        // STK3008 placeholder diagnostic; success of the type-check implies the
+        // STK3008-free condition, so this reduces to result.Succeeded.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp1-explicit-arithmetic-operators",
+            raw"""
+module Demo
+
+finite law i32[min max] Run(i32[min max] left, i32[min max] right)
+{
+    stack mut i32[min max] value = left;
+    value +%= right;
+    stack i32[min max] product = left *| right;
+    return -%value +% product +| 3;
+}
+""");
+        return Succeeds(compiled) && !HasDiagnostic(compiled, "STK3008");
+    }
+}
+
+// Ported from TypeCheckingTests.StrictFpModifierTypeChecksNowThatLoweringExists.
+public unsafe fn bool StrictFpModifierTypeChecksNowThatLoweringExistsImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: original uses the full Compile (no StopAfterPassId) and
+        // asserts result.Succeeded and no STK3008; the closest helper compiles the
+        // full pipeline and success implies the STK3008-free condition.
+        stack mut LlvmCompile compiled = CompileFull(
+            "typechkp1-strictfp-modifier",
+            raw"""
+module Demo
+
+strictfp finite law f32 Run(f32 left, f32 right)
+{
+    return left + right;
+}
+""");
+        return Succeeds(compiled) && !HasDiagnostic(compiled, "STK3008");
+    }
+}
+
+// Ported from TypeCheckingTests.FloatingPointArithmeticChainsTypeCheckAcrossMixedNumericOperands.
+public unsafe fn bool FloatingPointArithmeticChainsTypeCheckAcrossMixedNumericOperandsImpl()
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp1-fp-arithmetic-chains-mixed",
+            raw"""
+module Demo
+
+strictfp finite law f64 Run(f32 left, i32[min max] middle, f64 right, f32 divisor)
+{
+    return left + middle * right / divisor - 1.0;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeCheckingTests.ExplicitConversionsPointerOperatorsAndSliceViewsTypeCheck.
+public unsafe fn bool ExplicitConversionsPointerOperatorsAndSliceViewsTypeCheckImpl()
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp1-explicit-conversions-pointers-slices",
+            raw"""
+module Demo
+
+unsafe finite law i32[min max] Run(i64[min max] bits, ascii text)
+{
+    stack mut i32[min max] value = 7;
+    stack rawmutptr<i32[min max]> ptr = &value;
+    stack rawptr<i32[min max]> readonlyPtr = (rawptr<i32[min max]>)ptr;
+    *ptr = (i32[min max])bits;
+    stack i64[min max] address = (i64[min max])ptr;
+    stack rawmutptr<i32[min max]> roundTrip = (rawmutptr<i32[min max]>)address;
+    stack i32[min max][2] values =
+    {
+        1, 2
+    };
+    stack i32[min max][] view = (i32[min max][])values;
+    return *roundTrip + view[0];
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeCheckingTests.TextEscapeLiteralsPreferUtf8BackedAsciiUnlessExplicitlyConverted.
+public unsafe fn bool TextEscapeLiteralsPreferUtf8BackedAsciiUnlessExplicitlyConvertedImpl()
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp1-text-escape-literals-ascii",
+            raw"""
+module Demo
+
+finite law ascii AsciiString()
+{
+    return "\0\b\t\n\f\r\\\"\'";
+}
+
+finite law ascii AsciiChar()
+{
+    return '\x41';
+}
+
+finite law unicode UnicodeString()
+{
+    return (unicode)"\xC9";
+}
+
+finite law unicode UnicodeChar()
+{
+    return (unicode)'α';
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeCheckingTests.RawAndMultilineTextLiteralsTypeCheckAsTextLiterals.
+public unsafe fn bool RawAndMultilineTextLiteralsTypeCheckAsTextLiteralsImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: the C# raw string for this program used a 5-quote delimiter so
+        // the embedded program could contain its own triple-quoted multiline
+        // literal. The Stark raw"""...""" literal cannot itself nest a """ token,
+        // so the inner multiline raw"""..."""; body is preserved as written below;
+        // the embedded program is otherwise verbatim.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp1-raw-and-multiline-text-literals",
+            raw"""
+module Demo
+
+finite law ascii RawPath()
+{
+    return raw"c:\compiler\stage1";
+}
+
+finite law ascii Multiline()
+{
+    return raw"""
+    alpha
+    beta
+    """;
+}
+
+finite law ascii Interpolated()
+{
+    return $raw"Score: {100}\n";
+}
+
+finite law unicode Wide()
+{
+    return (unicode)raw"α";
+}
+""");
+        return Succeeds(compiled);
+    }
+}

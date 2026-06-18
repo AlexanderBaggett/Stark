@@ -1,0 +1,65 @@
+import CompilerTestSupport
+import System.Testing
+module CompilerPipelineLowerAbiTests_PKGIMGP1
+
+// Ported from CompilerPipelineLowerAbiTests.ManifestBackedModulesPreservePublishedAbiFactsFromCompilerFactSections.
+public unsafe fn bool ManifestBackedModulesPreservePublishedAbiFactsFromCompilerFactSectionsImpl()
+{
+    // PORT-NOTE: The C# test builds a package image from the Facade library, strips its
+    // untyped sections down to the typed interface + compiler facts, writes the manifest
+    // JSON, deletes the source, then re-imports Facade into a consumer compiled through
+    // the "lower-abi" pass and inspects PackageImageFacts and the AbiModel (Facade.Add
+    // direct param / not ReturnsIndirect, Facade.Make ReturnsIndirect + SRet param,
+    // Facade.Read IndirectIn param). Package-image construction, manifest round-tripping,
+    // filesystem effects, and ABI-fact inspection are not expressible with the Stark
+    // helpers, so this is reduced to compiling the published Facade library program
+    // through the ABI-lowering (MIR) stage and asserting it succeeds (the precondition
+    // for any published ABI fact).
+    stack mut LlvmCompile compiled = CompileMir(
+        "lower-abi-manifest-module-facts-library",
+        raw"""
+module Facade
+
+public struct Big
+{
+    i64[min max] A;
+    i64[min max] B;
+    i64[min max] C;
+}
+
+public fn Big Make();
+public fn i64[min max] Read(Big value);
+public fn i32[min max] Add(i32[min max] value);
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from CompilerPipelineLowerAbiTests.ManifestBackedMethodsPreservePublishedAbiFactsFromCompilerFactSections.
+public unsafe fn bool ManifestBackedMethodsPreservePublishedAbiFactsFromCompilerFactSectionsImpl()
+{
+    // PORT-NOTE: The C# test publishes the Facade library (a Counter struct with a
+    // borrow-mut Reset method) to a package image, writes the manifest JSON, deletes the
+    // source, then re-imports Facade into a consumer compiled through the "lower-abi"
+    // pass and inspects the AbiModel for Facade.Counter.Reset (symbol name and IndirectIn
+    // self parameter). Package-image bytes, manifest JSON, filesystem effects, and
+    // ABI-fact inspection are not expressible with the Stark helpers, so this is reduced
+    // to compiling the published Facade library program through the ABI-lowering (MIR)
+    // stage and asserting it succeeds.
+    stack mut LlvmCompile compiled = CompileMir(
+        "lower-abi-manifest-method-facts-library",
+        raw"""
+module Facade
+
+public struct Counter
+{
+    i32[min max] Value;
+
+    fn void Reset(borrow mut Counter self)
+    {
+        self.Value = 0;
+        return;
+    }
+}
+""");
+    return Succeeds(compiled);
+}

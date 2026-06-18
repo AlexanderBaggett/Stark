@@ -1,0 +1,234 @@
+import CompilerTestSupport
+import System.Testing
+
+module PackageImageOptimizationSummaryWrapperIntegrationTests_PKGIMGP1
+
+// Ported from PackageImageOptimizationSummaryWrapperIntegrationTests.ManifestBackedAggregateConstructionWrapperBodiesCompileAndRunWithoutTopLevelFunctionSemantics.
+public unsafe fn bool ManifestBackedAggregateConstructionWrapperBodiesCompileAndRunWithoutTopLevelFunctionSemanticsImpl()
+{
+    // PORT-NOTE: The C# test builds the Facade producer into a static library via the
+    // `--emit-lib -o` CLI path, loads the emitted `.starkpkg` manifest, asserts the
+    // generic templates `Facade.WrapObject`/`Facade.WrapEnum` have no BodyText but a
+    // TypedBody whose Semantics.Optimization.IsSingleReturnAggregateConstructionWrapper
+    // is set, rewrites the manifest to drop top-level function semantics (typed-only),
+    // deletes the Facade source, then compiles and runs a Demo consumer through the
+    // `--emit-exe` CLI path asserting exit code 41. The Stark test helpers cannot model
+    // the CLI emit-lib/emit-exe builds, manifest loading/typed-only rewriting,
+    // optimization-classification probing, filesystem effects, or process exit codes,
+    // so this is reduced to compiling the Facade producer program (the aggregate
+    // construction wrappers whose serialized templates carry the optimization facts)
+    // through the full pipeline and asserting it succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "pkgimg-aggregate-construction-wrapper",
+        raw"""
+module Facade
+
+public struct Inner<T>
+{
+    T Value;
+}
+
+public struct Outer<T>
+{
+    Inner<T> Item;
+    i32[min max] Count;
+}
+
+public enum Boxed<T>
+{
+    None,
+    Value
+    {
+        Data: T, Tag: i32[min max]
+    },
+}
+
+public fn Outer<T> WrapObject<T>(T value, i32[min max] count, T tag)
+{
+    return new Outer<T>()
+    {
+        Item =
+        {
+            Value = value
+        },
+        Count = count
+    };
+}
+
+public fn Boxed<T> WrapEnum<T>(T value, i32[min max] tag, T marker)
+{
+    return Boxed<T>.Value
+    {
+        Data: value, Tag: tag
+    };
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from PackageImageOptimizationSummaryWrapperIntegrationTests.ManifestBackedLocalUpdateWrapperBodiesCompileAndRunWithoutTopLevelFunctionSemantics.
+public unsafe fn bool ManifestBackedLocalUpdateWrapperBodiesCompileAndRunWithoutTopLevelFunctionSemanticsImpl()
+{
+    // PORT-NOTE: The C# test builds the Facade producer into a static library via the
+    // `--emit-lib -o` CLI path, loads the emitted `.starkpkg` manifest, asserts the
+    // generic template `Facade.Bump` has no BodyText but a TypedBody whose
+    // Semantics.Optimization.IsSimpleLocalUpdateWrapper is set, rewrites the manifest to
+    // drop top-level function semantics (typed-only), deletes the Facade source, then
+    // compiles and runs a Demo consumer through the `--emit-exe` CLI path asserting exit
+    // code 42. The Stark test helpers cannot model the CLI emit-lib/emit-exe builds,
+    // manifest loading/typed-only rewriting, optimization-classification probing,
+    // filesystem effects, or process exit codes, so this is reduced to compiling the
+    // Facade producer program (the simple-local-update wrapper whose serialized template
+    // carries the optimization facts) through the full pipeline and asserting it
+    // succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "pkgimg-local-update-wrapper",
+        raw"""
+module Facade
+
+public record Inner(i32[min max] Value)
+{
+}
+public record Box(Inner Inner)
+{
+}
+
+public fn i32[min max] Bump<T>(Box box, i32[min max] delta, T tag)
+{
+    stack mut i32[min max] current;
+    current = box.Inner.Value;
+    current += delta;
+    return current;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from PackageImageOptimizationSummaryWrapperIntegrationTests.ManifestBackedTerminalSelectionWrapperBodiesCompileAndRunWithoutTopLevelFunctionSemantics.
+public unsafe fn bool ManifestBackedTerminalSelectionWrapperBodiesCompileAndRunWithoutTopLevelFunctionSemanticsImpl()
+{
+    // PORT-NOTE: The C# test builds the Facade producer into a static library via the
+    // `--emit-lib -o` CLI path, loads the emitted `.starkpkg` manifest, asserts the
+    // generic templates `Facade.ChooseBranch`/`Facade.ChooseSwitch` have no BodyText but
+    // a TypedBody whose Semantics.Optimization.IsTerminalSelectionWrapper is set,
+    // rewrites the manifest to drop top-level function semantics (typed-only), deletes
+    // the Facade source, then compiles and runs a Demo consumer through the `--emit-exe`
+    // CLI path asserting exit code 42. The Stark test helpers cannot model the CLI
+    // emit-lib/emit-exe builds, manifest loading/typed-only rewriting,
+    // optimization-classification probing, filesystem effects, or process exit codes, so
+    // this is reduced to compiling the Facade producer program (the terminal-selection
+    // wrappers whose serialized templates carry the optimization facts) through the full
+    // pipeline and asserting it succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "pkgimg-terminal-selection-wrapper",
+        raw"""
+module Facade
+
+public fn i32[min max] ChooseBranch<T>(bool takeLeft, bool takeMiddle, i32[min max] left, i32[min max] middle, i32[min max] right, T tag)
+{
+    if (takeLeft)
+    {
+        return left;
+    }
+    else if (takeMiddle)
+    {
+        return middle;
+    }
+    else
+    {
+        return right;
+    }
+}
+
+public fn i32[min max] ChooseSwitch<T>(i32[min max] selector, i32[min max] left, i32[min max] middle, i32[min max] right, T tag)
+{
+    switch (selector)
+    {
+        case 0:
+            return left;
+        case 1:
+            return middle;
+        default:
+            return right;
+    }
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from PackageImageOptimizationSummaryWrapperIntegrationTests.ManifestBackedBinaryAndComparisonWrapperBodiesCompileAndRunWithoutTopLevelFunctionSemantics.
+public unsafe fn bool ManifestBackedBinaryAndComparisonWrapperBodiesCompileAndRunWithoutTopLevelFunctionSemanticsImpl()
+{
+    // PORT-NOTE: The C# test builds the Facade producer into a static library via the
+    // `--emit-lib -o` CLI path, loads the emitted `.starkpkg` manifest, asserts the
+    // generic template `Facade.AddDelta` is classified
+    // IsSingleReturnBinaryOperatorWrapper (and not IsSingleReturnComparisonWrapper) and
+    // `Facade.IsBelow` is classified IsSingleReturnComparisonWrapper (and not
+    // IsSingleReturnBinaryOperatorWrapper), with no BodyText but a TypedBody, rewrites
+    // the manifest to drop top-level function semantics (typed-only), deletes the Facade
+    // source, then compiles and runs a Demo consumer through the `--emit-exe` CLI path
+    // asserting exit code 42. The Stark test helpers cannot model the CLI
+    // emit-lib/emit-exe builds, manifest loading/typed-only rewriting,
+    // optimization-classification probing, filesystem effects, or process exit codes, so
+    // this is reduced to compiling the Facade producer program (the binary-operator and
+    // comparison wrappers whose serialized templates carry the optimization facts)
+    // through the full pipeline and asserting it succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "pkgimg-binary-and-comparison-wrapper",
+        raw"""
+module Facade
+
+public record Inner(i32[min max] Value)
+{
+}
+public record Box(Inner Inner)
+{
+}
+
+public fn i32[min max] AddDelta<T>(Box box, i32[min max] delta, T tag)
+{
+    return box.Inner.Value + delta;
+}
+
+public fn bool IsBelow<T>(Box box, i32[min max] limit, T tag)
+{
+    return box.Inner.Value < limit;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from PackageImageOptimizationSummaryWrapperIntegrationTests.ManifestBackedConversionWrapperBodiesCompileAndRunWithoutTopLevelFunctionSemantics.
+public unsafe fn bool ManifestBackedConversionWrapperBodiesCompileAndRunWithoutTopLevelFunctionSemanticsImpl()
+{
+    // PORT-NOTE: The C# test builds the Facade producer into a static library via the
+    // `--emit-lib -o` CLI path, loads the emitted `.starkpkg` manifest, asserts the
+    // generic template `Facade.Read` has no BodyText but a TypedBody whose
+    // Semantics.Optimization.IsSingleReturnConversionWrapper is set, rewrites the
+    // manifest to drop top-level function semantics (typed-only), deletes the Facade
+    // source, then compiles and runs a Demo consumer through the `--emit-exe` CLI path
+    // asserting exit code 42. The Stark test helpers cannot model the CLI
+    // emit-lib/emit-exe builds, manifest loading/typed-only rewriting,
+    // optimization-classification probing, filesystem effects, or process exit codes, so
+    // this is reduced to compiling the Facade producer program (the single-return
+    // conversion wrapper whose serialized template carries the optimization facts)
+    // through the full pipeline and asserting it succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "pkgimg-conversion-wrapper",
+        raw"""
+module Facade
+
+public record Inner(i32[min max] Value)
+{
+}
+public record Box(Inner Inner)
+{
+}
+
+public fn i64[min max] Read<T>(Box box, T tag)
+{
+    return (i64[min max])box.Inner.Value;
+}
+""");
+    return Succeeds(compiled);
+}

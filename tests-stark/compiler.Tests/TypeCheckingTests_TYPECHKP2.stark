@@ -1,0 +1,1033 @@
+import CompilerTestSupport
+import System.Testing
+
+module TypeCheckingTests_TYPECHKP2
+
+// Ported slice of tests/compiler.Tests/TypeCheckingTests.cs.
+// Each Impl runs the embedded Stark program (kept verbatim from the C# raw
+// string) through the closest compile helper and returns true when the original
+// xUnit assertions would hold. These are all positive type-check tests; the
+// originals additionally probe the TypeCheckModel artifact (NamedTypes,
+// Functions, Variants, OrderedFields, TypeTriggers, GenericParams, etc.) which
+// the compile helpers cannot express, so those probes reduce to the
+// result.Succeeded signal. PORT-NOTE comments flag each reduction.
+
+// Ported from TypeCheckingTests.ConstGlobalAggregateProjectionsCanBindToFrozenParameters.
+public unsafe fn bool ConstGlobalAggregateProjectionsCanBindToFrozenParametersImpl()
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp2-const-global-aggregate-projections-frozen",
+            raw"""
+module Demo
+
+struct Box
+{
+    i32[min max] Value;
+}
+
+struct Holder
+{
+    Box Item;
+}
+
+const Holder Current = new Holder()
+{
+    Item = new Box()
+    {
+        Value = 7
+    }
+};
+
+fn i32[min max] Read(frozen Box box)
+{
+    return 7;
+}
+
+fn i32[min max] Run()
+{
+    return Read(Current.Item);
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeCheckingTests.ExplicitLiteralTextConversionsTypeCheck.
+public unsafe fn bool ExplicitLiteralTextConversionsTypeCheckImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: original also probes the TypeCheckModel artifact is present;
+        // reduced to the result.Succeeded signal.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp2-explicit-literal-text-conversions",
+            raw"""
+module Demo
+
+finite law unicode Widen()
+{
+    return (unicode)"Hello";
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeCheckingTests.CompileTimeTextConcatenationTypeChecksAsTextLiteral.
+public unsafe fn bool CompileTimeTextConcatenationTypeChecksAsTextLiteralImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: original also probes the TypeCheckModel artifact is present;
+        // reduced to the result.Succeeded signal.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp2-comptime-text-concatenation",
+            raw"""
+module Demo
+
+finite law ascii Label()
+{
+    return "Score: " + "100";
+}
+
+finite law unicode WideLabel()
+{
+    return "Score: " + "100";
+}
+
+finite law unicode ExplicitWideLabel()
+{
+    return (unicode)"Score: " + (unicode)"100";
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeCheckingTests.CompileTimeInterpolatedTextTypeChecksAsTextLiteral.
+public unsafe fn bool CompileTimeInterpolatedTextTypeChecksAsTextLiteralImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: original also probes the TypeCheckModel artifact is present;
+        // reduced to the result.Succeeded signal.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp2-comptime-interpolated-text",
+            raw"""
+module Demo
+
+finite law ascii Label()
+{
+    const score = 100;
+    return $"Score: {score}, ready: {true}";
+}
+
+finite law unicode WideLabel()
+{
+    return $"Score: {100}";
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeCheckingTests.FixedCapacityRuntimeInterpolatedTextTypeChecksWithKnownFormatter.
+public unsafe fn bool FixedCapacityRuntimeInterpolatedTextTypeChecksWithKnownFormatterImpl()
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp2-fixed-capacity-runtime-interpolated-text",
+            raw"""
+module System.Text
+
+public finite law ascii AsciiView(Ascii source);
+public unsafe fn bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
+public unsafe fn bool TryFormatI32Ascii(rawmutptr<Ascii> destination, i32[min max] value);
+
+fn Ascii Label(i32[min max] score)
+{
+    stack Ascii label[64] = $"Score: {score}";
+    return label;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeCheckingTests.FixedCapacityTextConcatenationTypeChecksForAsciiAndUnicodeBuffers.
+public unsafe fn bool FixedCapacityTextConcatenationTypeChecksForAsciiAndUnicodeBuffersImpl()
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp2-fixed-capacity-text-concatenation",
+            raw"""
+module System.Text
+
+public finite law ascii AsciiView(Ascii source);
+public finite law unicode UnicodeView(Unicode source);
+public unsafe fn bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
+public unsafe fn bool TryConcatUnicode(rawmutptr<Unicode> destination, unicode left, unicode right);
+
+fn Ascii JoinAscii(Ascii left, ascii right)
+{
+    stack Ascii combined[64] = left + right;
+    return combined;
+}
+
+fn Unicode JoinUnicode(Unicode left, unicode right)
+{
+    stack Unicode combined[64] = left + right;
+    return combined;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeCheckingTests.EmptyTextSlicesTypeCheckAsSameTextKind.
+public unsafe fn bool EmptyTextSlicesTypeCheckAsSameTextKindImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: original also probes the TypeCheckModel artifact is present;
+        // reduced to the result.Succeeded signal.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp2-empty-text-slices-same-kind",
+            raw"""
+module Demo
+
+fn ascii SliceAscii(ascii text)
+{
+    return text[];
+}
+
+fn unicode SliceUnicode(unicode text)
+{
+    return text[];
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeCheckingTests.FixedArrayLengthsAcceptConstantArithmeticExpressions.
+public unsafe fn bool FixedArrayLengthsAcceptConstantArithmeticExpressionsImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: original also probes the TypeCheckModel artifact is present;
+        // reduced to the result.Succeeded signal.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp2-fixed-array-lengths-constant-arithmetic",
+            raw"""
+module Demo
+
+fn i32[min max] Run(i32[min max][1 + 2] values)
+{
+    return values[2];
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeCheckingTests.FixedArrayInitializersCanOmitTrailingElements.
+public unsafe fn bool FixedArrayInitializersCanOmitTrailingElementsImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: original also probes the TypeCheckModel artifact is present;
+        // reduced to the result.Succeeded signal.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp2-fixed-array-initializers-omit-trailing",
+            raw"""
+module Demo
+
+fn i32[min max] Run()
+{
+    stack i32[min max][3] values =
+    {
+        1, 2
+    };
+    return values[0] + values[1] + values[2];
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeCheckingTests.ScalarizableNamedAggregatesAreOrderedComparable.
+public unsafe fn bool ScalarizableNamedAggregatesAreOrderedComparableImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: original also probes the TypeCheckModel artifact is present;
+        // reduced to the result.Succeeded signal.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp2-scalarizable-named-aggregates-ordered",
+            raw"""
+module Demo
+
+record Many(i32[min max] A, i32[min max] B, i32[min max] C, i32[min max] D, i32[min max] E)
+{
+}
+
+fn bool Less(Many left, Many right)
+{
+    return left < right;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeCheckingTests.ScalarizableEnumsAreOrderedComparable.
+public unsafe fn bool ScalarizableEnumsAreOrderedComparableImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: original also probes the TypeCheckModel artifact is present;
+        // reduced to the result.Succeeded signal.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp2-scalarizable-enums-ordered",
+            raw"""
+module Demo
+
+enum Token
+{
+    None,
+    Many(i32[min max], i32[min max], i32[min max], i32[min max], i32[min max]),
+}
+
+fn bool Less(Token left, Token right)
+{
+    return left < right;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeCheckingTests.ExplicitNonAsciiLiteralToAsciiConversionTypeChecks.
+public unsafe fn bool ExplicitNonAsciiLiteralToAsciiConversionTypeChecksImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: original also probes the TypeCheckModel artifact is present;
+        // reduced to the result.Succeeded signal.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp2-explicit-non-ascii-literal-to-ascii",
+            raw"""
+module Demo
+
+finite law ascii Run()
+{
+    return (ascii)"\u03B1";
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeCheckingTests.FrozenReachableViewsTypeCheckAsReadonlyAliases.
+public unsafe fn bool FrozenReachableViewsTypeCheckAsReadonlyAliasesImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: original also probes the TypeCheckModel artifact is present;
+        // reduced to the result.Succeeded signal.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp2-frozen-reachable-views-readonly-aliases",
+            raw"""
+module Demo
+
+struct Box
+{
+    i32[min max] Value;
+}
+
+struct PtrBox
+{
+    rawmutptr<i32[min max]> Ptr;
+}
+
+unsafe finite law void Run(frozen Box box, frozen PtrBox ptrBox)
+{
+    stack rawptr<frozen i32[min max]> valuePtr = &box.Value;
+    stack rawptr<frozen i32[min max]> readonlyPtr = ptrBox.Ptr;
+    stack bool valuesEqual = *valuePtr == *readonlyPtr;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeCheckingTests.ConstParameterProvenanceTypeChecksAsReadonlyAliases.
+public unsafe fn bool ConstParameterProvenanceTypeChecksAsReadonlyAliasesImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: original also probes the TypeCheckModel artifact is present;
+        // reduced to the result.Succeeded signal.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp2-const-parameter-provenance-readonly-aliases",
+            raw"""
+module Demo
+
+struct PtrBox
+{
+    rawmutptr<i32[min max]> Ptr;
+}
+
+unsafe fn void Inspect(const PtrBox box, const rawmutptr<i32[min max]> ptr)
+{
+    stack rawptr<frozen i32[min max]> fieldPtr = box.Ptr;
+    stack rawptr<frozen i32[min max]> directPtr = ptr;
+    stack i32[min max] value = *ptr;
+    stack bool valuesEqual = *fieldPtr == *directPtr;
+    return;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeCheckingTests.ConstParametersCanBeForwardedToConstParameters.
+public unsafe fn bool ConstParametersCanBeForwardedToConstParametersImpl()
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp2-const-parameters-forwarded",
+            raw"""
+module Demo
+
+struct Box
+{
+    i32[min max] Value;
+}
+
+fn void Inspect(const Box box)
+{
+    return;
+}
+
+fn void Forward(const Box box)
+{
+    Inspect(box);
+    return;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeCheckingTests.ConstRawPointerProvenanceFlowsThroughImmutableLocal.
+public unsafe fn bool ConstRawPointerProvenanceFlowsThroughImmutableLocalImpl()
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp2-const-raw-pointer-provenance-immutable-local",
+            raw"""
+module Demo
+
+unsafe fn void Inspect(const rawmutptr<i32[min max]> ptr)
+{
+    return;
+}
+
+unsafe fn void Forward(const rawmutptr<i32[min max]> ptr)
+{
+    stack rawptr<frozen i32[min max]> local = ptr;
+    Inspect(local);
+    return;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeCheckingTests.GenericConstRawPointerCallsInferFromConstProvenanceView.
+public unsafe fn bool GenericConstRawPointerCallsInferFromConstProvenanceViewImpl()
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp2-generic-const-raw-pointer-infer-provenance",
+            raw"""
+module Demo
+
+unsafe fn rawptr<frozen i32[min max]> Forward<T>(const rawmutptr<i32[min max]> ptr, T tag)
+{
+    return ptr;
+}
+
+unsafe fn rawptr<frozen i32[min max]> Run(const rawmutptr<i32[min max]> ptr)
+{
+    stack i32[min max] tag = 0;
+    return Forward(ptr, tag);
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeCheckingTests.ConstRawSliceProvenanceFlowsThroughImmutableLocal.
+public unsafe fn bool ConstRawSliceProvenanceFlowsThroughImmutableLocalImpl()
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp2-const-raw-slice-provenance-immutable-local",
+            raw"""
+module Demo
+
+fn void Inspect(const i32[min max][] view)
+{
+    return;
+}
+
+unsafe fn void Forward(
+    const rawmutptr<i32[min max]>[count] pointer,
+    i32[1 10] count)
+    {
+        unsafe
+    {
+        stack frozen i32[min max][] view = slice(pointer, count);
+        Inspect(view);
+    }
+
+    return;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeCheckingTests.AggregateSwitchPatternsTypeCheckOnScalarFields.
+public unsafe fn bool AggregateSwitchPatternsTypeCheckOnScalarFieldsImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: original also probes the TypeCheckModel artifact is present;
+        // reduced to the result.Succeeded signal.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp2-aggregate-switch-patterns-scalar-fields",
+            raw"""
+module Demo
+
+record Pair(i32[min max] Left, i32[min max] Right)
+{
+}
+
+finite law i32[min max] Run(Pair value)
+{
+    switch (value)
+    {
+        case Pair(1, var right):
+            return right;
+        case Pair(_, _):
+            return 0;
+    }
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeCheckingTests.AggregatePropertySwitchPatternsTypeCheckOnNamedFields.
+public unsafe fn bool AggregatePropertySwitchPatternsTypeCheckOnNamedFieldsImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: original also probes the TypeCheckModel artifact is present;
+        // reduced to the result.Succeeded signal.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp2-aggregate-property-switch-patterns-named-fields",
+            raw"""
+module Demo
+
+struct Boxed
+{
+    i32[min max] Value;
+    bool Enabled;
+}
+
+finite law i32[min max] Run(Boxed value)
+{
+    switch (value)
+    {
+        case Boxed { Enabled: true, Value: var found }:
+            return found;
+        case Boxed { Value: _, Enabled: _ }:
+            return 0;
+    }
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeCheckingTests.ListSwitchPatternsTypeCheckOnFixedArrays.
+public unsafe fn bool ListSwitchPatternsTypeCheckOnFixedArraysImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: original also probes the TypeCheckModel artifact is present;
+        // reduced to the result.Succeeded signal.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp2-list-switch-patterns-fixed-arrays",
+            raw"""
+module Demo
+
+finite law i32[min max] Run(i32[min max][2] values)
+{
+    switch (values)
+    {
+        case [1, var right]:
+            return right;
+        case [_, _]:
+            return 0;
+    }
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeCheckingTests.ListSwitchPatternsTypeCheckOnSlices.
+public unsafe fn bool ListSwitchPatternsTypeCheckOnSlicesImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: original also probes the TypeCheckModel artifact is present;
+        // reduced to the result.Succeeded signal.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp2-list-switch-patterns-slices",
+            raw"""
+module Demo
+
+unsafe finite law i32[min max] Run(i32[min max][2] source)
+{
+    stack i32[min max][] values = source;
+    switch (values)
+    {
+        case [var left, var right]:
+            return left + right;
+        default:
+            return 0;
+    }
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeCheckingTests.NamedAggregateWholeValueSwitchCapturesTypeCheck.
+public unsafe fn bool NamedAggregateWholeValueSwitchCapturesTypeCheckImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: original also probes the TypeCheckModel artifact is present;
+        // reduced to the result.Succeeded signal.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp2-named-aggregate-whole-value-switch-captures",
+            raw"""
+module Demo
+
+record Pair(i32[min max] Left, i32[min max] Right)
+{
+}
+
+finite law i32[min max] Run(Pair value)
+{
+    switch (value)
+    {
+        case var whole:
+            return whole.Left;
+    }
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeCheckingTests.NestedAggregateWholeValueSwitchCapturesTypeCheck.
+public unsafe fn bool NestedAggregateWholeValueSwitchCapturesTypeCheckImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: original also probes the TypeCheckModel artifact is present;
+        // reduced to the result.Succeeded signal.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp2-nested-aggregate-whole-value-switch-captures",
+            raw"""
+module Demo
+
+record Pair(i32[min max] Left, i32[min max] Right)
+{
+}
+record Outer(Pair Values, i32[min max] Tail)
+{
+}
+
+finite law i32[min max] Run(Outer value)
+{
+    switch (value)
+    {
+        case Outer(Pair capture, var tail):
+            return capture.Right + tail;
+    }
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeCheckingTests.EnumWholeValueSwitchCapturesTypeCheck.
+public unsafe fn bool EnumWholeValueSwitchCapturesTypeCheckImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: original also probes the TypeCheckModel artifact is present;
+        // reduced to the result.Succeeded signal.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp2-enum-whole-value-switch-captures",
+            raw"""
+module Demo
+
+enum Token
+{
+    Empty,
+    Pair(i32[min max], i32[min max]),
+}
+
+finite law i32[min max] Run(Token value)
+{
+    switch (value)
+    {
+        case Token.Pair capture:
+            switch (capture)
+            {
+                case Token.Pair(var left, var right):
+                    return left + right;
+                default:
+                    return 0;
+            }
+        default:
+            return -1;
+    }
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeCheckingTests.GuardedSwitchLabelsDoNotContributeToReachabilityCoverage.
+public unsafe fn bool GuardedSwitchLabelsDoNotContributeToReachabilityCoverageImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: original also probes the TypeCheckModel artifact is present;
+        // reduced to the result.Succeeded signal plus the explicit
+        // DoesNotContain(STK3019) reachability check.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp2-guarded-switch-labels-no-reachability-coverage",
+            raw"""
+module Demo
+
+finite law i32[min max] Run(bool value, bool allow)
+{
+    switch (value)
+    {
+        case true when allow:
+            return 1;
+        case true:
+            return 2;
+        default:
+            return 0;
+    }
+}
+""");
+        return Succeeds(compiled) and not HasDiagnostic(compiled, "STK3019");
+    }
+}
+
+// Ported from TypeCheckingTests.NestedAggregateSwitchPatternsTypeCheckOnScalarLeaves.
+public unsafe fn bool NestedAggregateSwitchPatternsTypeCheckOnScalarLeavesImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: original also probes the TypeCheckModel artifact is present;
+        // reduced to the result.Succeeded signal.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp2-nested-aggregate-switch-patterns-scalar-leaves",
+            raw"""
+module Demo
+
+record Pair(i32[min max] Left, i32[min max] Right)
+{
+}
+record Outer(Pair Values, i32[min max] Tail)
+{
+}
+
+finite law i32[min max] Run(Outer value)
+{
+    switch (value)
+    {
+        case Outer(Pair(1, var right), var tail):
+            return right + tail;
+        default:
+            return 0;
+    }
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeCheckingTests.EnumSwitchPatternsTypeCheckOnCasePayloadCaptures.
+public unsafe fn bool EnumSwitchPatternsTypeCheckOnCasePayloadCapturesImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: original also probes the TypeCheckModel artifact is present;
+        // reduced to the result.Succeeded signal.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp2-enum-switch-patterns-case-payload-captures",
+            raw"""
+module Demo
+
+enum Token
+{
+    End,
+    Integer(i32[min max]),
+    Move
+    {
+        X: i32[min max], Y: i32[min max]
+    },
+}
+
+finite law i32[min max] Run(Token token)
+{
+    switch (token)
+    {
+        case Token.End:
+            return 0;
+        case Token.Integer(var value):
+            return value;
+        case Token.Move
+        {
+            X: var x, Y: var y
+        }:
+            return x + y;
+    }
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeCheckingTests.GenericEnumInstantiationTypeChecks.
+public unsafe fn bool GenericEnumInstantiationTypeChecksImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: original additionally probes the TypeCheckModel artifact
+        // (NamedTypes contains "Option" and "Option<i32>", the monomorphized
+        // Kind == Enum with 2 Variants, template IsGeneric); not expressible via
+        // the compile helpers, so reduced to the result.Succeeded signal.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp2-generic-enum-instantiation",
+            raw"""
+module Demo
+
+enum Option<T>
+{
+    None,
+    Some(T),
+}
+
+finite law bool HasValue(Option<i32[min max]> opt)
+{
+    switch (opt)
+    {
+        case Option<i32[min max]>.None:
+            return false;
+        case Option<i32[min max]>.Some(var value):
+            return value > 0;
+    }
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeCheckingTests.GenericRecordInstantiationTypeChecks.
+public unsafe fn bool GenericRecordInstantiationTypeChecksImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: original additionally probes the TypeCheckModel artifact
+        // (NamedTypes contains "Pair<i32,i32>" with 2 OrderedFields of Integer
+        // kind); not expressible via the compile helpers, so reduced to the
+        // result.Succeeded signal.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp2-generic-record-instantiation",
+            raw"""
+module Demo
+
+record Pair<A, B>(A First, B Second)
+{
+}
+
+finite law i32[min max] Sum(Pair<i32[min max], i32[min max]> pair)
+{
+    return pair.First + pair.Second;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeCheckingTests.GenericRecordPrimaryConstructorInstantiationTypeChecks.
+public unsafe fn bool GenericRecordPrimaryConstructorInstantiationTypeChecksImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: the original uses Compile(...) with no StopAfterPassId, so
+        // it runs the full pipeline; ported through CompileFull.
+        stack mut LlvmCompile compiled = CompileFull(
+            "typechkp2-generic-record-primary-constructor-instantiation",
+            raw"""
+module Demo
+
+record Pair<A, B>(A First, B Second)
+{
+}
+
+finite law i32[min max] Sum()
+{
+    stack Pair<i32[min max], i32[min max]> pair = new Pair<i32[min max], i32[min max]>(3, 4);
+    return pair.First + pair.Second;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeCheckingTests.GenericTypeUsesRecordConcreteInstantiationTriggers.
+public unsafe fn bool GenericTypeUsesRecordConcreteInstantiationTriggersImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: original additionally probes the TypeCheckModel artifact
+        // (single TypeTrigger "Pair<i32,bool>" with TypeArguments ["i32","bool"]);
+        // not expressible via the compile helpers, so reduced to the
+        // result.Succeeded signal.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp2-generic-type-uses-record-concrete-triggers",
+            raw"""
+module Demo
+
+record Pair<A, B>(A First, B Second)
+{
+}
+
+fn bool Accept(Pair<i32[min max], bool> pair)
+{
+    return pair.Second;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeCheckingTests.NestedGenericTypesInsideContainersMonomorphizeAndRecordTriggers.
+public unsafe fn bool NestedGenericTypesInsideContainersMonomorphizeAndRecordTriggersImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: original additionally probes the TypeCheckModel artifact
+        // (NamedTypes contains "Pair<i32,bool>" and TypeTriggers contains the
+        // matching trigger); not expressible via the compile helpers, so reduced
+        // to the result.Succeeded signal.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp2-nested-generic-types-monomorphize-triggers",
+            raw"""
+module Demo
+
+record Pair<A, B>(A First, B Second)
+{
+}
+
+unsafe fn i32[min max] Read(rawptr<Pair<i32[min max], bool>> ptr)
+{
+    if ((*ptr).Second)
+    {
+        return (*ptr).First;
+    }
+
+    return 0;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeCheckingTests.GenericFunctionBodiesCanUseTheirTypeParametersInLocalTypes.
+public unsafe fn bool GenericFunctionBodiesCanUseTheirTypeParametersInLocalTypesImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: original additionally probes the TypeCheckModel artifact
+        // (Functions contains "Identity" with IsGeneric, GenericParams ["T"],
+        // ReturnType/parameter DisplayName "T"); not expressible via the compile
+        // helpers, so reduced to the result.Succeeded signal.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp2-generic-function-bodies-type-parameters-local-types",
+            raw"""
+module Demo
+
+fn T Identity<T>(T value)
+{
+    stack T copy = value;
+    return copy;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeCheckingTests.GenericMethodBodiesCanUseTheirTypeParametersInLocalTypes.
+public unsafe fn bool GenericMethodBodiesCanUseTheirTypeParametersInLocalTypesImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: original additionally probes the TypeCheckModel artifact
+        // (Functions contains "Box.Echo" with IsGeneric, GenericParams ["T"],
+        // ReturnType/parameter DisplayName "T"); not expressible via the compile
+        // helpers, so reduced to the result.Succeeded signal.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "typechkp2-generic-method-bodies-type-parameters-local-types",
+            raw"""
+module Demo
+
+struct Box
+{
+    fn T Echo<T>(T value)
+    {
+        stack T copy = value;
+        return copy;
+    }
+}
+""");
+        return Succeeds(compiled);
+    }
+}

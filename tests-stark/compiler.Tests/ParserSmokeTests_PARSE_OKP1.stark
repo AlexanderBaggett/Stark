@@ -1,0 +1,452 @@
+import CompilerTestSupport
+import System.Testing
+
+module ParserSmokeTests_PARSE_OKP1
+
+// Ported from ParserSmokeTests.ValidProgramsParse.
+// PORT-NOTE: the original is a [Theory] over ValidPrograms (16 rows) that calls
+// StarkSyntax.ParseCompilationUnit(source) directly and asserts result.Succeeded
+// with result.SyntaxErrorCount == 0 for each row. The host protocol exposes no
+// standalone parse-only entry point, so each program is driven through the closest
+// signal -- a full-pipeline compile -- and the parser-success assertion is reduced
+// to compile success (Succeeds). Every embedded program is kept verbatim from the
+// C# raw string. Returns true iff all 16 rows compile successfully.
+public unsafe fn bool ValidProgramsParseImpl()
+{
+    // "minimal module"
+    stack mut LlvmCompile minimalModule = CompileFull(
+        "parser-smoke-valid-minimal-module",
+        raw"""
+module SomeModule
+""");
+
+    // "imports and function modifiers"
+    stack mut LlvmCompile importsAndFunctionModifiers = CompileFull(
+        "parser-smoke-valid-imports-and-function-modifiers",
+        raw"""
+import Core.Text
+export import Core.Math
+module Demo.Api
+
+public finite law i32[min max] Add(i32[min max] left, i32[min max] right);
+internal inline hot unsafe fn void Trace(rawptr<i8[min max]> message);
+export unsafe ffi fn void Send(rawmutptr<i8[min max]> buffer);
+""");
+
+    // "top level asm functions"
+    stack mut LlvmCompile topLevelAsmFunctions = CompileFull(
+        "parser-smoke-valid-top-level-asm-functions",
+        raw"""
+module System.Syscall
+
+public unsafe ffi asm(x86_64) fn i64[min max] Syscall3(i64[min max] number, i64[min max] arg1, i64[min max] arg2, i64[min max] arg3)
+    in("rax") number,
+    in("rdi") arg1,
+    in("rsi") arg2,
+    in("rdx") arg3,
+    out("rax") return,
+    clobber("rcx", "r11")
+{
+    "syscall"
+}
+""");
+
+    // "struct record trait and doctrine declarations"
+    stack mut LlvmCompile structRecordTraitAndDoctrine = CompileFull(
+        "parser-smoke-valid-struct-record-trait-and-doctrine-declarations",
+        raw"""
+module Shapes
+
+public struct Widget
+{
+    i32[min max] Value;
+    Widget()
+    {
+    }
+    fn void Reset()
+    {
+        return;
+    }
+    drop
+    {
+        ;
+    }
+}
+
+public record Point(i32[min max] X, i32[min max] Y)
+{
+    mut drop
+    {
+        self.X = 0;
+    }
+}
+
+public trait Comparable<T>
+{
+    law i32[min max] Compare(T other);
+}
+
+public doctrine Numbers<T>
+{
+    finite law T Clamp(T value);
+}
+""");
+
+    // "rust style enum declarations constructors and patterns"
+    stack mut LlvmCompile rustStyleEnumDeclarations = CompileFull(
+        "parser-smoke-valid-rust-style-enum-declarations-constructors-and-patterns",
+        raw"""
+module Variants
+
+public enum Result<T, E>
+{
+    Ok(T),
+    Err(E),
+}
+
+enum Token
+{
+    End,
+    Integer(i32[min max]),
+    Move
+    {
+        X: i32[min max], Y: i32[min max]
+    },
+}
+
+finite law i32[min max] Use(Result<i32[min max], ascii> result, Token token)
+{
+    stack Token end = Token.End;
+    stack Token integer = Token.Integer(5);
+    stack Token moveToken = Token.Move
+    {
+        X: 1, Y: 2
+    };
+
+    switch (token)
+    {
+        case Token.End:
+            return 0;
+        case Token.Integer(var value):
+            return value;
+        case Token.Move
+        {
+            X: var x, Y: var y
+        }:
+            return x + y;
+    }
+}
+""");
+
+    // "qualified types pointers and constrained ranges"
+    stack mut LlvmCompile qualifiedTypesPointersAndRanges = CompileFull(
+        "parser-smoke-valid-qualified-types-pointers-and-constrained-ranges",
+        raw"""
+module Memory
+
+public const i32[min max] Answer = 42;
+internal static rawptr<i8[min max]> Buffer = null;
+export static u8[0 max] Limit = 255;
+
+public unsafe finite void Accept(
+    borrow i8[min max][] input,
+    frozen ascii name,
+    shared u8[0 10] state,
+    out i8[min max][16] output,
+    init rawmutptr<i8[min max]> rawBuffer)
+{
+    return;
+}
+""");
+
+    // "text literals with supported escapes"
+    stack mut LlvmCompile textLiteralsWithSupportedEscapes = CompileFull(
+        "parser-smoke-valid-text-literals-with-supported-escapes",
+        raw"""
+module Escapes
+
+finite law void Run()
+{
+    stack ascii nul = '\0';
+    stack ascii hex = '\x41';
+    stack unicode greek = 'α';
+    stack ascii controls = "\0\b\t\n\f\r\\\"\'";
+    stack unicode wide = "\xC9";
+    return;
+}
+""");
+
+    // "blocks statements loops and expressions"
+    stack mut LlvmCompile blocksStatementsLoopsAndExpressions = CompileFull(
+        "parser-smoke-valid-blocks-statements-loops-and-expressions",
+        raw"""
+module Flow
+
+struct Widget
+{
+    i32[min max] Value;
+}
+
+finite law i32[min max] Run()
+{
+    const i32[min max] start = 0;
+    stack mut i32[min max] counter = start;
+    stack Widget item = new Widget()
+    {
+        Value = 1
+    };
+    stack i32[min max][3] values =
+    {
+        1, 2, 3
+    };
+    stack f32 power = 2.0 ** 3.0;
+
+    if w9 (counter == 0)
+    {
+        counter += item.Value;
+    }
+    else
+    {
+        counter = counter ? counter : 1;
+    }
+
+    counter ^= 1;
+
+    while willexit (counter < 10)
+    {
+        counter += 1;
+    }
+
+    for willexit (stack mut i32[min max] i = 0; i < 3; i += 1)
+    {
+        switch w1 (i)
+        {
+            case 0:
+                continue;
+            case var value when value > 0:
+                counter += value;
+                break;
+            default:
+                break;
+        }
+    }
+
+    return counter;
+}
+""");
+
+    // "aggregate switch patterns"
+    stack mut LlvmCompile aggregateSwitchPatterns = CompileFull(
+        "parser-smoke-valid-aggregate-switch-patterns",
+        raw"""
+module Patterns
+
+record Pair(i32[min max] Left, i32[min max] Right)
+{
+}
+
+finite law i32[min max] Run(Pair value)
+{
+    switch (value)
+    {
+        case Pair(1, var right):
+            return right;
+        case Pair(_, _):
+            return 0;
+    }
+}
+""");
+
+    // "property switch patterns"
+    stack mut LlvmCompile propertySwitchPatterns = CompileFull(
+        "parser-smoke-valid-property-switch-patterns",
+        raw"""
+module Patterns
+
+struct Boxed
+{
+    i32[min max] Value;
+}
+
+finite law i32[min max] Run(Boxed value)
+{
+    switch (value)
+    {
+        case Boxed { Value: 1 }:
+            return 1;
+        case Boxed { Value: var other }:
+            return other;
+    }
+}
+""");
+
+    // "list switch patterns"
+    stack mut LlvmCompile listSwitchPatterns = CompileFull(
+        "parser-smoke-valid-list-switch-patterns",
+        raw"""
+module Patterns
+
+finite law i32[min max] Run(i32[min max][2] values)
+{
+    switch (values)
+    {
+        case [1, var right]:
+            return right;
+        case [_, _]:
+            return 0;
+    }
+}
+""");
+
+    // "nested aggregate switch patterns"
+    stack mut LlvmCompile nestedAggregateSwitchPatterns = CompileFull(
+        "parser-smoke-valid-nested-aggregate-switch-patterns",
+        raw"""
+module Patterns
+
+record Pair(i32[min max] Left, i32[min max] Right)
+{
+}
+record Outer(Pair Values, i32[min max] Tail)
+{
+}
+
+finite law i32[min max] Run(Outer value)
+{
+    switch (value)
+    {
+        case Outer(Pair(1, var right), var tail):
+            return right + tail;
+        case Outer(Pair(_, _), _):
+            return 0;
+    }
+}
+""");
+
+    // "const aggregate literals and nested array members"
+    stack mut LlvmCompile constAggregateLiterals = CompileFull(
+        "parser-smoke-valid-const-aggregate-literals-and-nested-array-members",
+        raw"""
+module Globals
+
+struct Inner
+{
+    i32[min max][2] Pair;
+}
+
+struct Outer
+{
+    Inner Node;
+    i32[min max][3] View;
+}
+
+const Outer Frozen =
+{
+    Node =
+    {
+        Pair =
+        {
+            4, 7
+        }
+    },
+    View =
+    {
+        1, 2, 3
+    }
+};
+
+static Outer Shared =
+{
+    Node =
+    {
+        Pair =
+        {
+            8, 9
+        }
+    },
+    View =
+    {
+        5, 6, 7
+    }
+};
+""");
+
+    // "generic function with constraint"
+    stack mut LlvmCompile genericFunctionWithConstraint = CompileFull(
+        "parser-smoke-valid-generic-function-with-constraint",
+        raw"""
+module GenericDemo
+
+public inlinehint finite T Echo<T>(T value) where T: Cloneable
+{
+    return value;
+}
+""");
+
+    // "strict floating point and explicit arithmetic operator spellings"
+    stack mut LlvmCompile strictFloatingPointAndOperators = CompileFull(
+        "parser-smoke-valid-strict-floating-point-and-explicit-arithmetic-operator-spellings",
+        raw"""
+module Operators
+
+strictfp finite law f32 Precise(f32 left, f32 right)
+{
+    return left + right;
+}
+
+finite law i32[min max] Wrap(i32[min max] left, i32[min max] right)
+{
+    left +%= right;
+    return -%left +% right *% 2;
+}
+
+finite law i32[min max] Saturate(i32[min max] left, i32[min max] right)
+{
+    left +|= right;
+    return left +| right *| 2;
+}
+""");
+
+    // "explicit conversions and raw pointer operators"
+    stack mut LlvmCompile explicitConversionsAndRawPointers = CompileFull(
+        "parser-smoke-valid-explicit-conversions-and-raw-pointer-operators",
+        raw"""
+module UnsafeDemo
+
+struct Box
+{
+    i32[min max] Value;
+}
+
+static i32[min max] Counter = 0;
+
+unsafe fn i32[min max] Run(rawmutptr<i32[min max]> input, i64[min max] bits)
+{
+    stack mut Box box = new Box()
+    {
+        Value = 1
+    };
+    *(&(box.Value)) = (i32[min max])bits;
+    stack rawptr<i32[min max]> ptrAlias = (rawptr<i32[min max]>)input;
+    Counter = *ptrAlias;
+    return *(&Counter);
+}
+""");
+
+    return Succeeds(minimalModule)
+        && Succeeds(importsAndFunctionModifiers)
+        && Succeeds(topLevelAsmFunctions)
+        && Succeeds(structRecordTraitAndDoctrine)
+        && Succeeds(rustStyleEnumDeclarations)
+        && Succeeds(qualifiedTypesPointersAndRanges)
+        && Succeeds(textLiteralsWithSupportedEscapes)
+        && Succeeds(blocksStatementsLoopsAndExpressions)
+        && Succeeds(aggregateSwitchPatterns)
+        && Succeeds(propertySwitchPatterns)
+        && Succeeds(listSwitchPatterns)
+        && Succeeds(nestedAggregateSwitchPatterns)
+        && Succeeds(constAggregateLiterals)
+        && Succeeds(genericFunctionWithConstraint)
+        && Succeeds(strictFloatingPointAndOperators)
+        && Succeeds(explicitConversionsAndRawPointers);
+}

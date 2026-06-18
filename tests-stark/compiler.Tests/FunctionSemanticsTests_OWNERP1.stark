@@ -1,0 +1,323 @@
+import CompilerTestSupport
+import System.Testing
+module FunctionSemanticsTests_OWNERP1
+
+// Ported slice of tests/compiler.Tests/FunctionSemanticsTests.cs.
+//
+// PORT-NOTE: every C# original here asserts on the SemanticValidationModel
+// artifact (per-function MemoryEffects flags, per-parameter facts such as
+// IsMemoryBacked / GuaranteedNonNull / GuaranteedReadOnly / GuaranteedNoAlias /
+// DereferenceableBytes / AlignmentBytes / CaptureKind / Reads / Writes, and the
+// per-call argument writes). The Stark host test protocol cannot read the
+// SemanticValidation artifact's structured fields; the helpers only expose
+// Succeeds / diagnostics / LLVM / MIR text. Each embedded program is therefore
+// routed through CompileTypeCheck (which runs the semantic-validate pass) and the
+// structured-fact assertions are reduced to the original `Assert.True(Succeeded)`
+// gate: the program must type-check and pass semantic validation. The specific
+// fact reduced is named per test below.
+
+// Ported from FunctionSemanticsTests.SemanticValidationSummariesCaptureParameterGuaranteesAndReturnCaptures.
+public unsafe fn bool SemanticValidationSummariesCaptureParameterGuaranteesAndReturnCapturesImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: reduced. C# asserts echo.MemoryEffects.CapturesArgumentMemory,
+        // and the single `value` parameter facts: IsMemoryBacked, GuaranteedNonNull,
+        // GuaranteedReadOnly, DereferenceableBytes==4, AlignmentBytes==4,
+        // CaptureKind==Return. Helpers cannot read these structured facts, so this
+        // is reduced to Succeeds (program type-checks + passes semantic-validate).
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "ownerp1-fnsem-param-guarantees-return-captures",
+            raw"""
+module Demo
+
+struct Box
+{
+    i32[min max] Value;
+}
+
+unsafe fn retborrow Box Echo(retborrow Box value)
+{
+    return value;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from FunctionSemanticsTests.SemanticValidationSummariesDeriveConcreteLayoutFactsForPaddedAggregates.
+public unsafe fn bool SemanticValidationSummariesDeriveConcreteLayoutFactsForPaddedAggregatesImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: reduced. C# asserts the single `pair` parameter facts:
+        // IsMemoryBacked, GuaranteedNonNull, DereferenceableBytes==8 (i8 + pad +
+        // i32), AlignmentBytes==4. Helpers cannot read layout facts, so reduced to
+        // Succeeds.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "ownerp1-fnsem-padded-aggregate-layout",
+            raw"""
+module Demo
+
+struct Pair
+{
+    i8[min max] Tag;
+    i32[min max] Value;
+}
+
+unsafe fn void Inspect(borrow Pair pair)
+{
+    return;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from FunctionSemanticsTests.DefaultNonOverlapParameterContractsFlowIntoSemanticNoAliasFacts.
+public unsafe fn bool DefaultNonOverlapParameterContractsFlowIntoSemanticNoAliasFactsImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: reduced. C# asserts both `left` and `right` parameters of
+        // TouchDefault and TouchSecondDefault have GuaranteedNoAlias==true (default
+        // non-overlap contract). Helpers cannot read the no-alias fact, so reduced
+        // to Succeeds.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "ownerp1-fnsem-default-nonoverlap-noalias",
+            raw"""
+module Demo
+
+struct Box
+{
+    i32[min max] Value;
+}
+
+unsafe fn void TouchDefault(borrow mut Box left, borrow mut Box right)
+{
+    left.Value = 1;
+    right.Value = 2;
+    return;
+}
+
+unsafe fn void TouchSecondDefault(borrow mut Box left, borrow mut Box right)
+{
+    left.Value = 1;
+    right.Value = 2;
+    return;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from FunctionSemanticsTests.DefaultNonOverlapAndOverlapContractsFlowIntoSemanticNoAliasFacts.
+public unsafe fn bool DefaultNonOverlapAndOverlapContractsFlowIntoSemanticNoAliasFactsImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: reduced. C# asserts TouchDefault params GuaranteedNoAlias==true,
+        // and TouchOverlap (where overlap(left,right)) and TouchSame (where
+        // same(left,right)) params GuaranteedNoAlias==false. Helpers cannot read the
+        // no-alias fact, so reduced to Succeeds (program type-checks + passes
+        // semantic-validate including the overlap/same where-contracts).
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "ownerp1-fnsem-overlap-same-noalias",
+            raw"""
+module Demo
+
+struct Box
+{
+    i32[min max] Value;
+}
+
+unsafe fn void TouchDefault(borrow mut Box left, borrow mut Box right)
+{
+    left.Value = 1;
+    right.Value = 2;
+    return;
+}
+
+unsafe fn void TouchOverlap(borrow mut Box left, borrow mut Box right) where overlap(left, right)
+{
+    left.Value = 1;
+    right.Value = 2;
+    return;
+}
+
+unsafe fn void TouchSame(borrow mut Box left, borrow mut Box right) where same(left, right)
+{
+    left.Value = 1;
+    right.Value = 2;
+    return;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from FunctionSemanticsTests.ConstParameterQualifierFlowsIntoSemanticReadonlyFacts.
+public unsafe fn bool ConstParameterQualifierFlowsIntoSemanticReadonlyFactsImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: reduced. C# asserts the single `ptr` parameter has
+        // GuaranteedReadOnly==true (from the `const` qualifier). Helpers cannot read
+        // the readonly fact, so reduced to Succeeds.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "ownerp1-fnsem-const-param-readonly",
+            raw"""
+module Demo
+
+unsafe fn void Inspect(const rawmutptr<i32[min max]> ptr)
+{
+    return;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from FunctionSemanticsTests.TransitiveCallEffectsFlowIntoSemanticSummaries.
+public unsafe fn bool TransitiveCallEffectsFlowIntoSemanticSummariesImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: reduced. C# asserts Outer.MemoryEffects.WritesArgumentMemory,
+        // its single `box` parameter Writes==true, and the single recorded call to
+        // "Touch" with its single argument mapping box->box and Writes==true
+        // (transitive call effect). Helpers cannot read memory effects or the call
+        // table, so reduced to Succeeds.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "ownerp1-fnsem-transitive-call-effects",
+            raw"""
+module Demo
+
+struct Box
+{
+    i32[min max] Value;
+}
+
+unsafe fn void Touch(borrow mut Box box)
+{
+    box.Value = 1;
+    return;
+}
+
+unsafe fn void Outer(borrow mut Box box)
+{
+    Touch(box);
+    return;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from FunctionSemanticsTests.SemanticValidationSummariesDistinguishArgumentAndOtherMemory.
+public unsafe fn bool SemanticValidationSummariesDistinguishArgumentAndOtherMemoryImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: reduced. C# asserts ReadGlobal.MemoryEffects ReadsOtherMemory==
+        // true, WritesOtherMemory==false, ReadsArgumentMemory==false; and TouchArg
+        // .MemoryEffects WritesArgumentMemory==true, ReadsOtherMemory==false,
+        // WritesOtherMemory==false (argument vs other-memory distinction). Helpers
+        // cannot read memory-effect flags, so reduced to Succeeds.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "ownerp1-fnsem-distinguish-arg-other-memory",
+            raw"""
+module Demo
+
+struct Box
+{
+    i32[min max] Value;
+}
+
+static mut i32[min max] Counter = 0;
+
+unsafe fn i32[min max] ReadGlobal()
+{
+    return Counter;
+}
+
+unsafe fn void TouchArg(borrow mut Box box)
+{
+    box.Value = 1;
+    return;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from FunctionSemanticsTests.SystemMemoryAllocatorDeclarationSummariesIncludeAllocatorState.
+public unsafe fn bool SystemMemoryAllocatorDeclarationSummariesIncludeAllocatorStateImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: reduced. C# asserts that the extern declarations Allocate,
+        // Reallocate and Free each have MemoryEffects with ReadsOtherMemory==true and
+        // WritesOtherMemory==true (allocator state). Helpers cannot read memory
+        // effects, so reduced to Succeeds.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "ownerp1-fnsem-allocator-state",
+            raw"""
+module System.Memory
+
+public struct Allocator
+{
+    u8[0 127] Kind;
+}
+
+internal struct Allocation
+{
+    rawmutptr<i8[min max]> Pointer;
+    u64[0 2 ** 63 - 1] ByteLength;
+    u64[1 2 ** 63 - 1] Alignment;
+    Allocator Allocator;
+}
+
+internal unsafe fn Allocation Allocate(Allocator allocator, u64[0 2 ** 63 - 1] byteLength, u64[1 2 ** 63 - 1] alignment);
+internal unsafe fn Allocation Reallocate(Allocation allocation, u64[0 2 ** 63 - 1] byteLength, u64[1 2 ** 63 - 1] alignment);
+internal unsafe fn void Free(Allocation allocation);
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from FunctionSemanticsTests.DynamicStorageOperationsOnBorrowedParametersWriteArgumentMemory.
+public unsafe fn bool DynamicStorageOperationsOnBorrowedParametersWriteArgumentMemoryImpl()
+{
+    unsafe
+    {
+        // PORT-NOTE: reduced. C# asserts that Reserve and Append each have
+        // MemoryEffects with ReadsArgumentMemory==true and WritesArgumentMemory==
+        // true, and that each single `values` parameter has Reads==true and
+        // Writes==true (dynamic storage ops on a borrowed parameter write argument
+        // memory). Helpers cannot read memory effects or parameter facts, so reduced
+        // to Succeeds.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "ownerp1-fnsem-dynamic-storage-writes-arg",
+            raw"""
+module Demo
+
+unsafe fn bool Reserve(mut borrow dynamic u32[0 2 ** 31 - 1] values)
+{
+    return values.TryReserve(8);
+}
+
+unsafe fn bool Append(mut borrow dynamic u32[0 2 ** 31 - 1] values)
+{
+    if (!values.TryReserve(1))
+    {
+        return false;
+    }
+
+    init values[values.Length] = 1;
+    return true;
+}
+""");
+        return Succeeds(compiled);
+    }
+}

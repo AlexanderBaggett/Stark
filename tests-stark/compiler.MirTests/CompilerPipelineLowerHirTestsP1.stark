@@ -1,0 +1,64 @@
+import CompilerMirTestSupport
+import System.Testing
+module CompilerPipelineLowerHirTestsP1
+
+// Ported from CompilerPipelineLowerHirTests.NestedGenericCallsMaterializeTransitiveSpecializationsIntoHighLevelIr.
+public unsafe fn bool NestedGenericCallsMaterializeTransitiveSpecializationsIntoHighLevelIrImpl()
+{
+    // PORT-NOTE: original asserts over the HighLevelIr artifact's Functions list
+    // (StopAfterPassId "lower-hir"); helpers only expose the lower-mir text, so the
+    // transitive monomorphizations are matched as mangled names in the MIR artifact.
+    stack mut MirCompile c = CompileMir(
+        "lower-hir-nested-generic-transitive",
+        raw"""
+module Demo
+
+fn T Identity<T>(T value)
+{
+    return value;
+}
+
+fn T Forward<T>(T value)
+{
+    return Identity(value);
+}
+
+fn i32[min max] Run(i32[min max] value)
+{
+    return Forward(value);
+}
+""");
+    return MirContainsAll2(
+        c,
+        "__stark_mono_fn_Demo__Forward__i32",
+        "__stark_mono_fn_Demo__Identity__i32");
+}
+
+// Ported from CompilerPipelineLowerHirTests.LowerHirMaterializesSourceBackedMonomorphizedGenericFunctions.
+public unsafe fn bool LowerHirMaterializesSourceBackedMonomorphizedGenericFunctionsImpl()
+{
+    // PORT-NOTE: original asserts over the HighLevelIr artifact's single monomorphized
+    // function object (HasBody, BodyLoweringKind == StarkCfg, Signature.TemplateName /
+    // BodyTemplateName == "Identity", ReturnType/Parameter DisplayName == "i32",
+    // GenericTypeSubstitution["T"].DisplayName == "i32"). The helpers only expose the
+    // lower-mir text, so this is reduced to: the source-backed monomorphization is
+    // materialized exactly once as "__stark_mono_fn_Demo__Identity__i32".
+    stack mut MirCompile c = CompileMir(
+        "lower-hir-source-backed-monomorphized",
+        raw"""
+module Demo
+
+fn T Identity<T>(T value)
+{
+    stack T copy = value;
+    return copy;
+}
+
+fn i32[min max] Run(i32[min max] value)
+{
+    return Identity(value);
+}
+""");
+    return Succeeds(c)
+        && MirOccurrences(c, "__stark_mono_fn_Demo__Identity__i32") == 1;
+}

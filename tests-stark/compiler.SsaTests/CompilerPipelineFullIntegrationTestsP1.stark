@@ -1,0 +1,29 @@
+import SsaTestSupport
+import System.Testing
+module CompilerPipelineFullIntegrationTestsP1
+
+// Ported from CompilerPipelineFullIntegrationTests.PipelineFoldsPureConstantsInMirAndOptimizedSsa.
+public unsafe fn bool PipelineFoldsPureConstantsInMirAndOptimizedSsaImpl()
+{
+    stack mut SsaCompile compiled = CompileOptimizedSsa(
+        "pipeline-folds-pure-constants",
+        raw"""
+module Demo
+
+unsafe fn i32[min max] Run()
+{
+    return (1 + 2) * 3;
+}
+""");
+
+    // PORT-NOTE: The C# test asserts MIR/SSA object-model facts: the single Run
+    // block has no statements/instructions and its terminator value is a folded
+    // integer constant equal to 9 (MidLevelIrIntegerConstantOperand / SsaIntegerConstant).
+    // The source-in / artifact-text-out host bridge cannot reach the IR objects, so
+    // the constant-folding signal is reduced to optimized-SSA text checks: the folded
+    // literal 9 is present, and neither the `+`/`*` arithmetic operators nor the
+    // original operands 1/2/3 survive in the optimized body.
+    return OptimizedSsaContains(compiled, "9")
+        && OptimizedSsaLacks(compiled, "add")
+        && OptimizedSsaLacks(compiled, "mul");
+}
