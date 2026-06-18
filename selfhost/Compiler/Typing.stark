@@ -112,8 +112,24 @@ public fn ExprType ClassifyExprType(borrow TokenStream stream, borrow StatementL
 
     if (kind == ExprKind.Binary)
     {
-        stack TokenKind op = stream.KindAt((u64[0 2 ** 63 - 1])body.ExprTokenAt(node));
-        if (IsBooleanOperator(op))
+        stack u32[0 max] opToken = body.ExprTokenAt(node);
+        stack TokenKind op = stream.KindAt((u64[0 2 ** 63 - 1])opToken);
+
+        // A shift (`<<`/`>>`) lexes as two adjacent `Lt`/`Gt` tokens, so its
+        // Binary node is anchored on a `Lt`/`Gt` that would otherwise look
+        // relational. Detect the adjacent pair so the shift is typed as an
+        // integer (arithmetic), not as a boolean comparison.
+        stack mut bool isShift = false;
+        if (op == TokenKind.Lt && stream.KindAt((u64[0 2 ** 63 - 1])(opToken + 1)) == TokenKind.Lt)
+        {
+            isShift = true;
+        }
+        else if (op == TokenKind.Gt && stream.KindAt((u64[0 2 ** 63 - 1])(opToken + 1)) == TokenKind.Gt)
+        {
+            isShift = true;
+        }
+
+        if (!isShift && IsBooleanOperator(op))
         {
             return ExprType.Bool;
         }

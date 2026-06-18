@@ -1,0 +1,2218 @@
+import Compiler.Ir
+import System.Memory
+import System.Text
+import System.Runtime.Buffer
+import System.IO
+import System.IO.File
+import System.FileSystem
+import System.Process
+module Compiler.Mir
+
+// A first slice of the self-hosted compiler's MIR (mid-level IR), built on the
+// `Compiler.Ir` typed-handle substrate (docs/Self-host-Prep/24). Instructions live
+// in a dense `IrTable<MirInstruction>` the caller owns directly; each instruction's
+// result is named by a `MirValueId` (its 1-based table index), and operands are
+// raw 1-based value indices into the same table.
+//
+// The MIR builder is a set of FREE FUNCTIONS over the table rather than methods on a
+// wrapper struct: a struct field whose type is a generic aggregate (an `IrTable<T>`
+// field) currently miscompiles in the host backend (an invalid `getelementptr`), so
+// the table is passed directly instead of being wrapped. `MirInstruction` is a flat
+// record (plain enum + raw `u32`/`i64`), avoiding nested handle structs.
+
+// A MIR instruction opcode (a flat, non-generic enum).
+public enum MirOp
+{
+    // An integer constant; its value is the instruction's immediate.
+    ConstInt,
+    // A function parameter; its 0-based index rides in the immediate. Declared in the
+    // signature, so it emits no body line and is referenced as `%pK` by its uses.
+    Param,
+    Add,
+    Sub,
+    Mul,
+    // The rest of the integer ALU over operands A/B: signed/unsigned divide and
+    // remainder, bitwise and/or/xor, and left/arithmetic-right shifts. Map to LLVM
+    // sdiv/udiv/srem/and/or/xor/shl/ashr.
+    SDiv,
+    UDiv,
+    SRem,
+    And,
+    Or,
+    Xor,
+    Shl,
+    AShr,
+    // Signed integer comparisons over operands A/B; each yields an i1 (LLVM `icmp`),
+    // meant to feed a `CondBranch` condition. Eq/Ne/Lt/Le/Gt/Ge map to LLVM
+    // eq/ne/slt/sle/sgt/sge.
+    CmpEq,
+    CmpNe,
+    CmpLt,
+    CmpLe,
+    CmpGt,
+    CmpGe,
+    // Loads the i64 value of module global `@gN` (N = the global id in the immediate);
+    // its result is the value naming this instruction.
+    LoadGlobal,
+    // Stores operand A into module global `@gN` (N = the global id in the immediate).
+    // A side-effecting instruction with no meaningful result register.
+    StoreGlobal,
+    // A 2-incoming SSA phi: result = operand A from one predecessor block, operand B
+    // from another. The two predecessor block ids are packed into the immediate as
+    // `block0 + block1 * 2**32` (decoded by div/mod 2**32), since the flat instruction
+    // has no spare fields for them. Used at a control-flow merge.
+    Phi,
+    // Calls function `@fN` where N is the callee id held in the immediate. Zero-arg
+    // for now; its result is the value naming this instruction.
+    Call,
+    // Returns operand A from the function.
+    Return,
+}
+
+// A MIR value type. The integer subset is currently the only modeled family; values
+// default to `I64` so untyped builders emit `i64` exactly as before.
+public enum MirType
+{
+    I1,
+    I32,
+    I64,
+}
+
+// One MIR instruction: an opcode, up to two operand value indices (0 = absent), an
+// integer immediate (used by `ConstInt`/`Param`/`Call`/`*Global`/`Phi`), and the
+// type of its result value (defaults to `I64`).
+public struct MirInstruction
+{
+    MirOp Op;
+    u32[0 max] AIndex;
+    u32[0 max] BIndex;
+    i64[min max] Imm;
+    MirType ResType;
+
+    MirInstruction()
+    {
+        self.Op = MirOp.ConstInt;
+        self.AIndex = 0;
+        self.BIndex = 0;
+        self.Imm = 0;
+        self.ResType = MirType.I64;
+    }
+
+    public inline finite law MirOp Opcode(borrow MirInstruction self)
+    {
+        return self.Op;
+    }
+
+    public inline finite law MirType ResultType(borrow MirInstruction self)
+    {
+        return self.ResType;
+    }
+
+    public inline finite law u32[0 max] OperandAIndex(borrow MirInstruction self)
+    {
+        return self.AIndex;
+    }
+
+    public inline finite law u32[0 max] OperandBIndex(borrow MirInstruction self)
+    {
+        return self.BIndex;
+    }
+
+    public inline finite law i64[min max] Immediate(borrow MirInstruction self)
+    {
+        return self.Imm;
+    }
+}
+
+// Appends an instruction to `instrs`, returning the `MirValueId` naming its result.
+internal fn MirValueId MirEmit(mut borrow IrTable<MirInstruction> instrs, MirOp op, u32[0 max] aIndex, u32[0 max] bIndex, i64[min max] imm)
+{
+    stack mut MirInstruction instr = new();
+    instr.Op = op;
+    instr.AIndex = aIndex;
+    instr.BIndex = bIndex;
+    instr.Imm = imm;
+    return MirValueIdOf(instrs.Add(instr));
+}
+
+// Like `MirEmit` but sets the result type (the untyped `MirEmit` leaves it `I64`).
+internal fn MirValueId MirEmitTyped(mut borrow IrTable<MirInstruction> instrs, MirOp op, MirType type, u32[0 max] aIndex, u32[0 max] bIndex, i64[min max] imm)
+{
+    stack mut MirInstruction instr = new();
+    instr.Op = op;
+    instr.AIndex = aIndex;
+    instr.BIndex = bIndex;
+    instr.Imm = imm;
+    instr.ResType = type;
+    return MirValueIdOf(instrs.Add(instr));
+}
+
+// The result type of the instruction naming `value` (`I64` when out of range).
+public fn MirType MirValueType(borrow IrTable<MirInstruction> instrs, u32[0 max] valueIndex)
+{
+    if (!instrs.Contains(valueIndex))
+    {
+        return MirType.I64;
+    }
+
+    stack MirInstruction instr = instrs.Get(valueIndex);
+    return instr.ResultType();
+}
+
+// Emits an integer constant, returning the value naming it.
+public fn MirValueId MirConstInt(mut borrow IrTable<MirInstruction> instrs, i64[min max] value)
+{
+    return MirEmit(instrs, MirOp.ConstInt, 0, 0, value);
+}
+
+// A typed integer constant of result type `type`.
+public fn MirValueId MirConstIntTyped(mut borrow IrTable<MirInstruction> instrs, MirType type, i64[min max] value)
+{
+    return MirEmitTyped(instrs, MirOp.ConstInt, type, 0, 0, value);
+}
+
+// A typed integer add of result type `type` over A/B.
+public fn MirValueId MirAddTyped(mut borrow IrTable<MirInstruction> instrs, MirType type, MirValueId a, MirValueId b)
+{
+    return MirEmitTyped(instrs, MirOp.Add, type, a.Index(), b.Index(), 0);
+}
+
+// Declares the 0-based function parameter `paramIndex` as a value. Uses of the
+// returned value emit `%pParamIndex`; it produces no body line of its own.
+public fn MirValueId MirParam(mut borrow IrTable<MirInstruction> instrs, u32[0 max] paramIndex)
+{
+    return MirEmit(instrs, MirOp.Param, 0, 0, (i64[min max])paramIndex);
+}
+
+// The 0-based parameter index of the param instruction naming `value` (0 when not a
+// param / out of range). Guards on the opcode so the shared `Imm` field is not
+// misread for a ConstInt/Call value that also stores data there.
+public fn u32[0 max] MirParamIndexOf(borrow IrTable<MirInstruction> instrs, MirValueId value)
+{
+    if (!instrs.Contains(value.Index()))
+    {
+        return 0;
+    }
+
+    stack MirInstruction instr = instrs.Get(value.Index());
+    if (instr.Opcode() != MirOp.Param)
+    {
+        return 0;
+    }
+
+    return (u32[0 max])instr.Immediate();
+}
+
+public fn MirValueId MirAdd(mut borrow IrTable<MirInstruction> instrs, MirValueId a, MirValueId b)
+{
+    return MirEmit(instrs, MirOp.Add, a.Index(), b.Index(), 0);
+}
+
+public fn MirValueId MirSub(mut borrow IrTable<MirInstruction> instrs, MirValueId a, MirValueId b)
+{
+    return MirEmit(instrs, MirOp.Sub, a.Index(), b.Index(), 0);
+}
+
+public fn MirValueId MirMul(mut borrow IrTable<MirInstruction> instrs, MirValueId a, MirValueId b)
+{
+    return MirEmit(instrs, MirOp.Mul, a.Index(), b.Index(), 0);
+}
+
+// The rest of the integer ALU: signed/unsigned divide and remainder, bitwise
+// and/or/xor, and left/arithmetic-right shifts, each over operands A/B.
+public fn MirValueId MirSDiv(mut borrow IrTable<MirInstruction> instrs, MirValueId a, MirValueId b)
+{
+    return MirEmit(instrs, MirOp.SDiv, a.Index(), b.Index(), 0);
+}
+
+public fn MirValueId MirUDiv(mut borrow IrTable<MirInstruction> instrs, MirValueId a, MirValueId b)
+{
+    return MirEmit(instrs, MirOp.UDiv, a.Index(), b.Index(), 0);
+}
+
+public fn MirValueId MirSRem(mut borrow IrTable<MirInstruction> instrs, MirValueId a, MirValueId b)
+{
+    return MirEmit(instrs, MirOp.SRem, a.Index(), b.Index(), 0);
+}
+
+public fn MirValueId MirAnd(mut borrow IrTable<MirInstruction> instrs, MirValueId a, MirValueId b)
+{
+    return MirEmit(instrs, MirOp.And, a.Index(), b.Index(), 0);
+}
+
+public fn MirValueId MirOr(mut borrow IrTable<MirInstruction> instrs, MirValueId a, MirValueId b)
+{
+    return MirEmit(instrs, MirOp.Or, a.Index(), b.Index(), 0);
+}
+
+public fn MirValueId MirXor(mut borrow IrTable<MirInstruction> instrs, MirValueId a, MirValueId b)
+{
+    return MirEmit(instrs, MirOp.Xor, a.Index(), b.Index(), 0);
+}
+
+public fn MirValueId MirShl(mut borrow IrTable<MirInstruction> instrs, MirValueId a, MirValueId b)
+{
+    return MirEmit(instrs, MirOp.Shl, a.Index(), b.Index(), 0);
+}
+
+public fn MirValueId MirAShr(mut borrow IrTable<MirInstruction> instrs, MirValueId a, MirValueId b)
+{
+    return MirEmit(instrs, MirOp.AShr, a.Index(), b.Index(), 0);
+}
+
+// Signed integer comparisons; each emits an `i1`-valued instruction over A/B.
+public fn MirValueId MirCmpEq(mut borrow IrTable<MirInstruction> instrs, MirValueId a, MirValueId b)
+{
+    return MirEmit(instrs, MirOp.CmpEq, a.Index(), b.Index(), 0);
+}
+
+public fn MirValueId MirCmpNe(mut borrow IrTable<MirInstruction> instrs, MirValueId a, MirValueId b)
+{
+    return MirEmit(instrs, MirOp.CmpNe, a.Index(), b.Index(), 0);
+}
+
+public fn MirValueId MirCmpLt(mut borrow IrTable<MirInstruction> instrs, MirValueId a, MirValueId b)
+{
+    return MirEmit(instrs, MirOp.CmpLt, a.Index(), b.Index(), 0);
+}
+
+public fn MirValueId MirCmpLe(mut borrow IrTable<MirInstruction> instrs, MirValueId a, MirValueId b)
+{
+    return MirEmit(instrs, MirOp.CmpLe, a.Index(), b.Index(), 0);
+}
+
+public fn MirValueId MirCmpGt(mut borrow IrTable<MirInstruction> instrs, MirValueId a, MirValueId b)
+{
+    return MirEmit(instrs, MirOp.CmpGt, a.Index(), b.Index(), 0);
+}
+
+public fn MirValueId MirCmpGe(mut borrow IrTable<MirInstruction> instrs, MirValueId a, MirValueId b)
+{
+    return MirEmit(instrs, MirOp.CmpGe, a.Index(), b.Index(), 0);
+}
+
+public fn MirValueId MirReturn(mut borrow IrTable<MirInstruction> instrs, MirValueId value)
+{
+    return MirEmit(instrs, MirOp.Return, value.Index(), 0, 0);
+}
+
+// Loads module global `@gN` (globalId), returning the value naming the loaded result.
+// The global id rides in the immediate field.
+public fn MirValueId MirLoadGlobal(mut borrow IrTable<MirInstruction> instrs, u32[0 max] globalId)
+{
+    return MirEmit(instrs, MirOp.LoadGlobal, 0, 0, (i64[min max])globalId);
+}
+
+// The global id loaded by the load instruction naming `value` (0 when not a load /
+// out of range). Guards on the opcode so the shared `Imm` field is not misread.
+public fn u32[0 max] MirLoadedGlobalOf(borrow IrTable<MirInstruction> instrs, MirValueId value)
+{
+    if (!instrs.Contains(value.Index()))
+    {
+        return 0;
+    }
+
+    stack MirInstruction instr = instrs.Get(value.Index());
+    if (instr.Opcode() != MirOp.LoadGlobal)
+    {
+        return 0;
+    }
+
+    return (u32[0 max])instr.Immediate();
+}
+
+// Stores `value` into module global `@gN` (globalId). The stored value rides in
+// operand A; the global id rides in the immediate. The returned id names the store
+// instruction itself (a store has no meaningful result).
+public fn MirValueId MirStoreGlobal(mut borrow IrTable<MirInstruction> instrs, u32[0 max] globalId, MirValueId value)
+{
+    return MirEmit(instrs, MirOp.StoreGlobal, value.Index(), 0, (i64[min max])globalId);
+}
+
+// The global id written by the store instruction naming `value` (0 when not a store /
+// out of range). Guards on the opcode so the shared `Imm` field is not misread.
+public fn u32[0 max] MirStoredGlobalOf(borrow IrTable<MirInstruction> instrs, MirValueId value)
+{
+    if (!instrs.Contains(value.Index()))
+    {
+        return 0;
+    }
+
+    stack MirInstruction instr = instrs.Get(value.Index());
+    if (instr.Opcode() != MirOp.StoreGlobal)
+    {
+        return 0;
+    }
+
+    return (u32[0 max])instr.Immediate();
+}
+
+// The two predecessor block ids of a 2-incoming phi are packed into the immediate as
+// `block0 + block1 * 2**32`; these decode the low/high halves (div/mod, no bitwise).
+internal fn u32[0 max] DecodePhiBlock0(i64[min max] packed)
+{
+    return (u32[0 max])(packed % 4294967296);
+}
+
+internal fn u32[0 max] DecodePhiBlock1(i64[min max] packed)
+{
+    return (u32[0 max])(packed / 4294967296);
+}
+
+// A 2-incoming SSA phi: `value0` from `block0`, `value1` from `block1`. The values
+// ride in operands A/B; the two block ids are packed into the immediate.
+public fn MirValueId MirPhi2(mut borrow IrTable<MirInstruction> instrs, MirValueId value0, MirBlockId block0, MirValueId value1, MirBlockId block1)
+{
+    stack i64[min max] packed = (i64[min max])block0.Index() + (i64[min max])block1.Index() * 4294967296;
+    return MirEmit(instrs, MirOp.Phi, value0.Index(), value1.Index(), packed);
+}
+
+// The first/second incoming predecessor block of the phi naming `value` (invalid when
+// not a phi / out of range). Guards on the opcode before decoding the immediate.
+public fn MirBlockId MirPhiIncomingBlock0(borrow IrTable<MirInstruction> instrs, MirValueId value)
+{
+    if (!instrs.Contains(value.Index()))
+    {
+        return MirBlockIdOf(0);
+    }
+
+    stack MirInstruction instr = instrs.Get(value.Index());
+    if (instr.Opcode() != MirOp.Phi)
+    {
+        return MirBlockIdOf(0);
+    }
+
+    return MirBlockIdOf(DecodePhiBlock0(instr.Immediate()));
+}
+
+public fn MirBlockId MirPhiIncomingBlock1(borrow IrTable<MirInstruction> instrs, MirValueId value)
+{
+    if (!instrs.Contains(value.Index()))
+    {
+        return MirBlockIdOf(0);
+    }
+
+    stack MirInstruction instr = instrs.Get(value.Index());
+    if (instr.Opcode() != MirOp.Phi)
+    {
+        return MirBlockIdOf(0);
+    }
+
+    return MirBlockIdOf(DecodePhiBlock1(instr.Immediate()));
+}
+
+// Emits a zero-arg call to `callee`, returning the value naming its result. The
+// callee id rides in the immediate field.
+public fn MirValueId MirCall(mut borrow IrTable<MirInstruction> instrs, MirFuncId callee)
+{
+    return MirEmit(instrs, MirOp.Call, 0, 0, (i64[min max])callee.Index());
+}
+
+// Emits a one-argument call `callee(arg0)`; the argument rides in operand A.
+public fn MirValueId MirCall1(mut borrow IrTable<MirInstruction> instrs, MirFuncId callee, MirValueId arg0)
+{
+    return MirEmit(instrs, MirOp.Call, arg0.Index(), 0, (i64[min max])callee.Index());
+}
+
+// Emits a two-argument call `callee(arg0, arg1)`; the arguments ride in operands A/B.
+public fn MirValueId MirCall2(mut borrow IrTable<MirInstruction> instrs, MirFuncId callee, MirValueId arg0, MirValueId arg1)
+{
+    return MirEmit(instrs, MirOp.Call, arg0.Index(), arg1.Index(), (i64[min max])callee.Index());
+}
+
+// The callee of the call instruction naming `value` (invalid when not a call /
+// out of range). Guards on the opcode so the shared `Imm` field is not misread for
+// a ConstInt/Param value that also stores data there.
+public fn MirFuncId MirCalleeOf(borrow IrTable<MirInstruction> instrs, MirValueId value)
+{
+    if (!instrs.Contains(value.Index()))
+    {
+        return MirFuncIdOf(0);
+    }
+
+    stack MirInstruction instr = instrs.Get(value.Index());
+    if (instr.Opcode() != MirOp.Call)
+    {
+        return MirFuncIdOf(0);
+    }
+
+    return MirFuncIdOf((u32[0 max])instr.Immediate());
+}
+
+// True when `value` names a live instruction in `instrs`.
+public inline finite law bool MirDefines(borrow IrTable<MirInstruction> instrs, MirValueId value)
+{
+    return instrs.Contains(value.Index());
+}
+
+// The opcode of the instruction naming `value` (`Return` when out of range).
+public fn MirOp MirOpcodeOf(borrow IrTable<MirInstruction> instrs, MirValueId value)
+{
+    if (!instrs.Contains(value.Index()))
+    {
+        return MirOp.Return;
+    }
+
+    stack MirInstruction instr = instrs.Get(value.Index());
+    return instr.Opcode();
+}
+
+// The first operand of the instruction naming `value` (invalid when out of range).
+public fn MirValueId MirOperandAOf(borrow IrTable<MirInstruction> instrs, MirValueId value)
+{
+    if (!instrs.Contains(value.Index()))
+    {
+        return MirValueIdOf(0);
+    }
+
+    stack MirInstruction instr = instrs.Get(value.Index());
+    return MirValueIdOf(instr.OperandAIndex());
+}
+
+public fn MirValueId MirOperandBOf(borrow IrTable<MirInstruction> instrs, MirValueId value)
+{
+    if (!instrs.Contains(value.Index()))
+    {
+        return MirValueIdOf(0);
+    }
+
+    stack MirInstruction instr = instrs.Get(value.Index());
+    return MirValueIdOf(instr.OperandBIndex());
+}
+
+// The immediate of the instruction naming `value` (0 when out of range).
+public fn i64[min max] MirImmediateOf(borrow IrTable<MirInstruction> instrs, MirValueId value)
+{
+    if (!instrs.Contains(value.Index()))
+    {
+        return 0;
+    }
+
+    stack MirInstruction instr = instrs.Get(value.Index());
+    return instr.Immediate();
+}
+
+// === Basic blocks + terminators ===
+// A MIR control-flow block is named by a `MirBlockId` (its 1-based index in an
+// `IrTable<MirBlock>` the caller owns). This first slice records each block's
+// terminator; associating instructions to a block is a later slice. Like the
+// instruction layer, blocks are flat records built/read through free functions.
+
+// How a block transfers control at its end.
+public enum MirTermKind
+{
+    // No terminator yet (a freshly created or out-of-range block).
+    Unterminated,
+    // `return Slot0` — returns the value named by slot 0.
+    Return,
+    // `branch Slot0` — unconditionally jumps to the block named by slot 0.
+    Branch,
+    // `if Slot0 then Slot1 else Slot2` — conditional branch on a value to two blocks.
+    CondBranch,
+}
+
+// A MIR basic block: its terminator kind and up to three operand slots whose meaning
+// depends on the kind (a value id or a block id, 0 when unused).
+public struct MirBlock
+{
+    MirTermKind Term;
+    u32[0 max] Slot0;
+    u32[0 max] Slot1;
+    u32[0 max] Slot2;
+
+    MirBlock()
+    {
+        self.Term = MirTermKind.Unterminated;
+        self.Slot0 = 0;
+        self.Slot1 = 0;
+        self.Slot2 = 0;
+    }
+
+    public inline finite law MirTermKind Terminator(borrow MirBlock self)
+    {
+        return self.Term;
+    }
+
+    public inline finite law u32[0 max] Slot0Index(borrow MirBlock self)
+    {
+        return self.Slot0;
+    }
+
+    public inline finite law u32[0 max] Slot1Index(borrow MirBlock self)
+    {
+        return self.Slot1;
+    }
+
+    public inline finite law u32[0 max] Slot2Index(borrow MirBlock self)
+    {
+        return self.Slot2;
+    }
+}
+
+// Appends a block terminating in `return value`, returning its id.
+public fn MirBlockId MirReturnBlock(mut borrow IrTable<MirBlock> blocks, MirValueId value)
+{
+    stack mut MirBlock blk = new();
+    blk.Term = MirTermKind.Return;
+    blk.Slot0 = value.Index();
+    return MirBlockIdOf(blocks.Add(blk));
+}
+
+// Appends a block unconditionally branching to `target`, returning its id.
+public fn MirBlockId MirBranchBlock(mut borrow IrTable<MirBlock> blocks, MirBlockId target)
+{
+    stack mut MirBlock blk = new();
+    blk.Term = MirTermKind.Branch;
+    blk.Slot0 = target.Index();
+    return MirBlockIdOf(blocks.Add(blk));
+}
+
+// Appends a block conditionally branching on `cond` to `thenTarget`/`elseTarget`.
+public fn MirBlockId MirCondBlock(mut borrow IrTable<MirBlock> blocks, MirValueId cond, MirBlockId thenTarget, MirBlockId elseTarget)
+{
+    stack mut MirBlock blk = new();
+    blk.Term = MirTermKind.CondBranch;
+    blk.Slot0 = cond.Index();
+    blk.Slot1 = thenTarget.Index();
+    blk.Slot2 = elseTarget.Index();
+    return MirBlockIdOf(blocks.Add(blk));
+}
+
+// The terminator kind of block `b` (`Unterminated` when out of range).
+public fn MirTermKind MirBlockTerminator(borrow IrTable<MirBlock> blocks, MirBlockId b)
+{
+    if (!blocks.Contains(b.Index()))
+    {
+        return MirTermKind.Unterminated;
+    }
+
+    stack MirBlock blk = blocks.Get(b.Index());
+    return blk.Terminator();
+}
+
+// The value returned by a `Return` block (invalid when not a return / out of range).
+public fn MirValueId MirBlockReturnValue(borrow IrTable<MirBlock> blocks, MirBlockId b)
+{
+    if (!blocks.Contains(b.Index()))
+    {
+        return MirValueIdOf(0);
+    }
+
+    stack MirBlock blk = blocks.Get(b.Index());
+    return MirValueIdOf(blk.Slot0Index());
+}
+
+// The target of a `Branch` block (invalid when out of range).
+public fn MirBlockId MirBlockBranchTarget(borrow IrTable<MirBlock> blocks, MirBlockId b)
+{
+    if (!blocks.Contains(b.Index()))
+    {
+        return MirBlockIdOf(0);
+    }
+
+    stack MirBlock blk = blocks.Get(b.Index());
+    return MirBlockIdOf(blk.Slot0Index());
+}
+
+// The condition value of a `CondBranch` block (invalid when out of range).
+public fn MirValueId MirBlockCondValue(borrow IrTable<MirBlock> blocks, MirBlockId b)
+{
+    if (!blocks.Contains(b.Index()))
+    {
+        return MirValueIdOf(0);
+    }
+
+    stack MirBlock blk = blocks.Get(b.Index());
+    return MirValueIdOf(blk.Slot0Index());
+}
+
+// The then-/else-target blocks of a `CondBranch` block (invalid when out of range).
+public fn MirBlockId MirBlockCondThen(borrow IrTable<MirBlock> blocks, MirBlockId b)
+{
+    if (!blocks.Contains(b.Index()))
+    {
+        return MirBlockIdOf(0);
+    }
+
+    stack MirBlock blk = blocks.Get(b.Index());
+    return MirBlockIdOf(blk.Slot1Index());
+}
+
+public fn MirBlockId MirBlockCondElse(borrow IrTable<MirBlock> blocks, MirBlockId b)
+{
+    if (!blocks.Contains(b.Index()))
+    {
+        return MirBlockIdOf(0);
+    }
+
+    stack MirBlock blk = blocks.Get(b.Index());
+    return MirBlockIdOf(blk.Slot2Index());
+}
+
+// === Function model ===
+// A MIR function is the unit a backend pass lowers. It owns a CONTIGUOUS range of
+// blocks in an `IrTable<MirBlock>` and a contiguous range of instructions in an
+// `IrTable<MirInstruction>` (both built in order during lowering), and names its
+// entry block. Like the rest of the MIR it is a flat record (only raw indices, no
+// nested generic field) built/read through free functions over `IrTable<MirFunction>`.
+
+// A MIR function: its entry block plus the half-open block range it owns and the
+// half-open instruction range it owns, each as (first 1-based index, count).
+public struct MirFunction
+{
+    u32[0 max] Entry;
+    u32[0 max] FirstBlock;
+    u32[0 max] BlockCount;
+    u32[0 max] FirstInstr;
+    u32[0 max] InstrCount;
+
+    MirFunction()
+    {
+        self.Entry = 0;
+        self.FirstBlock = 0;
+        self.BlockCount = 0;
+        self.FirstInstr = 0;
+        self.InstrCount = 0;
+    }
+
+    public inline finite law u32[0 max] EntryIndex(borrow MirFunction self)
+    {
+        return self.Entry;
+    }
+
+    public inline finite law u32[0 max] FirstBlockIndex(borrow MirFunction self)
+    {
+        return self.FirstBlock;
+    }
+
+    public inline finite law u32[0 max] OwnedBlockCount(borrow MirFunction self)
+    {
+        return self.BlockCount;
+    }
+
+    public inline finite law u32[0 max] FirstInstrIndex(borrow MirFunction self)
+    {
+        return self.FirstInstr;
+    }
+
+    public inline finite law u32[0 max] OwnedInstrCount(borrow MirFunction self)
+    {
+        return self.InstrCount;
+    }
+}
+
+// Records a function owning blocks [firstBlock, firstBlock+blockCount) and
+// instructions [firstInstr, firstInstr+instrCount), entered at `entry`.
+public fn MirFuncId MirDefineFunction(mut borrow IrTable<MirFunction> funcs, MirBlockId entry, MirBlockId firstBlock, u32[0 max] blockCount, MirValueId firstInstr, u32[0 max] instrCount)
+{
+    stack mut MirFunction f = new();
+    f.Entry = entry.Index();
+    f.FirstBlock = firstBlock.Index();
+    f.BlockCount = blockCount;
+    f.FirstInstr = firstInstr.Index();
+    f.InstrCount = instrCount;
+    return MirFuncIdOf(funcs.Add(f));
+}
+
+// The entry block of function `id` (invalid when out of range).
+public fn MirBlockId MirFunctionEntry(borrow IrTable<MirFunction> funcs, MirFuncId id)
+{
+    if (!funcs.Contains(id.Index()))
+    {
+        return MirBlockIdOf(0);
+    }
+
+    stack MirFunction f = funcs.Get(id.Index());
+    return MirBlockIdOf(f.EntryIndex());
+}
+
+// The number of blocks function `id` owns (0 when out of range).
+public fn u32[0 max] MirFunctionBlockCount(borrow IrTable<MirFunction> funcs, MirFuncId id)
+{
+    if (!funcs.Contains(id.Index()))
+    {
+        return 0;
+    }
+
+    stack MirFunction f = funcs.Get(id.Index());
+    return f.OwnedBlockCount();
+}
+
+// The number of instructions function `id` owns (0 when out of range).
+public fn u32[0 max] MirFunctionInstrCount(borrow IrTable<MirFunction> funcs, MirFuncId id)
+{
+    if (!funcs.Contains(id.Index()))
+    {
+        return 0;
+    }
+
+    stack MirFunction f = funcs.Get(id.Index());
+    return f.OwnedInstrCount();
+}
+
+// True when block `b` falls inside function `id`'s owned block range. The invalid
+// id 0 is never owned (even if a malformed function records a 0 range start).
+public fn bool MirFunctionOwnsBlock(borrow IrTable<MirFunction> funcs, MirFuncId id, MirBlockId b)
+{
+    if (!funcs.Contains(id.Index()) || b.Index() == 0)
+    {
+        return false;
+    }
+
+    stack MirFunction f = funcs.Get(id.Index());
+    stack u64[0 max] first = (u64[0 max])f.FirstBlockIndex();
+    stack u64[0 max] count = (u64[0 max])f.OwnedBlockCount();
+    stack u64[0 max] idx = (u64[0 max])b.Index();
+    return idx >= first && idx < first + count;
+}
+
+// True when instruction `value` falls inside function `id`'s owned instruction range.
+// The invalid id 0 is never owned (even if a malformed function records a 0 start).
+public fn bool MirFunctionOwnsValue(borrow IrTable<MirFunction> funcs, MirFuncId id, MirValueId value)
+{
+    if (!funcs.Contains(id.Index()) || value.Index() == 0)
+    {
+        return false;
+    }
+
+    stack MirFunction f = funcs.Get(id.Index());
+    stack u64[0 max] first = (u64[0 max])f.FirstInstrIndex();
+    stack u64[0 max] count = (u64[0 max])f.OwnedInstrCount();
+    stack u64[0 max] idx = (u64[0 max])value.Index();
+    return idx >= first && idx < first + count;
+}
+
+// === LLVM textual IR emission (first backend lowering, step toward #31) ===
+// A first lowering of the integer MIR subset to LLVM textual IR. Each MIR value
+// `%vN` (N = its 1-based instruction index) becomes a NAMED LLVM SSA register, so
+// the output is valid LLVM IR (named locals sidestep LLVM's numbered-value
+// consecutiveness rule). `ConstInt` materializes via `add i64 0, imm`. This is text
+// generation only; binding to libLLVM for object emission is a later slice. Each
+// helper returns `MemoryStatus` and threads append failures sink via `try`.
+
+// Appends the LLVM register name (`%vN`) for the value at 1-based `index`.
+internal fn MemoryStatus EmitLlvmRegister(mut borrow OwnedAscii sink, u32[0 max] index)
+{
+    try sink.AppendConstAscii("%v");
+    try sink.AppendU64((u64[0 max])index);
+    return MemoryStatus.Ok;
+}
+
+// Appends the LLVM reference for an OPERAND value at `valueIndex`: `%pK` when it
+// names a Param instruction (K = its 0-based param index), else `%vN`. Operands go
+// through this (not `EmitLlvmRegister`) so parameter uses lower to `%pK`.
+internal fn MemoryStatus EmitLlvmOperand(borrow IrTable<MirInstruction> instrs, mut borrow OwnedAscii sink, u32[0 max] valueIndex)
+{
+    if (instrs.Contains(valueIndex))
+    {
+        stack MirInstruction op = instrs.Get(valueIndex);
+        if (op.Opcode() == MirOp.Param)
+        {
+            try sink.AppendConstAscii("%p");
+            try sink.AppendI64(op.Immediate());
+            return MemoryStatus.Ok;
+        }
+    }
+
+    return EmitLlvmRegister(sink, valueIndex);
+}
+
+// Appends an LLVM call argument list `(i64 <a>, i64 <b>)` for the up-to-two operand
+// slots (0 = absent): `()`, `(i64 <a>)`, or `(i64 <a>, i64 <b>)`. Each argument is a
+// value reference (`%vN` or `%pK`).
+internal fn MemoryStatus EmitLlvmCallArgs(borrow IrTable<MirInstruction> instrs, mut borrow OwnedAscii sink, u32[0 max] a, u32[0 max] b)
+{
+    try sink.AppendConstAscii("(");
+    if (a != 0)
+    {
+        try sink.AppendConstAscii("i64 ");
+        try EmitLlvmOperand(instrs, sink, a);
+        if (b != 0)
+        {
+            try sink.AppendConstAscii(", i64 ");
+            try EmitLlvmOperand(instrs, sink, b);
+        }
+    }
+
+    try sink.AppendConstAscii(")");
+    return MemoryStatus.Ok;
+}
+
+// Appends one LLVM line for a 2-incoming phi:
+// `  %vDst = phi i64 [ <a>, %bBlock0 ], [ <b>, %bBlock1 ]`. The incoming values go
+// through the param-aware operand path; the block ids are decoded from `packed`.
+internal fn MemoryStatus EmitLlvmPhi(borrow IrTable<MirInstruction> instrs, mut borrow OwnedAscii sink, u32[0 max] dst, u32[0 max] a, u32[0 max] b, i64[min max] packed)
+{
+    try sink.AppendConstAscii("  ");
+    try EmitLlvmRegister(sink, dst);
+    try sink.AppendConstAscii(" = phi i64 [ ");
+    try EmitLlvmOperand(instrs, sink, a);
+    try sink.AppendConstAscii(", ");
+    try EmitLlvmBlockRef(sink, DecodePhiBlock0(packed));
+    try sink.AppendConstAscii(" ], [ ");
+    try EmitLlvmOperand(instrs, sink, b);
+    try sink.AppendConstAscii(", ");
+    try EmitLlvmBlockRef(sink, DecodePhiBlock1(packed));
+    try sink.AppendConstAscii(" ]\n");
+    return MemoryStatus.Ok;
+}
+
+// Appends one LLVM line for a binary op: `  %vDst = <mnemonic> i64 <a>, <b>`, where
+// each operand is a value reference (`%vN` or `%pK`).
+internal fn MemoryStatus EmitLlvmBinary(borrow IrTable<MirInstruction> instrs, mut borrow OwnedAscii sink, u32[0 max] dst, const ascii mnemonic, u32[0 max] a, u32[0 max] b)
+{
+    try sink.AppendConstAscii("  ");
+    try EmitLlvmRegister(sink, dst);
+    try sink.AppendConstAscii(" = ");
+    try sink.AppendConstAscii(mnemonic);
+    try sink.AppendConstAscii(" i64 ");
+    try EmitLlvmOperand(instrs, sink, a);
+    try sink.AppendConstAscii(", ");
+    try EmitLlvmOperand(instrs, sink, b);
+    try sink.AppendConstAscii("\n");
+    return MemoryStatus.Ok;
+}
+
+// Appends the LLVM line for the instruction at 1-based `index` in `instrs`. An
+// out-of-range index emits nothing (rather than reading past the table — `Get`
+// requires `Contains`, and `index - 1` on a 0 index would wrap).
+internal fn MemoryStatus EmitLlvmInstruction(borrow IrTable<MirInstruction> instrs, mut borrow OwnedAscii sink, u32[0 max] index)
+{
+    if (!instrs.Contains(index))
+    {
+        return MemoryStatus.Ok;
+    }
+
+    stack MirInstruction instr = instrs.Get(index);
+    switch (instr.Opcode())
+    {
+        case MirOp.ConstInt:
+            try sink.AppendConstAscii("  ");
+            try EmitLlvmRegister(sink, index);
+            try sink.AppendConstAscii(" = add i64 0, ");
+            try sink.AppendI64(instr.Immediate());
+            try sink.AppendConstAscii("\n");
+        case MirOp.Param:
+            // Declared in the signature; emits no body line.
+            try sink.AppendConstAscii("");
+        case MirOp.Add:
+            try EmitLlvmBinary(instrs, sink, index, "add", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.Sub:
+            try EmitLlvmBinary(instrs, sink, index, "sub", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.Mul:
+            try EmitLlvmBinary(instrs, sink, index, "mul", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.SDiv:
+            try EmitLlvmBinary(instrs, sink, index, "sdiv", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.UDiv:
+            try EmitLlvmBinary(instrs, sink, index, "udiv", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.SRem:
+            try EmitLlvmBinary(instrs, sink, index, "srem", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.And:
+            try EmitLlvmBinary(instrs, sink, index, "and", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.Or:
+            try EmitLlvmBinary(instrs, sink, index, "or", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.Xor:
+            try EmitLlvmBinary(instrs, sink, index, "xor", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.Shl:
+            try EmitLlvmBinary(instrs, sink, index, "shl", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.AShr:
+            try EmitLlvmBinary(instrs, sink, index, "ashr", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.CmpEq:
+            try EmitLlvmBinary(instrs, sink, index, "icmp eq", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.CmpNe:
+            try EmitLlvmBinary(instrs, sink, index, "icmp ne", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.CmpLt:
+            try EmitLlvmBinary(instrs, sink, index, "icmp slt", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.CmpLe:
+            try EmitLlvmBinary(instrs, sink, index, "icmp sle", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.CmpGt:
+            try EmitLlvmBinary(instrs, sink, index, "icmp sgt", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.CmpGe:
+            try EmitLlvmBinary(instrs, sink, index, "icmp sge", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.LoadGlobal:
+            try sink.AppendConstAscii("  ");
+            try EmitLlvmRegister(sink, index);
+            try sink.AppendConstAscii(" = load i64, ptr @g");
+            try sink.AppendI64(instr.Immediate());
+            try sink.AppendConstAscii("\n");
+        case MirOp.StoreGlobal:
+            try sink.AppendConstAscii("  store i64 ");
+            try EmitLlvmOperand(instrs, sink, instr.OperandAIndex());
+            try sink.AppendConstAscii(", ptr @g");
+            try sink.AppendI64(instr.Immediate());
+            try sink.AppendConstAscii("\n");
+        case MirOp.Phi:
+            try EmitLlvmPhi(instrs, sink, index, instr.OperandAIndex(), instr.OperandBIndex(), instr.Immediate());
+        case MirOp.Call:
+            try sink.AppendConstAscii("  ");
+            try EmitLlvmRegister(sink, index);
+            try sink.AppendConstAscii(" = call i64 @f");
+            try sink.AppendI64(instr.Immediate());
+            try EmitLlvmCallArgs(instrs, sink, instr.OperandAIndex(), instr.OperandBIndex());
+            try sink.AppendConstAscii("\n");
+        case MirOp.Return:
+            try sink.AppendConstAscii("  ret i64 ");
+            try EmitLlvmOperand(instrs, sink, instr.OperandAIndex());
+            try sink.AppendConstAscii("\n");
+    }
+
+    return MemoryStatus.Ok;
+}
+
+// Emits an LLVM `define i64 @<name>() { entry: ... }` for the instruction range
+// [firstInstr, firstInstr+instrCount), in table order, into `sink`.
+public fn MemoryStatus EmitLlvmFunction(borrow IrTable<MirInstruction> instrs, const ascii name, u32[0 max] firstInstr, u32[0 max] instrCount, mut borrow OwnedAscii sink)
+{
+    try sink.AppendConstAscii("define i64 @");
+    try sink.AppendConstAscii(name);
+    try sink.AppendConstAscii("() {\nentry:\n");
+    stack mut u32[0 max] index = firstInstr;
+    stack mut u32[0 max] remaining = instrCount;
+    while willexit (remaining > 0)
+    {
+        try EmitLlvmInstruction(instrs, sink, index);
+        index = index + 1;
+        remaining = remaining - 1;
+    }
+
+    try sink.AppendConstAscii("}\n");
+    return MemoryStatus.Ok;
+}
+
+// Appends the LLVM block-label reference (`%bN`) for the block at 1-based `index`.
+internal fn MemoryStatus EmitLlvmBlockRef(mut borrow OwnedAscii sink, u32[0 max] index)
+{
+    try sink.AppendConstAscii("%b");
+    try sink.AppendU64((u64[0 max])index);
+    return MemoryStatus.Ok;
+}
+
+// Appends the LLVM terminator line for block `b`: `ret i64 <v>` for a Return,
+// `br label %bN` for an unconditional Branch, `br i1 <c>, label %bT, label %bE`
+// for a CondBranch, or `unreachable` for an unterminated/out-of-range block. The
+// returned value and the condition are value operands, so they go through
+// `EmitLlvmOperand` (a `%pK` parameter or a `%vN` instruction result) — `instrs` is
+// threaded in for that lookup. (The CondBranch condition is still typed `i1` though
+// the modeled subset only produces `i64` values; a real `icmp` lowering is a later
+// slice.)
+public fn MemoryStatus EmitLlvmTerminator(borrow IrTable<MirInstruction> instrs, borrow IrTable<MirBlock> blocks, MirBlockId b, mut borrow OwnedAscii sink)
+{
+    if (!blocks.Contains(b.Index()))
+    {
+        try sink.AppendConstAscii("  unreachable\n");
+        return MemoryStatus.Ok;
+    }
+
+    stack MirBlock blk = blocks.Get(b.Index());
+    switch (blk.Terminator())
+    {
+        case MirTermKind.Return:
+            try sink.AppendConstAscii("  ret i64 ");
+            try EmitLlvmOperand(instrs, sink, blk.Slot0Index());
+            try sink.AppendConstAscii("\n");
+        case MirTermKind.Branch:
+            try sink.AppendConstAscii("  br label ");
+            try EmitLlvmBlockRef(sink, blk.Slot0Index());
+            try sink.AppendConstAscii("\n");
+        case MirTermKind.CondBranch:
+            try sink.AppendConstAscii("  br i1 ");
+            try EmitLlvmOperand(instrs, sink, blk.Slot0Index());
+            try sink.AppendConstAscii(", label ");
+            try EmitLlvmBlockRef(sink, blk.Slot1Index());
+            try sink.AppendConstAscii(", label ");
+            try EmitLlvmBlockRef(sink, blk.Slot2Index());
+            try sink.AppendConstAscii("\n");
+        case MirTermKind.Unterminated:
+            try sink.AppendConstAscii("  unreachable\n");
+    }
+
+    return MemoryStatus.Ok;
+}
+
+// === Whole-function LLVM emission ===
+// Stitches the instruction and control-flow layers into a complete LLVM function.
+// A block owns a CONTIGUOUS instruction range [firstInstr, firstInstr+instrCount)
+// (the caller tracks the per-block split, since the flat model stores instructions
+// in one table); each block emits as `bN:` + its body instructions + its terminator.
+
+// Emits one labelled LLVM block: `bN:` then the instructions
+// [firstInstr, firstInstr+instrCount) then block N's terminator.
+public fn MemoryStatus EmitLlvmLabeledBlock(borrow IrTable<MirInstruction> instrs, borrow IrTable<MirBlock> blocks, u32[0 max] blockIndex, u32[0 max] firstInstr, u32[0 max] instrCount, mut borrow OwnedAscii sink)
+{
+    try sink.AppendConstAscii("b");
+    try sink.AppendU64((u64[0 max])blockIndex);
+    try sink.AppendConstAscii(":\n");
+    stack mut u32[0 max] index = firstInstr;
+    stack mut u32[0 max] remaining = instrCount;
+    while willexit (remaining > 0)
+    {
+        try EmitLlvmInstruction(instrs, sink, index);
+        index = index + 1;
+        remaining = remaining - 1;
+    }
+
+    try EmitLlvmTerminator(instrs, blocks, MirBlockIdOf(blockIndex), sink);
+    return MemoryStatus.Ok;
+}
+
+// Emits a complete single-block LLVM function: `define i64 @name() { ... }` whose
+// body is the entry block (its instruction range + its terminator).
+public fn MemoryStatus EmitLlvmDefinition(borrow IrTable<MirInstruction> instrs, borrow IrTable<MirBlock> blocks, const ascii name, u32[0 max] entryBlockIndex, u32[0 max] firstInstr, u32[0 max] instrCount, mut borrow OwnedAscii sink)
+{
+    try sink.AppendConstAscii("define i64 @");
+    try sink.AppendConstAscii(name);
+    try sink.AppendConstAscii("() {\n");
+    try EmitLlvmLabeledBlock(instrs, blocks, entryBlockIndex, firstInstr, instrCount, sink);
+    try sink.AppendConstAscii("}\n");
+    return MemoryStatus.Ok;
+}
+
+// Appends an LLVM parameter list `(i64 %p0, i64 %p1, …)` for `paramCount` params
+// (just `()` when zero).
+internal fn MemoryStatus EmitLlvmParamList(u32[0 max] paramCount, mut borrow OwnedAscii sink)
+{
+    try sink.AppendConstAscii("(");
+    stack mut u32[0 max] i = 0;
+    while willexit (i < paramCount)
+    {
+        if (i > 0)
+        {
+            try sink.AppendConstAscii(", ");
+        }
+
+        try sink.AppendConstAscii("i64 %p");
+        try sink.AppendU64((u64[0 max])i);
+        i = i + 1;
+    }
+
+    try sink.AppendConstAscii(")");
+    return MemoryStatus.Ok;
+}
+
+// Emits a single-block LLVM function with a parameter list: `define i64
+// @name(i64 %p0, …) { <entry block> }`. Body uses of `MirParam` values lower to
+// `%pK`, including a parameter returned directly by the block terminator (which
+// goes through the param-aware operand path). CONTRACT: the `MirParam` indices used
+// in the body must be a dense `0..paramCount-1` prefix matching the declared
+// signature — the signature is numbered independently `%p0..%p(paramCount-1)`, so a
+// non-dense index (e.g. `MirParam(instrs, 5)` with `paramCount = 2`) would reference
+// an undeclared `%p5`.
+public fn MemoryStatus EmitLlvmDefinitionWithParams(borrow IrTable<MirInstruction> instrs, borrow IrTable<MirBlock> blocks, const ascii name, u32[0 max] paramCount, u32[0 max] entryBlockIndex, u32[0 max] firstInstr, u32[0 max] instrCount, mut borrow OwnedAscii sink)
+{
+    try sink.AppendConstAscii("define i64 @");
+    try sink.AppendConstAscii(name);
+    try EmitLlvmParamList(paramCount, sink);
+    try sink.AppendConstAscii(" {\n");
+    try EmitLlvmLabeledBlock(instrs, blocks, entryBlockIndex, firstInstr, instrCount, sink);
+    try sink.AppendConstAscii("}\n");
+    return MemoryStatus.Ok;
+}
+
+// === Module emission ===
+// Emits a whole LLVM module: one `define` per function in the function table,
+// named `@fN` (N = the function's 1-based id). PRECONDITION: each function is
+// single-block — only its entry block is emitted (over the whole instruction range),
+// and `OwnedBlockCount` is NOT consulted, so a function recorded with more than one
+// block would silently drop its non-entry blocks. Multi-block-per-function emission
+// (iterating the owned block range, each block over its own instruction sub-range)
+// is a later slice once the model records per-block instruction ranges; it reuses
+// `EmitLlvmLabeledBlock`.
+
+// Emits `define i64 @<prefix><number>() { <entry block> }`.
+internal fn MemoryStatus EmitLlvmDefinitionNumbered(borrow IrTable<MirInstruction> instrs, borrow IrTable<MirBlock> blocks, const ascii prefix, u32[0 max] number, u32[0 max] entryBlockIndex, u32[0 max] firstInstr, u32[0 max] instrCount, mut borrow OwnedAscii sink)
+{
+    try sink.AppendConstAscii("define i64 @");
+    try sink.AppendConstAscii(prefix);
+    try sink.AppendU64((u64[0 max])number);
+    try sink.AppendConstAscii("() {\n");
+    try EmitLlvmLabeledBlock(instrs, blocks, entryBlockIndex, firstInstr, instrCount, sink);
+    try sink.AppendConstAscii("}\n");
+    return MemoryStatus.Ok;
+}
+
+// Emits an LLVM module: one `define i64 @fN() { … }` per function in `funcs`, in id
+// order, each a single-block definition over its entry block. An empty table emits
+// nothing.
+public fn MemoryStatus EmitLlvmModule(borrow IrTable<MirInstruction> instrs, borrow IrTable<MirBlock> blocks, borrow IrTable<MirFunction> funcs, mut borrow OwnedAscii sink)
+{
+    stack u64[0 2 ** 63 - 1] count = funcs.Count();
+    stack mut u32[0 max] id = 1;
+    while willexit ((u64[0 2 ** 63 - 1])id <= count)
+    {
+        stack MirFunction f = funcs.Get(id);
+        try EmitLlvmDefinitionNumbered(instrs, blocks, "f", id, f.EntryIndex(), f.FirstInstrIndex(), f.OwnedInstrCount(), sink);
+        id = id + 1;
+    }
+
+    return MemoryStatus.Ok;
+}
+
+// === Module-level globals ===
+// A module global variable with an integer initializer, named `@gN` (N = its 1-based
+// id in an `IrTable<MirGlobal>`). Flat record + free functions, like the rest of MIR.
+
+public struct MirGlobal
+{
+    i64[min max] Init;
+
+    MirGlobal()
+    {
+        self.Init = 0;
+    }
+
+    public inline finite law i64[min max] InitialValue(borrow MirGlobal self)
+    {
+        return self.Init;
+    }
+}
+
+// Records a global with integer initializer `value`, returning its 1-based id.
+public fn u32[0 max] MirDefineGlobal(mut borrow IrTable<MirGlobal> globals, i64[min max] value)
+{
+    stack mut MirGlobal g = new();
+    g.Init = value;
+    return globals.Add(g);
+}
+
+// The initializer of global `id` (0 when out of range).
+public fn i64[min max] MirGlobalInitialValue(borrow IrTable<MirGlobal> globals, u32[0 max] id)
+{
+    if (!globals.Contains(id))
+    {
+        return 0;
+    }
+
+    stack MirGlobal g = globals.Get(id);
+    return g.InitialValue();
+}
+
+// Emits one `@gN = global i64 V` line per global in id order (empty table → nothing).
+public fn MemoryStatus EmitLlvmGlobals(borrow IrTable<MirGlobal> globals, mut borrow OwnedAscii sink)
+{
+    stack u64[0 2 ** 63 - 1] count = globals.Count();
+    stack mut u32[0 max] id = 1;
+    while willexit ((u64[0 2 ** 63 - 1])id <= count)
+    {
+        stack MirGlobal g = globals.Get(id);
+        try sink.AppendConstAscii("@g");
+        try sink.AppendU64((u64[0 max])id);
+        try sink.AppendConstAscii(" = global i64 ");
+        try sink.AppendI64(g.InitialValue());
+        try sink.AppendConstAscii("\n");
+        id = id + 1;
+    }
+
+    return MemoryStatus.Ok;
+}
+
+// Emits a complete module: globals first, then function definitions.
+public fn MemoryStatus EmitLlvmModuleWithGlobals(borrow IrTable<MirInstruction> instrs, borrow IrTable<MirBlock> blocks, borrow IrTable<MirFunction> funcs, borrow IrTable<MirGlobal> globals, mut borrow OwnedAscii sink)
+{
+    try EmitLlvmGlobals(globals, sink);
+    try EmitLlvmModule(instrs, blocks, funcs, sink);
+    return MemoryStatus.Ok;
+}
+
+// === Typed function emission (types beyond i64) ===
+// A parallel straight-line emitter that spells each value's `MirType` instead of the
+// hardcoded `i64` of the untyped emitters. The function's return type is derived from
+// the trailing `Return` instruction's value, so a uniform-typed (e.g. i32) function
+// emits its type throughout. Untyped instructions default to `I64`, so this path
+// reproduces the i64 output for default values. Handles the const/arith/return subset.
+
+// Appends an LLVM integer type name (`i1`/`i32`/`i64`).
+internal fn MemoryStatus EmitLlvmTypeName(MirType t, mut borrow OwnedAscii sink)
+{
+    switch (t)
+    {
+        case MirType.I1:
+            try sink.AppendConstAscii("i1");
+        case MirType.I32:
+            try sink.AppendConstAscii("i32");
+        case MirType.I64:
+            try sink.AppendConstAscii("i64");
+    }
+
+    return MemoryStatus.Ok;
+}
+
+// `  %vDst = <mnemonic> <type> <a>, <b>`, spelling `type` instead of a fixed `i64`.
+internal fn MemoryStatus EmitLlvmTypedBinary(borrow IrTable<MirInstruction> instrs, mut borrow OwnedAscii sink, u32[0 max] dst, const ascii mnemonic, MirType t, u32[0 max] a, u32[0 max] b)
+{
+    try sink.AppendConstAscii("  ");
+    try EmitLlvmRegister(sink, dst);
+    try sink.AppendConstAscii(" = ");
+    try sink.AppendConstAscii(mnemonic);
+    try sink.AppendConstAscii(" ");
+    try EmitLlvmTypeName(t, sink);
+    try sink.AppendConstAscii(" ");
+    try EmitLlvmOperand(instrs, sink, a);
+    try sink.AppendConstAscii(", ");
+    try EmitLlvmOperand(instrs, sink, b);
+    try sink.AppendConstAscii("\n");
+    return MemoryStatus.Ok;
+}
+
+// Emits the typed LLVM line for the instruction at `index` (const/arith/return subset;
+// other opcodes emit nothing in this first typed path).
+internal fn MemoryStatus EmitLlvmTypedInstruction(borrow IrTable<MirInstruction> instrs, mut borrow OwnedAscii sink, u32[0 max] index)
+{
+    if (!instrs.Contains(index))
+    {
+        return MemoryStatus.Ok;
+    }
+
+    stack MirInstruction instr = instrs.Get(index);
+    switch (instr.Opcode())
+    {
+        case MirOp.ConstInt:
+            try sink.AppendConstAscii("  ");
+            try EmitLlvmRegister(sink, index);
+            try sink.AppendConstAscii(" = add ");
+            try EmitLlvmTypeName(instr.ResultType(), sink);
+            try sink.AppendConstAscii(" 0, ");
+            try sink.AppendI64(instr.Immediate());
+            try sink.AppendConstAscii("\n");
+        case MirOp.Add:
+            try EmitLlvmTypedBinary(instrs, sink, index, "add", instr.ResultType(), instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.Sub:
+            try EmitLlvmTypedBinary(instrs, sink, index, "sub", instr.ResultType(), instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.Mul:
+            try EmitLlvmTypedBinary(instrs, sink, index, "mul", instr.ResultType(), instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.Return:
+            try sink.AppendConstAscii("  ret ");
+            try EmitLlvmTypeName(MirValueType(instrs, instr.OperandAIndex()), sink);
+            try sink.AppendConstAscii(" ");
+            try EmitLlvmOperand(instrs, sink, instr.OperandAIndex());
+            try sink.AppendConstAscii("\n");
+        default:
+            try sink.AppendConstAscii("");
+    }
+
+    return MemoryStatus.Ok;
+}
+
+// The return type of a typed function: the type of the value returned by its trailing
+// `Return` instruction (`I64` if absent / out of range).
+internal fn MirType TypedFunctionReturnType(borrow IrTable<MirInstruction> instrs, u32[0 max] firstInstr, u32[0 max] instrCount)
+{
+    if (instrCount == 0)
+    {
+        return MirType.I64;
+    }
+
+    stack u32[0 max] lastIndex = firstInstr + instrCount - 1;
+    if (!instrs.Contains(lastIndex))
+    {
+        return MirType.I64;
+    }
+
+    stack MirInstruction last = instrs.Get(lastIndex);
+    if (last.Opcode() != MirOp.Return)
+    {
+        return MirType.I64;
+    }
+
+    return MirValueType(instrs, last.OperandAIndex());
+}
+
+// Emits `define <retType> @name() { entry: <typed instructions> }` for the
+// instruction range [firstInstr, firstInstr+instrCount), spelling each value's type.
+public fn MemoryStatus EmitLlvmTypedFunction(borrow IrTable<MirInstruction> instrs, const ascii name, u32[0 max] firstInstr, u32[0 max] instrCount, mut borrow OwnedAscii sink)
+{
+    try sink.AppendConstAscii("define ");
+    try EmitLlvmTypeName(TypedFunctionReturnType(instrs, firstInstr, instrCount), sink);
+    try sink.AppendConstAscii(" @");
+    try sink.AppendConstAscii(name);
+    try sink.AppendConstAscii("() {\nentry:\n");
+    stack mut u32[0 max] index = firstInstr;
+    stack mut u32[0 max] remaining = instrCount;
+    while willexit (remaining > 0)
+    {
+        try EmitLlvmTypedInstruction(instrs, sink, index);
+        index = index + 1;
+        remaining = remaining - 1;
+    }
+
+    try sink.AppendConstAscii("}\n");
+    return MemoryStatus.Ok;
+}
+
+// === MIR text disassembler ===
+// A readable dump of the MIR instruction stream (the textual core of an `inspect`
+// tool). MIR operands are spelled `vN` (the raw value id) uniformly — the LLVM
+// `%pK` parameter distinction is an LLVM-emission concern, not a MIR-level one.
+
+// Appends a MIR value reference `vN`.
+internal fn MemoryStatus EmitMirValue(mut borrow OwnedAscii sink, u32[0 max] index)
+{
+    try sink.AppendConstAscii("v");
+    try sink.AppendU64((u64[0 max])index);
+    return MemoryStatus.Ok;
+}
+
+// Appends `  vDst = <mnemonic> vA, vB` for a binary op / comparison.
+internal fn MemoryStatus EmitMirBinaryLine(mut borrow OwnedAscii sink, u32[0 max] dst, const ascii mnemonic, u32[0 max] a, u32[0 max] b)
+{
+    try EmitMirValue(sink, dst);
+    try sink.AppendConstAscii(" = ");
+    try sink.AppendConstAscii(mnemonic);
+    try sink.AppendConstAscii(" ");
+    try EmitMirValue(sink, a);
+    try sink.AppendConstAscii(", ");
+    try EmitMirValue(sink, b);
+    try sink.AppendConstAscii("\n");
+    return MemoryStatus.Ok;
+}
+
+// Appends the MIR text line for the instruction at 1-based `index`.
+internal fn MemoryStatus EmitMirInstruction(borrow IrTable<MirInstruction> instrs, mut borrow OwnedAscii sink, u32[0 max] index)
+{
+    if (!instrs.Contains(index))
+    {
+        return MemoryStatus.Ok;
+    }
+
+    stack MirInstruction instr = instrs.Get(index);
+    switch (instr.Opcode())
+    {
+        case MirOp.ConstInt:
+            try EmitMirValue(sink, index);
+            try sink.AppendConstAscii(" = const ");
+            try sink.AppendI64(instr.Immediate());
+            try sink.AppendConstAscii("\n");
+        case MirOp.Param:
+            try EmitMirValue(sink, index);
+            try sink.AppendConstAscii(" = param ");
+            try sink.AppendI64(instr.Immediate());
+            try sink.AppendConstAscii("\n");
+        case MirOp.Add:
+            try EmitMirBinaryLine(sink, index, "add", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.Sub:
+            try EmitMirBinaryLine(sink, index, "sub", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.Mul:
+            try EmitMirBinaryLine(sink, index, "mul", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.SDiv:
+            try EmitMirBinaryLine(sink, index, "sdiv", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.UDiv:
+            try EmitMirBinaryLine(sink, index, "udiv", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.SRem:
+            try EmitMirBinaryLine(sink, index, "srem", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.And:
+            try EmitMirBinaryLine(sink, index, "and", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.Or:
+            try EmitMirBinaryLine(sink, index, "or", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.Xor:
+            try EmitMirBinaryLine(sink, index, "xor", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.Shl:
+            try EmitMirBinaryLine(sink, index, "shl", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.AShr:
+            try EmitMirBinaryLine(sink, index, "ashr", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.CmpEq:
+            try EmitMirBinaryLine(sink, index, "eq", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.CmpNe:
+            try EmitMirBinaryLine(sink, index, "ne", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.CmpLt:
+            try EmitMirBinaryLine(sink, index, "slt", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.CmpLe:
+            try EmitMirBinaryLine(sink, index, "sle", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.CmpGt:
+            try EmitMirBinaryLine(sink, index, "sgt", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.CmpGe:
+            try EmitMirBinaryLine(sink, index, "sge", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.LoadGlobal:
+            try EmitMirValue(sink, index);
+            try sink.AppendConstAscii(" = load g");
+            try sink.AppendI64(instr.Immediate());
+            try sink.AppendConstAscii("\n");
+        case MirOp.StoreGlobal:
+            try sink.AppendConstAscii("store g");
+            try sink.AppendI64(instr.Immediate());
+            try sink.AppendConstAscii(", ");
+            try EmitMirValue(sink, instr.OperandAIndex());
+            try sink.AppendConstAscii("\n");
+        case MirOp.Phi:
+            try EmitMirValue(sink, index);
+            try sink.AppendConstAscii(" = phi ");
+            try EmitMirValue(sink, instr.OperandAIndex());
+            try sink.AppendConstAscii("@b");
+            try sink.AppendU64((u64[0 max])DecodePhiBlock0(instr.Immediate()));
+            try sink.AppendConstAscii(", ");
+            try EmitMirValue(sink, instr.OperandBIndex());
+            try sink.AppendConstAscii("@b");
+            try sink.AppendU64((u64[0 max])DecodePhiBlock1(instr.Immediate()));
+            try sink.AppendConstAscii("\n");
+        case MirOp.Call:
+            try EmitMirValue(sink, index);
+            try sink.AppendConstAscii(" = call f");
+            try sink.AppendI64(instr.Immediate());
+            try EmitMirCallArgs(instrs, sink, instr.OperandAIndex(), instr.OperandBIndex());
+            try sink.AppendConstAscii("\n");
+        case MirOp.Return:
+            try sink.AppendConstAscii("ret ");
+            try EmitMirValue(sink, instr.OperandAIndex());
+            try sink.AppendConstAscii("\n");
+    }
+
+    return MemoryStatus.Ok;
+}
+
+// Appends a MIR call argument list `(vA, vB)` for the up-to-two operand slots.
+internal fn MemoryStatus EmitMirCallArgs(borrow IrTable<MirInstruction> instrs, mut borrow OwnedAscii sink, u32[0 max] a, u32[0 max] b)
+{
+    try sink.AppendConstAscii("(");
+    if (a != 0)
+    {
+        try EmitMirValue(sink, a);
+        if (b != 0)
+        {
+            try sink.AppendConstAscii(", ");
+            try EmitMirValue(sink, b);
+        }
+    }
+
+    try sink.AppendConstAscii(")");
+    return MemoryStatus.Ok;
+}
+
+// Dumps the MIR text for the instruction range [firstInstr, firstInstr+instrCount).
+public fn MemoryStatus EmitMirInstructions(borrow IrTable<MirInstruction> instrs, u32[0 max] firstInstr, u32[0 max] instrCount, mut borrow OwnedAscii sink)
+{
+    stack mut u32[0 max] index = firstInstr;
+    stack mut u32[0 max] remaining = instrCount;
+    while willexit (remaining > 0)
+    {
+        try EmitMirInstruction(instrs, sink, index);
+        index = index + 1;
+        remaining = remaining - 1;
+    }
+
+    return MemoryStatus.Ok;
+}
+
+// === Binary serialization primitives (toward package images, #32) ===
+// A byte buffer is an `IrTable<u8[0 max]>` (1-based, append-only). Integers are
+// encoded little-endian via div/mod (no bitwise); a signed i64 is encoded through its
+// two's-complement bit pattern (`(u64)value`), which Stark's modular casts recover.
+
+// Appends `value` as 4 little-endian bytes.
+public fn void WriteU32(mut borrow IrTable<u8[0 max]> buf, u32[0 max] value)
+{
+    stack u32[0 max] a0 = buf.Add((u8[0 max])(value % 256));
+    stack u32[0 max] a1 = buf.Add((u8[0 max])((value / 256) % 256));
+    stack u32[0 max] a2 = buf.Add((u8[0 max])((value / 65536) % 256));
+    stack u32[0 max] a3 = buf.Add((u8[0 max])((value / 16777216) % 256));
+}
+
+// Reads a 4-byte little-endian u32 starting at the 1-based byte index `at`.
+public fn u32[0 max] ReadU32(borrow IrTable<u8[0 max]> buf, u32[0 max] at)
+{
+    stack u8[0 max] b0 = buf.Get(at);
+    stack u8[0 max] b1 = buf.Get(at + 1);
+    stack u8[0 max] b2 = buf.Get(at + 2);
+    stack u8[0 max] b3 = buf.Get(at + 3);
+    return (u32[0 max])b0
+        + (u32[0 max])b1 * 256
+        + (u32[0 max])b2 * 65536
+        + (u32[0 max])b3 * 16777216;
+}
+
+// Appends `value` as 8 little-endian bytes (two's-complement for negatives).
+public fn void WriteI64(mut borrow IrTable<u8[0 max]> buf, i64[min max] value)
+{
+    stack mut u64[0 max] rem = (u64[0 max])value;
+    stack mut u32[0 max] i = 0;
+    while willexit (i < 8)
+    {
+        stack u32[0 max] w = buf.Add((u8[0 max])(rem % 256));
+        rem = rem / 256;
+        i = i + 1;
+    }
+}
+
+// Reads an 8-byte little-endian i64 starting at the 1-based byte index `at`.
+public fn i64[min max] ReadI64(borrow IrTable<u8[0 max]> buf, u32[0 max] at)
+{
+    stack mut u64[0 max] acc = 0;
+    stack mut u64[0 max] mul = 1;
+    stack mut u32[0 max] i = 0;
+    while willexit (i < 8)
+    {
+        stack u8[0 max] byte = buf.Get(at + i);
+        acc = acc + (u64[0 max])byte * mul;
+        mul = mul * 256;
+        i = i + 1;
+    }
+
+    return (i64[min max])acc;
+}
+
+// === MIR instruction serialization (toward binary package images, #32) ===
+// A serialized instruction is a fixed 18-byte record: opcode (1) + result type (1) +
+// operand A (4 LE) + operand B (4 LE) + immediate (8 LE). An instruction stream is a
+// u32 count followed by that many records. Round-trips through the byte buffer above.
+
+// Opcode <-> byte (explicit both ways; no reliance on enum-ordinal casts).
+internal fn u8[0 max] MirOpToByte(MirOp op)
+{
+    switch (op)
+    {
+        case MirOp.ConstInt: return 0;
+        case MirOp.Param: return 1;
+        case MirOp.Add: return 2;
+        case MirOp.Sub: return 3;
+        case MirOp.Mul: return 4;
+        case MirOp.SDiv: return 5;
+        case MirOp.UDiv: return 6;
+        case MirOp.SRem: return 7;
+        case MirOp.And: return 8;
+        case MirOp.Or: return 9;
+        case MirOp.Xor: return 10;
+        case MirOp.Shl: return 11;
+        case MirOp.AShr: return 12;
+        case MirOp.CmpEq: return 13;
+        case MirOp.CmpNe: return 14;
+        case MirOp.CmpLt: return 15;
+        case MirOp.CmpLe: return 16;
+        case MirOp.CmpGt: return 17;
+        case MirOp.CmpGe: return 18;
+        case MirOp.LoadGlobal: return 19;
+        case MirOp.StoreGlobal: return 20;
+        case MirOp.Phi: return 21;
+        case MirOp.Call: return 22;
+        case MirOp.Return: return 23;
+    }
+}
+
+internal fn MirOp MirOpFromByte(u8[0 max] b)
+{
+    switch (b)
+    {
+        case 1: return MirOp.Param;
+        case 2: return MirOp.Add;
+        case 3: return MirOp.Sub;
+        case 4: return MirOp.Mul;
+        case 5: return MirOp.SDiv;
+        case 6: return MirOp.UDiv;
+        case 7: return MirOp.SRem;
+        case 8: return MirOp.And;
+        case 9: return MirOp.Or;
+        case 10: return MirOp.Xor;
+        case 11: return MirOp.Shl;
+        case 12: return MirOp.AShr;
+        case 13: return MirOp.CmpEq;
+        case 14: return MirOp.CmpNe;
+        case 15: return MirOp.CmpLt;
+        case 16: return MirOp.CmpLe;
+        case 17: return MirOp.CmpGt;
+        case 18: return MirOp.CmpGe;
+        case 19: return MirOp.LoadGlobal;
+        case 20: return MirOp.StoreGlobal;
+        case 21: return MirOp.Phi;
+        case 22: return MirOp.Call;
+        case 23: return MirOp.Return;
+        default: return MirOp.ConstInt;
+    }
+}
+
+internal fn u8[0 max] MirTypeToByte(MirType t)
+{
+    switch (t)
+    {
+        case MirType.I1: return 0;
+        case MirType.I32: return 1;
+        case MirType.I64: return 2;
+    }
+}
+
+internal fn MirType MirTypeFromByte(u8[0 max] b)
+{
+    switch (b)
+    {
+        case 0: return MirType.I1;
+        case 1: return MirType.I32;
+        default: return MirType.I64;
+    }
+}
+
+// Serializes the instruction range [firstInstr, firstInstr+instrCount) into `buf`:
+// a u32 count followed by one 18-byte record per instruction.
+public fn void SerializeInstructions(borrow IrTable<MirInstruction> instrs, u32[0 max] firstInstr, u32[0 max] instrCount, mut borrow IrTable<u8[0 max]> buf)
+{
+    WriteU32(buf, instrCount);
+    stack mut u32[0 max] index = firstInstr;
+    stack mut u32[0 max] remaining = instrCount;
+    while willexit (remaining > 0)
+    {
+        if (instrs.Contains(index))
+        {
+            stack MirInstruction instr = instrs.Get(index);
+            stack u32[0 max] wOp = buf.Add(MirOpToByte(instr.Opcode()));
+            stack u32[0 max] wType = buf.Add(MirTypeToByte(instr.ResultType()));
+            WriteU32(buf, instr.OperandAIndex());
+            WriteU32(buf, instr.OperandBIndex());
+            WriteI64(buf, instr.Immediate());
+        }
+
+        index = index + 1;
+        remaining = remaining - 1;
+    }
+}
+
+// Deserializes a stream written by `SerializeInstructions` into `outInstrs`,
+// reconstructing each instruction (opcode, result type, operands, immediate).
+public fn void DeserializeInstructions(borrow IrTable<u8[0 max]> buf, mut borrow IrTable<MirInstruction> outInstrs)
+{
+    DeserializeInstructionsAt(buf, 1, outInstrs);
+}
+
+// As `DeserializeInstructions` but the section begins at the 1-based byte
+// `startOffset` (for combined package images with several sections).
+public fn void DeserializeInstructionsAt(borrow IrTable<u8[0 max]> buf, u32[0 max] startOffset, mut borrow IrTable<MirInstruction> outInstrs)
+{
+    stack u32[0 max] count = ReadU32(buf, startOffset);
+    stack mut u32[0 max] i = 0;
+    while willexit (i < count)
+    {
+        stack u32[0 max] recordBase = startOffset + 4 + i * 18;
+        stack u8[0 max] opByte = buf.Get(recordBase);
+        stack u8[0 max] typeByte = buf.Get(recordBase + 1);
+        stack u32[0 max] a = ReadU32(buf, recordBase + 2);
+        stack u32[0 max] b = ReadU32(buf, recordBase + 6);
+        stack i64[min max] imm = ReadI64(buf, recordBase + 10);
+        stack MirValueId v = MirEmitTyped(outInstrs, MirOpFromByte(opByte), MirTypeFromByte(typeByte), a, b, imm);
+        i = i + 1;
+    }
+}
+
+// === Block / function / global serialization (toward a full package image, #32) ===
+// Each is a fixed-record stream like the instruction stream: a u32 count followed by
+// fixed-size records. (Each section serializes into its own buffer; a combined
+// multi-section image with a section directory is a later slice.)
+
+internal fn u8[0 max] MirTermToByte(MirTermKind t)
+{
+    switch (t)
+    {
+        case MirTermKind.Unterminated: return 0;
+        case MirTermKind.Return: return 1;
+        case MirTermKind.Branch: return 2;
+        case MirTermKind.CondBranch: return 3;
+    }
+}
+
+internal fn MirTermKind MirTermFromByte(u8[0 max] b)
+{
+    switch (b)
+    {
+        case 1: return MirTermKind.Return;
+        case 2: return MirTermKind.Branch;
+        case 3: return MirTermKind.CondBranch;
+        default: return MirTermKind.Unterminated;
+    }
+}
+
+// Adds a block from raw fields (used when reconstructing from a serialized stream).
+internal fn MirBlockId MirAddBlockRaw(mut borrow IrTable<MirBlock> blocks, MirTermKind term, u32[0 max] slot0, u32[0 max] slot1, u32[0 max] slot2)
+{
+    stack mut MirBlock blk = new();
+    blk.Term = term;
+    blk.Slot0 = slot0;
+    blk.Slot1 = slot1;
+    blk.Slot2 = slot2;
+    return MirBlockIdOf(blocks.Add(blk));
+}
+
+// Blocks: u32 count + 13-byte records (term byte + 3 u32 slots).
+public fn void SerializeBlocks(borrow IrTable<MirBlock> blocks, mut borrow IrTable<u8[0 max]> buf)
+{
+    stack u64[0 2 ** 63 - 1] count = blocks.Count();
+    WriteU32(buf, (u32[0 max])count);
+    stack mut u32[0 max] id = 1;
+    while willexit ((u64[0 2 ** 63 - 1])id <= count)
+    {
+        stack MirBlock blk = blocks.Get(id);
+        stack u32[0 max] w = buf.Add(MirTermToByte(blk.Terminator()));
+        WriteU32(buf, blk.Slot0Index());
+        WriteU32(buf, blk.Slot1Index());
+        WriteU32(buf, blk.Slot2Index());
+        id = id + 1;
+    }
+}
+
+public fn void DeserializeBlocks(borrow IrTable<u8[0 max]> buf, mut borrow IrTable<MirBlock> outBlocks)
+{
+    DeserializeBlocksAt(buf, 1, outBlocks);
+}
+
+public fn void DeserializeBlocksAt(borrow IrTable<u8[0 max]> buf, u32[0 max] startOffset, mut borrow IrTable<MirBlock> outBlocks)
+{
+    stack u32[0 max] count = ReadU32(buf, startOffset);
+    stack mut u32[0 max] i = 0;
+    while willexit (i < count)
+    {
+        stack u32[0 max] recordBase = startOffset + 4 + i * 13;
+        stack u8[0 max] termByte = buf.Get(recordBase);
+        stack u32[0 max] s0 = ReadU32(buf, recordBase + 1);
+        stack u32[0 max] s1 = ReadU32(buf, recordBase + 5);
+        stack u32[0 max] s2 = ReadU32(buf, recordBase + 9);
+        stack MirBlockId v = MirAddBlockRaw(outBlocks, MirTermFromByte(termByte), s0, s1, s2);
+        i = i + 1;
+    }
+}
+
+// Functions: u32 count + 20-byte records (entry, firstBlock, blockCount, firstInstr,
+// instrCount — five u32s).
+public fn void SerializeFunctions(borrow IrTable<MirFunction> funcs, mut borrow IrTable<u8[0 max]> buf)
+{
+    stack u64[0 2 ** 63 - 1] count = funcs.Count();
+    WriteU32(buf, (u32[0 max])count);
+    stack mut u32[0 max] id = 1;
+    while willexit ((u64[0 2 ** 63 - 1])id <= count)
+    {
+        stack MirFunction f = funcs.Get(id);
+        WriteU32(buf, f.EntryIndex());
+        WriteU32(buf, f.FirstBlockIndex());
+        WriteU32(buf, f.OwnedBlockCount());
+        WriteU32(buf, f.FirstInstrIndex());
+        WriteU32(buf, f.OwnedInstrCount());
+        id = id + 1;
+    }
+}
+
+public fn void DeserializeFunctions(borrow IrTable<u8[0 max]> buf, mut borrow IrTable<MirFunction> outFuncs)
+{
+    DeserializeFunctionsAt(buf, 1, outFuncs);
+}
+
+public fn void DeserializeFunctionsAt(borrow IrTable<u8[0 max]> buf, u32[0 max] startOffset, mut borrow IrTable<MirFunction> outFuncs)
+{
+    stack u32[0 max] count = ReadU32(buf, startOffset);
+    stack mut u32[0 max] i = 0;
+    while willexit (i < count)
+    {
+        stack u32[0 max] recordBase = startOffset + 4 + i * 20;
+        stack u32[0 max] entry = ReadU32(buf, recordBase);
+        stack u32[0 max] firstBlock = ReadU32(buf, recordBase + 4);
+        stack u32[0 max] blockCount = ReadU32(buf, recordBase + 8);
+        stack u32[0 max] firstInstr = ReadU32(buf, recordBase + 12);
+        stack u32[0 max] instrCount = ReadU32(buf, recordBase + 16);
+        stack MirFuncId v = MirDefineFunction(outFuncs, MirBlockIdOf(entry), MirBlockIdOf(firstBlock), blockCount, MirValueIdOf(firstInstr), instrCount);
+        i = i + 1;
+    }
+}
+
+// Globals: u32 count + 8-byte records (i64 initializer).
+public fn void SerializeGlobals(borrow IrTable<MirGlobal> globals, mut borrow IrTable<u8[0 max]> buf)
+{
+    stack u64[0 2 ** 63 - 1] count = globals.Count();
+    WriteU32(buf, (u32[0 max])count);
+    stack mut u32[0 max] id = 1;
+    while willexit ((u64[0 2 ** 63 - 1])id <= count)
+    {
+        stack MirGlobal g = globals.Get(id);
+        WriteI64(buf, g.InitialValue());
+        id = id + 1;
+    }
+}
+
+public fn void DeserializeGlobals(borrow IrTable<u8[0 max]> buf, mut borrow IrTable<MirGlobal> outGlobals)
+{
+    DeserializeGlobalsAt(buf, 1, outGlobals);
+}
+
+public fn void DeserializeGlobalsAt(borrow IrTable<u8[0 max]> buf, u32[0 max] startOffset, mut borrow IrTable<MirGlobal> outGlobals)
+{
+    stack u32[0 max] count = ReadU32(buf, startOffset);
+    stack mut u32[0 max] i = 0;
+    while willexit (i < count)
+    {
+        stack u32[0 max] recordBase = startOffset + 4 + i * 8;
+        stack i64[min max] initValue = ReadI64(buf, recordBase);
+        stack u32[0 max] v = MirDefineGlobal(outGlobals, initValue);
+        i = i + 1;
+    }
+}
+
+// === Combined package image (#32) ===
+// A package image concatenates the four section streams behind a fixed 20-byte
+// header: a magic u32 then the 1-based byte offset of each section
+// (instructions, blocks, functions, globals). Sections therefore start at byte 21.
+// `InspectPackageImage` reads only the header + per-section counts (an `inspect-pkg`
+// summary) without materializing the IR.
+
+// The magic identifying a MIR package image ("MIR1" little-endian-ish constant).
+internal fn u32[0 max] MirImageMagic()
+{
+    return 826757197;
+}
+
+// Appends every byte of `src` to `dst`.
+internal fn void AppendBytes(mut borrow IrTable<u8[0 max]> dst, borrow IrTable<u8[0 max]> src)
+{
+    stack u64[0 2 ** 63 - 1] count = src.Count();
+    stack mut u32[0 max] i = 1;
+    while willexit ((u64[0 2 ** 63 - 1])i <= count)
+    {
+        stack u8[0 max] b = src.Get(i);
+        stack u32[0 max] w = dst.Add(b);
+        i = i + 1;
+    }
+}
+
+// Serializes a whole MIR module (instructions/blocks/functions/globals) into one
+// package image in `buf`.
+public fn void SerializePackageImage(borrow IrTable<MirInstruction> instrs, borrow IrTable<MirBlock> blocks, borrow IrTable<MirFunction> funcs, borrow IrTable<MirGlobal> globals, mut borrow IrTable<u8[0 max]> buf)
+{
+    stack mut IrTable<u8[0 max]> instrBuf = new();
+    SerializeInstructions(instrs, 1, (u32[0 max])instrs.Count(), instrBuf);
+    stack mut IrTable<u8[0 max]> blockBuf = new();
+    SerializeBlocks(blocks, blockBuf);
+    stack mut IrTable<u8[0 max]> funcBuf = new();
+    SerializeFunctions(funcs, funcBuf);
+    stack mut IrTable<u8[0 max]> globalBuf = new();
+    SerializeGlobals(globals, globalBuf);
+
+    // Header is 20 bytes (magic + 4 offsets), so the first section starts at byte 21.
+    stack u32[0 max] instrOffset = 21;
+    stack u32[0 max] blockOffset = instrOffset + (u32[0 max])instrBuf.Count();
+    stack u32[0 max] funcOffset = blockOffset + (u32[0 max])blockBuf.Count();
+    stack u32[0 max] globalOffset = funcOffset + (u32[0 max])funcBuf.Count();
+
+    WriteU32(buf, MirImageMagic());
+    WriteU32(buf, instrOffset);
+    WriteU32(buf, blockOffset);
+    WriteU32(buf, funcOffset);
+    WriteU32(buf, globalOffset);
+    AppendBytes(buf, instrBuf);
+    AppendBytes(buf, blockBuf);
+    AppendBytes(buf, funcBuf);
+    AppendBytes(buf, globalBuf);
+}
+
+// Reads a package image into the four out-tables. Returns false (touching nothing)
+// when the magic does not match.
+public fn bool DeserializePackageImage(borrow IrTable<u8[0 max]> buf, mut borrow IrTable<MirInstruction> outInstrs, mut borrow IrTable<MirBlock> outBlocks, mut borrow IrTable<MirFunction> outFuncs, mut borrow IrTable<MirGlobal> outGlobals)
+{
+    if (ReadU32(buf, 1) != MirImageMagic())
+    {
+        return false;
+    }
+
+    DeserializeInstructionsAt(buf, ReadU32(buf, 5), outInstrs);
+    DeserializeBlocksAt(buf, ReadU32(buf, 9), outBlocks);
+    DeserializeFunctionsAt(buf, ReadU32(buf, 13), outFuncs);
+    DeserializeGlobalsAt(buf, ReadU32(buf, 17), outGlobals);
+    return true;
+}
+
+// Emits an `inspect-pkg` one-line summary of a package image, reading only the header
+// and each section's count (no IR materialized). Empty when the magic is wrong.
+public fn MemoryStatus InspectPackageImage(borrow IrTable<u8[0 max]> buf, mut borrow OwnedAscii sink)
+{
+    if (ReadU32(buf, 1) != MirImageMagic())
+    {
+        return MemoryStatus.Ok;
+    }
+
+    try sink.AppendConstAscii("package: ");
+    try sink.AppendU64((u64[0 max])ReadU32(buf, ReadU32(buf, 5)));
+    try sink.AppendConstAscii(" instructions, ");
+    try sink.AppendU64((u64[0 max])ReadU32(buf, ReadU32(buf, 9)));
+    try sink.AppendConstAscii(" blocks, ");
+    try sink.AppendU64((u64[0 max])ReadU32(buf, ReadU32(buf, 13)));
+    try sink.AppendConstAscii(" functions, ");
+    try sink.AppendU64((u64[0 max])ReadU32(buf, ReadU32(buf, 17)));
+    try sink.AppendConstAscii(" globals\n");
+    return MemoryStatus.Ok;
+}
+
+// === Bridge to the stdlib byte buffer (toward on-disk package images, #32) ===
+// `System.IO.File.WriteAllBytes`/`ReadAllBytes` consume/produce a
+// `System.Runtime.Buffer.DynamicByteBuffer`, so a package image (an `IrTable<u8>`)
+// converts to/from that type. Bytes are u8 here and i8 in the buffer; the modular
+// cast preserves the bit pattern. With these, persisting an image is a thin wrapper:
+// `SerializePackageImage` -> `ImageToByteBuffer` -> `File.WriteAllBytes`, and the
+// reverse for loading.
+
+// Copies every byte of the image `src` into the byte buffer `dst`.
+public fn void ImageToByteBuffer(borrow IrTable<u8[0 max]> src, mut borrow DynamicByteBuffer dst)
+{
+    stack u64[0 2 ** 63 - 1] count = src.Count();
+    stack mut u32[0 max] i = 1;
+    while willexit ((u64[0 2 ** 63 - 1])i <= count)
+    {
+        stack u8[0 max] b = src.Get(i);
+        stack System.Memory.MemoryStatus ws = dst.WriteByte((i8[min max])b);
+        i = i + 1;
+    }
+}
+
+// Copies the readable bytes of `src` into the image `dst`.
+public fn void ImageFromByteBuffer(borrow DynamicByteBuffer src, mut borrow IrTable<u8[0 max]> dst)
+{
+    stack i8[min max][] bytes = src.ReadSlice();
+    stack u64[0 2 ** 63 - 1] len = src.Readable();
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < len)
+    {
+        stack i8[min max] sb = bytes[i];
+        stack u32[0 max] w = dst.Add((u8[0 max])sb);
+        i = i + 1;
+    }
+}
+
+// === On-disk package image (#32, end-to-end file round-trip) ===
+// Serializes a module to a package image, writes it to a temp file via System.IO.File,
+// reads it back, and deserializes — exercising the full on-disk path. All filesystem +
+// dynamic-buffer work stays in this module (a [Fact] only builds inputs + checks the
+// bool). Switch arms are all non-empty (the empty `case Ok:` arm crashes host lower-mir
+// for cross-package stdlib-enum switches).
+
+internal fn bool WriteImageFile(ascii path, borrow DynamicByteBuffer dbuf)
+{
+    switch (System.IO.File.WriteAllBytes(path, dbuf))
+    {
+        case System.IO.IOStatus.Ok:
+            return true;
+        case System.IO.IOStatus.Err(var writeError):
+            return false;
+    }
+}
+
+internal fn bool ReadImageFile(ascii path, mut borrow IrTable<u8[0 max]> outBuf)
+{
+    switch (System.IO.File.ReadAllBytes(path))
+    {
+        case System.IO.IOResult<DynamicByteBuffer>.Ok(var contents):
+            ImageFromByteBuffer(contents, outBuf);
+            return true;
+        case System.IO.IOResult<DynamicByteBuffer>.Err(var readError):
+            return false;
+    }
+}
+
+// Builds `<fresh temp dir>/<filename>` into `outPath` (filename should lead with `/`).
+internal fn bool MakeTempPath(mut borrow OwnedAscii outPath, const ascii filename)
+{
+    switch (System.FileSystem.CreateTempDirectory("mir"))
+    {
+        case System.IO.IOResult<OwnedAscii>.Ok(var dir):
+            stack mut OwnedAscii dirPath = dir;
+            stack System.Memory.MemoryStatus appendDir = outPath.AppendAscii(dirPath.View());
+            stack System.Memory.MemoryStatus appendName = outPath.AppendConstAscii(filename);
+            return true;
+        case System.IO.IOResult<OwnedAscii>.Err(var dirError):
+            return false;
+    }
+}
+
+// Writes a serialized module to a temp file, reads it back, and reports whether the
+// section counts survive the on-disk round-trip.
+public fn bool PackageImageFileRoundTrips(borrow IrTable<MirInstruction> instrs, borrow IrTable<MirBlock> blocks, borrow IrTable<MirFunction> funcs, borrow IrTable<MirGlobal> globals)
+{
+    stack mut OwnedAscii path = new();
+    if (!MakeTempPath(path, "/image.mirpkg"))
+    {
+        return false;
+    }
+
+    stack mut IrTable<u8[0 max]> buf = new();
+    SerializePackageImage(instrs, blocks, funcs, globals, buf);
+    stack mut DynamicByteBuffer dbuf = new();
+    ImageToByteBuffer(buf, dbuf);
+
+    if (!WriteImageFile(path.View(), dbuf))
+    {
+        return false;
+    }
+
+    stack mut IrTable<u8[0 max]> readBuf = new();
+    if (!ReadImageFile(path.View(), readBuf))
+    {
+        return false;
+    }
+
+    stack mut IrTable<MirInstruction> bi = new();
+    stack mut IrTable<MirBlock> bb = new();
+    stack mut IrTable<MirFunction> bf = new();
+    stack mut IrTable<MirGlobal> bg = new();
+    stack bool ok = DeserializePackageImage(readBuf, bi, bb, bf, bg);
+    return ok
+        && bi.Count() == instrs.Count()
+        && bb.Count() == blocks.Count()
+        && bf.Count() == funcs.Count()
+        && bg.Count() == globals.Count();
+}
+
+// === LLVM IR text to disk (toward object output via clang/llc, #31) ===
+// The textual LLVM emitter + file I/O produce a real `.ll` file on disk. With
+// `clang module.ll -c` (or `llc`), that `.ll` becomes an object file — the standard
+// non-FFI path to native code that many compiler front ends use. (Direct libLLVM
+// C-API emission is the alternative; this subprocess path needs no FFI.)
+
+internal fn bool WriteAsciiFile(ascii path, borrow OwnedAscii text)
+{
+    switch (System.IO.File.WriteAllBytes(path, text.AsSlice()))
+    {
+        case System.IO.IOStatus.Ok:
+            return true;
+        case System.IO.IOStatus.Err(var writeError):
+            return false;
+    }
+}
+
+internal fn void AppendBufferToAscii(borrow DynamicByteBuffer src, mut borrow OwnedAscii dst)
+{
+    stack i8[min max][] bytes = src.ReadSlice();
+    stack u64[0 2 ** 63 - 1] len = src.Readable();
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < len)
+    {
+        stack i8[min max] b = bytes[i];
+        stack System.Memory.MemoryStatus w = dst.AppendByte(b);
+        i = i + 1;
+    }
+}
+
+internal fn bool ReadAsciiFileEquals(ascii path, borrow OwnedAscii expected)
+{
+    switch (System.IO.File.ReadAllBytes(path))
+    {
+        case System.IO.IOResult<DynamicByteBuffer>.Ok(var contents):
+            stack mut OwnedAscii readback = new();
+            AppendBufferToAscii(contents, readback);
+            return System.Text.OwnedAscii.Equals(expected, readback);
+        case System.IO.IOResult<DynamicByteBuffer>.Err(var readError):
+            return false;
+    }
+}
+
+// Emits the module as LLVM IR text, writes it to a temp `.ll` file, reads it back, and
+// reports whether the on-disk text matches the emitted text exactly.
+public fn bool LlvmModuleFileRoundTrips(borrow IrTable<MirInstruction> instrs, borrow IrTable<MirBlock> blocks, borrow IrTable<MirFunction> funcs)
+{
+    stack mut OwnedAscii text = new();
+    stack System.Memory.MemoryStatus emitStatus = EmitLlvmModule(instrs, blocks, funcs, text);
+
+    stack mut OwnedAscii path = new();
+    if (!MakeTempPath(path, "/module.ll"))
+    {
+        return false;
+    }
+
+    if (!WriteAsciiFile(path.View(), text))
+    {
+        return false;
+    }
+
+    return ReadAsciiFileEquals(path.View(), text);
+}
+
+// === Object generation via the toolchain (subprocess route, #31) ===
+// Emits a module's LLVM IR to a `.ll` file, invokes `clang -c` on it, and confirms an
+// object file was produced — the end-to-end subprocess path to native code. Success is
+// detected by the object file existing (ProcessOutput.ExitCode is not externally
+// readable). Tolerant of a missing toolchain so the suite stays portable.
+
+internal fn bool MakeTempDir(mut borrow OwnedAscii outDir)
+{
+    switch (System.FileSystem.CreateTempDirectory("mirobj"))
+    {
+        case System.IO.IOResult<OwnedAscii>.Ok(var dir):
+            stack mut OwnedAscii dirPath = dir;
+            stack System.Memory.MemoryStatus appendDir = outDir.AppendAscii(dirPath.View());
+            return true;
+        case System.IO.IOResult<OwnedAscii>.Err(var dirError):
+            return false;
+    }
+}
+
+// True when `path` names a non-empty file (used to detect that clang wrote an object).
+internal fn bool NonEmptyFileExists(ascii path)
+{
+    switch (System.IO.File.ReadAllBytes(path))
+    {
+        case System.IO.IOResult<DynamicByteBuffer>.Ok(var contents):
+            return contents.Readable() > 0;
+        case System.IO.IOResult<DynamicByteBuffer>.Err(var readError):
+            return false;
+    }
+}
+
+internal fn bool RunClangCapture(mut borrow System.Process.ProcessCommand command, ascii objPath)
+{
+    unsafe
+    {
+        switch (System.Process.RunCapture(command))
+        {
+            case System.Process.ProcessResult<System.Process.ProcessOutput>.Ok(var ranOutput):
+                return NonEmptyFileExists(objPath);
+            case System.Process.ProcessResult<System.Process.ProcessOutput>.Err(var runError):
+                return true;
+        }
+    }
+}
+
+internal fn bool RunClang(ascii llPath, ascii objPath)
+{
+    switch (System.Process.Command("clang"))
+    {
+        case System.Process.ProcessResult<System.Process.ProcessCommand>.Ok(var cmd):
+            stack mut System.Process.ProcessCommand command = cmd;
+            stack System.Process.ProcessStatus s1 = command.AddArgument("-c");
+            stack System.Process.ProcessStatus s2 = command.AddArgument(llPath);
+            stack System.Process.ProcessStatus s3 = command.AddArgument("-o");
+            stack System.Process.ProcessStatus s4 = command.AddArgument(objPath);
+            return RunClangCapture(command, objPath);
+        case System.Process.ProcessResult<System.Process.ProcessCommand>.Err(var cmdError):
+            return true;
+    }
+}
+
+// Emits the module's LLVM IR, writes it to a `.ll` file, and runs `clang -c` to produce
+// an object. Returns true when an object was produced OR the toolchain is unavailable;
+// false only when clang ran but produced no object (i.e. the IR was rejected).
+public fn bool CompileEmittedLlvmProducesObject(borrow IrTable<MirInstruction> instrs, borrow IrTable<MirBlock> blocks, borrow IrTable<MirFunction> funcs)
+{
+    stack mut OwnedAscii dir = new();
+    if (!MakeTempDir(dir))
+    {
+        return false;
+    }
+
+    stack mut OwnedAscii llPath = new();
+    stack System.Memory.MemoryStatus la = llPath.AppendAscii(dir.View());
+    stack System.Memory.MemoryStatus lb = llPath.AppendConstAscii("/module.ll");
+    stack mut OwnedAscii objPath = new();
+    stack System.Memory.MemoryStatus oa = objPath.AppendAscii(dir.View());
+    stack System.Memory.MemoryStatus ob = objPath.AppendConstAscii("/module.o");
+
+    stack mut OwnedAscii text = new();
+    stack System.Memory.MemoryStatus emitStatus = EmitLlvmModule(instrs, blocks, funcs, text);
+    if (!WriteAsciiFile(llPath.View(), text))
+    {
+        return false;
+    }
+
+    return RunClang(llPath.View(), objPath.View());
+}
+
+// === FFI capability probe (foundation for a libLLVM C-API binding, #31 direct) ===
+// The libLLVM direct-C-API route is `ffi fn` declarations of the LLVM C API linked
+// against libLLVM. As a foundation check that the self-hosted compiler package can
+// declare and call C functions through FFI, this binds libc `abs` — resolved from the
+// system C library that every macOS Stark binary already links. The remaining work
+// for the real binding is the static-archive link integration for libLLVM (it ships
+// here only as `libLLVM*.a` component archives, with no single shared `libLLVM`).
+
+internal unsafe ffi fn i32[min max] abs(i32[min max] value);
+
+// Calls libc `abs` through FFI.
+public fn i32[min max] AbsViaFfi(i32[min max] value)
+{
+    unsafe
+    {
+        return abs(value);
+    }
+}

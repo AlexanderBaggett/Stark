@@ -811,6 +811,154 @@ fn bool ResolvesSignatureTypes()
 }
 
 [Fact]
+fn bool FlagsUnresolvedLocalType()
+{
+    // The local `x` has the undeclared user type `Missing` — one UnresolvedType.
+    // The built-in local `n` (u32) is not checked.
+    stack ascii source = "fn void f() { stack Missing x; stack u32 n = 0; }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.CountOf(BindDiagnosticCode.UnresolvedType) == 1
+                && diags.Count() == 1;
+    }
+}
+
+[Fact]
+fn bool ResolvedLocalTypeBindsCleanly()
+{
+    // `Bar` is declared, so the local `b` of type `Bar` resolves; built-in locals
+    // are not checked — no diagnostics.
+    stack ascii source = "struct Bar { }\nfn void f() { stack Bar b; stack i32 n = 0; }\n";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.Count() == 0;
+    }
+}
+
+[Fact]
+fn bool GenericFunctionLocalTypeParameterIsNotUnresolved()
+{
+    // A local whose type names the function's own type parameter (`T`) is not an
+    // unresolved type; the undeclared `Missing` local is flagged.
+    stack ascii source = "fn void f<T>() { stack T a; stack Missing b; }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.CountOf(BindDiagnosticCode.UnresolvedType) == 1;
+    }
+}
+
+[Fact]
+fn bool FlagsUnresolvedForEachElementType()
+{
+    // A for-each element binding's declared type (`Missing`, no storage class) is
+    // resolved like any local — undeclared, so one UnresolvedType. `items` resolves.
+    stack ascii source = "fn void f(u32 items) { for willexit (Missing x in items) { } }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.CountOf(BindDiagnosticCode.UnresolvedType) == 1;
+    }
+}
+
+[Fact]
+fn bool GenericFunctionTypeParameterIsNotUnresolved()
+{
+    // A parameter/return type naming the function's own type parameter (`T`) is not
+    // an unresolved type; only the genuinely undeclared `Missing` is flagged.
+    stack ascii source = "fn T f<T>(T x, Missing y) { }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.CountOf(BindDiagnosticCode.UnresolvedType) == 1;
+    }
+}
+
+[Fact]
+fn bool FlagsUnresolvedWhereConstraint()
+{
+    // A `where T: Missing` constraint names an undeclared trait — one UnresolvedType.
+    stack ascii source = "fn void f<T>() where T: Missing { }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.CountOf(BindDiagnosticCode.UnresolvedType) == 1
+                && diags.Count() == 1;
+    }
+}
+
+[Fact]
+fn bool ResolvedWhereConstraintBindsCleanly()
+{
+    // `Eq` is a declared trait, so the `where T: Eq` constraint resolves — and `T`
+    // (the constrained parameter) is the function's own type parameter. No errors.
+    stack ascii source = "trait Eq { }\nfn void f<T>() where T: Eq { }\n";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.Count() == 0;
+    }
+}
+
+[Fact]
 fn bool FlagsUnresolvedSignatureTypes()
 {
     // Neither `Bar` (return) nor `Foo` (parameter) is declared — two unresolved
@@ -852,6 +1000,136 @@ fn bool FlagsUnresolvedSignatureTypes()
             return false;
         case ParseResult<FunctionSignature>.Ok(var signature):
             return CountUnresolvedSignatureTypes(signature, table, source, stream) == 2;
+    }
+}
+
+[Fact]
+fn bool FlagsUnresolvedFieldType()
+{
+    // The struct field `value` has type `Missing`, which names no declaration — one
+    // UnresolvedType. The built-in field `n` (i32) is not checked.
+    stack ascii source = "struct Box { Missing value; i32 n; }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.CountOf(BindDiagnosticCode.UnresolvedType) == 1
+                && diags.Count() == 1;
+    }
+}
+
+[Fact]
+fn bool ResolvedFieldTypesBindCleanly()
+{
+    // `Bar` is declared, so the field `b` of type `Bar` resolves; the built-in
+    // field `n` is not checked. A record's fields are checked the same way.
+    stack ascii source = "struct Bar { }\nstruct Box { Bar b; i32 n; }\nrecord Pair { Bar first; Bar second; }\n";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.Count() == 0;
+    }
+}
+
+[Fact]
+fn bool GenericParameterFieldTypeIsNotUnresolved()
+{
+    // A field whose type names the enclosing type's generic parameter (`T`, `V`) is
+    // not an unresolved type — only the genuinely undeclared `Missing` is flagged.
+    stack ascii source = "struct Box<T> { T value; Missing other; }\nrecord Pair<K, V> { K key; V val; }\n";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.CountOf(BindDiagnosticCode.UnresolvedType) == 1
+                && diags.Count() == 1;
+    }
+}
+
+[Fact]
+fn bool MultiDeclaratorUndefinedFieldTypeFlaggedOnce()
+{
+    // `Missing a, b;` is one field declaration with a shared type — the host resolves
+    // it once, so exactly one UnresolvedType (not one per declarator).
+    stack ascii source = "struct S { Missing a, b; }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.CountOf(BindDiagnosticCode.UnresolvedType) == 1
+                && diags.Count() == 1;
+    }
+}
+
+[Fact]
+fn bool BaseTraitGenericIsNotMistakenForFieldGenericParam()
+{
+    // `Box` declares NO type parameters; `Base<Bar>` is a generic BASE trait, not a
+    // parameter list — so the field type `Bar` (undeclared) is still flagged, not
+    // exempted as a generic parameter.
+    stack ascii source = "struct Box : Base<Bar> { Bar x; }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.CountOf(BindDiagnosticCode.UnresolvedType) == 1;
+    }
+}
+
+[Fact]
+fn bool ComptimeParameterTypeIsNotMistakenForGenericParam()
+{
+    // In `<comptime Foo N>` the parameter NAME is `N`; `Foo` is its type. A field of
+    // type `Foo` (undeclared) is flagged — `Foo` is not exempted as a parameter name.
+    stack ascii source = "struct Buf<comptime Foo N> { Foo x; }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.CountOf(BindDiagnosticCode.UnresolvedType) == 1;
     }
 }
 
@@ -1094,8 +1372,9 @@ fn bool HeaderBraceDoesNotDeriveBody()
 [Fact]
 fn bool ForBodyLocalsAreNotDropped()
 {
-    // The for-header's `;` separators must not truncate the statement: the for
-    // body's two `x` locals are recorded and the redefinition flagged.
+    // The for-header's `;` separators must not truncate the statement: the
+    // for-init `i` is bound in the loop scope and the for body's two `x` locals
+    // are recorded (three locals total) and the redefinition flagged.
     stack ascii source = "fn void f(u32 n) { for (stack mut u32 i = 0; i < n; i += 1) { stack u32 x = 0; stack u32 x = 1; } }";
     stack mut TokenStream stream = new();
     if (!LexOk(LexText(source), stream))
@@ -1114,8 +1393,380 @@ fn bool ForBodyLocalsAreNotDropped()
         case ParseResult<StatementList>.Err(var bodyError):
             return false;
         case ParseResult<StatementList>.Ok(var body):
-            return CountLocals(body) == 2
+            return CountLocals(body) == 3
                 && HasDuplicateLocalInBlock(source, stream, body);
+    }
+}
+
+[Fact]
+fn bool ForInitLocalResolvesInConditionAndBody()
+{
+    // The for-init `i` is bound in the loop scope, so the condition `i < n`
+    // (boolean) and the body reference `i` both resolve — and `n` resolves to
+    // the parameter. A clean loop produces no diagnostics.
+    stack ascii source = "fn void f(u32 n) { for (stack mut u32 i = 0; i < n; i += 1) { i; } }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.Count() == 0;
+    }
+}
+
+[Fact]
+fn bool FlagsNonBooleanForCondition()
+{
+    // A `for` whose middle clause is the bare `u32` parameter `n` is a non-boolean
+    // condition — flagged like an `if`/`while` — while `i` and `n` still resolve.
+    stack ascii source = "fn void f(u32 n) { for (stack mut u32 i = 0; n; i += 1) { } }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.CountOf(BindDiagnosticCode.NonBooleanCondition) == 1
+                && diags.Count() == 1;
+    }
+}
+
+[Fact]
+fn bool ForInitInitializerReferencesAreResolved()
+{
+    // The for-init's initializer is parsed, so an unbound name in it (`bad`) is
+    // flagged — and only it: `i` resolves in the condition `i < 3`.
+    stack ascii source = "fn void f() { for (stack mut u32 i = bad; i < 3; i += 1) { } }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.CountOf(BindDiagnosticCode.UnresolvedReference) == 1
+                && diags.Count() == 1;
+    }
+}
+
+[Fact]
+fn bool ForEachElementResolvesInBody()
+{
+    // The for-each element `x` is bound in the loop scope, so the body reference
+    // `x` resolves and `items` resolves to the parameter — no diagnostics. The
+    // traversal collection is not a boolean condition, so it is not flagged.
+    stack ascii source = "fn void f(u32 items) { for willexit (u32 x in items) { x; } }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.Count() == 0;
+    }
+}
+
+[Fact]
+fn bool ForEachIndexAndElementBothResolve()
+{
+    // The indexed for-each binds both the index `i` and the element `x`; both
+    // resolve in the body, as does the traversal `items` — no diagnostics.
+    stack ascii source = "fn void f(u32 items) { for willexit (stack u32 i, u32 x in items) { i; x; } }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.Count() == 0;
+    }
+}
+
+[Fact]
+fn bool BreakInsideForEachIsAccepted()
+{
+    // A for-each is a loop, so `break`/`continue` in its body are in an enclosing
+    // loop — no BreakOutsideLoop/ContinueOutsideLoop.
+    stack ascii source = "fn void f(u32 items) { for willexit (u32 x in items) { break; continue; } }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.CountOf(BindDiagnosticCode.BreakOutsideLoop) == 0
+                && diags.CountOf(BindDiagnosticCode.ContinueOutsideLoop) == 0;
+    }
+}
+
+[Fact]
+fn bool BreakInsideCStyleForIsAccepted()
+{
+    // The C-style `for` is a loop, and the parsed iterator clause (emitted one
+    // level deeper) must not displace the `For` as the body's enclosing loop — so
+    // `break`/`continue` in the body are accepted.
+    stack ascii source = "fn void f(u32 n) { for willexit (stack mut u32 i = 0; i < n; i += 1) { break; continue; } }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.CountOf(BindDiagnosticCode.BreakOutsideLoop) == 0
+                && diags.CountOf(BindDiagnosticCode.ContinueOutsideLoop) == 0
+                && diags.Count() == 0;
+    }
+}
+
+[Fact]
+fn bool ForEachCollectionDoesNotSeeLoopElement()
+{
+    // The traversal collection is evaluated in the enclosing scope BEFORE the loop
+    // element is bound, so a collection that names the element (`in x`) with no
+    // outer `x` is an unresolved reference — not a self-binding.
+    stack ascii source = "fn void f() { for willexit (u32 x in x) { } }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.CountOf(BindDiagnosticCode.UnresolvedReference) == 1;
+    }
+}
+
+[Fact]
+fn bool ForExpressionListInitReferencesAreResolved()
+{
+    // A C-style `for` with an expression-list initializer (`i = bad`, not a
+    // declaration) has its initializer parsed, so the unbound name `bad` is flagged.
+    stack ascii source = "fn void f(u32 n) { stack mut u32 i = 0; for willexit (i = bad; i < n; ) { } }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.CountOf(BindDiagnosticCode.UnresolvedReference) == 1
+                && diags.Count() == 1;
+    }
+}
+
+[Fact]
+fn bool ForIteratorClauseReferencesAreResolved()
+{
+    // The iterator clause is parsed, so an unbound name used only there (`bogus`)
+    // is flagged; the loop variable `i` in `i < n` still resolves.
+    stack ascii source = "fn void f(u32 n) { for willexit (stack mut u32 i = 0; i < n; bogus += 1) { } }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.CountOf(BindDiagnosticCode.UnresolvedReference) == 1
+                && diags.Count() == 1;
+    }
+}
+
+[Fact]
+fn bool SwitchSubjectReferenceIsResolved()
+{
+    // The switch subject expression is parsed and resolved, so an undefined subject
+    // is flagged as an unresolved reference.
+    stack ascii source = "fn void f() { switch (nope) { } }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.CountOf(BindDiagnosticCode.UnresolvedReference) == 1
+                && diags.Count() == 1;
+    }
+}
+
+[Fact]
+fn bool CaseVarBindingResolvesInSectionBody()
+{
+    // A `var x` pattern binding is in scope for the section body, so `x;` resolves;
+    // the subject `v` resolves to the parameter. No diagnostics.
+    stack ascii source = "fn void f(i32 v) { switch (v) { case Thing(var x): x; } }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.Count() == 0;
+    }
+}
+
+[Fact]
+fn bool WhenGuardSeesPatternBindingAndFlagsUnbound()
+{
+    // The `when` guard resolves in the section scope: the pattern binding `x` is
+    // visible there, while an undefined name (`bad`) in the guard is flagged.
+    stack ascii source = "fn void f(i32 v) { switch (v) { case Thing(var x) when x > bad: x; } }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.CountOf(BindDiagnosticCode.UnresolvedReference) == 1
+                && diags.Count() == 1;
+    }
+}
+
+[Fact]
+fn bool CaseVarBindingIsNotVisibleInOtherSection()
+{
+    // Each section has its own scope, so a `var x` bound in one section is not
+    // visible in another — the sibling section's `x;` is an unresolved reference.
+    stack ascii source = "fn void f(i32 v) { switch (v) { case A(var x): x; case B: x; } }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.CountOf(BindDiagnosticCode.UnresolvedReference) == 1;
+    }
+}
+
+[Fact]
+fn bool WhenGuardWithRelationalOperatorResolves()
+{
+    // A `when` guard's `<` is a relational operator, not an angle bracket — the
+    // label colon is still found, the guard `a < b` is parsed, and `a`/`b` resolve.
+    stack ascii source = "fn void f(i32 a, i32 b) { switch (a) { case 0 when a < b: a; default: b; } }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.Count() == 0;
+    }
+}
+
+[Fact]
+fn bool WhenGuardWithTernaryResolves()
+{
+    // A `when` guard may be a ternary; its `:` is a branch separator, not the label
+    // colon. The guard parses and `a`/`b`/`c` resolve; the section body is intact.
+    stack ascii source = "fn void f(bool c, i32 a, i32 b) { switch (a) { case 0 when c ? a > b : a < b: a; default: b; } }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.Count() == 0;
+    }
+}
+
+[Fact]
+fn bool OrAlternativesSharingVarNameAreNotDuplicate()
+{
+    // A `var` bound across `or` alternatives is last-write-wins in the host, not a
+    // redefinition — so `case A(var x) or B(var x): x;` is not a DuplicateLocalInBlock
+    // and `x` resolves.
+    stack ascii source = "fn void f(i32 v) { switch (v) { case A(var x) or B(var x): x; } }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.CountOf(BindDiagnosticCode.DuplicateLocalInBlock) == 0
+                && diags.Count() == 0;
     }
 }
 
@@ -1211,6 +1862,90 @@ fn bool LocalTypedConditionIsFlagged()
 }
 
 [Fact]
+fn bool FlagsNonBooleanMemberCondition()
+{
+    // `s.count` accesses an `i32` field of `s` (a struct), so `if (s.count)` is a
+    // non-boolean condition — the member access is typed via the field's type.
+    stack ascii source = "struct S { i32 count; }\nfn void f(S s) { if (s.count) { } }\n";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.CountOf(BindDiagnosticCode.NonBooleanCondition) == 1
+                && diags.Count() == 1;
+    }
+}
+
+[Fact]
+fn bool BooleanMemberConditionIsAccepted()
+{
+    // `s.flag` is a `bool` field, so `if (s.flag)` is a boolean condition — accepted.
+    stack ascii source = "struct S { bool flag; }\nfn void f(S s) { if (s.flag) { } }\n";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.Count() == 0;
+    }
+}
+
+[Fact]
+fn bool FlagsNonBooleanChainedMemberCondition()
+{
+    // `o.inner.count` chains through two struct fields to the `i32` `count`, so the
+    // condition is non-boolean — the receiver's struct is resolved recursively.
+    stack ascii source = "struct Inner { i32 count; }\nstruct Outer { Inner inner; }\nfn void f(Outer o) { if (o.inner.count) { } }\n";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.CountOf(BindDiagnosticCode.NonBooleanCondition) == 1
+                && diags.Count() == 1;
+    }
+}
+
+[Fact]
+fn bool BooleanChainedMemberConditionIsAccepted()
+{
+    // `o.inner.flag` chains to a `bool` field, so the condition is accepted.
+    stack ascii source = "struct Inner { bool flag; }\nstruct Outer { Inner inner; }\nfn void f(Outer o) { if (o.inner.flag) { } }\n";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.Count() == 0;
+    }
+}
+
+[Fact]
 fn bool FlagsNonBooleanLogicalOperand()
 {
     // `flag && n`: `flag` is bool (ok) but `n` is i32 — a non-boolean operand of
@@ -1251,5 +1986,421 @@ fn bool BooleanLogicalOperandsAreAccepted()
             return false;
         case BindResult<BindDiagnosticList>.Ok(var diags):
             return diags.Count() == 0;
+    }
+}
+
+[Fact]
+fn bool OuterConditionUsesParameterTypeNotInnerShadow()
+{
+    // The final `if (flag)` resolves to the bool PARAMETER (the inner i32 `flag`
+    // is in a closed block, out of scope), so it is a boolean condition — no
+    // diagnostic. (A flat last-name-match would wrongly type it i32 and flag it.)
+    stack ascii source = "fn void f(bool flag) { if (true) { stack i32 flag = 0; } if (flag) { } }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.CountOf(BindDiagnosticCode.NonBooleanCondition) == 0;
+    }
+}
+
+[Fact]
+fn bool OuterConditionUsesParameterTypeNotLaterShadow()
+{
+    // `if (n)` resolves to the i32 PARAMETER (the bool `n` is declared later in a
+    // separate block, out of scope here), so it is a non-boolean condition and is
+    // flagged. (A flat last-name-match would wrongly type it bool and miss it.)
+    stack ascii source = "fn void f(i32 n) { if (n) { } { stack bool n = true; } }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.CountOf(BindDiagnosticCode.NonBooleanCondition) == 1;
+    }
+}
+
+[Fact]
+fn bool ShiftConditionIsNonBoolean()
+{
+    // `1 << 2` is a shift (integer result), not a comparison, so `while (1 << 2)`
+    // is a non-boolean condition.
+    stack ascii source = "fn void f() { while (1 << 2) { } }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.CountOf(BindDiagnosticCode.NonBooleanCondition) == 1;
+    }
+}
+
+[Fact]
+fn bool DetectsSameBlockLocalRedefinitionInElseArm()
+{
+    // Both `x` locals are in the single `else` block (one scope per Stark.g4
+    // `ifStatement` else branch), so the same-block rule flags the redefinition.
+    stack ascii source = "fn void f() { if (c) { } else { stack u32 x = 0; stack u32 x = 1; } }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] fnKeyword = 0;
+    if (!FirstFunctionKeyword(stream, fnKeyword))
+    {
+        return false;
+    }
+
+    switch (ParseFunctionBody(stream, fnKeyword))
+    {
+        case ParseResult<StatementList>.Err(var bodyError):
+            return false;
+        case ParseResult<StatementList>.Ok(var body):
+            return CountLocals(body) == 2
+                && HasDuplicateLocalInBlock(source, stream, body);
+    }
+}
+
+[Fact]
+fn bool SameNameLocalsInThenAndElseArmsAreSeparate()
+{
+    // `x` in the then-arm and `x` in the else-arm are in DIFFERENT scopes, so this
+    // is shadowing-style separation, not a redefinition.
+    stack ascii source = "fn void f() { if (a) { stack u32 x = 0; } else { stack u32 x = 1; } }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] fnKeyword = 0;
+    if (!FirstFunctionKeyword(stream, fnKeyword))
+    {
+        return false;
+    }
+
+    switch (ParseFunctionBody(stream, fnKeyword))
+    {
+        case ParseResult<StatementList>.Err(var bodyError):
+            return false;
+        case ParseResult<StatementList>.Ok(var body):
+            return CountLocals(body) == 2
+                && !HasDuplicateLocalInBlock(source, stream, body);
+    }
+}
+
+[Fact]
+fn bool FlagsNonBooleanTernaryCondition()
+{
+    // `n ? 1 : 2`: the ternary condition `n` is an i32 — not boolean. The host
+    // requires a boolean conditional condition, so exactly one NonBooleanCondition.
+    stack ascii source = "fn void f(i32 n) { stack i32 r = n ? 1 : 2; }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.CountOf(BindDiagnosticCode.NonBooleanCondition) == 1
+                && diags.Count() == 1;
+    }
+}
+
+[Fact]
+fn bool BooleanTernaryConditionIsAccepted()
+{
+    // `b ? 1 : 2`: the ternary condition `b` is boolean — no diagnostics.
+    stack ascii source = "fn void f(bool b) { stack i32 r = b ? 1 : 2; }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.Count() == 0;
+    }
+}
+
+[Fact]
+fn bool FlagsValueReturnedFromVoid()
+{
+    // `return 5;` in a `void` function returns a value where none is allowed.
+    stack ascii source = "fn void f() { return 5; }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.CountOf(BindDiagnosticCode.ValueReturnedFromVoid) == 1
+                && diags.Count() == 1;
+    }
+}
+
+[Fact]
+fn bool FlagsMissingReturnValue()
+{
+    // A bare `return;` in a non-void (`i32`) function is missing its value.
+    stack ascii source = "fn i32 g() { return; }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.CountOf(BindDiagnosticCode.MissingReturnValue) == 1
+                && diags.Count() == 1;
+    }
+}
+
+[Fact]
+fn bool AcceptsWellFormedReturns()
+{
+    // A bare `return;` in a void function and a `return value;` in a non-void
+    // function are both well-formed — no diagnostics.
+    stack ascii source = "fn void f() { return; }\nfn i32 g() { return 5; }\n";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.Count() == 0;
+    }
+}
+
+[Fact]
+fn bool FlagsDuplicateEnumVariant()
+{
+    // `enum E { A, B, A }` declares `A` twice — one DuplicateEnumVariant.
+    stack ascii source = "enum E { A, B, A }\n";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.CountOf(BindDiagnosticCode.DuplicateEnumVariant) == 1
+                && diags.Count() == 1;
+    }
+}
+
+[Fact]
+fn bool AcceptsDistinctEnumVariants()
+{
+    // Distinct variant names — no diagnostics.
+    stack ascii source = "enum E { A, B, C }\n";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.Count() == 0;
+    }
+}
+
+[Fact]
+fn bool FlagsUnresolvedVariantPayloadType()
+{
+    // The variant payload type `Missing` names no declaration — one UnresolvedType.
+    stack ascii source = "enum E { V(Missing), None }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.CountOf(BindDiagnosticCode.UnresolvedType) == 1
+                && diags.Count() == 1;
+    }
+}
+
+[Fact]
+fn bool ResolvedVariantPayloadTypesBindCleanly()
+{
+    // Payload types across all three forms resolve (`Bar` declared); the built-in
+    // payloads and bare variant are not checked — no diagnostics.
+    stack ascii source = "struct Bar { }\nenum E { A(Bar, i32), B { f: Bar }, C from Bar, None }\n";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.Count() == 0;
+    }
+}
+
+[Fact]
+fn bool GenericEnumPayloadParameterIsNotUnresolved()
+{
+    // A payload type naming the enum's own generic parameter (`T`) is not an
+    // unresolved type; only the genuinely undeclared `Missing` is flagged.
+    stack ascii source = "enum Opt<T> { Some(T), Wrapped(Missing), None }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.CountOf(BindDiagnosticCode.UnresolvedType) == 1
+                && diags.Count() == 1;
+    }
+}
+
+[Fact]
+fn bool FlagsBreakOutsideLoop()
+{
+    // A `break;` at function-body top level has no enclosing loop/switch.
+    stack ascii source = "fn void f() { break; }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.CountOf(BindDiagnosticCode.BreakOutsideLoop) == 1
+                && diags.Count() == 1;
+    }
+}
+
+[Fact]
+fn bool FlagsContinueOutsideLoop()
+{
+    // A `continue;` at function-body top level has no enclosing loop.
+    stack ascii source = "fn void f() { continue; }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.CountOf(BindDiagnosticCode.ContinueOutsideLoop) == 1
+                && diags.Count() == 1;
+    }
+}
+
+[Fact]
+fn bool AcceptsBreakInsideLoop()
+{
+    // `break` inside a `while` loop is well-formed.
+    stack ascii source = "fn void f(bool c) { while (c) { break; } }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.Count() == 0;
+    }
+}
+
+[Fact]
+fn bool ContinueInSwitchWithoutLoopIsFlagged()
+{
+    // `break` is allowed in a `switch`, but `continue` requires a LOOP — a switch
+    // alone does not satisfy it. So `continue` in a non-loop switch is flagged,
+    // while a `break` in the same switch is not.
+    stack ascii source = "fn void f(i32 e) { switch (e) { case A: continue; } }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.CountOf(BindDiagnosticCode.ContinueOutsideLoop) == 1
+                && diags.CountOf(BindDiagnosticCode.BreakOutsideLoop) == 0;
     }
 }

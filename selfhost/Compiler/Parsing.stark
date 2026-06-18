@@ -769,14 +769,499 @@ public fn ParseResult<VariantList> ParseEnumVariants(borrow TokenStream stream, 
     return ParseResult<VariantList>.Ok(variants);
 }
 
+// A flat list of user-type head tokens (e.g. the payload types of an enum's
+// variants), each the rightmost depth-0 identifier of a type (0 for a built-in,
+// which is omitted). Used for type-reference resolution.
+public struct TypeHeadList
+{
+    internal dynamic u32[0 max] Heads;
+
+    TypeHeadList()
+    {
+        self.Heads = new();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] Count(borrow TypeHeadList self)
+    {
+        return self.Heads.Length;
+    }
+
+    public law u32[0 max] HeadAt(borrow TypeHeadList self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.Heads.Length)
+        {
+            token = self.Heads[index];
+        }
+
+        return token;
+    }
+
+    internal fn System.Memory.MemoryStatus Append(mut borrow TypeHeadList self, u32[0 max] head)
+    {
+        if (!self.Heads.TryReserve(1))
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        }
+
+        init self.Heads[self.Heads.Length] = head;
+        return System.Memory.MemoryStatus.Ok;
+    }
+}
+
+// The matching close-bracket index for the open bracket (`(`/`[`/`{`/`<`) at
+// `open`, tracking nested paren/bracket/brace/angle depth. Returns `open` when no
+// match is found before end-of-file.
+finite law u32[0 max] MatchingBracket(borrow TokenStream stream, u32[0 max] open)
+{
+    stack mut u32[0 max] index = open;
+    stack mut u32[0 max] depth = 0;
+    stack mut u64[0 2 ** 63 - 1] guard = stream.Count();
+    while willexit (guard > 0)
+    {
+        guard = (u64[0 2 ** 63 - 1])(guard - 1);
+        stack TokenKind k = stream.KindAt((u64[0 2 ** 63 - 1])index);
+        if (k == TokenKind.EndOfFile)
+        {
+            return open;
+        }
+
+        if (k == TokenKind.LParen || k == TokenKind.LBrack || k == TokenKind.LBrace || k == TokenKind.Lt)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (k == TokenKind.RParen || k == TokenKind.RBrack || k == TokenKind.RBrace || k == TokenKind.Gt)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+                if (depth == 0)
+                {
+                    return index;
+                }
+            }
+        }
+
+        index = (u32[0 max])(index + 1);
+    }
+
+    return open;
+}
+
+// Appends the user-type head of the type spanning `[start, endExclusive)` to
+// `heads` when it names a user type (a built-in's head is 0 and is omitted).
+internal fn System.Memory.MemoryStatus AppendUserHead(mut borrow TypeHeadList heads, borrow TokenStream stream, u32[0 max] start, u32[0 max] endExclusive)
+{
+    stack u32[0 max] head = BoundedLastIdentifier(stream, start, endExclusive);
+    if (head != 0)
+    {
+        switch (heads.Append(head))
+        {
+            case System.Memory.MemoryStatus.Err(var appendError):
+                return System.Memory.MemoryStatus.Err(appendError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+// Appends the head of each comma-separated type in `[start, endExclusive)` (a tuple
+// payload `(A, B)`'s inner types). Commas at angle/bracket/paren depth 0 separate.
+internal fn System.Memory.MemoryStatus CollectCommaSeparatedTypeHeads(mut borrow TypeHeadList heads, borrow TokenStream stream, u32[0 max] start, u32[0 max] endExclusive)
+{
+    stack mut u32[0 max] segStart = start;
+    stack mut u32[0 max] depth = 0;
+    stack mut u32[0 max] index = start;
+    while willexit (index < endExclusive)
+    {
+        stack TokenKind k = stream.KindAt((u64[0 2 ** 63 - 1])index);
+        if (k == TokenKind.LParen || k == TokenKind.LBrack || k == TokenKind.LBrace || k == TokenKind.Lt)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (k == TokenKind.RParen || k == TokenKind.RBrack || k == TokenKind.RBrace || k == TokenKind.Gt)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+        else if (depth == 0 && k == TokenKind.Comma)
+        {
+            switch (AppendUserHead(heads, stream, segStart, index))
+            {
+                case System.Memory.MemoryStatus.Err(var segError):
+                    return System.Memory.MemoryStatus.Err(segError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            segStart = (u32[0 max])(index + 1);
+        }
+
+        index = (u32[0 max])(index + 1);
+    }
+
+    // The final (or only) type, if the span is non-empty.
+    if (segStart < endExclusive)
+    {
+        switch (AppendUserHead(heads, stream, segStart, endExclusive))
+        {
+            case System.Memory.MemoryStatus.Err(var lastError):
+                return System.Memory.MemoryStatus.Err(lastError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+// Appends the head of each member type in a named-field payload `{ f: A, g: B }`
+// spanning `[start, endExclusive)`: for each comma-separated member, the type is
+// the span after its depth-0 `:`.
+internal fn System.Memory.MemoryStatus CollectNamedFieldTypeHeads(mut borrow TypeHeadList heads, borrow TokenStream stream, u32[0 max] start, u32[0 max] endExclusive)
+{
+    stack mut u32[0 max] segStart = start;
+    stack mut u32[0 max] depth = 0;
+    stack mut u32[0 max] index = start;
+    while willexit (index <= endExclusive)
+    {
+        stack mut bool boundary = false;
+        if (index >= endExclusive)
+        {
+            boundary = true;
+        }
+        else
+        {
+            stack TokenKind k = stream.KindAt((u64[0 2 ** 63 - 1])index);
+            if (k == TokenKind.LParen || k == TokenKind.LBrack || k == TokenKind.LBrace || k == TokenKind.Lt)
+            {
+                depth = (u32[0 max])(depth + 1);
+            }
+            else if (k == TokenKind.RParen || k == TokenKind.RBrack || k == TokenKind.RBrace || k == TokenKind.Gt)
+            {
+                if (depth > 0)
+                {
+                    depth = (u32[0 max])(depth - 1);
+                }
+            }
+            else if (depth == 0 && k == TokenKind.Comma)
+            {
+                boundary = true;
+            }
+        }
+
+        if (boundary)
+        {
+            // The member `[segStart, index)` is `field : type`; take the type's head.
+            stack mut u32[0 max] colon = segStart;
+            stack mut u32[0 max] cdepth = 0;
+            stack mut bool foundColon = false;
+            stack mut u32[0 max] cscan = segStart;
+            while willexit (cscan < index)
+            {
+                stack TokenKind ck = stream.KindAt((u64[0 2 ** 63 - 1])cscan);
+                if (ck == TokenKind.LParen || ck == TokenKind.LBrack || ck == TokenKind.LBrace || ck == TokenKind.Lt)
+                {
+                    cdepth = (u32[0 max])(cdepth + 1);
+                }
+                else if (ck == TokenKind.RParen || ck == TokenKind.RBrack || ck == TokenKind.RBrace || ck == TokenKind.Gt)
+                {
+                    if (cdepth > 0)
+                    {
+                        cdepth = (u32[0 max])(cdepth - 1);
+                    }
+                }
+                else if (cdepth == 0 && ck == TokenKind.Colon)
+                {
+                    colon = cscan;
+                    foundColon = true;
+                    cscan = index;
+                }
+
+                if (cscan < index)
+                {
+                    cscan = (u32[0 max])(cscan + 1);
+                }
+            }
+
+            if (foundColon && (u32[0 max])(colon + 1) < index)
+            {
+                switch (AppendUserHead(heads, stream, (u32[0 max])(colon + 1), index))
+                {
+                    case System.Memory.MemoryStatus.Err(var memberError):
+                        return System.Memory.MemoryStatus.Err(memberError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+
+            segStart = (u32[0 max])(index + 1);
+        }
+
+        index = (u32[0 max])(index + 1);
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+// The token index of the next depth-0 `,`, `}`, or `)` at or after `start` (the end
+// of a `from type` payload), tracking nested brackets so a `,` inside `List<A, B>`
+// does not end it. Returns the first such token, or end-of-file's index.
+finite law u32[0 max] FromPayloadEnd(borrow TokenStream stream, u32[0 max] start)
+{
+    stack mut u32[0 max] index = start;
+    stack mut u32[0 max] depth = 0;
+    stack mut u64[0 2 ** 63 - 1] guard = stream.Count();
+    while willexit (guard > 0)
+    {
+        guard = (u64[0 2 ** 63 - 1])(guard - 1);
+        stack TokenKind k = stream.KindAt((u64[0 2 ** 63 - 1])index);
+        if (k == TokenKind.EndOfFile)
+        {
+            return index;
+        }
+
+        if (depth == 0 && (k == TokenKind.Comma || k == TokenKind.RBrace || k == TokenKind.RParen))
+        {
+            return index;
+        }
+
+        if (k == TokenKind.LParen || k == TokenKind.LBrack || k == TokenKind.LBrace || k == TokenKind.Lt)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (k == TokenKind.RParen || k == TokenKind.RBrack || k == TokenKind.RBrace || k == TokenKind.Gt)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+
+        index = (u32[0 max])(index + 1);
+    }
+
+    return index;
+}
+
+// Collects the user-type head token of every enum-variant payload type across the
+// enum whose keyword is at `enumKeyword` — the tuple `(A, B)`, named-field
+// `{ f: A }`, and `from A` payload forms (`Stark.g4` `enumVariantPayload`). Built-in
+// payload types have head 0 and are omitted. Returns an empty list for a bodyless
+// enum. Attribute lists `[Attr]` before a variant are skipped by bracket depth.
+public fn ParseResult<TypeHeadList> ParseEnumPayloadHeads(borrow TokenStream stream, u32[0 max] enumKeyword)
+{
+    stack mut TypeHeadList heads = new();
+    stack mut u32[0 max] index = enumKeyword;
+    while willexit (stream.KindAt((u64[0 2 ** 63 - 1])index) != TokenKind.EndOfFile
+        && stream.KindAt((u64[0 2 ** 63 - 1])index) != TokenKind.LBrace)
+    {
+        index = (u32[0 max])(index + 1);
+    }
+
+    if (stream.KindAt((u64[0 2 ** 63 - 1])index) != TokenKind.LBrace)
+    {
+        return ParseResult<TypeHeadList>.Ok(heads);
+    }
+
+    index = (u32[0 max])(index + 1);
+    stack mut u32[0 max] depth = 0;
+    stack mut u64[0 2 ** 63 - 1] guard = stream.Count();
+    while willexit (guard > 0)
+    {
+        guard = (u64[0 2 ** 63 - 1])(guard - 1);
+        stack TokenKind k = stream.KindAt((u64[0 2 ** 63 - 1])index);
+        if (k == TokenKind.EndOfFile)
+        {
+            guard = 0;
+        }
+        else if (k == TokenKind.RBrace && depth == 0)
+        {
+            guard = 0;
+        }
+        else if (k == TokenKind.LBrack)
+        {
+            // An attribute list `[...]`: skip its contents via depth.
+            depth = (u32[0 max])(depth + 1);
+            index = (u32[0 max])(index + 1);
+        }
+        else if (k == TokenKind.RBrack)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+
+            index = (u32[0 max])(index + 1);
+        }
+        else if (depth == 0 && k == TokenKind.From)
+        {
+            stack u32[0 max] fromEnd = FromPayloadEnd(stream, (u32[0 max])(index + 1));
+            switch (AppendUserHead(heads, stream, (u32[0 max])(index + 1), fromEnd))
+            {
+                case System.Memory.MemoryStatus.Err(var fromError):
+                    return ParseResult<TypeHeadList>.Err(ParseError.OutOfMemory);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            index = fromEnd;
+        }
+        else if (depth == 0 && k == TokenKind.LParen)
+        {
+            stack u32[0 max] close = MatchingBracket(stream, index);
+            switch (CollectCommaSeparatedTypeHeads(heads, stream, (u32[0 max])(index + 1), close))
+            {
+                case System.Memory.MemoryStatus.Err(var tupleError):
+                    return ParseResult<TypeHeadList>.Err(ParseError.OutOfMemory);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            index = (u32[0 max])(close + 1);
+        }
+        else if (depth == 0 && k == TokenKind.LBrace)
+        {
+            stack u32[0 max] close = MatchingBracket(stream, index);
+            switch (CollectNamedFieldTypeHeads(heads, stream, (u32[0 max])(index + 1), close))
+            {
+                case System.Memory.MemoryStatus.Err(var namedError):
+                    return ParseResult<TypeHeadList>.Err(ParseError.OutOfMemory);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            index = (u32[0 max])(close + 1);
+        }
+        else
+        {
+            index = (u32[0 max])(index + 1);
+        }
+    }
+
+    return ParseResult<TypeHeadList>.Ok(heads);
+}
+
+// Collects the user-type head of every constraint trait in a `where Identifier :
+// type_ (, type_)*` type-parameter-constraint clause of the declaration whose
+// keyword is at `declKeyword` (`Stark.g4` `typeParameterConstraints`). The `where`
+// is found at bracket depth 0 before the body `{`/`;`; a memory-contract `where`
+// (`where disjoint(...)`, not followed by `Identifier :`) is skipped. Returns an
+// empty list when there is no such clause.
+public fn ParseResult<TypeHeadList> CollectWhereConstraintHeads(borrow TokenStream stream, u32[0 max] declKeyword)
+{
+    stack mut TypeHeadList heads = new();
+    stack mut u32[0 max] index = declKeyword;
+    stack mut u32[0 max] depth = 0;
+    stack mut u32[0 max] whereToken = 0;
+    stack mut u64[0 2 ** 63 - 1] guard = stream.Count();
+    while willexit (guard > 0)
+    {
+        guard = (u64[0 2 ** 63 - 1])(guard - 1);
+        stack TokenKind k = stream.KindAt((u64[0 2 ** 63 - 1])index);
+        if (k == TokenKind.EndOfFile)
+        {
+            guard = 0;
+        }
+        else if (k == TokenKind.LParen || k == TokenKind.LBrack || k == TokenKind.Lt)
+        {
+            depth = (u32[0 max])(depth + 1);
+            index = (u32[0 max])(index + 1);
+        }
+        else if (k == TokenKind.RParen || k == TokenKind.RBrack || k == TokenKind.Gt)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+
+            index = (u32[0 max])(index + 1);
+        }
+        else if (depth == 0 && (k == TokenKind.LBrace || k == TokenKind.Semi))
+        {
+            // The body (or end of an abstract declaration) before any `where`.
+            guard = 0;
+        }
+        else if (depth == 0 && k == TokenKind.Where
+            && stream.KindAt((u64[0 2 ** 63 - 1])(index + 1)) == TokenKind.Identifier
+            && stream.KindAt((u64[0 2 ** 63 - 1])(index + 2)) == TokenKind.Colon)
+        {
+            whereToken = index;
+            guard = 0;
+        }
+        else
+        {
+            index = (u32[0 max])(index + 1);
+        }
+    }
+
+    if (whereToken == 0)
+    {
+        return ParseResult<TypeHeadList>.Ok(heads);
+    }
+
+    // The constraint types run after `Identifier :` until the body `{`/`;` at depth 0.
+    stack mut u32[0 max] constraintStart = (u32[0 max])(whereToken + 3);
+    stack mut u32[0 max] constraintEnd = constraintStart;
+    stack mut u32[0 max] endDepth = 0;
+    stack mut u64[0 2 ** 63 - 1] endGuard = stream.Count();
+    while willexit (endGuard > 0)
+    {
+        endGuard = (u64[0 2 ** 63 - 1])(endGuard - 1);
+        stack TokenKind ek = stream.KindAt((u64[0 2 ** 63 - 1])constraintEnd);
+        if (ek == TokenKind.EndOfFile)
+        {
+            endGuard = 0;
+        }
+        else if (ek == TokenKind.LParen || ek == TokenKind.LBrack || ek == TokenKind.Lt)
+        {
+            endDepth = (u32[0 max])(endDepth + 1);
+            constraintEnd = (u32[0 max])(constraintEnd + 1);
+        }
+        else if (ek == TokenKind.RParen || ek == TokenKind.RBrack || ek == TokenKind.Gt)
+        {
+            if (endDepth > 0)
+            {
+                endDepth = (u32[0 max])(endDepth - 1);
+            }
+
+            constraintEnd = (u32[0 max])(constraintEnd + 1);
+        }
+        else if (endDepth == 0 && (ek == TokenKind.LBrace || ek == TokenKind.Semi))
+        {
+            endGuard = 0;
+        }
+        else
+        {
+            constraintEnd = (u32[0 max])(constraintEnd + 1);
+        }
+    }
+
+    switch (CollectCommaSeparatedTypeHeads(heads, stream, constraintStart, constraintEnd))
+    {
+        case System.Memory.MemoryStatus.Err(var collectError):
+            return ParseResult<TypeHeadList>.Err(ParseError.OutOfMemory);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    return ParseResult<TypeHeadList>.Ok(heads);
+}
+
 // The field name tokens of a struct/record body, in source order.
 public struct FieldList
 {
     internal dynamic u32[0 max] NameTokens;
+    // Per-field user-type head identifier (the rightmost depth-0 identifier of the
+    // field's type, e.g. `Bar` in `Bar f;` / `List` in `List<u32> f;`); 0 for a
+    // built-in field type (`i32 f;`). In lockstep with `NameTokens`.
+    internal dynamic u32[0 max] TypeHeadTokens;
+    // Per-field type-primary token (the first type-starting token of the field's
+    // type — a built-in like `i32`/`bool` or a user-type identifier), for value
+    // typing via `MapTypeToken`. In lockstep with `NameTokens`.
+    internal dynamic u32[0 max] TypePrimaryTokens;
 
     FieldList()
     {
         self.NameTokens = new();
+        self.TypeHeadTokens = new();
+        self.TypePrimaryTokens = new();
     }
 
     public inline finite law u64[0 2 ** 63 - 1] Count(borrow FieldList self)
@@ -795,14 +1280,42 @@ public struct FieldList
         return token;
     }
 
-    internal fn System.Memory.MemoryStatus Append(mut borrow FieldList self, u32[0 max] nameToken)
+    // The user-type head token of field `index` (0 when the field has a built-in
+    // type or `index` is out of range).
+    public law u32[0 max] TypeHeadAt(borrow FieldList self, u64[0 2 ** 63 - 1] index)
     {
-        if (!self.NameTokens.TryReserve(1))
+        stack mut u32[0 max] token = 0;
+        if (index < self.TypeHeadTokens.Length)
+        {
+            token = self.TypeHeadTokens[index];
+        }
+
+        return token;
+    }
+
+    // The type-primary token of field `index` (0 when out of range), for typing.
+    public law u32[0 max] TypePrimaryAt(borrow FieldList self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.TypePrimaryTokens.Length)
+        {
+            token = self.TypePrimaryTokens[index];
+        }
+
+        return token;
+    }
+
+    internal fn System.Memory.MemoryStatus Append(mut borrow FieldList self, u32[0 max] nameToken, u32[0 max] typeHeadToken, u32[0 max] typePrimaryToken)
+    {
+        if (!self.NameTokens.TryReserve(1) || !self.TypeHeadTokens.TryReserve(1)
+            || !self.TypePrimaryTokens.TryReserve(1))
         {
             return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
         }
 
         init self.NameTokens[self.NameTokens.Length] = nameToken;
+        init self.TypeHeadTokens[self.TypeHeadTokens.Length] = typeHeadToken;
+        init self.TypePrimaryTokens[self.TypePrimaryTokens.Length] = typePrimaryToken;
         return System.Memory.MemoryStatus.Ok;
     }
 }
@@ -850,28 +1363,58 @@ public fn ParseResult<FieldList> ParseStructFields(borrow TokenStream stream, u3
         if (kind == DeclarationKind.Unknown
             && stream.KindAt((u64[0 2 ** 63 - 1])memberEnd) == TokenKind.Semi)
         {
-            stack mut u32[0 max] nameToken = 0;
-            stack mut bool hasName = false;
-            stack mut u32[0 max] scan = memberStart;
-            while willexit (scan < memberEnd)
+            // A field declaration is `type_ variableDeclarators ;` where the
+            // declarators are a depth-0 comma-separated list, each `Identifier
+            // [capacity]?`. Split on depth-0 commas: the FIRST declarator's prefix is
+            // the shared field type (whose head is the rightmost depth-0 identifier
+            // before that declarator's name); every declarator's name is the last
+            // depth-0 identifier of its segment (so a `[N]` capacity — whose tokens
+            // are bracket-nested — is skipped). All declarators share the type head.
+            stack mut u32[0 max] sharedTypeHead = 0;
+            stack mut u32[0 max] sharedTypePrimary = 0;
+            stack mut bool haveType = false;
+            stack mut u32[0 max] segStart = memberStart;
+            stack mut u32[0 max] segDepth = 0;
+            stack mut u32[0 max] dscan = memberStart;
+            while willexit (dscan <= memberEnd)
             {
-                if (stream.KindAt((u64[0 2 ** 63 - 1])scan) == TokenKind.Identifier)
+                stack TokenKind dk = stream.KindAt((u64[0 2 ** 63 - 1])dscan);
+                if (dk == TokenKind.Lt || dk == TokenKind.LBrack || dk == TokenKind.LParen)
                 {
-                    nameToken = scan;
-                    hasName = true;
+                    segDepth = (u32[0 max])(segDepth + 1);
+                }
+                else if (dk == TokenKind.Gt || dk == TokenKind.RBrack || dk == TokenKind.RParen)
+                {
+                    if (segDepth > 0)
+                    {
+                        segDepth = (u32[0 max])(segDepth - 1);
+                    }
+                }
+                else if (segDepth == 0 && (dk == TokenKind.Comma || dk == TokenKind.Semi))
+                {
+                    // The declarator segment is `[segStart, dscan)`.
+                    stack u32[0 max] nameToken = BoundedLastIdentifier(stream, segStart, dscan);
+                    if (nameToken != 0)
+                    {
+                        if (!haveType)
+                        {
+                            sharedTypeHead = BoundedLastIdentifier(stream, segStart, nameToken);
+                            sharedTypePrimary = BoundedFirstTypeStart(stream, segStart, nameToken);
+                            haveType = true;
+                        }
+
+                        switch (fields.Append(nameToken, sharedTypeHead, sharedTypePrimary))
+                        {
+                            case System.Memory.MemoryStatus.Err(var appendError):
+                                return ParseResult<FieldList>.Err(ParseError.OutOfMemory);
+                            case System.Memory.MemoryStatus.Ok:
+                        }
+                    }
+
+                    segStart = (u32[0 max])(dscan + 1);
                 }
 
-                scan = (u32[0 max])(scan + 1);
-            }
-
-            if (hasName)
-            {
-                switch (fields.Append(nameToken))
-                {
-                    case System.Memory.MemoryStatus.Err(var appendError):
-                        return ParseResult<FieldList>.Err(ParseError.OutOfMemory);
-                    case System.Memory.MemoryStatus.Ok:
-                }
+                dscan = (u32[0 max])(dscan + 1);
             }
         }
 
@@ -889,6 +1432,10 @@ public struct FunctionSignature
     // (e.g. `Foo` in `fn Foo g()` / `List` in `fn List<u32> g()`); 0 when the
     // return type is a built-in (`fn void f()` / `fn i32 n()`).
     u32[0 max] ReturnTypeHead;
+    // The return type's type-primary token: the first type-starting token of the
+    // return type (a built-in like `void`/`i32` or a user-type identifier), used
+    // to classify the return type (e.g. to detect a `void` return).
+    u32[0 max] ReturnTypeToken;
     internal dynamic u32[0 max] ParamNameTokens;
     // Per-parameter type head identifier (0 for a built-in parameter type), kept
     // in lockstep with `ParamNameTokens`.
@@ -902,6 +1449,7 @@ public struct FunctionSignature
     {
         self.NameToken = 0;
         self.ReturnTypeHead = 0;
+        self.ReturnTypeToken = 0;
         self.ParamNameTokens = new();
         self.ParamTypeHeads = new();
         self.ParamTypeTokens = new();
@@ -916,6 +1464,13 @@ public struct FunctionSignature
     public inline finite law u32[0 max] ReturnType(borrow FunctionSignature self)
     {
         return self.ReturnTypeHead;
+    }
+
+    // The return type's type-primary token (built-in type token or user-type
+    // identifier), for classifying the return type.
+    public inline finite law u32[0 max] ReturnTypeTokenAt(borrow FunctionSignature self)
+    {
+        return self.ReturnTypeToken;
     }
 
     public inline finite law u64[0 2 ** 63 - 1] ParamCount(borrow FunctionSignature self)
@@ -1038,6 +1593,7 @@ public fn ParseResult<FunctionSignature> ParseFunctionSignature(borrow TokenStre
     stack mut u32[0 max] index = (u32[0 max])(fnKeyword + 1);
     stack mut u32[0 max] lastIdentifier = 0;
     stack mut u32[0 max] prevIdentifier = 0;
+    stack mut u32[0 max] returnTypeToken = 0;
     stack mut bool hasIdentifier = false;
     stack mut u32[0 max] nameDepth = 0;
 
@@ -1072,6 +1628,11 @@ public fn ParseResult<FunctionSignature> ParseFunctionSignature(borrow TokenStre
             hasIdentifier = true;
         }
 
+        if (nameDepth == 0 && returnTypeToken == 0 && IsTypeStartToken(headKind))
+        {
+            returnTypeToken = index;
+        }
+
         index = (u32[0 max])(index + 1);
     }
 
@@ -1084,6 +1645,7 @@ public fn ParseResult<FunctionSignature> ParseFunctionSignature(borrow TokenStre
     {
         signature.NameToken = lastIdentifier;
         signature.ReturnTypeHead = prevIdentifier;
+        signature.ReturnTypeToken = returnTypeToken;
     }
 
     index = (u32[0 max])(index + 1);
@@ -1142,10 +1704,21 @@ public enum StatementKind
     If,
     While,
     For,
+    // A for-each `for BEHAVIOR (type element in collection) { ... }` traversal. Its
+    // bound element (and optional index) are emitted as `Local`s in the loop scope
+    // and the traversal collection is its expression — but it carries no boolean
+    // condition, so it is a distinct kind from the C-style `For`.
+    ForEach,
     Switch,
     Break,
     Continue,
     Local,
+    // A `var Identifier` binding introduced by a `case` pattern. Like a `Local` it
+    // names an in-scope value (resolved in the section scope), but — unlike a
+    // `Local` — repeating the name across a section's `or` alternatives is NOT a
+    // redefinition (the host's pattern `Declare` is last-write-wins), so it is a
+    // distinct kind that the duplicate-in-block check ignores.
+    PatternBinding,
     Unsafe,
     // A bare brace-delimited block `{ ... }` used as a statement (its own scope);
     // its body statements are sub-parsed one level deeper.
@@ -1171,6 +1744,11 @@ public struct StatementItem
     // For a `Local` declaration, its type-primary token (a built-in type token or
     // user-type identifier); 0 for every other statement kind.
     u32[0 max] TypeToken;
+    // For a `Local` declaration with a declared type, its user-type HEAD token (the
+    // rightmost depth-0 identifier of the type — `Foo` for `Foo x` / `System.Foo x`,
+    // `List` for `List<u32> x`); 0 for a built-in type, a `var` pattern binding, or
+    // any other statement kind. Used to resolve the local's named type.
+    u32[0 max] TypeHead;
 
     StatementItem()
     {
@@ -1179,6 +1757,7 @@ public struct StatementItem
         self.EndToken = 0;
         self.NameToken = 0;
         self.TypeToken = 0;
+        self.TypeHead = 0;
     }
 }
 
@@ -1191,6 +1770,10 @@ public struct StatementList
     internal dynamic u32[0 max] NameTokens;
     // Per-statement declared type-primary token (`Local` declarations only).
     internal dynamic u32[0 max] TypeTokens;
+    // Per-statement declared user-type HEAD token (`Local` declarations with a named
+    // type; 0 for a built-in / `var` pattern binding / other kinds). For resolving
+    // the local's named type — distinct from `TypeTokens` for a qualified type.
+    internal dynamic u32[0 max] TypeHeads;
     // Per-statement expression root (1-based into `Expressions`, 0 = none): the
     // returned value of a `return`, or the whole of an expression statement.
     internal dynamic u32[0 max] ExprRoots;
@@ -1205,6 +1788,17 @@ public struct StatementList
     // range `(ExprStarts[i], ExprStarts[i+1]]` (or `(ExprStarts[i], total]` for
     // the last), letting a reference be attributed to its owning statement.
     internal dynamic u32[0 max] ExprStarts;
+    // Per-statement lexical scope id: every statement directly inside one block
+    // shares a scope id; a nested block (an `if`/loop/`switch`/bare-block body, or
+    // a switch section) gets a fresh child scope. This is the exact block model
+    // (two locals are in the same block iff same scope id), replacing the
+    // depth-heuristic that mis-handled sibling arms.
+    internal dynamic u32[0 max] ScopeIds;
+    // Per-scope-id parent scope id (indexed by scope id; the root scope is its own
+    // parent). Used to test scope ancestry for reference visibility.
+    internal dynamic u32[0 max] ScopeParents;
+    // The next scope id to hand out.
+    u32[0 max] NextScopeId;
     // The shared expression tree all statements' expressions are built into.
     internal ExprTree Expressions;
 
@@ -1215,10 +1809,59 @@ public struct StatementList
         self.EndTokens = new();
         self.NameTokens = new();
         self.TypeTokens = new();
+        self.TypeHeads = new();
         self.ExprRoots = new();
         self.Depths = new();
         self.ExprStarts = new();
+        self.ScopeIds = new();
+        self.ScopeParents = new();
+        self.NextScopeId = 0;
         self.Expressions = new();
+    }
+
+    // Allocates a fresh scope id whose parent is `parentScopeId`, recording the
+    // parent link. The first allocation (the root) should pass its own id (0).
+    internal fn u32[0 max] AllocateScope(mut borrow StatementList self, u32[0 max] parentScopeId)
+    {
+        if (!self.ScopeParents.TryReserve(1))
+        {
+            return 0;
+        }
+
+        stack u32[0 max] id = self.NextScopeId;
+        init self.ScopeParents[self.ScopeParents.Length] = parentScopeId;
+        self.NextScopeId = (u32[0 max])(id + 1);
+        return id;
+    }
+
+    // The lexical scope id of statement `index` (0 when out of range).
+    public law u32[0 max] ScopeIdAt(borrow StatementList self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] scopeId = 0;
+        if (index < self.ScopeIds.Length)
+        {
+            scopeId = self.ScopeIds[index];
+        }
+
+        return scopeId;
+    }
+
+    // The parent scope id of scope `scopeId` (itself when out of range / root).
+    public law u32[0 max] ScopeParentAt(borrow StatementList self, u32[0 max] scopeId)
+    {
+        stack mut u32[0 max] parent = scopeId;
+        if ((u64[0 2 ** 63 - 1])scopeId < self.ScopeParents.Length)
+        {
+            parent = self.ScopeParents[(u64[0 2 ** 63 - 1])scopeId];
+        }
+
+        return parent;
+    }
+
+    // The number of allocated scopes (an upper bound on scope-tree depth).
+    public inline finite law u64[0 2 ** 63 - 1] ScopeCount(borrow StatementList self)
+    {
+        return self.ScopeParents.Length;
     }
 
     public inline finite law u64[0 2 ** 63 - 1] Count(borrow StatementList self)
@@ -1250,6 +1893,11 @@ public struct StatementList
             if (index < self.TypeTokens.Length)
             {
                 item.TypeToken = self.TypeTokens[index];
+            }
+
+            if (index < self.TypeHeads.Length)
+            {
+                item.TypeHead = self.TypeHeads[index];
             }
         }
 
@@ -1325,16 +1973,18 @@ public struct StatementList
         return start;
     }
 
-    internal fn System.Memory.MemoryStatus Append(mut borrow StatementList self, StatementItem item, u32[0 max] exprRoot, u32[0 max] depth, u32[0 max] exprStart)
+    internal fn System.Memory.MemoryStatus Append(mut borrow StatementList self, StatementItem item, u32[0 max] exprRoot, u32[0 max] depth, u32[0 max] exprStart, u32[0 max] scopeId)
     {
         if (!self.Kinds.TryReserve(1)
             || !self.StartTokens.TryReserve(1)
             || !self.EndTokens.TryReserve(1)
             || !self.NameTokens.TryReserve(1)
             || !self.TypeTokens.TryReserve(1)
+            || !self.TypeHeads.TryReserve(1)
             || !self.ExprRoots.TryReserve(1)
             || !self.Depths.TryReserve(1)
-            || !self.ExprStarts.TryReserve(1))
+            || !self.ExprStarts.TryReserve(1)
+            || !self.ScopeIds.TryReserve(1))
         {
             return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
         }
@@ -1344,9 +1994,11 @@ public struct StatementList
         init self.EndTokens[self.EndTokens.Length] = item.EndToken;
         init self.NameTokens[self.NameTokens.Length] = item.NameToken;
         init self.TypeTokens[self.TypeTokens.Length] = item.TypeToken;
+        init self.TypeHeads[self.TypeHeads.Length] = item.TypeHead;
         init self.ExprRoots[self.ExprRoots.Length] = exprRoot;
         init self.Depths[self.Depths.Length] = depth;
         init self.ExprStarts[self.ExprStarts.Length] = exprStart;
+        init self.ScopeIds[self.ScopeIds.Length] = scopeId;
         return System.Memory.MemoryStatus.Ok;
     }
 }
@@ -1518,13 +2170,24 @@ finite law bool IsBlockStatement(StatementKind kind)
 }
 
 // The token index of the `:` that ends a `case <pattern>... :` / `default :`
-// switch-section label beginning at `start`: the first `:` at angle/bracket/paren
-// depth 0 (so `:` inside a pattern's `Foo<...>`/`(...)`/`[...]` is skipped).
-// Returns `start` if no such colon is found.
+// switch-section label beginning at `start`. The label is `pattern (or pattern)*
+// (when expression)? :`, so the colon is found past three traps that a naive
+// "first `:` at bracket depth 0" hits:
+//   * `(`/`[`/`{` always nest (balanced) — a `:` inside a named-field payload
+//     `{ a: p }` is skipped.
+//   * `<`/`>` are angle brackets ONLY in the pattern region (generic types like
+//     `List<u32>`); after a depth-0 `when` the guard is an expression where `<`,
+//     `>`, `<<`, `>>` are relational/shift OPERATORS and must not change depth.
+//   * a `when` guard may be a ternary `c ? a : b`, whose `:` is a branch separator,
+//     not the label colon — track unmatched `?` and consume the matching `:`.
+// Returns `start` if no label colon is found.
 finite law u32[0 max] FindSwitchLabelColon(borrow TokenStream stream, u32[0 max] start)
 {
     stack mut u32[0 max] index = start;
-    stack mut u32[0 max] depth = 0;
+    stack mut u32[0 max] bracketDepth = 0;
+    stack mut u32[0 max] angleDepth = 0;
+    stack mut u32[0 max] ternaryDepth = 0;
+    stack mut bool seenWhen = false;
     stack mut u64[0 2 ** 63 - 1] guard = stream.Count();
     while willexit (guard > 0)
     {
@@ -1535,20 +2198,46 @@ finite law u32[0 max] FindSwitchLabelColon(borrow TokenStream stream, u32[0 max]
             return start;
         }
 
-        if (kind == TokenKind.Colon && depth == 0)
+        if (kind == TokenKind.LParen || kind == TokenKind.LBrack || kind == TokenKind.LBrace)
         {
-            return index;
+            bracketDepth = (u32[0 max])(bracketDepth + 1);
         }
-
-        if (kind == TokenKind.Lt || kind == TokenKind.LParen || kind == TokenKind.LBrack)
+        else if (kind == TokenKind.RParen || kind == TokenKind.RBrack || kind == TokenKind.RBrace)
         {
-            depth = (u32[0 max])(depth + 1);
-        }
-        else if (kind == TokenKind.Gt || kind == TokenKind.RParen || kind == TokenKind.RBrack)
-        {
-            if (depth > 0)
+            if (bracketDepth > 0)
             {
-                depth = (u32[0 max])(depth - 1);
+                bracketDepth = (u32[0 max])(bracketDepth - 1);
+            }
+        }
+        else if (kind == TokenKind.When && bracketDepth == 0 && angleDepth == 0)
+        {
+            seenWhen = true;
+        }
+        else if (!seenWhen && kind == TokenKind.Lt)
+        {
+            angleDepth = (u32[0 max])(angleDepth + 1);
+        }
+        else if (!seenWhen && kind == TokenKind.Gt)
+        {
+            if (angleDepth > 0)
+            {
+                angleDepth = (u32[0 max])(angleDepth - 1);
+            }
+        }
+        else if (seenWhen && kind == TokenKind.Question && bracketDepth == 0)
+        {
+            ternaryDepth = (u32[0 max])(ternaryDepth + 1);
+        }
+        else if (kind == TokenKind.Colon && bracketDepth == 0 && angleDepth == 0)
+        {
+            if (seenWhen && ternaryDepth > 0)
+            {
+                // The `:` of a `c ? a : b` ternary branch in the guard.
+                ternaryDepth = (u32[0 max])(ternaryDepth - 1);
+            }
+            else
+            {
+                return index;
             }
         }
 
@@ -1556,6 +2245,539 @@ finite law u32[0 max] FindSwitchLabelColon(borrow TokenStream stream, u32[0 max]
     }
 
     return start;
+}
+
+// Parses a `case` label's pattern region `[patternStart, colon)` for the references
+// and bindings it introduces, appending them into `list` at `depth`/`scope` (the
+// section scope). Mirrors the host `CheckSwitchStatement`: each `var Identifier`
+// pattern binding becomes a `Local`, and a `when <expression>` guard (if present)
+// becomes an `Expression` (parsed after the bindings, so it sees them). Constant /
+// enum-case / type pattern references are not resolved by this slice.
+internal fn System.Memory.MemoryStatus ParseCaseLabel(borrow TokenStream stream, mut borrow StatementList list, u32[0 max] patternStart, u32[0 max] colon, u32[0 max] depth, u32[0 max] scope)
+{
+    // Locate a `when` guard at bracket/paren/brace/angle depth 0; the patterns are
+    // everything before it (or before the colon when there is no guard).
+    stack mut u32[0 max] whenToken = 0;
+    stack mut u32[0 max] guardScan = patternStart;
+    stack mut u32[0 max] guardDepth = 0;
+    while willexit (guardScan < colon)
+    {
+        stack TokenKind gk = stream.KindAt((u64[0 2 ** 63 - 1])guardScan);
+        if (gk == TokenKind.Lt || gk == TokenKind.LParen || gk == TokenKind.LBrack || gk == TokenKind.LBrace)
+        {
+            guardDepth = (u32[0 max])(guardDepth + 1);
+        }
+        else if (gk == TokenKind.Gt || gk == TokenKind.RParen || gk == TokenKind.RBrack || gk == TokenKind.RBrace)
+        {
+            if (guardDepth > 0)
+            {
+                guardDepth = (u32[0 max])(guardDepth - 1);
+            }
+        }
+        else if (gk == TokenKind.When && guardDepth == 0)
+        {
+            whenToken = guardScan;
+            break;
+        }
+
+        guardScan = (u32[0 max])(guardScan + 1);
+    }
+
+    stack mut u32[0 max] patternEnd = colon;
+    if (whenToken != 0)
+    {
+        patternEnd = whenToken;
+    }
+
+    // Each `var Identifier` (at any nesting, e.g. `Foo(var x)`) binds a `Local`.
+    stack mut u32[0 max] bindScan = patternStart;
+    while willexit (bindScan < patternEnd)
+    {
+        if (stream.KindAt((u64[0 2 ** 63 - 1])bindScan) == TokenKind.Var)
+        {
+            stack u32[0 max] nameToken = (u32[0 max])(bindScan + 1);
+            if (nameToken < patternEnd && stream.KindAt((u64[0 2 ** 63 - 1])nameToken) == TokenKind.Identifier)
+            {
+                stack u32[0 max] bindExprStart = (u32[0 max])list.Expressions.Count();
+                stack mut StatementItem bindItem = new();
+                bindItem.Kind = StatementKind.PatternBinding;
+                bindItem.StartToken = bindScan;
+                bindItem.EndToken = nameToken;
+                bindItem.NameToken = nameToken;
+                bindItem.TypeToken = 0;
+                switch (list.Append(bindItem, 0, depth, bindExprStart, scope))
+                {
+                    case System.Memory.MemoryStatus.Err(var bindError):
+                        return System.Memory.MemoryStatus.Err(bindError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+        }
+
+        bindScan = (u32[0 max])(bindScan + 1);
+    }
+
+    // The `when` guard expression resolves in the section scope after the bindings.
+    if (whenToken != 0 && (u32[0 max])(whenToken + 1) < colon)
+    {
+        stack u32[0 max] guardExprStart = (u32[0 max])list.Expressions.Count();
+        stack ExprParse guard = ParseAssignment(stream, list.Expressions, (u32[0 max])(whenToken + 1));
+        stack mut StatementItem guardItem = new();
+        guardItem.Kind = StatementKind.Expression;
+        guardItem.StartToken = (u32[0 max])(whenToken + 1);
+        guardItem.EndToken = colon;
+        switch (list.Append(guardItem, guard.Node, depth, guardExprStart, scope))
+        {
+            case System.Memory.MemoryStatus.Err(var guardError):
+                return System.Memory.MemoryStatus.Err(guardError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+// Parses the comma-separated expressions of a C-style `for` expression-list clause
+// (an `expressionList` `forInitializer` or the `forIterator`) in the half-open
+// token range `[startPos, endExclusive)`, appending each as an `Expression`
+// statement at `depth`/`scope` so its references resolve (matching the host, which
+// evaluates every such expression). An empty range appends nothing.
+internal fn System.Memory.MemoryStatus ParseForClause(borrow TokenStream stream, mut borrow StatementList list, u32[0 max] startPos, u32[0 max] endExclusive, u32[0 max] depth, u32[0 max] scope)
+{
+    stack mut u32[0 max] pos = startPos;
+    stack mut u64[0 2 ** 63 - 1] guard = stream.Count();
+    while willexit (guard > 0)
+    {
+        guard = (u64[0 2 ** 63 - 1])(guard - 1);
+        if (pos >= endExclusive)
+        {
+            break;
+        }
+
+        // Skip a leading or separating comma between expressions.
+        if (stream.KindAt((u64[0 2 ** 63 - 1])pos) == TokenKind.Comma)
+        {
+            pos = (u32[0 max])(pos + 1);
+            continue;
+        }
+
+        stack u32[0 max] exprStart = (u32[0 max])list.Expressions.Count();
+        stack ExprParse parsed = ParseAssignment(stream, list.Expressions, pos);
+        stack mut StatementItem item = new();
+        item.Kind = StatementKind.Expression;
+        item.StartToken = pos;
+        item.EndToken = endExclusive;
+        switch (list.Append(item, parsed.Node, depth, exprStart, scope))
+        {
+            case System.Memory.MemoryStatus.Err(var clauseError):
+                return System.Memory.MemoryStatus.Err(clauseError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        // Advance past the parsed expression; `+1` guarantees progress if it stalls.
+        if (parsed.Pos > pos)
+        {
+            pos = parsed.Pos;
+        }
+        else
+        {
+            pos = (u32[0 max])(pos + 1);
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+// Sub-parses a `for` loop's body — the first `{` after the header's matching `)`
+// (`headerClose`), in a fresh child scope of `forScope` — into `list`. Shared by
+// both `for` forms. A loop with no brace body (none found before `forEnd`) appends
+// nothing.
+internal fn System.Memory.MemoryStatus ParseForBody(borrow TokenStream stream, mut borrow StatementList list, u32[0 max] headerClose, u32[0 max] forEnd, u32[0 max] depth, u32[0 max] forScope)
+{
+    if (headerClose == 0)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack mut u32[0 max] bodyOpen = (u32[0 max])(headerClose + 1);
+    stack mut bool foundBody = false;
+    stack mut u64[0 2 ** 63 - 1] bodyGuard = stream.Count();
+    while willexit (bodyGuard > 0)
+    {
+        bodyGuard = (u64[0 2 ** 63 - 1])(bodyGuard - 1);
+        if (bodyOpen > forEnd)
+        {
+            break;
+        }
+
+        if (stream.KindAt((u64[0 2 ** 63 - 1])bodyOpen) == TokenKind.LBrace)
+        {
+            foundBody = true;
+            break;
+        }
+
+        bodyOpen = (u32[0 max])(bodyOpen + 1);
+    }
+
+    if (foundBody)
+    {
+        stack u32[0 max] bodyScope = list.AllocateScope(forScope);
+        switch (ParseBlock(stream, list, bodyOpen, (u32[0 max])(depth + 1), bodyScope))
+        {
+            case System.Memory.MemoryStatus.Err(var bodyError):
+                return System.Memory.MemoryStatus.Err(bodyError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+// The last identifier token at angle/bracket/paren depth 0 in the half-open token
+// range `[start, endExclusive)`. Returns 0 when the range holds no such token. Used
+// to extract a for-each binding's name (the identifier before the `in`/comma)
+// without the `=`/`;` terminator that `FindVariableName` relies on.
+finite law u32[0 max] BoundedLastIdentifier(borrow TokenStream stream, u32[0 max] start, u32[0 max] endExclusive)
+{
+    stack mut u32[0 max] nameToken = 0;
+    stack mut u32[0 max] index = start;
+    stack mut u32[0 max] depth = 0;
+    while willexit (index < endExclusive)
+    {
+        stack TokenKind k = stream.KindAt((u64[0 2 ** 63 - 1])index);
+        if (k == TokenKind.Lt || k == TokenKind.LBrack || k == TokenKind.LParen)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (k == TokenKind.Gt || k == TokenKind.RBrack || k == TokenKind.RParen)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+        else if (k == TokenKind.Identifier && depth == 0)
+        {
+            nameToken = index;
+        }
+
+        index = (u32[0 max])(index + 1);
+    }
+
+    return nameToken;
+}
+
+// The first type-start token at angle/bracket/paren depth 0 in `[start, endExclusive)`
+// (the bounded analogue of `FindVariableTypeToken`'s type-head capture), or 0.
+finite law u32[0 max] BoundedFirstTypeStart(borrow TokenStream stream, u32[0 max] start, u32[0 max] endExclusive)
+{
+    stack mut u32[0 max] typeToken = 0;
+    stack mut u32[0 max] index = start;
+    stack mut u32[0 max] depth = 0;
+    while willexit (index < endExclusive)
+    {
+        stack TokenKind k = stream.KindAt((u64[0 2 ** 63 - 1])index);
+        if (k == TokenKind.Lt || k == TokenKind.LBrack || k == TokenKind.LParen)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (k == TokenKind.Gt || k == TokenKind.RBrack || k == TokenKind.RParen)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+        else if (depth == 0 && typeToken == 0 && IsTypeStartToken(k))
+        {
+            typeToken = index;
+        }
+
+        index = (u32[0 max])(index + 1);
+    }
+
+    return typeToken;
+}
+
+// Parses a `for` loop whose span is `[forStart, forEnd]`. The loop gets its own
+// scope (`forScope`, a child of `scopeId`) holding its bound variables, with the
+// body as a further child scope. Two forms (per `Stark.g4` `forStatement`):
+//   * C-style `for B (init; cond; iter)`: a storage-class-led init declares a
+//     `Local` in `forScope` (an `expressionList` init is parsed as `Expression`s
+//     instead); the condition is the `For` statement's expression (also in
+//     `forScope`, so it sees the loop variable); and the iterator clause is parsed
+//     as `Expression`s in `forScope` (at `depth + 1` so the `For` stays the
+//     enclosing loop for `break`/`continue`).
+//   * for-each `for B (type element in collection)` (optionally `storage type idx,`
+//     first): the element (and index) are declared as `Local`s in `forScope` and
+//     the traversal collection is the `ForEach` statement's expression — there is
+//     no boolean condition, hence the distinct `ForEach` kind. The collection is
+//     attributed to the enclosing `scopeId` (the host evaluates it before the
+//     bindings exist), so it cannot see the loop's own element/index.
+internal fn System.Memory.MemoryStatus ParseForStatement(borrow TokenStream stream, mut borrow StatementList list, u32[0 max] forStart, u32[0 max] forEnd, u32[0 max] depth, u32[0 max] scopeId)
+{
+    stack u32[0 max] forScope = list.AllocateScope(scopeId);
+
+    // Locate the header `(`, the matching `)`, the two depth-1 `;` separators
+    // (C-style), and — for a for-each — the `in` keyword and the index-separator
+    // `,` that precedes it (both at paren depth 1 and angle/bracket depth 0, so a
+    // generic element type like `Map<u32, u64> x` does not mis-trigger them).
+    stack mut u32[0 max] headerOpen = 0;
+    stack mut u32[0 max] firstSemi = 0;
+    stack mut u32[0 max] secondSemi = 0;
+    stack mut u32[0 max] headerClose = 0;
+    stack mut u32[0 max] inToken = 0;
+    stack mut u32[0 max] indexComma = 0;
+    stack mut u32[0 max] parenDepth = 0;
+    stack mut u32[0 max] angleDepth = 0;
+    stack mut bool headerDone = false;
+    stack mut u32[0 max] scan = forStart;
+    while willexit (scan <= forEnd && !headerDone)
+    {
+        stack TokenKind k = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (k == TokenKind.LParen)
+        {
+            if (headerOpen == 0)
+            {
+                headerOpen = scan;
+            }
+
+            parenDepth = (u32[0 max])(parenDepth + 1);
+        }
+        else if (k == TokenKind.RParen)
+        {
+            if (parenDepth > 0)
+            {
+                parenDepth = (u32[0 max])(parenDepth - 1);
+                if (parenDepth == 0)
+                {
+                    headerClose = scan;
+                    headerDone = true;
+                }
+            }
+        }
+        else if (k == TokenKind.Lt || k == TokenKind.LBrack)
+        {
+            angleDepth = (u32[0 max])(angleDepth + 1);
+        }
+        else if (k == TokenKind.Gt || k == TokenKind.RBrack)
+        {
+            if (angleDepth > 0)
+            {
+                angleDepth = (u32[0 max])(angleDepth - 1);
+            }
+        }
+        else if (k == TokenKind.Semi && parenDepth == 1)
+        {
+            if (firstSemi == 0)
+            {
+                firstSemi = scan;
+            }
+            else if (secondSemi == 0)
+            {
+                secondSemi = scan;
+            }
+        }
+        else if (k == TokenKind.In && parenDepth == 1 && angleDepth == 0)
+        {
+            if (inToken == 0)
+            {
+                inToken = scan;
+            }
+        }
+        else if (k == TokenKind.Comma && parenDepth == 1 && angleDepth == 0)
+        {
+            if (inToken == 0 && indexComma == 0)
+            {
+                indexComma = scan;
+            }
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    // The for-each form binds its element (and optional index) and parses the
+    // traversal collection as the `ForEach` statement's expression.
+    if (headerOpen != 0 && inToken != 0)
+    {
+        stack mut u32[0 max] elementStart = (u32[0 max])(headerOpen + 1);
+        if (indexComma != 0 && (u32[0 max])(headerOpen + 1) < indexComma)
+        {
+            stack u32[0 max] idxStart = (u32[0 max])(headerOpen + 1);
+            stack u32[0 max] idxName = BoundedLastIdentifier(stream, idxStart, indexComma);
+            if (idxName != 0)
+            {
+                stack u32[0 max] idxExprStart = (u32[0 max])list.Expressions.Count();
+                stack mut StatementItem idxItem = new();
+                idxItem.Kind = StatementKind.Local;
+                idxItem.StartToken = idxStart;
+                idxItem.EndToken = indexComma;
+                idxItem.NameToken = idxName;
+                idxItem.TypeToken = BoundedFirstTypeStart(stream, idxStart, indexComma);
+                // The index binding is `storageClass type Identifier`, so the type
+                // head is the rightmost identifier before the name (after the class).
+                idxItem.TypeHead = BoundedLastIdentifier(stream, (u32[0 max])(idxStart + 1), idxName);
+                switch (list.Append(idxItem, 0, depth, idxExprStart, forScope))
+                {
+                    case System.Memory.MemoryStatus.Err(var idxError):
+                        return System.Memory.MemoryStatus.Err(idxError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+
+            elementStart = (u32[0 max])(indexComma + 1);
+        }
+
+        if (elementStart < inToken)
+        {
+            stack u32[0 max] elemName = BoundedLastIdentifier(stream, elementStart, inToken);
+            if (elemName != 0)
+            {
+                stack u32[0 max] elemExprStart = (u32[0 max])list.Expressions.Count();
+                stack mut StatementItem elemItem = new();
+                elemItem.Kind = StatementKind.Local;
+                elemItem.StartToken = elementStart;
+                elemItem.EndToken = inToken;
+                elemItem.NameToken = elemName;
+                elemItem.TypeToken = BoundedFirstTypeStart(stream, elementStart, inToken);
+                // The element binding is `type Identifier` (no storage class), so the
+                // type head is the rightmost identifier before the name.
+                elemItem.TypeHead = BoundedLastIdentifier(stream, elementStart, elemName);
+                switch (list.Append(elemItem, 0, depth, elemExprStart, forScope))
+                {
+                    case System.Memory.MemoryStatus.Err(var elemError):
+                        return System.Memory.MemoryStatus.Err(elemError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+        }
+
+        // The traversal collection (after `in`, before `)`) becomes the statement's
+        // expression so its references resolve; it is not a boolean condition. The
+        // host (CheckForTraversal) evaluates the collection in the ENCLOSING scope
+        // BEFORE declaring the element/index, so the `ForEach` statement is attributed
+        // to `scopeId` (not `forScope`): the loop's own element/index — which live in
+        // `forScope`, a child of `scopeId` — are therefore not visible to the
+        // collection (`for w (u32 x in x)` leaves the collection `x` unbound), while
+        // an outer binding or enclosing loop's variable still resolves.
+        stack u32[0 max] travExprStart = (u32[0 max])list.Expressions.Count();
+        stack mut u32[0 max] travRoot = 0;
+        if (headerClose != 0 && (u32[0 max])(inToken + 1) < headerClose)
+        {
+            stack ExprParse traversal = ParseAssignment(stream, list.Expressions, (u32[0 max])(inToken + 1));
+            travRoot = traversal.Node;
+        }
+
+        stack mut StatementItem forEachItem = new();
+        forEachItem.Kind = StatementKind.ForEach;
+        forEachItem.StartToken = forStart;
+        forEachItem.EndToken = forEnd;
+        switch (list.Append(forEachItem, travRoot, depth, travExprStart, scopeId))
+        {
+            case System.Memory.MemoryStatus.Err(var forEachError):
+                return System.Memory.MemoryStatus.Err(forEachError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        return ParseForBody(stream, list, headerClose, forEnd, depth, forScope);
+    }
+
+    // A storage-class-led init declares the loop variable in `forScope`.
+    if (headerOpen != 0 && firstSemi != 0 && (u32[0 max])(headerOpen + 1) < firstSemi)
+    {
+        stack u32[0 max] initStart = (u32[0 max])(headerOpen + 1);
+        if (ClassifyStatementKind(stream.KindAt((u64[0 2 ** 63 - 1])initStart)) == StatementKind.Local)
+        {
+            stack u32[0 max] initName = FindVariableName(stream, (u32[0 max])(initStart + 1));
+            if (initName != 0)
+            {
+                stack u32[0 max] initExprStart = (u32[0 max])list.Expressions.Count();
+                // Parse the initializer (after `=`, before the first `;`) so its
+                // references resolve; nodes precede the condition's, keeping the
+                // node order aligned with statement pre-order.
+                stack mut u32[0 max] initRoot = 0;
+                stack mut u32[0 max] initAssign = initStart;
+                stack mut bool foundInitAssign = false;
+                while willexit (initAssign < firstSemi)
+                {
+                    if (stream.KindAt((u64[0 2 ** 63 - 1])initAssign) == TokenKind.Assign)
+                    {
+                        foundInitAssign = true;
+                        break;
+                    }
+
+                    initAssign = (u32[0 max])(initAssign + 1);
+                }
+
+                if (foundInitAssign)
+                {
+                    stack ExprParse initializer = ParseAssignment(stream, list.Expressions, (u32[0 max])(initAssign + 1));
+                    initRoot = initializer.Node;
+                }
+
+                stack mut StatementItem initItem = new();
+                initItem.Kind = StatementKind.Local;
+                initItem.StartToken = initStart;
+                initItem.EndToken = firstSemi;
+                initItem.NameToken = initName;
+                initItem.TypeToken = FindVariableTypeToken(stream, (u32[0 max])(initStart + 1));
+                initItem.TypeHead = BoundedLastIdentifier(stream, (u32[0 max])(initStart + 1), initName);
+                switch (list.Append(initItem, initRoot, depth, initExprStart, forScope))
+                {
+                    case System.Memory.MemoryStatus.Err(var initError):
+                        return System.Memory.MemoryStatus.Err(initError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+        }
+        else
+        {
+            // An `expressionList` initializer (e.g. `i = h()`): parse each expression
+            // so its references resolve, in `forScope` before the `For` statement.
+            switch (ParseForClause(stream, list, initStart, firstSemi, depth, forScope))
+            {
+                case System.Memory.MemoryStatus.Err(var initExprError):
+                    return System.Memory.MemoryStatus.Err(initExprError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    // The condition (between the two `;`) is the `For` statement's expression.
+    stack u32[0 max] condExprStart = (u32[0 max])list.Expressions.Count();
+    stack mut u32[0 max] condRoot = 0;
+    if (firstSemi != 0 && secondSemi != 0 && (u32[0 max])(firstSemi + 1) < secondSemi)
+    {
+        stack ExprParse cond = ParseAssignment(stream, list.Expressions, (u32[0 max])(firstSemi + 1));
+        condRoot = cond.Node;
+    }
+
+    stack mut StatementItem forItem = new();
+    forItem.Kind = StatementKind.For;
+    forItem.StartToken = forStart;
+    forItem.EndToken = forEnd;
+    switch (list.Append(forItem, condRoot, depth, condExprStart, forScope))
+    {
+        case System.Memory.MemoryStatus.Err(var forError):
+            return System.Memory.MemoryStatus.Err(forError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    // The iterator clause (after the second `;`, before `)`): each expression is
+    // parsed in `forScope` so its references resolve (it sees the init local). It is
+    // emitted at `depth + 1` so the `For` statement remains the nearest enclosing
+    // loop at `depth` for a `break`/`continue` in the body.
+    if (secondSemi != 0 && headerClose != 0 && (u32[0 max])(secondSemi + 1) < headerClose)
+    {
+        switch (ParseForClause(stream, list, (u32[0 max])(secondSemi + 1), headerClose, (u32[0 max])(depth + 1), forScope))
+        {
+            case System.Memory.MemoryStatus.Err(var iterError):
+                return System.Memory.MemoryStatus.Err(iterError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
+    return ParseForBody(stream, list, headerClose, forEnd, depth, forScope);
 }
 
 // Recursively appends the statements of the block whose opening `{` is
@@ -1566,12 +2788,19 @@ finite law u32[0 max] FindSwitchLabelColon(borrow TokenStream stream, u32[0 max]
 // (the then-arm and `else`/`else if` arms of an `if`, the body of a loop/`switch`/
 // `unsafe`) is sub-parsed at depth + 1; a leading parenthesized header is skipped
 // so a brace inside it is not mistaken for the body.
-internal fn System.Memory.MemoryStatus ParseBlock(borrow TokenStream stream, mut borrow StatementList list, u32[0 max] openBrace, u32[0 max] depth)
+internal fn System.Memory.MemoryStatus ParseBlock(borrow TokenStream stream, mut borrow StatementList list, u32[0 max] openBrace, u32[0 max] depth, u32[0 max] scopeId)
 {
     stack mut u32[0 max] index = (u32[0 max])(openBrace + 1);
     // The depth for the section's statements: `depth` until a `case`/`default`
     // label is seen, then `depth + 1` (labels themselves stay at `depth`).
     stack mut u32[0 max] sectionDepth = depth;
+    // The scope for the current statements: this block's `scopeId` until a
+    // `case`/`default` label opens a fresh section scope (a child of `scopeId`).
+    stack mut u32[0 max] sectionScope = scopeId;
+    // Whether we are in a run of consecutive `case`/`default` labels of one section:
+    // a switch section is `label+ statement*`, so all labels of a section share one
+    // section scope, and the first label after a body statement opens the next.
+    stack mut bool labelRun = false;
 
     while willexit (stream.KindAt((u64[0 2 ** 63 - 1])index) != TokenKind.EndOfFile)
     {
@@ -1583,8 +2812,8 @@ internal fn System.Memory.MemoryStatus ParseBlock(borrow TokenStream stream, mut
         stack u32[0 max] statementStart = index;
         stack TokenKind leadKind = stream.KindAt((u64[0 2 ** 63 - 1])statementStart);
 
-        // A switch-section label: record it at the base depth and nest the
-        // section's following statements one deeper.
+        // A switch-section label: record it at the base depth/scope and nest the
+        // section's following statements one deeper in a fresh section scope.
         if (leadKind == TokenKind.Case || leadKind == TokenKind.Default)
         {
             stack u32[0 max] colon = FindSwitchLabelColon(stream, statementStart);
@@ -1593,20 +2822,60 @@ internal fn System.Memory.MemoryStatus ParseBlock(borrow TokenStream stream, mut
             label.Kind = StatementKind.Case;
             label.StartToken = statementStart;
             label.EndToken = colon;
-            switch (list.Append(label, 0, depth, labelStart))
+            switch (list.Append(label, 0, depth, labelStart, scopeId))
             {
                 case System.Memory.MemoryStatus.Err(var labelError):
                     return System.Memory.MemoryStatus.Err(labelError);
                 case System.Memory.MemoryStatus.Ok:
             }
 
-            sectionDepth = (u32[0 max])(depth + 1);
+            // Only the first label of a section opens a fresh section scope; later
+            // labels of the same section share it (so a `var` bound in one label is
+            // visible to a `when` guard or the body of the section).
+            if (!labelRun)
+            {
+                sectionDepth = (u32[0 max])(depth + 1);
+                sectionScope = list.AllocateScope(scopeId);
+                labelRun = true;
+            }
+
+            // A `case` label's pattern may bind `var` names and carry a `when` guard;
+            // both are scoped to the section. (`default` has neither.)
+            if (leadKind == TokenKind.Case)
+            {
+                switch (ParseCaseLabel(stream, list, (u32[0 max])(statementStart + 1), colon, sectionDepth, sectionScope))
+                {
+                    case System.Memory.MemoryStatus.Err(var patternError):
+                        return System.Memory.MemoryStatus.Err(patternError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+
             index = (u32[0 max])(colon + 1);
             continue;
         }
 
+        // A non-label statement ends the current section's label run.
+        labelRun = false;
+
         stack StatementKind kind = ClassifyStatementKind(leadKind);
         stack u32[0 max] statementEnd = SkipStatementBody(stream, statementStart);
+
+        // A `for` gets dedicated handling: its own loop scope holds the init
+        // local and the condition, with the body nested as a child scope, so the
+        // loop variable resolves in both. This replaces the generic block path.
+        if (kind == StatementKind.For)
+        {
+            switch (ParseForStatement(stream, list, statementStart, statementEnd, sectionDepth, sectionScope))
+            {
+                case System.Memory.MemoryStatus.Err(var forError):
+                    return System.Memory.MemoryStatus.Err(forError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            index = (u32[0 max])(statementEnd + 1);
+            continue;
+        }
 
         // A `return value;` parses the value (the token after `return`, unless
         // the statement is a bare `return;`); an expression statement parses the
@@ -1618,6 +2887,7 @@ internal fn System.Memory.MemoryStatus ParseBlock(borrow TokenStream stream, mut
         stack mut u32[0 max] exprRoot = 0;
         stack mut u32[0 max] localName = 0;
         stack mut u32[0 max] localType = 0;
+        stack mut u32[0 max] localHead = 0;
         if (kind == StatementKind.Return
             && stream.KindAt((u64[0 2 ** 63 - 1])(statementStart + 1)) != TokenKind.Semi)
         {
@@ -1635,12 +2905,49 @@ internal fn System.Memory.MemoryStatus ParseBlock(borrow TokenStream stream, mut
             stack ExprParse condition = ParseAssignment(stream, list.Expressions, (u32[0 max])(statementStart + 2));
             exprRoot = condition.Node;
         }
+        else if (kind == StatementKind.Switch)
+        {
+            // The switch subject `(expression)` is the statement's expression. Find
+            // the `(` (skipping an optional weight specifier) and parse after it.
+            stack mut u32[0 max] subjectOpen = (u32[0 max])(statementStart + 1);
+            stack mut bool foundSubject = false;
+            stack mut u64[0 2 ** 63 - 1] subjectGuard = stream.Count();
+            while willexit (subjectGuard > 0)
+            {
+                subjectGuard = (u64[0 2 ** 63 - 1])(subjectGuard - 1);
+                if (subjectOpen >= statementEnd)
+                {
+                    break;
+                }
+
+                if (stream.KindAt((u64[0 2 ** 63 - 1])subjectOpen) == TokenKind.LParen)
+                {
+                    foundSubject = true;
+                    break;
+                }
+
+                subjectOpen = (u32[0 max])(subjectOpen + 1);
+            }
+
+            if (foundSubject)
+            {
+                stack ExprParse subject = ParseAssignment(stream, list.Expressions, (u32[0 max])(subjectOpen + 1));
+                exprRoot = subject.Node;
+            }
+        }
         else if (kind == StatementKind.Local)
         {
             // The declared name is the last identifier before `=`/`;` (after the
             // leading storage-class/`const` keyword).
             localName = FindVariableName(stream, (u32[0 max])(statementStart + 1));
             localType = FindVariableTypeToken(stream, (u32[0 max])(statementStart + 1));
+            // The user-type head is the rightmost depth-0 identifier of the type
+            // (after the storage class, before the name); 0 for a built-in.
+            if (localName != 0)
+            {
+                localHead = BoundedLastIdentifier(stream, (u32[0 max])(statementStart + 1), localName);
+            }
+
             stack mut u32[0 max] scan = statementStart;
             stack mut bool foundInit = false;
             stack mut u64[0 2 ** 63 - 1] localGuard = stream.Count();
@@ -1674,7 +2981,8 @@ internal fn System.Memory.MemoryStatus ParseBlock(borrow TokenStream stream, mut
         item.EndToken = statementEnd;
         item.NameToken = localName;
         item.TypeToken = localType;
-        switch (list.Append(item, exprRoot, sectionDepth, exprStart))
+        item.TypeHead = localHead;
+        switch (list.Append(item, exprRoot, sectionDepth, exprStart, sectionScope))
         {
             case System.Memory.MemoryStatus.Err(var appendError):
                 return System.Memory.MemoryStatus.Err(appendError);
@@ -1722,7 +3030,9 @@ internal fn System.Memory.MemoryStatus ParseBlock(borrow TokenStream stream, mut
 
             // Sub-parse every top-level brace arm in the remaining span at
             // `sectionDepth + 1`: the then-/else-/else-if bodies of an `if`, and
-            // the single body of a loop/`switch`/`unsafe`.
+            // the single body of a loop/`switch`/`unsafe`. Each arm is its own
+            // child scope of this statement's scope, so sibling arms (then/else)
+            // are distinct blocks without any boundary marker.
             stack mut u32[0 max] braceDepth = 0;
             stack mut u32[0 max] armOpen = 0;
             stack mut bool inArm = false;
@@ -1748,7 +3058,8 @@ internal fn System.Memory.MemoryStatus ParseBlock(borrow TokenStream stream, mut
 
                     if (braceDepth == 0 && inArm)
                     {
-                        switch (ParseBlock(stream, list, armOpen, (u32[0 max])(sectionDepth + 1)))
+                        stack u32[0 max] armScope = list.AllocateScope(sectionScope);
+                        switch (ParseBlock(stream, list, armOpen, (u32[0 max])(sectionDepth + 1), armScope))
                         {
                             case System.Memory.MemoryStatus.Err(var blockError):
                                 return System.Memory.MemoryStatus.Err(blockError);
@@ -1774,7 +3085,9 @@ internal fn System.Memory.MemoryStatus ParseBlock(borrow TokenStream stream, mut
 internal fn ParseResult<StatementList> ParseStatements(borrow TokenStream stream, u32[0 max] openBrace)
 {
     stack mut StatementList list = new();
-    switch (ParseBlock(stream, list, openBrace, 0))
+    // Allocate the root (function-body) scope; it is its own parent.
+    stack u32[0 max] rootScope = list.AllocateScope(0);
+    switch (ParseBlock(stream, list, openBrace, 0, rootScope))
     {
         case System.Memory.MemoryStatus.Err(var blockError):
             return ParseResult<StatementList>.Err(ParseError.OutOfMemory);

@@ -389,6 +389,70 @@ fn bool ParsesEnumVariants()
 }
 
 [Fact]
+fn bool EnumPayloadTypeHeadsAreExtracted()
+{
+    // Payload type heads are captured across the three payload forms: tuple
+    // `A(Bar)` -> Bar, named-field `B { f: Baz }` -> Baz, `C from Qux` -> Qux. A
+    // bare variant (`None`) and built-in payloads contribute no user-type head.
+    stack ascii source = "enum E { A(Bar), B { f: Baz }, C from Qux, None }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] declStart = 0;
+    switch (ParseHeader(stream))
+    {
+        case ParseResult<CompilationUnitHeader>.Err(var headerError):
+            return false;
+        case ParseResult<CompilationUnitHeader>.Ok(var header):
+            declStart = header.NextToken;
+    }
+
+    stack mut u32[0 max] enumKeyword = 0;
+    stack mut bool foundEnum = false;
+    switch (ParseDeclarations(stream, declStart))
+    {
+        case ParseResult<DeclarationList>.Err(var declError):
+            return false;
+        case ParseResult<DeclarationList>.Ok(var decls):
+            if (decls.Count() == 1)
+            {
+                stack DeclItem only = decls.ItemAt(0);
+                if (only.Kind == DeclarationKind.Enum)
+                {
+                    enumKeyword = only.KeywordToken;
+                    foundEnum = true;
+                }
+            }
+    }
+
+    if (!foundEnum)
+    {
+        return false;
+    }
+
+    switch (ParseEnumPayloadHeads(stream, enumKeyword))
+    {
+        case ParseResult<TypeHeadList>.Err(var headsError):
+            return false;
+        case ParseResult<TypeHeadList>.Ok(var heads):
+            if (heads.Count() != 3)
+            {
+                return false;
+            }
+
+            stack ascii h0 = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])heads.HeadAt(0));
+            stack ascii h1 = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])heads.HeadAt(1));
+            stack ascii h2 = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])heads.HeadAt(2));
+            return System.Text.Equals(h0, "Bar")
+                && System.Text.Equals(h1, "Baz")
+                && System.Text.Equals(h2, "Qux");
+    }
+}
+
+[Fact]
 fn bool ParsesStructFieldsSkippingMembers()
 {
     stack ascii source = "struct P { u32[0 max] X; u32[0 max] Y; P() { } fn void f() { } }";
@@ -446,6 +510,197 @@ fn bool ParsesStructFieldsSkippingMembers()
             stack ascii secondField = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])fields.NameTokenAt(1));
             return System.Text.Equals(firstField, "X")
                 && System.Text.Equals(secondField, "Y");
+    }
+}
+
+[Fact]
+fn bool StructFieldTypeHeadsAreExtracted()
+{
+    // The user-type head of each field is captured (rightmost depth-0 identifier of
+    // the type): `Bar` for `Bar a`, `List` for `List<u32> c`; a built-in field type
+    // (`i32 b`) and a ranged built-in (`u32[0 max] d`) have head 0.
+    stack ascii source = "struct S { Bar a; i32 b; List<u32> c; u32[0 max] d; }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] declStart = 0;
+    switch (ParseHeader(stream))
+    {
+        case ParseResult<CompilationUnitHeader>.Err(var headerError):
+            return false;
+        case ParseResult<CompilationUnitHeader>.Ok(var header):
+            declStart = header.NextToken;
+    }
+
+    stack mut u32[0 max] structKeyword = 0;
+    stack mut bool foundStruct = false;
+    switch (ParseDeclarations(stream, declStart))
+    {
+        case ParseResult<DeclarationList>.Err(var declError):
+            return false;
+        case ParseResult<DeclarationList>.Ok(var decls):
+            if (decls.Count() == 1)
+            {
+                stack DeclItem only = decls.ItemAt(0);
+                if (only.Kind == DeclarationKind.Struct)
+                {
+                    structKeyword = only.KeywordToken;
+                    foundStruct = true;
+                }
+            }
+    }
+
+    if (!foundStruct)
+    {
+        return false;
+    }
+
+    switch (ParseStructFields(stream, structKeyword))
+    {
+        case ParseResult<FieldList>.Err(var fieldError):
+            return false;
+        case ParseResult<FieldList>.Ok(var fields):
+            if (fields.Count() != 4)
+            {
+                return false;
+            }
+
+            stack ascii head0 = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])fields.TypeHeadAt(0));
+            stack ascii head2 = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])fields.TypeHeadAt(2));
+            return fields.TypeHeadAt(0) != 0
+                && System.Text.Equals(head0, "Bar")
+                && fields.TypeHeadAt(1) == 0
+                && fields.TypeHeadAt(2) != 0
+                && System.Text.Equals(head2, "List")
+                && fields.TypeHeadAt(3) == 0;
+    }
+}
+
+[Fact]
+fn bool MultiDeclaratorFieldsShareType()
+{
+    // `Bar x, y;` declares two fields x and y, both of type `Bar` — the comma-
+    // separated declarators are split and share the one type head.
+    stack ascii source = "struct S { Bar x, y; }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] declStart = 0;
+    switch (ParseHeader(stream))
+    {
+        case ParseResult<CompilationUnitHeader>.Err(var headerError):
+            return false;
+        case ParseResult<CompilationUnitHeader>.Ok(var header):
+            declStart = header.NextToken;
+    }
+
+    stack mut u32[0 max] structKeyword = 0;
+    stack mut bool foundStruct = false;
+    switch (ParseDeclarations(stream, declStart))
+    {
+        case ParseResult<DeclarationList>.Err(var declError):
+            return false;
+        case ParseResult<DeclarationList>.Ok(var decls):
+            if (decls.Count() == 1)
+            {
+                stack DeclItem only = decls.ItemAt(0);
+                if (only.Kind == DeclarationKind.Struct)
+                {
+                    structKeyword = only.KeywordToken;
+                    foundStruct = true;
+                }
+            }
+    }
+
+    if (!foundStruct)
+    {
+        return false;
+    }
+
+    switch (ParseStructFields(stream, structKeyword))
+    {
+        case ParseResult<FieldList>.Err(var fieldError):
+            return false;
+        case ParseResult<FieldList>.Ok(var fields):
+            if (fields.Count() != 2)
+            {
+                return false;
+            }
+
+            stack ascii n0 = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])fields.NameTokenAt(0));
+            stack ascii n1 = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])fields.NameTokenAt(1));
+            stack ascii h0 = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])fields.TypeHeadAt(0));
+            stack ascii h1 = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])fields.TypeHeadAt(1));
+            return System.Text.Equals(n0, "x")
+                && System.Text.Equals(n1, "y")
+                && System.Text.Equals(h0, "Bar")
+                && System.Text.Equals(h1, "Bar");
+    }
+}
+
+[Fact]
+fn bool FieldStorageCapacityIsSkipped()
+{
+    // `Bar x[N];` is a field `x` of type `Bar` with storage capacity `[N]` — the
+    // capacity tokens are bracket-nested, so the name is `x` (not `N`), head `Bar`.
+    stack ascii source = "struct S { Bar x[N]; }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] declStart = 0;
+    switch (ParseHeader(stream))
+    {
+        case ParseResult<CompilationUnitHeader>.Err(var headerError):
+            return false;
+        case ParseResult<CompilationUnitHeader>.Ok(var header):
+            declStart = header.NextToken;
+    }
+
+    stack mut u32[0 max] structKeyword = 0;
+    stack mut bool foundStruct = false;
+    switch (ParseDeclarations(stream, declStart))
+    {
+        case ParseResult<DeclarationList>.Err(var declError):
+            return false;
+        case ParseResult<DeclarationList>.Ok(var decls):
+            if (decls.Count() == 1)
+            {
+                stack DeclItem only = decls.ItemAt(0);
+                if (only.Kind == DeclarationKind.Struct)
+                {
+                    structKeyword = only.KeywordToken;
+                    foundStruct = true;
+                }
+            }
+    }
+
+    if (!foundStruct)
+    {
+        return false;
+    }
+
+    switch (ParseStructFields(stream, structKeyword))
+    {
+        case ParseResult<FieldList>.Err(var fieldError):
+            return false;
+        case ParseResult<FieldList>.Ok(var fields):
+            if (fields.Count() != 1)
+            {
+                return false;
+            }
+
+            stack ascii nm = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])fields.NameTokenAt(0));
+            stack ascii hd = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])fields.TypeHeadAt(0));
+            return System.Text.Equals(nm, "x") && System.Text.Equals(hd, "Bar");
     }
 }
 
@@ -536,8 +791,9 @@ fn bool ParsesFunctionBodyStatements()
         return false;
     }
 
-    // Pre-order with depths: the local, the `if` (whose body's `return` nests at
-    // depth 1), the `while`, and the trailing `return` — five statements total.
+    // Pre-order with depths: the local, the `if` (whose then-body `return` nests
+    // at depth 1), the `while`, and the trailing `return` — five statements. The
+    // then/else arms are distinct scopes (no boundary statement is materialized).
     switch (ParseFunctionBody(stream, fnKeyword))
     {
         case ParseResult<StatementList>.Err(var bodyError):
@@ -1632,4 +1888,212 @@ fn bool ShiftOperatorConsumesBothTokens()
     return mixTree.NodeKindAt(mixRoot) == ExprKind.Binary
         && mixTree.NodeKindAt(mixTree.LeftAt(mixRoot)) == ExprKind.Binary
         && System.Text.Equals(mixLeftOp, "+");
+}
+
+[Fact]
+fn bool ScopeIdsReflectBlockNesting()
+{
+    // `a` and `d` are in the function-body scope; `b` is in the nested if-body
+    // scope. So a and d share a scope id, and b's differs.
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText("fn void f() { stack u32 a = 0; if (c) { stack u32 b = 1; } stack u32 d = 2; }"), stream))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] fnKeyword = 0;
+    stack mut bool foundFn = false;
+    switch (ParseDeclarations(stream, 0))
+    {
+        case ParseResult<DeclarationList>.Err(var declError):
+            return false;
+        case ParseResult<DeclarationList>.Ok(var decls):
+            if (decls.Count() == 1)
+            {
+                stack DeclItem only = decls.ItemAt(0);
+                if (only.Kind == DeclarationKind.Function)
+                {
+                    fnKeyword = only.KeywordToken;
+                    foundFn = true;
+                }
+            }
+    }
+
+    if (!foundFn)
+    {
+        return false;
+    }
+
+    switch (ParseFunctionBody(stream, fnKeyword))
+    {
+        case ParseResult<StatementList>.Err(var bodyError):
+            return false;
+        case ParseResult<StatementList>.Ok(var body):
+            // Statements: a@0, if@1, b@2 (if body), d@3.
+            return body.Count() == 4
+                && body.ScopeIdAt(0) == body.ScopeIdAt(3)
+                && body.ScopeIdAt(2) != body.ScopeIdAt(0)
+                && body.ScopeIdAt(1) == body.ScopeIdAt(0);
+    }
+}
+
+[Fact]
+fn bool ForStatementParsesInitConditionAndBodyScopes()
+{
+    // `for (stack mut u32 i = 0; i < n; i += 1) { stack u32 x = 0; }` parses to:
+    // the init local `i`@0 and the `For`@1 sharing the loop scope (the `For`
+    // carrying the condition as its expression), and the body local `x`@2 in a
+    // child scope whose parent is the loop scope.
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText("fn void f(u32 n) { for (stack mut u32 i = 0; i < n; i += 1) { stack u32 x = 0; } }"), stream))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] fnKeyword = 0;
+    stack mut bool foundFn = false;
+    switch (ParseDeclarations(stream, 0))
+    {
+        case ParseResult<DeclarationList>.Err(var declError):
+            return false;
+        case ParseResult<DeclarationList>.Ok(var decls):
+            if (decls.Count() == 1)
+            {
+                stack DeclItem only = decls.ItemAt(0);
+                if (only.Kind == DeclarationKind.Function)
+                {
+                    fnKeyword = only.KeywordToken;
+                    foundFn = true;
+                }
+            }
+    }
+
+    if (!foundFn)
+    {
+        return false;
+    }
+
+    switch (ParseFunctionBody(stream, fnKeyword))
+    {
+        case ParseResult<StatementList>.Err(var bodyError):
+            return false;
+        case ParseResult<StatementList>.Ok(var body):
+            // Statements: init i@0, For@1, iter (i += 1)@2, body x@3. The init and
+            // For and iter share the loop scope; the body is a child scope.
+            return body.Count() == 4
+                && body.ItemAt(0).Kind == StatementKind.Local
+                && body.ItemAt(1).Kind == StatementKind.For
+                && body.ItemAt(2).Kind == StatementKind.Expression
+                && body.ItemAt(3).Kind == StatementKind.Local
+                && body.ScopeIdAt(0) == body.ScopeIdAt(1)
+                && body.ScopeIdAt(2) == body.ScopeIdAt(1)
+                && body.ExprRootAt(1) != 0
+                && body.ScopeIdAt(3) != body.ScopeIdAt(1)
+                && body.ScopeParentAt(body.ScopeIdAt(3)) == body.ScopeIdAt(1);
+    }
+}
+
+[Fact]
+fn bool ForEachStatementParsesElementAndTraversalScopes()
+{
+    // `for willexit (u32 x in items) { x; }` parses to the element local `x`@0 and
+    // the `ForEach`@1 sharing the loop scope (the `ForEach` carrying the traversal
+    // `items` as its expression), with the body in a child scope of the loop scope.
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText("fn void f(u32 items) { for willexit (u32 x in items) { x; } }"), stream))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] fnKeyword = 0;
+    stack mut bool foundFn = false;
+    switch (ParseDeclarations(stream, 0))
+    {
+        case ParseResult<DeclarationList>.Err(var declError):
+            return false;
+        case ParseResult<DeclarationList>.Ok(var decls):
+            if (decls.Count() == 1)
+            {
+                stack DeclItem only = decls.ItemAt(0);
+                if (only.Kind == DeclarationKind.Function)
+                {
+                    fnKeyword = only.KeywordToken;
+                    foundFn = true;
+                }
+            }
+    }
+
+    if (!foundFn)
+    {
+        return false;
+    }
+
+    switch (ParseFunctionBody(stream, fnKeyword))
+    {
+        case ParseResult<StatementList>.Err(var bodyError):
+            return false;
+        case ParseResult<StatementList>.Ok(var body):
+            // Statements: element x@0 (loop scope), ForEach@1 (enclosing scope —
+            // the collection is evaluated before the bindings exist), body x;@2
+            // (a child of the loop scope). So the element's loop scope is a child
+            // of the ForEach's scope, and the body scope is a child of the loop scope.
+            return body.Count() == 3
+                && body.ItemAt(0).Kind == StatementKind.Local
+                && body.ItemAt(1).Kind == StatementKind.ForEach
+                && body.ItemAt(2).Kind == StatementKind.Expression
+                && body.ExprRootAt(1) != 0
+                && body.ScopeIdAt(0) != body.ScopeIdAt(1)
+                && body.ScopeParentAt(body.ScopeIdAt(0)) == body.ScopeIdAt(1)
+                && body.ScopeParentAt(body.ScopeIdAt(2)) == body.ScopeIdAt(0);
+    }
+}
+
+[Fact]
+fn bool SwitchSubjectAndCaseVarBindingParse()
+{
+    // `switch (v) { case Thing(var x): }` parses to the `Switch`@0 carrying the
+    // subject expression, the `Case` label@1, and the pattern's `var x` binding as
+    // a `Local`@2 in the section scope (a child of the switch body's scope).
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText("fn void f(i32 v) { switch (v) { case Thing(var x): } }"), stream))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] fnKeyword = 0;
+    stack mut bool foundFn = false;
+    switch (ParseDeclarations(stream, 0))
+    {
+        case ParseResult<DeclarationList>.Err(var declError):
+            return false;
+        case ParseResult<DeclarationList>.Ok(var decls):
+            if (decls.Count() == 1)
+            {
+                stack DeclItem only = decls.ItemAt(0);
+                if (only.Kind == DeclarationKind.Function)
+                {
+                    fnKeyword = only.KeywordToken;
+                    foundFn = true;
+                }
+            }
+    }
+
+    if (!foundFn)
+    {
+        return false;
+    }
+
+    switch (ParseFunctionBody(stream, fnKeyword))
+    {
+        case ParseResult<StatementList>.Err(var bodyError):
+            return false;
+        case ParseResult<StatementList>.Ok(var body):
+            // Statements: Switch@0 (subject `v`), Case@1, var-binding `x`@2.
+            return body.Count() == 3
+                && body.ItemAt(0).Kind == StatementKind.Switch
+                && body.ExprRootAt(0) != 0
+                && body.ItemAt(1).Kind == StatementKind.Case
+                && body.ItemAt(2).Kind == StatementKind.PatternBinding
+                && body.ScopeIdAt(2) != body.ScopeIdAt(0);
+    }
 }
