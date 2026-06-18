@@ -1,0 +1,414 @@
+import System.Collections
+import System.Memory
+module Compiler.Ir
+
+// The self-hosted compiler's IR memory model: typed handle indices into dense
+// tables (docs/Self-host-Prep/24). Each IR id is a DISTINCT value type wrapping a
+// compact 1-based index (0 is the invalid/null sentinel), so a `MirValueId` can
+// never be passed where a `TypeId` is expected — handles are not interchangeable
+// integers. They are small Copyable values, freely copied and stored in fact side
+// tables. A no-reuse dense `IrTable<T>` owns the rows; use the generational
+// `System.Collections.Arena.Arena<T>` only for tables that need deletion/reuse.
+
+// A type-table row id.
+public struct TypeId
+{
+    u32[0 max] Value;
+
+    TypeId()
+    {
+        self.Value = 0;
+    }
+
+    public inline finite law u32[0 max] Index(borrow TypeId self)
+    {
+        return self.Value;
+    }
+
+    public inline finite law bool IsValid(borrow TypeId self)
+    {
+        return self.Value != 0;
+    }
+
+    public inline finite law bool Equals(borrow TypeId self, TypeId other)
+    {
+        return self.Value == other.Value;
+    }
+}
+
+// The `TypeId` for the 1-based row index `index` (0 = the invalid id).
+public fn TypeId TypeIdOf(u32[0 max] index)
+{
+    stack mut TypeId id = new();
+    id.Value = index;
+    return id;
+}
+
+// A symbol-table row id.
+public struct SymbolId
+{
+    u32[0 max] Value;
+
+    SymbolId()
+    {
+        self.Value = 0;
+    }
+
+    public inline finite law u32[0 max] Index(borrow SymbolId self)
+    {
+        return self.Value;
+    }
+
+    public inline finite law bool IsValid(borrow SymbolId self)
+    {
+        return self.Value != 0;
+    }
+
+    public inline finite law bool Equals(borrow SymbolId self, SymbolId other)
+    {
+        return self.Value == other.Value;
+    }
+}
+
+public fn SymbolId SymbolIdOf(u32[0 max] index)
+{
+    stack mut SymbolId id = new();
+    id.Value = index;
+    return id;
+}
+
+// A MIR value (SSA-like instruction result / operand) id.
+public struct MirValueId
+{
+    u32[0 max] Value;
+
+    MirValueId()
+    {
+        self.Value = 0;
+    }
+
+    public inline finite law u32[0 max] Index(borrow MirValueId self)
+    {
+        return self.Value;
+    }
+
+    public inline finite law bool IsValid(borrow MirValueId self)
+    {
+        return self.Value != 0;
+    }
+
+    public inline finite law bool Equals(borrow MirValueId self, MirValueId other)
+    {
+        return self.Value == other.Value;
+    }
+}
+
+public fn MirValueId MirValueIdOf(u32[0 max] index)
+{
+    stack mut MirValueId id = new();
+    id.Value = index;
+    return id;
+}
+
+// A MIR basic-block id.
+public struct MirBlockId
+{
+    u32[0 max] Value;
+
+    MirBlockId()
+    {
+        self.Value = 0;
+    }
+
+    public inline finite law u32[0 max] Index(borrow MirBlockId self)
+    {
+        return self.Value;
+    }
+
+    public inline finite law bool IsValid(borrow MirBlockId self)
+    {
+        return self.Value != 0;
+    }
+
+    public inline finite law bool Equals(borrow MirBlockId self, MirBlockId other)
+    {
+        return self.Value == other.Value;
+    }
+}
+
+public fn MirBlockId MirBlockIdOf(u32[0 max] index)
+{
+    stack mut MirBlockId id = new();
+    id.Value = index;
+    return id;
+}
+
+// A MIR function id (the unit a backend pass lowers).
+public struct MirFuncId
+{
+    u32[0 max] Value;
+
+    MirFuncId()
+    {
+        self.Value = 0;
+    }
+
+    public inline finite law u32[0 max] Index(borrow MirFuncId self)
+    {
+        return self.Value;
+    }
+
+    public inline finite law bool IsValid(borrow MirFuncId self)
+    {
+        return self.Value != 0;
+    }
+
+    public inline finite law bool Equals(borrow MirFuncId self, MirFuncId other)
+    {
+        return self.Value == other.Value;
+    }
+}
+
+public fn MirFuncId MirFuncIdOf(u32[0 max] index)
+{
+    stack mut MirFuncId id = new();
+    id.Value = index;
+    return id;
+}
+
+// An SSA value id.
+public struct SsaValueId
+{
+    u32[0 max] Value;
+
+    SsaValueId()
+    {
+        self.Value = 0;
+    }
+
+    public inline finite law u32[0 max] Index(borrow SsaValueId self)
+    {
+        return self.Value;
+    }
+
+    public inline finite law bool IsValid(borrow SsaValueId self)
+    {
+        return self.Value != 0;
+    }
+
+    public inline finite law bool Equals(borrow SsaValueId self, SsaValueId other)
+    {
+        return self.Value == other.Value;
+    }
+}
+
+public fn SsaValueId SsaValueIdOf(u32[0 max] index)
+{
+    stack mut SsaValueId id = new();
+    id.Value = index;
+    return id;
+}
+
+// A package id (for cross-package fact imports).
+public struct PackageId
+{
+    u32[0 max] Value;
+
+    PackageId()
+    {
+        self.Value = 0;
+    }
+
+    public inline finite law u32[0 max] Index(borrow PackageId self)
+    {
+        return self.Value;
+    }
+
+    public inline finite law bool IsValid(borrow PackageId self)
+    {
+        return self.Value != 0;
+    }
+
+    public inline finite law bool Equals(borrow PackageId self, PackageId other)
+    {
+        return self.Value == other.Value;
+    }
+}
+
+public fn PackageId PackageIdOf(u32[0 max] index)
+{
+    stack mut PackageId id = new();
+    id.Value = index;
+    return id;
+}
+
+// A dense IR table: rows owned in insertion order, addressed by a 1-based index
+// (0 stays the invalid sentinel, so a freshly default handle never aliases row 0).
+// Prefer this no-reuse table inside a phase for speed and simpler diagnostics;
+// reach for `Arena<T>` only where deletion/reuse is proven necessary (doc 24 §3).
+public struct IrTable<T>
+{
+    internal System.Collections.List<T> Rows;
+
+    IrTable()
+    {
+        self.Rows = new();
+    }
+
+    // The number of rows (also the largest valid 1-based index).
+    public inline finite law u64[0 2 ** 63 - 1] Count(borrow IrTable<T> self)
+    {
+        return self.Rows.Count();
+    }
+
+    public inline finite law bool IsEmpty(borrow IrTable<T> self)
+    {
+        return self.Rows.Count() == 0;
+    }
+
+    // Appends `row`, returning its 1-based index (never 0). Returns 0 — the invalid
+    // sentinel — when the backing allocation fails.
+    public fn u32[0 max] Add(mut borrow IrTable<T> self, T row)
+    {
+        switch (self.Rows.Push(row))
+        {
+            case MemoryStatus.Ok:
+                return (u32[0 max])self.Rows.Count();
+            case MemoryStatus.Err(var error):
+                return 0;
+        }
+    }
+
+    // True when `index` is a live 1-based row index.
+    public inline finite law bool Contains(borrow IrTable<T> self, u32[0 max] index)
+    {
+        return index != 0 && (u64[0 2 ** 63 - 1])index <= self.Rows.Count();
+    }
+
+    // Borrows the row at the 1-based `index`; the caller must ensure `Contains`.
+    public law retborrow T Get(borrow IrTable<T> self, u32[0 max] index)
+    {
+        return self.Rows.Get((u64[0 2 ** 63 - 1])(index - 1));
+    }
+}
+
+// === Fact categories (doc 24 §4) ===
+// Concrete per-value fact records a pass attaches to a handle. These are plain
+// Copyable value types using bool presence flags + raw values (NOT `Option`), so
+// they instantiate cleanly across packages (a generic `Option<CompilerType>` value
+// in a body materialized from a downstream package currently crashes the host
+// `lower-mir`). The "one record per value" layout (`ValueFacts`) is the doc's form.
+
+// The calling/ABI convention of a callable value (doc 24 §4 `CallingAbi`).
+public enum AbiKind
+{
+    StarkAbi,
+    CAbi,
+    PlatformAbi,
+}
+
+// The optimization/backend facts attached to one MIR/SSA value (doc 24 §4). A fact
+// is present when its `Has*` flag is set; absent facts read as 0/false/`StarkAbi`.
+// `InheritFrom` is the lowering fact-transfer primitive (doc 24 §5): a lowered value
+// carries forward each PRESENT fact of the value it derives from, and an absent
+// source fact leaves the destination's own fact untouched.
+public struct ValueFacts
+{
+    bool HasAlign;
+    u32[0 max] AlignBytes;
+    bool HasAbi;
+    AbiKind Abi;
+    bool NoAlias;
+    bool IsVolatile;
+
+    ValueFacts()
+    {
+        self.HasAlign = false;
+        self.AlignBytes = 0;
+        self.HasAbi = false;
+        self.Abi = AbiKind.StarkAbi;
+        self.NoAlias = false;
+        self.IsVolatile = false;
+    }
+
+    public inline finite law bool HasAlignment(borrow ValueFacts self)
+    {
+        return self.HasAlign;
+    }
+
+    // The known alignment in bytes (0 when no alignment fact is attached).
+    public inline finite law u32[0 max] AlignmentBytes(borrow ValueFacts self)
+    {
+        return self.AlignBytes;
+    }
+
+    public inline finite law bool HasCallingAbi(borrow ValueFacts self)
+    {
+        return self.HasAbi;
+    }
+
+    // The calling ABI (defaults to `StarkAbi` when no ABI fact is attached).
+    public inline finite law AbiKind CallingAbi(borrow ValueFacts self)
+    {
+        return self.Abi;
+    }
+
+    public inline finite law bool HasNoAlias(borrow ValueFacts self)
+    {
+        return self.NoAlias;
+    }
+
+    public inline finite law bool Volatile(borrow ValueFacts self)
+    {
+        return self.IsVolatile;
+    }
+
+    public fn void SetAlignment(mut borrow ValueFacts self, u32[0 max] bytes)
+    {
+        self.HasAlign = true;
+        self.AlignBytes = bytes;
+    }
+
+    public fn void SetCallingAbi(mut borrow ValueFacts self, AbiKind abi)
+    {
+        self.HasAbi = true;
+        self.Abi = abi;
+    }
+
+    public fn void MarkNoAlias(mut borrow ValueFacts self)
+    {
+        self.NoAlias = true;
+    }
+
+    public fn void MarkVolatile(mut borrow ValueFacts self)
+    {
+        self.IsVolatile = true;
+    }
+
+    // Carries each PRESENT fact of `src` onto `self`; an absent source fact leaves
+    // `self`'s value untouched (the doc 24 §5 `Inherit`/`preserve` contract).
+    public fn void InheritFrom(mut borrow ValueFacts self, ValueFacts src)
+    {
+        if (src.HasAlign)
+        {
+            self.HasAlign = true;
+            self.AlignBytes = src.AlignBytes;
+        }
+
+        if (src.HasAbi)
+        {
+            self.HasAbi = true;
+            self.Abi = src.Abi;
+        }
+
+        if (src.NoAlias)
+        {
+            self.NoAlias = true;
+        }
+
+        if (src.IsVolatile)
+        {
+            self.IsVolatile = true;
+        }
+    }
+}

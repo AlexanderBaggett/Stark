@@ -263,27 +263,6 @@ public struct FunctionScope
     }
 }
 
-// The declared type-primary token of the symbol that `name` (a token) resolves to
-// in `scope` (the last-declared match), or 0 when the name is not a symbol or has
-// no known type. The name token and each symbol name are slices of the same
-// `source`, so they are compared inline with `System.Text.Equals`.
-public fn u32[0 max] TypeTokenForName(borrow FunctionScope scope, ascii source, borrow TokenStream stream, u32[0 max] nameToken)
-{
-    stack mut u32[0 max] typeToken = 0;
-    stack ascii name = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])nameToken);
-    stack u64[0 2 ** 63 - 1] count = scope.Count();
-    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
-    {
-        stack ascii symbolName = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])scope.NameTokenAt(index));
-        if (System.Text.Equals(symbolName, name))
-        {
-            typeToken = scope.TypeTokenAt(index);
-        }
-    }
-
-    return typeToken;
-}
-
 // Builds a function scope from a parsed signature and body: every named
 // parameter (depth 0) followed by every named `Local` declaration in body order
 // (at its block depth).
@@ -309,7 +288,10 @@ public fn BindResult<FunctionScope> BuildFunctionScope(borrow FunctionSignature 
     for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < statementCount; index += 1)
     {
         stack StatementItem item = body.ItemAt(index);
-        if (item.Kind == StatementKind.Local && item.NameToken != 0)
+        // Both ordinary `Local`s and `case`-pattern `var` bindings name in-scope
+        // values resolvable by reference; they differ only for the duplicate-in-block
+        // check (pattern bindings may repeat across `or` alternatives).
+        if ((item.Kind == StatementKind.Local || item.Kind == StatementKind.PatternBinding) && item.NameToken != 0)
         {
             switch (scope.Append(item.NameToken, SymbolKind.Local, body.DepthAt(index), (u32[0 max])index, item.TypeToken))
             {
@@ -398,23 +380,41 @@ public fn bool LocalShadowsParameter(borrow FunctionScope scope, ascii source, b
     return false;
 }
 
-// Whether a `Local` declared at body statement `declStmt` (block depth
-// `declDepth`) is in lexical scope at statement `refStmt`: the declaration must
-// precede the reference, and the local's block must still be open — i.e. no
-// statement in `(declStmt, refStmt]` drops below `declDepth` (which would have
-// closed the block before the reference). Parameters are handled separately and
-// are always visible.
-internal fn bool LocalVisibleAt(borrow StatementList body, u64[0 2 ** 63 - 1] declStmt, u32[0 max] declDepth, u64[0 2 ** 63 - 1] refStmt)
+// Whether a `Local` declared at body statement `declStmt` is in lexical scope at
+// statement `refStmt`: the declaration must precede the reference, and the local's
+// scope must enclose the reference's scope — i.e. the local's scope is an
+// ancestor-or-equal of the reference's scope in the scope tree. Parameters are
+// handled separately and are always visible.
+internal fn bool LocalVisibleAt(borrow StatementList body, u64[0 2 ** 63 - 1] declStmt, u64[0 2 ** 63 - 1] refStmt)
 {
     stack mut bool visible = false;
     if (declStmt < refStmt)
     {
-        visible = true;
-        for willexit (stack mut u64[0 2 ** 63 - 1] k = (u64[0 2 ** 63 - 1])(declStmt + 1); k <= refStmt; k += 1)
+        stack u32[0 max] declScope = body.ScopeIdAt(declStmt);
+        stack mut u32[0 max] cur = body.ScopeIdAt(refStmt);
+        // Walk the reference's scope up to the root; the local is visible iff the
+        // walk meets the local's scope. The guard (scope count) bounds the walk —
+        // each parent has a smaller id than its child, so the tree is finite.
+        stack mut u64[0 2 ** 63 - 1] guard = (u64[0 2 ** 63 - 1])(body.ScopeCount() + 1);
+        while willexit (guard > 0)
         {
-            if (body.DepthAt(k) < declDepth)
+            guard = (u64[0 2 ** 63 - 1])(guard - 1);
+            if (cur == declScope)
             {
-                visible = false;
+                visible = true;
+                guard = 0;
+            }
+            else
+            {
+                stack u32[0 max] parent = body.ScopeParentAt(cur);
+                if (parent == cur)
+                {
+                    guard = 0;
+                }
+                else
+                {
+                    cur = parent;
+                }
             }
         }
     }
@@ -612,7 +612,7 @@ public fn BindResult<ReferenceTable> ResolveReferences(borrow FunctionScope scop
                         else
                         {
                             stack u32[0 max] declStmt = scope.StmtIndexAt(s);
-                            if (LocalVisibleAt(body, (u64[0 2 ** 63 - 1])declStmt, scope.DepthAt(s), stmt))
+                            if (LocalVisibleAt(body, (u64[0 2 ** 63 - 1])declStmt, stmt))
                             {
                                 candidate = true;
                                 candDepth = scope.DepthAt(s);
@@ -742,13 +742,209 @@ public fn u32[0 max] CountUnresolvedSignatureTypes(borrow FunctionSignature sign
     return unresolved;
 }
 
-// True when two `Local` declarations in the same block share a name — a
-// redefinition. Block membership is read from the pre-order statement list: two
-// locals are in the same block iff they share a nesting depth `d` and every
-// statement strictly between them is at depth >= `d` (a shallower statement in
-// between means the block at depth `d` closed and a sibling block reopened). So
-// a same-name local in a nested or sibling block is shadowing, not redefinition,
-// and is not reported.
+// True when `headToken`'s text names a generic parameter of the declaration whose
+// keyword is at `declKeyword` — i.e. a parameter of the `<...>` that IMMEDIATELY
+// follows the declaration name (e.g. `T` in `struct Box<T>`, `K`/`V` in `record
+// Pair<K, V>`, `N` in `struct Buf<comptime u32 N>`). Used so a field whose type
+// names a generic parameter is not reported as an unresolved type. The `<` must
+// follow the name directly: a struct/record may carry a generic BASE trait
+// (`struct S : Base<Bar>`) whose `<...>` is NOT a parameter list. A parameter is
+// `Identifier` or `comptime type_ Identifier` (`Stark.g4` `typeParameter`), so the
+// parameter NAME is the LAST depth-1 identifier of each `,`-separated entry (the
+// comptime form's leading type is skipped). Names are `source` slices, compared
+// with `System.Text.Equals` (overlap-permitting), not a disjoint-contract lookup.
+internal fn bool HeadIsGenericParameter(ascii source, borrow TokenStream stream, u32[0 max] declKeyword, u32[0 max] headToken)
+{
+    // The declaration name is the first identifier after the keyword; the type
+    // parameter list, if present, is the `<` directly after it.
+    stack mut u32[0 max] nameNext = 0;
+    stack mut bool foundName = false;
+    stack mut u32[0 max] nscan = (u32[0 max])(declKeyword + 1);
+    stack mut u64[0 2 ** 63 - 1] nameGuard = stream.Count();
+    while willexit (nameGuard > 0)
+    {
+        nameGuard = (u64[0 2 ** 63 - 1])(nameGuard - 1);
+        stack TokenKind nk = stream.KindAt((u64[0 2 ** 63 - 1])nscan);
+        if (nk == TokenKind.EndOfFile || nk == TokenKind.LBrace || nk == TokenKind.Semi || nk == TokenKind.LParen)
+        {
+            nameGuard = 0;
+        }
+        else if (nk == TokenKind.Identifier)
+        {
+            nameNext = (u32[0 max])(nscan + 1);
+            foundName = true;
+            nameGuard = 0;
+        }
+        else
+        {
+            nscan = (u32[0 max])(nscan + 1);
+        }
+    }
+
+    if (!foundName)
+    {
+        return false;
+    }
+
+    return GenericParamListMatches(source, stream, nameNext, headToken);
+}
+
+// True when the generic parameter list opening at `ltToken` (which must be `<`)
+// declares a parameter whose name equals `headToken`'s text. A parameter is
+// `Identifier` or `comptime type_ Identifier`, so the name is the LAST depth-1
+// identifier of each `,`-separated entry. Returns false when `ltToken` is not a `<`
+// (the declaration has no parameter list). Shared by the type-declaration and
+// function-signature generic-parameter exemptions.
+internal fn bool GenericParamListMatches(ascii source, borrow TokenStream stream, u32[0 max] ltToken, u32[0 max] headToken)
+{
+    if (stream.KindAt((u64[0 2 ** 63 - 1])ltToken) != TokenKind.Lt)
+    {
+        return false;
+    }
+
+    stack ascii headName = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])headToken);
+    stack mut u32[0 max] index = ltToken;
+    stack mut u32[0 max] angleDepth = 0;
+    stack mut u32[0 max] lastParamIdent = 0;
+    stack mut bool matched = false;
+    stack mut u64[0 2 ** 63 - 1] guard = stream.Count();
+    while willexit (guard > 0)
+    {
+        guard = (u64[0 2 ** 63 - 1])(guard - 1);
+        stack TokenKind k = stream.KindAt((u64[0 2 ** 63 - 1])index);
+        if (k == TokenKind.EndOfFile)
+        {
+            guard = 0;
+        }
+        else if (k == TokenKind.Lt)
+        {
+            angleDepth = (u32[0 max])(angleDepth + 1);
+        }
+        else if (k == TokenKind.Gt)
+        {
+            // The closing `>` of the parameter list ends the last parameter.
+            if (angleDepth == 1)
+            {
+                if (lastParamIdent != 0)
+                {
+                    stack ascii lastName = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])lastParamIdent);
+                    if (System.Text.Equals(lastName, headName))
+                    {
+                        matched = true;
+                    }
+                }
+
+                guard = 0;
+            }
+            else if (angleDepth > 0)
+            {
+                angleDepth = (u32[0 max])(angleDepth - 1);
+            }
+        }
+        else if (angleDepth == 1 && k == TokenKind.Comma)
+        {
+            // End of one parameter: its name is the last identifier seen.
+            if (lastParamIdent != 0)
+            {
+                stack ascii paramName = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])lastParamIdent);
+                if (System.Text.Equals(paramName, headName))
+                {
+                    matched = true;
+                    guard = 0;
+                }
+            }
+
+            lastParamIdent = 0;
+        }
+        else if (angleDepth == 1 && k == TokenKind.Identifier)
+        {
+            // Keep the LAST depth-1 identifier of the current parameter (the name;
+            // a `comptime type_` prefix's identifiers are overwritten by it).
+            lastParamIdent = index;
+        }
+
+        index = (u32[0 max])(index + 1);
+    }
+
+    return matched;
+}
+
+// Emits an `UnresolvedType` diagnostic (anchored at the field's type-head token)
+// for each data field of the struct/record whose keyword is at `structKeyword`
+// whose user-type head names no top-level declaration AND is not one of the
+// declaration's own generic parameters — built-in field types have head 0 and are
+// skipped. Mirrors the host resolving `field.type_()` for every field (with the
+// type's generic parameters in scope). Parse failures for the type are skipped.
+internal fn System.Memory.MemoryStatus CollectUnresolvedFieldTypes(u32[0 max] structKeyword, borrow DeclarationTable table, ascii source, borrow TokenStream stream, mut borrow BindDiagnosticList diags)
+{
+    switch (ParseStructFields(stream, structKeyword))
+    {
+        case ParseResult<FieldList>.Err(var fieldsError):
+            return System.Memory.MemoryStatus.Ok;
+        case ParseResult<FieldList>.Ok(var fields):
+            stack u64[0 2 ** 63 - 1] count = fields.Count();
+            // All declarators of one `type_ a, b;` field declaration share the exact
+            // head token; the host resolves that `field.type_()` once, so emit a
+            // single diagnostic per distinct head token (a consecutive run of equal
+            // heads is one declaration; a separate declaration reuses no token index).
+            stack mut u32[0 max] prevHead = 0;
+            for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+            {
+                stack u32[0 max] head = fields.TypeHeadAt(index);
+                if (head != 0 && head != prevHead
+                    && !TypeHeadResolves(table, source, stream, head)
+                    && !HeadIsGenericParameter(source, stream, structKeyword, head))
+                {
+                    switch (diags.Append(BindDiagnosticCode.UnresolvedType, head))
+                    {
+                        case System.Memory.MemoryStatus.Err(var emitError):
+                            return System.Memory.MemoryStatus.Err(emitError);
+                        case System.Memory.MemoryStatus.Ok:
+                    }
+                }
+
+                prevHead = head;
+            }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+// Emits an `UnresolvedType` for each enum-variant payload type (tuple/named-field/
+// `from`) whose user-type head names no top-level declaration and is not one of the
+// enum's own generic parameters. Each payload type position is a distinct
+// `type_` for the host, so occurrences are not deduped. Parse failures are skipped.
+internal fn System.Memory.MemoryStatus CollectUnresolvedVariantTypes(u32[0 max] enumKeyword, borrow DeclarationTable table, ascii source, borrow TokenStream stream, mut borrow BindDiagnosticList diags)
+{
+    switch (ParseEnumPayloadHeads(stream, enumKeyword))
+    {
+        case ParseResult<TypeHeadList>.Err(var headsError):
+            return System.Memory.MemoryStatus.Ok;
+        case ParseResult<TypeHeadList>.Ok(var heads):
+            stack u64[0 2 ** 63 - 1] count = heads.Count();
+            for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+            {
+                stack u32[0 max] head = heads.HeadAt(index);
+                if (head != 0 && !TypeHeadResolves(table, source, stream, head)
+                    && !HeadIsGenericParameter(source, stream, enumKeyword, head))
+                {
+                    switch (diags.Append(BindDiagnosticCode.UnresolvedType, head))
+                    {
+                        case System.Memory.MemoryStatus.Err(var emitError):
+                            return System.Memory.MemoryStatus.Err(emitError);
+                        case System.Memory.MemoryStatus.Ok:
+                    }
+                }
+            }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+// True when two `Local` declarations in the same block (same lexical scope id)
+// share a name — a redefinition. A same-name local in a nested or sibling block
+// has a different scope id, so it is shadowing, not redefinition, and not
+// reported.
 public fn bool HasDuplicateLocalInBlock(ascii source, borrow TokenStream stream, borrow StatementList body)
 {
     stack mut bool duplicate = false;
@@ -758,31 +954,19 @@ public fn bool HasDuplicateLocalInBlock(ascii source, borrow TokenStream stream,
         stack StatementItem si = body.ItemAt(i);
         if (!duplicate && si.Kind == StatementKind.Local && si.NameToken != 0)
         {
-            stack u32[0 max] di = body.DepthAt(i);
+            stack u32[0 max] scopeI = body.ScopeIdAt(i);
             stack ascii nameI = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])si.NameToken);
             for willexit (stack mut u64[0 2 ** 63 - 1] j = (u64[0 2 ** 63 - 1])(i + 1); j < count; j += 1)
             {
                 if (!duplicate)
                 {
                     stack StatementItem sj = body.ItemAt(j);
-                    if (sj.Kind == StatementKind.Local && sj.NameToken != 0 && body.DepthAt(j) == di)
+                    if (sj.Kind == StatementKind.Local && sj.NameToken != 0 && body.ScopeIdAt(j) == scopeI)
                     {
-                        stack mut bool sameBlock = true;
-                        for willexit (stack mut u64[0 2 ** 63 - 1] k = (u64[0 2 ** 63 - 1])(i + 1); k < j; k += 1)
+                        stack ascii nameJ = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])sj.NameToken);
+                        if (System.Text.Equals(nameI, nameJ))
                         {
-                            if (body.DepthAt(k) < di)
-                            {
-                                sameBlock = false;
-                            }
-                        }
-
-                        if (sameBlock)
-                        {
-                            stack ascii nameJ = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])sj.NameToken);
-                            if (System.Text.Equals(nameI, nameJ))
-                            {
-                                duplicate = true;
-                            }
+                            duplicate = true;
                         }
                     }
                 }
@@ -803,6 +987,11 @@ public enum BindDiagnosticCode
     UnresolvedType,
     NonBooleanCondition,
     NonBooleanOperand,
+    ValueReturnedFromVoid,
+    MissingReturnValue,
+    DuplicateEnumVariant,
+    BreakOutsideLoop,
+    ContinueOutsideLoop,
 }
 
 // The diagnostics produced by binding a compilation unit, in discovery order:
@@ -907,19 +1096,213 @@ internal fn System.Memory.MemoryStatus CollectDuplicateDeclarations(borrow Decla
     return System.Memory.MemoryStatus.Ok;
 }
 
+// Emits a `DuplicateEnumVariant` diagnostic (anchored at the later variant name)
+// for every enum variant whose name repeats an earlier one in the same enum —
+// matching the host's STK3006 "declares variant 'V' more than once".
+internal fn System.Memory.MemoryStatus CollectDuplicateEnumVariants(borrow VariantList variants, ascii source, borrow TokenStream stream, mut borrow BindDiagnosticList diags)
+{
+    stack u64[0 2 ** 63 - 1] count = variants.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] later = 0; later < count; later += 1)
+    {
+        stack ascii laterName = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])variants.NameTokenAt(later));
+        stack mut bool repeats = false;
+        for willexit (stack mut u64[0 2 ** 63 - 1] earlier = 0; earlier < later; earlier += 1)
+        {
+            stack ascii earlierName = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])variants.NameTokenAt(earlier));
+            if (System.Text.Equals(earlierName, laterName))
+            {
+                repeats = true;
+            }
+        }
+
+        if (repeats)
+        {
+            switch (diags.Append(BindDiagnosticCode.DuplicateEnumVariant, variants.NameTokenAt(later)))
+            {
+                case System.Memory.MemoryStatus.Err(var error):
+                    return System.Memory.MemoryStatus.Err(error);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+// The declared type-primary token of the parameter/local that the reference at
+// expression node `node` resolves to, read from the lexical `ReferenceTable`
+// (which already honors shadowing and block scope). 0 when the node is not a
+// reference to a scope symbol (a declaration/unbound reference has no scope type).
+internal fn u32[0 max] ReferenceTypeTokenForNode(borrow ReferenceTable refs, borrow FunctionScope scope, u32[0 max] node)
+{
+    stack mut u32[0 max] typeToken = 0;
+    stack u64[0 2 ** 63 - 1] count = refs.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (refs.NodeAt(index) == node)
+        {
+            stack ReferenceKind kind = refs.KindAt(index);
+            if (kind == ReferenceKind.Parameter || kind == ReferenceKind.Local)
+            {
+                stack u32[0 max] target = refs.TargetAt(index);
+                if (target != 0)
+                {
+                    typeToken = scope.TypeTokenAt((u64[0 2 ** 63 - 1])(target - 1));
+                }
+            }
+        }
+    }
+
+    return typeToken;
+}
+
+// The definition name token of the struct/record declaration named by
+// `structNameToken` (matched by source text in the declaration table), or 0 when no
+// such declaration exists. `ParseStructFields` can be driven from this name token
+// (it scans forward to the struct's body `{`). Source-derived name slices are
+// compared inline with `System.Text.Equals` (overlap-permitting).
+internal fn u32[0 max] FindStructDefName(borrow DeclarationTable table, ascii source, borrow TokenStream stream, u32[0 max] structNameToken)
+{
+    if (structNameToken == 0)
+    {
+        return 0;
+    }
+
+    stack ascii structName = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])structNameToken);
+    stack mut u32[0 max] structDefName = 0;
+    stack u64[0 2 ** 63 - 1] tableCount = table.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] t = 0; t < tableCount; t += 1)
+    {
+        stack ascii declName = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])table.NameTokenAt(t));
+        if (System.Text.Equals(declName, structName))
+        {
+            structDefName = table.NameTokenAt(t);
+        }
+    }
+
+    return structDefName;
+}
+
+// The type-primary token of the data field named `fieldNameToken` of the struct/
+// record named `structNameToken` (e.g. the `i32` in `struct S { i32 count; }`), or 0
+// when not found — for value typing via `MapTypeToken`.
+internal fn u32[0 max] StructFieldTypePrimary(borrow DeclarationTable table, ascii source, borrow TokenStream stream, u32[0 max] structNameToken, u32[0 max] fieldNameToken)
+{
+    stack u32[0 max] structDefName = FindStructDefName(table, source, stream, structNameToken);
+    if (structDefName == 0 || fieldNameToken == 0)
+    {
+        return 0;
+    }
+
+    stack ascii fieldName = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])fieldNameToken);
+    stack mut u32[0 max] primary = 0;
+    switch (ParseStructFields(stream, structDefName))
+    {
+        case ParseResult<FieldList>.Err(var fieldsError):
+            return 0;
+        case ParseResult<FieldList>.Ok(var fields):
+            stack u64[0 2 ** 63 - 1] fieldCount = fields.Count();
+            for willexit (stack mut u64[0 2 ** 63 - 1] f = 0; f < fieldCount; f += 1)
+            {
+                stack ascii name = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])fields.NameTokenAt(f));
+                if (System.Text.Equals(name, fieldName))
+                {
+                    primary = fields.TypePrimaryAt(f);
+                }
+            }
+    }
+
+    return primary;
+}
+
+// The user-type HEAD token of the data field named `fieldNameToken` of the struct
+// named `structNameToken` (the field's own struct/record type name, e.g. `B` for a
+// field `B b;`), or 0 when not found or the field type is a built-in. Used to chain
+// member access — the head names the struct whose fields the next `.member` reads.
+internal fn u32[0 max] StructFieldTypeHead(borrow DeclarationTable table, ascii source, borrow TokenStream stream, u32[0 max] structNameToken, u32[0 max] fieldNameToken)
+{
+    stack u32[0 max] structDefName = FindStructDefName(table, source, stream, structNameToken);
+    if (structDefName == 0 || fieldNameToken == 0)
+    {
+        return 0;
+    }
+
+    stack ascii fieldName = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])fieldNameToken);
+    stack mut u32[0 max] head = 0;
+    switch (ParseStructFields(stream, structDefName))
+    {
+        case ParseResult<FieldList>.Err(var fieldsError):
+            return 0;
+        case ParseResult<FieldList>.Ok(var fields):
+            stack u64[0 2 ** 63 - 1] fieldCount = fields.Count();
+            for willexit (stack mut u64[0 2 ** 63 - 1] f = 0; f < fieldCount; f += 1)
+            {
+                stack ascii name = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])fields.NameTokenAt(f));
+                if (System.Text.Equals(name, fieldName))
+                {
+                    head = fields.TypeHeadAt(f);
+                }
+            }
+    }
+
+    return head;
+}
+
+// The struct/record type-name token that expression `node` evaluates to, when it is
+// a chain of identifier and member accesses over struct-typed values (e.g. `a` whose
+// type is `A`, or `a.b` whose field `b` has type `B`): an identifier yields its
+// declared type token; a `receiver.field` member yields the field's user-type head,
+// resolved against the receiver's struct (recursively). 0 when the node is not such a
+// chain or its type is not a known struct. Each recursion peels one `.member`, so it
+// terminates on the finite expression chain.
+internal fn u32[0 max] MemberStructNameToken(borrow DeclarationTable table, ascii source, borrow ReferenceTable refs, borrow FunctionScope scope, borrow TokenStream stream, borrow StatementList body, u32[0 max] node)
+{
+    stack ExprKind kind = body.ExprKindAt(node);
+    if (kind == ExprKind.Identifier)
+    {
+        return ReferenceTypeTokenForNode(refs, scope, node);
+    }
+    else if (kind == ExprKind.Member)
+    {
+        stack u32[0 max] receiverStruct = MemberStructNameToken(table, source, refs, scope, stream, body, body.ExprLeftAt(node));
+        return StructFieldTypeHead(table, source, stream, receiverStruct, body.ExprTokenAt(node));
+    }
+
+    return 0;
+}
+
 // The type of expression node `node` in `body`: its shape type from
-// `ClassifyExprType`, but when that is `Unknown` and the node is a bare
-// identifier, the declared type of the symbol it names (via the scope's type
-// tokens). This lets `n` (an integer parameter/local) be typed as `Int`.
-internal fn ExprType TypedNodeType(borrow FunctionScope scope, ascii source, borrow TokenStream stream, borrow StatementList body, u32[0 max] node)
+// `ClassifyExprType`, but when that is `Unknown`, the declared type of what the
+// node resolves to: for an identifier, the symbol it lexically resolves to (via the
+// reference table, respecting shadowing); for a member access `receiver.field` whose
+// receiver is a struct/record-typed identifier, the field's declared type (looked up
+// in that struct's declaration). This types `n` (an integer local) and `s.count`
+// (an `i32` field) as `Int`.
+internal fn ExprType TypedNodeType(borrow DeclarationTable table, ascii source, borrow ReferenceTable refs, borrow FunctionScope scope, borrow TokenStream stream, borrow StatementList body, u32[0 max] node)
 {
     stack mut ExprType nodeType = ClassifyExprType(stream, body, node);
-    if (nodeType == ExprType.Unknown && body.ExprKindAt(node) == ExprKind.Identifier)
+    if (nodeType == ExprType.Unknown)
     {
-        stack u32[0 max] typeToken = TypeTokenForName(scope, source, stream, body.ExprTokenAt(node));
-        if (typeToken != 0)
+        stack ExprKind kind = body.ExprKindAt(node);
+        if (kind == ExprKind.Identifier)
         {
-            nodeType = MapTypeToken(stream, typeToken);
+            stack u32[0 max] typeToken = ReferenceTypeTokenForNode(refs, scope, node);
+            if (typeToken != 0)
+            {
+                nodeType = MapTypeToken(stream, typeToken);
+            }
+        }
+        else if (kind == ExprKind.Member)
+        {
+            // `receiver.field`: when the receiver resolves to a struct/record (an
+            // identifier or a further member chain), type the access as the named
+            // field's declared type.
+            stack u32[0 max] structNameToken = MemberStructNameToken(table, source, refs, scope, stream, body, body.ExprLeftAt(node));
+            stack u32[0 max] fieldPrimary = StructFieldTypePrimary(table, source, stream, structNameToken, body.ExprTokenAt(node));
+            if (fieldPrimary != 0)
+            {
+                nodeType = MapTypeToken(stream, fieldPrimary);
+            }
         }
     }
 
@@ -927,19 +1310,21 @@ internal fn ExprType TypedNodeType(borrow FunctionScope scope, ascii source, bor
 }
 
 // Emits a `NonBooleanCondition` diagnostic (anchored at the condition's root
-// token) for each `if`/`while` whose condition has a definite non-boolean type.
-internal fn System.Memory.MemoryStatus CollectNonBooleanConditions(borrow FunctionScope scope, ascii source, borrow TokenStream stream, borrow StatementList body, mut borrow BindDiagnosticList diags)
+// token) for each `if`/`while`/`for` whose condition has a definite non-boolean
+// type. A `for`'s condition is its statement expression (the middle clause), so
+// references to its header-bound loop variable resolve in the loop scope.
+internal fn System.Memory.MemoryStatus CollectNonBooleanConditions(borrow DeclarationTable table, ascii source, borrow ReferenceTable refs, borrow FunctionScope scope, borrow TokenStream stream, borrow StatementList body, mut borrow BindDiagnosticList diags)
 {
     stack u64[0 2 ** 63 - 1] count = body.Count();
     for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
     {
         stack StatementItem item = body.ItemAt(index);
-        if (item.Kind == StatementKind.If || item.Kind == StatementKind.While)
+        if (item.Kind == StatementKind.If || item.Kind == StatementKind.While || item.Kind == StatementKind.For)
         {
             stack u32[0 max] root = body.ExprRootAt(index);
             if (root != 0)
             {
-                stack ExprType conditionType = TypedNodeType(scope, source, stream, body, root);
+                stack ExprType conditionType = TypedNodeType(table, source, refs, scope, stream, body, root);
                 if (IsDefiniteNonBoolean(conditionType))
                 {
                     switch (diags.Append(BindDiagnosticCode.NonBooleanCondition, body.ExprTokenAt(root)))
@@ -958,9 +1343,11 @@ internal fn System.Memory.MemoryStatus CollectNonBooleanConditions(borrow Functi
 
 // Emits a `NonBooleanOperand` diagnostic for each operand of a logical operator
 // (`&&`, `||`, `!`) whose type is a definite non-boolean — the host requires
-// boolean operands for these. Walks every node of the body's shared expression
-// tree; the diagnostic is anchored at the offending operand's token.
-internal fn System.Memory.MemoryStatus CollectNonBooleanLogicalOperands(borrow FunctionScope scope, ascii source, borrow TokenStream stream, borrow StatementList body, mut borrow BindDiagnosticList diags)
+// boolean operands for these — and a `NonBooleanCondition` for a ternary
+// `cond ? a : b` whose `cond` is a definite non-boolean (the host requires a
+// boolean conditional condition). Walks every node of the body's shared
+// expression tree; each diagnostic is anchored at the offending sub-expression.
+internal fn System.Memory.MemoryStatus CollectExpressionTypeErrors(borrow DeclarationTable table, ascii source, borrow ReferenceTable refs, borrow FunctionScope scope, borrow TokenStream stream, borrow StatementList body, mut borrow BindDiagnosticList diags)
 {
     stack u64[0 2 ** 63 - 1] nodeCount = body.ExprNodeCount();
     for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < nodeCount; index += 1)
@@ -972,14 +1359,14 @@ internal fn System.Memory.MemoryStatus CollectNonBooleanLogicalOperands(borrow F
             stack TokenKind op = stream.KindAt((u64[0 2 ** 63 - 1])body.ExprTokenAt(node));
             if (op == TokenKind.AndAnd || op == TokenKind.OrOr)
             {
-                switch (CheckBooleanOperand(scope, source, stream, body, body.ExprLeftAt(node), diags))
+                switch (CheckBooleanOperand(table, source, refs, scope, stream, body, body.ExprLeftAt(node), diags))
                 {
                     case System.Memory.MemoryStatus.Err(var leftError):
                         return System.Memory.MemoryStatus.Err(leftError);
                     case System.Memory.MemoryStatus.Ok:
                 }
 
-                switch (CheckBooleanOperand(scope, source, stream, body, body.ExprRightAt(node), diags))
+                switch (CheckBooleanOperand(table, source, refs, scope, stream, body, body.ExprRightAt(node), diags))
                 {
                     case System.Memory.MemoryStatus.Err(var rightError):
                         return System.Memory.MemoryStatus.Err(rightError);
@@ -992,11 +1379,28 @@ internal fn System.Memory.MemoryStatus CollectNonBooleanLogicalOperands(borrow F
             stack TokenKind op = stream.KindAt((u64[0 2 ** 63 - 1])body.ExprTokenAt(node));
             if (op == TokenKind.Bang)
             {
-                switch (CheckBooleanOperand(scope, source, stream, body, body.ExprLeftAt(node), diags))
+                switch (CheckBooleanOperand(table, source, refs, scope, stream, body, body.ExprLeftAt(node), diags))
                 {
                     case System.Memory.MemoryStatus.Err(var unaryError):
                         return System.Memory.MemoryStatus.Err(unaryError);
                     case System.Memory.MemoryStatus.Ok:
+                }
+            }
+        }
+        else if (nodeKind == ExprKind.Conditional)
+        {
+            stack u32[0 max] conditionNode = body.ExprLeftAt(node);
+            if (conditionNode != 0)
+            {
+                stack ExprType conditionType = TypedNodeType(table, source, refs, scope, stream, body, conditionNode);
+                if (IsDefiniteNonBoolean(conditionType))
+                {
+                    switch (diags.Append(BindDiagnosticCode.NonBooleanCondition, body.ExprTokenAt(conditionNode)))
+                    {
+                        case System.Memory.MemoryStatus.Err(var ternaryError):
+                            return System.Memory.MemoryStatus.Err(ternaryError);
+                        case System.Memory.MemoryStatus.Ok:
+                    }
                 }
             }
         }
@@ -1007,14 +1411,14 @@ internal fn System.Memory.MemoryStatus CollectNonBooleanLogicalOperands(borrow F
 
 // Emits a `NonBooleanOperand` diagnostic when `operand`'s type is a definite
 // non-boolean (anchored at the operand's token).
-internal fn System.Memory.MemoryStatus CheckBooleanOperand(borrow FunctionScope scope, ascii source, borrow TokenStream stream, borrow StatementList body, u32[0 max] operand, mut borrow BindDiagnosticList diags)
+internal fn System.Memory.MemoryStatus CheckBooleanOperand(borrow DeclarationTable table, ascii source, borrow ReferenceTable refs, borrow FunctionScope scope, borrow TokenStream stream, borrow StatementList body, u32[0 max] operand, mut borrow BindDiagnosticList diags)
 {
     if (operand == 0)
     {
         return System.Memory.MemoryStatus.Ok;
     }
 
-    stack ExprType operandType = TypedNodeType(scope, source, stream, body, operand);
+    stack ExprType operandType = TypedNodeType(table, source, refs, scope, stream, body, operand);
     if (IsDefiniteNonBoolean(operandType))
     {
         switch (diags.Append(BindDiagnosticCode.NonBooleanOperand, body.ExprTokenAt(operand)))
@@ -1022,6 +1426,144 @@ internal fn System.Memory.MemoryStatus CheckBooleanOperand(borrow FunctionScope 
             case System.Memory.MemoryStatus.Err(var error):
                 return System.Memory.MemoryStatus.Err(error);
             case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+// Emits the structural return-statement diagnostics (independent of value
+// coercion, matching the host): `ValueReturnedFromVoid` for a `return value;` in
+// a `void` function, and `MissingReturnValue` for a bare `return;` in a non-void
+// function. Anchored at the `return` statement. Skipped when the return type
+// could not be classified.
+internal fn System.Memory.MemoryStatus CollectReturnDiagnostics(borrow FunctionSignature signature, borrow StatementList body, borrow TokenStream stream, mut borrow BindDiagnosticList diags)
+{
+    stack u32[0 max] returnTypeToken = signature.ReturnTypeTokenAt();
+    if (returnTypeToken == 0)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack bool isVoid = stream.KindAt((u64[0 2 ** 63 - 1])returnTypeToken) == TokenKind.Void;
+    stack u64[0 2 ** 63 - 1] count = body.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack StatementItem item = body.ItemAt(index);
+        if (item.Kind == StatementKind.Return)
+        {
+            stack bool hasValue = body.ExprRootAt(index) != 0;
+            if (hasValue && isVoid)
+            {
+                switch (diags.Append(BindDiagnosticCode.ValueReturnedFromVoid, item.StartToken))
+                {
+                    case System.Memory.MemoryStatus.Err(var voidError):
+                        return System.Memory.MemoryStatus.Err(voidError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+            else if (!hasValue && !isVoid)
+            {
+                switch (diags.Append(BindDiagnosticCode.MissingReturnValue, item.StartToken))
+                {
+                    case System.Memory.MemoryStatus.Err(var missingError):
+                        return System.Memory.MemoryStatus.Err(missingError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+// The index plus one of the nearest statement before `fromIndex` at block depth
+// `targetDepth` (the ancestor block statement at that level), or 0 when none.
+internal fn u64[0 2 ** 63 - 1] NearestPrecedingAtDepth(borrow StatementList body, u64[0 2 ** 63 - 1] fromIndex, u32[0 max] targetDepth)
+{
+    stack mut u64[0 2 ** 63 - 1] found = 0;
+    stack mut u64[0 2 ** 63 - 1] scan = fromIndex;
+    while willexit (scan > 0)
+    {
+        scan = (u64[0 2 ** 63 - 1])(scan - 1);
+        if (found == 0 && body.DepthAt(scan) == targetDepth)
+        {
+            found = (u64[0 2 ** 63 - 1])(scan + 1);
+        }
+    }
+
+    return found;
+}
+
+// Whether the statement at `stmtIndex` is lexically enclosed by a loop (and, when
+// `includeSwitch`, a `switch`): walks the ancestor block-statement chain (nearest
+// preceding statement at each shallower depth) looking for a `While`/`For` (or
+// `Switch`).
+internal fn bool EnclosedByLoopOrSwitch(borrow StatementList body, u64[0 2 ** 63 - 1] stmtIndex, bool includeSwitch)
+{
+    stack mut bool enclosed = false;
+    stack mut u64[0 2 ** 63 - 1] cur = stmtIndex;
+    stack mut u32[0 max] d = body.DepthAt(stmtIndex);
+    while willexit (d > 0 && !enclosed)
+    {
+        stack u64[0 2 ** 63 - 1] ancestorPlus = NearestPrecedingAtDepth(body, cur, (u32[0 max])(d - 1));
+        if (ancestorPlus == 0)
+        {
+            d = 0;
+        }
+        else
+        {
+            stack u64[0 2 ** 63 - 1] ancestor = (u64[0 2 ** 63 - 1])(ancestorPlus - 1);
+            stack StatementItem item = body.ItemAt(ancestor);
+            if (item.Kind == StatementKind.While || item.Kind == StatementKind.For || item.Kind == StatementKind.ForEach)
+            {
+                enclosed = true;
+            }
+            else if (includeSwitch && item.Kind == StatementKind.Switch)
+            {
+                enclosed = true;
+            }
+
+            cur = ancestor;
+            d = (u32[0 max])(d - 1);
+        }
+    }
+
+    return enclosed;
+}
+
+// Emits `BreakOutsideLoop` for a `break` with no enclosing loop/switch and
+// `ContinueOutsideLoop` for a `continue` with no enclosing loop (a `switch` does
+// not satisfy `continue`), matching the host's STK4113/STK4114.
+internal fn System.Memory.MemoryStatus CollectControlFlowDiagnostics(borrow StatementList body, mut borrow BindDiagnosticList diags)
+{
+    stack u64[0 2 ** 63 - 1] count = body.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack StatementItem item = body.ItemAt(index);
+        if (item.Kind == StatementKind.Break)
+        {
+            if (!EnclosedByLoopOrSwitch(body, index, true))
+            {
+                switch (diags.Append(BindDiagnosticCode.BreakOutsideLoop, item.StartToken))
+                {
+                    case System.Memory.MemoryStatus.Err(var breakError):
+                        return System.Memory.MemoryStatus.Err(breakError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+        }
+        else if (item.Kind == StatementKind.Continue)
+        {
+            if (!EnclosedByLoopOrSwitch(body, index, false))
+            {
+                switch (diags.Append(BindDiagnosticCode.ContinueOutsideLoop, item.StartToken))
+                {
+                    case System.Memory.MemoryStatus.Err(var continueError):
+                        return System.Memory.MemoryStatus.Err(continueError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
         }
     }
 
@@ -1068,8 +1610,13 @@ internal fn System.Memory.MemoryStatus BindFunction(u32[0 max] fnKeyword, borrow
                                 }
                             }
 
+                            // The function's own type parameters (`fn RET name<T>(...)`)
+                            // open at the `<` directly after the name token, so a
+                            // return/parameter type naming a type parameter resolves.
+                            stack u32[0 max] genericList = (u32[0 max])(signature.Name() + 1);
                             stack u32[0 max] returnHead = signature.ReturnType();
-                            if (returnHead != 0 && !TypeHeadResolves(table, source, stream, returnHead))
+                            if (returnHead != 0 && !TypeHeadResolves(table, source, stream, returnHead)
+                                && !GenericParamListMatches(source, stream, genericList, returnHead))
                             {
                                 switch (diags.Append(BindDiagnosticCode.UnresolvedType, returnHead))
                                 {
@@ -1083,7 +1630,8 @@ internal fn System.Memory.MemoryStatus BindFunction(u32[0 max] fnKeyword, borrow
                             for willexit (stack mut u64[0 2 ** 63 - 1] p = 0; p < paramCount; p += 1)
                             {
                                 stack u32[0 max] paramHead = signature.ParamTypeAt(p);
-                                if (paramHead != 0 && !TypeHeadResolves(table, source, stream, paramHead))
+                                if (paramHead != 0 && !TypeHeadResolves(table, source, stream, paramHead)
+                                    && !GenericParamListMatches(source, stream, genericList, paramHead))
                                 {
                                     switch (diags.Append(BindDiagnosticCode.UnresolvedType, paramHead))
                                     {
@@ -1094,37 +1642,101 @@ internal fn System.Memory.MemoryStatus BindFunction(u32[0 max] fnKeyword, borrow
                                 }
                             }
 
-                            switch (ResolveReferences(scope, table, source, stream, body))
+                            // Each local declaration's named type (its head, 0 for a
+                            // built-in or a `var` pattern binding) must resolve to a
+                            // declaration or the function's own type parameters.
+                            stack u64[0 2 ** 63 - 1] localStmtCount = body.Count();
+                            for willexit (stack mut u64[0 2 ** 63 - 1] s = 0; s < localStmtCount; s += 1)
                             {
-                                case BindResult<ReferenceTable>.Err(var refError):
-                                    return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
-                                case BindResult<ReferenceTable>.Ok(var refs):
-                                    stack u64[0 2 ** 63 - 1] refCount = refs.Count();
-                                    for willexit (stack mut u64[0 2 ** 63 - 1] r = 0; r < refCount; r += 1)
+                                stack u32[0 max] localHead = body.ItemAt(s).TypeHead;
+                                if (localHead != 0 && !TypeHeadResolves(table, source, stream, localHead)
+                                    && !GenericParamListMatches(source, stream, genericList, localHead))
+                                {
+                                    switch (diags.Append(BindDiagnosticCode.UnresolvedType, localHead))
                                     {
-                                        if (refs.KindAt(r) == ReferenceKind.Unbound)
+                                        case System.Memory.MemoryStatus.Err(var e4b):
+                                            return System.Memory.MemoryStatus.Err(e4b);
+                                        case System.Memory.MemoryStatus.Ok:
+                                    }
+                                }
+                            }
+
+                            // Each `where T: Trait, ...` constraint trait must resolve
+                            // to a declaration (or be a function type parameter).
+                            switch (CollectWhereConstraintHeads(stream, fnKeyword))
+                            {
+                                case ParseResult<TypeHeadList>.Err(var whereError):
+                                    return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+                                case ParseResult<TypeHeadList>.Ok(var constraintHeads):
+                                    stack u64[0 2 ** 63 - 1] constraintCount = constraintHeads.Count();
+                                    for willexit (stack mut u64[0 2 ** 63 - 1] c = 0; c < constraintCount; c += 1)
+                                    {
+                                        stack u32[0 max] constraintHead = constraintHeads.HeadAt(c);
+                                        if (constraintHead != 0 && !TypeHeadResolves(table, source, stream, constraintHead)
+                                            && !GenericParamListMatches(source, stream, genericList, constraintHead))
                                         {
-                                            switch (diags.Append(BindDiagnosticCode.UnresolvedReference, refs.NameTokenAt(r)))
+                                            switch (diags.Append(BindDiagnosticCode.UnresolvedType, constraintHead))
                                             {
-                                                case System.Memory.MemoryStatus.Err(var e5):
-                                                    return System.Memory.MemoryStatus.Err(e5);
+                                                case System.Memory.MemoryStatus.Err(var e4c):
+                                                    return System.Memory.MemoryStatus.Err(e4c);
                                                 case System.Memory.MemoryStatus.Ok:
                                             }
                                         }
                                     }
                             }
 
-                            switch (CollectNonBooleanConditions(scope, source, stream, body, diags))
+                            // The lexical reference table (resolved with shadowing
+                            // and block scope) is built once and reused so that
+                            // identifier types are read from each reference's
+                            // RESOLVED symbol, not a flat last-name-match.
+                            stack mut ReferenceTable refs = new();
+                            switch (ResolveReferences(scope, table, source, stream, body))
+                            {
+                                case BindResult<ReferenceTable>.Err(var refError):
+                                    return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+                                case BindResult<ReferenceTable>.Ok(var built):
+                                    refs = built;
+                            }
+
+                            stack u64[0 2 ** 63 - 1] refCount = refs.Count();
+                            for willexit (stack mut u64[0 2 ** 63 - 1] r = 0; r < refCount; r += 1)
+                            {
+                                if (refs.KindAt(r) == ReferenceKind.Unbound)
+                                {
+                                    switch (diags.Append(BindDiagnosticCode.UnresolvedReference, refs.NameTokenAt(r)))
+                                    {
+                                        case System.Memory.MemoryStatus.Err(var e5):
+                                            return System.Memory.MemoryStatus.Err(e5);
+                                        case System.Memory.MemoryStatus.Ok:
+                                    }
+                                }
+                            }
+
+                            switch (CollectNonBooleanConditions(table, source, refs, scope, stream, body, diags))
                             {
                                 case System.Memory.MemoryStatus.Err(var condError):
                                     return System.Memory.MemoryStatus.Err(condError);
                                 case System.Memory.MemoryStatus.Ok:
                             }
 
-                            switch (CollectNonBooleanLogicalOperands(scope, source, stream, body, diags))
+                            switch (CollectExpressionTypeErrors(table, source, refs, scope, stream, body, diags))
                             {
                                 case System.Memory.MemoryStatus.Err(var operandError):
                                     return System.Memory.MemoryStatus.Err(operandError);
+                                case System.Memory.MemoryStatus.Ok:
+                            }
+
+                            switch (CollectReturnDiagnostics(signature, body, stream, diags))
+                            {
+                                case System.Memory.MemoryStatus.Err(var returnError):
+                                    return System.Memory.MemoryStatus.Err(returnError);
+                                case System.Memory.MemoryStatus.Ok:
+                            }
+
+                            switch (CollectControlFlowDiagnostics(body, diags))
+                            {
+                                case System.Memory.MemoryStatus.Err(var cfError):
+                                    return System.Memory.MemoryStatus.Err(cfError);
                                 case System.Memory.MemoryStatus.Ok:
                             }
 
@@ -1185,6 +1797,37 @@ public fn BindResult<BindDiagnosticList> BindCompilationUnit(ascii source, borro
             switch (BindFunction(item.KeywordToken, table, source, stream, diags))
             {
                 case System.Memory.MemoryStatus.Err(var fnError):
+                    return BindResult<BindDiagnosticList>.Err(BindError.OutOfMemory);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+        else if (item.Kind == DeclarationKind.Struct || item.Kind == DeclarationKind.Record)
+        {
+            switch (CollectUnresolvedFieldTypes(item.KeywordToken, table, source, stream, diags))
+            {
+                case System.Memory.MemoryStatus.Err(var fieldTypeError):
+                    return BindResult<BindDiagnosticList>.Err(BindError.OutOfMemory);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+        else if (item.Kind == DeclarationKind.Enum)
+        {
+            switch (ParseEnumVariants(stream, item.KeywordToken))
+            {
+                case ParseResult<VariantList>.Err(var variantError):
+                    return BindResult<BindDiagnosticList>.Err(BindError.OutOfMemory);
+                case ParseResult<VariantList>.Ok(var variants):
+                    switch (CollectDuplicateEnumVariants(variants, source, stream, diags))
+                    {
+                        case System.Memory.MemoryStatus.Err(var dupError):
+                            return BindResult<BindDiagnosticList>.Err(BindError.OutOfMemory);
+                        case System.Memory.MemoryStatus.Ok:
+                    }
+            }
+
+            switch (CollectUnresolvedVariantTypes(item.KeywordToken, table, source, stream, diags))
+            {
+                case System.Memory.MemoryStatus.Err(var variantTypeError):
                     return BindResult<BindDiagnosticList>.Err(BindError.OutOfMemory);
                 case System.Memory.MemoryStatus.Ok:
             }

@@ -2,6 +2,8 @@ export import Compiler.Lexing
 export import Compiler.Parsing
 export import Compiler.Binding
 export import Compiler.Typing
+export import Compiler.Ir
+export import Compiler.Mir
 module Compiler
 
 // Stage 1 self-hosted Stark compiler (pre-/src-cutover staging package).
