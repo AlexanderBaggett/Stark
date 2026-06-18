@@ -4,8 +4,48 @@ import System.Memory
 import System.Text
 import System.Runtime.Buffer
 import System.Testing
+import System.IO
+import System.Console
 [Collection("ir")]
 module IrTests
+
+[Fact]
+fn bool DebugDumpNestedIf()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack MirValueId x = MirParam(instrs, 0);
+    stack MirValueId one = MirConstInt(instrs, 1);
+    stack MirValueId cond1 = MirCmpLt(instrs, x, one);
+    stack MirValueId v10 = MirConstInt(instrs, 10);
+    stack MirValueId two = MirConstInt(instrs, 2);
+    stack MirValueId cond2 = MirCmpLt(instrs, x, two);
+    stack MirValueId v20 = MirConstInt(instrs, 20);
+    stack MirValueId v30 = MirConstInt(instrs, 30);
+    stack MirValueId innerPhi = MirPhi2(instrs, v20, MirBlockIdOf(4), v30, MirBlockIdOf(5));
+    stack MirValueId outerPhi = MirPhi2(instrs, v10, MirBlockIdOf(2), innerPhi, MirBlockIdOf(6));
+    stack MirBlockId entry = MirCondBlock(blocks, cond1, MirBlockIdOf(2), MirBlockIdOf(3));
+    stack MirBlockId then1 = MirBranchBlock(blocks, MirBlockIdOf(7));
+    stack MirBlockId innerEntry = MirCondBlock(blocks, cond2, MirBlockIdOf(4), MirBlockIdOf(5));
+    stack MirBlockId then2 = MirBranchBlock(blocks, MirBlockIdOf(6));
+    stack MirBlockId else2 = MirBranchBlock(blocks, MirBlockIdOf(6));
+    stack MirBlockId innerMerge = MirBranchBlock(blocks, MirBlockIdOf(7));
+    stack MirBlockId outerMerge = MirReturnBlock(blocks, outerPhi);
+    stack mut IrTable<BlockEmit> ranges = new();
+    stack u32[0 max] r1 = ranges.Add(MakeBlockEmit(entry.Index(), 1, 3));
+    stack u32[0 max] r2 = ranges.Add(MakeBlockEmit(then1.Index(), 4, 1));
+    stack u32[0 max] r3 = ranges.Add(MakeBlockEmit(innerEntry.Index(), 5, 2));
+    stack u32[0 max] r4 = ranges.Add(MakeBlockEmit(then2.Index(), 7, 1));
+    stack u32[0 max] r5 = ranges.Add(MakeBlockEmit(else2.Index(), 8, 1));
+    stack u32[0 max] r6 = ranges.Add(MakeBlockEmit(innerMerge.Index(), 9, 1));
+    stack u32[0 max] r7 = ranges.Add(MakeBlockEmit(outerMerge.Index(), 10, 0));
+    stack mut OwnedAscii sink = new();
+    stack MemoryStatus st = EmitLlvmBlocks(instrs, blocks, "classify", 1, ranges, sink);
+    WriteLine("<<<DUMP-START>>>");
+    Write(sink);
+    WriteLine("<<<DUMP-END>>>");
+    return true;
+}
 
 [Fact]
 fn bool TypedHandleRoundTripsIndex()
@@ -796,6 +836,269 @@ fn bool BinaryRoundTripsGlobals()
 }
 
 [Fact]
+fn bool LowersReturnIntSourceToLlvm()
+{
+    // The first source -> MIR -> LLVM thread (toward bootstrap #33): lex the source
+    // `return 42`, find the integer literal, lower to MIR (const + return), and emit
+    // the LLVM `@main` function.
+    stack mut OwnedAscii sink = new();
+    stack bool ok = LowerReturnIntToLlvm("return 42", sink);
+    return ok
+        && LlvmTextEquals(sink, "define i64 @main() {\nb1:\n  %v1 = add i64 0, 42\n  ret i64 %v1\n}\n");
+}
+
+[Fact]
+fn bool LowersReturnIntRejectsNoLiteral()
+{
+    // Source with no integer literal is rejected by the lowering.
+    stack mut OwnedAscii sink = new();
+    return !LowerReturnIntToLlvm("return", sink);
+}
+
+[Fact]
+fn bool LowersReturnAddExpr()
+{
+    // `return 2 + 3` lexes + lowers to a MIR add and emits the LLVM function.
+    stack mut OwnedAscii sink = new();
+    stack bool ok = LowerReturnExprToLlvm("return 2 + 3", sink);
+    return ok
+        && LlvmTextEquals(sink, "define i64 @main() {\nb1:\n  %v1 = add i64 0, 2\n  %v2 = add i64 0, 3\n  %v3 = add i64 %v1, %v2\n  ret i64 %v3\n}\n");
+}
+
+[Fact]
+fn bool LowersReturnSubAndMulExpr()
+{
+    // `-` and `*` lower to sub/mul.
+    stack mut OwnedAscii sinkSub = new();
+    stack bool okSub = LowerReturnExprToLlvm("return 10 - 4", sinkSub);
+    stack mut OwnedAscii sinkMul = new();
+    stack bool okMul = LowerReturnExprToLlvm("return 6 * 7", sinkMul);
+    return okSub
+        && okMul
+        && LlvmTextEquals(sinkSub, "define i64 @main() {\nb1:\n  %v1 = add i64 0, 10\n  %v2 = add i64 0, 4\n  %v3 = sub i64 %v1, %v2\n  ret i64 %v3\n}\n")
+        && LlvmTextEquals(sinkMul, "define i64 @main() {\nb1:\n  %v1 = add i64 0, 6\n  %v2 = add i64 0, 7\n  %v3 = mul i64 %v1, %v2\n  ret i64 %v3\n}\n");
+}
+
+[Fact]
+fn bool LowersReturnSingleConstViaExpr()
+{
+    // The single-constant case still works through the expression lowering.
+    stack mut OwnedAscii sink = new();
+    stack bool ok = LowerReturnExprToLlvm("return 42", sink);
+    return ok
+        && LlvmTextEquals(sink, "define i64 @main() {\nb1:\n  %v1 = add i64 0, 42\n  ret i64 %v1\n}\n");
+}
+
+[Fact]
+fn bool LowersReturnExpressionChain()
+{
+    // An arbitrary-length operator chain folds left-associatively:
+    // `return 2 + 3 + 4` -> ((2 + 3) + 4).
+    stack mut OwnedAscii sink = new();
+    stack bool ok = LowerReturnExprToLlvm("return 2 + 3 + 4", sink);
+    return ok
+        && LlvmTextEquals(sink, "define i64 @main() {\nb1:\n  %v1 = add i64 0, 2\n  %v2 = add i64 0, 3\n  %v3 = add i64 %v1, %v2\n  %v4 = add i64 0, 4\n  %v5 = add i64 %v3, %v4\n  ret i64 %v5\n}\n");
+}
+
+[Fact]
+fn bool LowersProgramWithLocalVariable()
+{
+    // A two-statement program: a local binds an expression's value, and the return
+    // reuses it by name. `var x = 2 + 3; return x * x` -> x = %v3 (the add), reused.
+    stack mut OwnedAscii sink = new();
+    stack bool ok = LowerProgramToLlvm("var x = 2 + 3; return x * x", sink);
+    return ok
+        && LlvmTextEquals(sink, "define i64 @main() {\nb1:\n  %v1 = add i64 0, 2\n  %v2 = add i64 0, 3\n  %v3 = add i64 %v1, %v2\n  %v4 = mul i64 %v3, %v3\n  ret i64 %v4\n}\n");
+}
+
+[Fact]
+fn bool LowersProgramWithTwoLocals()
+{
+    // Two local declarations, both reused in the return: `var x = 2; var y = 3;
+    // return x + y` -> x = %v1, y = %v2, ret add %v1, %v2.
+    stack mut OwnedAscii sink = new();
+    stack bool ok = LowerProgramToLlvm("var x = 2; var y = 3; return x + y", sink);
+    return ok
+        && LlvmTextEquals(sink, "define i64 @main() {\nb1:\n  %v1 = add i64 0, 2\n  %v2 = add i64 0, 3\n  %v3 = add i64 %v1, %v2\n  ret i64 %v3\n}\n");
+}
+
+[Fact]
+fn bool LowersProgramLocalReferencesEarlierLocal()
+{
+    // A later local can reference an earlier one: `var x = 4; var y = x * x;
+    // return y + x` -> y = x*x (%v2), ret (y + x).
+    stack mut OwnedAscii sink = new();
+    stack bool ok = LowerProgramToLlvm("var x = 4; var y = x * x; return y + x", sink);
+    return ok
+        && LlvmTextEquals(sink, "define i64 @main() {\nb1:\n  %v1 = add i64 0, 4\n  %v2 = mul i64 %v1, %v1\n  %v3 = add i64 %v2, %v1\n  ret i64 %v3\n}\n");
+}
+
+[Fact]
+fn bool LowersProgramReturningLocalPlusConst()
+{
+    // The local appears in a larger expression: `var y = 6 * 7; return y + 1`.
+    stack mut OwnedAscii sink = new();
+    stack bool ok = LowerProgramToLlvm("var y = 6 * 7; return y + 1", sink);
+    return ok
+        && LlvmTextEquals(sink, "define i64 @main() {\nb1:\n  %v1 = add i64 0, 6\n  %v2 = add i64 0, 7\n  %v3 = mul i64 %v1, %v2\n  %v4 = add i64 0, 1\n  %v5 = add i64 %v3, %v4\n  ret i64 %v5\n}\n");
+}
+
+[Fact]
+fn bool LowersFunctionParameterAndCallArgument()
+{
+    // A function with a parameter, called with an argument:
+    // `fn double(x) { return x + x } fn main() { return double(5) }` -> @f1 takes %p0
+    // and doubles it; @f2 calls @f1 with the constant 5.
+    stack mut OwnedAscii sink = new();
+    stack bool ok = LowerModuleToLlvm("fn double(x) { return x + x } fn main() { return double(5) }", sink);
+    return ok
+        && LlvmTextEquals(sink, "define i64 @f1(i64 %p0) {\nb1:\n  %v3 = add i64 %p0, %p0\n  ret i64 %v3\n}\ndefine i64 @f2() {\nb2:\n  %v4 = add i64 0, 5\n  %v5 = call i64 @f1(i64 %v4)\n  ret i64 %v5\n}\n");
+}
+
+[Fact]
+fn bool LowersTwoFunctionsWithCall()
+{
+    // Two function definitions where the second calls the first by name:
+    // `fn helper() { return 7 } fn main() { return helper() }` -> a module with
+    // @f1 (returns 7) and @f2 (calls @f1).
+    stack mut OwnedAscii sink = new();
+    stack bool ok = LowerModuleToLlvm("fn helper() { return 7 } fn main() { return helper() }", sink);
+    return ok
+        && LlvmTextEquals(sink, "define i64 @f1() {\nb1:\n  %v1 = add i64 0, 7\n  ret i64 %v1\n}\ndefine i64 @f2() {\nb2:\n  %v2 = call i64 @f1()\n  ret i64 %v2\n}\n");
+}
+
+[Fact]
+fn bool LowersIfExpressionToBranchingLlvm()
+{
+    // An `if` from source compiles to a branching function with a phi merge:
+    // `if x < y x else y` -> compare x,y; branch; phi selects x or y at the merge.
+    stack mut OwnedAscii sink = new();
+    stack bool ok = LowerIfToLlvm("if x < y x else y", sink);
+    return ok
+        && LlvmTextEquals(sink, "define i64 @main(i64 %p0, i64 %p1) {\nb1:\n  %v3 = icmp slt i64 %p0, %p1\n  br i1 %v3, label %b2, label %b3\nb2:\n  br label %b4\nb3:\n  br label %b4\nb4:\n  %v6 = phi i64 [ %p0, %b2 ], [ %p1, %b3 ]\n  ret i64 %v6\n}\n");
+}
+
+[Fact]
+fn bool LowersIfWithExpressionArms()
+{
+    // The then/else arms are expressions computed in their own blocks:
+    // `if x < y x + 1 else y - 1` -> then block computes x+1, else block computes y-1,
+    // the merge phi selects between them.
+    stack mut OwnedAscii sink = new();
+    stack bool ok = LowerIfToLlvm("if x < y x + 1 else y - 1", sink);
+    return ok
+        && LlvmTextEquals(sink, "define i64 @main(i64 %p0, i64 %p1) {\nb1:\n  %v3 = icmp slt i64 %p0, %p1\n  br i1 %v3, label %b2, label %b3\nb2:\n  %v5 = add i64 0, 1\n  %v6 = add i64 %p0, %v5\n  br label %b4\nb3:\n  %v8 = add i64 0, 1\n  %v9 = sub i64 %p1, %v8\n  br label %b4\nb4:\n  %v10 = phi i64 [ %v6, %b2 ], [ %v9, %b3 ]\n  ret i64 %v10\n}\n");
+}
+
+[Fact]
+fn bool LowersReturnComparison()
+{
+    // `return x < y` lowers to a signed compare then zero-extend to i64 (1 or 0).
+    stack mut OwnedAscii sink = new();
+    stack bool ok = LowerReturnExprToLlvm("return x < y", sink);
+    return ok
+        && LlvmTextEquals(sink, "define i64 @main(i64 %p0, i64 %p1) {\nb1:\n  %v3 = icmp slt i64 %p0, %p1\n  %v4 = zext i1 %v3 to i64\n  ret i64 %v4\n}\n");
+}
+
+[Fact]
+fn bool LowersReturnComparisonBelowArithmetic()
+{
+    // Comparison binds below `+`: `return x + 1 < y` lowers as `(x + 1) < y`.
+    stack mut OwnedAscii sink = new();
+    stack bool ok = LowerReturnExprToLlvm("return x + 1 < y", sink);
+    return ok
+        && LlvmTextEquals(sink, "define i64 @main(i64 %p0, i64 %p1) {\nb1:\n  %v2 = add i64 0, 1\n  %v3 = add i64 %p0, %v2\n  %v5 = icmp slt i64 %v3, %p1\n  %v6 = zext i1 %v5 to i64\n  ret i64 %v6\n}\n");
+}
+
+[Fact]
+fn bool LowersReturnParameterExpression()
+{
+    // An identifier in the expression is the function parameter `x` (lowered to %p0),
+    // and the function gains a parameter: `fn(x) return x + 1`.
+    stack mut OwnedAscii sink = new();
+    stack bool ok = LowerReturnExprToLlvm("return x + 1", sink);
+    return ok
+        && LlvmTextEquals(sink, "define i64 @main(i64 %p0) {\nb1:\n  %v2 = add i64 0, 1\n  %v3 = add i64 %p0, %v2\n  ret i64 %v3\n}\n");
+}
+
+[Fact]
+fn bool LowersReturnParameterSquared()
+{
+    // `return x * x` references the same parameter twice (one symbol-table entry):
+    // `mul i64 %p0, %p0`, one declared parameter.
+    stack mut OwnedAscii sink = new();
+    stack bool ok = LowerReturnExprToLlvm("return x * x", sink);
+    return ok
+        && LlvmTextEquals(sink, "define i64 @main(i64 %p0) {\nb1:\n  %v3 = mul i64 %p0, %p0\n  ret i64 %v3\n}\n");
+}
+
+[Fact]
+fn bool LowersReturnTwoParameters()
+{
+    // Distinct identifiers become distinct parameters via the symbol table:
+    // `x` -> %p0, `y` -> %p1, in first-appearance order.
+    stack mut OwnedAscii sink = new();
+    stack bool ok = LowerReturnExprToLlvm("return x + y", sink);
+    return ok
+        && LlvmTextEquals(sink, "define i64 @main(i64 %p0, i64 %p1) {\nb1:\n  %v3 = add i64 %p0, %p1\n  ret i64 %v3\n}\n");
+}
+
+[Fact]
+fn bool LowersReturnTwoParametersWithPrecedence()
+{
+    // `return x + y * x` -> x + (y * x): y=%p1, x=%p0, mul then add.
+    stack mut OwnedAscii sink = new();
+    stack bool ok = LowerReturnExprToLlvm("return x + y * x", sink);
+    return ok
+        && LlvmTextEquals(sink, "define i64 @main(i64 %p0, i64 %p1) {\nb1:\n  %v4 = mul i64 %p1, %p0\n  %v5 = add i64 %p0, %v4\n  ret i64 %v5\n}\n");
+}
+
+[Fact]
+fn bool LowersReturnDivisionAndRemainder()
+{
+    // `/` and `%` lower to `sdiv`/`srem` in the product tier.
+    stack mut OwnedAscii sinkDiv = new();
+    stack bool okDiv = LowerReturnExprToLlvm("return 12 / 3", sinkDiv);
+    stack mut OwnedAscii sinkMod = new();
+    stack bool okMod = LowerReturnExprToLlvm("return 17 % 5", sinkMod);
+    return okDiv
+        && okMod
+        && LlvmTextEquals(sinkDiv, "define i64 @main() {\nb1:\n  %v1 = add i64 0, 12\n  %v2 = add i64 0, 3\n  %v3 = sdiv i64 %v1, %v2\n  ret i64 %v3\n}\n")
+        && LlvmTextEquals(sinkMod, "define i64 @main() {\nb1:\n  %v1 = add i64 0, 17\n  %v2 = add i64 0, 5\n  %v3 = srem i64 %v1, %v2\n  ret i64 %v3\n}\n");
+}
+
+[Fact]
+fn bool LowersReturnDivisionPrecedence()
+{
+    // `/` binds tighter than `+`: `return 2 + 12 / 3` lowers as `2 + (12 / 3)`.
+    stack mut OwnedAscii sink = new();
+    stack bool ok = LowerReturnExprToLlvm("return 2 + 12 / 3", sink);
+    return ok
+        && LlvmTextEquals(sink, "define i64 @main() {\nb1:\n  %v1 = add i64 0, 2\n  %v2 = add i64 0, 12\n  %v3 = add i64 0, 3\n  %v4 = sdiv i64 %v2, %v3\n  %v5 = add i64 %v1, %v4\n  ret i64 %v5\n}\n");
+}
+
+[Fact]
+fn bool LowersReturnRespectsPrecedence()
+{
+    // `*` binds tighter than `+`: `return 2 + 3 * 4` lowers as `2 + (3 * 4)`, so the
+    // mul is computed first and fed to the add.
+    stack mut OwnedAscii sink = new();
+    stack bool ok = LowerReturnExprToLlvm("return 2 + 3 * 4", sink);
+    return ok
+        && LlvmTextEquals(sink, "define i64 @main() {\nb1:\n  %v1 = add i64 0, 2\n  %v2 = add i64 0, 3\n  %v3 = add i64 0, 4\n  %v4 = mul i64 %v2, %v3\n  %v5 = add i64 %v1, %v4\n  ret i64 %v5\n}\n");
+}
+
+[Fact]
+fn bool LowersReturnMixedOperatorChain()
+{
+    // A mixed chain folds left-to-right: `return 10 - 3 + 2` -> ((10 - 3) + 2).
+    stack mut OwnedAscii sink = new();
+    stack bool ok = LowerReturnExprToLlvm("return 10 - 3 + 2", sink);
+    return ok
+        && LlvmTextEquals(sink, "define i64 @main() {\nb1:\n  %v1 = add i64 0, 10\n  %v2 = add i64 0, 3\n  %v3 = sub i64 %v1, %v2\n  %v4 = add i64 0, 2\n  %v5 = add i64 %v3, %v4\n  ret i64 %v5\n}\n");
+}
+
+[Fact]
 fn bool FfiBindsLibcFunction()
 {
     // The self-hosted compiler package can declare and call a C function via FFI — the
@@ -1315,6 +1618,128 @@ fn bool EmitsLlvmModuleWithGlobals()
     {
         case MemoryStatus.Ok:
             return LlvmTextEquals(sink, "@g1 = global i64 42\ndefine i64 @f1() {\nb1:\n  %v1 = add i64 0, 1\n  %v2 = add i64 0, 2\n  %v3 = add i64 %v1, %v2\n  ret i64 %v3\n}\n");
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+[Fact]
+fn bool EmitsLlvmDiamondBranchWithPhi()
+{
+    // A real branching function `max(x, y)`: entry compares and conditionally branches
+    // to two empty blocks that both jump to a merge block, where a phi selects the
+    // value from whichever predecessor ran. Multi-block emission + cond-branch + phi.
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack MirValueId x = MirParam(instrs, 0);
+    stack MirValueId y = MirParam(instrs, 1);
+    stack MirValueId cmp = MirCmpLt(instrs, x, y);
+    stack MirValueId phi = MirPhi2(instrs, y, MirBlockIdOf(2), x, MirBlockIdOf(3));
+    stack MirBlockId entry = MirCondBlock(blocks, cmp, MirBlockIdOf(2), MirBlockIdOf(3));
+    stack MirBlockId thenB = MirBranchBlock(blocks, MirBlockIdOf(4));
+    stack MirBlockId elseB = MirBranchBlock(blocks, MirBlockIdOf(4));
+    stack MirBlockId mergeB = MirReturnBlock(blocks, phi);
+    stack mut OwnedAscii sink = new();
+    switch (EmitLlvmDiamond(instrs, blocks, "main", 2, entry.Index(), 1, 3, thenB.Index(), 1, 0, elseB.Index(), 1, 0, mergeB.Index(), 4, 1, sink))
+    {
+        case MemoryStatus.Ok:
+            return LlvmTextEquals(sink, "define i64 @main(i64 %p0, i64 %p1) {\nb1:\n  %v3 = icmp slt i64 %p0, %p1\n  br i1 %v3, label %b2, label %b3\nb2:\n  br label %b4\nb3:\n  br label %b4\nb4:\n  %v4 = phi i64 [ %p1, %b2 ], [ %p0, %b3 ]\n  ret i64 %v4\n}\n");
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+[Fact]
+fn bool EmitsLlvmNestedIfElseChain()
+{
+    // An else-if chain `if x < 1 -> 10 else if x < 2 -> 20 else -> 30` lowers to two
+    // composed diamonds: the outer if's else arm is itself a diamond whose merge feeds
+    // the outer merge. Seven blocks, two 2-incoming phis (no N-way phi needed), emitted
+    // through the general EmitLlvmBlocks block-sequence emitter.
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack MirValueId x = MirParam(instrs, 0);
+    // entry(b1): cond1 = x < 1
+    stack MirValueId one = MirConstInt(instrs, 1);
+    stack MirValueId cond1 = MirCmpLt(instrs, x, one);
+    // then1(b2): value 10
+    stack MirValueId v10 = MirConstInt(instrs, 10);
+    // inner-entry(b3): cond2 = x < 2
+    stack MirValueId two = MirConstInt(instrs, 2);
+    stack MirValueId cond2 = MirCmpLt(instrs, x, two);
+    // then2(b4): value 20 ; else2(b5): value 30
+    stack MirValueId v20 = MirConstInt(instrs, 20);
+    stack MirValueId v30 = MirConstInt(instrs, 30);
+    // inner-merge(b6): phi [20, b4], [30, b5]
+    stack MirValueId innerPhi = MirPhi2(instrs, v20, MirBlockIdOf(4), v30, MirBlockIdOf(5));
+    // outer-merge(b7): phi [10, b2], [inner, b6]
+    stack MirValueId outerPhi = MirPhi2(instrs, v10, MirBlockIdOf(2), innerPhi, MirBlockIdOf(6));
+    // Blocks in order: entry(b1), then1(b2), inner-entry(b3), then2(b4), else2(b5),
+    // inner-merge(b6), outer-merge(b7).
+    stack MirBlockId entry = MirCondBlock(blocks, cond1, MirBlockIdOf(2), MirBlockIdOf(3));
+    stack MirBlockId then1 = MirBranchBlock(blocks, MirBlockIdOf(7));
+    stack MirBlockId innerEntry = MirCondBlock(blocks, cond2, MirBlockIdOf(4), MirBlockIdOf(5));
+    stack MirBlockId then2 = MirBranchBlock(blocks, MirBlockIdOf(6));
+    stack MirBlockId else2 = MirBranchBlock(blocks, MirBlockIdOf(6));
+    stack MirBlockId innerMerge = MirBranchBlock(blocks, MirBlockIdOf(7));
+    stack MirBlockId outerMerge = MirReturnBlock(blocks, outerPhi);
+
+    stack mut IrTable<BlockEmit> ranges = new();
+    stack u32[0 max] r1 = ranges.Add(MakeBlockEmit(entry.Index(), 1, 3));
+    stack u32[0 max] r2 = ranges.Add(MakeBlockEmit(then1.Index(), 4, 1));
+    stack u32[0 max] r3 = ranges.Add(MakeBlockEmit(innerEntry.Index(), 5, 2));
+    stack u32[0 max] r4 = ranges.Add(MakeBlockEmit(then2.Index(), 7, 1));
+    stack u32[0 max] r5 = ranges.Add(MakeBlockEmit(else2.Index(), 8, 1));
+    stack u32[0 max] r6 = ranges.Add(MakeBlockEmit(innerMerge.Index(), 9, 1));
+    stack u32[0 max] r7 = ranges.Add(MakeBlockEmit(outerMerge.Index(), 10, 0));
+
+    stack mut OwnedAscii sink = new();
+    switch (EmitLlvmBlocks(instrs, blocks, "classify", 1, ranges, sink))
+    {
+        case MemoryStatus.Ok:
+            return LlvmTextEquals(sink, "define i64 @classify(i64 %p0) {\nb1:\n  %v2 = add i64 0, 1\n  %v3 = icmp slt i64 %p0, %v2\n  br i1 %v3, label %b2, label %b3\nb2:\n  %v4 = add i64 0, 10\n  br label %b7\nb3:\n  %v5 = add i64 0, 2\n  %v6 = icmp slt i64 %p0, %v5\n  br i1 %v6, label %b4, label %b5\nb4:\n  %v7 = add i64 0, 20\n  br label %b6\nb5:\n  %v8 = add i64 0, 30\n  br label %b6\nb6:\n  %v9 = phi i64 [ %v7, %b4 ], [ %v8, %b5 ]\n  br label %b7\nb7:\n  %v10 = phi i64 [ %v4, %b2 ], [ %v9, %b6 ]\n  ret i64 %v10\n}\n");
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+[Fact]
+fn bool LowersCountingLoopSourceToLlvm()
+{
+    // Source -> loop CFG: `var i = 0; while i < 10 { i = i + 1 } return i` lexes and
+    // lowers to the four-block loop — preheader constants, an induction phi counting
+    // 0->10, the `slt` guard, the body increment with a back-edge, and the exit return.
+    stack mut OwnedAscii sink = new();
+    stack bool ok = LowerCountingLoopToLlvm("var i = 0; while i < 10 { i = i + 1 } return i", sink);
+    return ok
+        && LlvmTextEquals(sink, "define i64 @main() {\nb1:\n  %v1 = add i64 0, 0\n  %v2 = add i64 0, 10\n  %v3 = add i64 0, 1\n  br label %b2\nb2:\n  %v4 = phi i64 [ %v1, %b1 ], [ %v6, %b3 ]\n  %v5 = icmp slt i64 %v4, %v2\n  br i1 %v5, label %b3, label %b4\nb3:\n  %v6 = add i64 %v4, %v3\n  br label %b2\nb4:\n  ret i64 %v4\n}\n");
+}
+
+[Fact]
+fn bool EmitsLlvmCountingLoopWithBackEdge()
+{
+    // A real loop: `i` is an induction phi (0 from the preheader, i+1 from the body);
+    // while i < n the body increments and branches back to the header; at exit the
+    // function returns i (= n). Four blocks with a back-edge header<-body.
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack MirValueId n = MirParam(instrs, 0);
+    stack MirValueId zero = MirConstInt(instrs, 0);
+    // i = phi [ zero, entry(b1) ], [ inext(%v6), body(b3) ]  (inext is forward-referenced)
+    stack MirValueId iVar = MirPhi2(instrs, zero, MirBlockIdOf(1), MirValueIdOf(6), MirBlockIdOf(3));
+    stack MirValueId cond = MirCmpLt(instrs, iVar, n);
+    stack MirValueId one = MirConstInt(instrs, 1);
+    stack MirValueId iNext = MirAdd(instrs, iVar, one);
+    // Blocks in order: entry(b1), header(b2), body(b3), exit(b4).
+    stack MirBlockId entry = MirBranchBlock(blocks, MirBlockIdOf(2));
+    stack MirBlockId header = MirCondBlock(blocks, cond, MirBlockIdOf(3), MirBlockIdOf(4));
+    stack MirBlockId body = MirBranchBlock(blocks, MirBlockIdOf(2));
+    stack MirBlockId exit = MirReturnBlock(blocks, iVar);
+    stack mut OwnedAscii sink = new();
+    switch (EmitLlvmDiamond(instrs, blocks, "main", 1, entry.Index(), 1, 2, header.Index(), 3, 2, body.Index(), 5, 2, exit.Index(), 7, 0, sink))
+    {
+        case MemoryStatus.Ok:
+            return LlvmTextEquals(sink, "define i64 @main(i64 %p0) {\nb1:\n  %v2 = add i64 0, 0\n  br label %b2\nb2:\n  %v3 = phi i64 [ %v2, %b1 ], [ %v6, %b3 ]\n  %v4 = icmp slt i64 %v3, %p0\n  br i1 %v4, label %b3, label %b4\nb3:\n  %v5 = add i64 0, 1\n  %v6 = add i64 %v3, %v5\n  br label %b2\nb4:\n  ret i64 %v3\n}\n");
         case MemoryStatus.Err(var error):
             return false;
     }
