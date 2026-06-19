@@ -1,0 +1,237 @@
+import CompilerTestSupport
+import System.Testing
+module OwnershipFieldReadAfterMoveRegressionTests
+
+// Ported slice of tests/compiler.Tests/OwnershipFieldReadAfterMoveRegressionTests.cs.
+//
+// Field-read-after-move regressions: dynamic storage header reads
+// (`moved.Field.Length` / `.Capacity`) used to bypass the moved-root check.
+// Each C# test embeds a Stark program and routes it through the type-check
+// pipeline. The rejection tests' AssertMoveError helper asserts both
+// `!Succeeded` and a STK4200 diagnostic, which FailsWithDiagnostic captures.
+// The constructor-flow test asserts success.
+
+// Ported from OwnershipFieldReadAfterMoveRegressionTests.DynamicLengthReadOnDefinitelyMovedRootErrors.
+internal fn bool DynamicLengthReadOnDefinitelyMovedRootErrorsImpl()
+{
+    {
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "ownerp1-dynamic-length-read-on-definitely-moved-root",
+            raw"""
+module Demo
+
+struct Payload
+{
+    dynamic i64[min max] Items;
+    i64[min max] Count;
+
+    Payload()
+    {
+        self.Items = new();
+        self.Count = 0;
+    }
+}
+
+fn bool Consume(Payload payload)
+{
+    return true;
+}
+
+fn i64[min max] Build()
+{
+    stack mut Payload payload = new();
+    stack bool sink = Consume(payload);
+    return payload.Items.Length;
+}
+""");
+        return FailsWithDiagnostic(compiled, "STK4200");
+    }
+}
+
+// Ported from OwnershipFieldReadAfterMoveRegressionTests.DynamicCapacityReadOnDefinitelyMovedRootErrors.
+internal fn bool DynamicCapacityReadOnDefinitelyMovedRootErrorsImpl()
+{
+    {
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "ownerp1-dynamic-capacity-read-on-definitely-moved-root",
+            raw"""
+module Demo
+
+struct Payload
+{
+    dynamic i64[min max] Items;
+    i64[min max] Count;
+
+    Payload()
+    {
+        self.Items = new();
+        self.Count = 0;
+    }
+}
+
+fn bool Consume(Payload payload)
+{
+    return true;
+}
+
+fn i64[min max] Build()
+{
+    stack mut Payload payload = new();
+    stack bool sink = Consume(payload);
+    return payload.Items.Capacity;
+}
+""");
+        return FailsWithDiagnostic(compiled, "STK4200");
+    }
+}
+
+// Ported from OwnershipFieldReadAfterMoveRegressionTests.DynamicLengthReadOnMaybeMovedRootErrors.
+internal fn bool DynamicLengthReadOnMaybeMovedRootErrorsImpl()
+{
+    {
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "ownerp1-dynamic-length-read-on-maybe-moved-root",
+            raw"""
+module Demo
+
+struct Payload
+{
+    dynamic i64[min max] Items;
+    i64[min max] Count;
+
+    Payload()
+    {
+        self.Items = new();
+        self.Count = 0;
+    }
+}
+
+fn bool Consume(Payload payload)
+{
+    return true;
+}
+
+fn i64[min max] Build(bool flag)
+{
+    stack mut Payload payload = new();
+    if (flag)
+    {
+        stack bool sink = Consume(payload);
+    }
+
+    return payload.Items.Length;
+}
+""");
+        return FailsWithDiagnostic(compiled, "STK4200");
+    }
+}
+
+// Ported from OwnershipFieldReadAfterMoveRegressionTests.DynamicMemberCallOnMovedReceiverErrors.
+internal fn bool DynamicMemberCallOnMovedReceiverErrorsImpl()
+{
+    {
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "ownerp1-dynamic-member-call-on-moved-receiver",
+            raw"""
+module Demo
+
+struct Payload
+{
+    dynamic i64[min max] Items;
+    i64[min max] Count;
+
+    Payload()
+    {
+        self.Items = new();
+        self.Count = 0;
+    }
+}
+
+fn bool Consume(Payload payload)
+{
+    return true;
+}
+
+fn i64[min max] Build()
+{
+    stack mut Payload payload = new();
+    stack bool sink = Consume(payload);
+    if (!payload.Items.TryReserve(1))
+    {
+        return 0;
+    }
+
+    return 1;
+}
+""");
+        return FailsWithDiagnostic(compiled, "STK4200");
+    }
+}
+
+// Ported from OwnershipFieldReadAfterMoveRegressionTests.ScalarFieldReadOnMovedRootErrors.
+internal fn bool ScalarFieldReadOnMovedRootErrorsImpl()
+{
+    {
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "ownerp1-scalar-field-read-on-moved-root",
+            raw"""
+module Demo
+
+struct Payload
+{
+    dynamic i64[min max] Items;
+    i64[min max] Count;
+
+    Payload()
+    {
+        self.Items = new();
+        self.Count = 0;
+    }
+}
+
+fn bool Consume(Payload payload)
+{
+    return true;
+}
+
+fn i64[min max] Build()
+{
+    stack mut Payload payload = new();
+    stack bool sink = Consume(payload);
+    return payload.Count;
+}
+""");
+        return FailsWithDiagnostic(compiled, "STK4200");
+    }
+}
+
+// Ported from OwnershipFieldReadAfterMoveRegressionTests.ConstructorReadsAssignedDynamicFieldHeaderLegally.
+internal fn bool ConstructorReadsAssignedDynamicFieldHeaderLegallyImpl()
+{
+    {
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "ownerp1-constructor-reads-assigned-dynamic-field-header-legally",
+            raw"""
+module Demo
+
+struct Payload
+{
+    dynamic i64[min max] Items;
+    i64[min max] Count;
+
+    Payload()
+    {
+        self.Items = new();
+        self.Count = self.Items.Length;
+    }
+}
+
+fn i64[min max] Build()
+{
+    stack Payload payload = new();
+    return payload.Count;
+}
+""");
+        return Succeeds(compiled);
+    }
+}

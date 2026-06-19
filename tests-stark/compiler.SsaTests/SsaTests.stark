@@ -1,22 +1,13 @@
 import SsaTestSupport
 import System.Testing
-import CompilerCliTestsP1
-import CompilerPipelineFullIntegrationTestsP1
-import CompilerPipelineOptimizeSsaTestsP1
-import CompilerPipelineOptimizeSsaTestsP2
-import CompilerPipelineOptimizeSsaTestsP3
-import CompilerPipelineOptimizeSsaTestsP4
-import CompilerPipelineOptimizeSsaTestsP5
-import SsaCrossBlockLoadForwardingRegressionTestsP1
-import SsaIrValidationTestsP1
-import SsaIrValidationTestsP2
-import SsaIrValidationTestsP3
-import SsaLoweringTestsP1
-import SsaOptimizationTestsP1
-import SsaOptimizationTestsP2
-import SsaOptimizationTestsP3
-import SsaOptimizationTestsP4
-[Collection("compiler-ssa")]
+import CompilerCliTests
+import CompilerPipelineFullIntegrationTests
+import CompilerPipelineOptimizeSsaTests
+import SsaCrossBlockLoadForwardingRegressionTests
+import SsaIrValidationTests
+import SsaLoweringTests
+import SsaOptimizationTests
+[Collection("compiler", "ssa")]
 module SsaTests
 
 // Ported slice of the SOURCE-DRIVEN SSA tests from tests/compiler.Tests
@@ -42,7 +33,6 @@ module SsaTests
 [Fact]
 fn bool BranchJoinProducesPhiForMergedLocal()
 {
-    unsafe
     {
         stack mut SsaCompile compiled = CompileSsa(
             "ssa-branch-join-phi",
@@ -75,7 +65,6 @@ fn i32[min max] Choose(bool flag)
 [Collection("loops")]
 fn bool LoopHeaderProducesPhiForBackedgeValue()
 {
-    unsafe
     {
         stack mut SsaCompile compiled = CompileSsa(
             "ssa-loop-header-phi",
@@ -103,7 +92,6 @@ fn i32[min max] Sum(i32[min max] count)
 [Fact]
 fn bool VoidCallStatementsLowerToStatementOnlyInstructions()
 {
-    unsafe
     {
         stack mut SsaCompile compiled = CompileSsa(
             "ssa-void-call-statement",
@@ -131,7 +119,6 @@ unsafe fn void Run(i32[min max] value)
 [Fact]
 fn bool MutableSliceAssignmentKeepsReplacementStore()
 {
-    unsafe
     {
         stack mut SsaCompile compiled = CompileSsa(
             "ssa-slice-replacement-store",
@@ -154,7 +141,6 @@ unsafe fn void Replace(borrow mut u32[0 max][] destination)
 [Fact]
 fn bool OutParameterAssignmentCarriesInitializationStore()
 {
-    unsafe
     {
         stack mut SsaCompile compiled = CompileSsa(
             "ssa-out-init-store",
@@ -178,7 +164,6 @@ fn void Write(out i32[min max] value)
 [Collection("memory")]
 fn bool HeapObjectCreationUsesStorageBackedLocal()
 {
-    unsafe
     {
         stack mut SsaCompile compiled = CompileSsa(
             "ssa-heap-object-storage",
@@ -213,7 +198,6 @@ unsafe fn i32[min max] Run()
 [Collection("memory")]
 fn bool HeapFixedArrayInitializationUsesHeapStorage()
 {
-    unsafe
     {
         stack mut SsaCompile compiled = CompileSsa(
             "ssa-heap-fixed-array",
@@ -241,7 +225,6 @@ unsafe fn i32[min max] Run()
 [Fact]
 fn bool RegisterScalarInitializerRemainsDirectValue()
 {
-    unsafe
     {
         stack mut SsaCompile compiled = CompileSsa(
             "ssa-register-scalar",
@@ -266,7 +249,6 @@ fn i32[min max] Run()
 [Collection("ffi")]
 fn bool ExplicitPointerDereferenceLowersToSsaLoad()
 {
-    unsafe
     {
         stack mut SsaCompile compiled = CompileSsa(
             "ssa-pointer-deref",
@@ -289,7 +271,6 @@ unsafe fn i32[min max] Run(rawptr<i32[min max]> source)
 [Collection("text")]
 fn bool TextSliceLowersToViewOperation()
 {
-    unsafe
     {
         stack mut SsaCompile compiled = CompileSsa(
             "ssa-text-slice-view",
@@ -312,7 +293,6 @@ unsafe fn ascii Head(ascii text)
 [Collection("text")]
 fn bool ExplicitAsciiToUnicodeLiteralFoldsToConstant()
 {
-    unsafe
     {
         stack mut SsaCompile compiled = CompileSsa(
             "ssa-ascii-to-unicode",
@@ -334,7 +314,6 @@ fn unicode Run()
 [Fact]
 fn bool BothArmsReturningLeavesNoJoinBlock()
 {
-    unsafe
     {
         stack mut SsaCompile compiled = CompileSsa(
             "ssa-no-join-block",
@@ -366,7 +345,6 @@ fn i32[min max] Run(bool flag)
 [Collection("memory")]
 fn bool AggregateByValueCallLowersToCall()
 {
-    unsafe
     {
         stack mut SsaCompile compiled = CompileSsa(
             "ssa-aggregate-by-value-call",
@@ -404,7 +382,6 @@ fn void Run(Box source)
 [Collection("ffi")]
 fn bool DeclarationOnlyFunctionRendersWithoutBody()
 {
-    unsafe
     {
         stack mut SsaCompile compiled = CompileSsa(
             "ssa-declaration-only",
@@ -430,7 +407,6 @@ public unsafe ffi fn void Touch(rawmutptr<i32[min max]> data);
 [Collection("optimization")]
 fn bool OptimizedSsaFoldsConstantArithmetic()
 {
-    unsafe
     {
         stack mut SsaCompile compiled = CompileOptimizedSsa(
             "ssa-opt-fold-arithmetic",
@@ -452,7 +428,6 @@ fn i32[min max] Run()
 [Collection("optimization")]
 fn bool OptimizedSsaFoldsConstantAggregateInitializerAccesses()
 {
-    unsafe
     {
         stack mut SsaCompile compiled = CompileOptimizedSsa(
             "ssa-opt-fold-aggregate",
@@ -487,7 +462,6 @@ fn i32[min max] Run()
 [Collection("optimization")]
 fn bool OptimizedSsaCanonicalizesBooleanCompareToSelect()
 {
-    unsafe
     {
         stack mut SsaCompile compiled = CompileOptimizedSsa(
             "ssa-opt-bool-compare-select",
@@ -515,7 +489,6 @@ fn i32[min max] Run(bool flag)
 [Collection("optimization")]
 fn bool OptimizedSsaCanonicalizesReturnPhiJoins()
 {
-    unsafe
     {
         stack mut SsaCompile compiled = CompileOptimizedSsa(
             "ssa-opt-return-phi-join",
@@ -550,7 +523,6 @@ fn i32[min max] Run(bool flag, i32[min max] value)
 [Collection("optimization", "loops")]
 fn bool OptimizedSsaKeepsLoopCarriedHeaderPhis()
 {
-    unsafe
     {
         stack mut SsaCompile compiled = CompileOptimizedSsa(
             "ssa-opt-loop-header-phi",
@@ -581,7 +553,6 @@ fn i32[min max] Run(i32[min max] n)
 [Collection("optimization")]
 fn bool OptimizedSsaKeepsDenseSwitch()
 {
-    unsafe
     {
         stack mut SsaCompile compiled = CompileOptimizedSsa(
             "ssa-opt-dense-switch",
@@ -616,7 +587,6 @@ fn i32[min max] Run(i32[min max] value)
 [Collection("optimization")]
 fn bool OptimizedSsaNormalizesSparseSwitchToCompareChain()
 {
-    unsafe
     {
         stack mut SsaCompile compiled = CompileOptimizedSsa(
             "ssa-opt-sparse-switch",
@@ -644,3481 +614,2709 @@ fn i32[min max] Run(i32[min max] value)
     }
 }
 
-
 // ---------------------------------------------------------------------------
-// Auto-wired [Fact] wrappers for ported C# tests (bodies in imported companions).
+// Ported [Fact] wrappers (bodies in imported companion modules). [Collection] tags
+// give each fact a domain; the module-level tag carries the pipeline stage.
 // ---------------------------------------------------------------------------
 [Fact]
+[Collection("compiler-cli")]
 fn bool EmitSsaModePrintsSsaModule()
 {
-    unsafe
-    {
-        return EmitSsaModePrintsSsaModuleImpl();
-    }
+    return EmitSsaModePrintsSsaModuleImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-full")]
 fn bool PipelineFoldsPureConstantsInMirAndOptimizedSsa()
 {
-    unsafe
-    {
-        return PipelineFoldsPureConstantsInMirAndOptimizedSsaImpl();
-    }
+    return PipelineFoldsPureConstantsInMirAndOptimizedSsaImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool CallableAddressTakenFactsArePrunedAfterDirectCallDevirtualization()
 {
-    unsafe
-    {
-        return CallableAddressTakenFactsArePrunedAfterDirectCallDevirtualizationImpl();
-    }
+    return CallableAddressTakenFactsArePrunedAfterDirectCallDevirtualizationImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool NonCapturingLambdaAddressTakenFactsArePrunedAfterDirectCallDevirtualization()
 {
-    unsafe
-    {
-        return NonCapturingLambdaAddressTakenFactsArePrunedAfterDirectCallDevirtualizationImpl();
-    }
+    return NonCapturingLambdaAddressTakenFactsArePrunedAfterDirectCallDevirtualizationImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool InlineSsaPreservesSuccessorPhiIncomingFromSplitContinuationBlocks()
 {
-    unsafe
-    {
-        return InlineSsaPreservesSuccessorPhiIncomingFromSplitContinuationBlocksImpl();
-    }
+    return InlineSsaPreservesSuccessorPhiIncomingFromSplitContinuationBlocksImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool OptimizeSsaPreservesMaterializedGenericCallSymbols()
 {
-    unsafe
-    {
-        return OptimizeSsaPreservesMaterializedGenericCallSymbolsImpl();
-    }
+    return OptimizeSsaPreservesMaterializedGenericCallSymbolsImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool OptimizeSsaDevirtualizesIdenticalFunctionPointerPhiTargets()
 {
-    unsafe
-    {
-        return OptimizeSsaDevirtualizesIdenticalFunctionPointerPhiTargetsImpl();
-    }
+    return OptimizeSsaDevirtualizesIdenticalFunctionPointerPhiTargetsImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool OptimizeSsaKeepsMixedFunctionPointerPhiTargetsIndirect()
 {
-    unsafe
-    {
-        return OptimizeSsaKeepsMixedFunctionPointerPhiTargetsIndirectImpl();
-    }
+    return OptimizeSsaKeepsMixedFunctionPointerPhiTargetsIndirectImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool CleanupSsaRemovesSourceLevelIntegerAlgebraicIdentities()
 {
-    unsafe
-    {
-        return CleanupSsaRemovesSourceLevelIntegerAlgebraicIdentitiesImpl();
-    }
+    return CleanupSsaRemovesSourceLevelIntegerAlgebraicIdentitiesImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool CleanupSsaRemovesIntegerAlgebraicAbsorbingAndSameOperandIdentities()
 {
-    unsafe
-    {
-        return CleanupSsaRemovesIntegerAlgebraicAbsorbingAndSameOperandIdentitiesImpl();
-    }
+    return CleanupSsaRemovesIntegerAlgebraicAbsorbingAndSameOperandIdentitiesImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ArithmeticFoldSsaFoldsRepeatedUnknownAddsToMultiply()
 {
-    unsafe
-    {
-        return ArithmeticFoldSsaFoldsRepeatedUnknownAddsToMultiplyImpl();
-    }
+    return ArithmeticFoldSsaFoldsRepeatedUnknownAddsToMultiplyImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ArithmeticFoldSsaFoldsLongRepeatedAddRunToSingleMultiply()
 {
-    unsafe
-    {
-        return ArithmeticFoldSsaFoldsLongRepeatedAddRunToSingleMultiplyImpl();
-    }
+    return ArithmeticFoldSsaFoldsLongRepeatedAddRunToSingleMultiplyImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ArithmeticFoldSsaPreservesTrailingConstantsAfterRepeatedAddRun()
 {
-    unsafe
-    {
-        return ArithmeticFoldSsaPreservesTrailingConstantsAfterRepeatedAddRunImpl();
-    }
+    return ArithmeticFoldSsaPreservesTrailingConstantsAfterRepeatedAddRunImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ArithmeticFoldSsaFoldsMultipleContiguousRepeatedTerms()
 {
-    unsafe
-    {
-        return ArithmeticFoldSsaFoldsMultipleContiguousRepeatedTermsImpl();
-    }
+    return ArithmeticFoldSsaFoldsMultipleContiguousRepeatedTermsImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ArithmeticFoldSsaCombinesSafeConstantCoefficientTerms()
 {
-    unsafe
-    {
-        return ArithmeticFoldSsaCombinesSafeConstantCoefficientTermsImpl();
-    }
+    return ArithmeticFoldSsaCombinesSafeConstantCoefficientTermsImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ArithmeticFoldSsaDoesNotCombineUnsafeConstantCoefficientTerms()
 {
-    unsafe
-    {
-        return ArithmeticFoldSsaDoesNotCombineUnsafeConstantCoefficientTermsImpl();
-    }
+    return ArithmeticFoldSsaDoesNotCombineUnsafeConstantCoefficientTermsImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ArithmeticFoldSsaRecognizesSafeLeftShiftCoefficients()
 {
-    unsafe
-    {
-        return ArithmeticFoldSsaRecognizesSafeLeftShiftCoefficientsImpl();
-    }
+    return ArithmeticFoldSsaRecognizesSafeLeftShiftCoefficientsImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ArithmeticFoldSsaDoesNotTreatUnsafeLeftShiftAsCoefficient()
 {
-    unsafe
-    {
-        return ArithmeticFoldSsaDoesNotTreatUnsafeLeftShiftAsCoefficientImpl();
-    }
+    return ArithmeticFoldSsaDoesNotTreatUnsafeLeftShiftAsCoefficientImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ArithmeticFoldSsaFoldsRepeatedUnaryNegatedTerms()
 {
-    unsafe
-    {
-        return ArithmeticFoldSsaFoldsRepeatedUnaryNegatedTermsImpl();
-    }
+    return ArithmeticFoldSsaFoldsRepeatedUnaryNegatedTermsImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ArithmeticFoldSsaCombinesSameSignConstantTail()
 {
-    unsafe
-    {
-        return ArithmeticFoldSsaCombinesSameSignConstantTailImpl();
-    }
+    return ArithmeticFoldSsaCombinesSameSignConstantTailImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ArithmeticFoldSsaDropsAdjacentZeroCoefficientTerms()
 {
-    unsafe
-    {
-        return ArithmeticFoldSsaDropsAdjacentZeroCoefficientTermsImpl();
-    }
+    return ArithmeticFoldSsaDropsAdjacentZeroCoefficientTermsImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ArithmeticFoldSsaFoldsSafeRepeatedSubtractionRuns()
 {
-    unsafe
-    {
-        return ArithmeticFoldSsaFoldsSafeRepeatedSubtractionRunsImpl();
-    }
+    return ArithmeticFoldSsaFoldsSafeRepeatedSubtractionRunsImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ArithmeticFoldSsaDoesNotFoldUnsafeRepeatedSubtractionRuns()
 {
-    unsafe
-    {
-        return ArithmeticFoldSsaDoesNotFoldUnsafeRepeatedSubtractionRunsImpl();
-    }
+    return ArithmeticFoldSsaDoesNotFoldUnsafeRepeatedSubtractionRunsImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ArithmeticFoldSsaDoesNotReassociateSeparatedOrdinaryTerms()
 {
-    unsafe
-    {
-        return ArithmeticFoldSsaDoesNotReassociateSeparatedOrdinaryTermsImpl();
-    }
+    return ArithmeticFoldSsaDoesNotReassociateSeparatedOrdinaryTermsImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ArithmeticFoldSsaFoldsWrappingAddRunsWithWrappingMultiply()
 {
-    unsafe
-    {
-        return ArithmeticFoldSsaFoldsWrappingAddRunsWithWrappingMultiplyImpl();
-    }
+    return ArithmeticFoldSsaFoldsWrappingAddRunsWithWrappingMultiplyImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ArithmeticFoldSsaFoldsWrappingSubtractRunsWithWrappingMultiply()
 {
-    unsafe
-    {
-        return ArithmeticFoldSsaFoldsWrappingSubtractRunsWithWrappingMultiplyImpl();
-    }
+    return ArithmeticFoldSsaFoldsWrappingSubtractRunsWithWrappingMultiplyImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ArithmeticFoldSsaDoesNotRewriteSaturatingAddChains()
 {
-    unsafe
-    {
-        return ArithmeticFoldSsaDoesNotRewriteSaturatingAddChainsImpl();
-    }
+    return ArithmeticFoldSsaDoesNotRewriteSaturatingAddChainsImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ArithmeticFoldSsaDoesNotRewriteSaturatingSubtractChains()
 {
-    unsafe
-    {
-        return ArithmeticFoldSsaDoesNotRewriteSaturatingSubtractChainsImpl();
-    }
+    return ArithmeticFoldSsaDoesNotRewriteSaturatingSubtractChainsImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ArithmeticFoldSsaFoldsRepeatedMultiplicationRunToExponent()
 {
-    unsafe
-    {
-        return ArithmeticFoldSsaFoldsRepeatedMultiplicationRunToExponentImpl();
-    }
+    return ArithmeticFoldSsaFoldsRepeatedMultiplicationRunToExponentImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ArithmeticFoldSsaGroupsIndependentRepeatedProductFactors()
 {
-    unsafe
-    {
-        return ArithmeticFoldSsaGroupsIndependentRepeatedProductFactorsImpl();
-    }
+    return ArithmeticFoldSsaGroupsIndependentRepeatedProductFactorsImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ArithmeticFoldSsaKeepsSeparatedProductFactorsSourceShaped()
 {
-    unsafe
-    {
-        return ArithmeticFoldSsaKeepsSeparatedProductFactorsSourceShapedImpl();
-    }
+    return ArithmeticFoldSsaKeepsSeparatedProductFactorsSourceShapedImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ArithmeticFoldSsaFoldsWrappingProductRunsToExponent()
 {
-    unsafe
-    {
-        return ArithmeticFoldSsaFoldsWrappingProductRunsToExponentImpl();
-    }
+    return ArithmeticFoldSsaFoldsWrappingProductRunsToExponentImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ArithmeticFoldSsaDoesNotRewriteSaturatingProductChains()
 {
-    unsafe
-    {
-        return ArithmeticFoldSsaDoesNotRewriteSaturatingProductChainsImpl();
-    }
+    return ArithmeticFoldSsaDoesNotRewriteSaturatingProductChainsImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ArithmeticFoldSsaRenderShowsFoldedLinearAndProductShapes()
 {
-    unsafe
-    {
-        return ArithmeticFoldSsaRenderShowsFoldedLinearAndProductShapesImpl();
-    }
+    return ArithmeticFoldSsaRenderShowsFoldedLinearAndProductShapesImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool CleanupSsaForwardsAggregateFieldThroughMatchingBranchPhi()
 {
-    unsafe
-    {
-        return CleanupSsaForwardsAggregateFieldThroughMatchingBranchPhiImpl();
-    }
+    return CleanupSsaForwardsAggregateFieldThroughMatchingBranchPhiImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool OptimizeSsaRemovesStaticRangeModuloAndDivisionIdentities()
 {
-    unsafe
-    {
-        return OptimizeSsaRemovesStaticRangeModuloAndDivisionIdentitiesImpl();
-    }
+    return OptimizeSsaRemovesStaticRangeModuloAndDivisionIdentitiesImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool CleanupSsaRemovesSameOperandDivisionAndModuloWhenSourceRangeExcludesZero()
 {
-    unsafe
-    {
-        return CleanupSsaRemovesSameOperandDivisionAndModuloWhenSourceRangeExcludesZeroImpl();
-    }
+    return CleanupSsaRemovesSameOperandDivisionAndModuloWhenSourceRangeExcludesZeroImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool CleanupSsaRemovesSameOperandIntegerComparisons()
 {
-    unsafe
-    {
-        return CleanupSsaRemovesSameOperandIntegerComparisonsImpl();
-    }
+    return CleanupSsaRemovesSameOperandIntegerComparisonsImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ShapeBranchesSimplifiesBooleanReturnDiamondToCondition()
 {
-    unsafe
-    {
-        return ShapeBranchesSimplifiesBooleanReturnDiamondToConditionImpl();
-    }
+    return ShapeBranchesSimplifiesBooleanReturnDiamondToConditionImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool InlineSsaInlinesSmallDirectCallsAndRerunsConstantPropagation()
 {
-    unsafe
-    {
-        return InlineSsaInlinesSmallDirectCallsAndRerunsConstantPropagationImpl();
-    }
+    return InlineSsaInlinesSmallDirectCallsAndRerunsConstantPropagationImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool AggregateConstructionSsaStoresFullConstructorsDirectlyIntoNonEscapedLocalFields()
 {
-    unsafe
-    {
-        return AggregateConstructionSsaStoresFullConstructorsDirectlyIntoNonEscapedLocalFieldsImpl();
-    }
+    return AggregateConstructionSsaStoresFullConstructorsDirectlyIntoNonEscapedLocalFieldsImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool AggregateConstructionSsaKeepsWholeStoreForRawEscapedLocal()
 {
-    unsafe
-    {
-        return AggregateConstructionSsaKeepsWholeStoreForRawEscapedLocalImpl();
-    }
+    return AggregateConstructionSsaKeepsWholeStoreForRawEscapedLocalImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool OwnershipTrafficSsaElidesDeadAggregateMoveTrafficForNonEscapedRoots()
 {
-    unsafe
-    {
-        return OwnershipTrafficSsaElidesDeadAggregateMoveTrafficForNonEscapedRootsImpl();
-    }
+    return OwnershipTrafficSsaElidesDeadAggregateMoveTrafficForNonEscapedRootsImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool OwnershipTrafficSsaKeepsMoveInvalidationForRawEscapedRoots()
 {
-    unsafe
-    {
-        return OwnershipTrafficSsaKeepsMoveInvalidationForRawEscapedRootsImpl();
-    }
+    return OwnershipTrafficSsaKeepsMoveInvalidationForRawEscapedRootsImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool InlineSsaPreservesOwnershipSummariesOnRewrittenFunctions()
 {
-    unsafe
-    {
-        return InlineSsaPreservesOwnershipSummariesOnRewrittenFunctionsImpl();
-    }
+    return InlineSsaPreservesOwnershipSummariesOnRewrittenFunctionsImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool DynamicStorageSsaElidesReserveWhenCapacityFactsProveNoop()
 {
-    unsafe
-    {
-        return DynamicStorageSsaElidesReserveWhenCapacityFactsProveNoopImpl();
-    }
+    return DynamicStorageSsaElidesReserveWhenCapacityFactsProveNoopImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool DynamicStorageSsaFoldsTryReserveWhenCapacityFactsProveSuccess()
 {
-    unsafe
-    {
-        return DynamicStorageSsaFoldsTryReserveWhenCapacityFactsProveSuccessImpl();
-    }
+    return DynamicStorageSsaFoldsTryReserveWhenCapacityFactsProveSuccessImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool DynamicStorageSsaKeepsTryReserveWhenCapacityMayBeInsufficient()
 {
-    unsafe
-    {
-        return DynamicStorageSsaKeepsTryReserveWhenCapacityMayBeInsufficientImpl();
-    }
+    return DynamicStorageSsaKeepsTryReserveWhenCapacityMayBeInsufficientImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool DynamicStorageSsaKeepsReserveAfterOpaqueDynamicOwnerCall()
 {
-    unsafe
-    {
-        return DynamicStorageSsaKeepsReserveAfterOpaqueDynamicOwnerCallImpl();
-    }
+    return DynamicStorageSsaKeepsReserveAfterOpaqueDynamicOwnerCallImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool DynamicStorageSsaPreservesCapacityFactsAcrossFullInitSliceHelperCall()
 {
-    unsafe
-    {
-        return DynamicStorageSsaPreservesCapacityFactsAcrossFullInitSliceHelperCallImpl();
-    }
+    return DynamicStorageSsaPreservesCapacityFactsAcrossFullInitSliceHelperCallImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool DynamicStorageSsaDoesNotCommitLengthAfterUnrecognizedInitSliceCall()
 {
-    unsafe
-    {
-        return DynamicStorageSsaDoesNotCommitLengthAfterUnrecognizedInitSliceCallImpl();
-    }
+    return DynamicStorageSsaDoesNotCommitLengthAfterUnrecognizedInitSliceCallImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool DynamicStorageSsaPreservesCapacityFactsAcrossReadOnlyLawCall()
 {
-    unsafe
-    {
-        return DynamicStorageSsaPreservesCapacityFactsAcrossReadOnlyLawCallImpl();
-    }
+    return DynamicStorageSsaPreservesCapacityFactsAcrossReadOnlyLawCallImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool DynamicStorageSsaElidesFreeWhenBackingAllocationProvenAbsent()
 {
-    unsafe
-    {
-        return DynamicStorageSsaElidesFreeWhenBackingAllocationProvenAbsentImpl();
-    }
+    return DynamicStorageSsaElidesFreeWhenBackingAllocationProvenAbsentImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool DynamicStorageSsaKeepsFreeWhenBackingAllocationMayExist()
 {
-    unsafe
-    {
-        return DynamicStorageSsaKeepsFreeWhenBackingAllocationMayExistImpl();
-    }
+    return DynamicStorageSsaKeepsFreeWhenBackingAllocationMayExistImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool DynamicStorageSsaMarksMoveLastNonEmptyWhenPrefixFactsProveLength()
 {
-    unsafe
-    {
-        return DynamicStorageSsaMarksMoveLastNonEmptyWhenPrefixFactsProveLengthImpl();
-    }
+    return DynamicStorageSsaMarksMoveLastNonEmptyWhenPrefixFactsProveLengthImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool DynamicStorageSsaMarksMoveAtInBoundsWhenIndexAndPrefixFactsProveIt()
 {
-    unsafe
-    {
-        return DynamicStorageSsaMarksMoveAtInBoundsWhenIndexAndPrefixFactsProveItImpl();
-    }
+    return DynamicStorageSsaMarksMoveAtInBoundsWhenIndexAndPrefixFactsProveItImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool DynamicStorageSsaKeepsMoveAtBoundsCheckWhenIndexMayReachLength()
 {
-    unsafe
-    {
-        return DynamicStorageSsaKeepsMoveAtBoundsCheckWhenIndexMayReachLengthImpl();
-    }
+    return DynamicStorageSsaKeepsMoveAtBoundsCheckWhenIndexMayReachLengthImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool DynamicStorageSsaDoesNotPromoteSparseUnsafeReadsToDensePrefixFacts()
 {
-    unsafe
-    {
-        return DynamicStorageSsaDoesNotPromoteSparseUnsafeReadsToDensePrefixFactsImpl();
-    }
+    return DynamicStorageSsaDoesNotPromoteSparseUnsafeReadsToDensePrefixFactsImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool DynamicStorageSsaKeepsDistinctFieldOwnerFactsSeparate()
 {
-    unsafe
-    {
-        return DynamicStorageSsaKeepsDistinctFieldOwnerFactsSeparateImpl();
-    }
+    return DynamicStorageSsaKeepsDistinctFieldOwnerFactsSeparateImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool DynamicStorageSsaPreservesEmptyPrefixAfterClearLoop()
 {
-    unsafe
-    {
-        return DynamicStorageSsaPreservesEmptyPrefixAfterClearLoopImpl();
-    }
+    return DynamicStorageSsaPreservesEmptyPrefixAfterClearLoopImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool DynamicAppendLoopSsaCommitsLengthOnceAfterLoop()
 {
-    unsafe
-    {
-        return DynamicAppendLoopSsaCommitsLengthOnceAfterLoopImpl();
-    }
+    return DynamicAppendLoopSsaCommitsLengthOnceAfterLoopImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool DynamicAppendLoopSsaKeepsPerIterationCommitWhenValueReadsChangingLength()
 {
-    unsafe
-    {
-        return DynamicAppendLoopSsaKeepsPerIterationCommitWhenValueReadsChangingLengthImpl();
-    }
+    return DynamicAppendLoopSsaKeepsPerIterationCommitWhenValueReadsChangingLengthImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool InlineSsaPreservesConstProvenanceOnSynthesizedArgumentSlots()
 {
-    unsafe
-    {
-        return InlineSsaPreservesConstProvenanceOnSynthesizedArgumentSlotsImpl();
-    }
+    return InlineSsaPreservesConstProvenanceOnSynthesizedArgumentSlotsImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool InlineSsaInlinesSmallModulePrivateDirectCallsWithoutExplicitInline()
 {
-    unsafe
-    {
-        return InlineSsaInlinesSmallModulePrivateDirectCallsWithoutExplicitInlineImpl();
-    }
+    return InlineSsaInlinesSmallModulePrivateDirectCallsWithoutExplicitInlineImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool InlineSsaOptimizesThroughSourceBuiltDependencyBoundary()
 {
-    unsafe
-    {
-        return InlineSsaOptimizesThroughSourceBuiltDependencyBoundaryImpl();
-    }
+    return InlineSsaOptimizesThroughSourceBuiltDependencyBoundaryImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool InlineSsaInlinesSmallMonomorphizedGenericHelpers()
 {
-    unsafe
-    {
-        return InlineSsaInlinesSmallMonomorphizedGenericHelpersImpl();
-    }
+    return InlineSsaInlinesSmallMonomorphizedGenericHelpersImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool InlineSsaOptimizesSmallGenericAbstractionLikeHandWrittenCode()
 {
-    unsafe
-    {
-        return InlineSsaOptimizesSmallGenericAbstractionLikeHandWrittenCodeImpl();
-    }
+    return InlineSsaOptimizesSmallGenericAbstractionLikeHandWrittenCodeImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool InlineSsaKeepsExplicitNoInlineMonomorphizedGenericHelpers()
 {
-    unsafe
-    {
-        return InlineSsaKeepsExplicitNoInlineMonomorphizedGenericHelpersImpl();
-    }
+    return InlineSsaKeepsExplicitNoInlineMonomorphizedGenericHelpersImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool InlineSsaKeepsPublicOrdinaryNonWrapperDirectCallsWithoutExplicitInline()
 {
-    unsafe
-    {
-        return InlineSsaKeepsPublicOrdinaryNonWrapperDirectCallsWithoutExplicitInlineImpl();
-    }
+    return InlineSsaKeepsPublicOrdinaryNonWrapperDirectCallsWithoutExplicitInlineImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool InlineSsaInlinesSmallPublicOrdinaryCallsWithConstantArguments()
 {
-    unsafe
-    {
-        return InlineSsaInlinesSmallPublicOrdinaryCallsWithConstantArgumentsImpl();
-    }
+    return InlineSsaInlinesSmallPublicOrdinaryCallsWithConstantArgumentsImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool InlineSsaKeepsPublicOrdinaryConstantArgumentCallsWhenBodyHasDirectCalls()
 {
-    unsafe
-    {
-        return InlineSsaKeepsPublicOrdinaryConstantArgumentCallsWhenBodyHasDirectCallsImpl();
-    }
+    return InlineSsaKeepsPublicOrdinaryConstantArgumentCallsWhenBodyHasDirectCallsImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool InlineSsaInlinesPublicWrapperDirectCallsWithoutExplicitInline()
 {
-    unsafe
-    {
-        return InlineSsaInlinesPublicWrapperDirectCallsWithoutExplicitInlineImpl();
-    }
+    return InlineSsaInlinesPublicWrapperDirectCallsWithoutExplicitInlineImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool InlineSsaInlinesSmallPublicLawDirectCallsWithoutExplicitInline()
 {
-    unsafe
-    {
-        return InlineSsaInlinesSmallPublicLawDirectCallsWithoutExplicitInlineImpl();
-    }
+    return InlineSsaInlinesSmallPublicLawDirectCallsWithoutExplicitInlineImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool InlineSsaInlinesDirectCallForwarderChains()
 {
-    unsafe
-    {
-        return InlineSsaInlinesDirectCallForwarderChainsImpl();
-    }
+    return InlineSsaInlinesDirectCallForwarderChainsImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool InlineSsaKeepsExplicitNoInlineDirectCalls()
 {
-    unsafe
-    {
-        return InlineSsaKeepsExplicitNoInlineDirectCallsImpl();
-    }
+    return InlineSsaKeepsExplicitNoInlineDirectCallsImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ConstGraphCallCseReusesRepeatedFiniteLawReadsFromConstGraphs()
 {
-    unsafe
-    {
-        return ConstGraphCallCseReusesRepeatedFiniteLawReadsFromConstGraphsImpl();
-    }
+    return ConstGraphCallCseReusesRepeatedFiniteLawReadsFromConstGraphsImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ConstGraphCallCseKeepsRepeatedReadonlyPointerLocalReadsWithoutPermanentConst()
 {
-    unsafe
-    {
-        return ConstGraphCallCseKeepsRepeatedReadonlyPointerLocalReadsWithoutPermanentConstImpl();
-    }
+    return ConstGraphCallCseKeepsRepeatedReadonlyPointerLocalReadsWithoutPermanentConstImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ConstGraphCallCseKeepsRepeatedNonFiniteLawReads()
 {
-    unsafe
-    {
-        return ConstGraphCallCseKeepsRepeatedNonFiniteLawReadsImpl();
-    }
+    return ConstGraphCallCseKeepsRepeatedNonFiniteLawReadsImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ConstGraphCallCseKeepsRepeatedFfiReads()
 {
-    unsafe
-    {
-        return ConstGraphCallCseKeepsRepeatedFfiReadsImpl();
-    }
+    return ConstGraphCallCseKeepsRepeatedFfiReadsImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ValueFactsCaptureIntegerRangesAndProvenComparisons()
 {
-    unsafe
-    {
-        return ValueFactsCaptureIntegerRangesAndProvenComparisonsImpl();
-    }
+    return ValueFactsCaptureIntegerRangesAndProvenComparisonsImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ValueFactsEmitVerboseOptimizationTraceSummary()
 {
-    unsafe
-    {
-        return ValueFactsEmitVerboseOptimizationTraceSummaryImpl();
-    }
+    return ValueFactsEmitVerboseOptimizationTraceSummaryImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ValueFactsJoinIntegerRangesAtPhis()
 {
-    unsafe
-    {
-        return ValueFactsJoinIntegerRangesAtPhisImpl();
-    }
+    return ValueFactsJoinIntegerRangesAtPhisImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ValueFactsPropagateJoinedRangesThroughDependentInstructions()
 {
-    unsafe
-    {
-        return ValueFactsPropagateJoinedRangesThroughDependentInstructionsImpl();
-    }
+    return ValueFactsPropagateJoinedRangesThroughDependentInstructionsImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ValueFactsPropagateBitwiseAndShiftRanges()
 {
-    unsafe
-    {
-        return ValueFactsPropagateBitwiseAndShiftRangesImpl();
-    }
+    return ValueFactsPropagateBitwiseAndShiftRangesImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ValueFactsUseKnownBitsToProveMaskedSingletons()
 {
-    unsafe
-    {
-        return ValueFactsUseKnownBitsToProveMaskedSingletonsImpl();
-    }
+    return ValueFactsUseKnownBitsToProveMaskedSingletonsImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ValueFactsUseConstantMasksToProveSignedValuesNonNegative()
 {
-    unsafe
-    {
-        return ValueFactsUseConstantMasksToProveSignedValuesNonNegativeImpl();
-    }
+    return ValueFactsUseConstantMasksToProveSignedValuesNonNegativeImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ValueFactsUseKnownBitsToProveShiftedLowBitIsZero()
 {
-    unsafe
-    {
-        return ValueFactsUseKnownBitsToProveShiftedLowBitIsZeroImpl();
-    }
+    return ValueFactsUseKnownBitsToProveShiftedLowBitIsZeroImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ValueFactsUseKnownBitsToProveEqualityFalse()
 {
-    unsafe
-    {
-        return ValueFactsUseKnownBitsToProveEqualityFalseImpl();
-    }
+    return ValueFactsUseKnownBitsToProveEqualityFalseImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ValueFactsPropagateDivisionAndModuloRanges()
 {
-    unsafe
-    {
-        return ValueFactsPropagateDivisionAndModuloRangesImpl();
-    }
+    return ValueFactsPropagateDivisionAndModuloRangesImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool FactDrivenBranchPruningUsesKnownBitsForMaskedComparisons()
 {
-    unsafe
-    {
-        return FactDrivenBranchPruningUsesKnownBitsForMaskedComparisonsImpl();
-    }
+    return FactDrivenBranchPruningUsesKnownBitsForMaskedComparisonsImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool FactDrivenBranchPruningUsesKnownBitsForImpossibleEquality()
 {
-    unsafe
-    {
-        return FactDrivenBranchPruningUsesKnownBitsForImpossibleEqualityImpl();
-    }
+    return FactDrivenBranchPruningUsesKnownBitsForImpossibleEqualityImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool FactDrivenBranchPruningUsesModuloRangeFacts()
 {
-    unsafe
-    {
-        return FactDrivenBranchPruningUsesModuloRangeFactsImpl();
-    }
+    return FactDrivenBranchPruningUsesModuloRangeFactsImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool FactDrivenBranchPruningUsesKnownBitsForShiftedMaskedComparisons()
 {
-    unsafe
-    {
-        return FactDrivenBranchPruningUsesKnownBitsForShiftedMaskedComparisonsImpl();
-    }
+    return FactDrivenBranchPruningUsesKnownBitsForShiftedMaskedComparisonsImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ValueFactsCaptureBranchTargetEntryRanges()
 {
-    unsafe
-    {
-        return ValueFactsCaptureBranchTargetEntryRangesImpl();
-    }
+    return ValueFactsCaptureBranchTargetEntryRangesImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ValueFactsCaptureBlockExitFactsForBranchScopedRanges()
 {
-    unsafe
-    {
-        return ValueFactsCaptureBlockExitFactsForBranchScopedRangesImpl();
-    }
+    return ValueFactsCaptureBlockExitFactsForBranchScopedRangesImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ValueFactsCaptureBranchTargetEntryNullability()
 {
-    unsafe
-    {
-        return ValueFactsCaptureBranchTargetEntryNullabilityImpl();
-    }
+    return ValueFactsCaptureBranchTargetEntryNullabilityImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ValueFactsCapturePointerEqualityTargetEntryNullability()
 {
-    unsafe
-    {
-        return ValueFactsCapturePointerEqualityTargetEntryNullabilityImpl();
-    }
+    return ValueFactsCapturePointerEqualityTargetEntryNullabilityImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ValueFactsCapturePointerInequalityFalseTargetEntryNullability()
 {
-    unsafe
-    {
-        return ValueFactsCapturePointerInequalityFalseTargetEntryNullabilityImpl();
-    }
+    return ValueFactsCapturePointerInequalityFalseTargetEntryNullabilityImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ValueFactsCapturePointerAlignmentForAddressValues()
 {
-    unsafe
-    {
-        return ValueFactsCapturePointerAlignmentForAddressValuesImpl();
-    }
+    return ValueFactsCapturePointerAlignmentForAddressValuesImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ValueFactsCaptureFixedArraySliceLengths()
 {
-    unsafe
-    {
-        return ValueFactsCaptureFixedArraySliceLengthsImpl();
-    }
+    return ValueFactsCaptureFixedArraySliceLengthsImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ValueFactsJoinSliceLengthRangesAtPhis()
 {
-    unsafe
-    {
-        return ValueFactsJoinSliceLengthRangesAtPhisImpl();
-    }
+    return ValueFactsJoinSliceLengthRangesAtPhisImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ValueFactsCaptureTextSliceLengthRanges()
 {
-    unsafe
-    {
-        return ValueFactsCaptureTextSliceLengthRangesImpl();
-    }
+    return ValueFactsCaptureTextSliceLengthRangesImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ValueFactsCaptureDynamicStorageSliceLengthRanges()
 {
-    unsafe
-    {
-        return ValueFactsCaptureDynamicStorageSliceLengthRangesImpl();
-    }
+    return ValueFactsCaptureDynamicStorageSliceLengthRangesImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ValueFactsCaptureTextLiteralLengthCallRanges()
 {
-    unsafe
-    {
-        return ValueFactsCaptureTextLiteralLengthCallRangesImpl();
-    }
+    return ValueFactsCaptureTextLiteralLengthCallRangesImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ConstantPropagationFoldsTextLiteralLengthCalls()
 {
-    unsafe
-    {
-        return ConstantPropagationFoldsTextLiteralLengthCallsImpl();
-    }
+    return ConstantPropagationFoldsTextLiteralLengthCallsImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ConstStdlibHelperSpecializationPrecomputesPathFactsForLiteral()
 {
-    unsafe
-    {
-        return ConstStdlibHelperSpecializationPrecomputesPathFactsForLiteralImpl();
-    }
+    return ConstStdlibHelperSpecializationPrecomputesPathFactsForLiteralImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ConstStdlibHelperSpecializationPrecomputesLiteralPathProjections()
 {
-    unsafe
-    {
-        return ConstStdlibHelperSpecializationPrecomputesLiteralPathProjectionsImpl();
-    }
+    return ConstStdlibHelperSpecializationPrecomputesLiteralPathProjectionsImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ConstStdlibHelperSpecializationKeepsRuntimePathInputsOnStdlibPath()
 {
-    unsafe
-    {
-        return ConstStdlibHelperSpecializationKeepsRuntimePathInputsOnStdlibPathImpl();
-    }
+    return ConstStdlibHelperSpecializationKeepsRuntimePathInputsOnStdlibPathImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ConstStdlibHelperSpecializationRetargetsLiteralPathWritesToConstVariants()
 {
-    unsafe
-    {
-        return ConstStdlibHelperSpecializationRetargetsLiteralPathWritesToConstVariantsImpl();
-    }
+    return ConstStdlibHelperSpecializationRetargetsLiteralPathWritesToConstVariantsImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ConstStdlibHelperSpecializationRetargetsConstPathWritesToConstVariants()
 {
-    unsafe
-    {
-        return ConstStdlibHelperSpecializationRetargetsConstPathWritesToConstVariantsImpl();
-    }
+    return ConstStdlibHelperSpecializationRetargetsConstPathWritesToConstVariantsImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ConstStdlibHelperSpecializationKeepsRuntimePathWritesOnSnapshotCapableVariants()
 {
-    unsafe
-    {
-        return ConstStdlibHelperSpecializationKeepsRuntimePathWritesOnSnapshotCapableVariantsImpl();
-    }
+    return ConstStdlibHelperSpecializationKeepsRuntimePathWritesOnSnapshotCapableVariantsImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ConstStdlibHelperSpecializationRetargetsLiteralTextAppendsToConstDisjointVariants()
 {
-    unsafe
-    {
-        return ConstStdlibHelperSpecializationRetargetsLiteralTextAppendsToConstDisjointVariantsImpl();
-    }
+    return ConstStdlibHelperSpecializationRetargetsLiteralTextAppendsToConstDisjointVariantsImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ConstStdlibHelperSpecializationRetargetsConstTextHelpers()
 {
-    unsafe
-    {
-        return ConstStdlibHelperSpecializationRetargetsConstTextHelpersImpl();
-    }
+    return ConstStdlibHelperSpecializationRetargetsConstTextHelpersImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ConstStdlibHelperSpecializationRetargetsLiteralTextMemberAppends()
 {
-    unsafe
-    {
-        return ConstStdlibHelperSpecializationRetargetsLiteralTextMemberAppendsImpl();
-    }
+    return ConstStdlibHelperSpecializationRetargetsLiteralTextMemberAppendsImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ConstStdlibHelperSpecializationKeepsRuntimeTextAppendsOnSnapshotCapableVariants()
 {
-    unsafe
-    {
-        return ConstStdlibHelperSpecializationKeepsRuntimeTextAppendsOnSnapshotCapableVariantsImpl();
-    }
+    return ConstStdlibHelperSpecializationKeepsRuntimeTextAppendsOnSnapshotCapableVariantsImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ConstStdlibHelperSpecializationRetargetsLiteralTextFactoryHelpers()
 {
-    unsafe
-    {
-        return ConstStdlibHelperSpecializationRetargetsLiteralTextFactoryHelpersImpl();
-    }
+    return ConstStdlibHelperSpecializationRetargetsLiteralTextFactoryHelpersImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ConstStdlibHelperSpecializationUsesWindowsPathSeparatorsForWindowsTargets()
 {
-    unsafe
-    {
-        return ConstStdlibHelperSpecializationUsesWindowsPathSeparatorsForWindowsTargetsImpl();
-    }
+    return ConstStdlibHelperSpecializationUsesWindowsPathSeparatorsForWindowsTargetsImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ValueFactsCaptureExplicitWrappingAndSaturatingArithmeticRanges()
 {
-    unsafe
-    {
-        return ValueFactsCaptureExplicitWrappingAndSaturatingArithmeticRangesImpl();
-    }
+    return ValueFactsCaptureExplicitWrappingAndSaturatingArithmeticRangesImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool FactDrivenBranchPruningRemovesProvenBranchAndStalePhiIncoming()
 {
-    unsafe
-    {
-        return FactDrivenBranchPruningRemovesProvenBranchAndStalePhiIncomingImpl();
-    }
+    return FactDrivenBranchPruningRemovesProvenBranchAndStalePhiIncomingImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool FactDrivenBranchPruningUsesBranchTargetEntryRanges()
 {
-    unsafe
-    {
-        return FactDrivenBranchPruningUsesBranchTargetEntryRangesImpl();
-    }
+    return FactDrivenBranchPruningUsesBranchTargetEntryRangesImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool FactDrivenBranchPruningUsesBranchTargetNullability()
 {
-    unsafe
-    {
-        return FactDrivenBranchPruningUsesBranchTargetNullabilityImpl();
-    }
+    return FactDrivenBranchPruningUsesBranchTargetNullabilityImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool FactDrivenBranchPruningUsesPointerEqualityNullability()
 {
-    unsafe
-    {
-        return FactDrivenBranchPruningUsesPointerEqualityNullabilityImpl();
-    }
+    return FactDrivenBranchPruningUsesPointerEqualityNullabilityImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool FactDrivenBranchPruningUsesBitwiseRangeFacts()
 {
-    unsafe
-    {
-        return FactDrivenBranchPruningUsesBitwiseRangeFactsImpl();
-    }
+    return FactDrivenBranchPruningUsesBitwiseRangeFactsImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool FactDrivenBranchPruningUsesExplicitArithmeticRangeFacts()
 {
-    unsafe
-    {
-        return FactDrivenBranchPruningUsesExplicitArithmeticRangeFactsImpl();
-    }
+    return FactDrivenBranchPruningUsesExplicitArithmeticRangeFactsImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool FactDrivenBranchPruningKeepsWrappingArithmeticThatMayWrap()
 {
-    unsafe
-    {
-        return FactDrivenBranchPruningKeepsWrappingArithmeticThatMayWrapImpl();
-    }
+    return FactDrivenBranchPruningKeepsWrappingArithmeticThatMayWrapImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool FactDrivenBranchPruningUsesTextLiteralLengthFacts()
 {
-    unsafe
-    {
-        return FactDrivenBranchPruningUsesTextLiteralLengthFactsImpl();
-    }
+    return FactDrivenBranchPruningUsesTextLiteralLengthFactsImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool AsciiToUnicodeLiteralSpecializationRewritesSmallLiteralCallsBeforeAbiLowering()
 {
-    unsafe
-    {
-        return AsciiToUnicodeLiteralSpecializationRewritesSmallLiteralCallsBeforeAbiLoweringImpl();
-    }
+    return AsciiToUnicodeLiteralSpecializationRewritesSmallLiteralCallsBeforeAbiLoweringImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool AsciiToUnicodeLiteralSpecializationLowersLargeLiteralToSsaCopy()
 {
-    unsafe
-    {
-        return AsciiToUnicodeLiteralSpecializationLowersLargeLiteralToSsaCopyImpl();
-    }
+    return AsciiToUnicodeLiteralSpecializationLowersLargeLiteralToSsaCopyImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool AsciiToUnicodeLiteralSpecializationKeepsNonAsciiLiteralOnBuiltinPath()
 {
-    unsafe
-    {
-        return AsciiToUnicodeLiteralSpecializationKeepsNonAsciiLiteralOnBuiltinPathImpl();
-    }
+    return AsciiToUnicodeLiteralSpecializationKeepsNonAsciiLiteralOnBuiltinPathImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ConstantTextFormatSpecializationRewritesLargeIntegerAsciiFormatCallsBeforeAbiLowering()
 {
-    unsafe
-    {
-        return ConstantTextFormatSpecializationRewritesLargeIntegerAsciiFormatCallsBeforeAbiLoweringImpl();
-    }
+    return ConstantTextFormatSpecializationRewritesLargeIntegerAsciiFormatCallsBeforeAbiLoweringImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ConstantTextFormatSpecializationRewritesLargeIntegerUnicodeFormatCallsBeforeAbiLowering()
 {
-    unsafe
-    {
-        return ConstantTextFormatSpecializationRewritesLargeIntegerUnicodeFormatCallsBeforeAbiLoweringImpl();
-    }
+    return ConstantTextFormatSpecializationRewritesLargeIntegerUnicodeFormatCallsBeforeAbiLoweringImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ConstantTextFormatSpecializationKeepsRuntimeIntegerFormatCallsOnStdLibPath()
 {
-    unsafe
-    {
-        return ConstantTextFormatSpecializationKeepsRuntimeIntegerFormatCallsOnStdLibPathImpl();
-    }
+    return ConstantTextFormatSpecializationKeepsRuntimeIntegerFormatCallsOnStdLibPathImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ConstantTextFormatSpecializationKeepsReadonlyDestinationIntegerFormatCalls()
 {
-    unsafe
-    {
-        return ConstantTextFormatSpecializationKeepsReadonlyDestinationIntegerFormatCallsImpl();
-    }
+    return ConstantTextFormatSpecializationKeepsReadonlyDestinationIntegerFormatCallsImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ConstantTextFormatSpecializationNormalizesOutOfRangeNarrowedIntegerConstants()
 {
-    unsafe
-    {
-        return ConstantTextFormatSpecializationNormalizesOutOfRangeNarrowedIntegerConstantsImpl();
-    }
+    return ConstantTextFormatSpecializationNormalizesOutOfRangeNarrowedIntegerConstantsImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool FactDrivenSwitchPruningRemovesCasesOutsideKnownInputRange()
 {
-    unsafe
-    {
-        return FactDrivenSwitchPruningRemovesCasesOutsideKnownInputRangeImpl();
-    }
+    return FactDrivenSwitchPruningRemovesCasesOutsideKnownInputRangeImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool FactDrivenSwitchPruningRewritesSingleReachableCaseToBranch()
 {
-    unsafe
-    {
-        return FactDrivenSwitchPruningRewritesSingleReachableCaseToBranchImpl();
-    }
+    return FactDrivenSwitchPruningRewritesSingleReachableCaseToBranchImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool FactDrivenBranchPruningKeepsReusedForLoopVariableRangesScoped()
 {
-    unsafe
-    {
-        return FactDrivenBranchPruningKeepsReusedForLoopVariableRangesScopedImpl();
-    }
+    return FactDrivenBranchPruningKeepsReusedForLoopVariableRangesScopedImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool AliasAwareMemoryOptimizationRemovesDeadForwardedStackScalarStores()
 {
-    unsafe
-    {
-        return AliasAwareMemoryOptimizationRemovesDeadForwardedStackScalarStoresImpl();
-    }
+    return AliasAwareMemoryOptimizationRemovesDeadForwardedStackScalarStoresImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool AliasAwareMemoryOptimizationKeepsAddressTakenStackScalarStoresConservative()
 {
-    unsafe
-    {
-        return AliasAwareMemoryOptimizationKeepsAddressTakenStackScalarStoresConservativeImpl();
-    }
+    return AliasAwareMemoryOptimizationKeepsAddressTakenStackScalarStoresConservativeImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool AliasAwareMemoryOptimizationForwardsStackFieldLoadsFromSource()
 {
-    unsafe
-    {
-        return AliasAwareMemoryOptimizationForwardsStackFieldLoadsFromSourceImpl();
-    }
+    return AliasAwareMemoryOptimizationForwardsStackFieldLoadsFromSourceImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool AliasAwareMemoryOptimizationForwardsNestedStackFieldLoadsFromSource()
 {
-    unsafe
-    {
-        return AliasAwareMemoryOptimizationForwardsNestedStackFieldLoadsFromSourceImpl();
-    }
+    return AliasAwareMemoryOptimizationForwardsNestedStackFieldLoadsFromSourceImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool AliasAwareMemoryOptimizationPreservesStackFieldFactsAcrossPureScalarCallsFromSource()
 {
-    unsafe
-    {
-        return AliasAwareMemoryOptimizationPreservesStackFieldFactsAcrossPureScalarCallsFromSourceImpl();
-    }
+    return AliasAwareMemoryOptimizationPreservesStackFieldFactsAcrossPureScalarCallsFromSourceImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool AliasAwareMemoryOptimizationForwardsStackFieldFactsAcrossSinglePredecessorBlocksFromSource()
 {
-    unsafe
-    {
-        return AliasAwareMemoryOptimizationForwardsStackFieldFactsAcrossSinglePredecessorBlocksFromSourceImpl();
-    }
+    return AliasAwareMemoryOptimizationForwardsStackFieldFactsAcrossSinglePredecessorBlocksFromSourceImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool AliasAwareMemoryOptimizationForwardsFixedArrayElementFactsFromSource()
 {
-    unsafe
-    {
-        return AliasAwareMemoryOptimizationForwardsFixedArrayElementFactsFromSourceImpl();
-    }
+    return AliasAwareMemoryOptimizationForwardsFixedArrayElementFactsFromSourceImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool ScalarReplacementRemovesDeadStackFieldStoresFromSource()
 {
-    unsafe
-    {
-        return ScalarReplacementRemovesDeadStackFieldStoresFromSourceImpl();
-    }
+    return ScalarReplacementRemovesDeadStackFieldStoresFromSourceImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool AliasAwareMemoryOptimizationUsesFunctionEffectsForPureCallGlobalFacts()
 {
-    unsafe
-    {
-        return AliasAwareMemoryOptimizationUsesFunctionEffectsForPureCallGlobalFactsImpl();
-    }
+    return AliasAwareMemoryOptimizationUsesFunctionEffectsForPureCallGlobalFactsImpl();
 }
 
 [Fact]
+[Collection("ssa-cross-block-load-forwarding")]
 fn bool InlinedLawReturnValueSurvivesFieldLoadForwardingAcrossBlocks()
 {
-    unsafe
-    {
-        return InlinedLawReturnValueSurvivesFieldLoadForwardingAcrossBlocksImpl();
-    }
+    return InlinedLawReturnValueSurvivesFieldLoadForwardingAcrossBlocksImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool UndefinedSsaValueReferenceFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return UndefinedSsaValueReferenceFailsBeforeLlvmEmissionImpl();
-    }
+    return UndefinedSsaValueReferenceFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool UnsupportedSsaConversionFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return UnsupportedSsaConversionFailsBeforeLlvmEmissionImpl();
-    }
+    return UnsupportedSsaConversionFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool UnsizedIntegerConversionFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return UnsizedIntegerConversionFailsBeforeLlvmEmissionImpl();
-    }
+    return UnsizedIntegerConversionFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool CompileTimeIntegerConstantFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return CompileTimeIntegerConstantFailsBeforeLlvmEmissionImpl();
-    }
+    return CompileTimeIntegerConstantFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool IntegerConstantOutsideStorageFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return IntegerConstantOutsideStorageFailsBeforeLlvmEmissionImpl();
-    }
+    return IntegerConstantOutsideStorageFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool IntegerConstantOutsideEffectiveRangeFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return IntegerConstantOutsideEffectiveRangeFailsBeforeLlvmEmissionImpl();
-    }
+    return IntegerConstantOutsideEffectiveRangeFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool UnsupportedFloatConversionTargetFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return UnsupportedFloatConversionTargetFailsBeforeLlvmEmissionImpl();
-    }
+    return UnsupportedFloatConversionTargetFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool DirectCallAbiMismatchFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return DirectCallAbiMismatchFailsBeforeLlvmEmissionImpl();
-    }
+    return DirectCallAbiMismatchFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool DirectCallIndirectAddressOnDirectParameterFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return DirectCallIndirectAddressOnDirectParameterFailsBeforeLlvmEmissionImpl();
-    }
+    return DirectCallIndirectAddressOnDirectParameterFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool DirectCallIndirectAddressPointeeMismatchFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return DirectCallIndirectAddressPointeeMismatchFailsBeforeLlvmEmissionImpl();
-    }
+    return DirectCallIndirectAddressPointeeMismatchFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool DirectCallPromotedUnknownLocalFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return DirectCallPromotedUnknownLocalFailsBeforeLlvmEmissionImpl();
-    }
+    return DirectCallPromotedUnknownLocalFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool DirectCallIndirectAddressAndPromotedStorageShapesAreAccepted()
 {
-    unsafe
-    {
-        return DirectCallIndirectAddressAndPromotedStorageShapesAreAcceptedImpl();
-    }
+    return DirectCallIndirectAddressAndPromotedStorageShapesAreAcceptedImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool IndirectCallIndirectAddressPointeeMismatchFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return IndirectCallIndirectAddressPointeeMismatchFailsBeforeLlvmEmissionImpl();
-    }
+    return IndirectCallIndirectAddressPointeeMismatchFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool IndirectCallLargeByvalAddressShapeIsAccepted()
 {
-    unsafe
-    {
-        return IndirectCallLargeByvalAddressShapeIsAcceptedImpl();
-    }
+    return IndirectCallLargeByvalAddressShapeIsAcceptedImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool FfiTextReturnFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return FfiTextReturnFailsBeforeLlvmEmissionImpl();
-    }
+    return FfiTextReturnFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool MirOnlyTempLocalStorageFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return MirOnlyTempLocalStorageFailsBeforeLlvmEmissionImpl();
-    }
+    return MirOnlyTempLocalStorageFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool NonHeapDeallocationFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return NonHeapDeallocationFailsBeforeLlvmEmissionImpl();
-    }
+    return NonHeapDeallocationFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool LocalUseWithoutAllocationFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return LocalUseWithoutAllocationFailsBeforeLlvmEmissionImpl();
-    }
+    return LocalUseWithoutAllocationFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool FunctionMissingAbiFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return FunctionMissingAbiFailsBeforeLlvmEmissionImpl();
-    }
+    return FunctionMissingAbiFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool DuplicateSsaValueDefinitionFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return DuplicateSsaValueDefinitionFailsBeforeLlvmEmissionImpl();
-    }
+    return DuplicateSsaValueDefinitionFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool PhiIncomingTypeMismatchFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return PhiIncomingTypeMismatchFailsBeforeLlvmEmissionImpl();
-    }
+    return PhiIncomingTypeMismatchFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool PhiIncomingFromNonPredecessorFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return PhiIncomingFromNonPredecessorFailsBeforeLlvmEmissionImpl();
-    }
+    return PhiIncomingFromNonPredecessorFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool PhiMissingIncomingFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return PhiMissingIncomingFailsBeforeLlvmEmissionImpl();
-    }
+    return PhiMissingIncomingFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool PhiDuplicateIncomingFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return PhiDuplicateIncomingFailsBeforeLlvmEmissionImpl();
-    }
+    return PhiDuplicateIncomingFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool PhiWithoutIncomingFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return PhiWithoutIncomingFailsBeforeLlvmEmissionImpl();
-    }
+    return PhiWithoutIncomingFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool FunctionAbiReturnMismatchFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return FunctionAbiReturnMismatchFailsBeforeLlvmEmissionImpl();
-    }
+    return FunctionAbiReturnMismatchFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool FunctionAbiRetborrowPointerReturnIsAccepted()
 {
-    unsafe
-    {
-        return FunctionAbiRetborrowPointerReturnIsAcceptedImpl();
-    }
+    return FunctionAbiRetborrowPointerReturnIsAcceptedImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool FunctionAbiParameterCountMismatchFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return FunctionAbiParameterCountMismatchFailsBeforeLlvmEmissionImpl();
-    }
+    return FunctionAbiParameterCountMismatchFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool FunctionAbiParameterTypeMismatchFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return FunctionAbiParameterTypeMismatchFailsBeforeLlvmEmissionImpl();
-    }
+    return FunctionAbiParameterTypeMismatchFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool FunctionAbiSretShapeMismatchFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return FunctionAbiSretShapeMismatchFailsBeforeLlvmEmissionImpl();
-    }
+    return FunctionAbiSretShapeMismatchFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool FunctionAbiSretShapeAccepted()
 {
-    unsafe
-    {
-        return FunctionAbiSretShapeAcceptedImpl();
-    }
+    return FunctionAbiSretShapeAcceptedImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool AddressOfParameterMissingAbiUserParameterFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return AddressOfParameterMissingAbiUserParameterFailsBeforeLlvmEmissionImpl();
-    }
+    return AddressOfParameterMissingAbiUserParameterFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool UnsupportedSsaInstructionFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return UnsupportedSsaInstructionFailsBeforeLlvmEmissionImpl();
-    }
+    return UnsupportedSsaInstructionFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool UnsupportedSsaRValueFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return UnsupportedSsaRValueFailsBeforeLlvmEmissionImpl();
-    }
+    return UnsupportedSsaRValueFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool UnsupportedSsaValueFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return UnsupportedSsaValueFailsBeforeLlvmEmissionImpl();
-    }
+    return UnsupportedSsaValueFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool UnsupportedSsaTerminatorFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return UnsupportedSsaTerminatorFailsBeforeLlvmEmissionImpl();
-    }
+    return UnsupportedSsaTerminatorFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool DynamicStorageElementLayoutFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return DynamicStorageElementLayoutFailsBeforeLlvmEmissionImpl();
-    }
+    return DynamicStorageElementLayoutFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool DynamicStorageCapacityWidthFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return DynamicStorageCapacityWidthFailsBeforeLlvmEmissionImpl();
-    }
+    return DynamicStorageCapacityWidthFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool DynamicStorageReserveAddressShapeFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return DynamicStorageReserveAddressShapeFailsBeforeLlvmEmissionImpl();
-    }
+    return DynamicStorageReserveAddressShapeFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool DynamicStorageMoveAtAddressPointeeMismatchFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return DynamicStorageMoveAtAddressPointeeMismatchFailsBeforeLlvmEmissionImpl();
-    }
+    return DynamicStorageMoveAtAddressPointeeMismatchFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool ElementAddressBasePointeeMismatchFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return ElementAddressBasePointeeMismatchFailsBeforeLlvmEmissionImpl();
-    }
+    return ElementAddressBasePointeeMismatchFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool ElementAddressResultPointeeMismatchFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return ElementAddressResultPointeeMismatchFailsBeforeLlvmEmissionImpl();
-    }
+    return ElementAddressResultPointeeMismatchFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool UnsupportedUnaryShapeFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return UnsupportedUnaryShapeFailsBeforeLlvmEmissionImpl();
-    }
+    return UnsupportedUnaryShapeFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool UnsizedIntegerUnaryFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return UnsizedIntegerUnaryFailsBeforeLlvmEmissionImpl();
-    }
+    return UnsizedIntegerUnaryFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool UnsupportedFloatUnaryFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return UnsupportedFloatUnaryFailsBeforeLlvmEmissionImpl();
-    }
+    return UnsupportedFloatUnaryFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool BinaryOperandShapeMismatchFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return BinaryOperandShapeMismatchFailsBeforeLlvmEmissionImpl();
-    }
+    return BinaryOperandShapeMismatchFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool WrappingFloatOperatorFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return WrappingFloatOperatorFailsBeforeLlvmEmissionImpl();
-    }
+    return WrappingFloatOperatorFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool UnsupportedFloatIntrinsicWidthFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return UnsupportedFloatIntrinsicWidthFailsBeforeLlvmEmissionImpl();
-    }
+    return UnsupportedFloatIntrinsicWidthFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool ComparisonResultShapeMismatchFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return ComparisonResultShapeMismatchFailsBeforeLlvmEmissionImpl();
-    }
+    return ComparisonResultShapeMismatchFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool FixedArrayOrderedComparisonUnsupportedElementFailsBeforeHelperEmission()
 {
-    unsafe
-    {
-        return FixedArrayOrderedComparisonUnsupportedElementFailsBeforeHelperEmissionImpl();
-    }
+    return FixedArrayOrderedComparisonUnsupportedElementFailsBeforeHelperEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool NamedOrderedComparisonUnsupportedFieldFailsBeforeHelperEmission()
 {
-    unsafe
-    {
-        return NamedOrderedComparisonUnsupportedFieldFailsBeforeHelperEmissionImpl();
-    }
+    return NamedOrderedComparisonUnsupportedFieldFailsBeforeHelperEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool ExtractFieldResultMismatchFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return ExtractFieldResultMismatchFailsBeforeLlvmEmissionImpl();
-    }
+    return ExtractFieldResultMismatchFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool ExtractFieldNameIndexMismatchFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return ExtractFieldNameIndexMismatchFailsBeforeLlvmEmissionImpl();
-    }
+    return ExtractFieldNameIndexMismatchFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool ExtractIndexOutOfRangeIsUnrepresentable()
 {
-    unsafe
-    {
-        return ExtractIndexOutOfRangeIsUnrepresentableImpl();
-    }
+    return ExtractIndexOutOfRangeIsUnrepresentableImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool InsertIndexValueMismatchIsUnrepresentable()
 {
-    unsafe
-    {
-        return InsertIndexValueMismatchIsUnrepresentableImpl();
-    }
+    return InsertIndexValueMismatchIsUnrepresentableImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool SliceViewIndexExtractionIsAccepted()
 {
-    unsafe
-    {
-        return SliceViewIndexExtractionIsAcceptedImpl();
-    }
+    return SliceViewIndexExtractionIsAcceptedImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool SliceViewNoOpRetypeSupportsImmutableComponentExtraction()
 {
-    unsafe
-    {
-        return SliceViewNoOpRetypeSupportsImmutableComponentExtractionImpl();
-    }
+    return SliceViewNoOpRetypeSupportsImmutableComponentExtractionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool IndexOperationFamilyMismatchIsUnrepresentable()
 {
-    unsafe
-    {
-        return IndexOperationFamilyMismatchIsUnrepresentableImpl();
-    }
+    return IndexOperationFamilyMismatchIsUnrepresentableImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool TextViewIndexExtractionIsAccepted()
 {
-    unsafe
-    {
-        return TextViewIndexExtractionIsAcceptedImpl();
-    }
+    return TextViewIndexExtractionIsAcceptedImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool TextViewFieldExtractionIsAccepted()
 {
-    unsafe
-    {
-        return TextViewFieldExtractionIsAcceptedImpl();
-    }
+    return TextViewFieldExtractionIsAcceptedImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool SelectArmShapeMismatchFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return SelectArmShapeMismatchFailsBeforeLlvmEmissionImpl();
-    }
+    return SelectArmShapeMismatchFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool UnsupportedSwitchConditionFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return UnsupportedSwitchConditionFailsBeforeLlvmEmissionImpl();
-    }
+    return UnsupportedSwitchConditionFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool UnsizedIntegerSwitchConditionFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return UnsizedIntegerSwitchConditionFailsBeforeLlvmEmissionImpl();
-    }
+    return UnsizedIntegerSwitchConditionFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool SwitchCaseShapeMismatchFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return SwitchCaseShapeMismatchFailsBeforeLlvmEmissionImpl();
-    }
+    return SwitchCaseShapeMismatchFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool SliceCreationShapeMismatchFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return SliceCreationShapeMismatchFailsBeforeLlvmEmissionImpl();
-    }
+    return SliceCreationShapeMismatchFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool IndirectLoadAddressShapeFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return IndirectLoadAddressShapeFailsBeforeLlvmEmissionImpl();
-    }
+    return IndirectLoadAddressShapeFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool IndirectStoreAcceptsQualifiedPointeeShape()
 {
-    unsafe
-    {
-        return IndirectStoreAcceptsQualifiedPointeeShapeImpl();
-    }
+    return IndirectStoreAcceptsQualifiedPointeeShapeImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool CopyMemoryDestinationPointeeMismatchFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return CopyMemoryDestinationPointeeMismatchFailsBeforeLlvmEmissionImpl();
-    }
+    return CopyMemoryDestinationPointeeMismatchFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool CopyMemorySourcePointeeMismatchFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return CopyMemorySourcePointeeMismatchFailsBeforeLlvmEmissionImpl();
-    }
+    return CopyMemorySourcePointeeMismatchFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool CopyMemoryWithoutConcreteLayoutFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return CopyMemoryWithoutConcreteLayoutFailsBeforeLlvmEmissionImpl();
-    }
+    return CopyMemoryWithoutConcreteLayoutFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool CopyMemoryAllowsFixedArrayElementPointers()
 {
-    unsafe
-    {
-        return CopyMemoryAllowsFixedArrayElementPointersImpl();
-    }
+    return CopyMemoryAllowsFixedArrayElementPointersImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool ScopedNoAliasProofCarrierAcceptsMatchingParameterRoots()
 {
-    unsafe
-    {
-        return ScopedNoAliasProofCarrierAcceptsMatchingParameterRootsImpl();
-    }
+    return ScopedNoAliasProofCarrierAcceptsMatchingParameterRootsImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool ScopedNoAliasProofCarrierRootMismatchFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return ScopedNoAliasProofCarrierRootMismatchFailsBeforeLlvmEmissionImpl();
-    }
+    return ScopedNoAliasProofCarrierRootMismatchFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool ScopedNoAliasProofCarrierDuplicateRootsFailBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return ScopedNoAliasProofCarrierDuplicateRootsFailBeforeLlvmEmissionImpl();
-    }
+    return ScopedNoAliasProofCarrierDuplicateRootsFailBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool ScopedNoAliasProofCarrierIdMismatchFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return ScopedNoAliasProofCarrierIdMismatchFailsBeforeLlvmEmissionImpl();
-    }
+    return ScopedNoAliasProofCarrierIdMismatchFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool ScopedNoAliasProofCarrierUnknownParameterRootFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return ScopedNoAliasProofCarrierUnknownParameterRootFailsBeforeLlvmEmissionImpl();
-    }
+    return ScopedNoAliasProofCarrierUnknownParameterRootFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool StringConstantNonTextTypeFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return StringConstantNonTextTypeFailsBeforeLlvmEmissionImpl();
-    }
+    return StringConstantNonTextTypeFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool TextDataAddressPointeeMismatchFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return TextDataAddressPointeeMismatchFailsBeforeLlvmEmissionImpl();
-    }
+    return TextDataAddressPointeeMismatchFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool GlobalAddressPointeeMismatchFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return GlobalAddressPointeeMismatchFailsBeforeLlvmEmissionImpl();
-    }
+    return GlobalAddressPointeeMismatchFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool UnknownGlobalLoadFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return UnknownGlobalLoadFailsBeforeLlvmEmissionImpl();
-    }
+    return UnknownGlobalLoadFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool KnownGlobalLoadTypeMismatchFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return KnownGlobalLoadTypeMismatchFailsBeforeLlvmEmissionImpl();
-    }
+    return KnownGlobalLoadTypeMismatchFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool KnownGlobalAddressTypeMismatchFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return KnownGlobalAddressTypeMismatchFailsBeforeLlvmEmissionImpl();
-    }
+    return KnownGlobalAddressTypeMismatchFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool StoreToImmutableGlobalFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return StoreToImmutableGlobalFailsBeforeLlvmEmissionImpl();
-    }
+    return StoreToImmutableGlobalFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool StoreGlobalValueMismatchFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return StoreGlobalValueMismatchFailsBeforeLlvmEmissionImpl();
-    }
+    return StoreGlobalValueMismatchFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool StoreMutableKnownGlobalPassesSsaValidation()
 {
-    unsafe
-    {
-        return StoreMutableKnownGlobalPassesSsaValidationImpl();
-    }
+    return StoreMutableKnownGlobalPassesSsaValidationImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool FunctionAddressNonFunctionPointerTypeFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return FunctionAddressNonFunctionPointerTypeFailsBeforeLlvmEmissionImpl();
-    }
+    return FunctionAddressNonFunctionPointerTypeFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool FunctionAddressMissingAbiFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return FunctionAddressMissingAbiFailsBeforeLlvmEmissionImpl();
-    }
+    return FunctionAddressMissingAbiFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool FunctionAddressSignatureMismatchFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return FunctionAddressSignatureMismatchFailsBeforeLlvmEmissionImpl();
-    }
+    return FunctionAddressSignatureMismatchFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool SystemMathBuiltinInvalidSignatureFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return SystemMathBuiltinInvalidSignatureFailsBeforeLlvmEmissionImpl();
-    }
+    return SystemMathBuiltinInvalidSignatureFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool SystemBitOperationsBuiltinInvalidWidthFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return SystemBitOperationsBuiltinInvalidWidthFailsBeforeLlvmEmissionImpl();
-    }
+    return SystemBitOperationsBuiltinInvalidWidthFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool SystemMemoryBuiltinInvalidAllocationShapeFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return SystemMemoryBuiltinInvalidAllocationShapeFailsBeforeLlvmEmissionImpl();
-    }
+    return SystemMemoryBuiltinInvalidAllocationShapeFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool SystemCollectionsDictionaryKeyAsciiKeyPassesBuiltinValidation()
 {
-    unsafe
-    {
-        return SystemCollectionsDictionaryKeyAsciiKeyPassesBuiltinValidationImpl();
-    }
+    return SystemCollectionsDictionaryKeyAsciiKeyPassesBuiltinValidationImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool SystemCollectionsDictionaryKeyUnsupportedKeyFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return SystemCollectionsDictionaryKeyUnsupportedKeyFailsBeforeLlvmEmissionImpl();
-    }
+    return SystemCollectionsDictionaryKeyUnsupportedKeyFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool SystemRuntimeByteSlicePartsMutableMismatchFailsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return SystemRuntimeByteSlicePartsMutableMismatchFailsBeforeLlvmEmissionImpl();
-    }
+    return SystemRuntimeByteSlicePartsMutableMismatchFailsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-ir")]
 fn bool ValidSystemBuiltinSignaturesPassSsaValidation()
 {
-    unsafe
-    {
-        return ValidSystemBuiltinSignaturesPassSsaValidationImpl();
-    }
+    return ValidSystemBuiltinSignaturesPassSsaValidationImpl();
 }
 
 [Fact]
+[Collection("ssa-lowering")]
 fn bool CommutativeRepeatedExpressionsShareAValueNumber()
 {
-    unsafe
-    {
-        return CommutativeRepeatedExpressionsShareAValueNumberImpl();
-    }
+    return CommutativeRepeatedExpressionsShareAValueNumberImpl();
 }
 
 [Fact]
+[Collection("ssa-lowering")]
 fn bool OptimizedSsaRemovesTrivialPhiNodesAndRewritesReturns()
 {
-    unsafe
-    {
-        return OptimizedSsaRemovesTrivialPhiNodesAndRewritesReturnsImpl();
-    }
+    return OptimizedSsaRemovesTrivialPhiNodesAndRewritesReturnsImpl();
 }
 
 [Fact]
+[Collection("ssa-lowering")]
 fn bool EmptyTrampolineBlocksAreCollapsed()
 {
-    unsafe
-    {
-        return EmptyTrampolineBlocksAreCollapsedImpl();
-    }
+    return EmptyTrampolineBlocksAreCollapsedImpl();
 }
 
 [Fact]
+[Collection("ssa-lowering")]
 fn bool VoidCallStatementsLowerToStatementOnlySsaInstructions()
 {
-    unsafe
-    {
-        return VoidCallStatementsLowerToStatementOnlySsaInstructionsImpl();
-    }
+    return VoidCallStatementsLowerToStatementOnlySsaInstructionsImpl();
 }
 
 [Fact]
+[Collection("ssa-lowering")]
 fn bool AggregateBranchJoinProducesByValuePhi()
 {
-    unsafe
-    {
-        return AggregateBranchJoinProducesByValuePhiImpl();
-    }
+    return AggregateBranchJoinProducesByValuePhiImpl();
 }
 
 [Fact]
+[Collection("ssa-lowering")]
 fn bool UnreachableJoinBlocksArePrunedFromSsa()
 {
-    unsafe
-    {
-        return UnreachableJoinBlocksArePrunedFromSsaImpl();
-    }
+    return UnreachableJoinBlocksArePrunedFromSsaImpl();
 }
 
 [Fact]
+[Collection("ssa-lowering")]
 fn bool AggregateFieldOperationsLowerToSsaExtractAndInsert()
 {
-    unsafe
-    {
-        return AggregateFieldOperationsLowerToSsaExtractAndInsertImpl();
-    }
+    return AggregateFieldOperationsLowerToSsaExtractAndInsertImpl();
 }
 
 [Fact]
+[Collection("ssa-lowering")]
 fn bool RegisterObjectCreationRemainsScalarizedInSsa()
 {
-    unsafe
-    {
-        return RegisterObjectCreationRemainsScalarizedInSsaImpl();
-    }
+    return RegisterObjectCreationRemainsScalarizedInSsaImpl();
 }
 
 [Fact]
+[Collection("ssa-lowering")]
 fn bool RegisterScalarInitializerRemainsDirectSsaValue()
 {
-    unsafe
-    {
-        return RegisterScalarInitializerRemainsDirectSsaValueImpl();
-    }
+    return RegisterScalarInitializerRemainsDirectSsaValueImpl();
 }
 
 [Fact]
+[Collection("ssa-lowering")]
 fn bool HeapObjectCreationUsesStorageBackedSsaLocalWithoutStackLifetimeMarkers()
 {
-    unsafe
-    {
-        return HeapObjectCreationUsesStorageBackedSsaLocalWithoutStackLifetimeMarkersImpl();
-    }
+    return HeapObjectCreationUsesStorageBackedSsaLocalWithoutStackLifetimeMarkersImpl();
 }
 
 [Fact]
+[Collection("ssa-lowering")]
 fn bool HeapFieldInitializationUsesAddressStoresWithoutAggregateLoads()
 {
-    unsafe
-    {
-        return HeapFieldInitializationUsesAddressStoresWithoutAggregateLoadsImpl();
-    }
+    return HeapFieldInitializationUsesAddressStoresWithoutAggregateLoadsImpl();
 }
 
 [Fact]
+[Collection("ssa-lowering")]
 fn bool HeapFixedArrayElementInitializationUsesAddressStores()
 {
-    unsafe
-    {
-        return HeapFixedArrayElementInitializationUsesAddressStoresImpl();
-    }
+    return HeapFixedArrayElementInitializationUsesAddressStoresImpl();
 }
 
 [Fact]
+[Collection("ssa-lowering")]
 fn bool AddressableAggregateAssignmentLowersToMemoryCopy()
 {
-    unsafe
-    {
-        return AddressableAggregateAssignmentLowersToMemoryCopyImpl();
-    }
+    return AddressableAggregateAssignmentLowersToMemoryCopyImpl();
 }
 
 [Fact]
+[Collection("ssa-lowering")]
 fn bool AggregateByValueCallInvalidatesMovedAddressableSource()
 {
-    unsafe
-    {
-        return AggregateByValueCallInvalidatesMovedAddressableSourceImpl();
-    }
+    return AggregateByValueCallInvalidatesMovedAddressableSourceImpl();
 }
 
 [Fact]
+[Collection("ssa-lowering")]
 fn bool AddressableAggregateInitializerDoesNotMaterializeAggregateTempLocals()
 {
-    unsafe
-    {
-        return AddressableAggregateInitializerDoesNotMaterializeAggregateTempLocalsImpl();
-    }
+    return AddressableAggregateInitializerDoesNotMaterializeAggregateTempLocalsImpl();
 }
 
 [Fact]
+[Collection("ssa-lowering")]
 fn bool AddressableAggregateConditionalDoesNotMaterializeAggregateTempLocals()
 {
-    unsafe
-    {
-        return AddressableAggregateConditionalDoesNotMaterializeAggregateTempLocalsImpl();
-    }
+    return AddressableAggregateConditionalDoesNotMaterializeAggregateTempLocalsImpl();
 }
 
 [Fact]
+[Collection("ssa-lowering")]
 fn bool NonAddressableFixedArrayDynamicIndexAllocatesCompilerGeneratedScratchLocalInSsa()
 {
-    unsafe
-    {
-        return NonAddressableFixedArrayDynamicIndexAllocatesCompilerGeneratedScratchLocalInSsaImpl();
-    }
+    return NonAddressableFixedArrayDynamicIndexAllocatesCompilerGeneratedScratchLocalInSsaImpl();
 }
 
 [Fact]
+[Collection("ssa-lowering")]
 fn bool FixedArrayIndexOperationsLowerToSsaExtractAndInsert()
 {
-    unsafe
-    {
-        return FixedArrayIndexOperationsLowerToSsaExtractAndInsertImpl();
-    }
+    return FixedArrayIndexOperationsLowerToSsaExtractAndInsertImpl();
 }
 
 [Fact]
+[Collection("ssa-lowering")]
 fn bool SliceLoweringUsesLocalSlotsAndSliceLoads()
 {
-    unsafe
-    {
-        return SliceLoweringUsesLocalSlotsAndSliceLoadsImpl();
-    }
+    return SliceLoweringUsesLocalSlotsAndSliceLoadsImpl();
 }
 
 [Fact]
+[Collection("ssa-lowering")]
 fn bool TextSlicesLowerToSsaViewOperations()
 {
-    unsafe
-    {
-        return TextSlicesLowerToSsaViewOperationsImpl();
-    }
+    return TextSlicesLowerToSsaViewOperationsImpl();
 }
 
 [Fact]
+[Collection("ssa-lowering")]
 fn bool ExplicitAsciiLiteralToUnicodeConversionLowersToUnicodeConstantInSsa()
 {
-    unsafe
-    {
-        return ExplicitAsciiLiteralToUnicodeConversionLowersToUnicodeConstantInSsaImpl();
-    }
+    return ExplicitAsciiLiteralToUnicodeConversionLowersToUnicodeConstantInSsaImpl();
 }
 
 [Fact]
+[Collection("ssa-lowering")]
 fn bool DynamicFixedArrayIndexMutationUsesIndirectAddressOps()
 {
-    unsafe
-    {
-        return DynamicFixedArrayIndexMutationUsesIndirectAddressOpsImpl();
-    }
+    return DynamicFixedArrayIndexMutationUsesIndirectAddressOpsImpl();
 }
 
 [Fact]
+[Collection("ssa-lowering")]
 fn bool SliceMutationUsesIndirectAddressOps()
 {
-    unsafe
-    {
-        return SliceMutationUsesIndirectAddressOpsImpl();
-    }
+    return SliceMutationUsesIndirectAddressOpsImpl();
 }
 
 [Fact]
+[Collection("ssa-lowering")]
 fn bool ExplicitPointerOperatorsAndConversionsLowerToSsa()
 {
-    unsafe
-    {
-        return ExplicitPointerOperatorsAndConversionsLowerToSsaImpl();
-    }
+    return ExplicitPointerOperatorsAndConversionsLowerToSsaImpl();
 }
 
 [Fact]
+[Collection("ssa-lowering")]
 fn bool FieldAndGlobalAddressExpressionsLowerToSsaAddresses()
 {
-    unsafe
-    {
-        return FieldAndGlobalAddressExpressionsLowerToSsaAddressesImpl();
-    }
+    return FieldAndGlobalAddressExpressionsLowerToSsaAddressesImpl();
 }
 
 [Fact]
+[Collection("ssa-lowering")]
 fn bool IndexedFieldAddressBehindRawPointerLowersToParameterBackedSsaAddresses()
 {
-    unsafe
-    {
-        return IndexedFieldAddressBehindRawPointerLowersToParameterBackedSsaAddressesImpl();
-    }
+    return IndexedFieldAddressBehindRawPointerLowersToParameterBackedSsaAddressesImpl();
 }
 
 [Fact]
+[Collection("ssa-lowering")]
 fn bool ImmutableGlobalAddressesLowerToReadonlySsaAddresses()
 {
-    unsafe
-    {
-        return ImmutableGlobalAddressesLowerToReadonlySsaAddressesImpl();
-    }
+    return ImmutableGlobalAddressesLowerToReadonlySsaAddressesImpl();
 }
 
 [Fact]
+[Collection("ssa-lowering")]
 fn bool FrozenSliceAddressesLowerToReadonlySsaAddresses()
 {
-    unsafe
-    {
-        return FrozenSliceAddressesLowerToReadonlySsaAddressesImpl();
-    }
+    return FrozenSliceAddressesLowerToReadonlySsaAddressesImpl();
 }
 
 [Fact]
+[Collection("ssa-lowering")]
 fn bool RuntimeDisjointTrueBranchCarriesScopedNoAliasFactsIntoSsaMemoryOperations()
 {
-    unsafe
-    {
-        return RuntimeDisjointTrueBranchCarriesScopedNoAliasFactsIntoSsaMemoryOperationsImpl();
-    }
+    return RuntimeDisjointTrueBranchCarriesScopedNoAliasFactsIntoSsaMemoryOperationsImpl();
 }
 
 [Fact]
+[Collection("ssa-lowering")]
 fn bool UnsafeAssumeDisjointCarriesUnsafeProofCarrierKindIntoSsaMemoryOperations()
 {
-    unsafe
-    {
-        return UnsafeAssumeDisjointCarriesUnsafeProofCarrierKindIntoSsaMemoryOperationsImpl();
-    }
+    return UnsafeAssumeDisjointCarriesUnsafeProofCarrierKindIntoSsaMemoryOperationsImpl();
 }
 
 [Fact]
+[Collection("ssa-lowering")]
 fn bool IndependentForLoopsPreserveLoopContractsInSsa()
 {
-    unsafe
-    {
-        return IndependentForLoopsPreserveLoopContractsInSsaImpl();
-    }
+    return IndependentForLoopsPreserveLoopContractsInSsaImpl();
 }
 
 [Fact]
+[Collection("ssa-lowering")]
 fn bool WillexitWhileLoopsPreserveLoopBehaviorOnBackedgesInSsa()
 {
-    unsafe
-    {
-        return WillexitWhileLoopsPreserveLoopBehaviorOnBackedgesInSsaImpl();
-    }
+    return WillexitWhileLoopsPreserveLoopBehaviorOnBackedgesInSsaImpl();
 }
 
 [Fact]
+[Collection("ssa-lowering")]
 fn bool IndependentSliceLoopsCarryAccessGroupsInSsa()
 {
-    unsafe
-    {
-        return IndependentSliceLoopsCarryAccessGroupsInSsaImpl();
-    }
+    return IndependentSliceLoopsCarryAccessGroupsInSsaImpl();
 }
 
 [Fact]
+[Collection("ssa-lowering")]
 fn bool InitAndOutAssignmentsCarryInitializationWriteKindInSsa()
 {
-    unsafe
-    {
-        return InitAndOutAssignmentsCarryInitializationWriteKindInSsaImpl();
-    }
+    return InitAndOutAssignmentsCarryInitializationWriteKindInSsaImpl();
 }
 
 [Fact]
+[Collection("ssa-lowering")]
 fn bool OrdinaryMutableSliceAssignmentKeepsReplacementWriteKindInSsa()
 {
-    unsafe
-    {
-        return OrdinaryMutableSliceAssignmentKeepsReplacementWriteKindInSsaImpl();
-    }
+    return OrdinaryMutableSliceAssignmentKeepsReplacementWriteKindInSsaImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool CleanupRemovesTrivialCopyInstructions()
 {
-    unsafe
-    {
-        return CleanupRemovesTrivialCopyInstructionsImpl();
-    }
+    return CleanupRemovesTrivialCopyInstructionsImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool CleanupPrunesPhiIncomingsForRemovedCfgEdges()
 {
-    unsafe
-    {
-        return CleanupPrunesPhiIncomingsForRemovedCfgEdgesImpl();
-    }
+    return CleanupPrunesPhiIncomingsForRemovedCfgEdgesImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool CleanupRemovesUnusedPureTemporaries()
 {
-    unsafe
-    {
-        return CleanupRemovesUnusedPureTemporariesImpl();
-    }
+    return CleanupRemovesUnusedPureTemporariesImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool CleanupRemovesIntegerAlgebraicIdentities()
 {
-    unsafe
-    {
-        return CleanupRemovesIntegerAlgebraicIdentitiesImpl();
-    }
+    return CleanupRemovesIntegerAlgebraicIdentitiesImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool CleanupRemovesIntegerModuloByOne()
 {
-    unsafe
-    {
-        return CleanupRemovesIntegerModuloByOneImpl();
-    }
+    return CleanupRemovesIntegerModuloByOneImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool CleanupRemovesSameOperandDivisionAndModuloWhenRangeExcludesZero()
 {
-    unsafe
-    {
-        return CleanupRemovesSameOperandDivisionAndModuloWhenRangeExcludesZeroImpl();
-    }
+    return CleanupRemovesSameOperandDivisionAndModuloWhenRangeExcludesZeroImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool CleanupRemovesSameOperandIntegerComparisons()
 {
-    unsafe
-    {
-        return CleanupRemovesSameOperandIntegerComparisonsImpl();
-    }
+    return CleanupRemovesSameOperandIntegerComparisonsImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool CleanupRemovesModuloAndDivisionWhenStaticRangeIsBelowPositiveDivisor()
 {
-    unsafe
-    {
-        return CleanupRemovesModuloAndDivisionWhenStaticRangeIsBelowPositiveDivisorImpl();
-    }
+    return CleanupRemovesModuloAndDivisionWhenStaticRangeIsBelowPositiveDivisorImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool CleanupForwardsAggregateFieldThroughPhiWhenIncomingFieldsMatch()
 {
-    unsafe
-    {
-        return CleanupForwardsAggregateFieldThroughPhiWhenIncomingFieldsMatchImpl();
-    }
+    return CleanupForwardsAggregateFieldThroughPhiWhenIncomingFieldsMatchImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool CleanupKeepsAggregateFieldExtractThroughPhiWhenIncomingFieldsDiffer()
 {
-    unsafe
-    {
-        return CleanupKeepsAggregateFieldExtractThroughPhiWhenIncomingFieldsDifferImpl();
-    }
+    return CleanupKeepsAggregateFieldExtractThroughPhiWhenIncomingFieldsDifferImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool CleanupForwardsAggregateIndexThroughPhiWhenIncomingElementsMatch()
 {
-    unsafe
-    {
-        return CleanupForwardsAggregateIndexThroughPhiWhenIncomingElementsMatchImpl();
-    }
+    return CleanupForwardsAggregateIndexThroughPhiWhenIncomingElementsMatchImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool CleanupForwardsAggregateFieldThroughSelectWhenSelectedFieldsMatch()
 {
-    unsafe
-    {
-        return CleanupForwardsAggregateFieldThroughSelectWhenSelectedFieldsMatchImpl();
-    }
+    return CleanupForwardsAggregateFieldThroughSelectWhenSelectedFieldsMatchImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool CleanupKeepsAggregateFieldExtractThroughSelectWhenSelectedFieldsDiffer()
 {
-    unsafe
-    {
-        return CleanupKeepsAggregateFieldExtractThroughSelectWhenSelectedFieldsDifferImpl();
-    }
+    return CleanupKeepsAggregateFieldExtractThroughSelectWhenSelectedFieldsDifferImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool CleanupForwardsAggregateIndexThroughSelectWhenSelectedElementsMatch()
 {
-    unsafe
-    {
-        return CleanupForwardsAggregateIndexThroughSelectWhenSelectedElementsMatchImpl();
-    }
+    return CleanupForwardsAggregateIndexThroughSelectWhenSelectedElementsMatchImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool CleanupRemovesIdentityPhiNodes()
 {
-    unsafe
-    {
-        return CleanupRemovesIdentityPhiNodesImpl();
-    }
+    return CleanupRemovesIdentityPhiNodesImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool CleanupReusesIdenticalMaterializedConstantConversions()
 {
-    unsafe
-    {
-        return CleanupReusesIdenticalMaterializedConstantConversionsImpl();
-    }
+    return CleanupReusesIdenticalMaterializedConstantConversionsImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool CleanupCanonicalizesEquivalentCommutativeExpressions()
 {
-    unsafe
-    {
-        return CleanupCanonicalizesEquivalentCommutativeExpressionsImpl();
-    }
+    return CleanupCanonicalizesEquivalentCommutativeExpressionsImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool CleanupRemovesRedundantSameTypeConversions()
 {
-    unsafe
-    {
-        return CleanupRemovesRedundantSameTypeConversionsImpl();
-    }
+    return CleanupRemovesRedundantSameTypeConversionsImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool CleanupCoalescesEquivalentPhiNodes()
 {
-    unsafe
-    {
-        return CleanupCoalescesEquivalentPhiNodesImpl();
-    }
+    return CleanupCoalescesEquivalentPhiNodesImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool CleanupSimplifiesBranchWithIdenticalTargets()
 {
-    unsafe
-    {
-        return CleanupSimplifiesBranchWithIdenticalTargetsImpl();
-    }
+    return CleanupSimplifiesBranchWithIdenticalTargetsImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool CleanupSimplifiesDefaultOnlySwitchToGoto()
 {
-    unsafe
-    {
-        return CleanupSimplifiesDefaultOnlySwitchToGotoImpl();
-    }
+    return CleanupSimplifiesDefaultOnlySwitchToGotoImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool CleanupRemovesUnusedLocalStorageScaffolding()
 {
-    unsafe
-    {
-        return CleanupRemovesUnusedLocalStorageScaffoldingImpl();
-    }
+    return CleanupRemovesUnusedLocalStorageScaffoldingImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool CleanupRemovesEmptyJumpOnlyBlocks()
 {
-    unsafe
-    {
-        return CleanupRemovesEmptyJumpOnlyBlocksImpl();
-    }
+    return CleanupRemovesEmptyJumpOnlyBlocksImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool CleanupMergesLinearBlocksWithSinglePredecessor()
 {
-    unsafe
-    {
-        return CleanupMergesLinearBlocksWithSinglePredecessorImpl();
-    }
+    return CleanupMergesLinearBlocksWithSinglePredecessorImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool CleanupSimplifiesSingleCaseSwitchToBranch()
 {
-    unsafe
-    {
-        return CleanupSimplifiesSingleCaseSwitchToBranchImpl();
-    }
+    return CleanupSimplifiesSingleCaseSwitchToBranchImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool CleanupKeepsDuplicateEdgeBranchesWhenSuccessorPhiNeedsBothIncomingValues()
 {
-    unsafe
-    {
-        return CleanupKeepsDuplicateEdgeBranchesWhenSuccessorPhiNeedsBothIncomingValuesImpl();
-    }
+    return CleanupKeepsDuplicateEdgeBranchesWhenSuccessorPhiNeedsBothIncomingValuesImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool CleanupNormalizesExhaustiveBoolSwitchToBranch()
 {
-    unsafe
-    {
-        return CleanupNormalizesExhaustiveBoolSwitchToBranchImpl();
-    }
+    return CleanupNormalizesExhaustiveBoolSwitchToBranchImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool CleanupDropsSwitchCasesThatAlreadyMatchDefaultTarget()
 {
-    unsafe
-    {
-        return CleanupDropsSwitchCasesThatAlreadyMatchDefaultTargetImpl();
-    }
+    return CleanupDropsSwitchCasesThatAlreadyMatchDefaultTargetImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool OptimizedSsaSimplifiesSingleCaseSwitchBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return OptimizedSsaSimplifiesSingleCaseSwitchBeforeLlvmEmissionImpl();
-    }
+    return OptimizedSsaSimplifiesSingleCaseSwitchBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool DevirtualizerTurnsKnownDynTraitCallIntoDirectCallBeforeInlining()
 {
-    unsafe
-    {
-        return DevirtualizerTurnsKnownDynTraitCallIntoDirectCallBeforeInliningImpl();
-    }
+    return DevirtualizerTurnsKnownDynTraitCallIntoDirectCallBeforeInliningImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool OptimizedSsaNormalizesSmallSparseSwitchToCompareChainBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return OptimizedSsaNormalizesSmallSparseSwitchToCompareChainBeforeLlvmEmissionImpl();
-    }
+    return OptimizedSsaNormalizesSmallSparseSwitchToCompareChainBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool OptimizedSsaKeepsDenseFourWaySwitchForLlvmLowering()
 {
-    unsafe
-    {
-        return OptimizedSsaKeepsDenseFourWaySwitchForLlvmLoweringImpl();
-    }
+    return OptimizedSsaKeepsDenseFourWaySwitchForLlvmLoweringImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool CleanupCanonicalizesEarlyReturnDiamonds()
 {
-    unsafe
-    {
-        return CleanupCanonicalizesEarlyReturnDiamondsImpl();
-    }
+    return CleanupCanonicalizesEarlyReturnDiamondsImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool OptimizedSsaCanonicalizesReturnPhiJoinsBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return OptimizedSsaCanonicalizesReturnPhiJoinsBeforeLlvmEmissionImpl();
-    }
+    return OptimizedSsaCanonicalizesReturnPhiJoinsBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool CleanupRemovesLoopInvariantSelfReferentialPhiNodes()
 {
-    unsafe
-    {
-        return CleanupRemovesLoopInvariantSelfReferentialPhiNodesImpl();
-    }
+    return CleanupRemovesLoopInvariantSelfReferentialPhiNodesImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool OptimizedSsaRemovesLoopInvariantHeaderPhisBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return OptimizedSsaRemovesLoopInvariantHeaderPhisBeforeLlvmEmissionImpl();
-    }
+    return OptimizedSsaRemovesLoopInvariantHeaderPhisBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool OptimizedSsaCanonicalizesBooleanCompareBranches()
 {
-    unsafe
-    {
-        return OptimizedSsaCanonicalizesBooleanCompareBranchesImpl();
-    }
+    return OptimizedSsaCanonicalizesBooleanCompareBranchesImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool OptimizedSsaRemovesDeadAddressableLocalStorageBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return OptimizedSsaRemovesDeadAddressableLocalStorageBeforeLlvmEmissionImpl();
-    }
+    return OptimizedSsaRemovesDeadAddressableLocalStorageBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool OptimizedSsaReusesRepeatedSliceLoadsWithinABlock()
 {
-    unsafe
-    {
-        return OptimizedSsaReusesRepeatedSliceLoadsWithinABlockImpl();
-    }
+    return OptimizedSsaReusesRepeatedSliceLoadsWithinABlockImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool OptimizedSsaDoesNotReuseLoadsAcrossStores()
 {
-    unsafe
-    {
-        return OptimizedSsaDoesNotReuseLoadsAcrossStoresImpl();
-    }
+    return OptimizedSsaDoesNotReuseLoadsAcrossStoresImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool FactDrivenBranchPruningThreadsProvenEdgesThroughBranchOnlyBlocks()
 {
-    unsafe
-    {
-        return FactDrivenBranchPruningThreadsProvenEdgesThroughBranchOnlyBlocksImpl();
-    }
+    return FactDrivenBranchPruningThreadsProvenEdgesThroughBranchOnlyBlocksImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool ValueFactsJoinLoopPhiInputsToAStableRange()
 {
-    unsafe
-    {
-        return ValueFactsJoinLoopPhiInputsToAStableRangeImpl();
-    }
+    return ValueFactsJoinLoopPhiInputsToAStableRangeImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool ValueFactsIgnoreUnreachablePhiInputs()
 {
-    unsafe
-    {
-        return ValueFactsIgnoreUnreachablePhiInputsImpl();
-    }
+    return ValueFactsIgnoreUnreachablePhiInputsImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool ValueFactsCaptureTextLiteralPayloadFacts()
 {
-    unsafe
-    {
-        return ValueFactsCaptureTextLiteralPayloadFactsImpl();
-    }
+    return ValueFactsCaptureTextLiteralPayloadFactsImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool ValueFactsPreserveOnlyIdenticalTextLiteralPayloadsThroughPhi()
 {
-    unsafe
-    {
-        return ValueFactsPreserveOnlyIdenticalTextLiteralPayloadsThroughPhiImpl();
-    }
+    return ValueFactsPreserveOnlyIdenticalTextLiteralPayloadsThroughPhiImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool ValueFactsDeriveTextSliceLiteralPayloads()
 {
-    unsafe
-    {
-        return ValueFactsDeriveTextSliceLiteralPayloadsImpl();
-    }
+    return ValueFactsDeriveTextSliceLiteralPayloadsImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool ValueFactsKeepDynamicTextSlicePayloadUnknown()
 {
-    unsafe
-    {
-        return ValueFactsKeepDynamicTextSlicePayloadUnknownImpl();
-    }
+    return ValueFactsKeepDynamicTextSlicePayloadUnknownImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool ValueFactsPublishBoundedRawPointerParameterRegions()
 {
-    unsafe
-    {
-        return ValueFactsPublishBoundedRawPointerParameterRegionsImpl();
-    }
+    return ValueFactsPublishBoundedRawPointerParameterRegionsImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool ValueFactsKeepZeroAllowedBoundedRawPointersNullable()
 {
-    unsafe
-    {
-        return ValueFactsKeepZeroAllowedBoundedRawPointersNullableImpl();
-    }
+    return ValueFactsKeepZeroAllowedBoundedRawPointersNullableImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool ValueFactsTrackDynamicStorageAllocationFieldsAndDataPointer()
 {
-    unsafe
-    {
-        return ValueFactsTrackDynamicStorageAllocationFieldsAndDataPointerImpl();
-    }
+    return ValueFactsTrackDynamicStorageAllocationFieldsAndDataPointerImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool ValueFactsTrackDynamicStorageTryReserveSuccessAndFailureEdges()
 {
-    unsafe
-    {
-        return ValueFactsTrackDynamicStorageTryReserveSuccessAndFailureEdgesImpl();
-    }
+    return ValueFactsTrackDynamicStorageTryReserveSuccessAndFailureEdgesImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool ValueFactsTrackDynamicStorageMoveLastLengthCommit()
 {
-    unsafe
-    {
-        return ValueFactsTrackDynamicStorageMoveLastLengthCommitImpl();
-    }
+    return ValueFactsTrackDynamicStorageMoveLastLengthCommitImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool ValueFactsTrackDynamicStorageLengthFieldStoreAsPrefixCommit()
 {
-    unsafe
-    {
-        return ValueFactsTrackDynamicStorageLengthFieldStoreAsPrefixCommitImpl();
-    }
+    return ValueFactsTrackDynamicStorageLengthFieldStoreAsPrefixCommitImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool ValueFactsTrackDynamicLengthReadDerivedCommitThroughOwnerAddress()
 {
-    unsafe
-    {
-        return ValueFactsTrackDynamicLengthReadDerivedCommitThroughOwnerAddressImpl();
-    }
+    return ValueFactsTrackDynamicLengthReadDerivedCommitThroughOwnerAddressImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool ValueFactsDemoteDynamicStorageAfterEscapedDataPointerCall()
 {
-    unsafe
-    {
-        return ValueFactsDemoteDynamicStorageAfterEscapedDataPointerCallImpl();
-    }
+    return ValueFactsDemoteDynamicStorageAfterEscapedDataPointerCallImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool DynamicStorageOptimizerKeepsReserveAfterEscapedDataPointerCall()
 {
-    unsafe
-    {
-        return DynamicStorageOptimizerKeepsReserveAfterEscapedDataPointerCallImpl();
-    }
+    return DynamicStorageOptimizerKeepsReserveAfterEscapedDataPointerCallImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool DynamicStorageOptimizerKeepsReserveAfterEscapedDataSliceCall()
 {
-    unsafe
-    {
-        return DynamicStorageOptimizerKeepsReserveAfterEscapedDataSliceCallImpl();
-    }
+    return DynamicStorageOptimizerKeepsReserveAfterEscapedDataSliceCallImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool ValueFactsTrackDynamicStorageZeroInitializerAsNoBackingAllocation()
 {
-    unsafe
-    {
-        return ValueFactsTrackDynamicStorageZeroInitializerAsNoBackingAllocationImpl();
-    }
+    return ValueFactsTrackDynamicStorageZeroInitializerAsNoBackingAllocationImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool ValueFactsKeepTextLocalPayloadUnknownWhenAddressTaken()
 {
-    unsafe
-    {
-        return ValueFactsKeepTextLocalPayloadUnknownWhenAddressTakenImpl();
-    }
+    return ValueFactsKeepTextLocalPayloadUnknownWhenAddressTakenImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool ValueFactsClampNonWrappingArithmeticToContinuingTypeRange()
 {
-    unsafe
-    {
-        return ValueFactsClampNonWrappingArithmeticToContinuingTypeRangeImpl();
-    }
+    return ValueFactsClampNonWrappingArithmeticToContinuingTypeRangeImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool ValueFactsDoNotCreateInvalidRangesWhenNonWrappingArithmeticAlwaysOverflows()
 {
-    unsafe
-    {
-        return ValueFactsDoNotCreateInvalidRangesWhenNonWrappingArithmeticAlwaysOverflowsImpl();
-    }
+    return ValueFactsDoNotCreateInvalidRangesWhenNonWrappingArithmeticAlwaysOverflowsImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool ValueFactsKeepWrappingArithmeticConservativeWhenRangeMayWrap()
 {
-    unsafe
-    {
-        return ValueFactsKeepWrappingArithmeticConservativeWhenRangeMayWrapImpl();
-    }
+    return ValueFactsKeepWrappingArithmeticConservativeWhenRangeMayWrapImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool ValueFactsClampSaturatingArithmeticInsteadOfUsingWrappingSemantics()
 {
-    unsafe
-    {
-        return ValueFactsClampSaturatingArithmeticInsteadOfUsingWrappingSemanticsImpl();
-    }
+    return ValueFactsClampSaturatingArithmeticInsteadOfUsingWrappingSemanticsImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool ValueFactsClampIntegerConversionsToTargetRange()
 {
-    unsafe
-    {
-        return ValueFactsClampIntegerConversionsToTargetRangeImpl();
-    }
+    return ValueFactsClampIntegerConversionsToTargetRangeImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool AliasAwareMemoryOptimizationForwardsStoredStackScalarLoadsWithinBlock()
 {
-    unsafe
-    {
-        return AliasAwareMemoryOptimizationForwardsStoredStackScalarLoadsWithinBlockImpl();
-    }
+    return AliasAwareMemoryOptimizationForwardsStoredStackScalarLoadsWithinBlockImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool AliasAwareMemoryOptimizationKeepsAddressEscapedLocalLoads()
 {
-    unsafe
-    {
-        return AliasAwareMemoryOptimizationKeepsAddressEscapedLocalLoadsImpl();
-    }
+    return AliasAwareMemoryOptimizationKeepsAddressEscapedLocalLoadsImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool AliasAwareMemoryOptimizationForwardsStoredStackFieldLoadsWithinBlock()
 {
-    unsafe
-    {
-        return AliasAwareMemoryOptimizationForwardsStoredStackFieldLoadsWithinBlockImpl();
-    }
+    return AliasAwareMemoryOptimizationForwardsStoredStackFieldLoadsWithinBlockImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool AliasAwareMemoryOptimizationForwardsStoredStackFixedArrayElementLoadsWithinBlock()
 {
-    unsafe
-    {
-        return AliasAwareMemoryOptimizationForwardsStoredStackFixedArrayElementLoadsWithinBlockImpl();
-    }
+    return AliasAwareMemoryOptimizationForwardsStoredStackFixedArrayElementLoadsWithinBlockImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool AliasAwareMemoryOptimizationKeepsStackFixedArrayElementLoadsAcrossDynamicElementStores()
 {
-    unsafe
-    {
-        return AliasAwareMemoryOptimizationKeepsStackFixedArrayElementLoadsAcrossDynamicElementStoresImpl();
-    }
+    return AliasAwareMemoryOptimizationKeepsStackFixedArrayElementLoadsAcrossDynamicElementStoresImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool AliasAwareMemoryOptimizationKeepsStackFieldLoadsAcrossUnknownIndirectStores()
 {
-    unsafe
-    {
-        return AliasAwareMemoryOptimizationKeepsStackFieldLoadsAcrossUnknownIndirectStoresImpl();
-    }
+    return AliasAwareMemoryOptimizationKeepsStackFieldLoadsAcrossUnknownIndirectStoresImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool AliasAwareMemoryOptimizationForwardsNestedStackFieldLoadsWithinBlock()
 {
-    unsafe
-    {
-        return AliasAwareMemoryOptimizationForwardsNestedStackFieldLoadsWithinBlockImpl();
-    }
+    return AliasAwareMemoryOptimizationForwardsNestedStackFieldLoadsWithinBlockImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool AliasAwareMemoryOptimizationKeepsSiblingNestedStackFieldPathsSeparate()
 {
-    unsafe
-    {
-        return AliasAwareMemoryOptimizationKeepsSiblingNestedStackFieldPathsSeparateImpl();
-    }
+    return AliasAwareMemoryOptimizationKeepsSiblingNestedStackFieldPathsSeparateImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool AliasAwareMemoryOptimizationRemovesOverwrittenStackFieldStoresWithinBlock()
 {
-    unsafe
-    {
-        return AliasAwareMemoryOptimizationRemovesOverwrittenStackFieldStoresWithinBlockImpl();
-    }
+    return AliasAwareMemoryOptimizationRemovesOverwrittenStackFieldStoresWithinBlockImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool AliasAwareMemoryOptimizationKeepsStackFieldStoresAcrossUnknownIndirectStores()
 {
-    unsafe
-    {
-        return AliasAwareMemoryOptimizationKeepsStackFieldStoresAcrossUnknownIndirectStoresImpl();
-    }
+    return AliasAwareMemoryOptimizationKeepsStackFieldStoresAcrossUnknownIndirectStoresImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool AliasAwareMemoryOptimizationForwardsStackFieldLoadsAcrossPureScalarCalls()
 {
-    unsafe
-    {
-        return AliasAwareMemoryOptimizationForwardsStackFieldLoadsAcrossPureScalarCallsImpl();
-    }
+    return AliasAwareMemoryOptimizationForwardsStackFieldLoadsAcrossPureScalarCallsImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool AliasAwareMemoryOptimizationKeepsStackFieldLoadsAcrossImpureCalls()
 {
-    unsafe
-    {
-        return AliasAwareMemoryOptimizationKeepsStackFieldLoadsAcrossImpureCallsImpl();
-    }
+    return AliasAwareMemoryOptimizationKeepsStackFieldLoadsAcrossImpureCallsImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool AliasAwareMemoryOptimizationRemovesOverwrittenStackFieldStoresAcrossReadonlyScalarCalls()
 {
-    unsafe
-    {
-        return AliasAwareMemoryOptimizationRemovesOverwrittenStackFieldStoresAcrossReadonlyScalarCallsImpl();
-    }
+    return AliasAwareMemoryOptimizationRemovesOverwrittenStackFieldStoresAcrossReadonlyScalarCallsImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool AliasAwareMemoryOptimizationKeepsStackFieldStoresAcrossReadonlyLocalMemoryCalls()
 {
-    unsafe
-    {
-        return AliasAwareMemoryOptimizationKeepsStackFieldStoresAcrossReadonlyLocalMemoryCallsImpl();
-    }
+    return AliasAwareMemoryOptimizationKeepsStackFieldStoresAcrossReadonlyLocalMemoryCallsImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool AliasAwareMemoryOptimizationForwardsStackFieldLoadsAcrossSinglePredecessorBlocks()
 {
-    unsafe
-    {
-        return AliasAwareMemoryOptimizationForwardsStackFieldLoadsAcrossSinglePredecessorBlocksImpl();
-    }
+    return AliasAwareMemoryOptimizationForwardsStackFieldLoadsAcrossSinglePredecessorBlocksImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool AliasAwareMemoryOptimizationKeepsStackFieldLoadsAtJoinBlocks()
 {
-    unsafe
-    {
-        return AliasAwareMemoryOptimizationKeepsStackFieldLoadsAtJoinBlocksImpl();
-    }
+    return AliasAwareMemoryOptimizationKeepsStackFieldLoadsAtJoinBlocksImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool AliasAwareMemoryOptimizationRemovesOverwrittenStackScalarStoresWithinBlock()
 {
-    unsafe
-    {
-        return AliasAwareMemoryOptimizationRemovesOverwrittenStackScalarStoresWithinBlockImpl();
-    }
+    return AliasAwareMemoryOptimizationRemovesOverwrittenStackScalarStoresWithinBlockImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool AliasAwareMemoryOptimizationForwardsStackScalarsAcrossSinglePredecessorBlocks()
 {
-    unsafe
-    {
-        return AliasAwareMemoryOptimizationForwardsStackScalarsAcrossSinglePredecessorBlocksImpl();
-    }
+    return AliasAwareMemoryOptimizationForwardsStackScalarsAcrossSinglePredecessorBlocksImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool AliasAwareMemoryOptimizationKeepsStackScalarLoadsAtJoinBlocks()
 {
-    unsafe
-    {
-        return AliasAwareMemoryOptimizationKeepsStackScalarLoadsAtJoinBlocksImpl();
-    }
+    return AliasAwareMemoryOptimizationKeepsStackScalarLoadsAtJoinBlocksImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool AliasAwareMemoryOptimizationForwardsRepeatedGlobalScalarLoadsWithinBlock()
 {
-    unsafe
-    {
-        return AliasAwareMemoryOptimizationForwardsRepeatedGlobalScalarLoadsWithinBlockImpl();
-    }
+    return AliasAwareMemoryOptimizationForwardsRepeatedGlobalScalarLoadsWithinBlockImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool AliasAwareMemoryOptimizationForwardsStoredGlobalScalarLoadsWithinBlock()
 {
-    unsafe
-    {
-        return AliasAwareMemoryOptimizationForwardsStoredGlobalScalarLoadsWithinBlockImpl();
-    }
+    return AliasAwareMemoryOptimizationForwardsStoredGlobalScalarLoadsWithinBlockImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool AliasAwareMemoryOptimizationKeepsGlobalScalarLoadsAcrossCallBarriers()
 {
-    unsafe
-    {
-        return AliasAwareMemoryOptimizationKeepsGlobalScalarLoadsAcrossCallBarriersImpl();
-    }
+    return AliasAwareMemoryOptimizationKeepsGlobalScalarLoadsAcrossCallBarriersImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool AliasAwareMemoryOptimizationKeepsGlobalScalarLoadsAcrossUnknownIndirectStores()
 {
-    unsafe
-    {
-        return AliasAwareMemoryOptimizationKeepsGlobalScalarLoadsAcrossUnknownIndirectStoresImpl();
-    }
+    return AliasAwareMemoryOptimizationKeepsGlobalScalarLoadsAcrossUnknownIndirectStoresImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool AliasAwareMemoryOptimizationForwardsGlobalScalarsAcrossSinglePredecessorBlocks()
 {
-    unsafe
-    {
-        return AliasAwareMemoryOptimizationForwardsGlobalScalarsAcrossSinglePredecessorBlocksImpl();
-    }
+    return AliasAwareMemoryOptimizationForwardsGlobalScalarsAcrossSinglePredecessorBlocksImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool AliasAwareMemoryOptimizationKeepsGlobalScalarLoadsAtJoinBlocks()
 {
-    unsafe
-    {
-        return AliasAwareMemoryOptimizationKeepsGlobalScalarLoadsAtJoinBlocksImpl();
-    }
+    return AliasAwareMemoryOptimizationKeepsGlobalScalarLoadsAtJoinBlocksImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool AliasAwareMemoryOptimizationRemovesOverwrittenGlobalScalarStoresWithinBlock()
 {
-    unsafe
-    {
-        return AliasAwareMemoryOptimizationRemovesOverwrittenGlobalScalarStoresWithinBlockImpl();
-    }
+    return AliasAwareMemoryOptimizationRemovesOverwrittenGlobalScalarStoresWithinBlockImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool AliasAwareMemoryOptimizationKeepsGlobalScalarStoresAcrossCallBarriers()
 {
-    unsafe
-    {
-        return AliasAwareMemoryOptimizationKeepsGlobalScalarStoresAcrossCallBarriersImpl();
-    }
+    return AliasAwareMemoryOptimizationKeepsGlobalScalarStoresAcrossCallBarriersImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool AliasAwareMemoryOptimizationForwardsGlobalScalarLoadsAcrossPureCalls()
 {
-    unsafe
-    {
-        return AliasAwareMemoryOptimizationForwardsGlobalScalarLoadsAcrossPureCallsImpl();
-    }
+    return AliasAwareMemoryOptimizationForwardsGlobalScalarLoadsAcrossPureCallsImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool AliasAwareMemoryOptimizationRemovesOverwrittenGlobalScalarStoresAcrossPureCalls()
 {
-    unsafe
-    {
-        return AliasAwareMemoryOptimizationRemovesOverwrittenGlobalScalarStoresAcrossPureCallsImpl();
-    }
+    return AliasAwareMemoryOptimizationRemovesOverwrittenGlobalScalarStoresAcrossPureCallsImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool AliasAwareMemoryOptimizationKeepsGlobalScalarStoresAcrossPureArgumentMemoryReadsWhenGlobalAddressIsPassed()
 {
-    unsafe
-    {
-        return AliasAwareMemoryOptimizationKeepsGlobalScalarStoresAcrossPureArgumentMemoryReadsWhenGlobalAddressIsPassedImpl();
-    }
+    return AliasAwareMemoryOptimizationKeepsGlobalScalarStoresAcrossPureArgumentMemoryReadsWhenGlobalAddressIsPassedImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool AliasAwareMemoryOptimizationRemovesOverwrittenGlobalScalarStoresAcrossPureArgumentMemoryReadsWithScalarArguments()
 {
-    unsafe
-    {
-        return AliasAwareMemoryOptimizationRemovesOverwrittenGlobalScalarStoresAcrossPureArgumentMemoryReadsWithScalarArgumentsImpl();
-    }
+    return AliasAwareMemoryOptimizationRemovesOverwrittenGlobalScalarStoresAcrossPureArgumentMemoryReadsWithScalarArgumentsImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool AliasAwareMemoryOptimizationKeepsPendingStackFieldStoresAcrossReadonlyReadsOfOtherLocals()
 {
-    unsafe
-    {
-        return AliasAwareMemoryOptimizationKeepsPendingStackFieldStoresAcrossReadonlyReadsOfOtherLocalsImpl();
-    }
+    return AliasAwareMemoryOptimizationKeepsPendingStackFieldStoresAcrossReadonlyReadsOfOtherLocalsImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool AliasAwareMemoryOptimizationKeepsPendingSiblingFieldStoresAcrossReadonlyFieldReads()
 {
-    unsafe
-    {
-        return AliasAwareMemoryOptimizationKeepsPendingSiblingFieldStoresAcrossReadonlyFieldReadsImpl();
-    }
+    return AliasAwareMemoryOptimizationKeepsPendingSiblingFieldStoresAcrossReadonlyFieldReadsImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool AliasAwareMemoryOptimizationKeepsPendingSiblingFieldStoresAcrossExactFieldCopies()
 {
-    unsafe
-    {
-        return AliasAwareMemoryOptimizationKeepsPendingSiblingFieldStoresAcrossExactFieldCopiesImpl();
-    }
+    return AliasAwareMemoryOptimizationKeepsPendingSiblingFieldStoresAcrossExactFieldCopiesImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool ScalarReplacementRemovesDeadStackFieldStores()
 {
-    unsafe
-    {
-        return ScalarReplacementRemovesDeadStackFieldStoresImpl();
-    }
+    return ScalarReplacementRemovesDeadStackFieldStoresImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool ScalarReplacementKeepsStackFieldStoresObservedByLaterLoad()
 {
-    unsafe
-    {
-        return ScalarReplacementKeepsStackFieldStoresObservedByLaterLoadImpl();
-    }
+    return ScalarReplacementKeepsStackFieldStoresObservedByLaterLoadImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool ScalarReplacementKeepsStackFieldStoresAcrossUnknownIndirectLoads()
 {
-    unsafe
-    {
-        return ScalarReplacementKeepsStackFieldStoresAcrossUnknownIndirectLoadsImpl();
-    }
+    return ScalarReplacementKeepsStackFieldStoresAcrossUnknownIndirectLoadsImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool ScalarReplacementKeepsStackFieldStoresAcrossUnknownCalls()
 {
-    unsafe
-    {
-        return ScalarReplacementKeepsStackFieldStoresAcrossUnknownCallsImpl();
-    }
+    return ScalarReplacementKeepsStackFieldStoresAcrossUnknownCallsImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool ScalarReplacementKeepsStackFieldStoresAfterAggregateAddressEscapes()
 {
-    unsafe
-    {
-        return ScalarReplacementKeepsStackFieldStoresAfterAggregateAddressEscapesImpl();
-    }
+    return ScalarReplacementKeepsStackFieldStoresAfterAggregateAddressEscapesImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool ScalarReplacementRemovesDeadExactScalarFieldCopies()
 {
-    unsafe
-    {
-        return ScalarReplacementRemovesDeadExactScalarFieldCopiesImpl();
-    }
+    return ScalarReplacementRemovesDeadExactScalarFieldCopiesImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool ScalarReplacementKeepsExactScalarFieldCopiesObservedByLaterLoad()
 {
-    unsafe
-    {
-        return ScalarReplacementKeepsExactScalarFieldCopiesObservedByLaterLoadImpl();
-    }
+    return ScalarReplacementKeepsExactScalarFieldCopiesObservedByLaterLoadImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool ScalarReplacementRemovesDeadAggregateCopiesToStackLocals()
 {
-    unsafe
-    {
-        return ScalarReplacementRemovesDeadAggregateCopiesToStackLocalsImpl();
-    }
+    return ScalarReplacementRemovesDeadAggregateCopiesToStackLocalsImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool ScalarReplacementKeepsAggregateCopiesObservedByLaterFieldLoad()
 {
-    unsafe
-    {
-        return ScalarReplacementKeepsAggregateCopiesObservedByLaterFieldLoadImpl();
-    }
+    return ScalarReplacementKeepsAggregateCopiesObservedByLaterFieldLoadImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool ScalarReplacementKeepsAggregateCopiesAfterDestinationAddressEscapes()
 {
-    unsafe
-    {
-        return ScalarReplacementKeepsAggregateCopiesAfterDestinationAddressEscapesImpl();
-    }
+    return ScalarReplacementKeepsAggregateCopiesAfterDestinationAddressEscapesImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool ScalarReplacementKeepsDeadAggregateMoveCopiesConservative()
 {
-    unsafe
-    {
-        return ScalarReplacementKeepsDeadAggregateMoveCopiesConservativeImpl();
-    }
+    return ScalarReplacementKeepsDeadAggregateMoveCopiesConservativeImpl();
 }
 

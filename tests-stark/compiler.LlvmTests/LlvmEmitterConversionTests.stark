@@ -1,0 +1,347 @@
+import LlvmTestSupport
+import System.Testing
+module LlvmEmitterConversionTests
+
+// Ported slice of tests/compiler.Tests/LlvmEmitterConversionTests.cs, running
+// against the current C# host compiler through the host test protocol. Each Impl
+// compiles a small source program, requests the rendered `llvm` artifact, and
+// asserts on raw LLVM-IR substrings with System.Testing text helpers.
+//
+// PORT-NOTE (applies to every case below): the C# oracle does NOT compile a
+// Stark source string. It builds an SSA module by hand (EmitSingleConversion /
+// EmitSingleUse), wiring a `module Demo` unit with a single `Run` function whose
+// body returns one `SsaConvertRValue` / `SsaUseRValue` over a literal SSA
+// constant, and feeds that directly to LlvmIrEmitter. The host LLVM bridge only
+// exposes a single-source compile, so each case is re-expressed as the
+// equivalent `module Demo` Stark program: a `Run` function that returns the same
+// conversion (C-style cast `(Target) value`) or plain use of the same literal.
+// The LLVM-text substring assertions are translated verbatim. The original C#
+// tests remain in tests/compiler.Tests as the oracle until cutover.
+
+// Ported from LlvmEmitterConversionTests.FloatToIntegerConversionEmitsFptosi.
+internal fn bool FloatToIntegerConversionEmitsFptosiImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-conv-float-to-integer-fptosi",
+        raw"""
+module Demo
+
+unsafe fn i32[min max] Run()
+{
+    stack f32 value = 3.5;
+    return (i32[min max]) value;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    // f32 3.5 emits as the bit-exact hex float of (double)(float)3.5.
+    return Contains(llvm, "define")
+        && Contains(llvm, "@Run()")
+        && Contains(llvm, "fptosi float 0x400C000000000000 to i32")
+        && Contains(llvm, "ret i32");
+}
+
+// Ported from LlvmEmitterConversionTests.IntegerToRawPointerConversionEmitsInttoptr.
+internal fn bool IntegerToRawPointerConversionEmitsInttoptrImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-conv-integer-to-rawptr-inttoptr",
+        raw"""
+module Demo
+
+unsafe fn rawptr<i32[min max]> Run()
+{
+    stack i64[min max] value = 1024;
+    return (rawptr<i32[min max]>) value;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "define")
+        && Contains(llvm, "@Run()")
+        && Contains(llvm, "inttoptr i64 1024 to ptr")
+        && Contains(llvm, "ret ptr");
+}
+
+// Ported from LlvmEmitterConversionTests.RawPointerToIntegerConversionEmitsPtrtoint.
+internal fn bool RawPointerToIntegerConversionEmitsPtrtointImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-conv-rawptr-to-integer-ptrtoint",
+        raw"""
+module Demo
+
+unsafe fn i64[min max] Run()
+{
+    stack rawptr<i32[min max]> value = null;
+    return (i64[min max]) value;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "define")
+        && Contains(llvm, "@Run()")
+        && Contains(llvm, "ptrtoint ptr null to i64")
+        && Contains(llvm, "ret i64");
+}
+
+// Ported from LlvmEmitterConversionTests.RawPointerToRawPointerConversionIsLlvmNoOp.
+internal fn bool RawPointerToRawPointerConversionIsLlvmNoOpImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-conv-rawptr-to-rawptr-noop",
+        raw"""
+module Demo
+
+unsafe fn rawptr<i32[min max]> Run()
+{
+    stack rawmutptr<i32[min max]> value = null;
+    return (rawptr<i32[min max]>) value;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "define")
+        && Contains(llvm, "@Run()")
+        && DoesNotContain(llvm, "getelementptr inbounds nuw i8, ptr null, i64 0")
+        && DoesNotContain(llvm, "select i1 true, ptr")
+        && DoesNotContain(llvm, "ptrtoint")
+        && DoesNotContain(llvm, "inttoptr")
+        && Contains(llvm, "ret ptr");
+}
+
+// Ported from LlvmEmitterConversionTests.SameWidthIntegerConversionIsEmittedAsAlias.
+internal fn bool SameWidthIntegerConversionIsEmittedAsAliasImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-conv-same-width-integer-alias",
+        raw"""
+module Demo
+
+unsafe fn i32[min max] Run()
+{
+    stack i32[min max] value = 7;
+    return (i32[min max]) value;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "define")
+        && DoesNotContain(llvm, "add i32")
+        && DoesNotContain(llvm, "trunc")
+        && DoesNotContain(llvm, "zext")
+        && DoesNotContain(llvm, "sext")
+        && Contains(llvm, "ret i32 7");
+}
+
+// Ported from LlvmEmitterConversionTests.SameWidthFloatConversionIsEmittedAsAlias.
+internal fn bool SameWidthFloatConversionIsEmittedAsAliasImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-conv-same-width-float-alias",
+        raw"""
+module Demo
+
+unsafe fn f32 Run()
+{
+    stack f32 value = 3.5;
+    return (f32) value;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "define")
+        && DoesNotContain(llvm, "fadd")
+        && DoesNotContain(llvm, "select i1 true, float")
+        && DoesNotContain(llvm, "fpext")
+        && DoesNotContain(llvm, "fptrunc")
+        && Contains(llvm, "ret float 0x400C000000000000");
+}
+
+// Ported from LlvmEmitterConversionTests.FloatUseRValueIsEmittedAsAlias.
+internal fn bool FloatUseRValueIsEmittedAsAliasImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-use-float-alias",
+        raw"""
+module Demo
+
+unsafe fn f32 Run()
+{
+    stack f32 value = 3.5;
+    return value;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "define")
+        && DoesNotContain(llvm, "add float")
+        && DoesNotContain(llvm, "fadd")
+        && Contains(llvm, "ret float 0x400C000000000000");
+}
+
+// Ported from LlvmEmitterConversionTests.RawPointerUseRValueIsEmittedAsAlias.
+internal fn bool RawPointerUseRValueIsEmittedAsAliasImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-use-rawptr-alias",
+        raw"""
+module Demo
+
+unsafe fn rawptr<i32[min max]> Run()
+{
+    stack rawptr<i32[min max]> value = null;
+    return value;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "define")
+        && DoesNotContain(llvm, "add ptr")
+        && Contains(llvm, "ret ptr null");
+}
+
+// Ported from LlvmEmitterConversionTests.AggregateUseRValueIsEmittedAsAlias.
+internal fn bool AggregateUseRValueIsEmittedAsAliasImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-use-aggregate-ascii-alias",
+        raw"""
+module Demo
+
+unsafe fn ascii Run()
+{
+    stack ascii value = "hello";
+    return value;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "define")
+        && DoesNotContain(llvm, "add %stark_ascii")
+        && Contains(llvm, "ret %stark_ascii { ptr getelementptr");
+}
+
+// Ported from LlvmEmitterConversionTests.AsciiToUnicodeReinterpretCastIsNotLowered.
+internal fn bool AsciiToUnicodeReinterpretCastIsNotLoweredImpl()
+{
+    // PORT-NOTE: the C# oracle hand-builds an unsupported `ascii` -> `unicode`
+    // SSA conversion and inspects the body-emission fallback comment plus the
+    // `declare`-only header that LlvmIrEmitter leaves for the source body. The
+    // host pipeline rejects the same conversion during SSA validation (STK5002:
+    // "conversion from 'ascii' to 'unicode' ... not supported by SSA LLVM
+    // emission"), so the closest expressible signal is that the compile does NOT
+    // succeed and no `define` body for Run is produced.
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-conv-ascii-to-unicode-reinterpret",
+        raw"""
+module Demo
+
+unsafe fn unicode Run()
+{
+    stack ascii value = "hello";
+    return (unicode) value;
+}
+""");
+    if (Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return DoesNotContain(llvm, "define");
+}
+
+// Ported from LlvmEmitterConversionTests.UnicodeToAsciiReinterpretCastIsNotLowered.
+internal fn bool UnicodeToAsciiReinterpretCastIsNotLoweredImpl()
+{
+    // PORT-NOTE: as above, the C# oracle hand-builds an unsupported `unicode` ->
+    // `ascii` SSA conversion and inspects the fallback comment and `declare`-only
+    // header. The host pipeline rejects it during SSA validation (STK5002), so
+    // the port reduces to asserting the compile does NOT succeed and emits no
+    // `define` body for Run.
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-conv-unicode-to-ascii-reinterpret",
+        raw"""
+module Demo
+
+unsafe fn ascii Run()
+{
+    stack unicode value = "α";
+    return (ascii) value;
+}
+""");
+    if (Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return DoesNotContain(llvm, "define");
+}
+
+// Ported from LlvmEmitterConversionTests.SourceBodyFallbackDeclarationCanBeStrictlyOmitted.
+internal fn bool SourceBodyFallbackDeclarationCanBeStrictlyOmittedImpl()
+{
+    // PORT-NOTE: the C# oracle passes emitFallbackDeclarationsForSourceBodies:
+    // false to LlvmIrEmitter and checks that the unsupported `ascii` -> `unicode`
+    // source body is reported as "declaration omitted for source body 'Run'"
+    // instead of a `declare`. That emitter knob is not exposed through the host
+    // single-source bridge, and the conversion is rejected during SSA validation
+    // (STK5002), so the port reduces to the same source as the ascii->unicode
+    // case and asserts the compile does NOT succeed with no `define` body.
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-conv-source-body-fallback-omitted",
+        raw"""
+module Demo
+
+unsafe fn unicode Run()
+{
+    stack ascii value = "hello";
+    return (unicode) value;
+}
+""");
+    if (Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return DoesNotContain(llvm, "define");
+}

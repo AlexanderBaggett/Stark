@@ -250,6 +250,11 @@ public sealed class CompilerPipelineBuilder
 
 public sealed class CompilerPipeline
 {
+    // Diagnostic: when STARK_PASS_TRACE is set, print each pass start/finish to stderr
+    // (flushed) so a hanging pass is identifiable by a [pass-start] with no [pass-done].
+    private static readonly bool PassTraceEnabled =
+        Environment.GetEnvironmentVariable("STARK_PASS_TRACE") is not null;
+
     private readonly IReadOnlyList<ICompilerPass> _passes;
 
     internal CompilerPipeline(IReadOnlyList<ICompilerPass> passes)
@@ -324,12 +329,22 @@ public sealed class CompilerPipeline
             }
 
             var diagnosticsBefore = state.Diagnostics.Count;
+            if (PassTraceEnabled)
+            {
+                Console.Error.WriteLine($"[pass-start] {pass.Id} (phase={pass.Phase})");
+                Console.Error.Flush();
+            }
             var stopwatch = Stopwatch.StartNew();
 
             try
             {
                 pass.Execute(context);
                 stopwatch.Stop();
+                if (PassTraceEnabled)
+                {
+                    Console.Error.WriteLine($"[pass-done]  {pass.Id} {stopwatch.ElapsedMilliseconds}ms");
+                    Console.Error.Flush();
+                }
 
                 state.Executions.Add(new PassExecutionRecord(
                     pass.Id,

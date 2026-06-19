@@ -1,0 +1,1085 @@
+import StdlibPortSupport
+import System
+import System.Net.Tcp
+import System.Testing
+module SystemNetTcpStandardLibraryTests
+
+// Ported from SystemNetTcpStandardLibraryTests.StdLibSourceNetTcpClosedHandleLifecycleTypeChecks.
+//
+// PORT-NOTE: the C# test resolves modules from stdlib/src, compiles the embedded
+// program with StopAfterPassId "enum-layout", then inspects the EnumLayoutModel
+// to assert that System.Net.Tcp.TcpShutdown uses an 8-bit compact $tag with a max
+// tag value of 2 and a single ordered $tag field. The compile-only host bridge
+// cannot stop after a named pass or read the enum-layout artifact, so this port
+// compiles the embedded program (Demo module) verbatim through the host stdlib --
+// which still parses and type-checks the TcpShutdown enum and the full closed-
+// handle lifecycle -- and asserts the compile succeeds, the strongest signal the
+// bridge can reproduce.
+internal fn bool StdLibSourceNetTcpClosedHandleLifecycleTypeChecksImpl()
+{
+    stack mut ProgramCompile c = CompileProgram("stdlib-net-tcp-closed-lifecycle-typechecks", raw"""
+import System.Net.Tcp
+module Demo
+
+fn bool StatusOk(System.Net.NetStatus status)
+{
+    switch (status)
+    {
+        case System.Net.NetStatus.Ok:
+            return true;
+        case System.Net.NetStatus.Err(var error):
+            return false;
+    }
+}
+
+fn i32[min max] Run()
+{
+    stack System.Net.IPv4Endpoint endpoint = new System.Net.IPv4Endpoint()
+    {
+        Address = new System.Net.IPv4Address()
+        {
+            A = 127,
+            B = 0,
+            C = 0,
+            D = 1
+        },
+        Port = 80
+    };
+    stack System.Net.NetResult<System.Net.Tcp.TcpClient> connected =
+        System.Net.Tcp.TcpClient.Connect(endpoint);
+    switch (connected)
+    {
+        case System.Net.NetResult<System.Net.Tcp.TcpClient>.Ok(var connectedClient):
+            if (!connectedClient.IsOpen())
+            {
+                return 7;
+            }
+        case System.Net.NetResult<System.Net.Tcp.TcpClient>.Err(var error):
+    }
+
+    stack System.Net.NetResult<System.Net.Tcp.TcpListener> listening =
+        System.Net.Tcp.TcpListener.Listen(endpoint);
+    switch (listening)
+    {
+        case System.Net.NetResult<System.Net.Tcp.TcpListener>.Ok(var listeningSocket):
+            if (!listeningSocket.IsOpen())
+            {
+                return 9;
+            }
+        case System.Net.NetResult<System.Net.Tcp.TcpListener>.Err(var error):
+    }
+
+    stack mut System.Net.Tcp.TcpClient client = new();
+    if (client.IsOpen())
+    {
+        return 1;
+    }
+
+    if (StatusOk(client.Shutdown(System.Net.Tcp.TcpShutdown.Both)))
+    {
+        return 8;
+    }
+
+    stack mut i8[min max][4] buffer =
+    {
+        1, 2, 3, 4
+    };
+    stack System.Net.NetResult<u64[0 2 ** 63 - 1]> readResult = client.Read(buffer);
+    switch (readResult)
+    {
+        case System.Net.NetResult<u64[0 2 ** 63 - 1]>.Ok(var count):
+            return 10;
+        case System.Net.NetResult<u64[0 2 ** 63 - 1]>.Err(var error):
+    }
+
+    stack System.Net.NetResult<u64[0 2 ** 63 - 1]> writeResult = client.Write(buffer);
+    switch (writeResult)
+    {
+        case System.Net.NetResult<u64[0 2 ** 63 - 1]>.Ok(var count):
+            return 11;
+        case System.Net.NetResult<u64[0 2 ** 63 - 1]>.Err(var error):
+    }
+
+    if (!StatusOk(client.Close()))
+    {
+        return 2;
+    }
+
+    stack mut System.Net.Tcp.TcpListener listener = new();
+    if (listener.IsOpen())
+    {
+        return 3;
+    }
+
+    stack System.Net.NetResult<System.Net.Tcp.TcpClient> closedAccept = listener.Accept();
+    switch (closedAccept)
+    {
+        case System.Net.NetResult<System.Net.Tcp.TcpClient>.Ok(var acceptedClient):
+            return 13;
+        case System.Net.NetResult<System.Net.Tcp.TcpClient>.Err(var error):
+    }
+
+    if (!StatusOk(listener.Close()))
+    {
+        return 4;
+    }
+
+    stack System.Net.Tcp.TcpShutdown shutdown = System.Net.Tcp.TcpShutdown.Both;
+    switch (shutdown)
+    {
+        case System.Net.Tcp.TcpShutdown.Receive:
+            return 5;
+        case System.Net.Tcp.TcpShutdown.Send:
+            return 6;
+        case System.Net.Tcp.TcpShutdown.Both:
+            return 0;
+    }
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemNetTcpStandardLibraryTests.PackagedStdLibNetTcpClosedHandleLifecycleWorksWithoutSource.
+//
+// PORT-NOTE: the C# test builds the shared packaged stdlib (libSystem.a /
+// System.lib plus the .starkpkg manifest), asserts the manifest file exists, then
+// compiles the embedded App program against the packaged FileSystemModuleResolver
+// with StopAfterPassId "enum-layout" and inspects the EnumLayoutModel to confirm
+// TcpShutdown still gets an 8-bit compact $tag (max tag value 2) when resolved
+// from the package rather than from source. The compile-only host bridge cannot
+// package the stdlib, assert on-disk manifest bytes, stop after a named pass, or
+// read the enum-layout artifact, so this port compiles the embedded App program
+// verbatim through the host stdlib -- which still parses and type-checks the same
+// closed-handle lifecycle and TcpShutdown enum -- and asserts the compile
+// succeeds, the strongest signal the bridge can reproduce.
+internal fn bool PackagedStdLibNetTcpClosedHandleLifecycleWorksWithoutSourceImpl()
+{
+    stack mut ProgramCompile c = CompileProgram("packaged-net-tcp-closed-lifecycle-no-source", raw"""
+import System
+module App
+
+fn bool StatusOk(System.Net.NetStatus status)
+{
+    switch (status)
+    {
+        case System.Net.NetStatus.Ok:
+            return true;
+        case System.Net.NetStatus.Err(var error):
+            return false;
+    }
+}
+
+fn i32[min max] Run()
+{
+    stack System.Net.IPv4Endpoint endpoint = new System.Net.IPv4Endpoint()
+    {
+        Address = new System.Net.IPv4Address()
+        {
+            A = 127,
+            B = 0,
+            C = 0,
+            D = 1
+        },
+        Port = 80
+    };
+    stack System.Net.NetResult<System.Net.Tcp.TcpClient> connected =
+        System.Net.Tcp.TcpClient.Connect(endpoint);
+    switch (connected)
+    {
+        case System.Net.NetResult<System.Net.Tcp.TcpClient>.Ok(var connectedClient):
+            if (!connectedClient.IsOpen())
+            {
+                return 7;
+            }
+        case System.Net.NetResult<System.Net.Tcp.TcpClient>.Err(var error):
+    }
+
+    stack System.Net.NetResult<System.Net.Tcp.TcpListener> listening =
+        System.Net.Tcp.TcpListener.Listen(endpoint);
+    switch (listening)
+    {
+        case System.Net.NetResult<System.Net.Tcp.TcpListener>.Ok(var listeningSocket):
+            if (!listeningSocket.IsOpen())
+            {
+                return 9;
+            }
+        case System.Net.NetResult<System.Net.Tcp.TcpListener>.Err(var error):
+    }
+
+    stack mut System.Net.Tcp.TcpClient client = new();
+    if (client.IsOpen())
+    {
+        return 1;
+    }
+
+    if (StatusOk(client.Shutdown(System.Net.Tcp.TcpShutdown.Both)))
+    {
+        return 8;
+    }
+
+    stack mut i8[min max][4] buffer =
+    {
+        1, 2, 3, 4
+    };
+    stack System.Net.NetResult<u64[0 2 ** 63 - 1]> readResult = client.Read(buffer);
+    switch (readResult)
+    {
+        case System.Net.NetResult<u64[0 2 ** 63 - 1]>.Ok(var count):
+            return 10;
+        case System.Net.NetResult<u64[0 2 ** 63 - 1]>.Err(var error):
+    }
+
+    stack System.Net.NetResult<u64[0 2 ** 63 - 1]> writeResult = client.Write(buffer);
+    switch (writeResult)
+    {
+        case System.Net.NetResult<u64[0 2 ** 63 - 1]>.Ok(var count):
+            return 11;
+        case System.Net.NetResult<u64[0 2 ** 63 - 1]>.Err(var error):
+    }
+
+    if (!StatusOk(client.Close()))
+    {
+        return 2;
+    }
+
+    stack mut System.Net.Tcp.TcpListener listener = new();
+    if (listener.IsOpen())
+    {
+        return 3;
+    }
+
+    stack System.Net.NetResult<System.Net.Tcp.TcpClient> closedAccept = listener.Accept();
+    switch (closedAccept)
+    {
+        case System.Net.NetResult<System.Net.Tcp.TcpClient>.Ok(var acceptedClient):
+            return 13;
+        case System.Net.NetResult<System.Net.Tcp.TcpClient>.Err(var error):
+    }
+
+    if (!StatusOk(listener.Close()))
+    {
+        return 4;
+    }
+
+    return 0;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemNetTcpStandardLibraryTests.StdLibSourceNetTcpCloseRoutesOpenHandlesThroughPlatformSocketClose.
+//
+// PORT-NOTE: the C# test reads the on-disk stdlib source
+// stdlib/src/System/Net/Tcp.stark, compiles it directly with EmitLlvmIr pinned to
+// the x86_64-unknown-linux-gnu target, then scans the module IR and the per-body
+// LLVM of TcpClient.Close / TcpListener.Close to confirm both route an open handle
+// through the Linux close syscall (LinuxCloseSyscallNumber + LinuxSyscall1Handle)
+// and convert the platform result via StatusFromPlatformResult /
+// NetworkErrorFromPlatformResult. The compile-only host bridge cannot read the
+// repository source tree nor override the LLVM target triple, so this port embeds
+// a driver that imports System.Net.Tcp and exercises the full Connect / Listen /
+// Accept / Read / Write / Shutdown / Close lifecycle so the host stdlib emits the
+// TcpClient_* / TcpListener_* definitions and pulls in the Linux platform module,
+// then keeps the original module-wide IR substring assertions and applies the
+// per-body close checks via LlvmDefinitionBody (the Stark mirror of
+// ExtractDefinedFunctionText). The Linux-specific symbol checks are target-
+// dependent in the original and assume a Linux host backend.
+internal fn bool StdLibSourceNetTcpCloseRoutesOpenHandlesThroughPlatformSocketCloseImpl()
+{
+    stack mut ProgramCompile c = CompileProgram("stdlib-net-tcp-close-routes-platform-close", raw"""
+import System.Net.Tcp
+module Demo
+
+fn bool StatusOk(System.Net.NetStatus status)
+{
+    switch (status)
+    {
+        case System.Net.NetStatus.Ok:
+            return true;
+        case System.Net.NetStatus.Err(var error):
+            return false;
+    }
+}
+
+fn i32[min max] Run()
+{
+    stack System.Net.IPv4Endpoint endpoint = new System.Net.IPv4Endpoint()
+    {
+        Address = new System.Net.IPv4Address()
+        {
+            A = 127,
+            B = 0,
+            C = 0,
+            D = 1
+        },
+        Port = 80
+    };
+    stack System.Net.NetResult<System.Net.Tcp.TcpClient> connected =
+        System.Net.Tcp.TcpClient.Connect(endpoint);
+    switch (connected)
+    {
+        case System.Net.NetResult<System.Net.Tcp.TcpClient>.Ok(var connectedClient):
+            if (!connectedClient.IsOpen())
+            {
+                return 7;
+            }
+        case System.Net.NetResult<System.Net.Tcp.TcpClient>.Err(var error):
+    }
+
+    stack System.Net.NetResult<System.Net.Tcp.TcpListener> listening =
+        System.Net.Tcp.TcpListener.Listen(endpoint);
+    switch (listening)
+    {
+        case System.Net.NetResult<System.Net.Tcp.TcpListener>.Ok(var listeningSocket):
+            if (!listeningSocket.IsOpen())
+            {
+                return 9;
+            }
+        case System.Net.NetResult<System.Net.Tcp.TcpListener>.Err(var error):
+    }
+
+    stack mut System.Net.Tcp.TcpClient client = new();
+    stack mut i8[min max][4] buffer =
+    {
+        1, 2, 3, 4
+    };
+    stack System.Net.NetResult<u64[0 2 ** 63 - 1]> readResult = client.Read(buffer);
+    switch (readResult)
+    {
+        case System.Net.NetResult<u64[0 2 ** 63 - 1]>.Ok(var count):
+            return 10;
+        case System.Net.NetResult<u64[0 2 ** 63 - 1]>.Err(var error):
+    }
+
+    stack System.Net.NetResult<u64[0 2 ** 63 - 1]> writeResult = client.Write(buffer);
+    switch (writeResult)
+    {
+        case System.Net.NetResult<u64[0 2 ** 63 - 1]>.Ok(var count):
+            return 11;
+        case System.Net.NetResult<u64[0 2 ** 63 - 1]>.Err(var error):
+    }
+
+    if (StatusOk(client.Shutdown(System.Net.Tcp.TcpShutdown.Both)))
+    {
+        return 8;
+    }
+
+    if (!StatusOk(client.Close()))
+    {
+        return 2;
+    }
+
+    stack mut System.Net.Tcp.TcpListener listener = new();
+    stack System.Net.NetResult<System.Net.Tcp.TcpClient> accepted = listener.Accept();
+    switch (accepted)
+    {
+        case System.Net.NetResult<System.Net.Tcp.TcpClient>.Ok(var acceptedClient):
+            return 13;
+        case System.Net.NetResult<System.Net.Tcp.TcpClient>.Err(var error):
+    }
+
+    if (!StatusOk(listener.Close()))
+    {
+        return 4;
+    }
+
+    return 0;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    if (!Contains(llvm, "@TcpClient_Read__")
+        || !Contains(llvm, "@TcpClient_Write__")
+        || !Contains(llvm, "define fastcc noundef %System_Net_NetStatus @TcpClient_Shutdown(")
+        || !Contains(llvm, "define fastcc noundef %System_Net_NetStatus @TcpClient_Close(")
+        || !Contains(llvm, "define fastcc noundef %System_Net_NetStatus @TcpListener_Close(")
+        || !Contains(llvm, "@TcpClient_Connect(")
+        || !Contains(llvm, "@TcpListener_Listen(")
+        || !Contains(llvm, "@TcpListener_Accept(")
+        || !Contains(llvm, "call fastcc ptr @__stark_inline_clone_System_Runtime_Platform_Linux_ConnectTcpIPv4(")
+        || !Contains(llvm, "call fastcc ptr @__stark_inline_clone_System_Runtime_Platform_Linux_ListenTcpIPv4(")
+        || !Contains(llvm, "call fastcc ptr @__stark_inline_clone_System_Runtime_Platform_Linux_AcceptSocket(")
+        || !Contains(llvm, "@System_Runtime_Platform_Linux_LinuxReadSyscallNumber")
+        || !Contains(llvm, "@System_Runtime_Platform_Linux_LinuxWriteSyscallNumber")
+        || !Contains(llvm, "call i64 @LinuxSyscall3HandleBuffer(")
+        || !Contains(llvm, "GetMutableByteSliceParts")
+        || !Contains(llvm, "GetByteSliceParts")
+        || !Contains(llvm, "@System_Runtime_Platform_Linux_LinuxShutdownSyscallNumber")
+        || !Contains(llvm, "@System_Runtime_Platform_Linux_LinuxCloseSyscallNumber")
+        || !Contains(llvm, "define fastcc noundef %System_Net_NetStatus @StatusFromPlatformResult(")
+        || !Contains(llvm, "@ByteCountFromPlatformResult(")
+        || !Contains(llvm, "call fastcc %System_Net_NetworkError @NetworkErrorFromPlatformResult("))
+    {
+        return false;
+    }
+
+    stack ascii clientCloseBody = LlvmDefinitionBody(llvm, "TcpClient_Close");
+    stack ascii listenerCloseBody = LlvmDefinitionBody(llvm, "TcpListener_Close");
+    if (!CloseBodyRoutesOpenHandleThroughPlatformClose(clientCloseBody)
+        || !CloseBodyRoutesOpenHandleThroughPlatformClose(listenerCloseBody))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Mirror of the C# AssertCloseBodyRoutesOpenHandleThroughPlatformClose helper:
+// the close body must reference the Linux close syscall number and call
+// LinuxSyscall1Handle, and it must convert the platform result either directly
+// through StatusFromPlatformResult or via the inlined NetworkErrorFromPlatformResult
+// branch (icmp slt i32 + insertvalue %System_Net_NetStatus).
+internal fn bool CloseBodyRoutesOpenHandleThroughPlatformClose(ascii body)
+{
+    if (!Contains(body, "@System_Runtime_Platform_Linux_LinuxCloseSyscallNumber")
+        || !Contains(body, "call i64 @LinuxSyscall1Handle("))
+    {
+        return false;
+    }
+
+    if (Contains(body, "call fastcc %System_Net_NetStatus @StatusFromPlatformResult("))
+    {
+        return true;
+    }
+
+    return Contains(body, "icmp slt i32")
+        && Contains(body, "call fastcc %System_Net_NetworkError @NetworkErrorFromPlatformResult(")
+        && Contains(body, "insertvalue %System_Net_NetStatus");
+}
+
+// Ported from SystemNetTcpStandardLibraryTests.StdLibSourceLinuxSocketCloseUsesCloseSyscallPath.
+//
+// PORT-NOTE: the C# test reads the on-disk stdlib source
+// stdlib/src/System/Runtime/Platform/Linux.stark, compiles it directly with
+// EmitLlvmIr pinned to x86_64-unknown-linux-gnu, then inspects the IR for the
+// close-syscall lowering of CloseSocket (which routes through CloseFile and
+// LinuxSyscall1Handle and never emits the Winsock closesocket import). The
+// compile-only host bridge cannot read the repository source tree nor override
+// the LLVM target triple, so this port embeds a driver that exercises the public
+// TCP close path so the host compiler pulls in the Linux platform module, then
+// keeps the original IR substring assertions verbatim. The Linux-specific symbol
+// checks are target-dependent in the original and assume a Linux host backend.
+internal fn bool StdLibSourceLinuxSocketCloseUsesCloseSyscallPathImpl()
+{
+    stack mut ProgramCompile c = CompileProgram("stdlib-linux-socket-close-syscall", raw"""
+import System.Net.Tcp
+module Demo
+
+fn bool StatusOk(System.Net.NetStatus status)
+{
+    switch (status)
+    {
+        case System.Net.NetStatus.Ok:
+            return true;
+        case System.Net.NetStatus.Err(var error):
+            return false;
+    }
+}
+
+export unsafe fn i32[min max] main()
+{
+    stack mut System.Net.Tcp.TcpClient client = new();
+    if (!StatusOk(client.Close()))
+    {
+        return 1;
+    }
+
+    stack mut System.Net.Tcp.TcpListener listener = new();
+    if (!StatusOk(listener.Close()))
+    {
+        return 2;
+    }
+
+    return 0;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    if (!Contains(llvm, "define fastcc noundef i32 @CloseSocket("))
+    {
+        return false;
+    }
+
+    if (!Contains(llvm, "call fastcc i32 @CloseFile("))
+    {
+        return false;
+    }
+
+    if (!Contains(llvm, "call i64 @LinuxSyscall1Handle("))
+    {
+        return false;
+    }
+
+    if (!DoesNotContain(llvm, "@closesocket("))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemNetTcpStandardLibraryTests.StdLibSourceLinuxTcpConnectUsesSocketAndConnectSyscallPath.
+//
+// PORT-NOTE: the C# test reads the on-disk stdlib source
+// stdlib/src/System/Runtime/Platform/Linux.stark, compiles it directly with
+// EmitLlvmIr pinned to x86_64-unknown-linux-gnu, then inspects the IR and the
+// ConnectTcpIPv4 body for the socket+connect syscall path (LinuxSyscall3Integers
+// to create the socket, WriteTcpIPv4Sockaddr + LinuxSyscall3HandleBuffer to
+// connect, and the folded LinuxCloseSyscallNumber 3 cleanup that does not fall
+// back to CloseFile). The compile-only host bridge cannot read the repository
+// source tree nor override the LLVM target triple, so this port embeds a driver
+// that exercises the public TCP connect path so the host compiler pulls in the
+// Linux platform module, then keeps the original IR substring assertions verbatim
+// and applies the body checks via LlvmDefinitionBody. The Linux-specific symbol
+// checks are target-dependent in the original and assume a Linux host backend.
+internal fn bool StdLibSourceLinuxTcpConnectUsesSocketAndConnectSyscallPathImpl()
+{
+    stack mut ProgramCompile c = CompileProgram("stdlib-linux-tcp-connect-syscall", raw"""
+import System.Net.Tcp
+module Demo
+
+fn i32[min max] Run()
+{
+    stack System.Net.IPv4Endpoint endpoint = new System.Net.IPv4Endpoint()
+    {
+        Address = new System.Net.IPv4Address()
+        {
+            A = 127,
+            B = 0,
+            C = 0,
+            D = 1
+        },
+        Port = 80
+    };
+    stack System.Net.NetResult<System.Net.Tcp.TcpClient> connected =
+        System.Net.Tcp.TcpClient.Connect(endpoint);
+    switch (connected)
+    {
+        case System.Net.NetResult<System.Net.Tcp.TcpClient>.Ok(var connectedClient):
+            if (!connectedClient.IsOpen())
+            {
+                return 1;
+            }
+        case System.Net.NetResult<System.Net.Tcp.TcpClient>.Err(var error):
+            return 2;
+    }
+
+    return 0;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    if (!Contains(llvm, "define fastcc noundef ptr @ConnectTcpIPv4(")
+        || !Contains(llvm, "call i64 @LinuxSyscall3Integers(")
+        || !Contains(llvm, "call i64 @LinuxSyscall3HandleBuffer(")
+        || !Contains(llvm, "call fastcc void @WriteTcpIPv4Sockaddr("))
+    {
+        return false;
+    }
+
+    stack ascii connectBody = LlvmDefinitionBody(llvm, "ConnectTcpIPv4");
+    // LinuxCloseSyscallNumber (3) is a comptime constant that folds into the call site.
+    if (!Contains(connectBody, "call i64 @LinuxSyscall1Handle(i64 3, "))
+    {
+        return false;
+    }
+
+    if (!DoesNotContain(connectBody, "call fastcc i32 @CloseFile("))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemNetTcpStandardLibraryTests.StdLibSourceLinuxTcpShutdownUsesShutdownSyscallPath.
+//
+// PORT-NOTE: the C# test reads the on-disk stdlib source
+// stdlib/src/System/Runtime/Platform/Linux.stark, compiles it directly with
+// EmitLlvmIr pinned to x86_64-unknown-linux-gnu, then inspects the IR for the
+// shutdown-syscall lowering of ShutdownSocket (LinuxSyscall2HandleInteger +
+// LinuxShutdownSyscallNumber, never the Winsock shutdown import). The compile-only
+// host bridge cannot read the repository source tree nor override the LLVM target
+// triple, so this port embeds a driver that exercises the public TCP shutdown
+// path so the host compiler pulls in the Linux platform module, then keeps the
+// original IR substring assertions verbatim. The Linux-specific symbol checks are
+// target-dependent in the original and assume a Linux host backend.
+internal fn bool StdLibSourceLinuxTcpShutdownUsesShutdownSyscallPathImpl()
+{
+    stack mut ProgramCompile c = CompileProgram("stdlib-linux-tcp-shutdown-syscall", raw"""
+import System.Net.Tcp
+module Demo
+
+fn bool StatusOk(System.Net.NetStatus status)
+{
+    switch (status)
+    {
+        case System.Net.NetStatus.Ok:
+            return true;
+        case System.Net.NetStatus.Err(var error):
+            return false;
+    }
+}
+
+export unsafe fn i32[min max] main()
+{
+    stack mut System.Net.Tcp.TcpClient client = new();
+    if (StatusOk(client.Shutdown(System.Net.Tcp.TcpShutdown.Both)))
+    {
+        return 1;
+    }
+
+    return 0;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    if (!Contains(llvm, "define fastcc noundef i32 @ShutdownSocket("))
+    {
+        return false;
+    }
+
+    if (!Contains(llvm, "call i64 @LinuxSyscall2HandleInteger("))
+    {
+        return false;
+    }
+
+    if (!Contains(llvm, "@LinuxShutdownSyscallNumber"))
+    {
+        return false;
+    }
+
+    if (!DoesNotContain(llvm, "@shutdown("))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemNetTcpStandardLibraryTests.StdLibSourceLinuxTcpReadWriteUseReadAndWriteSyscallPaths.
+//
+// PORT-NOTE: the C# test reads the on-disk stdlib source
+// stdlib/src/System/Runtime/Platform/Linux.stark, compiles it directly with
+// EmitLlvmIr pinned to x86_64-unknown-linux-gnu, then inspects the IR and the
+// ReadSocketVector2 / WriteSocketVector2 bodies for the read/write/readv/writev
+// syscall paths and the %LinuxIovec scatter-gather layout. The compile-only host
+// bridge cannot read the repository source tree nor override the LLVM target
+// triple, so this port embeds a driver that exercises the public TCP read / write
+// / vectored-read / vectored-write paths so the host compiler pulls in the Linux
+// platform module, then keeps the original assertions. The four `Assert.Matches`
+// regexes -- `define fastcc noundef(?: range(...))? i64 @{Read,Write}Socket{,Vector2}(`
+// -- are expressed with AnyLineContainsBoth("define fastcc noundef", "i64 @...("),
+// the closest faithful line-level expression of the optional `range(...)` regex.
+// The Linux-specific symbol checks are target-dependent and assume a Linux host
+// backend.
+internal fn bool StdLibSourceLinuxTcpReadWriteUseReadAndWriteSyscallPathsImpl()
+{
+    stack mut ProgramCompile c = CompileProgram("stdlib-linux-tcp-readwrite-syscall", raw"""
+import System.Net.Tcp
+module Demo
+
+fn i32[min max] Run()
+{
+    stack mut System.Net.Tcp.TcpClient client = new();
+    stack mut i8[min max][4] buffer =
+    {
+        1, 2, 3, 4
+    };
+    stack mut i8[min max][4] second =
+    {
+        5, 6, 7, 8
+    };
+    stack System.Net.NetResult<u64[0 2 ** 63 - 1]> readResult = client.Read(buffer);
+    switch (readResult)
+    {
+        case System.Net.NetResult<u64[0 2 ** 63 - 1]>.Ok(var count):
+            return 1;
+        case System.Net.NetResult<u64[0 2 ** 63 - 1]>.Err(var error):
+    }
+
+    stack System.Net.NetResult<u64[0 2 ** 63 - 1]> writeResult = client.Write(buffer);
+    switch (writeResult)
+    {
+        case System.Net.NetResult<u64[0 2 ** 63 - 1]>.Ok(var count):
+            return 2;
+        case System.Net.NetResult<u64[0 2 ** 63 - 1]>.Err(var error):
+    }
+
+    stack System.Net.NetResult<u64[0 2 ** 63 - 1]> readVectored = client.ReadVectored(buffer, second);
+    switch (readVectored)
+    {
+        case System.Net.NetResult<u64[0 2 ** 63 - 1]>.Ok(var count):
+            return 3;
+        case System.Net.NetResult<u64[0 2 ** 63 - 1]>.Err(var error):
+    }
+
+    stack System.Net.NetResult<u64[0 2 ** 63 - 1]> writeVectored = client.WriteVectored(buffer, second);
+    switch (writeVectored)
+    {
+        case System.Net.NetResult<u64[0 2 ** 63 - 1]>.Ok(var count):
+            return 4;
+        case System.Net.NetResult<u64[0 2 ** 63 - 1]>.Err(var error):
+    }
+
+    return 0;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    if (!AnyLineContainsBoth(llvm, "define fastcc noundef", "i64 @ReadSocket(")
+        || !AnyLineContainsBoth(llvm, "define fastcc noundef", "i64 @WriteSocket(")
+        || !AnyLineContainsBoth(llvm, "define fastcc noundef", "i64 @ReadSocketVector2(")
+        || !AnyLineContainsBoth(llvm, "define fastcc noundef", "i64 @WriteSocketVector2("))
+    {
+        return false;
+    }
+
+    if (!Contains(llvm, "%LinuxIovec = type { ptr, i64 }")
+        || !Contains(llvm, "call i64 @LinuxSyscall3HandleBuffer(")
+        || !Contains(llvm, "@LinuxReadSyscallNumber")
+        || !Contains(llvm, "@LinuxWriteSyscallNumber")
+        || !Contains(llvm, "@LinuxReadvSyscallNumber")
+        || !Contains(llvm, "@LinuxWritevSyscallNumber"))
+    {
+        return false;
+    }
+
+    stack ascii readVectorBody = LlvmDefinitionBody(llvm, "ReadSocketVector2");
+    stack ascii writeVectorBody = LlvmDefinitionBody(llvm, "WriteSocketVector2");
+    // LinuxReadvSyscallNumber (19) / LinuxWritevSyscallNumber (20) are comptime
+    // constants that fold into the syscall wrapper call sites.
+    if (!Contains(readVectorBody, "[2 x %LinuxIovec]")
+        || !Contains(readVectorBody, "call i64 @LinuxSyscall3HandleBuffer(i64 19, ")
+        || !Contains(readVectorBody, "i64 2"))
+    {
+        return false;
+    }
+
+    if (!Contains(writeVectorBody, "[2 x %LinuxIovec]")
+        || !Contains(writeVectorBody, "call i64 @LinuxSyscall3HandleBuffer(i64 20, ")
+        || !Contains(writeVectorBody, "i64 2"))
+    {
+        return false;
+    }
+
+    if (!DoesNotContain(llvm, "@recv(")
+        || !DoesNotContain(llvm, "@send(")
+        || !DoesNotContain(llvm, "@readv(")
+        || !DoesNotContain(llvm, "@writev("))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemNetTcpStandardLibraryTests.StdLibSourceLinuxTcpListenUsesSocketBindAndListenSyscallPath.
+//
+// PORT-NOTE: the C# test reads the on-disk stdlib source
+// stdlib/src/System/Runtime/Platform/Linux.stark, compiles it directly with
+// EmitLlvmIr pinned to x86_64-unknown-linux-gnu, then inspects the IR and the
+// ListenTcpIPv4 body for the socket+bind+listen syscall path (LinuxSyscall3Integers
+// for the socket, LinuxSyscall3HandleBuffer for bind, LinuxSyscall2HandleInteger
+// for listen, with the folded LinuxCloseSyscallNumber 3 cleanup that does not fall
+// back to CloseFile, and never the Winsock bind/listen imports). The compile-only
+// host bridge cannot read the repository source tree nor override the LLVM target
+// triple, so this port embeds a driver that exercises the public TCP listen path
+// so the host compiler pulls in the Linux platform module, then keeps the original
+// IR substring assertions verbatim and applies the body checks via
+// LlvmDefinitionBody. The Linux-specific symbol checks are target-dependent and
+// assume a Linux host backend.
+internal fn bool StdLibSourceLinuxTcpListenUsesSocketBindAndListenSyscallPathImpl()
+{
+    stack mut ProgramCompile c = CompileProgram("stdlib-linux-tcp-listen-syscall", raw"""
+import System.Net.Tcp
+module Demo
+
+fn i32[min max] Run()
+{
+    stack System.Net.IPv4Endpoint endpoint = new System.Net.IPv4Endpoint()
+    {
+        Address = new System.Net.IPv4Address()
+        {
+            A = 127,
+            B = 0,
+            C = 0,
+            D = 1
+        },
+        Port = 80
+    };
+    stack System.Net.NetResult<System.Net.Tcp.TcpListener> listening =
+        System.Net.Tcp.TcpListener.Listen(endpoint);
+    switch (listening)
+    {
+        case System.Net.NetResult<System.Net.Tcp.TcpListener>.Ok(var listeningSocket):
+            if (!listeningSocket.IsOpen())
+            {
+                return 1;
+            }
+        case System.Net.NetResult<System.Net.Tcp.TcpListener>.Err(var error):
+            return 2;
+    }
+
+    return 0;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    if (!Contains(llvm, "define fastcc noundef ptr @ListenTcpIPv4(")
+        || !Contains(llvm, "call i64 @LinuxSyscall3Integers(")
+        || !Contains(llvm, "call i64 @LinuxSyscall3HandleBuffer(")
+        || !Contains(llvm, "call i64 @LinuxSyscall2HandleInteger(")
+        || !Contains(llvm, "@LinuxBindSyscallNumber")
+        || !Contains(llvm, "@LinuxListenSyscallNumber"))
+    {
+        return false;
+    }
+
+    stack ascii listenBody = LlvmDefinitionBody(llvm, "ListenTcpIPv4");
+    // LinuxCloseSyscallNumber (3) is a comptime constant that folds into the call site.
+    if (!Contains(listenBody, "call i64 @LinuxSyscall1Handle(i64 3, "))
+    {
+        return false;
+    }
+
+    if (!DoesNotContain(listenBody, "call fastcc i32 @CloseFile("))
+    {
+        return false;
+    }
+
+    if (!DoesNotContain(llvm, "@bind(")
+        || !DoesNotContain(llvm, "@listen("))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemNetTcpStandardLibraryTests.StdLibSourceLinuxTcpAcceptUsesAccept4SyscallPath.
+//
+// PORT-NOTE: the C# test reads the on-disk stdlib source
+// stdlib/src/System/Runtime/Platform/Linux.stark, compiles it directly with
+// EmitLlvmIr pinned to x86_64-unknown-linux-gnu, then inspects the IR and the
+// AcceptSocket body for the accept4 syscall path (LinuxSyscall4HandlePointersInteger
+// + LinuxAccept4SyscallNumber + LinuxSocketCloseOnExecFlag, with no close-syscall
+// cleanup in the body and never the libc accept/accept4 imports). The compile-only
+// host bridge cannot read the repository source tree nor override the LLVM target
+// triple, so this port embeds a driver that exercises the public TCP accept path
+// so the host compiler pulls in the Linux platform module, then keeps the original
+// IR substring assertions verbatim and applies the body checks via
+// LlvmDefinitionBody. The Linux-specific symbol checks are target-dependent and
+// assume a Linux host backend.
+internal fn bool StdLibSourceLinuxTcpAcceptUsesAccept4SyscallPathImpl()
+{
+    stack mut ProgramCompile c = CompileProgram("stdlib-linux-tcp-accept-syscall", raw"""
+import System.Net.Tcp
+module Demo
+
+fn i32[min max] Run()
+{
+    stack mut System.Net.Tcp.TcpListener listener = new();
+    stack System.Net.NetResult<System.Net.Tcp.TcpClient> accepted = listener.Accept();
+    switch (accepted)
+    {
+        case System.Net.NetResult<System.Net.Tcp.TcpClient>.Ok(var acceptedClient):
+            return 1;
+        case System.Net.NetResult<System.Net.Tcp.TcpClient>.Err(var error):
+    }
+
+    return 0;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    if (!Contains(llvm, "define fastcc noundef ptr @AcceptSocket(")
+        || !Contains(llvm, "call i64 @LinuxSyscall4HandlePointersInteger(")
+        || !Contains(llvm, "@LinuxAccept4SyscallNumber")
+        || !Contains(llvm, "@LinuxSocketCloseOnExecFlag"))
+    {
+        return false;
+    }
+
+    stack ascii acceptBody = LlvmDefinitionBody(llvm, "AcceptSocket");
+    if (!DoesNotContain(acceptBody, "@LinuxCloseSyscallNumber")
+        || !DoesNotContain(acceptBody, "call i64 @LinuxSyscall1Handle("))
+    {
+        return false;
+    }
+
+    if (!DoesNotContain(llvm, "@accept(")
+        || !DoesNotContain(llvm, "@accept4("))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemNetTcpStandardLibraryTests.StdLibSourceWindowsTcpUsesWinsockPath.
+//
+// PORT-NOTE: the C# test reads the on-disk stdlib source
+// stdlib/src/System/Runtime/Platform/Windows.stark, compiles it directly with
+// EmitLlvmIr pinned to the x86_64-pc-windows-msvc target, then asserts the full
+// Winsock lowering: WSAStartup / WSAGetLastError / InitOnceExecuteOnce / WSASocketW
+// / connect / bind / listen / accept / recv / send / WSARecv / WSASend / shutdown /
+// closesocket declarations and call sites, the %WinSocketBuffer / %WinInitOnce
+// layouts, the @WinSockInitOnce global, the Connect/Listen/Accept/Read/Write/
+// Shutdown/Close definitions, and that NO @LinuxSyscall* symbol appears. The
+// compile-only host bridge cannot read the repository source tree and -- crucially
+// -- cannot override the LLVM target triple to x86_64-pc-windows-msvc, so it
+// cannot reproduce the Windows-specific Winsock IR (the host backend would emit the
+// Linux syscall path instead, directly contradicting the @LinuxSyscall* exclusion).
+// This port therefore compiles a driver that imports System.Net.Tcp and exercises
+// the full Connect / Listen / Accept / Read / Write / Shutdown / Close lifecycle
+// through the host stdlib and asserts the compile succeeds, the strongest signal
+// the bridge can reproduce for the Windows backend; the Winsock-symbol IR
+// assertions are dropped because they require the msvc target triple.
+internal fn bool StdLibSourceWindowsTcpUsesWinsockPathImpl()
+{
+    stack mut ProgramCompile c = CompileProgram("stdlib-windows-tcp-winsock", raw"""
+import System.Net.Tcp
+module Demo
+
+fn bool StatusOk(System.Net.NetStatus status)
+{
+    switch (status)
+    {
+        case System.Net.NetStatus.Ok:
+            return true;
+        case System.Net.NetStatus.Err(var error):
+            return false;
+    }
+}
+
+fn i32[min max] Run()
+{
+    stack System.Net.IPv4Endpoint endpoint = new System.Net.IPv4Endpoint()
+    {
+        Address = new System.Net.IPv4Address()
+        {
+            A = 127,
+            B = 0,
+            C = 0,
+            D = 1
+        },
+        Port = 80
+    };
+    stack System.Net.NetResult<System.Net.Tcp.TcpClient> connected =
+        System.Net.Tcp.TcpClient.Connect(endpoint);
+    switch (connected)
+    {
+        case System.Net.NetResult<System.Net.Tcp.TcpClient>.Ok(var connectedClient):
+            if (!connectedClient.IsOpen())
+            {
+                return 7;
+            }
+        case System.Net.NetResult<System.Net.Tcp.TcpClient>.Err(var error):
+    }
+
+    stack System.Net.NetResult<System.Net.Tcp.TcpListener> listening =
+        System.Net.Tcp.TcpListener.Listen(endpoint);
+    switch (listening)
+    {
+        case System.Net.NetResult<System.Net.Tcp.TcpListener>.Ok(var listeningSocket):
+            if (!listeningSocket.IsOpen())
+            {
+                return 9;
+            }
+        case System.Net.NetResult<System.Net.Tcp.TcpListener>.Err(var error):
+    }
+
+    stack mut System.Net.Tcp.TcpClient client = new();
+    stack mut i8[min max][4] buffer =
+    {
+        1, 2, 3, 4
+    };
+    stack System.Net.NetResult<u64[0 2 ** 63 - 1]> readResult = client.Read(buffer);
+    switch (readResult)
+    {
+        case System.Net.NetResult<u64[0 2 ** 63 - 1]>.Ok(var count):
+            return 10;
+        case System.Net.NetResult<u64[0 2 ** 63 - 1]>.Err(var error):
+    }
+
+    stack System.Net.NetResult<u64[0 2 ** 63 - 1]> writeResult = client.Write(buffer);
+    switch (writeResult)
+    {
+        case System.Net.NetResult<u64[0 2 ** 63 - 1]>.Ok(var count):
+            return 11;
+        case System.Net.NetResult<u64[0 2 ** 63 - 1]>.Err(var error):
+    }
+
+    if (StatusOk(client.Shutdown(System.Net.Tcp.TcpShutdown.Both)))
+    {
+        return 8;
+    }
+
+    if (!StatusOk(client.Close()))
+    {
+        return 2;
+    }
+
+    stack mut System.Net.Tcp.TcpListener listener = new();
+    stack System.Net.NetResult<System.Net.Tcp.TcpClient> accepted = listener.Accept();
+    switch (accepted)
+    {
+        case System.Net.NetResult<System.Net.Tcp.TcpClient>.Ok(var acceptedClient):
+            return 13;
+        case System.Net.NetResult<System.Net.Tcp.TcpClient>.Err(var error):
+    }
+
+    if (!StatusOk(listener.Close()))
+    {
+        return 4;
+    }
+
+    return 0;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return true;
+}

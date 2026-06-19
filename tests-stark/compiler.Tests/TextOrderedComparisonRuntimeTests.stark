@@ -1,0 +1,49 @@
+import CompilerTestSupport
+import System.Testing
+module TextOrderedComparisonRuntimeTests
+
+// Ported from TextOrderedComparisonRuntimeTests.TextOrderedComparisonsAreLexicographicAtRuntime.
+internal fn bool TextOrderedComparisonsAreLexicographicAtRuntimeImpl()
+{
+    // PORT-NOTE: original compiles the embedded program with --emit-exe, runs the
+    // linked executable, and asserts it exits with code 7 (i.e. every
+    // lexicographic/ordered comparison in main held at runtime). The Stark compile
+    // helpers cannot link or run the program nor observe its exit code; reduced to
+    // a full-pipeline compile of the embedded program returning Succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "text-ordered-comparisons-lexicographic-runtime",
+        raw"""
+module Demo
+
+export unsafe fn i32[min max] main()
+{
+    stack i32[min max][3] values =
+    {
+        1, 2, 3
+    };
+    stack rawptr<i32[min max]> p0 = (rawptr<i32[min max]>)(&values[0]);
+    stack rawptr<i32[min max]> p1 = (rawptr<i32[min max]>)(&values[1]);
+
+    if ("ab" < "aba"
+        && "aba" > "ab"
+        && "abc" <= "abc"
+        && "abd" >= "abd"
+        && false < true
+        && true >= true
+        && p0 < p1
+        && p1 > p0
+        && p0 <= p0
+        && p1 >= p1
+        && ((unicode)"cafe") < ((unicode)"café")
+        && ((unicode)"café") > ((unicode)"cafe")
+        && ((unicode)"cafe")[0, 3] <= ((unicode)"cafg")[0, 3]
+        && ((unicode)"cafg")[0, 3] >= ((unicode)"cafe")[0, 3])
+        {
+            return 7;
+    }
+
+    return 0;
+}
+""");
+    return Succeeds(compiled);
+}

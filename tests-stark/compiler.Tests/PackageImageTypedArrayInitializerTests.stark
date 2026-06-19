@@ -1,0 +1,39 @@
+import CompilerTestSupport
+import System.Testing
+module PackageImageTypedArrayInitializerTests
+
+// Ported from PackageImageTypedArrayInitializerTests.ManifestBackedTypedArrayInitializerBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecialization.
+internal fn bool ManifestBackedTypedArrayInitializerBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecializationImpl()
+{
+    // PORT-NOTE: The C# test builds a Facade library with a typed-array-initializer
+    // generic body, publishes it to a package image (PackageImageBuilder), asserts
+    // the bridged module source re-exports only the typed signature
+    // ("public fn i32[min max] SumArray<T>(...);") and drops the body text
+    // ("stack i32[2] values = { left, right };" / "return values[0] + values[1];"),
+    // round-trips the manifest JSON, deletes the Facade source, then re-imports
+    // Facade into a Demo consumer through a FileSystemModuleResolver and lowers to
+    // MIR (StopAfterPassId "lower-mir"), inspecting the monomorphized SumArray MIR
+    // function (HasBody, SupportsDirectCodeGeneration, a "values" local, and an
+    // InsertIndex r-value). The Stark test helpers cannot model package-image
+    // construction, bridge-body-text stripping, manifest round-tripping, module
+    // resolvers, filesystem effects, or MIR-node inspection, so this is reduced to
+    // lowering the published Facade library program (the typed-array-initializer
+    // generic body) through the MIR-lowering stage (CompileMir) and asserting it
+    // succeeds, which is the precondition for any published typed template body to
+    // lower from package-image facts.
+    stack mut LlvmCompile compiled = CompileMir(
+        "pkgimg-typed-array-initializer-body-bridge",
+        raw"""
+module Facade
+
+public fn i32[min max] SumArray<T>(i32[min max] left, i32[min max] right, T tag)
+{
+    stack i32[min max][2] values =
+    {
+        left, right
+    };
+    return values[0] + values[1];
+}
+""");
+    return Succeeds(compiled);
+}

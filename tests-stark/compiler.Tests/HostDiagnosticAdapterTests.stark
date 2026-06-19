@@ -19,8 +19,10 @@ const AdapterTimeoutMilliseconds = 180000;
 // Compiles `source` through the host bridge full pipeline (no artifacts) and
 // returns the outcome. Surfaces transport/path errors so callers can treat
 // "no STARK_HOST_COMPILER" as a failing fact rather than a false pass.
-internal unsafe fn HostResult<HostCompileOutcome> CompileForAdapter(ascii id, ascii source)
+internal fn HostResult<HostCompileOutcome> CompileForAdapter(ascii id, ascii source)
 {
+    unsafe
+    {
     stack mut OwnedAscii compilerPath = new();
     switch (CompilerPathFromEnvironment())
     {
@@ -39,13 +41,16 @@ internal unsafe fn HostResult<HostCompileOutcome> CompileForAdapter(ascii id, as
         "",
         0,
         AdapterTimeoutMilliseconds);
+    }
 }
 
 // Compiles the known-bad (missing ';') program, adapts its first diagnostic to
 // a System.Testing.Diagnostic, and asserts code/severity/stage/message/location
 // through the existing structured predicates.
-public unsafe fn bool MissingSemicolonAdaptsToStructuredDiagnosticImpl()
+public fn bool MissingSemicolonAdaptsToStructuredDiagnosticImpl()
 {
+    unsafe
+    {
     stack mut HostCompileOutcome outcome = new();
     switch (CompileForAdapter(
         "host-adapter-missing-semicolon",
@@ -80,23 +85,29 @@ unsafe fn void Run()
         && DiagnosticStage("parse", adapted)
         && DiagnosticMessageContains(adapted, "missing ';'")
         && DiagnosticHasLocation(adapted);
+    }
 }
 
 // The severity-string mapping is total: error -> Error, warning -> Warning,
 // everything else -> Info. Pure; runs without the host compiler.
-public unsafe fn bool SeverityMappingCoversKnownTokensImpl()
+public fn bool SeverityMappingCoversKnownTokensImpl()
 {
+    unsafe
+    {
     return SeverityEquals(HostSeverityFromAscii("error"), DiagnosticSeverity.Error)
         && SeverityEquals(HostSeverityFromAscii("warning"), DiagnosticSeverity.Warning)
         && SeverityEquals(HostSeverityFromAscii("info"), DiagnosticSeverity.Info)
         && SeverityEquals(HostSeverityFromAscii("note"), DiagnosticSeverity.Info)
         && SeverityEquals(HostSeverityFromAscii(""), DiagnosticSeverity.Info);
+    }
 }
 
 // TEST-06 (item 3): the convenience helpers CompileAssertClean and
 // CompileAssertHasCode behave on a good and a bad compile.
-public unsafe fn bool ConvenienceHelpersBehaveImpl()
+public fn bool ConvenienceHelpersBehaveImpl()
 {
+    unsafe
+    {
     stack mut HostCompileOutcome good = new();
     switch (CompileForAdapter(
         "host-helpers-clean",
@@ -140,14 +151,17 @@ unsafe fn void Run()
         && CompileAssertClean(bad) == false;
 
     return goodOk && badOk;
+    }
 }
 
 // TEST-06c: a root source that imports a sibling module placed in a temp
 // search directory compiles successfully when that directory is passed, and
 // fails to resolve the import when it is not. Proves searchDirectories drives
 // the server's module resolver.
-public unsafe fn bool SearchDirectoryResolvesSiblingModuleImpl()
+public fn bool SearchDirectoryResolvesSiblingModuleImpl()
 {
+    unsafe
+    {
     stack mut OwnedAscii searchDir = new();
     switch (System.FileSystem.CreateTempDirectory("stark-hostbridge-searchdir-"))
     {
@@ -199,13 +213,16 @@ export fn i32[min max] main()
 
     stack bool cleaned = IOOk2(System.FileSystem.DeleteTreeIfExists(searchDir.View()));
     return ready && succeededWith && failedWithout;
+    }
 }
 
 // Compiles `source` through the host bridge full pipeline, exposing
 // `searchDirectory` (empty disables module resolution), and returns true only
 // when transport, protocol, and the compile itself all succeed.
-internal unsafe fn bool CompileSucceedsWithSearchDir(ascii id, ascii source, ascii searchDirectory)
+internal fn bool CompileSucceedsWithSearchDir(ascii id, ascii source, ascii searchDirectory)
 {
+    unsafe
+    {
     stack mut OwnedAscii compilerPath = new();
     switch (CompilerPathFromEnvironment())
     {
@@ -229,6 +246,7 @@ internal unsafe fn bool CompileSucceedsWithSearchDir(ascii id, ascii source, asc
         case HostResult<HostCompileOutcome>.Ok(var outcome):
             stack mut HostCompileOutcome captured = outcome;
             return !captured.HadProtocolError() && captured.CompileSucceeded();
+    }
     }
 }
 
@@ -283,8 +301,10 @@ internal finite law bool SeverityEquals(DiagnosticSeverity actual, DiagnosticSev
 // `Helpers` placed in a temp search directory) and asserts the typed result
 // accessors: LoadedModuleCount() >= 2, RootModuleName() == "Demo", and
 // PassExecuted("type-check").
-public unsafe fn bool TypedResultAccessorsReportModulesAndPassesImpl()
+public fn bool TypedResultAccessorsReportModulesAndPassesImpl()
 {
+    unsafe
+    {
     stack mut OwnedAscii compilerPath = new();
     switch (CompilerPathFromEnvironment())
     {
@@ -359,14 +379,17 @@ export fn i32[min max] main()
 
     stack bool cleaned = IOOk2(System.FileSystem.DeleteTreeIfExists(searchDir.View()));
     return ready && checks;
+    }
 }
 
 // TEST-06e: compiles a trivial module requesting the `mir` artifact with an
 // artifactOutputDirectory, asserts exactly one artifact file was written, reads
 // the file back with System.IO.File, and asserts the MIR text contains the
 // function name `main`.
-public unsafe fn bool ArtifactFileOutputWritesAndReadsBackImpl()
+public fn bool ArtifactFileOutputWritesAndReadsBackImpl()
 {
+    unsafe
+    {
     stack mut OwnedAscii compilerPath = new();
     switch (CompilerPathFromEnvironment())
     {
@@ -428,12 +451,15 @@ export fn i32[min max] main()
 
     stack bool cleaned = IOOk2(System.FileSystem.DeleteTreeIfExists(outputDir.View()));
     return checks;
+    }
 }
 
 // TEST-06d: batches one good source and one with a missing ';' in ONE server
 // round-trip, asserting response[0] succeeded and response[1] reports STK1000.
-public unsafe fn bool RequestBatchingReportsPerResponseResultsImpl()
+public fn bool RequestBatchingReportsPerResponseResultsImpl()
 {
+    unsafe
+    {
     stack mut OwnedAscii compilerPath = new();
     switch (CompilerPathFromEnvironment())
     {
@@ -475,5 +501,6 @@ unsafe fn void Run()
                 && batch.SucceededAt(1) == false
                 && System.Text.Equals(batch.FirstDiagnosticCodeAt(1), "STK1000")
                 && batch.HasDiagnosticCodeAt(1, "STK1000");
+    }
     }
 }

@@ -31,70 +31,82 @@ public struct ProgramCompile
 
 // Compiles the program through the full pipeline with the LLVM artifact
 // requested. `Ok` additionally requires the compile itself to succeed.
-public unsafe fn ProgramCompile CompileProgram(ascii id, ascii source)
+public fn ProgramCompile CompileProgram(ascii id, ascii source)
 {
-    stack mut ProgramCompile compiled = RunHostCompile(id, source, "", "llvm");
-    if (compiled.Ok && !compiled.Outcome.CompileSucceeded())
+    unsafe
     {
-        compiled.Ok = false;
-    }
-
-    return compiled;
-}
-
-public unsafe fn bool Succeeds(mut borrow ProgramCompile compiled)
-{
-    return compiled.Ok && compiled.Outcome.CompileSucceeded();
-}
-
-public unsafe fn ascii Llvm(mut borrow ProgramCompile compiled)
-{
-    return compiled.Outcome.ArtifactText("llvm");
-}
-
-internal unsafe fn ProgramCompile RunHostCompile(ascii id, ascii source, ascii stopAfterPassId, ascii artifactName)
-{
-    stack mut OwnedAscii compilerPath = new();
-    stack mut bool havePath = false;
-    switch (CompilerPathFromEnvironment())
-    {
-        case HostResult<OwnedAscii>.Err(var pathError):
-            havePath = false;
-        case HostResult<OwnedAscii>.Ok(var path):
-            compilerPath = path;
-            havePath = true;
-    }
-
-    stack mut HostCompileOutcome outcome = new();
-    stack mut bool transportOk = false;
-    if (havePath)
-    {
-        switch (CompileOnceArtifactIn(
-            compilerPath.View(),
-            id,
-            source,
-            stopAfterPassId,
-            artifactName,
-            "",
-            0,
-            HostTimeoutMilliseconds))
+        stack mut ProgramCompile compiled = RunHostCompile(id, source, "", "llvm");
+        if (compiled.Ok && !compiled.Outcome.CompileSucceeded())
         {
-            case HostResult<HostCompileOutcome>.Err(var error):
-                transportOk = false;
-            case HostResult<HostCompileOutcome>.Ok(var captured):
-                outcome = captured;
-                transportOk = true;
+            compiled.Ok = false;
         }
-    }
 
-    stack mut bool ok = false;
-    if (transportOk)
+        return compiled;
+    }
+}
+
+public fn bool Succeeds(mut borrow ProgramCompile compiled)
+{
+    unsafe
     {
-        ok = !outcome.HadProtocolError();
+        return compiled.Ok && compiled.Outcome.CompileSucceeded();
     }
+}
 
-    stack mut ProgramCompile compiled = new();
-    compiled.Ok = ok;
-    compiled.Outcome = outcome;
-    return compiled;
+public fn ascii Llvm(mut borrow ProgramCompile compiled)
+{
+    unsafe
+    {
+        return compiled.Outcome.ArtifactText("llvm");
+    }
+}
+
+internal fn ProgramCompile RunHostCompile(ascii id, ascii source, ascii stopAfterPassId, ascii artifactName)
+{
+    unsafe
+    {
+        stack mut OwnedAscii compilerPath = new();
+        stack mut bool havePath = false;
+        switch (CompilerPathFromEnvironment())
+        {
+            case HostResult<OwnedAscii>.Err(var pathError):
+                havePath = false;
+            case HostResult<OwnedAscii>.Ok(var path):
+                compilerPath = path;
+                havePath = true;
+        }
+
+        stack mut HostCompileOutcome outcome = new();
+        stack mut bool transportOk = false;
+        if (havePath)
+        {
+            switch (CompileOnceArtifactIn(
+                compilerPath.View(),
+                id,
+                source,
+                stopAfterPassId,
+                artifactName,
+                "",
+                0,
+                HostTimeoutMilliseconds))
+            {
+                case HostResult<HostCompileOutcome>.Err(var error):
+                    transportOk = false;
+                case HostResult<HostCompileOutcome>.Ok(var captured):
+                    outcome = captured;
+                    transportOk = true;
+            }
+        }
+
+        stack mut bool ok = false;
+        if (transportOk)
+        {
+            ok = !outcome.HadProtocolError();
+        }
+
+        stack mut ProgramCompile compiled = new();
+        compiled.Ok = ok;
+        compiled.Outcome = outcome;
+        return compiled;
+    }
 }

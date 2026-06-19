@@ -37,8 +37,10 @@ public struct MirCompile
 
 // Compiles the source stopping after the "lower-mir" pass with the MIR text
 // artifact requested. `Ok` additionally requires the compile itself to succeed.
-public unsafe fn MirCompile CompileMir(ascii id, ascii source)
+public fn MirCompile CompileMir(ascii id, ascii source)
 {
+    unsafe
+    {
     stack mut MirCompile compiled = RunHostMirCompile(id, source);
     if (compiled.Ok && !compiled.Outcome.CompileSucceeded())
     {
@@ -46,36 +48,48 @@ public unsafe fn MirCompile CompileMir(ascii id, ascii source)
     }
 
     return compiled;
+    }
 }
 
 // True when the transport succeeded and the compile reported success.
-public unsafe fn bool Succeeds(mut borrow MirCompile compiled)
+public fn bool Succeeds(mut borrow MirCompile compiled)
 {
+    unsafe
+    {
     return compiled.Ok && compiled.Outcome.CompileSucceeded();
+    }
 }
 
 // Returns the rendered MIR artifact text of a successful CompileMir, or empty
 // text. The returned view borrows the outcome's owned buffer.
-public unsafe fn ascii Mir(mut borrow MirCompile compiled)
+public fn ascii Mir(mut borrow MirCompile compiled)
 {
+    unsafe
+    {
     return compiled.Outcome.ArtifactText("mir");
+    }
 }
 
 // True when the compile succeeded and the rendered MIR text contains `fragment`.
-public unsafe fn bool MirContains(mut borrow MirCompile compiled, ascii fragment)
+public fn bool MirContains(mut borrow MirCompile compiled, ascii fragment)
 {
+    unsafe
+    {
     if (!Succeeds(compiled))
     {
         return false;
     }
 
     return System.Testing.Contains(compiled.Outcome.ArtifactText("mir"), fragment);
+    }
 }
 
 // True when the compile succeeded and the rendered MIR text contains all two
 // fragments (anywhere in the text).
-public unsafe fn bool MirContainsAll2(mut borrow MirCompile compiled, ascii first, ascii second)
+public fn bool MirContainsAll2(mut borrow MirCompile compiled, ascii first, ascii second)
 {
+    unsafe
+    {
     if (!Succeeds(compiled))
     {
         return false;
@@ -84,16 +98,19 @@ public unsafe fn bool MirContainsAll2(mut borrow MirCompile compiled, ascii firs
     stack ascii text = compiled.Outcome.ArtifactText("mir");
     return System.Testing.Contains(text, first)
         && System.Testing.Contains(text, second);
+    }
 }
 
 // True when the compile succeeded and the rendered MIR text contains all three
 // fragments (anywhere in the text).
-public unsafe fn bool MirContainsAll3(
+public fn bool MirContainsAll3(
     mut borrow MirCompile compiled,
     ascii first,
     ascii second,
     ascii third)
 {
+    unsafe
+    {
     if (!Succeeds(compiled))
     {
         return false;
@@ -103,17 +120,20 @@ public unsafe fn bool MirContainsAll3(
     return System.Testing.Contains(text, first)
         && System.Testing.Contains(text, second)
         && System.Testing.Contains(text, third);
+    }
 }
 
 // True when the compile succeeded and the rendered MIR text contains all four
 // fragments (anywhere in the text).
-public unsafe fn bool MirContainsAll4(
+public fn bool MirContainsAll4(
     mut borrow MirCompile compiled,
     ascii first,
     ascii second,
     ascii third,
     ascii fourth)
 {
+    unsafe
+    {
     if (!Succeeds(compiled))
     {
         return false;
@@ -124,33 +144,42 @@ public unsafe fn bool MirContainsAll4(
         && System.Testing.Contains(text, second)
         && System.Testing.Contains(text, third)
         && System.Testing.Contains(text, fourth);
+    }
 }
 
 // True when the compile succeeded and the rendered MIR text does NOT contain
 // `fragment`.
-public unsafe fn bool MirDoesNotContain(mut borrow MirCompile compiled, ascii fragment)
+public fn bool MirDoesNotContain(mut borrow MirCompile compiled, ascii fragment)
 {
+    unsafe
+    {
     if (!Succeeds(compiled))
     {
         return false;
     }
 
     return !System.Testing.Contains(compiled.Outcome.ArtifactText("mir"), fragment);
+    }
 }
 
 // Number of times `fragment` appears in the rendered MIR text. Used by facts
 // asserting an operand was evaluated exactly once (for example a single shared
 // `Next()` call in a comparison chain).
-public unsafe fn u64[0 2 ** 63 - 1] MirOccurrences(mut borrow MirCompile compiled, ascii fragment)
+public fn u64[0 2 ** 63 - 1] MirOccurrences(mut borrow MirCompile compiled, ascii fragment)
 {
+    unsafe
+    {
     return CountOccurrences(compiled.Outcome.ArtifactText("mir"), fragment);
+    }
 }
 
 // Counts non-overlapping occurrences of `needle` in `haystack`. Returns 0 when
 // either is empty.
-internal unsafe fn u64[0 2 ** 63 - 1] CountOccurrences(ascii haystack, ascii needle)
+internal fn u64[0 2 ** 63 - 1] CountOccurrences(ascii haystack, ascii needle)
     where overlap(haystack, needle)
 {
+    unsafe
+    {
     stack i64[min max] haystackLength = AsciiLength(haystack);
     stack i64[min max] needleLength = AsciiLength(needle);
     if (haystackLength <= 0 || needleLength <= 0 || needleLength > haystackLength)
@@ -183,6 +212,7 @@ internal unsafe fn u64[0 2 ** 63 - 1] CountOccurrences(ascii haystack, ascii nee
     }
 
     return matches;
+    }
 }
 
 internal unsafe fn bool MatchesAt(
@@ -211,8 +241,10 @@ internal unsafe fn bool MatchesAt(
 // ---------------------------------------------------------------------------
 
 // Ported from MidLevelIrLoweringTests.IfStatementsLowerToBranchingBlocks.
-public unsafe fn bool IfStatementsLowerToBranchingBlocksBody()
+public fn bool IfStatementsLowerToBranchingBlocksBody()
 {
+    unsafe
+    {
     stack mut MirCompile compiled = CompileMir(
         "mir-if-branching",
         raw"""
@@ -231,11 +263,14 @@ unsafe finite law i32[min max] Run()
 }
 """);
     return MirContainsAll4(compiled, "branch true ->", "_if_then:", "_if_else:", "_if_join:");
+    }
 }
 
 // Ported from MidLevelIrLoweringTests.WhileLoopsLowerToBackedgeControlFlow.
-public unsafe fn bool WhileLoopsLowerToBackedgeControlFlowBody()
+public fn bool WhileLoopsLowerToBackedgeControlFlowBody()
 {
+    unsafe
+    {
     stack mut MirCompile compiled = CompileMir(
         "mir-while-backedge",
         raw"""
@@ -252,11 +287,14 @@ unsafe finite law void Run()
 }
 """);
     return MirContainsAll3(compiled, "_while_willexit_cond:", "_while_body:", "_while_exit:");
+    }
 }
 
 // Ported from MidLevelIrLoweringTests.ForLoopsProduceConditionIteratorAndExitBlocks.
-public unsafe fn bool ForLoopsProduceConditionIteratorAndExitBlocksBody()
+public fn bool ForLoopsProduceConditionIteratorAndExitBlocksBody()
 {
+    unsafe
+    {
     stack mut MirCompile compiled = CompileMir(
         "mir-for-blocks",
         raw"""
@@ -273,14 +311,17 @@ unsafe finite law void Run()
 }
 """);
     return MirContainsAll4(compiled, "i: stack i32 mut", "_for_willexit_cond:", "_for_iter:", "_for_exit:");
+    }
 }
 
 // Ported from MidLevelIrLoweringTests.LabeledBreakAndContinueLowerThroughNestedLoops.
 // The C# original asserts on multiple while condition/exit blocks and goto
 // back-edges; over the rendered text we assert the program lowers cleanly with
 // both an outer and inner loop and the labeled break/continue join targets.
-public unsafe fn bool LabeledBreakAndContinueLowerThroughNestedLoopsBody()
+public fn bool LabeledBreakAndContinueLowerThroughNestedLoopsBody()
 {
+    unsafe
+    {
     stack mut MirCompile compiled = CompileMir(
         "mir-labeled-break-continue",
         raw"""
@@ -316,11 +357,14 @@ unsafe finite law i32[min max] Run(i32[min max] count)
 """);
     return MirContainsAll3(compiled, "_while_willexit_cond:", "_while_body:", "_while_exit:")
         && MirContains(compiled, "direct-codegen: true");
+    }
 }
 
 // Ported from MidLevelIrLoweringTests.EnumConstructorsLowerToDirectTagFieldInserts.
-public unsafe fn bool EnumConstructorsLowerToDirectTagFieldInsertsBody()
+public fn bool EnumConstructorsLowerToDirectTagFieldInsertsBody()
 {
+    unsafe
+    {
     stack mut MirCompile compiled = CompileMir(
         "mir-enum-tag-inserts",
         raw"""
@@ -350,11 +394,14 @@ unsafe fn i32[min max] Run()
     return MirContains(compiled, "Token.End.$tag = 0")
         && MirContains(compiled, "Token.Integer[0] = 5")
         && MirContainsAll2(compiled, "Token.Move.X = 1", "Token.Move.Y = 2");
+    }
 }
 
 // Ported from MidLevelIrLoweringTests.ComparisonChainsLowerToShortCircuitBlocksAndReuseSharedOperands.
-public unsafe fn bool ComparisonChainsLowerToShortCircuitBlocksBody()
+public fn bool ComparisonChainsLowerToShortCircuitBlocksBody()
 {
+    unsafe
+    {
     stack mut MirCompile compiled = CompileMir(
         "mir-cmpchain-blocks",
         raw"""
@@ -371,12 +418,15 @@ unsafe fn bool Run()
 }
 """);
     return MirContainsAll3(compiled, "_cmpchain_next_1:", "_cmpchain_false_0:", "_cmpchain_join:");
+    }
 }
 
 // Companion to the comparison-chain port: the shared inner call is materialized
 // once. The C# original asserts a single direct Next() call statement in Run.
-public unsafe fn bool ComparisonChainsReuseSharedOperandBody()
+public fn bool ComparisonChainsReuseSharedOperandBody()
 {
+    unsafe
+    {
     stack mut MirCompile compiled = CompileMir(
         "mir-cmpchain-shared",
         raw"""
@@ -395,11 +445,14 @@ unsafe fn bool Run()
     // Two functions render: Next (its own body) and Run (one shared call temp).
     // "= Next()" only appears for the materialized call inside Run.
     return Succeeds(compiled) && MirOccurrences(compiled, "= Next() @") == 1;
+    }
 }
 
 // Ported from MidLevelIrLoweringTests.ShortCircuitOrLowersToMultipleBlocksAndDirectCodegen.
-public unsafe fn bool ShortCircuitOrLowersToMultipleBlocksBody()
+public fn bool ShortCircuitOrLowersToMultipleBlocksBody()
 {
+    unsafe
+    {
     stack mut MirCompile compiled = CompileMir(
         "mir-short-circuit-or",
         raw"""
@@ -413,11 +466,14 @@ unsafe fn bool Run(bool left, bool right, bool fallback)
     return MirContains(compiled, "direct-codegen: true")
         && MirContains(compiled, "_or: temp bool")
         && MirContainsAll2(compiled, "_or_rhs_", "_or_short_");
+    }
 }
 
 // Ported from MidLevelIrLoweringTests.ConditionalExpressionLowersToJoinableBlocks.
-public unsafe fn bool ConditionalExpressionLowersToJoinableBlocksBody()
+public fn bool ConditionalExpressionLowersToJoinableBlocksBody()
 {
+    unsafe
+    {
     stack mut MirCompile compiled = CompileMir(
         "mir-conditional-join",
         raw"""
@@ -430,11 +486,14 @@ unsafe fn i32[min max] Run(bool flag)
 """);
     return MirContains(compiled, "_cond: temp i32")
         && MirContainsAll3(compiled, "_cond_true:", "_cond_false:", "_cond_join:");
+    }
 }
 
 // Ported from MidLevelIrLoweringTests.VoidConditionalCallStatementsLowerToJoinableBlocks.
-public unsafe fn bool VoidConditionalCallStatementsLowerToJoinableBlocksBody()
+public fn bool VoidConditionalCallStatementsLowerToJoinableBlocksBody()
 {
+    unsafe
+    {
     stack mut MirCompile compiled = CompileMir(
         "mir-void-conditional-call",
         raw"""
@@ -454,11 +513,14 @@ unsafe fn void Run(bool flag, rawmutptr<i32[min max]> left, rawmutptr<i32[min ma
 """);
     return MirContainsAll3(compiled, "_cond_true:", "_cond_false:", "_cond_join:")
         && MirContainsAll2(compiled, "eval Reset(left,7)", "eval Reset(right,9)");
+    }
 }
 
 // Ported from MidLevelIrLoweringTests.VoidFunctionPointerCallsLowerAsStatementOnlyOperations.
-public unsafe fn bool VoidFunctionPointerCallsLowerAsStatementOnlyBody()
+public fn bool VoidFunctionPointerCallsLowerAsStatementOnlyBody()
 {
+    unsafe
+    {
     stack mut MirCompile compiled = CompileMir(
         "mir-void-fnptr-call",
         raw"""
@@ -479,11 +541,14 @@ unsafe fn void Run()
     // The void fnptr call lowers to a statement-only eval, not an assignment.
     return MirContains(compiled, "eval op(1)")
         && MirDoesNotContain(compiled, "= op(1)");
+    }
 }
 
 // Ported from MidLevelIrLoweringTests.LocalDeclarationsAndAssignmentsLowerToMirStatements.
-public unsafe fn bool LocalDeclarationsAndAssignmentsLowerToMirStatementsBody()
+public fn bool LocalDeclarationsAndAssignmentsLowerToMirStatementsBody()
 {
+    unsafe
+    {
     stack mut MirCompile compiled = CompileMir(
         "mir-local-decl-assign",
         raw"""
@@ -500,13 +565,16 @@ unsafe fn i32[min max] Run()
         && MirContains(compiled, "storage-live value")
         && MirContainsAll2(compiled, "init value = 1", "value = value+1")
         && MirContains(compiled, "_bin = +");
+    }
 }
 
 // Ported from MidLevelIrLoweringTests.SizeofAndAlignofLowerToConcreteIntegerConstants.
 // The MIR text renders the folded layout expression; the C# original asserts on
 // the concrete value 12 in the object model.
-public unsafe fn bool SizeofAndAlignofLowerBody()
+public fn bool SizeofAndAlignofLowerBody()
 {
+    unsafe
+    {
     stack mut MirCompile compiled = CompileMir(
         "mir-sizeof-alignof",
         raw"""
@@ -518,11 +586,14 @@ unsafe fn i64[min max] Run()
 }
 """);
     return MirContains(compiled, "return sizeof(i32[minmax])+alignof(i64[minmax])");
+    }
 }
 
 // Ported from MidLevelIrLoweringTests.BitwiseXorExpressionLowersToMirBinaryOperation.
-public unsafe fn bool BitwiseXorExpressionLowersToMirBinaryOperationBody()
+public fn bool BitwiseXorExpressionLowersToMirBinaryOperationBody()
 {
+    unsafe
+    {
     stack mut MirCompile compiled = CompileMir(
         "mir-bitwise-xor",
         raw"""
@@ -535,11 +606,14 @@ unsafe finite law i32[min max] Run(i32[min max] left, i32[min max] right)
 """);
     return MirContains(compiled, "_bin = ^")
         && MirContains(compiled, "direct-codegen: true");
+    }
 }
 
 // Ported from MidLevelIrLoweringTests.BitwiseAndShiftChainsRespectPrecedenceAndAssociativity.
-public unsafe fn bool BitwiseAndShiftChainsRespectPrecedenceBody()
+public fn bool BitwiseAndShiftChainsRespectPrecedenceBody()
 {
+    unsafe
+    {
     stack mut MirCompile compiled = CompileMir(
         "mir-bit-shift-chain",
         raw"""
@@ -552,11 +626,14 @@ unsafe fn i32[min max] Run(i32[min max] left, i32[min max] middle, i32[min max] 
 """);
     return MirContainsAll4(compiled, "_bin = <<", "_bin = >>", "_bin = &", "_bin = ^")
         && MirContains(compiled, "_bin = |");
+    }
 }
 
 // Ported from MidLevelIrLoweringTests.WrappingAndSaturatingArithmeticLowerToDistinctMirOperators.
-public unsafe fn bool WrappingAndSaturatingArithmeticLowerToDistinctOperatorsBody()
+public fn bool WrappingAndSaturatingArithmeticLowerToDistinctOperatorsBody()
 {
+    unsafe
+    {
     stack mut MirCompile compiled = CompileMir(
         "mir-wrap-sat-ops",
         raw"""
@@ -579,12 +656,15 @@ unsafe fn i32[min max] Run(i32[min max] left, i32[min max] right)
     return MirContainsAll3(compiled, "wrapped +%= right", "_bin = *%", "-%wrapped")
         && MirContainsAll2(compiled, "saturated +|= right", "_bin = -|")
         && MirContains(compiled, "saturated *|= 2");
+    }
 }
 
 // Ported from MidLevelIrLoweringTests.ExponentExpressionLowersToMirBinaryOperation
 // (float variant) and IntegerExponentExpressionLowersToMirBinaryOperation.
-public unsafe fn bool ExponentExpressionLowersToMirBinaryOperationBody()
+public fn bool ExponentExpressionLowersToMirBinaryOperationBody()
 {
+    unsafe
+    {
     stack mut MirCompile compiled = CompileMir(
         "mir-exponent",
         raw"""
@@ -597,11 +677,14 @@ unsafe finite law i32[min max] Run(i32[min max] left, i32[min max] right)
 """);
     return MirContains(compiled, "_pow = left**right")
         && MirContains(compiled, "direct-codegen: true");
+    }
 }
 
 // Ported from MidLevelIrLoweringTests.ObjectCreationAndFieldAccessLowerToAggregateOperations.
-public unsafe fn bool ObjectCreationAndFieldAccessLowerToAggregateOperationsBody()
+public fn bool ObjectCreationAndFieldAccessLowerToAggregateOperationsBody()
 {
+    unsafe
+    {
     stack mut MirCompile compiled = CompileMir(
         "mir-object-create-field",
         raw"""
@@ -624,11 +707,14 @@ unsafe fn i32[min max] Run(i32[min max] input)
     return MirContains(compiled, "_insertfield = zeroinitializer.Value = input")
         && MirContains(compiled, "_field = box.Value")
         && MirContains(compiled, "init box = newBox(){Value=input}");
+    }
 }
 
 // Ported from MidLevelIrLoweringTests.PrimaryRecordConstructorArgumentsLowerInEvaluationOrder.
-public unsafe fn bool PrimaryRecordConstructorArgumentsLowerInEvaluationOrderBody()
+public fn bool PrimaryRecordConstructorArgumentsLowerInEvaluationOrderBody()
 {
+    unsafe
+    {
     stack mut MirCompile compiled = CompileMir(
         "mir-primary-record-ctor-order",
         raw"""
@@ -656,13 +742,16 @@ unsafe fn i32[min max] Run()
 """);
     return MirContainsAll2(compiled, ".Left = First()", ".Right = Second()")
         && MirContains(compiled, "direct-codegen: true");
+    }
 }
 
 // Ported from MidLevelIrLoweringTests.MemberCallsEvaluateReceiverBeforeExplicitArguments.
 // The C# original asserts the call order [Make, Next, Box.Pick]; over the text
 // we assert all three calls are present and the qualified method name renders.
-public unsafe fn bool MemberCallsEvaluateReceiverBeforeArgumentsBody()
+public fn bool MemberCallsEvaluateReceiverBeforeArgumentsBody()
 {
+    unsafe
+    {
     stack mut MirCompile compiled = CompileMir(
         "mir-member-call-order",
         raw"""
@@ -694,12 +783,15 @@ unsafe fn i32[min max] Run()
     return MirContains(compiled, "_call = Make()")
         && MirContains(compiled, "_call = Next()")
         && MirContains(compiled, ".Pick(Next())");
+    }
 }
 
 // Ported from MidLevelIrLoweringTests.RegisterObjectCreationKeepsValueStyleLocalLowering.
 // A register local renders without the addressable "addr" marker.
-public unsafe fn bool RegisterObjectCreationKeepsValueStyleLocalBody()
+public fn bool RegisterObjectCreationKeepsValueStyleLocalBody()
 {
+    unsafe
+    {
     stack mut MirCompile compiled = CompileMir(
         "mir-register-object",
         raw"""
@@ -721,12 +813,15 @@ unsafe fn i32[min max] Run()
 """);
     return MirContains(compiled, "box: register Box")
         && MirDoesNotContain(compiled, "box: register Box addr");
+    }
 }
 
 // Ported from MidLevelIrLoweringTests.HeapObjectCreationMarksLocalAsAddressableStorage.
 // A heap local renders with the addressable "addr" marker.
-public unsafe fn bool HeapObjectCreationMarksLocalAsAddressableBody()
+public fn bool HeapObjectCreationMarksLocalAsAddressableBody()
 {
+    unsafe
+    {
     stack mut MirCompile compiled = CompileMir(
         "mir-heap-object",
         raw"""
@@ -747,12 +842,15 @@ unsafe fn i32[min max] Run()
 }
 """);
     return MirContains(compiled, "box: heap Box addr");
+    }
 }
 
 // Ported from MidLevelIrLoweringTests.PayloadEnumConstructorCallsDoNotProduceIndirectCallProbeDiagnostics.
 // Both Ok and Bad lower with direct code generation and no fallback.
-public unsafe fn bool PayloadEnumConstructorCallsLowerDirectlyBody()
+public fn bool PayloadEnumConstructorCallsLowerDirectlyBody()
 {
+    unsafe
+    {
     stack mut MirCompile compiled = CompileMir(
         "mir-payload-enum-direct",
         raw"""
@@ -784,12 +882,15 @@ unsafe fn Result<bool> Bad()
         && MirContains(compiled, "Error.Unknown[0] = -1")
         // direct-codegen: true must appear for both functions (no indirect-call fallback).
         && MirOccurrences(compiled, "direct-codegen: true") == 2;
+    }
 }
 
 // Ported from MidLevelIrLoweringTests.CharacterLiteralsLowerToMirStringConstants
 // and ExplicitAsciiLiteralToUnicodeConversionLowersToUnicodeStringConstant.
-public unsafe fn bool CharacterLiteralsLowerToMirStringConstantsBody()
+public fn bool CharacterLiteralsLowerToMirStringConstantsBody()
 {
+    unsafe
+    {
     stack mut MirCompile compiled = CompileMir(
         "mir-char-literals",
         raw"""
@@ -807,14 +908,17 @@ unsafe finite law unicode UnicodeChar()
 """);
     return MirContainsAll2(compiled, "fn ascii AsciiChar()", "fn unicode UnicodeChar()")
         && MirContains(compiled, "return 'a'");
+    }
 }
 
 // Ported from MidLevelIrDynamicFixedArrayIndexingTests
 // .DynamicIndexingOnFixedArrayTemporaryLowersWithoutUnsupportedFallback.
 // Dynamic indexing into a fixed-array temporary lowers through address-of +
 // element-address + indirect-load temporaries with direct code generation.
-public unsafe fn bool DynamicIndexingOnFixedArrayTemporaryLowersBody()
+public fn bool DynamicIndexingOnFixedArrayTemporaryLowersBody()
 {
+    unsafe
+    {
     stack mut MirCompile compiled = CompileMir(
         "mir-dynamic-fixed-array-index",
         raw"""
@@ -829,14 +933,17 @@ unsafe fn i32[min max] Run(i32[min max] index)
         && MirContains(compiled, "_indexbase: temp i32[3] addr")
         && MirContains(compiled, "_addr = &")
         && MirContains(compiled, "_load = ");
+    }
 }
 
 // Ported from MidLevelIrLoweringTests.AcceptedBoundOperationsDoNotProduceNullMirArtifacts
 // (LoweringInvariant). A program exercising structs, enums, switch, fnptr,
 // closures, dynamic storage, sizeof, and text lowers cleanly with every
 // function supporting direct code generation (no fallback bodies).
-public unsafe fn bool AcceptedBoundOperationsLowerWithoutFallbackBody()
+public fn bool AcceptedBoundOperationsLowerWithoutFallbackBody()
 {
+    unsafe
+    {
     stack mut MirCompile compiled = CompileMir(
         "mir-accepted-bound-operations",
         raw"""
@@ -908,13 +1015,16 @@ unsafe fn i32[min max] Run(bool flag)
     return Succeeds(compiled)
         && MirContains(compiled, "direct-codegen: true")
         && MirDoesNotContain(compiled, "direct-codegen: false");
+    }
 }
 
 // Runs one MIR compile against the host compiler test server. Mirrors the
 // transport handling of CompilerTestSupport.RunHostCompile, pinned to the
 // "lower-mir" stop pass and the "mir" textual artifact.
-internal unsafe fn MirCompile RunHostMirCompile(ascii id, ascii source)
+internal fn MirCompile RunHostMirCompile(ascii id, ascii source)
 {
+    unsafe
+    {
     stack mut OwnedAscii compilerPath = new();
     stack mut bool havePath = false;
     switch (CompilerPathFromEnvironment())
@@ -958,4 +1068,5 @@ internal unsafe fn MirCompile RunHostMirCompile(ascii id, ascii source)
     compiled.Ok = ok;
     compiled.Outcome = outcome;
     return compiled;
+    }
 }

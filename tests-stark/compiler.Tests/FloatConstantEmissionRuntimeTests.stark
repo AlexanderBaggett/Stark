@@ -1,0 +1,66 @@
+import CompilerTestSupport
+import System.Testing
+module FloatConstantEmissionRuntimeTests
+
+// Ported from FloatConstantEmissionRuntimeTests.IntegralAndScientificFloatConstantsBuildAndRunThroughLlvmBackend.
+internal fn bool IntegralAndScientificFloatConstantsBuildAndRunThroughLlvmBackendImpl()
+{
+    // PORT-NOTE: original writes the embedded program to disk, compiles it with
+    // --emit-exe through the real LLVM toolchain, then runs the linked executable
+    // and asserts the compile CLI exit is 0 and the process exit code is 0 (each
+    // `return N` guards a float-constant round-trip check). The compile helpers
+    // cannot link or observe a runtime exit code; reduced to driving the embedded
+    // program through the full pipeline and returning Succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "integral-scientific-float-constants-llvm",
+        raw"""
+module Demo
+
+// Powers of ten 10**0 .. 10**22: integral elements (1e0..1e16)
+// and scientific-form elements (1e17..1e22). Every element must
+// emit as a valid LLVM float literal or the backend rejects the
+// module.
+const f64[23] Pow10 =
+{
+    1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11,
+    1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18, 1e19, 1e20, 1e21, 1e22
+};
+
+// Scalar f64 literal in scientific range: previously emitted
+// `ret double 1E+17`.
+unsafe finite f64 ScalarScientific()
+{
+    return 1e17;
+}
+
+export unsafe fn i32[min max] main()
+{
+    // Integral element round-trips to 1.0.
+    if (Pow10[0] != 1.0)
+    {
+        return 1;
+    }
+
+    // Integral element 10**1.
+    if (Pow10[1] != 10.0)
+    {
+        return 2;
+    }
+
+    // Scientific-range array element equals the scalar literal.
+    if (Pow10[17] != ScalarScientific())
+    {
+        return 3;
+    }
+
+    // Largest table entry is finite and positive.
+    if (Pow10[22] <= 0.0)
+    {
+        return 4;
+    }
+
+    return 0;
+}
+""");
+    return Succeeds(compiled);
+}

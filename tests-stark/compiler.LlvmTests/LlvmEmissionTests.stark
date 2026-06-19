@@ -1,32 +1,22 @@
 import LlvmTestSupport
 import System.Testing
-import AddressOfByValueCopyableParameterRegressionTestsP1
-import BenchmarkSourceTestsP1
-import CommentTriviaTestsP1
-import CompilerPipelineEmitLlvmTestsP1
-import CompilerPipelineFullIntegrationTestsP1
-import CompilerPipelineOptimizeSsaTestsP1
-import CompilerPipelineSyntaxModelTestsP1
-import FixedArrayOrderedComparisonEmissionTestsP1
-import GenericUseSiteInstantiationRegressionTestsP1
-import LlvmEmitterConversionTestsP1
-import LlvmIrEmissionTestsP1
-import LlvmIrEmissionTestsP10
-import LlvmIrEmissionTestsP11
-import LlvmIrEmissionTestsP2
-import LlvmIrEmissionTestsP3
-import LlvmIrEmissionTestsP4
-import LlvmIrEmissionTestsP5
-import LlvmIrEmissionTestsP6
-import LlvmIrEmissionTestsP7
-import LlvmIrEmissionTestsP8
-import LlvmIrEmissionTestsP9
-import OutParameterDropRegressionTestsP1
-import PackageImageCallableValueTestsP1
-import RawMultilineStringParityTestsP1
-import SsaOptimizationTestsP1
-import TryPropagationImportedModuleTestsP1
-import V1LoweringContractTestsP1
+import AddressOfByValueCopyableParameterRegressionTests
+import BenchmarkSourceTests
+import CommentTriviaTests
+import CompilerPipelineEmitLlvmTests
+import CompilerPipelineFullIntegrationTests
+import CompilerPipelineOptimizeSsaTests
+import CompilerPipelineSyntaxModelTests
+import FixedArrayOrderedComparisonEmissionTests
+import GenericUseSiteInstantiationRegressionTests
+import LlvmEmitterConversionTests
+import LlvmIrEmissionTests
+import OutParameterDropRegressionTests
+import PackageImageCallableValueTests
+import RawMultilineStringParityTests
+import SsaOptimizationTests
+import TryPropagationImportedModuleTests
+import V1LoweringContractTests
 [Collection("compiler", "llvm")]
 module LlvmEmissionTests
 
@@ -51,7 +41,6 @@ module LlvmEmissionTests
 [Fact]
 fn bool StraightLineFunctionEmitsOptimizedLlvmBody()
 {
-    unsafe
     {
         stack mut LlvmCompile compiled = CompileLlvm(
             "llvm-straight-line",
@@ -85,7 +74,6 @@ unsafe finite law i32[min max] Run()
 [Collection("closures")]
 fn bool FunctionPointerCallsEmitFastccIndirectCall()
 {
-    unsafe
     {
         stack mut LlvmCompile compiled = CompileLlvm(
             "llvm-fnptr-indirect-call",
@@ -131,7 +119,6 @@ unsafe fn i32[min max] Run()
 [Collection("traits")]
 fn bool DynTraitObjectDispatchLoadsVtableSlotAndCallsIndirectly()
 {
-    unsafe
     {
         stack mut LlvmCompile compiled = CompileLlvm(
             "llvm-dyn-trait-dispatch",
@@ -187,7 +174,6 @@ export fn i32[min max] main()
 [Collection("closures")]
 fn bool NonCapturingClosureValuesLowerToInvokeAndEnvironmentPair()
 {
-    unsafe
     {
         stack mut LlvmCompile compiled = CompileLlvm(
             "llvm-noncapturing-closure-pair",
@@ -242,7 +228,6 @@ fn i32[min max] Run()
 [Collection("closures")]
 fn bool OptimizedFunctionItemClosurePromotionDevirtualizesAndPrunesAdapter()
 {
-    unsafe
     {
         stack mut LlvmCompile compiled = CompileLlvm(
             "llvm-closure-promotion-devirt",
@@ -284,7 +269,6 @@ fn i32[min max] Run()
 [Collection("integers")]
 fn bool SmallRangeUnsignedIntegerOperationsUseUnsignedLlvmOpcodes()
 {
-    unsafe
     {
         stack mut LlvmCompile compiled = CompileLlvm(
             "llvm-small-unsigned-opcodes",
@@ -334,7 +318,6 @@ unsafe fn u8[0 127] ShiftDown(u8[0 127] left, u8[0 127] right)
 [Collection("closures")]
 fn bool NonCapturingLambdaArgumentsLowerToFunctionPointers()
 {
-    unsafe
     {
         stack mut LlvmCompile compiled = CompileLlvm(
             "llvm-lambda-arg-fnptr",
@@ -381,7 +364,6 @@ unsafe fn i32[min max] Run()
 [Collection("comptime")]
 fn bool GenericSizeofAndAlignofLowerAfterConcreteInstantiation()
 {
-    unsafe
     {
         stack mut LlvmCompile compiled = CompileLlvm(
             "llvm-generic-sizeof-alignof",
@@ -421,7 +403,6 @@ unsafe fn i64[min max] Run()
 [Collection("integers")]
 fn bool BitwiseXorEmitsConcreteLlvmXorInstruction()
 {
-    unsafe
     {
         stack mut LlvmCompile compiled = CompileLlvm(
             "llvm-bitwise-xor",
@@ -449,7 +430,6 @@ unsafe fn i32[min max] Run(i32[min max] left, i32[min max] right)
 [Collection("integers")]
 fn bool BitwiseAndShiftExpressionsEmitConcreteLlvmInstructions()
 {
-    unsafe
     {
         stack mut LlvmCompile compiled = CompileLlvm(
             "llvm-bitwise-shift",
@@ -480,7 +460,6 @@ unsafe fn i32[min max] Run(i32[min max] left, i32[min max] middle, i32[min max] 
 [Collection("integers")]
 fn bool IntegerAndBoolUnaryOperatorsEmitConcreteLlvmInstructions()
 {
-    unsafe
     {
         stack mut LlvmCompile compiled = CompileLlvm(
             "llvm-unary-operators",
@@ -520,7 +499,6 @@ unsafe fn i32[min max] BitwiseNot(i32[min max] value)
 [Collection("integers")]
 fn bool OrdinaryIntegerArithmeticEmitsSignedNoWrapFlags()
 {
-    unsafe
     {
         stack mut LlvmCompile compiled = CompileLlvm(
             "llvm-arith-nsw",
@@ -562,7 +540,6 @@ unsafe fn i32[min max] Mul(i32[min max] left, i32[min max] right)
 [Collection("integers")]
 fn bool UnconstrainedUnsignedOrdinaryArithmeticEmitsUnsignedNoWrapByContract()
 {
-    unsafe
     {
         stack mut LlvmCompile compiled = CompileLlvm(
             "llvm-arith-nuw",
@@ -604,7 +581,6 @@ unsafe fn u32[0 max] Mul(u32[0 max] left, u32[0 max] right)
 [Collection("integers")]
 fn bool NonNegativeConstrainedOrdinaryArithmeticEmitsUnsignedNoWrapWhenProven()
 {
-    unsafe
     {
         stack mut LlvmCompile compiled = CompileLlvm(
             "llvm-arith-nuw-nsw-proven",
@@ -643,7 +619,6 @@ unsafe fn i32[min max] Mul(u8[0 10] left, u8[0 5] right)
 [Collection("integers")]
 fn bool WrappingArithmeticEmitsConcreteLlvmInstructions()
 {
-    unsafe
     {
         stack mut LlvmCompile compiled = CompileLlvm(
             "llvm-wrapping-arith",
@@ -678,7 +653,6 @@ unsafe fn i32[min max] Run(i32[min max] left, i32[min max] right)
 [Collection("integers")]
 fn bool SaturatingArithmeticEmitsWideClampSequence()
 {
-    unsafe
     {
         stack mut LlvmCompile compiled = CompileLlvm(
             "llvm-saturating-arith",
@@ -716,7 +690,6 @@ unsafe fn i32[min max] Run(i32[min max] left, i32[min max] right)
 [Collection("integers")]
 fn bool ExplicitWrappingAndSaturatingArithmeticStayFlagFree()
 {
-    unsafe
     {
         stack mut LlvmCompile compiled = CompileLlvm(
             "llvm-explicit-arith-flag-free",
@@ -757,7 +730,6 @@ unsafe fn i32[min max] Sat(u8[0 10] left, u8[0 5] right)
 [Collection("integers")]
 fn bool ExplicitIntegerArithmeticConstantsFoldBeforeLlvmEmission()
 {
-    unsafe
     {
         stack mut LlvmCompile compiled = CompileLlvm(
             "llvm-explicit-arith-const-fold",
@@ -798,7 +770,6 @@ unsafe fn i32[min max] SatMul()
 [Collection("floats")]
 fn bool FloatLiteralArgumentsEmitValidHexFloatConstants()
 {
-    unsafe
     {
         stack mut LlvmCompile compiled = CompileLlvm(
             "llvm-float-hex-constants",
@@ -851,7 +822,6 @@ unsafe fn i32[min max] Run()
 [Collection("control-flow")]
 fn bool LoopHeaderEmitsBackedgePhi()
 {
-    unsafe
     {
         stack mut LlvmCompile compiled = CompileLlvm(
             "llvm-loop-backedge-phi",
@@ -886,7 +856,6 @@ unsafe fn i32[min max] Run()
 [Collection("control-flow", "patterns")]
 fn bool GuardedSwitchBodyEmitsCompareAndGuardBranches()
 {
-    unsafe
     {
         stack mut LlvmCompile compiled = CompileLlvm(
             "llvm-guarded-switch",
@@ -922,7 +891,6 @@ unsafe fn i32[min max] Run(i32[min max] value, bool allow)
 [Collection("control-flow", "patterns")]
 fn bool OrPatternLiteralSwitchPreservesNativeSwitchLowering()
 {
-    unsafe
     {
         stack mut LlvmCompile compiled = CompileLlvm(
             "llvm-orpattern-native-switch",
@@ -960,7 +928,6 @@ unsafe fn i32[min max] Run(u8[0 3] value)
 [Collection("control-flow", "patterns")]
 fn bool RangePatternIntegerSwitchEmitsGuardedComparisons()
 {
-    unsafe
     {
         stack mut LlvmCompile compiled = CompileLlvm(
             "llvm-range-pattern-int-switch",
@@ -998,7 +965,6 @@ unsafe fn i32[min max] Run(u8[0 30] value)
 [Collection("control-flow", "patterns")]
 fn bool RangePatternEnumPayloadSwitchEmitsPayloadComparison()
 {
-    unsafe
     {
         stack mut LlvmCompile compiled = CompileLlvm(
             "llvm-range-pattern-enum-switch",
@@ -1043,7 +1009,6 @@ unsafe fn i32[min max] Run(Token token)
 [Collection("control-flow", "patterns")]
 fn bool OrPatternEnumCapturesShareBodyLocal()
 {
-    unsafe
     {
         stack mut LlvmCompile compiled = CompileLlvm(
             "llvm-orpattern-enum-capture",
@@ -1087,7 +1052,6 @@ unsafe fn i32[min max] Run(Token token)
 [Collection("control-flow")]
 fn bool ComparisonChainEmitsShortCircuitBranchesAndSingleSharedEvaluation()
 {
-    unsafe
     {
         stack mut LlvmCompile compiled = CompileLlvm(
             "llvm-comparison-chain",
@@ -1122,7 +1086,6 @@ unsafe fn bool Run()
 [Collection("control-flow", "floats")]
 fn bool FloatComparisonChainsUseOrderedPredicates()
 {
-    unsafe
     {
         stack mut LlvmCompile compiled = CompileLlvm(
             "llvm-float-comparison-chain",
@@ -1151,7 +1114,6 @@ unsafe fn bool Run(f32 low, f32 value, f32 high)
 [Collection("control-flow", "text")]
 fn bool TextLiteralSwitchEmitsLengthAndByteComparisons()
 {
-    unsafe
     {
         stack mut LlvmCompile compiled = CompileLlvm(
             "llvm-text-literal-switch",
@@ -1198,7 +1160,6 @@ unsafe fn i32[min max] Run(ascii value, bool allow)
 [Collection("ffi")]
 fn bool HelloWorldStyleFfiPutsEmitsStringGlobalAndMainBody()
 {
-    unsafe
     {
         stack mut LlvmCompile compiled = CompileLlvm(
             "llvm-ffi-puts-hello-world",
@@ -1236,7 +1197,6 @@ export unsafe fn i32[min max] main()
 [Collection("text")]
 fn bool TextOrderedComparisonsEmitLexicographicHelperCalls()
 {
-    unsafe
     {
         stack mut LlvmCompile compiled = CompileLlvm(
             "llvm-text-ordered-comparisons",
@@ -1284,4174 +1244,3248 @@ unsafe fn bool PointerLess(rawptr<i32[min max]> left, rawptr<i32[min max]> right
     }
 }
 
-
 // ---------------------------------------------------------------------------
-// Auto-wired [Fact] wrappers for ported C# tests (bodies in imported companions).
+// Ported [Fact] wrappers (bodies in imported companion modules). [Collection] tags
+// give each fact a domain; the module-level tag carries the pipeline stage.
 // ---------------------------------------------------------------------------
 [Fact]
+[Collection("address-of-by-value-copyable-parameter")]
 fn bool InliningAMultiBlockBorrowOfAByValueCopyableParameterValidates()
 {
-    unsafe
-    {
-        return InliningAMultiBlockBorrowOfAByValueCopyableParameterValidatesImpl();
-    }
+    return InliningAMultiBlockBorrowOfAByValueCopyableParameterValidatesImpl();
 }
 
 [Fact]
+[Collection("benchmark-source")]
 fn bool BenchmarkSourcesCompile()
 {
-    unsafe
-    {
-        return BenchmarkSourcesCompileImpl();
-    }
+    return BenchmarkSourcesCompileImpl();
 }
 
 [Fact]
+[Collection("benchmark-source")]
 fn bool MemoryCopyFillHotLoopUsesInfallibleHelpers()
 {
-    unsafe
-    {
-        return MemoryCopyFillHotLoopUsesInfallibleHelpersImpl();
-    }
+    return MemoryCopyFillHotLoopUsesInfallibleHelpersImpl();
 }
 
 [Fact]
+[Collection("benchmark-source")]
 fn bool WindowsDirectoryEnumerationUsesAllocationFreeInfoPath()
 {
-    unsafe
-    {
-        return WindowsDirectoryEnumerationUsesAllocationFreeInfoPathImpl();
-    }
+    return WindowsDirectoryEnumerationUsesAllocationFreeInfoPathImpl();
 }
 
 [Fact]
+[Collection("benchmark-source")]
 fn bool DirectoryEnumerationDoesNotExposeLargeDirectoryPayloadAsSsaValue()
 {
-    unsafe
-    {
-        return DirectoryEnumerationDoesNotExposeLargeDirectoryPayloadAsSsaValueImpl();
-    }
+    return DirectoryEnumerationDoesNotExposeLargeDirectoryPayloadAsSsaValueImpl();
 }
 
 [Fact]
+[Collection("benchmark-source")]
 fn bool FileOpenDoesNotExposeLargeFilePayloadAsSsaValue()
 {
-    unsafe
-    {
-        return FileOpenDoesNotExposeLargeFilePayloadAsSsaValueImpl();
-    }
+    return FileOpenDoesNotExposeLargeFilePayloadAsSsaValueImpl();
 }
 
 [Fact]
+[Collection("benchmark-source")]
 fn bool DictionaryInsertDropFieldUpdatesDoNotStoreDeferredAggregateValues()
 {
-    unsafe
-    {
-        return DictionaryInsertDropFieldUpdatesDoNotStoreDeferredAggregateValuesImpl();
-    }
+    return DictionaryInsertDropFieldUpdatesDoNotStoreDeferredAggregateValuesImpl();
 }
 
 [Fact]
+[Collection("benchmark-source")]
 fn bool TextFormattingBenchmarksSpecializeConstantIntegerFormatting()
 {
-    unsafe
-    {
-        return TextFormattingBenchmarksSpecializeConstantIntegerFormattingImpl();
-    }
+    return TextFormattingBenchmarksSpecializeConstantIntegerFormattingImpl();
 }
 
 [Fact]
+[Collection("comment-trivia")]
 fn bool LineBlockAndXmlCommentsAreIgnoredBeforeLowering()
 {
-    unsafe
-    {
-        return LineBlockAndXmlCommentsAreIgnoredBeforeLoweringImpl();
-    }
+    return LineBlockAndXmlCommentsAreIgnoredBeforeLoweringImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-emit-llvm")]
 fn bool SourceBackedImportedInlineFunctionsEmitInternalLlvmBodyClones()
 {
-    unsafe
-    {
-        return SourceBackedImportedInlineFunctionsEmitInternalLlvmBodyClonesImpl();
-    }
+    return SourceBackedImportedInlineFunctionsEmitInternalLlvmBodyClonesImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-emit-llvm")]
 fn bool SourceBackedImportedInlineFunctionsDeclareModulePrivateConstsUsedByClone()
 {
-    unsafe
-    {
-        return SourceBackedImportedInlineFunctionsDeclareModulePrivateConstsUsedByCloneImpl();
-    }
+    return SourceBackedImportedInlineFunctionsDeclareModulePrivateConstsUsedByCloneImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-emit-llvm")]
 fn bool SourceBackedImportedInlineFunctionsCloneModulePrivateCalleeDependencies()
 {
-    unsafe
-    {
-        return SourceBackedImportedInlineFunctionsCloneModulePrivateCalleeDependenciesImpl();
-    }
+    return SourceBackedImportedInlineFunctionsCloneModulePrivateCalleeDependenciesImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-emit-llvm")]
 fn bool SourceBackedImportedInlineCloneSeedsRestrictEmissionToReachableRootPath()
 {
-    unsafe
-    {
-        return SourceBackedImportedInlineCloneSeedsRestrictEmissionToReachableRootPathImpl();
-    }
+    return SourceBackedImportedInlineCloneSeedsRestrictEmissionToReachableRootPathImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-emit-llvm")]
 fn bool SourceBackedImportedNoInlineFunctionsStayAbiDeclarations()
 {
-    unsafe
-    {
-        return SourceBackedImportedNoInlineFunctionsStayAbiDeclarationsImpl();
-    }
+    return SourceBackedImportedNoInlineFunctionsStayAbiDeclarationsImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-emit-llvm")]
 fn bool ManifestBackedColdNoInlineGenericInstantiationsPreserveTypedInterfaceModifiersWithoutCompilerFacts()
 {
-    unsafe
-    {
-        return ManifestBackedColdNoInlineGenericInstantiationsPreserveTypedInterfaceModifiersWithoutCompilerFactsImpl();
-    }
+    return ManifestBackedColdNoInlineGenericInstantiationsPreserveTypedInterfaceModifiersWithoutCompilerFactsImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-emit-llvm")]
 fn bool PackageBackedImportedGenericInlineBodiesEmitReachableInlineClonesFromTypedFacts()
 {
-    unsafe
-    {
-        return PackageBackedImportedGenericInlineBodiesEmitReachableInlineClonesFromTypedFactsImpl();
-    }
+    return PackageBackedImportedGenericInlineBodiesEmitReachableInlineClonesFromTypedFactsImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-emit-llvm")]
 fn bool ManifestBackedImportedGenericSpecializationsUseTemplateSemanticAttributesWhenFunctionSemanticsAreMissing()
 {
-    unsafe
-    {
-        return ManifestBackedImportedGenericSpecializationsUseTemplateSemanticAttributesWhenFunctionSemanticsAreMissingImpl();
-    }
+    return ManifestBackedImportedGenericSpecializationsUseTemplateSemanticAttributesWhenFunctionSemanticsAreMissingImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-emit-llvm")]
 fn bool ManifestBackedImportedGenericSpecializationsPreserveRegionFactsWithoutSourceBodies()
 {
-    unsafe
-    {
-        return ManifestBackedImportedGenericSpecializationsPreserveRegionFactsWithoutSourceBodiesImpl();
-    }
+    return ManifestBackedImportedGenericSpecializationsPreserveRegionFactsWithoutSourceBodiesImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-emit-llvm")]
 fn bool ManifestBackedImportedPlainFnGenericsThatStrengthenToLawInlineWhenTemplateSemanticsSurviveWithoutFunctionSemantics()
 {
-    unsafe
-    {
-        return ManifestBackedImportedPlainFnGenericsThatStrengthenToLawInlineWhenTemplateSemanticsSurviveWithoutFunctionSemanticsImpl();
-    }
+    return ManifestBackedImportedPlainFnGenericsThatStrengthenToLawInlineWhenTemplateSemanticsSurviveWithoutFunctionSemanticsImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-emit-llvm")]
 fn bool ManifestBackedMemberCallForwarderGenericsUseOptimizationSummaryForPlanningAndCodegen()
 {
-    unsafe
-    {
-        return ManifestBackedMemberCallForwarderGenericsUseOptimizationSummaryForPlanningAndCodegenImpl();
-    }
+    return ManifestBackedMemberCallForwarderGenericsUseOptimizationSummaryForPlanningAndCodegenImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-emit-llvm")]
 fn bool ManifestBackedFieldAccessWrapperGenericsUseOptimizationSummaryForPlanningAndCodegen()
 {
-    unsafe
-    {
-        return ManifestBackedFieldAccessWrapperGenericsUseOptimizationSummaryForPlanningAndCodegenImpl();
-    }
+    return ManifestBackedFieldAccessWrapperGenericsUseOptimizationSummaryForPlanningAndCodegenImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-emit-llvm")]
 fn bool ManifestBackedIndexAccessWrapperGenericsUseOptimizationSummaryForPlanningAndCodegen()
 {
-    unsafe
-    {
-        return ManifestBackedIndexAccessWrapperGenericsUseOptimizationSummaryForPlanningAndCodegenImpl();
-    }
+    return ManifestBackedIndexAccessWrapperGenericsUseOptimizationSummaryForPlanningAndCodegenImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-emit-llvm")]
 fn bool ManifestBackedConversionWrapperGenericsUseOptimizationSummaryForPlanningAndCodegen()
 {
-    unsafe
-    {
-        return ManifestBackedConversionWrapperGenericsUseOptimizationSummaryForPlanningAndCodegenImpl();
-    }
+    return ManifestBackedConversionWrapperGenericsUseOptimizationSummaryForPlanningAndCodegenImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-emit-llvm")]
 fn bool ManifestBackedAddressOfWrapperGenericsUseOptimizationSummaryForPlanningAndCodegen()
 {
-    unsafe
-    {
-        return ManifestBackedAddressOfWrapperGenericsUseOptimizationSummaryForPlanningAndCodegenImpl();
-    }
+    return ManifestBackedAddressOfWrapperGenericsUseOptimizationSummaryForPlanningAndCodegenImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-emit-llvm")]
 fn bool ManifestBackedBinaryOperatorWrapperGenericsUseOptimizationSummaryForPlanningAndCodegen()
 {
-    unsafe
-    {
-        return ManifestBackedBinaryOperatorWrapperGenericsUseOptimizationSummaryForPlanningAndCodegenImpl();
-    }
+    return ManifestBackedBinaryOperatorWrapperGenericsUseOptimizationSummaryForPlanningAndCodegenImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-emit-llvm")]
 fn bool ManifestBackedComparisonWrapperGenericsUseOptimizationSummaryForPlanningAndCodegen()
 {
-    unsafe
-    {
-        return ManifestBackedComparisonWrapperGenericsUseOptimizationSummaryForPlanningAndCodegenImpl();
-    }
+    return ManifestBackedComparisonWrapperGenericsUseOptimizationSummaryForPlanningAndCodegenImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-emit-llvm")]
 fn bool ManifestBackedTerminalIfSelectionWrapperGenericsUseOptimizationSummaryForPlanningAndCodegen()
 {
-    unsafe
-    {
-        return ManifestBackedTerminalIfSelectionWrapperGenericsUseOptimizationSummaryForPlanningAndCodegenImpl();
-    }
+    return ManifestBackedTerminalIfSelectionWrapperGenericsUseOptimizationSummaryForPlanningAndCodegenImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-emit-llvm")]
 fn bool ManifestBackedTerminalSwitchSelectionWrapperGenericsUseOptimizationSummaryForPlanningAndCodegen()
 {
-    unsafe
-    {
-        return ManifestBackedTerminalSwitchSelectionWrapperGenericsUseOptimizationSummaryForPlanningAndCodegenImpl();
-    }
+    return ManifestBackedTerminalSwitchSelectionWrapperGenericsUseOptimizationSummaryForPlanningAndCodegenImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-emit-llvm")]
 fn bool ManifestBackedObjectConstructionWrapperGenericsUseOptimizationSummaryForPlanningAndCodegen()
 {
-    unsafe
-    {
-        return ManifestBackedObjectConstructionWrapperGenericsUseOptimizationSummaryForPlanningAndCodegenImpl();
-    }
+    return ManifestBackedObjectConstructionWrapperGenericsUseOptimizationSummaryForPlanningAndCodegenImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-emit-llvm")]
 fn bool ManifestBackedEnumConstructionWrapperGenericsUseOptimizationSummaryForPlanningAndCodegen()
 {
-    unsafe
-    {
-        return ManifestBackedEnumConstructionWrapperGenericsUseOptimizationSummaryForPlanningAndCodegenImpl();
-    }
+    return ManifestBackedEnumConstructionWrapperGenericsUseOptimizationSummaryForPlanningAndCodegenImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-emit-llvm")]
 fn bool ManifestBackedLocalUpdateWrapperGenericsUseOptimizationSummaryForPlanningAndCodegen()
 {
-    unsafe
-    {
-        return ManifestBackedLocalUpdateWrapperGenericsUseOptimizationSummaryForPlanningAndCodegenImpl();
-    }
+    return ManifestBackedLocalUpdateWrapperGenericsUseOptimizationSummaryForPlanningAndCodegenImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-emit-llvm")]
 fn bool ConstGlobalDerivedLoadsEmitInvariantLoadMetadataWithoutTaggingLocalLoads()
 {
-    unsafe
-    {
-        return ConstGlobalDerivedLoadsEmitInvariantLoadMetadataWithoutTaggingLocalLoadsImpl();
-    }
+    return ConstGlobalDerivedLoadsEmitInvariantLoadMetadataWithoutTaggingLocalLoadsImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-full")]
 fn bool PipelineFoldsImportedConstantLawCallsAcrossMirSsaAndLlvm()
 {
-    unsafe
-    {
-        return PipelineFoldsImportedConstantLawCallsAcrossMirSsaAndLlvmImpl();
-    }
+    return PipelineFoldsImportedConstantLawCallsAcrossMirSsaAndLlvmImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-full")]
 fn bool NestedAggregateRuntimeDropsDoNotTriggerUnsupportedMirLowering()
 {
-    unsafe
-    {
-        return NestedAggregateRuntimeDropsDoNotTriggerUnsupportedMirLoweringImpl();
-    }
+    return NestedAggregateRuntimeDropsDoNotTriggerUnsupportedMirLoweringImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-full")]
 fn bool NestedInitializersEmitLlvmWithoutUnsupportedLoweringLogs()
 {
-    unsafe
-    {
-        return NestedInitializersEmitLlvmWithoutUnsupportedLoweringLogsImpl();
-    }
+    return NestedInitializersEmitLlvmWithoutUnsupportedLoweringLogsImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-full")]
 fn bool ReadonlyScalarArrayGlobalsCanUseVectorizationFriendlyAlignment()
 {
-    unsafe
-    {
-        return ReadonlyScalarArrayGlobalsCanUseVectorizationFriendlyAlignmentImpl();
-    }
+    return ReadonlyScalarArrayGlobalsCanUseVectorizationFriendlyAlignmentImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-full")]
 fn bool SupportedComparisonFamiliesEmitLlvmWithoutUnsupportedLoweringLogs()
 {
-    unsafe
-    {
-        return SupportedComparisonFamiliesEmitLlvmWithoutUnsupportedLoweringLogsImpl();
-    }
+    return SupportedComparisonFamiliesEmitLlvmWithoutUnsupportedLoweringLogsImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-full")]
 fn bool ExpressionStatementsEmitLlvmWithoutUnsupportedLoweringLogs()
 {
-    unsafe
-    {
-        return ExpressionStatementsEmitLlvmWithoutUnsupportedLoweringLogsImpl();
-    }
+    return ExpressionStatementsEmitLlvmWithoutUnsupportedLoweringLogsImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-full")]
 fn bool NestedPlaceUpdatesEmitLlvmWithoutUnsupportedLoweringLogs()
 {
-    unsafe
-    {
-        return NestedPlaceUpdatesEmitLlvmWithoutUnsupportedLoweringLogsImpl();
-    }
+    return NestedPlaceUpdatesEmitLlvmWithoutUnsupportedLoweringLogsImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-full")]
 fn bool HeapAllocatorLoweringAvoidsLlvmFallbackLogs()
 {
-    unsafe
-    {
-        return HeapAllocatorLoweringAvoidsLlvmFallbackLogsImpl();
-    }
+    return HeapAllocatorLoweringAvoidsLlvmFallbackLogsImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-full")]
 fn bool UnusedTypeAliasesDoNotBlockTheCurrentPipeline()
 {
-    unsafe
-    {
-        return UnusedTypeAliasesDoNotBlockTheCurrentPipelineImpl();
-    }
+    return UnusedTypeAliasesDoNotBlockTheCurrentPipelineImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-full")]
 fn bool InternalEnumsDeriveDirectTagLayoutsAndFlowThroughTheFullPipeline()
 {
-    unsafe
-    {
-        return InternalEnumsDeriveDirectTagLayoutsAndFlowThroughTheFullPipelineImpl();
-    }
+    return InternalEnumsDeriveDirectTagLayoutsAndFlowThroughTheFullPipelineImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
 fn bool AsciiToUnicodeLiteralSpecializationHandlesLoopBackedgePhiSuccessors()
 {
-    unsafe
-    {
-        return AsciiToUnicodeLiteralSpecializationHandlesLoopBackedgePhiSuccessorsImpl();
-    }
+    return AsciiToUnicodeLiteralSpecializationHandlesLoopBackedgePhiSuccessorsImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-syntax-model")]
 fn bool BackendOpaqueCallableEmitsLlvmOptimizationBoundary()
 {
-    unsafe
-    {
-        return BackendOpaqueCallableEmitsLlvmOptimizationBoundaryImpl();
-    }
+    return BackendOpaqueCallableEmitsLlvmOptimizationBoundaryImpl();
 }
 
 [Fact]
+[Collection("fixed-array-ordered-comparison")]
 fn bool FixedArrayOrderedComparisonsEmitLexicographicHelperCalls()
 {
-    unsafe
-    {
-        return FixedArrayOrderedComparisonsEmitLexicographicHelperCallsImpl();
-    }
+    return FixedArrayOrderedComparisonsEmitLexicographicHelperCallsImpl();
 }
 
 [Fact]
+[Collection("generic-use-site-instantiation")]
 fn bool ImportedSourceOnlyInstantiationsMaterializeFromBodyUseSites()
 {
-    unsafe
-    {
-        return ImportedSourceOnlyInstantiationsMaterializeFromBodyUseSitesImpl();
-    }
+    return ImportedSourceOnlyInstantiationsMaterializeFromBodyUseSitesImpl();
 }
 
 [Fact]
+[Collection("llvm-emitter-conversion")]
 fn bool FloatToIntegerConversionEmitsFptosi()
 {
-    unsafe
-    {
-        return FloatToIntegerConversionEmitsFptosiImpl();
-    }
+    return FloatToIntegerConversionEmitsFptosiImpl();
 }
 
 [Fact]
+[Collection("llvm-emitter-conversion")]
 fn bool IntegerToRawPointerConversionEmitsInttoptr()
 {
-    unsafe
-    {
-        return IntegerToRawPointerConversionEmitsInttoptrImpl();
-    }
+    return IntegerToRawPointerConversionEmitsInttoptrImpl();
 }
 
 [Fact]
+[Collection("llvm-emitter-conversion")]
 fn bool RawPointerToIntegerConversionEmitsPtrtoint()
 {
-    unsafe
-    {
-        return RawPointerToIntegerConversionEmitsPtrtointImpl();
-    }
+    return RawPointerToIntegerConversionEmitsPtrtointImpl();
 }
 
 [Fact]
+[Collection("llvm-emitter-conversion")]
 fn bool RawPointerToRawPointerConversionIsLlvmNoOp()
 {
-    unsafe
-    {
-        return RawPointerToRawPointerConversionIsLlvmNoOpImpl();
-    }
+    return RawPointerToRawPointerConversionIsLlvmNoOpImpl();
 }
 
 [Fact]
+[Collection("llvm-emitter-conversion")]
 fn bool SameWidthIntegerConversionIsEmittedAsAlias()
 {
-    unsafe
-    {
-        return SameWidthIntegerConversionIsEmittedAsAliasImpl();
-    }
+    return SameWidthIntegerConversionIsEmittedAsAliasImpl();
 }
 
 [Fact]
+[Collection("llvm-emitter-conversion")]
 fn bool SameWidthFloatConversionIsEmittedAsAlias()
 {
-    unsafe
-    {
-        return SameWidthFloatConversionIsEmittedAsAliasImpl();
-    }
+    return SameWidthFloatConversionIsEmittedAsAliasImpl();
 }
 
 [Fact]
+[Collection("llvm-emitter-conversion")]
 fn bool FloatUseRValueIsEmittedAsAlias()
 {
-    unsafe
-    {
-        return FloatUseRValueIsEmittedAsAliasImpl();
-    }
+    return FloatUseRValueIsEmittedAsAliasImpl();
 }
 
 [Fact]
+[Collection("llvm-emitter-conversion")]
 fn bool RawPointerUseRValueIsEmittedAsAlias()
 {
-    unsafe
-    {
-        return RawPointerUseRValueIsEmittedAsAliasImpl();
-    }
+    return RawPointerUseRValueIsEmittedAsAliasImpl();
 }
 
 [Fact]
+[Collection("llvm-emitter-conversion")]
 fn bool AggregateUseRValueIsEmittedAsAlias()
 {
-    unsafe
-    {
-        return AggregateUseRValueIsEmittedAsAliasImpl();
-    }
+    return AggregateUseRValueIsEmittedAsAliasImpl();
 }
 
 [Fact]
+[Collection("llvm-emitter-conversion")]
 fn bool AsciiToUnicodeReinterpretCastIsNotLowered()
 {
-    unsafe
-    {
-        return AsciiToUnicodeReinterpretCastIsNotLoweredImpl();
-    }
+    return AsciiToUnicodeReinterpretCastIsNotLoweredImpl();
 }
 
 [Fact]
+[Collection("llvm-emitter-conversion")]
 fn bool UnicodeToAsciiReinterpretCastIsNotLowered()
 {
-    unsafe
-    {
-        return UnicodeToAsciiReinterpretCastIsNotLoweredImpl();
-    }
+    return UnicodeToAsciiReinterpretCastIsNotLoweredImpl();
 }
 
 [Fact]
+[Collection("llvm-emitter-conversion")]
 fn bool SourceBodyFallbackDeclarationCanBeStrictlyOmitted()
 {
-    unsafe
-    {
-        return SourceBodyFallbackDeclarationCanBeStrictlyOmittedImpl();
-    }
+    return SourceBodyFallbackDeclarationCanBeStrictlyOmittedImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool DynamicRawPointerStorageSliceLowersToSlicePairInLocalAndArgumentPositions()
 {
-    unsafe
-    {
-        return DynamicRawPointerStorageSliceLowersToSlicePairInLocalAndArgumentPositionsImpl();
-    }
+    return DynamicRawPointerStorageSliceLowersToSlicePairInLocalAndArgumentPositionsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool DynamicRawPointerStorageSliceReassignmentLowersToSlicePair()
 {
-    unsafe
-    {
-        return DynamicRawPointerStorageSliceReassignmentLowersToSlicePairImpl();
-    }
+    return DynamicRawPointerStorageSliceReassignmentLowersToSlicePairImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool CapturingClosureCopyLowersThroughEnvironmentStorage()
 {
-    unsafe
-    {
-        return CapturingClosureCopyLowersThroughEnvironmentStorageImpl();
-    }
+    return CapturingClosureCopyLowersThroughEnvironmentStorageImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool MutCapturingClosureWritesThroughCapturedAddress()
 {
-    unsafe
-    {
-        return MutCapturingClosureWritesThroughCapturedAddressImpl();
-    }
+    return MutCapturingClosureWritesThroughCapturedAddressImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool HeapCapturingClosureAllocatesHeapEnvironmentAndClearsNoFreeAttributes()
 {
-    unsafe
-    {
-        return HeapCapturingClosureAllocatesHeapEnvironmentAndClearsNoFreeAttributesImpl();
-    }
+    return HeapCapturingClosureAllocatesHeapEnvironmentAndClearsNoFreeAttributesImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool HeapClosureMoveCaptureDropReleasesOwnedFieldsBeforeEnvironment()
 {
-    unsafe
-    {
-        return HeapClosureMoveCaptureDropReleasesOwnedFieldsBeforeEnvironmentImpl();
-    }
+    return HeapClosureMoveCaptureDropReleasesOwnedFieldsBeforeEnvironmentImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool OnceHeapClosureMoveCaptureTransfersOwnedFieldAndFreesEnvironment()
 {
-    unsafe
-    {
-        return OnceHeapClosureMoveCaptureTransfersOwnedFieldAndFreesEnvironmentImpl();
-    }
+    return OnceHeapClosureMoveCaptureTransfersOwnedFieldAndFreesEnvironmentImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool OnceHeapClosureDropsUnmovedOwnedCapturesBeforeFreeingEnvironment()
 {
-    unsafe
-    {
-        return OnceHeapClosureDropsUnmovedOwnedCapturesBeforeFreeingEnvironmentImpl();
-    }
+    return OnceHeapClosureDropsUnmovedOwnedCapturesBeforeFreeingEnvironmentImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool OptimizedInlineClosureCallSpecializesAwayRuntimeClosure()
 {
-    unsafe
-    {
-        return OptimizedInlineClosureCallSpecializesAwayRuntimeClosureImpl();
-    }
+    return OptimizedInlineClosureCallSpecializesAwayRuntimeClosureImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool OptimizedInlineClosureWithNamedBorrowParameterSpecializesAwayRuntimeClosure()
 {
-    unsafe
-    {
-        return OptimizedInlineClosureWithNamedBorrowParameterSpecializesAwayRuntimeClosureImpl();
-    }
+    return OptimizedInlineClosureWithNamedBorrowParameterSpecializesAwayRuntimeClosureImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool OptimizedInlineClosureThroughNestedWrapperSpecializesAwayRuntimeClosure()
 {
-    unsafe
-    {
-        return OptimizedInlineClosureThroughNestedWrapperSpecializesAwayRuntimeClosureImpl();
-    }
+    return OptimizedInlineClosureThroughNestedWrapperSpecializesAwayRuntimeClosureImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool OptimizedInlineClosureInsideControlFlowSpecializesAwayRuntimeClosure()
 {
-    unsafe
-    {
-        return OptimizedInlineClosureInsideControlFlowSpecializesAwayRuntimeClosureImpl();
-    }
+    return OptimizedInlineClosureInsideControlFlowSpecializesAwayRuntimeClosureImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool OptimizedMutableInlineClosureSpecializesAwayRuntimeClosure()
 {
-    unsafe
-    {
-        return OptimizedMutableInlineClosureSpecializesAwayRuntimeClosureImpl();
-    }
+    return OptimizedMutableInlineClosureSpecializesAwayRuntimeClosureImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool OptimizedOnceInlineClosureSpecializesAwayRuntimeClosure()
 {
-    unsafe
-    {
-        return OptimizedOnceInlineClosureSpecializesAwayRuntimeClosureImpl();
-    }
+    return OptimizedOnceInlineClosureSpecializesAwayRuntimeClosureImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool FiniteLawFunctionPointerCallsEmitIndirectCallEffectAttributes()
 {
-    unsafe
-    {
-        return FiniteLawFunctionPointerCallsEmitIndirectCallEffectAttributesImpl();
-    }
+    return FiniteLawFunctionPointerCallsEmitIndirectCallEffectAttributesImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool FunctionPointerCallSiteEffectAttributesFollowPointerKind()
 {
-    unsafe
-    {
-        return FunctionPointerCallSiteEffectAttributesFollowPointerKindImpl();
-    }
+    return FunctionPointerCallSiteEffectAttributesFollowPointerKindImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool UnusedPlainFunctionPointerCallsAreNotRemovedBySsaCleanup()
 {
-    unsafe
-    {
-        return UnusedPlainFunctionPointerCallsAreNotRemovedBySsaCleanupImpl();
-    }
+    return UnusedPlainFunctionPointerCallsAreNotRemovedBySsaCleanupImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool FunctionPointerCallsWithFiniteKnownTargetSetsEmitCalleesMetadata()
 {
-    unsafe
-    {
-        return FunctionPointerCallsWithFiniteKnownTargetSetsEmitCalleesMetadataImpl();
-    }
+    return FunctionPointerCallsWithFiniteKnownTargetSetsEmitCalleesMetadataImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool ClosureFunctionItemLocalDevirtualizesAndInlinesAdapterAtO3()
 {
-    unsafe
-    {
-        return ClosureFunctionItemLocalDevirtualizesAndInlinesAdapterAtO3Impl();
-    }
+    return ClosureFunctionItemLocalDevirtualizesAndInlinesAdapterAtO3Impl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool ClosureCallsWithFiniteKnownTargetSetsEmitCalleesMetadata()
 {
-    unsafe
-    {
-        return ClosureCallsWithFiniteKnownTargetSetsEmitCalleesMetadataImpl();
-    }
+    return ClosureCallsWithFiniteKnownTargetSetsEmitCalleesMetadataImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool FunctionPointerCallsWithOpaqueTargetsDoNotEmitCalleesMetadata()
 {
-    unsafe
-    {
-        return FunctionPointerCallsWithOpaqueTargetsDoNotEmitCalleesMetadataImpl();
-    }
+    return FunctionPointerCallsWithOpaqueTargetsDoNotEmitCalleesMetadataImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool FunctionPointerCallsWithSingletonKnownTargetExpressionsBecomeDirectCalls()
 {
-    unsafe
-    {
-        return FunctionPointerCallsWithSingletonKnownTargetExpressionsBecomeDirectCallsImpl();
-    }
+    return FunctionPointerCallsWithSingletonKnownTargetExpressionsBecomeDirectCallsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool LawFunctionPointerCallsWithBorrowParametersEmitReadonlyMemoryEffects()
 {
-    unsafe
-    {
-        return LawFunctionPointerCallsWithBorrowParametersEmitReadonlyMemoryEffectsImpl();
-    }
+    return LawFunctionPointerCallsWithBorrowParametersEmitReadonlyMemoryEffectsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool FunctionPointerCallSiteEffectAttributesComposeWithOutAndAggregateAbi()
 {
-    unsafe
-    {
-        return FunctionPointerCallSiteEffectAttributesComposeWithOutAndAggregateAbiImpl();
-    }
+    return FunctionPointerCallSiteEffectAttributesComposeWithOutAndAggregateAbiImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool FunctionPointerCallsWithBorrowParametersUsePointerAbi()
 {
-    unsafe
-    {
-        return FunctionPointerCallsWithBorrowParametersUsePointerAbiImpl();
-    }
+    return FunctionPointerCallsWithBorrowParametersUsePointerAbiImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool FunctionPointerReturnsEmitNonnullAbiAttribute()
 {
-    unsafe
-    {
-        return FunctionPointerReturnsEmitNonnullAbiAttributeImpl();
-    }
+    return FunctionPointerReturnsEmitNonnullAbiAttributeImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool FunctionPointerCallsWithOutParametersUseCallerStorage()
 {
-    unsafe
-    {
-        return FunctionPointerCallsWithOutParametersUseCallerStorageImpl();
-    }
+    return FunctionPointerCallsWithOutParametersUseCallerStorageImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool FunctionPointerCallsWithInitParametersUseCallerStorage()
 {
-    unsafe
-    {
-        return FunctionPointerCallsWithInitParametersUseCallerStorageImpl();
-    }
+    return FunctionPointerCallsWithInitParametersUseCallerStorageImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool FunctionPointerCallsWithRawPointerParametersEmitNoAliasCallAttributes()
 {
-    unsafe
-    {
-        return FunctionPointerCallsWithRawPointerParametersEmitNoAliasCallAttributesImpl();
-    }
+    return FunctionPointerCallsWithRawPointerParametersEmitNoAliasCallAttributesImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool FunctionPointerOverlapContractsSuppressIndirectNoAliasCallAttributes()
 {
-    unsafe
-    {
-        return FunctionPointerOverlapContractsSuppressIndirectNoAliasCallAttributesImpl();
-    }
+    return FunctionPointerOverlapContractsSuppressIndirectNoAliasCallAttributesImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool FunctionPointerSameContractsSuppressIndirectNoAliasBetweenSameArguments()
 {
-    unsafe
-    {
-        return FunctionPointerSameContractsSuppressIndirectNoAliasBetweenSameArgumentsImpl();
-    }
+    return FunctionPointerSameContractsSuppressIndirectNoAliasBetweenSameArgumentsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool FunctionPointerCallsWithLargeByValueParametersUseByvalAbi()
 {
-    unsafe
-    {
-        return FunctionPointerCallsWithLargeByValueParametersUseByvalAbiImpl();
-    }
+    return FunctionPointerCallsWithLargeByValueParametersUseByvalAbiImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool FunctionPointerCallsWithLargeReturnValuesUseSretAbi()
 {
-    unsafe
-    {
-        return FunctionPointerCallsWithLargeReturnValuesUseSretAbiImpl();
-    }
+    return FunctionPointerCallsWithLargeReturnValuesUseSretAbiImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool DirectVoidStatementCallsWithOutParametersUseCallerStorage()
 {
-    unsafe
-    {
-        return DirectVoidStatementCallsWithOutParametersUseCallerStorageImpl();
-    }
+    return DirectVoidStatementCallsWithOutParametersUseCallerStorageImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool DirectCallsWithLargeByValueTemporaryConstructDirectlyIntoByvalCallSlot()
 {
-    unsafe
-    {
-        return DirectCallsWithLargeByValueTemporaryConstructDirectlyIntoByvalCallSlotImpl();
-    }
+    return DirectCallsWithLargeByValueTemporaryConstructDirectlyIntoByvalCallSlotImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool DirectCallsWithLargeByValueCurrentParameterUseByvalParameterPointer()
 {
-    unsafe
-    {
-        return DirectCallsWithLargeByValueCurrentParameterUseByvalParameterPointerImpl();
-    }
+    return DirectCallsWithLargeByValueCurrentParameterUseByvalParameterPointerImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool DynamicStorageAllocationIndexInitAndDropEmitRuntimeAllocatorCalls()
 {
-    unsafe
-    {
-        return DynamicStorageAllocationIndexInitAndDropEmitRuntimeAllocatorCallsImpl();
-    }
+    return DynamicStorageAllocationIndexInitAndDropEmitRuntimeAllocatorCallsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool DynamicStorageDropEmitsElementDestructorLoopBeforeFree()
 {
-    unsafe
-    {
-        return DynamicStorageDropEmitsElementDestructorLoopBeforeFreeImpl();
-    }
+    return DynamicStorageDropEmitsElementDestructorLoopBeforeFreeImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool DynamicStorageElementLoadsAndStoresCarryElementAlignment()
 {
-    unsafe
-    {
-        return DynamicStorageElementLoadsAndStoresCarryElementAlignmentImpl();
-    }
+    return DynamicStorageElementLoadsAndStoresCarryElementAlignmentImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool DynamicStorageReserveEmitsDirectReallocatePath()
 {
-    unsafe
-    {
-        return DynamicStorageReserveEmitsDirectReallocatePathImpl();
-    }
+    return DynamicStorageReserveEmitsDirectReallocatePathImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool OptimizedDynamicStorageReserveNoopElidesRuntimeReservePath()
 {
-    unsafe
-    {
-        return OptimizedDynamicStorageReserveNoopElidesRuntimeReservePathImpl();
-    }
+    return OptimizedDynamicStorageReserveNoopElidesRuntimeReservePathImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool OptimizedDynamicStorageZeroCapacityDropElidesRuntimeFreePath()
 {
-    unsafe
-    {
-        return OptimizedDynamicStorageZeroCapacityDropElidesRuntimeFreePathImpl();
-    }
+    return OptimizedDynamicStorageZeroCapacityDropElidesRuntimeFreePathImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool DynamicStorageTryReserveEmitsDirectFallibleReallocatePath()
 {
-    unsafe
-    {
-        return DynamicStorageTryReserveEmitsDirectFallibleReallocatePathImpl();
-    }
+    return DynamicStorageTryReserveEmitsDirectFallibleReallocatePathImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool OptimizedDynamicStorageTryReserveSuccessPrunesImpossibleCapacityBranch()
 {
-    unsafe
-    {
-        return OptimizedDynamicStorageTryReserveSuccessPrunesImpossibleCapacityBranchImpl();
-    }
+    return OptimizedDynamicStorageTryReserveSuccessPrunesImpossibleCapacityBranchImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool DynamicStorageTryReserveCapacityEmitsExactFallibleReallocatePath()
 {
-    unsafe
-    {
-        return DynamicStorageTryReserveCapacityEmitsExactFallibleReallocatePathImpl();
-    }
+    return DynamicStorageTryReserveCapacityEmitsExactFallibleReallocatePathImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool DynamicStorageInitSliceWritesCommitOwnerLength()
 {
-    unsafe
-    {
-        return DynamicStorageInitSliceWritesCommitOwnerLengthImpl();
-    }
+    return DynamicStorageInitSliceWritesCommitOwnerLengthImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool OptimizedDynamicStorageInitSlicePreservesPointerDefinitionAndAlignment()
 {
-    unsafe
-    {
-        return OptimizedDynamicStorageInitSlicePreservesPointerDefinitionAndAlignmentImpl();
-    }
+    return OptimizedDynamicStorageInitSlicePreservesPointerDefinitionAndAlignmentImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool InitSliceParametersKeepReadableSliceHeaderContract()
 {
-    unsafe
-    {
-        return InitSliceParametersKeepReadableSliceHeaderContractImpl();
-    }
+    return InitSliceParametersKeepReadableSliceHeaderContractImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool InitSliceElementStoresDoNotReadDestinationElementBeforeWrite()
 {
-    unsafe
-    {
-        return InitSliceElementStoresDoNotReadDestinationElementBeforeWriteImpl();
-    }
+    return InitSliceElementStoresDoNotReadDestinationElementBeforeWriteImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool DynamicStorageMoveLastEmitsDirectLengthUpdateAndLoad()
 {
-    unsafe
-    {
-        return DynamicStorageMoveLastEmitsDirectLengthUpdateAndLoadImpl();
-    }
+    return DynamicStorageMoveLastEmitsDirectLengthUpdateAndLoadImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool OptimizedDynamicStorageMoveLastSkipsEmptyCheckWhenPrefixFactsProveNonEmpty()
 {
-    unsafe
-    {
-        return OptimizedDynamicStorageMoveLastSkipsEmptyCheckWhenPrefixFactsProveNonEmptyImpl();
-    }
+    return OptimizedDynamicStorageMoveLastSkipsEmptyCheckWhenPrefixFactsProveNonEmptyImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool DynamicStorageMoveAtEmitsDirectLengthUpdateLoadAndMemmove()
 {
-    unsafe
-    {
-        return DynamicStorageMoveAtEmitsDirectLengthUpdateLoadAndMemmoveImpl();
-    }
+    return DynamicStorageMoveAtEmitsDirectLengthUpdateLoadAndMemmoveImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool OptimizedDynamicStorageMoveAtSkipsBoundsCheckWhenPrefixFactsProveInBounds()
 {
-    unsafe
-    {
-        return OptimizedDynamicStorageMoveAtSkipsBoundsCheckWhenPrefixFactsProveInBoundsImpl();
-    }
+    return OptimizedDynamicStorageMoveAtSkipsBoundsCheckWhenPrefixFactsProveInBoundsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool LargeDynamicStorageMoveLastIntoLocalUsesDestinationSlot()
 {
-    unsafe
-    {
-        return LargeDynamicStorageMoveLastIntoLocalUsesDestinationSlotImpl();
-    }
+    return LargeDynamicStorageMoveLastIntoLocalUsesDestinationSlotImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool LargeDynamicStorageMoveLastReturnCopiesDirectlyIntoSRetBuffer()
 {
-    unsafe
-    {
-        return LargeDynamicStorageMoveLastReturnCopiesDirectlyIntoSRetBufferImpl();
-    }
+    return LargeDynamicStorageMoveLastReturnCopiesDirectlyIntoSRetBufferImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool LargeDynamicStorageMoveAtReturnCopiesBeforeTailShift()
 {
-    unsafe
-    {
-        return LargeDynamicStorageMoveAtReturnCopiesBeforeTailShiftImpl();
-    }
+    return LargeDynamicStorageMoveAtReturnCopiesBeforeTailShiftImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool LargeDynamicStorageMoveLastIntoOutParameterUsesOutStorage()
 {
-    unsafe
-    {
-        return LargeDynamicStorageMoveLastIntoOutParameterUsesOutStorageImpl();
-    }
+    return LargeDynamicStorageMoveLastIntoOutParameterUsesOutStorageImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool LargeDynamicStorageMoveAtIntoOutParameterCopiesBeforeTailShift()
 {
-    unsafe
-    {
-        return LargeDynamicStorageMoveAtIntoOutParameterCopiesBeforeTailShiftImpl();
-    }
+    return LargeDynamicStorageMoveAtIntoOutParameterCopiesBeforeTailShiftImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool LargeDynamicStorageMoveLastIntoGlobalUsesGlobalStorage()
 {
-    unsafe
-    {
-        return LargeDynamicStorageMoveLastIntoGlobalUsesGlobalStorageImpl();
-    }
+    return LargeDynamicStorageMoveLastIntoGlobalUsesGlobalStorageImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool UnsafeDynamicStorageNonTailMoveEmitsDirectElementLoad()
 {
-    unsafe
-    {
-        return UnsafeDynamicStorageNonTailMoveEmitsDirectElementLoadImpl();
-    }
+    return UnsafeDynamicStorageNonTailMoveEmitsDirectElementLoadImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool AggregateLoadedFromDynamicSlotKeepsSnapshotAfterSlotReplacement()
 {
-    unsafe
-    {
-        return AggregateLoadedFromDynamicSlotKeepsSnapshotAfterSlotReplacementImpl();
-    }
+    return AggregateLoadedFromDynamicSlotKeepsSnapshotAfterSlotReplacementImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool NonCapturingLambdaFunctionPointersEmitSyntheticFunctionDefinitions()
 {
-    unsafe
-    {
-        return NonCapturingLambdaFunctionPointersEmitSyntheticFunctionDefinitionsImpl();
-    }
+    return NonCapturingLambdaFunctionPointersEmitSyntheticFunctionDefinitionsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool DebugMetadataIsEmittedForFunctionsParametersAndStackLocals()
 {
-    unsafe
-    {
-        return DebugMetadataIsEmittedForFunctionsParametersAndStackLocalsImpl();
-    }
+    return DebugMetadataIsEmittedForFunctionsParametersAndStackLocalsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool DebugMetadataMarksBuildsAsOptimized()
 {
-    unsafe
-    {
-        return DebugMetadataMarksBuildsAsOptimizedImpl();
-    }
+    return DebugMetadataMarksBuildsAsOptimizedImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool ConstantBranchConditionsCanFoldAllTheWayToReturn()
 {
-    unsafe
-    {
-        return ConstantBranchConditionsCanFoldAllTheWayToReturnImpl();
-    }
+    return ConstantBranchConditionsCanFoldAllTheWayToReturnImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool BranchJoinCanOptimizeToDirectReturns()
 {
-    unsafe
-    {
-        return BranchJoinCanOptimizeToDirectReturnsImpl();
-    }
+    return BranchJoinCanOptimizeToDirectReturnsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool IfWeightAnnotationEmitsBranchWeightMetadata()
 {
-    unsafe
-    {
-        return IfWeightAnnotationEmitsBranchWeightMetadataImpl();
-    }
+    return IfWeightAnnotationEmitsBranchWeightMetadataImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool SwitchWeightAnnotationEmitsDistributedBranchWeightMetadata()
 {
-    unsafe
-    {
-        return SwitchWeightAnnotationEmitsDistributedBranchWeightMetadataImpl();
-    }
+    return SwitchWeightAnnotationEmitsDistributedBranchWeightMetadataImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool ColdCallBranchTargetsInferUnlikelyBranchWeightMetadata()
 {
-    unsafe
-    {
-        return ColdCallBranchTargetsInferUnlikelyBranchWeightMetadataImpl();
-    }
+    return ColdCallBranchTargetsInferUnlikelyBranchWeightMetadataImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool GlobalsUseVisibilityAwareLinkageAndConstantKinds()
 {
-    unsafe
-    {
-        return GlobalsUseVisibilityAwareLinkageAndConstantKindsImpl();
-    }
+    return GlobalsUseVisibilityAwareLinkageAndConstantKindsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool MutableGlobalsEmitRealDefinitionsStoresAndLoads()
 {
-    unsafe
-    {
-        return MutableGlobalsEmitRealDefinitionsStoresAndLoadsImpl();
-    }
+    return MutableGlobalsEmitRealDefinitionsStoresAndLoadsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool MutableGlobalLoadsAreNotForwardedAcrossDestructorBackedCalls()
 {
-    unsafe
-    {
-        return MutableGlobalLoadsAreNotForwardedAcrossDestructorBackedCallsImpl();
-    }
+    return MutableGlobalLoadsAreNotForwardedAcrossDestructorBackedCallsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool LibraryBuildQualifiesRootGlobalSymbolsAndPreservesExportNames()
 {
-    unsafe
-    {
-        return LibraryBuildQualifiesRootGlobalSymbolsAndPreservesExportNamesImpl();
-    }
+    return LibraryBuildQualifiesRootGlobalSymbolsAndPreservesExportNamesImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool ExecutableInternalizationCanMakeRootModulePrivateFunctionsLocal()
 {
-    unsafe
-    {
-        return ExecutableInternalizationCanMakeRootModulePrivateFunctionsLocalImpl();
-    }
+    return ExecutableInternalizationCanMakeRootModulePrivateFunctionsLocalImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool RootFunctionSymbolIsQualifiedWhenItWouldCollideWithFfiImport()
 {
-    unsafe
-    {
-        return RootFunctionSymbolIsQualifiedWhenItWouldCollideWithFfiImportImpl();
-    }
+    return RootFunctionSymbolIsQualifiedWhenItWouldCollideWithFfiImportImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool FfiVarargsDeclarationsAndCallsUseLlvmVarargFunctionType()
 {
-    unsafe
-    {
-        return FfiVarargsDeclarationsAndCallsUseLlvmVarargFunctionTypeImpl();
-    }
+    return FfiVarargsDeclarationsAndCallsUseLlvmVarargFunctionTypeImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool FfiVarargsPercentSAcceptsRawCCharPointer()
 {
-    unsafe
-    {
-        return FfiVarargsPercentSAcceptsRawCCharPointerImpl();
-    }
+    return FfiVarargsPercentSAcceptsRawCCharPointerImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool InternalizedImmutableGlobalsUseUnnamedAddrOnlyWhenAddressesStayInsignificant()
 {
-    unsafe
-    {
-        return InternalizedImmutableGlobalsUseUnnamedAddrOnlyWhenAddressesStayInsignificantImpl();
-    }
+    return InternalizedImmutableGlobalsUseUnnamedAddrOnlyWhenAddressesStayInsignificantImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool AggregateAndArrayGlobalsEmitConcreteInitializers()
 {
-    unsafe
-    {
-        return AggregateAndArrayGlobalsEmitConcreteInitializersImpl();
-    }
+    return AggregateAndArrayGlobalsEmitConcreteInitializersImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool IntegralAndScientificFloatConstantsEmitValidHexFloatLiterals()
 {
-    unsafe
-    {
-        return IntegralAndScientificFloatConstantsEmitValidHexFloatLiteralsImpl();
-    }
+    return IntegralAndScientificFloatConstantsEmitValidHexFloatLiteralsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool GlobalsAndUnicodeStringConstantsEmitConcreteAlignment()
 {
-    unsafe
-    {
-        return GlobalsAndUnicodeStringConstantsEmitConcreteAlignmentImpl();
-    }
+    return GlobalsAndUnicodeStringConstantsEmitConcreteAlignmentImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool LongTextLiteralDataUsesVectorizationFriendlyAlignment()
 {
-    unsafe
-    {
-        return LongTextLiteralDataUsesVectorizationFriendlyAlignmentImpl();
-    }
+    return LongTextLiteralDataUsesVectorizationFriendlyAlignmentImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool ImmutableGlobalsWithoutAddressTakenEmitLocalUnnamedAddr()
 {
-    unsafe
-    {
-        return ImmutableGlobalsWithoutAddressTakenEmitLocalUnnamedAddrImpl();
-    }
+    return ImmutableGlobalsWithoutAddressTakenEmitLocalUnnamedAddrImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool ConstArithmeticGlobalsEmitConcreteInitializers()
 {
-    unsafe
-    {
-        return ConstArithmeticGlobalsEmitConcreteInitializersImpl();
-    }
+    return ConstArithmeticGlobalsEmitConcreteInitializersImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool RecordPrimaryConstructorGlobalsEmitConcreteInitializers()
 {
-    unsafe
-    {
-        return RecordPrimaryConstructorGlobalsEmitConcreteInitializersImpl();
-    }
+    return RecordPrimaryConstructorGlobalsEmitConcreteInitializersImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool ConstFixedArrayGlobalsEmitFrozenDefinitions()
 {
-    unsafe
-    {
-        return ConstFixedArrayGlobalsEmitFrozenDefinitionsImpl();
-    }
+    return ConstFixedArrayGlobalsEmitFrozenDefinitionsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool NestedConstObjectGraphsEmitConcreteConstantInitializers()
 {
-    unsafe
-    {
-        return NestedConstObjectGraphsEmitConcreteConstantInitializersImpl();
-    }
+    return NestedConstObjectGraphsEmitConcreteConstantInitializersImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool NestedAggregateLiteralsFoldIntoFrozenGlobalInitializers()
 {
-    unsafe
-    {
-        return NestedAggregateLiteralsFoldIntoFrozenGlobalInitializersImpl();
-    }
+    return NestedAggregateLiteralsFoldIntoFrozenGlobalInitializersImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool MutableAggregateGlobalsEmitConcreteInitializersAndStores()
 {
-    unsafe
-    {
-        return MutableAggregateGlobalsEmitConcreteInitializersAndStoresImpl();
-    }
+    return MutableAggregateGlobalsEmitConcreteInitializersAndStoresImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool StaticGenericConstructorInitializersCanForwardAggregateArguments()
 {
-    unsafe
-    {
-        return StaticGenericConstructorInitializersCanForwardAggregateArgumentsImpl();
-    }
+    return StaticGenericConstructorInitializersCanForwardAggregateArgumentsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool AggregateArrayFieldsEmitConcreteInitializers()
 {
-    unsafe
-    {
-        return AggregateArrayFieldsEmitConcreteInitializersImpl();
-    }
+    return AggregateArrayFieldsEmitConcreteInitializersImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool ImmutableGlobalLoadsEmitInvariantMetadataThroughFieldAndIndexChains()
 {
-    unsafe
-    {
-        return ImmutableGlobalLoadsEmitInvariantMetadataThroughFieldAndIndexChainsImpl();
-    }
+    return ImmutableGlobalLoadsEmitInvariantMetadataThroughFieldAndIndexChainsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool OnceInitializedReadonlyStackStorageEmitsInvariantStartWithoutInvariantLoadMetadata()
 {
-    unsafe
-    {
-        return OnceInitializedReadonlyStackStorageEmitsInvariantStartWithoutInvariantLoadMetadataImpl();
-    }
+    return OnceInitializedReadonlyStackStorageEmitsInvariantStartWithoutInvariantLoadMetadataImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool ReadonlyStackDropTempsPassedByAddressDoNotEmitInvariantMetadata()
 {
-    unsafe
-    {
-        return ReadonlyStackDropTempsPassedByAddressDoNotEmitInvariantMetadataImpl();
-    }
+    return ReadonlyStackDropTempsPassedByAddressDoNotEmitInvariantMetadataImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool FrozenRawPointerLoadsDoNotEmitInvariantMetadataWithoutConstProvenance()
 {
-    unsafe
-    {
-        return FrozenRawPointerLoadsDoNotEmitInvariantMetadataWithoutConstProvenanceImpl();
-    }
+    return FrozenRawPointerLoadsDoNotEmitInvariantMetadataWithoutConstProvenanceImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool StaticReadonlyPointerLoadsDoNotConferDeepConstProvenance()
 {
-    unsafe
-    {
-        return StaticReadonlyPointerLoadsDoNotConferDeepConstProvenanceImpl();
-    }
+    return StaticReadonlyPointerLoadsDoNotConferDeepConstProvenanceImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool ImmutableRawPointerLocalsDoNotConferDeepConstProvenance()
 {
-    unsafe
-    {
-        return ImmutableRawPointerLocalsDoNotConferDeepConstProvenanceImpl();
-    }
+    return ImmutableRawPointerLocalsDoNotConferDeepConstProvenanceImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool ReadonlyRawPointerLocalsDoNotConferDeepConstProvenance()
 {
-    unsafe
-    {
-        return ReadonlyRawPointerLocalsDoNotConferDeepConstProvenanceImpl();
-    }
+    return ReadonlyRawPointerLocalsDoNotConferDeepConstProvenanceImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool IntegerLaunderedMutablePointersDoNotEmitInvariantMetadata()
 {
-    unsafe
-    {
-        return IntegerLaunderedMutablePointersDoNotEmitInvariantMetadataImpl();
-    }
+    return IntegerLaunderedMutablePointersDoNotEmitInvariantMetadataImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool TypedScalarLoadsAndStoresEmitConservativeStarkTbaa()
 {
-    unsafe
-    {
-        return TypedScalarLoadsAndStoresEmitConservativeStarkTbaaImpl();
-    }
+    return TypedScalarLoadsAndStoresEmitConservativeStarkTbaaImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool TypedFieldAndFixedArrayElementLoadsEmitStructPathTbaa()
 {
-    unsafe
-    {
-        return TypedFieldAndFixedArrayElementLoadsEmitStructPathTbaaImpl();
-    }
+    return TypedFieldAndFixedArrayElementLoadsEmitStructPathTbaaImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool RawPointerAndPointerIntegerEscapesSuppressTbaa()
 {
-    unsafe
-    {
-        return RawPointerAndPointerIntegerEscapesSuppressTbaaImpl();
-    }
+    return RawPointerAndPointerIntegerEscapesSuppressTbaaImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool ExclusiveBorrowMemoryAccessesEmitScopedNoAliasMetadata()
 {
-    unsafe
-    {
-        return ExclusiveBorrowMemoryAccessesEmitScopedNoAliasMetadataImpl();
-    }
+    return ExclusiveBorrowMemoryAccessesEmitScopedNoAliasMetadataImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool SameRawPointerParametersShareAliasScopeAgainstDefaultDisjointParameters()
 {
-    unsafe
-    {
-        return SameRawPointerParametersShareAliasScopeAgainstDefaultDisjointParametersImpl();
-    }
+    return SameRawPointerParametersShareAliasScopeAgainstDefaultDisjointParametersImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool SameSliceParametersEmitDataAndLengthAssumes()
 {
-    unsafe
-    {
-        return SameSliceParametersEmitDataAndLengthAssumesImpl();
-    }
+    return SameSliceParametersEmitDataAndLengthAssumesImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool DynamicLocalStorageAccessesEmitScopedNoAliasMetadata()
 {
-    unsafe
-    {
-        return DynamicLocalStorageAccessesEmitScopedNoAliasMetadataImpl();
-    }
+    return DynamicLocalStorageAccessesEmitScopedNoAliasMetadataImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool RawPointerMemoryAccessesDoNotEmitScopedNoAliasMetadata()
 {
-    unsafe
-    {
-        return RawPointerMemoryAccessesDoNotEmitScopedNoAliasMetadataImpl();
-    }
+    return RawPointerMemoryAccessesDoNotEmitScopedNoAliasMetadataImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool OverlappingConstViewsDoNotInferNoAliasFromConstness()
 {
-    unsafe
-    {
-        return OverlappingConstViewsDoNotInferNoAliasFromConstnessImpl();
-    }
+    return OverlappingConstViewsDoNotInferNoAliasFromConstnessImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool RawPointerEscapesSuppressScopedNoAliasMetadataForAffectedAccesses()
 {
-    unsafe
-    {
-        return RawPointerEscapesSuppressScopedNoAliasMetadataForAffectedAccessesImpl();
-    }
+    return RawPointerEscapesSuppressScopedNoAliasMetadataForAffectedAccessesImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool IntegerLaunderedRawPointersSuppressScopedNoAliasMetadataForAffectedAccesses()
 {
-    unsafe
-    {
-        return IntegerLaunderedRawPointersSuppressScopedNoAliasMetadataForAffectedAccessesImpl();
-    }
+    return IntegerLaunderedRawPointersSuppressScopedNoAliasMetadataForAffectedAccessesImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool RawPointerConstNullGlobalsRemainExternalPlaceholders()
 {
-    unsafe
-    {
-        return RawPointerConstNullGlobalsRemainExternalPlaceholdersImpl();
-    }
+    return RawPointerConstNullGlobalsRemainExternalPlaceholdersImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool UnsignedOrdinaryArithmeticDoesNotInventSignedNoWrapForHighBitResults()
 {
-    unsafe
-    {
-        return UnsignedOrdinaryArithmeticDoesNotInventSignedNoWrapForHighBitResultsImpl();
-    }
+    return UnsignedOrdinaryArithmeticDoesNotInventSignedNoWrapForHighBitResultsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool PropagatedValueFactsEmitUnsignedNoWrapForJoinedRanges()
 {
-    unsafe
-    {
-        return PropagatedValueFactsEmitUnsignedNoWrapForJoinedRangesImpl();
-    }
+    return PropagatedValueFactsEmitUnsignedNoWrapForJoinedRangesImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool PropagatedValueFactsEmitNarrowerReturnRangeAttributes()
 {
-    unsafe
-    {
-        return PropagatedValueFactsEmitNarrowerReturnRangeAttributesImpl();
-    }
+    return PropagatedValueFactsEmitNarrowerReturnRangeAttributesImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool SameWidthSignednessChangingIntegerConversionsTranslateReturnRangeFacts()
 {
-    unsafe
-    {
-        return SameWidthSignednessChangingIntegerConversionsTranslateReturnRangeFactsImpl();
-    }
+    return SameWidthSignednessChangingIntegerConversionsTranslateReturnRangeFactsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool ProvenNonNegativeSignedDivisionAndModuloUseUnsignedLlvmOpcodes()
 {
-    unsafe
-    {
-        return ProvenNonNegativeSignedDivisionAndModuloUseUnsignedLlvmOpcodesImpl();
-    }
+    return ProvenNonNegativeSignedDivisionAndModuloUseUnsignedLlvmOpcodesImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool OrdinaryIntegerArithmeticDoesNotEmitUnsignedNoWrapWhenNegativeValuesArePossible()
 {
-    unsafe
-    {
-        return OrdinaryIntegerArithmeticDoesNotEmitUnsignedNoWrapWhenNegativeValuesArePossibleImpl();
-    }
+    return OrdinaryIntegerArithmeticDoesNotEmitUnsignedNoWrapWhenNegativeValuesArePossibleImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool ProvenShiftLeftRangesEmitNoWrapFlags()
 {
-    unsafe
-    {
-        return ProvenShiftLeftRangesEmitNoWrapFlagsImpl();
-    }
+    return ProvenShiftLeftRangesEmitNoWrapFlagsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool UnsignedIntegerOperationsUseUnsignedLlvmOpcodes()
 {
-    unsafe
-    {
-        return UnsignedIntegerOperationsUseUnsignedLlvmOpcodesImpl();
-    }
+    return UnsignedIntegerOperationsUseUnsignedLlvmOpcodesImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool ShiftRightAndSignedDivisionEmitExactWhenDivisibilityIsProven()
 {
-    unsafe
-    {
-        return ShiftRightAndSignedDivisionEmitExactWhenDivisibilityIsProvenImpl();
-    }
+    return ShiftRightAndSignedDivisionEmitExactWhenDivisibilityIsProvenImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool ShiftAndDivisionFlagsAreOmittedWhenProofFactsAreInsufficient()
 {
-    unsafe
-    {
-        return ShiftAndDivisionFlagsAreOmittedWhenProofFactsAreInsufficientImpl();
-    }
+    return ShiftAndDivisionFlagsAreOmittedWhenProofFactsAreInsufficientImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool ExplicitWrappingAndSaturatingArithmeticStayFlagFreeEvenWhenOrdinaryProofsExist()
 {
-    unsafe
-    {
-        return ExplicitWrappingAndSaturatingArithmeticStayFlagFreeEvenWhenOrdinaryProofsExistImpl();
-    }
+    return ExplicitWrappingAndSaturatingArithmeticStayFlagFreeEvenWhenOrdinaryProofsExistImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool ConstantFloatExponentExpressionsFoldBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return ConstantFloatExponentExpressionsFoldBeforeLlvmEmissionImpl();
-    }
+    return ConstantFloatExponentExpressionsFoldBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool IntegerExponentExpressionsEmitInternalPowHelpers()
 {
-    unsafe
-    {
-        return IntegerExponentExpressionsEmitInternalPowHelpersImpl();
-    }
+    return IntegerExponentExpressionsEmitInternalPowHelpersImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool SmallConstantIntegerExponentExpressionsLowerToStraightLineMultiplies()
 {
-    unsafe
-    {
-        return SmallConstantIntegerExponentExpressionsLowerToStraightLineMultipliesImpl();
-    }
+    return SmallConstantIntegerExponentExpressionsLowerToStraightLineMultipliesImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool ConstantLiteralSwitchesFoldBeforeLlvmEmission()
 {
-    unsafe
-    {
-        return ConstantLiteralSwitchesFoldBeforeLlvmEmissionImpl();
-    }
+    return ConstantLiteralSwitchesFoldBeforeLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool EnumSwitchExpressionCallEmitsSingleEvaluation()
 {
-    unsafe
-    {
-        return EnumSwitchExpressionCallEmitsSingleEvaluationImpl();
-    }
+    return EnumSwitchExpressionCallEmitsSingleEvaluationImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool LargeEnumSwitchLoadsTagWithRangeMetadataAndZeroTagsUnitCase()
 {
-    unsafe
-    {
-        return LargeEnumSwitchLoadsTagWithRangeMetadataAndZeroTagsUnitCaseImpl();
-    }
+    return LargeEnumSwitchLoadsTagWithRangeMetadataAndZeroTagsUnitCaseImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool CaptureSwitchPatternEmitsConcreteBody()
 {
-    unsafe
-    {
-        return CaptureSwitchPatternEmitsConcreteBodyImpl();
-    }
+    return CaptureSwitchPatternEmitsConcreteBodyImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool MultiLabelGuardedSwitchEmitsDecisionTreeBody()
 {
-    unsafe
-    {
-        return MultiLabelGuardedSwitchEmitsDecisionTreeBodyImpl();
-    }
+    return MultiLabelGuardedSwitchEmitsDecisionTreeBodyImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool LargeTextLiteralSwitchEmitsLengthPartitionedDispatch()
 {
-    unsafe
-    {
-        return LargeTextLiteralSwitchEmitsLengthPartitionedDispatchImpl();
-    }
+    return LargeTextLiteralSwitchEmitsLengthPartitionedDispatchImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool UnicodeTextLiteralSwitchEmitsConcreteBody()
 {
-    unsafe
-    {
-        return UnicodeTextLiteralSwitchEmitsConcreteBodyImpl();
-    }
+    return UnicodeTextLiteralSwitchEmitsConcreteBodyImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool TextSlicesEmitShiftedAsciiAndUnicodeViews()
 {
-    unsafe
-    {
-        return TextSlicesEmitShiftedAsciiAndUnicodeViewsImpl();
-    }
+    return TextSlicesEmitShiftedAsciiAndUnicodeViewsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool ExplicitAsciiLiteralToUnicodeConversionEmitsUnicodeConstant()
 {
-    unsafe
-    {
-        return ExplicitAsciiLiteralToUnicodeConversionEmitsUnicodeConstantImpl();
-    }
+    return ExplicitAsciiLiteralToUnicodeConversionEmitsUnicodeConstantImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool CompileTimeTextConcatenationEmitsSingleTextConstant()
 {
-    unsafe
-    {
-        return CompileTimeTextConcatenationEmitsSingleTextConstantImpl();
-    }
+    return CompileTimeTextConcatenationEmitsSingleTextConstantImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool CompileTimeInterpolatedTextEmitsFoldedTextConstant()
 {
-    unsafe
-    {
-        return CompileTimeInterpolatedTextEmitsFoldedTextConstantImpl();
-    }
+    return CompileTimeInterpolatedTextEmitsFoldedTextConstantImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool RawAndMultilineTextLiteralsEmitExactTextConstants()
 {
-    unsafe
-    {
-        return RawAndMultilineTextLiteralsEmitExactTextConstantsImpl();
-    }
+    return RawAndMultilineTextLiteralsEmitExactTextConstantsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool SystemTextOwnedConcatAndViewBuiltinsEmitConcreteDefinitions()
 {
-    unsafe
-    {
-        return SystemTextOwnedConcatAndViewBuiltinsEmitConcreteDefinitionsImpl();
-    }
+    return SystemTextOwnedConcatAndViewBuiltinsEmitConcreteDefinitionsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool SystemTextAsciiToUnicodeBuiltinEmitsDirectWideningLoop()
 {
-    unsafe
-    {
-        return SystemTextAsciiToUnicodeBuiltinEmitsDirectWideningLoopImpl();
-    }
+    return SystemTextAsciiToUnicodeBuiltinEmitsDirectWideningLoopImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool SystemTextAsciiToUnicodeLiteralCallSpecializesAtCallSite()
 {
-    unsafe
-    {
-        return SystemTextAsciiToUnicodeLiteralCallSpecializesAtCallSiteImpl();
-    }
+    return SystemTextAsciiToUnicodeLiteralCallSpecializesAtCallSiteImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool SystemTextAsciiToUnicodeSlicedLiteralSourceSpecializesAtCallSite()
 {
-    unsafe
-    {
-        return SystemTextAsciiToUnicodeSlicedLiteralSourceSpecializesAtCallSiteImpl();
-    }
+    return SystemTextAsciiToUnicodeSlicedLiteralSourceSpecializesAtCallSiteImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool SystemTextAsciiToUnicodeDynamicSliceSourceKeepsBuiltinCall()
 {
-    unsafe
-    {
-        return SystemTextAsciiToUnicodeDynamicSliceSourceKeepsBuiltinCallImpl();
-    }
+    return SystemTextAsciiToUnicodeDynamicSliceSourceKeepsBuiltinCallImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool SystemTextAsciiToUnicodeLargeLiteralSpecializationUsesMemcpy()
 {
-    unsafe
-    {
-        return SystemTextAsciiToUnicodeLargeLiteralSpecializationUsesMemcpyImpl();
-    }
+    return SystemTextAsciiToUnicodeLargeLiteralSpecializationUsesMemcpyImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool SystemTextAsciiToUnicodeDynamicSourceKeepsBuiltinCall()
 {
-    unsafe
-    {
-        return SystemTextAsciiToUnicodeDynamicSourceKeepsBuiltinCallImpl();
-    }
+    return SystemTextAsciiToUnicodeDynamicSourceKeepsBuiltinCallImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool SystemTextAsciiToUnicodeLocalLiteralSourceSpecializesAtCallSite()
 {
-    unsafe
-    {
-        return SystemTextAsciiToUnicodeLocalLiteralSourceSpecializesAtCallSiteImpl();
-    }
+    return SystemTextAsciiToUnicodeLocalLiteralSourceSpecializesAtCallSiteImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool SystemTextAsciiToUnicodeConstLiteralSourceSpecializesAtCallSite()
 {
-    unsafe
-    {
-        return SystemTextAsciiToUnicodeConstLiteralSourceSpecializesAtCallSiteImpl();
-    }
+    return SystemTextAsciiToUnicodeConstLiteralSourceSpecializesAtCallSiteImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool SystemTextAsciiToUnicodePhiJoinedIdenticalLiteralSourceSpecializesAtCallSite()
 {
-    unsafe
-    {
-        return SystemTextAsciiToUnicodePhiJoinedIdenticalLiteralSourceSpecializesAtCallSiteImpl();
-    }
+    return SystemTextAsciiToUnicodePhiJoinedIdenticalLiteralSourceSpecializesAtCallSiteImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool SystemTextAsciiToUnicodeEscapedAsciiLiteralSpecializesAtCallSite()
 {
-    unsafe
-    {
-        return SystemTextAsciiToUnicodeEscapedAsciiLiteralSpecializesAtCallSiteImpl();
-    }
+    return SystemTextAsciiToUnicodeEscapedAsciiLiteralSpecializesAtCallSiteImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool SystemTextAsciiToUnicodeEmptyLiteralSpecializationAvoidsDataLoad()
 {
-    unsafe
-    {
-        return SystemTextAsciiToUnicodeEmptyLiteralSpecializationAvoidsDataLoadImpl();
-    }
+    return SystemTextAsciiToUnicodeEmptyLiteralSpecializationAvoidsDataLoadImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool SystemTextAsciiToUnicodeLiteralSpecializationHandlesNullDestination()
 {
-    unsafe
-    {
-        return SystemTextAsciiToUnicodeLiteralSpecializationHandlesNullDestinationImpl();
-    }
+    return SystemTextAsciiToUnicodeLiteralSpecializationHandlesNullDestinationImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool SystemTextAsciiToUnicodeLiteralSpecializationChecksCapacity()
 {
-    unsafe
-    {
-        return SystemTextAsciiToUnicodeLiteralSpecializationChecksCapacityImpl();
-    }
+    return SystemTextAsciiToUnicodeLiteralSpecializationChecksCapacityImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool SystemTextAsciiToUnicodeLiteralSpecializationChecksNullDestinationData()
 {
-    unsafe
-    {
-        return SystemTextAsciiToUnicodeLiteralSpecializationChecksNullDestinationDataImpl();
-    }
+    return SystemTextAsciiToUnicodeLiteralSpecializationChecksNullDestinationDataImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool SystemTextAsciiToUnicodeLiteralSpecializationRewritesForwardPhiIncomingLabel()
 {
-    unsafe
-    {
-        return SystemTextAsciiToUnicodeLiteralSpecializationRewritesForwardPhiIncomingLabelImpl();
-    }
+    return SystemTextAsciiToUnicodeLiteralSpecializationRewritesForwardPhiIncomingLabelImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool SystemTextAsciiToUnicodeNonAsciiLiteralKeepsBuiltinCall()
 {
-    unsafe
-    {
-        return SystemTextAsciiToUnicodeNonAsciiLiteralKeepsBuiltinCallImpl();
-    }
+    return SystemTextAsciiToUnicodeNonAsciiLiteralKeepsBuiltinCallImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool SystemMathBuiltinsEmitConcreteDefinitionsAndLlvmIntrinsics()
 {
-    unsafe
-    {
-        return SystemMathBuiltinsEmitConcreteDefinitionsAndLlvmIntrinsicsImpl();
-    }
+    return SystemMathBuiltinsEmitConcreteDefinitionsAndLlvmIntrinsicsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool SystemBitOperationsBuiltinsEmitConcreteDefinitionsAndLlvmIntrinsics()
 {
-    unsafe
-    {
-        return SystemBitOperationsBuiltinsEmitConcreteDefinitionsAndLlvmIntrinsicsImpl();
-    }
+    return SystemBitOperationsBuiltinsEmitConcreteDefinitionsAndLlvmIntrinsicsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool ImportedSystemMathHardwareBuiltinsAreInternalizedIntoConsumerIr()
 {
-    unsafe
-    {
-        return ImportedSystemMathHardwareBuiltinsAreInternalizedIntoConsumerIrImpl();
-    }
+    return ImportedSystemMathHardwareBuiltinsAreInternalizedIntoConsumerIrImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool UnusedImportedSystemMathHardwareBuiltinsDoNotMaterializeIntoConsumerIr()
 {
-    unsafe
-    {
-        return UnusedImportedSystemMathHardwareBuiltinsDoNotMaterializeIntoConsumerIrImpl();
-    }
+    return UnusedImportedSystemMathHardwareBuiltinsDoNotMaterializeIntoConsumerIrImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool ImportedSystemBitOperationsBuiltinsAreInternalizedIntoConsumerIr()
 {
-    unsafe
-    {
-        return ImportedSystemBitOperationsBuiltinsAreInternalizedIntoConsumerIrImpl();
-    }
+    return ImportedSystemBitOperationsBuiltinsAreInternalizedIntoConsumerIrImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool InternalStringFunctionsUseConcreteStringAbi()
 {
-    unsafe
-    {
-        return InternalStringFunctionsUseConcreteStringAbiImpl();
-    }
+    return InternalStringFunctionsUseConcreteStringAbiImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool CharacterLiteralsEmitConcreteStringValues()
 {
-    unsafe
-    {
-        return CharacterLiteralsEmitConcreteStringValuesImpl();
-    }
+    return CharacterLiteralsEmitConcreteStringValuesImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool UnicodeStringLiteralsUseUtf32CodeUnitLengthInRuntimeValues()
 {
-    unsafe
-    {
-        return UnicodeStringLiteralsUseUtf32CodeUnitLengthInRuntimeValuesImpl();
-    }
+    return UnicodeStringLiteralsUseUtf32CodeUnitLengthInRuntimeValuesImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool EquivalentAsciiLiteralPayloadsShareOneHelperGlobalAcrossGlobalAndFunctionUses()
 {
-    unsafe
-    {
-        return EquivalentAsciiLiteralPayloadsShareOneHelperGlobalAcrossGlobalAndFunctionUsesImpl();
-    }
+    return EquivalentAsciiLiteralPayloadsShareOneHelperGlobalAcrossGlobalAndFunctionUsesImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool EquivalentUnicodeLiteralPayloadsShareOneHelperGlobal()
 {
-    unsafe
-    {
-        return EquivalentUnicodeLiteralPayloadsShareOneHelperGlobalImpl();
-    }
+    return EquivalentUnicodeLiteralPayloadsShareOneHelperGlobalImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool PlainFnsEmitInferredPureAndFiniteAttributes()
 {
-    unsafe
-    {
-        return PlainFnsEmitInferredPureAndFiniteAttributesImpl();
-    }
+    return PlainFnsEmitInferredPureAndFiniteAttributesImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool BorrowParametersEmitCapturesAttributes()
 {
-    unsafe
-    {
-        return BorrowParametersEmitCapturesAttributesImpl();
-    }
+    return BorrowParametersEmitCapturesAttributesImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool StoreBorrowParametersEmitEscapingCaptureAttributes()
 {
-    unsafe
-    {
-        return StoreBorrowParametersEmitEscapingCaptureAttributesImpl();
-    }
+    return StoreBorrowParametersEmitEscapingCaptureAttributesImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool RetborrowScalarReturnsUsePointerAbiAndCanBeWrittenThrough()
 {
-    unsafe
-    {
-        return RetborrowScalarReturnsUsePointerAbiAndCanBeWrittenThroughImpl();
-    }
+    return RetborrowScalarReturnsUsePointerAbiAndCanBeWrittenThroughImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool ScalarAbiValuesEmitNoundefOnParametersAndReturns()
 {
-    unsafe
-    {
-        return ScalarAbiValuesEmitNoundefOnParametersAndReturnsImpl();
-    }
+    return ScalarAbiValuesEmitNoundefOnParametersAndReturnsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool BorrowedPointerAbiValuesEmitNoundefOnParametersAndReturns()
 {
-    unsafe
-    {
-        return BorrowedPointerAbiValuesEmitNoundefOnParametersAndReturnsImpl();
-    }
+    return BorrowedPointerAbiValuesEmitNoundefOnParametersAndReturnsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool FullyDefinedNonFfiAbiSurfacesEmitNoundef()
 {
-    unsafe
-    {
-        return FullyDefinedNonFfiAbiSurfacesEmitNoundefImpl();
-    }
+    return FullyDefinedNonFfiAbiSurfacesEmitNoundefImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool PointerAbiContractsDistinguishSafeBorrowsAndNullableRawPointers()
 {
-    unsafe
-    {
-        return PointerAbiContractsDistinguishSafeBorrowsAndNullableRawPointersImpl();
-    }
+    return PointerAbiContractsDistinguishSafeBorrowsAndNullableRawPointersImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool RawMutablePointerDeclarationsMayReadAndWriteArgumentMemory()
 {
-    unsafe
-    {
-        return RawMutablePointerDeclarationsMayReadAndWriteArgumentMemoryImpl();
-    }
+    return RawMutablePointerDeclarationsMayReadAndWriteArgumentMemoryImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool FfiRawMutablePointerCallsPropagateWrapperArgumentWrites()
 {
-    unsafe
-    {
-        return FfiRawMutablePointerCallsPropagateWrapperArgumentWritesImpl();
-    }
+    return FfiRawMutablePointerCallsPropagateWrapperArgumentWritesImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool ConstrainedIntegerLoadsAndCallResultsEmitRangeMetadata()
 {
-    unsafe
-    {
-        return ConstrainedIntegerLoadsAndCallResultsEmitRangeMetadataImpl();
-    }
+    return ConstrainedIntegerLoadsAndCallResultsEmitRangeMetadataImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool ConstrainedIntegerAbiSurfacesEmitRangeAttributes()
 {
-    unsafe
-    {
-        return ConstrainedIntegerAbiSurfacesEmitRangeAttributesImpl();
-    }
+    return ConstrainedIntegerAbiSurfacesEmitRangeAttributesImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool BranchRefinedIntegerComparisonsEmitTargetedAssumes()
 {
-    unsafe
-    {
-        return BranchRefinedIntegerComparisonsEmitTargetedAssumesImpl();
-    }
+    return BranchRefinedIntegerComparisonsEmitTargetedAssumesImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool BranchRefinedRawPointerNullChecksEmitNonnullAssumeBundle()
 {
-    unsafe
-    {
-        return BranchRefinedRawPointerNullChecksEmitNonnullAssumeBundleImpl();
-    }
+    return BranchRefinedRawPointerNullChecksEmitNonnullAssumeBundleImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool BranchRefinedPointerEqualityToKnownAddressEmitsAlignmentAssumeBundle()
 {
-    unsafe
-    {
-        return BranchRefinedPointerEqualityToKnownAddressEmitsAlignmentAssumeBundleImpl();
-    }
+    return BranchRefinedPointerEqualityToKnownAddressEmitsAlignmentAssumeBundleImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool BoundaryFactsAndPlainBoolBranchesDoNotEmitAssumeIntrinsic()
 {
-    unsafe
-    {
-        return BoundaryFactsAndPlainBoolBranchesDoNotEmitAssumeIntrinsicImpl();
-    }
+    return BoundaryFactsAndPlainBoolBranchesDoNotEmitAssumeIntrinsicImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool SignedConstrainedIntegerLoadsEmitWrappingRangeMetadata()
 {
-    unsafe
-    {
-        return SignedConstrainedIntegerLoadsEmitWrappingRangeMetadataImpl();
-    }
+    return SignedConstrainedIntegerLoadsEmitWrappingRangeMetadataImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool MemoryAttributesDistinguishArgumentAndOtherMemoryEffects()
 {
-    unsafe
-    {
-        return MemoryAttributesDistinguishArgumentAndOtherMemoryEffectsImpl();
-    }
+    return MemoryAttributesDistinguishArgumentAndOtherMemoryEffectsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool MemoryAttributesKeepArgumentEffectsWhenSyntheticTemporariesAreNeeded()
 {
-    unsafe
-    {
-        return MemoryAttributesKeepArgumentEffectsWhenSyntheticTemporariesAreNeededImpl();
-    }
+    return MemoryAttributesKeepArgumentEffectsWhenSyntheticTemporariesAreNeededImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool EscapedTextLiteralsEmitDecodedBytes()
 {
-    unsafe
-    {
-        return EscapedTextLiteralsEmitDecodedBytesImpl();
-    }
+    return EscapedTextLiteralsEmitDecodedBytesImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool FfiStringCallsExtractPointerFromConcreteStringValues()
 {
-    unsafe
-    {
-        return FfiStringCallsExtractPointerFromConcreteStringValuesImpl();
-    }
+    return FfiStringCallsExtractPointerFromConcreteStringValuesImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool StructFieldAccessCanFoldToScalarReturn()
 {
-    unsafe
-    {
-        return StructFieldAccessCanFoldToScalarReturnImpl();
-    }
+    return StructFieldAccessCanFoldToScalarReturnImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool FieldAssignmentCanFoldToScalarReturn()
 {
-    unsafe
-    {
-        return FieldAssignmentCanFoldToScalarReturnImpl();
-    }
+    return FieldAssignmentCanFoldToScalarReturnImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool RegisterObjectCreationCanFoldToScalarReturn()
 {
-    unsafe
-    {
-        return RegisterObjectCreationCanFoldToScalarReturnImpl();
-    }
+    return RegisterObjectCreationCanFoldToScalarReturnImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool NonStrictFpFunctionsEmitFastMathFlagsOnBinaryOpsAndCalls()
 {
-    unsafe
-    {
-        return NonStrictFpFunctionsEmitFastMathFlagsOnBinaryOpsAndCallsImpl();
-    }
+    return NonStrictFpFunctionsEmitFastMathFlagsOnBinaryOpsAndCallsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool TailPositionDirectCallsEmitTailMarkerWhenAbiCompatible()
 {
-    unsafe
-    {
-        return TailPositionDirectCallsEmitTailMarkerWhenAbiCompatibleImpl();
-    }
+    return TailPositionDirectCallsEmitTailMarkerWhenAbiCompatibleImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool NonStrictFpFunctionsEmitFastMathFlagsOnRemainingFloatInstructions()
 {
-    unsafe
-    {
-        return NonStrictFpFunctionsEmitFastMathFlagsOnRemainingFloatInstructionsImpl();
-    }
+    return NonStrictFpFunctionsEmitFastMathFlagsOnRemainingFloatInstructionsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool NonStrictFpMultiplyAddExpressionsUseContractionFriendlyIntrinsic()
 {
-    unsafe
-    {
-        return NonStrictFpMultiplyAddExpressionsUseContractionFriendlyIntrinsicImpl();
-    }
+    return NonStrictFpMultiplyAddExpressionsUseContractionFriendlyIntrinsicImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool StrictFpFunctionsOptOutOfFastMathFlags()
 {
-    unsafe
-    {
-        return StrictFpFunctionsOptOutOfFastMathFlagsImpl();
-    }
+    return StrictFpFunctionsOptOutOfFastMathFlagsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool StrictFpFunctionPointerCallsComposeWithKindedCallSiteAttributes()
 {
-    unsafe
-    {
-        return StrictFpFunctionPointerCallsComposeWithKindedCallSiteAttributesImpl();
-    }
+    return StrictFpFunctionPointerCallsComposeWithKindedCallSiteAttributesImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool StrictFpMultiplyAddExpressionsDoNotUseContractionIntrinsic()
 {
-    unsafe
-    {
-        return StrictFpMultiplyAddExpressionsDoNotUseContractionIntrinsicImpl();
-    }
+    return StrictFpMultiplyAddExpressionsDoNotUseContractionIntrinsicImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool StrictFpConversionsUseConstrainedFloatingPointIntrinsics()
 {
-    unsafe
-    {
-        return StrictFpConversionsUseConstrainedFloatingPointIntrinsicsImpl();
-    }
+    return StrictFpConversionsUseConstrainedFloatingPointIntrinsicsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool UnrecoverableUnreachablePathsLowerThroughColdTrapHelper()
 {
-    unsafe
-    {
-        return UnrecoverableUnreachablePathsLowerThroughColdTrapHelperImpl();
-    }
+    return UnrecoverableUnreachablePathsLowerThroughColdTrapHelperImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool HeapObjectCreationUsesAllocatorLowering()
 {
-    unsafe
-    {
-        return HeapObjectCreationUsesAllocatorLoweringImpl();
-    }
+    return HeapObjectCreationUsesAllocatorLoweringImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool HeapFieldInitializationDoesNotReadUninitializedAggregateStorage()
 {
-    unsafe
-    {
-        return HeapFieldInitializationDoesNotReadUninitializedAggregateStorageImpl();
-    }
+    return HeapFieldInitializationDoesNotReadUninitializedAggregateStorageImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool SystemMemoryInternalAllocatorBuiltinsLowerToRuntimeAllocatorContract()
 {
-    unsafe
-    {
-        return SystemMemoryInternalAllocatorBuiltinsLowerToRuntimeAllocatorContractImpl();
-    }
+    return SystemMemoryInternalAllocatorBuiltinsLowerToRuntimeAllocatorContractImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool StackLocalsEmitInstructionAlignmentWhenLayoutsAreKnown()
 {
-    unsafe
-    {
-        return StackLocalsEmitInstructionAlignmentWhenLayoutsAreKnownImpl();
-    }
+    return StackLocalsEmitInstructionAlignmentWhenLayoutsAreKnownImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool AddressValueFactsEmitKnownPointeeAlignmentForIndirectLoads()
 {
-    unsafe
-    {
-        return AddressValueFactsEmitKnownPointeeAlignmentForIndirectLoadsImpl();
-    }
+    return AddressValueFactsEmitKnownPointeeAlignmentForIndirectLoadsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool RawPointerParametersDoNotInventPointeeAlignment()
 {
-    unsafe
-    {
-        return RawPointerParametersDoNotInventPointeeAlignmentImpl();
-    }
+    return RawPointerParametersDoNotInventPointeeAlignmentImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool OwnedScalarArrayStoragePreservesVectorizationFriendlyAlignment()
 {
-    unsafe
-    {
-        return OwnedScalarArrayStoragePreservesVectorizationFriendlyAlignmentImpl();
-    }
+    return OwnedScalarArrayStoragePreservesVectorizationFriendlyAlignmentImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool StaticStackAndAbiTemporaryAllocasEmitInEntryBlock()
 {
-    unsafe
-    {
-        return StaticStackAndAbiTemporaryAllocasEmitInEntryBlockImpl();
-    }
+    return StaticStackAndAbiTemporaryAllocasEmitInEntryBlockImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool SmallRecordEqualityAndInequalityEmitScalarLeafComparisons()
 {
-    unsafe
-    {
-        return SmallRecordEqualityAndInequalityEmitScalarLeafComparisonsImpl();
-    }
+    return SmallRecordEqualityAndInequalityEmitScalarLeafComparisonsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool SmallFixedArrayEqualityAndInequalityEmitScalarLeafComparisons()
 {
-    unsafe
-    {
-        return SmallFixedArrayEqualityAndInequalityEmitScalarLeafComparisonsImpl();
-    }
+    return SmallFixedArrayEqualityAndInequalityEmitScalarLeafComparisonsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool SmallEnumEqualityAndInequalityEmitScalarLeafComparisons()
 {
-    unsafe
-    {
-        return SmallEnumEqualityAndInequalityEmitScalarLeafComparisonsImpl();
-    }
+    return SmallEnumEqualityAndInequalityEmitScalarLeafComparisonsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool LargerRecordEqualityAndInequalityEmitScalarLeafComparisons()
 {
-    unsafe
-    {
-        return LargerRecordEqualityAndInequalityEmitScalarLeafComparisonsImpl();
-    }
+    return LargerRecordEqualityAndInequalityEmitScalarLeafComparisonsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool LargerRecordOrderedComparisonsEmitScalarLeafLexicographicHelperCalls()
 {
-    unsafe
-    {
-        return LargerRecordOrderedComparisonsEmitScalarLeafLexicographicHelperCallsImpl();
-    }
+    return LargerRecordOrderedComparisonsEmitScalarLeafLexicographicHelperCallsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool ScalarizableEnumOrderedComparisonsEmitScalarLeafLexicographicHelperCalls()
 {
-    unsafe
-    {
-        return ScalarizableEnumOrderedComparisonsEmitScalarLeafLexicographicHelperCallsImpl();
-    }
+    return ScalarizableEnumOrderedComparisonsEmitScalarLeafLexicographicHelperCallsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool LargerFixedArrayEqualityAndInequalityEmitScalarLeafComparisons()
 {
-    unsafe
-    {
-        return LargerFixedArrayEqualityAndInequalityEmitScalarLeafComparisonsImpl();
-    }
+    return LargerFixedArrayEqualityAndInequalityEmitScalarLeafComparisonsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool LargerEnumEqualityAndInequalityEmitScalarLeafComparisons()
 {
-    unsafe
-    {
-        return LargerEnumEqualityAndInequalityEmitScalarLeafComparisonsImpl();
-    }
+    return LargerEnumEqualityAndInequalityEmitScalarLeafComparisonsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool TextEqualityAndInequalityEmitHelperCalls()
 {
-    unsafe
-    {
-        return TextEqualityAndInequalityEmitHelperCallsImpl();
-    }
+    return TextEqualityAndInequalityEmitHelperCallsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool AggregatesWithTextFieldsEmitScalarLeafTextComparisons()
 {
-    unsafe
-    {
-        return AggregatesWithTextFieldsEmitScalarLeafTextComparisonsImpl();
-    }
+    return AggregatesWithTextFieldsEmitScalarLeafTextComparisonsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool SliceEqualityAndInequalityEmitPointerAndLengthComparisons()
 {
-    unsafe
-    {
-        return SliceEqualityAndInequalityEmitPointerAndLengthComparisonsImpl();
-    }
+    return SliceEqualityAndInequalityEmitPointerAndLengthComparisonsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool AggregatesWithSliceFieldsEmitScalarLeafSliceComparisons()
 {
-    unsafe
-    {
-        return AggregatesWithSliceFieldsEmitScalarLeafSliceComparisonsImpl();
-    }
+    return AggregatesWithSliceFieldsEmitScalarLeafSliceComparisonsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool MixedCallMemberAndIndexPostfixChainsEmitCallAndExtracts()
 {
-    unsafe
-    {
-        return MixedCallMemberAndIndexPostfixChainsEmitCallAndExtractsImpl();
-    }
+    return MixedCallMemberAndIndexPostfixChainsEmitCallAndExtractsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool RecordTypeUsesConcreteAggregateLayoutAndCanFoldFieldReads()
 {
-    unsafe
-    {
-        return RecordTypeUsesConcreteAggregateLayoutAndCanFoldFieldReadsImpl();
-    }
+    return RecordTypeUsesConcreteAggregateLayoutAndCanFoldFieldReadsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool PlainObjectCreationWithoutInitializerReturnsZeroInitializedAggregate()
 {
-    unsafe
-    {
-        return PlainObjectCreationWithoutInitializerReturnsZeroInitializedAggregateImpl();
-    }
+    return PlainObjectCreationWithoutInitializerReturnsZeroInitializedAggregateImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool PrimaryRecordConstructorArgumentsEmitOrderedAggregateUpdates()
 {
-    unsafe
-    {
-        return PrimaryRecordConstructorArgumentsEmitOrderedAggregateUpdatesImpl();
-    }
+    return PrimaryRecordConstructorArgumentsEmitOrderedAggregateUpdatesImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool InternalAggregateParameterUsesDirectValueAbi()
 {
-    unsafe
-    {
-        return InternalAggregateParameterUsesDirectValueAbiImpl();
-    }
+    return InternalAggregateParameterUsesDirectValueAbiImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool BorrowedPaddedAggregateEmitsDerivedAlignmentAndLayoutFacts()
 {
-    unsafe
-    {
-        return BorrowedPaddedAggregateEmitsDerivedAlignmentAndLayoutFactsImpl();
-    }
+    return BorrowedPaddedAggregateEmitsDerivedAlignmentAndLayoutFactsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool PackedCStructLayoutEmitsPackedPhysicalTypeAndUnalignedFieldAccess()
 {
-    unsafe
-    {
-        return PackedCStructLayoutEmitsPackedPhysicalTypeAndUnalignedFieldAccessImpl();
-    }
+    return PackedCStructLayoutEmitsPackedPhysicalTypeAndUnalignedFieldAccessImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool ExplicitStructLayoutEmitsByteStorageAndFieldOffsetAccess()
 {
-    unsafe
-    {
-        return ExplicitStructLayoutEmitsByteStorageAndFieldOffsetAccessImpl();
-    }
+    return ExplicitStructLayoutEmitsByteStorageAndFieldOffsetAccessImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool TypeAliasesPreserveTheUnderlyingAggregateAbi()
 {
-    unsafe
-    {
-        return TypeAliasesPreserveTheUnderlyingAggregateAbiImpl();
-    }
+    return TypeAliasesPreserveTheUnderlyingAggregateAbiImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool SmallPackedAddressableAggregateCopyUsesScalarFieldLoadsAndStores()
 {
-    unsafe
-    {
-        return SmallPackedAddressableAggregateCopyUsesScalarFieldLoadsAndStoresImpl();
-    }
+    return SmallPackedAddressableAggregateCopyUsesScalarFieldLoadsAndStoresImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool SmallPaddedAggregateCopyPreservesWholeAggregateTransfer()
 {
-    unsafe
-    {
-        return SmallPaddedAggregateCopyPreservesWholeAggregateTransferImpl();
-    }
+    return SmallPaddedAggregateCopyPreservesWholeAggregateTransferImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool LargeAddressableAggregateCopyUsesInlineMemcpy()
 {
-    unsafe
-    {
-        return LargeAddressableAggregateCopyUsesInlineMemcpyImpl();
-    }
+    return LargeAddressableAggregateCopyUsesInlineMemcpyImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool VeryLargeAddressableAggregateCopyUsesRegularMemcpy()
 {
-    unsafe
-    {
-        return VeryLargeAddressableAggregateCopyUsesRegularMemcpyImpl();
-    }
+    return VeryLargeAddressableAggregateCopyUsesRegularMemcpyImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool LargeLocalFixedArrayConstantIndexUpdateUsesScalarProjectionAccess()
 {
-    unsafe
-    {
-        return LargeLocalFixedArrayConstantIndexUpdateUsesScalarProjectionAccessImpl();
-    }
+    return LargeLocalFixedArrayConstantIndexUpdateUsesScalarProjectionAccessImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool LargeEnumPayloadProjectionIntoAddressableLocalUsesAddressCopy()
 {
-    unsafe
-    {
-        return LargeEnumPayloadProjectionIntoAddressableLocalUsesAddressCopyImpl();
-    }
+    return LargeEnumPayloadProjectionIntoAddressableLocalUsesAddressCopyImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool LargeEnumPayloadImmediateMoveIntoMethodLocalAliasesPayloadStorage()
 {
-    unsafe
-    {
-        return LargeEnumPayloadImmediateMoveIntoMethodLocalAliasesPayloadStorageImpl();
-    }
+    return LargeEnumPayloadImmediateMoveIntoMethodLocalAliasesPayloadStorageImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool LargeLocalAggregateInsertedIntoEnumPayloadUsesAddressCopy()
 {
-    unsafe
-    {
-        return LargeLocalAggregateInsertedIntoEnumPayloadUsesAddressCopyImpl();
-    }
+    return LargeLocalAggregateInsertedIntoEnumPayloadUsesAddressCopyImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool SmallEnumPayloadProjectionKeepsScalarLowering()
 {
-    unsafe
-    {
-        return SmallEnumPayloadProjectionKeepsScalarLoweringImpl();
-    }
+    return SmallEnumPayloadProjectionKeepsScalarLoweringImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool AddressForwardedAggregateStoreDoesNotReadEndedLocalLifetime()
 {
-    unsafe
-    {
-        return AddressForwardedAggregateStoreDoesNotReadEndedLocalLifetimeImpl();
-    }
+    return AddressForwardedAggregateStoreDoesNotReadEndedLocalLifetimeImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool LargeZeroInitializedAggregateStoresUseInlineMemset()
 {
-    unsafe
-    {
-        return LargeZeroInitializedAggregateStoresUseInlineMemsetImpl();
-    }
+    return LargeZeroInitializedAggregateStoresUseInlineMemsetImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool AggregateMoveInvalidatesAddressableSourceStorage()
 {
-    unsafe
-    {
-        return AggregateMoveInvalidatesAddressableSourceStorageImpl();
-    }
+    return AggregateMoveInvalidatesAddressableSourceStorageImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool AddressableAggregateConditionalUsesSingleAggregateAlloca()
 {
-    unsafe
-    {
-        return AddressableAggregateConditionalUsesSingleAggregateAllocaImpl();
-    }
+    return AddressableAggregateConditionalUsesSingleAggregateAllocaImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool InternalAggregateReturnUsesDirectValueAbi()
 {
-    unsafe
-    {
-        return InternalAggregateReturnUsesDirectValueAbiImpl();
-    }
+    return InternalAggregateReturnUsesDirectValueAbiImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool LargeAggregateReturnUsesSRetAbi()
 {
-    unsafe
-    {
-        return LargeAggregateReturnUsesSRetAbiImpl();
-    }
+    return LargeAggregateReturnUsesSRetAbiImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool LargeAggregateReturnedThroughSRetMaterializesBeforeNestedInsert()
 {
-    unsafe
-    {
-        return LargeAggregateReturnedThroughSRetMaterializesBeforeNestedInsertImpl();
-    }
+    return LargeAggregateReturnedThroughSRetMaterializesBeforeNestedInsertImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool LargeAggregateInitializerReturnMaterializesDirectlyIntoSRetBuffer()
 {
-    unsafe
-    {
-        return LargeAggregateInitializerReturnMaterializesDirectlyIntoSRetBufferImpl();
-    }
+    return LargeAggregateInitializerReturnMaterializesDirectlyIntoSRetBufferImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool LargeGenericEnumAggregateReturnMaterializesDirectlyIntoSRetBuffer()
 {
-    unsafe
-    {
-        return LargeGenericEnumAggregateReturnMaterializesDirectlyIntoSRetBufferImpl();
-    }
+    return LargeGenericEnumAggregateReturnMaterializesDirectlyIntoSRetBufferImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool LargeAggregateForwardReturnForwardsDirectCallIntoSRetBuffer()
 {
-    unsafe
-    {
-        return LargeAggregateForwardReturnForwardsDirectCallIntoSRetBufferImpl();
-    }
+    return LargeAggregateForwardReturnForwardsDirectCallIntoSRetBufferImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool LargeAggregateLocalForwardReturnKeepsDirectCallInSRetBuffer()
 {
-    unsafe
-    {
-        return LargeAggregateLocalForwardReturnKeepsDirectCallInSRetBufferImpl();
-    }
+    return LargeAggregateLocalForwardReturnKeepsDirectCallInSRetBufferImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool LargeAggregateReturnOfIndirectParameterSkipsEntryLoad()
 {
-    unsafe
-    {
-        return LargeAggregateReturnOfIndirectParameterSkipsEntryLoadImpl();
-    }
+    return LargeAggregateReturnOfIndirectParameterSkipsEntryLoadImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool LargeAggregateIndirectParameterForwardingUsesOriginalPointer()
 {
-    unsafe
-    {
-        return LargeAggregateIndirectParameterForwardingUsesOriginalPointerImpl();
-    }
+    return LargeAggregateIndirectParameterForwardingUsesOriginalPointerImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool LargeAggregateParametersUseByValueIndirectAbi()
 {
-    unsafe
-    {
-        return LargeAggregateParametersUseByValueIndirectAbiImpl();
-    }
+    return LargeAggregateParametersUseByValueIndirectAbiImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool AggregateCallReturnRegressionBenchmarkKeepsSmallAggregatesOnDirectAbi()
 {
-    unsafe
-    {
-        return AggregateCallReturnRegressionBenchmarkKeepsSmallAggregatesOnDirectAbiImpl();
-    }
+    return AggregateCallReturnRegressionBenchmarkKeepsSmallAggregatesOnDirectAbiImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool AggregateCallReturnRegressionBenchmarkKeepsLargeAggregatesOnIndirectAbi()
 {
-    unsafe
-    {
-        return AggregateCallReturnRegressionBenchmarkKeepsLargeAggregatesOnIndirectAbiImpl();
-    }
+    return AggregateCallReturnRegressionBenchmarkKeepsLargeAggregatesOnIndirectAbiImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool AggregateBranchJoinEmitsByValuePhiNode()
 {
-    unsafe
-    {
-        return AggregateBranchJoinEmitsByValuePhiNodeImpl();
-    }
+    return AggregateBranchJoinEmitsByValuePhiNodeImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool ValueReceiverMethodsLowerToDirectAggregateCalls()
 {
-    unsafe
-    {
-        return ValueReceiverMethodsLowerToDirectAggregateCallsImpl();
-    }
+    return ValueReceiverMethodsLowerToDirectAggregateCallsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool BorrowReceiverMethodsLowerToPointerReceiverCalls()
 {
-    unsafe
-    {
-        return BorrowReceiverMethodsLowerToPointerReceiverCallsImpl();
-    }
+    return BorrowReceiverMethodsLowerToPointerReceiverCallsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool IndexedFieldAddressBehindRawPointerEmitsDirectParameterGeps()
 {
-    unsafe
-    {
-        return IndexedFieldAddressBehindRawPointerEmitsDirectParameterGepsImpl();
-    }
+    return IndexedFieldAddressBehindRawPointerEmitsDirectParameterGepsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool IndexedRawPointerElementsEmitDirectParameterGeps()
 {
-    unsafe
-    {
-        return IndexedRawPointerElementsEmitDirectParameterGepsImpl();
-    }
+    return IndexedRawPointerElementsEmitDirectParameterGepsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool BorrowReceiverIndexedFieldAddressesEmitDirectReceiverGeps()
 {
-    unsafe
-    {
-        return BorrowReceiverIndexedFieldAddressesEmitDirectReceiverGepsImpl();
-    }
+    return BorrowReceiverIndexedFieldAddressesEmitDirectReceiverGepsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool MutableBorrowedAggregateWriterEmitsWriteOnlyNoCaptureParameterFacts()
 {
-    unsafe
-    {
-        return MutableBorrowedAggregateWriterEmitsWriteOnlyNoCaptureParameterFactsImpl();
-    }
+    return MutableBorrowedAggregateWriterEmitsWriteOnlyNoCaptureParameterFactsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool MutableBorrowReturnedSliceWritesDoNotEmitReadonlyParameterFacts()
 {
-    unsafe
-    {
-        return MutableBorrowReturnedSliceWritesDoNotEmitReadonlyParameterFactsImpl();
-    }
+    return MutableBorrowReturnedSliceWritesDoNotEmitReadonlyParameterFactsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool FixedArrayInitializerAndIndexCanFoldToScalarReturn()
 {
-    unsafe
-    {
-        return FixedArrayInitializerAndIndexCanFoldToScalarReturnImpl();
-    }
+    return FixedArrayInitializerAndIndexCanFoldToScalarReturnImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool FixedArrayIndexAssignmentCanFoldToScalarReturn()
 {
-    unsafe
-    {
-        return FixedArrayIndexAssignmentCanFoldToScalarReturnImpl();
-    }
+    return FixedArrayIndexAssignmentCanFoldToScalarReturnImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool DynamicArrayIndexEmitsAddressBasedLoad()
 {
-    unsafe
-    {
-        return DynamicArrayIndexEmitsAddressBasedLoadImpl();
-    }
+    return DynamicArrayIndexEmitsAddressBasedLoadImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool NonAddressableFixedArrayDynamicIndexSpillsOnlyTheTemporarySource()
 {
-    unsafe
-    {
-        return NonAddressableFixedArrayDynamicIndexSpillsOnlyTheTemporarySourceImpl();
-    }
+    return NonAddressableFixedArrayDynamicIndexSpillsOnlyTheTemporarySourceImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool SliceParameterUsesConcreteSliceAbiAndDynamicIndexLoad()
 {
-    unsafe
-    {
-        return SliceParameterUsesConcreteSliceAbiAndDynamicIndexLoadImpl();
-    }
+    return SliceParameterUsesConcreteSliceAbiAndDynamicIndexLoadImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool FixedArrayBackedSliceAndKnownTextSliceCarryProvenGepFlags()
 {
-    unsafe
-    {
-        return FixedArrayBackedSliceAndKnownTextSliceCarryProvenGepFlagsImpl();
-    }
+    return FixedArrayBackedSliceAndKnownTextSliceCarryProvenGepFlagsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool PropagatedSliceAndTextLengthFactsCarryProvenGepFlags()
 {
-    unsafe
-    {
-        return PropagatedSliceAndTextLengthFactsCarryProvenGepFlagsImpl();
-    }
+    return PropagatedSliceAndTextLengthFactsCarryProvenGepFlagsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool FixedArrayParameterUsesDirectValueAbi()
 {
-    unsafe
-    {
-        return FixedArrayParameterUsesDirectValueAbiImpl();
-    }
+    return FixedArrayParameterUsesDirectValueAbiImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool FixedArrayParameterDynamicIndexUsesParameterSlotAddressing()
 {
-    unsafe
-    {
-        return FixedArrayParameterDynamicIndexUsesParameterSlotAddressingImpl();
-    }
+    return FixedArrayParameterDynamicIndexUsesParameterSlotAddressingImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool FixedArrayDynamicIndexEmitsGepFlagsOnlyWhenRangeProvesObjectBounds()
 {
-    unsafe
-    {
-        return FixedArrayDynamicIndexEmitsGepFlagsOnlyWhenRangeProvesObjectBoundsImpl();
-    }
+    return FixedArrayDynamicIndexEmitsGepFlagsOnlyWhenRangeProvesObjectBoundsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool FixedArrayReturnUsesDirectValueAbi()
 {
-    unsafe
-    {
-        return FixedArrayReturnUsesDirectValueAbiImpl();
-    }
+    return FixedArrayReturnUsesDirectValueAbiImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool DynamicArrayIndexMutationEmitsAddressBasedStoreAndLoad()
 {
-    unsafe
-    {
-        return DynamicArrayIndexMutationEmitsAddressBasedStoreAndLoadImpl();
-    }
+    return DynamicArrayIndexMutationEmitsAddressBasedStoreAndLoadImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool SliceMutationEmitsIndirectStoreAndLoad()
 {
-    unsafe
-    {
-        return SliceMutationEmitsIndirectStoreAndLoadImpl();
-    }
+    return SliceMutationEmitsIndirectStoreAndLoadImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool ImportedStarkFunctionUsesQualifiedDependencySymbol()
 {
-    unsafe
-    {
-        return ImportedStarkFunctionUsesQualifiedDependencySymbolImpl();
-    }
+    return ImportedStarkFunctionUsesQualifiedDependencySymbolImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool ImportedSourceAsmFunctionsEmitExternalDeclarationsAndCalls()
 {
-    unsafe
-    {
-        return ImportedSourceAsmFunctionsEmitExternalDeclarationsAndCallsImpl();
-    }
+    return ImportedSourceAsmFunctionsEmitExternalDeclarationsAndCallsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool ImportedGlobalsUseQualifiedDependencySymbolsAndFoldConstValues()
 {
-    unsafe
-    {
-        return ImportedGlobalsUseQualifiedDependencySymbolsAndFoldConstValuesImpl();
-    }
+    return ImportedGlobalsUseQualifiedDependencySymbolsAndFoldConstValuesImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool ImportedReadonlyScalarArrayDeclarationsCarryVectorizationFriendlyAlignment()
 {
-    unsafe
-    {
-        return ImportedReadonlyScalarArrayDeclarationsCarryVectorizationFriendlyAlignmentImpl();
-    }
+    return ImportedReadonlyScalarArrayDeclarationsCarryVectorizationFriendlyAlignmentImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool PackageImageBackedImportedReadonlyDataPreservesInvariantMetadata()
 {
-    unsafe
-    {
-        return PackageImageBackedImportedReadonlyDataPreservesInvariantMetadataImpl();
-    }
+    return PackageImageBackedImportedReadonlyDataPreservesInvariantMetadataImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool ImmutableGlobalAddressesLowerWithoutPointerCasts()
 {
-    unsafe
-    {
-        return ImmutableGlobalAddressesLowerWithoutPointerCastsImpl();
-    }
+    return ImmutableGlobalAddressesLowerWithoutPointerCastsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool ImportedAggregateFunctionsUseCrossModuleAbiDeclarations()
 {
-    unsafe
-    {
-        return ImportedAggregateFunctionsUseCrossModuleAbiDeclarationsImpl();
-    }
+    return ImportedAggregateFunctionsUseCrossModuleAbiDeclarationsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool ConstantImportedLawCallsFoldBeforeClosedWorldCloneEmission()
 {
-    unsafe
-    {
-        return ConstantImportedLawCallsFoldBeforeClosedWorldCloneEmissionImpl();
-    }
+    return ConstantImportedLawCallsFoldBeforeClosedWorldCloneEmissionImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool ConstantImportedLawCallsStillFoldInsideImpureCallers()
 {
-    unsafe
-    {
-        return ConstantImportedLawCallsStillFoldInsideImpureCallersImpl();
-    }
+    return ConstantImportedLawCallsStillFoldInsideImpureCallersImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool MixedLawAndNonLawRootCallersUseSelectiveImportedDoctrineLawClones()
 {
-    unsafe
-    {
-        return MixedLawAndNonLawRootCallersUseSelectiveImportedDoctrineLawClonesImpl();
-    }
+    return MixedLawAndNonLawRootCallersUseSelectiveImportedDoctrineLawClonesImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool MixedLawAndNonLawRootCallersUseSelectiveImportedTopLevelLawClones()
 {
-    unsafe
-    {
-        return MixedLawAndNonLawRootCallersUseSelectiveImportedTopLevelLawClonesImpl();
-    }
+    return MixedLawAndNonLawRootCallersUseSelectiveImportedTopLevelLawClonesImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool ImpureRootFunctionsDoNotCloneImportedLawBodiesIntoRootLlvm()
 {
-    unsafe
-    {
-        return ImpureRootFunctionsDoNotCloneImportedLawBodiesIntoRootLlvmImpl();
-    }
+    return ImpureRootFunctionsDoNotCloneImportedLawBodiesIntoRootLlvmImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool ImportedLawEntrypointsWithExplicitInlineHintDoNotSpecializeIntoClones()
 {
-    unsafe
-    {
-        return ImportedLawEntrypointsWithExplicitInlineHintDoNotSpecializeIntoClonesImpl();
-    }
+    return ImportedLawEntrypointsWithExplicitInlineHintDoNotSpecializeIntoClonesImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool ClosedWorldModulePrivateLawHelpersEmitAlwaysInline()
 {
-    unsafe
-    {
-        return ClosedWorldModulePrivateLawHelpersEmitAlwaysInlineImpl();
-    }
+    return ClosedWorldModulePrivateLawHelpersEmitAlwaysInlineImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool ModulePrivateDirectCallForwardersEmitAlwaysInline()
 {
-    unsafe
-    {
-        return ModulePrivateDirectCallForwardersEmitAlwaysInlineImpl();
-    }
+    return ModulePrivateDirectCallForwardersEmitAlwaysInlineImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool ModulePrivateMemberCallForwardersEmitAlwaysInline()
 {
-    unsafe
-    {
-        return ModulePrivateMemberCallForwardersEmitAlwaysInlineImpl();
-    }
+    return ModulePrivateMemberCallForwardersEmitAlwaysInlineImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool ModulePrivateFieldAccessWrappersEmitAlwaysInline()
 {
-    unsafe
-    {
-        return ModulePrivateFieldAccessWrappersEmitAlwaysInlineImpl();
-    }
+    return ModulePrivateFieldAccessWrappersEmitAlwaysInlineImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool ModulePrivateIndexAccessWrappersEmitAlwaysInline()
 {
-    unsafe
-    {
-        return ModulePrivateIndexAccessWrappersEmitAlwaysInlineImpl();
-    }
+    return ModulePrivateIndexAccessWrappersEmitAlwaysInlineImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool ModulePrivateConversionWrappersEmitAlwaysInline()
 {
-    unsafe
-    {
-        return ModulePrivateConversionWrappersEmitAlwaysInlineImpl();
-    }
+    return ModulePrivateConversionWrappersEmitAlwaysInlineImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool ModulePrivateAddressOfWrappersEmitAlwaysInline()
 {
-    unsafe
-    {
-        return ModulePrivateAddressOfWrappersEmitAlwaysInlineImpl();
-    }
+    return ModulePrivateAddressOfWrappersEmitAlwaysInlineImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool ModulePrivateBinaryOperatorWrappersEmitAlwaysInline()
 {
-    unsafe
-    {
-        return ModulePrivateBinaryOperatorWrappersEmitAlwaysInlineImpl();
-    }
+    return ModulePrivateBinaryOperatorWrappersEmitAlwaysInlineImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool ModulePrivateComparisonWrappersEmitAlwaysInline()
 {
-    unsafe
-    {
-        return ModulePrivateComparisonWrappersEmitAlwaysInlineImpl();
-    }
+    return ModulePrivateComparisonWrappersEmitAlwaysInlineImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool ModulePrivateTerminalIfSelectionWrappersEmitAlwaysInline()
 {
-    unsafe
-    {
-        return ModulePrivateTerminalIfSelectionWrappersEmitAlwaysInlineImpl();
-    }
+    return ModulePrivateTerminalIfSelectionWrappersEmitAlwaysInlineImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool ModulePrivateTerminalSwitchSelectionWrappersEmitAlwaysInline()
 {
-    unsafe
-    {
-        return ModulePrivateTerminalSwitchSelectionWrappersEmitAlwaysInlineImpl();
-    }
+    return ModulePrivateTerminalSwitchSelectionWrappersEmitAlwaysInlineImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool ModulePrivateObjectConstructionWrappersEmitAlwaysInline()
 {
-    unsafe
-    {
-        return ModulePrivateObjectConstructionWrappersEmitAlwaysInlineImpl();
-    }
+    return ModulePrivateObjectConstructionWrappersEmitAlwaysInlineImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool ModulePrivateEnumConstructionWrappersEmitAlwaysInline()
 {
-    unsafe
-    {
-        return ModulePrivateEnumConstructionWrappersEmitAlwaysInlineImpl();
-    }
+    return ModulePrivateEnumConstructionWrappersEmitAlwaysInlineImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool ModulePrivateLocalUpdateWrappersEmitAlwaysInline()
 {
-    unsafe
-    {
-        return ModulePrivateLocalUpdateWrappersEmitAlwaysInlineImpl();
-    }
+    return ModulePrivateLocalUpdateWrappersEmitAlwaysInlineImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool HotFunctionsEmitHotAttribute()
 {
-    unsafe
-    {
-        return HotFunctionsEmitHotAttributeImpl();
-    }
+    return HotFunctionsEmitHotAttributeImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool LibraryBuildQualifiesPublicRootSymbols()
 {
-    unsafe
-    {
-        return LibraryBuildQualifiesPublicRootSymbolsImpl();
-    }
+    return LibraryBuildQualifiesPublicRootSymbolsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool ModulePrivateFunctionsLowerWithInternalLinkage()
 {
-    unsafe
-    {
-        return ModulePrivateFunctionsLowerWithInternalLinkageImpl();
-    }
+    return ModulePrivateFunctionsLowerWithInternalLinkageImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool SourceBackedGenericCallsInlineSmallConcreteMonomorphizedSymbols()
 {
-    unsafe
-    {
-        return SourceBackedGenericCallsInlineSmallConcreteMonomorphizedSymbolsImpl();
-    }
+    return SourceBackedGenericCallsInlineSmallConcreteMonomorphizedSymbolsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool BackendOpaqueGenericFunctionsRemainOptimizationBoundariesAfterMonomorphization()
 {
-    unsafe
-    {
-        return BackendOpaqueGenericFunctionsRemainOptimizationBoundariesAfterMonomorphizationImpl();
-    }
+    return BackendOpaqueGenericFunctionsRemainOptimizationBoundariesAfterMonomorphizationImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool BackendOpaqueGenericTypeMethodsRemainOptimizationBoundariesAfterMonomorphization()
 {
-    unsafe
-    {
-        return BackendOpaqueGenericTypeMethodsRemainOptimizationBoundariesAfterMonomorphizationImpl();
-    }
+    return BackendOpaqueGenericTypeMethodsRemainOptimizationBoundariesAfterMonomorphizationImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool BackendOpaqueStructAndRecordMethodsRemainNarrowOptimizationBoundaries()
 {
-    unsafe
-    {
-        return BackendOpaqueStructAndRecordMethodsRemainNarrowOptimizationBoundariesImpl();
-    }
+    return BackendOpaqueStructAndRecordMethodsRemainNarrowOptimizationBoundariesImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool BackendOpaqueDoctrineMethodsRemainNarrowOptimizationBoundaries()
 {
-    unsafe
-    {
-        return BackendOpaqueDoctrineMethodsRemainNarrowOptimizationBoundariesImpl();
-    }
+    return BackendOpaqueDoctrineMethodsRemainNarrowOptimizationBoundariesImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool NestedSourceBackedGenericCallsInlineTransitiveSmallConcreteMonomorphizedSymbols()
 {
-    unsafe
-    {
-        return NestedSourceBackedGenericCallsInlineTransitiveSmallConcreteMonomorphizedSymbolsImpl();
-    }
+    return NestedSourceBackedGenericCallsInlineTransitiveSmallConcreteMonomorphizedSymbolsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool ImportedSourceBackedGenericSpecializationsUseLinkOnceOdrComdatDefinitionsAndInlineSmallCalls()
 {
-    unsafe
-    {
-        return ImportedSourceBackedGenericSpecializationsUseLinkOnceOdrComdatDefinitionsAndInlineSmallCallsImpl();
-    }
+    return ImportedSourceBackedGenericSpecializationsUseLinkOnceOdrComdatDefinitionsAndInlineSmallCallsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool ImportedSourceBackedMutableBorrowGenericSpecializationsDoNotDenyArgumentMemoryAccess()
 {
-    unsafe
-    {
-        return ImportedSourceBackedMutableBorrowGenericSpecializationsDoNotDenyArgumentMemoryAccessImpl();
-    }
+    return ImportedSourceBackedMutableBorrowGenericSpecializationsDoNotDenyArgumentMemoryAccessImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool ManifestBackedGenericCallsInlineSmallConcreteMonomorphizedSymbolsFromPackageImageTemplates()
 {
-    unsafe
-    {
-        return ManifestBackedGenericCallsInlineSmallConcreteMonomorphizedSymbolsFromPackageImageTemplatesImpl();
-    }
+    return ManifestBackedGenericCallsInlineSmallConcreteMonomorphizedSymbolsFromPackageImageTemplatesImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool ManifestBackedGenericInlineClosureCallSpecializesFromPackageImageTypedBody()
 {
-    unsafe
-    {
-        return ManifestBackedGenericInlineClosureCallSpecializesFromPackageImageTypedBodyImpl();
-    }
+    return ManifestBackedGenericInlineClosureCallSpecializesFromPackageImageTypedBodyImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool ManifestBackedNestedGenericCallsInlineTransitiveSmallConcreteMonomorphizedSymbolsFromPackageImageTemplates()
 {
-    unsafe
-    {
-        return ManifestBackedNestedGenericCallsInlineTransitiveSmallConcreteMonomorphizedSymbolsFromPackageImageTemplatesImpl();
-    }
+    return ManifestBackedNestedGenericCallsInlineTransitiveSmallConcreteMonomorphizedSymbolsFromPackageImageTemplatesImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool RepeatedManifestBackedNestedGenericCallsStayInternalAndDeduplicatedAtLlvmEmission()
 {
-    unsafe
-    {
-        return RepeatedManifestBackedNestedGenericCallsStayInternalAndDeduplicatedAtLlvmEmissionImpl();
-    }
+    return RepeatedManifestBackedNestedGenericCallsStayInternalAndDeduplicatedAtLlvmEmissionImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool LocalFixedArrayCanBeCoercedToSliceForCalls()
 {
-    unsafe
-    {
-        return LocalFixedArrayCanBeCoercedToSliceForCallsImpl();
-    }
+    return LocalFixedArrayCanBeCoercedToSliceForCallsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool BorrowedSliceParametersAcceptReusableSliceViews()
 {
-    unsafe
-    {
-        return BorrowedSliceParametersAcceptReusableSliceViewsImpl();
-    }
+    return BorrowedSliceParametersAcceptReusableSliceViewsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool BorrowedAggregateCallReusesPromotedLocalSlot()
 {
-    unsafe
-    {
-        return BorrowedAggregateCallReusesPromotedLocalSlotImpl();
-    }
+    return BorrowedAggregateCallReusesPromotedLocalSlotImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool MutableBorrowReceiverForwardingReusesOriginalParameterPointer()
 {
-    unsafe
-    {
-        return MutableBorrowReceiverForwardingReusesOriginalParameterPointerImpl();
-    }
+    return MutableBorrowReceiverForwardingReusesOriginalParameterPointerImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool MutableBorrowFieldReceiverUsesOriginalFieldAddress()
 {
-    unsafe
-    {
-        return MutableBorrowFieldReceiverUsesOriginalFieldAddressImpl();
-    }
+    return MutableBorrowFieldReceiverUsesOriginalFieldAddressImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool StoreBorrowFieldsUsePointerStorageAndProjectThroughBorrowedValue()
 {
-    unsafe
-    {
-        return StoreBorrowFieldsUsePointerStorageAndProjectThroughBorrowedValueImpl();
-    }
+    return StoreBorrowFieldsUsePointerStorageAndProjectThroughBorrowedValueImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool RawPointerLoopBackedgeCastsMaterializePhiIncomingValues()
 {
-    unsafe
-    {
-        return RawPointerLoopBackedgeCastsMaterializePhiIncomingValuesImpl();
-    }
+    return RawPointerLoopBackedgeCastsMaterializePhiIncomingValuesImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool ManifestBackedMutableBorrowMethodsStayWritableAtImportedDeclarations()
 {
-    unsafe
-    {
-        return ManifestBackedMutableBorrowMethodsStayWritableAtImportedDeclarationsImpl();
-    }
+    return ManifestBackedMutableBorrowMethodsStayWritableAtImportedDeclarationsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool DoctrineLawCallsEmitDirectReadonlyNoCaptureSignatures()
 {
-    unsafe
-    {
-        return DoctrineLawCallsEmitDirectReadonlyNoCaptureSignaturesImpl();
-    }
+    return DoctrineLawCallsEmitDirectReadonlyNoCaptureSignaturesImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool ConfiguredTargetInfoIsEmittedInHeader()
 {
-    unsafe
-    {
-        return ConfiguredTargetInfoIsEmittedInHeaderImpl();
-    }
+    return ConfiguredTargetInfoIsEmittedInHeaderImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool ShortCircuitAndTernaryEmitBranchesAndPhi()
 {
-    unsafe
-    {
-        return ShortCircuitAndTernaryEmitBranchesAndPhiImpl();
-    }
+    return ShortCircuitAndTernaryEmitBranchesAndPhiImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool PointerOperatorsAndExplicitConversionsEmitRawMemoryAccess()
 {
-    unsafe
-    {
-        return PointerOperatorsAndExplicitConversionsEmitRawMemoryAccessImpl();
-    }
+    return PointerOperatorsAndExplicitConversionsEmitRawMemoryAccessImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool RuntimeDisjointRawPointerConditionEmitsByteRangeComparisons()
 {
-    unsafe
-    {
-        return RuntimeDisjointRawPointerConditionEmitsByteRangeComparisonsImpl();
-    }
+    return RuntimeDisjointRawPointerConditionEmitsByteRangeComparisonsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool RuntimeDisjointRawPointerRegionsUseElementCounts()
 {
-    unsafe
-    {
-        return RuntimeDisjointRawPointerRegionsUseElementCountsImpl();
-    }
+    return RuntimeDisjointRawPointerRegionsUseElementCountsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool RuntimeDisjointBorrowConditionEmitsAddressRangeComparisons()
 {
-    unsafe
-    {
-        return RuntimeDisjointBorrowConditionEmitsAddressRangeComparisonsImpl();
-    }
+    return RuntimeDisjointBorrowConditionEmitsAddressRangeComparisonsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool RuntimeDisjointSliceConditionUsesViewDataAndLength()
 {
-    unsafe
-    {
-        return RuntimeDisjointSliceConditionUsesViewDataAndLengthImpl();
-    }
+    return RuntimeDisjointSliceConditionUsesViewDataAndLengthImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool RuntimeDisjointTrueBranchEmitsScopedNoAliasMetadata()
 {
-    unsafe
-    {
-        return RuntimeDisjointTrueBranchEmitsScopedNoAliasMetadataImpl();
-    }
+    return RuntimeDisjointTrueBranchEmitsScopedNoAliasMetadataImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool RuntimeDisjointSameBaseRawPointerSubregionsEmitScopedNoAliasMetadata()
 {
-    unsafe
-    {
-        return RuntimeDisjointSameBaseRawPointerSubregionsEmitScopedNoAliasMetadataImpl();
-    }
+    return RuntimeDisjointSameBaseRawPointerSubregionsEmitScopedNoAliasMetadataImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool RuntimeDisjointSameBaseSubregionScopedNoAliasDoesNotEscapeTrueBranch()
 {
-    unsafe
-    {
-        return RuntimeDisjointSameBaseSubregionScopedNoAliasDoesNotEscapeTrueBranchImpl();
-    }
+    return RuntimeDisjointSameBaseSubregionScopedNoAliasDoesNotEscapeTrueBranchImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool UnsafeAssumeDisjointEmitsScopedNoAliasMetadataWithoutRuntimeCheck()
 {
-    unsafe
-    {
-        return UnsafeAssumeDisjointEmitsScopedNoAliasMetadataWithoutRuntimeCheckImpl();
-    }
+    return UnsafeAssumeDisjointEmitsScopedNoAliasMetadataWithoutRuntimeCheckImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool RuntimeScopedNoAliasFactsAttachToEligibleDirectCalls()
 {
-    unsafe
-    {
-        return RuntimeScopedNoAliasFactsAttachToEligibleDirectCallsImpl();
-    }
+    return RuntimeScopedNoAliasFactsAttachToEligibleDirectCallsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool IndependentLoopLawCallsEmitAccessGroupMetadata()
 {
-    unsafe
-    {
-        return IndependentLoopLawCallsEmitAccessGroupMetadataImpl();
-    }
+    return IndependentLoopLawCallsEmitAccessGroupMetadataImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool FfiCallsDoNotReceiveScopedNoAliasOrAccessGroupMetadata()
 {
-    unsafe
-    {
-        return FfiCallsDoNotReceiveScopedNoAliasOrAccessGroupMetadataImpl();
-    }
+    return FfiCallsDoNotReceiveScopedNoAliasOrAccessGroupMetadataImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool DisjointRawPointerParametersEmitNoAliasAttributes()
 {
-    unsafe
-    {
-        return DisjointRawPointerParametersEmitNoAliasAttributesImpl();
-    }
+    return DisjointRawPointerParametersEmitNoAliasAttributesImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool DefaultNonOverlapRawPointerParametersEmitNoAliasAttributes()
 {
-    unsafe
-    {
-        return DefaultNonOverlapRawPointerParametersEmitNoAliasAttributesImpl();
-    }
+    return DefaultNonOverlapRawPointerParametersEmitNoAliasAttributesImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool OverlapRawPointerParametersDoNotEmitNoAliasAttributes()
 {
-    unsafe
-    {
-        return OverlapRawPointerParametersDoNotEmitNoAliasAttributesImpl();
-    }
+    return OverlapRawPointerParametersDoNotEmitNoAliasAttributesImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool ConstantBoundedRawPointerParametersEmitDereferenceabilityAttributes()
 {
-    unsafe
-    {
-        return ConstantBoundedRawPointerParametersEmitDereferenceabilityAttributesImpl();
-    }
+    return ConstantBoundedRawPointerParametersEmitDereferenceabilityAttributesImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool PositiveVariableBoundedRawPointerParametersEmitMinimumDereferenceabilityAttributes()
 {
-    unsafe
-    {
-        return PositiveVariableBoundedRawPointerParametersEmitMinimumDereferenceabilityAttributesImpl();
-    }
+    return PositiveVariableBoundedRawPointerParametersEmitMinimumDereferenceabilityAttributesImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool ZeroLengthBoundedRawPointerParametersDoNotEmitNonnullOrDereferenceabilityAttributes()
 {
-    unsafe
-    {
-        return ZeroLengthBoundedRawPointerParametersDoNotEmitNonnullOrDereferenceabilityAttributesImpl();
-    }
+    return ZeroLengthBoundedRawPointerParametersDoNotEmitNonnullOrDereferenceabilityAttributesImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool FunctionPointerCallsWithPositiveVariableBoundedRawPointerParametersEmitCallAttributes()
 {
-    unsafe
-    {
-        return FunctionPointerCallsWithPositiveVariableBoundedRawPointerParametersEmitCallAttributesImpl();
-    }
+    return FunctionPointerCallsWithPositiveVariableBoundedRawPointerParametersEmitCallAttributesImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool BoundedRawPointerArgumentFactsStrengthenDirectAndIndirectCallAttributes()
 {
-    unsafe
-    {
-        return BoundedRawPointerArgumentFactsStrengthenDirectAndIndirectCallAttributesImpl();
-    }
+    return BoundedRawPointerArgumentFactsStrengthenDirectAndIndirectCallAttributesImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool BoundedRawPointerRegionFactsEmitInboundsGepForProvenParameterIndexes()
 {
-    unsafe
-    {
-        return BoundedRawPointerRegionFactsEmitInboundsGepForProvenParameterIndexesImpl();
-    }
+    return BoundedRawPointerRegionFactsEmitInboundsGepForProvenParameterIndexesImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool RawSlicesCarryBoundedRegionFactsIntoSliceElementGepFlags()
 {
-    unsafe
-    {
-        return RawSlicesCarryBoundedRegionFactsIntoSliceElementGepFlagsImpl();
-    }
+    return RawSlicesCarryBoundedRegionFactsIntoSliceElementGepFlagsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool DisjointRawPointerParameterAccessesEmitScopedNoAliasMetadata()
 {
-    unsafe
-    {
-        return DisjointRawPointerParameterAccessesEmitScopedNoAliasMetadataImpl();
-    }
+    return DisjointRawPointerParameterAccessesEmitScopedNoAliasMetadataImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool DefaultNonOverlapRawPointerParameterAccessesEmitScopedNoAliasMetadata()
 {
-    unsafe
-    {
-        return DefaultNonOverlapRawPointerParameterAccessesEmitScopedNoAliasMetadataImpl();
-    }
+    return DefaultNonOverlapRawPointerParameterAccessesEmitScopedNoAliasMetadataImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool ConstRawPointerParametersEmitReadonlyAttributes()
 {
-    unsafe
-    {
-        return ConstRawPointerParametersEmitReadonlyAttributesImpl();
-    }
+    return ConstRawPointerParametersEmitReadonlyAttributesImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool ConstRawPointerParameterLoadsDoNotEmitInvariantLoadMetadata()
 {
-    unsafe
-    {
-        return ConstRawPointerParameterLoadsDoNotEmitInvariantLoadMetadataImpl();
-    }
+    return ConstRawPointerParameterLoadsDoNotEmitInvariantLoadMetadataImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool RawSlicesPreserveRuntimeDisjointScopedNoAliasMetadata()
 {
-    unsafe
-    {
-        return RawSlicesPreserveRuntimeDisjointScopedNoAliasMetadataImpl();
-    }
+    return RawSlicesPreserveRuntimeDisjointScopedNoAliasMetadataImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool RawSlicesFromConstPointersDoNotEmitInvariantLoadMetadata()
 {
-    unsafe
-    {
-        return RawSlicesFromConstPointersDoNotEmitInvariantLoadMetadataImpl();
-    }
+    return RawSlicesFromConstPointersDoNotEmitInvariantLoadMetadataImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool RawSlicesFromConstPointerLocalsDoNotEmitInvariantLoadMetadata()
 {
-    unsafe
-    {
-        return RawSlicesFromConstPointerLocalsDoNotEmitInvariantLoadMetadataImpl();
-    }
+    return RawSlicesFromConstPointerLocalsDoNotEmitInvariantLoadMetadataImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool WillexitScalarLoopsEmitMustProgressLoopMetadata()
 {
-    unsafe
-    {
-        return WillexitScalarLoopsEmitMustProgressLoopMetadataImpl();
-    }
+    return WillexitScalarLoopsEmitMustProgressLoopMetadataImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool NonDeterministicScalarLoopsDoNotEmitMustProgressLoopMetadata()
 {
-    unsafe
-    {
-        return NonDeterministicScalarLoopsDoNotEmitMustProgressLoopMetadataImpl();
-    }
+    return NonDeterministicScalarLoopsDoNotEmitMustProgressLoopMetadataImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool IndependentScalarLoopsEmitMustProgressLoopMetadata()
 {
-    unsafe
-    {
-        return IndependentScalarLoopsEmitMustProgressLoopMetadataImpl();
-    }
+    return IndependentScalarLoopsEmitMustProgressLoopMetadataImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool IndependentForLoopsEmitMustProgressLoopMetadata()
 {
-    unsafe
-    {
-        return IndependentForLoopsEmitMustProgressLoopMetadataImpl();
-    }
+    return IndependentForLoopsEmitMustProgressLoopMetadataImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool IndependentSliceLoopsEmitAccessGroupAndParallelLoopMetadata()
 {
-    unsafe
-    {
-        return IndependentSliceLoopsEmitAccessGroupAndParallelLoopMetadataImpl();
-    }
+    return IndependentSliceLoopsEmitAccessGroupAndParallelLoopMetadataImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool FixedArrayToSliceCallArgumentsMaterializeSliceAbiSlots()
 {
-    unsafe
-    {
-        return FixedArrayToSliceCallArgumentsMaterializeSliceAbiSlotsImpl();
-    }
+    return FixedArrayToSliceCallArgumentsMaterializeSliceAbiSlotsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool IndependentSliceLoopsWithConditionalsEmitAccessGroupAndParallelLoopMetadata()
 {
-    unsafe
-    {
-        return IndependentSliceLoopsWithConditionalsEmitAccessGroupAndParallelLoopMetadataImpl();
-    }
+    return IndependentSliceLoopsWithConditionalsEmitAccessGroupAndParallelLoopMetadataImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool IndependentSliceLoopsWithMemberProjectionsEmitAccessGroupAndParallelLoopMetadata()
 {
-    unsafe
-    {
-        return IndependentSliceLoopsWithMemberProjectionsEmitAccessGroupAndParallelLoopMetadataImpl();
-    }
+    return IndependentSliceLoopsWithMemberProjectionsEmitAccessGroupAndParallelLoopMetadataImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool IndependentBoundedRawPointerLoopsEmitAccessGroupAndParallelLoopMetadata()
 {
-    unsafe
-    {
-        return IndependentBoundedRawPointerLoopsEmitAccessGroupAndParallelLoopMetadataImpl();
-    }
+    return IndependentBoundedRawPointerLoopsEmitAccessGroupAndParallelLoopMetadataImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool IndependentBoundedRawPointerLoopsUseRuntimeRegionFactsForParallelMetadata()
 {
-    unsafe
-    {
-        return IndependentBoundedRawPointerLoopsUseRuntimeRegionFactsForParallelMetadataImpl();
-    }
+    return IndependentBoundedRawPointerLoopsUseRuntimeRegionFactsForParallelMetadataImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool BoundedRawPointerCopyLoopLowersToMemcpyWhenNoAliasIsProven()
 {
-    unsafe
-    {
-        return BoundedRawPointerCopyLoopLowersToMemcpyWhenNoAliasIsProvenImpl();
-    }
+    return BoundedRawPointerCopyLoopLowersToMemcpyWhenNoAliasIsProvenImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool BoundedRawPointerCopyLoopInsideNontrivialFunctionLowersToMemcpy()
 {
-    unsafe
-    {
-        return BoundedRawPointerCopyLoopInsideNontrivialFunctionLowersToMemcpyImpl();
-    }
+    return BoundedRawPointerCopyLoopInsideNontrivialFunctionLowersToMemcpyImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool BoundedRawPointerCopyLoopWithoutNoAliasProofKeepsScalarLowering()
 {
-    unsafe
-    {
-        return BoundedRawPointerCopyLoopWithoutNoAliasProofKeepsScalarLoweringImpl();
-    }
+    return BoundedRawPointerCopyLoopWithoutNoAliasProofKeepsScalarLoweringImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool BoundedRawPointerCopyLoopInsideNontrivialFunctionWithoutNoAliasProofKeepsScalarLowering()
 {
-    unsafe
-    {
-        return BoundedRawPointerCopyLoopInsideNontrivialFunctionWithoutNoAliasProofKeepsScalarLoweringImpl();
-    }
+    return BoundedRawPointerCopyLoopInsideNontrivialFunctionWithoutNoAliasProofKeepsScalarLoweringImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool BoundedRawPointerOverlapSafeTemporaryCopyLowersToMemmove()
 {
-    unsafe
-    {
-        return BoundedRawPointerOverlapSafeTemporaryCopyLowersToMemmoveImpl();
-    }
+    return BoundedRawPointerOverlapSafeTemporaryCopyLowersToMemmoveImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool BoundedRawPointerOverlapSafeTemporaryCopyInsideNontrivialFunctionLowersToMemmove()
 {
-    unsafe
-    {
-        return BoundedRawPointerOverlapSafeTemporaryCopyInsideNontrivialFunctionLowersToMemmoveImpl();
-    }
+    return BoundedRawPointerOverlapSafeTemporaryCopyInsideNontrivialFunctionLowersToMemmoveImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool BoundedRawPointerForwardBackwardMoveLoopLowersToMemmove()
 {
-    unsafe
-    {
-        return BoundedRawPointerForwardBackwardMoveLoopLowersToMemmoveImpl();
-    }
+    return BoundedRawPointerForwardBackwardMoveLoopLowersToMemmoveImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool SliceForwardBackwardMoveLoopLowersToMemmoveWhenByteLengthIsRepresentable()
 {
-    unsafe
-    {
-        return SliceForwardBackwardMoveLoopLowersToMemmoveWhenByteLengthIsRepresentableImpl();
-    }
+    return SliceForwardBackwardMoveLoopLowersToMemmoveWhenByteLengthIsRepresentableImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool BoundedRawPointerOverlapSafeTemporaryCopyWithTemporaryEpilogueUseKeepsScalarLowering()
 {
-    unsafe
-    {
-        return BoundedRawPointerOverlapSafeTemporaryCopyWithTemporaryEpilogueUseKeepsScalarLoweringImpl();
-    }
+    return BoundedRawPointerOverlapSafeTemporaryCopyWithTemporaryEpilogueUseKeepsScalarLoweringImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool BoundedRawPointerByteFillLoopLowersToMemset()
 {
-    unsafe
-    {
-        return BoundedRawPointerByteFillLoopLowersToMemsetImpl();
-    }
+    return BoundedRawPointerByteFillLoopLowersToMemsetImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool InitSliceByteFillLoopLowersToMemset()
 {
-    unsafe
-    {
-        return InitSliceByteFillLoopLowersToMemsetImpl();
-    }
+    return InitSliceByteFillLoopLowersToMemsetImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool DynamicTailInitByteFillLoopLowersToMemsetAndCommitsLength()
 {
-    unsafe
-    {
-        return DynamicTailInitByteFillLoopLowersToMemsetAndCommitsLengthImpl();
-    }
+    return DynamicTailInitByteFillLoopLowersToMemsetAndCommitsLengthImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool DynamicAppendThroughLengthByteFillLoopLowersToMemsetAndCommitsLengthOnce()
 {
-    unsafe
-    {
-        return DynamicAppendThroughLengthByteFillLoopLowersToMemsetAndCommitsLengthOnceImpl();
-    }
+    return DynamicAppendThroughLengthByteFillLoopLowersToMemsetAndCommitsLengthOnceImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool DisjointInitSliceCopyLoopLowersToMemcpy()
 {
-    unsafe
-    {
-        return DisjointInitSliceCopyLoopLowersToMemcpyImpl();
-    }
+    return DisjointInitSliceCopyLoopLowersToMemcpyImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool InitSliceOverlapSafeTemporaryCopyLowersToMemmove()
 {
-    unsafe
-    {
-        return InitSliceOverlapSafeTemporaryCopyLowersToMemmoveImpl();
-    }
+    return InitSliceOverlapSafeTemporaryCopyLowersToMemmoveImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool BoundedRawPointerByteFillLoopInsideNontrivialFunctionLowersToMemset()
 {
-    unsafe
-    {
-        return BoundedRawPointerByteFillLoopInsideNontrivialFunctionLowersToMemsetImpl();
-    }
+    return BoundedRawPointerByteFillLoopInsideNontrivialFunctionLowersToMemsetImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool IndependentBoundedRawPointerFillAndTransformLoopsEmitParallelMetadata()
 {
-    unsafe
-    {
-        return IndependentBoundedRawPointerFillAndTransformLoopsEmitParallelMetadataImpl();
-    }
+    return IndependentBoundedRawPointerFillAndTransformLoopsEmitParallelMetadataImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool IntegerArithmeticFoldEmitsSingleMultiplyForRepeatedUnknownAdds()
 {
-    unsafe
-    {
-        return IntegerArithmeticFoldEmitsSingleMultiplyForRepeatedUnknownAddsImpl();
-    }
+    return IntegerArithmeticFoldEmitsSingleMultiplyForRepeatedUnknownAddsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool IntegerArithmeticFoldEmitsMultiplySubtractForRepeatedSubtractionChains()
 {
-    unsafe
-    {
-        return IntegerArithmeticFoldEmitsMultiplySubtractForRepeatedSubtractionChainsImpl();
-    }
+    return IntegerArithmeticFoldEmitsMultiplySubtractForRepeatedSubtractionChainsImpl();
 }
 
 [Fact]
+[Collection("llvm-ir")]
 fn bool IntegerArithmeticFoldLowersRepeatedProductRunsWithoutPowHelper()
 {
-    unsafe
-    {
-        return IntegerArithmeticFoldLowersRepeatedProductRunsWithoutPowHelperImpl();
-    }
+    return IntegerArithmeticFoldLowersRepeatedProductRunsWithoutPowHelperImpl();
 }
 
 [Fact]
+[Collection("out-parameter-drop")]
 fn bool AssigningIntoAnOutParameterDoesNotFreeTheTransferredValueOnReturn()
 {
-    unsafe
-    {
-        return AssigningIntoAnOutParameterDoesNotFreeTheTransferredValueOnReturnImpl();
-    }
+    return AssigningIntoAnOutParameterDoesNotFreeTheTransferredValueOnReturnImpl();
 }
 
 [Fact]
+[Collection("package-image-callable-value")]
 fn bool PackageImageBackedCallableAliasDrivesIndirectCallSiteEffectAttributes()
 {
-    unsafe
-    {
-        return PackageImageBackedCallableAliasDrivesIndirectCallSiteEffectAttributesImpl();
-    }
+    return PackageImageBackedCallableAliasDrivesIndirectCallSiteEffectAttributesImpl();
 }
 
 [Fact]
+[Collection("package-image-callable-value")]
 fn bool PackageImageBackedGenericTemplateFnptrCallKeepsKindedIndirectCallAttributes()
 {
-    unsafe
-    {
-        return PackageImageBackedGenericTemplateFnptrCallKeepsKindedIndirectCallAttributesImpl();
-    }
+    return PackageImageBackedGenericTemplateFnptrCallKeepsKindedIndirectCallAttributesImpl();
 }
 
 [Fact]
+[Collection("package-image-callable-value")]
 fn bool PackageImageBackedFunctionPointerParametersTargetTypeNonCapturingLambdas()
 {
-    unsafe
-    {
-        return PackageImageBackedFunctionPointerParametersTargetTypeNonCapturingLambdasImpl();
-    }
+    return PackageImageBackedFunctionPointerParametersTargetTypeNonCapturingLambdasImpl();
 }
 
 [Fact]
+[Collection("package-image-callable-value")]
 fn bool PackageImageBackedAcceptedProgramEmitsLlvmWithoutFallbackLogs()
 {
-    unsafe
-    {
-        return PackageImageBackedAcceptedProgramEmitsLlvmWithoutFallbackLogsImpl();
-    }
+    return PackageImageBackedAcceptedProgramEmitsLlvmWithoutFallbackLogsImpl();
 }
 
 [Fact]
+[Collection("raw-multiline-string-parity")]
 fn bool MultilineRawStringsStripDelimiterNewlinesAndClosingIndentation()
 {
-    unsafe
-    {
-        return MultilineRawStringsStripDelimiterNewlinesAndClosingIndentationImpl();
-    }
+    return MultilineRawStringsStripDelimiterNewlinesAndClosingIndentationImpl();
 }
 
 [Fact]
+[Collection("raw-multiline-string-parity")]
 fn bool WhitespaceOnlyLinesShorterThanTheClosingIndentationBecomeEmptyLines()
 {
-    unsafe
-    {
-        return WhitespaceOnlyLinesShorterThanTheClosingIndentationBecomeEmptyLinesImpl();
-    }
+    return WhitespaceOnlyLinesShorterThanTheClosingIndentationBecomeEmptyLinesImpl();
 }
 
 [Fact]
+[Collection("raw-multiline-string-parity")]
 fn bool SingleLineRawTripleQuoteStringsKeepTheirContentVerbatim()
 {
-    unsafe
-    {
-        return SingleLineRawTripleQuoteStringsKeepTheirContentVerbatimImpl();
-    }
+    return SingleLineRawTripleQuoteStringsKeepTheirContentVerbatimImpl();
 }
 
 [Fact]
+[Collection("raw-multiline-string-parity")]
 fn bool InterpolatedRawMultilineStringsNormalizeBeforeHoleSplitting()
 {
-    unsafe
-    {
-        return InterpolatedRawMultilineStringsNormalizeBeforeHoleSplittingImpl();
-    }
+    return InterpolatedRawMultilineStringsNormalizeBeforeHoleSplittingImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool ConstantPropagationFoldsConstantBranchesInLlvm()
 {
-    unsafe
-    {
-        return ConstantPropagationFoldsConstantBranchesInLlvmImpl();
-    }
+    return ConstantPropagationFoldsConstantBranchesInLlvmImpl();
 }
 
 [Fact]
+[Collection("ssa-optimization")]
 fn bool ConstantPropagationFoldsConstantSwitchesInLlvm()
 {
-    unsafe
-    {
-        return ConstantPropagationFoldsConstantSwitchesInLlvmImpl();
-    }
+    return ConstantPropagationFoldsConstantSwitchesInLlvmImpl();
 }
 
 [Fact]
+[Collection("try-propagation-imported-module")]
 fn bool TryInsideImportedSourceModuleLowersThroughTheWholePipeline()
 {
-    unsafe
-    {
-        return TryInsideImportedSourceModuleLowersThroughTheWholePipelineImpl();
-    }
+    return TryInsideImportedSourceModuleLowersThroughTheWholePipelineImpl();
 }
 
 [Fact]
+[Collection("v1-lowering-contract")]
 fn bool InternalScalarFunctionsUseFastccAndDirectScalarAbi()
 {
-    unsafe
-    {
-        return InternalScalarFunctionsUseFastccAndDirectScalarAbiImpl();
-    }
+    return InternalScalarFunctionsUseFastccAndDirectScalarAbiImpl();
 }
 
 [Fact]
+[Collection("v1-lowering-contract")]
 fn bool InternalTextAndSliceValuesKeepConcretePtrLengthAbi()
 {
-    unsafe
-    {
-        return InternalTextAndSliceValuesKeepConcretePtrLengthAbiImpl();
-    }
+    return InternalTextAndSliceValuesKeepConcretePtrLengthAbiImpl();
 }
 
 [Fact]
+[Collection("v1-lowering-contract")]
 fn bool FfiAsciiBoundaryDoesNotUseFastccAndLowersToPointerAbi()
 {
-    unsafe
-    {
-        return FfiAsciiBoundaryDoesNotUseFastccAndLowersToPointerAbiImpl();
-    }
+    return FfiAsciiBoundaryDoesNotUseFastccAndLowersToPointerAbiImpl();
 }
 
 [Fact]
+[Collection("v1-lowering-contract")]
 fn bool SafeExportedMainDoesNotNeedUnsafeOrFfiAndUsesNativeCallingConvention()
 {
-    unsafe
-    {
-        return SafeExportedMainDoesNotNeedUnsafeOrFfiAndUsesNativeCallingConventionImpl();
-    }
+    return SafeExportedMainDoesNotNeedUnsafeOrFfiAndUsesNativeCallingConventionImpl();
 }
 
 [Fact]
+[Collection("v1-lowering-contract")]
 fn bool ExportedStarkFunctionsUseNativeCallingConventionWithoutFfiUnsafe()
 {
-    unsafe
-    {
-        return ExportedStarkFunctionsUseNativeCallingConventionWithoutFfiUnsafeImpl();
-    }
+    return ExportedStarkFunctionsUseNativeCallingConventionWithoutFfiUnsafeImpl();
 }
 
 [Fact]
+[Collection("v1-lowering-contract")]
 fn bool BorrowedAggregatesRemainIndirectWithReadonlyFacts()
 {
-    unsafe
-    {
-        return BorrowedAggregatesRemainIndirectWithReadonlyFactsImpl();
-    }
+    return BorrowedAggregatesRemainIndirectWithReadonlyFactsImpl();
 }
 
 [Fact]
+[Collection("v1-lowering-contract")]
 fn bool SixteenByteAggregatesStayDirectByValue()
 {
-    unsafe
-    {
-        return SixteenByteAggregatesStayDirectByValueImpl();
-    }
+    return SixteenByteAggregatesStayDirectByValueImpl();
 }
 
 [Fact]
+[Collection("v1-lowering-contract")]
 fn bool AggregatesLargerThanSixteenBytesUseIndirectAbi()
 {
-    unsafe
-    {
-        return AggregatesLargerThanSixteenBytesUseIndirectAbiImpl();
-    }
+    return AggregatesLargerThanSixteenBytesUseIndirectAbiImpl();
 }
 
 [Fact]
+[Collection("v1-lowering-contract")]
 fn bool FixedArraysFollowTheSameSixteenByteThreshold()
 {
-    unsafe
-    {
-        return FixedArraysFollowTheSameSixteenByteThresholdImpl();
-    }
+    return FixedArraysFollowTheSameSixteenByteThresholdImpl();
 }
 

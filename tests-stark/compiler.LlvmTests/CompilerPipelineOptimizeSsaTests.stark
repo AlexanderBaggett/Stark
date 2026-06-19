@@ -1,0 +1,50 @@
+import LlvmTestSupport
+import System.Testing
+module CompilerPipelineOptimizeSsaTests
+
+// Ported from CompilerPipelineOptimizeSsaTests.AsciiToUnicodeLiteralSpecializationHandlesLoopBackedgePhiSuccessors.
+internal fn bool AsciiToUnicodeLiteralSpecializationHandlesLoopBackedgePhiSuccessorsImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "optimize-ssa-ascii-unicode-loop-backedge-phi",
+        raw"""
+module System.Text
+
+public unsafe inline finite bool TryConvertAsciiToUnicode(rawmutptr<Unicode> destination, ascii source);
+
+public unsafe fn i32[min max] Run(i32[min max] count)
+{
+    stack mut i32[min max][16] unicodeBuffer =
+    {
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    };
+    stack mut Unicode ownedUnicode = new Unicode()
+    {
+        Data = &unicodeBuffer[0],
+        Length = 0,
+        Capacity = 16
+    };
+    stack mut i32[min max] index = 0;
+
+    while willexit (index < count)
+    {
+        if (TryConvertAsciiToUnicode(&ownedUnicode, "Stark") == false)
+        {
+            return -1;
+        }
+
+        index = index + 1;
+    }
+
+    return index;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return DoesNotContain(llvm, "call fastcc i1 @TryConvertAsciiToUnicode(")
+        && DoesNotContain(llvm, "; LLVM body emission fallback for Run");
+}

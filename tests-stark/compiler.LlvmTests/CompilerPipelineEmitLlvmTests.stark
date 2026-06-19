@@ -1,0 +1,775 @@
+import LlvmTestSupport
+import System.Testing
+module CompilerPipelineEmitLlvmTests
+
+// Ported slice of tests/compiler.PipelineTests/CompilerPipelineEmitLlvmTests.cs,
+// running against the current C# host compiler through the host test protocol.
+// Each Impl compiles a source program, requests the rendered `llvm` artifact,
+// and asserts on raw LLVM-IR substrings with System.Testing text helpers.
+//
+// PORT-NOTE (applies to every manifest/package-backed case below): the C#
+// oracle stages a library compile, builds a `.starkpkg`/`.a` package image,
+// rewrites manifest sections (dropping FunctionSemantics, corrupting template
+// bodies, stripping source bodies, etc.), deletes the source, and re-runs the
+// consumer through a FileSystemModuleResolver while inspecting
+// MonomorphizationPlan / LoadedModuleSet / PackageImageFacts artifacts. The
+// host LLVM bridge only exposes a single-source compile and the rendered `llvm`
+// text, so those manifest-surgery and non-LLVM-artifact assertions cannot be
+// reproduced. These ports compile the closest expressible program (the embedded
+// consumer or library source) and assert over the LLVM text where possible,
+// otherwise reduce to Succeeds(...).
+
+// Ported from CompilerPipelineEmitLlvmTests.SourceBackedImportedInlineFunctionsEmitInternalLlvmBodyClones.
+internal fn bool SourceBackedImportedInlineFunctionsEmitInternalLlvmBodyClonesImpl()
+{
+    // PORT-NOTE: original imports a sibling `Lib.stark` resolved from disk; the
+    // host bridge compiles a single source, so the inline `SelectOrAdd` body is
+    // folded into the same module here. Clone-symbol / ABI-call assertions are
+    // reduced to Succeeds because the imported-inline clone path requires the
+    // FileSystemModuleResolver staging the C# test performs.
+    stack mut LlvmCompile c = CompileLlvm(
+        "emit-llvm-source-imported-inline-body-clone",
+        raw"""
+module Lib
+
+export inline fn u8[0 102] SelectOrAdd(u8[0 100] value, bool add)
+{
+    stack mut u8[0 102] result = value;
+    stack mut i32[min max] step = 0;
+    while willexit (step < 2)
+    {
+        if (add)
+        {
+            result = (result / 2) + 1;
+            result = (result / 3) + (result / 5);
+            result = (result / 2) + 1;
+        }
+        else
+        {
+            result = (result / 2) + 2;
+            result = (result / 3) + (result / 7);
+            result = (result / 2) + 2;
+        }
+
+        step = step + 1;
+    }
+
+    return result;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "SelectOrAdd");
+}
+
+// Ported from CompilerPipelineEmitLlvmTests.SourceBackedImportedInlineFunctionsDeclareModulePrivateConstsUsedByClone.
+internal fn bool SourceBackedImportedInlineFunctionsDeclareModulePrivateConstsUsedByCloneImpl()
+{
+    // PORT-NOTE: cross-module imported-inline clone + module-private const
+    // bring-in cannot be staged through the single-source host bridge; reduced
+    // to compiling the library module and asserting Succeeds.
+    stack mut LlvmCompile c = CompileLlvm(
+        "emit-llvm-source-imported-inline-const",
+        raw"""
+module Lib
+
+const Offset = 7;
+
+export inline fn i32[min max] AddOffset(i32[min max] value)
+{
+    stack mut i32[min max] total = value;
+    stack mut i32[min max] step = 0;
+    while willexit (step < 3)
+    {
+        total = total + Offset;
+        total = total + (total / 3);
+        total = total - (total / 5);
+        total = total + (total / 7);
+        total = total - (total / 11);
+        step = step + 1;
+    }
+
+    return total;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "AddOffset");
+}
+
+// Ported from CompilerPipelineEmitLlvmTests.SourceBackedImportedInlineFunctionsCloneModulePrivateCalleeDependencies.
+internal fn bool SourceBackedImportedInlineFunctionsCloneModulePrivateCalleeDependenciesImpl()
+{
+    // PORT-NOTE: imported-inline clone of a module-private callee dependency
+    // depends on the FileSystemModuleResolver import staging; reduced to
+    // compiling the library module and asserting Succeeds.
+    stack mut LlvmCompile c = CompileLlvm(
+        "emit-llvm-source-imported-inline-private-callee",
+        raw"""
+module Lib
+
+const Offset = 7;
+
+fn u8[0 100] ApplyOffset(u8[0 93] value)
+{
+    stack mut u8[0 100] total = value;
+    stack mut i32[min max] step = 0;
+    while willexit (step < 2)
+    {
+        total = (total / 2) + Offset;
+        total = (total / 3) + Offset;
+        total = (total / 2) + (total / 5);
+        total = (total / 3) + (total / 7);
+        step = step + 1;
+    }
+
+    return total;
+}
+
+export inline fn u8[0 100] AddOffset(u8[0 93] value)
+{
+    return ApplyOffset(value);
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "ApplyOffset");
+}
+
+// Ported from CompilerPipelineEmitLlvmTests.SourceBackedImportedInlineCloneSeedsRestrictEmissionToReachableRootPath.
+internal fn bool SourceBackedImportedInlineCloneSeedsRestrictEmissionToReachableRootPathImpl()
+{
+    // PORT-NOTE: the original wires ImportedInlineCloneSeedFunctions = {UsedEntry}
+    // through CompilerOptions and a FileSystemModuleResolver to restrict clone
+    // emission to the reachable root. The host bridge exposes neither the seed
+    // option nor cross-module import staging, so the reachability-restriction
+    // assertions are reduced to compiling the library module and Succeeds.
+    stack mut LlvmCompile c = CompileLlvm(
+        "emit-llvm-source-imported-inline-seed",
+        raw"""
+module Base
+
+export inline fn i32[min max] Used(i32[min max] value, bool add)
+{
+    stack mut i32[min max] total = value;
+    stack mut i32[min max] step = 0;
+    while willexit (step < 2)
+    {
+        if (add)
+        {
+            total = total + 1 + (total / 3);
+            total = total - (total / 5);
+        }
+        else
+        {
+            total = total + 3 + (total / 7);
+            total = total - (total / 11);
+        }
+
+        step = step + 1;
+    }
+
+    return total;
+}
+
+export inline fn i32[min max] Unused(i32[min max] value, bool add)
+{
+    stack mut i32[min max] total = value;
+    stack mut i32[min max] step = 0;
+    while willexit (step < 2)
+    {
+        if (add)
+        {
+            total = total + 2 + (total / 3);
+            total = total - (total / 5);
+        }
+        else
+        {
+            total = total + 4 + (total / 7);
+            total = total - (total / 11);
+        }
+
+        step = step + 1;
+    }
+
+    return total;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "Used");
+}
+
+// Ported from CompilerPipelineEmitLlvmTests.SourceBackedImportedNoInlineFunctionsStayAbiDeclarations.
+internal fn bool SourceBackedImportedNoInlineFunctionsStayAbiDeclarationsImpl()
+{
+    // PORT-NOTE: original imports a sibling `Lib.stark` and checks the consumer
+    // emits an ABI `call fastcc @Lib_SelectOrAdd` with no inline clone. Without
+    // import staging, this compiles the noinline library module directly and
+    // asserts it emits no inline-clone artifacts.
+    stack mut LlvmCompile c = CompileLlvm(
+        "emit-llvm-source-imported-noinline-body",
+        raw"""
+module Lib
+
+public noinline finite u8[0 102] SelectOrAdd(u8[0 100] value, bool add)
+{
+    if (add)
+    {
+        return value + 1;
+    }
+
+    return value + 2;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return DoesNotContain(llvm, "closed-world imported inline body: Lib.SelectOrAdd")
+        && DoesNotContain(llvm, "@__stark_inline_clone_Lib_SelectOrAdd");
+}
+
+// Ported from CompilerPipelineEmitLlvmTests.ManifestBackedColdNoInlineGenericInstantiationsPreserveTypedInterfaceModifiersWithoutCompilerFacts.
+internal fn bool ManifestBackedColdNoInlineGenericInstantiationsPreserveTypedInterfaceModifiersWithoutCompilerFactsImpl()
+{
+    // PORT-NOTE: original publishes a cold/noinline generic to a typed-only
+    // package manifest (no CompilerFacts), then asserts the consumer
+    // specialization keeps cold/noinline LLVM attributes. The host bridge cannot
+    // build/rewrite a package image, so this compiles the library module and
+    // asserts the cold/noinline generic declaration round-trips through codegen.
+    stack mut LlvmCompile c = CompileLlvm(
+        "emit-llvm-manifest-typed-interface-modifiers",
+        raw"""
+module Facade
+
+public cold noinline fn T Choose<T>(T left, T right, bool takeRight)
+{
+    stack mut T current = left;
+    if (takeRight)
+    {
+        current = right;
+    }
+
+    return current;
+}
+""");
+    return Succeeds(c);
+}
+
+// Ported from CompilerPipelineEmitLlvmTests.PackageBackedImportedGenericInlineBodiesEmitReachableInlineClonesFromTypedFacts.
+internal fn bool PackageBackedImportedGenericInlineBodiesEmitReachableInlineClonesFromTypedFactsImpl()
+{
+    // PORT-NOTE: original corrupts the package template BodyText and proves the
+    // consumer emits an inline clone from typed facts rather than the corrupted
+    // text. Package-image corruption/import staging is out of reach for the host
+    // bridge, so this compiles the library module and asserts Succeeds.
+    stack mut LlvmCompile c = CompileLlvm(
+        "emit-llvm-package-imported-generic-inline-clone",
+        raw"""
+module Facade
+
+public inline fn i32[min max] Blend<T>(T tag, i32[min max] value)
+{
+    stack i32[min max] a = value + (value / 3);
+    stack i32[min max] b = a - (a / 5);
+    stack i32[min max] c = b + (b / 7);
+    stack i32[min max] d = c - (c / 11);
+    stack i32[min max] e = d + (d / 13);
+    stack i32[min max] f = e - (e / 17);
+    stack i32[min max] g = f + (f / 19);
+    stack i32[min max] h = g - (g / 23);
+    stack i32[min max] i = h + (h / 29);
+    stack i32[min max] j = i - (i / 31);
+    stack i32[min max] k = j + (j / 37);
+    stack i32[min max] l = k - (k / 41);
+    stack i32[min max] m = l + (l / 43);
+    return m;
+}
+""");
+    return Succeeds(c);
+}
+
+// Ported from CompilerPipelineEmitLlvmTests.ManifestBackedImportedGenericSpecializationsUseTemplateSemanticAttributesWhenFunctionSemanticsAreMissing.
+internal fn bool ManifestBackedImportedGenericSpecializationsUseTemplateSemanticAttributesWhenFunctionSemanticsAreMissingImpl()
+{
+    // PORT-NOTE: original drops FunctionSemantics from the manifest and proves
+    // the imported specialization recovers readonly/argmem attributes from
+    // template semantics. Manifest surgery is out of reach; this compiles the
+    // library module and asserts Succeeds.
+    stack mut LlvmCompile c = CompileLlvm(
+        "emit-llvm-manifest-generic-template-semantics",
+        raw"""
+module Facade
+
+public struct Box
+{
+    i32[min max] Value;
+}
+
+public fn void Touch<T>(borrow Box box, T tag)
+{
+    stack i32[min max] copy = box.Value;
+    return;
+}
+""");
+    return Succeeds(c);
+}
+
+// Ported from CompilerPipelineEmitLlvmTests.ManifestBackedImportedGenericSpecializationsPreserveRegionFactsWithoutSourceBodies.
+internal fn bool ManifestBackedImportedGenericSpecializationsPreserveRegionFactsWithoutSourceBodiesImpl()
+{
+    // PORT-NOTE: original strips source bodies from the manifest and proves the
+    // imported specialization preserves noalias region facts (alias.scope /
+    // noalias metadata). Source-body stripping and import staging are out of
+    // reach; this compiles the library module and asserts Succeeds.
+    stack mut LlvmCompile c = CompileLlvm(
+        "emit-llvm-manifest-generic-region-facts",
+        raw"""
+module Facade
+
+public unsafe fn i32[min max] CopyFirst<T>(
+    rawmutptr<i32[min max]> left,
+    rawmutptr<i32[min max]> right,
+    T tag)
+    {
+        *left = 7;
+    return *right;
+}
+""");
+    return Succeeds(c);
+}
+
+// Ported from CompilerPipelineEmitLlvmTests.ManifestBackedImportedPlainFnGenericsThatStrengthenToLawInlineWhenTemplateSemanticsSurviveWithoutFunctionSemantics.
+internal fn bool ManifestBackedImportedPlainFnGenericsThatStrengthenToLawInlineWhenTemplateSemanticsSurviveWithoutFunctionSemanticsImpl()
+{
+    // PORT-NOTE: original drops FunctionSemantics, imports AddTag into a `law`
+    // consumer, and proves the plain fn strengthens to finite-law with
+    // memory(none)/alwaysinline LLVM attributes. Manifest surgery / import
+    // staging are out of reach; this compiles the library module and asserts
+    // Succeeds.
+    stack mut LlvmCompile c = CompileLlvm(
+        "emit-llvm-manifest-plain-fn-generic-template-semantics",
+        raw"""
+module Math
+
+public fn i32[min max] AddTag<T>(i32[min max] left, i32[min max] right, T tag)
+{
+    return left + right;
+}
+""");
+    return Succeeds(c);
+}
+
+// Ported from CompilerPipelineEmitLlvmTests.ManifestBackedMemberCallForwarderGenericsUseOptimizationSummaryForPlanningAndCodegen.
+internal fn bool ManifestBackedMemberCallForwarderGenericsUseOptimizationSummaryForPlanningAndCodegenImpl()
+{
+    // PORT-NOTE: original drops FunctionSemantics and proves the member-call
+    // forwarder specialization is planned InlineSmallBody and emitted with
+    // alwaysinline from the OptimizationSummary. Manifest surgery / import
+    // staging / plan inspection are out of reach; this compiles the library
+    // module and asserts Succeeds.
+    stack mut LlvmCompile c = CompileLlvm(
+        "emit-llvm-manifest-member-forwarder-generic",
+        raw"""
+module Facade
+
+public record Box(i32[min max] Value)
+{
+    fn i32[min max] Bump(borrow Box self, i32[min max] delta)
+    {
+        return self.Value + delta;
+    }
+}
+
+public fn i32[min max] Forward<T>(borrow Box box, i32[min max] delta, T tag)
+{
+    return box.Bump(delta);
+}
+""");
+    return Succeeds(c);
+}
+
+// Ported from CompilerPipelineEmitLlvmTests.ManifestBackedFieldAccessWrapperGenericsUseOptimizationSummaryForPlanningAndCodegen.
+internal fn bool ManifestBackedFieldAccessWrapperGenericsUseOptimizationSummaryForPlanningAndCodegenImpl()
+{
+    // PORT-NOTE: original drops FunctionSemantics and proves the field-access
+    // wrapper specialization is planned InlineSmallBody and emitted with
+    // alwaysinline from the OptimizationSummary. Manifest surgery / import
+    // staging / plan inspection are out of reach; this compiles the library
+    // module and asserts Succeeds.
+    stack mut LlvmCompile c = CompileLlvm(
+        "emit-llvm-manifest-field-wrapper-generic",
+        raw"""
+module Facade
+
+public record Inner(i32[min max] Value)
+{
+}
+public record Box(Inner Inner)
+{
+}
+
+public fn i32[min max] Read<T>(borrow Box box, T tag)
+{
+    return box.Inner.Value;
+}
+""");
+    return Succeeds(c);
+}
+
+// Ported from CompilerPipelineEmitLlvmTests.ManifestBackedIndexAccessWrapperGenericsUseOptimizationSummaryForPlanningAndCodegen.
+internal fn bool ManifestBackedIndexAccessWrapperGenericsUseOptimizationSummaryForPlanningAndCodegenImpl()
+{
+    // PORT-NOTE: original drops FunctionSemantics and proves the index-access
+    // wrapper specialization is planned InlineSmallBody and emitted with
+    // alwaysinline from the OptimizationSummary. Manifest surgery / import
+    // staging / plan inspection are out of reach; this compiles the library
+    // module and asserts Succeeds.
+    stack mut LlvmCompile c = CompileLlvm(
+        "emit-llvm-manifest-index-wrapper-generic",
+        raw"""
+module Facade
+
+public record Box(i32[min max] Value)
+{
+}
+
+public fn i32[min max] Read<T>(Box[2] boxes, i32[min max] index, T tag)
+{
+    return boxes[index].Value;
+}
+""");
+    return Succeeds(c);
+}
+
+// Ported from CompilerPipelineEmitLlvmTests.ManifestBackedConversionWrapperGenericsUseOptimizationSummaryForPlanningAndCodegen.
+internal fn bool ManifestBackedConversionWrapperGenericsUseOptimizationSummaryForPlanningAndCodegenImpl()
+{
+    // PORT-NOTE: original drops FunctionSemantics and proves the conversion
+    // wrapper specialization is planned InlineSmallBody and emitted with
+    // alwaysinline from the OptimizationSummary. Manifest surgery / import
+    // staging / plan inspection are out of reach; this compiles the library
+    // module and asserts Succeeds.
+    stack mut LlvmCompile c = CompileLlvm(
+        "emit-llvm-manifest-conversion-wrapper-generic",
+        raw"""
+module Facade
+
+public record Inner(i32[min max] Value)
+{
+}
+public record Box(Inner Inner)
+{
+}
+
+public fn i64[min max] Read<T>(borrow Box box, T tag)
+{
+    return (i64[min max])box.Inner.Value;
+}
+""");
+    return Succeeds(c);
+}
+
+// Ported from CompilerPipelineEmitLlvmTests.ManifestBackedAddressOfWrapperGenericsUseOptimizationSummaryForPlanningAndCodegen.
+internal fn bool ManifestBackedAddressOfWrapperGenericsUseOptimizationSummaryForPlanningAndCodegenImpl()
+{
+    // PORT-NOTE: original drops FunctionSemantics and proves the address-of
+    // wrapper specialization is planned InlineSmallBody, emitted with
+    // alwaysinline, and lowers through getelementptr (no ptrtoint/inttoptr).
+    // Manifest surgery / import staging / plan inspection are out of reach; this
+    // compiles the library module and asserts Succeeds.
+    stack mut LlvmCompile c = CompileLlvm(
+        "emit-llvm-manifest-address-of-wrapper-generic",
+        raw"""
+module Facade
+
+public record Buffer(i32[min max][2] Values)
+{
+}
+
+public unsafe fn rawptr<i32[min max]> Pin<T>(borrow Buffer buffer, i32[min max] index, T tag)
+{
+    return &buffer.Values[index];
+}
+""");
+    return Succeeds(c);
+}
+
+// Ported from CompilerPipelineEmitLlvmTests.ManifestBackedBinaryOperatorWrapperGenericsUseOptimizationSummaryForPlanningAndCodegen.
+internal fn bool ManifestBackedBinaryOperatorWrapperGenericsUseOptimizationSummaryForPlanningAndCodegenImpl()
+{
+    // PORT-NOTE: original drops FunctionSemantics and proves the binary-operator
+    // wrapper specialization is planned InlineSmallBody and emitted with
+    // alwaysinline from the OptimizationSummary. Manifest surgery / import
+    // staging / plan inspection are out of reach; this compiles the library
+    // module and asserts Succeeds.
+    stack mut LlvmCompile c = CompileLlvm(
+        "emit-llvm-manifest-binary-operator-wrapper-generic",
+        raw"""
+module Facade
+
+public record Inner(i32[min max] Value)
+{
+}
+public record Box(Inner Inner)
+{
+}
+
+public fn i32[min max] AddDelta<T>(borrow Box box, i32[min max] delta, T tag)
+{
+    return box.Inner.Value + delta;
+}
+""");
+    return Succeeds(c);
+}
+
+// Ported from CompilerPipelineEmitLlvmTests.ManifestBackedComparisonWrapperGenericsUseOptimizationSummaryForPlanningAndCodegen.
+internal fn bool ManifestBackedComparisonWrapperGenericsUseOptimizationSummaryForPlanningAndCodegenImpl()
+{
+    // PORT-NOTE: original drops FunctionSemantics and proves the comparison
+    // wrapper specialization is planned InlineSmallBody and emitted with
+    // alwaysinline from the OptimizationSummary. Manifest surgery / import
+    // staging / plan inspection are out of reach; this compiles the library
+    // module and asserts Succeeds.
+    stack mut LlvmCompile c = CompileLlvm(
+        "emit-llvm-manifest-comparison-wrapper-generic",
+        raw"""
+module Facade
+
+public record Inner(i32[min max] Value)
+{
+}
+public record Box(Inner Inner)
+{
+}
+
+public fn bool IsBelow<T>(borrow Box box, i32[min max] limit, T tag)
+{
+    return box.Inner.Value < limit;
+}
+""");
+    return Succeeds(c);
+}
+
+// Ported from CompilerPipelineEmitLlvmTests.ManifestBackedTerminalIfSelectionWrapperGenericsUseOptimizationSummaryForPlanningAndCodegen.
+internal fn bool ManifestBackedTerminalIfSelectionWrapperGenericsUseOptimizationSummaryForPlanningAndCodegenImpl()
+{
+    // PORT-NOTE: original drops FunctionSemantics and proves the terminal-if
+    // selection wrapper specialization is planned InlineSmallBody and emitted
+    // with alwaysinline from the OptimizationSummary. Manifest surgery / import
+    // staging / plan inspection are out of reach; this compiles the library
+    // module and asserts Succeeds.
+    stack mut LlvmCompile c = CompileLlvm(
+        "emit-llvm-manifest-terminal-if-wrapper-generic",
+        raw"""
+module Facade
+
+public fn i32[min max] ChooseBranch<T>(bool takeLeft, bool takeMiddle, i32[min max] left, i32[min max] middle, i32[min max] right, T tag)
+{
+    if (takeLeft)
+    {
+        return left;
+    }
+    else if (takeMiddle)
+    {
+        return middle;
+    }
+    else
+    {
+        return right;
+    }
+}
+""");
+    return Succeeds(c);
+}
+
+// Ported from CompilerPipelineEmitLlvmTests.ManifestBackedTerminalSwitchSelectionWrapperGenericsUseOptimizationSummaryForPlanningAndCodegen.
+internal fn bool ManifestBackedTerminalSwitchSelectionWrapperGenericsUseOptimizationSummaryForPlanningAndCodegenImpl()
+{
+    // PORT-NOTE: original drops FunctionSemantics and proves the terminal-switch
+    // selection wrapper specialization is planned InlineSmallBody and emitted
+    // with alwaysinline from the OptimizationSummary. Manifest surgery / import
+    // staging / plan inspection are out of reach; this compiles the library
+    // module and asserts Succeeds.
+    stack mut LlvmCompile c = CompileLlvm(
+        "emit-llvm-manifest-terminal-switch-wrapper-generic",
+        raw"""
+module Facade
+
+public fn i32[min max] ChooseSwitch<T>(i32[min max] selector, i32[min max] left, i32[min max] middle, i32[min max] right, T tag)
+{
+    switch (selector)
+    {
+        case 0:
+            return left;
+        case 1:
+            return middle;
+        default:
+            return right;
+    }
+}
+""");
+    return Succeeds(c);
+}
+
+// Ported from CompilerPipelineEmitLlvmTests.ManifestBackedObjectConstructionWrapperGenericsUseOptimizationSummaryForPlanningAndCodegen.
+internal fn bool ManifestBackedObjectConstructionWrapperGenericsUseOptimizationSummaryForPlanningAndCodegenImpl()
+{
+    // PORT-NOTE: original drops FunctionSemantics and proves the object-
+    // construction wrapper specialization is planned InlineSmallBody and emitted
+    // with alwaysinline from the OptimizationSummary. Manifest surgery / import
+    // staging / plan inspection are out of reach; this compiles the library
+    // module and asserts Succeeds.
+    stack mut LlvmCompile c = CompileLlvm(
+        "emit-llvm-manifest-object-construction-wrapper-generic",
+        raw"""
+module Facade
+
+public struct Inner<T>
+{
+    T Value;
+}
+
+public struct Outer<T>
+{
+    Inner<T> Item;
+    i32[min max] Count;
+}
+
+public fn Outer<T> Wrap<T>(T value, i32[min max] count, T tag)
+{
+    return new Outer<T>()
+    {
+        Item =
+        {
+            Value = value
+        },
+        Count = count
+    };
+}
+""");
+    return Succeeds(c);
+}
+
+// Ported from CompilerPipelineEmitLlvmTests.ManifestBackedEnumConstructionWrapperGenericsUseOptimizationSummaryForPlanningAndCodegen.
+internal fn bool ManifestBackedEnumConstructionWrapperGenericsUseOptimizationSummaryForPlanningAndCodegenImpl()
+{
+    // PORT-NOTE: original drops FunctionSemantics and proves the enum-
+    // construction wrapper specialization is planned InlineSmallBody and emitted
+    // with alwaysinline from the OptimizationSummary. Manifest surgery / import
+    // staging / plan inspection are out of reach; this compiles the library
+    // module and asserts Succeeds.
+    stack mut LlvmCompile c = CompileLlvm(
+        "emit-llvm-manifest-enum-construction-wrapper-generic",
+        raw"""
+module Facade
+
+public enum Boxed<T>
+{
+    None,
+    Value
+    {
+        Data: T, Tag: i32[min max]
+    },
+}
+
+public fn Boxed<T> Wrap<T>(T value, i32[min max] tag, T marker)
+{
+    return Boxed<T>.Value
+    {
+        Data: value, Tag: tag
+    };
+}
+""");
+    return Succeeds(c);
+}
+
+// Ported from CompilerPipelineEmitLlvmTests.ManifestBackedLocalUpdateWrapperGenericsUseOptimizationSummaryForPlanningAndCodegen.
+internal fn bool ManifestBackedLocalUpdateWrapperGenericsUseOptimizationSummaryForPlanningAndCodegenImpl()
+{
+    // PORT-NOTE: original drops FunctionSemantics and proves the local-update
+    // wrapper specialization is planned InlineSmallBody and emitted with
+    // alwaysinline from the OptimizationSummary. Manifest surgery / import
+    // staging / plan inspection are out of reach; this compiles the library
+    // module and asserts Succeeds.
+    stack mut LlvmCompile c = CompileLlvm(
+        "emit-llvm-manifest-local-update-wrapper-generic",
+        raw"""
+module Facade
+
+public record Inner(i32[min max] Value)
+{
+}
+public record Box(Inner Inner)
+{
+}
+
+public fn i32[min max] Bump<T>(borrow Box box, i32[min max] delta, T tag)
+{
+    stack mut i32[min max] current = box.Inner.Value;
+    current += delta;
+    return current;
+}
+""");
+    return Succeeds(c);
+}
+
+// Ported from CompilerPipelineEmitLlvmTests.ConstGlobalDerivedLoadsEmitInvariantLoadMetadataWithoutTaggingLocalLoads.
+internal fn bool ConstGlobalDerivedLoadsEmitInvariantLoadMetadataWithoutTaggingLocalLoadsImpl()
+{
+    // PORT-NOTE: the C# oracle slices the @Run body and counts that exactly two
+    // i32 loads appear with exactly one carrying `!invariant.load`. The host
+    // bridge exposes the raw LLVM text but not a body-scoped load counter, so
+    // the per-load count assertions are reduced to substring checks: an
+    // invariant-marked load is present and Run was emitted.
+    stack mut LlvmCompile c = CompileLlvm(
+        "emit-llvm-const-invariant-load",
+        raw"""
+module Demo
+
+struct Box
+{
+    i32[min max] Value;
+}
+
+const Box Current = new Box()
+{
+    Value = 5
+};
+
+unsafe fn i32[min max] Run()
+{
+    stack mut i32[min max] local = 3;
+    stack rawptr<i32[min max]> localPtr = &local;
+    stack rawptr<frozen i32[min max]> constPtr = &(Current.Value);
+    return (*localPtr) + (*constPtr);
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "@Run(")
+        && Contains(llvm, "!invariant.load");
+}
