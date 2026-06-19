@@ -1,0 +1,54 @@
+import CompilerMirTestSupport
+import System.Testing
+module CompilerPipelineLowerAbiTests
+
+// Ported from CompilerPipelineLowerAbiTests.MonomorphizedGenericFunctionsReceiveExplicitAbiLowering.
+// PORT-NOTE: the C# test stops after the "lower-abi" pass and inspects the
+// AbiModel artifact (UsesFastCallingConvention, ReturnsIndirect,
+// AbiParameterKind, LlvmType.Kind) for the two monomorphizations of Bounce<T>.
+// The MIR-text helpers available here cannot reach the AbiModel artifact, so
+// this compiles the same program through the closest helper (CompileMir, which
+// stops after "lower-mir") and asserts over the rendered MIR text: both
+// monomorphized symbols (__stark_mono_fn_Demo__Bounce__i32 and
+// __stark_mono_fn_Demo__Bounce__Big) must be present, reducing the explicit
+// direct-vs-indirect ABI lowering checks to a presence/structure signal.
+internal fn bool MonomorphizedGenericFunctionsReceiveExplicitAbiLoweringImpl()
+{
+    stack mut MirCompile c = CompileMir(
+        "lower-abi-mono-bounce",
+        raw"""
+        module Demo
+
+        struct Big
+        {
+            i64[min max] A;
+            i64[min max] B;
+            i64[min max] C;
+        }
+
+        fn T Bounce<T>(T value)
+        {
+            return value;
+        }
+
+        fn i32[min max] Run(i32[min max] value)
+        {
+            return Bounce(value);
+        }
+
+        fn Big Make(Big value)
+        {
+            return Bounce(value);
+        }
+        """);
+
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return MirContainsAll2(
+        c,
+        "__stark_mono_fn_Demo__Bounce__i32",
+        "__stark_mono_fn_Demo__Bounce__Big");
+}

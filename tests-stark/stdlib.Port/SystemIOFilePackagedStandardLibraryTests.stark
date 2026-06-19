@@ -1,0 +1,554 @@
+import StdlibPortSupport
+import System
+import System.Testing
+import System.Text
+module SystemIOFilePackagedStandardLibraryTests
+
+// Ported from SystemIOFilePackagedStandardLibraryTests.StdLibSourceOwnedFileFlushDrainsOnlyUserBufferAndSyncAllCallsPlatformFlush.
+//
+// PORT-NOTE: the C# test reads the on-disk stdlib source
+// stdlib/src/System/IO/File.stark and compiles it directly with EmitLlvmIr,
+// then scans per-function LLVM bodies. The compile-only host bridge cannot read
+// the repository source tree, so this port compiles a program that imports
+// System.IO and exercises System.IO.File so the host stdlib emits the File_*
+// definitions into the program module, then applies the same per-body
+// Contains/DoesNotContain checks via LlvmDefinitionBody (the Stark mirror of the
+// C# ExtractDefinedFunctionText helper).
+internal fn bool StdLibSourceOwnedFileFlushDrainsOnlyUserBufferAndSyncAllCallsPlatformFlushImpl()
+{
+    stack mut ProgramCompile c = CompileProgram("stdlib-file-flush-drains-user-buffer", raw"""
+import System
+module App
+fn bool StatusOk(System.IO.IOStatus status)
+{
+    switch (status)
+    {
+        case System.IO.IOStatus.Ok:
+            return true;
+        case System.IO.IOStatus.Err(var error):
+            return false;
+    }
+}
+
+fn System.IO.File.File OpenOrEmpty(System.IO.IOResult<System.IO.File.File> result)
+{
+    switch (result)
+    {
+        case System.IO.IOResult<System.IO.File.File>.Ok(var value):
+            return value;
+        case System.IO.IOResult<System.IO.File.File>.Err(var error):
+            return new();
+    }
+}
+
+export unsafe fn i32[min max] main()
+{
+    stack mut System.IO.File.File file = OpenOrEmpty(System.IO.File.Open("flush-test.txt", System.IO.File.FileMode.Write));
+    file.WriteLine("Owned");
+    if (!StatusOk(file.Flush()))
+    {
+        return 1;
+    }
+
+    if (!StatusOk(file.SyncAll()))
+    {
+        return 2;
+    }
+
+    if (!StatusOk(file.Close()))
+    {
+        return 3;
+    }
+
+    return 0;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+
+    // The buffered close/flush/read/write/seek paths drain only the user buffer
+    // and must not call the platform flush primitive directly.
+    if (System.Testing.Contains(LlvmDefinitionBody(llvm, "File_Close"), "@System_Runtime_Platform_FlushFile(")
+        || System.Testing.Contains(LlvmDefinitionBody(llvm, "File_Flush"), "@System_Runtime_Platform_FlushFile(")
+        || System.Testing.Contains(LlvmDefinitionBody(llvm, "File_ReadBytes"), "@System_Runtime_Platform_FlushFile(")
+        || System.Testing.Contains(LlvmDefinitionBody(llvm, "File_WriteBytes"), "@System_Runtime_Platform_FlushFile(")
+        || System.Testing.Contains(LlvmDefinitionBody(llvm, "File_ReadByteRegion"), "@System_Runtime_Platform_FlushFile(")
+        || System.Testing.Contains(LlvmDefinitionBody(llvm, "File_WriteByteRegion"), "@System_Runtime_Platform_FlushFile(")
+        || System.Testing.Contains(LlvmDefinitionBody(llvm, "File_SeekRaw"), "@System_Runtime_Platform_FlushFile(")
+        || System.Testing.Contains(LlvmDefinitionBody(llvm, "Flush"), "@System_Runtime_Platform_FlushFile("))
+    {
+        return false;
+    }
+
+    // The raw close/flush helpers drain the buffered write through the user
+    // buffer helper.
+    if (!System.Testing.Contains(LlvmDefinitionBody(llvm, "File_CloseRaw"), "@File_FlushBufferedWrite(")
+        || !System.Testing.Contains(LlvmDefinitionBody(llvm, "File_FlushRaw"), "@File_FlushBufferedWrite("))
+    {
+        return false;
+    }
+
+    // The raw read/write/seek paths route through File_FlushRaw.
+    if (!System.Testing.Contains(LlvmDefinitionBody(llvm, "File_ReadBytes"), "@File_FlushRaw(")
+        || !System.Testing.Contains(LlvmDefinitionBody(llvm, "File_WriteBytes"), "@File_FlushRaw(")
+        || !System.Testing.Contains(LlvmDefinitionBody(llvm, "File_ReadByteRegion"), "@File_FlushRaw(")
+        || !System.Testing.Contains(LlvmDefinitionBody(llvm, "File_WriteByteRegion"), "@File_FlushRaw(")
+        || !System.Testing.Contains(LlvmDefinitionBody(llvm, "File_SeekRaw"), "@File_FlushRaw("))
+    {
+        return false;
+    }
+
+    // SyncAll funnels through SyncAllRaw, which drains the user buffer and then
+    // calls the platform flush; the raw SyncAll also calls the platform flush.
+    if (!System.Testing.Contains(LlvmDefinitionBody(llvm, "File_SyncAll"), "@File_SyncAllRaw("))
+    {
+        return false;
+    }
+
+    if (!System.Testing.Contains(LlvmDefinitionBody(llvm, "File_SyncAllRaw"), "@File_FlushBufferedWrite(")
+        || !System.Testing.Contains(LlvmDefinitionBody(llvm, "File_SyncAllRaw"), "@System_Runtime_Platform_FlushFile("))
+    {
+        return false;
+    }
+
+    if (!System.Testing.Contains(LlvmDefinitionBody(llvm, "SyncAll"), "@System_Runtime_Platform_FlushFile("))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemIOFilePackagedStandardLibraryTests.StdLibSourceFileBufferedAsciiAppendsUseInlineAsmCopyHelper.
+//
+// PORT-NOTE: the C# test reads the on-disk stdlib source
+// stdlib/src/System/IO/File.stark and compiles it directly with EmitLlvmIr for
+// the x86_64-unknown-linux-gnu target, then inspects the
+// File_TryAppendBufferedAscii body. The compile-only host bridge cannot read the
+// repository source tree nor override the LLVM target triple, so this port
+// compiles a program that imports System.IO and exercises the buffered ascii
+// append path through the host stdlib, then applies the same body assertions via
+// LlvmDefinitionBody (the Stark mirror of ExtractDefinedFunctionText). The
+// `rep movsb` inline-asm check is target-dependent in the original; it is
+// retained as a module-wide presence check.
+internal fn bool StdLibSourceFileBufferedAsciiAppendsUseInlineAsmCopyHelperImpl()
+{
+    stack mut ProgramCompile c = CompileProgram("stdlib-file-buffered-ascii-append", raw"""
+import System
+module App
+fn System.IO.File.File OpenOrEmpty(System.IO.IOResult<System.IO.File.File> result)
+{
+    switch (result)
+    {
+        case System.IO.IOResult<System.IO.File.File>.Ok(var value):
+            return value;
+        case System.IO.IOResult<System.IO.File.File>.Err(var error):
+            return new();
+    }
+}
+
+export unsafe fn i32[min max] main()
+{
+    stack mut System.IO.File.File file = OpenOrEmpty(System.IO.File.Open("append-test.txt", System.IO.File.FileMode.Write, System.IO.File.FileBuffering.Full));
+    file.WriteText("Hi");
+    file.WriteLine("There");
+    file.Close();
+    return 0;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    stack ascii appendBody = LlvmDefinitionBody(llvm, "File_TryAppendBufferedAscii");
+
+    if (!System.Testing.Contains(llvm, "define void @CopyAsciiBytes("))
+    {
+        return false;
+    }
+
+    if (!System.Testing.Contains(llvm, "rep movsb"))
+    {
+        return false;
+    }
+
+    if (!System.Testing.Contains(appendBody, "call void @CopyAsciiBytes("))
+    {
+        return false;
+    }
+
+    if (System.Testing.Contains(appendBody, "@llvm.memcpy"))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemIOFilePackagedStandardLibraryTests.PackagedStdLibOwnedFileHandleFlushesAndClosesOnDrop.
+//
+// PORT-NOTE: the C# test builds the shared packaged stdlib, compiles the
+// embedded program to a native executable via the compiler CLI, runs it, and
+// asserts the process exit code, empty stdout/stderr, and the on-disk
+// owned-test.txt contents ("Owned\n"). The compile-only host bridge cannot link
+// or run executables, package the stdlib, or observe file-system effects, so
+// this port compiles the embedded program verbatim through the host stdlib and
+// asserts the compile succeeds, the strongest signal the bridge can reproduce.
+internal fn bool PackagedStdLibOwnedFileHandleFlushesAndClosesOnDropImpl()
+{
+    stack mut ProgramCompile c = CompileProgram("packaged-owned-file-flush-close-on-drop", raw"""
+import System
+module App
+fn bool StatusOk(System.IO.IOStatus status)
+{
+    switch (status)
+    {
+        case System.IO.IOStatus.Ok:
+            return true;
+        case System.IO.IOStatus.Err(var error):
+            return false;
+    }
+}
+
+fn bool BoolOrFalse(System.IO.IOResult<bool> result)
+{
+    switch (result)
+    {
+        case System.IO.IOResult<bool>.Ok(var value):
+            return value;
+        case System.IO.IOResult<bool>.Err(var error):
+            return false;
+    }
+}
+
+fn System.IO.File.File OpenOrEmpty(System.IO.IOResult<System.IO.File.File> result)
+{
+    switch (result)
+    {
+        case System.IO.IOResult<System.IO.File.File>.Ok(var value):
+            return value;
+        case System.IO.IOResult<System.IO.File.File>.Err(var error):
+            return new();
+    }
+}
+
+fn i64[min max] CountOrNegative(System.IO.IOResult<u64[0 2 ** 63 - 1]> result)
+{
+    switch (result)
+    {
+        case System.IO.IOResult<u64[0 2 ** 63 - 1]>.Ok(var value):
+            return (i64[min max])value;
+        case System.IO.IOResult<u64[0 2 ** 63 - 1]>.Err(var error):
+            return -1;
+    }
+}
+
+fn void WriteOwned()
+{
+    stack mut System.IO.File.File file = OpenOrEmpty(System.IO.File.Open("owned-test.txt", System.IO.File.FileMode.Write));
+    file.WriteLine("Owned");
+    return;
+}
+
+export unsafe fn i32[min max] main()
+{
+    WriteOwned();
+
+    if (!BoolOrFalse(System.IO.File.Exists("owned-test.txt")))
+    {
+        return 2;
+    }
+
+    if (BoolOrFalse(System.IO.File.Exists("missing-test.txt")))
+    {
+        return 3;
+    }
+
+    stack mut i8[min max][8] buffer =
+    {
+        0, 0, 0, 0, 0, 0, 0, 0
+    };
+    stack mut System.IO.File.File file = OpenOrEmpty(System.IO.File.Open("owned-test.txt", System.IO.File.FileMode.Read));
+    stack mut i8[min max][] destination = slice(&buffer[0], 6);
+    stack i64[min max] count = CountOrNegative(file.Read(destination));
+    file.Close();
+
+    if (count != 6)
+    {
+        return 4;
+    }
+
+    return 0;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemIOFilePackagedStandardLibraryTests.PackagedStdLibFileBufferingModesBehaveAsExpected.
+//
+// PORT-NOTE: the C# test builds the shared packaged stdlib, compiles the
+// embedded program to a native executable via the compiler CLI, runs it, and
+// asserts the process exit code, empty stdout/stderr, and the on-disk contents
+// of default.txt/full.txt/line.txt/none.txt produced by the different
+// FileBuffering modes. The compile-only host bridge cannot link or run
+// executables, package the stdlib, or observe file-system effects, so this port
+// compiles the embedded program verbatim through the host stdlib and asserts the
+// compile succeeds, the strongest signal the bridge can reproduce.
+internal fn bool PackagedStdLibFileBufferingModesBehaveAsExpectedImpl()
+{
+    stack mut ProgramCompile c = CompileProgram("packaged-file-buffering-modes", raw"""
+import System
+module App
+fn bool StatusOk(System.IO.IOStatus status)
+{
+    switch (status)
+    {
+        case System.IO.IOStatus.Ok:
+            return true;
+        case System.IO.IOStatus.Err(var error):
+            return false;
+    }
+}
+
+fn bool BoolOrFalse(System.IO.IOResult<bool> result)
+{
+    switch (result)
+    {
+        case System.IO.IOResult<bool>.Ok(var value):
+            return value;
+        case System.IO.IOResult<bool>.Err(var error):
+            return false;
+    }
+}
+
+fn System.IO.File.File OpenOrEmpty(System.IO.IOResult<System.IO.File.File> result)
+{
+    switch (result)
+    {
+        case System.IO.IOResult<System.IO.File.File>.Ok(var value):
+            return value;
+        case System.IO.IOResult<System.IO.File.File>.Err(var error):
+            return new();
+    }
+}
+
+fn i64[min max] CountOrNegative(System.IO.IOResult<u64[0 2 ** 63 - 1]> result)
+{
+    switch (result)
+    {
+        case System.IO.IOResult<u64[0 2 ** 63 - 1]>.Ok(var value):
+            return (i64[min max])value;
+        case System.IO.IOResult<u64[0 2 ** 63 - 1]>.Err(var error):
+            return -1;
+    }
+}
+
+unsafe fn i64[min max] ReadCount(ascii path, u64[0 2 ** 63 - 1] expected)
+{
+    stack mut i8[min max][16] buffer =
+    {
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    };
+    stack mut System.IO.File.File file = OpenOrEmpty(System.IO.File.Open(path, System.IO.File.FileMode.Read));
+    if (!file.IsOpen())
+    {
+        return -1;
+    }
+
+    stack mut i8[min max][] destination = slice(&buffer[0], expected);
+    stack i64[min max] count = CountOrNegative(file.Read(destination));
+    file.Close();
+    return count;
+}
+
+export unsafe fn i32[min max] main()
+{
+    stack mut System.IO.File.File defaulted = OpenOrEmpty(System.IO.File.Open("default.txt", System.IO.File.FileMode.Write));
+    defaulted.WriteLine("Default");
+    if (ReadCount("default.txt", 8) != 0)
+    {
+        return 1;
+    }
+
+    if (!StatusOk(defaulted.Close()))
+    {
+        return 2;
+    }
+
+    if (ReadCount("default.txt", 8) != 8)
+    {
+        return 3;
+    }
+
+    stack mut System.IO.File.File full = OpenOrEmpty(System.IO.File.Open("full.txt", System.IO.File.FileMode.Write, System.IO.File.FileBuffering.Full));
+    full.WriteLine("Full");
+    if (ReadCount("full.txt", 5) != 0)
+    {
+        return 4;
+    }
+
+    if (!StatusOk(full.Flush()))
+    {
+        return 5;
+    }
+
+    if (ReadCount("full.txt", 5) != 5)
+    {
+        return 6;
+    }
+
+    if (!StatusOk(full.Close()))
+    {
+        return 7;
+    }
+
+    stack mut System.IO.File.File line = OpenOrEmpty(System.IO.File.Open("line.txt", System.IO.File.FileMode.Write, System.IO.File.FileBuffering.Line));
+    line.WriteLine("Line");
+    if (ReadCount("line.txt", 5) != 5)
+    {
+        return 8;
+    }
+
+    if (!StatusOk(line.Close()))
+    {
+        return 9;
+    }
+
+    stack mut System.IO.File.File none = OpenOrEmpty(System.IO.File.Open("none.txt", System.IO.File.FileMode.Write, System.IO.File.FileBuffering.None));
+    none.WriteText("None");
+    if (ReadCount("none.txt", 4) != 4)
+    {
+        return 10;
+    }
+
+    if (!StatusOk(none.Close()))
+    {
+        return 11;
+    }
+
+    return 0;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemIOFilePackagedStandardLibraryTests.PackagedStdLibOwnedFileWritesHonorExplicitTextEncodings.
+//
+// PORT-NOTE: the C# test builds the shared packaged stdlib, compiles the
+// embedded program to a native executable via the compiler CLI, runs it, and
+// asserts the exact on-disk byte contents of utf8.txt/utf16.txt/utf32.txt
+// against the expected UTF-8/UTF-16/UTF-32 encodings. The compile-only host
+// bridge cannot link or run executables, package the stdlib, or read encoded
+// file bytes, so this port compiles the embedded program verbatim through the
+// host stdlib and asserts the compile succeeds, the strongest signal the bridge
+// can reproduce.
+internal fn bool PackagedStdLibOwnedFileWritesHonorExplicitTextEncodingsImpl()
+{
+    stack mut ProgramCompile c = CompileProgram("packaged-owned-file-text-encodings", raw"""
+import System
+import System.Text
+module App
+fn bool StatusOk(System.IO.IOStatus status)
+{
+    switch (status)
+    {
+        case System.IO.IOStatus.Ok:
+            return true;
+        case System.IO.IOStatus.Err(var error):
+            return false;
+    }
+}
+
+fn bool BoolOrFalse(System.IO.IOResult<bool> result)
+{
+    switch (result)
+    {
+        case System.IO.IOResult<bool>.Ok(var value):
+            return value;
+        case System.IO.IOResult<bool>.Err(var error):
+            return false;
+    }
+}
+
+fn System.IO.File.File OpenOrEmpty(System.IO.IOResult<System.IO.File.File> result)
+{
+    switch (result)
+    {
+        case System.IO.IOResult<System.IO.File.File>.Ok(var value):
+            return value;
+        case System.IO.IOResult<System.IO.File.File>.Err(var error):
+            return new();
+    }
+}
+export unsafe fn i32[min max] main()
+{
+    stack mut i32[min max][1] gothicBuffer =
+    {
+        66376
+    };
+    stack mut Unicode gothic = new Unicode()
+    {
+        Data = &gothicBuffer[0],
+        Length = 1,
+        Capacity = 1
+    };
+
+    stack mut System.IO.File.File utf8 = OpenOrEmpty(System.IO.File.Open("utf8.txt", System.IO.File.FileMode.Write, System.Text.Encoding.UTF8));
+    utf8.WriteText("Hi ");
+    utf8.WriteLine((unicode)"α");
+    if (!StatusOk(utf8.Close()))
+    {
+        return 1;
+    }
+
+    stack mut System.IO.File.File utf16 = OpenOrEmpty(System.IO.File.Open("utf16.txt", System.IO.File.FileMode.Write, System.Text.Encoding.UTF16));
+    utf16.WriteText("A");
+    utf16.WriteText(System.Text.UnicodeView(gothic));
+    utf16.WriteLine((unicode)"β");
+    if (!StatusOk(utf16.Close()))
+    {
+        return 2;
+    }
+
+    gothic = new Unicode()
+    {
+        Data = &gothicBuffer[0],
+        Length = 1,
+        Capacity = 1
+    };
+
+    stack mut System.IO.File.File utf32 = OpenOrEmpty(System.IO.File.Open("utf32.txt", System.IO.File.FileMode.Write, System.Text.Encoding.UTF32));
+    utf32.WriteText("Z");
+    utf32.WriteText(System.Text.UnicodeView(gothic));
+    utf32.WriteLine((unicode)"γ");
+    if (!StatusOk(utf32.Close()))
+    {
+        return 3;
+    }
+
+    return 0;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return true;
+}

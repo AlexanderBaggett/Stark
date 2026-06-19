@@ -1,0 +1,2602 @@
+import CompilerTestSupport
+import System.Testing
+import System.Text
+module PackageImageArchitectureTests
+
+// Ported from PackageImageArchitectureTests.PackageImagePreservesAssociatedTypesAcrossTypedInterfaceSourceBridgeAndFacts.
+internal fn bool PackageImagePreservesAssociatedTypesAcrossTypedInterfaceSourceBridgeAndFactsImpl()
+{
+    {
+        // PORT-NOTE: The C# test builds a `Facade` library through `lower-abi`, constructs a
+        // package image via PackageImageBuilder.Create, probes the manifest TypedInterface for
+        // associated-type facts (Reader.Item required/no-target, HasHash.Code integer/64-bit,
+        // HasBuffer.Buffer named, Counter.Item integer/32-bit), round-trips the typed source
+        // surface (`alias Item;`, `alias Code = `, ...), re-loads package-image facts, deletes the
+        // Facade source, then runs the `Demo` consumer (EmitLlvmIr) against a
+        // FileSystemModuleResolver and asserts its `Run` LLVM body folds to `ret i64 13` with no
+        // residual `call`. Package-image manifest construction, typed-source round-tripping, fact
+        // loading, sourceless resolution, and LLVM-text inspection are not expressible via the
+        // compile helpers, so this resolves `Facade` as a sibling source module and asserts the
+        // `Demo` consumer (carrying the full comptime associated-type fact body) type-checks.
+        stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+            "package-image-preserves-associated-types-typed-interface-source-bridge-facts",
+            raw"""
+import Facade
+module Demo
+
+    finite law i64[min max] AssociatedScore<ReaderType, HasHashType, CounterType, BufferType>()
+    {
+        if (comptime System.Compiler.AssociatedTypeCount<ReaderType>() == 1
+            && comptime !System.Compiler.AssociatedTypeHasTarget<ReaderType, 0>()
+            && comptime (System.Compiler.AssociatedTypeName<HasHashType, 0>() == "Code")
+            && comptime System.Compiler.AssociatedTypeTargetTypeIs<HasHashType, u64[0 max], 0>()
+            && comptime System.Compiler.AssociatedTypeTargetTypeIs<CounterType, i32[min max], 0>()
+            && comptime System.Compiler.AssociatedTypeTargetTypeIsInteger<HasHashType, 0>()
+            && comptime System.Compiler.AssociatedTypeTargetTypeHasConcreteLayout<CounterType, 0>()
+            && comptime (System.Compiler.AssociatedTypeTargetTypeDisplayName<ReaderType, 0>() == "")
+            && comptime (System.Compiler.AssociatedTypeTargetTypeModuleName<ReaderType, 0>() == "")
+            && comptime !System.Compiler.AssociatedTypeTargetTypeIsGenericInstantiation<ReaderType, 0>()
+            && comptime (System.Compiler.AssociatedTypeTargetTypeDisplayName<BufferType, 0>() == "Facade.Holder<u8, 4>")
+            && comptime (System.Compiler.AssociatedTypeTargetTypeBaseName<BufferType, 0>() == "Facade.Holder")
+            && comptime (System.Compiler.AssociatedTypeTargetTypeModuleName<BufferType, 0>() == "Facade")
+            && comptime System.Compiler.AssociatedTypeTargetTypeIsGenericInstantiation<BufferType, 0>()
+            && comptime System.Compiler.AssociatedTypeTargetTypeArgumentCount<BufferType, 0>() == 1
+            && comptime System.Compiler.AssociatedTypeTargetTypeComptimeArgumentCount<BufferType, 0>() == 1)
+        {
+            return 13;
+        }
+
+        return 0;
+    }
+
+    finite law i64[min max] Run()
+    {
+        return comptime AssociatedScore<Facade.Reader, Facade.HasHash, Facade.Counter, Facade.HasBuffer>();
+    }
+""",
+            "",
+            "Facade.stark",
+            raw"""
+module Facade
+
+public trait Reader
+{
+    alias Item;
+
+    finite law Self.Item Read(borrow Self self);
+}
+
+public trait HasHash
+{
+    alias Code = u64[0 max];
+
+    finite law Self.Code Hash(borrow Self self);
+}
+
+public struct Holder<T, comptime u8[1 8] N>
+{
+    T[N] Items;
+}
+
+public trait HasBuffer
+{
+    alias Buffer = Holder<u8[0 max], 4>;
+}
+
+public struct Counter : Reader, HasHash
+{
+    alias Item = i32[min max];
+
+    i32[min max] Value;
+
+    public finite law i32[min max] Read(borrow Counter self)
+    {
+        return self.Value;
+    }
+
+    public finite law u64[0 max] Hash(borrow Counter self)
+    {
+        return (u64[0 max])self.Value;
+    }
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from PackageImageArchitectureTests.PackageImagePreservesMethodStructuralFactsAcrossTypedInterfaceSourceBridgeAndFacts.
+internal fn bool PackageImagePreservesMethodStructuralFactsAcrossTypedInterfaceSourceBridgeAndFactsImpl()
+{
+    {
+        // PORT-NOTE: The C# test publishes a `Facade` library carrying `Box.Echo`/`Box.Pick`/
+        // `Box.ReadBounded` and a `BorrowService.Pick` with retborrow/borrow/out/shared/frozen/init
+        // qualified parameters, builds a package image, probes the loaded FunctionSignatures for
+        // borrow/access/initialization kinds and raw-pointer element-count expressions, round-trips
+        // the `where T: Drawable, Bound<T, comptime N>` and `rawptr<...>[length]` source, deletes the
+        // Facade source, then runs the `Demo` consumer (EmitLlvmIr) and asserts its `Run` LLVM body
+        // folds to `ret i32 42` with no residual `call`. Manifest round-tripping, fact probing,
+        // sourceless resolution, and LLVM-text inspection are not expressible via the compile
+        // helpers, so this resolves `Facade` as a sibling source module and asserts the `Demo`
+        // consumer (carrying the full comptime method-structural-fact body) type-checks.
+        stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+            "package-image-preserves-method-structural-facts-typed-interface-source-bridge-facts",
+            raw"""
+import Facade
+module Demo
+
+finite law i32[min max] Run()
+{
+    if (!(comptime System.Compiler.MethodCount<Facade.BorrowService>() == 1
+        && comptime (System.Compiler.MethodModuleName<Facade.BorrowService, 0>() == "Facade")
+        && comptime System.Compiler.MethodReturnTypeBorrowKindIsRetBorrow<Facade.BorrowService, 0>()
+        && comptime System.Compiler.MethodReturnTypeUnqualifiedTypeIs<Facade.BorrowService, Facade.Box, 0>()
+        && comptime System.Compiler.MethodParameterTypeBorrowKindIsBorrow<Facade.BorrowService, 0, 0>()
+        && comptime System.Compiler.MethodParameterTypeBorrowKindIsRetBorrow<Facade.BorrowService, 0, 1>()
+        && comptime System.Compiler.MethodParameterTypeBorrowKindIsBorrow<Facade.BorrowService, 0, 2>()
+        && comptime System.Compiler.MethodParameterTypeIsMutableView<Facade.BorrowService, 0, 2>()
+        && comptime System.Compiler.MethodParameterTypeInitializationKindIsOut<Facade.BorrowService, 0, 3>()
+        && comptime System.Compiler.MethodParameterTypeAccessKindIsShared<Facade.BorrowService, 0, 4>()
+        && comptime System.Compiler.MethodParameterTypeAccessKindIsFrozen<Facade.BorrowService, 0, 5>()
+        && comptime System.Compiler.MethodParameterTypeInitializationKindIsInit<Facade.BorrowService, 0, 6>()
+        && comptime System.Compiler.MethodParameterTypeUnqualifiedTypeIs<Facade.BorrowService, i32[min max][], 0, 6>()))
+    {
+        return 0;
+    }
+
+    if (comptime System.Compiler.MethodCount<Facade.Box>() == 3)
+    {
+        if (comptime (System.Compiler.MethodName<Facade.Box, 0>() == "Echo")
+            && comptime (System.Compiler.MethodModuleName<Facade.Box, 0>() == "Facade"))
+        {
+            if (comptime System.Compiler.MethodParameterCount<Facade.Box, 0>() == 2
+                && comptime (System.Compiler.MethodParameterName<Facade.Box, 0, 0>() == "self")
+                && comptime (System.Compiler.MethodParameterName<Facade.Box, 0, 1>() == "fallback"))
+            {
+                if (comptime System.Compiler.MethodReturnTypeIs<Facade.Box, Facade.Holder<i32[min max], 4>, 0>())
+                {
+                    if (comptime System.Compiler.MethodParameterTypeIs<Facade.Box, Facade.Holder<i32[min max], 4>, 0, 1>())
+                    {
+                        if (comptime (System.Compiler.MethodReturnTypeDisplayName<Facade.Box, 0>() == "Facade.Holder<i32, 4>")
+                            && comptime (System.Compiler.MethodReturnTypeBaseName<Facade.Box, 0>() == "Facade.Holder")
+                            && comptime (System.Compiler.MethodReturnTypeModuleName<Facade.Box, 0>() == "Facade")
+                            && comptime System.Compiler.MethodReturnTypeIsGenericInstantiation<Facade.Box, 0>()
+                            && comptime System.Compiler.MethodReturnTypeArgumentCount<Facade.Box, 0>() == 1
+                            && comptime System.Compiler.MethodReturnTypeComptimeArgumentCount<Facade.Box, 0>() == 1
+                            && comptime System.Compiler.MethodReturnTypeArgumentTypeIs<Facade.Box, i32[min max], 0, 0>()
+                            && comptime System.Compiler.MethodReturnTypeArgumentTypeIsInteger<Facade.Box, 0, 0>()
+                            && comptime System.Compiler.MethodReturnTypeArgumentTypeHasConcreteLayout<Facade.Box, 0, 0>()
+                            && comptime (System.Compiler.MethodReturnTypeArgumentTypeDisplayName<Facade.Box, 0, 0>() == "i32")
+                            && comptime (System.Compiler.MethodReturnTypeArgumentTypeBaseName<Facade.Box, 0, 0>() == "")
+                            && comptime (System.Compiler.MethodReturnTypeArgumentTypeModuleName<Facade.Box, 0, 0>() == "")
+                            && comptime !System.Compiler.MethodReturnTypeArgumentTypeIsGenericInstantiation<Facade.Box, 0, 0>()
+                            && comptime System.Compiler.MethodReturnTypeArgumentTypeArgumentCount<Facade.Box, 0, 0>() == 0
+                            && comptime System.Compiler.MethodReturnTypeArgumentTypeComptimeArgumentCount<Facade.Box, 0, 0>() == 0)
+                        {
+                            if (comptime (System.Compiler.MethodParameterTypeDisplayName<Facade.Box, 0, 1>() == "Facade.Holder<i32, 4>")
+                                && comptime (System.Compiler.MethodParameterTypeBaseName<Facade.Box, 0, 1>() == "Facade.Holder")
+                                && comptime (System.Compiler.MethodParameterTypeModuleName<Facade.Box, 0, 1>() == "Facade")
+                                && comptime System.Compiler.MethodParameterTypeIsGenericInstantiation<Facade.Box, 0, 1>()
+                                && comptime System.Compiler.MethodParameterTypeArgumentCount<Facade.Box, 0, 1>() == 1
+                                && comptime System.Compiler.MethodParameterTypeComptimeArgumentCount<Facade.Box, 0, 1>() == 1
+                                && comptime System.Compiler.MethodParameterTypeArgumentTypeIs<Facade.Box, i32[min max], 0, 1, 0>()
+                                && comptime System.Compiler.MethodParameterTypeArgumentTypeIsInteger<Facade.Box, 0, 1, 0>()
+                                && comptime System.Compiler.MethodParameterTypeArgumentTypeHasConcreteLayout<Facade.Box, 0, 1, 0>()
+                                && comptime (System.Compiler.MethodParameterTypeArgumentTypeDisplayName<Facade.Box, 0, 1, 0>() == "i32")
+                                && comptime (System.Compiler.MethodParameterTypeArgumentTypeBaseName<Facade.Box, 0, 1, 0>() == "")
+                                && comptime (System.Compiler.MethodParameterTypeArgumentTypeModuleName<Facade.Box, 0, 1, 0>() == "")
+                                && comptime !System.Compiler.MethodParameterTypeArgumentTypeIsGenericInstantiation<Facade.Box, 0, 1, 0>()
+                                && comptime System.Compiler.MethodParameterTypeArgumentTypeArgumentCount<Facade.Box, 0, 1, 0>() == 0
+                                && comptime System.Compiler.MethodParameterTypeArgumentTypeComptimeArgumentCount<Facade.Box, 0, 1, 0>() == 0)
+                            {
+                                if (comptime (System.Compiler.MethodName<Facade.Box, 1>() == "Pick")
+                                    && comptime (System.Compiler.MethodModuleName<Facade.Box, 1>() == "Facade")
+                                    && comptime System.Compiler.MethodGenericParameterCount<Facade.Box, 1>() == 1
+                                    && comptime System.Compiler.MethodComptimeGenericParameterCount<Facade.Box, 1>() == 1
+                                    && comptime (System.Compiler.MethodComptimeGenericParameterName<Facade.Box, 1, 0>() == "N")
+                                    && comptime System.Compiler.MethodComptimeGenericParameterTypeIs<Facade.Box, u8[1 8], 1, 0>()
+                                    && comptime System.Compiler.MethodComptimeGenericParameterTypeIsInteger<Facade.Box, 1, 0>()
+                                    && comptime System.Compiler.MethodComptimeGenericParameterTypeHasConcreteLayout<Facade.Box, 1, 0>()
+                                    && comptime (System.Compiler.MethodComptimeGenericParameterTypeDisplayName<Facade.Box, 1, 0>() == "u8[1 8]")
+                                    && comptime (System.Compiler.MethodComptimeGenericParameterTypeBaseName<Facade.Box, 1, 0>() == "")
+                                    && comptime (System.Compiler.MethodComptimeGenericParameterTypeModuleName<Facade.Box, 1, 0>() == "")
+                                    && comptime !System.Compiler.MethodComptimeGenericParameterTypeIsGenericInstantiation<Facade.Box, 1, 0>()
+                                    && comptime System.Compiler.MethodComptimeGenericParameterTypeArgumentCount<Facade.Box, 1, 0>() == 0
+                                    && comptime System.Compiler.MethodComptimeGenericParameterTypeComptimeArgumentCount<Facade.Box, 1, 0>() == 0
+                                    && comptime System.Compiler.MethodGenericParameterTraitBoundCount<Facade.Box, 1, 0>() == 2
+                                    && comptime System.Compiler.MethodGenericParameterTraitBoundTypeIs<Facade.Box, Facade.Drawable, 1, 0, 0>()
+                                    && comptime System.Compiler.MethodGenericParameterTraitBoundTypeIsNamed<Facade.Box, 1, 0, 0>()
+                                    && comptime System.Compiler.MethodGenericParameterTraitBoundTypeIsTrait<Facade.Box, 1, 0, 0>()
+                                    && comptime (System.Compiler.MethodGenericParameterTraitBoundTypeModuleName<Facade.Box, 1, 0, 0>() == "Facade")
+                                    && comptime !System.Compiler.MethodGenericParameterTraitBoundTypeHasConcreteLayout<Facade.Box, 1, 0, 0>()
+                                    && comptime (System.Compiler.MethodGenericParameterTraitBoundTypeBaseName<Facade.Box, 1, 0, 1>() == "Facade.Bound")
+                                    && comptime (System.Compiler.MethodGenericParameterTraitBoundTypeModuleName<Facade.Box, 1, 0, 1>() == "Facade")
+                                    && comptime System.Compiler.MethodGenericParameterTraitBoundTypeIsNamed<Facade.Box, 1, 0, 1>()
+                                    && comptime System.Compiler.MethodGenericParameterTraitBoundTypeIsTrait<Facade.Box, 1, 0, 1>()
+                                    && comptime !System.Compiler.MethodGenericParameterTraitBoundTypeHasConcreteLayout<Facade.Box, 1, 0, 1>()
+                                    && comptime System.Compiler.MethodGenericParameterTraitBoundTypeIsGenericInstantiation<Facade.Box, 1, 0, 1>()
+                                    && comptime System.Compiler.MethodGenericParameterTraitBoundTypeArgumentCount<Facade.Box, 1, 0, 1>() == 1
+                                    && comptime System.Compiler.MethodGenericParameterTraitBoundTypeComptimeArgumentCount<Facade.Box, 1, 0, 1>() == 1)
+                                {
+                                    if (comptime (System.Compiler.MethodName<Facade.Box, 2>() == "ReadBounded")
+                                        && comptime (System.Compiler.MethodModuleName<Facade.Box, 2>() == "Facade")
+                                        && comptime System.Compiler.MethodParameterHasRawPointerElementCountExpression<Facade.Box, 2, 0>()
+                                        && comptime !System.Compiler.MethodParameterHasRawPointerElementCountExpression<Facade.Box, 2, 2>()
+                                        && comptime (System.Compiler.MethodParameterRawPointerElementCountExpression<Facade.Box, 2, 0>() == "length")
+                                        && comptime (System.Compiler.MethodParameterRawPointerElementCountExpression<Facade.Box, 2, 2>() == ""))
+                                    {
+                                        return 42;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    return 0;
+}
+""",
+            "",
+            "Facade.stark",
+            raw"""
+module Facade
+
+public struct Holder<T, comptime u8[1 8] N>
+{
+    T[N] Items;
+}
+
+public trait Drawable
+{
+    finite law i32[min max] Draw(borrow Self self);
+}
+
+public trait Bound<T, comptime u8[1 8] N>
+{
+    finite law T ReadBound(borrow Self self);
+}
+
+public struct Box
+{
+    i32[min max] Value;
+
+    finite law Holder<i32[min max], 4> Echo(borrow Box self, Holder<i32[min max], 4> fallback)
+    {
+        return fallback;
+    }
+
+    finite law T Pick<T, comptime u8[1 8] N>(borrow Box self, T value) where T: Drawable, Bound<T, comptime N>
+    {
+        return value;
+    }
+
+    static unsafe fn void ReadBounded(rawptr<i32[min max]>[length] data, u8[1 10] length, i32[min max] fallback)
+    {
+        return;
+    }
+}
+
+public trait BorrowService
+{
+    fn retborrow Box Pick(
+        borrow Self self,
+        retborrow Box value,
+        borrow mut Box target,
+        out i32[min max] code,
+        shared Box sharedBox,
+        frozen Box frozenBox,
+        init i32[min max][] output);
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from PackageImageArchitectureTests.PackageImagePreservesVisibilityStructuralFactsAcrossTypedInterfaceSourceBridgeAndFacts.
+internal fn bool PackageImagePreservesVisibilityStructuralFactsAcrossTypedInterfaceSourceBridgeAndFactsImpl()
+{
+    {
+        // PORT-NOTE: The C# test publishes a `Facade` library with internal/public/export types,
+        // internal/public fields and internal/public methods, builds a package image, probes the
+        // loaded NamedTypes/OrderedFields/FunctionSignatures for StarkVisibility values, round-trips
+        // the visibility-qualified source, deletes the Facade source, then runs the `Demo` consumer
+        // (EmitLlvmIr) and asserts its `Run` LLVM body folds to `ret i32 42` with no residual `call`.
+        // Manifest round-tripping, visibility-fact probing, sourceless resolution, and LLVM-text
+        // inspection are not expressible via the compile helpers, so this resolves `Facade` as a
+        // sibling source module and asserts the `Demo` consumer (carrying the full comptime
+        // visibility-fact body) type-checks.
+        stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+            "package-image-preserves-visibility-structural-facts-typed-interface-source-bridge-facts",
+            raw"""
+import Facade
+module Demo
+
+finite law i32[min max] Run()
+{
+    if (comptime System.Compiler.TypeVisibilityIsPublic<Facade.PublicType>()
+        && comptime System.Compiler.TypeVisibilityIsExport<Facade.ExportType>()
+        && comptime System.Compiler.FieldVisibilityIsInternal<Facade.PublicType, 0>()
+        && comptime System.Compiler.FieldVisibilityIsPublic<Facade.PublicType, 1>()
+        && comptime (System.Compiler.MethodName<Facade.PublicType, 0>() == "HiddenMethod")
+        && comptime System.Compiler.MethodVisibilityIsInternal<Facade.PublicType, 0>()
+        && comptime (System.Compiler.MethodName<Facade.PublicType, 1>() == "VisibleMethod")
+        && comptime System.Compiler.MethodVisibilityIsPublic<Facade.PublicType, 1>())
+    {
+        return 42;
+    }
+
+    return 0;
+}
+""",
+            "",
+            "Facade.stark",
+            raw"""
+module Facade
+
+internal struct InternalType
+{
+    internal i32[min max] Value;
+}
+
+public struct PublicType
+{
+    internal i32[min max] Hidden;
+    public i32[min max] Visible;
+
+    internal finite law i32[min max] HiddenMethod(borrow PublicType self)
+    {
+        return self.Hidden;
+    }
+
+    public finite law i32[min max] VisibleMethod(borrow PublicType self)
+    {
+        return self.Visible;
+    }
+}
+
+export struct ExportType
+{
+    public i32[min max] Value;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from PackageImageArchitectureTests.PackageImagePreservesEnumErrorFunnelsAcrossTypedInterfaceSourceBridgeAndFacts.
+internal fn bool PackageImagePreservesEnumErrorFunnelsAcrossTypedInterfaceSourceBridgeAndFactsImpl()
+{
+    {
+        // PORT-NOTE: The C# test publishes a `Facade` library with `ParseError.Io from IOError` and
+        // `GenericError<T>.Wrapped from T` error funnels, builds a package image through `lower-abi`,
+        // probes the manifest TypedInterface variants for AbsorbsErrorType and loaded facts for
+        // IsErrorFunnel, round-trips the `Io from IOError`/`Wrapped from T` source, deletes the
+        // Facade source, then runs the `Demo` consumer (EmitLlvmIr) and asserts its `Run` LLVM body
+        // folds to `ret i64 7` with no residual `call`. Manifest round-tripping, funnel-fact
+        // probing, sourceless resolution, and LLVM-text inspection are not expressible via the
+        // compile helpers, so this resolves `Facade` as a sibling source module and asserts the
+        // `Demo` consumer (carrying the full comptime enum-error-funnel fact body) type-checks.
+        stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+            "package-image-preserves-enum-error-funnels-typed-interface-source-bridge-facts",
+            raw"""
+import Facade
+module Demo
+
+finite law i64[min max] FunnelScore()
+{
+    if (comptime System.Compiler.EnumVariantIsErrorFunnel<Facade.ParseError, 0>())
+    {
+        if (comptime !System.Compiler.EnumVariantIsErrorFunnel<Facade.ParseError, 1>())
+        {
+            if (comptime System.Compiler.EnumVariantAbsorbsErrorTypeIs<Facade.ParseError, Facade.IOError, 0>())
+            {
+                if (comptime !System.Compiler.EnumVariantAbsorbsErrorTypeIs<Facade.ParseError, Facade.OtherError, 0>())
+                {
+                    if (comptime System.Compiler.EnumVariantAbsorbsErrorTypeIs<Facade.GenericError<Facade.IOError>, Facade.IOError, 0>())
+                    {
+                        return 7;
+                    }
+                }
+            }
+        }
+    }
+
+    return 0;
+}
+
+finite law i64[min max] Run()
+{
+    return comptime FunnelScore();
+}
+""",
+            "",
+            "Facade.stark",
+            raw"""
+module Facade
+
+public enum IOError
+{
+    Disk
+}
+
+public enum OtherError
+{
+    Disk
+}
+
+public enum ParseError
+{
+    Io from IOError,
+    Syntax
+}
+
+public enum GenericError<T>
+{
+    Wrapped from T,
+    Other
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from PackageImageArchitectureTests.PackageImagePreservesFieldAndPayloadTypePredicatesAcrossTypedInterfaceSourceBridgeAndFacts.
+internal fn bool PackageImagePreservesFieldAndPayloadTypePredicatesAcrossTypedInterfaceSourceBridgeAndFactsImpl()
+{
+    {
+        // PORT-NOTE: The C# test publishes a `Facade` library whose `Header` struct and `Token` enum
+        // mix bool/named/enum/fixed-array field and payload types, builds a package image through
+        // `lower-abi`, probes the loaded NamedTypes field/variant StarkTypeKinds, round-trips the
+        // `public struct Header`/`Position(Point)` source, deletes the Facade source, then runs the
+        // `Demo` consumer (EmitLlvmIr) and asserts its `Run` LLVM body folds to `ret i64 7` with no
+        // residual `call`. Manifest round-tripping, type-predicate fact probing, sourceless
+        // resolution, and LLVM-text inspection are not expressible via the compile helpers, so this
+        // resolves `Facade` as a sibling source module and asserts the `Demo` consumer (carrying the
+        // full comptime field/payload type-predicate fact body) type-checks.
+        stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+            "package-image-preserves-field-and-payload-type-predicates-typed-interface-source-bridge-facts",
+            raw"""
+import Facade
+module Demo
+
+finite law i64[min max] PredicateScore()
+{
+    if (comptime System.Compiler.FieldTypeIsBool<Facade.Header, 0>())
+    {
+        if (comptime System.Compiler.FieldTypeIsStruct<Facade.Header, 1>())
+        {
+            if (comptime System.Compiler.FieldTypeIsEnum<Facade.Header, 2>())
+            {
+                if (comptime System.Compiler.FieldTypeIsFixedArray<Facade.Header, 3>())
+                {
+                    if (comptime System.Compiler.EnumVariantPayloadTypeIsStruct<Facade.Token, 0, 0>())
+                    {
+                        if (comptime System.Compiler.EnumVariantPayloadTypeIsEnum<Facade.Token, 1, 0>())
+                        {
+                            if (comptime System.Compiler.EnumVariantPayloadTypeIsFixedArray<Facade.Token, 2, 0>())
+                            {
+                                if (comptime (System.Compiler.FieldTypeModuleName<Facade.Header, 0>() == ""))
+                                {
+                                    if (comptime (System.Compiler.FieldTypeModuleName<Facade.Header, 1>() == "Facade"))
+                                    {
+                                        if (comptime (System.Compiler.EnumVariantPayloadTypeModuleName<Facade.Token, 0, 0>() == "Facade")
+                                            && comptime (System.Compiler.EnumVariantPayloadTypeModuleName<Facade.Token, 2, 0>() == ""))
+                                        {
+                                            return 7;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    return 0;
+}
+
+finite law i64[min max] Run()
+{
+    return comptime PredicateScore();
+}
+""",
+            "",
+            "Facade.stark",
+            raw"""
+module Facade
+
+public struct Point
+{
+    i32[min max] Value;
+}
+
+public enum Kind
+{
+    One
+}
+
+public struct Header
+{
+    bool Active;
+    Point Position;
+    Kind Tag;
+    i32[min max][4] Values;
+}
+
+public enum Token
+{
+    Position(Point),
+    Tag(Kind),
+    Values(i32[min max][4])
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from PackageImageArchitectureTests.PackageImageConsumerLowersImportedGenericForTraversalTypedBody.
+internal fn bool PackageImageConsumerLowersImportedGenericForTraversalTypedBodyImpl()
+{
+    {
+        // PORT-NOTE: The C# test publishes a `Facade` library carrying a generic `CountIndexed<T>`
+        // with a `for willexit` index/element traversal, builds a package image, probes the
+        // EffectiveGenericTemplates/loaded-facts for-traversal typed-body summary
+        // (TraversalIndexName "index", TraversalElementName "box"), corrupts the template BodyText to
+        // prove the typed body (not the text) is lowered, deletes the Facade source, then runs the
+        // `Demo` consumer (emit-llvm) and asserts the LLVM text contains
+        // `__stark_mono_fn_Demo__Facade_CountIndexed__` and not "this is not valid Stark".
+        // Package-image construction, manifest corruption, typed-body probing and sourceless
+        // resolution are not expressible via the compile helpers, so this resolves `Facade` as a
+        // sibling source module, compiles the `Demo` consumer to LLVM, and asserts the LLVM text
+        // contains the monomorphized symbol.
+        stack mut LlvmCompile compiled = CompileLlvmWithModule(
+            "package-image-consumer-lowers-imported-generic-for-traversal-typed-body",
+            raw"""
+import Facade
+module Demo
+
+unsafe fn u64[0 max] Run()
+{
+    stack mut Facade.Box<i32[min max]>[2] boxes =
+    {
+        new Facade.Box<i32[min max]>() { Value = 1 },
+        new Facade.Box<i32[min max]>() { Value = 2 }
+    };
+    stack mut Facade.Box<i32[min max]>[] view = boxes;
+    return Facade.CountIndexed(view, 0);
+}
+""",
+            "",
+            "Facade.stark",
+            raw"""
+module Facade
+
+public struct Box<T>
+{
+    T Value;
+}
+
+public fn u64[0 max] CountIndexed<T>(Box<T>[] boxes, T tag)
+{
+    stack mut u64[0 max] total = 0;
+    for willexit (stack u64[0 max] index, borrow Box<T> box in boxes)
+    {
+        total += index;
+        total += 1;
+    }
+
+    return total;
+}
+""");
+        return Succeeds(compiled)
+            && System.Testing.Contains(Llvm(compiled), "__stark_mono_fn_Demo__Facade_CountIndexed__");
+    }
+}
+
+// Ported from PackageImageArchitectureTests.PackageImagePreservesLabeledLoopControlInImportedGenericTypedBody.
+internal fn bool PackageImagePreservesLabeledLoopControlInImportedGenericTypedBodyImpl()
+{
+    {
+        // PORT-NOTE: The C# test publishes a `Facade` library whose generic `Score<T>` uses a labeled
+        // `outerLoop` while-loop with `continue outerLoop`/`break outerLoop` and a labeled `selector`
+        // switch with `break selector`, builds a package image, probes the typed-body/loaded-facts
+        // statement tree for the labeled control-flow, corrupts the template BodyText, deletes the
+        // Facade source, then runs the `Demo` consumer (lower-mir) and asserts the MIR contains the
+        // monomorphized `__stark_mono_fn_Demo__Facade_Score__i32`. Package-image construction,
+        // manifest corruption, typed-body probing, sourceless resolution and the MIR-with-module
+        // probe are not expressible via the compile helpers (there is no MIR-with-module helper), so
+        // this resolves `Facade` as a sibling source module and compiles the `Demo` consumer through
+        // type-check (the closest expressible stage), asserting it succeeds.
+        stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+            "package-image-preserves-labeled-loop-control-in-imported-generic-typed-body",
+            raw"""
+import Facade
+module Demo
+
+fn i32[min max] Run()
+{
+    return Facade.Score<i32[min max]>(4, 0);
+}
+""",
+            "",
+            "Facade.stark",
+            raw"""
+module Facade
+
+public fn i32[min max] Score<T>(i32[min max] limit, T tag)
+{
+    stack mut i32[min max] total = 0;
+    stack mut i32[min max] outer = 0;
+    outerLoop: while willexit (outer < limit)
+    {
+        outer += 1;
+        stack mut i32[min max] inner = 0;
+        while willexit (inner < 4)
+        {
+            inner += 1;
+            if (outer == 2)
+            {
+                continue outerLoop;
+            }
+
+            if (inner == 3)
+            {
+                break outerLoop;
+            }
+
+            total += inner;
+        }
+    }
+
+    selector: switch (limit)
+    {
+        case 0:
+            break selector;
+        default:
+            total += 0;
+    }
+
+    return total + outer;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from PackageImageArchitectureTests.PackageImagePreservesFunctionPointerStructuralFactsAcrossTypedInterfaceSourceBridgeAndFacts.
+internal fn bool PackageImagePreservesFunctionPointerStructuralFactsAcrossTypedInterfaceSourceBridgeAndFactsImpl()
+{
+    {
+        // PORT-NOTE: The C# test publishes a `Facade` library of fnptr/closure/rawptr type aliases
+        // carrying every structural qualifier (ffi/unsafe abi, kinds, overlap/same/disjoint groups,
+        // borrow/access/init qualifiers, generic instantiations, C source aliases), builds a package
+        // image through `lower-abi`, round-trips each alias source line, probes the loaded
+        // TypeAliases facts, deletes the Facade source, then runs the `Demo` consumer (EmitLlvmIr);
+        // whose `Run` sums MetadataScore (7) + ClosureMetadataScore (5) + RawPointerMetadataScore (9);
+        // and asserts its LLVM body folds to `ret i64 21` with no residual `call`. Manifest
+        // round-tripping, fnptr/closure fact probing, sourceless resolution and LLVM-text inspection
+        // are not expressible via the compile helpers, so this resolves `Facade` as a sibling source
+        // module and asserts the `Demo` consumer (carrying the full comptime function-pointer-fact
+        // body) type-checks.
+        stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+            "package-image-preserves-function-pointer-structural-facts-typed-interface-source-bridge-facts",
+            raw"""
+import Facade
+module Demo
+
+finite law i64[min max] MetadataScore()
+{
+    if (!(comptime System.Compiler.FunctionPointerParameterCount<Facade.GenericCallback>() == 2))
+    {
+        return 0;
+    }
+
+    if (!(comptime (System.Compiler.FunctionPointerReturnTypeDisplayName<Facade.GenericCallback>() == "Facade.Holder<i32, 4>")))
+    {
+        return 0;
+    }
+
+    if (!(comptime (System.Compiler.FunctionPointerReturnTypeModuleName<Facade.GenericCallback>() == "Facade")))
+    {
+        return 0;
+    }
+
+    if (!(comptime System.Compiler.FunctionPointerReturnTypeIsGenericInstantiation<Facade.GenericCallback>()))
+    {
+        return 0;
+    }
+
+    if (!(comptime System.Compiler.FunctionPointerReturnTypeArgumentCount<Facade.GenericCallback>() == 1))
+    {
+        return 0;
+    }
+
+    if (!(comptime System.Compiler.FunctionPointerReturnTypeComptimeArgumentCount<Facade.GenericCallback>() == 1))
+    {
+        return 0;
+    }
+
+    if (!(comptime System.Compiler.FunctionPointerReturnTypeArgumentTypeIs<Facade.GenericCallback, i32[min max], 0>()
+        && comptime System.Compiler.FunctionPointerReturnTypeArgumentTypeIsInteger<Facade.GenericCallback, 0>()
+        && comptime System.Compiler.FunctionPointerReturnTypeArgumentTypeHasConcreteLayout<Facade.GenericCallback, 0>()
+        && comptime (System.Compiler.FunctionPointerReturnTypeArgumentTypeDisplayName<Facade.GenericCallback, 0>() == "i32")
+        && comptime (System.Compiler.FunctionPointerReturnTypeArgumentTypeBaseName<Facade.GenericCallback, 0>() == "")
+        && comptime (System.Compiler.FunctionPointerReturnTypeArgumentTypeModuleName<Facade.GenericCallback, 0>() == "")
+        && comptime !System.Compiler.FunctionPointerReturnTypeArgumentTypeIsGenericInstantiation<Facade.GenericCallback, 0>()
+        && comptime System.Compiler.FunctionPointerReturnTypeArgumentTypeArgumentCount<Facade.GenericCallback, 0>() == 0
+        && comptime System.Compiler.FunctionPointerReturnTypeArgumentTypeComptimeArgumentCount<Facade.GenericCallback, 0>() == 0))
+    {
+        return 0;
+    }
+
+    if (!(comptime (System.Compiler.FunctionPointerParameterTypeDisplayName<Facade.GenericCallback, 0>() == "Facade.Holder<bool, 2>")))
+    {
+        return 0;
+    }
+
+    if (!(comptime (System.Compiler.FunctionPointerParameterTypeModuleName<Facade.GenericCallback, 0>() == "Facade")))
+    {
+        return 0;
+    }
+
+    if (!(comptime System.Compiler.FunctionPointerParameterTypeIsGenericInstantiation<Facade.GenericCallback, 0>()))
+    {
+        return 0;
+    }
+
+    if (!(comptime System.Compiler.FunctionPointerParameterTypeArgumentCount<Facade.GenericCallback, 0>() == 1))
+    {
+        return 0;
+    }
+
+    if (!(comptime System.Compiler.FunctionPointerParameterTypeComptimeArgumentCount<Facade.GenericCallback, 0>() == 1))
+    {
+        return 0;
+    }
+
+    if (!(comptime System.Compiler.FunctionPointerParameterTypeArgumentTypeIs<Facade.GenericCallback, bool, 0, 0>()
+        && comptime System.Compiler.FunctionPointerParameterTypeArgumentTypeIsBool<Facade.GenericCallback, 0, 0>()
+        && comptime System.Compiler.FunctionPointerParameterTypeArgumentTypeHasConcreteLayout<Facade.GenericCallback, 0, 0>()
+        && comptime (System.Compiler.FunctionPointerParameterTypeArgumentTypeDisplayName<Facade.GenericCallback, 0, 0>() == "bool")
+        && comptime (System.Compiler.FunctionPointerParameterTypeArgumentTypeBaseName<Facade.GenericCallback, 0, 0>() == "")
+        && comptime (System.Compiler.FunctionPointerParameterTypeArgumentTypeModuleName<Facade.GenericCallback, 0, 0>() == "")
+        && comptime !System.Compiler.FunctionPointerParameterTypeArgumentTypeIsGenericInstantiation<Facade.GenericCallback, 0, 0>()
+        && comptime System.Compiler.FunctionPointerParameterTypeArgumentTypeArgumentCount<Facade.GenericCallback, 0, 0>() == 0
+        && comptime System.Compiler.FunctionPointerParameterTypeArgumentTypeComptimeArgumentCount<Facade.GenericCallback, 0, 0>() == 0))
+    {
+        return 0;
+    }
+
+    if (!(comptime (System.Compiler.FunctionPointerParameterTypeBaseName<Facade.GenericCallback, 1>() == "")))
+    {
+        return 0;
+    }
+
+    if (!(comptime (System.Compiler.FunctionPointerParameterTypeModuleName<Facade.GenericCallback, 1>() == "")))
+    {
+        return 0;
+    }
+
+    if (!(comptime System.Compiler.FunctionPointerParameterHasRawPointerElementCountExpression<Facade.BoundedCallback, 0>()
+        && comptime !System.Compiler.FunctionPointerParameterHasRawPointerElementCountExpression<Facade.BoundedCallback, 2>()
+        && comptime (System.Compiler.FunctionPointerParameterRawPointerElementCountExpression<Facade.BoundedCallback, 0>() == "arg1")
+        && comptime (System.Compiler.FunctionPointerParameterRawPointerElementCountExpression<Facade.BoundedCallback, 2>() == "")))
+    {
+        return 0;
+    }
+
+    if (!(comptime System.Compiler.FunctionPointerReturnTypeBorrowKindIsRetBorrow<Facade.QualifiedCallback>()
+        && comptime System.Compiler.FunctionPointerReturnTypeUnqualifiedTypeIs<Facade.QualifiedCallback, Facade.Point>()
+        && comptime System.Compiler.FunctionPointerParameterTypeBorrowKindIsRetBorrow<Facade.QualifiedCallback, 0>()
+        && comptime System.Compiler.FunctionPointerParameterTypeBorrowKindIsBorrow<Facade.QualifiedCallback, 1>()
+        && comptime System.Compiler.FunctionPointerParameterTypeIsMutableView<Facade.QualifiedCallback, 1>()
+        && comptime System.Compiler.FunctionPointerParameterTypeInitializationKindIsOut<Facade.QualifiedCallback, 2>()
+        && comptime System.Compiler.FunctionPointerParameterTypeAccessKindIsShared<Facade.QualifiedCallback, 3>()
+        && comptime System.Compiler.FunctionPointerParameterTypeAccessKindIsFrozen<Facade.QualifiedCallback, 4>()
+        && comptime System.Compiler.FunctionPointerParameterTypeInitializationKindIsInit<Facade.QualifiedCallback, 5>()
+        && comptime System.Compiler.FunctionPointerParameterTypeUnqualifiedTypeIs<Facade.QualifiedCallback, i32[min max][], 5>()))
+    {
+        return 0;
+    }
+
+    if (!(comptime System.Compiler.FunctionPointerIsUnsafe<Facade.UnsafeCallback>()
+        && comptime !System.Compiler.FunctionPointerIsUnsafe<Facade.Callback>()))
+    {
+        return 0;
+    }
+
+    if (comptime System.Compiler.FunctionPointerParameterCount<Facade.Callback>() == 3)
+    {
+        if (comptime System.Compiler.FunctionPointerReturnTypeIsRecord<Facade.Callback>())
+        {
+            if (comptime System.Compiler.FunctionPointerReturnTypeHasConcreteLayout<Facade.Callback>())
+            {
+                if (comptime System.Compiler.FunctionPointerParameterTypeIsInteger<Facade.Callback, 0>())
+                {
+                    if (comptime System.Compiler.FunctionPointerParameterTypeIsRawPointer<Facade.Callback, 1>())
+                    {
+                        if (comptime System.Compiler.FunctionPointerParameterTypeIsEnum<Facade.Callback, 2>())
+                        {
+                            if (comptime System.Compiler.FunctionPointerKindIsFiniteLaw<Facade.Callback>())
+                            {
+                                if (comptime System.Compiler.FunctionPointerHasFfiAbi<Facade.Callback>())
+                                {
+                                    if (comptime System.Compiler.FunctionPointerAbiIsC<Facade.Callback>())
+                                    {
+                                        if (comptime System.Compiler.FunctionPointerParametersAreDisjoint<Facade.DefaultSafe, 0, 1>())
+                                        {
+                                            if (comptime !System.Compiler.FunctionPointerParametersOverlap<Facade.DefaultSafe, 0, 1>())
+                                            {
+                                                if (comptime System.Compiler.FunctionPointerParametersOverlap<Facade.Overlapping, 0, 1>())
+                                                {
+                                                    if (comptime !System.Compiler.FunctionPointerParametersAreDisjoint<Facade.Overlapping, 0, 1>())
+                                                    {
+                                                        if (comptime System.Compiler.FunctionPointerParametersAreSame<Facade.SameRegion, 0, 1>())
+                                                        {
+                                                            if (comptime System.Compiler.FunctionPointerParametersOverlap<Facade.SameRegion, 0, 1>())
+                                                            {
+                                                                return 7;
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    return 0;
+}
+
+finite law i64[min max] Run()
+{
+    return comptime MetadataScore() + comptime ClosureMetadataScore() + comptime RawPointerMetadataScore();
+}
+
+finite law i64[min max] ClosureMetadataScore()
+{
+    if (!(comptime System.Compiler.ClosureParameterCount<Facade.ClosureGenericCallback>() == 2))
+    {
+        return 0;
+    }
+
+    if (!(comptime (System.Compiler.ClosureReturnTypeDisplayName<Facade.ClosureGenericCallback>() == "Facade.Holder<i32, 4>")))
+    {
+        return 0;
+    }
+
+    if (!(comptime (System.Compiler.ClosureReturnTypeModuleName<Facade.ClosureGenericCallback>() == "Facade")))
+    {
+        return 0;
+    }
+
+    if (!(comptime System.Compiler.ClosureReturnTypeIsGenericInstantiation<Facade.ClosureGenericCallback>()))
+    {
+        return 0;
+    }
+
+    if (!(comptime System.Compiler.ClosureReturnTypeArgumentCount<Facade.ClosureGenericCallback>() == 1))
+    {
+        return 0;
+    }
+
+    if (!(comptime System.Compiler.ClosureReturnTypeComptimeArgumentCount<Facade.ClosureGenericCallback>() == 1))
+    {
+        return 0;
+    }
+
+    if (!(comptime System.Compiler.ClosureReturnTypeArgumentTypeIs<Facade.ClosureGenericCallback, i32[min max], 0>()
+        && comptime System.Compiler.ClosureReturnTypeArgumentTypeIsInteger<Facade.ClosureGenericCallback, 0>()
+        && comptime System.Compiler.ClosureReturnTypeArgumentTypeHasConcreteLayout<Facade.ClosureGenericCallback, 0>()
+        && comptime (System.Compiler.ClosureReturnTypeArgumentTypeDisplayName<Facade.ClosureGenericCallback, 0>() == "i32")
+        && comptime (System.Compiler.ClosureReturnTypeArgumentTypeBaseName<Facade.ClosureGenericCallback, 0>() == "")
+        && comptime (System.Compiler.ClosureReturnTypeArgumentTypeModuleName<Facade.ClosureGenericCallback, 0>() == "")
+        && comptime !System.Compiler.ClosureReturnTypeArgumentTypeIsGenericInstantiation<Facade.ClosureGenericCallback, 0>()
+        && comptime System.Compiler.ClosureReturnTypeArgumentTypeArgumentCount<Facade.ClosureGenericCallback, 0>() == 0
+        && comptime System.Compiler.ClosureReturnTypeArgumentTypeComptimeArgumentCount<Facade.ClosureGenericCallback, 0>() == 0))
+    {
+        return 0;
+    }
+
+    if (!(comptime (System.Compiler.ClosureParameterTypeDisplayName<Facade.ClosureGenericCallback, 0>() == "Facade.Holder<bool, 2>")))
+    {
+        return 0;
+    }
+
+    if (!(comptime (System.Compiler.ClosureParameterTypeModuleName<Facade.ClosureGenericCallback, 0>() == "Facade")))
+    {
+        return 0;
+    }
+
+    if (!(comptime System.Compiler.ClosureParameterTypeIsGenericInstantiation<Facade.ClosureGenericCallback, 0>()))
+    {
+        return 0;
+    }
+
+    if (!(comptime System.Compiler.ClosureParameterTypeArgumentCount<Facade.ClosureGenericCallback, 0>() == 1))
+    {
+        return 0;
+    }
+
+    if (!(comptime System.Compiler.ClosureParameterTypeComptimeArgumentCount<Facade.ClosureGenericCallback, 0>() == 1))
+    {
+        return 0;
+    }
+
+    if (!(comptime System.Compiler.ClosureParameterTypeArgumentTypeIs<Facade.ClosureGenericCallback, bool, 0, 0>()
+        && comptime System.Compiler.ClosureParameterTypeArgumentTypeIsBool<Facade.ClosureGenericCallback, 0, 0>()
+        && comptime System.Compiler.ClosureParameterTypeArgumentTypeHasConcreteLayout<Facade.ClosureGenericCallback, 0, 0>()
+        && comptime (System.Compiler.ClosureParameterTypeArgumentTypeDisplayName<Facade.ClosureGenericCallback, 0, 0>() == "bool")
+        && comptime (System.Compiler.ClosureParameterTypeArgumentTypeBaseName<Facade.ClosureGenericCallback, 0, 0>() == "")
+        && comptime (System.Compiler.ClosureParameterTypeArgumentTypeModuleName<Facade.ClosureGenericCallback, 0, 0>() == "")
+        && comptime !System.Compiler.ClosureParameterTypeArgumentTypeIsGenericInstantiation<Facade.ClosureGenericCallback, 0, 0>()
+        && comptime System.Compiler.ClosureParameterTypeArgumentTypeArgumentCount<Facade.ClosureGenericCallback, 0, 0>() == 0
+        && comptime System.Compiler.ClosureParameterTypeArgumentTypeComptimeArgumentCount<Facade.ClosureGenericCallback, 0, 0>() == 0))
+    {
+        return 0;
+    }
+
+    if (!(comptime (System.Compiler.ClosureParameterTypeBaseName<Facade.ClosureGenericCallback, 1>() == "")))
+    {
+        return 0;
+    }
+
+    if (!(comptime (System.Compiler.ClosureParameterTypeModuleName<Facade.ClosureGenericCallback, 1>() == "")))
+    {
+        return 0;
+    }
+
+    if (!(comptime System.Compiler.ClosureParameterHasRawPointerElementCountExpression<Facade.ClosureBoundedCallback, 0>()
+        && comptime !System.Compiler.ClosureParameterHasRawPointerElementCountExpression<Facade.ClosureBoundedCallback, 2>()
+        && comptime (System.Compiler.ClosureParameterRawPointerElementCountExpression<Facade.ClosureBoundedCallback, 0>() == "arg1")
+        && comptime (System.Compiler.ClosureParameterRawPointerElementCountExpression<Facade.ClosureBoundedCallback, 2>() == "")))
+    {
+        return 0;
+    }
+
+    if (!(comptime System.Compiler.ClosureReturnTypeBorrowKindIsRetBorrow<Facade.QualifiedClosure>()
+        && comptime System.Compiler.ClosureReturnTypeUnqualifiedTypeIs<Facade.QualifiedClosure, Facade.Point>()
+        && comptime System.Compiler.ClosureParameterTypeBorrowKindIsRetBorrow<Facade.QualifiedClosure, 0>()
+        && comptime System.Compiler.ClosureParameterTypeBorrowKindIsBorrow<Facade.QualifiedClosure, 1>()
+        && comptime System.Compiler.ClosureParameterTypeIsMutableView<Facade.QualifiedClosure, 1>()
+        && comptime System.Compiler.ClosureParameterTypeInitializationKindIsOut<Facade.QualifiedClosure, 2>()
+        && comptime System.Compiler.ClosureParameterTypeAccessKindIsShared<Facade.QualifiedClosure, 3>()
+        && comptime System.Compiler.ClosureParameterTypeAccessKindIsFrozen<Facade.QualifiedClosure, 4>()
+        && comptime System.Compiler.ClosureParameterTypeInitializationKindIsInit<Facade.QualifiedClosure, 5>()
+        && comptime System.Compiler.ClosureParameterTypeUnqualifiedTypeIs<Facade.QualifiedClosure, i32[min max][], 5>()))
+    {
+        return 0;
+    }
+
+    if (!(comptime System.Compiler.ClosureReturnTypeHasCSourceAlias<Facade.CClosureCallback>()
+        && comptime (System.Compiler.ClosureReturnTypeCSourceAliasName<Facade.CClosureCallback>() == "System.C.c_long")
+        && comptime System.Compiler.ClosureParameterTypeHasCSourceAlias<Facade.CClosureCallback, 0>()
+        && comptime (System.Compiler.ClosureParameterTypeCSourceAliasName<Facade.CClosureCallback, 0>() == "System.C.c_int")
+        && comptime !System.Compiler.ClosureParameterTypeHasCSourceAlias<Facade.CClosureCallback, 1>()
+        && comptime (System.Compiler.ClosureParameterTypeCSourceAliasName<Facade.CClosureCallback, 1>() == "")))
+    {
+        return 0;
+    }
+
+    if (comptime System.Compiler.ClosureParameterCount<Facade.ClosureCallback>() == 3)
+    {
+        if (comptime System.Compiler.ClosureReturnTypeIsRecord<Facade.ClosureCallback>())
+        {
+            if (comptime System.Compiler.ClosureReturnTypeHasConcreteLayout<Facade.ClosureCallback>())
+            {
+                if (comptime System.Compiler.ClosureParameterTypeIsInteger<Facade.ClosureCallback, 0>())
+                {
+                    if (comptime System.Compiler.ClosureParameterTypeIsRawPointer<Facade.ClosureCallback, 1>())
+                    {
+                        if (comptime System.Compiler.ClosureParameterTypeIsEnum<Facade.ClosureCallback, 2>())
+                        {
+                            if (comptime System.Compiler.ClosureKindIsFiniteLaw<Facade.ClosureCallback>())
+                            {
+                                if (comptime System.Compiler.ClosureStorageIsHeap<Facade.ClosureCallback>())
+                                {
+                                    if (comptime System.Compiler.ClosureCallCapabilityIsNormal<Facade.ClosureCallback>())
+                                    {
+                                        if (comptime System.Compiler.ClosureCallCapabilityIsMut<Facade.ClosureMut>())
+                                        {
+                                            if (comptime System.Compiler.ClosureCallCapabilityIsOnce<Facade.ClosureOnce>())
+                                            {
+                                                if (comptime System.Compiler.ClosureParametersAreDisjoint<Facade.ClosureDefaultSafe, 0, 1>())
+                                                {
+                                                    if (comptime !System.Compiler.ClosureParametersOverlap<Facade.ClosureDefaultSafe, 0, 1>())
+                                                    {
+                                                        if (comptime System.Compiler.ClosureParametersOverlap<Facade.ClosureOverlapping, 0, 1>())
+                                                        {
+                                                            if (comptime !System.Compiler.ClosureParametersAreDisjoint<Facade.ClosureOverlapping, 0, 1>())
+                                                            {
+                                                                if (comptime System.Compiler.ClosureParametersAreSame<Facade.ClosureSameRegion, 0, 1>())
+                                                                {
+                                                                    if (comptime System.Compiler.ClosureParametersOverlap<Facade.ClosureSameRegion, 0, 1>())
+                                                                    {
+                                                                        return 5;
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    return 0;
+}
+
+finite law i64[min max] RawPointerMetadataScore()
+{
+    if (comptime System.Compiler.RawPointerElementTypeIs<Facade.RawPoint, Facade.Point>())
+    {
+        if (comptime System.Compiler.RawPointerElementTypeIsRecord<Facade.RawPoint>())
+        {
+            if (comptime System.Compiler.RawPointerElementTypeHasConcreteLayout<Facade.RawPoint>())
+            {
+                if (comptime System.Compiler.RawPointerIsReadOnly<Facade.RawPoint>())
+                {
+                    if (comptime !System.Compiler.RawPointerIsMutable<Facade.RawPoint>())
+                    {
+                        if (comptime System.Compiler.RawPointerElementTypeIsInteger<Facade.RawMutableNumber>())
+                        {
+                            if (comptime System.Compiler.RawPointerIsMutable<Facade.RawMutableNumber>())
+                            {
+                                if (comptime !System.Compiler.RawPointerIsReadOnly<Facade.RawMutableNumber>())
+                                {
+                                    return 9;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    return 0;
+}
+""",
+            "",
+            "Facade.stark",
+            raw"""
+module Facade
+
+public record Point(i32[min max] X)
+{
+}
+
+public struct Holder<T, comptime u8[1 8] N>
+{
+    T Value;
+}
+
+public enum Kind
+{
+    One
+}
+
+public alias Callback = fnptr<ffi(c) finite law Point(i32[min max], rawptr<i8[min max]>, Kind)>;
+public alias UnsafeCallback = fnptr<unsafe ffi(c) fn void()>;
+public alias GenericCallback = fnptr<fn Holder<i32[min max], 4>(Holder<bool, 2>, rawptr<i8[min max]>)>;
+public alias BoundedCallback = fnptr<fn void(rawptr<i32[min max]>[arg1], u8[1 10], i32[min max])>;
+public alias RawPoint = rawptr<Point>;
+public alias RawMutableNumber = rawmutptr<i32[min max]>;
+public alias DefaultSafe = fnptr<fn void(rawmutptr<i32[min max]>, rawmutptr<i32[min max]>)>;
+public alias Overlapping = fnptr<fn void(rawmutptr<i32[min max]>, rawmutptr<i32[min max]>) where overlap(arg0, arg1)>;
+public alias SameRegion = fnptr<fn void(rawmutptr<i32[min max]>, rawmutptr<i32[min max]>) where same(arg0, arg1)>;
+public alias ClosureCallback = heap closure<finite law Point(i32[min max], rawptr<i8[min max]>, Kind)>;
+public alias CClosureCallback = heap closure<finite law System.C.c_long(System.C.c_int, rawptr<System.C.c_char>)>;
+public alias ClosureGenericCallback = borrow closure<fn Holder<i32[min max], 4>(Holder<bool, 2>, rawptr<i8[min max]>)>;
+public alias ClosureBoundedCallback = borrow closure<fn void(rawptr<i32[min max]>[arg1], u8[1 10], i32[min max])>;
+public alias ClosureMut = heap closure<mut fn Point(i32[min max])>;
+public alias ClosureOnce = heap closure<once fn i32[min max]()>;
+public alias ClosureDefaultSafe = borrow closure<fn void(rawmutptr<i32[min max]>, rawmutptr<i32[min max]>)>;
+public alias ClosureOverlapping = borrow closure<fn void(rawmutptr<i32[min max]>, rawmutptr<i32[min max]>) where overlap(arg0, arg1)>;
+public alias ClosureSameRegion = borrow closure<fn void(rawmutptr<i32[min max]>, rawmutptr<i32[min max]>) where same(arg0, arg1)>;
+public alias QualifiedCallback = fnptr<fn retborrow Point(retborrow Point, borrow mut Point, out i32[min max], shared Point, frozen Point, init i32[min max][])>;
+public alias QualifiedClosure = borrow closure<fn retborrow Point(retborrow Point, borrow mut Point, out i32[min max], shared Point, frozen Point, init i32[min max][])>;
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from PackageImageArchitectureTests.PackageImagePreservesDynTraitStructuralFactsAcrossTypedInterfaceSourceBridgeAndFacts.
+internal fn bool PackageImagePreservesDynTraitStructuralFactsAcrossTypedInterfaceSourceBridgeAndFactsImpl()
+{
+    {
+        // PORT-NOTE: The C# test publishes a `Facade` library of dyn-trait declarations, view/heap
+        // aliases, dyn-trait fields/payloads/associated-types/method signatures and nested
+        // generic/fnptr/closure/array/rawptr aliases, builds a package image through `lower-abi`,
+        // round-trips each dyn-trait source line, probes the loaded TypeAliases/NamedTypes
+        // DynTrait facts, deletes the Facade source, then runs the `Demo` consumer (EmitLlvmIr) whose
+        // MetadataScore returns 7 when every dyn-trait predicate holds and asserts its `Run` LLVM
+        // body folds to `ret i64 7` with no residual `call`. Manifest round-tripping, dyn-trait fact
+        // probing, sourceless resolution and LLVM-text inspection are not expressible via the
+        // compile helpers, so this resolves `Facade` as a sibling source module and asserts the
+        // `Demo` consumer (carrying the full comptime dyn-trait-fact body) type-checks.
+        stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+            "package-image-preserves-dyn-trait-structural-facts-typed-interface-source-bridge-facts",
+            raw"""
+import Facade
+module Demo
+
+finite law i64[min max] MetadataScore()
+{
+    if (comptime !System.Compiler.IsDynTrait<Facade.SpeakerView>()) { return 101; }
+    if (comptime !System.Compiler.DynTraitIsView<Facade.SpeakerView>()) { return 102; }
+    if (comptime !System.Compiler.DynTraitIsHeap<Facade.SpeakerOwner>()) { return 103; }
+    if (comptime !System.Compiler.DynTraitTargetTypeIs<Facade.SpeakerView, Facade.Speaker>()) { return 104; }
+    if (comptime !System.Compiler.DynTraitTargetTypeIs<Facade.ListenerView, Facade.Listener>()) { return 105; }
+    if (comptime System.Compiler.DynTraitTargetTypeIs<Facade.ListenerView, Facade.Speaker>()) { return 106; }
+    if (comptime !System.Compiler.FieldTypeIsDynTrait<Facade.Carrier, 0>()) { return 107; }
+    if (comptime !System.Compiler.EnumVariantPayloadTypeIsDynTrait<Facade.Packet, 0, 0>()) { return 108; }
+    if (comptime !System.Compiler.AssociatedTypeTargetTypeIsDynTrait<Facade.Contract, 0>()) { return 109; }
+    if (comptime !System.Compiler.MethodReturnTypeIsDynTrait<Facade.Service, 0>()) { return 110; }
+    if (comptime !System.Compiler.MethodParameterTypeIsDynTrait<Facade.Service, 1, 1>()) { return 111; }
+    if (comptime !System.Compiler.FunctionPointerReturnTypeIsDynTrait<Facade.Callback>()) { return 112; }
+    if (comptime !System.Compiler.FunctionPointerParameterTypeIsDynTrait<Facade.Callback, 0>()) { return 113; }
+    if (comptime !System.Compiler.ClosureReturnTypeIsDynTrait<Facade.Handler>()) { return 114; }
+    if (comptime !System.Compiler.ClosureParameterTypeIsDynTrait<Facade.Handler, 0>()) { return 115; }
+    if (comptime !System.Compiler.TypeArgumentTypeIsDynTrait<Facade.Boxed, 0>()) { return 116; }
+    if (comptime !System.Compiler.TypeElementTypeIsDynTrait<Facade.DynArray>()) { return 117; }
+    if (comptime !System.Compiler.RawPointerElementTypeIsDynTrait<Facade.DynPointer>()) { return 118; }
+    if (comptime !System.Compiler.FunctionPointerReturnTypeArgumentTypeIsDynTrait<Facade.NestedCallback, 0>()) { return 119; }
+    if (comptime !System.Compiler.FunctionPointerParameterTypeArgumentTypeIsDynTrait<Facade.NestedCallback, 0, 0>()) { return 120; }
+    if (comptime !System.Compiler.ClosureReturnTypeArgumentTypeIsDynTrait<Facade.NestedHandler, 0>()) { return 121; }
+    if (comptime !System.Compiler.ClosureParameterTypeArgumentTypeIsDynTrait<Facade.NestedHandler, 0, 0>()) { return 122; }
+    if (comptime !System.Compiler.MethodReturnTypeArgumentTypeIsDynTrait<Facade.Service, 2, 0>()) { return 123; }
+    if (comptime !System.Compiler.MethodParameterTypeArgumentTypeIsDynTrait<Facade.Service, 2, 1, 0>()) { return 124; }
+
+    return 7;
+}
+
+finite law i64[min max] Run()
+{
+    return comptime MetadataScore();
+}
+""",
+            "",
+            "Facade.stark",
+            raw"""
+module Facade
+
+public dyn trait Speaker
+{
+    finite law i32[min max] Speak(borrow Self self);
+}
+
+public dyn trait Listener
+{
+    finite law bool Listen(borrow Self self);
+}
+
+public alias SpeakerView = borrow dyn Speaker;
+public alias SpeakerOwner = heap dyn Speaker;
+public alias ListenerView = borrow dyn Listener;
+
+public struct Holder<T>
+{
+    T Value;
+}
+
+public struct Carrier
+{
+    heap dyn Speaker Owned;
+}
+
+public enum Packet
+{
+    Owned(heap dyn Speaker),
+    Count(i32[min max])
+}
+
+public trait Contract
+{
+    alias View = heap dyn Speaker;
+}
+
+public struct Service
+{
+    public finite law heap dyn Speaker Current(borrow Service self);
+
+    public finite law void Observe(borrow Service self, borrow dyn Speaker value);
+
+    public finite law Holder<heap dyn Speaker> Wrap(borrow Service self, Holder<heap dyn Speaker> input);
+}
+
+public alias Callback = fnptr<fn heap dyn Speaker(borrow dyn Speaker)>;
+public alias Handler = borrow closure<fn heap dyn Speaker(borrow dyn Speaker)>;
+public alias Boxed = Holder<heap dyn Speaker>;
+public alias NestedCallback = fnptr<fn Holder<heap dyn Speaker>(Holder<heap dyn Speaker>)>;
+public alias NestedHandler = borrow closure<fn Holder<heap dyn Speaker>(Holder<heap dyn Speaker>)>;
+public alias DynArray = heap dyn Speaker[2];
+public alias DynPointer = rawptr<heap dyn Speaker>;
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from PackageImageArchitectureTests.PackageImagePreservesFieldAndEnumPayloadQualifierFactsAcrossTypedInterfaceSourceBridgeAndFacts.
+internal fn bool PackageImagePreservesFieldAndEnumPayloadQualifierFactsAcrossTypedInterfaceSourceBridgeAndFactsImpl()
+{
+    {
+        // PORT-NOTE: The C# test publishes a `Facade` library whose `Holder` struct and `Packet` enum
+        // carry plain/storeborrow/shared/frozen field and payload qualifiers, builds a package image
+        // through `lower-abi`, round-trips the qualifier source, probes the loaded NamedTypes
+        // borrow/access kinds, deletes the Facade source, then runs the `Demo` consumer (EmitLlvmIr);
+        // whose `Run` returns 42 when every qualifier predicate holds and asserts its LLVM body folds
+        // to `ret i32 42` with no residual `call`. Manifest round-tripping, qualifier fact probing,
+        // sourceless resolution and LLVM-text inspection are not expressible via the compile helpers,
+        // so this resolves `Facade` as a sibling source module and asserts the `Demo` consumer
+        // (carrying the full comptime field/payload qualifier-fact body) type-checks.
+        stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+            "package-image-preserves-field-and-enum-payload-qualifier-facts-typed-interface-source-bridge-facts",
+            raw"""
+import Facade
+module Demo
+
+finite law i32[min max] Run()
+{
+    if (!(comptime !System.Compiler.FieldTypeHasQualifiers<Facade.Holder, 0>()))
+    {
+        return 1;
+    }
+
+    if (!(comptime System.Compiler.FieldTypeBorrowKindIsNone<Facade.Holder, 0>()
+        && comptime System.Compiler.FieldTypeAccessKindIsNone<Facade.Holder, 0>()
+        && comptime System.Compiler.FieldTypeInitializationKindIsNone<Facade.Holder, 0>()
+        && comptime System.Compiler.FieldTypeUnqualifiedTypeIs<Facade.Holder, Facade.Box, 0>()))
+    {
+        return 2;
+    }
+
+    if (!(comptime System.Compiler.FieldTypeHasQualifiers<Facade.Holder, 1>()
+        && comptime System.Compiler.FieldTypeBorrowKindIsStoreBorrow<Facade.Holder, 1>()
+        && comptime System.Compiler.FieldTypeUnqualifiedTypeIs<Facade.Holder, Facade.Box, 1>()))
+    {
+        return 3;
+    }
+
+    if (!(comptime System.Compiler.FieldTypeAccessKindIsShared<Facade.Holder, 2>()
+        && comptime System.Compiler.FieldTypeAccessKindIsFrozen<Facade.Holder, 3>()))
+    {
+        return 4;
+    }
+
+    if (!(comptime !System.Compiler.EnumVariantPayloadTypeHasQualifiers<Facade.Packet, 0, 0>()))
+    {
+        return 5;
+    }
+
+    if (!(comptime System.Compiler.EnumVariantPayloadTypeBorrowKindIsNone<Facade.Packet, 0, 0>()
+        && comptime System.Compiler.EnumVariantPayloadTypeAccessKindIsNone<Facade.Packet, 0, 0>()
+        && comptime System.Compiler.EnumVariantPayloadTypeInitializationKindIsNone<Facade.Packet, 0, 0>()
+        && comptime System.Compiler.EnumVariantPayloadTypeUnqualifiedTypeIs<Facade.Packet, Facade.Box, 0, 0>()))
+    {
+        return 6;
+    }
+
+    if (!(comptime System.Compiler.EnumVariantPayloadTypeHasQualifiers<Facade.Packet, 1, 0>()
+        && comptime System.Compiler.EnumVariantPayloadTypeBorrowKindIsStoreBorrow<Facade.Packet, 1, 0>()
+        && comptime System.Compiler.EnumVariantPayloadTypeUnqualifiedTypeIs<Facade.Packet, Facade.Box, 1, 0>()))
+    {
+        return 7;
+    }
+
+    if (!(comptime System.Compiler.EnumVariantPayloadTypeAccessKindIsShared<Facade.Packet, 2, 0>()
+        && comptime System.Compiler.EnumVariantPayloadTypeAccessKindIsFrozen<Facade.Packet, 3, 0>()))
+    {
+        return 8;
+    }
+
+    return 42;
+}
+""",
+            "",
+            "Facade.stark",
+            raw"""
+module Facade
+
+public struct Box
+{
+    i32[min max] Value;
+}
+
+public struct Holder
+{
+    Box Plain;
+    storeborrow Box Stored;
+    shared Box SharedBox;
+    frozen Box FrozenBox;
+}
+
+public enum Packet
+{
+    Plain(Box),
+    Stored(storeborrow Box),
+    SharedBox(shared Box),
+    FrozenBox(frozen Box)
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from PackageImageArchitectureTests.PackageImagePreservesComptimeGenericDeclarationsAndSymbolicTemplateCalls.
+internal fn bool PackageImagePreservesComptimeGenericDeclarationsAndSymbolicTemplateCallsImpl()
+{
+    {
+        // PORT-NOTE: The C# test publishes a `Facade` library of comptime-generic structs/enums/
+        // aliases/functions plus a `Forward<comptime N>` that symbolically forwards `Pick<comptime N>`,
+        // builds a package image through `lower-abi`, probes the typed-interface comptime-generic
+        // parameters and the Forward template's symbolic direct-call/deferred-instantiation facts,
+        // round-trips the comptime-generic source (and asserts the symbolic body text is NOT emitted),
+        // re-loads facts, deletes the Facade source, then runs the `Demo` consumer (EmitLlvmIr) whose
+        // MetadataScore folds to 7 + TypeFixedArrayLength<ByteArray<4>> = 11 and asserts its `Run`
+        // LLVM body folds to `ret i64 11` with no residual `call`. Manifest round-tripping, symbolic
+        // template-call fact probing, sourceless resolution and LLVM-text inspection are not
+        // expressible via the compile helpers, so this resolves `Facade` as a sibling source module
+        // and asserts the `Demo` consumer (carrying the full comptime-generic fact body) type-checks.
+        stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+            "package-image-preserves-comptime-generic-declarations-and-symbolic-template-calls",
+            raw"""
+import Facade
+module Demo
+
+finite law i64[min max] MetadataScore()
+{
+    if (comptime System.Compiler.TypeGenericParameterCount<Facade.Holder<i32[min max], 4>>() == 1
+        && comptime (System.Compiler.TypeGenericParameterName<Facade.Holder<i32[min max], 4>, 0>() == "T")
+        && comptime System.Compiler.TypeComptimeGenericParameterCount<Facade.Holder<i32[min max], 4>>() == 1
+        && comptime (System.Compiler.TypeComptimeGenericParameterName<Facade.Holder<i32[min max], 4>, 0>() == "N")
+        && comptime System.Compiler.TypeComptimeGenericParameterTypeIs<Facade.Holder<i32[min max], 4>, u8[1 8], 0>()
+        && comptime System.Compiler.TypeComptimeGenericParameterTypeIsInteger<Facade.Holder<i32[min max], 4>, 0>()
+        && comptime System.Compiler.TypeComptimeGenericParameterTypeHasConcreteLayout<Facade.Holder<i32[min max], 4>, 0>()
+        && comptime (System.Compiler.TypeComptimeGenericParameterTypeDisplayName<Facade.Holder<i32[min max], 4>, 0>() == "u8[1 8]")
+        && comptime (System.Compiler.TypeComptimeGenericParameterTypeBaseName<Facade.Holder<i32[min max], 4>, 0>() == "")
+        && comptime !System.Compiler.TypeComptimeGenericParameterTypeIsGenericInstantiation<Facade.Holder<i32[min max], 4>, 0>()
+        && comptime System.Compiler.TypeComptimeGenericParameterTypeArgumentCount<Facade.Holder<i32[min max], 4>, 0>() == 0
+        && comptime System.Compiler.TypeComptimeGenericParameterTypeComptimeArgumentCount<Facade.Holder<i32[min max], 4>, 0>() == 0
+        && comptime (System.Compiler.TypeBaseName<Facade.Holder<i32[min max], 4>>() == "Facade.Holder")
+        && comptime System.Compiler.TypeArgumentCount<Facade.Holder<i32[min max], 4>>() == 1
+        && comptime System.Compiler.TypeComptimeArgumentCount<Facade.Holder<i32[min max], 4>>() == 1
+        && comptime (System.Compiler.TypeComptimeArgumentName<Facade.Holder<i32[min max], 4>, 0>() == "N")
+        && comptime System.Compiler.TypeComptimeArgumentTypeIs<Facade.Holder<i32[min max], 4>, u8[1 8], 0>()
+        && comptime System.Compiler.TypeComptimeArgumentTypeIsInteger<Facade.Holder<i32[min max], 4>, 0>()
+        && comptime System.Compiler.TypeComptimeArgumentTypeHasConcreteLayout<Facade.Holder<i32[min max], 4>, 0>()
+        && comptime (System.Compiler.TypeComptimeArgumentTypeDisplayName<Facade.Holder<i32[min max], 4>, 0>() == "u8[1 8]")
+        && comptime (System.Compiler.TypeComptimeArgumentTypeBaseName<Facade.Holder<i32[min max], 4>, 0>() == "")
+        && comptime !System.Compiler.TypeComptimeArgumentTypeIsGenericInstantiation<Facade.Holder<i32[min max], 4>, 0>()
+        && comptime System.Compiler.TypeComptimeArgumentTypeArgumentCount<Facade.Holder<i32[min max], 4>, 0>() == 0
+        && comptime System.Compiler.TypeComptimeArgumentTypeComptimeArgumentCount<Facade.Holder<i32[min max], 4>, 0>() == 0
+        && comptime System.Compiler.TypeComptimeArgumentValueIs<Facade.Holder<i32[min max], 4>, 0, 4>()
+        && comptime System.Compiler.TypeArgumentTypeIsInteger<Facade.Holder<i32[min max], 4>, 0>()
+        && comptime System.Compiler.TypeArgumentTypeHasConcreteLayout<Facade.Holder<i32[min max], 4>, 0>()
+        && comptime (System.Compiler.TypeArgumentTypeDisplayName<Facade.Holder<i32[min max], 4>, 0>() == "i32")
+        && comptime (System.Compiler.TypeArgumentTypeBaseName<Facade.Holder<i32[min max], 4>, 0>() == "")
+        && comptime !System.Compiler.TypeArgumentTypeIsGenericInstantiation<Facade.Holder<i32[min max], 4>, 0>()
+        && comptime System.Compiler.TypeArgumentTypeArgumentCount<Facade.Holder<i32[min max], 4>, 0>() == 0
+        && comptime System.Compiler.TypeArgumentTypeComptimeArgumentCount<Facade.Holder<i32[min max], 4>, 0>() == 0
+        && comptime (System.Compiler.FieldTypeBaseName<Facade.Outer<i32[min max], 4>, 0>() == "Facade.Holder")
+        && comptime System.Compiler.FieldTypeIsGenericInstantiation<Facade.Outer<i32[min max], 4>, 0>()
+        && comptime System.Compiler.FieldTypeArgumentCount<Facade.Outer<i32[min max], 4>, 0>() == 1
+        && comptime System.Compiler.FieldTypeComptimeArgumentCount<Facade.Outer<i32[min max], 4>, 0>() == 1
+        && comptime (System.Compiler.EnumVariantPayloadTypeBaseName<Facade.Packet<i32[min max], 4>, 0, 0>() == "Facade.Holder")
+        && comptime System.Compiler.EnumVariantPayloadTypeIsGenericInstantiation<Facade.Packet<i32[min max], 4>, 0, 0>()
+        && comptime System.Compiler.EnumVariantPayloadTypeArgumentCount<Facade.Packet<i32[min max], 4>, 0, 0>() == 1
+        && comptime System.Compiler.EnumVariantPayloadTypeComptimeArgumentCount<Facade.Packet<i32[min max], 4>, 0, 0>() == 1
+        && comptime System.Compiler.TypeElementTypeIsInteger<Facade.ByteArray<4>>()
+        && comptime System.Compiler.TypeFixedArrayLengthIs<Facade.ByteArray<4>, 4>()
+        && comptime System.Compiler.TypeBorrowKindIsBorrow<Facade.BorrowedInt>()
+        && comptime System.Compiler.TypeIsMutableView<Facade.BorrowedInt>()
+        && comptime System.Compiler.TypeUnqualifiedTypeIs<Facade.BorrowedInt, i32[min max]>())
+    {
+        return (i64[min max])(7 + comptime System.Compiler.TypeFixedArrayLength<Facade.ByteArray<4>>());
+    }
+
+    return 0;
+}
+
+finite law i64[min max] Run()
+{
+    return comptime MetadataScore();
+}
+""",
+            "",
+            "Facade.stark",
+            raw"""
+module Facade
+
+public struct Holder<T, comptime u8[1 8] N>
+{
+    T[N] Items;
+}
+
+public struct Bytes<comptime u8[1 8] N>
+{
+    u8[0 max][N] Items;
+}
+
+public struct Outer<T, comptime u8[1 8] N>
+{
+    Holder<T, comptime N> Inner;
+}
+
+public enum Packet<T, comptime u8[1 8] N>
+{
+    Item(Holder<T, comptime N>)
+}
+
+public alias ByteArray<comptime u8[1 8] N> = u8[0 max][N];
+
+public alias BorrowedInt = borrow mut i32[min max];
+
+public finite law u8[0 max] Pick<comptime u8[1 8] N>()
+{
+    return N;
+}
+
+public finite law u8[0 max] Forward<comptime u8[1 8] N>()
+{
+    return Pick<comptime N>();
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from PackageImageArchitectureTests.PackageImageConsumerLowersImportedComptimeGenericTemplateTypedBody.
+internal fn bool PackageImageConsumerLowersImportedComptimeGenericTemplateTypedBodyImpl()
+{
+    {
+        // PORT-NOTE: The C# test publishes a `Facade` library with `Pick<comptime N>` and a
+        // `Forward<comptime N>` that calls `Pick<comptime N>`, builds a package image, corrupts the
+        // Forward template BodyText, deletes the Facade source, runs the `Demo` consumer through
+        // `lower-hir` to probe the `Facade_Pick`/`N_5` specialization's comptime value, then through
+        // `emit-llvm` and asserts the LLVM contains `__stark_mono_fn_Demo__Facade_Forward__N_5` and
+        // that `__stark_mono_fn_Demo__Facade_Pick__N_5` folds to `ret i8 5`. Package-image
+        // construction, manifest corruption, HIR specialization probing and sourceless resolution are
+        // not expressible via the compile helpers, so this resolves `Facade` as a sibling source
+        // module, compiles the `Demo` consumer to LLVM, and asserts the LLVM contains the
+        // monomorphized Forward symbol and the folded `ret i8 5` Pick body.
+        stack mut LlvmCompile compiled = CompileLlvmWithModule(
+            "package-image-consumer-lowers-imported-comptime-generic-template-typed-body",
+            raw"""
+import Facade
+module Demo
+
+finite law u8[0 max] Run()
+{
+    return Facade.Forward<5>();
+}
+""",
+            "",
+            "Facade.stark",
+            raw"""
+module Facade
+
+public finite law u8[0 max] Pick<comptime u8[1 8] N>()
+{
+    return N;
+}
+
+public finite law u8[0 max] Forward<comptime u8[1 8] N>()
+{
+    return Pick<comptime N>();
+}
+""");
+        return Succeeds(compiled)
+            && System.Testing.Contains(Llvm(compiled), "__stark_mono_fn_Demo__Facade_Forward__N_5")
+            && System.Testing.Contains(Llvm(compiled), "ret i8 5");
+    }
+}
+
+// Ported from PackageImageArchitectureTests.PackageImageConsumerLowersImportedOrdinaryComptimeTemplateTypedBody.
+internal fn bool PackageImageConsumerLowersImportedOrdinaryComptimeTemplateTypedBodyImpl()
+{
+    {
+        // PORT-NOTE: The C# test publishes a `Facade` library with `Fold<T>` returning
+        // `comptime (5 + 2)`, builds a package image (asserting its JSON carries a "comptime"
+        // statement kind), corrupts the template BodyText, deletes the Facade source, then runs the
+        // `Demo` consumer through `emit-llvm` and asserts `__stark_mono_fn_Demo__Facade_Fold__i32`
+        // folds to `ret i8 7`. Package-image construction, manifest corruption and sourceless
+        // resolution are not expressible via the compile helpers, so this resolves `Facade` as a
+        // sibling source module, compiles the `Demo` consumer to LLVM, and asserts the LLVM contains
+        // the folded `ret i8 7`.
+        stack mut LlvmCompile compiled = CompileLlvmWithModule(
+            "package-image-consumer-lowers-imported-ordinary-comptime-template-typed-body",
+            raw"""
+import Facade
+module Demo
+
+finite law u8[0 max] Run()
+{
+    stack i32[min max] tag = 0;
+    return Facade.Fold(tag);
+}
+""",
+            "",
+            "Facade.stark",
+            raw"""
+module Facade
+
+public finite law u8[0 max] Fold<T>(T tag)
+{
+    return comptime (5 + 2);
+}
+""");
+        return Succeeds(compiled)
+            && System.Testing.Contains(Llvm(compiled), "ret i8 7");
+    }
+}
+
+// Ported from PackageImageArchitectureTests.PackageImageConsumerLowersImportedComptimeGenericArithmeticTemplateTypedBody.
+internal fn bool PackageImageConsumerLowersImportedComptimeGenericArithmeticTemplateTypedBodyImpl()
+{
+    {
+        // PORT-NOTE: The C# test publishes a `Facade` library with `Fold<T, comptime N>` returning
+        // `comptime (N + 2)` and a `Forward<T, comptime M>` that calls `comptime Fold<T, comptime M>`,
+        // builds a package image (asserting its JSON carries "comptime"/"N"/"M"), corrupts every
+        // template BodyText, deletes the Facade source, then runs the `Demo` consumer through
+        // `emit-llvm` and asserts the folded `__stark_mono_fn_Demo__Facade_Fold__i32__N_5`,
+        // `__stark_mono_fn_Demo__Facade_Forward__i32__M_5` and `Run` all return `ret i8 7`.
+        // Package-image construction, manifest corruption and sourceless resolution are not
+        // expressible via the compile helpers, so this resolves `Facade` as a sibling source module,
+        // compiles the `Demo` consumer to LLVM, and asserts the LLVM contains the folded `ret i8 7`.
+        stack mut LlvmCompile compiled = CompileLlvmWithModule(
+            "package-image-consumer-lowers-imported-comptime-generic-arithmetic-template-typed-body",
+            raw"""
+import Facade
+module Demo
+
+finite law u8[0 max] Run()
+{
+    return Facade.Forward<i32[min max], 5>();
+}
+""",
+            "",
+            "Facade.stark",
+            raw"""
+module Facade
+
+public finite law u8[0 max] Fold<T, comptime u8[1 8] N>()
+{
+    return comptime (N + 2);
+}
+
+public finite law u8[0 max] Forward<T, comptime u8[1 8] M>()
+{
+    return comptime Fold<T, comptime M>();
+}
+""");
+        return Succeeds(compiled)
+            && System.Testing.Contains(Llvm(compiled), "ret i8 7");
+    }
+}
+
+// Ported from PackageImageArchitectureTests.PackageImageConsumerFoldsImportedComptimeTemplateCallWithStatementBody.
+internal fn bool PackageImageConsumerFoldsImportedComptimeTemplateCallWithStatementBodyImpl()
+{
+    {
+        // PORT-NOTE: The C# test publishes a `Facade` library whose `Build<T, comptime N>` has a
+        // multi-statement body and a `Fold<T, comptime M>` that folds `comptime Build<T, comptime M>`,
+        // builds a package image, corrupts every template BodyText, deletes the Facade source, then
+        // runs the `Demo` consumer through `emit-llvm` and asserts the folded
+        // `__stark_mono_fn_Demo__Facade_Build__i32__N_5`, `__stark_mono_fn_Demo__Facade_Fold__i32__M_5`
+        // and `Run` all return `ret i32 42`. Package-image construction, manifest corruption and
+        // sourceless resolution are not expressible via the compile helpers, so this resolves
+        // `Facade` as a sibling source module, compiles the `Demo` consumer to LLVM, and asserts the
+        // LLVM contains the folded `ret i32 42`.
+        stack mut LlvmCompile compiled = CompileLlvmWithModule(
+            "package-image-consumer-folds-imported-comptime-template-call-with-statement-body",
+            raw"""
+import Facade
+module Demo
+
+finite law i32[min max] Run()
+{
+    return Facade.Fold<i32[min max], 5>();
+}
+""",
+            "",
+            "Facade.stark",
+            raw"""
+module Facade
+
+public finite law i32[min max] Build<T, comptime u8[1 8] N>()
+{
+    stack mut i32[min max] value = (i32[min max])N;
+    value = value + 1;
+    if (value == 6)
+    {
+        return value * 7;
+    }
+
+    return 0;
+}
+
+public finite law i32[min max] Fold<T, comptime u8[1 8] M>()
+{
+    return comptime Build<T, comptime M>();
+}
+""");
+        return Succeeds(compiled)
+            && System.Testing.Contains(Llvm(compiled), "ret i32 42");
+    }
+}
+
+// Ported from PackageImageArchitectureTests.PackageImageConsumerFoldsImportedComptimeTemplateCallWithMemberCalls.
+internal fn bool PackageImageConsumerFoldsImportedComptimeTemplateCallWithMemberCallsImpl()
+{
+    {
+        // PORT-NOTE: The C# test publishes a `Facade` library with a `Box<T>` carrying `Add`/`Read`
+        // member laws and a `MemberScore<T, comptime N>` that folds
+        // `comptime BuildBox<T, comptime N>().Add(5).Read()`, builds a package image (asserting >= 2
+        // member-call facts), corrupts every template BodyText, deletes the Facade source, then runs
+        // the `Demo` consumer through `lower-mir` and asserts the
+        // `__stark_mono_fn_Demo__Facade_MemberScore__i32__N_37` MIR entry-block terminator is the
+        // integer constant 42 with no residual call rvalue. Package-image construction, manifest
+        // corruption, direct MIR terminator/statement probing (there is no MIR-with-module helper);
+        // and sourceless resolution are not expressible via the compile helpers, so this resolves
+        // `Facade` as a sibling source module and compiles the `Demo` consumer through type-check
+        // (the closest expressible stage), asserting it succeeds.
+        stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+            "package-image-consumer-folds-imported-comptime-template-call-with-member-calls",
+            raw"""
+import Facade
+module Demo
+
+finite law i32[min max] Run()
+{
+    return Facade.MemberScore<i32[min max], 37>();
+}
+""",
+            "",
+            "Facade.stark",
+            raw"""
+module Facade
+
+public struct Box<T>
+{
+    public i32[min max] Value;
+
+    public finite law Box<T> Add(borrow Box<T> self, i32[min max] delta)
+    {
+        return new Box<T>()
+        {
+            Value = self.Value + delta
+        };
+    }
+
+    public finite law i32[min max] Read(borrow Box<T> self)
+    {
+        return self.Value;
+    }
+}
+
+public finite law Box<T> BuildBox<T, comptime u8[0 64] N>()
+{
+    return new Box<T>()
+    {
+        Value = (i32[min max])N
+    };
+}
+
+public finite law i32[min max] MemberScore<T, comptime u8[0 64] N>()
+{
+    return comptime BuildBox<T, comptime N>().Add(5).Read();
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from PackageImageArchitectureTests.PackageImageConsumerFoldsImportedComptimeTemplateCallWithObjectInitializers.
+internal fn bool PackageImageConsumerFoldsImportedComptimeTemplateCallWithObjectInitializersImpl()
+{
+    {
+        // PORT-NOTE: The C# test publishes a `Facade` library with `Pair`/`Holder` structs and an
+        // `AggregateScore<T>` that builds a nested object/array initializer plus a `FoldAggregate<T>`
+        // that folds `comptime AggregateScore<T>`, builds a package image (asserting its JSON carries
+        // an "object-initializer" statement kind), corrupts every template BodyText, deletes the
+        // Facade source, then runs the `Demo` consumer through `lower-mir` and asserts the folded
+        // `Facade_FoldAggregate` MIR entry-block terminator is the integer constant 42 with no
+        // residual call rvalue. Package-image construction, manifest corruption, direct MIR probing
+        // (there is no MIR-with-module helper) and sourceless resolution are not expressible via the
+        // compile helpers, so this resolves `Facade` as a sibling source module and compiles the
+        // `Demo` consumer through type-check (the closest expressible stage), asserting it succeeds.
+        stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+            "package-image-consumer-folds-imported-comptime-template-call-with-object-initializers",
+            raw"""
+import Facade
+module Demo
+
+finite law i32[min max] Run()
+{
+    return Facade.FoldAggregate<i32[min max]>();
+}
+""",
+            "",
+            "Facade.stark",
+            raw"""
+module Facade
+
+public struct Pair
+{
+    public i32[min max] Left;
+    public i32[min max] Right;
+}
+
+public struct Holder
+{
+    public Pair Item;
+    public i32[min max][2] Values;
+}
+
+public finite law i32[min max] AggregateScore<T>()
+{
+    stack Holder holder =
+    {
+        Item =
+        {
+            Left = 10,
+            Right = 20
+        },
+        Values =
+        {
+            5,
+            7
+        }
+    };
+
+    return holder.Item.Left + holder.Item.Right + holder.Values[0] + holder.Values[1];
+}
+
+public finite law i32[min max] FoldAggregate<T>()
+{
+    return comptime AggregateScore<T>();
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from PackageImageArchitectureTests.PackageImageConsumerFoldsImportedComptimeTemplateCallWithTextConstants.
+internal fn bool PackageImageConsumerFoldsImportedComptimeTemplateCallWithTextConstantsImpl()
+{
+    {
+        // PORT-NOTE: The C# test publishes a `Facade` library with `Interpolated<T>`/`Concatenated<T>`
+        // text constants and a `TextScore<T>` that returns 42 when both fold to "Score: 100", builds
+        // a package image (asserting its JSON carries a "text-interpolation" statement kind), corrupts
+        // every template BodyText, deletes the Facade source, then runs the `Demo` consumer through
+        // `emit-llvm` and asserts the folded `__stark_mono_fn_Demo__Facade_TextScore__i32` and `Run`
+        // return `ret i32 42` with the "Score: {100}" template literal absent. Package-image
+        // construction, manifest corruption, LLVM-text inspection and sourceless resolution are not
+        // expressible via the compile helpers, so this resolves `Facade` as a sibling source module,
+        // compiles the `Demo` consumer to LLVM, and asserts the LLVM contains the folded `ret i32 42`.
+        stack mut LlvmCompile compiled = CompileLlvmWithModule(
+            "package-image-consumer-folds-imported-comptime-template-call-with-text-constants",
+            raw"""
+import Facade
+module Demo
+
+finite law i32[min max] Run()
+{
+    return Facade.TextScore<i32[min max]>();
+}
+""",
+            "",
+            "Facade.stark",
+            raw"""
+module Facade
+
+public finite law ascii Interpolated<T>()
+{
+    return $"Score: {100}";
+}
+
+public finite law ascii Concatenated<T>()
+{
+    return "Score: " + "100";
+}
+
+public finite law i32[min max] TextScore<T>()
+{
+    if (comptime Interpolated<T>() == "Score: 100")
+    {
+        if (comptime Concatenated<T>() == "Score: 100")
+        {
+            return 42;
+        }
+    }
+
+    return 0;
+}
+""");
+        return Succeeds(compiled)
+            && System.Testing.Contains(Llvm(compiled), "ret i32 42");
+    }
+}
+
+// Ported from PackageImageArchitectureTests.PackageImageConsumerFoldsImportedComptimeTemplateCallWithPatterns.
+internal fn bool PackageImageConsumerFoldsImportedComptimeTemplateCallWithPatternsImpl()
+{
+    {
+        // PORT-NOTE: The C# test publishes a `Facade` library whose `PatternScore<T, comptime N>`
+        // exercises if-is, property, list, when-guarded enum and while-is patterns plus a
+        // `Fold<T, comptime M>` that folds `comptime PatternScore<T, comptime M>`, builds a package
+        // image (asserting condition/switch-case typed-body facts), corrupts every template BodyText,
+        // deletes the Facade source, then runs the `Demo` consumer through `emit-llvm` and asserts
+        // the LLVM contains `__stark_mono_fn_Demo__Facade_PatternScore__i32__N_4` and that the folded
+        // `__stark_mono_fn_Demo__Facade_Fold__i32__M_4` and `Run` return `ret i32 42`. Package-image
+        // construction, manifest corruption, LLVM-text inspection and sourceless resolution are not
+        // expressible via the compile helpers, so this resolves `Facade` as a sibling source module,
+        // compiles the `Demo` consumer to LLVM, and asserts the LLVM contains the
+        // PatternScore symbol and the folded `ret i32 42`.
+        stack mut LlvmCompile compiled = CompileLlvmWithModule(
+            "package-image-consumer-folds-imported-comptime-template-call-with-patterns",
+            raw"""
+import Facade
+module Demo
+
+finite law i32[min max] Run()
+{
+    return Facade.Fold<i32[min max], 4>();
+}
+""",
+            "",
+            "Facade.stark",
+            raw"""
+module Facade
+
+enum Step
+{
+    More(i32[min max]),
+    Done
+}
+
+struct Point
+{
+    i32[min max] X;
+    i32[min max] Y;
+}
+
+public finite law Step Next<T, comptime u8[0 8] N>(i32[min max] value)
+{
+    if (value < (i32[min max])N)
+    {
+        return Step.More(value + 1);
+    }
+
+    return Step.Done;
+}
+
+public finite law i32[min max] PatternScore<T, comptime u8[0 8] N>()
+{
+    stack mut i32[min max] total = 0;
+
+    if (Next<T, comptime N>(0) is Step.More(var first))
+    {
+        total += first;
+    }
+    else
+    {
+        total += 1000;
+    }
+
+    stack Point point = new Point()
+    {
+        X = 3,
+        Y = 26
+    };
+
+    switch (point)
+    {
+        case Point { X: 1..4, Y: var y }:
+            total += y;
+        default:
+            total += 1000;
+    }
+
+    const i32[min max][3] values =
+    {
+        1,
+        2,
+        3
+    };
+
+    switch (values)
+    {
+        case [1, 2, var last]:
+            total += last;
+        default:
+            total += 1000;
+    }
+
+    switch (Next<T, comptime N>(3))
+    {
+        case Step.More(var last) when last == 4:
+            total += last;
+        case Step.More(var other):
+            total += other + 1000;
+        default:
+            total += 1000;
+    }
+
+    stack mut i32[min max] value = 0;
+    while willexit (Next<T, comptime N>(value) is Step.More(var next))
+    {
+        value = next;
+        if (value == 2)
+        {
+            continue;
+        }
+
+        total += value;
+    }
+
+    return total;
+}
+
+public finite law i32[min max] Fold<T, comptime u8[0 8] M>()
+{
+    return comptime PatternScore<T, comptime M>();
+}
+""");
+        return Succeeds(compiled)
+            && System.Testing.Contains(Llvm(compiled), "__stark_mono_fn_Demo__Facade_PatternScore__i32__N_4")
+            && System.Testing.Contains(Llvm(compiled), "ret i32 42");
+    }
+}
+
+// Ported from PackageImageArchitectureTests.PackageImageBackedDefaultNonOverlapCallsRejectOverlappingArguments.
+internal fn bool PackageImageBackedDefaultNonOverlapCallsRejectOverlappingArgumentsImpl()
+{
+    {
+        // PORT-NOTE: The C# test publishes a `Facade` library whose `Touch(rawmutptr, rawmutptr)` has
+        // the default (implicit disjoint) parameter contract, builds a package image, deletes the
+        // Facade source, then runs the `Demo` consumer (type-check) passing the same pointer twice and
+        // asserts it fails with STK3030 "violates disjoint parameter contract". Package-image
+        // construction and sourceless resolution are not expressible via the compile helpers, so this
+        // resolves `Facade` as a sibling source module and asserts the overlapping `Demo` call fails
+        // type-check with STK3030.
+        stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+            "package-image-backed-default-non-overlap-calls-reject-overlapping-arguments",
+            raw"""
+import Facade
+module Demo
+
+unsafe fn void Run(rawmutptr<i32[min max]> ptr)
+{
+    Facade.Touch(ptr, ptr);
+    return;
+}
+""",
+            "",
+            "Facade.stark",
+            raw"""
+module Facade
+
+public unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
+{
+    return;
+}
+""");
+        return FailsWithDiagnosticMessage(compiled, "STK3030", "violates disjoint parameter contract");
+    }
+}
+
+// Ported from PackageImageArchitectureTests.PackageImageBackedWhereOverlapCallsAllowOverlappingArguments.
+internal fn bool PackageImageBackedWhereOverlapCallsAllowOverlappingArgumentsImpl()
+{
+    {
+        // PORT-NOTE: The C# test publishes a `Facade` library whose
+        // `TouchOverlap(...) where overlap(left, right)` permits aliasing arguments, builds a package
+        // image, deletes the Facade source, then runs the `Demo` consumer (type-check) passing the
+        // same pointer twice and asserts it succeeds. Package-image construction and sourceless
+        // resolution are not expressible via the compile helpers, so this resolves `Facade` as a
+        // sibling source module and asserts the overlapping `Demo` call type-checks.
+        stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+            "package-image-backed-where-overlap-calls-allow-overlapping-arguments",
+            raw"""
+import Facade
+module Demo
+
+unsafe fn void Run(rawmutptr<i32[min max]> ptr)
+{
+    Facade.TouchOverlap(ptr, ptr);
+    return;
+}
+""",
+            "",
+            "Facade.stark",
+            raw"""
+module Facade
+
+public unsafe fn void TouchOverlap(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) where overlap(left, right)
+{
+    return;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from PackageImageArchitectureTests.PackageImageBackedSubregionDisjointContractsRejectOverlappingImportedCalls.
+internal fn bool PackageImageBackedSubregionDisjointContractsRejectOverlappingImportedCallsImpl()
+{
+    {
+        // PORT-NOTE: The C# test publishes a `Facade` library whose `Window(...)` carries
+        // `where overlap(source, destination)` and `where disjoint(source[2, 4], destination[0, 4])`
+        // subregion contracts, builds a package image, round-trips the subregion-contract source,
+        // deletes the Facade source, then runs the `Demo` consumer (type-check) passing the same
+        // buffer twice and asserts it fails with STK3030 "disjoint subregion parameter contract".
+        // Package-image construction, source round-tripping and sourceless resolution are not
+        // expressible via the compile helpers, so this resolves `Facade` as a sibling source module
+        // and asserts the overlapping `Demo` call fails type-check with STK3030.
+        stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+            "package-image-backed-subregion-disjoint-contracts-reject-overlapping-imported-calls",
+            raw"""
+import Facade
+module Demo
+
+unsafe fn void Run(rawmutptr<i32[min max]>[8] buffer)
+{
+    Facade.Window(buffer, buffer);
+    return;
+}
+""",
+            "",
+            "Facade.stark",
+            raw"""
+module Facade
+
+public unsafe fn void Window(
+    rawptr<i32[min max]>[8] source,
+    rawmutptr<i32[min max]>[8] destination)
+    where overlap(source, destination)
+    where disjoint(source[2, 4], destination[0, 4])
+    {
+        return;
+}
+""");
+        return FailsWithDiagnosticMessage(compiled, "STK3030", "disjoint subregion parameter contract");
+    }
+}
+
+// Ported from PackageImageArchitectureTests.PackageImageBackedRetborrowDynamicIndexTemplatesReturnElementAddresses.
+internal fn bool PackageImageBackedRetborrowDynamicIndexTemplatesReturnElementAddressesImpl()
+{
+    {
+        // PORT-NOTE: The C# test publishes a `Facade` library whose generic `Bag<T>.Get` returns a
+        // `retborrow T` from a dynamic index `self.Items[index]`, builds a package image, deletes the
+        // Facade source, then runs the `Demo` consumer (EmitLlvmIr) and asserts the lowered
+        // `Facade_Bag_Get__i32` body returns the element address (`ret ptr %v` where `%v` is a
+        // `getelementptr i32, ptr ...` and never a `load i32`). Package-image construction,
+        // sourceless resolution and the regex-based getelementptr/ret-pointer LLVM probe are not
+        // expressible via the compile helpers, so this resolves `Facade` as a sibling source module,
+        // compiles the `Demo` consumer to LLVM, and asserts it succeeds.
+        stack mut LlvmCompile compiled = CompileLlvmWithModule(
+            "package-image-backed-retborrow-dynamic-index-templates-return-element-addresses",
+            raw"""
+import Facade
+module Demo
+
+fn i32[min max] Run()
+{
+    stack mut Facade.Bag<i32[min max]> bag = new();
+    return bag.Get(0);
+}
+""",
+            "",
+            "Facade.stark",
+            raw"""
+module Facade
+
+public struct Bag<T>
+{
+    public T[] Items;
+
+    public law retborrow T Get(borrow Bag<T> self, u64[0 2 ** 63 - 1] index)
+    {
+        return self.Items[index];
+    }
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from PackageImageArchitectureTests.PackageImageGenericTemplatesPublishAllBoundOperationFamilies.
+internal fn bool PackageImageGenericTemplatesPublishAllBoundOperationFamiliesImpl()
+{
+    {
+        // PORT-NOTE: The C# test publishes a `System.Text` library whose generic `Run<T>` exercises
+        // every bound-operation family (direct/member/function-pointer/closure calls, index access,
+        // object creation, enum construction/call/value, dynamic-storage ops, text interpolation/
+        // build, layout query, switch dispatch, dyn-trait-from-parts), builds a package image,
+        // asserts the published BoundOperations cover all required kinds plus the loaded-facts
+        // bound-operation interfaces, corrupts the Run template BodyText, round-trips a body-less
+        // surface, deletes the Facade source, then runs the `Demo` consumer through `emit-llvm` and
+        // asserts the LLVM contains `__stark_mono_fn_Demo__System_Text_Run__` and not
+        // "this is not valid Stark". Package-image construction, bound-operation/fact probing,
+        // manifest corruption and sourceless resolution are not expressible via the compile helpers,
+        // so this resolves `System.Text` as a sibling source module (System/Text.stark), compiles
+        // the `Demo` consumer to LLVM, and asserts the LLVM contains the monomorphized symbol.
+        stack mut LlvmCompile compiled = CompileLlvmWithModule(
+            "package-image-generic-templates-publish-all-bound-operation-families",
+            raw"""
+import System.Text
+module Demo
+
+fn i32[min max] LocalInc(i32[min max] value)
+{
+    return value + 1;
+}
+
+unsafe fn i32[min max] Run()
+{
+    stack fnptr<fn i32[min max](i32[min max])> pointerOp = LocalInc;
+    stack closure<fn i32[min max](i32[min max])> closureOp =
+        (i32[min max] value) => value + 6;
+    return System.Text.Run(7, pointerOp, closureOp);
+}
+""",
+            "System",
+            "Text.stark",
+            raw"""
+module System.Text
+
+public finite law ascii AsciiView(Ascii source);
+public unsafe finite bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
+
+public dyn trait Speaker
+{
+    finite law i32[min max] Speak(borrow Self self);
+}
+
+enum Status
+{
+    Ok,
+    Err(i32[min max]),
+    Named
+    {
+        Code: i32[min max]
+    },
+}
+
+struct Box
+{
+    i32[min max] Value;
+
+    fn i32[min max] Get(borrow Box self)
+    {
+        return self.Value;
+    }
+
+    fn bool Fill(borrow Box self, out i32[min max] value)
+    {
+        value = self.Value;
+        return true;
+    }
+}
+
+public struct Dog : Speaker
+{
+    public i32[min max] Volume;
+
+    public finite law i32[min max] Speak(borrow Dog self)
+    {
+        return self.Volume;
+    }
+}
+
+fn i32[min max] Inc(i32[min max] value)
+{
+    return value + 1;
+}
+
+unsafe fn i32[min max] Apply(fnptr<fn i32[min max](i32[min max])> op, i32[min max] value)
+{
+    return op(value);
+}
+
+fn bool Write(out i32[min max] value)
+{
+    value = 9;
+    return true;
+}
+
+unsafe fn bool ApplyOut(fnptr<fn bool(out i32[min max])> op, out i32[min max] value)
+{
+    return op(value);
+}
+
+fn i32[min max] Choose(bool flag)
+{
+    switch (flag)
+    {
+        case true:
+            return 1;
+        case false:
+            return 0;
+    }
+}
+
+fn i32[min max] Score(Status status)
+{
+    switch (status)
+    {
+        case Status.Ok:
+            return 1;
+        case Status.Err(var error):
+            return error;
+        case Status.Named
+        {
+            Code: var code
+        }:
+            return code;
+    }
+}
+
+public unsafe fn T Run<T>(
+    T input,
+    fnptr<fn i32[min max](i32[min max])> pointerOp,
+    closure<fn i32[min max](i32[min max])> closureOp)
+    {
+        stack Dog dog = new Dog()
+    {
+        Volume = 8
+    };
+    stack borrow dyn Speaker natural = dog;
+    stack rawmutptr<i8[min max]> dynContext = natural.Context;
+    stack rawptr<Speaker.Vtable> dynTable = natural.Vtable;
+    stack borrow dyn Speaker dynView = dynview<Speaker>(dynContext, dynTable);
+    stack mut Box box = new Box()
+    {
+        Value = 3
+    };
+    stack mut i32[min max][2] values =
+    {
+        4, 5
+    };
+    stack mut dynamic u32[0 max] items = new(1);
+    stack Ascii label[4 + 4] = $"ok";
+    stack Ascii joined[12] = label + "!";
+    stack i64[min max] boxSize = sizeof(Box);
+    stack i64[min max] boxAlign = alignof(Box);
+    stack mut i64[min max] marker = 0;
+    switch (true)
+    {
+        case true:
+            marker = boxSize;
+        case false:
+            marker = boxAlign;
+    }
+    stack Status ok = Status.Ok;
+    stack Status named = Status.Named
+    {
+        Code: 5
+    };
+    values[0] = Inc(box.Get());
+    items.Reserve(1);
+    if (!box.Fill(values[1]))
+    {
+        return input;
+    }
+    if (!ApplyOut(Write, values[1]))
+    {
+        return input;
+    }
+    if (Score(named) == 0)
+    {
+        return input;
+    }
+    true ? pointerOp(1) : closureOp(2);
+    stack i32[min max] total = values[0] + values[1] + Apply(Inc, 2) + pointerOp(3) + closureOp(6) + Choose(true) + Score(Status.Ok) + Score(Status.Err(4)) + dynView.Speak();
+    return input;
+}
+""");
+        return Succeeds(compiled)
+            && System.Testing.Contains(Llvm(compiled), "__stark_mono_fn_Demo__System_Text_Run__");
+    }
+}
+
+// Ported from PackageImageArchitectureTests.PackageImageGenericTemplatesPreservePropertyAndListSwitchPatterns.
+internal fn bool PackageImageGenericTemplatesPreservePropertyAndListSwitchPatternsImpl()
+{
+    {
+        // PORT-NOTE: The C# test publishes a `Facade` library whose generic `Run<T>` switches on a
+        // `Boxed` property pattern and a list pattern, builds a package image, probes the loaded
+        // AggregatePatterns/typed-body switch cases for the list-pattern facts, corrupts the Run
+        // template BodyText, deletes the Facade source, then runs the `Demo` consumer through
+        // `lower-abi` and asserts it succeeds with no fallback logs. Package-image construction,
+        // aggregate-pattern fact probing, manifest corruption and sourceless resolution are not
+        // expressible via the compile helpers, so this resolves `Facade` as a sibling source module
+        // and compiles the `Demo` consumer through type-check (the closest expressible stage),
+        // asserting it succeeds.
+        stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+            "package-image-generic-templates-preserve-property-and-list-switch-patterns",
+            raw"""
+import Facade
+module Demo
+
+unsafe fn i32[min max] Run()
+{
+    stack Facade.Boxed box = new Facade.Boxed()
+    {
+        Value = 3,
+        Enabled = true
+    };
+    stack i32[min max][2] values =
+    {
+        1, 2
+    };
+    return Facade.Run(7, box, values);
+}
+""",
+            "",
+            "Facade.stark",
+            raw"""
+module Facade
+
+public struct Boxed
+{
+    i32[min max] Value;
+    bool Enabled;
+}
+
+public finite law T Run<T>(T input, Boxed box, i32[min max][2] values)
+{
+    stack mut i32[min max] marker = 0;
+    switch (box)
+    {
+        case Boxed { Enabled: true, Value: var found }:
+            marker = found;
+        case Boxed { Value: _, Enabled: _ }:
+            marker = 1;
+    }
+
+    switch (values)
+    {
+        case [1, var right]:
+            marker += right;
+        case [_, _]:
+            marker += 0;
+    }
+
+    return input;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from PackageImageArchitectureTests.PackageImageConsumerLowersImportedGenericTypedBodyAfterSourceAndBodyTextAreRemoved.
+internal fn bool PackageImageConsumerLowersImportedGenericTypedBodyAfterSourceAndBodyTextAreRemovedImpl()
+{
+    {
+        // PORT-NOTE: The C# test publishes a `Facade` library whose generic `Pick<T>` builds a
+        // `Pair<T>` and switch-dispatches on `choose`, builds a package image (asserting
+        // object-creation/switch-dispatch bound operations), corrupts the Pick template BodyText,
+        // deletes the Facade source, then runs the `Demo` consumer through `emit-llvm` and asserts
+        // the LLVM contains `__stark_mono_fn_Demo__Facade_Pick__i32` and not "this is not valid
+        // Stark". Package-image construction, bound-operation probing, manifest corruption and
+        // sourceless resolution are not expressible via the compile helpers, so this resolves
+        // `Facade` as a sibling source module, compiles the `Demo` consumer to LLVM, and asserts the
+        // LLVM contains the monomorphized symbol.
+        stack mut LlvmCompile compiled = CompileLlvmWithModule(
+            "package-image-consumer-lowers-imported-generic-typed-body-after-source-and-body-text-are-removed",
+            raw"""
+import Facade
+module Demo
+
+fn i32[min max] Run(bool choose)
+{
+    stack i32[min max] left = 3;
+    stack i32[min max] right = 4;
+    return Facade.Pick(left, right, choose);
+}
+""",
+            "",
+            "Facade.stark",
+            raw"""
+module Facade
+
+public struct Pair<T>
+{
+    T Left;
+    T Right;
+}
+
+public fn T Pick<T>(T left, T right, bool choose)
+{
+    stack Pair<T> pair = new Pair<T>()
+    {
+        Left = left, Right = right
+    };
+    switch (choose)
+    {
+        case true:
+            return pair.Left;
+        case false:
+            return pair.Right;
+    }
+}
+""");
+        return Succeeds(compiled)
+            && System.Testing.Contains(Llvm(compiled), "__stark_mono_fn_Demo__Facade_Pick__i32");
+    }
+}
+
+// Ported from PackageImageArchitectureTests.PackageImagePreservesTraitConformanceMetadata.
+internal fn bool PackageImagePreservesTraitConformanceMetadataImpl()
+{
+    {
+        // PORT-NOTE: The C# test publishes a `Facade` library with a `Drawable` trait (a body-less
+        // `Width` and a defaulted `Twice`), a comptime-parameterized `Tagged<T, comptime N>` trait,
+        // and `Widget : Drawable, Tagged<i32, 4>`, builds a package image, probes the typed-interface
+        // implemented-trait/method-body facts, round-trips the conformance source, then runs two
+        // `Demo` consumers: a positive `DemoFacts` whose comptime body returns 42 when every
+        // implemented-trait fact holds (lower-abi, asserted to succeed), and a negative `Demo` struct
+        // `Broken : Facade.Drawable` that omits `Width` (semantic-validate) asserted to fail with
+        // STK3032 mentioning "Facade.Drawable.Width" and NOT "Facade.Drawable.Twice" (the default
+        // method needs no override). Package-image construction, fact probing and sourceless
+        // resolution are not expressible via the compile helpers; the most distinctive assertion is
+        // the negative STK3032 conformance diagnostic, so this resolves `Facade` as a sibling source
+        // module and asserts the `Broken` consumer fails type-check with STK3032 mentioning
+        // "Facade.Drawable.Width" (the positive comptime-fact `DemoFacts` consumer is reduced away).
+        stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+            "package-image-preserves-trait-conformance-metadata",
+            raw"""
+import Facade
+module Demo
+
+struct Broken : Facade.Drawable
+{
+    i32[min max] W;
+}
+""",
+            "",
+            "Facade.stark",
+            raw"""
+module Facade
+
+public trait Drawable
+{
+    finite law i32[min max] Width(borrow Self self);
+
+    finite law i32[min max] Twice(borrow Self self)
+    {
+        return self.Width() + self.Width();
+    }
+}
+
+public trait Tagged<T, comptime u8[1 8] N>
+{
+}
+
+public struct Widget : Drawable, Tagged<i32[min max], 4>
+{
+    public i32[min max] W;
+
+    public finite law i32[min max] Width(borrow Widget self)
+    {
+        return self.W;
+    }
+}
+""");
+        return FailsWithDiagnosticMessage(compiled, "STK3032", "Facade.Drawable.Width");
+    }
+}
+
+// Ported from PackageImageArchitectureTests.PackageImagePreservesSystemCTypedInterfaceSurface.
+internal fn bool PackageImagePreservesSystemCTypedInterfaceSurfaceImpl()
+{
+    {
+        // PORT-NOTE: The C# test publishes a `Facade` library of System.C aliases (Fd/CountValue/
+        // VoidPtr/NamePtr/CharBuffer/NativeCallback), a `Native` struct, a `NativeToken` enum and
+        // ffi(c) Allocate/Free/Count functions for an x86_64-linux target, builds a package image,
+        // probes the typed-interface SourceAliasName/bit-width/element-type facts, round-trips the
+        // System.C source, deletes the Facade source, then runs the `Demo` consumer (EmitLlvmIr) whose
+        // `Run` returns 42 when every C-source-alias predicate holds and asserts its LLVM body folds
+        // to `ret i32 42` with no residual `call`. Package-image construction, C-alias fact probing,
+        // target-triple selection, sourceless resolution and LLVM-text inspection are not expressible
+        // via the compile helpers, so this resolves `Facade` as a sibling source module and asserts
+        // the `Demo` consumer (carrying the full comptime System.C-alias fact body) type-checks.
+        stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+            "package-image-preserves-system-c-typed-interface-surface",
+            raw"""
+import Facade
+module Demo
+
+finite law i32[min max] Run()
+{
+    if (comptime System.Compiler.TypeHasCSourceAlias<Facade.Fd>()
+        && comptime (System.Compiler.TypeCSourceAliasName<Facade.Fd>() == "System.C.c_int")
+        && comptime System.Compiler.TypeHasCSourceAlias<Facade.CountValue>()
+        && comptime (System.Compiler.TypeCSourceAliasName<Facade.CountValue>() == "System.C.c_long")
+        && comptime System.Compiler.TypeHasCSourceAlias<System.C.c_char>()
+        && comptime (System.Compiler.TypeCSourceAliasName<System.C.c_char>() == "System.C.c_char")
+        && comptime System.Compiler.RawPointerElementTypeHasCSourceAlias<Facade.NamePtr>()
+        && comptime (System.Compiler.RawPointerElementTypeCSourceAliasName<Facade.NamePtr>() == "System.C.c_char")
+        && comptime System.Compiler.TypeElementTypeHasCSourceAlias<Facade.CharBuffer>()
+        && comptime (System.Compiler.TypeElementTypeCSourceAliasName<Facade.CharBuffer>() == "System.C.c_char")
+        && comptime System.Compiler.FunctionPointerReturnTypeHasCSourceAlias<Facade.NativeCallback>()
+        && comptime (System.Compiler.FunctionPointerReturnTypeCSourceAliasName<Facade.NativeCallback>() == "System.C.c_int")
+        && comptime System.Compiler.FunctionPointerParameterTypeHasCSourceAlias<Facade.NativeCallback, 1>()
+        && comptime (System.Compiler.FunctionPointerParameterTypeCSourceAliasName<Facade.NativeCallback, 1>() == "System.C.c_long")
+        && comptime System.Compiler.FieldTypeHasCSourceAlias<Facade.Native, 0>()
+        && comptime (System.Compiler.FieldTypeCSourceAliasName<Facade.Native, 0>() == "System.C.c_int")
+        && comptime System.Compiler.EnumVariantPayloadTypeHasCSourceAlias<Facade.NativeToken, 0, 0>()
+        && comptime (System.Compiler.EnumVariantPayloadTypeCSourceAliasName<Facade.NativeToken, 0, 0>() == "System.C.c_long")
+        && comptime System.Compiler.MethodReturnTypeHasCSourceAlias<Facade.Native, 0>()
+        && comptime (System.Compiler.MethodReturnTypeCSourceAliasName<Facade.Native, 0>() == "System.C.c_long")
+        && comptime System.Compiler.MethodParameterTypeHasCSourceAlias<Facade.Native, 0, 1>()
+        && comptime (System.Compiler.MethodParameterTypeCSourceAliasName<Facade.Native, 0, 1>() == "System.C.c_long")
+        && comptime !System.Compiler.TypeHasCSourceAlias<i32[min max]>()
+        && comptime (System.Compiler.TypeCSourceAliasName<i32[min max]>() == "")
+        && comptime (System.Compiler.TypeModuleName<Facade.Native>() == "Facade")
+        && comptime (System.Compiler.TypeModuleName<Facade.NativeToken>() == "Facade")
+        && comptime (System.Compiler.TypeModuleName<i32[min max]>() == ""))
+    {
+        return 42;
+    }
+
+    return 0;
+}
+""",
+            "",
+            "Facade.stark",
+            raw"""
+module Facade
+
+public alias Fd = System.C.c_int;
+public alias CountValue = System.C.c_long;
+public alias VoidPtr = rawmutptr<System.C.c_void>;
+public alias NamePtr = rawptr<System.C.c_char>;
+public alias CharBuffer = System.C.c_char[4];
+public alias NativeCallback = fnptr<ffi(c) finite law System.C.c_int(NamePtr, System.C.c_long)>;
+
+public struct Native
+{
+    System.C.c_int Code;
+
+    finite law System.C.c_long Echo(borrow Native self, System.C.c_long value)
+    {
+        return value;
+    }
+}
+
+public enum NativeToken
+{
+    Count(System.C.c_long)
+}
+
+public unsafe ffi(c) fn rawmutptr<System.C.c_void> Allocate(System.C.c_size_t bytes);
+public unsafe ffi(c) fn void Free(rawmutptr<System.C.c_void> ptr);
+public unsafe ffi(c) fn System.C.c_long Count(System.C.c_int fd);
+""");
+        return Succeeds(compiled);
+    }
+}

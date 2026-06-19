@@ -1,0 +1,75 @@
+import CompilerMirTestSupport
+import System.Testing
+module LoweringContractFactKeyRegressionTests
+
+// Ported slice of tests/compiler.Tests/LoweringContractFactKeyRegressionTests.cs.
+// The C# originals compile a root module that imports a separate "Dep" module
+// supplied through InMemoryModuleResolver, then assert result.Succeeded (and for
+// the generic case that no STK9999 leaks). The MIR test helpers compile a single
+// source with no module-resolution path, so each port runs the embedded root
+// program (verbatim) through CompileMir and returns Succeeds(...). See the
+// per-function PORT-NOTE for what was reduced.
+
+// Ported from LoweringContractFactKeyRegressionTests.MemberCallsDoNotCollideWithImportedConstructorCallsAtTheSameCoordinates.
+// PORT-NOTE: reduced from a two-module compile (root + resolver-supplied "Dep")
+// stopping at "validate-lowering-contract" to a single-source MIR compile of the
+// root program; the imported "Dep" module and module-resolver path the C#
+// asserted over cannot be expressed by the CompileMir helper, so this returns the
+// nearest signal (Succeeds) over the root.
+internal fn bool MemberCallsDoNotCollideWithImportedConstructorCallsAtTheSameCoordinatesImpl()
+{
+    stack mut MirCompile c = CompileMir(
+        "fact-key-member-vs-imported-ctor",
+        raw"""
+import Dep
+module Demo
+
+fn i64[min max] ReadHolder(borrow Dep.Holder holder)
+{
+    if (holder.CountValue() < 0)
+    {
+        return 0;
+        stack i64[min max] n = holder.CountValue();
+        return n;
+    }
+
+    return holder.CountValue();
+}
+
+export fn i32[min max] main()
+{
+    stack Dep.Holder holder = new Dep.Holder();
+    if (ReadHolder(holder) < 0)
+    {
+        return 1;
+    }
+
+    return 0;
+}
+""");
+    return Succeeds(c);
+}
+
+// Ported from LoweringContractFactKeyRegressionTests.ImportedGenericMemberCallLowersAcrossModulesWithoutInvariantViolation.
+// PORT-NOTE: reduced from a two-module compile (root + resolver-supplied "Dep")
+// stopping at "lower-mir" to a single-source MIR compile of the root program; the
+// imported generic "Dep" module and module-resolver path cannot be expressed by
+// the CompileMir helper. The C# also asserted no STK9999 diagnostic leaked; that
+// is folded into the Succeeds signal (a clean MIR compile cannot carry STK9999).
+internal fn bool ImportedGenericMemberCallLowersAcrossModulesWithoutInvariantViolationImpl()
+{
+    stack mut MirCompile c = CompileMir(
+        "fact-key-imported-generic-member-call",
+        raw"""
+import Dep
+module Demo
+
+export fn i32[min max] main()
+{
+    stack Dep.Bag<i32[min max]> bag = Dep.NewBag<i32[min max]>();
+    stack Dep.Bag<i32[min max]> pushed = bag.Push(7);
+    return pushed.Size();
+}
+""");
+    return Succeeds(c);
+}

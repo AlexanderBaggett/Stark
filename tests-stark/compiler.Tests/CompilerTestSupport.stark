@@ -33,60 +33,78 @@ public struct LlvmCompile
 
 // Compiles the source through the full pipeline with the LLVM artifact
 // requested. `Ok` additionally requires the compile itself to succeed.
-public unsafe fn LlvmCompile CompileLlvm(ascii id, ascii source)
+public fn LlvmCompile CompileLlvm(ascii id, ascii source)
 {
-    stack mut LlvmCompile compiled = RunHostCompile(id, source, "", "llvm");
-    if (compiled.Ok && !compiled.Outcome.CompileSucceeded())
+    unsafe
     {
-        compiled.Ok = false;
-    }
+        stack mut LlvmCompile compiled = RunHostCompile(id, source, "", "llvm");
+        if (compiled.Ok && !compiled.Outcome.CompileSucceeded())
+        {
+            compiled.Ok = false;
+        }
 
-    return compiled;
+        return compiled;
+    }
 }
 
 // Compiles the source through the full pipeline without artifacts. `Ok`
 // covers transport/protocol only, so failing compiles can be asserted with
 // FailsWithDiagnostic.
-public unsafe fn LlvmCompile CompileFull(ascii id, ascii source)
+public fn LlvmCompile CompileFull(ascii id, ascii source)
 {
-    return RunHostCompile(id, source, "", "");
+    unsafe
+    {
+        return RunHostCompile(id, source, "", "");
+    }
 }
 
 // Compiles the source stopping after MIR lowering with the MIR text artifact
 // requested. `Ok` additionally requires the compile itself to succeed.
-public unsafe fn LlvmCompile CompileMir(ascii id, ascii source)
+public fn LlvmCompile CompileMir(ascii id, ascii source)
 {
-    stack mut LlvmCompile compiled = RunHostCompile(id, source, "lower-mir", "mir");
-    if (compiled.Ok && !compiled.Outcome.CompileSucceeded())
+    unsafe
     {
-        compiled.Ok = false;
-    }
+        stack mut LlvmCompile compiled = RunHostCompile(id, source, "lower-mir", "mir");
+        if (compiled.Ok && !compiled.Outcome.CompileSucceeded())
+        {
+            compiled.Ok = false;
+        }
 
-    return compiled;
+        return compiled;
+    }
 }
 
 // Compiles the source stopping after type checking, for facts that assert
 // diagnostics. `Ok` covers transport/protocol only.
-public unsafe fn LlvmCompile CompileTypeCheck(ascii id, ascii source)
+public fn LlvmCompile CompileTypeCheck(ascii id, ascii source)
 {
-    return RunHostCompile(id, source, "type-check", "");
+    unsafe
+    {
+        return RunHostCompile(id, source, "type-check", "");
+    }
 }
 
 // CompileTypeCheck with a compile-time loop iteration cap, for facts that
 // assert the comptime interpreter's iteration limit diagnostics.
-public unsafe fn LlvmCompile CompileTypeCheckWithLoopLimit(
+public fn LlvmCompile CompileTypeCheckWithLoopLimit(
     ascii id,
     ascii source,
     u32[0 2 ** 31 - 1] maximumComptimeLoopIterations)
 {
-    return RunHostCompileIn(id, source, "type-check", "", "", maximumComptimeLoopIterations);
+    unsafe
+    {
+        return RunHostCompileIn(id, source, "type-check", "", "", maximumComptimeLoopIterations);
+    }
 }
 
 // True when the transport succeeded and the compile reported success. For
 // type-check probes this is the positive-polarity assertion.
-public unsafe fn bool Succeeds(mut borrow LlvmCompile compiled)
+public fn bool Succeeds(mut borrow LlvmCompile compiled)
 {
-    return compiled.Ok && compiled.Outcome.CompileSucceeded();
+    unsafe
+    {
+        return compiled.Ok && compiled.Outcome.CompileSucceeded();
+    }
 }
 
 // Compiles `source` stopping after type checking while `moduleSource` is
@@ -94,35 +112,41 @@ public unsafe fn bool Succeeds(mut borrow LlvmCompile compiled)
 // root-level modules ("Worker" -> Worker.stark) or a single subdirectory name
 // for dotted modules ("System.Threading" -> System + Threading.stark). Stark-side port of
 // the C# facts built on InMemoryModuleResolver.
-public unsafe fn LlvmCompile CompileTypeCheckWithModule(
+public fn LlvmCompile CompileTypeCheckWithModule(
     ascii id,
     ascii source,
     ascii moduleDirectory,
     ascii moduleFileName,
     ascii moduleSource)
 {
-    return RunWithModule(id, source, "type-check", "", moduleDirectory, moduleFileName, moduleSource);
+    unsafe
+    {
+        return RunWithModule(id, source, "type-check", "", moduleDirectory, moduleFileName, moduleSource);
+    }
 }
 
 // Full-pipeline variant of CompileTypeCheckWithModule with the LLVM artifact
 // requested. `Ok` additionally requires the compile itself to succeed.
-public unsafe fn LlvmCompile CompileLlvmWithModule(
+public fn LlvmCompile CompileLlvmWithModule(
     ascii id,
     ascii source,
     ascii moduleDirectory,
     ascii moduleFileName,
     ascii moduleSource)
 {
-    stack mut LlvmCompile compiled = RunWithModule(id, source, "", "llvm", moduleDirectory, moduleFileName, moduleSource);
-    if (compiled.Ok && !compiled.Outcome.CompileSucceeded())
+    unsafe
     {
-        compiled.Ok = false;
-    }
+        stack mut LlvmCompile compiled = RunWithModule(id, source, "", "llvm", moduleDirectory, moduleFileName, moduleSource);
+        if (compiled.Ok && !compiled.Outcome.CompileSucceeded())
+        {
+            compiled.Ok = false;
+        }
 
-    return compiled;
+        return compiled;
+    }
 }
 
-internal unsafe fn LlvmCompile RunWithModule(
+internal fn LlvmCompile RunWithModule(
     ascii id,
     ascii source,
     ascii stopAfterPassId,
@@ -131,54 +155,57 @@ internal unsafe fn LlvmCompile RunWithModule(
     ascii moduleFileName,
     ascii moduleSource)
 {
-    stack mut OwnedAscii root = new();
-    stack mut bool ready = false;
-    // System.Testing also exports CreateTempDirectory/CreateDirectory, so these
-    // two stay qualified to pick the FileSystem ones.
-    switch (System.FileSystem.CreateTempDirectory("stark-feature-modules-"))
+    unsafe
     {
-        case IOResult<OwnedAscii>.Err(var rootError):
-            ready = false;
-        case IOResult<OwnedAscii>.Ok(var created):
-            root = created;
-            ready = true;
-    }
+        stack mut OwnedAscii root = new();
+        stack mut bool ready = false;
+        // System.Testing also exports CreateTempDirectory/CreateDirectory, so these
+        // two stay qualified to pick the FileSystem ones.
+        switch (System.FileSystem.CreateTempDirectory("stark-feature-modules-"))
+        {
+            case IOResult<OwnedAscii>.Err(var rootError):
+                ready = false;
+            case IOResult<OwnedAscii>.Ok(var created):
+                root = created;
+                ready = true;
+        }
 
-    stack mut OwnedAscii filePath = new();
-    if (ready)
-    {
-        ready = MemoryOk(filePath.AppendAscii(root.View()));
-    }
-
-    if (ready && AsciiLength(moduleDirectory) > 0)
-    {
-        ready = MemoryOk(filePath.AppendByte(47))
-            && MemoryOk(filePath.AppendAscii(moduleDirectory));
+        stack mut OwnedAscii filePath = new();
         if (ready)
         {
-            ready = IOOk(System.FileSystem.CreateDirectory(filePath.View()));
+            ready = MemoryOk(filePath.AppendAscii(root.View()));
         }
-    }
 
-    if (ready)
-    {
-        ready = MemoryOk(filePath.AppendByte(47))
-            && MemoryOk(filePath.AppendAscii(moduleFileName));
-    }
+        if (ready && AsciiLength(moduleDirectory) > 0)
+        {
+            ready = MemoryOk(filePath.AppendByte(47))
+                && MemoryOk(filePath.AppendAscii(moduleDirectory));
+            if (ready)
+            {
+                ready = IOOk(System.FileSystem.CreateDirectory(filePath.View()));
+            }
+        }
 
-    if (ready)
-    {
-        ready = IOOk(WriteAllText(filePath.View(), moduleSource));
-    }
+        if (ready)
+        {
+            ready = MemoryOk(filePath.AppendByte(47))
+                && MemoryOk(filePath.AppendAscii(moduleFileName));
+        }
 
-    stack mut LlvmCompile compiled = new();
-    if (ready)
-    {
-        compiled = RunHostCompileIn(id, source, stopAfterPassId, artifactName, root.View(), 0);
-    }
+        if (ready)
+        {
+            ready = IOOk(WriteAllText(filePath.View(), moduleSource));
+        }
 
-    stack bool cleaned = IOOk(DeleteTreeIfExists(root.View()));
-    return compiled;
+        stack mut LlvmCompile compiled = new();
+        if (ready)
+        {
+            compiled = RunHostCompileIn(id, source, stopAfterPassId, artifactName, root.View(), 0);
+        }
+
+        stack bool cleaned = IOOk(DeleteTreeIfExists(root.View()));
+        return compiled;
+    }
 }
 
 internal finite law bool MemoryOk(MemoryStatus status)
@@ -204,87 +231,111 @@ internal finite law bool IOOk(IOStatus status)
 }
 
 // Returns the LLVM artifact text of a successful compile, or empty text.
-public unsafe fn ascii Llvm(mut borrow LlvmCompile compiled)
+public fn ascii Llvm(mut borrow LlvmCompile compiled)
 {
-    return compiled.Outcome.ArtifactText("llvm");
+    unsafe
+    {
+        return compiled.Outcome.ArtifactText("llvm");
+    }
 }
 
 // Returns the MIR artifact text of a successful CompileMir, or empty text.
-public unsafe fn ascii Mir(mut borrow LlvmCompile compiled)
+public fn ascii Mir(mut borrow LlvmCompile compiled)
 {
-    return compiled.Outcome.ArtifactText("mir");
+    unsafe
+    {
+        return compiled.Outcome.ArtifactText("mir");
+    }
 }
 
 // Counts diagnostics that carry the code and whose message contains the
 // fragment.
-public unsafe fn u64[0 2 ** 63 - 1] CountDiagnosticsWithCodeAndMessage(
+public fn u64[0 2 ** 63 - 1] CountDiagnosticsWithCodeAndMessage(
     mut borrow LlvmCompile compiled,
     ascii code,
     ascii messageFragment)
 {
-    stack mut u64[0 2 ** 63 - 1] matches = 0;
-    stack u64[0 2 ** 63 - 1] count = compiled.Outcome.DiagnosticCount();
-    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    unsafe
     {
-        if (Equals(compiled.Outcome.DiagnosticCodeAt(index), code)
-            && System.Testing.Contains(compiled.Outcome.DiagnosticMessageAt(index), messageFragment))
+        stack mut u64[0 2 ** 63 - 1] matches = 0;
+        stack u64[0 2 ** 63 - 1] count = compiled.Outcome.DiagnosticCount();
+        for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
         {
-            matches += 1;
+            if (Equals(compiled.Outcome.DiagnosticCodeAt(index), code)
+                && System.Testing.Contains(compiled.Outcome.DiagnosticMessageAt(index), messageFragment))
+            {
+                matches += 1;
+            }
         }
-    }
 
-    return matches;
+        return matches;
+    }
 }
 
-public unsafe fn bool AnyDiagnosticMessageContains(mut borrow LlvmCompile compiled, ascii fragment)
+public fn bool AnyDiagnosticMessageContains(mut borrow LlvmCompile compiled, ascii fragment)
 {
-    stack u64[0 2 ** 63 - 1] count = compiled.Outcome.DiagnosticCount();
-    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    unsafe
     {
-        if (System.Testing.Contains(compiled.Outcome.DiagnosticMessageAt(index), fragment))
+        stack u64[0 2 ** 63 - 1] count = compiled.Outcome.DiagnosticCount();
+        for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
         {
-            return true;
+            if (System.Testing.Contains(compiled.Outcome.DiagnosticMessageAt(index), fragment))
+            {
+                return true;
+            }
         }
-    }
 
-    return false;
+        return false;
+    }
 }
 
 // True when any diagnostic carries the code, regardless of compile outcome.
-public unsafe fn bool HasDiagnostic(mut borrow LlvmCompile compiled, ascii code)
+public fn bool HasDiagnostic(mut borrow LlvmCompile compiled, ascii code)
 {
-    return compiled.Outcome.HasDiagnosticCode(code);
+    unsafe
+    {
+        return compiled.Outcome.HasDiagnosticCode(code);
+    }
 }
 
 // True when the compile failed and reported the diagnostic code.
-public unsafe fn bool FailsWithDiagnostic(mut borrow LlvmCompile compiled, ascii code)
+public fn bool FailsWithDiagnostic(mut borrow LlvmCompile compiled, ascii code)
 {
-    if (!compiled.Ok || compiled.Outcome.CompileSucceeded())
+    unsafe
     {
-        return false;
-    }
+        if (!compiled.Ok || compiled.Outcome.CompileSucceeded())
+        {
+            return false;
+        }
 
-    return compiled.Outcome.HasDiagnosticCode(code);
+        return compiled.Outcome.HasDiagnosticCode(code);
+    }
 }
 
 // True when the compile failed and reported the diagnostic code with a message
 // containing the fragment.
-public unsafe fn bool FailsWithDiagnosticMessage(mut borrow LlvmCompile compiled, ascii code, ascii messageFragment)
+public fn bool FailsWithDiagnosticMessage(mut borrow LlvmCompile compiled, ascii code, ascii messageFragment)
 {
-    if (!FailsWithDiagnostic(compiled, code))
+    unsafe
     {
-        return false;
+        if (!FailsWithDiagnostic(compiled, code))
+        {
+            return false;
+        }
+
+        return AnyDiagnosticMessageContains(compiled, messageFragment);
     }
-
-    return AnyDiagnosticMessageContains(compiled, messageFragment);
 }
 
-internal unsafe fn LlvmCompile RunHostCompile(ascii id, ascii source, ascii stopAfterPassId, ascii artifactName)
+internal fn LlvmCompile RunHostCompile(ascii id, ascii source, ascii stopAfterPassId, ascii artifactName)
 {
-    return RunHostCompileIn(id, source, stopAfterPassId, artifactName, "", 0);
+    unsafe
+    {
+        return RunHostCompileIn(id, source, stopAfterPassId, artifactName, "", 0);
+    }
 }
 
-internal unsafe fn LlvmCompile RunHostCompileIn(
+internal fn LlvmCompile RunHostCompileIn(
     ascii id,
     ascii source,
     ascii stopAfterPassId,
@@ -292,47 +343,50 @@ internal unsafe fn LlvmCompile RunHostCompileIn(
     ascii searchDirectory,
     u32[0 2 ** 31 - 1] maximumComptimeLoopIterations)
 {
-    stack mut OwnedAscii compilerPath = new();
-    stack mut bool havePath = false;
-    switch (CompilerPathFromEnvironment())
+    unsafe
     {
-        case HostResult<OwnedAscii>.Err(var pathError):
-            havePath = false;
-        case HostResult<OwnedAscii>.Ok(var path):
-            compilerPath = path;
-            havePath = true;
-    }
-
-    stack mut HostCompileOutcome outcome = new();
-    stack mut bool transportOk = false;
-    if (havePath)
-    {
-        switch (CompileOnceArtifactIn(
-            compilerPath.View(),
-            id,
-            source,
-            stopAfterPassId,
-            artifactName,
-            searchDirectory,
-            maximumComptimeLoopIterations,
-            HostTimeoutMilliseconds))
+        stack mut OwnedAscii compilerPath = new();
+        stack mut bool havePath = false;
+        switch (CompilerPathFromEnvironment())
         {
-            case HostResult<HostCompileOutcome>.Err(var error):
-                transportOk = false;
-            case HostResult<HostCompileOutcome>.Ok(var captured):
-                outcome = captured;
-                transportOk = true;
+            case HostResult<OwnedAscii>.Err(var pathError):
+                havePath = false;
+            case HostResult<OwnedAscii>.Ok(var path):
+                compilerPath = path;
+                havePath = true;
         }
-    }
 
-    stack mut bool ok = false;
-    if (transportOk)
-    {
-        ok = !outcome.HadProtocolError();
-    }
+        stack mut HostCompileOutcome outcome = new();
+        stack mut bool transportOk = false;
+        if (havePath)
+        {
+            switch (CompileOnceArtifactIn(
+                compilerPath.View(),
+                id,
+                source,
+                stopAfterPassId,
+                artifactName,
+                searchDirectory,
+                maximumComptimeLoopIterations,
+                HostTimeoutMilliseconds))
+            {
+                case HostResult<HostCompileOutcome>.Err(var error):
+                    transportOk = false;
+                case HostResult<HostCompileOutcome>.Ok(var captured):
+                    outcome = captured;
+                    transportOk = true;
+            }
+        }
 
-    stack mut LlvmCompile compiled = new();
-    compiled.Ok = ok;
-    compiled.Outcome = outcome;
-    return compiled;
+        stack mut bool ok = false;
+        if (transportOk)
+        {
+            ok = !outcome.HadProtocolError();
+        }
+
+        stack mut LlvmCompile compiled = new();
+        compiled.Ok = ok;
+        compiled.Outcome = outcome;
+        return compiled;
+    }
 }

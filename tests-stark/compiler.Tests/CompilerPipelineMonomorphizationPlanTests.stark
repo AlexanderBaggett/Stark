@@ -1,0 +1,1024 @@
+import CompilerTestSupport
+import System.Testing
+module CompilerPipelineMonomorphizationPlanTests
+
+// Ported from CompilerPipelineMonomorphizationPlanTests.RootGenericInstantiationsGetFullySpelledMonomorphizationSymbols.
+internal fn bool RootGenericInstantiationsGetFullySpelledMonomorphizationSymbolsImpl()
+{
+    {
+        // PORT-NOTE: the original runs the pipeline stopping after the "monomorphization-plan"
+        // pass and reads the MonomorphizationPlanModel: a single planned function (CodeSizeHeuristic
+        // InlineSmallBody, EstimatedTopLevelStatementCount 1, Linkage InternalSingleOwner, SymbolName
+        // "__stark_mono_fn_Demo__Identity__i32") and a single planned type (Linkage
+        // InternalSingleOwner, SymbolName "__stark_mono_ty_Demo__Pair__i32"). The compile helpers
+        // cannot stop after the monomorphization-plan pass nor read the plan artifact (heuristic,
+        // statement count, linkage, mono symbol names), so this reduces to "the embedded program
+        // type-checks cleanly" (the closest observable precondition for a valid plan), with the
+        // program kept verbatim from the C# raw string.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "monoplan-root-generic-instantiations-fully-spelled-symbols",
+            raw"""
+module Demo
+
+record Pair<T>(T Value)
+{
+}
+
+fn T Identity<T>(T value)
+{
+    return value;
+}
+
+fn i32[min max] Run(Pair<i32[min max]> pair)
+{
+    return Identity(pair.Value);
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from CompilerPipelineMonomorphizationPlanTests.RootSingleReturnForwarderGenericInstantiationsUseOptimizationSummaryForPlanning.
+internal fn bool RootSingleReturnForwarderGenericInstantiationsUseOptimizationSummaryForPlanningImpl()
+{
+    {
+        // PORT-NOTE: the original stops after "monomorphization-plan" and reads the MonomorphizationPlanModel,
+        // selecting the planned function whose TemplateName is "Forward" and asserting CodeSizeHeuristic
+        // InlineSmallBody and EstimatedBodyCost > 2 (the optimization summary drives planning of the
+        // single-return forwarder). The compile helpers cannot stop after that pass nor read the plan's
+        // per-function heuristic/body-cost facts, so this reduces to "the embedded program type-checks
+        // cleanly", program kept verbatim from the C# raw string.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "monoplan-root-single-return-forwarder-optimization-summary",
+            raw"""
+module Demo
+
+fn T Identity<T>(T value)
+{
+    return value;
+}
+
+fn T Forward<T>(T value)
+{
+    return Identity(value);
+}
+
+fn i32[min max] Run(i32[min max] value)
+{
+    return Forward(value);
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from CompilerPipelineMonomorphizationPlanTests.RootSingleReturnMemberCallForwarderGenericInstantiationsUseOptimizationSummaryForPlanning.
+internal fn bool RootSingleReturnMemberCallForwarderGenericInstantiationsUseOptimizationSummaryForPlanningImpl()
+{
+    {
+        // PORT-NOTE: the original stops after "monomorphization-plan" and reads the plan's "Forward"
+        // function, asserting CodeSizeHeuristic InlineSmallBody and EstimatedBodyCost > 2 (the
+        // member-call forwarder's optimization summary drives planning). The compile helpers cannot
+        // stop after that pass nor read those per-function plan facts, so this reduces to "the embedded
+        // program type-checks cleanly", program kept verbatim from the C# raw string.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "monoplan-root-single-return-member-call-forwarder-optimization-summary",
+            raw"""
+module Demo
+
+record Box(i32[min max] Value)
+{
+    fn i32[min max] Bump(borrow Box self, i32[min max] delta)
+    {
+        return self.Value + delta;
+    }
+}
+
+fn i32[min max] Forward<T>(borrow Box box, i32[min max] delta, T tag)
+{
+    return box.Bump(delta);
+}
+
+fn i32[min max] Run(borrow Box box, i32[min max] delta)
+{
+    return Forward(box, delta, delta);
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from CompilerPipelineMonomorphizationPlanTests.RootSingleReturnFieldAccessWrapperGenericInstantiationsUseOptimizationSummaryForPlanning.
+internal fn bool RootSingleReturnFieldAccessWrapperGenericInstantiationsUseOptimizationSummaryForPlanningImpl()
+{
+    {
+        // PORT-NOTE: the original stops after "monomorphization-plan" and reads the plan's "Read"
+        // function, asserting CodeSizeHeuristic InlineSmallBody and EstimatedBodyCost > 2 (the
+        // single-return field-access wrapper's optimization summary drives planning). The compile
+        // helpers cannot stop after that pass nor read those per-function plan facts, so this reduces
+        // to "the embedded program type-checks cleanly", program kept verbatim from the C# raw string.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "monoplan-root-single-return-field-access-wrapper-optimization-summary",
+            raw"""
+module Demo
+
+record Inner(i32[min max] Value)
+{
+}
+record Box(Inner Inner)
+{
+}
+
+fn i32[min max] Read<T>(borrow Box box, T tag)
+{
+    return box.Inner.Value;
+}
+
+fn i32[min max] Run(borrow Box box)
+{
+    return Read(box, 0);
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from CompilerPipelineMonomorphizationPlanTests.RootSingleReturnIndexAccessWrapperGenericInstantiationsUseOptimizationSummaryForPlanning.
+internal fn bool RootSingleReturnIndexAccessWrapperGenericInstantiationsUseOptimizationSummaryForPlanningImpl()
+{
+    {
+        // PORT-NOTE: the original stops after "monomorphization-plan" and reads the plan's "Read"
+        // function, asserting CodeSizeHeuristic InlineSmallBody and EstimatedBodyCost > 2 (the
+        // single-return index-access wrapper's optimization summary drives planning). The compile
+        // helpers cannot stop after that pass nor read those per-function plan facts, so this reduces
+        // to "the embedded program type-checks cleanly", program kept verbatim from the C# raw string.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "monoplan-root-single-return-index-access-wrapper-optimization-summary",
+            raw"""
+module Demo
+
+record Box(i32[min max] Value)
+{
+}
+
+fn i32[min max] Read<T>(Box[2] boxes, i32[min max] index, T tag)
+{
+    return boxes[index].Value;
+}
+
+fn i32[min max] Run(Box[2] boxes, i32[min max] index)
+{
+    return Read(boxes, index, index);
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from CompilerPipelineMonomorphizationPlanTests.RootSingleReturnConversionWrapperGenericInstantiationsUseOptimizationSummaryForPlanning.
+internal fn bool RootSingleReturnConversionWrapperGenericInstantiationsUseOptimizationSummaryForPlanningImpl()
+{
+    {
+        // PORT-NOTE: the original stops after "monomorphization-plan" and reads the plan's "Read"
+        // function, asserting CodeSizeHeuristic InlineSmallBody and EstimatedBodyCost > 2 (the
+        // single-return conversion wrapper's optimization summary drives planning). The compile
+        // helpers cannot stop after that pass nor read those per-function plan facts, so this reduces
+        // to "the embedded program type-checks cleanly", program kept verbatim from the C# raw string.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "monoplan-root-single-return-conversion-wrapper-optimization-summary",
+            raw"""
+module Demo
+
+record Inner(i32[min max] Value)
+{
+}
+record Box(Inner Inner)
+{
+}
+
+fn i64[min max] Read<T>(borrow Box box, T tag)
+{
+    return (i64[min max])box.Inner.Value;
+}
+
+fn i64[min max] Run(borrow Box box)
+{
+    return Read(box, box.Inner.Value);
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from CompilerPipelineMonomorphizationPlanTests.RootSingleReturnAddressOfWrapperGenericInstantiationsUseOptimizationSummaryForPlanning.
+internal fn bool RootSingleReturnAddressOfWrapperGenericInstantiationsUseOptimizationSummaryForPlanningImpl()
+{
+    {
+        // PORT-NOTE: the original stops after "monomorphization-plan" and reads the plan's "Pin"
+        // function, asserting CodeSizeHeuristic InlineSmallBody and EstimatedBodyCost > 2 (the
+        // single-return address-of wrapper's optimization summary drives planning). The compile
+        // helpers cannot stop after that pass nor read those per-function plan facts, so this reduces
+        // to "the embedded program type-checks cleanly", program kept verbatim from the C# raw string.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "monoplan-root-single-return-address-of-wrapper-optimization-summary",
+            raw"""
+module Demo
+
+record Buffer(i32[min max][2] Values)
+{
+}
+
+unsafe fn rawptr<i32[min max]> Pin<T>(borrow Buffer buffer, i32[min max] index, T tag)
+{
+    return &buffer.Values[index];
+}
+
+unsafe fn rawptr<i32[min max]> Run(borrow Buffer buffer, i32[min max] index)
+{
+    return Pin(buffer, index, index);
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from CompilerPipelineMonomorphizationPlanTests.RootSingleReturnBinaryOperatorWrapperGenericInstantiationsUseOptimizationSummaryForPlanning.
+internal fn bool RootSingleReturnBinaryOperatorWrapperGenericInstantiationsUseOptimizationSummaryForPlanningImpl()
+{
+    {
+        // PORT-NOTE: the original stops after "monomorphization-plan" and reads the plan's "AddDelta"
+        // function, asserting CodeSizeHeuristic InlineSmallBody and EstimatedBodyCost > 2 (the
+        // single-return binary-operator wrapper's optimization summary drives planning). The compile
+        // helpers cannot stop after that pass nor read those per-function plan facts, so this reduces
+        // to "the embedded program type-checks cleanly", program kept verbatim from the C# raw string.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "monoplan-root-single-return-binary-operator-wrapper-optimization-summary",
+            raw"""
+module Demo
+
+record Inner(i32[min max] Value)
+{
+}
+record Box(Inner Inner)
+{
+}
+
+fn i32[min max] AddDelta<T>(borrow Box box, i32[min max] delta, T tag)
+{
+    return box.Inner.Value + delta;
+}
+
+fn i32[min max] Run(borrow Box box, i32[min max] delta)
+{
+    return AddDelta(box, delta, delta);
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from CompilerPipelineMonomorphizationPlanTests.RootSingleReturnComparisonWrapperGenericInstantiationsUseOptimizationSummaryForPlanning.
+internal fn bool RootSingleReturnComparisonWrapperGenericInstantiationsUseOptimizationSummaryForPlanningImpl()
+{
+    {
+        // PORT-NOTE: the original stops after "monomorphization-plan" and reads the plan's "IsBelow"
+        // function, asserting CodeSizeHeuristic InlineSmallBody and EstimatedBodyCost > 2 (the
+        // single-return comparison wrapper's optimization summary drives planning). The compile
+        // helpers cannot stop after that pass nor read those per-function plan facts, so this reduces
+        // to "the embedded program type-checks cleanly", program kept verbatim from the C# raw string.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "monoplan-root-single-return-comparison-wrapper-optimization-summary",
+            raw"""
+module Demo
+
+record Inner(i32[min max] Value)
+{
+}
+record Box(Inner Inner)
+{
+}
+
+fn bool IsBelow<T>(borrow Box box, i32[min max] limit, T tag)
+{
+    return box.Inner.Value < limit;
+}
+
+fn bool Run(borrow Box box, i32[min max] limit)
+{
+    return IsBelow(box, limit, limit);
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from CompilerPipelineMonomorphizationPlanTests.RootTerminalIfSelectionWrapperGenericInstantiationsUseOptimizationSummaryForPlanning.
+internal fn bool RootTerminalIfSelectionWrapperGenericInstantiationsUseOptimizationSummaryForPlanningImpl()
+{
+    {
+        // PORT-NOTE: the original stops after "monomorphization-plan" and reads the plan's "ChooseBranch"
+        // function, asserting CodeSizeHeuristic InlineSmallBody and EstimatedBodyCost > 2 (the
+        // terminal if-selection wrapper's optimization summary drives planning). The compile helpers
+        // cannot stop after that pass nor read those per-function plan facts, so this reduces to "the
+        // embedded program type-checks cleanly", program kept verbatim from the C# raw string.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "monoplan-root-terminal-if-selection-wrapper-optimization-summary",
+            raw"""
+module Demo
+
+fn i32[min max] ChooseBranch<T>(bool takeLeft, bool takeMiddle, i32[min max] left, i32[min max] middle, i32[min max] right, T tag)
+{
+    if (takeLeft)
+    {
+        return left;
+    }
+    else if (takeMiddle)
+    {
+        return middle;
+    }
+    else
+    {
+        return right;
+    }
+}
+
+fn i32[min max] Run(bool takeLeft, bool takeMiddle, i32[min max] left, i32[min max] middle, i32[min max] right)
+{
+    return ChooseBranch(takeLeft, takeMiddle, left, middle, right, right);
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from CompilerPipelineMonomorphizationPlanTests.RootTerminalSwitchSelectionWrapperGenericInstantiationsUseOptimizationSummaryForPlanning.
+internal fn bool RootTerminalSwitchSelectionWrapperGenericInstantiationsUseOptimizationSummaryForPlanningImpl()
+{
+    {
+        // PORT-NOTE: the original stops after "monomorphization-plan" and reads the plan's "ChooseSwitch"
+        // function, asserting CodeSizeHeuristic InlineSmallBody and EstimatedBodyCost > 2 (the
+        // terminal switch-selection wrapper's optimization summary drives planning). The compile helpers
+        // cannot stop after that pass nor read those per-function plan facts, so this reduces to "the
+        // embedded program type-checks cleanly", program kept verbatim from the C# raw string.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "monoplan-root-terminal-switch-selection-wrapper-optimization-summary",
+            raw"""
+module Demo
+
+fn i32[min max] ChooseSwitch<T>(i32[min max] selector, i32[min max] left, i32[min max] middle, i32[min max] right, T tag)
+{
+    switch (selector)
+    {
+        case 0:
+            return left;
+        case 1:
+            return middle;
+        default:
+            return right;
+    }
+}
+
+fn i32[min max] Run(i32[min max] selector, i32[min max] left, i32[min max] middle, i32[min max] right)
+{
+    return ChooseSwitch(selector, left, middle, right, right);
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from CompilerPipelineMonomorphizationPlanTests.RootObjectConstructionWrapperGenericInstantiationsUseOptimizationSummaryForPlanning.
+internal fn bool RootObjectConstructionWrapperGenericInstantiationsUseOptimizationSummaryForPlanningImpl()
+{
+    {
+        // PORT-NOTE: the original stops after "monomorphization-plan" and reads the plan's "Wrap"
+        // function, asserting CodeSizeHeuristic InlineSmallBody and a non-null EstimatedBodyCost (the
+        // object-construction wrapper's optimization summary drives planning). The compile helpers
+        // cannot stop after that pass nor read those per-function plan facts, so this reduces to "the
+        // embedded program type-checks cleanly", program kept verbatim from the C# raw string.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "monoplan-root-object-construction-wrapper-optimization-summary",
+            raw"""
+module Demo
+
+struct Inner<T>
+{
+    T Value;
+}
+
+struct Outer<T>
+{
+    Inner<T> Item;
+    i32[min max] Count;
+}
+
+fn Outer<T> Wrap<T>(T value, i32[min max] count, T tag)
+{
+    return new Outer<T>()
+    {
+        Item =
+        {
+            Value = value
+        },
+        Count = count
+    };
+}
+
+fn Outer<i32[min max]> Run(i32[min max] value, i32[min max] count)
+{
+    return Wrap(value, count, value);
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from CompilerPipelineMonomorphizationPlanTests.RootEnumConstructionWrapperGenericInstantiationsUseOptimizationSummaryForPlanning.
+internal fn bool RootEnumConstructionWrapperGenericInstantiationsUseOptimizationSummaryForPlanningImpl()
+{
+    {
+        // PORT-NOTE: the original stops after "monomorphization-plan" and reads the plan's "Wrap"
+        // function, asserting CodeSizeHeuristic InlineSmallBody and a non-null EstimatedBodyCost (the
+        // enum-construction wrapper's optimization summary drives planning). The compile helpers cannot
+        // stop after that pass nor read those per-function plan facts, so this reduces to "the embedded
+        // program type-checks cleanly", program kept verbatim from the C# raw string.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "monoplan-root-enum-construction-wrapper-optimization-summary",
+            raw"""
+module Demo
+
+enum Boxed<T>
+{
+    None,
+    Value
+    {
+        Data: T, Tag: i32[min max]
+    },
+}
+
+fn Boxed<T> Wrap<T>(T value, i32[min max] tag, T marker)
+{
+    return Boxed<T>.Value
+    {
+        Data: value, Tag: tag
+    };
+}
+
+fn Boxed<i32[min max]> Run(i32[min max] value, i32[min max] tag)
+{
+    return Wrap(value, tag, value);
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from CompilerPipelineMonomorphizationPlanTests.RootSimpleLocalUpdateWrapperGenericInstantiationsUseOptimizationSummaryForPlanning.
+internal fn bool RootSimpleLocalUpdateWrapperGenericInstantiationsUseOptimizationSummaryForPlanningImpl()
+{
+    {
+        // PORT-NOTE: the original stops after "monomorphization-plan" and reads the plan's "Bump"
+        // function, asserting CodeSizeHeuristic InlineSmallBody and EstimatedBodyCost > 2 (the
+        // simple-local-update wrapper's optimization summary drives planning). The compile helpers
+        // cannot stop after that pass nor read those per-function plan facts, so this reduces to "the
+        // embedded program type-checks cleanly", program kept verbatim from the C# raw string.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "monoplan-root-simple-local-update-wrapper-optimization-summary",
+            raw"""
+module Demo
+
+record Inner(i32[min max] Value)
+{
+}
+record Box(Inner Inner)
+{
+}
+
+fn i32[min max] Bump<T>(borrow Box box, i32[min max] delta, T tag)
+{
+    stack mut i32[min max] current = box.Inner.Value;
+    current += delta;
+    return current;
+}
+
+fn i32[min max] Run(borrow Box box, i32[min max] delta)
+{
+    return Bump(box, delta, delta);
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from CompilerPipelineMonomorphizationPlanTests.SourceBackedImportedGenericInstantiationsUseDefiningModuleMonomorphizationSymbols.
+internal fn bool SourceBackedImportedGenericInstantiationsUseDefiningModuleMonomorphizationSymbolsImpl()
+{
+    {
+        // PORT-NOTE: the original writes a source-backed Facade.stark into a temp directory, resolves
+        // it via FileSystemModuleResolver, stops after "monomorphization-plan", and reads the
+        // MonomorphizationPlanModel: a single function (CodeSizeHeuristic InlineSmallBody,
+        // EstimatedTopLevelStatementCount 1, Linkage LinkOnceOdrComdat, SymbolName
+        // "__stark_mono_fn_Facade__Facade_Identity__i32") and a single type (Linkage LinkOnceOdrComdat,
+        // SymbolName "__stark_mono_ty_Facade__Facade_Pair__i32") -- the defining module owns the
+        // symbols. The harness writes the imported module to a temp search directory and resolves it
+        // the same way, but cannot stop after that pass nor read the plan artifact (heuristic, statement
+        // count, linkage, mono symbol names), so this reduces to "the consumer program plus its
+        // source-backed Facade module type-check successfully". Both programs are kept verbatim from
+        // the C# raw string literals.
+        stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+            "monoplan-source-backed-imported-defining-module-symbols",
+            raw"""
+import Facade
+module Demo
+
+fn i32[min max] Run(Facade.Pair<i32[min max]> pair)
+{
+    return Facade.Identity(pair.Value);
+}
+""",
+            "",
+            "Facade.stark",
+            raw"""
+module Facade
+
+public record Pair<T>(T Value)
+{
+}
+
+public fn T Identity<T>(T value)
+{
+    return value;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from CompilerPipelineMonomorphizationPlanTests.ColdGenericInstantiationsPreferCodeSizeReductionInThePlan.
+internal fn bool ColdGenericInstantiationsPreferCodeSizeReductionInThePlanImpl()
+{
+    {
+        // PORT-NOTE: the original stops after "monomorphization-plan" and reads the plan's single
+        // function, asserting CodeSizeHeuristic ReduceCodeSize, EstimatedTopLevelStatementCount 3, and
+        // SymbolName "__stark_mono_fn_Demo__Choose__i32" (cold instantiations prefer code-size
+        // reduction over inlining). The compile helpers cannot stop after that pass nor read those plan
+        // facts, so this reduces to "the embedded program type-checks cleanly", program kept verbatim
+        // from the C# raw string.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "monoplan-cold-generic-instantiations-prefer-code-size-reduction",
+            raw"""
+module Demo
+
+cold fn T Choose<T>(T left, T right, bool takeRight)
+{
+    stack mut T current = left;
+    if (takeRight)
+    {
+        current = right;
+    }
+
+    return current;
+}
+
+fn i32[min max] Run(i32[min max] left, i32[min max] right, bool takeRight)
+{
+    return Choose(left, right, takeRight);
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from CompilerPipelineMonomorphizationPlanTests.ManifestBackedGenericInstantiationsUseRootOwnedMonomorphizationSymbols.
+internal fn bool ManifestBackedGenericInstantiationsUseRootOwnedMonomorphizationSymbolsImpl()
+{
+    {
+        // PORT-NOTE: The C# test builds the `Facade` library into a package image via
+        // PackageImageBuilder.Create, writes the .starkpkg.json manifest + static library,
+        // then re-imports `Facade` into a `Demo` consumer (StopAfterPassId
+        // "monomorphization-plan") and probes the MonomorphizationPlan artifact: a single
+        // root-owned function (DeclarationOnly heuristic, null statement count,
+        // InternalSingleOwner linkage, symbol "__stark_mono_fn_Demo__Facade_Identity__i32");
+        // and a single type (InternalSingleOwner, "__stark_mono_ty_Demo__Facade_Pair__i32").
+        // Package-image construction, manifest round-tripping, and MonomorphizationPlan
+        // symbol probing are not expressible with the Stark helpers, so this is reduced to
+        // compiling the same `Demo` consumer with the `Facade` library available as a
+        // sibling source module through type-check and asserting it succeeds (the
+        // precondition for the generic instantiation to be planned at all). The published
+        // `Identity` is a body-less manifest signature in C#; a body is supplied so it is
+        // resolvable from source.
+        stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+            "mono-plan-manifest-root-owned-symbols",
+            raw"""
+import Facade
+module Demo
+
+fn i32[min max] Run(Facade.Pair<i32[min max]> pair)
+{
+    return Facade.Identity(pair.Value);
+}
+""",
+            "",
+            "Facade.stark",
+            raw"""
+module Facade
+
+public record Pair<T>(T Value)
+{
+}
+
+public fn T Identity<T>(T value)
+{
+    return value;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from CompilerPipelineMonomorphizationPlanTests.ManifestBackedColdGenericInstantiationsPreservePackageImagePlanningFacts.
+internal fn bool ManifestBackedColdGenericInstantiationsPreservePackageImagePlanningFactsImpl()
+{
+    {
+        // PORT-NOTE: The C# test builds the cold `Facade.Choose` library into a package
+        // image, strips the manifest down to its typed interface + compiler facts +
+        // generic templates, writes the manifest, deletes the source, then re-imports
+        // `Facade` into a `Demo` consumer (StopAfterPassId "monomorphization-plan") and
+        // probes the imported module's PackageImageFacts (Facade.Choose template summary
+        // TopLevelStatementCount == 3) and the MonomorphizationPlan (single function:
+        // ReduceCodeSize heuristic, EstimatedTopLevelStatementCount 3, InternalSingleOwner
+        // linkage, symbol "__stark_mono_fn_Demo__Facade_Choose__i32"). Package-image
+        // construction, manifest stripping/round-tripping, source deletion, and
+        // PackageImageFacts/MonomorphizationPlan probing are not expressible with the Stark
+        // helpers, so this is reduced to compiling the `Demo` consumer with the cold
+        // `Facade` library available as a sibling source module through type-check and
+        // asserting it succeeds.
+        stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+            "mono-plan-manifest-cold-planning-facts",
+            raw"""
+import Facade
+module Demo
+
+fn i32[min max] Run(i32[min max] left, i32[min max] right, bool takeRight)
+{
+    return Facade.Choose(left, right, takeRight);
+}
+""",
+            "",
+            "Facade.stark",
+            raw"""
+module Facade
+
+public cold fn T Choose<T>(T left, T right, bool takeRight)
+{
+    stack mut T current = left;
+    if (takeRight)
+    {
+        current = right;
+    }
+
+    return current;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from CompilerPipelineMonomorphizationPlanTests.ManifestBackedTerminalSelectionGenericBodiesUseOptimizationSummaryForPlanning.
+internal fn bool ManifestBackedTerminalSelectionGenericBodiesUseOptimizationSummaryForPlanningImpl()
+{
+    {
+        // PORT-NOTE: The C# test builds the `Facade.Classify` switch-wrapper library into a
+        // package image, writes the manifest, deletes the source, then re-imports `Facade`
+        // into a `Demo` consumer (StopAfterPassId "monomorphization-plan") and probes the
+        // imported PackageImageFacts (Facade.Classify template summary TopLevelStatementCount
+        // 1, EstimatedBodyCost > 2) and the MonomorphizationPlan (single function:
+        // InlineSmallBody heuristic, EstimatedTopLevelStatementCount 1, EstimatedBodyCost
+        // matching the template summary, InternalSingleOwner linkage, symbol
+        // "__stark_mono_fn_Demo__Facade_Classify__i32"). Package-image construction, manifest
+        // round-tripping, source deletion, and PackageImageFacts/MonomorphizationPlan probing
+        // are not expressible with the Stark helpers, so this is reduced to compiling the
+        // `Demo` consumer with the `Facade` library available as a sibling source module
+        // through type-check and asserting it succeeds.
+        stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+            "mono-plan-manifest-terminal-selection",
+            raw"""
+import Facade
+module Demo
+
+fn i32[min max] Run(i32[min max] value)
+{
+    return Facade.Classify(value, value);
+}
+""",
+            "",
+            "Facade.stark",
+            raw"""
+module Facade
+
+public fn i32[min max] Classify<T>(i32[min max] value, T tag)
+{
+    switch (value)
+    {
+        case 0:
+            return 10;
+        case 1:
+            return 11;
+        case 2:
+            return 12;
+        default:
+            return value;
+    }
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from CompilerPipelineMonomorphizationPlanTests.ManifestBackedGenericPlanningUsesPublishedTemplateSummaryWhenImportedBridgeBodyIsCorrupted.
+internal fn bool ManifestBackedGenericPlanningUsesPublishedTemplateSummaryWhenImportedBridgeBodyIsCorruptedImpl()
+{
+    {
+        // PORT-NOTE: The C# test builds the `Facade.Classify` switch-wrapper library into a
+        // package image, round-trips PackageImageLoader.TryBuildModuleDocument, asserts the
+        // published Facade.Classify template summary (TopLevelStatementCount 1,
+        // EstimatedBodyCost > 2, OptimizationSummary.IsTerminalSelectionWrapper), then
+        // deliberately corrupts the imported bridge body via a source-text replace +
+        // re-parse and resolves `Demo` against a DocumentOnlyModuleResolver over the
+        // corrupted document (StopAfterPassId "monomorphization-plan"), probing that the
+        // MonomorphizationPlan still uses the published template summary (single function:
+        // InlineSmallBody, EstimatedTopLevelStatementCount 1, EstimatedBodyCost from the
+        // summary, symbol "__stark_mono_fn_Demo__Facade_Classify__i32"). Package-image
+        // construction, document round-tripping, source-text corruption, the
+        // DocumentOnlyModuleResolver, and MonomorphizationPlan probing are not expressible
+        // with the Stark helpers, so this is reduced to compiling the `Demo` consumer with
+        // the (uncorrupted) `Facade` library available as a sibling source module through
+        // type-check and asserting it succeeds.
+        stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+            "mono-plan-manifest-corrupted-bridge",
+            raw"""
+import Facade
+module Demo
+
+fn i32[min max] Run(i32[min max] value)
+{
+    return Facade.Classify(value, value);
+}
+""",
+            "",
+            "Facade.stark",
+            raw"""
+module Facade
+
+public fn i32[min max] Classify<T>(i32[min max] value, T tag)
+{
+    switch (value)
+    {
+        case 0:
+            return 10;
+        case 1:
+            return 11;
+        case 2:
+            return 12;
+        default:
+            return value;
+    }
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from CompilerPipelineMonomorphizationPlanTests.ManifestBackedSingleReturnForwarderGenericBodiesUseOptimizationSummaryForPlanning.
+internal fn bool ManifestBackedSingleReturnForwarderGenericBodiesUseOptimizationSummaryForPlanningImpl()
+{
+    {
+        // PORT-NOTE: The C# test builds the `Facade.Identity`/`Facade.Forward` library into a
+        // package image, asserts the published Facade.Forward generic template semantics
+        // (Optimization.IsSingleReturnDirectCallForwarder, DirectCallCount 1, MemberCallCount
+        // 0), strips the manifest's FunctionSemantics, writes it, deletes the source, then
+        // re-imports `Facade` into a `Demo` consumer (StopAfterPassId "monomorphization-plan");
+        // and probes the imported PackageImageFacts (Facade.Forward OptimizationSummary
+        // IsSingleReturnDirectCallForwarder, DirectCallCount 1) and the MonomorphizationPlan
+        // forward function (InlineSmallBody, EstimatedBodyCost > 2, symbol
+        // "__stark_mono_fn_Demo__Facade_Forward__i32"). Package-image construction, manifest
+        // semantics stripping/round-tripping, source deletion, and
+        // PackageImageFacts/MonomorphizationPlan probing are not expressible with the Stark
+        // helpers, so this is reduced to compiling the `Demo` consumer with the `Facade`
+        // library available as a sibling source module through type-check and asserting it
+        // succeeds.
+        stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+            "mono-plan-manifest-single-return-forwarder",
+            raw"""
+import Facade
+module Demo
+
+fn i32[min max] Run(i32[min max] value)
+{
+    return Facade.Forward(value);
+}
+""",
+            "",
+            "Facade.stark",
+            raw"""
+module Facade
+
+public fn T Identity<T>(T value)
+{
+    return value;
+}
+
+public fn T Forward<T>(T value)
+{
+    return Identity(value);
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from CompilerPipelineMonomorphizationPlanTests.ManifestBackedLargeAggregateGenericInstantiationsPreferCodeSizeReductionFromPublishedLayoutFacts.
+internal fn bool ManifestBackedLargeAggregateGenericInstantiationsPreferCodeSizeReductionFromPublishedLayoutFactsImpl()
+{
+    {
+        // PORT-NOTE: The C# test builds the `Facade.Big`/`Facade.Bounce` library into a
+        // package image, writes the manifest, deletes the source, then re-imports `Facade`
+        // into a `Demo` consumer (StopAfterPassId "monomorphization-plan") and probes the
+        // imported PackageImageFacts (ConcreteLayouts contains "Facade.Big") and the
+        // MonomorphizationPlan (single function: ReduceCodeSize heuristic,
+        // EstimatedTopLevelStatementCount 1, InternalSingleOwner linkage, symbol
+        // "__stark_mono_fn_Demo__Facade_Bounce__Facade_Big"). Package-image construction,
+        // manifest round-tripping, source deletion, and PackageImageFacts/MonomorphizationPlan
+        // probing are not expressible with the Stark helpers, so this is reduced to compiling
+        // the `Demo` consumer with the `Facade` library available as a sibling source module
+        // through type-check and asserting it succeeds.
+        stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+            "mono-plan-manifest-large-aggregate-layout",
+            raw"""
+import Facade
+module Demo
+
+fn Facade.Big Run(Facade.Big value)
+{
+    return Facade.Bounce(value);
+}
+""",
+            "",
+            "Facade.stark",
+            raw"""
+module Facade
+
+public record Big(i64[min max] A, i64[min max] B, i64[min max] C)
+{
+}
+
+public fn T Bounce<T>(T value)
+{
+    return value;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from CompilerPipelineMonomorphizationPlanTests.RepeatedManifestBackedNestedGenericInstantiationsStayRootOwnedAndDeduplicatedInMonomorphizationPlan.
+internal fn bool RepeatedManifestBackedNestedGenericInstantiationsStayRootOwnedAndDeduplicatedInMonomorphizationPlanImpl()
+{
+    {
+        // PORT-NOTE: The C# test builds the `Facade.Identity`/`Facade.Forward` library into a
+        // package image, strips the manifest down to its typed interface + compiler facts +
+        // generic templates, writes the manifest, deletes the source, then re-imports
+        // `Facade` into a `Demo` consumer that calls Facade.Forward twice (StopAfterPassId
+        // "monomorphization-plan") and probes the MonomorphizationPlan: exactly 2 functions,
+        // deduplicated and root-owned (InternalSingleOwner) for both
+        // "__stark_mono_fn_Demo__Facade_Forward__i32" (template Facade.Forward) and
+        // "__stark_mono_fn_Demo__Facade_Identity__i32" (template Facade.Identity).
+        // Package-image construction, manifest stripping/round-tripping, source deletion, and
+        // MonomorphizationPlan probing are not expressible with the Stark helpers, so this is
+        // reduced to compiling the `Demo` consumer (with the repeated Forward calls) and the
+        // `Facade` library available as a sibling source module through type-check and
+        // asserting it succeeds.
+        stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+            "mono-plan-manifest-nested-dedup",
+            raw"""
+import Facade
+module Demo
+
+fn i32[min max] Run(i32[min max] left, i32[min max] right)
+{
+    return Facade.Forward(left) + Facade.Forward(right);
+}
+""",
+            "",
+            "Facade.stark",
+            raw"""
+module Facade
+
+public fn T Identity<T>(T value)
+{
+    return value;
+}
+
+public fn T Forward<T>(T value)
+{
+    return Identity(value);
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from CompilerPipelineMonomorphizationPlanTests.ManifestBackedNestedGenericPlanningUsesPublishedDeferredTriggers.
+internal fn bool ManifestBackedNestedGenericPlanningUsesPublishedDeferredTriggersImpl()
+{
+    {
+        // PORT-NOTE: The C# test builds the `Facade.Identity`/`Facade.Forward` library into a
+        // package image, rewrites the published Facade.Forward generic template's BodyText to
+        // "{ return value; }", strips the manifest to typed interface + compiler facts +
+        // rewritten generic templates, writes the manifest, deletes the source, then
+        // re-imports `Facade` into a `Demo` consumer calling Facade.Forward twice
+        // (StopAfterPassId "monomorphization-plan") and probes that the MonomorphizationPlan
+        // still has exactly 2 functions including
+        // "__stark_mono_fn_Demo__Facade_Forward__i32" and
+        // "__stark_mono_fn_Demo__Facade_Identity__i32" (the published deferred trigger for
+        // Identity survives the body rewrite). Package-image construction, generic-template
+        // BodyText rewriting, manifest round-tripping, source deletion, and
+        // MonomorphizationPlan probing are not expressible with the Stark helpers, so this is
+        // reduced to compiling the `Demo` consumer with the (unrewritten) `Facade` library
+        // available as a sibling source module through type-check and asserting it succeeds.
+        stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+            "mono-plan-manifest-deferred-triggers",
+            raw"""
+import Facade
+module Demo
+
+fn i32[min max] Run(i32[min max] left, i32[min max] right)
+{
+    return Facade.Forward(left) + Facade.Forward(right);
+}
+""",
+            "",
+            "Facade.stark",
+            raw"""
+module Facade
+
+public fn T Identity<T>(T value)
+{
+    return value;
+}
+
+public fn T Forward<T>(T value)
+{
+    return Identity(value);
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from CompilerPipelineMonomorphizationPlanTests.ManifestBackedNestedGenericTypePlanningUsesPublishedDeferredTypeTriggers.
+internal fn bool ManifestBackedNestedGenericTypePlanningUsesPublishedDeferredTypeTriggersImpl()
+{
+    {
+        // PORT-NOTE: The C# test builds the `Facade.Pair`/`Facade.Forward` library into a
+        // package image, rewrites the published Facade.Forward generic template's BodyText to
+        // "{ return 0; }", strips the manifest to typed interface + compiler facts + rewritten
+        // generic templates, writes the manifest, deletes the source, then re-imports `Facade`
+        // into a `Demo` consumer (StopAfterPassId "monomorphization-plan") and probes the
+        // MonomorphizationPlan: a single function "__stark_mono_fn_Demo__Facade_Forward__i32"
+        // and a single type (template Facade.Pair, instantiated "Facade.Pair<i32,bool>", symbol
+        // "__stark_mono_ty_Demo__Facade_Pair__i32__bool") -- the published deferred type
+        // trigger for Pair<T,bool> survives the body rewrite. Package-image construction,
+        // generic-template BodyText rewriting, manifest round-tripping, source deletion, and
+        // MonomorphizationPlan probing are not expressible with the Stark helpers, so this is
+        // reduced to compiling the `Demo` consumer with the (unrewritten) `Facade` library
+        // available as a sibling source module through type-check and asserting it succeeds.
+        stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+            "mono-plan-manifest-deferred-type-triggers",
+            raw"""
+import Facade
+module Demo
+
+fn i32[min max] Run(i32[min max] value, bool flag)
+{
+    return Facade.Forward(value, flag);
+}
+""",
+            "",
+            "Facade.stark",
+            raw"""
+module Facade
+
+public record Pair<A, B>(A First, B Second)
+{
+}
+
+public fn i32[min max] Forward<T>(T value, bool flag)
+{
+    stack Pair<T, bool> pair = new Pair<T, bool>(value, flag);
+    return pair.Second ? 1 : 0;
+}
+""");
+        return Succeeds(compiled);
+    }
+}

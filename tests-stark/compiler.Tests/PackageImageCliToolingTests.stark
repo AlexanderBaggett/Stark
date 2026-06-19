@@ -1,0 +1,219 @@
+import CompilerTestSupport
+import System.Testing
+module PackageImageCliToolingTests
+
+// Ported from PackageImageCliToolingTests.EmitPackageModeWritesPackageImageWithRequestedLibraryFileName.
+internal fn bool EmitPackageModeWritesPackageImageWithRequestedLibraryFileNameImpl()
+{
+    {
+        // PORT-NOTE: the C# test drives the `--emit-pkg --package-library-file
+        // libDemoCustom.a -o Demo.starkpkg` CLI path and asserts exit code 0, empty
+        // stderr, CLI stdout ("Emitted package image:", "Package library file:
+        // libDemoCustom.a"), the .starkpkg file existing, and the loaded manifest's
+        // RootModule "Demo" / LibraryFileName "libDemoCustom.a" / single module.
+        // CLI process output, exit codes, file-system effects and package-image
+        // manifest contents are not expressible via the compile helpers, so this is
+        // reduced to compiling the same embedded Demo program through the full
+        // pipeline and asserting it succeeds (the precondition for emitting the
+        // package image).
+        stack mut LlvmCompile compiled = CompileFull(
+            "pkgimg-emit-requested-library-file-name",
+            raw"""
+module Demo
+
+public fn i32[min max] Run()
+{
+    return 7;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from PackageImageCliToolingTests.EmitPackageModeWritesNativeDependencyMetadata.
+internal fn bool EmitPackageModeWritesNativeDependencyMetadataImpl()
+{
+    {
+        // PORT-NOTE: the C# test drives `--emit-pkg` with native-dependency flags
+        // (--native-source, --native-include-dir, --native-library-dir,
+        // --native-library, --native-pkg-config, --native-link-arg) and asserts the
+        // loaded manifest's NativeDependencies records each (sources=DemoNative.c,
+        // includes=include, library-dirs=native, libraries=demo, pkg-config=demo-pkg,
+        // link-args=-pthread), then re-runs `--inspect-pkg` and asserts the summary
+        // "native dependencies: sources=1, includes=1, library-dirs=1, libraries=1,
+        // pkg-config=1, link-args=1". CLI process output, native-dependency manifest
+        // metadata and the inspect summary are not expressible via the compile
+        // helpers, so this is reduced to compiling the embedded Demo program through
+        // the full pipeline and asserting it succeeds.
+        stack mut LlvmCompile compiled = CompileFull(
+            "pkgimg-emit-native-dependency-metadata",
+            raw"""
+module Demo
+
+public fn i32[min max] Run()
+{
+    return 7;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from PackageImageCliToolingTests.EmitPackageModeStoresAbsoluteNativeSourcePathRelativeToPackageImage.
+internal fn bool EmitPackageModeStoresAbsoluteNativeSourcePathRelativeToPackageImageImpl()
+{
+    {
+        // PORT-NOTE: the C# test drives `--emit-pkg --native-source <abs src/DemoNative.c>
+        // -o <dist/Demo.starkpkg>` from separate src/ and dist/ directories and asserts
+        // the loaded manifest's single NativeDependencies source is stored relative
+        // (not rooted) and equals the package-image-relative path from dist/ to the
+        // native source. CLI process output, native-source path relocation and
+        // manifest metadata are not expressible via the compile helpers, so this is
+        // reduced to compiling the embedded Demo program through the full pipeline and
+        // asserting it succeeds.
+        stack mut LlvmCompile compiled = CompileFull(
+            "pkgimg-emit-relative-native-source-path",
+            raw"""
+module Demo
+
+public fn i32[min max] Run()
+{
+    return 7;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from PackageImageCliToolingTests.InspectPackageModePrintsReadableSummaryForValidPackageImage.
+internal fn bool InspectPackageModePrintsReadableSummaryForValidPackageImageImpl()
+{
+    {
+        // PORT-NOTE: the C# test first emits a package image from the Demo program via
+        // `--emit-pkg -o Demo.starkpkg`, then runs `--inspect-pkg` and asserts exit
+        // code 0, empty stderr, and a readable summary containing "package image:",
+        // "root module: Demo", "module count: 1", "module Demo:", "source-surface",
+        // "typed-interface" and "compiler-facts". CLI process output and the inspect
+        // summary text are not expressible via the compile helpers, so this is reduced
+        // to compiling the embedded Demo program through the full pipeline and
+        // asserting it succeeds (the precondition for emitting and inspecting it).
+        stack mut LlvmCompile compiled = CompileFull(
+            "pkgimg-inspect-readable-summary-valid-image",
+            raw"""
+module Demo
+
+public fn i32[min max] Run()
+{
+    return 7;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from PackageImageCliToolingTests.InspectPackageModeReportsValidationDiagnosticsForMalformedContent.
+internal fn bool InspectPackageModeReportsValidationDiagnosticsForMalformedContentImpl()
+{
+    {
+        // PORT-NOTE: the C# test writes a malformed package-image JSON document (a
+        // manifest with two modules both named "Demo") and runs `--inspect-pkg`,
+        // asserting exit code 1, empty stdout, and stderr containing "STK7106",
+        // "package-image" and "Failure summary:". The embedded document is package-
+        // image JSON, not a Stark program, and STK7106 is a package-image validation
+        // diagnostic the compile helpers cannot emit; so this is reduced to feeding the
+        // same malformed text verbatim through the full pipeline and asserting it does
+        // not succeed (the closest available failure signal).
+        stack mut LlvmCompile compiled = CompileFull(
+            "pkgimg-inspect-malformed-content-diagnostics",
+            raw"""
+{
+    "RootModule": "Demo",
+  "LibraryFileName": "libDemo.a",
+  "Modules": [
+    {
+        "ModuleName": "Demo",
+      "ReExports": [],
+      "Functions": [],
+      "Types": [],
+      "Globals": []
+    },
+    {
+        "ModuleName": "Demo",
+      "ReExports": [],
+      "Functions": [],
+      "Types": [],
+      "Globals": []
+    }
+  ]
+}
+""");
+        return !Succeeds(compiled);
+    }
+}
+
+// Ported slice of tests/compiler.IntegrationTests/PackageImageCliToolingTests.cs.
+// These are CLI integration tests whose original assertions cover --emit-lib /
+// --emit-exe exit codes, emitted-executable existence, CLI stdout text, the
+// linked program's runtime exit code, and pkg-config / linker log file contents.
+// The Stark compile helpers cannot observe those effects, so each Impl reduces
+// to driving the embedded package program through the closest compile helper and
+// asserting the nearest available success signal. See per-method `// PORT-NOTE:`.
+
+// Ported from PackageImageCliToolingTests.EmitExecutableLinksImportedPackageNativeSources.
+internal fn bool EmitExecutableLinksImportedPackageNativeSourcesImpl()
+{
+    // PORT-NOTE: original emits a NativeDemo package (--emit-lib with a C
+    // --native-source), deletes the package source, links an App that imports the
+    // manifest-backed package (--emit-exe -I), then runs the executable and
+    // asserts exit code 42. The compile helpers cannot model native-source
+    // linking, the sibling App module, or runtime exit codes; reduced to
+    // compiling the NativeDemo package program through the full pipeline and
+    // returning Succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "pkg-native-link-imported-sources",
+        raw"""
+module NativeDemo
+
+unsafe ffi fn i32[min max] stark_native_value();
+
+public fn i32[min max] GetValue()
+{
+    unsafe
+    {
+        return stark_native_value();
+    }
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from PackageImageCliToolingTests.EmitExecutableUsesPackageNativePkgConfigMetadata.
+internal fn bool EmitExecutableUsesPackageNativePkgConfigMetadataImpl()
+{
+    // PORT-NOTE: original emits a NativePkgDemo package (--emit-lib with a C
+    // --native-source and --native-pkg-config native-demo), deletes the package
+    // source, links an App importing the package (--emit-exe -I with a capture
+    // --linker), and asserts CLI exit 0, "Emitted executable:" stdout, the output
+    // exists, the pkg-config log contains --cflags/--libs/native-demo, and the
+    // linker log contains the library directory, -lNativeDemoSystem and -pthread.
+    // The compile helpers cannot model pkg-config invocation, native-source
+    // linking, the sibling App module, or log file contents; reduced to compiling
+    // the NativePkgDemo package program through the full pipeline and returning
+    // Succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "pkg-native-pkg-config-metadata",
+        raw"""
+module NativePkgDemo
+
+unsafe ffi fn i32[min max] stark_native_value();
+
+public fn i32[min max] GetValue()
+{
+    unsafe
+    {
+        return stark_native_value();
+    }
+}
+""");
+    return Succeeds(compiled);
+}

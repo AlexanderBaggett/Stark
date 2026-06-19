@@ -1,0 +1,523 @@
+import LlvmTestSupport
+import System.Testing
+module CompilerPipelineFullIntegrationTests
+
+// Ported slice of tests/compiler.PipelineTests/CompilerPipelineFullIntegrationTests.cs,
+// running against the current C# host compiler through the host test protocol.
+// Each Impl compiles a source program, requests the rendered `llvm` artifact,
+// and asserts on raw LLVM-IR substrings with System.Testing text helpers.
+//
+// PORT-NOTE (applies broadly): the C# oracle inspects pipeline `result.Logs`
+// (the "unsupported-lowering" / "llvm-body-fallback" log absence checks) and
+// non-LLVM artifacts (MidLevelIr, OptimizedSsaIr, EnumLayoutModel,
+// TypeCheckModel). The host LLVM bridge only exposes a single-source compile
+// and the rendered `llvm` text, so those log-absence and non-LLVM-artifact
+// assertions cannot be reproduced; they are reduced to Succeeds(...) or to the
+// nearest LLVM-text signal, with a per-method PORT-NOTE.
+
+// Ported from CompilerPipelineFullIntegrationTests.PipelineFoldsImportedConstantLawCallsAcrossMirSsaAndLlvm.
+internal fn bool PipelineFoldsImportedConstantLawCallsAcrossMirSsaAndLlvmImpl()
+{
+    // PORT-NOTE: the original imports a sibling `Lib.stark` (resolved through an
+    // InMemoryModuleResolver) and asserts the constant fold across MIR, SSA, and
+    // LLVM. The host bridge compiles a single source, so the imported `Adjust`
+    // finite law is folded into the same module here. The MIR/SSA constant-7
+    // checks cannot be expressed; only the LLVM-text assertions survive.
+    stack mut LlvmCompile c = CompileLlvm(
+        "fullint-folds-imported-constant-law",
+        raw"""
+module Demo
+
+public finite law i32[min max] Adjust(i32[min max] value)
+{
+    stack mut i32[min max] current = value;
+    if (current < 10)
+    {
+        current = current + 3;
+    }
+
+    return current;
+}
+
+unsafe fn i32[min max] Run()
+{
+    return Adjust(4);
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "ret i32 7")
+        && DoesNotContain(llvm, "call fastcc i32 @Lib_Adjust")
+        && DoesNotContain(llvm, "call fastcc i32 @Lib.Adjust");
+}
+
+// Ported from CompilerPipelineFullIntegrationTests.NestedAggregateRuntimeDropsDoNotTriggerUnsupportedMirLowering.
+internal fn bool NestedAggregateRuntimeDropsDoNotTriggerUnsupportedMirLoweringImpl()
+{
+    // PORT-NOTE: the original asserts the absence of an "unsupported-lowering"
+    // log at the lower-mir stage and the presence of the LlvmIrModule artifact.
+    // Neither pipeline logs nor artifact presence are exposed by the host
+    // bridge, so this reduces to Succeeds (a successful LLVM render implies the
+    // module lowered and emitted without falling over).
+    stack mut LlvmCompile c = CompileLlvm(
+        "fullint-nested-aggregate-runtime-drops",
+        raw"""
+module Demo
+
+static mut i32[min max] Counter = 0;
+
+fn void Bump(i32[min max] value)
+{
+    Counter = Counter + value;
+    return;
+}
+
+struct Resource
+{
+    i32[min max] Value;
+
+    drop
+    {
+        Bump(self.Value);
+    }
+}
+
+enum Token
+{
+    End,
+    Text(Resource),
+}
+
+struct Holder
+{
+    Token Token;
+    Resource Backup;
+}
+
+export fn i32[min max] main()
+{
+    {
+        stack Holder holder = new Holder()
+        {
+            Token = Token.Text(new Resource()
+            {
+                Value = 3
+            }),
+            Backup = new Resource()
+            {
+                Value = 4
+            }
+        };
+    }
+
+    return 0;
+}
+""");
+    return Succeeds(c);
+}
+
+// Ported from CompilerPipelineFullIntegrationTests.NestedInitializersEmitLlvmWithoutUnsupportedLoweringLogs.
+internal fn bool NestedInitializersEmitLlvmWithoutUnsupportedLoweringLogsImpl()
+{
+    // PORT-NOTE: the original asserts the absence of an "unsupported-lowering"
+    // lower-mir log and the LlvmIrModule artifact presence; neither is exposed
+    // by the host bridge, so this reduces to Succeeds.
+    stack mut LlvmCompile c = CompileLlvm(
+        "fullint-nested-initializers",
+        raw"""
+module Demo
+
+struct Inner
+{
+    i32[min max][2] Pair;
+}
+
+struct Outer
+{
+    i32[min max] Score;
+    Inner Node;
+}
+
+fn i32[min max] MakeScore()
+{
+    return 9;
+}
+
+fn i32[min max] MakeLeft()
+{
+    return 4;
+}
+
+fn i32[min max] MakeRight()
+{
+    return 7;
+}
+
+export fn i32[min max] main()
+{
+    stack Outer outer = new Outer()
+    {
+        Score = MakeScore(),
+        Node =
+        {
+            Pair =
+            {
+                MakeLeft(), MakeRight()
+            }
+        }
+    };
+    stack i32[min max][3] buffer =
+    {
+        1, 2, 3
+    };
+    stack i32[min max] total = outer.Node.Pair[0] + outer.Node.Pair[1] + outer.Score + buffer[2];
+    return total;
+}
+""");
+    return Succeeds(c);
+}
+
+// Ported from CompilerPipelineFullIntegrationTests.ReadonlyScalarArrayGlobalsCanUseVectorizationFriendlyAlignment.
+internal fn bool ReadonlyScalarArrayGlobalsCanUseVectorizationFriendlyAlignmentImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "fullint-readonly-scalar-array-globals",
+        raw"""
+module Demo
+
+const i32[min max][4] Lookup =
+{
+    1, 2, 3, 4
+};
+static mut i32[min max][4] Scratch =
+{
+    5, 6, 7, 8
+};
+
+fn i32[min max] Run(i32[min max] index)
+{
+    return Lookup[index] + Scratch[index];
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "constant [4 x i32] [i32 1, i32 2, i32 3, i32 4], align 16")
+        && Contains(llvm, "@Scratch = global [4 x i32] [i32 5, i32 6, i32 7, i32 8], align 4");
+}
+
+// Ported from CompilerPipelineFullIntegrationTests.SupportedComparisonFamiliesEmitLlvmWithoutUnsupportedLoweringLogs.
+internal fn bool SupportedComparisonFamiliesEmitLlvmWithoutUnsupportedLoweringLogsImpl()
+{
+    // PORT-NOTE: the original asserts the absence of an "unsupported-lowering"
+    // lower-mir log and the LlvmIrModule artifact presence; neither is exposed
+    // by the host bridge, so this reduces to Succeeds.
+    stack mut LlvmCompile c = CompileLlvm(
+        "fullint-supported-comparison-families",
+        raw"""
+module Demo
+
+record Many(i32[min max] A, i32[min max] B, i32[min max] C, i32[min max] D, i32[min max] E)
+{
+}
+record Label(ascii Tag, unicode Word)
+{
+}
+
+enum Token
+{
+    None,
+    Pair(i32[min max], i32[min max]),
+}
+
+export unsafe fn i32[min max] main()
+{
+    stack Many lessLeft = new Many(1, 2, 3, 4, 5);
+    stack Many lessRight = new Many(1, 2, 3, 4, 6);
+
+    stack i32[min max][3] sameLeft =
+    {
+        1, 2, 3
+    };
+    stack i32[min max][3] sameRight =
+    {
+        1, 2, 3
+    };
+    stack i32[min max][3] greaterLeft =
+    {
+        1, 2, 4
+    };
+    stack i32[min max][3] greaterRight =
+    {
+        1, 2, 3
+    };
+
+    stack i32[min max][3] leftValues =
+    {
+        1, 2, 3
+    };
+    stack i32[min max][3] rightValues =
+    {
+        1, 2, 3
+    };
+    stack i32[min max][] leftView = leftValues;
+    stack i32[min max][] rightView = rightValues;
+
+    if (lessLeft < lessRight
+        && sameLeft == sameRight
+        && greaterLeft > greaterRight
+        && "cab!"[1, 2] == "zab?"[1, 2]
+        && "cab!"[1, 2] < "cac?"[1, 2]
+        && ((unicode)"café!")[0, 4] != ((unicode)"cafe?")[0, 4]
+        && leftView != rightView
+        && new Label("cab!"[1, 2], ((unicode)"café!")[0, 4])
+            == new Label("zab?"[1, 2], ((unicode)"café?")[0, 4])
+        && Token.Pair(1, 2) > Token.Pair(1, 1))
+        {
+            return 7;
+    }
+
+    return 0;
+}
+""");
+    return Succeeds(c);
+}
+
+// Ported from CompilerPipelineFullIntegrationTests.ExpressionStatementsEmitLlvmWithoutUnsupportedLoweringLogs.
+internal fn bool ExpressionStatementsEmitLlvmWithoutUnsupportedLoweringLogsImpl()
+{
+    // PORT-NOTE: the original asserts the absence of an "unsupported-lowering"
+    // lower-mir log and the LlvmIrModule artifact presence; neither is exposed
+    // by the host bridge, so this reduces to Succeeds.
+    stack mut LlvmCompile c = CompileLlvm(
+        "fullint-expression-statements",
+        raw"""
+module Demo
+
+struct Box
+{
+    i32[min max] Value;
+}
+
+fn i32[min max] Next()
+{
+    return 7;
+}
+
+fn Box MakeBox(i32[min max] value)
+{
+    return new Box()
+    {
+        Value = value
+    };
+}
+
+export fn i32[min max] main()
+{
+    stack mut Box box = new Box()
+    {
+        Value = 1
+    };
+    box.Value + 2;
+    MakeBox(Next());
+    new Box()
+    {
+        Value = Next()
+    };
+    true ? MakeBox(3) : MakeBox(4);
+    return box.Value;
+}
+""");
+    return Succeeds(c);
+}
+
+// Ported from CompilerPipelineFullIntegrationTests.NestedPlaceUpdatesEmitLlvmWithoutUnsupportedLoweringLogs.
+internal fn bool NestedPlaceUpdatesEmitLlvmWithoutUnsupportedLoweringLogsImpl()
+{
+    // PORT-NOTE: the original asserts the absence of an "unsupported-lowering"
+    // lower-mir log and the LlvmIrModule artifact presence; neither is exposed
+    // by the host bridge, so this reduces to Succeeds.
+    stack mut LlvmCompile c = CompileLlvm(
+        "fullint-nested-place-updates",
+        raw"""
+module Demo
+
+struct Cell
+{
+    i32[min max] Value;
+}
+
+struct Holder
+{
+    Cell[2] Cells;
+}
+
+export fn i32[min max] main()
+{
+    stack mut Holder holder = new Holder()
+    {
+        Cells =
+        {
+            new Cell()
+            {
+                Value = 1
+            },
+            new Cell()
+            {
+                Value = 2
+            }
+        }
+    };
+    stack i32[min max] index = 1;
+    holder.Cells[index].Value += 4;
+
+    stack mut mut i32[min max][3] values =
+    {
+        1, 2, 3
+    };
+    stack mut mut i32[min max][] view = values;
+    view[0] = holder.Cells[index].Value;
+
+    return holder.Cells[index].Value + view[0];
+}
+""");
+    return Succeeds(c);
+}
+
+// Ported from CompilerPipelineFullIntegrationTests.HeapAllocatorLoweringAvoidsLlvmFallbackLogs.
+internal fn bool HeapAllocatorLoweringAvoidsLlvmFallbackLogsImpl()
+{
+    // PORT-NOTE: the original also asserts the absence of a codegen
+    // "llvm-body-fallback" log for `Run`; pipeline logs are not exposed by the
+    // host bridge, so that check is dropped and only the LLVM-text assertions
+    // (heap-alloc/free declarations and call sites) are kept.
+    stack mut LlvmCompile c = CompileLlvm(
+        "fullint-heap-allocator-lowering",
+        raw"""
+module Demo
+
+struct Box
+{
+    i32[min max] Value;
+}
+
+unsafe fn i32[min max] Run()
+{
+    heap Box box = new Box()
+    {
+        Value = 7
+    };
+    return box.Value;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "define internal dso_local noalias nonnull noundef ptr @__stark_heap_alloc(i64 noundef %size, i64 noundef allocalign %alignment)")
+        && Contains(llvm, "call noalias nonnull noundef align 4 dereferenceable(4) ptr @__stark_heap_alloc(i64 noundef")
+        && Contains(llvm, "call void @__stark_heap_free(ptr %slot_box)");
+}
+
+// Ported from CompilerPipelineFullIntegrationTests.UnusedTypeAliasesDoNotBlockTheCurrentPipeline.
+internal fn bool UnusedTypeAliasesDoNotBlockTheCurrentPipelineImpl()
+{
+    // PORT-NOTE: the original also asserts the TypeCheckModel and LlvmIrModule
+    // artifacts are present; artifact presence is not exposed by the host
+    // bridge, so only the LLVM-text `@Run` definition assertion is kept.
+    stack mut LlvmCompile c = CompileLlvm(
+        "fullint-unused-type-aliases",
+        raw"""
+module Demo
+
+alias Byte = i8[min max];
+
+unsafe fn i32[min max] Run()
+{
+    return 0;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "define fastcc noundef i32 @Run()");
+}
+
+// Ported from CompilerPipelineFullIntegrationTests.InternalEnumsDeriveDirectTagLayoutsAndFlowThroughTheFullPipeline.
+internal fn bool InternalEnumsDeriveDirectTagLayoutsAndFlowThroughTheFullPipelineImpl()
+{
+    // PORT-NOTE: the original asserts a detailed EnumLayoutModel (DirectTag kind,
+    // `$tag`/`$Integer_0`/`$Move_X`/`$Move_Y` ordered fields, per-variant tag
+    // values and field mappings); that artifact is not exposed by the host
+    // bridge. Only the LLVM-text `%Token = type {` aggregate-declaration
+    // assertion is kept.
+    stack mut LlvmCompile c = CompileLlvm(
+        "fullint-internal-enums-direct-tag",
+        raw"""
+module Enums
+
+enum Token
+{
+    End,
+    Integer(i32[min max]),
+    Move
+    {
+        X: i32[min max], Y: i32[min max]
+    },
+}
+
+fn Token Make(i32[min max] value)
+{
+    if (value == 0)
+    {
+        return Token.End;
+    }
+
+    if (value == 1)
+    {
+        return Token.Integer(7);
+    }
+
+    return Token.Move
+    {
+        X: value, Y: 2
+    };
+}
+
+fn Token Echo(Token token)
+{
+    return token;
+}
+
+unsafe fn i32[min max] Run()
+{
+    stack Token first = Token.Integer(5);
+    stack Token second = Token.Move
+    {
+        X: 1, Y: 2
+    };
+    stack Token third = Make(0);
+    stack Token fourth = Echo(second);
+    return 0;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "%Token = type {");
+}

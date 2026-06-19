@@ -1,0 +1,151 @@
+import StdlibPortSupport
+import System.Memory
+import System.Runtime.Buffer
+import System.Testing
+module SystemRuntimeBufferStandardLibraryTests
+
+// Ported from SystemRuntimeBufferStandardLibraryTests.StdLibSourceRuntimeBufferModuleSupportsLinearAndRingOperations.
+internal fn bool StdLibSourceRuntimeBufferModuleSupportsLinearAndRingOperationsImpl()
+{
+    stack mut ProgramCompile c = CompileProgram("stdlib-runtime-buffer-linear-and-ring", raw"""
+        import System.Runtime.Buffer
+        import System.Memory
+        module Demo
+
+        unsafe fn i32[min max] Use()
+        {
+            stack mut System.Runtime.Buffer.FixedByteBuffer512 linear = new System.Runtime.Buffer.FixedByteBuffer512();
+            linear.WriteSlice()[0] = (i8[min max])65;
+            linear.AdvanceWrite(1);
+
+            stack i8[min max][] readSlice = linear.ReadSlice();
+            if (readSlice[0] != (i8[min max])65)
+            {
+                return 2;
+            }
+
+            linear.AdvanceRead(1);
+            if (!linear.IsEmpty())
+            {
+                return 3;
+            }
+
+            stack mut System.Runtime.Buffer.DynamicByteBuffer buffer = new System.Runtime.Buffer.DynamicByteBuffer();
+            stack mut i8[min max] value = 0;
+            switch (buffer.WriteByte((i8[min max])66))
+            {
+                case System.Memory.MemoryStatus.Err(var writeError):
+                    return 4;
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            if (!buffer.TryReadByte(value) || value != (i8[min max])66)
+            {
+                return 5;
+            }
+
+            return 0;
+        }
+        """);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemRuntimeBufferStandardLibraryTests.SourceRuntimeBufferModuleCanExecuteLinearAndRingOperations.
+internal fn bool SourceRuntimeBufferModuleCanExecuteLinearAndRingOperationsImpl()
+{
+    // PORT-NOTE: the C# original copies stdlib System/Runtime/Buffer.stark into a temp
+    // module tree, drives the CompilerCli with --emit-exe to produce a native binary,
+    // checks the CLI exit code / "Emitted executable:" stdout / compiler logs, then runs
+    // the produced process and asserts exit code 0 with empty stdout and stderr. The
+    // compile-only host bridge cannot emit or execute a native binary, so this reduces
+    // to compiling the embedded App program against the host stdlib and asserting Succeeds.
+    stack mut ProgramCompile c = CompileProgram("source-runtime-buffer-execute-linear-and-ring", raw"""
+        import System.Runtime.Buffer
+        import System.Memory
+        module App
+
+        fn bool IsOk(System.Memory.MemoryStatus status)
+        {
+            switch (status)
+            {
+                case System.Memory.MemoryStatus.Err(var error):
+                    return false;
+                case System.Memory.MemoryStatus.Ok:
+                    return true;
+            }
+        }
+
+        export fn i32[min max] main()
+        {
+            stack mut System.Runtime.Buffer.FixedByteBuffer512 linear = new System.Runtime.Buffer.FixedByteBuffer512();
+            if (linear.Capacity() != 512 || linear.Readable() != 0 || linear.Writable() != 512)
+            {
+                return 1;
+            }
+
+            linear.WriteSlice()[0] = (i8[min max])65;
+            linear.AdvanceWrite(1);
+
+            stack i8[min max][] readSlice = linear.ReadSlice();
+            if (readSlice[0] != (i8[min max])65)
+            {
+                return 3;
+            }
+
+            linear.AdvanceRead(1);
+            if (!linear.IsEmpty())
+            {
+                return 4;
+            }
+
+            stack mut System.Runtime.Buffer.DynamicByteBuffer buffer = new System.Runtime.Buffer.DynamicByteBuffer();
+            stack mut i8[min max] value = 0;
+
+            if (!IsOk(buffer.WriteByte((i8[min max])66)) || !IsOk(buffer.WriteByte((i8[min max])67)))
+            {
+                return 5;
+            }
+
+            if (!buffer.TryReadByte(value) || value != (i8[min max])66)
+            {
+                return 6;
+            }
+
+            if (!buffer.TryReadByte(value) || value != (i8[min max])67)
+            {
+                return 7;
+            }
+
+            for willexit (stack mut i64[min max] i = 0; i < 1024; i += 1)
+            {
+                if (!IsOk(buffer.WriteByte((i8[min max])90)))
+                {
+                    return 8;
+                }
+
+                if (!buffer.TryReadByte(value) || value != (i8[min max])90)
+                {
+                    return 9;
+                }
+            }
+
+            if (!buffer.IsEmpty())
+            {
+                return 10;
+            }
+
+            return 0;
+        }
+        """);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return true;
+}

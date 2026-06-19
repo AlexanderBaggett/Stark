@@ -1,0 +1,1068 @@
+import SsaTestSupport
+import System.Testing
+module SsaLoweringTests
+
+// Ported slice (part 1) of the source-driven SsaLoweringTests.cs SSA lowering
+// tests, running against the current C# host compiler through the host test
+// protocol. Each Impl compiles the embedded Stark program (kept verbatim from
+// the C# raw string) through the closest compile helper and returns a bool that
+// is true when the original xUnit assertions would hold.
+//
+// PORT-NOTE (suite-wide): the original C# tests inspect the structured
+// SsaIrModule object model -- block lists, phi nodes, and the SsaInstruction /
+// SsaRValue subtype hierarchy (SsaInsertFieldRValue, SsaExtractFieldRValue,
+// SsaElementAddressRValue, SsaFieldAddressRValue, SsaSliceElementAddressRValue,
+// SsaLoadIndirectRValue, SsaStoreIndirectInstruction, SsaCopyMemoryInstruction,
+// SsaAllocateLocalInstruction, SsaCallInstruction, SsaConvertRValue, etc.) and
+// per-instruction metadata (ScopedNoAliasGroups / AliasProofCarrierKind,
+// LoopContracts / LoopBehavior, LoopAccessGroups, MemoryWriteKind). The host
+// source-in / rendered-artifact-text-out bridge cannot reconstruct those typed
+// inputs, so each ported assertion is reduced to the nearest signal over the
+// rendered `ssa` (raw `lower-ssa`, via CompileSsa) or `optimized-ssa` (via
+// CompileOptimizedSsa) artifact text: a `Succeeds(...)` gate plus, where the
+// rendered text exposes a faithful token, a `SsaContains` / `SsaContainsAll*` /
+// `SsaContainsButNot` / `SsaOccurrences` / `OptimizedSsa*` text signal. The text
+// renderer (ArtifactTextRenderer.cs) does NOT emit scoped-noalias groups, alias
+// proof carriers, loop contracts, loop behavior, or loop access groups, so the
+// tests keyed on those metadata facts reduce to `Succeeds(...)` only. The C#
+// tests remain the oracle until cutover.
+
+// Ported from SsaLoweringTests.CommutativeRepeatedExpressionsShareAValueNumber.
+internal fn bool CommutativeRepeatedExpressionsShareAValueNumberImpl()
+{
+    // PORT-NOTE: original counts SsaBinaryRValue Add instructions and asserts the
+    // commuted `left + right` / `right + left` pair plus the final `first + second`
+    // collapse to exactly two distinct adds via value numbering. The text bridge
+    // cannot enumerate typed binary rvalues by operator, so this is reduced to a
+    // successful raw-SSA compile of the program.
+    stack mut SsaCompile compiled = CompileSsa(
+        "ssa-p1-commutative-repeated-value-number",
+        raw"""
+module Demo
+
+unsafe fn i32[min max] Run(i32[min max] left, i32[min max] right)
+{
+    stack i32[min max] first = left + right;
+    stack i32[min max] second = right + left;
+    return first + second;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from SsaLoweringTests.OptimizedSsaRemovesTrivialPhiNodesAndRewritesReturns.
+internal fn bool OptimizedSsaRemovesTrivialPhiNodesAndRewritesReturnsImpl()
+{
+    // PORT-NOTE: original asserts every optimized block has no phis and that some
+    // block's return terminator carries the integer constant 7. Reduced to: the
+    // optimized-ssa text has no surviving `phi` and the constant `return 7`
+    // appears (both arms store 7, so the trivial phi is removed and the return is
+    // rewritten to the constant).
+    stack mut SsaCompile compiled = CompileOptimizedSsa(
+        "ssa-p1-optimized-removes-trivial-phi",
+        raw"""
+module Demo
+
+unsafe fn i32[min max] Run(bool flag)
+{
+    stack mut i32[min max] value = 7;
+    if (flag)
+    {
+        value = 7;
+    }
+    else
+    {
+        value = 7;
+    }
+
+    return value;
+}
+""");
+    return OptimizedSsaContainsButNot(compiled, "return 7", "phi");
+}
+
+// Ported from SsaLoweringTests.EmptyTrampolineBlocksAreCollapsed.
+internal fn bool EmptyTrampolineBlocksAreCollapsedImpl()
+{
+    // PORT-NOTE: the original builds a MidLevelIrModule by hand (entry goto -> an
+    // empty trampoline block -> exit returning 0) and runs SsaLowerer directly,
+    // asserting the trampoline is collapsed so the entry jumps straight to the
+    // exit. There is NO embedded Stark source on the C# side, so this is a
+    // closest-equivalent source program whose empty-goto chain (the if-true arm
+    // is an empty block that falls through to the join) exercises trampoline-block
+    // collapsing. The hand-built-MIR object-model asserts (block count, label not
+    // containing "trampoline", entry retargeted to the exit id) cannot cross the
+    // source-in bridge, so this is reduced to a successful raw-SSA compile.
+    stack mut SsaCompile compiled = CompileSsa(
+        "ssa-p1-empty-trampoline-collapsed",
+        raw"""
+module Demo
+
+unsafe fn i32[min max] Run(bool flag)
+{
+    if (flag)
+    {
+    }
+
+    return 0;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from SsaLoweringTests.VoidCallStatementsLowerToStatementOnlySsaInstructions.
+internal fn bool VoidCallStatementsLowerToStatementOnlySsaInstructionsImpl()
+{
+    // PORT-NOTE: the original builds a MidLevelIrModule by hand with a direct void
+    // call (Drop(1)) and an indirect void call through a function-address operand,
+    // runs SsaLowerer directly, and asserts the lowered instructions contain a
+    // statement-only SsaCallInstruction and SsaIndirectCallInstruction (both
+    // void) and NO SsaValueInstruction wrapping a void call rvalue. There is NO
+    // embedded Stark source on the C# side, so this is a closest-equivalent source
+    // program: a void `fn` invoked both directly and through a `fnptr` value, so
+    // the void calls lower to statement-only `call` instructions. The hand-built
+    // typed-instruction asserts cannot cross the source-in bridge, so this is
+    // reduced to a text signal that the `call` to Drop survives.
+    stack mut SsaCompile compiled = CompileSsa(
+        "ssa-p1-void-call-statement-only",
+        raw"""
+module Demo
+
+unsafe fn void Drop(i32[min max] value)
+{
+    return;
+}
+
+unsafe fn void Run()
+{
+    Drop(1);
+    stack fnptr<unsafe fn(i32[min max])> op = &Drop;
+    op(2);
+    return;
+}
+""");
+    return SsaContains(compiled, "Drop");
+}
+
+// Ported from SsaLoweringTests.AggregateBranchJoinProducesByValuePhi.
+internal fn bool AggregateBranchJoinProducesByValuePhiImpl()
+{
+    // PORT-NOTE: original asserts a single join block carries one phi for `box`
+    // whose type is the named aggregate and which has two incomings. The rendered
+    // text exposes the if-join block label and a `phi` line, but not the typed
+    // variable-name / type-kind facts; reduced to a text signal that an if-join
+    // block exists and a `phi` over the named `Box` aggregate is present.
+    stack mut SsaCompile compiled = CompileSsa(
+        "ssa-p1-aggregate-branch-join-byvalue-phi",
+        raw"""
+module Demo
+
+struct Box
+{
+    i32[min max] Value;
+}
+
+unsafe fn i32[min max] Run(bool flag)
+{
+    stack mut Box box = new Box()
+    {
+        Value = 0
+    };
+    if (flag)
+    {
+        box = new Box()
+        {
+            Value = 1
+        };
+    }
+    else
+    {
+        box = new Box()
+        {
+            Value = 2
+        };
+    }
+
+    return box.Value;
+}
+""");
+    return Succeeds(compiled) && SsaContainsAll2(compiled, "if_join", "phi");
+}
+
+// Ported from SsaLoweringTests.UnreachableJoinBlocksArePrunedFromSsa.
+internal fn bool UnreachableJoinBlocksArePrunedFromSsaImpl()
+{
+    // PORT-NOTE: original asserts the function has exactly 3 blocks and that no
+    // block label contains "if_join" (both arms return, so the join is
+    // unreachable and pruned). The text bridge cannot count typed blocks, so this
+    // is reduced to a text signal that no `if_join` block label survives.
+    stack mut SsaCompile compiled = CompileSsa(
+        "ssa-p1-unreachable-join-pruned",
+        raw"""
+module Demo
+
+unsafe fn i32[min max] Run()
+{
+    if (true)
+    {
+        return 1;
+    }
+    else
+    {
+        return 2;
+    }
+}
+""");
+    return Succeeds(compiled) && SsaContainsButNot(compiled, "return", "if_join");
+}
+
+// Ported from SsaLoweringTests.AggregateFieldOperationsLowerToSsaExtractAndInsert.
+internal fn bool AggregateFieldOperationsLowerToSsaExtractAndInsertImpl()
+{
+    // PORT-NOTE: original asserts the instructions contain both an
+    // SsaInsertFieldRValue (box.Value = 2) and an SsaExtractFieldRValue
+    // (return box.Value). The rendered text does not expose those typed rvalue
+    // discriminators distinctly, so this is reduced to a successful raw-SSA
+    // compile of the field write-then-read program.
+    stack mut SsaCompile compiled = CompileSsa(
+        "ssa-p1-aggregate-field-extract-insert",
+        raw"""
+module Demo
+
+struct Box
+{
+    i32[min max] Value;
+}
+
+unsafe fn i32[min max] Run()
+{
+    stack mut Box box = new Box()
+    {
+        Value = 1
+    };
+    box.Value = 2;
+    return box.Value;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from SsaLoweringTests.RegisterObjectCreationRemainsScalarizedInSsa.
+internal fn bool RegisterObjectCreationRemainsScalarizedInSsaImpl()
+{
+    // PORT-NOTE: original asserts a `register` aggregate is scalarized -- no
+    // alloca/store-local for `box` -- while insert/extract field rvalues are
+    // present. The faithful, expressible signal is that no stack/heap alloca for
+    // `box` survives (the register local never materializes a slot).
+    stack mut SsaCompile compiled = CompileSsa(
+        "ssa-p1-register-object-creation-scalarized",
+        raw"""
+module Demo
+
+struct Box
+{
+    i32[min max] Value;
+}
+
+unsafe fn i32[min max] Run()
+{
+    register Box box = new Box()
+    {
+        Value = 7
+    };
+    return box.Value;
+}
+""");
+    return Succeeds(compiled) && !SsaContains(compiled, "alloca[stack] box");
+}
+
+// Ported from SsaLoweringTests.RegisterScalarInitializerRemainsDirectSsaValue.
+internal fn bool RegisterScalarInitializerRemainsDirectSsaValueImpl()
+{
+    // PORT-NOTE: original asserts a `register` scalar local stays a direct SSA
+    // value -- no alloca, store-local, or lifetime markers for `value` -- with a
+    // surviving Add binary rvalue. Reduced to the faithful expressible signal that
+    // no alloca and no lifetime marker for `value` is rendered.
+    stack mut SsaCompile compiled = CompileSsa(
+        "ssa-p1-register-scalar-direct-value",
+        raw"""
+module Demo
+
+unsafe fn i32[min max] Run()
+{
+    register mut i32[min max] value = 7;
+    value = value + 1;
+    return value;
+}
+""");
+    return Succeeds(compiled)
+        && !SsaContains(compiled, "alloca[stack] value")
+        && !SsaContains(compiled, "lifetime.start value");
+}
+
+// Ported from SsaLoweringTests.HeapObjectCreationUsesStorageBackedSsaLocalWithoutStackLifetimeMarkers.
+internal fn bool HeapObjectCreationUsesStorageBackedSsaLocalWithoutStackLifetimeMarkersImpl()
+{
+    // PORT-NOTE: original asserts a `heap` aggregate gets a heap alloca/dealloc
+    // and a store-local for `box`, with NO stack lifetime markers. The rendered
+    // text exposes the storage-class alloca/dealloc and the lifetime mnemonics, so
+    // this is reduced to: `alloca[heap] box` and `dealloc[heap] box` present, and
+    // no `lifetime.start box` marker.
+    stack mut SsaCompile compiled = CompileSsa(
+        "ssa-p1-heap-object-storage-backed-no-lifetime",
+        raw"""
+module Demo
+
+struct Box
+{
+    i32[min max] Value;
+}
+
+unsafe fn i32[min max] Run()
+{
+    heap Box box = new Box()
+    {
+        Value = 7
+    };
+    return box.Value;
+}
+""");
+    return SsaContainsAll2(compiled, "alloca[heap] box", "dealloc[heap] box")
+        && !SsaContains(compiled, "lifetime.start box");
+}
+
+// Ported from SsaLoweringTests.HeapFieldInitializationUsesAddressStoresWithoutAggregateLoads.
+internal fn bool HeapFieldInitializationUsesAddressStoresWithoutAggregateLoadsImpl()
+{
+    // PORT-NOTE: original asserts a heap aggregate's per-field initialization uses
+    // a heap alloca for `pair`, exactly two SsaStoreIndirectInstruction stores,
+    // Left/Right SsaFieldAddressRValue field-address rvalues, and NO store-local /
+    // aggregate-load / insert-field for `pair`. Reduced to the faithful
+    // expressible signals: `alloca[heap] pair` is present and no aggregate
+    // store-local `-> pair` survives (the fields are written through addresses).
+    stack mut SsaCompile compiled = CompileSsa(
+        "ssa-p1-heap-field-init-address-stores",
+        raw"""
+module Demo
+
+struct Pair
+{
+    i32[min max] Left;
+    i32[min max] Right;
+}
+
+unsafe fn i32[min max] Run(i32[min max] left, i32[min max] right)
+{
+    heap mut Pair pair;
+    pair.Left = left;
+    pair.Right = right;
+    return pair.Left + pair.Right;
+}
+""");
+    return SsaContains(compiled, "alloca[heap] pair") && !SsaContains(compiled, "-> pair");
+}
+
+// Ported from SsaLoweringTests.HeapFixedArrayElementInitializationUsesAddressStores.
+internal fn bool HeapFixedArrayElementInitializationUsesAddressStoresImpl()
+{
+    // PORT-NOTE: original asserts a heap fixed-array gets a heap alloca for
+    // `values`, exactly two store-indirect stores, two constant-index
+    // SsaElementAddressRValue element-address rvalues, and NO store-local /
+    // insert-index for `values`. Reduced to the faithful expressible signals:
+    // `alloca[heap] values` is present and no aggregate store-local `-> values`
+    // survives.
+    stack mut SsaCompile compiled = CompileSsa(
+        "ssa-p1-heap-fixed-array-element-address-stores",
+        raw"""
+module Demo
+
+unsafe fn i32[min max] Run(i32[min max] left, i32[min max] right)
+{
+    heap mut i32[min max][2] values;
+    values[0] = left;
+    values[1] = right;
+    return values[0] + values[1];
+}
+""");
+    return SsaContains(compiled, "alloca[heap] values") && !SsaContains(compiled, "-> values");
+}
+
+// Ported from SsaLoweringTests.AddressableAggregateAssignmentLowersToMemoryCopy.
+internal fn bool AddressableAggregateAssignmentLowersToMemoryCopyImpl()
+{
+    // PORT-NOTE: original asserts an addressable aggregate assignment (dest =
+    // source, with both address-taken) lowers to an SsaCopyMemoryInstruction with
+    // a Move transfer kind over the named type, and an `undef` store-local
+    // invalidating the moved `source`. The rendered text exposes the copy-memory
+    // `move ... ->` mnemonic and the `undef -> source` store; reduced to a text
+    // signal that the `move` copy and the `undef -> source` invalidation are
+    // present.
+    stack mut SsaCompile compiled = CompileSsa(
+        "ssa-p1-addressable-aggregate-assignment-memory-copy",
+        raw"""
+module Demo
+
+struct Pair
+{
+    i32[min max] Left;
+    i32[min max] Right;
+
+    drop
+    {
+    }
+}
+
+unsafe fn i32[min max] Run()
+{
+    stack Pair source = new Pair()
+    {
+        Left = 1, Right = 2
+    };
+    stack mut Pair dest = new Pair()
+    {
+        Left = 0, Right = 0
+    };
+    stack rawptr<Pair> sourcePtr = &source;
+    stack rawptr<Pair> destPtr = &dest;
+    dest = source;
+    return dest.Right;
+}
+""");
+    return SsaContainsAll2(compiled, "move", "undef -> source");
+}
+
+// Ported from SsaLoweringTests.AggregateByValueCallInvalidatesMovedAddressableSource.
+internal fn bool AggregateByValueCallInvalidatesMovedAddressableSourceImpl()
+{
+    // PORT-NOTE: original asserts a by-value call (Touch(source)) on an
+    // address-taken aggregate keeps the Touch call and emits an `undef`
+    // store-local invalidating the moved `source`. The rendered text exposes the
+    // `call`/Touch token and the `undef -> source` store; reduced to a text signal
+    // that the Touch call and the `undef -> source` invalidation are both present.
+    stack mut SsaCompile compiled = CompileSsa(
+        "ssa-p1-aggregate-byvalue-call-invalidates-source",
+        raw"""
+module Demo
+
+struct Pair
+{
+    i32[min max] Left;
+    i32[min max] Right;
+
+    drop
+    {
+    }
+}
+
+unsafe fn void Touch(Pair value)
+{
+}
+
+unsafe fn i32[min max] Run()
+{
+    stack mut Pair source = new Pair()
+    {
+        Left = 1, Right = 2
+    };
+    stack rawptr<Pair> sourcePtr = &source;
+    Touch(source);
+    source = new Pair()
+    {
+        Left = 3, Right = 4
+    };
+    return source.Right;
+}
+""");
+    return SsaContainsAll2(compiled, "Touch", "undef -> source");
+}
+
+// Ported from SsaLoweringTests.AddressableAggregateInitializerDoesNotMaterializeAggregateTempLocals.
+internal fn bool AddressableAggregateInitializerDoesNotMaterializeAggregateTempLocalsImpl()
+{
+    // PORT-NOTE: original asserts an addressable aggregate initializer materializes
+    // the named local `value` but NO compiler-generated `$tmp` aggregate alloca /
+    // store-local and NO named-type copy-memory. Reduced to the faithful
+    // expressible signals: `alloca[stack] value` is present and no `$tmp` local is
+    // rendered.
+    stack mut SsaCompile compiled = CompileSsa(
+        "ssa-p1-addressable-aggregate-initializer-no-temp",
+        raw"""
+module Demo
+
+struct Pair
+{
+    i32[min max] Left;
+    i32[min max] Right;
+}
+
+unsafe fn i32[min max] Run()
+{
+    stack Pair value = new Pair()
+    {
+        Left = 1, Right = 2
+    };
+    stack rawptr<Pair> ptr = &value;
+    return value.Right;
+}
+""");
+    return SsaContains(compiled, "alloca[stack] value") && !SsaContains(compiled, "$tmp");
+}
+
+// Ported from SsaLoweringTests.AddressableAggregateConditionalDoesNotMaterializeAggregateTempLocals.
+internal fn bool AddressableAggregateConditionalDoesNotMaterializeAggregateTempLocalsImpl()
+{
+    // PORT-NOTE: original asserts an addressable aggregate from a ternary
+    // initializer materializes the named local `value` but NO compiler-generated
+    // `$tmp` aggregate alloca / store-local and NO named-type copy-memory. Reduced
+    // to the faithful expressible signals: `alloca[stack] value` is present and no
+    // `$tmp` local is rendered.
+    stack mut SsaCompile compiled = CompileSsa(
+        "ssa-p1-addressable-aggregate-conditional-no-temp",
+        raw"""
+module Demo
+
+struct Pair
+{
+    i32[min max] Left;
+    i32[min max] Right;
+}
+
+unsafe fn i32[min max] Run(bool flag)
+{
+    stack Pair value = flag ? new Pair()
+    {
+        Left = 1, Right = 2
+    }:
+    new Pair()
+    {
+        Left = 3, Right = 4
+    };
+    stack rawptr<Pair> ptr = &value;
+    return value.Right;
+}
+""");
+    return SsaContains(compiled, "alloca[stack] value") && !SsaContains(compiled, "$tmp");
+}
+
+// Ported from SsaLoweringTests.NonAddressableFixedArrayDynamicIndexAllocatesCompilerGeneratedScratchLocalInSsa.
+internal fn bool NonAddressableFixedArrayDynamicIndexAllocatesCompilerGeneratedScratchLocalInSsaImpl()
+{
+    // PORT-NOTE: original asserts a dynamic index into a non-addressable fixed-array
+    // call result allocates a compiler-generated `$tmp` stack scratch local of
+    // fixed-array type (so the result can be addressed) with NO lifetime markers on
+    // that scratch local. Reduced to the faithful expressible signal that a `$tmp`
+    // scratch alloca is rendered in Run.
+    stack mut SsaCompile compiled = CompileSsa(
+        "ssa-p1-nonaddressable-fixed-array-dynamic-index-scratch",
+        raw"""
+module Demo
+
+unsafe fn i32[min max][3] Make(i32[min max] left, i32[min max] middle, i32[min max] right)
+{
+    stack i32[min max][3] values =
+    {
+        left, middle, right
+    };
+    return values;
+}
+
+unsafe fn i32[min max] Run(i32[min max] index, i32[min max] seed)
+{
+    return Make(seed, seed + 1, seed + 2)[index];
+}
+""");
+    return Succeeds(compiled) && SsaContains(compiled, "$tmp");
+}
+
+// Ported from SsaLoweringTests.FixedArrayIndexOperationsLowerToSsaExtractAndInsert.
+internal fn bool FixedArrayIndexOperationsLowerToSsaExtractAndInsertImpl()
+{
+    // PORT-NOTE: original asserts a constant-index fixed-array write-then-read stays
+    // scalarized -- no alloca/store-local/lifetime markers for `values` -- while
+    // insert-index / extract-index rvalues are present. The faithful expressible
+    // signal is that no alloca and no lifetime marker for `values` is rendered.
+    stack mut SsaCompile compiled = CompileSsa(
+        "ssa-p1-fixed-array-index-extract-insert",
+        raw"""
+module Demo
+
+unsafe fn i32[min max] Run()
+{
+    stack mut i32[min max][3] values =
+    {
+        1, 2, 3
+    };
+    values[1] = 9;
+    return values[1];
+}
+""");
+    return Succeeds(compiled)
+        && !SsaContains(compiled, "alloca[stack] values")
+        && !SsaContains(compiled, "lifetime.start values");
+}
+
+// Ported from SsaLoweringTests.SliceLoweringUsesLocalSlotsAndSliceLoads.
+internal fn bool SliceLoweringUsesLocalSlotsAndSliceLoadsImpl()
+{
+    // PORT-NOTE: original asserts a slice over a fixed-array local materializes a
+    // `values` alloca with lifetime markers and a store-local, plus a
+    // make-slice-from-local rvalue, a slice-element-address rvalue, and an indirect
+    // load for the dynamic `view[index]`. The rendered text exposes the alloca and
+    // lifetime mnemonics for `values`; reduced to: `alloca[stack] values`,
+    // `lifetime.start values`, and `lifetime.end values` are all present.
+    stack mut SsaCompile compiled = CompileSsa(
+        "ssa-p1-slice-lowering-local-slots-loads",
+        raw"""
+module Demo
+
+unsafe fn i32[min max] Run(i32[min max] index)
+{
+    stack i32[min max][3] values =
+    {
+        4, 7, 9
+    };
+    stack i32[min max][] view = values;
+    return view[index];
+}
+""");
+    return SsaContainsAll3(compiled, "alloca[stack] values", "lifetime.start values", "lifetime.end values");
+}
+
+// Ported from SsaLoweringTests.TextSlicesLowerToSsaViewOperations.
+internal fn bool TextSlicesLowerToSsaViewOperationsImpl()
+{
+    // PORT-NOTE: original asserts `text[start, length]` lowers to an
+    // SsaTextSliceRValue producing a unicode view with 64-bit-integer start and
+    // length operands. The text bridge cannot inspect the typed rvalue's operand
+    // bit-widths, so this is reduced to a successful raw-SSA compile of the
+    // text-slice program.
+    stack mut SsaCompile compiled = CompileSsa(
+        "ssa-p1-text-slice-view-operations",
+        raw"""
+module Demo
+
+unsafe fn unicode Run(unicode text, i32[min max] start, i32[min max] length)
+{
+    return text[start, length];
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from SsaLoweringTests.ExplicitAsciiLiteralToUnicodeConversionLowersToUnicodeConstantInSsa.
+internal fn bool ExplicitAsciiLiteralToUnicodeConversionLowersToUnicodeConstantInSsaImpl()
+{
+    // PORT-NOTE: original asserts an explicit `(unicode)"Hello"` cast folds to a
+    // unicode SsaStringConstant returned directly, with NO surviving
+    // ascii->unicode SsaConvertRValue. The rendered text exposes the returned
+    // string literal but not the typed-constant kind; reduced to: the `"Hello"`
+    // literal is returned and no `convert` instruction survives.
+    stack mut SsaCompile compiled = CompileSsa(
+        "ssa-p1-ascii-to-unicode-constant-fold",
+        raw"""
+module Demo
+
+unsafe fn unicode Run()
+{
+    return (unicode)"Hello";
+}
+""");
+    return SsaContainsButNot(compiled, "Hello", "convert");
+}
+
+// Ported from SsaLoweringTests.DynamicFixedArrayIndexMutationUsesIndirectAddressOps.
+internal fn bool DynamicFixedArrayIndexMutationUsesIndirectAddressOpsImpl()
+{
+    // PORT-NOTE: original asserts a dynamic-index fixed-array write-then-read
+    // materializes the `values` local (alloca + lifetime markers) and uses
+    // address-of-local, element-address, store-indirect, and load-indirect ops.
+    // Reduced to the faithful expressible signals: `alloca[stack] values` and its
+    // lifetime markers are present (the dynamic index forces the slot to
+    // materialize).
+    stack mut SsaCompile compiled = CompileSsa(
+        "ssa-p1-dynamic-fixed-array-index-indirect",
+        raw"""
+module Demo
+
+unsafe fn i32[min max] Run(i32[min max] index)
+{
+    stack mut i32[min max][3] values =
+    {
+        1, 2, 3
+    };
+    values[index] = 9;
+    return values[index];
+}
+""");
+    return SsaContainsAll3(compiled, "alloca[stack] values", "lifetime.start values", "lifetime.end values");
+}
+
+// Ported from SsaLoweringTests.SliceMutationUsesIndirectAddressOps.
+internal fn bool SliceMutationUsesIndirectAddressOpsImpl()
+{
+    // PORT-NOTE: original asserts a mutable-slice write-then-read uses a
+    // slice-element-address rvalue, a store-indirect, and a load-indirect. The
+    // text bridge cannot discriminate those typed rvalues distinctly, so this is
+    // reduced to a successful raw-SSA compile of the slice-mutation program.
+    stack mut SsaCompile compiled = CompileSsa(
+        "ssa-p1-slice-mutation-indirect",
+        raw"""
+module Demo
+
+unsafe fn i32[min max] Run(mut i32[min max][] view, i32[min max] index)
+{
+    view[index] = 9;
+    return view[index];
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from SsaLoweringTests.ExplicitPointerOperatorsAndConversionsLowerToSsa.
+internal fn bool ExplicitPointerOperatorsAndConversionsLowerToSsaImpl()
+{
+    // PORT-NOTE: original asserts explicit pointer operators and casts lower to a
+    // `value` alloca, an address-of-local rvalue, a rawptr->rawptr convert, an
+    // int->int convert, a store-indirect, and a load-indirect. The rendered text
+    // exposes the alloca and `convert` mnemonic; reduced to: `alloca[stack] value`
+    // and a `convert` instruction are both present.
+    stack mut SsaCompile compiled = CompileSsa(
+        "ssa-p1-explicit-pointer-operators-conversions",
+        raw"""
+module Demo
+
+unsafe fn i32[min max] Run(i64[min max] bits)
+{
+    stack mut i32[min max] value = 1;
+    stack rawmutptr<i32[min max]> ptr = &value;
+    stack rawptr<i32[min max]> readonlyPtr = (rawptr<i32[min max]>)ptr;
+    *ptr = (i32[min max])bits;
+    return *readonlyPtr;
+}
+""");
+    return SsaContainsAll2(compiled, "alloca[stack] value", "convert");
+}
+
+// Ported from SsaLoweringTests.FieldAndGlobalAddressExpressionsLowerToSsaAddresses.
+internal fn bool FieldAndGlobalAddressExpressionsLowerToSsaAddressesImpl()
+{
+    // PORT-NOTE: original asserts field- and global-address expressions lower to a
+    // `box` alloca, a field-address rvalue, a store-indirect, and a load-indirect
+    // whose address is the global `Counter`. The rendered text exposes the alloca
+    // and the `@Counter` global-address token; reduced to: `alloca[stack] box` and
+    // the `@Counter` global address are both present.
+    stack mut SsaCompile compiled = CompileSsa(
+        "ssa-p1-field-and-global-address-expressions",
+        raw"""
+module Demo
+
+struct Box
+{
+    i32[min max] Value;
+}
+
+static mut i32[min max] Counter = 0;
+
+unsafe fn i32[min max] Run(i32[min max] input)
+{
+    stack mut Box box = new Box()
+    {
+        Value = 1
+    };
+    *(&(box.Value)) = input;
+    Counter = *(&(box.Value));
+    return *(&Counter);
+}
+""");
+    return SsaContainsAll2(compiled, "alloca[stack] box", "@Counter");
+}
+
+// Ported from SsaLoweringTests.IndexedFieldAddressBehindRawPointerLowersToParameterBackedSsaAddresses.
+internal fn bool IndexedFieldAddressBehindRawPointerLowersToParameterBackedSsaAddressesImpl()
+{
+    // PORT-NOTE: original asserts an indexed field address behind a raw pointer
+    // (`&(*buffer).Storage[index]`) lowers to a field-address rvalue, an
+    // element-address rvalue, a store-indirect, and a load-indirect. The text
+    // bridge cannot discriminate those typed rvalues distinctly, so this is
+    // reduced to a successful raw-SSA compile of the indexed-field-address program.
+    stack mut SsaCompile compiled = CompileSsa(
+        "ssa-p1-indexed-field-address-behind-rawptr",
+        raw"""
+module Demo
+
+struct Buffer
+{
+    i8[min max][16] Storage;
+    i64[min max] WritePos;
+}
+
+unsafe fn i32[min max] Touch(rawmutptr<Buffer> buffer, i64[min max] index, i8[min max] value)
+{
+    *(&(*buffer).Storage[index]) = value;
+    return (i32[min max])*(&(*buffer).Storage[index]);
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from SsaLoweringTests.ImmutableGlobalAddressesLowerToReadonlySsaAddresses.
+internal fn bool ImmutableGlobalAddressesLowerToReadonlySsaAddressesImpl()
+{
+    // PORT-NOTE: original asserts both CounterPtr and FieldPtr support direct code
+    // generation, that CounterPtr returns a readonly global-address value for
+    // `Counter`, and that FieldPtr emits a readonly field-address rvalue with NO
+    // rawptr->rawptr mutability-stripping convert. The text bridge cannot inspect
+    // the typed pointer-mutability flags, so this is reduced to: the compile
+    // succeeds and CounterPtr returns the `@Counter` global address (with no
+    // `convert` surviving in the rendered text).
+    stack mut SsaCompile compiled = CompileSsa(
+        "ssa-p1-immutable-global-addresses-readonly",
+        raw"""
+module Demo
+
+struct Box
+{
+    i32[min max] Value;
+}
+
+static i32[min max] Counter = 0;
+static Box Current = new Box()
+{
+    Value = 5
+};
+
+unsafe fn rawptr<i32[min max]> CounterPtr()
+{
+    return &Counter;
+}
+
+unsafe fn rawptr<i32[min max]> FieldPtr()
+{
+    return &(Current.Value);
+}
+""");
+    return SsaContainsButNot(compiled, "@Counter", "convert");
+}
+
+// Ported from SsaLoweringTests.FrozenSliceAddressesLowerToReadonlySsaAddresses.
+internal fn bool FrozenSliceAddressesLowerToReadonlySsaAddressesImpl()
+{
+    // PORT-NOTE: original asserts FirstPtr supports direct code generation and
+    // emits a slice-element-address rvalue whose result pointer is readonly
+    // (not mutable). The text bridge cannot inspect the typed pointer-mutability
+    // flag, so this is reduced to a successful raw-SSA compile of the
+    // frozen-slice-address program.
+    stack mut SsaCompile compiled = CompileSsa(
+        "ssa-p1-frozen-slice-addresses-readonly",
+        raw"""
+module Demo
+
+unsafe fn rawptr<frozen i32[min max]> FirstPtr(frozen i32[min max][] view)
+{
+    return &(view[0]);
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from SsaLoweringTests.RuntimeDisjointTrueBranchCarriesScopedNoAliasFactsIntoSsaMemoryOperations.
+internal fn bool RuntimeDisjointTrueBranchCarriesScopedNoAliasFactsIntoSsaMemoryOperationsImpl()
+{
+    // PORT-NOTE: original asserts the `if disjoint(...)` true branch attaches a
+    // single shared ScopedNoAliasGroup (RuntimeDisjointCondition proof carrier,
+    // root keys param:left / param:right) to its store-indirect and load-indirect,
+    // while the false path carries no groups. The text renderer
+    // (ArtifactTextRenderer.cs) does NOT emit scoped-noalias groups or alias proof
+    // carriers, so this metadata fact is inexpressible; reduced to a successful
+    // raw-SSA compile of the runtime-disjoint program.
+    stack mut SsaCompile compiled = CompileSsa(
+        "ssa-p1-runtime-disjoint-noalias-facts",
+        raw"""
+module Demo
+
+unsafe fn i32[min max] Run(
+    rawmutptr<i32[min max]> left,
+    rawmutptr<i32[min max]> right)
+    {
+        if disjoint(left, right)
+    {
+        *left = 7;
+        return *right;
+    }
+
+    *left = 1;
+    return *right;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from SsaLoweringTests.UnsafeAssumeDisjointCarriesUnsafeProofCarrierKindIntoSsaMemoryOperations.
+internal fn bool UnsafeAssumeDisjointCarriesUnsafeProofCarrierKindIntoSsaMemoryOperationsImpl()
+{
+    // PORT-NOTE: original asserts an `assume disjoint(...)` block attaches a single
+    // shared ScopedNoAliasGroup (UnsafeAssumeDisjoint proof carrier, root keys
+    // param:left / param:right) to its store-indirect and load-indirect. The text
+    // renderer does NOT emit scoped-noalias groups or alias proof carriers, so this
+    // metadata fact is inexpressible; reduced to a successful raw-SSA compile of
+    // the assume-disjoint program.
+    stack mut SsaCompile compiled = CompileSsa(
+        "ssa-p1-unsafe-assume-disjoint-proof-carrier",
+        raw"""
+module Demo
+
+unsafe fn i32[min max] Run(
+    rawmutptr<i32[min max]> left,
+    rawmutptr<i32[min max]> right)
+    where overlap(left, right)
+    {
+        assume disjoint(left, right)
+    {
+        *left = 7;
+        return *right;
+    }
+
+    return 0;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from SsaLoweringTests.IndependentForLoopsPreserveLoopContractsInSsa.
+internal fn bool IndependentForLoopsPreserveLoopContractsInSsaImpl()
+{
+    // PORT-NOTE: original asserts some block terminator carries LoopContracts
+    // including "independent" with LoopBehavior "willexit". The text renderer does
+    // NOT emit terminator loop contracts or loop behavior, so this metadata fact is
+    // inexpressible; reduced to a successful raw-SSA compile of the
+    // for-willexit-independent program.
+    stack mut SsaCompile compiled = CompileSsa(
+        "ssa-p1-independent-for-loop-contracts",
+        raw"""
+module Demo
+
+unsafe fn u8[0 10] Run()
+{
+    stack mut u8[0 10] sum = 0;
+    for willexit independent (stack mut u8[0 10] index = 0; index < 4; index += 1)
+    {
+        sum += index;
+    }
+
+    return sum;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from SsaLoweringTests.WillexitWhileLoopsPreserveLoopBehaviorOnBackedgesInSsa.
+internal fn bool WillexitWhileLoopsPreserveLoopBehaviorOnBackedgesInSsaImpl()
+{
+    // PORT-NOTE: original asserts at least two terminators carry LoopBehavior
+    // "willexit" (the cond backedge and the continue backedge) and that none of
+    // them carry LoopContracts. The text renderer does NOT emit terminator loop
+    // behavior or loop contracts, so this metadata fact is inexpressible; reduced
+    // to a successful raw-SSA compile of the while-willexit-with-continue program.
+    stack mut SsaCompile compiled = CompileSsa(
+        "ssa-p1-willexit-while-loop-backedges",
+        raw"""
+module Demo
+
+unsafe fn u8[0 10] Run(u8[0 10] limit)
+{
+    stack mut u8[0 10] value = 0;
+    while willexit (value < limit)
+    {
+        value += 1;
+        if (value == 2)
+        {
+            continue;
+        }
+    }
+
+    return value;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from SsaLoweringTests.IndependentSliceLoopsCarryAccessGroupsInSsa.
+internal fn bool IndependentSliceLoopsCarryAccessGroupsInSsaImpl()
+{
+    // PORT-NOTE: original asserts an independent slice loop attaches LoopAccessGroups
+    // to a load-indirect value instruction and to a block terminator. The text
+    // renderer does NOT emit loop access groups, so this metadata fact is
+    // inexpressible; reduced to a successful raw-SSA compile of the
+    // independent-slice-loop program.
+    stack mut SsaCompile compiled = CompileSsa(
+        "ssa-p1-independent-slice-loop-access-groups",
+        raw"""
+module Demo
+
+unsafe fn void Add(
+    borrow i32[min max][] left,
+    borrow i32[min max][] right,
+    borrow mut i32[min max][] output,
+    u8[0 10] count)
+    {
+        for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1)
+    {
+        output[index] = left[index] + right[index];
+    }
+
+    return;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from SsaLoweringTests.InitAndOutAssignmentsCarryInitializationWriteKindInSsa.
+internal fn bool InitAndOutAssignmentsCarryInitializationWriteKindInSsaImpl()
+{
+    // PORT-NOTE: original asserts both Fill (init slice element) and Write (out
+    // parameter) emit an SsaStoreIndirectInstruction with WriteKind Initialization
+    // over an integer value. The text renderer distinguishes initialization stores
+    // with the `init-store` mnemonic; reduced to: an `init-store` is present in the
+    // rendered text (covering the init/out initialization-write-kind stores).
+    stack mut SsaCompile compiled = CompileSsa(
+        "ssa-p1-init-and-out-initialization-write-kind",
+        raw"""
+module Demo
+
+unsafe fn void Fill(init u32[0 max][] destination)
+{
+    init destination[0] = 7;
+    return;
+}
+
+fn void Write(out u32[0 max] value)
+{
+    value = 9;
+    return;
+}
+""");
+    return SsaContains(compiled, "init-store");
+}
+
+// Ported from SsaLoweringTests.OrdinaryMutableSliceAssignmentKeepsReplacementWriteKindInSsa.
+internal fn bool OrdinaryMutableSliceAssignmentKeepsReplacementWriteKindInSsaImpl()
+{
+    // PORT-NOTE: original asserts an ordinary mutable-slice assignment emits an
+    // SsaStoreIndirectInstruction with WriteKind Replacement (not Initialization)
+    // over an integer value. The text renderer renders replacement stores with the
+    // plain `store` mnemonic (initialization stores use `init-store`); reduced to:
+    // a plain `store` is present and no `init-store` initialization-write-kind
+    // store survives.
+    stack mut SsaCompile compiled = CompileSsa(
+        "ssa-p1-ordinary-mutable-slice-replacement-write-kind",
+        raw"""
+module Demo
+
+unsafe fn void Replace(borrow mut u32[0 max][] destination)
+{
+    destination[0] = 7;
+    return;
+}
+""");
+    return SsaContainsButNot(compiled, "store", "init-store");
+}

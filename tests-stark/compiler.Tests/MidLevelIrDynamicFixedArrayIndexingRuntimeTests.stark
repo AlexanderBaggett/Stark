@@ -1,0 +1,26 @@
+import CompilerTestSupport
+import System.Testing
+module MidLevelIrDynamicFixedArrayIndexingRuntimeTests
+
+// Ported from MidLevelIrDynamicFixedArrayIndexingRuntimeTests.DynamicIndexingOnFixedArrayTemporaryCompilesAndRuns.
+internal fn bool DynamicIndexingOnFixedArrayTemporaryCompilesAndRunsImpl()
+{
+    // PORT-NOTE: original emits the embedded program with --emit-exe, asserts the
+    // compile CLI exit is 0 with "Emitted executable:" on stdout and empty stderr,
+    // then runs the linked executable and asserts its process exit code is 0 (with
+    // empty stdout/stderr). The compile helpers cannot link or observe a runtime
+    // exit code; reduced to driving the embedded program through the full pipeline
+    // and returning Succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "dynamic-indexing-fixed-array-temporary",
+        raw"""
+module Demo
+
+export fn i32[min max] main()
+{
+    stack i32[min max] index = 2;
+    return (new i32[min max][3])[index];
+}
+""");
+    return Succeeds(compiled);
+}

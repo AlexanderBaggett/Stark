@@ -1,0 +1,45 @@
+import CompilerTestSupport
+import System.Testing
+module RawMultilineStringParityTests
+
+// Ported from RawMultilineStringParityTests.ContentOnTheOpeningQuoteLineIsDiagnosed.
+internal fn bool ContentOnTheOpeningQuoteLineIsDiagnosedImpl()
+{
+    {
+        stack mut LlvmCompile compiled = CompileLlvm(
+            "raw-multiline-content-on-opening-quote-line",
+            "module Demo\n\nunsafe fn ascii Value()\n{\n    return raw\"\"\"first\n        second\n        \"\"\";\n}");
+        return !Succeeds(compiled)
+            && AnyDiagnosticMessageContains(
+                compiled,
+                "must start their content on the line after the opening quotes");
+    }
+}
+
+// Ported from RawMultilineStringParityTests.LinesIndentedLessThanTheClosingQuotesAreDiagnosed.
+internal fn bool LinesIndentedLessThanTheClosingQuotesAreDiagnosedImpl()
+{
+    {
+        stack mut LlvmCompile compiled = CompileLlvm(
+            "raw-multiline-lines-indented-less-than-closing-quotes",
+            "module Demo\n\nunsafe fn ascii Value()\n{\n    return raw\"\"\"\n  under\n        \"\"\";\n}\n");
+        return !Succeeds(compiled)
+            && AnyDiagnosticMessageContains(
+                compiled,
+                "must start with the same whitespace as the closing quotes");
+    }
+}
+
+// Ported from RawMultilineStringParityTests.ContentBeforeTheClosingQuotesOnTheirLineIsDiagnosed.
+internal fn bool ContentBeforeTheClosingQuotesOnTheirLineIsDiagnosedImpl()
+{
+    {
+        stack mut LlvmCompile compiled = CompileLlvm(
+            "raw-multiline-content-before-closing-quotes",
+            "module Demo\n\nunsafe fn ascii Value()\n{\n    return raw\"\"\"\n        first\n        second \"\"\";\n}");
+        return !Succeeds(compiled)
+            && AnyDiagnosticMessageContains(
+                compiled,
+                "closing quotes of a multiline raw string literal must be on their own line");
+    }
+}

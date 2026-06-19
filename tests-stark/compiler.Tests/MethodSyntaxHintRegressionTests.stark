@@ -1,0 +1,69 @@
+import CompilerTestSupport
+import System.Testing
+module MethodSyntaxHintRegressionTests
+
+// Ported from MethodSyntaxHintRegressionTests.FreeFunctionCalledWithMethodSyntaxSuggestsTheFreeCallForm.
+internal fn bool FreeFunctionCalledWithMethodSyntaxSuggestsTheFreeCallFormImpl()
+{
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-free-function-called-with-method-syntax-suggests-free-call-form",
+        raw"""
+module Demo
+
+struct Point
+{
+    i32[min max] X;
+}
+
+fn i32[min max] GetX(borrow Point self)
+{
+    return self.X;
+}
+
+fn i32[min max] Run(borrow Point p)
+{
+    return p.GetX();
+}
+""");
+    // C# Assert.False(result.Succeeded) plus a single STK3005 diagnostic whose
+    // message contains all three fragments. FailsWithDiagnosticMessage covers the
+    // failed-compile + code + first fragment; the remaining fragments are checked
+    // against the diagnostic stream.
+    return FailsWithDiagnosticMessage(
+            compiled,
+            "STK3005",
+            "does not contain a field named 'GetX'")
+        && AnyDiagnosticMessageContains(compiled, "'GetX' is a free function")
+        && AnyDiagnosticMessageContains(compiled, "Methods are declared inside the type body");
+}
+
+// Ported from MethodSyntaxHintRegressionTests.GenuinelyMissingMemberHasNoFreeFunctionHint.
+internal fn bool GenuinelyMissingMemberHasNoFreeFunctionHintImpl()
+{
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-genuinely-missing-member-has-no-free-function-hint",
+        raw"""
+module Demo
+
+struct Point
+{
+    i32[min max] X;
+}
+
+fn i32[min max] Run(borrow Point p)
+{
+    return p.Nonexistent;
+}
+""");
+    // C# Assert.False(result.Succeeded) plus an STK3005 diagnostic that names the
+    // missing field but does NOT mention "free function". The helpers cannot assert
+    // the absence of a substring on the matching diagnostic, so the negative half is
+    // approximated against the whole diagnostic stream.
+    // PORT-NOTE: the "must NOT contain 'free function'" clause is reduced to
+    // !AnyDiagnosticMessageContains(compiled, "free function") over all diagnostics.
+    return FailsWithDiagnosticMessage(
+            compiled,
+            "STK3005",
+            "does not contain a field named 'Nonexistent'")
+        && !AnyDiagnosticMessageContains(compiled, "free function");
+}

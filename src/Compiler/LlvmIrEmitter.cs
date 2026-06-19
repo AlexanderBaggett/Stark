@@ -28,6 +28,11 @@ internal sealed class LlvmIrEmitter
     private readonly CompilerLogBag? _logs;
     private readonly AbiModel _abiModel;
     private readonly SsaIrModule _ssa;
+    // Name -> SSA function index, so per-function emission does O(1) lookups instead of
+    // an O(N) linear scan of _ssa.Functions (which made whole-module emission O(N^2)).
+    private readonly Dictionary<string, SsaFunction> _ssaFunctionsByName;
+    private readonly HashSet<string> _ssaFunctionBodyNames;
+    private Dictionary<string, ClosureLambdaTypingRecord>? _capturingClosureLambdasByName;
     private readonly LlvmTargetInfo? _targetInfo;
     private readonly bool _internalizeModulePrivate;
     private readonly bool _enableOptimizedRawPointerLoopIntrinsics;
@@ -138,6 +143,19 @@ internal sealed class LlvmIrEmitter
         _logs = logs;
         _abiModel = abiModel;
         _ssa = ssa;
+        _ssaFunctionsByName = new Dictionary<string, SsaFunction>(StringComparer.Ordinal);
+        _ssaFunctionBodyNames = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var ssaFunctionByName in ssa.Functions)
+        {
+            // First occurrence wins, matching the prior FirstOrDefault(by name) semantics.
+            _ssaFunctionsByName.TryAdd(ssaFunctionByName.Name, ssaFunctionByName);
+            // Any same-named function with a body marks the name as having an SSA body,
+            // matching the prior `_ssa.Functions.Any(name == X && HasBody)` semantics.
+            if (ssaFunctionByName.HasBody)
+            {
+                _ssaFunctionBodyNames.Add(ssaFunctionByName.Name);
+            }
+        }
         _targetInfo = targetInfo;
         _internalizeModulePrivate = internalizeModulePrivate;
         _enableOptimizedRawPointerLoopIntrinsics = enableOptimizedRawPointerLoopIntrinsics;
@@ -285,7 +303,7 @@ internal sealed class LlvmIrEmitter
             var effects = _allFunctionEffects[resolvedName];
             var signature = _typeModel.Functions[resolvedName];
             var abiSignature = _abiModel.Functions[resolvedName];
-            var ssaFunction = _ssa.Functions.FirstOrDefault(item => item.Name == resolvedName);
+            var ssaFunction = _ssaFunctionsByName.GetValueOrDefault(resolvedName);
             var parameterEffects = GetParameterEffects(resolvedName, function.HasBody && !effects.IsFfi)
                 ?? GetBuiltinParameterEffects(_syntaxModel.ModuleName, resolvedName, signature);
             var memoryEffects = GetFunctionMemoryEffects(resolvedName, function.HasBody && !effects.IsFfi);
@@ -548,7 +566,7 @@ internal sealed class LlvmIrEmitter
                 continue;
             }
 
-            var ssaFunction = _ssa.Functions.FirstOrDefault(function => string.Equals(function.Name, abiFunction.Name, StringComparison.Ordinal));
+            var ssaFunction = _ssaFunctionsByName.GetValueOrDefault(abiFunction.Name);
             var hasBody = ssaFunction is { HasBody: true };
             var parameterEffects = GetParameterEffects(abiFunction.Name, hasBody)
                 ?? GetBuiltinParameterEffects(moduleName: string.Empty, abiFunction.Name, signature);
@@ -2554,16 +2572,39 @@ internal sealed class LlvmIrEmitter
         return parameterEffects;
     }
 
+    private ClosureLambdaTypingRecord? GetCapturingClosureLambda(string functionName)
+    {
+        // O(1) lookup over a lazily built index, replacing a per-call linear
+        // FirstOrDefault scan of _typeModel.ClosureLambdas. The index keeps the first
+        // capturing lambda (with a non-empty environment type) per function name, matching
+        // the prior FirstOrDefault first-match semantics.
+        _capturingClosureLambdasByName ??= BuildCapturingClosureLambdaIndex();
+        return _capturingClosureLambdasByName.GetValueOrDefault(functionName);
+    }
+
+    private Dictionary<string, ClosureLambdaTypingRecord> BuildCapturingClosureLambdaIndex()
+    {
+        var index = new Dictionary<string, ClosureLambdaTypingRecord>(StringComparer.Ordinal);
+        foreach (var candidate in _typeModel.ClosureLambdas)
+        {
+            if (candidate.HasCaptures
+                && !string.IsNullOrEmpty(candidate.FunctionName)
+                && !string.IsNullOrWhiteSpace(candidate.EnvironmentTypeName))
+            {
+                index.TryAdd(candidate.FunctionName, candidate);
+            }
+        }
+
+        return index;
+    }
+
     private bool TryBuildClosureEnvironmentParameterEffects(
         string functionName,
         ParameterMemoryEffectSummary? existing,
         out ParameterMemoryEffectSummary effects)
     {
         effects = default!;
-        var lambda = _typeModel.ClosureLambdas.FirstOrDefault(candidate =>
-            candidate.HasCaptures
-            && string.Equals(candidate.FunctionName, functionName, StringComparison.Ordinal)
-            && !string.IsNullOrWhiteSpace(candidate.EnvironmentTypeName));
+        var lambda = GetCapturingClosureLambda(functionName);
         if (lambda is null)
         {
             return false;
@@ -2615,9 +2656,10 @@ internal sealed class LlvmIrEmitter
 
     private bool HasSsaBody(string functionName)
     {
-        return _ssa.Functions.Any(function =>
-            string.Equals(function.Name, functionName, StringComparison.Ordinal)
-            && function.HasBody);
+        // O(1) lookup over a precomputed set of names whose SSA function has a body,
+        // replacing a per-call linear scan of _ssa.Functions (which made callers such as
+        // GetParameterEffects O(N) and, inside per-function .Any() scans, O(N^2)).
+        return _ssaFunctionBodyNames.Contains(functionName);
     }
 
     private bool TryGetRootValidationSummary(string functionName, out FunctionValidationSummary validation)

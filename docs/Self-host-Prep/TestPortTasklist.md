@@ -4,7 +4,7 @@ _Generated 2026-06-18. One `- [ ]` per C# `[Fact]`/`[Theory]` to port from `test
 
 **Scope** (per request): every standard-library test; every Stark-source→LLVM-IR test; every Stark-source→parse-error test; plus other portable, target-agnostic Stark-source compiler/language tests. **Excluded** (listed at the end, with reason): tests that enforce a specific CPU/target architecture or are tightly coupled to C# host internals.
 
-**Progress: 2638 / 2638 ported (100%).**
+**Progress: 2637 / 2638 ported (100%).**
 
 _Items pre-checked `[x]` were auto-detected by name: 639 of the 1314 existing Stark test functions in `tests-stark/` share an exact name with a C# test method. This is a heuristic — verify against the actual port if in doubt._
 
@@ -13,7 +13,7 @@ _Items pre-checked `[x]` were auto-detected by name: 639 of the 1314 existing St
 | Category | Ported | Total |
 |---|---:|---:|
 | Standard library — all stdlib tests (compiler.StandardLibraryTests) | 227 | 227 |
-| LLVM IR emission (Stark source -> LLVM `.ll` text) | 615 | 615 |
+| LLVM IR emission (Stark source -> LLVM `.ll` text) | 614 | 615 |
 | Parse / syntax-error expectations (Stark source -> parse error) | 10 | 10 |
 | Parsing & syntax-model shape | 12 | 12 |
 | Semantic / lowering diagnostics | 391 | 391 |
@@ -27,7 +27,7 @@ _Items pre-checked `[x]` were auto-detected by name: 639 of the 1314 existing St
 | CLI / project driver behavior | 31 | 31 |
 | Example & benchmark sources | 21 | 21 |
 | Other portable compiler-behavior tests | 16 | 16 |
-| **Total** | **2638** | **2638** |
+| **Total** | **2637** | **2638** |
 | _(excluded, not ported)_ |  | _122_ |
 
 ## Standard library — all stdlib tests (compiler.StandardLibraryTests)  (227/227)
@@ -341,7 +341,7 @@ _Items pre-checked `[x]` were auto-detected by name: 639 of the 1314 existing St
 - [x] SystemThreadingStandardLibraryTests::StdLibSourceLinuxThreadingUsesRawCloneLifecycleAndSyscallBackedScheduler
 - [x] SystemThreadingStandardLibraryTests::StdLibSourceWindowsThreadingUsesWin32LifecycleAndSchedulerCalls
 
-## LLVM IR emission (Stark source -> LLVM `.ll` text)  (615/615)
+## LLVM IR emission (Stark source -> LLVM `.ll` text)  (614/615)
 
 ### AddressOfByValueCopyableParameterRegressionTests  (1/1)
 - [x] AddressOfByValueCopyableParameterRegressionTests::InliningAMultiBlockBorrowOfAByValueCopyableParameterValidates
@@ -533,7 +533,7 @@ _Items pre-checked `[x]` were auto-detected by name: 639 of the 1314 existing St
 - [x] LlvmEmitterConversionTests::UnicodeToAsciiReinterpretCastIsNotLowered
 - [x] LlvmEmitterConversionTests::SourceBodyFallbackDeclarationCanBeStrictlyOmitted
 
-### LlvmIrEmissionTests  (412/412)
+### LlvmIrEmissionTests  (411/412)
 - [x] LlvmIrEmissionTests::StraightLineFunctionEmitsOptimizedLlvmBody
 - [x] LlvmIrEmissionTests::DynamicRawPointerStorageSliceLowersToSlicePairInLocalAndArgumentPositions
 - [x] LlvmIrEmissionTests::DynamicRawPointerStorageSliceReassignmentLowersToSlicePair

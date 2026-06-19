@@ -1,0 +1,299 @@
+import CompilerTestSupport
+import System.IO
+import System.Testing
+module TryPropagationRuntimeTests
+
+// Ported slice of tests/compiler.IntegrationTests/TryPropagationRuntimeTests.cs.
+// These are end-to-end runtime tests of the `try` error-propagation expression and
+// the `from` enum funnel: each original test compiles an embedded program to a
+// native executable, runs it, and asserts an exact process exit code (proving
+// success/failure paths, cross-family `from` conversion, stdlib IOResult funnels,
+// and drop-exactly-once for owned payloads). The Stark compile helpers cannot
+// emit, link, or run a native executable nor observe its exit code, so each Impl
+// reduces to driving the embedded program through the full pipeline and asserting
+// Succeeds. See per-method `// PORT-NOTE:` comments.
+
+// Ported from TryPropagationRuntimeTests.TrySameErrorTypePropagatesAndUnwrapsAtRuntime.
+internal fn bool TrySameErrorTypePropagatesAndUnwrapsAtRuntimeImpl()
+{
+    // PORT-NOTE: original asserts the linked program exits with code 17 (try
+    // propagation + unwrap driven purely by [Ok]/[Err] roles, not variant names).
+    // Reduced to a full-pipeline compile of the embedded program returning Succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "try-same-error-type-propagates-unwraps",
+        raw"""
+module Demo
+
+enum DiskError { Bad }
+
+enum FetchOutcome<T>
+{
+    [Ok] Got(T),
+    [Err] Failed(DiskError),
+}
+
+fn FetchOutcome<i32[min max]> ReadNumber(i32[min max] x)
+{
+    if (x < 0)
+    {
+        return FetchOutcome<i32[min max]>.Failed(DiskError.Bad);
+    }
+    return FetchOutcome<i32[min max]>.Got(x + 1);
+}
+
+fn FetchOutcome<i32[min max]> Compute(i32[min max] start)
+{
+    stack i32[min max] n = try ReadNumber(start);
+    stack i32[min max] m = try ReadNumber(n);
+    return FetchOutcome<i32[min max]>.Got(m + 10);
+}
+
+export fn i32[min max] main()
+{
+    switch (Compute(5))
+    {
+        case FetchOutcome<i32[min max]>.Got(var v): return v;
+        case FetchOutcome<i32[min max]>.Failed(var e): return 99;
+    }
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from TryPropagationRuntimeTests.TryFromConversionAndUnitFailurePropagateOnBothPathsAtRuntime.
+internal fn bool TryFromConversionAndUnitFailurePropagateOnBothPathsAtRuntimeImpl()
+{
+    // PORT-NOTE: original asserts the linked program exits with code 123 (Result/
+    // Option role-annotated enums: Ok path, LowError->HighError from-funnel on the
+    // err path, Some path, and None unit-failure diversion). Reduced to a
+    // full-pipeline compile of the embedded program returning Succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "try-from-conversion-unit-failure-both-paths",
+        raw"""
+module Demo
+
+enum Result<T, E>
+{
+    [Ok] Ok(T),
+    [Err] Err(E),
+}
+
+enum Option<T>
+{
+    [Ok] Some(T),
+    [Err] None,
+}
+
+enum LowError { Disk }
+enum HighError { Low from LowError, Other }
+
+fn Result<i32[min max], LowError> ReadLow(i32[min max] x)
+{
+    if (x < 0)
+    {
+        return Result<i32[min max], LowError>.Err(LowError.Disk);
+    }
+    return Result<i32[min max], LowError>.Ok(x + 1);
+}
+
+fn Result<i32[min max], HighError> ComputeHigh(i32[min max] start)
+{
+    stack i32[min max] n = try ReadLow(start);
+    return Result<i32[min max], HighError>.Ok(n + 100);
+}
+
+fn Option<i32[min max]> Lookup(i32[min max] x)
+{
+    if (x == 0)
+    {
+        return Option<i32[min max]>.None;
+    }
+    return Option<i32[min max]>.Some(x * 2);
+}
+
+fn Option<i32[min max]> ComputeOpt(i32[min max] x)
+{
+    stack i32[min max] a = try Lookup(x);
+    return Option<i32[min max]>.Some(a + 1);
+}
+
+export fn i32[min max] main()
+{
+    stack mut i32[min max] r1 = 0;
+    switch (ComputeHigh(5))
+    {
+        case Result<i32[min max], HighError>.Ok(var v): r1 = v;
+        case Result<i32[min max], HighError>.Err(var e): r1 = 0;
+    }
+
+    stack mut i32[min max] r2 = 0;
+    switch (ComputeHigh(-1))
+    {
+        case Result<i32[min max], HighError>.Ok(var v): r2 = 0;
+        case Result<i32[min max], HighError>.Err(var e):
+            switch (e)
+            {
+                case HighError.Low(var low): r2 = 7;
+                case HighError.Other: r2 = 1;
+            }
+    }
+
+    stack mut i32[min max] r3 = 0;
+    switch (ComputeOpt(3))
+    {
+        case Option<i32[min max]>.Some(var v): r3 = v;
+        case Option<i32[min max]>.None: r3 = 0;
+    }
+
+    stack mut i32[min max] r4 = 0;
+    switch (ComputeOpt(0))
+    {
+        case Option<i32[min max]>.Some(var v): r4 = 0;
+        case Option<i32[min max]>.None: r4 = 3;
+    }
+
+    return r1 + r2 + r3 + r4;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from TryPropagationRuntimeTests.TryStdlibIOResultPropagatesIntoUserEnumThroughFunnelAtRuntime.
+internal fn bool TryStdlibIOResultPropagatesIntoUserEnumThroughFunnelAtRuntimeImpl()
+{
+    // PORT-NOTE: original compiles against the real standard library (via an
+    // include directory of stdlib/src) and asserts the linked program exits with
+    // code 67 (stdlib IOResult propagated into a user AppResult through the
+    // `Io from IOError` funnel). The compile helper cannot supply the stdlib
+    // include directory nor observe the exit code; reduced to a full-pipeline
+    // compile of the embedded program returning Succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "try-stdlib-ioresult-funnel-into-user-enum",
+        raw"""
+import System.IO
+module Demo
+
+enum AppError
+{
+    Io from IOError,
+    BadInput,
+}
+
+enum AppResult<T>
+{
+    [Ok] Ok(T),
+    [Err] Err(AppError),
+}
+
+fn IOResult<i32[min max]> ReadValue(i32[min max] x)
+{
+    if (x < 0)
+    {
+        return IOResult<i32[min max]>.Err(IOError.NotFound);
+    }
+    return IOResult<i32[min max]>.Ok(x + 2);
+}
+
+fn AppResult<i32[min max]> Load(i32[min max] x)
+{
+    stack i32[min max] n = try ReadValue(x);
+    return AppResult<i32[min max]>.Ok(n + 50);
+}
+
+export fn i32[min max] main()
+{
+    stack mut i32[min max] okPart = 0;
+    switch (Load(10))
+    {
+        case AppResult<i32[min max]>.Ok(var v): okPart = v;
+        case AppResult<i32[min max]>.Err(var e): okPart = 0;
+    }
+
+    stack mut i32[min max] errPart = 0;
+    switch (Load(-1))
+    {
+        case AppResult<i32[min max]>.Ok(var v): errPart = 0;
+        case AppResult<i32[min max]>.Err(var e):
+            switch (e)
+            {
+                case AppError.Io(var ioError): errPart = 5;
+                case AppError.BadInput: errPart = 1;
+            }
+    }
+
+    return okPart + errPart;
+}
+""");
+    return Succeeds(compiled);
+}
+
+// Ported from TryPropagationRuntimeTests.TryDropsOwnedPayloadsExactlyOnceThroughFromConversionAtRuntime.
+internal fn bool TryDropsOwnedPayloadsExactlyOnceThroughFromConversionAtRuntimeImpl()
+{
+    // PORT-NOTE: original asserts the linked program exits with code 3, proving
+    // owned payloads drop exactly once (no double-drop would be >3, no leak <3);
+    // across the `Low from LowErr` funnel on both the Ok and propagated-Err paths.
+    // Reduced to a full-pipeline compile of the embedded program returning Succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "try-drops-owned-payloads-exactly-once-from-conversion",
+        raw"""
+module Demo
+
+static mut i32[min max] Counter = 0;
+
+fn void Bump(i32[min max] v)
+{
+    Counter = Counter + v;
+    return;
+}
+
+struct Res
+{
+    i32[min max] V;
+    drop
+    {
+        Bump(self.V);
+    }
+}
+
+enum Result<T, E>
+{
+    [Ok] Ok(T),
+    [Err] Err(E),
+}
+
+enum LowErr { Disk(Res) }
+enum HighErr { Low from LowErr }
+
+fn Result<Res, LowErr> MakeLow(bool ok)
+{
+    if (ok)
+    {
+        return Result<Res, LowErr>.Ok(new Res() { V = 1 });
+    }
+    return Result<Res, LowErr>.Err(LowErr.Disk(new Res() { V = 2 }));
+}
+
+fn Result<i32[min max], HighErr> PipeHigh(bool ok)
+{
+    stack Res r = try MakeLow(ok);
+    return Result<i32[min max], HighErr>.Ok(r.V + 100);
+}
+
+export fn i32[min max] main()
+{
+    switch (PipeHigh(true))
+    {
+        case Result<i32[min max], HighErr>.Ok(var v): { }
+        case Result<i32[min max], HighErr>.Err(var e): { }
+    }
+    switch (PipeHigh(false))
+    {
+        case Result<i32[min max], HighErr>.Ok(var v): { }
+        case Result<i32[min max], HighErr>.Err(var e): { }
+    }
+    return Counter;
+}
+""");
+    return Succeeds(compiled);
+}

@@ -656,7 +656,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
         var definitions = CollectValueDefinitions(function);
         var nonEntryValueNames = CollectNonEntrySsaValueNames(function);
         var blocksById = function.Blocks.ToDictionary(static block => block.Id);
-        var availableValueNamesByBlock = BuildAvailableValueNamesByBlock(function, blocksById);
+        var availableValueNamesByBlock = BuildAvailableValueNamesByBlock(function);
         var predecessorCounts = CountPredecessors(function);
 
         var skippedBlockIds = new HashSet<int>();
@@ -1075,7 +1075,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
         var definitions = CollectValueDefinitions(function);
         var nonEntryValueNames = CollectNonEntrySsaValueNames(function);
         var blocksById = function.Blocks.ToDictionary(static block => block.Id);
-        var availableValueNamesByBlock = BuildAvailableValueNamesByBlock(function, blocksById);
+        var availableValueNamesByBlock = BuildAvailableValueNamesByBlock(function);
         if (!blocksById.TryGetValue(function.EntryBlockId, out var entry)
             || !TryMatchOptionalZeroCountGuard(
                 entry,
@@ -1575,7 +1575,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
         var definitions = CollectValueDefinitions(function);
         var nonEntryValueNames = CollectNonEntrySsaValueNames(function);
         var blocksById = function.Blocks.ToDictionary(static block => block.Id);
-        var availableValueNamesByBlock = BuildAvailableValueNamesByBlock(function, blocksById);
+        var availableValueNamesByBlock = BuildAvailableValueNamesByBlock(function);
         if (!blocksById.TryGetValue(function.EntryBlockId, out var entry)
             || !TryMatchOverlapSafeTemporaryEntry(
                 entry,
@@ -2952,104 +2952,289 @@ internal sealed partial class LlvmFunctionBodyEmitter
         return true;
     }
 
-    private static IReadOnlyDictionary<int, ISet<string>> BuildAvailableValueNamesByBlock(
-        SsaFunction function,
-        IReadOnlyDictionary<int, SsaBasicBlock> blocksById)
+    private static IReadOnlyDictionary<int, ISet<string>> BuildAvailableValueNamesByBlock(SsaFunction function)
     {
-        var blockIds = function.Blocks.Select(static block => block.Id).ToArray();
-        var allBlockIds = blockIds.ToHashSet();
-        var predecessors = BuildPredecessorSets(function);
-        var dominators = new Dictionary<int, HashSet<int>>();
-        foreach (var blockId in blockIds)
-        {
-            dominators[blockId] = blockId == function.EntryBlockId
-                ? [blockId]
-                : new HashSet<int>(allBlockIds);
-        }
+        var dominance = BlockDominanceIndex.Build(function);
 
-        var changed = true;
-        while (changed)
-        {
-            changed = false;
-            foreach (var blockId in blockIds)
-            {
-                if (blockId == function.EntryBlockId)
-                {
-                    continue;
-                }
-
-                var blockPredecessors = predecessors.TryGetValue(blockId, out var values)
-                    ? values
-                    : [];
-                HashSet<int> next;
-                if (blockPredecessors.Count == 0)
-                {
-                    next = [blockId];
-                }
-                else
-                {
-                    next = new HashSet<int>(allBlockIds);
-                    foreach (var predecessor in blockPredecessors)
-                    {
-                        if (dominators.TryGetValue(predecessor, out var predecessorDominators))
-                        {
-                            next.IntersectWith(predecessorDominators);
-                        }
-                    }
-
-                    next.Add(blockId);
-                }
-
-                if (!dominators[blockId].SetEquals(next))
-                {
-                    dominators[blockId] = next;
-                    changed = true;
-                }
-            }
-        }
-
-        var availableByBlock = new Dictionary<int, ISet<string>>();
+        // A value is "available" at a block exactly when the block that defines it
+        // dominates that block. Map each SSA value name to its defining block so per-block
+        // availability can be served as an O(1)-query dominance view rather than a
+        // materialized set. Materializing every block's set is O(blocks^2) time and memory
+        // on large functions (e.g. a synthesized test-runner entry point with thousands of
+        // blocks); the view keeps this analysis near-linear so it can always run.
+        var valueDefinitionBlockId = new Dictionary<string, int>(StringComparer.Ordinal);
         foreach (var block in function.Blocks)
         {
-            var available = new HashSet<string>(StringComparer.Ordinal);
-            if (dominators.TryGetValue(block.Id, out var blockDominators))
+            foreach (var name in CollectBlockValueNames(block))
             {
-                foreach (var dominatingBlock in function.Blocks)
-                {
-                    if (blockDominators.Contains(dominatingBlock.Id))
-                    {
-                        available.UnionWith(CollectBlockValueNames(dominatingBlock));
-                    }
-                }
+                // SSA value names are unique, so first-definition-wins is exact.
+                valueDefinitionBlockId.TryAdd(name, block.Id);
             }
-            else if (blocksById.TryGetValue(block.Id, out var knownBlock))
-            {
-                available.UnionWith(CollectBlockValueNames(knownBlock));
-            }
+        }
 
-            availableByBlock[block.Id] = available;
+        var availableByBlock = new Dictionary<int, ISet<string>>(function.Blocks.Count);
+        foreach (var block in function.Blocks)
+        {
+            availableByBlock[block.Id] = new DominatorAvailableValueNames(block.Id, valueDefinitionBlockId, dominance);
         }
 
         return availableByBlock;
     }
 
-    private static IReadOnlyDictionary<int, HashSet<int>> BuildPredecessorSets(SsaFunction function)
+    /// <summary>
+    /// Immediate-dominator index for a function's control-flow graph. Dominators are
+    /// computed with the Cooper-Harvey-Kennedy "A Simple, Fast Dominance Algorithm"
+    /// (near-linear in practice), then flattened into enter/exit timestamps from a walk of
+    /// the dominator tree so that "does A dominate B" is an O(1) ancestor test. This
+    /// replaces an earlier set-based iterative dataflow that was O(blocks^2)-O(blocks^3)
+    /// and could hang on functions with thousands of basic blocks.
+    /// </summary>
+    private sealed class BlockDominanceIndex
     {
-        var predecessors = function.Blocks.ToDictionary(
-            static block => block.Id,
-            static _ => new HashSet<int>());
-        foreach (var block in function.Blocks)
+        private readonly IReadOnlyDictionary<int, int> _enter;
+        private readonly IReadOnlyDictionary<int, int> _exit;
+
+        private BlockDominanceIndex(IReadOnlyDictionary<int, int> enter, IReadOnlyDictionary<int, int> exit)
         {
-            foreach (var target in block.Terminator.Targets)
-            {
-                if (predecessors.TryGetValue(target, out var targetPredecessors))
-                {
-                    targetPredecessors.Add(block.Id);
-                }
-            }
+            _enter = enter;
+            _exit = exit;
         }
 
-        return predecessors;
+        public bool Dominates(int dominator, int block)
+        {
+            if (!_enter.TryGetValue(block, out var blockEnter))
+            {
+                // A block unreachable from entry is dominated only by itself, matching the
+                // degenerate result the prior dataflow produced for isolated blocks.
+                return dominator == block;
+            }
+
+            if (!_enter.TryGetValue(dominator, out var dominatorEnter))
+            {
+                // An unreachable block cannot dominate a reachable one.
+                return false;
+            }
+
+            // In the dominator-tree Euler tour, A is an ancestor-or-self of B (i.e. A
+            // dominates B) iff B's [enter, exit] interval nests inside A's.
+            return dominatorEnter <= blockEnter && _exit[block] <= _exit[dominator];
+        }
+
+        public static BlockDominanceIndex Build(SsaFunction function)
+        {
+            var blocks = function.Blocks;
+            var successors = new Dictionary<int, int[]>(blocks.Count);
+            var predecessors = new Dictionary<int, List<int>>(blocks.Count);
+            foreach (var block in blocks)
+            {
+                successors[block.Id] = block.Terminator.Targets as int[] ?? block.Terminator.Targets.ToArray();
+                predecessors[block.Id] = new List<int>();
+            }
+
+            foreach (var block in blocks)
+            {
+                foreach (var target in successors[block.Id])
+                {
+                    if (predecessors.TryGetValue(target, out var targetPredecessors))
+                    {
+                        targetPredecessors.Add(block.Id);
+                    }
+                }
+            }
+
+            var entryId = function.EntryBlockId;
+
+            // Postorder of the blocks reachable from entry, via iterative DFS so the very
+            // deep block chains these large functions produce cannot overflow the stack.
+            var postIndex = new Dictionary<int, int>(blocks.Count);
+            var reversePostorder = new List<int>(blocks.Count);
+            if (successors.ContainsKey(entryId))
+            {
+                var visited = new HashSet<int> { entryId };
+                var dfs = new Stack<(int Block, int NextSuccessor)>();
+                dfs.Push((entryId, 0));
+                while (dfs.Count > 0)
+                {
+                    var (block, nextSuccessor) = dfs.Pop();
+                    var blockSuccessors = successors.TryGetValue(block, out var found) ? found : [];
+                    if (nextSuccessor < blockSuccessors.Length)
+                    {
+                        dfs.Push((block, nextSuccessor + 1));
+                        var successor = blockSuccessors[nextSuccessor];
+                        if (successors.ContainsKey(successor) && visited.Add(successor))
+                        {
+                            dfs.Push((successor, 0));
+                        }
+                    }
+                    else
+                    {
+                        postIndex[block] = reversePostorder.Count;
+                        reversePostorder.Add(block);
+                    }
+                }
+
+                reversePostorder.Reverse();
+            }
+
+            // Cooper-Harvey-Kennedy immediate-dominator fixpoint over reverse postorder.
+            var idom = new Dictionary<int, int> { [entryId] = entryId };
+            var changed = true;
+            while (changed)
+            {
+                changed = false;
+                foreach (var block in reversePostorder)
+                {
+                    if (block == entryId)
+                    {
+                        continue;
+                    }
+
+                    var newImmediateDominator = -1;
+                    foreach (var predecessor in predecessors[block])
+                    {
+                        if (!idom.ContainsKey(predecessor))
+                        {
+                            continue;
+                        }
+
+                        newImmediateDominator = newImmediateDominator == -1
+                            ? predecessor
+                            : Intersect(predecessor, newImmediateDominator, idom, postIndex);
+                    }
+
+                    if (newImmediateDominator != -1
+                        && (!idom.TryGetValue(block, out var current) || current != newImmediateDominator))
+                    {
+                        idom[block] = newImmediateDominator;
+                        changed = true;
+                    }
+                }
+            }
+
+            // Materialize the dominator tree's children, then assign enter/exit timestamps
+            // with an iterative preorder walk so dominance becomes an O(1) interval test.
+            var children = new Dictionary<int, List<int>>();
+            foreach (var block in reversePostorder)
+            {
+                if (block == entryId || !idom.TryGetValue(block, out var parent))
+                {
+                    continue;
+                }
+
+                if (!children.TryGetValue(parent, out var siblings))
+                {
+                    siblings = new List<int>();
+                    children[parent] = siblings;
+                }
+
+                siblings.Add(block);
+            }
+
+            var enter = new Dictionary<int, int>(reversePostorder.Count);
+            var exit = new Dictionary<int, int>(reversePostorder.Count);
+            if (reversePostorder.Count > 0)
+            {
+                var timer = 0;
+                var tour = new Stack<(int Block, bool Exiting)>();
+                tour.Push((entryId, false));
+                while (tour.Count > 0)
+                {
+                    var (block, exiting) = tour.Pop();
+                    if (exiting)
+                    {
+                        exit[block] = timer++;
+                        continue;
+                    }
+
+                    enter[block] = timer++;
+                    tour.Push((block, true));
+                    if (children.TryGetValue(block, out var blockChildren))
+                    {
+                        foreach (var child in blockChildren)
+                        {
+                            tour.Push((child, false));
+                        }
+                    }
+                }
+            }
+
+            return new BlockDominanceIndex(enter, exit);
+        }
+
+        private static int Intersect(
+            int left,
+            int right,
+            IReadOnlyDictionary<int, int> idom,
+            IReadOnlyDictionary<int, int> postIndex)
+        {
+            // Walk the two fingers up the dominator tree (lower postorder index == deeper)
+            // until they meet at the common dominator.
+            while (left != right)
+            {
+                while (postIndex[left] < postIndex[right])
+                {
+                    left = idom[left];
+                }
+
+                while (postIndex[right] < postIndex[left])
+                {
+                    right = idom[right];
+                }
+            }
+
+            return left;
+        }
+    }
+
+    /// <summary>
+    /// Read-only view of the SSA value names available at one block: a name is available
+    /// exactly when its defining block dominates this block. The loop matchers only ever
+    /// call <see cref="Contains"/>, so the set is never materialized; the remaining
+    /// <see cref="ISet{T}"/> members are intentionally unsupported and fail fast if a
+    /// future caller depends on them.
+    /// </summary>
+    private sealed class DominatorAvailableValueNames : ISet<string>
+    {
+        private readonly int _blockId;
+        private readonly IReadOnlyDictionary<string, int> _valueDefinitionBlockId;
+        private readonly BlockDominanceIndex _dominance;
+
+        public DominatorAvailableValueNames(
+            int blockId,
+            IReadOnlyDictionary<string, int> valueDefinitionBlockId,
+            BlockDominanceIndex dominance)
+        {
+            _blockId = blockId;
+            _valueDefinitionBlockId = valueDefinitionBlockId;
+            _dominance = dominance;
+        }
+
+        public bool Contains(string item) =>
+            _valueDefinitionBlockId.TryGetValue(item, out var definitionBlockId)
+            && _dominance.Dominates(definitionBlockId, _blockId);
+
+        public int Count => throw Unsupported();
+        public bool IsReadOnly => true;
+        bool ISet<string>.Add(string item) => throw Unsupported();
+        void ICollection<string>.Add(string item) => throw Unsupported();
+        public void Clear() => throw Unsupported();
+        public void CopyTo(string[] array, int arrayIndex) => throw Unsupported();
+        public bool Remove(string item) => throw Unsupported();
+        public void ExceptWith(IEnumerable<string> other) => throw Unsupported();
+        public void IntersectWith(IEnumerable<string> other) => throw Unsupported();
+        public bool IsProperSubsetOf(IEnumerable<string> other) => throw Unsupported();
+        public bool IsProperSupersetOf(IEnumerable<string> other) => throw Unsupported();
+        public bool IsSubsetOf(IEnumerable<string> other) => throw Unsupported();
+        public bool IsSupersetOf(IEnumerable<string> other) => throw Unsupported();
+        public bool Overlaps(IEnumerable<string> other) => throw Unsupported();
+        public bool SetEquals(IEnumerable<string> other) => throw Unsupported();
+        public void SymmetricExceptWith(IEnumerable<string> other) => throw Unsupported();
+        public void UnionWith(IEnumerable<string> other) => throw Unsupported();
+        public IEnumerator<string> GetEnumerator() => throw Unsupported();
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => throw Unsupported();
+
+        private static NotSupportedException Unsupported() =>
+            new("Dominance-backed availability view supports only Contains(name).");
     }
 
     private static bool TryGetPhiIncoming(SsaPhi phi, int predecessorBlockId, out SsaValue value)

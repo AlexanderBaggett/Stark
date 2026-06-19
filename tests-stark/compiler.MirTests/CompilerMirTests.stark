@@ -1,22 +1,22 @@
 import CompilerMirTestSupport
 import System.Testing
-import CompilerCliTestsP1
-import CompilerPipelineEnumLayoutTestsP1
-import CompilerPipelineFullIntegrationTestsP1
-import CompilerPipelineLowerAbiTestsP1
-import CompilerPipelineLowerHirTestsP1
-import CompilerPipelineLowerMirTestsP1
-import GenericUseSiteInstantiationRegressionTestsP1
-import LoweringContractFactKeyRegressionTestsP1
-import MidLevelIrDynamicFixedArrayIndexingTestsP1
-import MidLevelIrLoweringTests_CompileTimeEvaluatorP1
-import MidLevelIrLoweringTests_CoreP1
-import MidLevelIrLoweringTests_LoweringInvariantP1
-import MidLevelIrLoweringTests_PlaceLowererP1
-import MidLevelIrLoweringTests_RuntimeDropLowererP1
-import MidLevelIrLoweringTests_SwitchPatternLowererP1
-import RawSingleLineLiteralRegressionTestsP1
-[Collection("compiler-mir")]
+import CompilerCliTests
+import CompilerPipelineEnumLayoutTests
+import CompilerPipelineFullIntegrationTests
+import CompilerPipelineLowerAbiTests
+import CompilerPipelineLowerHirTests
+import CompilerPipelineLowerMirTests
+import GenericUseSiteInstantiationRegressionTests
+import LoweringContractFactKeyRegressionTests
+import MidLevelIrDynamicFixedArrayIndexingTests
+import MidLevelIrLoweringTests_CompileTimeEvaluator
+import MidLevelIrLoweringTests_Core
+import MidLevelIrLoweringTests_LoweringInvariant
+import MidLevelIrLoweringTests_PlaceLowerer
+import MidLevelIrLoweringTests_RuntimeDropLowerer
+import MidLevelIrLoweringTests_SwitchPatternLowerer
+import RawSingleLineLiteralRegressionTests
+[Collection("compiler", "mir")]
 module CompilerMirTests
 
 // Ported slice of tests/compiler.Tests/MidLevelIrLowering and
@@ -36,7 +36,6 @@ module CompilerMirTests
 [Fact]
 fn bool IfStatementsLowerToBranchingBlocks()
 {
-    unsafe
     {
         return IfStatementsLowerToBranchingBlocksBody();
     }
@@ -45,7 +44,6 @@ fn bool IfStatementsLowerToBranchingBlocks()
 [Fact]
 fn bool WhileLoopsLowerToBackedgeControlFlow()
 {
-    unsafe
     {
         return WhileLoopsLowerToBackedgeControlFlowBody();
     }
@@ -54,7 +52,6 @@ fn bool WhileLoopsLowerToBackedgeControlFlow()
 [Fact]
 fn bool ForLoopsProduceConditionIteratorAndExitBlocks()
 {
-    unsafe
     {
         return ForLoopsProduceConditionIteratorAndExitBlocksBody();
     }
@@ -63,7 +60,6 @@ fn bool ForLoopsProduceConditionIteratorAndExitBlocks()
 [Fact]
 fn bool LabeledBreakAndContinueLowerThroughNestedLoops()
 {
-    unsafe
     {
         return LabeledBreakAndContinueLowerThroughNestedLoopsBody();
     }
@@ -72,7 +68,6 @@ fn bool LabeledBreakAndContinueLowerThroughNestedLoops()
 [Fact]
 fn bool ConditionalExpressionLowersToJoinableBlocks()
 {
-    unsafe
     {
         return ConditionalExpressionLowersToJoinableBlocksBody();
     }
@@ -81,7 +76,6 @@ fn bool ConditionalExpressionLowersToJoinableBlocks()
 [Fact]
 fn bool VoidConditionalCallStatementsLowerToJoinableBlocks()
 {
-    unsafe
     {
         return VoidConditionalCallStatementsLowerToJoinableBlocksBody();
     }
@@ -90,7 +84,6 @@ fn bool VoidConditionalCallStatementsLowerToJoinableBlocks()
 [Fact]
 fn bool ShortCircuitOrLowersToMultipleBlocks()
 {
-    unsafe
     {
         return ShortCircuitOrLowersToMultipleBlocksBody();
     }
@@ -99,7 +92,6 @@ fn bool ShortCircuitOrLowersToMultipleBlocks()
 [Fact]
 fn bool ComparisonChainsLowerToShortCircuitBlocks()
 {
-    unsafe
     {
         return ComparisonChainsLowerToShortCircuitBlocksBody();
     }
@@ -108,7 +100,6 @@ fn bool ComparisonChainsLowerToShortCircuitBlocks()
 [Fact]
 fn bool ComparisonChainsReuseSharedOperand()
 {
-    unsafe
     {
         return ComparisonChainsReuseSharedOperandBody();
     }
@@ -119,7 +110,6 @@ fn bool ComparisonChainsReuseSharedOperand()
 [Fact]
 fn bool EnumConstructorsLowerToDirectTagFieldInserts()
 {
-    unsafe
     {
         return EnumConstructorsLowerToDirectTagFieldInsertsBody();
     }
@@ -128,7 +118,6 @@ fn bool EnumConstructorsLowerToDirectTagFieldInserts()
 [Fact]
 fn bool PayloadEnumConstructorCallsLowerDirectly()
 {
-    unsafe
     {
         return PayloadEnumConstructorCallsLowerDirectlyBody();
     }
@@ -139,7 +128,6 @@ fn bool PayloadEnumConstructorCallsLowerDirectly()
 [Fact]
 fn bool LocalDeclarationsAndAssignmentsLowerToMirStatements()
 {
-    unsafe
     {
         return LocalDeclarationsAndAssignmentsLowerToMirStatementsBody();
     }
@@ -148,7 +136,6 @@ fn bool LocalDeclarationsAndAssignmentsLowerToMirStatements()
 [Fact]
 fn bool VoidFunctionPointerCallsLowerAsStatementOnly()
 {
-    unsafe
     {
         return VoidFunctionPointerCallsLowerAsStatementOnlyBody();
     }
@@ -157,7 +144,6 @@ fn bool VoidFunctionPointerCallsLowerAsStatementOnly()
 [Fact]
 fn bool ObjectCreationAndFieldAccessLowerToAggregateOperations()
 {
-    unsafe
     {
         return ObjectCreationAndFieldAccessLowerToAggregateOperationsBody();
     }
@@ -166,7 +152,6 @@ fn bool ObjectCreationAndFieldAccessLowerToAggregateOperations()
 [Fact]
 fn bool PrimaryRecordConstructorArgumentsLowerInEvaluationOrder()
 {
-    unsafe
     {
         return PrimaryRecordConstructorArgumentsLowerInEvaluationOrderBody();
     }
@@ -175,7 +160,6 @@ fn bool PrimaryRecordConstructorArgumentsLowerInEvaluationOrder()
 [Fact]
 fn bool MemberCallsEvaluateReceiverBeforeArguments()
 {
-    unsafe
     {
         return MemberCallsEvaluateReceiverBeforeArgumentsBody();
     }
@@ -184,7 +168,6 @@ fn bool MemberCallsEvaluateReceiverBeforeArguments()
 [Fact]
 fn bool RegisterObjectCreationKeepsValueStyleLocal()
 {
-    unsafe
     {
         return RegisterObjectCreationKeepsValueStyleLocalBody();
     }
@@ -193,7 +176,6 @@ fn bool RegisterObjectCreationKeepsValueStyleLocal()
 [Fact]
 fn bool HeapObjectCreationMarksLocalAsAddressable()
 {
-    unsafe
     {
         return HeapObjectCreationMarksLocalAsAddressableBody();
     }
@@ -202,7 +184,6 @@ fn bool HeapObjectCreationMarksLocalAsAddressable()
 [Fact]
 fn bool DynamicIndexingOnFixedArrayTemporaryLowers()
 {
-    unsafe
     {
         return DynamicIndexingOnFixedArrayTemporaryLowersBody();
     }
@@ -213,7 +194,6 @@ fn bool DynamicIndexingOnFixedArrayTemporaryLowers()
 [Fact]
 fn bool SizeofAndAlignofLower()
 {
-    unsafe
     {
         return SizeofAndAlignofLowerBody();
     }
@@ -222,7 +202,6 @@ fn bool SizeofAndAlignofLower()
 [Fact]
 fn bool BitwiseXorExpressionLowersToMirBinaryOperation()
 {
-    unsafe
     {
         return BitwiseXorExpressionLowersToMirBinaryOperationBody();
     }
@@ -231,7 +210,6 @@ fn bool BitwiseXorExpressionLowersToMirBinaryOperation()
 [Fact]
 fn bool BitwiseAndShiftChainsRespectPrecedence()
 {
-    unsafe
     {
         return BitwiseAndShiftChainsRespectPrecedenceBody();
     }
@@ -240,7 +218,6 @@ fn bool BitwiseAndShiftChainsRespectPrecedence()
 [Fact]
 fn bool WrappingAndSaturatingArithmeticLowerToDistinctOperators()
 {
-    unsafe
     {
         return WrappingAndSaturatingArithmeticLowerToDistinctOperatorsBody();
     }
@@ -249,7 +226,6 @@ fn bool WrappingAndSaturatingArithmeticLowerToDistinctOperators()
 [Fact]
 fn bool ExponentExpressionLowersToMirBinaryOperation()
 {
-    unsafe
     {
         return ExponentExpressionLowersToMirBinaryOperationBody();
     }
@@ -258,7 +234,6 @@ fn bool ExponentExpressionLowersToMirBinaryOperation()
 [Fact]
 fn bool CharacterLiteralsLowerToMirStringConstants()
 {
-    unsafe
     {
         return CharacterLiteralsLowerToMirStringConstantsBody();
     }
@@ -269,1012 +244,789 @@ fn bool CharacterLiteralsLowerToMirStringConstants()
 [Fact]
 fn bool AcceptedBoundOperationsLowerWithoutFallback()
 {
-    unsafe
     {
         return AcceptedBoundOperationsLowerWithoutFallbackBody();
     }
 }
 
-
 // ---------------------------------------------------------------------------
-// Auto-wired [Fact] wrappers for ported C# tests (bodies in imported companions).
+// Ported [Fact] wrappers (bodies in imported companion modules). [Collection] tags
+// give each fact a domain; the module-level tag carries the pipeline stage.
 // ---------------------------------------------------------------------------
 [Fact]
+[Collection("compiler-cli")]
 fn bool EmitMirModePrintsMirModule()
 {
-    unsafe
-    {
-        return EmitMirModePrintsMirModuleImpl();
-    }
+    return EmitMirModePrintsMirModuleImpl();
 }
 
 [Fact]
+[Collection("compiler-cli")]
 fn bool EmitMirModeSupportsOutputPath()
 {
-    unsafe
-    {
-        return EmitMirModeSupportsOutputPathImpl();
-    }
+    return EmitMirModeSupportsOutputPathImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-enum-layout")]
 fn bool EnumLayoutsUseSmallestSoundTagWidths()
 {
-    unsafe
-    {
-        return EnumLayoutsUseSmallestSoundTagWidthsImpl();
-    }
+    return EnumLayoutsUseSmallestSoundTagWidthsImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-enum-layout")]
 fn bool EnumPayloadLayoutsUseTargetSoundAlignmentForNonStandardAndWideIntegers()
 {
-    unsafe
-    {
-        return EnumPayloadLayoutsUseTargetSoundAlignmentForNonStandardAndWideIntegersImpl();
-    }
+    return EnumPayloadLayoutsUseTargetSoundAlignmentForNonStandardAndWideIntegersImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-full")]
 fn bool PipelinePreservesMirSwitchBreakShapeAndNormalizesOptimizedSsaControlFlow()
 {
-    unsafe
-    {
-        return PipelinePreservesMirSwitchBreakShapeAndNormalizesOptimizedSsaControlFlowImpl();
-    }
+    return PipelinePreservesMirSwitchBreakShapeAndNormalizesOptimizedSsaControlFlowImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-full")]
 fn bool PipelineCarriesSourceLocationsThroughMirAndSsaArtifacts()
 {
-    unsafe
-    {
-        return PipelineCarriesSourceLocationsThroughMirAndSsaArtifactsImpl();
-    }
+    return PipelineCarriesSourceLocationsThroughMirAndSsaArtifactsImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-full")]
 fn bool ImportedAsmDeclarationsFlowThroughHirMirAndSsaAsExplicitBypassFunctions()
 {
-    unsafe
-    {
-        return ImportedAsmDeclarationsFlowThroughHirMirAndSsaAsExplicitBypassFunctionsImpl();
-    }
+    return ImportedAsmDeclarationsFlowThroughHirMirAndSsaAsExplicitBypassFunctionsImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-full")]
 fn bool ImportedModulePrivateLawHelpersFlowIntoHirMirAndSsa()
 {
-    unsafe
-    {
-        return ImportedModulePrivateLawHelpersFlowIntoHirMirAndSsaImpl();
-    }
+    return ImportedModulePrivateLawHelpersFlowIntoHirMirAndSsaImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-full")]
 fn bool ImportedSourceModulesFlowIntoHirMirAndSsaArtifacts()
 {
-    unsafe
-    {
-        return ImportedSourceModulesFlowIntoHirMirAndSsaArtifactsImpl();
-    }
+    return ImportedSourceModulesFlowIntoHirMirAndSsaArtifactsImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-full")]
 fn bool ImportedSourceModulesWithPrivateHelpersAndStringLiteralsLowerIntoMirAndSsa()
 {
-    unsafe
-    {
-        return ImportedSourceModulesWithPrivateHelpersAndStringLiteralsLowerIntoMirAndSsaImpl();
-    }
+    return ImportedSourceModulesWithPrivateHelpersAndStringLiteralsLowerIntoMirAndSsaImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-full")]
 fn bool OverloadedMethodsResolveThroughSemanticValidationAndMirLowering()
 {
-    unsafe
-    {
-        return OverloadedMethodsResolveThroughSemanticValidationAndMirLoweringImpl();
-    }
+    return OverloadedMethodsResolveThroughSemanticValidationAndMirLoweringImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-lower-abi")]
 fn bool MonomorphizedGenericFunctionsReceiveExplicitAbiLowering()
 {
-    unsafe
-    {
-        return MonomorphizedGenericFunctionsReceiveExplicitAbiLoweringImpl();
-    }
+    return MonomorphizedGenericFunctionsReceiveExplicitAbiLoweringImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-lower-hir")]
 fn bool NestedGenericCallsMaterializeTransitiveSpecializationsIntoHighLevelIr()
 {
-    unsafe
-    {
-        return NestedGenericCallsMaterializeTransitiveSpecializationsIntoHighLevelIrImpl();
-    }
+    return NestedGenericCallsMaterializeTransitiveSpecializationsIntoHighLevelIrImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-lower-hir")]
 fn bool LowerHirMaterializesSourceBackedMonomorphizedGenericFunctions()
 {
-    unsafe
-    {
-        return LowerHirMaterializesSourceBackedMonomorphizedGenericFunctionsImpl();
-    }
+    return LowerHirMaterializesSourceBackedMonomorphizedGenericFunctionsImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-lower-mir")]
 fn bool ExplicitConstructorBodiesLowerIntoObjectCreation()
 {
-    unsafe
-    {
-        return ExplicitConstructorBodiesLowerIntoObjectCreationImpl();
-    }
+    return ExplicitConstructorBodiesLowerIntoObjectCreationImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-lower-mir")]
 fn bool LowerMirSubstitutesConcreteTypesInsideMaterializedGenericBodies()
 {
-    unsafe
-    {
-        return LowerMirSubstitutesConcreteTypesInsideMaterializedGenericBodiesImpl();
-    }
+    return LowerMirSubstitutesConcreteTypesInsideMaterializedGenericBodiesImpl();
 }
 
 [Fact]
+[Collection("compiler-pipeline-lower-mir")]
 fn bool LowerMirRewritesGenericCallsToMaterializedSpecializationSymbols()
 {
-    unsafe
-    {
-        return LowerMirRewritesGenericCallsToMaterializedSpecializationSymbolsImpl();
-    }
+    return LowerMirRewritesGenericCallsToMaterializedSpecializationSymbolsImpl();
 }
 
 [Fact]
+[Collection("generic-use-site-instantiation")]
 fn bool NestedGenericTypeLayoutsAreDiscoveredFromSourceUseSites()
 {
-    unsafe
-    {
-        return NestedGenericTypeLayoutsAreDiscoveredFromSourceUseSitesImpl();
-    }
+    return NestedGenericTypeLayoutsAreDiscoveredFromSourceUseSitesImpl();
 }
 
 [Fact]
+[Collection("lowering-contract-fact-key")]
 fn bool MemberCallsDoNotCollideWithImportedConstructorCallsAtTheSameCoordinates()
 {
-    unsafe
-    {
-        return MemberCallsDoNotCollideWithImportedConstructorCallsAtTheSameCoordinatesImpl();
-    }
+    return MemberCallsDoNotCollideWithImportedConstructorCallsAtTheSameCoordinatesImpl();
 }
 
 [Fact]
+[Collection("lowering-contract-fact-key")]
 fn bool ImportedGenericMemberCallLowersAcrossModulesWithoutInvariantViolation()
 {
-    unsafe
-    {
-        return ImportedGenericMemberCallLowersAcrossModulesWithoutInvariantViolationImpl();
-    }
+    return ImportedGenericMemberCallLowersAcrossModulesWithoutInvariantViolationImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-dynamic-fixed-array-indexing")]
 fn bool DynamicIndexingOnFixedArrayTemporaryLowersWithoutUnsupportedFallback()
 {
-    unsafe
-    {
-        return DynamicIndexingOnFixedArrayTemporaryLowersWithoutUnsupportedFallbackImpl();
-    }
+    return DynamicIndexingOnFixedArrayTemporaryLowersWithoutUnsupportedFallbackImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-compile-time-evaluator")]
 fn bool PureConstantArithmeticReturnsFoldedMirConstant()
 {
-    unsafe
-    {
-        return PureConstantArithmeticReturnsFoldedMirConstantImpl();
-    }
+    return PureConstantArithmeticReturnsFoldedMirConstantImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-compile-time-evaluator")]
 fn bool ConstantIntegerExponentComparisonOperandFoldsBeforeMirWidthSelection()
 {
-    unsafe
-    {
-        return ConstantIntegerExponentComparisonOperandFoldsBeforeMirWidthSelectionImpl();
-    }
+    return ConstantIntegerExponentComparisonOperandFoldsBeforeMirWidthSelectionImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-compile-time-evaluator")]
 fn bool ConstantLawCallsFoldToMirConstants()
 {
-    unsafe
-    {
-        return ConstantLawCallsFoldToMirConstantsImpl();
-    }
+    return ConstantLawCallsFoldToMirConstantsImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-compile-time-evaluator")]
 fn bool BackendOpaqueLawCallsDoNotFoldToMirConstants()
 {
-    unsafe
-    {
-        return BackendOpaqueLawCallsDoNotFoldToMirConstantsImpl();
-    }
+    return BackendOpaqueLawCallsDoNotFoldToMirConstantsImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-compile-time-evaluator")]
 fn bool FixedArrayArithmeticIndexStillLowersToAggregateIndexOperations()
 {
-    unsafe
-    {
-        return FixedArrayArithmeticIndexStillLowersToAggregateIndexOperationsImpl();
-    }
+    return FixedArrayArithmeticIndexStillLowersToAggregateIndexOperationsImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-core")]
 fn bool PayloadEnumConstructorCallsDoNotProduceIndirectCallProbeDiagnostics()
 {
-    unsafe
-    {
-        return PayloadEnumConstructorCallsDoNotProduceIndirectCallProbeDiagnosticsImpl();
-    }
+    return PayloadEnumConstructorCallsDoNotProduceIndirectCallProbeDiagnosticsImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-core")]
 fn bool ComparisonChainsLowerToShortCircuitBlocksAndReuseSharedOperands()
 {
-    unsafe
-    {
-        return ComparisonChainsLowerToShortCircuitBlocksAndReuseSharedOperandsImpl();
-    }
+    return ComparisonChainsLowerToShortCircuitBlocksAndReuseSharedOperandsImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-core")]
 fn bool ShortCircuitOrLowersToMultipleBlocksAndDirectCodegen()
 {
-    unsafe
-    {
-        return ShortCircuitOrLowersToMultipleBlocksAndDirectCodegenImpl();
-    }
+    return ShortCircuitOrLowersToMultipleBlocksAndDirectCodegenImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-core")]
 fn bool VoidFunctionPointerCallsLowerAsStatementOnlyOperations()
 {
-    unsafe
-    {
-        return VoidFunctionPointerCallsLowerAsStatementOnlyOperationsImpl();
-    }
+    return VoidFunctionPointerCallsLowerAsStatementOnlyOperationsImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-core")]
 fn bool SizeofAndAlignofLowerToConcreteIntegerConstants()
 {
-    unsafe
-    {
-        return SizeofAndAlignofLowerToConcreteIntegerConstantsImpl();
-    }
+    return SizeofAndAlignofLowerToConcreteIntegerConstantsImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-core")]
 fn bool HugeCompileTimeIntegerConversionMaterializesConcreteMirConstant()
 {
-    unsafe
-    {
-        return HugeCompileTimeIntegerConversionMaterializesConcreteMirConstantImpl();
-    }
+    return HugeCompileTimeIntegerConversionMaterializesConcreteMirConstantImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-core")]
 fn bool ConstantNarrowingConversionMaterializesWrappedMirConstant()
 {
-    unsafe
-    {
-        return ConstantNarrowingConversionMaterializesWrappedMirConstantImpl();
-    }
+    return ConstantNarrowingConversionMaterializesWrappedMirConstantImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-core")]
 fn bool BitwiseXorAssignmentLowersToMirBinaryOperation()
 {
-    unsafe
-    {
-        return BitwiseXorAssignmentLowersToMirBinaryOperationImpl();
-    }
+    return BitwiseXorAssignmentLowersToMirBinaryOperationImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-core")]
 fn bool BitwiseAndShiftChainsRespectPrecedenceAndAssociativity()
 {
-    unsafe
-    {
-        return BitwiseAndShiftChainsRespectPrecedenceAndAssociativityImpl();
-    }
+    return BitwiseAndShiftChainsRespectPrecedenceAndAssociativityImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-core")]
 fn bool WrappingAndSaturatingArithmeticLowerToDistinctMirOperators()
 {
-    unsafe
-    {
-        return WrappingAndSaturatingArithmeticLowerToDistinctMirOperatorsImpl();
-    }
+    return WrappingAndSaturatingArithmeticLowerToDistinctMirOperatorsImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-core")]
 fn bool IntegerExponentExpressionLowersToMirBinaryOperation()
 {
-    unsafe
-    {
-        return IntegerExponentExpressionLowersToMirBinaryOperationImpl();
-    }
+    return IntegerExponentExpressionLowersToMirBinaryOperationImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-core")]
 fn bool FloatingPointArithmeticChainsLowerToFloatMirBinaryOperations()
 {
-    unsafe
-    {
-        return FloatingPointArithmeticChainsLowerToFloatMirBinaryOperationsImpl();
-    }
+    return FloatingPointArithmeticChainsLowerToFloatMirBinaryOperationsImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-core")]
 fn bool ExplicitAsciiLiteralToUnicodeConversionLowersToUnicodeStringConstant()
 {
-    unsafe
-    {
-        return ExplicitAsciiLiteralToUnicodeConversionLowersToUnicodeStringConstantImpl();
-    }
+    return ExplicitAsciiLiteralToUnicodeConversionLowersToUnicodeStringConstantImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-core")]
 fn bool ConstructorInitializerCombinationAppliesInitializerAfterConstructorFields()
 {
-    unsafe
-    {
-        return ConstructorInitializerCombinationAppliesInitializerAfterConstructorFieldsImpl();
-    }
+    return ConstructorInitializerCombinationAppliesInitializerAfterConstructorFieldsImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-core")]
 fn bool NestedObjectAndArrayInitializersLowerRecursivelyInSourceOrder()
 {
-    unsafe
-    {
-        return NestedObjectAndArrayInitializersLowerRecursivelyInSourceOrderImpl();
-    }
+    return NestedObjectAndArrayInitializersLowerRecursivelyInSourceOrderImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-core")]
 fn bool MemberCallsEvaluateReceiverBeforeExplicitArguments()
 {
-    unsafe
-    {
-        return MemberCallsEvaluateReceiverBeforeExplicitArgumentsImpl();
-    }
+    return MemberCallsEvaluateReceiverBeforeExplicitArgumentsImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-core")]
 fn bool TargetTypedObjectCreationLowersWithDestinationType()
 {
-    unsafe
-    {
-        return TargetTypedObjectCreationLowersWithDestinationTypeImpl();
-    }
+    return TargetTypedObjectCreationLowersWithDestinationTypeImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-core")]
 fn bool RegisterObjectCreationKeepsValueStyleLocalLowering()
 {
-    unsafe
-    {
-        return RegisterObjectCreationKeepsValueStyleLocalLoweringImpl();
-    }
+    return RegisterObjectCreationKeepsValueStyleLocalLoweringImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-core")]
 fn bool HeapObjectCreationMarksLocalAsAddressableStorage()
 {
-    unsafe
-    {
-        return HeapObjectCreationMarksLocalAsAddressableStorageImpl();
-    }
+    return HeapObjectCreationMarksLocalAsAddressableStorageImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-lowering-invariant")]
 fn bool AcceptedBoundOperationsDoNotProduceNullMirArtifacts()
 {
-    unsafe
-    {
-        return AcceptedBoundOperationsDoNotProduceNullMirArtifactsImpl();
-    }
+    return AcceptedBoundOperationsDoNotProduceNullMirArtifactsImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-place-lowerer")]
 fn bool FieldAssignmentLowersToAggregateUpdate()
 {
-    unsafe
-    {
-        return FieldAssignmentLowersToAggregateUpdateImpl();
-    }
+    return FieldAssignmentLowersToAggregateUpdateImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-place-lowerer")]
 fn bool FieldCompoundAssignmentLowersToAggregateReadModifyWrite()
 {
-    unsafe
-    {
-        return FieldCompoundAssignmentLowersToAggregateReadModifyWriteImpl();
-    }
+    return FieldCompoundAssignmentLowersToAggregateReadModifyWriteImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-place-lowerer")]
 fn bool FixedArrayInitializerAndConstantIndexLowerToAggregateIndexOperations()
 {
-    unsafe
-    {
-        return FixedArrayInitializerAndConstantIndexLowerToAggregateIndexOperationsImpl();
-    }
+    return FixedArrayInitializerAndConstantIndexLowerToAggregateIndexOperationsImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-place-lowerer")]
 fn bool PartialFixedArrayInitializersInsideObjectInitializersLowerWithZeroFilledTails()
 {
-    unsafe
-    {
-        return PartialFixedArrayInitializersInsideObjectInitializersLowerWithZeroFilledTailsImpl();
-    }
+    return PartialFixedArrayInitializersInsideObjectInitializersLowerWithZeroFilledTailsImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-place-lowerer")]
 fn bool FixedArrayElementAssignmentLowersToAggregateIndexUpdate()
 {
-    unsafe
-    {
-        return FixedArrayElementAssignmentLowersToAggregateIndexUpdateImpl();
-    }
+    return FixedArrayElementAssignmentLowersToAggregateIndexUpdateImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-place-lowerer")]
 fn bool LargeFixedArrayConstantIndexReadsAndWritesUseAddressBasedMemoryAccess()
 {
-    unsafe
-    {
-        return LargeFixedArrayConstantIndexReadsAndWritesUseAddressBasedMemoryAccessImpl();
-    }
+    return LargeFixedArrayConstantIndexReadsAndWritesUseAddressBasedMemoryAccessImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-place-lowerer")]
 fn bool LargeAggregateFieldAndConstantIndexReadsAndWritesUseAddressBasedMemoryAccess()
 {
-    unsafe
-    {
-        return LargeAggregateFieldAndConstantIndexReadsAndWritesUseAddressBasedMemoryAccessImpl();
-    }
+    return LargeAggregateFieldAndConstantIndexReadsAndWritesUseAddressBasedMemoryAccessImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-place-lowerer")]
 fn bool LocalFixedArrayCanLowerToSliceAndDynamicSliceRead()
 {
-    unsafe
-    {
-        return LocalFixedArrayCanLowerToSliceAndDynamicSliceReadImpl();
-    }
+    return LocalFixedArrayCanLowerToSliceAndDynamicSliceReadImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-place-lowerer")]
 fn bool InitSliceElementAssignmentCarriesInitializationWriteKindInMir()
 {
-    unsafe
-    {
-        return InitSliceElementAssignmentCarriesInitializationWriteKindInMirImpl();
-    }
+    return InitSliceElementAssignmentCarriesInitializationWriteKindInMirImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-place-lowerer")]
 fn bool OutParameterAssignmentCarriesInitializationWriteKindInMir()
 {
-    unsafe
-    {
-        return OutParameterAssignmentCarriesInitializationWriteKindInMirImpl();
-    }
+    return OutParameterAssignmentCarriesInitializationWriteKindInMirImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-place-lowerer")]
 fn bool TextSlicesLowerToViewProducingMir()
 {
-    unsafe
-    {
-        return TextSlicesLowerToViewProducingMirImpl();
-    }
+    return TextSlicesLowerToViewProducingMirImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-place-lowerer")]
 fn bool EmptyTextSlicesLowerToIdentityTextOperands()
 {
-    unsafe
-    {
-        return EmptyTextSlicesLowerToIdentityTextOperandsImpl();
-    }
+    return EmptyTextSlicesLowerToIdentityTextOperandsImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-place-lowerer")]
 fn bool SingleElementTextIndexingLowersToUnitLengthTextViews()
 {
-    unsafe
-    {
-        return SingleElementTextIndexingLowersToUnitLengthTextViewsImpl();
-    }
+    return SingleElementTextIndexingLowersToUnitLengthTextViewsImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-place-lowerer")]
 fn bool DynamicFixedArrayIndexMutationUsesAddressBasedMemoryAccess()
 {
-    unsafe
-    {
-        return DynamicFixedArrayIndexMutationUsesAddressBasedMemoryAccessImpl();
-    }
+    return DynamicFixedArrayIndexMutationUsesAddressBasedMemoryAccessImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-place-lowerer")]
 fn bool FixedArrayParameterDynamicIndexUsesAddressBasedMemoryAccess()
 {
-    unsafe
-    {
-        return FixedArrayParameterDynamicIndexUsesAddressBasedMemoryAccessImpl();
-    }
+    return FixedArrayParameterDynamicIndexUsesAddressBasedMemoryAccessImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-place-lowerer")]
 fn bool NestedLvalueChainsWithDynamicIndexCompoundAssignmentsUseAddressBasedMemoryAccess()
 {
-    unsafe
-    {
-        return NestedLvalueChainsWithDynamicIndexCompoundAssignmentsUseAddressBasedMemoryAccessImpl();
-    }
+    return NestedLvalueChainsWithDynamicIndexCompoundAssignmentsUseAddressBasedMemoryAccessImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-place-lowerer")]
 fn bool SliceMutationUsesAddressBasedMemoryAccess()
 {
-    unsafe
-    {
-        return SliceMutationUsesAddressBasedMemoryAccessImpl();
-    }
+    return SliceMutationUsesAddressBasedMemoryAccessImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-place-lowerer")]
 fn bool MixedCallMemberAndIndexPostfixChainsLowerToMir()
 {
-    unsafe
-    {
-        return MixedCallMemberAndIndexPostfixChainsLowerToMirImpl();
-    }
+    return MixedCallMemberAndIndexPostfixChainsLowerToMirImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-place-lowerer")]
 fn bool ExplicitPointerOperatorsAndConversionsLowerToMir()
 {
-    unsafe
-    {
-        return ExplicitPointerOperatorsAndConversionsLowerToMirImpl();
-    }
+    return ExplicitPointerOperatorsAndConversionsLowerToMirImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-place-lowerer")]
 fn bool FieldAndGlobalAddressExpressionsLowerToMirAddresses()
 {
-    unsafe
-    {
-        return FieldAndGlobalAddressExpressionsLowerToMirAddressesImpl();
-    }
+    return FieldAndGlobalAddressExpressionsLowerToMirAddressesImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-place-lowerer")]
 fn bool IndexedFieldAddressBehindRawPointerLowersToParameterBackedMirAddresses()
 {
-    unsafe
-    {
-        return IndexedFieldAddressBehindRawPointerLowersToParameterBackedMirAddressesImpl();
-    }
+    return IndexedFieldAddressBehindRawPointerLowersToParameterBackedMirAddressesImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-place-lowerer")]
 fn bool ImmutableGlobalAddressesLowerToReadonlyMirAddresses()
 {
-    unsafe
-    {
-        return ImmutableGlobalAddressesLowerToReadonlyMirAddressesImpl();
-    }
+    return ImmutableGlobalAddressesLowerToReadonlyMirAddressesImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-place-lowerer")]
 fn bool ConstGlobalAddressesLowerToFrozenMirAddresses()
 {
-    unsafe
-    {
-        return ConstGlobalAddressesLowerToFrozenMirAddressesImpl();
-    }
+    return ConstGlobalAddressesLowerToFrozenMirAddressesImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-place-lowerer")]
 fn bool ConstParameterAddressesLowerToFrozenMirAddresses()
 {
-    unsafe
-    {
-        return ConstParameterAddressesLowerToFrozenMirAddressesImpl();
-    }
+    return ConstParameterAddressesLowerToFrozenMirAddressesImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-place-lowerer")]
 fn bool ConstProvenanceLocalsAreMarkedInMir()
 {
-    unsafe
-    {
-        return ConstProvenanceLocalsAreMarkedInMirImpl();
-    }
+    return ConstProvenanceLocalsAreMarkedInMirImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-place-lowerer")]
 fn bool FrozenSliceAddressesLowerToReadonlyMirAddresses()
 {
-    unsafe
-    {
-        return FrozenSliceAddressesLowerToReadonlyMirAddressesImpl();
-    }
+    return FrozenSliceAddressesLowerToReadonlyMirAddressesImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-runtime-drop-lowerer")]
 fn bool DestructorBlocksLowerBeforeStorageDeadAtScopeExit()
 {
-    unsafe
-    {
-        return DestructorBlocksLowerBeforeStorageDeadAtScopeExitImpl();
-    }
+    return DestructorBlocksLowerBeforeStorageDeadAtScopeExitImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-runtime-drop-lowerer")]
 fn bool WholeLocalDestructorDropsInPlaceWithoutCopyingToDropTemporary()
 {
-    unsafe
-    {
-        return WholeLocalDestructorDropsInPlaceWithoutCopyingToDropTemporaryImpl();
-    }
+    return WholeLocalDestructorDropsInPlaceWithoutCopyingToDropTemporaryImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-runtime-drop-lowerer")]
 fn bool EarlyReturnBranchDropDoesNotSuppressFallthroughScopeDrop()
 {
-    unsafe
-    {
-        return EarlyReturnBranchDropDoesNotSuppressFallthroughScopeDropImpl();
-    }
+    return EarlyReturnBranchDropDoesNotSuppressFallthroughScopeDropImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-runtime-drop-lowerer")]
 fn bool ReassigningADestructibleLocalLowersTheOldDropBeforeOverwrite()
 {
-    unsafe
-    {
-        return ReassigningADestructibleLocalLowersTheOldDropBeforeOverwriteImpl();
-    }
+    return ReassigningADestructibleLocalLowersTheOldDropBeforeOverwriteImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-runtime-drop-lowerer")]
 fn bool DynamicStorageDropsInitializedElementsBeforeFreeingBackingStorage()
 {
-    unsafe
-    {
-        return DynamicStorageDropsInitializedElementsBeforeFreeingBackingStorageImpl();
-    }
+    return DynamicStorageDropsInitializedElementsBeforeFreeingBackingStorageImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-runtime-drop-lowerer")]
 fn bool EnumPayloadCaptureDropsMovedPayloadOnlyOnce()
 {
-    unsafe
-    {
-        return EnumPayloadCaptureDropsMovedPayloadOnlyOnceImpl();
-    }
+    return EnumPayloadCaptureDropsMovedPayloadOnlyOnceImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-runtime-drop-lowerer")]
 fn bool LargeEnumPayloadCaptureDropsMovedPayloadOnlyOnce()
 {
-    unsafe
-    {
-        return LargeEnumPayloadCaptureDropsMovedPayloadOnlyOnceImpl();
-    }
+    return LargeEnumPayloadCaptureDropsMovedPayloadOnlyOnceImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-runtime-drop-lowerer")]
 fn bool LargeEnumPayloadCaptureEarlyReturnKeepsDropCleanup()
 {
-    unsafe
-    {
-        return LargeEnumPayloadCaptureEarlyReturnKeepsDropCleanupImpl();
-    }
+    return LargeEnumPayloadCaptureEarlyReturnKeepsDropCleanupImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-runtime-drop-lowerer")]
 fn bool LargeEnumPayloadReassignmentDropsOldAndReplacementOnce()
 {
-    unsafe
-    {
-        return LargeEnumPayloadReassignmentDropsOldAndReplacementOnceImpl();
-    }
+    return LargeEnumPayloadReassignmentDropsOldAndReplacementOnceImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-runtime-drop-lowerer")]
 fn bool PrimaryConstructorArgumentsMoveIntoReturnedOwnerDropState()
 {
-    unsafe
-    {
-        return PrimaryConstructorArgumentsMoveIntoReturnedOwnerDropStateImpl();
-    }
+    return PrimaryConstructorArgumentsMoveIntoReturnedOwnerDropStateImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-runtime-drop-lowerer")]
 fn bool ExplicitConstructorArgumentsMoveIntoReturnedOwnerDropState()
 {
-    unsafe
-    {
-        return ExplicitConstructorArgumentsMoveIntoReturnedOwnerDropStateImpl();
-    }
+    return ExplicitConstructorArgumentsMoveIntoReturnedOwnerDropStateImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-runtime-drop-lowerer")]
 fn bool FixedArrayElementsCascadeRuntimeDrops()
 {
-    unsafe
-    {
-        return FixedArrayElementsCascadeRuntimeDropsImpl();
-    }
+    return FixedArrayElementsCascadeRuntimeDropsImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-runtime-drop-lowerer")]
 fn bool HeapBackedFixedArrayElementsDropBeforeStorageDead()
 {
-    unsafe
-    {
-        return HeapBackedFixedArrayElementsDropBeforeStorageDeadImpl();
-    }
+    return HeapBackedFixedArrayElementsDropBeforeStorageDeadImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-runtime-drop-lowerer")]
 fn bool ImportedTypeDestructorsResolveHelpersInTheirDefiningModule()
 {
-    unsafe
-    {
-        return ImportedTypeDestructorsResolveHelpersInTheirDefiningModuleImpl();
-    }
+    return ImportedTypeDestructorsResolveHelpersInTheirDefiningModuleImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-runtime-drop-lowerer")]
 fn bool EnumPayloadDropsLowerThroughActiveTagDispatch()
 {
-    unsafe
-    {
-        return EnumPayloadDropsLowerThroughActiveTagDispatchImpl();
-    }
+    return EnumPayloadDropsLowerThroughActiveTagDispatchImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-switch-pattern-lowerer")]
 fn bool LiteralSwitchLowersToMirSwitchTerminator()
 {
-    unsafe
-    {
-        return LiteralSwitchLowersToMirSwitchTerminatorImpl();
-    }
+    return LiteralSwitchLowersToMirSwitchTerminatorImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-switch-pattern-lowerer")]
 fn bool SwitchSectionsCanAssignAndBreakToSharedExit()
 {
-    unsafe
-    {
-        return SwitchSectionsCanAssignAndBreakToSharedExitImpl();
-    }
+    return SwitchSectionsCanAssignAndBreakToSharedExitImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-switch-pattern-lowerer")]
 fn bool GuardedSwitchLowersToBranchBasedCfg()
 {
-    unsafe
-    {
-        return GuardedSwitchLowersToBranchBasedCfgImpl();
-    }
+    return GuardedSwitchLowersToBranchBasedCfgImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-switch-pattern-lowerer")]
 fn bool GuardedDiscardSwitchLowersToBranchBasedCfg()
 {
-    unsafe
-    {
-        return GuardedDiscardSwitchLowersToBranchBasedCfgImpl();
-    }
+    return GuardedDiscardSwitchLowersToBranchBasedCfgImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-switch-pattern-lowerer")]
 fn bool MultiLabelSectionWithGuardedDiscardLowersInOrder()
 {
-    unsafe
-    {
-        return MultiLabelSectionWithGuardedDiscardLowersInOrderImpl();
-    }
+    return MultiLabelSectionWithGuardedDiscardLowersInOrderImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-switch-pattern-lowerer")]
 fn bool MultiLabelSectionsNormalizeIntoSectionDecisionTrees()
 {
-    unsafe
-    {
-        return MultiLabelSectionsNormalizeIntoSectionDecisionTreesImpl();
-    }
+    return MultiLabelSectionsNormalizeIntoSectionDecisionTreesImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-switch-pattern-lowerer")]
 fn bool CaptureSwitchPatternLowersToMatchLocalAndBody()
 {
-    unsafe
-    {
-        return CaptureSwitchPatternLowersToMatchLocalAndBodyImpl();
-    }
+    return CaptureSwitchPatternLowersToMatchLocalAndBodyImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-switch-pattern-lowerer")]
 fn bool AggregateSwitchPatternBindsScalarFieldsAfterPatternSelection()
 {
-    unsafe
-    {
-        return AggregateSwitchPatternBindsScalarFieldsAfterPatternSelectionImpl();
-    }
+    return AggregateSwitchPatternBindsScalarFieldsAfterPatternSelectionImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-switch-pattern-lowerer")]
 fn bool AggregatePropertySwitchPatternBindsNamedFieldsAfterPatternSelection()
 {
-    unsafe
-    {
-        return AggregatePropertySwitchPatternBindsNamedFieldsAfterPatternSelectionImpl();
-    }
+    return AggregatePropertySwitchPatternBindsNamedFieldsAfterPatternSelectionImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-switch-pattern-lowerer")]
 fn bool ListSwitchPatternBindsFixedArrayElementsAfterPatternSelection()
 {
-    unsafe
-    {
-        return ListSwitchPatternBindsFixedArrayElementsAfterPatternSelectionImpl();
-    }
+    return ListSwitchPatternBindsFixedArrayElementsAfterPatternSelectionImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-switch-pattern-lowerer")]
 fn bool AggregateWholeValueSwitchPatternBindsMatchLocalAfterPatternSelection()
 {
-    unsafe
-    {
-        return AggregateWholeValueSwitchPatternBindsMatchLocalAfterPatternSelectionImpl();
-    }
+    return AggregateWholeValueSwitchPatternBindsMatchLocalAfterPatternSelectionImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-switch-pattern-lowerer")]
 fn bool NestedAggregateWholeValueSwitchPatternBindsMatchLocalAfterPatternSelection()
 {
-    unsafe
-    {
-        return NestedAggregateWholeValueSwitchPatternBindsMatchLocalAfterPatternSelectionImpl();
-    }
+    return NestedAggregateWholeValueSwitchPatternBindsMatchLocalAfterPatternSelectionImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-switch-pattern-lowerer")]
 fn bool EnumWholeValueSwitchPatternBindsMatchLocalAfterTagSelection()
 {
-    unsafe
-    {
-        return EnumWholeValueSwitchPatternBindsMatchLocalAfterTagSelectionImpl();
-    }
+    return EnumWholeValueSwitchPatternBindsMatchLocalAfterTagSelectionImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-switch-pattern-lowerer")]
 fn bool NestedAggregateSwitchPatternBindsScalarLeavesAfterPatternSelection()
 {
-    unsafe
-    {
-        return NestedAggregateSwitchPatternBindsScalarLeavesAfterPatternSelectionImpl();
-    }
+    return NestedAggregateSwitchPatternBindsScalarLeavesAfterPatternSelectionImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-switch-pattern-lowerer")]
 fn bool EnumSwitchPatternsLowerToTagTestsAndActivePayloadExtractions()
 {
-    unsafe
-    {
-        return EnumSwitchPatternsLowerToTagTestsAndActivePayloadExtractionsImpl();
-    }
+    return EnumSwitchPatternsLowerToTagTestsAndActivePayloadExtractionsImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-switch-pattern-lowerer")]
 fn bool EnumSwitchExpressionCallIsLoweredOnceInMir()
 {
-    unsafe
-    {
-        return EnumSwitchExpressionCallIsLoweredOnceInMirImpl();
-    }
+    return EnumSwitchExpressionCallIsLoweredOnceInMirImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-switch-pattern-lowerer")]
 fn bool TextLiteralSwitchLowersToBranchBasedComparisonTree()
 {
-    unsafe
-    {
-        return TextLiteralSwitchLowersToBranchBasedComparisonTreeImpl();
-    }
+    return TextLiteralSwitchLowersToBranchBasedComparisonTreeImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-switch-pattern-lowerer")]
 fn bool LargeTextLiteralSwitchLowersThroughLengthPartitioning()
 {
-    unsafe
-    {
-        return LargeTextLiteralSwitchLowersThroughLengthPartitioningImpl();
-    }
+    return LargeTextLiteralSwitchLowersThroughLengthPartitioningImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-switch-pattern-lowerer")]
 fn bool UnicodeTextLiteralSwitchLowersSuccessfully()
 {
-    unsafe
-    {
-        return UnicodeTextLiteralSwitchLowersSuccessfullyImpl();
-    }
+    return UnicodeTextLiteralSwitchLowersSuccessfullyImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-switch-pattern-lowerer")]
 fn bool FloatLiteralSwitchLowersToBranchBasedCfg()
 {
-    unsafe
-    {
-        return FloatLiteralSwitchLowersToBranchBasedCfgImpl();
-    }
+    return FloatLiteralSwitchLowersToBranchBasedCfgImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-switch-pattern-lowerer")]
 fn bool RawPointerNullSwitchLowersToBranchBasedCfg()
 {
-    unsafe
-    {
-        return RawPointerNullSwitchLowersToBranchBasedCfgImpl();
-    }
+    return RawPointerNullSwitchLowersToBranchBasedCfgImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-switch-pattern-lowerer")]
 fn bool AggregateSwitchPatternsCanMatchAndCaptureTextLeaves()
 {
-    unsafe
-    {
-        return AggregateSwitchPatternsCanMatchAndCaptureTextLeavesImpl();
-    }
+    return AggregateSwitchPatternsCanMatchAndCaptureTextLeavesImpl();
 }
 
 [Fact]
+[Collection("mid-level-ir-lowering-tests-switch-pattern-lowerer")]
 fn bool EnumSwitchPatternsCanMatchAndCaptureTextLeaves()
 {
-    unsafe
-    {
-        return EnumSwitchPatternsCanMatchAndCaptureTextLeavesImpl();
-    }
+    return EnumSwitchPatternsCanMatchAndCaptureTextLeavesImpl();
 }
 
 [Fact]
+[Collection("raw-single-line-literal")]
 fn bool RawSingleLineLiteralsLowerAsComparisonOperands()
 {
-    unsafe
-    {
-        return RawSingleLineLiteralsLowerAsComparisonOperandsImpl();
-    }
+    return RawSingleLineLiteralsLowerAsComparisonOperandsImpl();
 }
 
