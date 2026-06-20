@@ -4,11 +4,11 @@
     "insertText": "System",
     "kind": "module",
     "module": "System",
-    "source": "generated",
-    "detail": "standard library module namespace",
+    "source": "stdlib/src/System.stark",
+    "detail": "standard library module",
     "visibility": "public",
     "qualifiedName": "System",
-    "documentation": "Standard library module namespace `System`."
+    "documentation": "System\n\nVisibility: public"
   },
   {
     "label": "System.BitOperations",
