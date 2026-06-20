@@ -1199,8 +1199,14 @@ internal static partial class PackageImageLoader
 
         foreach (var template in module.EffectiveGenericTemplates?.Functions ?? [])
         {
-            if (template.TypedBody is not null)
+            if (template.TypedBody is { } typedBody)
             {
+                if (!CanOmitBridgeBodyText(typedBody)
+                    && TryRenderGenericTemplateBody(template, out var renderedBodyText))
+                {
+                    templates[BuildGenericTemplateLookupKey(template.QualifiedName, template.OverloadKey)] = renderedBodyText;
+                }
+
                 continue;
             }
 
@@ -1215,22 +1221,7 @@ internal static partial class PackageImageLoader
 
     private static Dictionary<string, string> BuildRenderableGenericTemplateBodyLookup(StarkPackageModuleManifest module)
     {
-        var templates = new Dictionary<string, string>(StringComparer.Ordinal);
-
-        foreach (var template in module.EffectiveGenericTemplates?.Functions ?? [])
-        {
-            if (template.TypedBody is not null)
-            {
-                continue;
-            }
-
-            if (!string.IsNullOrEmpty(template.BodyText))
-            {
-                templates[BuildGenericTemplateLookupKey(template.QualifiedName, template.OverloadKey)] = template.BodyText;
-            }
-        }
-
-        return templates;
+        return BuildGenericTemplateBodyLookup(module);
     }
 
     private static bool TryRenderGenericTemplateBody(
@@ -2430,6 +2421,12 @@ internal static partial class PackageImageLoader
         IReadOnlyDictionary<int, StarkPackageTemplateFieldAccessManifest> fieldAccessesByOrdinal,
         IReadOnlyDictionary<int, StarkPackageTemplateMemberCallManifest> memberCallsByOrdinal)
     {
+        if (expression.Args.Count == 0
+            && !string.IsNullOrWhiteSpace(objectCreation.ExpressionText))
+        {
+            return objectCreation.ExpressionText;
+        }
+
         var arguments = string.Join(", ", expression.Args.Select(argument => RenderImportedTypedTemplateExpression(argument, objectCreationsByOrdinal, enumConstructorsByOrdinal, enumCallsByOrdinal, enumValuesByOrdinal, directCallsByOrdinal, fieldAccessesByOrdinal, memberCallsByOrdinal)));
 
         if (objectCreation.StorageSelector == ObjectCreationStorageSelector.Arena)

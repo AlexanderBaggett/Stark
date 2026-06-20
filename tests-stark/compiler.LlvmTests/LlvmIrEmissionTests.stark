@@ -2168,6 +2168,190 @@ unsafe fn u64[0 2 ** 63 - 1] Run()
         && DoesNotContain(llvm, "dynamic_try_reserve_new_capacity");
 }
 
+// Ported from LlvmIrEmissionTests.ArenaDynamicStorageReserveEmitsGrowCopyWithoutRuntimeReallocate.
+internal fn bool ArenaDynamicStorageReserveEmitsGrowCopyWithoutRuntimeReallocateImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-arena-dynamic-reserve-grow-copy",
+        raw"""
+module Demo
+
+unsafe fn u64[0 max] Run()
+{
+    stack mut dynamic u64[0 max] values = new(arena, 1);
+    init values[0] = 41;
+    values.Reserve(8);
+    return values[0] +% (u64[0 max])values.Capacity;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    stack ascii runBody = LlvmDefinitionBody(llvm, "Run");
+    return DoesNotContain(llvm, "; LLVM body emission fallback for Run")
+        && Contains(runBody, "dynamic_reserve_arena")
+        && Contains(runBody, "call noalias nonnull noundef align 8 ptr @__stark_arena_alloc")
+        && Contains(runBody, "call void @llvm.memcpy.p0.p0.i64(ptr align 8")
+        && DoesNotContain(runBody, "@__stark_runtime_realloc")
+        && DoesNotContain(runBody, "@__stark_runtime_try_realloc")
+        && DoesNotContain(runBody, "@__stark_runtime_free");
+}
+
+// Ported from LlvmIrEmissionTests.ArenaDynamicStorageTryReserveEmitsFallibleGrowCopy.
+internal fn bool ArenaDynamicStorageTryReserveEmitsFallibleGrowCopyImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-arena-dynamic-try-reserve-grow-copy",
+        raw"""
+module Demo
+
+unsafe fn u64[0 max] Run()
+{
+    stack mut dynamic u64[0 max] values = new(arena, 1);
+    init values[0] = 41;
+    if (!values.TryReserve(8))
+    {
+        return 0;
+    }
+
+    return values[0] +% (u64[0 max])values.Capacity;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    stack ascii runBody = LlvmDefinitionBody(llvm, "Run");
+    return DoesNotContain(llvm, "; LLVM body emission fallback for Run")
+        && Contains(runBody, "dynamic_try_reserve_arena")
+        && Contains(runBody, "call noalias noundef ptr @__stark_arena_try_alloc")
+        && Contains(runBody, "call void @llvm.memcpy.p0.p0.i64(ptr align 8")
+        && Contains(runBody, "phi i1")
+        && DoesNotContain(runBody, "@__stark_runtime_realloc")
+        && DoesNotContain(runBody, "@__stark_runtime_try_realloc")
+        && DoesNotContain(runBody, "@__stark_runtime_free");
+}
+
+// Ported from LlvmIrEmissionTests.ArenaDynamicStorageTryReserveCapacityEmitsExactFallibleGrowCopy.
+internal fn bool ArenaDynamicStorageTryReserveCapacityEmitsExactFallibleGrowCopyImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-arena-dynamic-try-reserve-capacity-grow-copy",
+        raw"""
+module Demo
+
+unsafe fn u64[0 max] Run()
+{
+    stack mut dynamic u64[0 max] values = new(arena, 1);
+    init values[0] = 41;
+    if (!values.TryReserveCapacity(8))
+    {
+        return 0;
+    }
+
+    return values[0] +% (u64[0 max])values.Capacity;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    stack ascii runBody = LlvmDefinitionBody(llvm, "Run");
+    return DoesNotContain(llvm, "; LLVM body emission fallback for Run")
+        && Contains(runBody, "dynamic_try_reserve_capacity_arena")
+        && Contains(runBody, "call noalias noundef ptr @__stark_arena_try_alloc")
+        && Contains(runBody, "call void @llvm.memcpy.p0.p0.i64(ptr align 8")
+        && Contains(runBody, "phi i1")
+        && DoesNotContain(runBody, "dynamic_try_reserve_minimum")
+        && DoesNotContain(runBody, "dynamic_try_reserve_new_capacity")
+        && DoesNotContain(runBody, "@__stark_runtime_realloc")
+        && DoesNotContain(runBody, "@__stark_runtime_try_realloc")
+        && DoesNotContain(runBody, "@__stark_runtime_free");
+}
+
+// Ported from LlvmIrEmissionTests.ArenaDynamicStorageDropEmitsElementDestructorLoopBeforeFrameCleanupWithoutFreeingOwner.
+internal fn bool ArenaDynamicStorageDropEmitsElementDestructorLoopBeforeFrameCleanupWithoutFreeingOwnerImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-arena-dynamic-drop-before-frame-cleanup",
+        raw"""
+module Demo
+
+static mut i32[min max] Counter = 0;
+
+unsafe fn void Bump(i32[min max] value)
+{
+    stack i32[min max] a = value + (value / 3);
+    stack i32[min max] b = a - (a / 5);
+    stack i32[min max] c = b + (b / 7);
+    stack i32[min max] d = c - (c / 11);
+    stack i32[min max] e = d + (d / 13);
+    stack i32[min max] f = e - (e / 17);
+    stack i32[min max] g = f + (f / 19);
+    stack i32[min max] h = g - (g / 23);
+    stack i32[min max] i = h + (h / 29);
+    stack i32[min max] j = i - (i / 31);
+    stack i32[min max] k = j + (j / 37);
+    stack i32[min max] l = k - (k / 41);
+    stack i32[min max] m = l + (l / 43);
+    Counter = Counter + m;
+    return;
+}
+
+struct Token
+{
+    i32[min max] Value;
+
+    drop
+    {
+        Bump(self.Value);
+    }
+}
+
+unsafe fn void Run()
+{
+    stack mut dynamic Token values = new(arena, 1);
+    init values[0] = new Token()
+    {
+        Value = 1
+    };
+    values.Reserve(4);
+    init values[1] = new Token()
+    {
+        Value = 2
+    };
+    return;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    stack ascii runBody = LlvmDefinitionBody(llvm, "Run");
+    // PORT-NOTE: the C# oracle additionally asserts the Bump call precedes
+    // @__stark_arena_leave by IndexOf ordering; Stark-side helpers expose body
+    // scoping but no arbitrary substring-order predicate.
+    return DoesNotContain(llvm, "; LLVM body emission fallback for Run")
+        && Contains(runBody, "dynamic_reserve_arena")
+        && Contains(runBody, "call noalias nonnull noundef align 4 ptr @__stark_arena_alloc")
+        && Contains(runBody, "call void @llvm.memcpy.p0.p0.i64(ptr align 4")
+        && Contains(runBody, "call fastcc void @Bump")
+        && Contains(runBody, "call void @__stark_arena_leave(ptr nonnull %__stark_arena_frame)")
+        && DoesNotContain(runBody, "dynamic_free_ptr")
+        && DoesNotContain(runBody, "@__stark_runtime_realloc")
+        && DoesNotContain(runBody, "@__stark_runtime_try_realloc")
+        && DoesNotContain(runBody, "@__stark_runtime_free");
+}
+
 // Ported from LlvmIrEmissionTests.DynamicStorageInitSliceWritesCommitOwnerLength.
 internal fn bool DynamicStorageInitSliceWritesCommitOwnerLengthImpl()
 {

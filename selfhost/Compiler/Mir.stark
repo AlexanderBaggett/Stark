@@ -1,5 +1,6 @@
 import Compiler.Ir
 import Compiler.Lexing
+import Compiler.Parsing
 import System.Memory
 import System.Text
 import System.Runtime.Buffer
@@ -1000,6 +1001,22 @@ internal fn bool MirFunctionWellFormed(borrow IrTable<MirInstruction> instrs, bo
 // generation only; binding to libLLVM for object emission is a later slice. Each
 // helper returns `MemoryStatus` and threads append failures sink via `try`.
 
+// Appends an LLVM integer type name (`i1`/`i32`/`i64`).
+internal fn MemoryStatus EmitLlvmTypeName(MirType t, mut borrow OwnedAscii sink)
+{
+    switch (t)
+    {
+        case MirType.I1:
+            try sink.AppendConstAscii("i1");
+        case MirType.I32:
+            try sink.AppendConstAscii("i32");
+        case MirType.I64:
+            try sink.AppendConstAscii("i64");
+    }
+
+    return MemoryStatus.Ok;
+}
+
 // Appends the LLVM register name (`%vN`) for the value at 1-based `index`.
 internal fn MemoryStatus EmitLlvmRegister(mut borrow OwnedAscii sink, u32[0 max] index)
 {
@@ -1025,6 +1042,166 @@ internal fn MemoryStatus EmitLlvmOperand(borrow IrTable<MirInstruction> instrs, 
     }
 
     return EmitLlvmRegister(sink, valueIndex);
+}
+
+internal fn ValueFacts FactAt(borrow IrTable<ValueFacts> facts, u32[0 max] index)
+{
+    stack mut ValueFacts empty = new();
+    if (facts.Contains(index))
+    {
+        return facts.Get(index);
+    }
+
+    return empty;
+}
+
+internal fn ValueFacts RangeFactForValue(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<ValueFacts> paramFacts,
+    borrow IrTable<ValueFacts> valueFacts,
+    borrow IrTable<ValueFacts> globalFacts,
+    borrow IrTable<ValueFacts> functionReturnFacts,
+    u32[0 max] valueIndex)
+{
+    if (!instrs.Contains(valueIndex))
+    {
+        return FactAt(valueFacts, valueIndex);
+    }
+
+    stack MirInstruction instr = instrs.Get(valueIndex);
+    if (instr.Opcode() == MirOp.Param)
+    {
+        return FactAt(paramFacts, (u32[0 max])instr.Immediate() + 1);
+    }
+
+    if (instr.Opcode() == MirOp.LoadGlobal)
+    {
+        return FactAt(globalFacts, (u32[0 max])instr.Immediate());
+    }
+
+    if (instr.Opcode() == MirOp.Call || instr.Opcode() == MirOp.TailCall)
+    {
+        return FactAt(functionReturnFacts, (u32[0 max])instr.Immediate());
+    }
+
+    return FactAt(valueFacts, valueIndex);
+}
+
+internal fn MemoryStatus EmitLlvmRangeAttribute(MirType type, ValueFacts facts, mut borrow OwnedAscii sink)
+{
+    if (!facts.HasIntegerRange())
+    {
+        return MemoryStatus.Ok;
+    }
+
+    try sink.AppendConstAscii(" range(");
+    try EmitLlvmTypeName(type, sink);
+    try sink.AppendConstAscii(" ");
+    try sink.AppendI64(facts.IntegerRangeLower());
+    try sink.AppendConstAscii(", ");
+    try sink.AppendI64(facts.IntegerRangeUpperExclusive());
+    try sink.AppendConstAscii(")");
+    return MemoryStatus.Ok;
+}
+
+internal struct LlvmRangeMetadata
+{
+    MirType Type;
+    i64[min max] Lower;
+    i64[min max] UpperExclusive;
+
+    LlvmRangeMetadata()
+    {
+        self.Type = MirType.I64;
+        self.Lower = 0;
+        self.UpperExclusive = 0;
+    }
+}
+
+internal fn LlvmRangeMetadata MakeLlvmRangeMetadata(MirType type, ValueFacts facts)
+{
+    stack mut LlvmRangeMetadata metadata = new();
+    metadata.Type = type;
+    metadata.Lower = facts.IntegerRangeLower();
+    metadata.UpperExclusive = facts.IntegerRangeUpperExclusive();
+    return metadata;
+}
+
+internal fn bool LlvmRangeMetadataEquals(LlvmRangeMetadata metadata, MirType type, ValueFacts facts)
+{
+    return metadata.Type == type
+        && metadata.Lower == facts.IntegerRangeLower()
+        && metadata.UpperExclusive == facts.IntegerRangeUpperExclusive();
+}
+
+internal fn MemoryStatus GetOrAddLlvmRangeMetadata(mut borrow IrTable<LlvmRangeMetadata> ranges, MirType type, ValueFacts facts, out u32[0 max] metadataId)
+{
+    metadataId = 0;
+    if (!facts.HasIntegerRange())
+    {
+        return MemoryStatus.Ok;
+    }
+
+    stack u64[0 2 ** 63 - 1] count = ranges.Count();
+    stack mut u32[0 max] i = 1;
+    while willexit ((u64[0 2 ** 63 - 1])i <= count)
+    {
+        stack LlvmRangeMetadata metadata = ranges.Get(i);
+        if (LlvmRangeMetadataEquals(metadata, type, facts))
+        {
+            metadataId = i - 1;
+            return MemoryStatus.Ok;
+        }
+
+        i = i + 1;
+    }
+
+    stack u32[0 max] added = ranges.Add(MakeLlvmRangeMetadata(type, facts));
+    if (added == 0)
+    {
+        return MemoryStatus.Err(MemoryError.OutOfMemory);
+    }
+
+    metadataId = added - 1;
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EmitLlvmRangeMetadataAttachment(MirType type, ValueFacts facts, mut borrow IrTable<LlvmRangeMetadata> ranges, mut borrow OwnedAscii sink)
+{
+    if (!facts.HasIntegerRange())
+    {
+        return MemoryStatus.Ok;
+    }
+
+    stack mut u32[0 max] metadataId = 0;
+    try GetOrAddLlvmRangeMetadata(ranges, type, facts, metadataId);
+    try sink.AppendConstAscii(", !range !");
+    try sink.AppendU64((u64[0 max])metadataId);
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EmitLlvmRangeMetadataDefinitions(borrow IrTable<LlvmRangeMetadata> ranges, mut borrow OwnedAscii sink)
+{
+    stack u64[0 2 ** 63 - 1] count = ranges.Count();
+    stack mut u32[0 max] i = 1;
+    while willexit ((u64[0 2 ** 63 - 1])i <= count)
+    {
+        stack LlvmRangeMetadata metadata = ranges.Get(i);
+        try sink.AppendConstAscii("!");
+        try sink.AppendU64((u64[0 max])(i - 1));
+        try sink.AppendConstAscii(" = !{");
+        try EmitLlvmTypeName(metadata.Type, sink);
+        try sink.AppendConstAscii(" ");
+        try sink.AppendI64(metadata.Lower);
+        try sink.AppendConstAscii(", ");
+        try EmitLlvmTypeName(metadata.Type, sink);
+        try sink.AppendConstAscii(" ");
+        try sink.AppendI64(metadata.UpperExclusive);
+        try sink.AppendConstAscii("}\n");
+        i = i + 1;
+    }
+
+    return MemoryStatus.Ok;
 }
 
 // Appends an LLVM call argument list `(i64 <a>, i64 <b>)` for the up-to-two operand
@@ -1058,6 +1235,65 @@ internal fn MemoryStatus EmitLlvmCallArgs(borrow IrTable<MirInstruction> instrs,
     {
         try sink.AppendConstAscii(", i64 ");
         try EmitLlvmOperand(instrs, sink, d);
+    }
+
+    try sink.AppendConstAscii(")");
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EmitLlvmCallArgWithRangeFacts(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<ValueFacts> paramFacts,
+    borrow IrTable<ValueFacts> valueFacts,
+    borrow IrTable<ValueFacts> globalFacts,
+    borrow IrTable<ValueFacts> functionReturnFacts,
+    mut borrow OwnedAscii sink,
+    u32[0 max] valueIndex)
+{
+    try sink.AppendConstAscii("i64");
+    try EmitLlvmRangeAttribute(
+        MirType.I64,
+        RangeFactForValue(instrs, paramFacts, valueFacts, globalFacts, functionReturnFacts, valueIndex),
+        sink);
+    try sink.AppendConstAscii(" ");
+    try EmitLlvmOperand(instrs, sink, valueIndex);
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EmitLlvmCallArgsWithRangeFacts(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<ValueFacts> paramFacts,
+    borrow IrTable<ValueFacts> valueFacts,
+    borrow IrTable<ValueFacts> globalFacts,
+    borrow IrTable<ValueFacts> functionReturnFacts,
+    mut borrow OwnedAscii sink,
+    u32[0 max] a,
+    u32[0 max] b,
+    u32[0 max] c,
+    u32[0 max] d)
+{
+    try sink.AppendConstAscii("(");
+    if (a != 0)
+    {
+        try EmitLlvmCallArgWithRangeFacts(instrs, paramFacts, valueFacts, globalFacts, functionReturnFacts, sink, a);
+    }
+
+    if (b != 0)
+    {
+        try sink.AppendConstAscii(", ");
+        try EmitLlvmCallArgWithRangeFacts(instrs, paramFacts, valueFacts, globalFacts, functionReturnFacts, sink, b);
+    }
+
+    if (c != 0)
+    {
+        try sink.AppendConstAscii(", ");
+        try EmitLlvmCallArgWithRangeFacts(instrs, paramFacts, valueFacts, globalFacts, functionReturnFacts, sink, c);
+    }
+
+    if (d != 0)
+    {
+        try sink.AppendConstAscii(", ");
+        try EmitLlvmCallArgWithRangeFacts(instrs, paramFacts, valueFacts, globalFacts, functionReturnFacts, sink, d);
     }
 
     try sink.AppendConstAscii(")");
@@ -1211,6 +1447,123 @@ internal fn MemoryStatus EmitLlvmInstructionWithTailCallees(borrow IrTable<MirIn
     return MemoryStatus.Ok;
 }
 
+internal fn MemoryStatus EmitLlvmInstructionWithRangeFacts(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<u32[0 max]> funcTailFlags,
+    borrow IrTable<ValueFacts> paramFacts,
+    borrow IrTable<ValueFacts> valueFacts,
+    borrow IrTable<ValueFacts> globalFacts,
+    borrow IrTable<ValueFacts> functionReturnFacts,
+    mut borrow IrTable<LlvmRangeMetadata> rangeMetadata,
+    mut borrow OwnedAscii sink,
+    u32[0 max] index)
+{
+    if (!instrs.Contains(index))
+    {
+        return MemoryStatus.Ok;
+    }
+
+    stack MirInstruction instr = instrs.Get(index);
+    switch (instr.Opcode())
+    {
+        case MirOp.ConstInt:
+            try sink.AppendConstAscii("  ");
+            try EmitLlvmRegister(sink, index);
+            try sink.AppendConstAscii(" = add i64 0, ");
+            try sink.AppendI64(instr.Immediate());
+            try sink.AppendConstAscii("\n");
+        case MirOp.Param:
+            try sink.AppendConstAscii("");
+        case MirOp.Add:
+            try EmitLlvmBinary(instrs, sink, index, "add", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.Sub:
+            try EmitLlvmBinary(instrs, sink, index, "sub", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.Mul:
+            try EmitLlvmBinary(instrs, sink, index, "mul", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.SDiv:
+            try EmitLlvmBinary(instrs, sink, index, "sdiv", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.UDiv:
+            try EmitLlvmBinary(instrs, sink, index, "udiv", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.SRem:
+            try EmitLlvmBinary(instrs, sink, index, "srem", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.And:
+            try EmitLlvmBinary(instrs, sink, index, "and", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.Or:
+            try EmitLlvmBinary(instrs, sink, index, "or", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.Xor:
+            try EmitLlvmBinary(instrs, sink, index, "xor", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.Shl:
+            try EmitLlvmBinary(instrs, sink, index, "shl", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.AShr:
+            try EmitLlvmBinary(instrs, sink, index, "ashr", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.CmpEq:
+            try EmitLlvmBinary(instrs, sink, index, "icmp eq", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.CmpNe:
+            try EmitLlvmBinary(instrs, sink, index, "icmp ne", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.CmpLt:
+            try EmitLlvmBinary(instrs, sink, index, "icmp slt", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.CmpLe:
+            try EmitLlvmBinary(instrs, sink, index, "icmp sle", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.CmpGt:
+            try EmitLlvmBinary(instrs, sink, index, "icmp sgt", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.CmpGe:
+            try EmitLlvmBinary(instrs, sink, index, "icmp sge", instr.OperandAIndex(), instr.OperandBIndex());
+        case MirOp.ZExt:
+            try sink.AppendConstAscii("  ");
+            try EmitLlvmRegister(sink, index);
+            try sink.AppendConstAscii(" = zext i1 ");
+            try EmitLlvmOperand(instrs, sink, instr.OperandAIndex());
+            try sink.AppendConstAscii(" to i64\n");
+        case MirOp.LoadGlobal:
+            try sink.AppendConstAscii("  ");
+            try EmitLlvmRegister(sink, index);
+            try sink.AppendConstAscii(" = load i64, ptr @g");
+            try sink.AppendI64(instr.Immediate());
+            try EmitLlvmRangeMetadataAttachment(MirType.I64, FactAt(globalFacts, (u32[0 max])instr.Immediate()), rangeMetadata, sink);
+            try sink.AppendConstAscii("\n");
+        case MirOp.StoreGlobal:
+            try sink.AppendConstAscii("  store i64 ");
+            try EmitLlvmOperand(instrs, sink, instr.OperandAIndex());
+            try sink.AppendConstAscii(", ptr @g");
+            try sink.AppendI64(instr.Immediate());
+            try sink.AppendConstAscii("\n");
+        case MirOp.Phi:
+            try EmitLlvmPhi(instrs, sink, index, instr.OperandAIndex(), instr.OperandBIndex(), instr.Immediate());
+        case MirOp.Call:
+            try sink.AppendConstAscii("  ");
+            try EmitLlvmRegister(sink, index);
+            try sink.AppendConstAscii(" = call ");
+            if (FunctionIdIsTailCallable(funcTailFlags, (u32[0 max])instr.Immediate()))
+            {
+                try sink.AppendConstAscii("tailcc ");
+            }
+
+            try sink.AppendConstAscii("i64 @f");
+            try sink.AppendI64(instr.Immediate());
+            try EmitLlvmCallArgsWithRangeFacts(
+                instrs,
+                paramFacts,
+                valueFacts,
+                globalFacts,
+                functionReturnFacts,
+                sink,
+                instr.OperandAIndex(),
+                instr.OperandBIndex(),
+                instr.OperandCIndex(),
+                instr.OperandDIndex());
+            try EmitLlvmRangeMetadataAttachment(MirType.I64, FactAt(functionReturnFacts, (u32[0 max])instr.Immediate()), rangeMetadata, sink);
+            try sink.AppendConstAscii("\n");
+        case MirOp.TailCall:
+            try sink.AppendConstAscii("");
+        case MirOp.Return:
+            try sink.AppendConstAscii("  ret i64 ");
+            try EmitLlvmOperand(instrs, sink, instr.OperandAIndex());
+            try sink.AppendConstAscii("\n");
+    }
+
+    return MemoryStatus.Ok;
+}
+
 internal fn MemoryStatus EmitLlvmInstruction(borrow IrTable<MirInstruction> instrs, mut borrow OwnedAscii sink, u32[0 max] index)
 {
     stack mut IrTable<u32[0 max]> noTailCallees = new();
@@ -1309,6 +1662,83 @@ public fn MemoryStatus EmitLlvmTerminatorWithTailCallees(borrow IrTable<MirInstr
     return MemoryStatus.Ok;
 }
 
+internal fn MemoryStatus EmitLlvmTerminatorWithRangeFacts(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<u32[0 max]> funcTailFlags,
+    borrow IrTable<ValueFacts> paramFacts,
+    borrow IrTable<ValueFacts> valueFacts,
+    borrow IrTable<ValueFacts> globalFacts,
+    borrow IrTable<ValueFacts> functionReturnFacts,
+    mut borrow IrTable<LlvmRangeMetadata> rangeMetadata,
+    borrow IrTable<MirBlock> blocks,
+    MirBlockId b,
+    mut borrow OwnedAscii sink)
+{
+    if (!blocks.Contains(b.Index()))
+    {
+        try sink.AppendConstAscii("  unreachable\n");
+        return MemoryStatus.Ok;
+    }
+
+    stack MirBlock blk = blocks.Get(b.Index());
+    switch (blk.Terminator())
+    {
+        case MirTermKind.Return:
+            try sink.AppendConstAscii("  ret i64 ");
+            try EmitLlvmOperand(instrs, sink, blk.Slot0Index());
+            try sink.AppendConstAscii("\n");
+        case MirTermKind.Branch:
+            try sink.AppendConstAscii("  br label ");
+            try EmitLlvmBlockRef(sink, blk.Slot0Index());
+            try sink.AppendConstAscii("\n");
+        case MirTermKind.CondBranch:
+            try sink.AppendConstAscii("  br i1 ");
+            try EmitLlvmOperand(instrs, sink, blk.Slot0Index());
+            try sink.AppendConstAscii(", label ");
+            try EmitLlvmBlockRef(sink, blk.Slot1Index());
+            try sink.AppendConstAscii(", label ");
+            try EmitLlvmBlockRef(sink, blk.Slot2Index());
+            try sink.AppendConstAscii("\n");
+        case MirTermKind.TailCall:
+            if (!instrs.Contains(blk.Slot0Index()))
+            {
+                try sink.AppendConstAscii("  unreachable\n");
+                return MemoryStatus.Ok;
+            }
+
+            stack MirInstruction tailCall = instrs.Get(blk.Slot0Index());
+            if (tailCall.Opcode() != MirOp.TailCall)
+            {
+                try sink.AppendConstAscii("  unreachable\n");
+                return MemoryStatus.Ok;
+            }
+
+            try sink.AppendConstAscii("  ");
+            try EmitLlvmRegister(sink, blk.Slot0Index());
+            try sink.AppendConstAscii(" = musttail call tailcc i64 @f");
+            try sink.AppendI64(tailCall.Immediate());
+            try EmitLlvmCallArgsWithRangeFacts(
+                instrs,
+                paramFacts,
+                valueFacts,
+                globalFacts,
+                functionReturnFacts,
+                sink,
+                tailCall.OperandAIndex(),
+                tailCall.OperandBIndex(),
+                tailCall.OperandCIndex(),
+                tailCall.OperandDIndex());
+            try EmitLlvmRangeMetadataAttachment(MirType.I64, FactAt(functionReturnFacts, (u32[0 max])tailCall.Immediate()), rangeMetadata, sink);
+            try sink.AppendConstAscii("\n  ret i64 ");
+            try EmitLlvmOperand(instrs, sink, blk.Slot0Index());
+            try sink.AppendConstAscii("\n");
+        case MirTermKind.Unterminated:
+            try sink.AppendConstAscii("  unreachable\n");
+    }
+
+    return MemoryStatus.Ok;
+}
+
 public fn MemoryStatus EmitLlvmTerminator(borrow IrTable<MirInstruction> instrs, borrow IrTable<MirBlock> blocks, MirBlockId b, mut borrow OwnedAscii sink)
 {
     stack mut IrTable<u32[0 max]> noTailCallees = new();
@@ -1338,6 +1768,55 @@ public fn MemoryStatus EmitLlvmLabeledBlockWithTailCallees(borrow IrTable<MirIns
     }
 
     try EmitLlvmTerminatorWithTailCallees(instrs, funcTailFlags, blocks, MirBlockIdOf(blockIndex), sink);
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EmitLlvmLabeledBlockWithRangeFacts(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<u32[0 max]> funcTailFlags,
+    borrow IrTable<ValueFacts> paramFacts,
+    borrow IrTable<ValueFacts> valueFacts,
+    borrow IrTable<ValueFacts> globalFacts,
+    borrow IrTable<ValueFacts> functionReturnFacts,
+    mut borrow IrTable<LlvmRangeMetadata> rangeMetadata,
+    borrow IrTable<MirBlock> blocks,
+    u32[0 max] blockIndex,
+    u32[0 max] firstInstr,
+    u32[0 max] instrCount,
+    mut borrow OwnedAscii sink)
+{
+    try sink.AppendConstAscii("b");
+    try sink.AppendU64((u64[0 max])blockIndex);
+    try sink.AppendConstAscii(":\n");
+    stack mut u32[0 max] index = firstInstr;
+    stack mut u32[0 max] remaining = instrCount;
+    while willexit (remaining > 0)
+    {
+        try EmitLlvmInstructionWithRangeFacts(
+            instrs,
+            funcTailFlags,
+            paramFacts,
+            valueFacts,
+            globalFacts,
+            functionReturnFacts,
+            rangeMetadata,
+            sink,
+            index);
+        index = index + 1;
+        remaining = remaining - 1;
+    }
+
+    try EmitLlvmTerminatorWithRangeFacts(
+        instrs,
+        funcTailFlags,
+        paramFacts,
+        valueFacts,
+        globalFacts,
+        functionReturnFacts,
+        rangeMetadata,
+        blocks,
+        MirBlockIdOf(blockIndex),
+        sink);
     return MemoryStatus.Ok;
 }
 
@@ -1381,6 +1860,28 @@ internal fn MemoryStatus EmitLlvmParamList(u32[0 max] paramCount, mut borrow Own
     return MemoryStatus.Ok;
 }
 
+internal fn MemoryStatus EmitLlvmParamListWithRangeFacts(u32[0 max] paramCount, borrow IrTable<ValueFacts> paramFacts, mut borrow OwnedAscii sink)
+{
+    try sink.AppendConstAscii("(");
+    stack mut u32[0 max] i = 0;
+    while willexit (i < paramCount)
+    {
+        if (i > 0)
+        {
+            try sink.AppendConstAscii(", ");
+        }
+
+        try sink.AppendConstAscii("i64");
+        try EmitLlvmRangeAttribute(MirType.I64, FactAt(paramFacts, i + 1), sink);
+        try sink.AppendConstAscii(" %p");
+        try sink.AppendU64((u64[0 max])i);
+        i = i + 1;
+    }
+
+    try sink.AppendConstAscii(")");
+    return MemoryStatus.Ok;
+}
+
 // Emits a single-block LLVM function with a parameter list: `define i64
 // @name(i64 %p0, …) { <entry block> }`. Body uses of `MirParam` values lower to
 // `%pK`, including a parameter returned directly by the block terminator (which
@@ -1408,6 +1909,93 @@ public fn MemoryStatus EmitLlvmDefinitionWithParamsTail(borrow IrTable<MirInstru
     try sink.AppendConstAscii(" {\n");
     try EmitLlvmLabeledBlockWithTailCallees(instrs, funcTailFlags, blocks, entryBlockIndex, firstInstr, instrCount, sink);
     try sink.AppendConstAscii("}\n");
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EmitLlvmDefinitionWithRangeFactsCore(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<u32[0 max]> funcTailFlags,
+    borrow IrTable<MirBlock> blocks,
+    const ascii name,
+    bool isTailCallable,
+    ValueFacts returnFacts,
+    borrow IrTable<ValueFacts> paramFacts,
+    borrow IrTable<ValueFacts> valueFacts,
+    borrow IrTable<ValueFacts> globalFacts,
+    borrow IrTable<ValueFacts> functionReturnFacts,
+    mut borrow IrTable<LlvmRangeMetadata> rangeMetadata,
+    u32[0 max] paramCount,
+    u32[0 max] entryBlockIndex,
+    u32[0 max] firstInstr,
+    u32[0 max] instrCount,
+    mut borrow OwnedAscii sink)
+{
+    if (isTailCallable)
+    {
+        try sink.AppendConstAscii("define tailcc");
+    }
+    else
+    {
+        try sink.AppendConstAscii("define");
+    }
+
+    try EmitLlvmRangeAttribute(MirType.I64, returnFacts, sink);
+    try sink.AppendConstAscii(" i64 @");
+    try sink.AppendConstAscii(name);
+    try EmitLlvmParamListWithRangeFacts(paramCount, paramFacts, sink);
+    try sink.AppendConstAscii(" {\n");
+    try EmitLlvmLabeledBlockWithRangeFacts(
+        instrs,
+        funcTailFlags,
+        paramFacts,
+        valueFacts,
+        globalFacts,
+        functionReturnFacts,
+        rangeMetadata,
+        blocks,
+        entryBlockIndex,
+        firstInstr,
+        instrCount,
+        sink);
+    try sink.AppendConstAscii("}\n");
+    return MemoryStatus.Ok;
+}
+
+public fn MemoryStatus EmitLlvmDefinitionWithRangeFacts(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<MirBlock> blocks,
+    const ascii name,
+    ValueFacts returnFacts,
+    borrow IrTable<ValueFacts> paramFacts,
+    borrow IrTable<ValueFacts> valueFacts,
+    borrow IrTable<ValueFacts> globalFacts,
+    borrow IrTable<ValueFacts> functionReturnFacts,
+    u32[0 max] paramCount,
+    u32[0 max] entryBlockIndex,
+    u32[0 max] firstInstr,
+    u32[0 max] instrCount,
+    mut borrow OwnedAscii sink)
+{
+    stack mut IrTable<u32[0 max]> noTailCallees = new();
+    stack mut IrTable<LlvmRangeMetadata> rangeMetadata = new();
+    try EmitLlvmDefinitionWithRangeFactsCore(
+        instrs,
+        noTailCallees,
+        blocks,
+        name,
+        false,
+        returnFacts,
+        paramFacts,
+        valueFacts,
+        globalFacts,
+        functionReturnFacts,
+        rangeMetadata,
+        paramCount,
+        entryBlockIndex,
+        firstInstr,
+        instrCount,
+        sink);
+    try EmitLlvmRangeMetadataDefinitions(rangeMetadata, sink);
     return MemoryStatus.Ok;
 }
 
@@ -1482,6 +2070,94 @@ public fn MemoryStatus EmitLlvmBlocksWithTailCallees(borrow IrTable<MirInstructi
     return MemoryStatus.Ok;
 }
 
+internal fn MemoryStatus EmitLlvmBlocksWithRangeFactsCore(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<u32[0 max]> funcTailFlags,
+    borrow IrTable<MirBlock> blocks,
+    const ascii name,
+    bool isTailCallable,
+    ValueFacts returnFacts,
+    borrow IrTable<ValueFacts> paramFacts,
+    borrow IrTable<ValueFacts> valueFacts,
+    borrow IrTable<ValueFacts> globalFacts,
+    borrow IrTable<ValueFacts> functionReturnFacts,
+    mut borrow IrTable<LlvmRangeMetadata> rangeMetadata,
+    u32[0 max] paramCount,
+    borrow IrTable<BlockEmit> ranges,
+    mut borrow OwnedAscii sink)
+{
+    if (isTailCallable)
+    {
+        try sink.AppendConstAscii("define tailcc");
+    }
+    else
+    {
+        try sink.AppendConstAscii("define");
+    }
+
+    try EmitLlvmRangeAttribute(MirType.I64, returnFacts, sink);
+    try sink.AppendConstAscii(" i64 @");
+    try sink.AppendConstAscii(name);
+    try EmitLlvmParamListWithRangeFacts(paramCount, paramFacts, sink);
+    try sink.AppendConstAscii(" {\n");
+    stack u64[0 2 ** 63 - 1] total = ranges.Count();
+    stack mut u32[0 max] i = 1;
+    while willexit ((u64[0 2 ** 63 - 1])i <= total)
+    {
+        try EmitLlvmLabeledBlockWithRangeFacts(
+            instrs,
+            funcTailFlags,
+            paramFacts,
+            valueFacts,
+            globalFacts,
+            functionReturnFacts,
+            rangeMetadata,
+            blocks,
+            ranges.Get(i).BlockIndex,
+            ranges.Get(i).First,
+            ranges.Get(i).Count,
+            sink);
+        i = i + 1;
+    }
+
+    try sink.AppendConstAscii("}\n");
+    return MemoryStatus.Ok;
+}
+
+public fn MemoryStatus EmitLlvmBlocksWithRangeFacts(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<MirBlock> blocks,
+    const ascii name,
+    ValueFacts returnFacts,
+    borrow IrTable<ValueFacts> paramFacts,
+    borrow IrTable<ValueFacts> valueFacts,
+    borrow IrTable<ValueFacts> globalFacts,
+    borrow IrTable<ValueFacts> functionReturnFacts,
+    u32[0 max] paramCount,
+    borrow IrTable<BlockEmit> ranges,
+    mut borrow OwnedAscii sink)
+{
+    stack mut IrTable<u32[0 max]> noTailCallees = new();
+    stack mut IrTable<LlvmRangeMetadata> rangeMetadata = new();
+    try EmitLlvmBlocksWithRangeFactsCore(
+        instrs,
+        noTailCallees,
+        blocks,
+        name,
+        false,
+        returnFacts,
+        paramFacts,
+        valueFacts,
+        globalFacts,
+        functionReturnFacts,
+        rangeMetadata,
+        paramCount,
+        ranges,
+        sink);
+    try EmitLlvmRangeMetadataDefinitions(rangeMetadata, sink);
+    return MemoryStatus.Ok;
+}
+
 // Like `EmitLlvmBlocks` but emits a NUMBERED function name `@<prefix><number>` (e.g. `@f3`)
 // instead of a fixed name — the multi-block counterpart of `EmitLlvmNumberedFunction`, so a
 // module function (`@fN`) can have an arbitrary block list (a branch, a loop), not just one
@@ -1512,6 +2188,62 @@ public fn MemoryStatus EmitLlvmBlocksNumberedWithTailCallees(borrow IrTable<MirI
     while willexit ((u64[0 2 ** 63 - 1])i <= total)
     {
         try EmitLlvmLabeledBlockWithTailCallees(instrs, funcTailFlags, blocks, ranges.Get(i).BlockIndex, ranges.Get(i).First, ranges.Get(i).Count, sink);
+        i = i + 1;
+    }
+
+    try sink.AppendConstAscii("}\n");
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EmitLlvmBlocksNumberedWithRangeFactsCore(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<u32[0 max]> funcTailFlags,
+    borrow IrTable<MirBlock> blocks,
+    const ascii prefix,
+    u32[0 max] number,
+    bool isTailCallable,
+    ValueFacts returnFacts,
+    borrow IrTable<ValueFacts> paramFacts,
+    borrow IrTable<ValueFacts> valueFacts,
+    borrow IrTable<ValueFacts> globalFacts,
+    borrow IrTable<ValueFacts> functionReturnFacts,
+    mut borrow IrTable<LlvmRangeMetadata> rangeMetadata,
+    u32[0 max] paramCount,
+    borrow IrTable<BlockEmit> ranges,
+    mut borrow OwnedAscii sink)
+{
+    if (isTailCallable)
+    {
+        try sink.AppendConstAscii("define tailcc");
+    }
+    else
+    {
+        try sink.AppendConstAscii("define");
+    }
+
+    try EmitLlvmRangeAttribute(MirType.I64, returnFacts, sink);
+    try sink.AppendConstAscii(" i64 @");
+    try sink.AppendConstAscii(prefix);
+    try sink.AppendU64((u64[0 max])number);
+    try EmitLlvmParamListWithRangeFacts(paramCount, paramFacts, sink);
+    try sink.AppendConstAscii(" {\n");
+    stack u64[0 2 ** 63 - 1] total = ranges.Count();
+    stack mut u32[0 max] i = 1;
+    while willexit ((u64[0 2 ** 63 - 1])i <= total)
+    {
+        try EmitLlvmLabeledBlockWithRangeFacts(
+            instrs,
+            funcTailFlags,
+            paramFacts,
+            valueFacts,
+            globalFacts,
+            functionReturnFacts,
+            rangeMetadata,
+            blocks,
+            ranges.Get(i).BlockIndex,
+            ranges.Get(i).First,
+            ranges.Get(i).Count,
+            sink);
         i = i + 1;
     }
 
@@ -1674,22 +2406,6 @@ public fn MemoryStatus EmitLlvmModuleWithGlobals(borrow IrTable<MirInstruction> 
 // the trailing `Return` instruction's value, so a uniform-typed (e.g. i32) function
 // emits its type throughout. Untyped instructions default to `I64`, so this path
 // reproduces the i64 output for default values. Handles the const/arith/return subset.
-
-// Appends an LLVM integer type name (`i1`/`i32`/`i64`).
-internal fn MemoryStatus EmitLlvmTypeName(MirType t, mut borrow OwnedAscii sink)
-{
-    switch (t)
-    {
-        case MirType.I1:
-            try sink.AppendConstAscii("i1");
-        case MirType.I32:
-            try sink.AppendConstAscii("i32");
-        case MirType.I64:
-            try sink.AppendConstAscii("i64");
-    }
-
-    return MemoryStatus.Ok;
-}
 
 // `  %vDst = <mnemonic> <type> <a>, <b>`, spelling `type` instead of a fixed `i64`.
 internal fn MemoryStatus EmitLlvmTypedBinary(borrow IrTable<MirInstruction> instrs, mut borrow OwnedAscii sink, u32[0 max] dst, const ascii mnemonic, MirType t, u32[0 max] a, u32[0 max] b)
@@ -2781,6 +3497,273 @@ internal fn i64[min max] ParseDigitSpan(borrow i8[min max][] source, u64[0 2 ** 
     return value;
 }
 
+internal finite law i64[min max] I64MinValue()
+{
+    return (i64[min max])(-(2 ** 63));
+}
+
+internal finite law i64[min max] I64MaxValue()
+{
+    return 9223372036854775807;
+}
+
+internal fn i64[min max] Pow2I64(u32[0 max] exponent)
+{
+    stack mut i64[min max] value = 1;
+    stack mut u32[0 max] i = 0;
+    while willexit (i < exponent)
+    {
+        value = value * 2;
+        i = i + 1;
+    }
+
+    return value;
+}
+
+internal fn bool TokenTextIs3(borrow TokenStream stream, borrow i8[min max][] source, u32[0 max] token, i8[min max] first, i8[min max] second, i8[min max] third)
+{
+    stack u64[0 2 ** 63 - 1] length = stream.LengthAt((u64[0 2 ** 63 - 1])token);
+    if (length != 3)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] start = stream.StartAt((u64[0 2 ** 63 - 1])token);
+    return source[start] == first
+        && source[start + 1] == second
+        && source[start + 2] == third;
+}
+
+internal fn bool TokenIsMin(borrow TokenStream stream, borrow i8[min max][] source, u32[0 max] token)
+{
+    return TokenTextIs3(stream, source, token, 109, 105, 110);
+}
+
+internal fn bool TokenIsMax(borrow TokenStream stream, borrow i8[min max][] source, u32[0 max] token)
+{
+    return TokenTextIs3(stream, source, token, 109, 97, 120);
+}
+
+internal fn bool IntegerTypeIsUnsigned(borrow TokenStream stream, borrow i8[min max][] source, u32[0 max] typeToken)
+{
+    if (stream.KindAt((u64[0 2 ** 63 - 1])typeToken) != TokenKind.IntegerType)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] start = stream.StartAt((u64[0 2 ** 63 - 1])typeToken);
+    return source[start] == 117;
+}
+
+internal fn u32[0 max] IntegerTypeBitWidth(borrow TokenStream stream, borrow i8[min max][] source, u32[0 max] typeToken)
+{
+    if (stream.KindAt((u64[0 2 ** 63 - 1])typeToken) != TokenKind.IntegerType)
+    {
+        return 64;
+    }
+
+    stack u64[0 2 ** 63 - 1] start = stream.StartAt((u64[0 2 ** 63 - 1])typeToken);
+    stack u64[0 2 ** 63 - 1] length = stream.LengthAt((u64[0 2 ** 63 - 1])typeToken);
+    stack mut u64[0 2 ** 63 - 1] i = 1;
+    stack mut u32[0 max] width = 0;
+    while willexit (i < length)
+    {
+        stack i8[min max] byte = source[start + i];
+        if (byte < 48 || byte > 57)
+        {
+            return 64;
+        }
+
+        width = width * 10 + (u32[0 max])((i64[min max])byte - 48);
+        i = i + 1;
+    }
+
+    if (width == 0)
+    {
+        return 64;
+    }
+
+    return width;
+}
+
+internal fn bool IntegerTypeSignedMinValue(borrow TokenStream stream, borrow i8[min max][] source, u32[0 max] typeToken, out i64[min max] value)
+{
+    value = 0;
+    stack u32[0 max] width = IntegerTypeBitWidth(stream, source, typeToken);
+    if (IntegerTypeIsUnsigned(stream, source, typeToken))
+    {
+        value = 0;
+        return true;
+    }
+
+    if (width == 64)
+    {
+        value = I64MinValue();
+        return true;
+    }
+
+    if (width > 0 && width < 64)
+    {
+        value = 0 - Pow2I64(width - 1);
+        return true;
+    }
+
+    return false;
+}
+
+internal fn bool IntegerTypeMaxValue(borrow TokenStream stream, borrow i8[min max][] source, u32[0 max] typeToken, out i64[min max] value)
+{
+    value = 0;
+    stack u32[0 max] width = IntegerTypeBitWidth(stream, source, typeToken);
+    if (IntegerTypeIsUnsigned(stream, source, typeToken))
+    {
+        if (width >= 63)
+        {
+            return false;
+        }
+
+        value = Pow2I64(width) - 1;
+        return true;
+    }
+
+    if (width == 64)
+    {
+        value = I64MaxValue();
+        return true;
+    }
+
+    if (width > 0 && width < 64)
+    {
+        value = Pow2I64(width - 1) - 1;
+        return true;
+    }
+
+    return false;
+}
+
+internal fn bool TryReadRangeLowerInclusive(borrow TokenStream stream, borrow i8[min max][] source, u32[0 max] typeToken, u32[0 max] token, out i64[min max] value)
+{
+    value = 0;
+    stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])token);
+    if (kind == TokenKind.IntegerLiteral)
+    {
+        value = ParseDigitSpan(source, stream.StartAt((u64[0 2 ** 63 - 1])token), stream.LengthAt((u64[0 2 ** 63 - 1])token));
+        return true;
+    }
+
+    if (kind == TokenKind.Minus && stream.KindAt((u64[0 2 ** 63 - 1])token + 1) == TokenKind.IntegerLiteral)
+    {
+        value = 0 - ParseDigitSpan(source, stream.StartAt((u64[0 2 ** 63 - 1])token + 1), stream.LengthAt((u64[0 2 ** 63 - 1])token + 1));
+        return true;
+    }
+
+    if (kind == TokenKind.Identifier && TokenIsMin(stream, source, token))
+    {
+        return IntegerTypeSignedMinValue(stream, source, typeToken, value);
+    }
+
+    if (kind == TokenKind.Identifier && TokenIsMax(stream, source, token))
+    {
+        return IntegerTypeMaxValue(stream, source, typeToken, value);
+    }
+
+    return false;
+}
+
+internal fn bool TryReadRangeUpperExclusive(borrow TokenStream stream, borrow i8[min max][] source, u32[0 max] typeToken, u32[0 max] token, out i64[min max] value)
+{
+    value = 0;
+    stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])token);
+    if (kind == TokenKind.Identifier && TokenIsMax(stream, source, token))
+    {
+        if (IntegerTypeIsUnsigned(stream, source, typeToken))
+        {
+            stack u32[0 max] width = IntegerTypeBitWidth(stream, source, typeToken);
+            if (width >= 63)
+            {
+                return false;
+            }
+
+            value = Pow2I64(width);
+            return true;
+        }
+
+        stack u32[0 max] signedWidth = IntegerTypeBitWidth(stream, source, typeToken);
+        if (signedWidth == 64)
+        {
+            value = I64MinValue();
+            return true;
+        }
+
+        if (signedWidth > 0 && signedWidth < 64)
+        {
+            value = Pow2I64(signedWidth - 1);
+            return true;
+        }
+
+        return false;
+    }
+
+    stack mut i64[min max] inclusive = 0;
+    if (!TryReadRangeLowerInclusive(stream, source, typeToken, token, inclusive))
+    {
+        return false;
+    }
+
+    if (inclusive == I64MaxValue())
+    {
+        value = I64MinValue();
+    }
+    else
+    {
+        value = inclusive + 1;
+    }
+
+    return true;
+}
+
+internal finite law u32[0 max] NextRangeBoundToken(borrow TokenStream stream, u32[0 max] token)
+{
+    if (stream.KindAt((u64[0 2 ** 63 - 1])token) == TokenKind.Minus)
+    {
+        return token + 2;
+    }
+
+    return token + 1;
+}
+
+internal fn bool TryReadIntegerRangeFact(borrow TokenStream stream, borrow i8[min max][] source, u32[0 max] typeToken, out ValueFacts facts)
+{
+    facts = new();
+    if (typeToken == 0 || stream.KindAt((u64[0 2 ** 63 - 1])typeToken) != TokenKind.IntegerType)
+    {
+        return false;
+    }
+
+    if (stream.KindAt((u64[0 2 ** 63 - 1])typeToken + 1) != TokenKind.LBrack)
+    {
+        return false;
+    }
+
+    stack u32[0 max] lowerToken = typeToken + 2;
+    stack u32[0 max] upperToken = NextRangeBoundToken(stream, lowerToken);
+    stack mut i64[min max] lower = 0;
+    stack mut i64[min max] upperExclusive = 0;
+    if (!TryReadRangeLowerInclusive(stream, source, typeToken, lowerToken, lower)
+        || !TryReadRangeUpperExclusive(stream, source, typeToken, upperToken, upperExclusive))
+    {
+        return false;
+    }
+
+    if (lower == I64MinValue() && upperExclusive == I64MinValue())
+    {
+        return false;
+    }
+
+    facts.SetIntegerRange(lower, upperExclusive);
+    return true;
+}
+
 // The value of the first IntegerLiteral token in `stream` (parsed from `source`), or
 // -1 if there is none.
 internal fn i64[min max] FirstIntLiteralValue(borrow TokenStream stream, borrow i8[min max][] source)
@@ -3093,6 +4076,57 @@ internal fn MemoryStatus EmitLlvmNumberedFunctionWithTailCallees(borrow IrTable<
     try EmitLlvmParamList(paramCount, sink);
     try sink.AppendConstAscii(" {\n");
     try EmitLlvmLabeledBlockWithTailCallees(instrs, funcTailFlags, blocks, entryBlock, firstInstr, instrCount, sink);
+    try sink.AppendConstAscii("}\n");
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EmitLlvmNumberedFunctionWithRangeFactsCore(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<u32[0 max]> funcTailFlags,
+    borrow IrTable<MirBlock> blocks,
+    const ascii prefix,
+    u32[0 max] number,
+    bool isTailCallable,
+    ValueFacts returnFacts,
+    borrow IrTable<ValueFacts> paramFacts,
+    borrow IrTable<ValueFacts> valueFacts,
+    borrow IrTable<ValueFacts> globalFacts,
+    borrow IrTable<ValueFacts> functionReturnFacts,
+    mut borrow IrTable<LlvmRangeMetadata> rangeMetadata,
+    u32[0 max] paramCount,
+    u32[0 max] entryBlock,
+    u32[0 max] firstInstr,
+    u32[0 max] instrCount,
+    mut borrow OwnedAscii sink)
+{
+    if (isTailCallable)
+    {
+        try sink.AppendConstAscii("define tailcc");
+    }
+    else
+    {
+        try sink.AppendConstAscii("define");
+    }
+
+    try EmitLlvmRangeAttribute(MirType.I64, returnFacts, sink);
+    try sink.AppendConstAscii(" i64 @");
+    try sink.AppendConstAscii(prefix);
+    try sink.AppendU64((u64[0 max])number);
+    try EmitLlvmParamListWithRangeFacts(paramCount, paramFacts, sink);
+    try sink.AppendConstAscii(" {\n");
+    try EmitLlvmLabeledBlockWithRangeFacts(
+        instrs,
+        funcTailFlags,
+        paramFacts,
+        valueFacts,
+        globalFacts,
+        functionReturnFacts,
+        rangeMetadata,
+        blocks,
+        entryBlock,
+        firstInstr,
+        instrCount,
+        sink);
     try sink.AppendConstAscii("}\n");
     return MemoryStatus.Ok;
 }
@@ -5363,6 +6397,64 @@ internal fn void SeedSignatureParams(borrow TokenStream stream, borrow i8[min ma
     }
 }
 
+internal fn void SeedSignatureParamsFromParsed(borrow TokenStream stream, borrow i8[min max][] source, borrow Compiler.Parsing.FunctionSignature signature, mut borrow IrTable<ParamName> params)
+{
+    stack u64[0 2 ** 63 - 1] count = signature.ParamCount();
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < count)
+    {
+        stack u32[0 max] token = signature.ParamNameAt(i);
+        if (token != 0)
+        {
+            stack u32[0 max] index = ResolveParam(params, source, stream.StartAt((u64[0 2 ** 63 - 1])token), stream.LengthAt((u64[0 2 ** 63 - 1])token));
+        }
+
+        i = i + 1;
+    }
+}
+
+internal fn bool ParseFunctionSignatureAt(borrow TokenStream stream, u32[0 max] fnIndex, out Compiler.Parsing.FunctionSignature signature)
+{
+    signature = new();
+    switch (Compiler.Parsing.ParseFunctionSignature(stream, fnIndex))
+    {
+        case Compiler.Parsing.ParseResult<Compiler.Parsing.FunctionSignature>.Err(var sigError):
+            return false;
+        case Compiler.Parsing.ParseResult<Compiler.Parsing.FunctionSignature>.Ok(var parsed):
+            signature = parsed;
+            return signature.Name() != 0;
+    }
+
+    return false;
+}
+
+internal fn ValueFacts FunctionReturnRangeFact(borrow TokenStream stream, borrow i8[min max][] source, borrow Compiler.Parsing.FunctionSignature signature)
+{
+    stack mut ValueFacts facts = new();
+    stack u32[0 max] typeToken = signature.ReturnTypeTokenAt();
+    stack bool hasRange = TryReadIntegerRangeFact(stream, source, typeToken, facts);
+    return facts;
+}
+
+internal fn bool BuildParamRangeFacts(borrow TokenStream stream, borrow i8[min max][] source, borrow Compiler.Parsing.FunctionSignature signature, mut borrow IrTable<ValueFacts> paramFacts)
+{
+    stack u64[0 2 ** 63 - 1] count = signature.ParamCount();
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < count)
+    {
+        stack mut ValueFacts facts = new();
+        stack bool hasRange = TryReadIntegerRangeFact(stream, source, signature.ParamTypeTokenAt(i), facts);
+        if (paramFacts.Add(facts) == 0)
+        {
+            return false;
+        }
+
+        i = i + 1;
+    }
+
+    return true;
+}
+
 // The unified front-to-back path for a single FUNCTION declaration `fn <name>(<params>)
 // { return <expr> }`: lex -> seed the symbol table from the SIGNATURE (so parameter order
 // is authoritative) -> parse the return expression (names resolve to signature params) ->
@@ -5384,9 +6476,14 @@ public fn bool CompileFunctionToLlvm(ascii source, mut borrow OwnedAscii sink)
                 return false;
             }
 
-            // The signature's `(` follows `fn <name>`.
+            stack mut Compiler.Parsing.FunctionSignature signature = new();
+            if (!ParseFunctionSignatureAt(stream, (u32[0 max])fnIndex, signature))
+            {
+                return false;
+            }
+
             stack mut IrTable<ParamName> params = new();
-            SeedSignatureParams(stream, sourceBytes, (u64[0 2 ** 63 - 1])fnIndex + 2, params);
+            SeedSignatureParamsFromParsed(stream, sourceBytes, signature, params);
 
             // Freeze the declared arity: the body may only reference the signature's
             // parameters. If parsing the body APPENDS a name (an undeclared identifier),
@@ -5419,7 +6516,17 @@ public fn bool CompileFunctionToLlvm(ascii source, mut borrow OwnedAscii sink)
             stack MirBlockId entry = MirReturnBlock(blocks, returnValue);
             stack u32[0 max] instrCount = (u32[0 max])instrs.Count();
             stack u32[0 max] paramCount = (u32[0 max])signatureParamCount;
-            switch (EmitLlvmDefinitionWithParams(instrs, blocks, "main", paramCount, entry.Index(), 1, instrCount, sink))
+            stack mut IrTable<ValueFacts> paramFacts = new();
+            if (!BuildParamRangeFacts(stream, sourceBytes, signature, paramFacts))
+            {
+                return false;
+            }
+
+            stack ValueFacts returnFacts = FunctionReturnRangeFact(stream, sourceBytes, signature);
+            stack mut IrTable<ValueFacts> valueFacts = new();
+            stack mut IrTable<ValueFacts> globalFacts = new();
+            stack mut IrTable<ValueFacts> functionReturnFacts = new();
+            switch (EmitLlvmDefinitionWithRangeFacts(instrs, blocks, "main", returnFacts, paramFacts, valueFacts, globalFacts, functionReturnFacts, paramCount, entry.Index(), 1, instrCount, sink))
             {
                 case MemoryStatus.Ok:
                     return true;
@@ -5550,8 +6657,8 @@ internal fn LoweredBody LowerFunctionWithLocals(borrow TokenStream stream, borro
     stack mut LoweredBody result = new();
 
     stack i64[min max] braceIndex = FirstTokenOfKindAfter(stream, TokenKind.LBrace, fnIndex);
-    stack i64[min max] returnIndex = FirstTokenOfKindAfter(stream, TokenKind.Return, fnIndex);
-    stack i64[min max] becomeIndex = FirstTokenOfKindAfter(stream, TokenKind.Become, fnIndex);
+    stack mut i64[min max] returnIndex = FirstTokenOfKindAfter(stream, TokenKind.Return, fnIndex);
+    stack mut i64[min max] becomeIndex = FirstTokenOfKindAfter(stream, TokenKind.Become, fnIndex);
     if (braceIndex < 0)
     {
         return result;
@@ -5595,8 +6702,14 @@ internal fn LoweredBody LowerFunctionWithLocals(borrow TokenStream stream, borro
         return result;
     }
 
+    stack mut Compiler.Parsing.FunctionSignature signature = new();
+    if (!ParseFunctionSignatureAt(stream, (u32[0 max])fnIndex, signature))
+    {
+        return result;
+    }
+
     stack mut IrTable<ParamName> params = new();
-    SeedSignatureParams(stream, source, fnIndex + 2, params);
+    SeedSignatureParamsFromParsed(stream, source, signature, params);
     stack u64[0 2 ** 63 - 1] signatureParamCount = params.Count();
 
     // Per-index types (1 = boolean, 0 = integer/parameter); signature parameters are integer.
@@ -5736,7 +6849,18 @@ internal fn LoweredBody LowerFunctionWithLocals(borrow TokenStream stream, borro
 // every name in `funcNames`): that is RECURSION through the AST path (e.g. factorial). The
 // condition must be boolean and both returned arms integer. Returns false if the body is not
 // this shape, or is malformed / ill-typed / has an invalid call.
-internal fn bool EmitModuleIfReturnFunction(borrow TokenStream stream, borrow i8[min max][] source, borrow IrTable<ParamName> funcNames, borrow IrTable<u32[0 max]> funcParamCounts, borrow IrTable<u32[0 max]> funcTailFlags, bool isTailCallable, u64[0 2 ** 63 - 1] fnIndex, u32[0 max] functionNumber, mut borrow OwnedAscii sink)
+internal fn bool EmitModuleIfReturnFunction(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<u32[0 max]> funcParamCounts,
+    borrow IrTable<u32[0 max]> funcTailFlags,
+    borrow IrTable<ValueFacts> functionReturnFacts,
+    mut borrow IrTable<LlvmRangeMetadata> rangeMetadata,
+    bool isTailCallable,
+    u64[0 2 ** 63 - 1] fnIndex,
+    u32[0 max] functionNumber,
+    mut borrow OwnedAscii sink)
 {
     stack i64[min max] braceIndex = FirstTokenOfKindAfter(stream, TokenKind.LBrace, fnIndex);
     if (braceIndex < 0 || stream.KindAt((u64[0 2 ** 63 - 1])braceIndex + 1) != TokenKind.If)
@@ -5744,8 +6868,14 @@ internal fn bool EmitModuleIfReturnFunction(borrow TokenStream stream, borrow i8
         return false;
     }
 
+    stack mut Compiler.Parsing.FunctionSignature signature = new();
+    if (!ParseFunctionSignatureAt(stream, (u32[0 max])fnIndex, signature))
+    {
+        return false;
+    }
+
     stack mut IrTable<ParamName> params = new();
-    SeedSignatureParams(stream, source, fnIndex + 2, params);
+    SeedSignatureParamsFromParsed(stream, source, signature, params);
     stack u64[0 2 ** 63 - 1] signatureParamCount = params.Count();
 
     // `if <cond> (return|become) <then> else (return|become) <else>`.
@@ -5876,7 +7006,31 @@ internal fn bool EmitModuleIfReturnFunction(borrow TokenStream stream, borrow i8
     stack u32[0 max] r3 = ranges.Add(MakeBlockEmit(elseBlock.Index(), elseFirst, elseCount));
 
     stack u32[0 max] paramCount = (u32[0 max])signatureParamCount;
-    switch (EmitLlvmBlocksNumberedWithTailCallees(instrs, funcTailFlags, blocks, "f", functionNumber, isTailCallable, paramCount, ranges, sink))
+    stack mut IrTable<ValueFacts> paramFacts = new();
+    if (!BuildParamRangeFacts(stream, source, signature, paramFacts))
+    {
+        return false;
+    }
+
+    stack ValueFacts returnFacts = FunctionReturnRangeFact(stream, source, signature);
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<ValueFacts> globalFacts = new();
+    switch (EmitLlvmBlocksNumberedWithRangeFactsCore(
+        instrs,
+        funcTailFlags,
+        blocks,
+        "f",
+        functionNumber,
+        isTailCallable,
+        returnFacts,
+        paramFacts,
+        valueFacts,
+        globalFacts,
+        functionReturnFacts,
+        rangeMetadata,
+        paramCount,
+        ranges,
+        sink))
     {
         case MemoryStatus.Ok:
             return true;
@@ -5890,13 +7044,34 @@ internal fn bool EmitModuleIfReturnFunction(borrow TokenStream stream, borrow i8
 // whose body begins with `if` is a BRANCH-bodied function (`if … return … else return …`,
 // which may RECURSE) and routes to `EmitModuleIfReturnFunction`; otherwise it is the shared
 // `var`-locals-then-`return` body. Returns false on any malformed/ill-typed/invalid function.
-internal fn bool EmitModuleFunctionAst(borrow TokenStream stream, borrow i8[min max][] source, borrow IrTable<ParamName> funcNames, borrow IrTable<u32[0 max]> funcParamCounts, borrow IrTable<u32[0 max]> funcTailFlags, u64[0 2 ** 63 - 1] fnIndex, u32[0 max] functionNumber, mut borrow OwnedAscii sink)
+internal fn bool EmitModuleFunctionAst(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<u32[0 max]> funcParamCounts,
+    borrow IrTable<u32[0 max]> funcTailFlags,
+    borrow IrTable<ValueFacts> functionReturnFacts,
+    mut borrow IrTable<LlvmRangeMetadata> rangeMetadata,
+    u64[0 2 ** 63 - 1] fnIndex,
+    u32[0 max] functionNumber,
+    mut borrow OwnedAscii sink)
 {
     stack bool isTailCallable = FunctionIdIsTailCallable(funcTailFlags, functionNumber);
     stack i64[min max] bodyBrace = FirstTokenOfKindAfter(stream, TokenKind.LBrace, fnIndex);
     if (bodyBrace >= 0 && stream.KindAt((u64[0 2 ** 63 - 1])bodyBrace + 1) == TokenKind.If)
     {
-        return EmitModuleIfReturnFunction(stream, source, funcNames, funcParamCounts, funcTailFlags, isTailCallable, fnIndex, functionNumber, sink);
+        return EmitModuleIfReturnFunction(
+            stream,
+            source,
+            funcNames,
+            funcParamCounts,
+            funcTailFlags,
+            functionReturnFacts,
+            rangeMetadata,
+            isTailCallable,
+            fnIndex,
+            functionNumber,
+            sink);
     }
 
     stack mut IrTable<MirInstruction> instrs = new();
@@ -5908,7 +7083,39 @@ internal fn bool EmitModuleFunctionAst(borrow TokenStream stream, borrow i8[min 
     }
 
     stack u32[0 max] instrCount = (u32[0 max])instrs.Count();
-    switch (EmitLlvmNumberedFunctionWithTailCallees(instrs, funcTailFlags, blocks, "f", functionNumber, isTailCallable, body.ParamCount, body.EntryBlock, 1, instrCount, sink))
+    stack mut Compiler.Parsing.FunctionSignature signature = new();
+    if (!ParseFunctionSignatureAt(stream, (u32[0 max])fnIndex, signature))
+    {
+        return false;
+    }
+
+    stack mut IrTable<ValueFacts> paramFacts = new();
+    if (!BuildParamRangeFacts(stream, source, signature, paramFacts))
+    {
+        return false;
+    }
+
+    stack ValueFacts returnFacts = FunctionReturnRangeFact(stream, source, signature);
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<ValueFacts> globalFacts = new();
+    switch (EmitLlvmNumberedFunctionWithRangeFactsCore(
+        instrs,
+        funcTailFlags,
+        blocks,
+        "f",
+        functionNumber,
+        isTailCallable,
+        returnFacts,
+        paramFacts,
+        valueFacts,
+        globalFacts,
+        functionReturnFacts,
+        rangeMetadata,
+        body.ParamCount,
+        body.EntryBlock,
+        1,
+        instrCount,
+        sink))
     {
         case MemoryStatus.Ok:
             return true;
@@ -5933,23 +7140,24 @@ internal fn bool CompileModuleFromAstStream(borrow TokenStream stream, borrow i8
     stack mut IrTable<ParamName> funcNames = new();
     stack mut IrTable<u32[0 max]> funcParamCounts = new();
     stack mut IrTable<u32[0 max]> funcTailFlags = new();
+    stack mut IrTable<ValueFacts> functionReturnFacts = new();
     stack mut u64[0 2 ** 63 - 1] i = 0;
     while willexit (i < tokenCount)
     {
         if (stream.KindAt(i) == TokenKind.Fn)
         {
-            stack mut ParamName name = new();
-            name.Start = stream.StartAt(i + 1);
-            name.Length = stream.LengthAt(i + 1);
-            stack u32[0 max] added = funcNames.Add(name);
-
-            stack i64[min max] paramCount = CountArgsBetweenParens(stream, i + 2);
-            stack mut u32[0 max] paramCountValue = 0;
-            if (paramCount > 0)
+            stack mut Compiler.Parsing.FunctionSignature signature = new();
+            if (!ParseFunctionSignatureAt(stream, (u32[0 max])i, signature))
             {
-                paramCountValue = (u32[0 max])paramCount;
+                return false;
             }
 
+            stack mut ParamName name = new();
+            name.Start = stream.StartAt((u64[0 2 ** 63 - 1])signature.Name());
+            name.Length = stream.LengthAt((u64[0 2 ** 63 - 1])signature.Name());
+            stack u32[0 max] added = funcNames.Add(name);
+
+            stack u32[0 max] paramCountValue = (u32[0 max])signature.ParamCount();
             stack u32[0 max] addedCount = funcParamCounts.Add(paramCountValue);
             stack mut u32[0 max] tailFlag = 0;
             if (FunctionTokenHasTailModifier(stream, i))
@@ -5958,6 +7166,11 @@ internal fn bool CompileModuleFromAstStream(borrow TokenStream stream, borrow i8
             }
 
             stack u32[0 max] addedTailFlag = funcTailFlags.Add(tailFlag);
+            stack ValueFacts returnFacts = FunctionReturnRangeFact(stream, source, signature);
+            if (functionReturnFacts.Add(returnFacts) == 0)
+            {
+                return false;
+            }
         }
 
         i = i + 1;
@@ -5969,6 +7182,7 @@ internal fn bool CompileModuleFromAstStream(borrow TokenStream stream, borrow i8
     }
 
     // Lower + emit each function in definition order.
+    stack mut IrTable<LlvmRangeMetadata> rangeMetadata = new();
     stack mut u32[0 max] functionNumber = 0;
     stack mut u64[0 2 ** 63 - 1] f = 0;
     while willexit (f < tokenCount)
@@ -5976,7 +7190,7 @@ internal fn bool CompileModuleFromAstStream(borrow TokenStream stream, borrow i8
         if (stream.KindAt(f) == TokenKind.Fn)
         {
             functionNumber = functionNumber + 1;
-            if (!EmitModuleFunctionAst(stream, source, funcNames, funcParamCounts, funcTailFlags, f, functionNumber, sink))
+            if (!EmitModuleFunctionAst(stream, source, funcNames, funcParamCounts, funcTailFlags, functionReturnFacts, rangeMetadata, f, functionNumber, sink))
             {
                 return false;
             }
@@ -5985,7 +7199,13 @@ internal fn bool CompileModuleFromAstStream(borrow TokenStream stream, borrow i8
         f = f + 1;
     }
 
-    return true;
+    switch (EmitLlvmRangeMetadataDefinitions(rangeMetadata, sink))
+    {
+        case MemoryStatus.Ok:
+            return true;
+        case MemoryStatus.Err(var metadataError):
+            return false;
+    }
 }
 
 // Lexes a multi-function module and compiles it through the AST path (see
@@ -6070,7 +7290,23 @@ public fn bool CompileFunctionWithLocalsToLlvm(ascii source, mut borrow OwnedAsc
             }
 
             stack u32[0 max] instrCount = (u32[0 max])instrs.Count();
-            switch (EmitLlvmDefinitionWithParams(instrs, blocks, "main", body.ParamCount, body.EntryBlock, 1, instrCount, sink))
+            stack mut Compiler.Parsing.FunctionSignature signature = new();
+            if (!ParseFunctionSignatureAt(stream, (u32[0 max])fnIndex, signature))
+            {
+                return false;
+            }
+
+            stack mut IrTable<ValueFacts> paramFacts = new();
+            if (!BuildParamRangeFacts(stream, sourceBytes, signature, paramFacts))
+            {
+                return false;
+            }
+
+            stack ValueFacts returnFacts = FunctionReturnRangeFact(stream, sourceBytes, signature);
+            stack mut IrTable<ValueFacts> valueFacts = new();
+            stack mut IrTable<ValueFacts> globalFacts = new();
+            stack mut IrTable<ValueFacts> functionReturnFacts = new();
+            switch (EmitLlvmDefinitionWithRangeFacts(instrs, blocks, "main", returnFacts, paramFacts, valueFacts, globalFacts, functionReturnFacts, body.ParamCount, body.EntryBlock, 1, instrCount, sink))
             {
                 case MemoryStatus.Ok:
                     return true;

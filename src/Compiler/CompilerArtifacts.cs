@@ -1293,7 +1293,8 @@ public sealed record ImportedTemplateObjectCreationSummary(
     StarkTypeSymbol CreatedType,
     TypedConstructorShape? Constructor,
     ObjectCreationStorageSelector StorageSelector = ObjectCreationStorageSelector.Default,
-    IReadOnlyList<ImportedTemplateObjectInitializerMemberSummary>? InitializerMemberSummaries = null)
+    IReadOnlyList<ImportedTemplateObjectInitializerMemberSummary>? InitializerMemberSummaries = null,
+    string? ExpressionText = null)
 {
     public IReadOnlyList<ImportedTemplateObjectInitializerMemberSummary> InitializerMembers =>
         InitializerMemberSummaries ?? [];
@@ -4646,6 +4647,8 @@ public enum MidLevelIrStatementKind
 {
     StorageLive,
     StorageDead,
+    ArenaFrameEnter,
+    ArenaFrameLeave,
     Assign,
     StoreIndirect,
     Evaluate
@@ -6129,6 +6132,12 @@ public sealed record SsaDeallocateLocalInstruction(
     StarkTypeSymbol LocalType,
     string StorageClass = "heap",
     SourceLocation? Location = null)
+    : SsaInstruction;
+
+public sealed record SsaArenaFrameEnterInstruction(SourceLocation? Location = null)
+    : SsaInstruction;
+
+public sealed record SsaArenaFrameLeaveInstruction(SourceLocation? Location = null)
     : SsaInstruction;
 
 public sealed record SsaStoreLocalInstruction(

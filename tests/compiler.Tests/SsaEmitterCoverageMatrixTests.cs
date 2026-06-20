@@ -82,6 +82,8 @@ public sealed class SsaEmitterCoverageMatrixTests
             Row(nameof(SsaLifetimeStartInstruction), CoverageKind.PositiveLlvmEmission, "LlvmIrEmissionTests.DynamicArrayIndexEmitsAddressBasedLoad"),
             Row(nameof(SsaLifetimeEndInstruction), CoverageKind.PositiveLlvmEmission, "LlvmIrEmissionTests.DynamicArrayIndexEmitsAddressBasedLoad"),
             Row(nameof(SsaDeallocateLocalInstruction), CoverageKind.PositiveLlvmEmission, "LlvmIrEmissionTests.HeapObjectCreationUsesAllocatorLowering"),
+            Row(nameof(SsaArenaFrameEnterInstruction), CoverageKind.PositiveLlvmEmission, "LlvmIrEmissionTests.ArenaDynamicStorageAllocationUsesFrameAllocatorAndDropsWithoutFreeingOwner"),
+            Row(nameof(SsaArenaFrameLeaveInstruction), CoverageKind.PositiveLlvmEmission, "LlvmIrEmissionTests.ArenaDynamicStorageAllocationUsesFrameAllocatorAndDropsWithoutFreeingOwner"),
             Row(nameof(SsaStoreLocalInstruction), CoverageKind.PositiveLlvmEmission, "LlvmIrEmissionTests.PointerOperatorsAndExplicitConversionsEmitRawMemoryAccess", "LlvmIrEmissionTests.DynamicArrayIndexMutationEmitsAddressBasedStoreAndLoad"),
             Row(nameof(SsaStoreIndirectInstruction), CoverageKind.PositiveLlvmEmission, "LlvmIrEmissionTests.PointerOperatorsAndExplicitConversionsEmitRawMemoryAccess", "LlvmIrEmissionTests.SliceMutationEmitsIndirectStoreAndLoad"),
             Row(nameof(SsaCopyMemoryInstruction), CoverageKind.PositiveLlvmEmission, "LlvmIrEmissionTests.LargeAddressableAggregateCopyUsesInlineMemcpy", "LlvmIrEmissionTests.BoundedRawPointerOverlapSafeTemporaryCopyLowersToMemmove"),
@@ -92,6 +94,7 @@ public sealed class SsaEmitterCoverageMatrixTests
             Row(TerminatorName(SsaTerminatorKind.Branch), CoverageKind.PositiveLlvmEmission, "LlvmIrEmissionTests.ShortCircuitAndTernaryEmitBranchesAndPhi"),
             Row(TerminatorName(SsaTerminatorKind.Switch), CoverageKind.PositiveLlvmEmission, "LlvmIrEmissionTests.LargeEnumSwitchLoadsTagWithRangeMetadataAndZeroTagsUnitCase", "LlvmIrEmissionTests.TextLiteralSwitchEmitsLengthAndByteComparisons"),
             Row(TerminatorName(SsaTerminatorKind.Return), CoverageKind.PositiveLlvmEmission, "LlvmIrEmissionTests.StraightLineFunctionEmitsOptimizedLlvmBody"),
+            Row(TerminatorName(SsaTerminatorKind.TailCall), CoverageKind.PositiveLlvmEmission, "LlvmIrEmissionTests.TailPositionDirectCallsEmitTailMarkerWhenAbiCompatible"),
             Row(TerminatorName(SsaTerminatorKind.Unreachable), CoverageKind.PositiveLlvmEmission, "LlvmIrEmissionTests.UnrecoverableUnreachablePathsLowerThroughColdTrapHelper")
         ];
     }

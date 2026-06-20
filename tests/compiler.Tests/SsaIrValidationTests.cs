@@ -418,6 +418,47 @@ public sealed class SsaIrValidationTests
     }
 
     [Fact]
+    public void ArenaFrameInstructionsAreAcceptedAroundArenaAllocation()
+    {
+        var function = BuildVoidFunction([
+            new SsaArenaFrameEnterInstruction(),
+            new SsaAllocateLocalInstruction("scratch", I32, StorageClass: "arena"),
+            new SsaArenaFrameLeaveInstruction()
+        ]);
+
+        var diagnostics = Validate(function);
+
+        Assert.Empty(diagnostics);
+    }
+
+    [Fact]
+    public void ArenaAllocationWithoutFrameScopeFailsBeforeLlvmEmission()
+    {
+        var function = BuildVoidFunction([
+            new SsaAllocateLocalInstruction("scratch", I32, StorageClass: "arena")
+        ]);
+
+        var diagnostics = Validate(function);
+
+        AssertDiagnostic(diagnostics, "STK5002", "arena-using function", "exactly one arena frame enter", "found 0");
+        AssertDiagnostic(diagnostics, "STK5002", "arena-using return block", "arena frame leave before return");
+    }
+
+    [Fact]
+    public void MisplacedArenaFrameInstructionsFailBeforeLlvmEmission()
+    {
+        var function = BuildVoidFunction([
+            new SsaAllocateLocalInstruction("scratch", I32, StorageClass: "arena"),
+            new SsaArenaFrameEnterInstruction(),
+            new SsaArenaFrameLeaveInstruction()
+        ]);
+
+        var diagnostics = Validate(function);
+
+        AssertDiagnostic(diagnostics, "STK5002", "arena frame enter", "first SSA instruction in the entry block");
+    }
+
+    [Fact]
     public void LocalUseWithoutAllocationFailsBeforeLlvmEmission()
     {
         var function = BuildVoidFunction([

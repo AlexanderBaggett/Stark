@@ -320,6 +320,9 @@ public struct ValueFacts
     AbiKind Abi;
     bool NoAlias;
     bool IsVolatile;
+    bool HasRange;
+    i64[min max] RangeLower;
+    i64[min max] RangeUpperExclusive;
 
     ValueFacts()
     {
@@ -329,6 +332,9 @@ public struct ValueFacts
         self.Abi = AbiKind.StarkAbi;
         self.NoAlias = false;
         self.IsVolatile = false;
+        self.HasRange = false;
+        self.RangeLower = 0;
+        self.RangeUpperExclusive = 0;
     }
 
     public inline finite law bool HasAlignment(borrow ValueFacts self)
@@ -363,6 +369,21 @@ public struct ValueFacts
         return self.IsVolatile;
     }
 
+    public inline finite law bool HasIntegerRange(borrow ValueFacts self)
+    {
+        return self.HasRange;
+    }
+
+    public inline finite law i64[min max] IntegerRangeLower(borrow ValueFacts self)
+    {
+        return self.RangeLower;
+    }
+
+    public inline finite law i64[min max] IntegerRangeUpperExclusive(borrow ValueFacts self)
+    {
+        return self.RangeUpperExclusive;
+    }
+
     public fn void SetAlignment(mut borrow ValueFacts self, u32[0 max] bytes)
     {
         self.HasAlign = true;
@@ -383,6 +404,13 @@ public struct ValueFacts
     public fn void MarkVolatile(mut borrow ValueFacts self)
     {
         self.IsVolatile = true;
+    }
+
+    public fn void SetIntegerRange(mut borrow ValueFacts self, i64[min max] lower, i64[min max] upperExclusive)
+    {
+        self.HasRange = true;
+        self.RangeLower = lower;
+        self.RangeUpperExclusive = upperExclusive;
     }
 
     // Carries each PRESENT fact of `src` onto `self`; an absent source fact leaves
@@ -409,6 +437,13 @@ public struct ValueFacts
         if (src.IsVolatile)
         {
             self.IsVolatile = true;
+        }
+
+        if (src.HasRange)
+        {
+            self.HasRange = true;
+            self.RangeLower = src.RangeLower;
+            self.RangeUpperExclusive = src.RangeUpperExclusive;
         }
     }
 }

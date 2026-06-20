@@ -1327,6 +1327,195 @@ public sealed class PackageImageArchitectureTests
     }
 
     [Fact]
+    public void PackageImagePreservesArenaObjectCreationStorageSelectorInGenericTemplateFacts()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-arena-template-");
+        var sourcePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+        var manifestPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.starkpkg.json" : "libFacade.starkpkg.json");
+        var libraryPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    module Facade
+
+                    public struct Box
+                    {
+                        public i32[min max] Value;
+                    }
+
+                    public fn u64[0 max] Count<T>(T item)
+                    {
+                        stack mut dynamic T values = new(arena, 1);
+                        init values[0] = item;
+                        return values.Length;
+                    }
+                    """,
+                    sourcePath),
+                new CompilerOptions(StopAfterPassId: "lower-abi"));
+
+            Assert.True(libraryResult.Succeeded, string.Join(Environment.NewLine, libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            FallbackLogAssertions.AssertNoFallbackLogs(libraryResult, "Package-image arena-template library builds", sourcePath);
+
+            var manifest = PackageImageBuilder.Create(libraryResult, libraryPath);
+            File.WriteAllText(manifestPath, manifest.ToJson());
+            var facadeModule = Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade");
+            var countTemplate = Assert.Single(facadeModule.EffectiveGenericTemplates!.Functions, static function => function.QualifiedResolvedName == "Facade.Count");
+            Assert.Contains(
+                countTemplate.ObjectCreations!,
+                static creation => creation.StorageSelector == ObjectCreationStorageSelector.Arena
+                    && creation.ExpressionText == "new(arena,1)");
+            Assert.Contains(
+                countTemplate.BoundOperations!,
+                static operation => operation.Kind == "object-creation"
+                    && operation.StorageSelector == ObjectCreationStorageSelector.Arena);
+
+            Assert.True(PackageImageLoader.TryBuildLoadedPackageImageFacts(CreateResolvedPackageModule(facadeModule), out var facts));
+            var importedTemplate = facts.FunctionTemplates["Facade.Count"];
+            Assert.Contains(
+                importedTemplate.ObjectCreations,
+                static creation => creation.StorageSelector == ObjectCreationStorageSelector.Arena
+                    && creation.ExpressionText == "new(arena,1)");
+            Assert.Contains(importedTemplate.BoundOperations, static operation =>
+                operation.Operation is BoundObjectCreationOperation { StorageSelector: ObjectCreationStorageSelector.Arena });
+
+            Assert.True(PackageImageLoader.TryBuildModuleSource(CreateResolvedPackageModule(facadeModule), out var sourceText));
+            Assert.Contains("new(arena,1)", sourceText, StringComparison.Ordinal);
+            Assert.Contains("init values[0] = item;", sourceText, StringComparison.Ordinal);
+
+            File.Delete(sourcePath);
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    fn u64[0 max] Run()
+                    {
+                        stack Facade.Box box = new Facade.Box()
+                        {
+                            Value = 7
+                        };
+                        return Facade.Count(box);
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName),
+                    StopAfterPassId: "lower-abi"));
+
+            Assert.True(consumerResult.Succeeded, string.Join(Environment.NewLine, consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup.
+            }
+        }
+    }
+
+    [Fact]
+    public void PackageImageBackedRetainingBorrowSurfaceRejectsArenaBackedArguments()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-arena-retain-");
+        var sourcePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+        var manifestPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.starkpkg.json" : "libFacade.starkpkg.json");
+        var libraryPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    module Facade
+
+                    public struct Box
+                    {
+                        public i32[min max] Value;
+                    }
+
+                    public fn void Observe(borrow Box box)
+                    {
+                        return;
+                    }
+
+                    public fn void Retain(storeborrow Box box)
+                    {
+                        return;
+                    }
+                    """,
+                    sourcePath),
+                new CompilerOptions(StopAfterPassId: "lower-abi"));
+
+            Assert.True(libraryResult.Succeeded, string.Join(Environment.NewLine, libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            FallbackLogAssertions.AssertNoFallbackLogs(libraryResult, "Package-image arena-retain library builds", sourcePath);
+
+            var manifest = PackageImageBuilder.Create(libraryResult, libraryPath);
+            File.WriteAllText(manifestPath, manifest.ToJson());
+            var facadeModule = Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade");
+            var retainSemantics = Assert.Single(
+                facadeModule.CompilerSections!.CompilerFacts!.FunctionSemantics ?? [],
+                static function => function.QualifiedResolvedName == "Facade.Retain");
+            var retainParameter = Assert.Single(retainSemantics.Parameters!, static parameter => parameter.Name == "box");
+            Assert.Equal("escape", retainParameter.CaptureKind);
+
+            Assert.True(PackageImageLoader.TryBuildLoadedPackageImageFacts(CreateResolvedPackageModule(facadeModule), out var facts));
+            var loadedRetainParameter = Assert.Single(facts.FunctionSemantics["Facade.Retain"].Parameters!, static parameter => parameter.Name == "box");
+            Assert.Equal(ParameterCaptureKind.Escape, loadedRetainParameter.CaptureKind);
+
+            File.Delete(sourcePath);
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    fn void Bad()
+                    {
+                        arena Facade.Box box = new Facade.Box()
+                        {
+                            Value = 1
+                        };
+                        Facade.Observe(box);
+                        Facade.Retain(box);
+                        return;
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName),
+                    StopAfterPassId: "ownership"));
+
+            Assert.False(consumerResult.Succeeded);
+            Assert.Contains(
+                consumerResult.Diagnostics,
+                static diagnostic => diagnostic.Code == "STK4202"
+                    && diagnostic.Message.Contains("Arena lifetime error", StringComparison.Ordinal)
+                    && diagnostic.Message.Contains("callee may retain", StringComparison.Ordinal));
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup.
+            }
+        }
+    }
+
+    [Fact]
     public void PackageImagePreservesConstDefaultNonOverlapAndExplicitRelationQualifiers()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-parameter-qualifiers-");

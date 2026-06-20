@@ -521,7 +521,12 @@ internal sealed partial class LlvmFunctionBodyEmitter
             return;
         }
 
-        _entryStaticAllocas.Add($"  {ArenaFrameSlotName} = alloca {ArenaFrameLlvmType}, align 8");
+        if (!_arenaFrameSlotQueued)
+        {
+            _entryStaticAllocas.Add($"  {ArenaFrameSlotName} = alloca {ArenaFrameLlvmType}, align 8");
+            _arenaFrameSlotQueued = true;
+        }
+
         AppendLine($"  call void @{ArenaEnterHelperName}(ptr nonnull {ArenaFrameSlotName})");
     }
 
@@ -709,8 +714,13 @@ internal sealed partial class LlvmFunctionBodyEmitter
             {
                 switch (instruction)
                 {
+                    case SsaArenaFrameEnterInstruction:
+                    case SsaArenaFrameLeaveInstruction:
                     case SsaAllocateLocalInstruction { StorageClass: "arena" }:
                     case SsaValueInstruction { Value: SsaDynamicStorageAllocationRValue { AllocationKind: DynamicStorageAllocationKind.Arena } }:
+                    case SsaValueInstruction { Value: SsaDynamicStorageReserveRValue { AllocationKind: DynamicStorageAllocationKind.Arena } }:
+                    case SsaValueInstruction { Value: SsaDynamicStorageTryReserveRValue { AllocationKind: DynamicStorageAllocationKind.Arena } }:
+                    case SsaValueInstruction { Value: SsaDynamicStorageTryReserveCapacityRValue { AllocationKind: DynamicStorageAllocationKind.Arena } }:
                         return true;
                 }
             }

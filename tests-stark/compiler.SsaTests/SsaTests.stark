@@ -4,6 +4,7 @@ import CompilerCliTests
 import CompilerPipelineFullIntegrationTests
 import CompilerPipelineOptimizeSsaTests
 import SsaCrossBlockLoadForwardingRegressionTests
+import SsaArenaFrameTests
 import SsaIrValidationTests
 import SsaLoweringTests
 import SsaOptimizationTests
@@ -26,6 +27,13 @@ module SsaTests
 // ---------------------------------------------------------------------------
 // SsaLoweringTests (source-driven, rendered-ssa-text)
 // ---------------------------------------------------------------------------
+
+[Fact]
+[Collection("ssa-arena-frame")]
+fn bool ArenaMirFrameScopeLowersToExplicitSsaInstructions()
+{
+    return ArenaMirFrameScopeLowersToExplicitSsaInstructionsImpl();
+}
 
 // Ported from SsaLoweringTests.BranchJoinProducesPhiForMergedLocal: a value
 // mutated on both arms of an if/else joins through a phi node at the if-join
@@ -3319,4 +3327,3 @@ fn bool ScalarReplacementKeepsDeadAggregateMoveCopiesConservative()
 {
     return ScalarReplacementKeepsDeadAggregateMoveCopiesConservativeImpl();
 }
-

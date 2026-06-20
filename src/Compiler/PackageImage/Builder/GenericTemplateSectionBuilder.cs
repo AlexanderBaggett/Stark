@@ -5022,7 +5022,8 @@ internal static partial class PackageImageBuilder
                                 member.FieldName,
                                 member.FieldIndex,
                                 BuildPublishedAbiTypeReference(member.FieldType, module)))
-                            .ToArray())
+                            .ToArray(),
+                    ExpressionText: record.ExpressionText)
                 : new StarkPackageTemplateObjectCreationManifest(
                     CreatedType: BuildPublishedAbiTypeReference(StarkTypeSymbols.Error, module),
                     Constructor: null))

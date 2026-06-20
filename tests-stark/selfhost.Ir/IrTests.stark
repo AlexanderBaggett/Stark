@@ -87,7 +87,8 @@ fn bool ValueFactsDefaultToAbsent()
         && vf.AlignmentBytes() == 0
         && !vf.HasCallingAbi()
         && !vf.HasNoAlias()
-        && !vf.Volatile();
+        && !vf.Volatile()
+        && !vf.HasIntegerRange();
 }
 
 [Fact]
@@ -98,10 +99,14 @@ fn bool ValueFactsSetAndQuery()
     vf.SetAlignment(8);
     vf.SetCallingAbi(AbiKind.CAbi);
     vf.MarkNoAlias();
+    vf.SetIntegerRange(2, 9);
     return vf.HasAlignment()
         && vf.AlignmentBytes() == 8
         && vf.HasCallingAbi()
         && vf.HasNoAlias()
+        && vf.HasIntegerRange()
+        && vf.IntegerRangeLower() == 2
+        && vf.IntegerRangeUpperExclusive() == 9
         && !vf.Volatile();
 }
 
@@ -113,6 +118,7 @@ fn bool ValueFactsInheritCarriesPresentFactsOnly()
     stack mut ValueFacts src = new();
     src.SetAlignment(16);
     src.MarkNoAlias();
+    src.SetIntegerRange(0, 11);
 
     stack mut ValueFacts dst = new();
     dst.MarkVolatile();
@@ -121,6 +127,9 @@ fn bool ValueFactsInheritCarriesPresentFactsOnly()
     return dst.HasAlignment()
         && dst.AlignmentBytes() == 16
         && dst.HasNoAlias()
+        && dst.HasIntegerRange()
+        && dst.IntegerRangeLower() == 0
+        && dst.IntegerRangeUpperExclusive() == 11
         && dst.Volatile()
         && !dst.HasCallingAbi();
 }
@@ -659,6 +668,102 @@ fn bool EmitsLlvmCallForwardingAParameter()
         case MemoryStatus.Err(var error):
             return false;
     }
+}
+
+[Fact]
+fn bool EmitsLlvmRangeAttributesForReturnAndParameters()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack MirValueId p0 = MirParam(instrs, 0);
+    stack MirBlockId entry = MirReturnBlock(blocks, p0);
+
+    stack mut ValueFacts returnFacts = new();
+    returnFacts.SetIntegerRange(0, 11);
+    stack mut ValueFacts p0Facts = new();
+    p0Facts.SetIntegerRange(1, 6);
+    stack mut IrTable<ValueFacts> paramFacts = new();
+    stack u32[0 max] addedParamFact = paramFacts.Add(p0Facts);
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<ValueFacts> globalFacts = new();
+    stack mut IrTable<ValueFacts> functionReturnFacts = new();
+    stack mut OwnedAscii sink = new();
+    switch (EmitLlvmDefinitionWithRangeFacts(instrs, blocks, "bounded", returnFacts, paramFacts, valueFacts, globalFacts, functionReturnFacts, 1, entry.Index(), 1, 1, sink))
+    {
+        case MemoryStatus.Ok:
+            return LlvmTextEquals(sink, "define range(i64 0, 11) i64 @bounded(i64 range(i64 1, 6) %p0) {\nb1:\n  ret i64 %p0\n}\n");
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+[Fact]
+fn bool EmitsLlvmRangeMetadataForCallResultsAndArguments()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack MirValueId p0 = MirParam(instrs, 0);
+    stack MirValueId result = MirCall1(instrs, MirFuncIdOf(2), p0);
+    stack MirBlockId entry = MirReturnBlock(blocks, result);
+
+    stack mut ValueFacts emptyReturn = new();
+    stack mut ValueFacts p0Facts = new();
+    p0Facts.SetIntegerRange(0, 11);
+    stack mut IrTable<ValueFacts> paramFacts = new();
+    stack u32[0 max] addedParamFact = paramFacts.Add(p0Facts);
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<ValueFacts> globalFacts = new();
+    stack mut IrTable<ValueFacts> functionReturnFacts = new();
+    stack mut ValueFacts noFact = new();
+    stack u32[0 max] addedFirstReturnFact = functionReturnFacts.Add(noFact);
+    stack mut ValueFacts f2Facts = new();
+    f2Facts.SetIntegerRange(5, 9);
+    stack u32[0 max] addedSecondReturnFact = functionReturnFacts.Add(f2Facts);
+
+    stack mut OwnedAscii sink = new();
+    switch (EmitLlvmDefinitionWithRangeFacts(instrs, blocks, "caller", emptyReturn, paramFacts, valueFacts, globalFacts, functionReturnFacts, 1, entry.Index(), 1, 2, sink))
+    {
+        case MemoryStatus.Ok:
+            return LlvmTextEquals(sink, "define i64 @caller(i64 range(i64 0, 11) %p0) {\nb1:\n  %v2 = call i64 @f2(i64 range(i64 0, 11) %p0), !range !0\n  ret i64 %v2\n}\n!0 = !{i64 5, i64 9}\n");
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+[Fact]
+fn bool EmitsLlvmRangeMetadataForGlobalLoads()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack MirValueId value = MirLoadGlobal(instrs, 1);
+    stack MirBlockId entry = MirReturnBlock(blocks, value);
+
+    stack mut ValueFacts emptyReturn = new();
+    stack mut IrTable<ValueFacts> paramFacts = new();
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut IrTable<ValueFacts> globalFacts = new();
+    stack mut ValueFacts g1Facts = new();
+    g1Facts.SetIntegerRange(-3, 4);
+    stack u32[0 max] g1 = globalFacts.Add(g1Facts);
+    stack mut IrTable<ValueFacts> functionReturnFacts = new();
+
+    stack mut OwnedAscii sink = new();
+    switch (EmitLlvmDefinitionWithRangeFacts(instrs, blocks, "readg", emptyReturn, paramFacts, valueFacts, globalFacts, functionReturnFacts, 0, entry.Index(), 1, 1, sink))
+    {
+        case MemoryStatus.Ok:
+            return LlvmTextEquals(sink, "define i64 @readg() {\nb1:\n  %v1 = load i64, ptr @g1, !range !0\n  ret i64 %v1\n}\n!0 = !{i64 -3, i64 4}\n");
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+[Fact]
+fn bool CompileFunctionRangeSignatureLowersToLlvmRangeAttributes()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionToLlvm("fn i64[0 10] id(i64[1 5] x) { return x }", sink);
+    return ok
+        && LlvmTextEquals(sink, "define range(i64 0, 11) i64 @main(i64 range(i64 1, 6) %p0) {\nb1:\n  ret i64 %p0\n}\n");
 }
 
 [Fact]

@@ -264,6 +264,12 @@ internal sealed class SsaLowerer
                     }
 
                     return;
+                case MidLevelIrStatementKind.ArenaFrameEnter:
+                    block.Instructions.Add(new SsaArenaFrameEnterInstruction(statement.Location ?? _function.Location));
+                    return;
+                case MidLevelIrStatementKind.ArenaFrameLeave:
+                    block.Instructions.Add(new SsaArenaFrameLeaveInstruction(statement.Location ?? _function.Location));
+                    return;
                 case MidLevelIrStatementKind.Assign:
                     if (statement.TargetName is null || statement.TargetType is null || statement.Value is null)
                     {
@@ -1698,6 +1704,8 @@ internal sealed class SsaLowerer
                 SsaLifetimeStartInstruction lifetimeStart => lifetimeStart,
                 SsaLifetimeEndInstruction lifetimeEnd => lifetimeEnd,
                 SsaDeallocateLocalInstruction deallocateLocal => deallocateLocal,
+                SsaArenaFrameEnterInstruction arenaFrameEnter => arenaFrameEnter,
+                SsaArenaFrameLeaveInstruction arenaFrameLeave => arenaFrameLeave,
                 SsaStoreLocalInstruction storeLocal => new SsaStoreLocalInstruction(
                     storeLocal.LocalName,
                     storeLocal.LocalType,

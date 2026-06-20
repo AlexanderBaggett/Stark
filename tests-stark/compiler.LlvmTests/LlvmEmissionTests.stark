@@ -2041,6 +2041,34 @@ fn bool DynamicStorageTryReserveCapacityEmitsExactFallibleReallocatePath()
 
 [Fact]
 [Collection("llvm-ir")]
+fn bool ArenaDynamicStorageReserveEmitsGrowCopyWithoutRuntimeReallocate()
+{
+    return ArenaDynamicStorageReserveEmitsGrowCopyWithoutRuntimeReallocateImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ArenaDynamicStorageTryReserveEmitsFallibleGrowCopy()
+{
+    return ArenaDynamicStorageTryReserveEmitsFallibleGrowCopyImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ArenaDynamicStorageTryReserveCapacityEmitsExactFallibleGrowCopy()
+{
+    return ArenaDynamicStorageTryReserveCapacityEmitsExactFallibleGrowCopyImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ArenaDynamicStorageDropEmitsElementDestructorLoopBeforeFrameCleanupWithoutFreeingOwner()
+{
+    return ArenaDynamicStorageDropEmitsElementDestructorLoopBeforeFrameCleanupWithoutFreeingOwnerImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
 fn bool DynamicStorageInitSliceWritesCommitOwnerLength()
 {
     return DynamicStorageInitSliceWritesCommitOwnerLengthImpl();

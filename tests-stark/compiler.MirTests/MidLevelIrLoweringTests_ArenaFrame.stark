@@ -1,0 +1,38 @@
+import CompilerMirTestSupport
+import System.Testing
+module MidLevelIrLoweringTests_ArenaFrame
+
+// Ported from MidLevelIrArenaFrameTests.ArenaDynamicStorageEmitsExplicitMirFrameScopeOnEveryReturn.
+// The Stark-side host protocol exposes rendered MIR text, so this checks the
+// explicit arena frame operations and their per-return count.
+internal fn bool ArenaDynamicStorageEmitsExplicitMirFrameScopeOnEveryReturnImpl()
+{
+    stack mut MirCompile compiled = CompileMir(
+        "mir-arena-frame-early-return",
+        raw"""
+module Demo
+
+unsafe fn u64[0 max] Run(bool flag)
+{
+    stack mut dynamic u32[0 max] values = new(arena, 4);
+    if (flag)
+    {
+        return values.Capacity;
+    }
+
+    values.Reserve(8);
+    return values.Capacity;
+}
+""");
+
+    if (!Succeeds(compiled))
+    {
+        return false;
+    }
+
+    stack ascii mir = Mir(compiled);
+    return System.Testing.CountOccurrences(mir, "arena-frame.enter") == 1
+        && System.Testing.CountOccurrences(mir, "arena-frame.leave") == 2
+        && System.Testing.Contains(mir, "values: stack dynamic u32 mut")
+        && System.Testing.Contains(mir, "return values.Capacity");
+}

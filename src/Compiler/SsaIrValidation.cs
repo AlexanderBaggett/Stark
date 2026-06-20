@@ -902,6 +902,93 @@ internal sealed class SsaIrValidator
 
             ValidateTerminator(function, block.Terminator, blockIds, valueDefinitions, localDefinitions, currentAbi);
         }
+
+        ValidateArenaFrameShape(function);
+    }
+
+    private void ValidateArenaFrameShape(SsaFunction function)
+    {
+        var usesArenaFrame = false;
+        var enterCount = 0;
+        var leaveCount = 0;
+
+        foreach (var block in function.Blocks)
+        {
+            for (var index = 0; index < block.Instructions.Count; index++)
+            {
+                var instruction = block.Instructions[index];
+                switch (instruction)
+                {
+                    case SsaArenaFrameEnterInstruction enter:
+                        enterCount++;
+                        if (block.Id != function.EntryBlockId)
+                        {
+                            Report(function, enter.Location, "arena frame enter must be emitted in the entry block.");
+                        }
+
+                        if (index != 0)
+                        {
+                            Report(function, enter.Location, "arena frame enter must be the first SSA instruction in the entry block.");
+                        }
+
+                        break;
+                    case SsaArenaFrameLeaveInstruction leave:
+                        leaveCount++;
+                        if (block.Terminator.Kind != SsaTerminatorKind.Return)
+                        {
+                            Report(function, leave.Location, "arena frame leave must be emitted only in blocks that return.");
+                        }
+
+                        if (index != block.Instructions.Count - 1)
+                        {
+                            Report(function, leave.Location, "arena frame leave must be the final SSA instruction before return.");
+                        }
+
+                        break;
+                    case SsaAllocateLocalInstruction { StorageClass: "arena" }:
+                    case SsaValueInstruction { Value: SsaDynamicStorageAllocationRValue { AllocationKind: DynamicStorageAllocationKind.Arena } }:
+                    case SsaValueInstruction { Value: SsaDynamicStorageReserveRValue { AllocationKind: DynamicStorageAllocationKind.Arena } }:
+                    case SsaValueInstruction { Value: SsaDynamicStorageTryReserveRValue { AllocationKind: DynamicStorageAllocationKind.Arena } }:
+                    case SsaValueInstruction { Value: SsaDynamicStorageTryReserveCapacityRValue { AllocationKind: DynamicStorageAllocationKind.Arena } }:
+                        usesArenaFrame = true;
+                        break;
+                }
+            }
+        }
+
+        if (!usesArenaFrame)
+        {
+            return;
+        }
+
+        if (enterCount != 1)
+        {
+            Report(function, function.Location, $"arena-using function must emit exactly one arena frame enter, found {enterCount}.");
+        }
+
+        foreach (var block in function.Blocks)
+        {
+            if (block.Terminator.Kind == SsaTerminatorKind.Return)
+            {
+                if (block.Instructions.LastOrDefault() is not SsaArenaFrameLeaveInstruction)
+                {
+                    Report(function, block.Terminator.Location, "arena-using return block must end with arena frame leave before return.");
+                }
+
+                continue;
+            }
+
+            if (block.Terminator.Kind == SsaTerminatorKind.TailCall)
+            {
+                Report(function, block.Terminator.Location, "arena-using function cannot lower a tail call while arena frame cleanup is pending.");
+            }
+        }
+
+        var returnBlockCount = function.Blocks.Count(static block => block.Terminator.Kind == SsaTerminatorKind.Return);
+        if (leaveCount != returnBlockCount)
+        {
+            Report(function, function.Location, $"arena-using function must emit one arena frame leave per return block, found {leaveCount} leave(s) for {returnBlockCount} return block(s).");
+        }
     }
 
     private void ValidateValueDefinitionUniqueness(SsaFunction function)
@@ -1184,6 +1271,9 @@ internal sealed class SsaIrValidator
                     Report(function, deallocateLocal.Location, $"local '{deallocateLocal.LocalName}' has invalid deallocation storage class '{deallocateLocal.StorageClass}'.");
                 }
 
+                break;
+            case SsaArenaFrameEnterInstruction:
+            case SsaArenaFrameLeaveInstruction:
                 break;
             case SsaStoreLocalInstruction storeLocal:
                 ValidateLocalExists(function, storeLocal.LocalName, localDefinitions, storeLocal.Location);
