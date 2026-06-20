@@ -10,6 +10,7 @@ internal sealed class AbiLowerer
     private readonly HighLevelIrModule _hir;
     private readonly CompilerOptions _options;
     private readonly IReadOnlyDictionary<string, FunctionIdentity> _functionIdentities;
+    private readonly IReadOnlyDictionary<string, ConcreteTypeLayout> _publishedConcreteLayouts;
 
     public AbiLowerer(
         SyntaxModel syntaxModel,
@@ -28,6 +29,7 @@ internal sealed class AbiLowerer
         _hir = hir;
         _options = options;
         _functionIdentities = BuildFunctionIdentityIndex(loadedModules);
+        _publishedConcreteLayouts = BuildPublishedConcreteLayouts(loadedModules);
     }
 
     public AbiModel Lower()
@@ -79,8 +81,19 @@ internal sealed class AbiLowerer
         var (moduleName, sourceName, visibility) = ResolveFunctionIdentity(function.Name);
         var parameters = new List<AbiParameterSymbol>();
         var isFfi = effects.IsFfi;
-        var returnsIndirect = !isFfi
-            && AbiLoweringHeuristics.RequiresIndirectReturnAbi(function.ReturnType, _typeModel.NamedTypes, _enumLayoutModel.Layouts);
+        CAbiAggregateClassification? ffiReturnClassification = null;
+        var hasFfiReturnClassification = isFfi
+            && CAbiAggregateClassifier.TryClassify(
+                function.ReturnType,
+                effects.FfiAbi,
+                _options.TargetInfo,
+                _typeModel.NamedTypes,
+                _enumLayoutModel.Layouts,
+                _publishedConcreteLayouts,
+                out ffiReturnClassification);
+        var returnsIndirect = hasFfiReturnClassification
+            ? ffiReturnClassification!.PassKind == CAbiAggregatePassKind.Indirect
+            : !isFfi && AbiLoweringHeuristics.RequiresIndirectReturnAbi(function.ReturnType, _typeModel.NamedTypes, _enumLayoutModel.Layouts);
         var isOverloaded = !string.Equals(function.Name, function.DisplaySourceName, StringComparison.Ordinal);
         var symbolName = ComputeSymbolName(
             function.Name,
@@ -103,11 +116,27 @@ internal sealed class AbiLowerer
 
         foreach (var parameter in function.Parameters)
         {
-            var kind = !isFfi && AbiLoweringHeuristics.RequiresIndirectParameterAbi(parameter.Type, _typeModel.NamedTypes, _enumLayoutModel.Layouts)
-                ? AbiParameterKind.IndirectIn
-                : AbiParameterKind.Direct;
+            CAbiAggregateClassification? ffiParameterClassification = null;
+            var hasFfiParameterClassification = isFfi
+                && CAbiAggregateClassifier.TryClassify(
+                    parameter.Type,
+                    effects.FfiAbi,
+                    _options.TargetInfo,
+                    _typeModel.NamedTypes,
+                    _enumLayoutModel.Layouts,
+                    _publishedConcreteLayouts,
+                    out ffiParameterClassification);
+            var kind = hasFfiParameterClassification
+                ? ffiParameterClassification!.PassKind == CAbiAggregatePassKind.Indirect
+                    ? AbiParameterKind.IndirectIn
+                    : AbiParameterKind.Direct
+                : !isFfi && AbiLoweringHeuristics.RequiresIndirectParameterAbi(parameter.Type, _typeModel.NamedTypes, _enumLayoutModel.Layouts)
+                    ? AbiParameterKind.IndirectIn
+                    : AbiParameterKind.Direct;
 
-            var llvmType = LowerAbiValueType(parameter.Type, isFfi, forReturnValue: false);
+            var llvmType = hasFfiParameterClassification
+                ? ffiParameterClassification!.LlvmType
+                : LowerAbiValueType(parameter.Type, isFfi, forReturnValue: false);
 
             parameters.Add(new AbiParameterSymbol(
                 SourceName: parameter.Name,
@@ -124,12 +153,17 @@ internal sealed class AbiLowerer
             function.Name,
             symbolName,
             function.ReturnType,
-            returnsIndirect ? StarkTypeSymbols.Void : LowerAbiValueType(function.ReturnType, isFfi, forReturnValue: true),
+            returnsIndirect
+                ? StarkTypeSymbols.Void
+                : hasFfiReturnClassification
+                    ? ffiReturnClassification!.LlvmType
+                    : LowerAbiValueType(function.ReturnType, isFfi, forReturnValue: true),
             parameters,
             isFfi,
             SourceName: function.SourceName,
             UsesFastCallingConvention: effects.UseFastCallingConvention,
-            IsVarargs: effects.IsVarargs);
+            IsVarargs: effects.IsVarargs,
+            FfiAbi: effects.FfiAbi);
     }
 
     private HashSet<string> CollectFfiSymbolNames()
@@ -237,6 +271,26 @@ internal sealed class AbiLowerer
         }
 
         return identities;
+    }
+
+    private static IReadOnlyDictionary<string, ConcreteTypeLayout> BuildPublishedConcreteLayouts(LoadedModuleSet loadedModules)
+    {
+        var layouts = new Dictionary<string, ConcreteTypeLayout>(StringComparer.Ordinal);
+
+        foreach (var module in loadedModules.ImportedModules)
+        {
+            if (module.PackageImageFacts is not { } packageImageFacts)
+            {
+                continue;
+            }
+
+            foreach (var (qualifiedName, layout) in packageImageFacts.ConcreteLayouts)
+            {
+                layouts[qualifiedName] = layout;
+            }
+        }
+
+        return layouts;
     }
 
     private readonly record struct FunctionIdentity(

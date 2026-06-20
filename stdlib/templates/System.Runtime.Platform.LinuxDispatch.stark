@@ -1,5 +1,12 @@
+import System.C
 import System.Runtime.Platform.Linux
 module System.Runtime.Platform
+
+internal enum FileOpenResult
+{
+    Ok(rawptr<i8[min max]>),
+    Err(i32[min max]),
+}
 
 internal fn void ExitProcess(i32[min max] code)
 {
@@ -166,11 +173,61 @@ internal unsafe fn rawptr<i8[min max]> OpenFileRead(ascii path)
     }
 }
 
+internal unsafe fn FileOpenResult OpenFileReadResult(ascii path)
+{
+    unsafe
+    {
+        switch (System.Runtime.Platform.Linux.OpenFileReadResult(path))
+        {
+            case System.Runtime.Platform.Linux.FileOpenResult.Ok(var handle):
+                return FileOpenResult.Ok(handle);
+            case System.Runtime.Platform.Linux.FileOpenResult.Err(var error):
+                return FileOpenResult.Err(error);
+        }
+    }
+}
+
 internal unsafe fn rawptr<i8[min max]> OpenFileWrite(ascii path)
 {
     unsafe
     {
         return System.Runtime.Platform.Linux.OpenFileWrite(path);
+    }
+}
+
+internal unsafe fn FileOpenResult OpenFileWriteResult(ascii path)
+{
+    unsafe
+    {
+        switch (System.Runtime.Platform.Linux.OpenFileWriteResult(path))
+        {
+            case System.Runtime.Platform.Linux.FileOpenResult.Ok(var handle):
+                return FileOpenResult.Ok(handle);
+            case System.Runtime.Platform.Linux.FileOpenResult.Err(var error):
+                return FileOpenResult.Err(error);
+        }
+    }
+}
+
+internal unsafe fn rawptr<i8[min max]> OpenFileCreateNew(ascii path)
+{
+    unsafe
+    {
+        return System.Runtime.Platform.Linux.OpenFileCreateNew(path);
+    }
+}
+
+internal unsafe fn FileOpenResult OpenFileCreateNewResult(ascii path)
+{
+    unsafe
+    {
+        switch (System.Runtime.Platform.Linux.OpenFileCreateNewResult(path))
+        {
+            case System.Runtime.Platform.Linux.FileOpenResult.Ok(var handle):
+                return FileOpenResult.Ok(handle);
+            case System.Runtime.Platform.Linux.FileOpenResult.Err(var error):
+                return FileOpenResult.Err(error);
+        }
     }
 }
 
@@ -182,11 +239,39 @@ internal unsafe fn rawptr<i8[min max]> OpenFileAppend(ascii path)
     }
 }
 
+internal unsafe fn FileOpenResult OpenFileAppendResult(ascii path)
+{
+    unsafe
+    {
+        switch (System.Runtime.Platform.Linux.OpenFileAppendResult(path))
+        {
+            case System.Runtime.Platform.Linux.FileOpenResult.Ok(var handle):
+                return FileOpenResult.Ok(handle);
+            case System.Runtime.Platform.Linux.FileOpenResult.Err(var error):
+                return FileOpenResult.Err(error);
+        }
+    }
+}
+
 internal unsafe fn rawptr<i8[min max]> OpenFileReadWrite(ascii path)
 {
     unsafe
     {
         return System.Runtime.Platform.Linux.OpenFileReadWrite(path);
+    }
+}
+
+internal unsafe fn FileOpenResult OpenFileReadWriteResult(ascii path)
+{
+    unsafe
+    {
+        switch (System.Runtime.Platform.Linux.OpenFileReadWriteResult(path))
+        {
+            case System.Runtime.Platform.Linux.FileOpenResult.Ok(var handle):
+                return FileOpenResult.Ok(handle);
+            case System.Runtime.Platform.Linux.FileOpenResult.Err(var error):
+                return FileOpenResult.Err(error);
+        }
     }
 }
 
@@ -203,6 +288,38 @@ internal unsafe fn i32[min max] FlushFile(rawptr<i8[min max]> handle)
     unsafe
     {
         return System.Runtime.Platform.Linux.FlushFile(handle);
+    }
+}
+
+internal unsafe inline fn i32[min max] CloseRawDescriptor(i32[min max] descriptor)
+{
+    unsafe
+    {
+        return System.Runtime.Platform.Linux.CloseRawDescriptor(descriptor);
+    }
+}
+
+internal unsafe fn i64[min max] MonotonicMilliseconds()
+{
+    unsafe
+    {
+        return System.Runtime.Platform.Linux.MonotonicMilliseconds();
+    }
+}
+
+internal unsafe inline fn i64[min max] ReadRawDescriptorBytes(rawmutptr<i8[min max]>[length] buffer, u64[0 2 ** 63 - 1] length, i32[min max] descriptor)
+{
+    unsafe
+    {
+        return System.Runtime.Platform.Linux.ReadRawDescriptorBytes(buffer, length, descriptor);
+    }
+}
+
+internal unsafe inline fn i64[min max] WriteRawDescriptorBytes(rawptr<i8[min max]>[length] buffer, u64[0 2 ** 63 - 1] length, i32[min max] descriptor)
+{
+    unsafe
+    {
+        return System.Runtime.Platform.Linux.WriteRawDescriptorBytes(buffer, length, descriptor);
     }
 }
 
@@ -278,6 +395,11 @@ internal fn i32[min max] MoveFile(ascii oldPath, ascii newPath)
     return System.Runtime.Platform.Linux.MoveFile(oldPath, newPath);
 }
 
+internal fn i32[min max] SetPermissions(ascii path, i32[min max] mode)
+{
+    return System.Runtime.Platform.Linux.SetPermissions(path, mode);
+}
+
 internal fn bool FileExists(ascii path)
 {
     return System.Runtime.Platform.Linux.FileExists(path);
@@ -296,6 +418,35 @@ internal fn bool IsFile(ascii path)
 internal fn bool IsDirectory(ascii path)
 {
     return System.Runtime.Platform.Linux.IsDirectory(path);
+}
+
+internal unsafe fn i32[min max] ReadPathMetadata(ascii path, rawmutptr<i8[min max]> metadataData)
+{
+    unsafe
+    {
+        return System.Runtime.Platform.Linux.ReadPathMetadata(path, metadataData);
+    }
+}
+
+internal unsafe fn i32[min max] ReadLinkMetadata(ascii path, rawmutptr<i8[min max]> metadataData)
+{
+    unsafe
+    {
+        return System.Runtime.Platform.Linux.ReadLinkMetadata(path, metadataData);
+    }
+}
+
+internal unsafe fn i64[min max] ReadSymlinkInto(
+    ascii path,
+    rawmutptr<i8[min max]>[capacity] buffer,
+    u64[0 2 ** 63 - 1] capacity)
+{
+    return System.Runtime.Platform.Linux.ReadSymlinkInto(path, buffer, capacity);
+}
+
+internal fn i32[min max] CreateSymlink(ascii target, ascii linkPath)
+{
+    return System.Runtime.Platform.Linux.CreateSymlink(target, linkPath);
 }
 
 internal fn i32[min max] CreateDirectory(ascii path)
@@ -414,11 +565,29 @@ internal unsafe fn bool TryCurrentDirectory(rawmutptr<Ascii> destination)
     }
 }
 
+internal unsafe fn bool TryTempDirectory(rawmutptr<Ascii> destination)
+{
+    unsafe
+    {
+        return System.Runtime.Platform.Linux.TryTempDirectory(destination);
+    }
+}
+
 internal unsafe fn rawmutptr<i8[min max]> StartThread(fnptr<fn i32[min max]()> entry)
 {
     unsafe
     {
         return System.Runtime.Platform.Linux.StartThread(entry);
+    }
+}
+
+internal unsafe fn rawmutptr<i8[min max]> StartThreadWithContext(
+    fnptr<unsafe fn i32[min max](rawmutptr<i8[min max]>)> entry,
+    rawmutptr<i8[min max]> context)
+{
+    unsafe
+    {
+        return System.Runtime.Platform.Linux.StartThreadWithContext(entry, context);
     }
 }
 
@@ -588,4 +757,122 @@ internal unsafe fn i32[min max] FutexWake(rawmutptr<i32[min max]> address, i32[m
     {
         return System.Runtime.Platform.Linux.FutexWake(address, count);
     }
+}
+
+internal unsafe fn i32[min max] StartProcessCapture(
+    rawptr<System.C.c_char> executable,
+    borrow rawptr<System.C.c_char>[] argv,
+    rawptr<System.C.c_char> workingDirectory,
+    bool captureStdin,
+    rawmutptr<i32[min max]> processId,
+    rawmutptr<i32[min max]> stdinDescriptor,
+    rawmutptr<i32[min max]> stdoutDescriptor,
+    rawmutptr<i32[min max]> stderrDescriptor)
+    where overlap(executable, argv),
+          overlap(executable, workingDirectory),
+          overlap(argv, workingDirectory),
+          overlap(executable, processId),
+          overlap(executable, stdinDescriptor),
+          overlap(executable, stdoutDescriptor),
+          overlap(executable, stderrDescriptor)
+{
+    return System.Runtime.Platform.Linux.StartProcessCapture(
+        executable,
+        argv,
+        workingDirectory,
+        captureStdin,
+        processId,
+        stdinDescriptor,
+        stdoutDescriptor,
+        stderrDescriptor);
+}
+
+internal unsafe fn i32[min max] WaitProcess(i32[min max] processId, rawmutptr<i32[min max]> status)
+{
+    return System.Runtime.Platform.Linux.WaitProcess(processId, status);
+}
+
+internal unsafe fn i32[min max] WaitProcessNoHang(i32[min max] processId, rawmutptr<i32[min max]> status)
+{
+    return System.Runtime.Platform.Linux.WaitProcessNoHang(processId, status);
+}
+
+internal unsafe fn i32[min max] KillProcess(i32[min max] processId)
+{
+    return System.Runtime.Platform.Linux.KillProcess(processId);
+}
+
+internal unsafe fn i32[min max] PollProcessPipesTimed(
+    i32[min max] stdoutDescriptor,
+    i32[min max] stderrDescriptor,
+    rawmutptr<i16[min max]> stdoutEvents,
+    rawmutptr<i16[min max]> stderrEvents,
+    i32[min max] timeoutMilliseconds)
+{
+    return System.Runtime.Platform.Linux.PollProcessPipesTimed(
+        stdoutDescriptor,
+        stderrDescriptor,
+        stdoutEvents,
+        stderrEvents,
+        timeoutMilliseconds);
+}
+
+internal unsafe fn i32[min max] PollProcessIoTimed(
+    i32[min max] stdinDescriptor,
+    i32[min max] stdoutDescriptor,
+    i32[min max] stderrDescriptor,
+    rawmutptr<i16[min max]> stdinEvents,
+    rawmutptr<i16[min max]> stdoutEvents,
+    rawmutptr<i16[min max]> stderrEvents,
+    i32[min max] timeoutMilliseconds)
+{
+    return System.Runtime.Platform.Linux.PollProcessIoTimed(
+        stdinDescriptor,
+        stdoutDescriptor,
+        stderrDescriptor,
+        stdinEvents,
+        stdoutEvents,
+        stderrEvents,
+        timeoutMilliseconds);
+}
+
+internal inline finite law bool ProcessPipeReadable(i16[min max] events)
+{
+    return System.Runtime.Platform.Linux.ProcessPipeReadable(events);
+}
+
+internal inline finite law bool ProcessPipeWritable(i16[min max] events)
+{
+    return System.Runtime.Platform.Linux.ProcessPipeWritable(events);
+}
+
+internal inline finite law bool ProcessPipeClosed(i16[min max] events)
+{
+    return System.Runtime.Platform.Linux.ProcessPipeClosed(events);
+}
+
+internal unsafe fn i32[min max] SetEnvironmentRaw(rawptr<System.C.c_char> name, rawptr<System.C.c_char> value)
+    where overlap(name, value)
+{
+    return System.Runtime.Platform.Linux.SetEnvironmentRaw(name, value);
+}
+
+internal unsafe fn i32[min max] RemoveEnvironmentRaw(rawptr<System.C.c_char> name)
+{
+    return System.Runtime.Platform.Linux.RemoveEnvironmentRaw(name);
+}
+
+internal unsafe fn rawptr<System.C.c_char> GetEnvironmentRaw(rawptr<System.C.c_char> name)
+{
+    return System.Runtime.Platform.Linux.GetEnvironmentRaw(name);
+}
+
+internal unsafe fn i32[min max] ChangeCurrentDirectoryRaw(rawptr<System.C.c_char> path)
+{
+    return System.Runtime.Platform.Linux.ChangeCurrentDirectoryRaw(path);
+}
+
+internal unsafe fn i32[min max] ReadArgumentsBlock(mut borrow dynamic i8[min max] destination)
+{
+    return System.Runtime.Platform.Linux.ReadArgumentsBlock(destination);
 }

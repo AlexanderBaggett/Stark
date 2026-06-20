@@ -1,0 +1,1014 @@
+import System.Collections
+import System.Memory
+import System.Text
+module System.Text.Interning
+
+public enum TextInternerError
+{
+    TooManyItems,
+    InvalidId,
+    Memory from System.Memory.MemoryError,
+}
+
+public enum TextInternerResult<T>
+{
+    [Ok] Ok(T),
+    [Err] Err(TextInternerError),
+}
+
+internal inline finite law System.Collections.Ordering CompareIndex(
+    u32[0 max] left,
+    u32[0 max] right)
+{
+    if (left < right)
+    {
+        return System.Collections.Ordering.Less;
+    }
+
+    if (left > right)
+    {
+        return System.Collections.Ordering.Greater;
+    }
+
+    return System.Collections.Ordering.Equal;
+}
+
+public struct SymbolId
+{
+    internal u32[0 max] Value;
+
+    inline finite law u32[0 max] Index(borrow SymbolId self)
+    {
+        return self.Value;
+    }
+
+    static finite law u64[0 max] Hash(borrow SymbolId value)
+    {
+        return (u64[0 max])value.Value;
+    }
+
+    static finite law bool Equals(borrow SymbolId left, borrow SymbolId right)
+        where overlap(left, right)
+    {
+        return left.Value == right.Value;
+    }
+
+    static finite law System.Collections.Ordering Compare(borrow SymbolId left, borrow SymbolId right)
+        where overlap(left, right)
+    {
+        return CompareIndex(left.Value, right.Value);
+    }
+}
+
+public struct TypeId
+{
+    internal u32[0 max] Value;
+
+    inline finite law u32[0 max] Index(borrow TypeId self)
+    {
+        return self.Value;
+    }
+
+    static finite law u64[0 max] Hash(borrow TypeId value)
+    {
+        return (u64[0 max])value.Value;
+    }
+
+    static finite law bool Equals(borrow TypeId left, borrow TypeId right)
+        where overlap(left, right)
+    {
+        return left.Value == right.Value;
+    }
+
+    static finite law System.Collections.Ordering Compare(borrow TypeId left, borrow TypeId right)
+        where overlap(left, right)
+    {
+        return CompareIndex(left.Value, right.Value);
+    }
+}
+
+public struct ModuleId
+{
+    internal u32[0 max] Value;
+
+    inline finite law u32[0 max] Index(borrow ModuleId self)
+    {
+        return self.Value;
+    }
+
+    static finite law u64[0 max] Hash(borrow ModuleId value)
+    {
+        return (u64[0 max])value.Value;
+    }
+
+    static finite law bool Equals(borrow ModuleId left, borrow ModuleId right)
+        where overlap(left, right)
+    {
+        return left.Value == right.Value;
+    }
+
+    static finite law System.Collections.Ordering Compare(borrow ModuleId left, borrow ModuleId right)
+        where overlap(left, right)
+    {
+        return CompareIndex(left.Value, right.Value);
+    }
+}
+
+public struct PackageId
+{
+    internal u32[0 max] Value;
+
+    inline finite law u32[0 max] Index(borrow PackageId self)
+    {
+        return self.Value;
+    }
+
+    static finite law u64[0 max] Hash(borrow PackageId value)
+    {
+        return (u64[0 max])value.Value;
+    }
+
+    static finite law bool Equals(borrow PackageId left, borrow PackageId right)
+        where overlap(left, right)
+    {
+        return left.Value == right.Value;
+    }
+
+    static finite law System.Collections.Ordering Compare(borrow PackageId left, borrow PackageId right)
+        where overlap(left, right)
+    {
+        return CompareIndex(left.Value, right.Value);
+    }
+}
+
+public struct FieldId
+{
+    internal u32[0 max] Value;
+
+    inline finite law u32[0 max] Index(borrow FieldId self)
+    {
+        return self.Value;
+    }
+
+    static finite law u64[0 max] Hash(borrow FieldId value)
+    {
+        return (u64[0 max])value.Value;
+    }
+
+    static finite law bool Equals(borrow FieldId left, borrow FieldId right)
+        where overlap(left, right)
+    {
+        return left.Value == right.Value;
+    }
+
+    static finite law System.Collections.Ordering Compare(borrow FieldId left, borrow FieldId right)
+        where overlap(left, right)
+    {
+        return CompareIndex(left.Value, right.Value);
+    }
+}
+
+public struct MemberId
+{
+    internal u32[0 max] Value;
+
+    inline finite law u32[0 max] Index(borrow MemberId self)
+    {
+        return self.Value;
+    }
+
+    static finite law u64[0 max] Hash(borrow MemberId value)
+    {
+        return (u64[0 max])value.Value;
+    }
+
+    static finite law bool Equals(borrow MemberId left, borrow MemberId right)
+        where overlap(left, right)
+    {
+        return left.Value == right.Value;
+    }
+
+    static finite law System.Collections.Ordering Compare(borrow MemberId left, borrow MemberId right)
+        where overlap(left, right)
+    {
+        return CompareIndex(left.Value, right.Value);
+    }
+}
+
+public struct ArtifactKeyId
+{
+    internal u32[0 max] Value;
+
+    inline finite law u32[0 max] Index(borrow ArtifactKeyId self)
+    {
+        return self.Value;
+    }
+
+    static finite law u64[0 max] Hash(borrow ArtifactKeyId value)
+    {
+        return (u64[0 max])value.Value;
+    }
+
+    static finite law bool Equals(borrow ArtifactKeyId left, borrow ArtifactKeyId right)
+        where overlap(left, right)
+    {
+        return left.Value == right.Value;
+    }
+
+    static finite law System.Collections.Ordering Compare(borrow ArtifactKeyId left, borrow ArtifactKeyId right)
+        where overlap(left, right)
+    {
+        return CompareIndex(left.Value, right.Value);
+    }
+}
+
+internal inline finite law SymbolId MakeSymbolId(u32[0 max] value)
+{
+    return new SymbolId()
+    {
+        Value = value
+    };
+}
+
+internal inline finite law TypeId MakeTypeId(u32[0 max] value)
+{
+    return new TypeId()
+    {
+        Value = value
+    };
+}
+
+internal inline finite law ModuleId MakeModuleId(u32[0 max] value)
+{
+    return new ModuleId()
+    {
+        Value = value
+    };
+}
+
+internal inline finite law PackageId MakePackageId(u32[0 max] value)
+{
+    return new PackageId()
+    {
+        Value = value
+    };
+}
+
+internal inline finite law FieldId MakeFieldId(u32[0 max] value)
+{
+    return new FieldId()
+    {
+        Value = value
+    };
+}
+
+internal inline finite law MemberId MakeMemberId(u32[0 max] value)
+{
+    return new MemberId()
+    {
+        Value = value
+    };
+}
+
+internal inline finite law ArtifactKeyId MakeArtifactKeyId(u32[0 max] value)
+{
+    return new ArtifactKeyId()
+    {
+        Value = value
+    };
+}
+
+internal struct AsciiInterner
+{
+    internal OwnedAscii Text;
+    internal dynamic u64[0 2 ** 63 - 1] Offsets;
+    internal dynamic u64[0 2 ** 63 - 1] Lengths;
+    internal dynamic u64[0 max] Hashes;
+    internal dynamic u32[0 max] Values;
+    internal dynamic u8[0 1] States;
+    internal u64[0 2 ** 63 - 1] Length;
+
+    AsciiInterner()
+    {
+        self.Text = new();
+        self.Offsets = new();
+        self.Lengths = new();
+        self.Hashes = new();
+        self.Values = new();
+        self.States = new();
+        self.Length = 0;
+    }
+
+    inline finite law u64[0 2 ** 63 - 1] Count(borrow AsciiInterner self)
+    {
+        return self.Length;
+    }
+
+    inline finite law bool IsEmpty(borrow AsciiInterner self)
+    {
+        return self.Length == 0;
+    }
+
+    inline finite law bool Contains(borrow AsciiInterner self, ascii name)
+        where overlap(self, name)
+    {
+        return self.FindIndex(name, System.Text.Hash(name)) < self.States.Length;
+    }
+
+    inline fn bool TryGet(borrow AsciiInterner self, ascii name, out u32[0 max] id)
+        where overlap(self, name),
+              overlap(name, id)
+    {
+        stack u64[0 2 ** 63 - 1] index = self.FindIndex(name, System.Text.Hash(name));
+        if (index >= self.States.Length)
+        {
+            return false;
+        }
+
+        stack u32[0 max][] values = self.Values[0, self.Values.Length];
+        id = values[index];
+        return true;
+    }
+
+    internal fn System.Memory.MemoryStatus ReserveFacts(
+        mut borrow AsciiInterner self,
+        u64[0 2 ** 63 - 1] additional)
+    {
+        if (additional > (u64[0 2 ** 63 - 1])(2 ** 63 - 1) - self.Length)
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.TooLarge);
+        }
+
+        if (!self.Offsets.TryReserve(additional)
+            || !self.Lengths.TryReserve(additional)
+            || !self.Hashes.TryReserve(additional))
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        }
+
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    internal inline finite law u64[0 2 ** 63 - 1] FindIndex(
+        borrow AsciiInterner self,
+        ascii name,
+        u64[0 max] hash)
+        where overlap(self, name)
+    {
+        if (self.States.Length == 0)
+        {
+            return 0;
+        }
+
+        stack u64[0 2 ** 63 - 1] mask = (u64[0 2 ** 63 - 1])(self.States.Length - 1);
+        stack mut u64[0 2 ** 63 - 1] index = (u64[0 2 ** 63 - 1])(hash & (u64[0 max])mask);
+        stack mut u64[0 2 ** 63 - 1] probe = 0;
+        stack u8[0 1][] states = self.States[0, self.States.Length];
+        stack u32[0 max][] values = self.Values[0, self.Values.Length];
+        stack u64[0 max][] hashes = self.Hashes[0, self.Hashes.Length];
+        stack u64[0 2 ** 63 - 1][] offsets = self.Offsets[0, self.Offsets.Length];
+        stack u64[0 2 ** 63 - 1][] lengths = self.Lengths[0, self.Lengths.Length];
+
+        while willexit (probe < self.States.Length)
+        {
+            if (states[index] == 0)
+            {
+                return self.States.Length;
+            }
+
+            stack u64[0 2 ** 63 - 1] id = (u64[0 2 ** 63 - 1])values[index];
+            if (hashes[id] == hash
+                && System.Text.OwnedAsciiRangeEqualsAscii(self.Text, offsets[id], lengths[id], name))
+            {
+                return index;
+            }
+
+            index += 1;
+            if (index >= self.States.Length)
+            {
+                index = 0;
+            }
+
+            probe += 1;
+        }
+
+        return self.States.Length;
+    }
+
+    static fn u64[0 2 ** 63 - 1] InsertPrepared(
+        mut borrow u32[0 max][] values,
+        mut borrow u8[0 1][] states,
+        borrow u64[0 max][] hashes,
+        u64[0 2 ** 63 - 1] capacity,
+        u32[0 max] id)
+        where overlap(values, states),
+              overlap(values, hashes),
+              overlap(states, hashes)
+    {
+        stack u64[0 max] hash = hashes[(u64[0 2 ** 63 - 1])id];
+        stack u64[0 2 ** 63 - 1] mask = (u64[0 2 ** 63 - 1])(capacity - 1);
+        stack mut u64[0 2 ** 63 - 1] index = (u64[0 2 ** 63 - 1])(hash & (u64[0 max])mask);
+        stack mut u64[0 2 ** 63 - 1] probe = 0;
+
+        while willexit (probe < capacity)
+        {
+            if (states[index] == 0)
+            {
+                values[index] = id;
+                states[index] = 1;
+                return index;
+            }
+
+            index += 1;
+            if (index >= capacity)
+            {
+                index = 0;
+            }
+
+            probe += 1;
+        }
+
+        return capacity;
+    }
+
+    internal fn System.Memory.MemoryStatus RebuildLookup(
+        mut borrow AsciiInterner self,
+        u64[0 2 ** 63 - 1] nextCapacity)
+    {
+        stack mut dynamic u32[0 max] nextValues = new();
+        stack mut dynamic u8[0 1] nextStates = new();
+
+        if (!nextValues.TryReserve(nextCapacity) || !nextStates.TryReserve(nextCapacity))
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        }
+
+        for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < nextCapacity; index += 1)
+        {
+            init nextValues[nextValues.Length] = 0;
+            init nextStates[nextStates.Length] = 0;
+        }
+
+        stack u32[0 max][] oldValues = self.Values[0, self.Values.Length];
+        stack u8[0 1][] oldStates = self.States[0, self.States.Length];
+        stack u64[0 max][] hashes = self.Hashes[0, self.Hashes.Length];
+        stack mut u64[0 2 ** 63 - 1] oldIndex = 0;
+        while willexit (oldIndex < self.States.Length)
+        {
+            if (oldStates[oldIndex] == 1)
+            {
+                AsciiInterner.InsertPrepared(
+                    nextValues[0, nextValues.Length],
+                    nextStates[0, nextStates.Length],
+                    hashes,
+                    nextCapacity,
+                    oldValues[oldIndex]);
+            }
+
+            oldIndex += 1;
+        }
+
+        self.Values = nextValues;
+        self.States = nextStates;
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    internal fn System.Memory.MemoryStatus ReserveLookup(
+        mut borrow AsciiInterner self,
+        u64[0 2 ** 63 - 1] additional)
+    {
+        if (additional > (u64[0 2 ** 63 - 1])(2 ** 63 - 1) - self.Length)
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.TooLarge);
+        }
+
+        stack u64[0 2 ** 63 - 1] required = (u64[0 2 ** 63 - 1])(self.Length + additional);
+        if (self.States.Length > 0 && required * 2 < self.States.Length)
+        {
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        stack mut u64[0 2 ** 63 - 1] nextCapacity = self.States.Length;
+        if (nextCapacity == 0)
+        {
+            nextCapacity = 8;
+        }
+
+        while willexit (required * 2 >= nextCapacity)
+        {
+            if (nextCapacity > (u64[0 2 ** 63 - 1])(2 ** 62 - 1))
+            {
+                return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.TooLarge);
+            }
+
+            nextCapacity = (u64[0 2 ** 63 - 1])(nextCapacity * 2);
+        }
+
+        if (nextCapacity <= self.States.Length)
+        {
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        return self.RebuildLookup(nextCapacity);
+    }
+
+    fn TextInternerResult<u32[0 max]> Intern(mut borrow AsciiInterner self, ascii name)
+        where overlap(self, name)
+    {
+        stack u64[0 max] hash = System.Text.Hash(name);
+        stack mut u32[0 max] existing = 0;
+        if (self.TryGet(name, existing))
+        {
+            return TextInternerResult<u32[0 max]>.Ok(existing);
+        }
+
+        stack u64[0 2 ** 63 - 1] count = self.Length;
+        if (count > (u64[0 2 ** 63 - 1])(2 ** 32 - 1))
+        {
+            return TextInternerResult<u32[0 max]>.Err(TextInternerError.TooManyItems);
+        }
+
+        stack i64[min max] signedNameLength = System.Text.AsciiLength(name);
+        if (signedNameLength < 0)
+        {
+            return TextInternerResult<u32[0 max]>.Err(TextInternerError.Memory(System.Memory.MemoryError.InvalidLayout));
+        }
+
+        stack u64[0 2 ** 63 - 1] nameLength = (u64[0 2 ** 63 - 1])signedNameLength;
+        stack System.Memory.MemoryStatus factsStatus = self.ReserveFacts(1);
+        switch (factsStatus)
+        {
+            case System.Memory.MemoryStatus.Err(var factsError):
+                return TextInternerResult<u32[0 max]>.Err(TextInternerError.Memory(factsError));
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        stack System.Memory.MemoryStatus lookupReserveStatus = self.ReserveLookup(1);
+        switch (lookupReserveStatus)
+        {
+            case System.Memory.MemoryStatus.Err(var lookupReserveError):
+                return TextInternerResult<u32[0 max]>.Err(TextInternerError.Memory(lookupReserveError));
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        stack System.Memory.MemoryStatus textReserveStatus = self.Text.Reserve(nameLength);
+        switch (textReserveStatus)
+        {
+            case System.Memory.MemoryStatus.Err(var textReserveError):
+                return TextInternerResult<u32[0 max]>.Err(TextInternerError.Memory(textReserveError));
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        stack u64[0 2 ** 63 - 1] offset = self.Text.Length();
+        stack System.Memory.MemoryStatus appendStatus = self.Text.AppendAscii(name);
+        switch (appendStatus)
+        {
+            case System.Memory.MemoryStatus.Err(var appendError):
+                return TextInternerResult<u32[0 max]>.Err(TextInternerError.Memory(appendError));
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        stack u32[0 max] id = (u32[0 max])count;
+        init self.Offsets[self.Offsets.Length] = offset;
+        init self.Lengths[self.Lengths.Length] = nameLength;
+        init self.Hashes[self.Hashes.Length] = hash;
+        AsciiInterner.InsertPrepared(
+            self.Values[0, self.Values.Length],
+            self.States[0, self.States.Length],
+            self.Hashes[0, self.Hashes.Length],
+            self.States.Length,
+            id);
+        self.Length += 1;
+
+        return TextInternerResult<u32[0 max]>.Ok(id);
+    }
+
+    fn TextInternerResult<OwnedAscii> CopyName(mut borrow AsciiInterner self, u32[0 max] id)
+    {
+        stack u64[0 2 ** 63 - 1] index = (u64[0 2 ** 63 - 1])id;
+        if (index >= self.Length)
+        {
+            return TextInternerResult<OwnedAscii>.Err(TextInternerError.InvalidId);
+        }
+
+        stack u64[0 2 ** 63 - 1][] offsets = self.Offsets[0, self.Offsets.Length];
+        stack u64[0 2 ** 63 - 1][] lengths = self.Lengths[0, self.Lengths.Length];
+        stack mut OwnedAscii copy = new();
+        stack System.Memory.MemoryStatus status =
+            System.Text.AppendOwnedAsciiRange(copy, self.Text, offsets[index], lengths[index]);
+        switch (status)
+        {
+            case System.Memory.MemoryStatus.Err(var error):
+                return TextInternerResult<OwnedAscii>.Err(TextInternerError.Memory(error));
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        return TextInternerResult<OwnedAscii>.Ok(copy);
+    }
+}
+
+public struct SymbolInterner
+{
+    internal AsciiInterner Inner;
+
+    SymbolInterner()
+    {
+        self.Inner = new();
+    }
+
+    inline finite law u64[0 2 ** 63 - 1] Count(borrow SymbolInterner self)
+    {
+        return self.Inner.Count();
+    }
+
+    inline finite law bool IsEmpty(borrow SymbolInterner self)
+    {
+        return self.Inner.IsEmpty();
+    }
+
+    inline finite law bool Contains(borrow SymbolInterner self, ascii name)
+        where overlap(self, name)
+    {
+        return self.Inner.Contains(name);
+    }
+
+    inline fn bool TryGet(borrow SymbolInterner self, ascii name, out SymbolId id)
+        where overlap(self, name),
+              overlap(name, id)
+    {
+        stack mut u32[0 max] raw = 0;
+        if (!self.Inner.TryGet(name, raw))
+        {
+            return false;
+        }
+
+        id = MakeSymbolId(raw);
+        return true;
+    }
+
+    fn TextInternerResult<SymbolId> Intern(mut borrow SymbolInterner self, ascii name)
+        where overlap(self, name)
+    {
+        stack TextInternerResult<u32[0 max]> result = self.Inner.Intern(name);
+        switch (result)
+        {
+            case TextInternerResult<u32[0 max]>.Err(var error):
+                return TextInternerResult<SymbolId>.Err(error);
+            case TextInternerResult<u32[0 max]>.Ok(var raw):
+                return TextInternerResult<SymbolId>.Ok(MakeSymbolId(raw));
+        }
+    }
+
+    fn TextInternerResult<OwnedAscii> CopyName(mut borrow SymbolInterner self, SymbolId id)
+    {
+        return self.Inner.CopyName(id.Value);
+    }
+}
+
+public struct TypeInterner
+{
+    internal AsciiInterner Inner;
+
+    TypeInterner()
+    {
+        self.Inner = new();
+    }
+
+    inline finite law u64[0 2 ** 63 - 1] Count(borrow TypeInterner self)
+    {
+        return self.Inner.Count();
+    }
+
+    inline finite law bool IsEmpty(borrow TypeInterner self)
+    {
+        return self.Inner.IsEmpty();
+    }
+
+    inline finite law bool Contains(borrow TypeInterner self, ascii name)
+        where overlap(self, name)
+    {
+        return self.Inner.Contains(name);
+    }
+
+    inline fn bool TryGet(borrow TypeInterner self, ascii name, out TypeId id)
+        where overlap(self, name),
+              overlap(name, id)
+    {
+        stack mut u32[0 max] raw = 0;
+        if (!self.Inner.TryGet(name, raw))
+        {
+            return false;
+        }
+
+        id = MakeTypeId(raw);
+        return true;
+    }
+
+    fn TextInternerResult<TypeId> Intern(mut borrow TypeInterner self, ascii name)
+        where overlap(self, name)
+    {
+        stack TextInternerResult<u32[0 max]> result = self.Inner.Intern(name);
+        switch (result)
+        {
+            case TextInternerResult<u32[0 max]>.Err(var error):
+                return TextInternerResult<TypeId>.Err(error);
+            case TextInternerResult<u32[0 max]>.Ok(var raw):
+                return TextInternerResult<TypeId>.Ok(MakeTypeId(raw));
+        }
+    }
+
+    fn TextInternerResult<OwnedAscii> CopyName(mut borrow TypeInterner self, TypeId id)
+    {
+        return self.Inner.CopyName(id.Value);
+    }
+}
+
+public struct ModuleInterner
+{
+    internal AsciiInterner Inner;
+
+    ModuleInterner()
+    {
+        self.Inner = new();
+    }
+
+    inline finite law u64[0 2 ** 63 - 1] Count(borrow ModuleInterner self)
+    {
+        return self.Inner.Count();
+    }
+
+    inline finite law bool IsEmpty(borrow ModuleInterner self)
+    {
+        return self.Inner.IsEmpty();
+    }
+
+    inline finite law bool Contains(borrow ModuleInterner self, ascii name)
+        where overlap(self, name)
+    {
+        return self.Inner.Contains(name);
+    }
+
+    inline fn bool TryGet(borrow ModuleInterner self, ascii name, out ModuleId id)
+        where overlap(self, name),
+              overlap(name, id)
+    {
+        stack mut u32[0 max] raw = 0;
+        if (!self.Inner.TryGet(name, raw))
+        {
+            return false;
+        }
+
+        id = MakeModuleId(raw);
+        return true;
+    }
+
+    fn TextInternerResult<ModuleId> Intern(mut borrow ModuleInterner self, ascii name)
+        where overlap(self, name)
+    {
+        stack TextInternerResult<u32[0 max]> result = self.Inner.Intern(name);
+        switch (result)
+        {
+            case TextInternerResult<u32[0 max]>.Err(var error):
+                return TextInternerResult<ModuleId>.Err(error);
+            case TextInternerResult<u32[0 max]>.Ok(var raw):
+                return TextInternerResult<ModuleId>.Ok(MakeModuleId(raw));
+        }
+    }
+
+    fn TextInternerResult<OwnedAscii> CopyName(mut borrow ModuleInterner self, ModuleId id)
+    {
+        return self.Inner.CopyName(id.Value);
+    }
+}
+
+public struct PackageInterner
+{
+    internal AsciiInterner Inner;
+
+    PackageInterner()
+    {
+        self.Inner = new();
+    }
+
+    inline finite law u64[0 2 ** 63 - 1] Count(borrow PackageInterner self)
+    {
+        return self.Inner.Count();
+    }
+
+    inline finite law bool IsEmpty(borrow PackageInterner self)
+    {
+        return self.Inner.IsEmpty();
+    }
+
+    inline finite law bool Contains(borrow PackageInterner self, ascii name)
+        where overlap(self, name)
+    {
+        return self.Inner.Contains(name);
+    }
+
+    inline fn bool TryGet(borrow PackageInterner self, ascii name, out PackageId id)
+        where overlap(self, name),
+              overlap(name, id)
+    {
+        stack mut u32[0 max] raw = 0;
+        if (!self.Inner.TryGet(name, raw))
+        {
+            return false;
+        }
+
+        id = MakePackageId(raw);
+        return true;
+    }
+
+    fn TextInternerResult<PackageId> Intern(mut borrow PackageInterner self, ascii name)
+        where overlap(self, name)
+    {
+        stack TextInternerResult<u32[0 max]> result = self.Inner.Intern(name);
+        switch (result)
+        {
+            case TextInternerResult<u32[0 max]>.Err(var error):
+                return TextInternerResult<PackageId>.Err(error);
+            case TextInternerResult<u32[0 max]>.Ok(var raw):
+                return TextInternerResult<PackageId>.Ok(MakePackageId(raw));
+        }
+    }
+
+    fn TextInternerResult<OwnedAscii> CopyName(mut borrow PackageInterner self, PackageId id)
+    {
+        return self.Inner.CopyName(id.Value);
+    }
+}
+
+public struct FieldInterner
+{
+    internal AsciiInterner Inner;
+
+    FieldInterner()
+    {
+        self.Inner = new();
+    }
+
+    inline finite law u64[0 2 ** 63 - 1] Count(borrow FieldInterner self)
+    {
+        return self.Inner.Count();
+    }
+
+    inline finite law bool IsEmpty(borrow FieldInterner self)
+    {
+        return self.Inner.IsEmpty();
+    }
+
+    inline finite law bool Contains(borrow FieldInterner self, ascii name)
+        where overlap(self, name)
+    {
+        return self.Inner.Contains(name);
+    }
+
+    inline fn bool TryGet(borrow FieldInterner self, ascii name, out FieldId id)
+        where overlap(self, name),
+              overlap(name, id)
+    {
+        stack mut u32[0 max] raw = 0;
+        if (!self.Inner.TryGet(name, raw))
+        {
+            return false;
+        }
+
+        id = MakeFieldId(raw);
+        return true;
+    }
+
+    fn TextInternerResult<FieldId> Intern(mut borrow FieldInterner self, ascii name)
+        where overlap(self, name)
+    {
+        stack TextInternerResult<u32[0 max]> result = self.Inner.Intern(name);
+        switch (result)
+        {
+            case TextInternerResult<u32[0 max]>.Err(var error):
+                return TextInternerResult<FieldId>.Err(error);
+            case TextInternerResult<u32[0 max]>.Ok(var raw):
+                return TextInternerResult<FieldId>.Ok(MakeFieldId(raw));
+        }
+    }
+
+    fn TextInternerResult<OwnedAscii> CopyName(mut borrow FieldInterner self, FieldId id)
+    {
+        return self.Inner.CopyName(id.Value);
+    }
+}
+
+public struct MemberInterner
+{
+    internal AsciiInterner Inner;
+
+    MemberInterner()
+    {
+        self.Inner = new();
+    }
+
+    inline finite law u64[0 2 ** 63 - 1] Count(borrow MemberInterner self)
+    {
+        return self.Inner.Count();
+    }
+
+    inline finite law bool IsEmpty(borrow MemberInterner self)
+    {
+        return self.Inner.IsEmpty();
+    }
+
+    inline finite law bool Contains(borrow MemberInterner self, ascii name)
+        where overlap(self, name)
+    {
+        return self.Inner.Contains(name);
+    }
+
+    inline fn bool TryGet(borrow MemberInterner self, ascii name, out MemberId id)
+        where overlap(self, name),
+              overlap(name, id)
+    {
+        stack mut u32[0 max] raw = 0;
+        if (!self.Inner.TryGet(name, raw))
+        {
+            return false;
+        }
+
+        id = MakeMemberId(raw);
+        return true;
+    }
+
+    fn TextInternerResult<MemberId> Intern(mut borrow MemberInterner self, ascii name)
+        where overlap(self, name)
+    {
+        stack TextInternerResult<u32[0 max]> result = self.Inner.Intern(name);
+        switch (result)
+        {
+            case TextInternerResult<u32[0 max]>.Err(var error):
+                return TextInternerResult<MemberId>.Err(error);
+            case TextInternerResult<u32[0 max]>.Ok(var raw):
+                return TextInternerResult<MemberId>.Ok(MakeMemberId(raw));
+        }
+    }
+
+    fn TextInternerResult<OwnedAscii> CopyName(mut borrow MemberInterner self, MemberId id)
+    {
+        return self.Inner.CopyName(id.Value);
+    }
+}
+
+public struct ArtifactKeyInterner
+{
+    internal AsciiInterner Inner;
+
+    ArtifactKeyInterner()
+    {
+        self.Inner = new();
+    }
+
+    inline finite law u64[0 2 ** 63 - 1] Count(borrow ArtifactKeyInterner self)
+    {
+        return self.Inner.Count();
+    }
+
+    inline finite law bool IsEmpty(borrow ArtifactKeyInterner self)
+    {
+        return self.Inner.IsEmpty();
+    }
+
+    inline finite law bool Contains(borrow ArtifactKeyInterner self, ascii name)
+        where overlap(self, name)
+    {
+        return self.Inner.Contains(name);
+    }
+
+    inline fn bool TryGet(borrow ArtifactKeyInterner self, ascii name, out ArtifactKeyId id)
+        where overlap(self, name),
+              overlap(name, id)
+    {
+        stack mut u32[0 max] raw = 0;
+        if (!self.Inner.TryGet(name, raw))
+        {
+            return false;
+        }
+
+        id = MakeArtifactKeyId(raw);
+        return true;
+    }
+
+    fn TextInternerResult<ArtifactKeyId> Intern(mut borrow ArtifactKeyInterner self, ascii name)
+        where overlap(self, name)
+    {
+        stack TextInternerResult<u32[0 max]> result = self.Inner.Intern(name);
+        switch (result)
+        {
+            case TextInternerResult<u32[0 max]>.Err(var error):
+                return TextInternerResult<ArtifactKeyId>.Err(error);
+            case TextInternerResult<u32[0 max]>.Ok(var raw):
+                return TextInternerResult<ArtifactKeyId>.Ok(MakeArtifactKeyId(raw));
+        }
+    }
+
+    fn TextInternerResult<OwnedAscii> CopyName(mut borrow ArtifactKeyInterner self, ArtifactKeyId id)
+    {
+        return self.Inner.CopyName(id.Value);
+    }
+}

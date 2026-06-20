@@ -69,6 +69,8 @@ The `stark` command searches upward from the current directory. The nearest mani
 
 * in a project directory: builds that project
 * in a solution directory: builds that solution
+* `--target <triple>` selects the target triple used for both codegen and the build output path
+* `--stage stage0` selects the current C# host compiler stage; Stage1/Stage2 selectors are reserved until those compilers exist
 
 When run from a solution, the declared default build set is used. If none is declared, every buildable member is built.
 
@@ -76,12 +78,14 @@ When run from a solution, the declared default build set is used. If none is dec
 stark build
 stark build breakout
 stark build raylib --release
+stark build --target x86_64-unknown-linux-gnu --stage stage0
 ```
 
 ### `stark run`
 
 * in an executable project directory: builds and runs that project
 * in a solution directory: builds and runs the solution default run target
+* supports the same `--target <triple>` and `--stage stage0` selectors as `stark build`
 
 If a solution has multiple runnable projects and no default, `stark run` stops with a message asking for a name.
 
@@ -96,12 +100,64 @@ stark run --release
 * in a test project directory: builds and runs that project's test executable
 * in a solution directory: runs the declared test set, or every member with `kind = "test"` if none is declared
 * a target name can be a solution alias, member path, or project name
-* assertions are ordinary Stark functions from `System.Testing`; discovery is explicit and static today
+* supports the same `--target <triple>` and `--stage stage0` selectors as `stark build`
+* `[Fact]` and `[Theory]` tests use a generated explicit `main` runner; there is no runtime reflection
+* assertions are ordinary Stark functions from `System.Testing`
+* `--filter <text>` can be repeated to run only generated test names containing the filter text
+* `[Theory]` rows can come from `[InlineData(...)]` constants or typed indexed `[MemberData(provider, rowType, count, ...fields)]` providers
+* `[Platform(...)]` and `[SkipPlatform(...)]` gates on facts, structs, and records are resolved from the selected target triple at build time
+* `[Collection(name)]` and `[Serial]` on facts, structs, and records create stable serial scheduling groups in the generated runner
+* `--collection <name[,name...]>` can be repeated and comma-splits each value to run only facts tagged with the named `[Collection]`s, with union semantics across selections
+* `--list-collections` prints the project's collection names without running any facts
 
 ```bash
 stark test
 stark test standard-library-tests
+stark test standard-library-tests --filter Integer
+stark test standard-library-tests --collection ownership,lexing
+stark test standard-library-tests --list-collections
 ```
+
+### `stark clean`
+
+* deletes artifacts under the formal `build/<profile>/<target-triple>/<stage>/` layout
+* default scope is `stage`
+* `target`, `stage`, `diagnostics`, and `artifacts` use `--target <triple>` or the detected default target
+* `profile` deletes `build/<profile>/` and does not require target discovery
+
+```bash
+stark clean
+stark clean stage --target x86_64-unknown-linux-gnu
+stark clean target --target x86_64-unknown-linux-gnu
+stark clean profile
+stark clean diagnostics --target x86_64-unknown-linux-gnu
+stark clean artifacts --target x86_64-unknown-linux-gnu
+```
+
+Project command outputs use the formal build layout:
+
+```text
+build/<profile>/<target-triple>/<stage>/
+  bin/<project>/
+  obj/<project>/
+  pkg/<project>/
+  tests/<project>/
+```
+
+The current host driver writes Stage0 executable/library outputs under `bin`,
+saved native intermediates under `obj`, and test executables plus generated
+`[Fact]` runners under `tests`. Library package images go under `pkg` and can
+refer back to the static library with a relative path. Project builds search the
+active stage's `stdlib` directory for stage-local `System` artifacts, then the
+nearest repo `stdlib/dist` package images, then the nearest repo `stdlib/src`
+source tree for source-tree development, then bundled stdlib artifacts next to
+the active compiler distribution. Project builds do not use `STARK_PATH`; use
+manifest dependencies for ordinary packages, future explicit stdlib overrides,
+or direct low-level compiler `-I` inputs instead. Stdlib artifact
+generation/routing, diagnostic, and artifact-export routing are still part of
+self-hosting prep.
+When a `System.*` import cannot be resolved, project builds report the searched
+stdlib paths and the active profile, target, and stage.
 
 ## `Stark.toml`
 
@@ -117,7 +173,6 @@ output = "breakout-raylib"
 
 [dependencies]
 raylib = { path = "../raylib" }
-stdlib = { path = "../../stdlib" }
 
 [profiles.dev]
 opt = 0
@@ -150,14 +205,13 @@ kind = "test"
 [test]
 root = "StandardLibraryTests.stark"
 output = "standard-library-tests"
-
-[dependencies]
-stdlib = { path = "../../stdlib" }
 ```
 
-The test root is compiled as an executable. It returns `0` for success and a
-non-zero exit code for failure. `System.Testing` provides the first assertion
-helpers and a small explicit fact runner:
+The test root is compiled as an executable. If it contains `[Fact]` metadata,
+`stark test` generates the executable `main` at build time and returns `0` for
+success or a non-zero exit code for failure. Manual `main` runners are still
+available for bootstrap test executables with no generated test metadata.
+`System.Testing` provides the assertion helpers used by generated runners:
 
 ```stark
 import System.Testing
@@ -169,15 +223,49 @@ fn bool AddsNumbers()
     return System.Testing.Equal(4, 2 + 2);
 }
 
-export fn i32[min max] main()
+[Fact]
+[Platform(linux.x64)]
+fn bool LinuxToolchainProbe()
 {
-    stack mut u8[0 1] failed = 0;
-    if (System.Testing.RunFact("AddsNumbers", AddsNumbers()) != 0)
-    {
-        failed = 1;
-    }
+    return true;
+}
 
-    return System.Testing.ExitCode(failed);
+[Serial]
+struct ToolchainState
+{
+    [Fact]
+    static fn bool UsesSharedInstall()
+    {
+        return true;
+    }
+}
+
+[Theory]
+[InlineData(2, 2, 4)]
+[InlineData(-3, 5, 2)]
+finite law bool AddsExamples(i32[min max] left, i32[min max] right, i32[min max] expected)
+{
+    return left + right == expected;
+}
+
+record AddRow(i32[min max] Left, i32[min max] Right, i32[min max] Expected) { }
+
+finite law AddRow AddRows(u64[0 2 ** 63 - 1] index)
+{
+    switch (index)
+    {
+        case 0:
+            return new AddRow(2, 2, 4);
+        default:
+            return new AddRow(-3, 5, 2);
+    }
+}
+
+[Theory]
+[MemberData(AddRows, AddRow, 2, Left, Right, Expected)]
+finite law bool AddsMemberExamples(i32[min max] left, i32[min max] right, i32[min max] expected)
+{
+    return left + right == expected;
 }
 ```
 
@@ -224,10 +312,12 @@ Path dependencies cover v1:
 ```toml
 [dependencies]
 raylib = { path = "../raylib" }
-stdlib = { path = "../../stdlib" }
 ```
 
-That handles examples, standard library work, multi project repos, and native backed packages inside the same solution. Versioned and registry dependencies come later.
+That handles multi project repos and native backed packages inside the same
+solution. `System.*` modules come from the standard library discovery path, so
+projects do not list `stdlib` as an ordinary dependency. Versioned and registry
+dependencies come later.
 
 ## Native Packages
 
@@ -337,7 +427,6 @@ output = "breakout-raylib"
 
 [dependencies]
 raylib = { path = "../raylib" }
-stdlib = { path = "../../stdlib" }
 ```
 
 ### `Stark.solution.toml`

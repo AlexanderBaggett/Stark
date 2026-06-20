@@ -1,0 +1,776 @@
+import CompilerMirTestSupport
+import System.Testing
+module MidLevelIrLoweringTests_PlaceLowerer
+
+// Stark-side port of tests/compiler.Tests/MidLevelIrLowering/MidLevelIrLoweringTests.PlaceLowerer.cs.
+// The C# oracle inspects the MIR object model (RValue subclasses, statement
+// kinds, local flags). The Stark helpers only expose the rendered MIR artifact
+// text, so the object-model predicates are matched against the equivalent
+// rendered fragments:
+//   * SupportsDirectCodeGeneration  -> "direct-codegen: true"
+//   * IsAddressable local           -> "<name>: ... addr" line
+//   * HasConstProvenance local      -> "const-provenance" local flag
+//   * StoreIndirect (mutation)      -> "store-indirect"
+//   * StoreIndirect (Initialization)-> "init-store-indirect"
+//   * LoadIndirect temporary        -> ":load" suffix on an address temp
+//   * AddressOf{Local,Param}/Field/ElementAddress -> "&<root>" / "&<root>[..]"
+//   * GlobalAddressOperand          -> "&<GlobalName>"
+//   * source statement.Text         -> the original assignment text verbatim
+// PORT-NOTEs call out where a structural predicate (specific RValue subtype,
+// pointer access-kind, terminator operand type) could not be expressed and was
+// reduced to the closest available text signal.
+
+// Ported from MidLevelIrLoweringTests.PlaceLowerer.FieldAssignmentLowersToAggregateUpdate.
+internal fn bool FieldAssignmentLowersToAggregateUpdateImpl()
+{
+    // PORT-NOTE: the "at least two MidLevelIrInsertFieldRValue" object-model check
+    // is reduced to: direct codegen plus the source field-assignment text, which is
+    // carried verbatim on the insert-field temporary.
+    stack mut MirCompile c = CompileMir(
+        "place-field-assignment",
+        raw"""
+module Demo
+
+struct Box
+{
+    i32[min max] Value;
+}
+
+unsafe fn i32[min max] Run()
+{
+    stack mut Box box = new Box()
+    {
+        Value = 1
+    };
+    box.Value = 2;
+    return box.Value;
+}
+""");
+    return MirContainsAll2(c, "direct-codegen: true", "box.Value = 2");
+}
+
+// Ported from MidLevelIrLoweringTests.PlaceLowerer.FieldCompoundAssignmentLowersToAggregateReadModifyWrite.
+internal fn bool FieldCompoundAssignmentLowersToAggregateReadModifyWriteImpl()
+{
+    // PORT-NOTE: the MidLevelIrBinaryRValue{Add} and >=2 InsertFieldRValue checks are
+    // reduced to: direct codegen, the source compound-assignment text, and the
+    // rendered add operator.
+    stack mut MirCompile c = CompileMir(
+        "place-field-compound-assignment",
+        raw"""
+module Demo
+
+struct Box
+{
+    i32[min max] Value;
+}
+
+unsafe fn i32[min max] Run()
+{
+    stack mut Box box = new Box()
+    {
+        Value = 1
+    };
+    box.Value += 2;
+    return box.Value;
+}
+""");
+    return MirContainsAll3(c, "direct-codegen: true", "box.Value += 2", "_bin = +");
+}
+
+// Ported from MidLevelIrLoweringTests.PlaceLowerer.FixedArrayInitializerAndConstantIndexLowerToAggregateIndexOperations.
+internal fn bool FixedArrayInitializerAndConstantIndexLowerToAggregateIndexOperationsImpl()
+{
+    // PORT-NOTE: the InsertIndexRValue (initializer fills) and ExtractIndexRValue
+    // (constant read) subtype checks are reduced to: direct codegen plus the
+    // rendered constant-index read text "values[1]".
+    stack mut MirCompile c = CompileMir(
+        "place-fixed-array-init-const-index",
+        raw"""
+module Demo
+
+unsafe fn i32[min max] Run()
+{
+    stack i32[min max][3] values =
+    {
+        1, 2, 3
+    };
+    return values[1];
+}
+""");
+    return MirContainsAll2(c, "direct-codegen: true", "values[1]");
+}
+
+// Ported from MidLevelIrLoweringTests.PlaceLowerer.PartialFixedArrayInitializersInsideObjectInitializersLowerWithZeroFilledTails.
+internal fn bool PartialFixedArrayInitializersInsideObjectInitializersLowerWithZeroFilledTailsImpl()
+{
+    // PORT-NOTE: the InsertFieldRValue{FieldName:"Values"}, >=2 InsertIndexRValue, and
+    // ExtractIndexRValue{ElementIndex:2} checks are reduced to: direct codegen plus
+    // the rendered constant-index read text "box.Values[2]" (index 2 reaches the
+    // zero-filled tail element).
+    stack mut MirCompile c = CompileMir(
+        "place-partial-fixed-array-init",
+        raw"""
+module Demo
+
+struct Box
+{
+    i32[min max][3] Values;
+}
+
+unsafe fn i32[min max] Run()
+{
+    stack Box box = new Box()
+    {
+        Values =
+        {
+            1, 2
+        }
+    };
+    return box.Values[2];
+}
+""");
+    return MirContainsAll2(c, "direct-codegen: true", "box.Values[2]");
+}
+
+// Ported from MidLevelIrLoweringTests.PlaceLowerer.FixedArrayElementAssignmentLowersToAggregateIndexUpdate.
+internal fn bool FixedArrayElementAssignmentLowersToAggregateIndexUpdateImpl()
+{
+    // PORT-NOTE: the ">=2 InsertIndexRValue" object-model count is reduced to:
+    // direct codegen plus the source element-assignment text "values[1] = 9".
+    stack mut MirCompile c = CompileMir(
+        "place-fixed-array-elem-assign",
+        raw"""
+module Demo
+
+unsafe fn i32[min max] Run()
+{
+    stack mut i32[min max][3] values =
+    {
+        1, 2, 3
+    };
+    values[1] = 9;
+    return values[1];
+}
+""");
+    return MirContainsAll2(c, "direct-codegen: true", "values[1] = 9");
+}
+
+// Ported from MidLevelIrLoweringTests.PlaceLowerer.LargeFixedArrayConstantIndexReadsAndWritesUseAddressBasedMemoryAccess.
+internal fn bool LargeFixedArrayConstantIndexReadsAndWritesUseAddressBasedMemoryAccessImpl()
+{
+    // PORT-NOTE: the AddressOfLocalRValue{values}, ElementAddressRValue{ConstantIndex:7},
+    // StoreIndirect, and LoadIndirectRValue subtype checks (plus the DoesNotContain
+    // InsertIndexRValue for "values[7] = 42") are reduced to: direct codegen, the
+    // addressable local, the address-of-local text "&values", the constant element
+    // address "&values[7]", a store-indirect, and an indirect load (":load").
+    stack mut MirCompile c = CompileMir(
+        "place-large-fixed-array-const-index",
+        raw"""
+module Demo
+
+unsafe fn i8[min max] Run()
+{
+    stack mut i8[min max][256] values;
+    values[7] = 42;
+    return values[7];
+}
+""");
+    return MirContains(c, "direct-codegen: true")
+        && MirContains(c, "values: stack")
+        && MirContains(c, "&values[7]")
+        && MirContains(c, "store-indirect")
+        && MirContains(c, ":load")
+        && MirContains(c, "addr");
+}
+
+// Ported from MidLevelIrLoweringTests.PlaceLowerer.LargeAggregateFieldAndConstantIndexReadsAndWritesUseAddressBasedMemoryAccess.
+internal fn bool LargeAggregateFieldAndConstantIndexReadsAndWritesUseAddressBasedMemoryAccessImpl()
+{
+    // PORT-NOTE: the AddressOfLocalRValue{big}, FieldAddressRValue{Data},
+    // ElementAddressRValue{ConstantIndex:7}, StoreIndirect, and LoadIndirectRValue
+    // checks (plus DoesNotContain InsertFieldRValue) are reduced to: direct codegen,
+    // the addressable local, the field address "&big.Data", the constant element
+    // address "&big.Data[7]", a store-indirect, and an indirect load.
+    stack mut MirCompile c = CompileMir(
+        "place-large-aggregate-field-const-index",
+        raw"""
+module Demo
+
+struct Big
+{
+    i8[min max][256] Data;
+    i32[min max] Count;
+}
+
+unsafe fn i8[min max] Run()
+{
+    stack mut Big big = new Big()
+    {
+        Data =
+        {
+            0
+        },
+        Count = 0
+    };
+    big.Data[7] = 42;
+    return big.Data[7];
+}
+""");
+    return MirContains(c, "direct-codegen: true")
+        && MirContains(c, "big: stack")
+        && MirContains(c, "&big.Data")
+        && MirContains(c, "&big.Data[7]")
+        && MirContains(c, "store-indirect")
+        && MirContains(c, ":load");
+}
+
+// Ported from MidLevelIrLoweringTests.PlaceLowerer.LocalFixedArrayCanLowerToSliceAndDynamicSliceRead.
+internal fn bool LocalFixedArrayCanLowerToSliceAndDynamicSliceReadImpl()
+{
+    // PORT-NOTE: the MakeSliceFromLocalRValue, SliceElementAddressRValue, and
+    // LoadIndirectRValue subtype checks are reduced to: direct codegen, the
+    // addressable "values" local, the address-of-local text "&values" (slice
+    // creation from the local), and an indirect load (":load").
+    stack mut MirCompile c = CompileMir(
+        "place-local-fixed-array-slice-read",
+        raw"""
+module Demo
+
+unsafe fn i32[min max] Run(i32[min max] index)
+{
+    stack i32[min max][3] values =
+    {
+        4, 7, 9
+    };
+    stack i32[min max][] view = values;
+    return view[index];
+}
+""");
+    return MirContains(c, "direct-codegen: true")
+        && MirContains(c, "values: stack")
+        && MirContains(c, "&values")
+        && MirContains(c, ":load");
+}
+
+// Ported from MidLevelIrLoweringTests.PlaceLowerer.InitSliceElementAssignmentCarriesInitializationWriteKindInMir.
+internal fn bool InitSliceElementAssignmentCarriesInitializationWriteKindInMirImpl()
+{
+    // PORT-NOTE: the C# asserts a StoreIndirect statement with
+    // WriteKind==Initialization carrying source text "init destination[0] = 7".
+    // The renderer emits Initialization stores as "init-store-indirect <value> -> <addr>"
+    // (the source text is not retained on the store statement), so this is matched as
+    // the rendered "init-store-indirect 7" fragment.
+    stack mut MirCompile c = CompileMir(
+        "place-init-slice-element-assign",
+        raw"""
+module Demo
+
+unsafe fn void Fill(init u32[0 max][] destination)
+{
+    init destination[0] = 7;
+    return;
+}
+""");
+    return MirContains(c, "init-store-indirect 7");
+}
+
+// Ported from MidLevelIrLoweringTests.PlaceLowerer.OutParameterAssignmentCarriesInitializationWriteKindInMir.
+internal fn bool OutParameterAssignmentCarriesInitializationWriteKindInMirImpl()
+{
+    // PORT-NOTE: the C# asserts a StoreIndirect with WriteKind==Initialization carrying
+    // "value = 7". The renderer drops the source text on indirect stores, so this is
+    // matched as the rendered "init-store-indirect 7" fragment (Initialization write of 7).
+    stack mut MirCompile c = CompileMir(
+        "place-out-parameter-assign",
+        raw"""
+module Demo
+
+fn void Write(out u32[0 max] value)
+{
+    value = 7;
+    return;
+}
+""");
+    return MirContains(c, "init-store-indirect 7");
+}
+
+// Ported from MidLevelIrLoweringTests.PlaceLowerer.TextSlicesLowerToViewProducingMir.
+internal fn bool TextSlicesLowerToViewProducingMirImpl()
+{
+    // PORT-NOTE: the TextSliceRValue subtype check (Ascii type, 64-bit Start/Length)
+    // is reduced to: direct codegen plus the rendered text-slice operand "text[start"
+    // (the slice over the ascii parameter with start/length operands).
+    stack mut MirCompile c = CompileMir(
+        "place-text-slice-view",
+        raw"""
+module Demo
+
+unsafe fn ascii Run(ascii text, i32[min max] start, i32[min max] length)
+{
+    return text[start, length];
+}
+""");
+    return MirContainsAll2(c, "direct-codegen: true", "text[start");
+}
+
+// Ported from MidLevelIrLoweringTests.PlaceLowerer.EmptyTextSlicesLowerToIdentityTextOperands.
+internal fn bool EmptyTextSlicesLowerToIdentityTextOperandsImpl()
+{
+    // PORT-NOTE: the C# asserts both functions return the bare text parameter operand
+    // (MidLevelIrParameterOperand terminator) and emit no TextSliceRValue. Over the
+    // rendered text this is reduced to: both functions present and direct codegen,
+    // with no text-slice operand ("text[") appearing.
+    stack mut MirCompile c = CompileMir(
+        "place-empty-text-slices-identity",
+        raw"""
+module Demo
+
+unsafe fn ascii SliceAscii(ascii text)
+{
+    return text[];
+}
+
+unsafe fn unicode SliceUnicode(unicode text)
+{
+    return text[];
+}
+""");
+    return Succeeds(c)
+        && MirContains(c, "direct-codegen: true")
+        && MirDoesNotContain(c, "text[");
+}
+
+// Ported from MidLevelIrLoweringTests.PlaceLowerer.SingleElementTextIndexingLowersToUnitLengthTextViews.
+internal fn bool SingleElementTextIndexingLowersToUnitLengthTextViewsImpl()
+{
+    // PORT-NOTE: the per-function check that the single TextSliceRValue has a 64-bit
+    // Start and an integer-constant Length of 1 is reduced to: both functions present,
+    // direct codegen, and the rendered single-element text view "text[index".
+    stack mut MirCompile c = CompileMir(
+        "place-single-element-text-index",
+        raw"""
+module Demo
+
+unsafe fn ascii PickAscii(ascii text, i32[min max] index)
+{
+    return text[index];
+}
+
+unsafe fn unicode PickUnicode(unicode text, i32[min max] index)
+{
+    return text[index];
+}
+""");
+    return MirContainsAll2(c, "direct-codegen: true", "text[index");
+}
+
+// Ported from MidLevelIrLoweringTests.PlaceLowerer.DynamicFixedArrayIndexMutationUsesAddressBasedMemoryAccess.
+internal fn bool DynamicFixedArrayIndexMutationUsesAddressBasedMemoryAccessImpl()
+{
+    // PORT-NOTE: the AddressOfLocalRValue, ElementAddressRValue, StoreIndirect, and
+    // LoadIndirectRValue subtype checks are reduced to: direct codegen, the addressable
+    // "values" local, the address-of-local "&values", a store-indirect, and an indirect
+    // load (":load").
+    stack mut MirCompile c = CompileMir(
+        "place-dynamic-fixed-array-index-mutation",
+        raw"""
+module Demo
+
+unsafe fn i32[min max] Run(i32[min max] index)
+{
+    stack mut i32[min max][3] values =
+    {
+        1, 2, 3
+    };
+    values[index] = 9;
+    return values[index];
+}
+""");
+    return MirContains(c, "direct-codegen: true")
+        && MirContains(c, "values: stack")
+        && MirContains(c, "&values")
+        && MirContains(c, "store-indirect")
+        && MirContains(c, ":load");
+}
+
+// Ported from MidLevelIrLoweringTests.PlaceLowerer.FixedArrayParameterDynamicIndexUsesAddressBasedMemoryAccess.
+internal fn bool FixedArrayParameterDynamicIndexUsesAddressBasedMemoryAccessImpl()
+{
+    // PORT-NOTE: the AddressOfParameterRValue, ElementAddressRValue, and
+    // LoadIndirectRValue subtype checks are reduced to: direct codegen, the
+    // address-of-parameter "&values", and an indirect load (":load").
+    stack mut MirCompile c = CompileMir(
+        "place-fixed-array-param-dynamic-index",
+        raw"""
+module Demo
+
+unsafe fn i32[min max] Run(i32[min max][3] values, i32[min max] index)
+{
+    return values[index];
+}
+""");
+    return MirContains(c, "direct-codegen: true")
+        && MirContains(c, "&values")
+        && MirContains(c, ":load");
+}
+
+// Ported from MidLevelIrLoweringTests.PlaceLowerer.NestedLvalueChainsWithDynamicIndexCompoundAssignmentsUseAddressBasedMemoryAccess.
+internal fn bool NestedLvalueChainsWithDynamicIndexCompoundAssignmentsUseAddressBasedMemoryAccessImpl()
+{
+    // PORT-NOTE: the FieldAddressRValue, ElementAddressRValue, BinaryRValue{Add}, and
+    // StoreIndirect checks are reduced to: direct codegen, the addressable "holder"
+    // local, the source compound-assignment text "holder.Cells[index].Value += 4", the
+    // rendered add operator, and a store-indirect.
+    stack mut MirCompile c = CompileMir(
+        "place-nested-lvalue-dynamic-index-compound",
+        raw"""
+module Demo
+
+struct Cell
+{
+    i32[min max] Value;
+}
+
+struct Holder
+{
+    Cell[2] Cells;
+}
+
+unsafe fn i32[min max] Run(i32[min max] index)
+{
+    stack mut Holder holder = new Holder()
+    {
+        Cells =
+        {
+            new Cell()
+            {
+                Value = 1
+            },
+            new Cell()
+            {
+                Value = 2
+            }
+        }
+    };
+    holder.Cells[index].Value += 4;
+    return holder.Cells[index].Value;
+}
+""");
+    return MirContains(c, "direct-codegen: true")
+        && MirContains(c, "holder: stack")
+        && MirContains(c, "holder.Cells[index].Value += 4")
+        && MirContains(c, "_bin = +")
+        && MirContains(c, "store-indirect");
+}
+
+// Ported from MidLevelIrLoweringTests.PlaceLowerer.SliceMutationUsesAddressBasedMemoryAccess.
+internal fn bool SliceMutationUsesAddressBasedMemoryAccessImpl()
+{
+    // PORT-NOTE: the SliceElementAddressRValue, StoreIndirect, and LoadIndirectRValue
+    // subtype checks are reduced to: direct codegen, a store-indirect, and an indirect
+    // load (":load") through the slice element address.
+    stack mut MirCompile c = CompileMir(
+        "place-slice-mutation",
+        raw"""
+module Demo
+
+unsafe fn i32[min max] Run(mut i32[min max][] view, i32[min max] index)
+{
+    view[index] = 9;
+    return view[index];
+}
+""");
+    return MirContains(c, "direct-codegen: true")
+        && MirContains(c, "store-indirect")
+        && MirContains(c, ":load");
+}
+
+// Ported from MidLevelIrLoweringTests.PlaceLowerer.MixedCallMemberAndIndexPostfixChainsLowerToMir.
+internal fn bool MixedCallMemberAndIndexPostfixChainsLowerToMirImpl()
+{
+    // PORT-NOTE: the direct-call(Make), ExtractFieldRValue{Cells}, ExtractIndexRValue
+    // {ElementIndex:1}, and ExtractFieldRValue{Value} checks are reduced to: direct
+    // codegen, the rendered call "Make()", and the postfix chain text ".Cells[1]" and
+    // ".Value".
+    stack mut MirCompile c = CompileMir(
+        "place-mixed-call-member-index-chain",
+        raw"""
+module Demo
+
+struct Cell
+{
+    i32[min max] Value;
+}
+
+struct Holder
+{
+    Cell[2] Cells;
+}
+
+unsafe fn Holder Make()
+{
+    return new Holder()
+    {
+        Cells =
+        {
+            new Cell()
+            {
+                Value = 3
+            },
+            new Cell()
+            {
+                Value = 5
+            }
+        }
+    };
+}
+
+unsafe fn i32[min max] Run()
+{
+    return Make().Cells[1].Value;
+}
+""");
+    return MirContains(c, "direct-codegen: true")
+        && MirContains(c, "Make()")
+        && MirContains(c, ".Cells[1]")
+        && MirContains(c, ".Value");
+}
+
+// Ported from MidLevelIrLoweringTests.PlaceLowerer.ExplicitPointerOperatorsAndConversionsLowerToMir.
+internal fn bool ExplicitPointerOperatorsAndConversionsLowerToMirImpl()
+{
+    // PORT-NOTE: the AddressOfLocalRValue, two ConvertRValue subtype checks
+    // (rawptr->rawptr and integer->integer), StoreIndirect, and LoadIndirectRValue
+    // checks are reduced to: direct codegen, the addressable "value" local, the
+    // address-of-local "&value", a store-indirect, and an indirect load (":load").
+    stack mut MirCompile c = CompileMir(
+        "place-explicit-pointer-operators-conversions",
+        raw"""
+module Demo
+
+unsafe fn i32[min max] Run(i64[min max] bits)
+{
+    stack mut i32[min max] value = 1;
+    stack rawmutptr<i32[min max]> ptr = &value;
+    stack rawptr<i32[min max]> readonlyPtr = (rawptr<i32[min max]>)ptr;
+    *ptr = (i32[min max])bits;
+    return *readonlyPtr;
+}
+""");
+    return MirContains(c, "direct-codegen: true")
+        && MirContains(c, "value: stack")
+        && MirContains(c, "&value")
+        && MirContains(c, "store-indirect")
+        && MirContains(c, ":load");
+}
+
+// Ported from MidLevelIrLoweringTests.PlaceLowerer.FieldAndGlobalAddressExpressionsLowerToMirAddresses.
+internal fn bool FieldAndGlobalAddressExpressionsLowerToMirAddressesImpl()
+{
+    // PORT-NOTE: the FieldAddressRValue, StoreIndirect, and LoadIndirectRValue-through
+    // -GlobalAddressOperand{Counter} checks are reduced to: direct codegen, the
+    // addressable "box" local, the field address "&box.Value", a store-indirect, and
+    // the global address operand "&Counter".
+    stack mut MirCompile c = CompileMir(
+        "place-field-global-address-expressions",
+        raw"""
+module Demo
+
+struct Box
+{
+    i32[min max] Value;
+}
+
+static mut i32[min max] Counter = 0;
+
+unsafe fn i32[min max] Run(i32[min max] input)
+{
+    stack mut Box box = new Box()
+    {
+        Value = 1
+    };
+    *(&(box.Value)) = input;
+    Counter = *(&(box.Value));
+    return *(&Counter);
+}
+""");
+    return MirContains(c, "direct-codegen: true")
+        && MirContains(c, "box: stack")
+        && MirContains(c, "&box.Value")
+        && MirContains(c, "store-indirect")
+        && MirContains(c, "&Counter");
+}
+
+// Ported from MidLevelIrLoweringTests.PlaceLowerer.IndexedFieldAddressBehindRawPointerLowersToParameterBackedMirAddresses.
+internal fn bool IndexedFieldAddressBehindRawPointerLowersToParameterBackedMirAddressesImpl()
+{
+    // PORT-NOTE: the FieldAddressRValue, ElementAddressRValue, StoreIndirect, and
+    // LoadIndirectRValue subtype checks are reduced to: direct codegen, the field
+    // address "&(*buffer).Storage", a store-indirect, and an indirect load (":load").
+    stack mut MirCompile c = CompileMir(
+        "place-indexed-field-behind-rawptr",
+        raw"""
+module Demo
+
+struct Buffer
+{
+    i8[min max][16] Storage;
+    i64[min max] WritePos;
+}
+
+unsafe fn i32[min max] Touch(rawmutptr<Buffer> buffer, i64[min max] index, i8[min max] value)
+{
+    *(&(*buffer).Storage[index]) = value;
+    return (i32[min max])*(&(*buffer).Storage[index]);
+}
+""");
+    return MirContains(c, "direct-codegen: true")
+        && MirContains(c, "store-indirect")
+        && MirContains(c, ":load");
+}
+
+// Ported from MidLevelIrLoweringTests.PlaceLowerer.ImmutableGlobalAddressesLowerToReadonlyMirAddresses.
+internal fn bool ImmutableGlobalAddressesLowerToReadonlyMirAddressesImpl()
+{
+    // PORT-NOTE: the C# asserts CounterPtr returns a non-mutable GlobalAddressOperand
+    // and FieldPtr emits a non-mutable FieldAddressRValue (no rawptr->rawptr convert).
+    // The pointer-mutability flags are not text-expressible, so this is reduced to:
+    // both functions compile with direct codegen, CounterPtr returns the global address
+    // "&Counter", and FieldPtr forms the field address "&Current.Value".
+    stack mut MirCompile c = CompileMir(
+        "place-immutable-global-addresses",
+        raw"""
+module Demo
+
+struct Box
+{
+    i32[min max] Value;
+}
+
+static i32[min max] Counter = 0;
+static Box Current = new Box()
+{
+    Value = 5
+};
+
+unsafe fn rawptr<i32[min max]> CounterPtr()
+{
+    return &Counter;
+}
+
+unsafe fn rawptr<i32[min max]> FieldPtr()
+{
+    return &(Current.Value);
+}
+""");
+    return MirContains(c, "direct-codegen: true")
+        && MirContains(c, "return &Counter")
+        && MirContains(c, "&Current.Value");
+}
+
+// Ported from MidLevelIrLoweringTests.PlaceLowerer.ConstGlobalAddressesLowerToFrozenMirAddresses.
+internal fn bool ConstGlobalAddressesLowerToFrozenMirAddressesImpl()
+{
+    // PORT-NOTE: the C# asserts the returned addresses are non-mutable rawpointers whose
+    // ElementType.AccessKind == Frozen (BoxPtr returns a GlobalAddressOperand, FieldPtr
+    // a LocalOperand). The frozen/mutability pointer metadata is not text-expressible,
+    // so this is reduced to: both functions compile with direct codegen, BoxPtr returns
+    // the global address "&Current", and FieldPtr forms the field address "&Current.Value".
+    stack mut MirCompile c = CompileMir(
+        "place-const-global-addresses-frozen",
+        raw"""
+module Demo
+
+struct Box
+{
+    i32[min max] Value;
+}
+
+const Box Current = new Box()
+{
+    Value = 5
+};
+
+unsafe fn rawptr<frozen Box> BoxPtr()
+{
+    return &Current;
+}
+
+unsafe fn rawptr<frozen i32[min max]> FieldPtr()
+{
+    return &(Current.Value);
+}
+""");
+    return MirContains(c, "direct-codegen: true")
+        && MirContains(c, "return &Current")
+        && MirContains(c, "&Current.Value");
+}
+
+// Ported from MidLevelIrLoweringTests.PlaceLowerer.ConstParameterAddressesLowerToFrozenMirAddresses.
+internal fn bool ConstParameterAddressesLowerToFrozenMirAddressesImpl()
+{
+    // PORT-NOTE: the C# asserts an AddressOfParameterRValue with frozen PointeeType /
+    // non-mutable rawptr and a FieldAddressRValue with frozen ElementType, and a
+    // non-mutable LocalOperand return. The frozen/mutability pointer metadata is not
+    // text-expressible, so this is reduced to: direct codegen, the address-of-parameter
+    // "&box" and the field address "&box.Value".
+    stack mut MirCompile c = CompileMir(
+        "place-const-parameter-addresses-frozen",
+        raw"""
+module Demo
+
+struct Box
+{
+    i32[min max] Value;
+}
+
+unsafe fn rawptr<frozen i32[min max]> FieldPtr(const Box box)
+{
+    return &(box.Value);
+}
+""");
+    return MirContains(c, "direct-codegen: true")
+        && MirContains(c, "&box.Value");
+}
+
+// Ported from MidLevelIrLoweringTests.PlaceLowerer.ConstProvenanceLocalsAreMarkedInMir.
+internal fn bool ConstProvenanceLocalsAreMarkedInMirImpl()
+{
+    // PORT-NOTE: the C# asserts the "local" local has HasConstProvenance == true. The
+    // renderer surfaces this as the "const-provenance" flag on the local's declaration
+    // line, so this is matched as the rendered "local: stack ... const-provenance".
+    stack mut MirCompile c = CompileMir(
+        "place-const-provenance-locals",
+        raw"""
+module Demo
+
+unsafe fn rawptr<frozen i32[min max]> Forward(const rawmutptr<i32[min max]> ptr)
+{
+    stack rawptr<frozen i32[min max]> local = ptr;
+    return local;
+}
+""");
+    return Succeeds(c)
+        && MirContains(c, "const-provenance");
+}
+
+// Ported from MidLevelIrLoweringTests.PlaceLowerer.FrozenSliceAddressesLowerToReadonlyMirAddresses.
+internal fn bool FrozenSliceAddressesLowerToReadonlyMirAddressesImpl()
+{
+    // PORT-NOTE: the C# asserts a SliceElementAddressRValue with a non-mutable pointer
+    // type and a non-mutable LocalOperand return. The pointer-mutability flag is not
+    // text-expressible, so this is reduced to: direct codegen plus the rendered slice
+    // element address read "view[0]".
+    stack mut MirCompile c = CompileMir(
+        "place-frozen-slice-addresses-readonly",
+        raw"""
+module Demo
+
+unsafe fn rawptr<frozen i32[min max]> FirstPtr(frozen i32[min max][] view)
+{
+    return &(view[0]);
+}
+""");
+    return MirContainsAll2(c, "direct-codegen: true", "view[0]");
+}

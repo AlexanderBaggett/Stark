@@ -1,0 +1,179 @@
+import StdlibPortSupport
+import System
+import System.Net
+import System.Testing
+module SystemNetStandardLibraryTests
+
+// Ported from SystemNetStandardLibraryTests.StdLibSourceNetFoundationTypesAndCompactLayoutsTypeCheck.
+//
+// PORT-NOTE: the C# test compiles the embedded program against the on-disk stdlib
+// source tree (stdlib/src) with StopAfterPassId "enum-layout", then inspects the
+// EnumLayoutModel artifact to assert the compact-tag layouts of
+// System.Net.NetworkError, System.Net.NetStatus, and System.Net.NetResult<i32>
+// (tag bit widths, tag range, ordered $tag/$Ok_0/$Err_0 fields, and field types).
+// The compile-only host bridge cannot read the repository source tree, stop after
+// a named pass, nor surface the EnumLayoutModel artifact, so this port compiles
+// the embedded program verbatim through the host stdlib and asserts the compile
+// succeeds, the strongest signal the bridge can reproduce.
+internal fn bool StdLibSourceNetFoundationTypesAndCompactLayoutsTypeCheckImpl()
+{
+    stack mut ProgramCompile c = CompileProgram("stdlib-net-foundation-types-compact-layouts", raw"""
+import System.Net
+module Demo
+
+fn bool StatusOk(System.Net.NetStatus status)
+{
+    switch (status)
+    {
+        case System.Net.NetStatus.Ok:
+            return true;
+        case System.Net.NetStatus.Err(var error):
+            return false;
+    }
+}
+
+fn i32[min max] ReadResult(System.Net.NetResult<i32[min max]> result)
+{
+    switch (result)
+    {
+        case System.Net.NetResult<i32[min max]>.Ok(var value):
+            return value;
+        case System.Net.NetResult<i32[min max]>.Err(var error):
+            return 0;
+    }
+}
+
+fn u8[0 max] FirstOctet(System.Net.IPv4Endpoint endpoint)
+{
+    return endpoint.Address.A;
+}
+
+fn u16[0 max] EndpointPort(System.Net.IPv4Endpoint endpoint)
+{
+    return endpoint.Port;
+}
+
+fn i32[min max] Run()
+{
+    stack System.Net.IPv4Address address = new System.Net.IPv4Address()
+    {
+        A = 127,
+        B = 0,
+        C = 0,
+        D = 1
+    };
+    stack System.Net.IPv4Endpoint endpoint = new System.Net.IPv4Endpoint()
+    {
+        Address = address,
+        Port = 8080
+    };
+    stack System.Net.NetResult<i32[min max]> result =
+        System.Net.NetResult<i32[min max]>.Ok(7);
+
+    if (!StatusOk(System.Net.NetStatus.Ok))
+    {
+        return 1;
+    }
+
+    if (FirstOctet(endpoint) != 127)
+    {
+        return 2;
+    }
+
+    if (EndpointPort(endpoint) != 8080)
+    {
+        return 3;
+    }
+
+    return ReadResult(result);
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemNetStandardLibraryTests.PackagedStdLibNetFoundationTypesWorkWithoutSource.
+//
+// PORT-NOTE: the C# test builds the shared packaged stdlib, asserts the packaged
+// System.starkpkg manifest exists, then compiles the embedded program resolving
+// modules against the package directory (no source tree) with StopAfterPassId
+// "enum-layout", and inspects the EnumLayoutModel artifact to assert the same
+// compact-tag layouts of System.Net.NetworkError, System.Net.NetStatus, and
+// System.Net.NetResult<i32>. The compile-only host bridge cannot package the
+// stdlib, check manifest existence, stop after a named pass, nor surface the
+// EnumLayoutModel artifact, so this port compiles the embedded program verbatim
+// through the host stdlib and asserts the compile succeeds, the strongest signal
+// the bridge can reproduce.
+internal fn bool PackagedStdLibNetFoundationTypesWorkWithoutSourceImpl()
+{
+    stack mut ProgramCompile c = CompileProgram("packaged-net-foundation-types-without-source", raw"""
+import System
+module App
+
+fn bool StatusOk(System.Net.NetStatus status)
+{
+    switch (status)
+    {
+        case System.Net.NetStatus.Ok:
+            return true;
+        case System.Net.NetStatus.Err(var error):
+            return false;
+    }
+}
+
+fn i32[min max] ReadResult(System.Net.NetResult<i32[min max]> result)
+{
+    switch (result)
+    {
+        case System.Net.NetResult<i32[min max]>.Ok(var value):
+            return value;
+        case System.Net.NetResult<i32[min max]>.Err(var error):
+            return 0;
+    }
+}
+
+fn u16[0 max] EndpointPort(System.Net.IPv4Endpoint endpoint)
+{
+    return endpoint.Port;
+}
+
+fn i32[min max] Run()
+{
+    stack System.Net.IPv4Endpoint endpoint = new System.Net.IPv4Endpoint()
+    {
+        Address = new System.Net.IPv4Address()
+        {
+            A = 127,
+            B = 0,
+            C = 0,
+            D = 1
+        },
+        Port = 8080
+    };
+    stack System.Net.NetResult<i32[min max]> result =
+        System.Net.NetResult<i32[min max]>.Ok(11);
+
+    if (!StatusOk(System.Net.NetStatus.Ok))
+    {
+        return 1;
+    }
+
+    if (EndpointPort(endpoint) != 8080)
+    {
+        return 2;
+    }
+
+    return ReadResult(result);
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return true;
+}

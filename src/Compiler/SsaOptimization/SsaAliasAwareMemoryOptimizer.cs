@@ -205,7 +205,13 @@ internal sealed class SsaAliasAwareMemoryOptimizer
                          && TryResolveFieldMemoryKey(loadIndirect.Address, definitions, fieldAddressKeys, out var loadedFieldKey)
                          && loadedFieldKey.Type == loadIndirect.Type
                          && knownFields.TryGetValue(loadedFieldKey, out var knownValue)
-                         && knownValue.Type == loadIndirect.Type:
+                         && knownValue.Type == loadIndirect.Type
+                         && ValueUsesAreConfinedToBlock(valueInstruction.ResultName, block.Id, valueUseBlockIds):
+                    // The confinement check matches the load-local and
+                    // load-global forwarding cases above: replacements are
+                    // per-block, so a result consumed in another block (e.g.
+                    // an inlined call's continuation phi) must keep its
+                    // defining load.
                     replacements[valueInstruction.ResultName] = RewriteValue(knownValue, replacements);
                     blockChanged = true;
                     continue;
@@ -1067,6 +1073,12 @@ internal sealed class SsaAliasAwareMemoryOptimizer
                 case SsaValueInstruction valueInstruction:
                     AddEscapedLocalNames(valueInstruction.Value, escaped);
                     break;
+                case SsaCallInstruction call:
+                    AddEscapedIndirectArgumentLocalNames(call.IndirectArgumentLocalNames, escaped);
+                    break;
+                case SsaIndirectCallInstruction call:
+                    AddEscapedIndirectArgumentLocalNames(call.IndirectArgumentLocalNames, escaped);
+                    break;
             }
         }
 
@@ -1085,16 +1097,26 @@ internal sealed class SsaAliasAwareMemoryOptimizer
                 escaped.Add(makeSlice.LocalName);
                 break;
 
-            case SsaCallRValue { IndirectArgumentLocalNames: { } indirectLocals }:
-                foreach (var localName in indirectLocals)
-                {
-                    if (localName is not null)
-                    {
-                        escaped.Add(localName);
-                    }
-                }
-
+            case SsaCallRValue call:
+                AddEscapedIndirectArgumentLocalNames(call.IndirectArgumentLocalNames, escaped);
                 break;
+
+            case SsaIndirectCallRValue call:
+                AddEscapedIndirectArgumentLocalNames(call.IndirectArgumentLocalNames, escaped);
+                break;
+        }
+    }
+
+    private static void AddEscapedIndirectArgumentLocalNames(
+        IReadOnlyList<string?>? indirectLocals,
+        ISet<string> escaped)
+    {
+        foreach (var localName in indirectLocals ?? [])
+        {
+            if (localName is not null)
+            {
+                escaped.Add(localName);
+            }
         }
     }
 
@@ -1258,7 +1280,9 @@ internal sealed class SsaAliasAwareMemoryOptimizer
         return _effectModel is not { } effectModel
                || !effectModel.Functions.TryGetValue(call.FunctionName, out var effects)
                || !effects.IsPure
-               || !effects.NoSync;
+               || !effects.NoSync
+               // A callee that writes memory beyond its arguments may write globals.
+               || effects.WritesOtherMemory;
     }
 
     private bool MayReadGlobalMemory(
@@ -1279,6 +1303,9 @@ internal sealed class SsaAliasAwareMemoryOptimizer
                || !effectModel.Functions.TryGetValue(call.FunctionName, out var effects)
                || !effects.IsPure
                || !effects.NoSync
+               // A callee that reads memory beyond its arguments (e.g. through a
+               // dyn trait object's data pointer) may read global memory.
+               || effects.ReadsOtherMemory
                || effects.ReadsArgumentMemory && EnumerateCallMemoryArguments(call).Any(argument =>
                    ValueMayReferenceGlobalMemory(
                        argument,
@@ -1301,6 +1328,17 @@ internal sealed class SsaAliasAwareMemoryOptimizer
             || !effects.NoSync)
         {
             return false;
+        }
+
+        if (effects.ReadsOtherMemory)
+        {
+            // The callee reads memory beyond its arguments (e.g. the object behind a
+            // dyn trait object's data pointer, or memory reached through a global). It
+            // can only reach a local through a pointer to that local, so the locals it
+            // may read are exactly those whose address has escaped in this function.
+            // Locals whose address is never taken cannot be observed by such a callee.
+            CollectAddressEscapedLocals(definitions, roots);
+            return true;
         }
 
         if (!effects.ReadsArgumentMemory)
@@ -1358,6 +1396,35 @@ internal sealed class SsaAliasAwareMemoryOptimizer
             SsaTextSliceRValue textSlice => ValueMayReferenceGlobalMemory(textSlice.TextValue, definitions, visitedValueNames),
             _ => false
         };
+    }
+
+    // Locals whose address is taken anywhere in the function (directly, or via a
+    // field/element/slice address). Only these can be observed by a callee that
+    // reads memory beyond its arguments, so they bound such a callee's local reads.
+    private static void CollectAddressEscapedLocals(
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        ISet<string> escapedLocals)
+    {
+        foreach (var rvalue in definitions.Values)
+        {
+            switch (rvalue)
+            {
+                case SsaAddressOfLocalRValue addressOfLocal:
+                    escapedLocals.Add(addressOfLocal.LocalName);
+                    break;
+                case SsaMakeSliceFromLocalRValue makeSlice:
+                    escapedLocals.Add(makeSlice.LocalName);
+                    break;
+                case SsaFieldAddressRValue fieldAddress
+                    when TryResolveFieldAddressRoot(fieldAddress.Address, definitions, new HashSet<string>(StringComparer.Ordinal), out var fieldRoot, out _):
+                    escapedLocals.Add(fieldRoot);
+                    break;
+                case SsaElementAddressRValue elementAddress
+                    when TryResolveFieldAddressRoot(elementAddress.Address, definitions, new HashSet<string>(StringComparer.Ordinal), out var elementRoot, out _):
+                    escapedLocals.Add(elementRoot);
+                    break;
+            }
+        }
     }
 
     private static bool TryCollectLocalMemoryReads(

@@ -2818,6 +2818,7 @@ internal sealed class SsaCleanupOptimizer
             SsaInsertFieldRValue insertField => [insertField.Target, insertField.Value],
             SsaExtractIndexRValue extractIndex => [extractIndex.Target],
             SsaInsertIndexRValue insertIndex => [insertIndex.Target, insertIndex.Value],
+            SsaDynVTableSlotRValue vtableSlot => [vtableSlot.VtablePointer],
             SsaMakeSliceFromPointerRValue makeSlice => [makeSlice.Pointer, makeSlice.Length],
             SsaDynamicStorageAllocationRValue allocation => [allocation.Capacity],
             SsaDynamicStorageFreeRValue free => [free.Storage],
@@ -3475,7 +3476,10 @@ internal sealed class SsaCleanupOptimizer
         {
             SsaValueInstruction valueInstruction => new SsaValueInstruction(
                 valueInstruction.ResultName,
-                RewriteRValue(valueInstruction.Value, replacements)),
+                RewriteRValue(valueInstruction.Value, replacements),
+                valueInstruction.Location,
+                valueInstruction.ScopedNoAliasGroups,
+                valueInstruction.LoopAccessGroups),
             SsaCallInstruction call => call with
             {
                 Arguments = call.Arguments
@@ -3595,6 +3599,11 @@ internal sealed class SsaCleanupOptimizer
                 RewriteValue(insertIndex.Value, replacements),
                 insertIndex.Type,
                 insertIndex.Text),
+            SsaDynVTableSlotRValue vtableSlot => new SsaDynVTableSlotRValue(
+                RewriteValue(vtableSlot.VtablePointer, replacements),
+                vtableSlot.SlotIndex,
+                vtableSlot.Type,
+                vtableSlot.Text),
             SsaMakeSliceFromLocalRValue makeSlice => makeSlice,
             SsaMakeSliceFromPointerRValue makeSlice => new SsaMakeSliceFromPointerRValue(
                 RewriteValue(makeSlice.Pointer, replacements),

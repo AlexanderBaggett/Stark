@@ -1,0 +1,65 @@
+import StdlibPortSupport
+import System.Json
+import System.Testing
+module SystemJsonStandardLibraryTests
+
+// Ported from SystemJsonStandardLibraryTests.StdLibSourceJsonHelpersTypeCheckAndLower.
+internal fn bool StdLibSourceJsonHelpersTypeCheckAndLowerImpl()
+{
+    stack mut ProgramCompile c = CompileProgram("stdlib-json-helpers-typecheck-and-lower", raw"""
+        import System.Json
+        module Demo
+
+        unsafe fn u64[0 2 ** 63 - 1] CountNodes(ascii payload)
+        {
+            switch (System.Json.ParseText(payload))
+            {
+                case System.Json.JsonResult<System.Json.JsonDocument>.Err(var error):
+                    return 0;
+                case System.Json.JsonResult<System.Json.JsonDocument>.Ok(var document):
+                    return document.Count();
+            }
+        }
+
+        unsafe fn u64[0 2 ** 63 - 1] WriteProbe()
+        {
+            stack mut System.Json.JsonWriter writer = new();
+            stack System.Json.JsonStatus begin = writer.BeginObject();
+            stack System.Json.JsonStatus key = writer.Key("id");
+            stack System.Json.JsonStatus value = writer.TextValue("probe");
+            stack System.Json.JsonStatus end = writer.EndObject();
+            return writer.Length();
+        }
+        """);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    if (!Contains(llvm, "i64 @CountNodes(")
+        || !Contains(llvm, "i64 @WriteProbe(")
+        || !Contains(llvm, "@System_Json_ParseText("))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemJsonStandardLibraryTests.SourceJsonParseAndWriteRoundTripExecute.
+internal fn bool SourceJsonParseAndWriteRoundTripExecuteImpl()
+{
+    // PORT-NOTE: original writes the embedded program to disk, builds a native executable
+    // via the CLI (--emit-exe with an -I include path and an explicit target triple), then
+    // launches the binary and asserts process exit code 0. The compile-only host bridge
+    // cannot link, run, or observe the exit code of the produced binary, so this reduces to
+    // compiling the embedded program and asserting it succeeds.
+    stack mut ProgramCompile c = CompileProgram("source-json-parse-and-write-roundtrip-execute", "import System.Json\nimport System.Testing\nmodule Demo\n\nexport unsafe fn i32[min max] main()\n{\n    stack ascii payload = \"{\\\"protocolVersion\\\":1,\\\"responses\\\":[{\\\"id\\\":\\\"t1\\\",\\\"succeeded\\\":true,\\\"diagnostics\\\":[{\\\"code\\\":\\\"STK1001\\\",\\\"message\\\":\\\"bad \\\\u00e9 parse\\\\n\\\"}],\\\"count\\\":-42}]}\";\n    switch (System.Json.ParseText(payload))\n    {\n        case System.Json.JsonResult<System.Json.JsonDocument>.Err(var error):\n            return 1;\n        case System.Json.JsonResult<System.Json.JsonDocument>.Ok(var captured):\n            stack mut System.Json.JsonDocument document = captured;\n            stack mut u64[0 2 ** 63 - 1] responses = 0;\n            if (!document.TryFindMember(0, \"responses\", responses))\n            {\n                return 2;\n            }\n\n            if (document.KindAt(responses) != System.Json.JsonKind.Array)\n            {\n                return 3;\n            }\n\n            stack mut u64[0 2 ** 63 - 1] first = 0;\n            if (!document.TryChildAt(responses, 0, first))\n            {\n                return 4;\n            }\n\n            stack mut u64[0 2 ** 63 - 1] succeeded = 0;\n            if (!document.TryFindMember(first, \"succeeded\", succeeded) || !document.BoolAt(succeeded))\n            {\n                return 5;\n            }\n\n            stack mut u64[0 2 ** 63 - 1] count = 0;\n            if (!document.TryFindMember(first, \"count\", count))\n            {\n                return 6;\n            }\n\n            switch (document.I64At(count))\n            {\n                case System.Json.JsonResult<i64[min max]>.Err(var countError):\n                    return 7;\n                case System.Json.JsonResult<i64[min max]>.Ok(var countValue):\n                    if (countValue != -42)\n                    {\n                        return 8;\n                    }\n            }\n\n            stack mut u64[0 2 ** 63 - 1] diagnostics = 0;\n            if (!document.TryFindMember(first, \"diagnostics\", diagnostics))\n            {\n                return 9;\n            }\n\n            stack mut u64[0 2 ** 63 - 1] diagnostic = 0;\n            if (!document.TryChildAt(diagnostics, 0, diagnostic))\n            {\n                return 10;\n            }\n\n            stack mut u64[0 2 ** 63 - 1] message = 0;\n            if (!document.TryFindMember(diagnostic, \"message\", message))\n            {\n                return 11;\n            }\n\n            stack ascii decoded = document.TextAt(message);\n            if (!System.Testing.Contains(decoded, \"bad \"))\n            {\n                return 12;\n            }\n\n            stack mut System.Json.JsonWriter writer = new();\n            stack System.Json.JsonStatus s1 = writer.BeginObject();\n            stack System.Json.JsonStatus s2 = writer.Key(\"id\");\n            stack System.Json.JsonStatus s3 = writer.TextValue(\"line1\\nline2 \\\"quoted\\\"\");\n            stack System.Json.JsonStatus s4 = writer.Key(\"n\");\n            stack System.Json.JsonStatus s5 = writer.I64Value(-9876543210);\n            stack System.Json.JsonStatus s6 = writer.EndObject();\n            stack ascii written = writer.View();\n            if (!System.Testing.Contains(written, \"\\\\n\"))\n            {\n                return 13;\n            }\n\n            switch (System.Json.ParseText(written))\n            {\n                case System.Json.JsonResult<System.Json.JsonDocument>.Err(var reparseError):\n                    return 14;\n                case System.Json.JsonResult<System.Json.JsonDocument>.Ok(var reparsedCaptured):\n                    stack mut System.Json.JsonDocument reparsed = reparsedCaptured;\n                    stack mut u64[0 2 ** 63 - 1] n = 0;\n                    if (!reparsed.TryFindMember(0, \"n\", n))\n                    {\n                        return 15;\n                    }\n\n                    switch (reparsed.I64At(n))\n                    {\n                        case System.Json.JsonResult<i64[min max]>.Err(var nError):\n                            return 16;\n                        case System.Json.JsonResult<i64[min max]>.Ok(var nValue):\n                            if (nValue != -9876543210)\n                            {\n                                return 17;\n                            }\n                    }\n            }\n\n            return 0;\n    }\n}");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return true;
+}

@@ -21,7 +21,6 @@ public sealed class SystemBackendBoundaryAuditTests : StandardLibraryTestSuite
             var result = DefaultCompilerPipeline.Create().Run(
                 new CompilationInput(File.ReadAllText(benchmarkPath), benchmarkPath),
                 new CompilerOptions(
-                    OptimizationLevel: CompilerOptimizationLevel.O3,
                     EmitLlvmIr: true,
                     TargetInfo: targetInfo,
                     ModuleResolver: new TargetAwareStdLibModuleResolver(

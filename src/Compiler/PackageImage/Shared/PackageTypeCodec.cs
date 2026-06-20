@@ -14,7 +14,7 @@ internal static partial class PackageImageBuilder
         string moduleName,
         ISet<string> localNamedTypes)
     {
-        var normalizedNamedType = type.NamedType is null
+        var normalizedNamedType = type.NamedType is null && type.DynTraitName is null
             ? null
             : QualifyModuleLocalNamedType(type, moduleName, localNamedTypes);
         var callableFunctionKind = GetPackageCallableFunctionKind(type);
@@ -33,13 +33,22 @@ internal static partial class PackageImageBuilder
             InitializationKind: type.InitializationKind == StarkInitializationKind.None ? null : type.InitializationKind.ToString().ToLowerInvariant(),
             IsMutableView: type.IsMutableView,
             FixedLength: type.FixedLength,
+            FixedLengthParameterName: type.FixedLengthParameterName,
             ElementType: type.ElementType is null ? null : BuildPublishedAbiTypeReference(type.ElementType, moduleName, localNamedTypes),
             TypeArguments: type.TypeArguments is { Count: > 0 }
                 ? type.TypeArguments.Select(argument => BuildPublishedAbiTypeReference(argument, moduleName, localNamedTypes)).ToArray()
                 : null,
+            ComptimeValueArguments: type.ComptimeValueArguments is { Count: > 0 }
+                ? type.ComptimeValueArguments.Select(argument => BuildPublishedAbiComptimeValueArgument(argument, moduleName, localNamedTypes)).ToArray()
+                : null,
             FunctionKind: callableFunctionKind is null ? null : RenderPackageFunctionKind(callableFunctionKind.Value),
+            FunctionAbi: type.Kind == StarkTypeKind.FunctionPointer && type.FunctionPointerAbi is { } functionPointerAbi
+                ? StarkFfiAbiFacts.DisplayName(functionPointerAbi)
+                : null,
+            FunctionIsUnsafe: type.Kind == StarkTypeKind.FunctionPointer && type.FunctionPointerIsUnsafe ? true : null,
             ClosureStorageKind: type.Kind == StarkTypeKind.Closure ? RenderPackageClosureStorageKind(type.ClosureStorageKind) : null,
             ClosureCallCapability: type.Kind == StarkTypeKind.Closure ? RenderPackageClosureCallCapability(type.ClosureCallCapability) : null,
+            DynTraitStorageKind: type.Kind == StarkTypeKind.DynTrait ? RenderPackageDynTraitStorageKind(type.DynTraitStorageKind) : null,
             ReturnType: callableReturnType is null
                 ? null
                 : BuildPublishedAbiTypeReference(callableReturnType, moduleName, localNamedTypes),
@@ -48,7 +57,12 @@ internal static partial class PackageImageBuilder
                 : null,
             ParameterRawPointerElementCountExpressions: GetCallableRawPointerElementCountExpressions(type),
             OverlapParameterGroups: BuildParameterOverlapGroupManifests(GetCallableOverlapParameterGroups(type)),
-            SameParameterGroups: BuildParameterSameGroupManifests(GetCallableSameParameterGroups(type)));
+            SameParameterGroups: BuildParameterSameGroupManifests(GetCallableSameParameterGroups(type)),
+            AssociatedOwnerType: type.AssociatedTypeOwner is null
+                ? null
+                : BuildPublishedAbiTypeReference(type.AssociatedTypeOwner, moduleName, localNamedTypes),
+            AssociatedTypeName: type.AssociatedTypeName,
+            SourceAliasName: type.CSourceAliasName);
     }
 
     private static string ComputePublishedPackageAbiSymbolName(
@@ -129,7 +143,7 @@ internal static partial class PackageImageBuilder
         string moduleName,
         bool stripCurrentModulePrefix = true)
     {
-        var normalizedNamedType = type.NamedType is null
+        var normalizedNamedType = type.NamedType is null && type.DynTraitName is null
             ? null
             : NormalizeNamedType(type, moduleName, stripCurrentModulePrefix);
         var callableFunctionKind = GetPackageCallableFunctionKind(type);
@@ -148,13 +162,22 @@ internal static partial class PackageImageBuilder
             InitializationKind: type.InitializationKind == StarkInitializationKind.None ? null : type.InitializationKind.ToString().ToLowerInvariant(),
             IsMutableView: type.IsMutableView,
             FixedLength: type.FixedLength,
+            FixedLengthParameterName: type.FixedLengthParameterName,
             ElementType: type.ElementType is null ? null : BuildTypeReference(type.ElementType, moduleName, stripCurrentModulePrefix),
             TypeArguments: type.TypeArguments is { Count: > 0 }
                 ? type.TypeArguments.Select(argument => BuildTypeReference(argument, moduleName, stripCurrentModulePrefix)).ToArray()
                 : null,
+            ComptimeValueArguments: type.ComptimeValueArguments is { Count: > 0 }
+                ? type.ComptimeValueArguments.Select(argument => BuildComptimeValueArgument(argument, moduleName, stripCurrentModulePrefix)).ToArray()
+                : null,
             FunctionKind: callableFunctionKind is null ? null : RenderPackageFunctionKind(callableFunctionKind.Value),
+            FunctionAbi: type.Kind == StarkTypeKind.FunctionPointer && type.FunctionPointerAbi is { } functionPointerAbi
+                ? StarkFfiAbiFacts.DisplayName(functionPointerAbi)
+                : null,
+            FunctionIsUnsafe: type.Kind == StarkTypeKind.FunctionPointer && type.FunctionPointerIsUnsafe ? true : null,
             ClosureStorageKind: type.Kind == StarkTypeKind.Closure ? RenderPackageClosureStorageKind(type.ClosureStorageKind) : null,
             ClosureCallCapability: type.Kind == StarkTypeKind.Closure ? RenderPackageClosureCallCapability(type.ClosureCallCapability) : null,
+            DynTraitStorageKind: type.Kind == StarkTypeKind.DynTrait ? RenderPackageDynTraitStorageKind(type.DynTraitStorageKind) : null,
             ReturnType: callableReturnType is null
                 ? null
                 : BuildTypeReference(callableReturnType, moduleName, stripCurrentModulePrefix),
@@ -163,7 +186,55 @@ internal static partial class PackageImageBuilder
                 : null,
             ParameterRawPointerElementCountExpressions: GetCallableRawPointerElementCountExpressions(type),
             OverlapParameterGroups: BuildParameterOverlapGroupManifests(GetCallableOverlapParameterGroups(type)),
-            SameParameterGroups: BuildParameterSameGroupManifests(GetCallableSameParameterGroups(type)));
+            SameParameterGroups: BuildParameterSameGroupManifests(GetCallableSameParameterGroups(type)),
+            AssociatedOwnerType: type.AssociatedTypeOwner is null
+                ? null
+                : BuildTypeReference(type.AssociatedTypeOwner, moduleName, stripCurrentModulePrefix),
+            AssociatedTypeName: type.AssociatedTypeName,
+            SourceAliasName: type.CSourceAliasName);
+    }
+
+    private static StarkPackageComptimeValueArgumentManifest BuildPublishedAbiComptimeValueArgument(
+        ComptimeValueArgumentSymbol argument,
+        string moduleName,
+        ISet<string> localNamedTypes)
+    {
+        return new StarkPackageComptimeValueArgumentManifest(
+            argument.ParameterName,
+            argument.IntegerValue.ToString(),
+            BuildPublishedAbiTypeReference(argument.Type, moduleName, localNamedTypes),
+            argument.IsSymbolic,
+            argument.SymbolicSourceName);
+    }
+
+    private static StarkPackageComptimeValueArgumentManifest BuildComptimeValueArgument(
+        ComptimeValueArgumentSymbol argument,
+        string moduleName,
+        bool stripCurrentModulePrefix)
+    {
+        return new StarkPackageComptimeValueArgumentManifest(
+            argument.ParameterName,
+            argument.IntegerValue.ToString(),
+            BuildTypeReference(argument.Type, moduleName, stripCurrentModulePrefix),
+            argument.IsSymbolic,
+            argument.SymbolicSourceName);
+    }
+
+    private static IReadOnlyList<StarkPackageComptimeGenericParameterManifest>? BuildComptimeGenericParameterManifests(
+        IReadOnlyList<ComptimeGenericParameterSymbol> parameters,
+        string moduleName,
+        bool stripCurrentModulePrefix = true)
+    {
+        if (parameters.Count == 0)
+        {
+            return null;
+        }
+
+        return parameters
+            .Select(parameter => new StarkPackageComptimeGenericParameterManifest(
+                parameter.Name,
+                BuildTypeReference(parameter.Type, moduleName, stripCurrentModulePrefix)))
+            .ToArray();
     }
 
     private static StarkFunctionKind? GetPackageCallableFunctionKind(StarkTypeSymbol type)
@@ -257,9 +328,20 @@ internal static partial class PackageImageBuilder
         };
     }
 
+    private static string RenderPackageDynTraitStorageKind(StarkDynTraitStorageKind storageKind)
+    {
+        return storageKind switch
+        {
+            StarkDynTraitStorageKind.Heap => "heap",
+            _ => "view"
+        };
+    }
+
     private static string NormalizeNamedType(StarkTypeSymbol type, string moduleName, bool stripCurrentModulePrefix)
     {
-        var name = type.TypeArguments is { Count: > 0 }
+        var name = type.Kind == StarkTypeKind.DynTrait
+            ? type.DynTraitName!
+            : StarkTypeSymbols.IsGenericInstantiation(type)
             ? StarkTypeSymbols.GetGenericBaseName(type.NamedType!)
             : type.NamedType!;
         return stripCurrentModulePrefix
@@ -281,9 +363,16 @@ internal static partial class PackageImageBuilder
         string moduleName,
         ISet<string> localNamedTypes)
     {
-        var name = type.TypeArguments is { Count: > 0 }
+        var name = type.Kind == StarkTypeKind.DynTrait
+            ? type.DynTraitName!
+            : StarkTypeSymbols.IsGenericInstantiation(type)
             ? StarkTypeSymbols.GetGenericBaseName(type.NamedType!)
             : type.NamedType!;
+
+        if (TryQualifyModuleLocalDynTraitVtableTypeName(name, moduleName, localNamedTypes, out var qualifiedVtableTypeName))
+        {
+            return qualifiedVtableTypeName;
+        }
 
         if (string.IsNullOrEmpty(moduleName)
             || name.Contains('.', StringComparison.Ordinal)
@@ -295,6 +384,30 @@ internal static partial class PackageImageBuilder
         return $"{moduleName}.{name}";
     }
 
+    private static bool TryQualifyModuleLocalDynTraitVtableTypeName(
+        string name,
+        string moduleName,
+        ISet<string> localNamedTypes,
+        out string qualifiedName)
+    {
+        qualifiedName = name;
+        if (string.IsNullOrEmpty(moduleName)
+            || !name.EndsWith($".{StarkTypeSymbols.DynTraitVtableMemberName}", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var ownerName = name[..^(StarkTypeSymbols.DynTraitVtableMemberName.Length + 1)];
+        if (ownerName.Contains('.', StringComparison.Ordinal)
+            || !localNamedTypes.Contains(ownerName))
+        {
+            return false;
+        }
+
+        qualifiedName = $"{moduleName}.{name}";
+        return true;
+    }
+
     private static string StripCurrentModulePrefix(string name, string moduleName)
     {
         if (string.IsNullOrEmpty(moduleName))
@@ -302,7 +415,30 @@ internal static partial class PackageImageBuilder
             return name;
         }
 
-        return name.Replace($"{moduleName}.", string.Empty, StringComparison.Ordinal);
+        var prefix = $"{moduleName}.";
+        if (!name.StartsWith(prefix, StringComparison.Ordinal))
+        {
+            return name;
+        }
+
+        // Only strip names the loader can re-qualify: module-local single
+        // segments and module-local dyn-trait vtable members. A child-module
+        // type ("System.Core.Option" in module "System") must stay fully
+        // qualified or consumers resolve it as a different type identity.
+        var remainder = name[prefix.Length..];
+        if (!remainder.Contains('.', StringComparison.Ordinal))
+        {
+            return remainder;
+        }
+
+        var vtableSuffix = $".{StarkTypeSymbols.DynTraitVtableMemberName}";
+        if (remainder.EndsWith(vtableSuffix, StringComparison.Ordinal)
+            && !remainder[..^vtableSuffix.Length].Contains('.', StringComparison.Ordinal))
+        {
+            return remainder;
+        }
+
+        return name;
     }
 
     private static string CanonicalizeManifestTypeText(string text)
@@ -448,6 +584,7 @@ internal static partial class PackageImageLoader
             "bool" => StarkTypeSymbols.Bool,
             "ascii" => StarkTypeSymbols.Ascii,
             "unicode" => StarkTypeSymbols.Unicode,
+            "cvoid" => StarkTypeSymbols.CVoid,
             "null" => StarkTypeSymbols.Null,
             "integer" => StarkTypeSymbols.Integer(
                 type.BitWidth ?? 32,
@@ -456,7 +593,7 @@ internal static partial class PackageImageLoader
                 type.IsUnsigned == true),
             "float" => StarkTypeSymbols.Float(type.BitWidth ?? 32),
             "rawpointer" => StarkTypeSymbols.RawPointer(BuildTypeSymbol(type.ElementType!, currentModuleName, localNamedTypes), type.IsMutablePointer),
-            "fixedarray" => StarkTypeSymbols.FixedArray(BuildTypeSymbol(type.ElementType!, currentModuleName, localNamedTypes), type.FixedLength),
+            "fixedarray" => StarkTypeSymbols.FixedArray(BuildTypeSymbol(type.ElementType!, currentModuleName, localNamedTypes), type.FixedLength, type.FixedLengthParameterName),
             "slice" => StarkTypeSymbols.Slice(BuildTypeSymbol(type.ElementType!, currentModuleName, localNamedTypes)),
             "dynamic" => StarkTypeSymbols.Dynamic(BuildTypeSymbol(type.ElementType!, currentModuleName, localNamedTypes)),
             "functionpointer" when type.ReturnType is not null => StarkTypeSymbols.FunctionPointer(
@@ -466,7 +603,9 @@ internal static partial class PackageImageLoader
                 BuildTypeReferenceParameterDisjointGroups(type.DisjointParameterGroups),
                 BuildParameterOverlapGroups(type.OverlapParameterGroups),
                 BuildParameterSameGroups(type.SameParameterGroups),
-                type.ParameterRawPointerElementCountExpressions),
+                type.ParameterRawPointerElementCountExpressions,
+                ParsePackageFfiAbi(type.FunctionAbi),
+                type.FunctionIsUnsafe == true),
             "closure" when type.ReturnType is not null => StarkTypeSymbols.Closure(
                 ParsePackageClosureStorageKind(type.ClosureStorageKind),
                 ParsePackageClosureCallCapability(type.ClosureCallCapability),
@@ -477,12 +616,24 @@ internal static partial class PackageImageLoader
                 BuildParameterOverlapGroups(type.OverlapParameterGroups),
                 BuildParameterSameGroups(type.SameParameterGroups),
                 type.ParameterRawPointerElementCountExpressions),
-            "named" when type.TypeArguments is { Count: > 0 } => StarkTypeSymbols.GenericInstantiation(
+            "dyntrait" => StarkTypeSymbols.DynTrait(
                 normalizedNamedType ?? "<unnamed>",
-                type.TypeArguments.Select(argument => BuildTypeSymbol(argument, currentModuleName, localNamedTypes)).ToArray()),
+                ParsePackageDynTraitStorageKind(type.DynTraitStorageKind),
+                (type.TypeArguments ?? []).Select(argument => BuildTypeSymbol(argument, currentModuleName, localNamedTypes)).ToArray()),
+            "named" when type.TypeArguments is { Count: > 0 } || type.ComptimeValueArguments is { Count: > 0 } => StarkTypeSymbols.GenericInstantiation(
+                normalizedNamedType ?? "<unnamed>",
+                (type.TypeArguments ?? []).Select(argument => BuildTypeSymbol(argument, currentModuleName, localNamedTypes)).ToArray(),
+                BuildComptimeValueArgumentSymbols(type.ComptimeValueArguments, currentModuleName, localNamedTypes)),
             "named" => StarkTypeSymbols.Named(normalizedNamedType ?? "<unnamed>"),
+            "associatedtype" when type.AssociatedOwnerType is not null
+                                    && type.AssociatedTypeName is not null
+                => StarkTypeSymbols.AssociatedType(
+                    BuildTypeSymbol(type.AssociatedOwnerType, currentModuleName, localNamedTypes),
+                    type.AssociatedTypeName),
             _ => StarkTypeSymbols.Error
         };
+
+        core = StarkTypeSymbols.WithCSourceAlias(core, type.SourceAliasName);
 
         return StarkTypeSymbols.ApplyQualifiers(
             core,
@@ -490,6 +641,43 @@ internal static partial class PackageImageLoader
             accessKind: ParseAccessKind(type.AccessKind),
             initializationKind: ParseInitializationKind(type.InitializationKind),
             isMutableView: type.IsMutableView);
+    }
+
+    private static IReadOnlyList<ComptimeValueArgumentSymbol>? BuildComptimeValueArgumentSymbols(
+        IReadOnlyList<StarkPackageComptimeValueArgumentManifest>? arguments,
+        string? currentModuleName,
+        ISet<string>? localNamedTypes)
+    {
+        if (arguments is not { Count: > 0 })
+        {
+            return null;
+        }
+
+        return arguments
+            .Select(argument => new ComptimeValueArgumentSymbol(
+                argument.ParameterName,
+                BigInteger.Parse(argument.IntegerValue),
+                BuildTypeSymbol(argument.Type, currentModuleName, localNamedTypes),
+                argument.IsSymbolic,
+                argument.SymbolicSourceName))
+            .ToArray();
+    }
+
+    private static IReadOnlyList<ComptimeGenericParameterSymbol>? BuildComptimeGenericParameterSymbols(
+        IReadOnlyList<StarkPackageComptimeGenericParameterManifest>? parameters,
+        string? currentModuleName,
+        ISet<string>? localNamedTypes)
+    {
+        if (parameters is not { Count: > 0 })
+        {
+            return null;
+        }
+
+        return parameters
+            .Select(parameter => new ComptimeGenericParameterSymbol(
+                parameter.Name,
+                BuildTypeSymbol(parameter.Type, currentModuleName, localNamedTypes)))
+            .ToArray();
     }
 
     private static StarkFunctionKind ParsePackageFunctionKind(string? functionKind)
@@ -501,6 +689,18 @@ internal static partial class PackageImageLoader
             "finite law" or "finitelaw" => StarkFunctionKind.FiniteLaw,
             _ => StarkFunctionKind.Fn
         };
+    }
+
+    private static StarkFfiAbi? ParsePackageFfiAbi(string? functionAbi)
+    {
+        if (string.IsNullOrWhiteSpace(functionAbi))
+        {
+            return null;
+        }
+
+        return StarkFfiAbiFacts.TryParse(functionAbi, out var abi)
+            ? abi
+            : null;
     }
 
     private static StarkClosureStorageKind ParsePackageClosureStorageKind(string? storageKind)
@@ -523,20 +723,61 @@ internal static partial class PackageImageLoader
         };
     }
 
+    private static StarkDynTraitStorageKind ParsePackageDynTraitStorageKind(string? storageKind)
+    {
+        return storageKind switch
+        {
+            "heap" => StarkDynTraitStorageKind.Heap,
+            _ => StarkDynTraitStorageKind.View
+        };
+    }
+
     private static string QualifyLoadedNamedType(
         string name,
         string? currentModuleName,
         ISet<string>? localNamedTypes)
     {
+        var baseName = StarkTypeSymbols.GetGenericBaseName(name);
+        if (currentModuleName is not null
+            && localNamedTypes is not null
+            && TryQualifyModuleLocalDynTraitVtableTypeName(baseName, currentModuleName, localNamedTypes, out var qualifiedVtableTypeName))
+        {
+            return $"{qualifiedVtableTypeName}{name[baseName.Length..]}";
+        }
+
         if (string.IsNullOrWhiteSpace(currentModuleName)
             || localNamedTypes is null
-            || name.Contains('.', StringComparison.Ordinal)
-            || !localNamedTypes.Contains(name))
+            || baseName.Contains('.', StringComparison.Ordinal)
+            || !localNamedTypes.Contains(baseName))
         {
             return name;
         }
 
-        return $"{currentModuleName}.{name}";
+        return $"{currentModuleName}.{baseName}{name[baseName.Length..]}";
+    }
+
+    private static bool TryQualifyModuleLocalDynTraitVtableTypeName(
+        string name,
+        string moduleName,
+        ISet<string> localNamedTypes,
+        out string qualifiedName)
+    {
+        qualifiedName = name;
+        if (string.IsNullOrEmpty(moduleName)
+            || !name.EndsWith($".{StarkTypeSymbols.DynTraitVtableMemberName}", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var ownerName = name[..^(StarkTypeSymbols.DynTraitVtableMemberName.Length + 1)];
+        if (ownerName.Contains('.', StringComparison.Ordinal)
+            || !localNamedTypes.Contains(ownerName))
+        {
+            return false;
+        }
+
+        qualifiedName = $"{moduleName}.{name}";
+        return true;
     }
 
     private static string RenderTypeReference(StarkPackageTypeReference type)
@@ -562,30 +803,51 @@ internal static partial class PackageImageLoader
             qualifiers.Add(type.InitializationKind);
         }
 
-        var core = type.Kind switch
+        var core = !string.IsNullOrWhiteSpace(type.SourceAliasName)
+            ? type.SourceAliasName
+            : type.Kind switch
         {
             "error" => "<error>",
             "void" => "void",
             "bool" => "bool",
             "ascii" => "ascii",
             "unicode" => "unicode",
+            "cvoid" => "System.C.c_void",
             "null" => "null",
             "integer" => PackageImageIntegerTypeText.Render(type.BitWidth, type.RangeMin, type.RangeMax, type.IsUnsigned == true),
             "float" => $"f{type.BitWidth}",
             "rawpointer" => $"{(type.IsMutablePointer ? "rawmutptr" : "rawptr")}<{RenderTypeReference(type.ElementType!)}>",
-            "fixedarray" => $"{RenderTypeReference(type.ElementType!)}[{(type.FixedLength is { } fixedLength ? fixedLength.ToString() : "?")}]",
+            "fixedarray" => $"{RenderTypeReference(type.ElementType!)}[{(type.FixedLength is { } fixedLength ? fixedLength.ToString() : type.FixedLengthParameterName ?? "?")}]",
             "slice" => $"{RenderTypeReference(type.ElementType!)}[]",
             "dynamic" => $"dynamic {RenderTypeReference(type.ElementType!)}",
-            "functionpointer" => $"fnptr<{RenderTypeReferenceFunctionKind(type.FunctionKind)} {RenderTypeReference(type.ReturnType!)}({string.Join(", ", (type.ParameterTypes ?? []).Select((parameter, index) => RenderFunctionPointerParameterTypeReference(parameter, type.ParameterRawPointerElementCountExpressions, index)))}){RenderFunctionPointerMemoryContracts(type)}>",
+            "functionpointer" => $"fnptr<{RenderTypeReferenceFunctionSafetyPrefix(type.FunctionIsUnsafe)}{RenderTypeReferenceFunctionAbi(type.FunctionAbi)}{RenderTypeReferenceFunctionKind(type.FunctionKind)} {RenderTypeReference(type.ReturnType!)}({string.Join(", ", (type.ParameterTypes ?? []).Select((parameter, index) => RenderFunctionPointerParameterTypeReference(parameter, type.ParameterRawPointerElementCountExpressions, index)))}){RenderFunctionPointerMemoryContracts(type)}>",
             "closure" => $"{RenderClosureStoragePrefix(type.ClosureStorageKind)}closure<{RenderClosureCallCapabilityPrefix(type.ClosureCallCapability)}{RenderTypeReferenceFunctionKind(type.FunctionKind)} {RenderTypeReference(type.ReturnType!)}({string.Join(", ", (type.ParameterTypes ?? []).Select((parameter, index) => RenderFunctionPointerParameterTypeReference(parameter, type.ParameterRawPointerElementCountExpressions, index)))}){RenderFunctionPointerMemoryContracts(type)}>",
-            "named" when type.TypeArguments is { Count: > 0 } => $"{type.Name}<{string.Join(", ", type.TypeArguments.Select(RenderTypeReference))}>",
+            "dyntrait" when type.TypeArguments is { Count: > 0 } || type.ComptimeValueArguments is { Count: > 0 }
+                => $"{RenderDynTraitStoragePrefix(type.DynTraitStorageKind)}dyn {type.Name}<{RenderTypeReferenceGenericArguments(type)}>",
+            "dyntrait" => $"{RenderDynTraitStoragePrefix(type.DynTraitStorageKind)}dyn {type.Name ?? "<unnamed>"}",
+            "named" when type.TypeArguments is { Count: > 0 } || type.ComptimeValueArguments is { Count: > 0 }
+                => $"{type.Name}<{RenderTypeReferenceGenericArguments(type)}>",
             "named" => type.Name ?? "<unnamed>",
+            "associatedtype" when type.AssociatedOwnerType is not null
+                                    && type.AssociatedTypeName is not null
+                => $"{RenderTypeReference(type.AssociatedOwnerType)}.{type.AssociatedTypeName}",
             _ => type.Name ?? type.Kind
         };
 
         return qualifiers.Count == 0
             ? core
             : $"{string.Join(" ", qualifiers)} {core}";
+    }
+
+    private static string RenderTypeReferenceGenericArguments(StarkPackageTypeReference type)
+    {
+        var parts = (type.TypeArguments ?? [])
+            .Select(RenderTypeReference)
+            .Concat((type.ComptimeValueArguments ?? []).Select(static argument => argument.IsSymbolic
+                ? $"comptime {argument.SymbolicSourceName ?? argument.ParameterName}"
+                : argument.IntegerValue))
+            .ToArray();
+        return string.Join(", ", parts);
     }
 
     private static string RenderTypeReferenceFunctionKind(string? functionKind)
@@ -599,6 +861,18 @@ internal static partial class PackageImageLoader
         };
     }
 
+    private static string RenderTypeReferenceFunctionAbi(string? functionAbi)
+    {
+        return string.IsNullOrWhiteSpace(functionAbi)
+            ? string.Empty
+            : $"ffi({functionAbi}) ";
+    }
+
+    private static string RenderTypeReferenceFunctionSafetyPrefix(bool? isUnsafe)
+    {
+        return isUnsafe == true ? "unsafe " : string.Empty;
+    }
+
     private static string RenderClosureStoragePrefix(string? storageKind)
     {
         return storageKind switch
@@ -607,6 +881,13 @@ internal static partial class PackageImageLoader
             "heap" => "heap ",
             _ => string.Empty
         };
+    }
+
+    private static string RenderDynTraitStoragePrefix(string? storageKind)
+    {
+        return string.Equals(storageKind, "heap", StringComparison.Ordinal)
+            ? "heap "
+            : string.Empty;
     }
 
     private static string RenderClosureCallCapabilityPrefix(string? callCapability)

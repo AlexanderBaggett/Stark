@@ -1,0 +1,223 @@
+import CompilerTestSupport
+import System.Testing
+module ParserEdgeCaseTests
+
+// Ported from ParserEdgeCaseTests.InvalidProgramsDoNotParse.
+internal fn bool ParserEdgeCaseTests_InvalidProgramsDoNotParseImpl()
+{
+    {
+        // PORT-NOTE: the original is a [Theory] over the InvalidPrograms MemberData rows. Each row is
+        // parsed via StarkSyntax.ParseCompilationUnit and asserts result.Succeeded is false AND
+        // result.SyntaxErrorCount > 0. The compile helpers expose neither a standalone parse entry point
+        // nor a syntax-error count, so each row is run through CompileFull and reduced to "the embedded
+        // program does not compile" (the parse-error signal); the Impl returns true only if every row
+        // fails. Row scenarios inlined verbatim from the C# MemberData.
+
+        // "argument lists still reject doubled separators"
+        stack mut LlvmCompile doubledSeparators = CompileFull(
+            "invalid-programs-doubled-separators",
+            raw"""
+module Demo
+
+fn void Write(i32[min max] left, i32[min max] right)
+{
+    return;
+}
+
+fn void Run()
+{
+    Write(1, 2,,);
+}
+""");
+
+        // "nested generic brackets must balance"
+        stack mut LlvmCompile unbalancedGenerics = CompileFull(
+            "invalid-programs-unbalanced-generics",
+            raw"""
+module Demo
+
+unsafe fn void Run(rawptr<rawmutptr<i8[min max]> value)
+{
+    return;
+}
+""");
+
+        // "range constraints must contain exactly two bounds"
+        stack mut LlvmCompile threeBoundRange = CompileFull(
+            "invalid-programs-three-bound-range",
+            raw"""
+module Demo
+
+fn void Run(i32[min max][-10 10 20] value)
+{
+    return;
+}
+""");
+
+        // "postfix chains cannot contain empty member segments"
+        stack mut LlvmCompile emptyMemberSegment = CompileFull(
+            "invalid-programs-empty-member-segment",
+            raw"""
+module Demo
+
+fn void Run()
+{
+    return new Node()..Value;
+}
+""");
+
+        // "loop behavior spellings are tokenized not identifier based"
+        stack mut LlvmCompile loopBehaviorSpelling = CompileFull(
+            "invalid-programs-loop-behavior-spelling",
+            raw"""
+module Demo
+
+fn void Run(bool flag)
+{
+    while non_deterministic (flag)
+    {
+        break;
+    }
+}
+""");
+
+        // "object initializer members still require a single expression"
+        stack mut LlvmCompile doubledInitializerSeparator = CompileFull(
+            "invalid-programs-doubled-initializer-separator",
+            raw"""
+module Demo
+
+struct Item
+{
+    i32[min max] Value;
+}
+
+fn void Run()
+{
+    stack Item item = new Item()
+    {
+        Value = 1,,
+    };
+}
+""");
+
+        return !Succeeds(doubledSeparators)
+            && !Succeeds(unbalancedGenerics)
+            && !Succeeds(threeBoundRange)
+            && !Succeeds(emptyMemberSegment)
+            && !Succeeds(loopBehaviorSpelling)
+            && !Succeeds(doubledInitializerSeparator);
+    }
+}
+
+// Ported from ParserEdgeCaseTests.ValidProgramsParse.
+internal fn bool ParserEdgeCaseTests_ValidProgramsParseImpl()
+{
+    {
+        // PORT-NOTE: the original is a [Theory] over the ValidPrograms MemberData (5 rows);
+        // that calls StarkSyntax.ParseCompilationUnit(source) and asserts result.Succeeded
+        // and result.SyntaxErrorCount == 0 for each scenario. The compile helpers run the
+        // full pipeline rather than exposing a standalone parse result with a syntax-error
+        // count, so each row is reduced to "the embedded program compiles successfully"
+        // (Succeeds). All five rows are inlined and the function returns true only if every
+        // case holds.
+
+        // "nested generics and negative range constraints parse"
+        stack mut LlvmCompile c0 = CompileFull(
+            "parser-edge-valid-nested-generics-negative-ranges",
+            raw"""
+module Types
+
+unsafe fn Matrix<Vector<rawptr<i8[min max]>>> Project(
+    Matrix<Vector<rawptr<i8[min max]>>> table,
+    i32[-10 10][] ranges)
+{
+    return table;
+}
+""");
+
+        // "trailing separators survive across calls object initializers and declarations"
+        stack mut LlvmCompile c1 = CompileFull(
+            "parser-edge-valid-trailing-separators",
+            raw"""
+module Trailing
+
+struct Node
+{
+    i32[min max] Value;
+}
+
+fn Node Build(Node node, i32[min max] count,)
+{
+    return new Node()
+    {
+        Value = count,
+    };
+}
+
+fn i32[min max] Read()
+{
+    return Build(new Node(), 1,).Value;
+}
+""");
+
+        // "loop behavior spellings remain parseable in nested loops"
+        stack mut LlvmCompile c2 = CompileFull(
+            "parser-edge-valid-loop-behavior-spellings",
+            raw"""
+module Flow
+
+fn void Run(bool flag)
+{
+    while infinite (flag)
+    {
+        for non-deterministic (stack i32[min max] i = 0; i < 1; i += 1)
+        {
+            continue;
+        }
+    }
+}
+""");
+
+        // "nested postfix chains with indexing and member access parse"
+        stack mut LlvmCompile c3 = CompileFull(
+            "parser-edge-valid-nested-postfix-chains",
+            raw"""
+module Access
+
+struct Leaf
+{
+    i32[min max] Value;
+}
+
+struct Node
+{
+    Leaf[2] Leaves;
+}
+
+fn i32[min max] Read()
+{
+    return new Node().Leaves[0].Value;
+}
+""");
+
+        // "deeply nested generic arguments with range-bearing integers parse"
+        stack mut LlvmCompile c4 = CompileFull(
+            "parser-edge-valid-deeply-nested-generic-ranges",
+            raw"""
+module Ranges
+
+unsafe fn rawptr<Vector<i32[min max]>> Make(
+    rawptr<Vector<i32[-10 10]>> input)
+{
+    return input;
+}
+""");
+
+        return Succeeds(c0)
+            && Succeeds(c1)
+            && Succeeds(c2)
+            && Succeeds(c3)
+            && Succeeds(c4);
+    }
+}

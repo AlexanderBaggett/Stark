@@ -4,6 +4,7 @@ internal sealed class SsaLowerer
 {
     private readonly Dictionary<string, TypedFunctionSignature> _signatures;
     private readonly IReadOnlyDictionary<string, TypedGlobalSymbol> _globals;
+    private readonly CopyabilityFacts? _copyability;
 
     public SsaLowerer()
         : this(typeModel: null)
@@ -18,9 +19,21 @@ internal sealed class SsaLowerer
         _globals = typeModel is null
             ? new Dictionary<string, TypedGlobalSymbol>(StringComparer.Ordinal)
             : new Dictionary<string, TypedGlobalSymbol>(typeModel.Globals, StringComparer.Ordinal);
+        _copyability = typeModel is null ? null : new CopyabilityFacts(typeModel.NamedTypes);
     }
 
     public SsaIrModule Lower(MidLevelIrModule mir)
+    {
+        SeedFunctionSignatures(mir);
+
+        var functions = mir.Functions
+            .Select(LowerFunction)
+            .ToArray();
+
+        return new SsaIrModule(mir.ModuleName, functions, mir.AddressTakenFunctions);
+    }
+
+    public void SeedFunctionSignatures(MidLevelIrModule mir)
     {
         foreach (var function in mir.Functions)
         {
@@ -32,15 +45,9 @@ internal sealed class SsaLowerer
                     function.Parameters,
                     SourceName: function.Name));
         }
-
-        var functions = mir.Functions
-            .Select(LowerFunction)
-            .ToArray();
-
-        return new SsaIrModule(mir.ModuleName, functions, mir.AddressTakenFunctions);
     }
 
-    private SsaFunction LowerFunction(MidLevelIrFunction function)
+    public SsaFunction LowerFunction(MidLevelIrFunction function)
     {
         if (!function.HasBody || !function.SupportsDirectCodeGeneration || function.Blocks.Count == 0)
         {
@@ -59,7 +66,7 @@ internal sealed class SsaLowerer
                 function.Ownership);
         }
 
-        var builder = new FunctionSsaBuilder(function, _signatures, _globals);
+        var builder = new FunctionSsaBuilder(function, _signatures, _globals, _copyability);
         return builder.Lower();
     }
 
@@ -68,6 +75,7 @@ internal sealed class SsaLowerer
         private readonly MidLevelIrFunction _function;
         private readonly IReadOnlyDictionary<string, TypedFunctionSignature> _signatures;
         private readonly IReadOnlyDictionary<string, TypedGlobalSymbol> _globals;
+        private readonly CopyabilityFacts? _copyability;
         private readonly Dictionary<int, MidLevelIrBasicBlock> _sourceBlocks;
         private readonly IReadOnlyList<int> _reachableOrder;
         private readonly Dictionary<int, List<int>> _predecessors;
@@ -93,11 +101,13 @@ internal sealed class SsaLowerer
         public FunctionSsaBuilder(
             MidLevelIrFunction function,
             IReadOnlyDictionary<string, TypedFunctionSignature> signatures,
-            IReadOnlyDictionary<string, TypedGlobalSymbol> globals)
+            IReadOnlyDictionary<string, TypedGlobalSymbol> globals,
+            CopyabilityFacts? copyability)
         {
             _function = function;
             _signatures = signatures;
             _globals = globals;
+            _copyability = copyability;
             _sourceBlocks = function.Blocks.ToDictionary(static block => block.Id);
             _successors = BuildSuccessors(function.Blocks);
             _reachableOrder = ComputeReachableOrder(function.EntryBlockId, function.Blocks, _successors);
@@ -451,6 +461,11 @@ internal sealed class SsaLowerer
                     LowerOperand(blockId, block, insertIndex.Value),
                     insertIndex.Type,
                     insertIndex.Text)),
+                MidLevelIrDynVTableSlotRValue vtableSlot => EmitValue(block, new SsaDynVTableSlotRValue(
+                    LowerOperand(blockId, block, vtableSlot.VtablePointer),
+                    vtableSlot.SlotIndex,
+                    vtableSlot.Type,
+                    vtableSlot.Text)),
                 MidLevelIrMakeSliceFromLocalRValue makeSlice => EmitValue(block, new SsaMakeSliceFromLocalRValue(
                     makeSlice.LocalName,
                     makeSlice.SourceType,
@@ -805,7 +820,7 @@ internal sealed class SsaLowerer
             return type.Kind is StarkTypeKind.Named or StarkTypeKind.FixedArray;
         }
 
-        private static bool IsMoveOnly(StarkTypeSymbol type)
+        private bool IsMoveOnly(StarkTypeSymbol type)
         {
             if (type.Kind == StarkTypeKind.Error || type.Kind == StarkTypeKind.Void)
             {
@@ -815,6 +830,11 @@ internal sealed class SsaLowerer
             if (type.BorrowKind != StarkBorrowKind.None)
             {
                 return type.IsMutableView;
+            }
+
+            if ((type.Kind is StarkTypeKind.Named or StarkTypeKind.FixedArray or StarkTypeKind.Slice or StarkTypeKind.FunctionPointer) && _copyability?.IsCopyable(type) == true)
+            {
+                return false;
             }
 
             return type.Kind switch
@@ -830,12 +850,12 @@ internal sealed class SsaLowerer
             };
         }
 
-        private static bool ConsumesAssignmentSource(StarkTypeSymbol targetType)
+        private bool ConsumesAssignmentSource(StarkTypeSymbol targetType)
         {
             return IsMoveOnly(targetType);
         }
 
-        private static bool ConsumesCallArgument(StarkTypeSymbol parameterType)
+        private bool ConsumesCallArgument(StarkTypeSymbol parameterType)
         {
             return parameterType.BorrowKind == StarkBorrowKind.None
                 && parameterType.Kind != StarkTypeKind.RawPointer

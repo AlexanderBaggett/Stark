@@ -1,0 +1,495 @@
+import System.Testing
+import System.FileSystem
+import System.IO
+import System.IO.File
+import System.Text
+[Collection("filesystem")]
+module FileSystemSymlinkTests
+
+// Stark-native tests for System.FileSystem symlink policy (S10) and richer IO
+// error mapping (S09/S10). Verified on macOS; the same public API is wired
+// through the Linux backend via the shared platform dispatch layer.
+
+finite law bool IsNotFound(System.IO.IOError error)
+{
+    return error == System.IO.IOError.NotFound;
+}
+
+finite law bool IsSymlinkKind(System.FileSystem.FileSystemEntryKind kind)
+{
+    return kind == System.FileSystem.FileSystemEntryKind.Symlink;
+}
+
+finite law bool IsNotADirectory(System.IO.IOError error)
+{
+    return error == System.IO.IOError.NotADirectory;
+}
+
+enum SymlinkFixture
+{
+    Ready
+    {
+        TargetPath: System.Text.OwnedAscii, LinkPath: System.Text.OwnedAscii
+    },
+    Failed,
+}
+
+// Creates a symlink at <tmp>/link pointing at the absolute path of
+// <tmp>/target.txt (an existing file) and returns both absolute paths.
+fn SymlinkFixture CreateSymlinkFixture(mut borrow System.Testing.TempDirectory fixture)
+{
+    switch (fixture.WriteText("target.txt", "payload"))
+    {
+        case System.IO.IOStatus.Err(var writeError):
+            return SymlinkFixture.Failed;
+        case System.IO.IOStatus.Ok:
+    }
+
+    stack mut System.Text.OwnedAscii targetPath = new();
+    switch (fixture.PathFor("target.txt"))
+    {
+        case System.IO.IOResult<System.Text.OwnedAscii>.Err(var pathError):
+            return SymlinkFixture.Failed;
+        case System.IO.IOResult<System.Text.OwnedAscii>.Ok(var value):
+            targetPath = value;
+    }
+
+    stack mut System.Text.OwnedAscii linkPath = new();
+    switch (fixture.PathFor("link"))
+    {
+        case System.IO.IOResult<System.Text.OwnedAscii>.Err(var pathError):
+            return SymlinkFixture.Failed;
+        case System.IO.IOResult<System.Text.OwnedAscii>.Ok(var value):
+            linkPath = value;
+    }
+
+    switch (System.FileSystem.CreateSymlink(targetPath.View(), linkPath.View()))
+    {
+        case System.IO.IOStatus.Err(var linkError):
+            return SymlinkFixture.Failed;
+        case System.IO.IOStatus.Ok:
+            return SymlinkFixture.Ready
+            {
+                TargetPath: targetPath, LinkPath: linkPath
+            };
+    }
+}
+
+// CreateSymlink then ReadSymlink round-trips the stored target verbatim.
+[Fact]
+fn bool ReadSymlinkRoundTripsTarget()
+{
+    stack mut System.Testing.TempDirectory fixture = new();
+    switch (System.Testing.CreateTempDirectory("stark-fs-symlink"))
+    {
+        case System.IO.IOResult<System.Testing.TempDirectory>.Err(var error):
+            return false;
+        case System.IO.IOResult<System.Testing.TempDirectory>.Ok(var value):
+            fixture = value;
+    }
+
+    stack mut System.Text.OwnedAscii targetPath = new();
+    stack mut System.Text.OwnedAscii linkPath = new();
+    switch (CreateSymlinkFixture(fixture))
+    {
+        case SymlinkFixture.Failed:
+            return false;
+        case SymlinkFixture.Ready
+        {
+            TargetPath: var target, LinkPath: var link
+        }:
+            targetPath = target;
+            linkPath = link;
+    }
+
+    switch (System.FileSystem.ReadSymlink(linkPath.View()))
+    {
+        case System.IO.IOResult<System.Text.OwnedAscii>.Err(var error):
+            return false;
+        case System.IO.IOResult<System.Text.OwnedAscii>.Ok(var stored):
+            stack mut System.Text.OwnedAscii readBack = stored;
+            return System.Testing.Equal(targetPath.View(), readBack.View());
+    }
+}
+
+// LinkMetadata (lstat) reports the link itself as a symlink, while Metadata
+// (stat) follows the link and reports the target file.
+[Fact]
+fn bool LinkMetadataDetectsSymlinkWhileMetadataFollows()
+{
+    stack mut System.Testing.TempDirectory fixture = new();
+    switch (System.Testing.CreateTempDirectory("stark-fs-symlink"))
+    {
+        case System.IO.IOResult<System.Testing.TempDirectory>.Err(var error):
+            return false;
+        case System.IO.IOResult<System.Testing.TempDirectory>.Ok(var value):
+            fixture = value;
+    }
+
+    stack mut System.Text.OwnedAscii targetPath = new();
+    stack mut System.Text.OwnedAscii linkPath = new();
+    switch (CreateSymlinkFixture(fixture))
+    {
+        case SymlinkFixture.Failed:
+            return false;
+        case SymlinkFixture.Ready
+        {
+            TargetPath: var target, LinkPath: var link
+        }:
+            targetPath = target;
+            linkPath = link;
+    }
+
+    stack mut bool linkIsSymlink = false;
+    switch (System.FileSystem.LinkMetadata(linkPath.View()))
+    {
+        case System.IO.IOResult<System.FileSystem.FileMetadata>.Err(var error):
+            return false;
+        case System.IO.IOResult<System.FileSystem.FileMetadata>.Ok(var metadata):
+            linkIsSymlink = IsSymlinkKind(metadata.Kind);
+    }
+
+    stack mut bool followedIsFile = false;
+    switch (System.FileSystem.Metadata(linkPath.View()))
+    {
+        case System.IO.IOResult<System.FileSystem.FileMetadata>.Err(var error):
+            return false;
+        case System.IO.IOResult<System.FileSystem.FileMetadata>.Ok(var metadata):
+            followedIsFile = metadata.Kind == System.FileSystem.FileSystemEntryKind.File;
+    }
+
+    return linkIsSymlink && followedIsFile;
+}
+
+// IsSymlink is true for a link and false for an ordinary file.
+[Fact]
+fn bool IsSymlinkDistinguishesLinkFromFile()
+{
+    stack mut System.Testing.TempDirectory fixture = new();
+    switch (System.Testing.CreateTempDirectory("stark-fs-symlink"))
+    {
+        case System.IO.IOResult<System.Testing.TempDirectory>.Err(var error):
+            return false;
+        case System.IO.IOResult<System.Testing.TempDirectory>.Ok(var value):
+            fixture = value;
+    }
+
+    stack mut System.Text.OwnedAscii targetPath = new();
+    stack mut System.Text.OwnedAscii linkPath = new();
+    switch (CreateSymlinkFixture(fixture))
+    {
+        case SymlinkFixture.Failed:
+            return false;
+        case SymlinkFixture.Ready
+        {
+            TargetPath: var target, LinkPath: var link
+        }:
+            targetPath = target;
+            linkPath = link;
+    }
+
+    stack mut bool linkResult = false;
+    switch (System.FileSystem.IsSymlink(linkPath.View()))
+    {
+        case System.IO.IOResult<bool>.Err(var error):
+            return false;
+        case System.IO.IOResult<bool>.Ok(var value):
+            linkResult = value;
+    }
+
+    stack mut bool fileResult = true;
+    switch (System.FileSystem.IsSymlink(targetPath.View()))
+    {
+        case System.IO.IOResult<bool>.Err(var error):
+            return false;
+        case System.IO.IOResult<bool>.Ok(var value):
+            fileResult = value;
+    }
+
+    return linkResult && !fileResult;
+}
+
+// Error mapping: metadata on a missing path maps errno ENOENT to NotFound,
+// rather than collapsing into a generic Unknown failure.
+[Fact]
+fn bool MetadataOnMissingPathMapsToNotFound()
+{
+    stack mut System.Testing.TempDirectory fixture = new();
+    switch (System.Testing.CreateTempDirectory("stark-fs-symlink"))
+    {
+        case System.IO.IOResult<System.Testing.TempDirectory>.Err(var error):
+            return false;
+        case System.IO.IOResult<System.Testing.TempDirectory>.Ok(var value):
+            fixture = value;
+    }
+
+    stack mut System.Text.OwnedAscii missingPath = new();
+    switch (fixture.PathFor("does-not-exist.txt"))
+    {
+        case System.IO.IOResult<System.Text.OwnedAscii>.Err(var pathError):
+            return false;
+        case System.IO.IOResult<System.Text.OwnedAscii>.Ok(var value):
+            missingPath = value;
+    }
+
+    switch (System.FileSystem.Metadata(missingPath.View()))
+    {
+        case System.IO.IOResult<System.FileSystem.FileMetadata>.Err(var error):
+            return IsNotFound(error);
+        case System.IO.IOResult<System.FileSystem.FileMetadata>.Ok(var metadata):
+            return false;
+    }
+}
+
+// Error mapping: LinkMetadata on a missing path also maps ENOENT to NotFound.
+[Fact]
+fn bool LinkMetadataOnMissingPathMapsToNotFound()
+{
+    stack mut System.Testing.TempDirectory fixture = new();
+    switch (System.Testing.CreateTempDirectory("stark-fs-symlink"))
+    {
+        case System.IO.IOResult<System.Testing.TempDirectory>.Err(var error):
+            return false;
+        case System.IO.IOResult<System.Testing.TempDirectory>.Ok(var value):
+            fixture = value;
+    }
+
+    stack mut System.Text.OwnedAscii missingPath = new();
+    switch (fixture.PathFor("missing-link"))
+    {
+        case System.IO.IOResult<System.Text.OwnedAscii>.Err(var pathError):
+            return false;
+        case System.IO.IOResult<System.Text.OwnedAscii>.Ok(var value):
+            missingPath = value;
+    }
+
+    switch (System.FileSystem.LinkMetadata(missingPath.View()))
+    {
+        case System.IO.IOResult<System.FileSystem.FileMetadata>.Err(var error):
+            return IsNotFound(error);
+        case System.IO.IOResult<System.FileSystem.FileMetadata>.Ok(var metadata):
+            return false;
+    }
+}
+
+// Error mapping: opening a missing file for reading maps ENOENT to NotFound.
+[Fact]
+fn bool OpenMissingFileMapsToNotFound()
+{
+    stack mut System.Testing.TempDirectory fixture = new();
+    switch (System.Testing.CreateTempDirectory("stark-fs-symlink"))
+    {
+        case System.IO.IOResult<System.Testing.TempDirectory>.Err(var error):
+            return false;
+        case System.IO.IOResult<System.Testing.TempDirectory>.Ok(var value):
+            fixture = value;
+    }
+
+    stack mut System.Text.OwnedAscii missingPath = new();
+    switch (fixture.PathFor("absent.txt"))
+    {
+        case System.IO.IOResult<System.Text.OwnedAscii>.Err(var pathError):
+            return false;
+        case System.IO.IOResult<System.Text.OwnedAscii>.Ok(var value):
+            missingPath = value;
+    }
+
+    switch (System.IO.File.ReadAllText(missingPath.View()))
+    {
+        case System.IO.IOResult<System.Text.OwnedAscii>.Err(var error):
+            return IsNotFound(error);
+        case System.IO.IOResult<System.Text.OwnedAscii>.Ok(var value):
+            return false;
+    }
+}
+
+// Error mapping: stat-ing a path that uses a regular file as a directory
+// component maps errno ENOTDIR to the dedicated NotADirectory variant instead
+// of collapsing it into NotFound or a generic Unknown failure.
+[Fact]
+fn bool MetadataThroughFileComponentMapsToNotADirectory()
+{
+    stack mut System.Testing.TempDirectory fixture = new();
+    switch (System.Testing.CreateTempDirectory("stark-fs-symlink"))
+    {
+        case System.IO.IOResult<System.Testing.TempDirectory>.Err(var error):
+            return false;
+        case System.IO.IOResult<System.Testing.TempDirectory>.Ok(var value):
+            fixture = value;
+    }
+
+    switch (fixture.WriteText("file.txt", "payload"))
+    {
+        case System.IO.IOStatus.Err(var writeError):
+            return false;
+        case System.IO.IOStatus.Ok:
+    }
+
+    stack mut System.Text.OwnedAscii throughFilePath = new();
+    switch (fixture.PathFor("file.txt/child"))
+    {
+        case System.IO.IOResult<System.Text.OwnedAscii>.Err(var pathError):
+            return false;
+        case System.IO.IOResult<System.Text.OwnedAscii>.Ok(var value):
+            throughFilePath = value;
+    }
+
+    switch (System.FileSystem.Metadata(throughFilePath.View()))
+    {
+        case System.IO.IOResult<System.FileSystem.FileMetadata>.Err(var error):
+            return IsNotADirectory(error);
+        case System.IO.IOResult<System.FileSystem.FileMetadata>.Ok(var metadata):
+            return false;
+    }
+}
+
+// Resolves a temp-dir fixture and writes `name` with `content`, returning the
+// absolute path. Returns an empty OwnedAscii on any setup failure.
+fn System.Text.OwnedAscii WriteFixtureFile(mut borrow System.Testing.TempDirectory fixture, ascii name, ascii content)
+{
+    switch (fixture.WriteText(name, content))
+    {
+        case System.IO.IOStatus.Err(var writeError):
+            return new();
+        case System.IO.IOStatus.Ok:
+    }
+
+    switch (fixture.PathFor(name))
+    {
+        case System.IO.IOResult<System.Text.OwnedAscii>.Err(var pathError):
+            return new();
+        case System.IO.IOResult<System.Text.OwnedAscii>.Ok(var value):
+            return value;
+    }
+}
+
+// The execute state of `path`: -1 metadata error, 0 not executable, 1
+// executable. Centralizing the `Metadata` switch keeps each fact's body free of
+// repeated `var metadata` bindings (which collide in SSA local allocation).
+fn i32[min max] PathExecState(ascii path)
+{
+    switch (System.FileSystem.Metadata(path))
+    {
+        case System.IO.IOResult<System.FileSystem.FileMetadata>.Err(var error):
+            return -1;
+        case System.IO.IOResult<System.FileSystem.FileMetadata>.Ok(var metadata):
+            if (metadata.IsExecutable())
+            {
+                return 1;
+            }
+
+            return 0;
+    }
+}
+
+// MakeExecutable adds the execute bit to a freshly written (non-executable)
+// file, matching `chmod +x`.
+[Fact]
+fn bool MakeExecutableAddsExecuteBit()
+{
+    stack mut System.Testing.TempDirectory fixture = new();
+    switch (System.Testing.CreateTempDirectory("stark-fs-perm"))
+    {
+        case System.IO.IOResult<System.Testing.TempDirectory>.Err(var error):
+            return false;
+        case System.IO.IOResult<System.Testing.TempDirectory>.Ok(var value):
+            fixture = value;
+    }
+
+    stack mut System.Text.OwnedAscii path = WriteFixtureFile(fixture, "tool", "#!/bin/sh\n");
+    if (System.Text.AsciiLength(path.View()) == 0)
+    {
+        return false;
+    }
+
+    // A regular written file starts non-executable.
+    if (PathExecState(path.View()) != 0)
+    {
+        return false;
+    }
+
+    switch (System.FileSystem.MakeExecutable(path.View()))
+    {
+        case System.IO.IOStatus.Err(var error):
+            return false;
+        case System.IO.IOStatus.Ok:
+    }
+
+    return PathExecState(path.View()) == 1;
+}
+
+// SetPermissions applies an explicit mode: 0o644 leaves the file
+// non-executable, 0o755 makes it executable.
+[Fact]
+fn bool SetPermissionsAppliesExplicitMode()
+{
+    stack mut System.Testing.TempDirectory fixture = new();
+    switch (System.Testing.CreateTempDirectory("stark-fs-perm"))
+    {
+        case System.IO.IOResult<System.Testing.TempDirectory>.Err(var error):
+            return false;
+        case System.IO.IOResult<System.Testing.TempDirectory>.Ok(var value):
+            fixture = value;
+    }
+
+    stack mut System.Text.OwnedAscii path = WriteFixtureFile(fixture, "data", "x");
+    if (System.Text.AsciiLength(path.View()) == 0)
+    {
+        return false;
+    }
+
+    // 0o644 == 420: rw-r--r--, no execute.
+    switch (System.FileSystem.SetPermissions(path.View(), 420))
+    {
+        case System.IO.IOStatus.Err(var error):
+            return false;
+        case System.IO.IOStatus.Ok:
+    }
+
+    if (PathExecState(path.View()) != 0)
+    {
+        return false;
+    }
+
+    // 0o755 == 493: rwxr-xr-x.
+    switch (System.FileSystem.SetPermissions(path.View(), 493))
+    {
+        case System.IO.IOStatus.Err(var error):
+            return false;
+        case System.IO.IOStatus.Ok:
+    }
+
+    return PathExecState(path.View()) == 1;
+}
+
+// MakeExecutable on a missing path surfaces the metadata lookup failure rather
+// than silently succeeding.
+[Fact]
+fn bool MakeExecutableOnMissingPathFails()
+{
+    stack mut System.Testing.TempDirectory fixture = new();
+    switch (System.Testing.CreateTempDirectory("stark-fs-perm"))
+    {
+        case System.IO.IOResult<System.Testing.TempDirectory>.Err(var error):
+            return false;
+        case System.IO.IOResult<System.Testing.TempDirectory>.Ok(var value):
+            fixture = value;
+    }
+
+    stack mut System.Text.OwnedAscii missing = new();
+    switch (fixture.PathFor("does-not-exist"))
+    {
+        case System.IO.IOResult<System.Text.OwnedAscii>.Err(var error):
+            return false;
+        case System.IO.IOResult<System.Text.OwnedAscii>.Ok(var value):
+            missing = value;
+    }
+
+    switch (System.FileSystem.MakeExecutable(missing.View()))
+    {
+        case System.IO.IOStatus.Err(var error):
+            return true;
+        case System.IO.IOStatus.Ok:
+            return false;
+    }
+}

@@ -1,0 +1,192 @@
+import Compiler.Typing
+import Compiler.Parsing
+import Compiler.Lexing
+import System.Testing
+[Collection("typing")]
+module TypingTests
+
+fn bool LexOk(LexResult<TokenStream> result, out TokenStream stream)
+{
+    switch (result)
+    {
+        case LexResult<TokenStream>.Err(var error):
+            stream = new();
+            return false;
+        case LexResult<TokenStream>.Ok(var value):
+            stream = value;
+            return true;
+    }
+}
+
+// Finds the keyword token of the sole function declaration in an already-lexed
+// stream. False when the stream is not a single function.
+fn bool FirstFunctionKeyword(borrow TokenStream stream, out u32[0 max] fnKeyword)
+{
+    fnKeyword = 0;
+    switch (ParseDeclarations(stream, 0))
+    {
+        case ParseResult<DeclarationList>.Err(var declError):
+            return false;
+        case ParseResult<DeclarationList>.Ok(var decls):
+            if (decls.Count() == 1)
+            {
+                stack DeclItem only = decls.ItemAt(0);
+                if (only.Kind == DeclarationKind.Function)
+                {
+                    fnKeyword = only.KeywordToken;
+                    return true;
+                }
+            }
+
+            return false;
+    }
+}
+
+[Fact]
+fn bool ClassifiesParameterTypes()
+{
+    // Each parameter's type-primary token maps to its value type: i32 -> Int,
+    // f64 -> Float, bool -> Bool, ascii -> Text, and a user type Foo -> Unknown.
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText("fn void f(i32 a, f64 b, bool c, ascii d, Foo e) { }"), stream))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] fnKeyword = 0;
+    if (!FirstFunctionKeyword(stream, fnKeyword))
+    {
+        return false;
+    }
+
+    switch (ParseFunctionSignature(stream, fnKeyword))
+    {
+        case ParseResult<FunctionSignature>.Err(var sigError):
+            return false;
+        case ParseResult<FunctionSignature>.Ok(var signature):
+            if (signature.ParamCount() != 5)
+            {
+                return false;
+            }
+
+            return MapTypeToken(stream, signature.ParamTypeTokenAt(0)) == ExprType.Int
+                && MapTypeToken(stream, signature.ParamTypeTokenAt(1)) == ExprType.Float
+                && MapTypeToken(stream, signature.ParamTypeTokenAt(2)) == ExprType.Bool
+                && MapTypeToken(stream, signature.ParamTypeTokenAt(3)) == ExprType.Text
+                && MapTypeToken(stream, signature.ParamTypeTokenAt(4)) == ExprType.Unknown;
+    }
+}
+
+[Fact]
+fn bool ClassifiesExpressionShapes()
+{
+    // Four expression statements: `1 + 2` (Int), `1.0` (Float), `a < b` (Bool),
+    // and `!a` (Bool).
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText("fn void f(i32 a, i32 b) { 1 + 2; 1.0; a < b; !a; }"), stream))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] fnKeyword = 0;
+    if (!FirstFunctionKeyword(stream, fnKeyword))
+    {
+        return false;
+    }
+
+    switch (ParseFunctionBody(stream, fnKeyword))
+    {
+        case ParseResult<StatementList>.Err(var bodyError):
+            return false;
+        case ParseResult<StatementList>.Ok(var body):
+            if (body.Count() != 4)
+            {
+                return false;
+            }
+
+            stack ExprType t0 = ClassifyExprType(stream, body, body.ExprRootAt(0));
+            stack ExprType t1 = ClassifyExprType(stream, body, body.ExprRootAt(1));
+            stack ExprType t2 = ClassifyExprType(stream, body, body.ExprRootAt(2));
+            stack ExprType t3 = ClassifyExprType(stream, body, body.ExprRootAt(3));
+            return t0 == ExprType.Int
+                && t1 == ExprType.Float
+                && t2 == ExprType.Bool
+                && t3 == ExprType.Bool;
+    }
+}
+
+[Fact]
+fn bool IntegerConditionIsANonBooleanError()
+{
+    // `if (1 + 2)` has an integer condition — a basic type error.
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText("fn void f() { if (1 + 2) { } }"), stream))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] fnKeyword = 0;
+    if (!FirstFunctionKeyword(stream, fnKeyword))
+    {
+        return false;
+    }
+
+    switch (ParseFunctionBody(stream, fnKeyword))
+    {
+        case ParseResult<StatementList>.Err(var bodyError):
+            return false;
+        case ParseResult<StatementList>.Ok(var body):
+            return CountNonBooleanConditions(stream, body) == 1;
+    }
+}
+
+[Fact]
+fn bool ComparisonAndLogicalConditionsAreBoolean()
+{
+    // `a < b` and `a == b` are boolean conditions — no errors.
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText("fn void f(i32 a, i32 b) { if (a < b) { } while (a == b) { } }"), stream))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] fnKeyword = 0;
+    if (!FirstFunctionKeyword(stream, fnKeyword))
+    {
+        return false;
+    }
+
+    switch (ParseFunctionBody(stream, fnKeyword))
+    {
+        case ParseResult<StatementList>.Err(var bodyError):
+            return false;
+        case ParseResult<StatementList>.Ok(var body):
+            return CountNonBooleanConditions(stream, body) == 0;
+    }
+}
+
+[Fact]
+fn bool IdentifierConditionIsNotFlagged()
+{
+    // `if (flag)` types as Unknown (identifier), so the conservative checker does
+    // not flag it.
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText("fn void f(bool flag) { if (flag) { } }"), stream))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] fnKeyword = 0;
+    if (!FirstFunctionKeyword(stream, fnKeyword))
+    {
+        return false;
+    }
+
+    switch (ParseFunctionBody(stream, fnKeyword))
+    {
+        case ParseResult<StatementList>.Err(var bodyError):
+            return false;
+        case ParseResult<StatementList>.Ok(var body):
+            return CountNonBooleanConditions(stream, body) == 0;
+    }
+}

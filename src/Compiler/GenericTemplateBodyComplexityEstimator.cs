@@ -79,26 +79,37 @@ internal static class GenericTemplateBodyComplexityEstimator
                 + elseCost;
         }
 
-        if (statement.switchStatement() is { } switchStatement)
+        var labeledStatement = statement.labeledStatement();
+        var statementSwitch = statement.switchStatement() ?? labeledStatement?.switchStatement();
+        var statementWhile = statement.whileStatement() ?? labeledStatement?.whileStatement();
+        var statementFor = statement.forStatement() ?? labeledStatement?.forStatement();
+        var labelCost = labeledStatement is null ? 0 : 1;
+
+        if (statementSwitch is { } switchStatement)
         {
-            return 3
+            return labelCost
+                + 3
                 + EstimateExpression(switchStatement.expression())
                 + switchStatement.switchSection().Sum(EstimateSwitchSection);
         }
 
-        if (statement.whileStatement() is { } whileStatement)
+        if (statementWhile is { } whileStatement)
         {
-            return 4
+            return labelCost
+                + 4
                 + EstimateExpression(whileStatement.expression())
                 + EstimateStatement(whileStatement.statement());
         }
 
-        if (statement.forStatement() is { } forStatement)
+        if (statementFor is { } forStatement)
         {
-            return 4
-                + EstimateForInitializer(forStatement.forInitializer())
-                + EstimateForCondition(forStatement.forCondition())
-                + EstimateForIterator(forStatement.forIterator())
+            return labelCost
+                + 4
+                + (forStatement.forTraversal() is { } forTraversal
+                    ? EstimateExpression(forTraversal.expression())
+                    : EstimateForInitializer(forStatement.forInitializer())
+                        + EstimateForCondition(forStatement.forCondition())
+                        + EstimateForIterator(forStatement.forIterator()))
                 + EstimateStatement(forStatement.statement());
         }
 

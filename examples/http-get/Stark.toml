@@ -7,9 +7,6 @@ kind = "executable"
 root = "HttpGet.stark"
 output = "http-get"
 
-[dependencies]
-stdlib = { path = "../../stdlib" }
-
 [native]
 sources = ["HttpsNative.c"]
 pkg-config = ["openssl"]

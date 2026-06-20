@@ -84,6 +84,7 @@ internal static partial class PackageImageBuilder
                             TargetType = GetContextSourceText(module.ParseResult, typeAliasSyntax.type_()),
                             GenericParameters = typeAliasSyntax.typeParameterList() is { } typeParameterList
                                 ? typeParameterList.typeParameter()
+                                    .Where(static parameter => parameter.COMPTIME() is null)
                                     .Select(static parameter => parameter.Identifier().GetText())
                                     .ToArray()
                                 : null
@@ -120,6 +121,7 @@ internal static partial class PackageImageBuilder
                 .ToArray(),
             GenericParameters = functionDeclaration.typeParameterList() is { } typeParameterList
                 ? typeParameterList.typeParameter()
+                    .Where(static parameter => parameter.COMPTIME() is null)
                     .Select(static parameter => parameter.Identifier().GetText())
                     .ToArray()
                 : null,
@@ -127,7 +129,14 @@ internal static partial class PackageImageBuilder
                 functionDeclaration.parameterList(),
                 functionDeclaration.parameterMemoryContractClause()),
             OverlapParameterGroups = BuildParameterOverlapGroupManifests(functionDeclaration.parameterMemoryContractClause()),
-            SameParameterGroups = BuildParameterSameGroupManifests(functionDeclaration.parameterMemoryContractClause())
+            SameParameterGroups = BuildParameterSameGroupManifests(functionDeclaration.parameterMemoryContractClause()),
+            TypeParameterConstraints = BuildSourceSurfaceTypeParameterConstraints(
+                module,
+                functionDeclaration.typeParameterConstraints()),
+            ThreadSafetyLawPredicates = BuildSourceSurfaceThreadSafetyLawPredicates(
+                module,
+                functionDeclaration.parameterMemoryContractClause()),
+            ValueContracts = BuildParameterValueContractManifests(functionDeclaration.parameterMemoryContractClause())
         };
     }
 
@@ -143,7 +152,12 @@ internal static partial class PackageImageBuilder
             {
                 return manifest with
                 {
-                    Fields = BuildSourceSurfaceFields(module, structDeclaration.structBody().structMember().Select(static member => member.fieldDeclaration())),
+                    Fields = BuildSourceSurfaceFields(module, structDeclaration.structBody().structMember()),
+                    StructLayout = TryGetAttributeArgument(declaration.attributeList(), "StructLayout"),
+                    PackBytes = TryGetIntegerAttributeArgument(declaration.attributeList(), "Pack"),
+                    AlignBytes = TryGetIntegerAttributeArgument(declaration.attributeList(), "Align"),
+                    ThreadSafetyLawAttributes = BuildSourceSurfaceThreadSafetyLawAttributes(module, declaration.attributeList()),
+                    ImplementedTraits = BuildSourceSurfaceImplementedTraits(module, structDeclaration.baseTraitList()),
                     Constructors = BuildSourceSurfaceConstructorManifests(
                         module,
                         structDeclaration.Identifier().GetText(),
@@ -168,7 +182,7 @@ internal static partial class PackageImageBuilder
             {
                 return manifest with
                 {
-                    Fields = BuildSourceSurfaceFields(module, recordDeclaration.recordBody().recordMember().Select(static member => member.fieldDeclaration())),
+                    Fields = BuildSourceSurfaceFields(module, recordDeclaration.recordBody().recordMember()),
                     PrimaryConstructorParameters = recordDeclaration.primaryConstructorParameters()?.parameterList().parameter()
                         .Select(parameter => new StarkPackageParameterManifest(
                             parameter.Identifier().GetText(),
@@ -176,6 +190,8 @@ internal static partial class PackageImageBuilder
                             ParameterHasPrefix(parameter, StarkParser.DISJOINT),
                             ParameterHasPrefix(parameter, StarkParser.CONST)))
                         .ToArray(),
+                    ThreadSafetyLawAttributes = BuildSourceSurfaceThreadSafetyLawAttributes(module, declaration.attributeList()),
+                    ImplementedTraits = BuildSourceSurfaceImplementedTraits(module, recordDeclaration.baseTraitList()),
                     Constructors = BuildSourceSurfaceConstructorManifests(
                         module,
                         recordDeclaration.Identifier().GetText(),
@@ -200,6 +216,7 @@ internal static partial class PackageImageBuilder
             {
                 return manifest with
                 {
+                    ThreadSafetyLawAttributes = BuildSourceSurfaceThreadSafetyLawAttributes(module, declaration.attributeList()),
                     Variants = enumDeclaration.enumBody().enumVariantDeclaration()
                         .Select(variant => BuildSourceSurfaceEnumVariantManifest(module, variant))
                         .ToArray()
@@ -242,20 +259,172 @@ internal static partial class PackageImageBuilder
         return manifest;
     }
 
+    private static IReadOnlyList<string>? BuildSourceSurfaceImplementedTraits(
+        LoadedModuleDocument module,
+        StarkParser.BaseTraitListContext? baseTraitList)
+    {
+        return baseTraitList is null
+            ? null
+            : baseTraitList.type_()
+                .Select(type => GetContextSourceText(module.ParseResult, type))
+                .ToArray();
+    }
+
     private static IReadOnlyList<StarkPackageFieldManifest> BuildSourceSurfaceFields(
         LoadedModuleDocument module,
-        IEnumerable<StarkParser.FieldDeclarationContext?> fieldDeclarations)
+        IEnumerable<StarkParser.StructMemberContext> members)
     {
-        return fieldDeclarations
-            .Where(static declaration => declaration is not null)
-            .Cast<StarkParser.FieldDeclarationContext>()
+        return members
+            .Where(static member => member.fieldDeclaration() is not null)
             .SelectMany(fieldDeclaration =>
-                fieldDeclaration.variableDeclarators().variableDeclarator()
+                fieldDeclaration.fieldDeclaration()!.variableDeclarators().variableDeclarator()
                     .Select(variable => new StarkPackageFieldManifest(
                         variable.Identifier().GetText(),
-                        GetContextSourceText(module.ParseResult, fieldDeclaration.type_()),
-                        fieldDeclaration.visibilityModifier()?.GetText())))
+                        GetContextSourceText(module.ParseResult, fieldDeclaration.fieldDeclaration()!.type_()),
+                        fieldDeclaration.fieldDeclaration()!.visibilityModifier()?.GetText(),
+                        TryGetIntegerAttributeArgument(fieldDeclaration.attributeList(), "FieldOffset"),
+                        BuildSourceSurfaceThreadSafetyLawAttributes(module, fieldDeclaration.attributeList()))))
             .ToArray();
+    }
+
+    private static IReadOnlyList<StarkPackageFieldManifest> BuildSourceSurfaceFields(
+        LoadedModuleDocument module,
+        IEnumerable<StarkParser.RecordMemberContext> members)
+    {
+        return members
+            .Where(static member => member.fieldDeclaration() is not null)
+            .SelectMany(fieldDeclaration =>
+                fieldDeclaration.fieldDeclaration()!.variableDeclarators().variableDeclarator()
+                    .Select(variable => new StarkPackageFieldManifest(
+                        variable.Identifier().GetText(),
+                        GetContextSourceText(module.ParseResult, fieldDeclaration.fieldDeclaration()!.type_()),
+                        fieldDeclaration.fieldDeclaration()!.visibilityModifier()?.GetText(),
+                        TryGetIntegerAttributeArgument(fieldDeclaration.attributeList(), "FieldOffset"),
+                        BuildSourceSurfaceThreadSafetyLawAttributes(module, fieldDeclaration.attributeList()))))
+            .ToArray();
+    }
+
+    private static IReadOnlyList<StarkPackageThreadSafetyLawAttributeManifest>? BuildSourceSurfaceThreadSafetyLawAttributes(
+        LoadedModuleDocument module,
+        IEnumerable<StarkParser.AttributeListContext> attributeLists)
+    {
+        List<StarkPackageThreadSafetyLawAttributeManifest>? attributes = null;
+        foreach (var attribute in attributeLists.SelectMany(static list => list.attribute()))
+        {
+            var attributeName = attribute.qualifiedName().GetText();
+            if (!TryRenderThreadSafetyLawAttributeKind(attributeName, out var kind)
+                || attribute.attributeArgument() is not [var lawArgument])
+            {
+                continue;
+            }
+
+            StarkPackageThreadSafetyLawPredicateManifest? condition = null;
+            if (attribute.attributeCondition()?.lawPredicateContract() is { } predicate)
+            {
+                condition = new StarkPackageThreadSafetyLawPredicateManifest(
+                    predicate.Identifier().GetText(),
+                    GetContextSourceText(module.ParseResult, predicate.type_()));
+            }
+
+            attributes ??= [];
+            attributes.Add(new StarkPackageThreadSafetyLawAttributeManifest(
+                kind,
+                lawArgument.GetText(),
+                condition));
+        }
+
+        return attributes;
+    }
+
+    private static bool TryRenderThreadSafetyLawAttributeKind(string attributeName, out string kind)
+    {
+        if (string.Equals(attributeName, "Grant", StringComparison.Ordinal))
+        {
+            kind = "grant";
+            return true;
+        }
+
+        if (string.Equals(attributeName, "Deny", StringComparison.Ordinal))
+        {
+            kind = "deny";
+            return true;
+        }
+
+        kind = string.Empty;
+        return false;
+    }
+
+    private static IReadOnlyList<StarkPackageThreadSafetyLawPredicateManifest>? BuildSourceSurfaceThreadSafetyLawPredicates(
+        LoadedModuleDocument module,
+        IReadOnlyList<StarkParser.ParameterMemoryContractClauseContext> memoryContractClauses)
+    {
+        List<StarkPackageThreadSafetyLawPredicateManifest>? predicates = null;
+        foreach (var clause in memoryContractClauses)
+        {
+            foreach (var contract in clause.parameterMemoryContract())
+            {
+                if (contract.lawPredicateContract() is not { } predicate)
+                {
+                    continue;
+                }
+
+                predicates ??= [];
+                predicates.Add(new StarkPackageThreadSafetyLawPredicateManifest(
+                    predicate.Identifier().GetText(),
+                    GetContextSourceText(module.ParseResult, predicate.type_())));
+            }
+        }
+
+        return predicates;
+    }
+
+    private static IReadOnlyList<StarkPackageTypeParameterConstraintManifest>? BuildSourceSurfaceTypeParameterConstraints(
+        LoadedModuleDocument module,
+        IReadOnlyList<StarkParser.TypeParameterConstraintsContext> constraintContexts)
+    {
+        List<StarkPackageTypeParameterConstraintManifest>? constraints = null;
+        foreach (var constraint in constraintContexts)
+        {
+            var bounds = constraint.type_()
+                .Select(type => GetContextSourceText(module.ParseResult, type))
+                .ToArray();
+            if (bounds.Length == 0)
+            {
+                continue;
+            }
+
+            constraints ??= [];
+            constraints.Add(new StarkPackageTypeParameterConstraintManifest(
+                constraint.Identifier().GetText(),
+                bounds));
+        }
+
+        return constraints;
+    }
+
+    private static string? TryGetAttributeArgument(
+        IEnumerable<StarkParser.AttributeListContext> attributeLists,
+        string attributeName)
+    {
+        foreach (var attribute in attributeLists.SelectMany(static list => list.attribute()))
+        {
+            if (string.Equals(attribute.qualifiedName().GetText(), attributeName, StringComparison.Ordinal)
+                && attribute.attributeArgument() is [var argument])
+            {
+                return argument.GetText();
+            }
+        }
+
+        return null;
+    }
+
+    private static int? TryGetIntegerAttributeArgument(
+        IEnumerable<StarkParser.AttributeListContext> attributeLists,
+        string attributeName)
+    {
+        return int.TryParse(TryGetAttributeArgument(attributeLists, attributeName), out var value)
+            ? value
+            : null;
     }
 
     private static IReadOnlyList<StarkPackageConstructorManifest>? BuildSourceSurfaceConstructorManifests(
@@ -320,6 +489,7 @@ internal static partial class PackageImageBuilder
                     .ToArray(),
                 GenericParameters = method.typeParameterList() is { } typeParameterList
                     ? typeParameterList.typeParameter()
+                        .Where(static parameter => parameter.COMPTIME() is null)
                         .Select(static parameter => parameter.Identifier().GetText())
                         .ToArray()
                     : null,
@@ -327,7 +497,14 @@ internal static partial class PackageImageBuilder
                     method.parameterList(),
                     method.parameterMemoryContractClause()),
                 OverlapParameterGroups = BuildParameterOverlapGroupManifests(method.parameterMemoryContractClause()),
-                SameParameterGroups = BuildParameterSameGroupManifests(method.parameterMemoryContractClause())
+                SameParameterGroups = BuildParameterSameGroupManifests(method.parameterMemoryContractClause()),
+                TypeParameterConstraints = BuildSourceSurfaceTypeParameterConstraints(
+                    module,
+                    method.typeParameterConstraints()),
+                ThreadSafetyLawPredicates = BuildSourceSurfaceThreadSafetyLawPredicates(
+                    module,
+                    method.parameterMemoryContractClause()),
+                ValueContracts = BuildParameterValueContractManifests(method.parameterMemoryContractClause())
             });
         }
 
@@ -375,6 +552,7 @@ internal static partial class PackageImageBuilder
                     .ToArray(),
                 GenericParameters = method.typeParameterList() is { } typeParameterList
                     ? typeParameterList.typeParameter()
+                        .Where(static parameter => parameter.COMPTIME() is null)
                         .Select(static parameter => parameter.Identifier().GetText())
                         .ToArray()
                     : null,
@@ -382,7 +560,14 @@ internal static partial class PackageImageBuilder
                     method.parameterList(),
                     method.parameterMemoryContractClause()),
                 OverlapParameterGroups = BuildParameterOverlapGroupManifests(method.parameterMemoryContractClause()),
-                SameParameterGroups = BuildParameterSameGroupManifests(method.parameterMemoryContractClause())
+                SameParameterGroups = BuildParameterSameGroupManifests(method.parameterMemoryContractClause()),
+                TypeParameterConstraints = BuildSourceSurfaceTypeParameterConstraints(
+                    module,
+                    method.typeParameterConstraints()),
+                ThreadSafetyLawPredicates = BuildSourceSurfaceThreadSafetyLawPredicates(
+                    module,
+                    method.parameterMemoryContractClause()),
+                ValueContracts = BuildParameterValueContractManifests(method.parameterMemoryContractClause())
             });
         }
 
@@ -430,6 +615,7 @@ internal static partial class PackageImageBuilder
                     .ToArray(),
                 GenericParameters = method.typeParameterList() is { } typeParameterList
                     ? typeParameterList.typeParameter()
+                        .Where(static parameter => parameter.COMPTIME() is null)
                         .Select(static parameter => parameter.Identifier().GetText())
                         .ToArray()
                     : null,
@@ -437,7 +623,14 @@ internal static partial class PackageImageBuilder
                     method.parameterList(),
                     method.parameterMemoryContractClause()),
                 OverlapParameterGroups = BuildParameterOverlapGroupManifests(method.parameterMemoryContractClause()),
-                SameParameterGroups = BuildParameterSameGroupManifests(method.parameterMemoryContractClause())
+                SameParameterGroups = BuildParameterSameGroupManifests(method.parameterMemoryContractClause()),
+                TypeParameterConstraints = BuildSourceSurfaceTypeParameterConstraints(
+                    module,
+                    method.typeParameterConstraints()),
+                ThreadSafetyLawPredicates = BuildSourceSurfaceThreadSafetyLawPredicates(
+                    module,
+                    method.parameterMemoryContractClause()),
+                ValueContracts = BuildParameterValueContractManifests(method.parameterMemoryContractClause())
             });
         }
 
@@ -448,12 +641,29 @@ internal static partial class PackageImageBuilder
         LoadedModuleDocument module,
         StarkParser.EnumVariantDeclarationContext variant)
     {
+        // The authored [Ok]/[Err] role attribute is part of the published surface: it is
+        // what keeps the enum `try`-propagatable for downstream packages.
+        var role = GetSourceSurfaceEnumVariantRole(variant);
+
         if (variant.enumVariantPayload() is not { } payload)
         {
             return new StarkPackageEnumVariantManifest(
                 variant.Identifier().GetText(),
                 UsesNamedFields: false,
-                Fields: []);
+                Fields: [],
+                Role: role);
+        }
+
+        if (payload.FROM() is not null)
+        {
+            // `Name from Type`: a single positional payload plus the `try` conversion funnel.
+            var absorbedErrorTypeText = GetContextSourceText(module.ParseResult, payload.type_(0));
+            return new StarkPackageEnumVariantManifest(
+                variant.Identifier().GetText(),
+                UsesNamedFields: false,
+                Fields: [new StarkPackageFieldManifest("Item0", absorbedErrorTypeText)],
+                Role: role,
+                AbsorbsErrorType: absorbedErrorTypeText);
         }
 
         if (payload.enumVariantFieldDeclaration().Length != 0)
@@ -465,7 +675,8 @@ internal static partial class PackageImageBuilder
                     .Select(field => new StarkPackageFieldManifest(
                         field.Identifier().GetText(),
                         GetContextSourceText(module.ParseResult, field.type_())))
-                    .ToArray());
+                    .ToArray(),
+                Role: role);
         }
 
         return new StarkPackageEnumVariantManifest(
@@ -475,7 +686,31 @@ internal static partial class PackageImageBuilder
                 .Select((fieldType, index) => new StarkPackageFieldManifest(
                     $"Item{index}",
                     GetContextSourceText(module.ParseResult, fieldType)))
-                .ToArray());
+                .ToArray(),
+            Role: role);
+    }
+
+    private static string? GetSourceSurfaceEnumVariantRole(StarkParser.EnumVariantDeclarationContext variant)
+    {
+        foreach (var attributeList in variant.attributeList())
+        {
+            foreach (var attribute in attributeList.attribute())
+            {
+                var role = attribute.qualifiedName().GetText() switch
+                {
+                    "Ok" => "ok",
+                    "Err" => "err",
+                    _ => null
+                };
+
+                if (role is not null)
+                {
+                    return role;
+                }
+            }
+        }
+
+        return null;
     }
 
     private static Dictionary<string, Queue<StarkParser.FunctionDeclarationContext>> BuildFunctionDeclarationSyntaxLookup(

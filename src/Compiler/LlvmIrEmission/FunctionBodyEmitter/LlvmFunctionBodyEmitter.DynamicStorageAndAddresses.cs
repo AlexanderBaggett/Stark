@@ -132,7 +132,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
         }
 
         var pointer = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_free_ptr"))}";
-        AppendLine($"  {pointer} = extractvalue {MapType(free.Storage.Type)} {FormatValue(free.Storage)}, 0");
+        AppendLine($"  {pointer} = extractvalue {MapType(NormalizeAggregateType(free.Storage.Type))} {FormatValue(free.Storage)}, 0");
         AppendLine($"  call void @{RuntimeFreeHelperName}(ptr {pointer})");
     }
 
@@ -163,7 +163,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
                 $"Dynamic storage reserve requires a concrete element layout for '{elementType.DisplayName}'.");
         }
 
-        var storageType = MapType(reserve.StorageType);
+        var storageType = MapType(NormalizeAggregateType(reserve.StorageType));
         var storageAddress = FormatValue(reserve.StorageAddress);
         var additionalI64 = EmitUnsignedIntegerAsI64(reserve.AdditionalCapacity, "dynamic_reserve_additional");
         var maxCount = GetMaximumDynamicStorageElementCount(elementLayout.SizeBytes);
@@ -275,7 +275,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
                 $"Dynamic storage TryReserve requires a concrete element layout for '{elementType.DisplayName}'.");
         }
 
-        var storageType = MapType(reserve.StorageType);
+        var storageType = MapType(NormalizeAggregateType(reserve.StorageType));
         var storageAddress = FormatValue(reserve.StorageAddress);
         var additionalI64 = EmitUnsignedIntegerAsI64(reserve.AdditionalCapacity, "dynamic_try_reserve_additional");
         var maxCount = GetMaximumDynamicStorageElementCount(elementLayout.SizeBytes);
@@ -393,7 +393,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
                 $"Dynamic storage TryReserveCapacity requires a concrete element layout for '{elementType.DisplayName}'.");
         }
 
-        var storageType = MapType(reserve.StorageType);
+        var storageType = MapType(NormalizeAggregateType(reserve.StorageType));
         var storageAddress = FormatValue(reserve.StorageAddress);
         var targetCapacityI64 = EmitUnsignedIntegerAsI64(reserve.TargetCapacity, "dynamic_try_reserve_capacity_target");
         var maxCount = GetMaximumDynamicStorageElementCount(elementLayout.SizeBytes);
@@ -497,7 +497,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
                 $"Dynamic storage MoveLast requires a concrete element layout for '{elementType.DisplayName}'.");
         }
 
-        var storageType = MapType(moveLast.StorageType);
+        var storageType = MapType(NormalizeAggregateType(moveLast.StorageType));
         var elementLlvmType = MapType(moveLast.Type);
         var storageAddress = FormatValue(moveLast.StorageAddress);
         var elementAlignment = Math.Max(1, elementLayout.AlignmentBytes);
@@ -622,7 +622,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
                 $"Dynamic storage MoveAt requires a concrete element layout for '{elementType.DisplayName}'.");
         }
 
-        var storageType = MapType(moveAt.StorageType);
+        var storageType = MapType(NormalizeAggregateType(moveAt.StorageType));
         var elementLlvmType = MapType(moveAt.Type);
         var storageAddress = FormatValue(moveAt.StorageAddress);
         var indexI64 = EmitUnsignedIntegerAsI64(moveAt.Index, "dynamic_move_at_index");
@@ -874,7 +874,14 @@ internal sealed partial class LlvmFunctionBodyEmitter
     private void EmitAddressOfLocal(string result, SsaAddressOfLocalRValue addressOfLocal)
     {
         EnsureLocalSlotExists(addressOfLocal.LocalName, addressOfLocal.PointeeType);
-        AppendLine($"  {result} = getelementptr{GetZeroOffsetGepFlags()} {MapType(addressOfLocal.PointeeType)}, ptr {GetLocalSlotPointer(addressOfLocal.LocalName)}, i32 0");
+        AppendLine($"  {result} = getelementptr{GetZeroOffsetGepFlags()} {MapType(NormalizeAggregateType(addressOfLocal.PointeeType))}, ptr {GetLocalSlotPointer(addressOfLocal.LocalName)}, i32 0");
+    }
+
+    private bool TryAliasAddressOfLocal(string resultName, SsaAddressOfLocalRValue addressOfLocal)
+    {
+        EnsureLocalSlotExists(addressOfLocal.LocalName, addressOfLocal.PointeeType);
+        _valueAliases[resultName] = GetLocalSlotPointer(addressOfLocal.LocalName);
+        return true;
     }
 
     private void EmitAddressOfParameter(string result, SsaAddressOfParameterRValue addressOfParameter)
@@ -889,23 +896,85 @@ internal sealed partial class LlvmFunctionBodyEmitter
         if (parameter.Kind == AbiParameterKind.IndirectIn)
         {
             AppendLine(
-                $"  {result} = getelementptr{GetZeroOffsetGepFlags()} {MapType(addressOfParameter.PointeeType)}, ptr %{EscapeIdentifier(parameter.LlvmName)}, i32 0");
+                $"  {result} = getelementptr{GetZeroOffsetGepFlags()} {MapType(NormalizeAggregateType(addressOfParameter.PointeeType))}, ptr %{EscapeIdentifier(parameter.LlvmName)}, i32 0");
             return;
         }
 
         EnsureParameterSlotExists(parameter, addressOfParameter.PointeeType);
         AppendLine(
-            $"  {result} = getelementptr{GetZeroOffsetGepFlags()} {MapType(addressOfParameter.PointeeType)}, ptr %{EscapeIdentifier($"slot_param_{parameter.SourceName}")}, i32 0");
+            $"  {result} = getelementptr{GetZeroOffsetGepFlags()} {MapType(NormalizeAggregateType(addressOfParameter.PointeeType))}, ptr %{EscapeIdentifier($"slot_param_{parameter.SourceName}")}, i32 0");
+    }
+
+    private bool TryAliasAddressOfParameter(string resultName, SsaAddressOfParameterRValue addressOfParameter)
+    {
+        var parameter = _abiFunction.UserParameters.FirstOrDefault(
+            candidate => string.Equals(candidate.SourceName, addressOfParameter.ParameterName, StringComparison.Ordinal));
+        if (parameter is null)
+        {
+            return false;
+        }
+
+        if (parameter.Kind == AbiParameterKind.IndirectIn)
+        {
+            _valueAliases[resultName] = $"%{EscapeIdentifier(parameter.LlvmName)}";
+            return true;
+        }
+
+        EnsureParameterSlotExists(parameter, addressOfParameter.PointeeType);
+        _valueAliases[resultName] = $"%{EscapeIdentifier($"slot_param_{parameter.SourceName}")}";
+        return true;
     }
 
     private void EmitFieldAddress(string result, SsaFieldAddressRValue fieldAddress)
     {
-        AppendLine($"  {result} = getelementptr{GetProvenInObjectGepFlags()} {MapType(fieldAddress.AggregateType)}, ptr {FormatValue(fieldAddress.Address)}, i32 0, i32 {fieldAddress.FieldIndex}");
+        var aggregateType = NormalizeAggregateType(
+            StarkTypeSymbols.IsPointerBackedBorrowType(fieldAddress.AggregateType)
+                ? StarkTypeSymbols.BorrowReturnValueType(fieldAddress.AggregateType)
+                : fieldAddress.AggregateType);
+
+        if (TryGetLayoutControlledFieldOffsetBytes(
+                aggregateType,
+                fieldAddress.FieldIndex,
+                out var fieldOffsetBytes))
+        {
+            AppendLine($"  {result} = getelementptr{GetProvenInObjectGepFlags()} i8, ptr {FormatValue(fieldAddress.Address)}, i64 {fieldOffsetBytes}");
+            return;
+        }
+
+        AppendLine($"  {result} = getelementptr{GetProvenInObjectGepFlags()} {MapType(aggregateType)}, ptr {FormatValue(fieldAddress.Address)}, i32 0, i32 {fieldAddress.FieldIndex}");
+    }
+
+    private bool TryGetLayoutControlledFieldOffsetBytes(
+        StarkTypeSymbol aggregateType,
+        int fieldIndex,
+        out int fieldOffsetBytes)
+    {
+        fieldOffsetBytes = 0;
+        var normalizedType = NormalizeAggregateType(aggregateType);
+        if (normalizedType.Kind != StarkTypeKind.Named
+            || ResolveNamedTypeSymbol(normalizedType) is not { } namedType
+            || !LlvmLayoutControlledAggregateFacts.RequiresPhysicalLayout(namedType)
+            || TryGetConcreteTypeLayout(normalizedType) is not { } layout
+            || fieldIndex < 0
+            || fieldIndex >= namedType.OrderedFields.Count)
+        {
+            return false;
+        }
+
+        var fieldName = namedType.OrderedFields[fieldIndex].Name;
+        if (!layout.TryGetField(fieldName, out var fieldLayout))
+        {
+            return false;
+        }
+
+        fieldOffsetBytes = fieldLayout.OffsetBytes;
+        return true;
     }
 
     private void EmitElementAddress(string result, SsaElementAddressRValue elementAddress)
     {
-        if (elementAddress.AggregateType.Kind == StarkTypeKind.FixedArray)
+        if (elementAddress.AggregateType.Kind == StarkTypeKind.FixedArray
+            && !ElementAddressTargetsWholeAggregate(elementAddress))
         {
             var indexValue = elementAddress.ConstantIndex is int constantIndex
                 ? constantIndex.ToString()
@@ -937,6 +1006,31 @@ internal sealed partial class LlvmFunctionBodyEmitter
         }
 
         AppendLine($"  {result} = getelementptr{GetUnboundedPointerIndexGepFlags(elementAddress.Address, elementAddress.Index)} {MapType(elementAddress.AggregateType)}, ptr {FormatValue(elementAddress.Address)}, {MapType(elementAddress.Index.Type)} {FormatValue(elementAddress.Index)}");
+    }
+
+    /// <summary>
+    /// True when the element address yields a pointer to the whole aggregate type
+    /// rather than into it: addressing an element of dynamic or raw storage whose
+    /// element type is itself a fixed array. Such addresses must use the
+    /// pointer-element GEP form (stride = whole array), not the into-array form.
+    /// </summary>
+    private bool ElementAddressTargetsWholeAggregate(SsaElementAddressRValue elementAddress)
+    {
+        return elementAddress.Type.Kind == StarkTypeKind.RawPointer
+            && elementAddress.Type.ElementType is { } pointeeType
+            && string.Equals(MapType(pointeeType), MapType(elementAddress.AggregateType), StringComparison.Ordinal);
+    }
+
+    private bool TryAliasZeroElementAddress(string resultName, SsaElementAddressRValue elementAddress)
+    {
+        if (elementAddress.AggregateType.Kind == StarkTypeKind.FixedArray
+            || elementAddress.ConstantIndex != 0)
+        {
+            return false;
+        }
+
+        _valueAliases[resultName] = FormatValue(elementAddress.Address);
+        return true;
     }
 
     private void EmitSliceElementAddress(string result, SsaSliceElementAddressRValue sliceElementAddress)

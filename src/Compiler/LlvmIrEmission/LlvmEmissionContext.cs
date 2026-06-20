@@ -117,6 +117,24 @@ internal sealed class LlvmEmissionContext
 
     public LlvmTargetInfo? TargetInfo { get; }
 
+    // Mach-O has no COMDAT support; linkonce_odr definitions must be emitted without
+    // comdat groups on Apple targets.
+    public bool TargetSupportsComdat
+    {
+        get
+        {
+            var triple = TargetInfo?.Triple;
+            if (string.IsNullOrWhiteSpace(triple))
+            {
+                return true;
+            }
+
+            return !triple.Contains("darwin", StringComparison.OrdinalIgnoreCase)
+                && !triple.Contains("macos", StringComparison.OrdinalIgnoreCase)
+                && !triple.Contains("apple", StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
     public string AllocatorSizeType => _getAllocatorSizeType();
 
     public bool DebugInfoEnabled => _isDebugInfoEnabled();

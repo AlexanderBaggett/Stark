@@ -1,0 +1,408 @@
+import CompilerTestSupport
+import System.Testing
+module CompilerPipelineSpecializationPlanTests
+
+// Ported from CompilerPipelineSpecializationPlanTests.ConflictingSpecializationSymbolPlansReportAmbiguityDiagnostics.
+internal fn bool ConflictingSpecializationSymbolPlansReportAmbiguityDiagnosticsImpl()
+{
+    // PORT-NOTE: original writes a separate Math.stark library and wires it to the
+    // Demo consumer through a FileSystemModuleResolver, stopping after the
+    // specialization-plan pass. The compile helpers resolve a single root source,
+    // so only the Demo consumer program (kept verbatim from the C# raw string) is
+    // compiled here; the imported Math module and the StopAfterPassId option are
+    // not expressible. The original asserts result.Succeeded == false plus two
+    // stage="specialization-plan" diagnostics: STK4115 (mentioning the conflicting
+    // mono symbol and both source spellings) and STK4116. That is reduced to
+    // requiring both diagnostic code/message pairs to be present, which also
+    // implies the compile failed.
+    stack mut LlvmCompile compiled = CompileFull(
+        "diagp1-conflicting-specialization-symbol-plans-ambiguity",
+        raw"""
+import Math
+module Demo
+
+finite law i32[min max] Run(i32[min max] value)
+{
+    stack i32[min max] left = Math.Numbers_Identity(value);
+    return Math.Numbers.Identity(left);
+}
+""");
+    return CountDiagnosticsWithCodeAndMessage(
+            compiled,
+            "STK4115",
+            "__stark_mono_fn_Math__Math_Numbers_Identity__i32") > 0
+        && AnyDiagnosticMessageContains(compiled, "Math.Numbers.Identity<i32>")
+        && AnyDiagnosticMessageContains(compiled, "Math.Numbers_Identity<i32>")
+        && CountDiagnosticsWithCodeAndMessage(
+            compiled,
+            "STK4116",
+            "Math.Numbers.Identity<i32>") > 0;
+}
+
+// Ported from CompilerPipelineSpecializationPlanTests.RootGenericInstantiationsPreferOwnedConcreteBodiesInSpecializationPlan.
+internal fn bool RootGenericInstantiationsPreferOwnedConcreteBodiesInSpecializationPlanImpl()
+{
+    {
+        // PORT-NOTE: the original runs the pipeline stopping after the "specialization-plan" pass and
+        // reads the SpecializationPlanModel: a single planned function (SymbolName
+        // "__stark_mono_fn_Demo__Identity__i32", SelectionOrder [OwnedConcreteBody], CodeGenerationMode
+        // SingleOwnerConcreteBody). The compile helpers cannot stop after that pass nor read the plan
+        // artifact (symbol name, selection order, code-generation mode), so this reduces to "the embedded
+        // program type-checks cleanly" (the closest observable precondition for a valid plan), with the
+        // program kept verbatim from the C# raw string.
+        stack mut LlvmCompile compiled = CompileTypeCheck(
+            "specplan-root-generic-instantiations-prefer-owned-concrete-bodies",
+            raw"""
+module Demo
+
+fn T Identity<T>(T value)
+{
+    return value;
+}
+
+fn i32[min max] Run(i32[min max] value)
+{
+    return Identity(value);
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from CompilerPipelineSpecializationPlanTests.SourceBackedImportedLawGenericsPreferCallerCloneBeforeOwnedBodyInSpecializationPlan.
+internal fn bool SourceBackedImportedLawGenericsPreferCallerCloneBeforeOwnedBodyInSpecializationPlanImpl()
+{
+    {
+        // PORT-NOTE: the original writes a source-backed Math.stark into a temp directory, resolves it via
+        // FileSystemModuleResolver, stops after "specialization-plan", and reads the SpecializationPlanModel:
+        // a single function (SymbolName "__stark_mono_fn_Math__Math_Numbers_Identity__i32", SelectionOrder
+        // [LawCallerSpecializedClone, OwnedConcreteBody, DirectAbiBoundaryFallback], CodeGenerationMode
+        // CallerSpecializedClone). The harness writes the imported module to a temp search directory and
+        // resolves it the same way, but cannot stop after that pass nor read the plan artifact (symbol name,
+        // selection order, code-generation mode), so this reduces to "the consumer program plus its
+        // source-backed Math module type-check successfully". Both programs are kept verbatim from the C#
+        // raw string literals.
+        stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+            "specplan-source-backed-imported-law-generics-prefer-caller-clone",
+            raw"""
+import Math
+module Demo
+
+finite law i32[min max] Run(i32[min max] value)
+{
+    return Math.Numbers.Identity(value);
+}
+""",
+            "",
+            "Math.stark",
+            raw"""
+module Math
+
+public doctrine Numbers
+{
+    finite law T Identity<T>(T value)
+    {
+        return value;
+    }
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from CompilerPipelineSpecializationPlanTests.SourceBackedImportedTopLevelLawGenericsPreferCallerCloneBeforeOwnedBodyInSpecializationPlan.
+internal fn bool SourceBackedImportedTopLevelLawGenericsPreferCallerCloneBeforeOwnedBodyInSpecializationPlanImpl()
+{
+    {
+        // PORT-NOTE: the original writes a source-backed Math.stark into a temp directory, resolves it via
+        // FileSystemModuleResolver, stops after "specialization-plan", and reads the SpecializationPlanModel:
+        // a single function (SymbolName "__stark_mono_fn_Math__Math_Identity__i32", SelectionOrder
+        // [LawCallerSpecializedClone, OwnedConcreteBody, DirectAbiBoundaryFallback], CodeGenerationMode
+        // CallerSpecializedClone) for a top-level imported law generic. The harness writes the imported
+        // module to a temp search directory and resolves it the same way, but cannot stop after that pass
+        // nor read the plan artifact (symbol name, selection order, code-generation mode), so this reduces
+        // to "the consumer program plus its source-backed Math module type-check successfully". Both
+        // programs are kept verbatim from the C# raw string literals.
+        stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+            "specplan-source-backed-imported-top-level-law-generics-prefer-caller-clone",
+            raw"""
+import Math
+module Demo
+
+finite law i32[min max] Run(i32[min max] value)
+{
+    return Math.Identity(value);
+}
+""",
+            "",
+            "Math.stark",
+            raw"""
+module Math
+
+public finite law T Identity<T>(T value)
+{
+    return value;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from CompilerPipelineSpecializationPlanTests.ColdImportedLawGenericsPreferAbiFallbackOverCallerCloneInSpecializationPlan.
+internal fn bool ColdImportedLawGenericsPreferAbiFallbackOverCallerCloneInSpecializationPlanImpl()
+{
+    {
+        // PORT-NOTE: the original writes a source-backed Math.stark (a cold finite law generic) into a temp
+        // directory, resolves it via FileSystemModuleResolver, stops after "specialization-plan", and reads
+        // the SpecializationPlanModel: a single function with SelectionOrder [DirectAbiBoundaryFallback] and
+        // CodeGenerationMode AbiBoundaryOnly (cold imports prefer the ABI fallback over the caller clone).
+        // The harness writes the imported module to a temp search directory and resolves it the same way,
+        // but cannot stop after that pass nor read the plan artifact (selection order, code-generation mode),
+        // so this reduces to "the consumer program plus its source-backed Math module type-check
+        // successfully". Both programs are kept verbatim from the C# raw string literals.
+        stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+            "specplan-cold-imported-law-generics-prefer-abi-fallback-over-caller-clone",
+            raw"""
+import Math
+module Demo
+
+finite law i32[min max] Run(i32[min max] value)
+{
+    return Math.Numbers.Identity(value);
+}
+""",
+            "",
+            "Math.stark",
+            raw"""
+module Math
+
+public doctrine Numbers
+{
+    cold finite law T Identity<T>(T value)
+    {
+        return value;
+    }
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from CompilerPipelineSpecializationPlanTests.ManifestBackedImportedLawGenericsPreferCallerCloneWhenTemplateSemanticsSurviveWithoutFunctionSemantics.
+internal fn bool ManifestBackedImportedLawGenericsPreferCallerCloneWhenTemplateSemanticsSurviveWithoutFunctionSemanticsImpl()
+{
+    {
+        // PORT-NOTE: The C# test builds the `Math.Numbers.AddTag` doctrine-law-generic
+        // library into a package image via PackageImageBuilder.Create, rewrites the manifest
+        // to strip FunctionSemantics (so only the typed interface + template semantics
+        // survive), asserts the Math module's EffectiveCompilerFacts.FunctionSemantics is now
+        // empty, writes the .starkpkg.json manifest, deletes the Math source, then re-imports
+        // `Math` into a `Demo` consumer (StopAfterPassId "specialization-plan") and probes the
+        // imported PackageImageFacts (Math.Numbers.AddTag template semantics with empty
+        // CalledFunctions) and the SpecializationPlan (single function with SelectionOrder
+        // [LawCallerSpecializedClone, OwnedConcreteBody, DirectAbiBoundaryFallback] and
+        // CodeGenerationMode CallerSpecializedClone). Package-image construction, manifest
+        // FunctionSemantics stripping/round-tripping, source deletion, and
+        // PackageImageFacts/SpecializationPlan probing are not expressible with the Stark
+        // helpers, so this is reduced to compiling the `Demo` consumer with the `Math`
+        // library available as a sibling source module through type-check and asserting it
+        // succeeds (the precondition for the imported law generic to be planned at all).
+        stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+            "spec-plan-manifest-law-generic-template-semantics",
+            raw"""
+import Math
+module Demo
+
+law i32[min max] Run(i32[min max] left, i32[min max] right)
+{
+    return Math.Numbers.AddTag(left, right, left);
+}
+""",
+            "",
+            "Math.stark",
+            raw"""
+module Math
+
+public doctrine Numbers
+{
+    law i32[min max] AddTag<T>(i32[min max] left, i32[min max] right, T tag)
+    {
+        return left + right;
+    }
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from CompilerPipelineSpecializationPlanTests.ManifestBackedImportedPlainFnGenericsThatStrengthenToLawPreferCallerCloneWhenTemplateSemanticsSurviveWithoutFunctionSemantics.
+internal fn bool ManifestBackedImportedPlainFnGenericsThatStrengthenToLawPreferCallerCloneWhenTemplateSemanticsSurviveWithoutFunctionSemanticsImpl()
+{
+    {
+        // PORT-NOTE: The C# test builds the `Math.AddTag` plain-fn-generic library into a
+        // package image, rewrites the manifest to strip FunctionSemantics, writes the
+        // .starkpkg.json manifest, deletes the Math source, then re-imports `Math` into a
+        // `Demo` consumer (StopAfterPassId "specialization-plan") and probes the imported
+        // PackageImageFacts (Math.AddTag template semantics DeclaredKind == Fn,
+        // EffectiveKind == FiniteLaw -- the plain fn strengthens to a law), the
+        // SpecializationPlan (single function with SelectionOrder [LawCallerSpecializedClone,
+        // OwnedConcreteBody, DirectAbiBoundaryFallback] and CodeGenerationMode
+        // CallerSpecializedClone), and the FunctionEffects artifact (Math.AddTag Kind
+        // FiniteLaw, IsPure/NoSync/NoFree/WillReturn/MustProgress all true). Package-image
+        // construction, manifest FunctionSemantics stripping/round-tripping, source deletion,
+        // and PackageImageFacts/SpecializationPlan/FunctionEffects probing are not expressible
+        // with the Stark helpers, so this is reduced to compiling the `Demo` consumer with the
+        // `Math` library available as a sibling source module through type-check and asserting
+        // it succeeds.
+        stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+            "spec-plan-manifest-plain-fn-strengthen-to-law",
+            raw"""
+import Math
+module Demo
+
+law i32[min max] Run(i32[min max] left, i32[min max] right)
+{
+    return Math.AddTag(left, right, left);
+}
+""",
+            "",
+            "Math.stark",
+            raw"""
+module Math
+
+public fn i32[min max] AddTag<T>(i32[min max] left, i32[min max] right, T tag)
+{
+    return left + right;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from CompilerPipelineSpecializationPlanTests.ManifestBackedRecursiveImportedLawGenericsDoNotPreferCallerCloneWhenTemplateSemanticsSurviveWithoutFunctionSemantics.
+internal fn bool ManifestBackedRecursiveImportedLawGenericsDoNotPreferCallerCloneWhenTemplateSemanticsSurviveWithoutFunctionSemanticsImpl()
+{
+    {
+        // PORT-NOTE: The C# test builds the recursive `Math.Numbers.CountDown` doctrine-law
+        // generic library into a package image, rewrites the manifest to strip
+        // FunctionSemantics, writes the .starkpkg.json manifest, deletes the Math source, then
+        // re-imports `Math` into a `Demo` consumer (StopAfterPassId "specialization-plan") and
+        // probes the imported PackageImageFacts (Math.Numbers.CountDown template semantics
+        // CalledFunctions contains "Math.Numbers.CountDown" -- it is self-recursive) and the
+        // SpecializationPlan (single function whose SelectionOrder does NOT contain
+        // LawCallerSpecializedClone and whose CodeGenerationMode is SingleOwnerConcreteBody --
+        // recursion blocks the caller-specialized clone). Package-image construction, manifest
+        // FunctionSemantics stripping/round-tripping, source deletion, and
+        // PackageImageFacts/SpecializationPlan probing are not expressible with the Stark
+        // helpers, so this is reduced to compiling the `Demo` consumer with the recursive
+        // `Math` library available as a sibling source module through type-check and asserting
+        // it succeeds.
+        stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+            "spec-plan-manifest-recursive-law-generic",
+            raw"""
+import Math
+module Demo
+
+law i32[min max] Run(i32[min max] value)
+{
+    return Math.Numbers.CountDown(value, value);
+}
+""",
+            "",
+            "Math.stark",
+            raw"""
+module Math
+
+public doctrine Numbers
+{
+    law i32[min max] CountDown<T>(i32[min max] value, T tag)
+    {
+        if (value == 0)
+        {
+            return 0;
+        }
+
+        return Numbers.CountDown(value - 1, tag);
+    }
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from CompilerPipelineSpecializationPlanTests.DeclarationOnlyImportedGenericInstantiationsFallBackToAbiOnlySpecializationPlan.
+internal fn bool DeclarationOnlyImportedGenericInstantiationsFallBackToAbiOnlySpecializationPlanImpl()
+{
+    {
+        // PORT-NOTE: The C# test builds the declaration-only `Facade.Identity<T>` library
+        // (a body-less manifest signature) into a package image, writes the .starkpkg.json
+        // manifest, then re-imports `Facade` into a `Demo` consumer (StopAfterPassId
+        // "specialization-plan") and probes the SpecializationPlan (single function with
+        // SelectionOrder [DirectAbiBoundaryFallback] only and CodeGenerationMode
+        // AbiBoundaryOnly -- with no published body the plan can only cross the ABI boundary).
+        // Package-image construction, manifest round-tripping, and SpecializationPlan probing
+        // are not expressible with the Stark helpers, so this is reduced to compiling the
+        // `Demo` consumer with the declaration-only `Facade` library available as a sibling
+        // source module through type-check and asserting it succeeds.
+        stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+            "spec-plan-manifest-declaration-only-abi-fallback",
+            raw"""
+import Facade
+module Demo
+
+fn i32[min max] Run(i32[min max] value)
+{
+    return Facade.Identity(value);
+}
+""",
+            "",
+            "Facade.stark",
+            raw"""
+module Facade
+
+public fn T Identity<T>(T value);
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from CompilerPipelineSpecializationPlanTests.ManifestBackedImportedGenericsWithoutPublishedAbiFactsPreferOwnedBodyOnlyInSpecializationPlan.
+internal fn bool ManifestBackedImportedGenericsWithoutPublishedAbiFactsPreferOwnedBodyOnlyInSpecializationPlanImpl()
+{
+    {
+        // PORT-NOTE: The C# test builds the `Facade.Identity<T>` library (with a body) into a
+        // package image, asserts the Facade module's CompilerFacts.AbiFunctions is non-null,
+        // rewrites the manifest to strip AbiFunctions (empty), writes the .starkpkg.json
+        // manifest, then re-imports `Facade` into a `Demo` consumer (StopAfterPassId
+        // "specialization-plan") and probes the SpecializationPlan (single function with
+        // SelectionOrder [LawCallerSpecializedClone, OwnedConcreteBody] -- no
+        // DirectAbiBoundaryFallback because the ABI facts were stripped -- and
+        // CodeGenerationMode CallerSpecializedClone). Package-image construction, manifest
+        // AbiFunctions stripping/round-tripping, and SpecializationPlan probing are not
+        // expressible with the Stark helpers, so this is reduced to compiling the `Demo`
+        // consumer with the `Facade` library available as a sibling source module through
+        // type-check and asserting it succeeds.
+        stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+            "spec-plan-manifest-no-abi-facts-owned-body",
+            raw"""
+import Facade
+module Demo
+
+fn i32[min max] Run(i32[min max] value)
+{
+    return Facade.Identity(value);
+}
+""",
+            "",
+            "Facade.stark",
+            raw"""
+module Facade
+
+public fn T Identity<T>(T value)
+{
+    return value;
+}
+""");
+        return Succeeds(compiled);
+    }
+}

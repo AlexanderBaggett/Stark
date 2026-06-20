@@ -175,7 +175,7 @@ public sealed class LargeOwnedAggregateRuntimeTests
             using var stdout = new StringWriter();
             using var stderr = new StringWriter();
             var compileExitCode = await CompilerCli.RunAsync(
-                [appPath, "--emit-exe", "-O3", "--native-source", witnessPath, "-o", outputPath, "--target", targetInfo.Triple],
+                [appPath, "--emit-exe", "--native-source", witnessPath, "-o", outputPath, "--target", targetInfo.Triple],
                 TextReader.Null,
                 stdout,
                 stderr);
@@ -278,7 +278,7 @@ public sealed class LargeOwnedAggregateRuntimeTests
             using var stdout = new StringWriter();
             using var stderr = new StringWriter();
             var compileExitCode = await CompilerCli.RunAsync(
-                [appPath, "--emit-exe", "-O3", "-o", outputPath, "--target", targetInfo.Triple],
+                [appPath, "--emit-exe", "-o", outputPath, "--target", targetInfo.Triple],
                 TextReader.Null,
                 stdout,
                 stderr);

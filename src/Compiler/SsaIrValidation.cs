@@ -222,8 +222,112 @@ internal sealed class SsaIrValidator
             if (TryResolveSystemRuntimeBuiltin(function, out var runtimeBuiltin))
             {
                 ValidateSystemRuntimeBuiltinContract(function, runtimeBuiltin);
+                continue;
+            }
+
+            if (TryResolveSystemThreadingAtomicBuiltin(function, out var atomicBuiltin))
+            {
+                ValidateSystemThreadingAtomicBuiltinContract(function, atomicBuiltin);
             }
         }
+    }
+
+    private bool TryResolveSystemThreadingAtomicBuiltin(
+        TypedFunctionSignature function,
+        out SystemThreadingAtomicBuiltin builtin)
+    {
+        return SystemThreadingAtomicFacts.TryGetAtomicBuiltin(CurrentModuleName, function.DisplaySourceName, out builtin)
+            || SystemThreadingAtomicFacts.TryGetAtomicBuiltin(moduleName: string.Empty, function.Name, out builtin);
+    }
+
+    /// <summary>
+    /// Validates one System.Threading atomic builtin declaration against the contract the
+    /// LLVM lowering relies on (doc 12 §5): operation arity, a borrowed atomic-struct
+    /// receiver (mutable for mutating operations), value-typed operands, the right return
+    /// type, and the value stored as the struct's single storage field at offset 0.
+    /// </summary>
+    private void ValidateSystemThreadingAtomicBuiltinContract(
+        TypedFunctionSignature function,
+        SystemThreadingAtomicBuiltin builtin)
+    {
+        var expectedParameterCount = builtin.Operation switch
+        {
+            SystemThreadingAtomicOperation.Load => 1,
+            SystemThreadingAtomicOperation.CompareExchange => 3,
+            _ => 2
+        };
+
+        if (function.Parameters.Count != expectedParameterCount)
+        {
+            ReportBuiltin(function, $"System.Threading atomic builtin '{function.Name}' expects exactly {expectedParameterCount} parameter(s) including the receiver.");
+            return;
+        }
+
+        var receiverType = function.Parameters[0].Type;
+        if (receiverType.Kind != StarkTypeKind.Named
+            || receiverType.BorrowKind != StarkBorrowKind.Borrow
+            || !IsSystemThreadingAtomicReceiverTypeName(receiverType.NamedType, builtin.AtomicTypeName))
+        {
+            ReportBuiltin(function, $"System.Threading atomic builtin '{function.Name}' must take 'borrow {builtin.AtomicTypeName} self' as its first parameter.");
+            return;
+        }
+
+        if (builtin.Operation != SystemThreadingAtomicOperation.Load && !receiverType.IsMutableView)
+        {
+            ReportBuiltin(function, $"System.Threading atomic builtin '{function.Name}' mutates the value and must take 'mut borrow {builtin.AtomicTypeName} self'.");
+            return;
+        }
+
+        if (ResolveNamedTypeSymbol(receiverType) is { } atomicStructType
+            && !SystemThreadingAtomicFacts.HasValidAtomicFieldLayout(atomicStructType, builtin))
+        {
+            ReportBuiltin(function, SystemThreadingAtomicFacts.DescribeRequiredAtomicFieldLayout(builtin));
+            return;
+        }
+
+        foreach (var parameter in function.Parameters.Skip(1))
+        {
+            if (!IsSystemThreadingAtomicValueType(parameter.Type, builtin))
+            {
+                ReportBuiltin(function, $"System.Threading atomic builtin '{function.Name}' parameter '{parameter.Name}' must match the atomic value type.");
+                return;
+            }
+        }
+
+        var returnTypeIsValid = builtin.Operation switch
+        {
+            SystemThreadingAtomicOperation.Store => function.ReturnType.Kind == StarkTypeKind.Void,
+            SystemThreadingAtomicOperation.CompareExchange => function.ReturnType.Kind == StarkTypeKind.Bool,
+            _ => IsSystemThreadingAtomicValueType(function.ReturnType, builtin)
+        };
+
+        if (!returnTypeIsValid)
+        {
+            ReportBuiltin(function, $"System.Threading atomic builtin '{function.Name}' has the wrong return type for operation '{builtin.Operation}'.");
+        }
+    }
+
+    private static bool IsSystemThreadingAtomicReceiverTypeName(string? namedType, string atomicTypeName)
+    {
+        if (namedType is null)
+        {
+            return false;
+        }
+
+        return string.Equals(namedType, atomicTypeName, StringComparison.Ordinal)
+            || string.Equals(namedType, SystemThreadingAtomicFacts.ModuleName + "." + atomicTypeName, StringComparison.Ordinal);
+    }
+
+    private static bool IsSystemThreadingAtomicValueType(StarkTypeSymbol type, SystemThreadingAtomicBuiltin builtin)
+    {
+        if (builtin.IsBool)
+        {
+            return type.Kind == StarkTypeKind.Bool;
+        }
+
+        return type.Kind == StarkTypeKind.Integer
+            && type.BitWidth == builtin.ValueBitWidth
+            && type.IsUnsigned == builtin.IsUnsigned;
     }
 
     private IReadOnlyDictionary<string, TypedFunctionSignature> BuildAllFunctionSignatures()
@@ -257,11 +361,26 @@ internal sealed class SsaIrValidator
                 functions[strategy.SymbolName] = FunctionOverloadFacts.InstantiateSignature(
                     templateSignature,
                     strategy.TypeArguments,
-                    strategy.SymbolName);
+                    strategy.SymbolName,
+                    ResolveAssociatedTypeForValidation,
+                    strategy.ComptimeValueArguments);
             }
         }
 
         return functions;
+    }
+
+    private StarkTypeSymbol? ResolveAssociatedTypeForValidation(
+        StarkTypeSymbol ownerType,
+        string associatedTypeName)
+    {
+        return AssociatedTypeFacts.TryResolveAssociatedType(
+            ownerType,
+            associatedTypeName,
+            _namedTypes,
+            out var targetType)
+                ? targetType
+                : null;
     }
 
     private bool IsOpenGenericBuiltinSignature(TypedFunctionSignature function)
@@ -641,7 +760,11 @@ internal sealed class SsaIrValidator
             }
         }
 
-        if (keyType.Kind is not (StarkTypeKind.Bool or StarkTypeKind.Integer))
+        if (!SystemCollectionsDictionaryKeyFacts.TryResolveContract(
+                keyType,
+                _typeModel?.Overloads ?? new Dictionary<string, IReadOnlyList<TypedFunctionSignature>>(StringComparer.Ordinal),
+                out _,
+                out _))
         {
             ReportBuiltin(function, $"System.Collections DictionaryKey builtin '{function.Name}' does not support key type '{keyType.DisplayName}'.");
             return;
@@ -1017,9 +1140,11 @@ internal sealed class SsaIrValidator
         switch (instruction)
         {
             case SsaValueInstruction valueInstruction:
+                ValidateScopedNoAliasGroups(function, valueInstruction.ScopedNoAliasGroups, valueInstruction.Location);
                 ValidateRValue(function, valueInstruction.Value, valueDefinitions, localDefinitions, currentAbi, valueInstruction.Location);
                 break;
             case SsaCallInstruction call:
+                ValidateScopedNoAliasGroups(function, call.ScopedNoAliasGroups, call.Location);
                 foreach (var argument in call.Arguments)
                 {
                     ValidateValue(function, argument, valueDefinitions, call.Location);
@@ -1029,6 +1154,7 @@ internal sealed class SsaIrValidator
                 ValidateDirectCall(function, call, localDefinitions, currentAbi, call.Location);
                 break;
             case SsaIndirectCallInstruction indirectCall:
+                ValidateScopedNoAliasGroups(function, indirectCall.ScopedNoAliasGroups, indirectCall.Location);
                 ValidateValue(function, indirectCall.Target, valueDefinitions, indirectCall.Location);
                 foreach (var argument in indirectCall.Arguments)
                 {
@@ -1064,6 +1190,7 @@ internal sealed class SsaIrValidator
                 ValidateValue(function, storeLocal.Value, valueDefinitions, storeLocal.Location);
                 break;
             case SsaStoreIndirectInstruction storeIndirect:
+                ValidateScopedNoAliasGroups(function, storeIndirect.ScopedNoAliasGroups, storeIndirect.Location);
                 ValidateValue(function, storeIndirect.Address, valueDefinitions, storeIndirect.Location);
                 ValidateValue(function, storeIndirect.Value, valueDefinitions, storeIndirect.Location);
                 ValidateRawPointerValue(function, storeIndirect.Address, "indirect store address", storeIndirect.Location);
@@ -1071,6 +1198,7 @@ internal sealed class SsaIrValidator
                 ValidateValueShape(function, storeIndirect.ValueType, storeIndirect.Value.Type, "indirect store value", storeIndirect.Location);
                 break;
             case SsaCopyMemoryInstruction copyMemory:
+                ValidateScopedNoAliasGroups(function, copyMemory.ScopedNoAliasGroups, copyMemory.Location);
                 ValidateValue(function, copyMemory.DestinationAddress, valueDefinitions, copyMemory.Location);
                 ValidateValue(function, copyMemory.SourceAddress, valueDefinitions, copyMemory.Location);
                 ValidateRawPointerValue(function, copyMemory.DestinationAddress, "copy destination address", copyMemory.Location);
@@ -1087,6 +1215,163 @@ internal sealed class SsaIrValidator
                 Report(function, null, $"unsupported SSA instruction type '{instruction.GetType().Name}' reached validation.");
                 break;
         }
+    }
+
+    private void ValidateScopedNoAliasGroups(
+        SsaFunction function,
+        IReadOnlyList<ScopedNoAliasGroup>? groups,
+        SourceLocation? fallbackLocation)
+    {
+        if (groups is not { Count: > 0 })
+        {
+            return;
+        }
+
+        var seenScopeIds = new HashSet<string>(StringComparer.Ordinal);
+        var parameterNames = function.Parameters
+            .Select(static parameter => parameter.Name)
+            .ToHashSet(StringComparer.Ordinal);
+        foreach (var group in groups)
+        {
+            var proof = group.ProofCarrier;
+            var location = proof?.Location ?? fallbackLocation;
+            if (string.IsNullOrWhiteSpace(group.ScopeId))
+            {
+                Report(function, location, "scoped noalias group is missing a scope id.");
+            }
+            else if (!seenScopeIds.Add(group.ScopeId))
+            {
+                Report(function, location, $"scoped noalias group '{group.ScopeId}' is attached more than once to the same SSA instruction.");
+            }
+
+            ValidateAliasProofRoots(function, parameterNames, group.ScopeId, group.RootKeys, location, "scoped noalias group");
+
+            if (proof is null)
+            {
+                Report(function, fallbackLocation, $"scoped noalias group '{group.ScopeId}' is missing its alias proof carrier.");
+                continue;
+            }
+
+            if (!Enum.IsDefined(typeof(AliasProofCarrierKind), proof.Kind))
+            {
+                Report(function, location, $"alias proof carrier '{proof.ProofId}' has unknown proof kind '{(int)proof.Kind}'.");
+            }
+
+            if (string.IsNullOrWhiteSpace(proof.ProofId))
+            {
+                Report(function, location, "alias proof carrier is missing a proof id.");
+            }
+            else if (!string.Equals(proof.ProofId, group.ScopeId, StringComparison.Ordinal))
+            {
+                Report(function, location, $"alias proof carrier '{proof.ProofId}' does not match scoped noalias group '{group.ScopeId}'.");
+            }
+
+            ValidateAliasProofRoots(function, parameterNames, proof.ProofId, proof.RootKeys, location, "alias proof carrier");
+
+            if (!RootSetsEqual(group.RootKeys, proof.RootKeys))
+            {
+                Report(function, location, $"alias proof carrier '{proof.ProofId}' roots do not match scoped noalias group '{group.ScopeId}' roots.");
+            }
+        }
+    }
+
+    private void ValidateAliasProofRoots(
+        SsaFunction function,
+        ISet<string> parameterNames,
+        string proofId,
+        IReadOnlyList<string> rootKeys,
+        SourceLocation? location,
+        string usage)
+    {
+        var roots = rootKeys
+            .Where(static rootKey => !string.IsNullOrWhiteSpace(rootKey))
+            .ToArray();
+        var distinctRoots = roots
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+
+        if (roots.Length < 2)
+        {
+            Report(function, location, $"{usage} '{proofId}' must name at least two memory roots.");
+        }
+
+        if (roots.Length != rootKeys.Count || distinctRoots.Length != roots.Length)
+        {
+            Report(function, location, $"{usage} '{proofId}' contains blank or duplicate memory roots.");
+        }
+
+        foreach (var root in distinctRoots)
+        {
+            if (!IsValidAliasProofRootKey(root))
+            {
+                Report(function, location, $"{usage} '{proofId}' uses invalid memory-root key '{root}'.");
+                continue;
+            }
+
+            if (!TryGetAliasProofParameterName(root, out var parameterName)
+                || !parameterNames.Contains(parameterName))
+            {
+                Report(function, location, $"{usage} '{proofId}' uses unknown parameter memory-root key '{root}'.");
+            }
+        }
+    }
+
+    private static bool RootSetsEqual(IReadOnlyList<string> left, IReadOnlyList<string> right)
+    {
+        var leftRoots = CanonicalAliasProofRoots(left);
+        var rightRoots = CanonicalAliasProofRoots(right);
+        return leftRoots.SequenceEqual(rightRoots, StringComparer.Ordinal);
+    }
+
+    private static string[] CanonicalAliasProofRoots(IReadOnlyList<string> rootKeys)
+    {
+        return rootKeys
+            .Where(static rootKey => !string.IsNullOrWhiteSpace(rootKey))
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(static rootKey => rootKey, StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    private static bool IsValidAliasProofRootKey(string rootKey)
+    {
+        if (!rootKey.StartsWith("param:", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var suffixStart = rootKey.IndexOf('[', StringComparison.Ordinal);
+        if (suffixStart < 0)
+        {
+            return rootKey.Length > "param:".Length;
+        }
+
+        return suffixStart > "param:".Length
+            && rootKey.EndsWith(']')
+            && rootKey.Length > suffixStart + 2;
+    }
+
+    private static bool TryGetAliasProofParameterName(string rootKey, out string parameterName)
+    {
+        parameterName = string.Empty;
+        if (!rootKey.StartsWith("param:", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var nameStart = "param:".Length;
+        var nameEnd = rootKey.IndexOf('[', StringComparison.Ordinal);
+        if (nameEnd < 0)
+        {
+            nameEnd = rootKey.Length;
+        }
+
+        if (nameEnd <= nameStart)
+        {
+            return false;
+        }
+
+        parameterName = rootKey[nameStart..nameEnd];
+        return true;
     }
 
     private void ValidateRValue(
@@ -1369,6 +1654,20 @@ internal sealed class SsaIrValidator
             case SsaLoadLocalRValue loadLocal:
                 ValidateLocalExists(function, loadLocal.LocalName, localDefinitions, location);
                 break;
+            case SsaDynVTableSlotRValue vtableSlot:
+                ValidateValue(function, vtableSlot.VtablePointer, valueDefinitions, location);
+                ValidateRawPointerValue(function, vtableSlot.VtablePointer, "dyn vtable slot base", location);
+                if (vtableSlot.SlotIndex < 0)
+                {
+                    Report(function, location, $"dyn vtable slot index '{vtableSlot.SlotIndex}' must be non-negative.");
+                }
+
+                if (vtableSlot.Type.Kind != StarkTypeKind.FunctionPointer)
+                {
+                    Report(function, location, $"dyn vtable slot result must be a function pointer, but found '{vtableSlot.Type.DisplayName}'.");
+                }
+
+                break;
             default:
                 Report(function, location, $"unsupported SSA rvalue type '{value.GetType().Name}' reached validation.");
                 break;
@@ -1491,6 +1790,7 @@ internal sealed class SsaIrValidator
                 or StarkTypeKind.Ascii
                 or StarkTypeKind.Unicode,
             IndexedElementOperationFamily.ClosureComponent => normalizedType.Kind == StarkTypeKind.Closure,
+            IndexedElementOperationFamily.DynTraitComponent => normalizedType.Kind == StarkTypeKind.DynTrait,
             _ => false
         };
 
@@ -1535,9 +1835,37 @@ internal sealed class SsaIrValidator
             StarkTypeKind.FixedArray => TryGetFixedArrayElementType(function, aggregateType, index, usage, location, out elementType),
             StarkTypeKind.Dynamic => TryGetDynamicStorageElementType(function, aggregateType, index, fieldName: null, usage: usage, location: location, out elementType),
             StarkTypeKind.Closure => TryGetClosureElementType(function, aggregateType, index, usage, location, out elementType),
+            StarkTypeKind.DynTrait => TryGetDynTraitElementType(function, aggregateType, index, usage, location, out elementType),
             StarkTypeKind.Named => TryGetNamedAggregateElementType(function, aggregateType, index, fieldName: null, usage: usage, location: location, out elementType),
             _ => ReportInvalidAggregateElementAccess(function, aggregateType, usage, "aggregate or view", location)
         };
+    }
+
+    // The fat-pointer components of a `dyn Trait` value: slot 0 is the erased data
+    // pointer (rawmutptr<i8>), slot 1 is the read-only typed vtable pointer
+    // (rawptr<Trait.Vtable>).
+    private bool TryGetDynTraitElementType(
+        SsaFunction function,
+        StarkTypeSymbol aggregateType,
+        int index,
+        string usage,
+        SourceLocation? location,
+        out StarkTypeSymbol elementType)
+    {
+        elementType = index switch
+        {
+            0 => StarkTypeSymbols.RawPointer(StarkTypeSymbols.Integer(8), isMutable: true),
+            1 => StarkTypeSymbols.DynTraitVtablePointerForTraitObject(aggregateType),
+            _ => StarkTypeSymbols.Error
+        };
+
+        if (index is 0 or 1)
+        {
+            return true;
+        }
+
+        Report(function, location, $"{usage} index {index} is out of range for trait object '{aggregateType.DisplayName}'.");
+        return false;
     }
 
     private bool TryGetClosureElementType(
@@ -2455,6 +2783,20 @@ internal sealed class SsaIrValidator
             && !valueDefinitions.Contains(reference.Name))
         {
             Report(function, location, $"value reference '%{reference.Name}' is not defined in this SSA function.");
+            if (Environment.GetEnvironmentVariable("STARK_DEBUG_SSA_VALIDATE") == "1")
+            {
+                Console.Error.WriteLine($"[ssa-validate-debug] function '{function.Name}' missing '%{reference.Name}'; blocks:");
+                foreach (var debugBlock in function.Blocks)
+                {
+                    var names = debugBlock.Phis.Select(static phi => phi.ResultName)
+                        .Concat(debugBlock.Instructions.OfType<SsaValueInstruction>().Select(static instruction => instruction.ResultName));
+                    Console.Error.WriteLine($"  block {debugBlock.Id} '{debugBlock.Label}': defs [{string.Join(", ", names)}] terminator {debugBlock.Terminator.Kind} -> [{string.Join(", ", debugBlock.Terminator.Targets)}]");
+                    foreach (var debugPhi in debugBlock.Phis)
+                    {
+                        Console.Error.WriteLine($"    phi {debugPhi.ResultName}: {string.Join(", ", debugPhi.Incomings.Select(static incoming => $"[{(incoming.Value is SsaValueReference r ? "%" + r.Name : incoming.Value.GetType().Name)} from {incoming.PredecessorBlockId}]"))}");
+                    }
+                }
+            }
         }
 
         switch (value)
@@ -2546,6 +2888,13 @@ internal sealed class SsaIrValidator
         SsaGlobalAddressValue globalAddress,
         SourceLocation? location)
     {
+        // Synthesized trait-object vtables are emitted by the module surface emitter,
+        // not the user/global type model, so they are not in the known-global set.
+        if (DynTraitFacts.IsVtableGlobalName(globalAddress.GlobalName))
+        {
+            return;
+        }
+
         if (!TryGetKnownGlobal(function, globalAddress.GlobalName, "global address", location, out var global))
         {
             return;
@@ -2759,7 +3108,6 @@ internal sealed class SsaIrValidator
         SourceLocation? location)
     {
         var aggregateType = NormalizeType(elementAddress.AggregateType);
-        var expectedElementType = aggregateType;
         if (aggregateType.Kind == StarkTypeKind.FixedArray)
         {
             if (aggregateType.ElementType is not { } fixedArrayElementType)
@@ -2768,10 +3116,24 @@ internal sealed class SsaIrValidator
                 return;
             }
 
-            expectedElementType = fixedArrayElementType;
+            // A fixed-array aggregate type reaches element addressing two ways:
+            // indexing into a fixed array (result pointee is the array element)
+            // and addressing an element of dynamic or raw storage whose element
+            // type is itself a fixed array (result pointee is the whole array).
+            // Accept either pointee shape.
+            if (elementAddress.Type.Kind == StarkTypeKind.RawPointer
+                && elementAddress.Type.ElementType is { } pointeeType
+                && (HaveSameLlvmValueShape(fixedArrayElementType, pointeeType)
+                    || HaveSameLlvmValueShape(aggregateType, pointeeType)))
+            {
+                return;
+            }
+
+            ValidatePointerElementShape(function, elementAddress.Type, fixedArrayElementType, "element address result", location);
+            return;
         }
 
-        ValidatePointerElementShape(function, elementAddress.Type, expectedElementType, "element address result", location);
+        ValidatePointerElementShape(function, elementAddress.Type, aggregateType, "element address result", location);
     }
 
     private void ValidateRawPointerValue(
@@ -3119,6 +3481,11 @@ internal sealed class SsaIrValidator
 
     private void ValidateConversion(SsaFunction function, SsaConvertRValue convert, SourceLocation? location)
     {
+        if (IsPointerBackedBorrowRuntimePointerConversion(convert.Operand.Type, convert.TargetType))
+        {
+            return;
+        }
+
         var sourceType = NormalizeType(convert.Operand.Type);
         var targetType = NormalizeType(convert.TargetType);
         if (HaveSameLlvmValueShape(sourceType, targetType))
@@ -3156,6 +3523,27 @@ internal sealed class SsaIrValidator
                 Report(function, location, $"conversion from '{convert.Operand.Type.DisplayName}' to '{convert.TargetType.DisplayName}' is not supported by SSA LLVM emission.");
                 return;
         }
+    }
+
+    private static bool IsPointerBackedBorrowRuntimePointerConversion(
+        StarkTypeSymbol sourceType,
+        StarkTypeSymbol targetType)
+    {
+        if (StarkTypeSymbols.IsPointerBackedBorrowType(sourceType)
+            && targetType.Kind == StarkTypeKind.RawPointer
+            && targetType.ElementType is { } targetElementType)
+        {
+            return HaveSameLlvmValueShape(StarkTypeSymbols.BorrowReturnValueType(sourceType), targetElementType);
+        }
+
+        if (sourceType.Kind == StarkTypeKind.RawPointer
+            && sourceType.ElementType is { } sourceElementType
+            && StarkTypeSymbols.IsPointerBackedBorrowType(targetType))
+        {
+            return HaveSameLlvmValueShape(sourceElementType, StarkTypeSymbols.BorrowReturnValueType(targetType));
+        }
+
+        return false;
     }
 
     private void ValidateConcreteIntegerType(
@@ -3267,8 +3655,13 @@ internal sealed class SsaIrValidator
             return true;
         }
 
-        return normalized.ClosureParameterTypes is { Count: > 0 }
-            && normalized.ClosureParameterTypes.Any(ContainsUnboundGenericPlaceholder);
+        if (normalized.ClosureParameterTypes is { Count: > 0 }
+            && normalized.ClosureParameterTypes.Any(ContainsUnboundGenericPlaceholder))
+        {
+            return true;
+        }
+
+        return normalized.Kind == StarkTypeKind.AssociatedType;
     }
 
     private string CurrentModuleName => _typeModel?.ModuleName ?? _ssa.ModuleName;

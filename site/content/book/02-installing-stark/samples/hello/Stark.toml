@@ -6,6 +6,3 @@ kind = "executable"
 [executable]
 root = "../hello.stark"
 output = "hello"
-
-[dependencies]
-stdlib = { path = "../../stdlib" }

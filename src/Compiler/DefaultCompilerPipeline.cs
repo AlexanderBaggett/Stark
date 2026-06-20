@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Numerics;
 using Stark.Compiler.LlvmIrEmission;
 using Stark.Parsing;
 
@@ -100,6 +101,48 @@ public static class DefaultCompilerPipeline
         }
 
         return emittedAny;
+    }
+
+    private static TypedFunctionSignature InstantiateSignatureForInstantiation(
+        TypedFunctionSignature template,
+        IReadOnlyList<StarkTypeSymbol> typeArguments,
+        string materializedName,
+        TypeCheckModel typeModel,
+        IReadOnlyList<ComptimeValueArgumentSymbol>? valueArguments = null)
+    {
+        return FunctionOverloadFacts.InstantiateSignature(
+            template,
+            typeArguments,
+            materializedName,
+            (ownerType, associatedTypeName) => ResolveAssociatedTypeForSubstitution(ownerType, associatedTypeName, typeModel),
+            valueArguments);
+    }
+
+    private static StarkTypeSymbol SubstituteTypeForInstantiation(
+        StarkTypeSymbol type,
+        IReadOnlyDictionary<string, StarkTypeSymbol> substitution,
+        TypeCheckModel typeModel,
+        IReadOnlyDictionary<string, BigInteger>? valueSubstitution = null)
+    {
+        return FunctionOverloadFacts.SubstituteType(
+            type,
+            substitution,
+            (ownerType, associatedTypeName) => ResolveAssociatedTypeForSubstitution(ownerType, associatedTypeName, typeModel),
+            valueSubstitution);
+    }
+
+    private static StarkTypeSymbol? ResolveAssociatedTypeForSubstitution(
+        StarkTypeSymbol ownerType,
+        string associatedTypeName,
+        TypeCheckModel typeModel)
+    {
+        return AssociatedTypeFacts.TryResolveAssociatedType(
+            ownerType,
+            associatedTypeName,
+            typeModel.NamedTypes,
+            out var targetType)
+                ? targetType
+                : null;
     }
 
     private sealed class ParsePass : ICompilerPass
@@ -322,6 +365,26 @@ public static class DefaultCompilerPipeline
                                 pendingImports.Enqueue((resolved.ModuleName, nestedImport));
                             }
                         }
+                        else if (context.Options.SharedSourceModuleParseCache is { } sharedParseCache
+                                 && resolved.ManifestPath is null
+                                 && sharedParseCache.TryGet(resolved.ModuleName, resolved.FilePath, out var sharedParse))
+                        {
+                            sourceModuleParseCache[resolved.ModuleName] = sharedParse;
+
+                            if (!string.Equals(sharedParse.SyntaxModel.ModuleName, resolved.ModuleName, StringComparison.Ordinal))
+                            {
+                                context.Diagnostics.Error(
+                                    "STK2002",
+                                    $"Resolved module '{resolved.ModuleName}' declares itself as '{sharedParse.SyntaxModel.ModuleName}'.",
+                                    Id,
+                                    new SourceLocation(sharedParse.Reference.FilePath ?? resolved.FilePath, 1, 1));
+                            }
+
+                            foreach (var nestedImport in sharedParse.SyntaxModel.Imports)
+                            {
+                                pendingImports.Enqueue((resolved.ModuleName, nestedImport));
+                            }
+                        }
                         else if (resolver is IModuleSourceResolver sourceResolver
                                  && sourceResolver.TryLoadModuleSource(resolved, out var sourceText, out var filePath))
                         {
@@ -352,10 +415,21 @@ public static class DefaultCompilerPipeline
                             }
 
                             var importedSyntax = buildResult.Model;
-                            sourceModuleParseCache[resolved.ModuleName] = new SourceModuleParse(
+                            var sourceModuleParse = new SourceModuleParse(
                                 cachedReference,
                                 parseResult,
                                 importedSyntax);
+                            sourceModuleParseCache[resolved.ModuleName] = sourceModuleParse;
+
+                            // Only diagnostic-free plain source parses may be reused by later
+                            // pipeline runs; anything else must re-parse so diagnostics repeat.
+                            if (context.Options.SharedSourceModuleParseCache is { } populateSharedCache
+                                && resolved.ManifestPath is null
+                                && parseResult.Diagnostics.Count == 0
+                                && buildResult.Diagnostics.Count == 0)
+                            {
+                                populateSharedCache.Add(sourceModuleParse);
+                            }
 
                             if (!string.Equals(importedSyntax.ModuleName, resolved.ModuleName, StringComparison.Ordinal))
                             {
@@ -450,7 +524,8 @@ public static class DefaultCompilerPipeline
                 [syntaxModel.ModuleName] = new LoadedModuleDocument(
                     new ResolvedModuleReference(syntaxModel.ModuleName, context.Input.FilePath, IsExternal: false, IsRoot: true),
                     parseResult,
-                    syntaxModel)
+                    syntaxModel,
+                    TargetInfo: context.Options.TargetInfo)
             };
 
             if (resolver is not null)
@@ -521,7 +596,8 @@ public static class DefaultCompilerPipeline
             modules[reference.ModuleName] = new LoadedModuleDocument(
                 reference,
                 cachedParse.ParseResult,
-                cachedParse.SyntaxModel);
+                cachedParse.SyntaxModel,
+                TargetInfo: context.Options.TargetInfo);
         }
 
         private void AddParsedSourceModule(
@@ -545,7 +621,8 @@ public static class DefaultCompilerPipeline
             modules[reference.ModuleName] = new LoadedModuleDocument(
                 reference,
                 importedParse,
-                importedBuildResult.Model);
+                importedBuildResult.Model,
+                TargetInfo: context.Options.TargetInfo);
         }
 
         private void AddParseDiagnostics(
@@ -636,6 +713,7 @@ public static class DefaultCompilerPipeline
                     UseFastCallingConvention: false,
                     IsFfi: true,
                     IsVarargs: false,
+                    FfiAbi: null,
                     IsHot: false,
                     IsCold: false,
                     InlinePreference: InlinePreference.InlineHint,
@@ -663,6 +741,7 @@ public static class DefaultCompilerPipeline
                 UseFastCallingConvention: !function.Modifiers.IsFfi && visibility != StarkVisibility.Export,
                 IsFfi: function.Modifiers.IsFfi,
                 IsVarargs: function.Modifiers.IsVarargs,
+                FfiAbi: function.Modifiers.FfiAbi,
                 IsHot: function.Modifiers.IsHot,
                 IsCold: function.Modifiers.IsCold,
                 InlinePreference: inlinePreference,
@@ -719,7 +798,8 @@ public static class DefaultCompilerPipeline
             var typeModel = context.Artifacts.GetRequired(CompilerArtifactKeys.TypeCheckModel);
             var ownership = BuildInstantiationOwnershipModel(loadedModules, typeModel);
 
-            ValidateDictionaryKeyConstraints(context, ownership.Types);
+            ValidateDictionaryKeyConstraints(context, ownership.Types, typeModel);
+            ValidateGenericConstraints(context, ownership.Functions, typeModel);
 
             context.Artifacts.Set(
                 CompilerArtifactKeys.InstantiationOwnership,
@@ -728,32 +808,120 @@ public static class DefaultCompilerPipeline
 
         private static void ValidateDictionaryKeyConstraints(
             CompilerPassContext context,
-            IEnumerable<TypeInstantiationOwnership> types)
+            IEnumerable<TypeInstantiationOwnership> types,
+            TypeCheckModel typeModel)
         {
             foreach (var type in types)
             {
-                if (type.TemplateName is not "System.Collections.Dictionary"
-                    || type.TypeArguments.Count != 2)
+                StarkTypeSymbol keyType;
+                string collectionUseText;
+                if (type.TemplateName is SystemCollectionsDictionaryKeyFacts.DictionaryTypeName
+                    && type.TypeArguments.Count == 2)
+                {
+                    keyType = SystemCollectionsDictionaryKeyFacts.NormalizeType(type.TypeArguments[0]);
+                    collectionUseText = $"Dictionary<{keyType.DisplayName}, V>";
+                }
+                else if (type.TemplateName is SystemCollectionsDictionaryKeyFacts.HashSetTypeName
+                    && type.TypeArguments.Count == 1)
+                {
+                    keyType = SystemCollectionsDictionaryKeyFacts.NormalizeType(type.TypeArguments[0]);
+                    collectionUseText = $"HashSet<{keyType.DisplayName}>";
+                }
+                else
                 {
                     continue;
                 }
 
-                var keyType = StarkTypeSymbols.WithQualifiers(
-                    type.TypeArguments[0],
-                    borrowKind: StarkBorrowKind.None,
-                    accessKind: StarkAccessKind.None,
-                    initializationKind: StarkInitializationKind.None,
-                    isMutableView: false);
-                if (keyType.Kind is StarkTypeKind.Bool or StarkTypeKind.Integer)
+                if (SystemCollectionsDictionaryKeyFacts.TryResolveContract(
+                        keyType,
+                        typeModel.Overloads,
+                        out _,
+                        out var diagnostic))
                 {
                     continue;
                 }
 
                 context.Diagnostics.Error(
                     "STK3023",
-                    $"Dictionary key type '{keyType.DisplayName}' must satisfy 'System.Collections.DictionaryKey<{keyType.DisplayName}>'. Built-in dictionary key contracts are available for 'bool' and Stark integer key types; add an explicit hash/equality contract before using this key type.",
+                    $"{collectionUseText} collection use requires a compile-time DictionaryKey contract for key type '{keyType.DisplayName}'. {diagnostic}",
                     "instantiation-ownership",
                     type.FirstUseLocation);
+            }
+        }
+
+        // Enforces `where T: Trait` bounds at each concrete generic call site: the
+        // type argument bound to a constrained parameter must implement every
+        // required trait (its base list, captured as `ImplementedTraits`). A
+        // still-generic argument is skipped here and validated at its own concrete
+        // instantiation. Deep method conformance is enforced at the `struct X :
+        // Trait` declaration site.
+        private static void ValidateGenericConstraints(
+            CompilerPassContext context,
+            IEnumerable<FunctionInstantiationOwnership> functions,
+            TypeCheckModel typeModel)
+        {
+            foreach (var instantiation in functions)
+            {
+                var signature = instantiation.Signature;
+                if (signature.Constraints.Count == 0)
+                {
+                    continue;
+                }
+
+                // The instantiated signature preserves the `where` constraints but
+                // clears the generic-parameter name list, so take the parameter
+                // ordering (which `TypeArguments` is positional against) from the
+                // uninstantiated template.
+                var genericParameters = signature.GenericParams;
+                if (genericParameters.Count == 0
+                    && signature.TemplateName is { } templateKey
+                    && typeModel.Functions.TryGetValue(templateKey, out var templateSignature))
+                {
+                    genericParameters = templateSignature.GenericParams;
+                }
+                foreach (var constraint in signature.Constraints)
+                {
+                    var parameterIndex = -1;
+                    for (var index = 0; index < genericParameters.Count; index++)
+                    {
+                        if (string.Equals(genericParameters[index], constraint.ParameterName, StringComparison.Ordinal))
+                        {
+                            parameterIndex = index;
+                            break;
+                        }
+                    }
+
+                    if (parameterIndex < 0 || parameterIndex >= instantiation.TypeArguments.Count)
+                    {
+                        continue;
+                    }
+
+                    var typeArgument = instantiation.TypeArguments[parameterIndex];
+                    if (typeArgument.NamedType is not { } typeArgumentName
+                        || !typeModel.NamedTypes.TryGetValue(typeArgumentName, out var typeArgumentSymbol))
+                    {
+                        // Not a concrete named type (e.g. still a type parameter of the
+                        // caller); validated when the caller is itself instantiated.
+                        continue;
+                    }
+
+                    foreach (var bound in constraint.BoundTraits)
+                    {
+                        if (bound.NamedType is not { } boundName)
+                        {
+                            continue;
+                        }
+
+                        if (!typeArgumentSymbol.ImplementedTraits.Contains(boundName))
+                        {
+                            context.Diagnostics.Error(
+                                "STK3034",
+                                $"Type argument '{typeArgumentSymbol.Name}' does not satisfy the '{bound.DisplayName}' bound on type parameter '{constraint.ParameterName}' of '{instantiation.TemplateName}'. The type must declare ': {bound.DisplayName}' in its base list.",
+                                "instantiation-ownership",
+                                instantiation.FirstUseLocation);
+                        }
+                    }
+                }
             }
         }
 
@@ -781,7 +949,7 @@ public static class DefaultCompilerPipeline
                 var templateName = trigger.Signature.TemplateName ?? trigger.FunctionName;
                 var declaringModuleName = ResolveDeclaringModuleName(templateName, loadedModules.RootModuleName, moduleNames);
                 var ownerModuleName = ResolveOwnerModuleName(declaringModuleName, loadedModules);
-                var key = $"{ownerModuleName}|{templateName}|{FunctionOverloadFacts.BuildTypeArgumentKey(trigger.TypeArguments)}";
+                var key = $"{ownerModuleName}|{templateName}|{FunctionOverloadFacts.BuildInstantiationArgumentKey(trigger.TypeArguments, trigger.ComptimeValueArguments)}";
                 if (functionOwnership.ContainsKey(key))
                 {
                     continue;
@@ -790,6 +958,7 @@ public static class DefaultCompilerPipeline
                 functionOwnership[key] = new FunctionInstantiationOwnership(
                     templateName,
                     trigger.TypeArguments.ToArray(),
+                    trigger.ComptimeValueArguments?.ToArray(),
                     trigger.Signature,
                     declaringModuleName,
                     ownerModuleName,
@@ -812,6 +981,7 @@ public static class DefaultCompilerPipeline
                     templateName,
                     trigger.TypeName,
                     trigger.TypeArguments.ToArray(),
+                    trigger.ComptimeValueArguments?.ToArray(),
                     declaringModuleName,
                     ownerModuleName,
                     IsSourceBackedModule(declaringModuleName, loadedModules),
@@ -889,11 +1059,13 @@ public static class DefaultCompilerPipeline
                 }
 
                 var substitution = FunctionOverloadFacts.BuildGenericSubstitution(enclosingTemplateSignature, trigger.TypeArguments);
+                var valueSubstitution = FunctionOverloadFacts.BuildComptimeValueSubstitution(enclosingTemplateSignature, trigger.ComptimeValueArguments);
                 if (importedDeferredByTemplate.TryGetValue(enclosingTemplateName, out var importedTemplate))
                 {
                     ExpandImportedDeferredFunctionTriggers(
                         importedTemplate,
                         substitution,
+                        valueSubstitution,
                         trigger.Location,
                         typeModel,
                         availableFunctionSignatures,
@@ -903,6 +1075,7 @@ public static class DefaultCompilerPipeline
                     ExpandImportedTemplateCallSummaryTriggers(
                         GetImportedTemplateReachableCallSignatures(importedTemplate),
                         substitution,
+                        valueSubstitution,
                         trigger.Location,
                         typeModel,
                         availableFunctionSignatures,
@@ -921,27 +1094,41 @@ public static class DefaultCompilerPipeline
                 foreach (var deferredTrigger in deferredTriggers)
                 {
                     if (deferredTrigger.Signature.TemplateName is not { } calleeTemplateName
-                        || deferredTrigger.Signature.TypeArguments is not { Count: > 0 } openTypeArguments
                         || !typeModel.Functions.TryGetValue(calleeTemplateName, out var calleeTemplateSignature))
                     {
                         continue;
                     }
 
+                    var openTypeArguments = deferredTrigger.Signature.TypeArguments ?? [];
+                    var openValueArguments = deferredTrigger.Signature.ComptimeValueArguments;
+                    if (openTypeArguments.Count == 0 && openValueArguments is not { Count: > 0 })
+                    {
+                        continue;
+                    }
+
                     var concreteTypeArguments = openTypeArguments
-                        .Select(typeArgument => FunctionOverloadFacts.SubstituteType(typeArgument, substitution))
+                        .Select(typeArgument => SubstituteTypeForInstantiation(typeArgument, substitution, typeModel, valueSubstitution))
                         .ToArray();
                     if (concreteTypeArguments.Any(typeArgument => ContainsUnboundGenericParameter(typeArgument, typeModel)))
                     {
                         continue;
                     }
+                    var concreteValueArguments = FunctionOverloadFacts.SubstituteComptimeValues(openValueArguments, valueSubstitution);
+                    if (concreteValueArguments is { Count: > 0 } && concreteValueArguments.Any(static value => value.IsSymbolic))
+                    {
+                        continue;
+                    }
 
-                    var instantiatedSignature = FunctionOverloadFacts.InstantiateSignature(
+                    var instantiatedSignature = InstantiateSignatureForInstantiation(
                         calleeTemplateSignature,
                         concreteTypeArguments,
-                        calleeTemplateSignature.Name);
+                        calleeTemplateSignature.Name,
+                        typeModel,
+                        concreteValueArguments);
                     var expandedTrigger = new FunctionInstantiationTriggerRecord(
                         calleeTemplateSignature.DisplaySourceName,
                         concreteTypeArguments,
+                        concreteValueArguments?.ToArray(),
                         instantiatedSignature,
                         deferredTrigger.Location);
                     if (TryAddExpandedTrigger(expandedTrigger, seen, expanded))
@@ -953,7 +1140,7 @@ public static class DefaultCompilerPipeline
 
             return expanded
                 .OrderBy(static trigger => trigger.Signature.TemplateName ?? trigger.FunctionName, StringComparer.Ordinal)
-                .ThenBy(static trigger => FunctionOverloadFacts.BuildTypeArgumentKey(trigger.TypeArguments), StringComparer.Ordinal)
+                .ThenBy(static trigger => FunctionOverloadFacts.BuildInstantiationArgumentKey(trigger.TypeArguments, trigger.ComptimeValueArguments), StringComparer.Ordinal)
                 .ToArray();
         }
 
@@ -996,7 +1183,8 @@ public static class DefaultCompilerPipeline
                         instanceOverloads,
                         receiverType,
                         [],
-                        TypeCompatibilityFacts.CanAssign);
+                        TypeCompatibilityFacts.CanAssign,
+                        (ownerType, associatedTypeName) => ResolveAssociatedTypeForSubstitution(ownerType, associatedTypeName, typeModel));
                     if (!resolution.Succeeded
                         || resolution.Match is not { IsGenericInstantiation: true } signature
                         || signature.TypeArguments is not { Count: > 0 } typeArguments
@@ -1006,10 +1194,11 @@ public static class DefaultCompilerPipeline
                         continue;
                     }
 
-                    var instantiatedSignature = FunctionOverloadFacts.InstantiateSignature(
+                    var instantiatedSignature = InstantiateSignatureForInstantiation(
                         templateSignature,
                         typeArguments,
-                        templateSignature.Name);
+                        templateSignature.Name,
+                        typeModel);
                     var key = $"{instantiatedSignature.TemplateName ?? instantiatedSignature.Name}|{FunctionOverloadFacts.BuildTypeArgumentKey(typeArguments)}";
                     if (!seen.Add(key))
                     {
@@ -1019,6 +1208,7 @@ public static class DefaultCompilerPipeline
                     triggers.Add(new FunctionInstantiationTriggerRecord(
                         templateSignature.DisplaySourceName,
                         typeArguments.ToArray(),
+                        null,
                         instantiatedSignature,
                         typeTrigger.Location));
                 }
@@ -1026,7 +1216,7 @@ public static class DefaultCompilerPipeline
 
             return triggers
                 .OrderBy(static trigger => trigger.Signature.TemplateName ?? trigger.FunctionName, StringComparer.Ordinal)
-                .ThenBy(static trigger => FunctionOverloadFacts.BuildTypeArgumentKey(trigger.TypeArguments), StringComparer.Ordinal)
+                .ThenBy(static trigger => FunctionOverloadFacts.BuildInstantiationArgumentKey(trigger.TypeArguments, trigger.ComptimeValueArguments), StringComparer.Ordinal)
                 .ToArray();
         }
 
@@ -1149,7 +1339,7 @@ public static class DefaultCompilerPipeline
 
                 foreach (var deferredType in deferredTypes)
                 {
-                    var concreteType = FunctionOverloadFacts.SubstituteType(deferredType.Type, substitution);
+                    var concreteType = SubstituteTypeForInstantiation(deferredType.Type, substitution, typeModel);
                     if (ContainsUnboundGenericParameter(concreteType, typeModel))
                     {
                         continue;
@@ -1161,13 +1351,14 @@ public static class DefaultCompilerPipeline
 
             return expanded
                 .OrderBy(static trigger => trigger.TypeName, StringComparer.Ordinal)
-                .ThenBy(static trigger => FunctionOverloadFacts.BuildTypeArgumentKey(trigger.TypeArguments), StringComparer.Ordinal)
+                .ThenBy(static trigger => FunctionOverloadFacts.BuildInstantiationArgumentKey(trigger.TypeArguments, trigger.ComptimeValueArguments), StringComparer.Ordinal)
                 .ToArray();
         }
 
         private static void ExpandImportedDeferredFunctionTriggers(
             ImportedFunctionTemplateSummary importedTemplate,
             IReadOnlyDictionary<string, StarkTypeSymbol> substitution,
+            IReadOnlyDictionary<string, BigInteger> valueSubstitution,
             SourceLocation location,
             TypeCheckModel typeModel,
             IReadOnlyDictionary<string, TypedFunctionSignature> availableFunctionSignatures,
@@ -1185,7 +1376,9 @@ public static class DefaultCompilerPipeline
                 TryEnqueueFunctionTriggerFromOpenTypeArguments(
                     calleeTemplateSignature,
                     deferredTrigger.TypeArguments,
+                    deferredTrigger.ComptimeValueArguments,
                     substitution,
+                    valueSubstitution,
                     location,
                     typeModel,
                     seen,
@@ -1197,6 +1390,7 @@ public static class DefaultCompilerPipeline
         private static void ExpandImportedTemplateCallSummaryTriggers(
             IEnumerable<TypedFunctionSignature> callSignatures,
             IReadOnlyDictionary<string, StarkTypeSymbol> substitution,
+            IReadOnlyDictionary<string, BigInteger> valueSubstitution,
             SourceLocation location,
             TypeCheckModel typeModel,
             IReadOnlyDictionary<string, TypedFunctionSignature> availableFunctionSignatures,
@@ -1207,8 +1401,14 @@ public static class DefaultCompilerPipeline
             foreach (var callSignature in callSignatures)
             {
                 if (callSignature.TemplateName is not { } calleeTemplateName
-                    || callSignature.TypeArguments is not { Count: > 0 } openTypeArguments
                     || !availableFunctionSignatures.TryGetValue(calleeTemplateName, out var calleeTemplateSignature))
+                {
+                    continue;
+                }
+
+                var openTypeArguments = callSignature.TypeArguments ?? [];
+                var openValueArguments = callSignature.ComptimeValueArguments;
+                if (openTypeArguments.Count == 0 && openValueArguments is not { Count: > 0 })
                 {
                     continue;
                 }
@@ -1216,7 +1416,9 @@ public static class DefaultCompilerPipeline
                 TryEnqueueFunctionTriggerFromOpenTypeArguments(
                     calleeTemplateSignature,
                     openTypeArguments,
+                    openValueArguments,
                     substitution,
+                    valueSubstitution,
                     location,
                     typeModel,
                     seen,
@@ -1228,7 +1430,9 @@ public static class DefaultCompilerPipeline
         private static void TryEnqueueFunctionTriggerFromOpenTypeArguments(
             TypedFunctionSignature calleeTemplateSignature,
             IReadOnlyList<StarkTypeSymbol> openTypeArguments,
+            IReadOnlyList<ComptimeValueArgumentSymbol>? openValueArguments,
             IReadOnlyDictionary<string, StarkTypeSymbol> substitution,
+            IReadOnlyDictionary<string, BigInteger> valueSubstitution,
             SourceLocation location,
             TypeCheckModel typeModel,
             ISet<string> seen,
@@ -1236,20 +1440,28 @@ public static class DefaultCompilerPipeline
             Queue<FunctionInstantiationTriggerRecord> pending)
         {
             var concreteTypeArguments = openTypeArguments
-                .Select(typeArgument => FunctionOverloadFacts.SubstituteType(typeArgument, substitution))
+                .Select(typeArgument => SubstituteTypeForInstantiation(typeArgument, substitution, typeModel, valueSubstitution))
                 .ToArray();
             if (concreteTypeArguments.Any(typeArgument => ContainsUnboundGenericParameter(typeArgument, typeModel)))
             {
                 return;
             }
+            var concreteValueArguments = FunctionOverloadFacts.SubstituteComptimeValues(openValueArguments, valueSubstitution);
+            if (concreteValueArguments is { Count: > 0 } && concreteValueArguments.Any(static value => value.IsSymbolic))
+            {
+                return;
+            }
 
-            var instantiatedSignature = FunctionOverloadFacts.InstantiateSignature(
+            var instantiatedSignature = InstantiateSignatureForInstantiation(
                 calleeTemplateSignature,
                 concreteTypeArguments,
-                calleeTemplateSignature.Name);
+                calleeTemplateSignature.Name,
+                typeModel,
+                concreteValueArguments);
             var expandedTrigger = new FunctionInstantiationTriggerRecord(
                 calleeTemplateSignature.DisplaySourceName,
                 concreteTypeArguments,
+                concreteValueArguments?.ToArray(),
                 instantiatedSignature,
                 location);
             if (TryAddExpandedTrigger(expandedTrigger, seen, expanded))
@@ -1268,7 +1480,7 @@ public static class DefaultCompilerPipeline
         {
             foreach (var deferredType in importedTemplate.DeferredTypes)
             {
-                var concreteType = FunctionOverloadFacts.SubstituteType(deferredType.Type, substitution);
+                var concreteType = SubstituteTypeForInstantiation(deferredType.Type, substitution, typeModel);
                 if (ContainsUnboundGenericParameter(concreteType, typeModel))
                 {
                     continue;
@@ -1279,7 +1491,7 @@ public static class DefaultCompilerPipeline
 
             foreach (var objectCreation in importedTemplate.ObjectCreations)
             {
-                var concreteCreatedType = FunctionOverloadFacts.SubstituteType(objectCreation.CreatedType, substitution);
+                var concreteCreatedType = SubstituteTypeForInstantiation(objectCreation.CreatedType, substitution, typeModel);
                 if (!ContainsUnboundGenericParameter(concreteCreatedType, typeModel))
                 {
                     AddExpandedTypeTriggers(concreteCreatedType, location, typeModel, seen, expanded);
@@ -1292,7 +1504,7 @@ public static class DefaultCompilerPipeline
 
                 foreach (var parameter in constructor.Parameters)
                 {
-                    var concreteParameterType = FunctionOverloadFacts.SubstituteType(parameter.Type, substitution);
+                    var concreteParameterType = SubstituteTypeForInstantiation(parameter.Type, substitution, typeModel);
                     if (ContainsUnboundGenericParameter(concreteParameterType, typeModel))
                     {
                         continue;
@@ -1304,7 +1516,7 @@ public static class DefaultCompilerPipeline
 
             foreach (var localDeclaration in importedTemplate.LocalDeclarations)
             {
-                var concreteLocalType = FunctionOverloadFacts.SubstituteType(localDeclaration.Type, substitution);
+                var concreteLocalType = SubstituteTypeForInstantiation(localDeclaration.Type, substitution, typeModel);
                 if (ContainsUnboundGenericParameter(concreteLocalType, typeModel))
                 {
                     continue;
@@ -1315,7 +1527,7 @@ public static class DefaultCompilerPipeline
 
             foreach (var conversion in importedTemplate.Conversions)
             {
-                var concreteTargetType = FunctionOverloadFacts.SubstituteType(conversion.TargetType, substitution);
+                var concreteTargetType = SubstituteTypeForInstantiation(conversion.TargetType, substitution, typeModel);
                 if (ContainsUnboundGenericParameter(concreteTargetType, typeModel))
                 {
                     continue;
@@ -1358,13 +1570,19 @@ public static class DefaultCompilerPipeline
                 .Where(static signature => signature is not null)
                 .Cast<TypedFunctionSignature>()
                 .ToArray();
+            var functionAddressSignatures = importedTemplate.FunctionAddresses
+                .Select(static functionAddress => functionAddress.Signature)
+                .ToArray();
             if (boundCalls.Length != 0)
             {
-                return boundCalls;
+                return boundCalls
+                    .Concat(functionAddressSignatures)
+                    .ToArray();
             }
 
             return importedTemplate.DirectCalls.Select(static call => call.Signature)
                 .Concat(importedTemplate.MemberCalls.Select(static call => call.Signature))
+                .Concat(functionAddressSignatures)
                 .ToArray();
         }
 
@@ -1629,7 +1847,7 @@ public static class DefaultCompilerPipeline
             ISet<string> seen,
             ICollection<TypeInstantiationTriggerRecord> expanded)
         {
-            var concreteType = FunctionOverloadFacts.SubstituteType(type, substitution);
+            var concreteType = SubstituteTypeForInstantiation(type, substitution, typeModel);
             if (ContainsUnboundGenericParameter(concreteType, typeModel))
             {
                 return;
@@ -1702,7 +1920,7 @@ public static class DefaultCompilerPipeline
         {
             foreach (var typeArgument in signature.TypeArguments ?? [])
             {
-                var concreteTypeArgument = FunctionOverloadFacts.SubstituteType(typeArgument, substitution);
+                var concreteTypeArgument = SubstituteTypeForInstantiation(typeArgument, substitution, typeModel);
                 if (ContainsUnboundGenericParameter(concreteTypeArgument, typeModel))
                 {
                     continue;
@@ -1711,7 +1929,7 @@ public static class DefaultCompilerPipeline
                 AddExpandedTypeTriggers(concreteTypeArgument, location, typeModel, seen, expanded);
             }
 
-            var concreteReturnType = FunctionOverloadFacts.SubstituteType(signature.ReturnType, substitution);
+            var concreteReturnType = SubstituteTypeForInstantiation(signature.ReturnType, substitution, typeModel);
             if (!ContainsUnboundGenericParameter(concreteReturnType, typeModel))
             {
                 AddExpandedTypeTriggers(concreteReturnType, location, typeModel, seen, expanded);
@@ -1719,7 +1937,7 @@ public static class DefaultCompilerPipeline
 
             foreach (var parameter in signature.Parameters)
             {
-                var concreteParameterType = FunctionOverloadFacts.SubstituteType(parameter.Type, substitution);
+                var concreteParameterType = SubstituteTypeForInstantiation(parameter.Type, substitution, typeModel);
                 if (ContainsUnboundGenericParameter(concreteParameterType, typeModel))
                 {
                     continue;
@@ -1735,7 +1953,7 @@ public static class DefaultCompilerPipeline
             ICollection<FunctionInstantiationTriggerRecord> expanded)
         {
             var templateName = trigger.Signature.TemplateName ?? trigger.FunctionName;
-            var key = $"{templateName}|{FunctionOverloadFacts.BuildTypeArgumentKey(trigger.TypeArguments)}";
+            var key = $"{templateName}|{FunctionOverloadFacts.BuildInstantiationArgumentKey(trigger.TypeArguments, trigger.ComptimeValueArguments)}";
             if (!seen.Add(key))
             {
                 return false;
@@ -1791,10 +2009,9 @@ public static class DefaultCompilerPipeline
             }
 
             if (StarkTypeSymbols.IsGenericInstantiation(coreType)
-                && coreType.TypeArguments is { Count: > 0 }
                 && !ContainsUnboundGenericParameter(coreType, typeModel))
             {
-                var key = $"{StarkTypeSymbols.GetGenericBaseName(coreType.NamedType)}|{FunctionOverloadFacts.BuildTypeArgumentKey(coreType.TypeArguments)}";
+                var key = $"{StarkTypeSymbols.GetGenericBaseName(coreType.NamedType)}|{FunctionOverloadFacts.BuildInstantiationArgumentKey(coreType.TypeArguments, coreType.ComptimeValueArguments)}";
                 if (!seen.Add(key))
                 {
                     return;
@@ -1802,7 +2019,8 @@ public static class DefaultCompilerPipeline
 
                 expanded.Add(new TypeInstantiationTriggerRecord(
                     coreType.NamedType,
-                    coreType.TypeArguments.ToArray(),
+                    (coreType.TypeArguments ?? []).ToArray(),
+                    coreType.ComptimeValueArguments?.ToArray(),
                     location));
             }
 
@@ -1890,7 +2108,7 @@ public static class DefaultCompilerPipeline
                 {
                     var nestedFieldType = substitution is null
                         ? field.Type
-                        : FunctionOverloadFacts.SubstituteType(field.Type, substitution);
+                        : SubstituteTypeForInstantiation(field.Type, substitution, typeModel);
                     AddExpandedTypeTriggers(nestedFieldType, location, typeModel, seen, expanded, activeNamedTypes);
                 }
 
@@ -1900,7 +2118,7 @@ public static class DefaultCompilerPipeline
                     {
                         var nestedFieldType = substitution is null
                             ? field.Type
-                            : FunctionOverloadFacts.SubstituteType(field.Type, substitution);
+                            : SubstituteTypeForInstantiation(field.Type, substitution, typeModel);
                         AddExpandedTypeTriggers(nestedFieldType, location, typeModel, seen, expanded, activeNamedTypes);
                     }
                 }
@@ -1932,6 +2150,17 @@ public static class DefaultCompilerPipeline
 
             if (coreType.TypeArguments is { Count: > 0 }
                 && coreType.TypeArguments.Any(typeArgument => ContainsUnboundGenericParameter(typeArgument, typeModel)))
+            {
+                return true;
+            }
+
+            if (coreType.ComptimeValueArguments is { Count: > 0 }
+                && coreType.ComptimeValueArguments.Any(static value => value.IsSymbolic))
+            {
+                return true;
+            }
+
+            if (coreType.Kind == StarkTypeKind.AssociatedType)
             {
                 return true;
             }
@@ -2041,6 +2270,7 @@ public static class DefaultCompilerPipeline
                     return new MonomorphizedFunctionPlan(
                         function.TemplateName,
                         function.TypeArguments.ToArray(),
+                        function.ComptimeValueArguments?.ToArray(),
                         function.DeclaringModuleName,
                         function.OwnerModuleName,
                         function.IsDeclaringModuleSourceBacked,
@@ -2051,7 +2281,8 @@ public static class DefaultCompilerPipeline
                         GlobalSymbolNaming.ComputeMonomorphizedFunctionSymbolName(
                             function.OwnerModuleName,
                             function.TemplateName,
-                            function.TypeArguments),
+                            function.TypeArguments,
+                            function.ComptimeValueArguments),
                         function.FirstUseLocation);
                 })
                 .OrderBy(static function => function.SymbolName, StringComparer.Ordinal)
@@ -2062,6 +2293,7 @@ public static class DefaultCompilerPipeline
                     type.TemplateName,
                     type.InstantiatedTypeName,
                     type.TypeArguments.ToArray(),
+                    type.ComptimeValueArguments?.ToArray(),
                     type.DeclaringModuleName,
                     type.OwnerModuleName,
                     type.IsDeclaringModuleSourceBacked,
@@ -2069,7 +2301,8 @@ public static class DefaultCompilerPipeline
                     GlobalSymbolNaming.ComputeMonomorphizedTypeSymbolName(
                         type.OwnerModuleName,
                         type.TemplateName,
-                        type.TypeArguments),
+                        type.TypeArguments,
+                        type.ComptimeValueArguments),
                     type.FirstUseLocation))
                 .OrderBy(static type => type.SymbolName, StringComparer.Ordinal)
                 .ToArray();
@@ -2287,10 +2520,12 @@ public static class DefaultCompilerPipeline
                 return false;
             }
 
-            var instantiatedSignature = FunctionOverloadFacts.InstantiateSignature(
+            var instantiatedSignature = InstantiateSignatureForInstantiation(
                 templateSignature,
                 function.TypeArguments,
-                function.TemplateName);
+                function.TemplateName,
+                typeModel,
+                function.ComptimeValueArguments);
 
             if (RequiresIndirectAggregateReturnAbi(
                     instantiatedSignature.ReturnType,
@@ -2507,6 +2742,7 @@ public static class DefaultCompilerPipeline
             return new FunctionSpecializationPlan(
                 function.TemplateName,
                 function.TypeArguments.ToArray(),
+                function.ComptimeValueArguments?.ToArray(),
                 function.DeclaringModuleName,
                 function.OwnerModuleName,
                 function.SymbolName,
@@ -2525,7 +2761,7 @@ public static class DefaultCompilerPipeline
             {
                 var candidates = collision
                     .OrderBy(static function => function.TemplateName, StringComparer.Ordinal)
-                    .ThenBy(static function => FormatConcreteTypeArguments(function.TypeArguments), StringComparer.Ordinal)
+                    .ThenBy(static function => FormatConcreteArguments(function.TypeArguments, function.ComptimeValueArguments), StringComparer.Ordinal)
                     .ToArray();
                 var first = candidates[0];
 
@@ -2594,12 +2830,17 @@ public static class DefaultCompilerPipeline
 
         private static string FormatFunctionInstance(FunctionSpecializationPlan plan)
         {
-            return $"{plan.TemplateName}<{FormatConcreteTypeArguments(plan.TypeArguments)}>";
+            return $"{plan.TemplateName}<{FormatConcreteArguments(plan.TypeArguments, plan.ComptimeValueArguments)}>";
         }
 
-        private static string FormatConcreteTypeArguments(IReadOnlyList<StarkTypeSymbol> typeArguments)
+        private static string FormatConcreteArguments(
+            IReadOnlyList<StarkTypeSymbol> typeArguments,
+            IReadOnlyList<ComptimeValueArgumentSymbol>? valueArguments)
         {
-            return string.Join(", ", typeArguments.Select(static argument => argument.DisplayName));
+            return string.Join(
+                ", ",
+                typeArguments.Select(static argument => argument.DisplayName)
+                    .Concat((valueArguments ?? []).Select(static argument => argument.IntegerValue.ToString())));
         }
 
         private static string FormatSelectionOrder(IReadOnlyList<FunctionSpecializationStrategy> selectionOrder)
@@ -2683,6 +2924,7 @@ public static class DefaultCompilerPipeline
                     return new FunctionSpecializationCodegenStrategy(
                         function.TemplateName,
                         function.TypeArguments.ToArray(),
+                        function.ComptimeValueArguments?.ToArray(),
                         function.DeclaringModuleName,
                         function.OwnerModuleName,
                         monomorphized.IsDeclaringModuleSourceBacked,
@@ -2802,6 +3044,12 @@ public static class DefaultCompilerPipeline
                 var readsArgumentMemory = summary?.MemoryEffects?.ReadsArgumentMemory
                     ?? importedSummary?.MemoryEffects?.ReadsArgumentMemory
                     ?? existing.ReadsArgumentMemory;
+                var readsOtherMemory = summary?.MemoryEffects?.ReadsOtherMemory
+                    ?? importedSummary?.MemoryEffects?.ReadsOtherMemory
+                    ?? existing.ReadsOtherMemory;
+                var writesOtherMemory = summary?.MemoryEffects?.WritesOtherMemory
+                    ?? importedSummary?.MemoryEffects?.WritesOtherMemory
+                    ?? existing.WritesOtherMemory;
                 var inlinePreference = DetermineInlinePreference(
                     name,
                     summary,
@@ -2820,6 +3068,8 @@ public static class DefaultCompilerPipeline
                 {
                     Kind = effectiveKind,
                     ReadsArgumentMemory = readsArgumentMemory,
+                    ReadsOtherMemory = readsOtherMemory,
+                    WritesOtherMemory = writesOtherMemory,
                     IsPure = isLaw,
                     NoSync = isLaw,
                     NoFree = isLaw,
@@ -2841,6 +3091,8 @@ public static class DefaultCompilerPipeline
                     {
                         Kind = effectiveKind,
                         ReadsArgumentMemory = lambdaSummary.MemoryEffects?.ReadsArgumentMemory ?? lambdaEffects.ReadsArgumentMemory,
+                        ReadsOtherMemory = lambdaSummary.MemoryEffects?.ReadsOtherMemory ?? lambdaEffects.ReadsOtherMemory,
+                        WritesOtherMemory = lambdaSummary.MemoryEffects?.WritesOtherMemory ?? lambdaEffects.WritesOtherMemory,
                         IsPure = isLaw,
                         NoSync = isLaw,
                         NoFree = isLaw,
@@ -2864,6 +3116,8 @@ public static class DefaultCompilerPipeline
                     {
                         Kind = effectiveKind,
                         ReadsArgumentMemory = lambdaSummary.MemoryEffects?.ReadsArgumentMemory ?? lambdaEffects.ReadsArgumentMemory,
+                        ReadsOtherMemory = lambdaSummary.MemoryEffects?.ReadsOtherMemory ?? lambdaEffects.ReadsOtherMemory,
+                        WritesOtherMemory = lambdaSummary.MemoryEffects?.WritesOtherMemory ?? lambdaEffects.WritesOtherMemory,
                         IsPure = isLaw,
                         NoSync = isLaw,
                         NoFree = isLaw,
@@ -3729,18 +3983,21 @@ public static class DefaultCompilerPipeline
                 })
                 .ToArray();
             var closureDropFunctions = BuildClosureDropFunctions(types);
+            var dynDropThunks = BuildDynDropThunks(types);
             var declarationsByQualifiedName = CollectFunctionDeclarationsByQualifiedName(loadedModules);
             var specializedFunctions = MaterializeSpecializedFunctions(
                 specializationStrategy,
                 declarationsByQualifiedName,
                 effects,
                 types.Functions,
-                fallbackSignatures);
+                fallbackSignatures,
+                types);
             var functions = declaredFunctions
                 .Concat(lambdaFunctions)
                 .Concat(closureLambdaFunctions)
                 .Concat(closureFunctionAdapterFunctions)
                 .Concat(closureDropFunctions)
+                .Concat(dynDropThunks)
                 .Concat(specializedFunctions)
                 .ToArray();
 
@@ -3755,6 +4012,7 @@ public static class DefaultCompilerPipeline
                         .Concat(types.ClosureLambdas.Select(static lambda => lambda.FunctionName))
                         .Concat(types.ClosureFunctionPromotions.Select(static adapter => adapter.AdapterFunctionName))
                         .Concat(closureDropFunctions.Select(static function => function.Name))
+                        .Concat(dynDropThunks.Select(static function => function.Name))
                         .Distinct(StringComparer.Ordinal)
                         .OrderBy(static name => name, StringComparer.Ordinal)
                         .ToArray()));
@@ -3807,6 +4065,49 @@ public static class DefaultCompilerPipeline
             return functions;
         }
 
+        // Synthesizes the per-type drop thunk referenced by each `dyn trait` vtable's
+        // Drop slot: `<Type>.__dyn_drop(rawmutptr<i8> self)` drops the boxed value and
+        // frees the box. Emitted for every non-generic concrete type that implements a
+        // `dyn trait` (the slot is dead for borrowed objects but correct for `heap dyn`);
+        // the thunk's signature/effects mirror a heap-closure drop thunk.
+        private static IReadOnlyList<HighLevelIrFunction> BuildDynDropThunks(TypeCheckModel types)
+        {
+            var functions = new List<HighLevelIrFunction>();
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+
+            foreach (var namedType in types.NamedTypes.Values)
+            {
+                if (namedType.Kind is not (DeclarationKind.Struct or DeclarationKind.Record)
+                    || namedType.IsGeneric
+                    || namedType.ImplementedTraits.Count == 0)
+                {
+                    continue;
+                }
+
+                var implementsDynTrait = namedType.ImplementedTraits.Any(traitName =>
+                    types.NamedTypes.TryGetValue(traitName, out var traitType) && traitType.IsDynTrait);
+                if (!implementsDynTrait)
+                {
+                    continue;
+                }
+
+                var functionName = DynTraitFacts.BuildDropThunkName(namedType.Name);
+                if (!seen.Add(functionName))
+                {
+                    continue;
+                }
+
+                functions.Add(new HighLevelIrFunction(
+                    functionName,
+                    CallableValueFacts.BuildClosureDropSignature(functionName),
+                    HasBody: true,
+                    BodyLoweringKind: FunctionBodyLoweringKind.StarkCfg,
+                    Effects: CallableValueFacts.BuildClosureDropEffectProfile(functionName)));
+            }
+
+            return functions;
+        }
+
         private static IReadOnlyDictionary<string, FunctionDeclarationModel> CollectFunctionDeclarationsByQualifiedName(
             LoadedModuleSet loadedModules)
         {
@@ -3839,7 +4140,8 @@ public static class DefaultCompilerPipeline
             IReadOnlyDictionary<string, FunctionDeclarationModel> declarationsByQualifiedName,
             FunctionEffectModel effects,
             IReadOnlyDictionary<string, TypedFunctionSignature> signatures,
-            IReadOnlyDictionary<string, TypedFunctionSignature> fallbackSignatures)
+            IReadOnlyDictionary<string, TypedFunctionSignature> fallbackSignatures,
+            TypeCheckModel typeModel)
         {
             var functions = new List<HighLevelIrFunction>();
 
@@ -3868,7 +4170,13 @@ public static class DefaultCompilerPipeline
                 }
 
                 var substitution = FunctionOverloadFacts.BuildGenericSubstitution(templateSignature, strategy.TypeArguments);
-                var specializedSignature = FunctionOverloadFacts.InstantiateSignature(templateSignature, strategy.TypeArguments, strategy.SymbolName);
+                var valueSubstitution = FunctionOverloadFacts.BuildComptimeValueSubstitution(templateSignature, strategy.ComptimeValueArguments);
+                var specializedSignature = InstantiateSignatureForInstantiation(
+                    templateSignature,
+                    strategy.TypeArguments,
+                    strategy.SymbolName,
+                    typeModel,
+                    strategy.ComptimeValueArguments);
                 functions.Add(new HighLevelIrFunction(
                     strategy.SymbolName,
                     specializedSignature,
@@ -3876,7 +4184,8 @@ public static class DefaultCompilerPipeline
                     DetermineBodyLoweringKind(declaration),
                     templateEffects with { Name = strategy.SymbolName },
                     BodyTemplateName: strategy.TemplateName,
-                    GenericTypeSubstitution: substitution));
+                    GenericTypeSubstitution: substitution,
+                    GenericValueSubstitution: valueSubstitution));
             }
 
             return functions
@@ -3918,15 +4227,9 @@ public static class DefaultCompilerPipeline
             {
                 if (module.PackageImageFacts is { FunctionSignatures.Count: > 0 } packageImageFacts)
                 {
-                    foreach (var declaration in module.SyntaxModel.Declarations.Where(static declaration => declaration.Function is not null))
+                    foreach (var (qualifiedName, signature) in packageImageFacts.FunctionSignatures)
                     {
-                        var qualifiedName = FunctionOverloadFacts.QualifyResolvedName(
-                            module,
-                            FunctionOverloadFacts.GetResolvedLocalName(module.SyntaxModel, declaration));
-                        if (packageImageFacts.FunctionSignatures.TryGetValue(qualifiedName, out var signature))
-                        {
-                            functions[qualifiedName] = signature;
-                        }
+                        functions[qualifiedName] = signature;
                     }
 
                     continue;
@@ -3950,7 +4253,7 @@ public static class DefaultCompilerPipeline
                             parameter.parameterContractPrefix().Any(static prefix => prefix.Start.Type == StarkParser.CONST),
                             rawPointerElementCountExpression))
                         .ToArray();
-                    var isFfi = declaration.Modifiers.Any(static modifier => string.Equals(modifier.GetText(), "ffi", StringComparison.Ordinal));
+                    var isFfi = declaration.Modifiers.Any(FfiAbiSyntaxFacts.IsFfiModifier);
                     var isAsm = declarationModel?.Function?.Asm is not null;
                     var overlapGroups = declarationModel?.Function?.OverlapGroups ?? [];
                     var sameGroups = declarationModel?.Function?.SameGroups ?? [];
@@ -3969,6 +4272,7 @@ public static class DefaultCompilerPipeline
                         IsStatic: declaration.IsStatic,
                         IsUnsafe: declaration.Modifiers.Any(static modifier => string.Equals(modifier.GetText(), "unsafe", StringComparison.Ordinal)),
                         IsVarargs: declaration.Modifiers.Any(static modifier => string.Equals(modifier.GetText(), "varargs", StringComparison.Ordinal)),
+                        FfiAbi: declarationModel?.Function?.Modifiers.FfiAbi,
                         DisjointParameterGroups: disjointGroups,
                         OverlapParameterGroups: overlapGroups,
                         SameParameterGroups: sameGroups);
@@ -4069,12 +4373,8 @@ public static class DefaultCompilerPipeline
             var specializationCodegenStrategy = context.Artifacts.GetRequired(CompilerArtifactKeys.SpecializationCodegenStrategy);
             var abiModel = context.Artifacts.GetRequired(CompilerArtifactKeys.AbiModel);
             var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.OptimizedSsaIr);
-            var useSsaValueFacts = context.Options.OptimizationLevel is CompilerOptimizationLevel.O1
-                or CompilerOptimizationLevel.O2
-                or CompilerOptimizationLevel.O3;
             SsaValueFactModel? ssaValueFacts = null;
-            if (useSsaValueFacts
-                && context.Artifacts.TryGet(CompilerArtifactKeys.SsaValueFacts, out SsaValueFactModel? facts))
+            if (context.Artifacts.TryGet(CompilerArtifactKeys.SsaValueFacts, out SsaValueFactModel? facts))
             {
                 ssaValueFacts = facts;
             }
@@ -4091,10 +4391,8 @@ public static class DefaultCompilerPipeline
                 ssa,
                 context.Options.TargetInfo,
                 internalizeModulePrivate: context.Options.InternalizeModulePrivate || context.Options.QualifyModuleSymbols,
-                isOptimizedBuild: context.Options.OptimizationLevel != CompilerOptimizationLevel.O0,
-                enableOptimizedRawPointerLoopIntrinsics: context.Options.OptimizationLevel is CompilerOptimizationLevel.O1
-                    or CompilerOptimizationLevel.O2
-                    or CompilerOptimizationLevel.O3,
+                isOptimizedBuild: true,
+                enableOptimizedRawPointerLoopIntrinsics: true,
                 semanticValidation: validationModel,
                 closedWorldModel: closedWorldModel,
                 specializationCodegenStrategy: specializationCodegenStrategy,
@@ -4115,13 +4413,22 @@ public static class DefaultCompilerPipeline
 
         public PassExecutionMode ExecutionMode => PassExecutionMode.SkipOnErrors;
 
-        public IReadOnlyList<string> Dependencies => ["type-check", "lower-mir", "borrow-liveness"];
+        public IReadOnlyList<string> Dependencies => ["type-check", "lower-mir", "borrow-liveness", "load-modules", "function-effects", "specialization-codegen-strategy"];
 
         public void Execute(CompilerPassContext context)
         {
             var mir = context.Artifacts.GetRequired(CompilerArtifactKeys.MidLevelIr);
             var typeModel = context.Artifacts.GetRequired(CompilerArtifactKeys.TypeCheckModel);
-            var ssa = new SsaLowerer(typeModel).Lower(mir);
+            var lowerer = new SsaLowerer(typeModel);
+            var ssa = context.Options.PruneUnusedLoweredFunctions
+                ? SsaEmissionReachability.LowerReachableFromEmission(
+                    lowerer,
+                    mir,
+                    context.Artifacts.GetRequired(CompilerArtifactKeys.LoadedModules),
+                    typeModel,
+                    context.Artifacts.GetRequired(CompilerArtifactKeys.FunctionEffects),
+                    context.Artifacts.GetRequired(CompilerArtifactKeys.SpecializationCodegenStrategy))
+                : lowerer.Lower(mir);
             context.Artifacts.Set(CompilerArtifactKeys.SsaIr, ssa);
         }
     }
@@ -4139,9 +4446,7 @@ public static class DefaultCompilerPipeline
         public void Execute(CompilerPassContext context)
         {
             var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.SsaIr);
-            var optimized = context.Options.OptimizationLevel is CompilerOptimizationLevel.O0 or CompilerOptimizationLevel.Og
-                ? ssa
-                : new SsaCleanupOptimizer(enableSelectPredication: false).Optimize(ssa);
+            var optimized = new SsaCleanupOptimizer(enableSelectPredication: false).Optimize(ssa);
             context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, optimized);
         }
     }
@@ -4159,9 +4464,7 @@ public static class DefaultCompilerPipeline
         public void Execute(CompilerPassContext context)
         {
             var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.OptimizedSsaIr);
-            var optimized = context.Options.OptimizationLevel is CompilerOptimizationLevel.O0 or CompilerOptimizationLevel.Og
-                ? ssa
-                : new SsaConstantPropagator().Optimize(ssa);
+            var optimized = new SsaConstantPropagator().Optimize(ssa);
             context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, optimized);
         }
     }
@@ -4179,11 +4482,6 @@ public static class DefaultCompilerPipeline
         public void Execute(CompilerPassContext context)
         {
             var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.OptimizedSsaIr);
-            if (context.Options.OptimizationLevel is CompilerOptimizationLevel.O0 or CompilerOptimizationLevel.Og)
-            {
-                context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, ssa);
-                return;
-            }
 
             var effectModel = context.Artifacts.GetRequired(CompilerArtifactKeys.FunctionEffects);
             var typeModel = context.Artifacts.GetRequired(CompilerArtifactKeys.TypeCheckModel);
@@ -4227,7 +4525,7 @@ public static class DefaultCompilerPipeline
                 optimized = inliner.Optimize(optimized);
                 optimized = cleanup.Optimize(optimized);
                 optimized = constants.Optimize(optimized);
-                optimized = new SsaDirectCallDevirtualizer().Optimize(optimized);
+                optimized = new SsaDirectCallDevirtualizer(typeModel).Optimize(optimized);
             }
 
             optimized = cleanup.Optimize(optimized);
@@ -4257,7 +4555,7 @@ public static class DefaultCompilerPipeline
             {
                 if (!prunableSyntheticNames.Contains(function.Name))
                 {
-                    CollectReferencedFunctions(function, referencedFunctions);
+                    SsaFunctionReferenceWalker.CollectReferencedFunctions(function, referencedFunctions);
                 }
             }
 
@@ -4272,7 +4570,7 @@ public static class DefaultCompilerPipeline
                 }
 
                 var nestedReferences = new HashSet<string>(StringComparer.Ordinal);
-                CollectReferencedFunctions(function, nestedReferences);
+                SsaFunctionReferenceWalker.CollectReferencedFunctions(function, nestedReferences);
                 foreach (var nestedReference in nestedReferences)
                 {
                     if (prunableSyntheticNames.Contains(nestedReference)
@@ -4302,242 +4600,6 @@ public static class DefaultCompilerPipeline
                 module.ModuleName,
                 prunedFunctions,
                 prunedAddressTakenFunctions);
-        }
-
-        private static void CollectReferencedFunctions(
-            SsaFunction function,
-            ISet<string> referencedFunctions)
-        {
-            foreach (var block in function.Blocks)
-            {
-                foreach (var phi in block.Phis)
-                {
-                    foreach (var incoming in phi.Incomings)
-                    {
-                        CollectReferencedFunctions(incoming.Value, referencedFunctions);
-                    }
-                }
-
-                foreach (var instruction in block.Instructions)
-                {
-                    CollectReferencedFunctions(instruction, referencedFunctions);
-                }
-
-                CollectReferencedFunctions(block.Terminator, referencedFunctions);
-            }
-        }
-
-        private static void CollectReferencedFunctions(
-            SsaInstruction instruction,
-            ISet<string> referencedFunctions)
-        {
-            switch (instruction)
-            {
-                case SsaValueInstruction valueInstruction:
-                    CollectReferencedFunctions(valueInstruction.Value, referencedFunctions);
-                    break;
-                case SsaCallInstruction call:
-                    referencedFunctions.Add(call.FunctionName);
-                    foreach (var argument in call.Arguments)
-                    {
-                        CollectReferencedFunctions(argument, referencedFunctions);
-                    }
-
-                    foreach (var address in call.IndirectArgumentAddresses?.OfType<SsaValue>() ?? [])
-                    {
-                        CollectReferencedFunctions(address, referencedFunctions);
-                    }
-
-                    break;
-                case SsaIndirectCallInstruction call:
-                    CollectReferencedFunctions(call.Target, referencedFunctions);
-                    foreach (var argument in call.Arguments)
-                    {
-                        CollectReferencedFunctions(argument, referencedFunctions);
-                    }
-
-                    foreach (var address in call.IndirectArgumentAddresses?.OfType<SsaValue>() ?? [])
-                    {
-                        CollectReferencedFunctions(address, referencedFunctions);
-                    }
-
-                    break;
-                case SsaStoreLocalInstruction storeLocal:
-                    CollectReferencedFunctions(storeLocal.Value, referencedFunctions);
-                    break;
-                case SsaCopyMemoryInstruction copyMemory:
-                    CollectReferencedFunctions(copyMemory.DestinationAddress, referencedFunctions);
-                    CollectReferencedFunctions(copyMemory.SourceAddress, referencedFunctions);
-                    break;
-                case SsaStoreIndirectInstruction storeIndirect:
-                    CollectReferencedFunctions(storeIndirect.Address, referencedFunctions);
-                    CollectReferencedFunctions(storeIndirect.Value, referencedFunctions);
-                    break;
-                case SsaStoreGlobalInstruction storeGlobal:
-                    CollectReferencedFunctions(storeGlobal.Value, referencedFunctions);
-                    break;
-            }
-        }
-
-        private static void CollectReferencedFunctions(
-            SsaRValue value,
-            ISet<string> referencedFunctions)
-        {
-            switch (value)
-            {
-                case SsaUseRValue use:
-                    CollectReferencedFunctions(use.Value, referencedFunctions);
-                    break;
-                case SsaUnaryRValue unary:
-                    CollectReferencedFunctions(unary.Operand, referencedFunctions);
-                    break;
-                case SsaBinaryRValue binary:
-                    CollectReferencedFunctions(binary.Left, referencedFunctions);
-                    CollectReferencedFunctions(binary.Right, referencedFunctions);
-                    break;
-                case SsaSelectRValue select:
-                    CollectReferencedFunctions(select.Condition, referencedFunctions);
-                    CollectReferencedFunctions(select.WhenTrue, referencedFunctions);
-                    CollectReferencedFunctions(select.WhenFalse, referencedFunctions);
-                    break;
-                case SsaCallRValue call:
-                    referencedFunctions.Add(call.FunctionName);
-                    foreach (var argument in call.Arguments)
-                    {
-                        CollectReferencedFunctions(argument, referencedFunctions);
-                    }
-
-                    foreach (var address in call.IndirectArgumentAddresses?.OfType<SsaValue>() ?? [])
-                    {
-                        CollectReferencedFunctions(address, referencedFunctions);
-                    }
-
-                    break;
-                case SsaIndirectCallRValue indirectCall:
-                    CollectReferencedFunctions(indirectCall.Target, referencedFunctions);
-                    foreach (var argument in indirectCall.Arguments)
-                    {
-                        CollectReferencedFunctions(argument, referencedFunctions);
-                    }
-
-                    foreach (var address in indirectCall.IndirectArgumentAddresses?.OfType<SsaValue>() ?? [])
-                    {
-                        CollectReferencedFunctions(address, referencedFunctions);
-                    }
-
-                    break;
-                case SsaConvertRValue convert:
-                    CollectReferencedFunctions(convert.Operand, referencedFunctions);
-                    break;
-                case SsaExtractFieldRValue extractField:
-                    CollectReferencedFunctions(extractField.Target, referencedFunctions);
-                    break;
-                case SsaInsertFieldRValue insertField:
-                    CollectReferencedFunctions(insertField.Target, referencedFunctions);
-                    CollectReferencedFunctions(insertField.Value, referencedFunctions);
-                    break;
-                case SsaExtractIndexRValue extractIndex:
-                    CollectReferencedFunctions(extractIndex.Target, referencedFunctions);
-                    break;
-                case SsaInsertIndexRValue insertIndex:
-                    CollectReferencedFunctions(insertIndex.Target, referencedFunctions);
-                    CollectReferencedFunctions(insertIndex.Value, referencedFunctions);
-                    break;
-                case SsaMakeSliceFromPointerRValue makeSlice:
-                    CollectReferencedFunctions(makeSlice.Pointer, referencedFunctions);
-                    CollectReferencedFunctions(makeSlice.Length, referencedFunctions);
-                    break;
-                case SsaDynamicStorageAllocationRValue allocation:
-                    CollectReferencedFunctions(allocation.Capacity, referencedFunctions);
-                    break;
-                case SsaDynamicStorageFreeRValue free:
-                    CollectReferencedFunctions(free.Storage, referencedFunctions);
-                    break;
-                case SsaHeapStorageFreeRValue free:
-                    CollectReferencedFunctions(free.Pointer, referencedFunctions);
-                    break;
-                case SsaDynamicStorageReserveRValue reserve:
-                    CollectReferencedFunctions(reserve.StorageAddress, referencedFunctions);
-                    CollectReferencedFunctions(reserve.AdditionalCapacity, referencedFunctions);
-                    break;
-                case SsaDynamicStorageTryReserveRValue reserve:
-                    CollectReferencedFunctions(reserve.StorageAddress, referencedFunctions);
-                    CollectReferencedFunctions(reserve.AdditionalCapacity, referencedFunctions);
-                    break;
-                case SsaDynamicStorageTryReserveCapacityRValue reserve:
-                    CollectReferencedFunctions(reserve.StorageAddress, referencedFunctions);
-                    CollectReferencedFunctions(reserve.TargetCapacity, referencedFunctions);
-                    break;
-                case SsaDynamicStorageMoveLastRValue moveLast:
-                    CollectReferencedFunctions(moveLast.StorageAddress, referencedFunctions);
-                    break;
-                case SsaDynamicStorageMoveAtRValue moveAt:
-                    CollectReferencedFunctions(moveAt.StorageAddress, referencedFunctions);
-                    CollectReferencedFunctions(moveAt.Index, referencedFunctions);
-                    break;
-                case SsaLoadSliceElementRValue loadSlice:
-                    CollectReferencedFunctions(loadSlice.Slice, referencedFunctions);
-                    CollectReferencedFunctions(loadSlice.Index, referencedFunctions);
-                    break;
-                case SsaTextSliceRValue textSlice:
-                    CollectReferencedFunctions(textSlice.TextValue, referencedFunctions);
-                    CollectReferencedFunctions(textSlice.Start, referencedFunctions);
-                    CollectReferencedFunctions(textSlice.Length, referencedFunctions);
-                    break;
-                case SsaFieldAddressRValue fieldAddress:
-                    CollectReferencedFunctions(fieldAddress.Address, referencedFunctions);
-                    break;
-                case SsaElementAddressRValue elementAddress:
-                    CollectReferencedFunctions(elementAddress.Address, referencedFunctions);
-                    if (elementAddress.Index is not null)
-                    {
-                        CollectReferencedFunctions(elementAddress.Index, referencedFunctions);
-                    }
-
-                    break;
-                case SsaSliceElementAddressRValue sliceElementAddress:
-                    CollectReferencedFunctions(sliceElementAddress.Slice, referencedFunctions);
-                    CollectReferencedFunctions(sliceElementAddress.Index, referencedFunctions);
-                    break;
-                case SsaLoadIndirectRValue loadIndirect:
-                    CollectReferencedFunctions(loadIndirect.Address, referencedFunctions);
-                    break;
-            }
-        }
-
-        private static void CollectReferencedFunctions(
-            SsaTerminator terminator,
-            ISet<string> referencedFunctions)
-        {
-            if (terminator.Value is not null)
-            {
-                CollectReferencedFunctions(terminator.Value, referencedFunctions);
-            }
-
-            if (terminator.Condition is not null)
-            {
-                CollectReferencedFunctions(terminator.Condition, referencedFunctions);
-            }
-
-            foreach (var switchCase in terminator.SwitchCases ?? [])
-            {
-                CollectReferencedFunctions(switchCase.MatchValue, referencedFunctions);
-            }
-        }
-
-        private static void CollectReferencedFunctions(
-            SsaValue value,
-            ISet<string> referencedFunctions)
-        {
-            switch (value)
-            {
-                case SsaFunctionAddressValue functionAddress:
-                    referencedFunctions.Add(functionAddress.FunctionName);
-                    break;
-                case SsaClosureValue closure:
-                    referencedFunctions.Add(closure.InvokeFunctionName);
-                    break;
-            }
         }
 
         private static FunctionEffectModel BuildInlinerEffectModel(
@@ -4599,9 +4661,7 @@ public static class DefaultCompilerPipeline
         public void Execute(CompilerPassContext context)
         {
             var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.OptimizedSsaIr);
-            var optimized = context.Options.OptimizationLevel is CompilerOptimizationLevel.O0 or CompilerOptimizationLevel.Og
-                ? ssa
-                : new SsaDirectCallDevirtualizer().Optimize(ssa);
+            var optimized = new SsaDirectCallDevirtualizer(context.Artifacts.GetRequired(CompilerArtifactKeys.TypeCheckModel)).Optimize(ssa);
             context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, optimized);
         }
     }
@@ -4619,11 +4679,6 @@ public static class DefaultCompilerPipeline
         public void Execute(CompilerPassContext context)
         {
             var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.OptimizedSsaIr);
-            if (context.Options.OptimizationLevel is CompilerOptimizationLevel.O0 or CompilerOptimizationLevel.Og)
-            {
-                context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, ssa);
-                return;
-            }
 
             var effectModel = context.Artifacts.GetRequired(CompilerArtifactKeys.FunctionEffects);
             var semanticValidation = context.Artifacts.GetRequired(CompilerArtifactKeys.SemanticValidation);
@@ -4806,11 +4861,6 @@ public static class DefaultCompilerPipeline
         public void Execute(CompilerPassContext context)
         {
             var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.OptimizedSsaIr);
-            if (context.Options.OptimizationLevel is CompilerOptimizationLevel.O0 or CompilerOptimizationLevel.Og)
-            {
-                context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, ssa);
-                return;
-            }
 
             var typeModel = context.Artifacts.GetRequired(CompilerArtifactKeys.TypeCheckModel);
             var optimized = new SsaConstLookupTableOptimizer(typeModel).Optimize(ssa);
@@ -4838,11 +4888,6 @@ public static class DefaultCompilerPipeline
         public void Execute(CompilerPassContext context)
         {
             var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.OptimizedSsaIr);
-            if (context.Options.OptimizationLevel is CompilerOptimizationLevel.O0 or CompilerOptimizationLevel.Og)
-            {
-                context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, ssa);
-                return;
-            }
 
             var facts = context.Artifacts.GetRequired(CompilerArtifactKeys.SsaValueFacts);
             var specialized = new SsaAsciiToUnicodeLiteralSpecializer().Optimize(ssa, facts);
@@ -4869,11 +4914,6 @@ public static class DefaultCompilerPipeline
         public void Execute(CompilerPassContext context)
         {
             var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.OptimizedSsaIr);
-            if (context.Options.OptimizationLevel is CompilerOptimizationLevel.O0 or CompilerOptimizationLevel.Og)
-            {
-                context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, ssa);
-                return;
-            }
 
             var facts = context.Artifacts.GetRequired(CompilerArtifactKeys.SsaValueFacts);
             var typeModel = context.Artifacts.GetRequired(CompilerArtifactKeys.TypeCheckModel);
@@ -4906,11 +4946,6 @@ public static class DefaultCompilerPipeline
         public void Execute(CompilerPassContext context)
         {
             var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.OptimizedSsaIr);
-            if (context.Options.OptimizationLevel is CompilerOptimizationLevel.O0 or CompilerOptimizationLevel.Og)
-            {
-                context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, ssa);
-                return;
-            }
 
             var facts = context.Artifacts.GetRequired(CompilerArtifactKeys.SsaValueFacts);
             var semanticValidation = context.Artifacts.GetRequired(CompilerArtifactKeys.SemanticValidation);
@@ -4947,11 +4982,6 @@ public static class DefaultCompilerPipeline
         public void Execute(CompilerPassContext context)
         {
             var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.OptimizedSsaIr);
-            if (context.Options.OptimizationLevel is CompilerOptimizationLevel.O0 or CompilerOptimizationLevel.Og)
-            {
-                context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, ssa);
-                return;
-            }
 
             var optimized = new SsaDynamicAppendLoopOptimizer().Optimize(ssa);
             if (ReferenceEquals(optimized, ssa))
@@ -4986,11 +5016,6 @@ public static class DefaultCompilerPipeline
         public void Execute(CompilerPassContext context)
         {
             var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.OptimizedSsaIr);
-            if (context.Options.OptimizationLevel is CompilerOptimizationLevel.O0 or CompilerOptimizationLevel.Og)
-            {
-                context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, ssa);
-                return;
-            }
 
             var specialized = new SsaConstantTextFormatSpecializer().Optimize(ssa);
             if (ReferenceEquals(specialized, ssa))
@@ -5016,11 +5041,6 @@ public static class DefaultCompilerPipeline
         public void Execute(CompilerPassContext context)
         {
             var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.OptimizedSsaIr);
-            if (context.Options.OptimizationLevel is CompilerOptimizationLevel.O0 or CompilerOptimizationLevel.Og)
-            {
-                context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, ssa);
-                return;
-            }
 
             var facts = context.Artifacts.GetRequired(CompilerArtifactKeys.SsaValueFacts);
             var pruned = new SsaFactDrivenBranchPruner().Optimize(ssa, facts);
@@ -5050,11 +5070,6 @@ public static class DefaultCompilerPipeline
         {
             var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.OptimizedSsaIr);
             var effectModel = context.Artifacts.GetRequired(CompilerArtifactKeys.FunctionEffects);
-            if (context.Options.OptimizationLevel is CompilerOptimizationLevel.O0 or CompilerOptimizationLevel.Og)
-            {
-                context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, ssa);
-                return;
-            }
 
             var optimized = new SsaAliasAwareMemoryOptimizer(effectModel).Optimize(ssa);
             if (ReferenceEquals(optimized, ssa))
@@ -5083,11 +5098,6 @@ public static class DefaultCompilerPipeline
         {
             var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.OptimizedSsaIr);
             var effectModel = context.Artifacts.GetRequired(CompilerArtifactKeys.FunctionEffects);
-            if (context.Options.OptimizationLevel is CompilerOptimizationLevel.O0 or CompilerOptimizationLevel.Og)
-            {
-                context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, ssa);
-                return;
-            }
 
             var optimized = new SsaScalarReplacementOptimizer(effectModel).Optimize(ssa);
             if (ReferenceEquals(optimized, ssa))
@@ -5115,11 +5125,6 @@ public static class DefaultCompilerPipeline
         public void Execute(CompilerPassContext context)
         {
             var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.OptimizedSsaIr);
-            if (context.Options.OptimizationLevel is CompilerOptimizationLevel.O0 or CompilerOptimizationLevel.Og)
-            {
-                context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, ssa);
-                return;
-            }
 
             var optimized = new SsaOwnershipTrafficOptimizer().Optimize(ssa);
             if (ReferenceEquals(optimized, ssa))
@@ -5147,11 +5152,6 @@ public static class DefaultCompilerPipeline
         public void Execute(CompilerPassContext context)
         {
             var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.OptimizedSsaIr);
-            if (context.Options.OptimizationLevel is CompilerOptimizationLevel.O0 or CompilerOptimizationLevel.Og)
-            {
-                context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, ssa);
-                return;
-            }
 
             var typeModel = context.Artifacts.GetRequired(CompilerArtifactKeys.TypeCheckModel);
             var optimized = new SsaAggregateConstructionStoreOptimizer(typeModel.NamedTypes).Optimize(ssa);
@@ -5180,11 +5180,6 @@ public static class DefaultCompilerPipeline
         public void Execute(CompilerPassContext context)
         {
             var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.OptimizedSsaIr);
-            if (context.Options.OptimizationLevel is CompilerOptimizationLevel.O0 or CompilerOptimizationLevel.Og)
-            {
-                context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, ssa);
-                return;
-            }
 
             var shaped = new SsaCleanupOptimizer(enableSelectPredication: true).Optimize(ssa);
             context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, shaped);
@@ -5206,11 +5201,6 @@ public static class DefaultCompilerPipeline
         public void Execute(CompilerPassContext context)
         {
             var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.OptimizedSsaIr);
-            if (context.Options.OptimizationLevel is CompilerOptimizationLevel.O0 or CompilerOptimizationLevel.Og)
-            {
-                context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, ssa);
-                return;
-            }
 
             var folded = new SsaIntegerArithmeticFolder().Optimize(ssa);
             if (ReferenceEquals(folded, ssa))

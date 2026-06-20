@@ -10,6 +10,8 @@ internal sealed class LlvmBuiltinAndHelperEmitter
     private const string UnicodeEqualityHelperName = "__stark_unicode_equal";
     private const string AsciiCompareHelperName = "__stark_ascii_compare";
     private const string UnicodeCompareHelperName = "__stark_unicode_compare";
+    private const string AsciiHashHelperName = "__stark_ascii_hash";
+    private const string UnicodeHashHelperName = "__stark_unicode_hash";
     private const string FixedArrayCompareHelperNamePrefix = "__stark_fixed_array_compare_";
     private const string ScalarizedAggregateCompareHelperNamePrefix = "__stark_named_compare_";
     private const string IntegerExponentHelperNamePrefix = "__stark_int_pow_i";
@@ -49,6 +51,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
 
     private readonly LlvmEmissionContext _context;
     private readonly Func<bool, TypedFunctionSignature, AbiFunctionSignature, FunctionEffectProfile, FunctionMemoryEffectSummary?, IReadOnlyDictionary<string, ParameterMemoryEffectSummary>?, string> _buildDefinitionSignature;
+    private readonly Func<TypedFunctionSignature, AbiFunctionSignature?> _resolveFunctionAbi;
     private readonly Func<IEnumerable<SsaBinaryRValue>> _enumerateBinaryOperations;
     private readonly Func<IEnumerable<SsaFunction>> _enumerateSsaFunctions;
     private readonly Func<string, string> _escapeInlineAsmString;
@@ -66,6 +69,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
     public LlvmBuiltinAndHelperEmitter(
         LlvmEmissionContext context,
         Func<bool, TypedFunctionSignature, AbiFunctionSignature, FunctionEffectProfile, FunctionMemoryEffectSummary?, IReadOnlyDictionary<string, ParameterMemoryEffectSummary>?, string> buildDefinitionSignature,
+        Func<TypedFunctionSignature, AbiFunctionSignature?> resolveFunctionAbi,
         Func<IEnumerable<SsaBinaryRValue>> enumerateBinaryOperations,
         Func<IEnumerable<SsaFunction>> enumerateSsaFunctions,
         Func<string, string> escapeInlineAsmString,
@@ -82,6 +86,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
     {
         _context = context;
         _buildDefinitionSignature = buildDefinitionSignature;
+        _resolveFunctionAbi = resolveFunctionAbi;
         _enumerateBinaryOperations = enumerateBinaryOperations;
         _enumerateSsaFunctions = enumerateSsaFunctions;
         _escapeInlineAsmString = escapeInlineAsmString;
@@ -244,13 +249,14 @@ internal sealed class LlvmBuiltinAndHelperEmitter
 
     public void EmitInternalHelperDefinitions(StringBuilder builder, IEnumerable<TypedFunctionSignature> signatures)
     {
-        var systemMemoryBuiltins = CollectSystemMemoryAllocatorBuiltins(signatures);
+        var signatureList = signatures as IReadOnlyList<TypedFunctionSignature> ?? signatures.ToArray();
+        var systemMemoryBuiltins = CollectSystemMemoryAllocatorBuiltins(signatureList);
         var usesSystemMemoryAllocator = systemMemoryBuiltins.Contains(SystemMemoryBuiltinKind.Allocate)
             || systemMemoryBuiltins.Contains(SystemMemoryBuiltinKind.Reallocate)
             || systemMemoryBuiltins.Contains(SystemMemoryBuiltinKind.Free);
         var usesDynamicStorageAllocator = UsesDynamicStorageAllocator();
 
-        foreach (var textType in CollectTextEqualityTypes())
+        foreach (var textType in CollectTextEqualityTypes(signatureList))
         {
             EmitTextEqualityHelperDefinition(
                 builder,
@@ -265,6 +271,15 @@ internal sealed class LlvmBuiltinAndHelperEmitter
                 builder,
                 textType,
                 textType.Kind == StarkTypeKind.Ascii ? AsciiCompareHelperName : UnicodeCompareHelperName);
+            builder.AppendLine();
+        }
+
+        foreach (var textType in CollectTextHashTypes(signatureList))
+        {
+            EmitTextHashHelperDefinition(
+                builder,
+                textType,
+                textType.Kind == StarkTypeKind.Ascii ? AsciiHashHelperName : UnicodeHashHelperName);
             builder.AppendLine();
         }
 
@@ -1792,15 +1807,18 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         return true;
     }
 
-    private IReadOnlyList<StarkTypeSymbol> CollectTextEqualityTypes()
+    private IReadOnlyList<StarkTypeSymbol> CollectTextEqualityTypes(IReadOnlyList<TypedFunctionSignature> signatures)
     {
         return _enumerateBinaryOperations()
             .Where(static binary => binary.Operator is SsaBinaryOperator.Equal or SsaBinaryOperator.NotEqual)
             .Select(static binary => binary.Left.Type)
+            .Concat(CollectDictionaryKeyTextSignatureTypes(signatures, DictionaryKeyTextCallOperation.Equals))
+            .Concat(CollectDictionaryKeyTextTypes(DictionaryKeyTextCallOperation.Equals))
             .Select(NormalizeAggregateType)
             .Where(static type => type.Kind is StarkTypeKind.Ascii or StarkTypeKind.Unicode)
-            .Distinct()
-            .OrderBy(static type => type.DisplayName, StringComparer.Ordinal)
+            .GroupBy(static type => type.Kind)
+            .Select(static group => group.First())
+            .OrderBy(static type => type.Kind)
             .ToArray();
     }
 
@@ -1815,9 +1833,178 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             .Select(static binary => binary.Left.Type)
             .Select(NormalizeAggregateType)
             .Where(static type => type.Kind is StarkTypeKind.Ascii or StarkTypeKind.Unicode)
-            .Distinct()
-            .OrderBy(static type => type.DisplayName, StringComparer.Ordinal)
+            .GroupBy(static type => type.Kind)
+            .Select(static group => group.First())
+            .OrderBy(static type => type.Kind)
             .ToArray();
+    }
+
+    private IReadOnlyList<StarkTypeSymbol> CollectTextHashTypes(IReadOnlyList<TypedFunctionSignature> signatures)
+    {
+        return CollectDictionaryKeyTextSignatureTypes(signatures, DictionaryKeyTextCallOperation.Hash)
+            .Concat(CollectDictionaryKeyTextTypes(DictionaryKeyTextCallOperation.Hash))
+            .Select(NormalizeAggregateType)
+            .Where(static type => type.Kind is StarkTypeKind.Ascii or StarkTypeKind.Unicode)
+            .GroupBy(static type => type.Kind)
+            .Select(static group => group.First())
+            .OrderBy(static type => type.Kind)
+            .ToArray();
+    }
+
+    private enum DictionaryKeyTextCallOperation
+    {
+        Hash,
+        Equals
+    }
+
+    private static IEnumerable<StarkTypeSymbol> CollectDictionaryKeyTextSignatureTypes(
+        IEnumerable<TypedFunctionSignature> signatures,
+        DictionaryKeyTextCallOperation operation)
+    {
+        foreach (var signature in signatures)
+        {
+            if (TryResolveDictionaryKeyTextCallOperation(
+                    signature.TemplateName,
+                    signature.DisplaySourceName,
+                    signature.Name) != operation)
+            {
+                continue;
+            }
+
+            var expectedParameterCount = operation == DictionaryKeyTextCallOperation.Hash ? 1 : 2;
+            if (signature.Parameters.Count != expectedParameterCount)
+            {
+                continue;
+            }
+
+            var keyType = NormalizeAggregateType(signature.Parameters[0].Type);
+            if (!IsTextType(keyType))
+            {
+                continue;
+            }
+
+            var allParametersMatch = true;
+            for (var index = 1; index < signature.Parameters.Count; index++)
+            {
+                if (NormalizeAggregateType(signature.Parameters[index].Type) != keyType)
+                {
+                    allParametersMatch = false;
+                    break;
+                }
+            }
+
+            if (allParametersMatch)
+            {
+                yield return keyType;
+            }
+        }
+    }
+
+    private IEnumerable<StarkTypeSymbol> CollectDictionaryKeyTextTypes(DictionaryKeyTextCallOperation operation)
+    {
+        foreach (var call in EnumerateDirectCallValues())
+        {
+            if (TryResolveDictionaryKeyTextCallOperation(call) != operation)
+            {
+                continue;
+            }
+
+            var expectedArgumentCount = operation == DictionaryKeyTextCallOperation.Hash ? 1 : 2;
+            if (call.Arguments.Count != expectedArgumentCount
+                || !TryResolveDictionaryKeyTextArgumentType(call, 0, out var keyType))
+            {
+                continue;
+            }
+
+            var allArgumentsMatch = true;
+            for (var index = 1; index < call.Arguments.Count; index++)
+            {
+                if (!TryResolveDictionaryKeyTextArgumentType(call, index, out var argumentType)
+                    || NormalizeAggregateType(argumentType) != NormalizeAggregateType(keyType))
+                {
+                    allArgumentsMatch = false;
+                    break;
+                }
+            }
+
+            if (allArgumentsMatch)
+            {
+                yield return keyType;
+            }
+        }
+    }
+
+    private IEnumerable<SsaCallRValue> EnumerateDirectCallValues()
+    {
+        return _enumerateSsaFunctions()
+            .SelectMany(static function => function.Blocks)
+            .SelectMany(static block => block.Instructions)
+            .OfType<SsaValueInstruction>()
+            .Select(static instruction => instruction.Value)
+            .OfType<SsaCallRValue>();
+    }
+
+    private static DictionaryKeyTextCallOperation? TryResolveDictionaryKeyTextCallOperation(SsaCallRValue call)
+    {
+        return TryResolveDictionaryKeyTextCallOperation(call.FunctionName);
+    }
+
+    private static DictionaryKeyTextCallOperation? TryResolveDictionaryKeyTextCallOperation(params string?[] functionNames)
+    {
+        foreach (var functionName in functionNames)
+        {
+            if (string.IsNullOrWhiteSpace(functionName))
+            {
+                continue;
+            }
+
+            if ((functionName is "System.Collections.DictionaryKey.Hash"
+                    or "DictionaryKey.Hash"
+                    or "System_Collections_DictionaryKey_Hash")
+                || functionName.Contains("System_Collections_DictionaryKey_Hash__", StringComparison.Ordinal))
+            {
+                return DictionaryKeyTextCallOperation.Hash;
+            }
+
+            if ((functionName is "System.Collections.DictionaryKey.Equals"
+                    or "DictionaryKey.Equals"
+                    or "System_Collections_DictionaryKey_Equals")
+                || functionName.Contains("System_Collections_DictionaryKey_Equals__", StringComparison.Ordinal))
+            {
+                return DictionaryKeyTextCallOperation.Equals;
+            }
+        }
+
+        return null;
+    }
+
+    private static bool TryResolveDictionaryKeyTextArgumentType(
+        SsaCallRValue call,
+        int argumentIndex,
+        out StarkTypeSymbol keyType)
+    {
+        keyType = NormalizeAggregateType(call.Arguments[argumentIndex].Type);
+        if (IsTextType(keyType))
+        {
+            return true;
+        }
+
+        var indirectArgumentAddress = call.IndirectArgumentAddresses is not null && argumentIndex < call.IndirectArgumentAddresses.Count
+            ? call.IndirectArgumentAddresses[argumentIndex]
+            : null;
+        if (indirectArgumentAddress?.Type is { Kind: StarkTypeKind.RawPointer, ElementType: not null } pointerType)
+        {
+            keyType = NormalizeAggregateType(pointerType.ElementType);
+            return IsTextType(keyType);
+        }
+
+        keyType = StarkTypeSymbols.Error;
+        return false;
+    }
+
+    private static bool IsTextType(StarkTypeSymbol type)
+    {
+        return type.Kind is StarkTypeKind.Ascii or StarkTypeKind.Unicode;
     }
 
     private IReadOnlyList<int> CollectIntegerExponentBitWidths()
@@ -2041,6 +2228,11 @@ internal sealed class LlvmBuiltinAndHelperEmitter
                         return false;
                     }
 
+                    if (LlvmLayoutControlledAggregateFacts.RequiresPhysicalLayout(namedType))
+                    {
+                        return false;
+                    }
+
                     var sizeBytes = 0;
                     var alignmentBytes = 1;
                     for (var index = 0; index < orderedFields.Count; index++)
@@ -2233,6 +2425,49 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         builder.AppendLine();
         builder.AppendLine("return_equal:");
         builder.AppendLine("  ret i32 0");
+        builder.AppendLine("}");
+    }
+
+    private void EmitTextHashHelperDefinition(
+        StringBuilder builder,
+        StarkTypeSymbol textType,
+        string helperName)
+    {
+        var textLlvmType = MapType(textType);
+        var unitType = textType.Kind switch
+        {
+            StarkTypeKind.Ascii => StarkTypeSymbols.Integer(8),
+            StarkTypeKind.Unicode => StarkTypeSymbols.Integer(32),
+            _ => throw new InvalidOperationException($"Text hash helper requires an ascii/unicode type, but found '{textType.DisplayName}'.")
+        };
+        var unitLlvmType = MapType(unitType);
+
+        builder.AppendLine(BuildInternalAddressInsensitiveHelperSignature(
+            "i64",
+            helperName,
+            $"{textLlvmType} %value"));
+        builder.AppendLine("entry:");
+        builder.AppendLine($"  %text_hash_data = extractvalue {textLlvmType} %value, 0");
+        builder.AppendLine($"  %text_hash_length = extractvalue {textLlvmType} %value, 1");
+        builder.AppendLine("  br label %loop_header");
+        builder.AppendLine();
+        builder.AppendLine("loop_header:");
+        builder.AppendLine("  %text_hash_index = phi i64 [ 0, %entry ], [ %text_hash_next, %loop_body ]");
+        builder.AppendLine("  %text_hash_value = phi i64 [ 14695981039346656037, %entry ], [ %text_hash_mixed, %loop_body ]");
+        builder.AppendLine("  %text_hash_done = icmp eq i64 %text_hash_index, %text_hash_length");
+        builder.AppendLine("  br i1 %text_hash_done, label %return_hash, label %loop_body");
+        builder.AppendLine();
+        builder.AppendLine("loop_body:");
+        builder.AppendLine($"  %text_hash_unit_ptr = getelementptr{GetProvenInObjectGepFlags()} {unitLlvmType}, ptr %text_hash_data, i64 %text_hash_index");
+        builder.AppendLine($"  %text_hash_unit = load {unitLlvmType}, ptr %text_hash_unit_ptr");
+        builder.AppendLine($"  %text_hash_wide = zext {unitLlvmType} %text_hash_unit to i64");
+        builder.AppendLine("  %text_hash_xored = xor i64 %text_hash_value, %text_hash_wide");
+        builder.AppendLine("  %text_hash_mixed = mul i64 %text_hash_xored, 1099511628211");
+        builder.AppendLine("  %text_hash_next = add i64 %text_hash_index, 1");
+        builder.AppendLine("  br label %loop_header");
+        builder.AppendLine();
+        builder.AppendLine("return_hash:");
+        builder.AppendLine("  ret i64 %text_hash_value");
         builder.AppendLine("}");
     }
 
@@ -2536,9 +2771,9 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             StarkTypeKind.Dynamic when normalizedType.ElementType is not null && index == 0
                 => StarkTypeSymbols.RawPointer(normalizedType.ElementType, isMutable: true),
             StarkTypeKind.Dynamic when index == 1
-                => StarkTypeSymbols.Integer(64),
+                => StarkTypeSymbols.Integer(64, BigInteger.Zero, new BigInteger(long.MaxValue)),
             StarkTypeKind.Dynamic when index == 2
-                => StarkTypeSymbols.Integer(64),
+                => StarkTypeSymbols.Integer(64, BigInteger.Zero, new BigInteger(long.MaxValue)),
             StarkTypeKind.Named when ResolveNamedTypeSymbol(normalizedType) is { } namedType
                                        && TryGetScalarizableNamedAggregateFields(namedType, out var orderedFields)
                                        && index >= 0
@@ -2929,6 +3164,14 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             return true;
         }
 
+        if (TryResolveSystemThreadingAtomicBuiltin(moduleName, function, out var systemThreadingAtomicBuiltin))
+        {
+            builder.AppendLine(_buildDefinitionSignature(internalize, function, abiFunction, effects, memoryEffects, parameterEffects) + " {");
+            EmitSystemThreadingAtomicBuiltin(builder, function, abiFunction, systemThreadingAtomicBuiltin);
+            builder.AppendLine("}");
+            return true;
+        }
+
         if (!TryGetSystemTextBuiltin(moduleName, function.Name, out var builtinKind))
         {
             return false;
@@ -3110,6 +3353,426 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         }
     }
 
+    private static bool TryResolveSystemThreadingAtomicBuiltin(
+        string moduleName,
+        TypedFunctionSignature function,
+        out SystemThreadingAtomicBuiltin builtin)
+    {
+        return SystemThreadingAtomicFacts.TryGetAtomicBuiltin(moduleName, function.DisplaySourceName, out builtin)
+            || SystemThreadingAtomicFacts.TryGetAtomicBuiltin(moduleName: string.Empty, function.Name, out builtin);
+    }
+
+    /// <summary>
+    /// Emits the body of one System.Threading atomic builtin method (doc 12 §4/§5).
+    /// Every operation is seq-cst, performed on the power-of-2 storage container at
+    /// offset 0 of the receiver. The container always holds the sign/zero-extension of
+    /// the logical value (the canonical-extension invariant, maintained by the
+    /// constructor and by every mutation here), which keeps Load / Store / Exchange /
+    /// And / Or / Xor / CompareExchange single hardware instructions at every width;
+    /// only Add / Sub on narrower-than-container values need a compare-exchange retry
+    /// loop, because carries do not commute with extension.
+    /// </summary>
+    private void EmitSystemThreadingAtomicBuiltin(
+        StringBuilder builder,
+        TypedFunctionSignature function,
+        AbiFunctionSignature abiFunction,
+        SystemThreadingAtomicBuiltin builtin)
+    {
+        ValidateSystemThreadingAtomicBuiltinSignature(function, abiFunction, builtin);
+
+        if (builtin.Tier == SystemThreadingAtomicTier.EmbeddedLock)
+        {
+            EmitSystemThreadingAtomicEmbeddedLockBuiltin(builder, function, abiFunction, builtin);
+            return;
+        }
+
+        // The atomic container is the struct's only field, at offset 0: the receiver
+        // pointer is the container pointer.
+        var receiverPointer = $"%{EscapeIdentifier(abiFunction.UserParameters[0].LlvmName)}";
+        var containerType = $"i{builtin.StorageBitWidth}";
+        var alignment = builtin.StorageAlignmentBytes;
+
+        builder.AppendLine("entry:");
+        switch (builtin.Operation)
+        {
+            case SystemThreadingAtomicOperation.Load:
+                builder.AppendLine($"  %atomic_loaded = load atomic {containerType}, ptr {receiverPointer} seq_cst, align {alignment}");
+                EmitSystemThreadingAtomicValueReturn(builder, builtin, "%atomic_loaded");
+                return;
+
+            case SystemThreadingAtomicOperation.Store:
+            {
+                var storeValue = WidenSystemThreadingAtomicOperand(builder, builtin, abiFunction.UserParameters[1], "store");
+                builder.AppendLine($"  store atomic {containerType} {storeValue}, ptr {receiverPointer} seq_cst, align {alignment}");
+                builder.AppendLine("  ret void");
+                return;
+            }
+
+            case SystemThreadingAtomicOperation.And:
+            case SystemThreadingAtomicOperation.Or:
+            case SystemThreadingAtomicOperation.Xor:
+            case SystemThreadingAtomicOperation.Exchange:
+            {
+                // Extension commutes with xchg/and/or/xor, so these are single
+                // instructions on the container at every width.
+                var rmwOperation = GetSystemThreadingAtomicRmwOperationName(builtin.Operation);
+                var operand = WidenSystemThreadingAtomicOperand(builder, builtin, abiFunction.UserParameters[1], "rmw");
+                builder.AppendLine($"  %atomic_previous = atomicrmw {rmwOperation} ptr {receiverPointer}, {containerType} {operand} seq_cst, align {alignment}");
+                EmitSystemThreadingAtomicValueReturn(builder, builtin, "%atomic_previous");
+                return;
+            }
+
+            case SystemThreadingAtomicOperation.Add:
+            case SystemThreadingAtomicOperation.Sub:
+            {
+                var rmwOperation = GetSystemThreadingAtomicRmwOperationName(builtin.Operation);
+                var operand = $"%{EscapeIdentifier(abiFunction.UserParameters[1].LlvmName)}";
+                if (builtin.ValueBitWidth == builtin.StorageBitWidth)
+                {
+                    // Full-width values: a single atomicrmw (wrapping arithmetic).
+                    builder.AppendLine($"  %atomic_previous = atomicrmw {rmwOperation} ptr {receiverPointer}, {containerType} {operand} seq_cst, align {alignment}");
+                    builder.AppendLine($"  ret {containerType} %atomic_previous");
+                    return;
+                }
+
+                // Carries do not commute with extension: re-extend the value-width
+                // result through a compare-exchange retry loop.
+                EmitSystemThreadingAtomicArithmeticCasLoop(builder, builtin, receiverPointer, rmwOperation, operand, containerType, alignment);
+                return;
+            }
+
+            case SystemThreadingAtomicOperation.CompareExchange:
+            {
+                // Both comparands are canonically extended, so a single container-wide
+                // cmpxchg compares exactly the logical values.
+                var expected = WidenSystemThreadingAtomicOperand(builder, builtin, abiFunction.UserParameters[1], "expected");
+                var desired = WidenSystemThreadingAtomicOperand(builder, builtin, abiFunction.UserParameters[2], "desired");
+                builder.AppendLine($"  %atomic_pair = cmpxchg ptr {receiverPointer}, {containerType} {expected}, {containerType} {desired} seq_cst seq_cst, align {alignment}");
+                builder.AppendLine($"  %atomic_swapped = extractvalue {{ {containerType}, i1 }} %atomic_pair, 1");
+                builder.AppendLine("  ret i1 %atomic_swapped");
+                return;
+            }
+
+            default:
+                throw new InvalidOperationException($"Unsupported System.Threading atomic operation '{builtin.Operation}'.");
+        }
+    }
+
+    /// <summary>
+    /// Add/Sub for values narrower than their storage container: truncate the observed
+    /// container to the value width, do the wrapping arithmetic there, re-extend, and
+    /// publish with cmpxchg — retrying until no other thread raced the update. Returns
+    /// the previous value.
+    /// </summary>
+    private static void EmitSystemThreadingAtomicArithmeticCasLoop(
+        StringBuilder builder,
+        SystemThreadingAtomicBuiltin builtin,
+        string receiverPointer,
+        string arithmeticOperation,
+        string operand,
+        string containerType,
+        int alignment)
+    {
+        var valueType = $"i{builtin.ValueBitWidth}";
+        var extendOperation = builtin.IsUnsigned ? "zext" : "sext";
+
+        builder.AppendLine($"  %atomic_initial = load atomic {containerType}, ptr {receiverPointer} seq_cst, align {alignment}");
+        builder.AppendLine("  br label %cas_loop");
+        builder.AppendLine();
+        builder.AppendLine("cas_loop:");
+        builder.AppendLine($"  %atomic_current = phi {containerType} [ %atomic_initial, %entry ], [ %atomic_observed, %cas_loop ]");
+        builder.AppendLine($"  %atomic_current_value = trunc {containerType} %atomic_current to {valueType}");
+        builder.AppendLine($"  %atomic_new_value = {arithmeticOperation} {valueType} %atomic_current_value, {operand}");
+        builder.AppendLine($"  %atomic_new_container = {extendOperation} {valueType} %atomic_new_value to {containerType}");
+        builder.AppendLine($"  %atomic_pair = cmpxchg ptr {receiverPointer}, {containerType} %atomic_current, {containerType} %atomic_new_container seq_cst seq_cst, align {alignment}");
+        builder.AppendLine($"  %atomic_observed = extractvalue {{ {containerType}, i1 }} %atomic_pair, 0");
+        builder.AppendLine($"  %atomic_swapped = extractvalue {{ {containerType}, i1 }} %atomic_pair, 1");
+        builder.AppendLine("  br i1 %atomic_swapped, label %cas_done, label %cas_loop");
+        builder.AppendLine();
+        builder.AppendLine("cas_done:");
+        builder.AppendLine($"  ret {valueType} %atomic_current_value");
+    }
+
+    /// <summary>
+    /// 192-1024-bit atomics (doc 12 §4 tier 3): no CPU supports lock-free atomics above
+    /// 128 bits, so the struct embeds its own spinlock word (field 1) next to the value
+    /// (field 0, at offset 0) and every operation serializes through it. The lock
+    /// acquire/release are seq-cst, making each whole operation observably indivisible
+    /// and sequentially consistent; inside the critical section the value is accessed
+    /// with ordinary loads/stores.
+    /// </summary>
+    private void EmitSystemThreadingAtomicEmbeddedLockBuiltin(
+        StringBuilder builder,
+        TypedFunctionSignature function,
+        AbiFunctionSignature abiFunction,
+        SystemThreadingAtomicBuiltin builtin)
+    {
+        var receiverPointer = $"%{EscapeIdentifier(abiFunction.UserParameters[0].LlvmName)}";
+        var receiverType = NormalizeAggregateType(function.Parameters[0].Type);
+        if (TryGetConcreteTypeLayout(receiverType) is not { } receiverLayout
+            || !receiverLayout.TryGetField("Value", out var valueFieldLayout)
+            || valueFieldLayout.OffsetBytes != 0
+            || !receiverLayout.TryGetField("Lock", out var lockFieldLayout))
+        {
+            throw new InvalidOperationException(SystemThreadingAtomicFacts.DescribeRequiredAtomicFieldLayout(builtin));
+        }
+
+        var valueType = $"i{builtin.ValueBitWidth}";
+
+        // The value sits at offset 0 (the receiver pointer). Address the lock through
+        // the concrete layout so opaque LLVM pointers and future layout tweaks stay in
+        // agreement with Stark's field model.
+        builder.AppendLine("entry:");
+        builder.AppendLine($"  %atomic_lock_addr = getelementptr{GetProvenInObjectGepFlags()} i8, ptr {receiverPointer}, i64 {lockFieldLayout.OffsetBytes}");
+        builder.AppendLine("  br label %acquire");
+        builder.AppendLine();
+        builder.AppendLine("acquire:");
+        builder.AppendLine("  %atomic_lock_previous = atomicrmw xchg ptr %atomic_lock_addr, i32 1 seq_cst, align 4");
+        builder.AppendLine("  %atomic_lock_acquired = icmp eq i32 %atomic_lock_previous, 0");
+        builder.AppendLine("  br i1 %atomic_lock_acquired, label %critical, label %acquire");
+        builder.AppendLine();
+        builder.AppendLine("critical:");
+
+        switch (builtin.Operation)
+        {
+            case SystemThreadingAtomicOperation.Load:
+            {
+                builder.AppendLine($"  %atomic_value = load {valueType}, ptr {receiverPointer}, align 8");
+                EmitSystemThreadingAtomicEmbeddedLockRelease(builder);
+                builder.AppendLine($"  ret {valueType} %atomic_value");
+                return;
+            }
+
+            case SystemThreadingAtomicOperation.Store:
+            {
+                var storeValue = $"%{EscapeIdentifier(abiFunction.UserParameters[1].LlvmName)}";
+                builder.AppendLine($"  store {valueType} {storeValue}, ptr {receiverPointer}, align 8");
+                EmitSystemThreadingAtomicEmbeddedLockRelease(builder);
+                builder.AppendLine("  ret void");
+                return;
+            }
+
+            case SystemThreadingAtomicOperation.Exchange:
+            {
+                var exchangeValue = $"%{EscapeIdentifier(abiFunction.UserParameters[1].LlvmName)}";
+                builder.AppendLine($"  %atomic_previous = load {valueType}, ptr {receiverPointer}, align 8");
+                builder.AppendLine($"  store {valueType} {exchangeValue}, ptr {receiverPointer}, align 8");
+                EmitSystemThreadingAtomicEmbeddedLockRelease(builder);
+                builder.AppendLine($"  ret {valueType} %atomic_previous");
+                return;
+            }
+
+            case SystemThreadingAtomicOperation.Add:
+            case SystemThreadingAtomicOperation.Sub:
+            case SystemThreadingAtomicOperation.And:
+            case SystemThreadingAtomicOperation.Or:
+            case SystemThreadingAtomicOperation.Xor:
+            {
+                var binaryOperation = builtin.Operation switch
+                {
+                    SystemThreadingAtomicOperation.Add => "add",
+                    SystemThreadingAtomicOperation.Sub => "sub",
+                    SystemThreadingAtomicOperation.And => "and",
+                    SystemThreadingAtomicOperation.Or => "or",
+                    _ => "xor"
+                };
+                var operand = $"%{EscapeIdentifier(abiFunction.UserParameters[1].LlvmName)}";
+                builder.AppendLine($"  %atomic_previous = load {valueType}, ptr {receiverPointer}, align 8");
+                builder.AppendLine($"  %atomic_updated = {binaryOperation} {valueType} %atomic_previous, {operand}");
+                builder.AppendLine($"  store {valueType} %atomic_updated, ptr {receiverPointer}, align 8");
+                EmitSystemThreadingAtomicEmbeddedLockRelease(builder);
+                builder.AppendLine($"  ret {valueType} %atomic_previous");
+                return;
+            }
+
+            case SystemThreadingAtomicOperation.CompareExchange:
+            {
+                var expected = $"%{EscapeIdentifier(abiFunction.UserParameters[1].LlvmName)}";
+                var desired = $"%{EscapeIdentifier(abiFunction.UserParameters[2].LlvmName)}";
+                builder.AppendLine($"  %atomic_current = load {valueType}, ptr {receiverPointer}, align 8");
+                builder.AppendLine($"  %atomic_matches = icmp eq {valueType} %atomic_current, {expected}");
+                // Branch-free publish: keep the current value unless the comparison matched.
+                builder.AppendLine($"  %atomic_publish = select i1 %atomic_matches, {valueType} {desired}, {valueType} %atomic_current");
+                builder.AppendLine($"  store {valueType} %atomic_publish, ptr {receiverPointer}, align 8");
+                EmitSystemThreadingAtomicEmbeddedLockRelease(builder);
+                builder.AppendLine("  ret i1 %atomic_matches");
+                return;
+            }
+
+            default:
+                throw new InvalidOperationException($"Unsupported System.Threading atomic operation '{builtin.Operation}'.");
+        }
+    }
+
+    private static void EmitSystemThreadingAtomicEmbeddedLockRelease(StringBuilder builder)
+    {
+        builder.AppendLine("  store atomic i32 0, ptr %atomic_lock_addr seq_cst, align 4");
+    }
+
+    private static string GetSystemThreadingAtomicRmwOperationName(SystemThreadingAtomicOperation operation)
+    {
+        return operation switch
+        {
+            SystemThreadingAtomicOperation.Add => "add",
+            SystemThreadingAtomicOperation.Sub => "sub",
+            SystemThreadingAtomicOperation.And => "and",
+            SystemThreadingAtomicOperation.Or => "or",
+            SystemThreadingAtomicOperation.Xor => "xor",
+            SystemThreadingAtomicOperation.Exchange => "xchg",
+            _ => throw new InvalidOperationException($"Atomic operation '{operation}' is not an atomicrmw operation.")
+        };
+    }
+
+    /// <summary>
+    /// Brings an incoming value-width operand up to the container width ahead of the
+    /// atomic instruction: bool zero-extends its i1 to the storage byte, narrower
+    /// integers sign/zero-extend to their power-of-2 container, and full-width values
+    /// pass through unchanged.
+    /// </summary>
+    private string WidenSystemThreadingAtomicOperand(
+        StringBuilder builder,
+        SystemThreadingAtomicBuiltin builtin,
+        AbiParameterSymbol parameter,
+        string nameHint)
+    {
+        var rawValue = $"%{EscapeIdentifier(parameter.LlvmName)}";
+        if (builtin.IsBool)
+        {
+            var widenedBool = $"%atomic_{nameHint}_byte";
+            builder.AppendLine($"  {widenedBool} = zext i1 {rawValue} to i8");
+            return widenedBool;
+        }
+
+        if (builtin.ValueBitWidth == builtin.StorageBitWidth)
+        {
+            return rawValue;
+        }
+
+        var extendOperation = builtin.IsUnsigned ? "zext" : "sext";
+        var widenedValue = $"%atomic_{nameHint}_container";
+        builder.AppendLine($"  {widenedValue} = {extendOperation} i{builtin.ValueBitWidth} {rawValue} to i{builtin.StorageBitWidth}");
+        return widenedValue;
+    }
+
+    /// <summary>
+    /// Returns the loaded/previous container value to the caller at the declared value
+    /// width: bool narrows its byte back to i1, narrower integers truncate their
+    /// container, and full-width values return directly.
+    /// </summary>
+    private static void EmitSystemThreadingAtomicValueReturn(
+        StringBuilder builder,
+        SystemThreadingAtomicBuiltin builtin,
+        string containerValue)
+    {
+        if (builtin.IsBool)
+        {
+            builder.AppendLine($"  %atomic_result = icmp ne i8 {containerValue}, 0");
+            builder.AppendLine("  ret i1 %atomic_result");
+            return;
+        }
+
+        if (builtin.ValueBitWidth == builtin.StorageBitWidth)
+        {
+            builder.AppendLine($"  ret i{builtin.StorageBitWidth} {containerValue}");
+            return;
+        }
+
+        builder.AppendLine($"  %atomic_result = trunc i{builtin.StorageBitWidth} {containerValue} to i{builtin.ValueBitWidth}");
+        builder.AppendLine($"  ret i{builtin.ValueBitWidth} %atomic_result");
+    }
+
+    /// <summary>
+    /// The stdlib declarations and this emitter move in lockstep; any mismatch here is a
+    /// compiler/stdlib bug, not a user error. Checks the operation arity, that the
+    /// receiver is a borrowed atomic struct whose single field is the storage container
+    /// at offset 0, and that operand/return types match the value type.
+    /// </summary>
+    private void ValidateSystemThreadingAtomicBuiltinSignature(
+        TypedFunctionSignature function,
+        AbiFunctionSignature abiFunction,
+        SystemThreadingAtomicBuiltin builtin)
+    {
+        var expectedParameterCount = builtin.Operation switch
+        {
+            SystemThreadingAtomicOperation.Load => 1,
+            SystemThreadingAtomicOperation.CompareExchange => 3,
+            _ => 2
+        };
+
+        if (function.Parameters.Count != expectedParameterCount
+            || abiFunction.UserParameters.Count != expectedParameterCount)
+        {
+            throw new InvalidOperationException(
+                $"System.Threading atomic builtin '{function.Name}' expects exactly {expectedParameterCount} parameter(s) including the receiver.");
+        }
+
+        var receiverType = function.Parameters[0].Type;
+        if (receiverType.Kind != StarkTypeKind.Named
+            || receiverType.BorrowKind != StarkBorrowKind.Borrow
+            || !IsSystemThreadingAtomicTypeName(receiverType.NamedType, builtin.AtomicTypeName))
+        {
+            throw new InvalidOperationException(
+                $"System.Threading atomic builtin '{function.Name}' must take 'borrow {builtin.AtomicTypeName} self' as its first parameter.");
+        }
+
+        if (builtin.Operation != SystemThreadingAtomicOperation.Load && !receiverType.IsMutableView)
+        {
+            throw new InvalidOperationException(
+                $"System.Threading atomic builtin '{function.Name}' mutates the value and must take 'mut borrow {builtin.AtomicTypeName} self'.");
+        }
+
+        if (ResolveNamedTypeSymbol(receiverType) is { } atomicStructType
+            && !SystemThreadingAtomicFacts.HasValidAtomicFieldLayout(atomicStructType, builtin))
+        {
+            throw new InvalidOperationException(SystemThreadingAtomicFacts.DescribeRequiredAtomicFieldLayout(builtin));
+        }
+
+        foreach (var parameter in function.Parameters.Skip(1))
+        {
+            if (!IsSystemThreadingAtomicValueType(parameter.Type, builtin))
+            {
+                throw new InvalidOperationException(
+                    $"System.Threading atomic builtin '{function.Name}' parameter '{parameter.Name}' must match the atomic value type.");
+            }
+        }
+
+        var returnTypeIsValid = builtin.Operation switch
+        {
+            SystemThreadingAtomicOperation.Store => function.ReturnType.Kind == StarkTypeKind.Void,
+            SystemThreadingAtomicOperation.CompareExchange => function.ReturnType.Kind == StarkTypeKind.Bool,
+            _ => IsSystemThreadingAtomicValueType(function.ReturnType, builtin)
+        };
+
+        if (!returnTypeIsValid)
+        {
+            throw new InvalidOperationException(
+                $"System.Threading atomic builtin '{function.Name}' has the wrong return type for operation '{builtin.Operation}'.");
+        }
+    }
+
+    private static bool IsSystemThreadingAtomicTypeName(string? namedType, string atomicTypeName)
+    {
+        if (namedType is null)
+        {
+            return false;
+        }
+
+        return string.Equals(namedType, atomicTypeName, StringComparison.Ordinal)
+            || string.Equals(namedType, SystemThreadingAtomicFacts.ModuleName + "." + atomicTypeName, StringComparison.Ordinal);
+    }
+
+    private static bool IsSystemThreadingAtomicValueType(StarkTypeSymbol type, SystemThreadingAtomicBuiltin builtin)
+    {
+        if (builtin.IsBool)
+        {
+            return type.Kind == StarkTypeKind.Bool;
+        }
+
+        return type.Kind == StarkTypeKind.Integer
+            && type.BitWidth == builtin.ValueBitWidth
+            && type.IsUnsigned == builtin.IsUnsigned;
+    }
+
     private void EmitSystemRuntimeBuiltin(
         StringBuilder builder,
         AbiFunctionSignature abiFunction,
@@ -3194,16 +3857,33 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         TypedFunctionSignature function,
         AbiFunctionSignature abiFunction)
     {
-        var keyType = ValidateSystemCollectionsDictionaryKeySignature(function, expectedParameterCount: 2);
+        var contract = ValidateSystemCollectionsDictionaryKeySignature(function, expectedParameterCount: 2);
+        var keyType = contract.KeyType;
         if (abiFunction.UserParameters.Count != 2)
         {
             throw new InvalidOperationException($"System.Collections builtin '{function.Name}' expects exactly two key parameters.");
+        }
+
+        if (contract.UsesExplicitStaticMethods)
+        {
+            EmitDictionaryKeyContractForwardingCall(builder, abiFunction, contract.EqualsFunction!, "dict_key_equal");
+            return;
         }
 
         var llvmType = MapType(keyType);
         builder.AppendLine("entry:");
         var left = EmitDictionaryKeyParameterLoad(builder, abiFunction.UserParameters[0], keyType, "dict_key_left");
         var right = EmitDictionaryKeyParameterLoad(builder, abiFunction.UserParameters[1], keyType, "dict_key_right");
+        if (contract.UsesCompilerKnownText)
+        {
+            var helperName = keyType.Kind == StarkTypeKind.Ascii
+                ? AsciiEqualityHelperName
+                : UnicodeEqualityHelperName;
+            builder.AppendLine($"  %dict_key_equal = call i1 @{EscapeIdentifier(helperName)}({llvmType} {left}, {llvmType} {right})");
+            builder.AppendLine("  ret i1 %dict_key_equal");
+            return;
+        }
+
         builder.AppendLine($"  %dict_key_equal = icmp eq {llvmType} {left}, {right}");
         builder.AppendLine("  ret i1 %dict_key_equal");
     }
@@ -3213,15 +3893,32 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         TypedFunctionSignature function,
         AbiFunctionSignature abiFunction)
     {
-        var keyType = ValidateSystemCollectionsDictionaryKeySignature(function, expectedParameterCount: 1);
+        var contract = ValidateSystemCollectionsDictionaryKeySignature(function, expectedParameterCount: 1);
+        var keyType = contract.KeyType;
         if (abiFunction.UserParameters.Count != 1)
         {
             throw new InvalidOperationException($"System.Collections builtin '{function.Name}' expects exactly one key parameter.");
         }
 
+        if (contract.UsesExplicitStaticMethods)
+        {
+            EmitDictionaryKeyContractForwardingCall(builder, abiFunction, contract.HashFunction!, "dict_key_hash");
+            return;
+        }
+
         var llvmType = MapType(keyType);
         builder.AppendLine("entry:");
         var value = EmitDictionaryKeyParameterLoad(builder, abiFunction.UserParameters[0], keyType, "dict_key_value");
+        if (contract.UsesCompilerKnownText)
+        {
+            var helperName = keyType.Kind == StarkTypeKind.Ascii
+                ? AsciiHashHelperName
+                : UnicodeHashHelperName;
+            builder.AppendLine($"  %dict_key_hash = call i64 @{EscapeIdentifier(helperName)}({llvmType} {value})");
+            builder.AppendLine("  ret i64 %dict_key_hash");
+            return;
+        }
+
         var hashValue = keyType.Kind switch
         {
             StarkTypeKind.Bool => EmitIntegerHashConversion(builder, "i1", value, "dict_key_hash"),
@@ -3229,6 +3926,45 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             _ => throw new InvalidOperationException($"System.Collections DictionaryKey.Hash does not support key type '{keyType.DisplayName}'.")
         };
         builder.AppendLine($"  ret i64 {hashValue}");
+    }
+
+    private void EmitDictionaryKeyContractForwardingCall(
+        StringBuilder builder,
+        AbiFunctionSignature wrapperAbi,
+        TypedFunctionSignature targetFunction,
+        string localName)
+    {
+        var targetAbi = _resolveFunctionAbi(targetFunction)
+            ?? throw new InvalidOperationException($"Missing ABI lowering for dictionary key contract method '{targetFunction.Name}'.");
+        if (targetAbi.ReturnsIndirect)
+        {
+            throw new InvalidOperationException($"Dictionary key contract method '{targetFunction.Name}' must return directly.");
+        }
+
+        if (targetAbi.UserParameters.Count != wrapperAbi.UserParameters.Count)
+        {
+            throw new InvalidOperationException($"Dictionary key contract method '{targetFunction.Name}' has ABI parameter count {targetAbi.UserParameters.Count}, expected {wrapperAbi.UserParameters.Count}.");
+        }
+
+        var arguments = new List<string>(targetAbi.UserParameters.Count);
+        for (var index = 0; index < targetAbi.UserParameters.Count; index++)
+        {
+            var targetParameter = targetAbi.UserParameters[index];
+            var wrapperParameter = wrapperAbi.UserParameters[index];
+            if (targetParameter.Kind != wrapperParameter.Kind)
+            {
+                throw new InvalidOperationException($"Dictionary key contract method '{targetFunction.Name}' ABI parameter '{targetParameter.SourceName}' does not match wrapper parameter '{wrapperParameter.SourceName}'.");
+            }
+
+            arguments.Add($"{MapType(targetParameter.LlvmType)} %{EscapeIdentifier(wrapperParameter.LlvmName)}");
+        }
+
+        var callConvention = GetCallConventionPrefix(targetAbi);
+        var resultType = MapType(targetAbi.LlvmReturnType);
+        var result = $"%{EscapeIdentifier(localName)}";
+        builder.AppendLine("entry:");
+        builder.AppendLine($"  {result} = call {callConvention}{resultType} @{EscapeIdentifier(targetAbi.SymbolName)}({string.Join(", ", arguments)})");
+        builder.AppendLine($"  ret {MapType(wrapperAbi.LlvmReturnType)} {result}");
     }
 
     private string EmitDictionaryKeyParameterLoad(
@@ -3270,6 +4006,18 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         var opcode = bitWidth < 64 ? "zext" : "trunc";
         builder.AppendLine($"  {converted} = {opcode} {llvmType} {value} to i64");
         return converted;
+    }
+
+    private static string GetCallConventionPrefix(AbiFunctionSignature abiFunction)
+    {
+        if (abiFunction.UsesFastCallingConvention)
+        {
+            return "fastcc ";
+        }
+
+        return StarkFfiAbiFacts.LlvmCallingConventionName(abiFunction.FfiAbi) is { } callingConvention
+            ? $"{callingConvention} "
+            : string.Empty;
     }
 
     private void EmitSystemMemoryAllocateBuiltin(
@@ -5081,7 +5829,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             ItemsFieldType: null);
     }
 
-    private static StarkTypeSymbol ValidateSystemCollectionsDictionaryKeySignature(
+    private SystemCollectionsDictionaryKeyContract ValidateSystemCollectionsDictionaryKeySignature(
         TypedFunctionSignature function,
         int expectedParameterCount)
     {
@@ -5102,12 +5850,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             throw new InvalidOperationException($"System.Collections builtin '{function.Name}' must return 'bool'.");
         }
 
-        var keyType = StarkTypeSymbols.WithQualifiers(
-            function.Parameters[0].Type,
-            borrowKind: StarkBorrowKind.None,
-            accessKind: StarkAccessKind.None,
-            initializationKind: StarkInitializationKind.None,
-            isMutableView: false);
+        var keyType = SystemCollectionsDictionaryKeyFacts.NormalizeType(function.Parameters[0].Type);
         if (function.Parameters[0].Type.BorrowKind == StarkBorrowKind.None)
         {
             throw new InvalidOperationException($"System.Collections builtin '{function.Name}' key parameters must use 'borrow'.");
@@ -5115,12 +5858,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
 
         for (var index = 1; index < function.Parameters.Count; index++)
         {
-            var parameterType = StarkTypeSymbols.WithQualifiers(
-                function.Parameters[index].Type,
-                borrowKind: StarkBorrowKind.None,
-                accessKind: StarkAccessKind.None,
-                initializationKind: StarkInitializationKind.None,
-                isMutableView: false);
+            var parameterType = SystemCollectionsDictionaryKeyFacts.NormalizeType(function.Parameters[index].Type);
             if (function.Parameters[index].Type.BorrowKind == StarkBorrowKind.None
                 || parameterType != keyType)
             {
@@ -5128,12 +5866,16 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             }
         }
 
-        if (keyType.Kind is not (StarkTypeKind.Bool or StarkTypeKind.Integer))
+        if (!SystemCollectionsDictionaryKeyFacts.TryResolveContract(
+                keyType,
+                _context.TypeModel.Overloads,
+                out var contract,
+                out _))
         {
             throw new InvalidOperationException($"System.Collections DictionaryKey builtin '{function.Name}' does not support key type '{keyType.DisplayName}'.");
         }
 
-        return keyType;
+        return contract;
     }
 
     private static FunctionMemoryEffectSummary GetSystemMemoryBuiltinMemoryEffects(SystemMemoryBuiltinKind builtinKind)

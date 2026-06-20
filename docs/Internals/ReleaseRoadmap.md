@@ -2068,9 +2068,9 @@ Completion rules:
 
 - [x] Define the Stark test-project model.
   - [x] Model keywords and syntax after Xunit, such as `[Fact]`.
-    - Done: `[Fact]` attributes are valid source metadata on test functions;
-      test discovery remains explicit in `main`, and `[Theory]` is reserved for
-      the later data-driven runner rather than implied today.
+    - Done: `[Fact]` and `[Theory]` attributes are valid source metadata on
+      test functions; `stark test` generates an explicit `main` with inline and
+      typed indexed member-data expansion instead of using runtime reflection.
   - [x] decide whether test projects are a separate `kind = "test"` manifest kind or executable projects with test metadata
     - Done: test projects use separate `kind = "test"` manifests with a
       `[test]` root/output table.
@@ -2436,7 +2436,7 @@ Completion rules:
     full `dotnet test -c Release tests/compiler.Tests/compiler.Tests.csproj`
     passed 1321 tests. `scripts/build-stdlib.sh` rebuilt
     `stdlib/dist/libSystem.a` and `stdlib/dist/libSystem.starkpkg.json`. A
-    native `--emit-obj -O0` smoke test for positive and zero-allowed bounded
+    native `--emit-obj` smoke test for positive and zero-allowed bounded
     raw-pointer parameters succeeded with the installed LLVM backend.
   - 100-run benchmark verification: `IndependentRawPointerRegions` from
     `results-20260514T051846Z.16lFLs.csv` recorded Stark/C `0.964066`, Rust/C
@@ -2713,5 +2713,5 @@ Completion rules:
   - Verification: focused captured/non-capturing/function-item closure LLVM
     tests passed 3 tests; focused `LlvmIrEmissionTests` passed 388 tests; full
     `dotnet test -c Release tests/compiler.Tests/compiler.Tests.csproj
-    --no-restore` passed 1387 tests; and an `--emit-obj -O0` smoke test for a
+    --no-restore` passed 1387 tests; and an `--emit-obj` smoke test for a
     captured closure succeeded.

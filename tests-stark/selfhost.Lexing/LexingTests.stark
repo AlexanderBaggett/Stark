@@ -1,0 +1,464 @@
+import Compiler.Lexing
+import System.Testing
+[Collection("lexing")]
+module LexingTests
+
+// Stage 1 lexer facts: token-kind sequences, grammar-faithful longest match,
+// literal forms, exact spans, trivia, and lex diagnostics. Stark.g4 is the
+// authority these expectations were read from.
+
+fn bool LexOk(LexResult<TokenStream> result, out TokenStream stream)
+{
+    switch (result)
+    {
+        case LexResult<TokenStream>.Err(var error):
+            stream = new();
+            return false;
+        case LexResult<TokenStream>.Ok(var value):
+            stream = value;
+            return true;
+    }
+}
+
+[Fact]
+fn bool EmptySourceLexesToEndOfFile()
+{
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(""), stream))
+    {
+        return false;
+    }
+
+    return stream.Count() == 1
+        && stream.KindAt(0) == TokenKind.EndOfFile
+        && stream.DiagnosticCount() == 0;
+}
+
+[Fact]
+fn bool KeywordsClassifyAgainstIdentifiers()
+{
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText("import module finite law fnptr willexit non-deterministic ascii Ascii importx lawful Module"), stream))
+    {
+        return false;
+    }
+
+    return stream.DiagnosticCount() == 0
+        && stream.Count() == 13
+        && stream.KindAt(0) == TokenKind.Import
+        && stream.KindAt(1) == TokenKind.Module
+        && stream.KindAt(2) == TokenKind.Finite
+        && stream.KindAt(3) == TokenKind.Law
+        && stream.KindAt(4) == TokenKind.Fnptr
+        && stream.KindAt(5) == TokenKind.Willexit
+        && stream.KindAt(6) == TokenKind.NonDeterministic
+        && stream.KindAt(7) == TokenKind.AsciiView
+        && stream.KindAt(8) == TokenKind.AsciiOwned
+        && stream.KindAt(9) == TokenKind.Identifier
+        && stream.KindAt(10) == TokenKind.Identifier
+        && stream.KindAt(11) == TokenKind.Identifier
+        && stream.KindAt(12) == TokenKind.EndOfFile;
+}
+
+[Fact]
+fn bool WidthTypesWeightsAndDiscardClassify()
+{
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText("i32 u1024 i7 f64 f99 w9 w99 w9x _ _x __error"), stream))
+    {
+        return false;
+    }
+
+    return stream.DiagnosticCount() == 0
+        && stream.KindAt(0) == TokenKind.IntegerType
+        && stream.KindAt(1) == TokenKind.IntegerType
+        && stream.KindAt(2) == TokenKind.InvalidIntegerType
+        && stream.KindAt(3) == TokenKind.FloatType
+        && stream.KindAt(4) == TokenKind.InvalidFloatType
+        && stream.KindAt(5) == TokenKind.WeightLiteral
+        && stream.KindAt(6) == TokenKind.WeightLiteral
+        && stream.KindAt(7) == TokenKind.Identifier
+        && stream.KindAt(8) == TokenKind.Discard
+        && stream.KindAt(9) == TokenKind.Identifier
+        && stream.KindAt(10) == TokenKind.Identifier;
+}
+
+[Fact]
+fn bool OperatorsUseLongestMatch()
+{
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText("+%= +% + +| +|= == => = .. . ** * <= <"), stream))
+    {
+        return false;
+    }
+
+    return stream.DiagnosticCount() == 0
+        && stream.KindAt(0) == TokenKind.WrapAddAssign
+        && stream.KindAt(1) == TokenKind.WrapAdd
+        && stream.KindAt(2) == TokenKind.Plus
+        && stream.KindAt(3) == TokenKind.SatAdd
+        && stream.KindAt(4) == TokenKind.SatAddAssign
+        && stream.KindAt(5) == TokenKind.EqEq
+        && stream.KindAt(6) == TokenKind.Arrow
+        && stream.KindAt(7) == TokenKind.Assign
+        && stream.KindAt(8) == TokenKind.Range
+        && stream.KindAt(9) == TokenKind.Dot
+        && stream.KindAt(10) == TokenKind.Pow
+        && stream.KindAt(11) == TokenKind.Star
+        && stream.KindAt(12) == TokenKind.Lte
+        && stream.KindAt(13) == TokenKind.Lt;
+}
+
+[Fact]
+fn bool AdjacentAnglesStaySingleTokens()
+{
+    // The grammar has no shift tokens: `<<` and `>>` must lex as two
+    // angle tokens each so generics like Box<Box<T>> parse.
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText("a << b >> c"), stream))
+    {
+        return false;
+    }
+
+    return stream.DiagnosticCount() == 0
+        && stream.KindAt(1) == TokenKind.Lt
+        && stream.KindAt(2) == TokenKind.Lt
+        && stream.KindAt(4) == TokenKind.Gt
+        && stream.KindAt(5) == TokenKind.Gt;
+}
+
+[Fact]
+fn bool NumbersSplitIntegerAndFloatForms()
+{
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText("1 1.5 1e5 1.5e-3f 2.ToAscii 0..9 1e"), stream))
+    {
+        return false;
+    }
+
+    return stream.DiagnosticCount() == 0
+        && stream.KindAt(0) == TokenKind.IntegerLiteral
+        && stream.KindAt(1) == TokenKind.FloatLiteral
+        && stream.KindAt(2) == TokenKind.FloatLiteral
+        && stream.KindAt(3) == TokenKind.FloatLiteral
+        && stream.KindAt(4) == TokenKind.IntegerLiteral
+        && stream.KindAt(5) == TokenKind.Dot
+        && stream.KindAt(6) == TokenKind.Identifier
+        && stream.KindAt(7) == TokenKind.IntegerLiteral
+        && stream.KindAt(8) == TokenKind.Range
+        && stream.KindAt(9) == TokenKind.IntegerLiteral
+        && stream.KindAt(10) == TokenKind.IntegerLiteral
+        && stream.KindAt(11) == TokenKind.Identifier;
+}
+
+[Fact]
+fn bool StringFormsLexWithDelimiterSpans()
+{
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText("\"plain\" \"es\\\"caped\" raw\"x\\d\" 'a' '\\n' $\"hole\""), stream))
+    {
+        return false;
+    }
+
+    if (stream.DiagnosticCount() != 0)
+    {
+        return false;
+    }
+
+    return stream.KindAt(0) == TokenKind.StringLiteral
+        && stream.LengthAt(0) == 7
+        && stream.KindAt(1) == TokenKind.StringLiteral
+        && stream.KindAt(2) == TokenKind.StringLiteral
+        && stream.LengthAt(2) == 8
+        && stream.KindAt(3) == TokenKind.CharacterLiteral
+        && stream.LengthAt(3) == 3
+        && stream.KindAt(4) == TokenKind.CharacterLiteral
+        && stream.KindAt(5) == TokenKind.Dollar
+        && stream.KindAt(6) == TokenKind.StringLiteral;
+}
+
+[Fact]
+fn bool RawMultilineStringsSpanLines()
+{
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText("before raw\"\"\"line one\nline \"two\"\n\"\"\" after"), stream))
+    {
+        return false;
+    }
+
+    return stream.DiagnosticCount() == 0
+        && stream.Count() == 4
+        && stream.KindAt(0) == TokenKind.Identifier
+        && stream.KindAt(1) == TokenKind.StringLiteral
+        && stream.KindAt(2) == TokenKind.Identifier
+        && stream.LineAt(2) == 3
+        && stream.KindAt(3) == TokenKind.EndOfFile;
+}
+
+[Fact]
+fn bool CommentsAreTriviaButAdvanceLines()
+{
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText("// line comment\n/* block\ncomment */ fn /// doc\nlaw"), stream))
+    {
+        return false;
+    }
+
+    return stream.DiagnosticCount() == 0
+        && stream.Count() == 3
+        && stream.KindAt(0) == TokenKind.Fn
+        && stream.LineAt(0) == 3
+        && stream.KindAt(1) == TokenKind.Law
+        && stream.LineAt(1) == 4
+        && stream.ColumnAt(1) == 1;
+}
+
+[Fact]
+fn bool SpansRecordExactPositions()
+{
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText("fn add\n  ()"), stream))
+    {
+        return false;
+    }
+
+    return stream.KindAt(0) == TokenKind.Fn
+        && stream.StartAt(0) == 0
+        && stream.LengthAt(0) == 2
+        && stream.LineAt(0) == 1
+        && stream.ColumnAt(0) == 1
+        && stream.KindAt(1) == TokenKind.Identifier
+        && stream.StartAt(1) == 3
+        && stream.LengthAt(1) == 3
+        && stream.ColumnAt(1) == 4
+        && stream.KindAt(2) == TokenKind.LParen
+        && stream.LineAt(2) == 2
+        && stream.ColumnAt(2) == 3;
+}
+
+[Fact]
+fn bool TokenTextReturnsExactSourceSlices()
+{
+    stack ascii source = "stack mut i32 value = raw\"abc\";";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    return TokenTextOf(source, stream, 0) == "stack"
+        && TokenTextOf(source, stream, 2) == "i32"
+        && TokenTextOf(source, stream, 3) == "value"
+        && TokenTextOf(source, stream, 5) == "raw\"abc\"";
+}
+
+[Fact]
+[Collection("diagnostics")]
+fn bool UnterminatedStringReportsDiagnosticAndContinues()
+{
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText("stack \"broken\nlaw"), stream))
+    {
+        return false;
+    }
+
+    return stream.DiagnosticCount() == 1
+        && stream.DiagnosticKindAt(0) == LexDiagnosticKind.UnterminatedString
+        && stream.DiagnosticLineAt(0) == 1
+        && stream.DiagnosticColumnAt(0) == 7
+        && stream.KindAt(0) == TokenKind.Stack
+        && stream.KindAt(1) == TokenKind.ErrorToken
+        && stream.KindAt(2) == TokenKind.Law;
+}
+
+[Fact]
+[Collection("diagnostics")]
+fn bool UnterminatedBlockCommentReportsDiagnostic()
+{
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText("fn /* never closed"), stream))
+    {
+        return false;
+    }
+
+    return stream.DiagnosticCount() == 1
+        && stream.DiagnosticKindAt(0) == LexDiagnosticKind.UnterminatedBlockComment
+        && stream.KindAt(0) == TokenKind.Fn
+        && stream.KindAt(1) == TokenKind.EndOfFile;
+}
+
+[Fact]
+[Collection("diagnostics")]
+fn bool UnexpectedCharacterReportsDiagnosticAndContinues()
+{
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText("fn @ law"), stream))
+    {
+        return false;
+    }
+
+    return stream.DiagnosticCount() == 1
+        && stream.DiagnosticKindAt(0) == LexDiagnosticKind.UnexpectedCharacter
+        && stream.KindAt(0) == TokenKind.Fn
+        && stream.KindAt(1) == TokenKind.ErrorToken
+        && stream.KindAt(2) == TokenKind.Law;
+}
+
+[Fact]
+fn bool KindAtReturnsCopyableValuesAcrossModules()
+{
+    // TokenKind is a 152-variant tag enum declared in the imported
+    // stark-compiler package: KindAt copies it out of the token table
+    // and the value compares and re-reads without consuming anything.
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText("fn add law"), stream))
+    {
+        return false;
+    }
+
+    stack TokenKind first = stream.KindAt(0);
+    stack TokenKind again = stream.KindAt(0);
+    return first == TokenKind.Fn
+        && again == TokenKind.Fn
+        && stream.KindAt(1) == TokenKind.Identifier
+        && stream.KindAt(2) == TokenKind.Law
+        && stream.KindAt(3) == TokenKind.EndOfFile
+        && stream.KindAt(99) == TokenKind.EndOfFile;
+}
+
+[Fact]
+fn bool TokenAtCopiesWholeTokensOutOfTheTable()
+{
+    // Whole-Token copies out of the dynamic token table: the guard plus
+    // structural copyability make this a safe law with no unsafe and no
+    // per-field plumbing — the parser's lookahead shape.
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText("fn add"), stream))
+    {
+        return false;
+    }
+
+    stack Token second = stream.TokenAt(1);
+    stack Token again = stream.TokenAt(1);
+    stack Token past = stream.TokenAt(42);
+    return second.Kind == TokenKind.Identifier
+        && second.Start == 3
+        && second.Length == 3
+        && again.Kind == TokenKind.Identifier
+        && past.Kind == TokenKind.EndOfFile
+        && stream.KindAt(1) == TokenKind.Identifier;
+}
+
+[Fact]
+fn bool NewLanguageSurfaceLexesCleanly()
+{
+    // Every syntax form added in June 2026 — the [Copyable] assertion,
+    // where Copyable(T) law bounds, and where value contracts — lexes
+    // with the existing token vocabulary. Stark.g4 changed only at the
+    // parser level (valueContract); the token set is unchanged.
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(raw"""
+[Copyable]
+enum Kind
+{
+Alpha,
+Beta,
+}
+
+struct Table
+{
+dynamic Kind Items;
+
+finite law Kind At(borrow Table self, u64[0 2 ** 63 - 1] index)
+    where index < self.Items.Length
+{
+    return self.Items[index];
+}
+}
+
+fn bool RangeIsZero(borrow Table self, u64[0 2 ** 63 - 1] start, u64[0 2 ** 63 - 1] length)
+where start + length <= self.Items.Length
+{
+return true;
+}
+
+fn bool Duplicate<T>(T value)
+where Copyable(T)
+{
+stack T first = value;
+stack T second = value;
+return true;
+}
+"""), stream))
+    {
+        return false;
+    }
+
+    return stream.DiagnosticCount() == 0
+        && stream.Count() > 100
+        && stream.KindAt(0) == TokenKind.LBrack
+        && stream.KindAt(1) == TokenKind.Identifier
+        && stream.KindAt(2) == TokenKind.RBrack
+        && stream.KindAt(3) == TokenKind.Enum
+        && stream.KindAt((u64[0 2 ** 63 - 1])(stream.Count() - 1)) == TokenKind.EndOfFile;
+}
+
+[Fact]
+fn bool RealStarkSourceLexesCleanly()
+{
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(raw"""
+import System.Text
+module Demo.RealShape
+
+public enum ParseError
+{
+Empty,
+Io from System.IO.IOError,
+}
+
+public enum ParseOutcome<T>
+{
+[Ok] Ok(T),
+[Err] Err(ParseError),
+}
+
+const Limit = 2 ** 12;
+
+public finite law i32[min max] Clamp(i32[min max] value, i32[0 1024 * 4] bound)
+where overlap(value, bound)
+{
+if (value >= (i32[min max])bound)
+{
+    return (i32[min max])bound;
+}
+
+return value;
+}
+
+unsafe fn ParseOutcome<i64[min max]> ReadCount(ascii text)
+{
+stack mut i64[min max] total = 0;
+for willexit independent (stack mut u8[0 64] index = 0; index < 64; index += 1)
+{
+    total +%= 1;
+}
+
+switch (System.Text.ParseI64Ascii(text))
+{
+    case System.Text.TextResult<i64[min max]>.Err(var error):
+        return ParseOutcome<i64[min max]>.Err(ParseError.Empty);
+    case System.Text.TextResult<i64[min max]>.Ok(var value):
+        return ParseOutcome<i64[min max]>.Ok(value);
+}
+}
+"""), stream))
+    {
+        return false;
+    }
+
+    return stream.DiagnosticCount() == 0
+        && stream.Count() > 200
+        && stream.KindAt(0) == TokenKind.Import
+        && stream.KindAt((u64[0 2 ** 63 - 1])(stream.Count() - 1)) == TokenKind.EndOfFile;
+}

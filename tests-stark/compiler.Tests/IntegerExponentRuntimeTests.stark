@@ -1,0 +1,28 @@
+import CompilerTestSupport
+import System.Testing
+module IntegerExponentRuntimeTests
+
+// Ported from IntegerExponentRuntimeTests.IntegerExponentiationRunsAtRuntime.
+internal fn bool IntegerExponentiationRunsAtRuntimeImpl()
+{
+    // PORT-NOTE: original detects a native toolchain, emits an executable via the
+    // CLI (--emit-exe), asserts CLI exit 0, "Emitted executable:" stdout, empty
+    // stderr, the output file exists, and the linked program exits with code 32
+    // (2 ** 5). The Stark compile helpers cannot observe native-toolchain
+    // detection, emitted-file existence, CLI stdout, or runtime exit codes;
+    // reduced to driving the embedded program through the full pipeline and
+    // returning Succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "int-exponent-runs-at-runtime",
+        raw"""
+module Demo
+
+export fn i32[min max] main()
+{
+    stack i32[min max] left = 2;
+    stack i32[min max] right = 5;
+    return left ** right;
+}
+""");
+    return Succeeds(compiled);
+}

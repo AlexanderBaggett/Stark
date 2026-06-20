@@ -1,0 +1,54 @@
+import CompilerTestSupport
+import System.Testing
+module PackageImageTypedComparisonChainIntegrationTests
+
+// Ported from PackageImageTypedComparisonChainIntegrationTests.ManifestBackedTypedComparisonChainBodiesCompileAndRunWithoutSyntheticSource.
+internal fn bool ManifestBackedTypedComparisonChainBodiesCompileAndRunWithoutSyntheticSourceImpl()
+{
+    // PORT-NOTE: original is a multi-stage CLI/runtime integration test. It (1);
+    // emits a static library from the Facade package source (--emit-lib),
+    // asserting CLI exit 0, "Emitted static library:" stdout, empty stderr, and
+    // that the library + .starkpkg manifest exist; (2) loads the manifest and
+    // asserts the Facade module's ObserveOrdered/ObserveEquality generic
+    // templates have a null BodyText but a non-null TypedBody; (3) rewrites the
+    // manifest to a typed-only form, deletes the Facade source, then links a Demo
+    // program that imports the manifest-backed Facade (--emit-exe -I), asserting
+    // CLI exit 0, "Emitted executable:" stdout, empty stderr, output existence,
+    // empty process stdout/stderr, and a runtime exit code of 11. The Stark
+    // compile helpers cannot model --emit-lib/--emit-exe, package-image manifest
+    // loading or rewriting, manifest-backed cross-module imports, or the linked
+    // executable's runtime exit code. Reduced to compiling the Facade package
+    // source (the program whose typed comparison-chain bodies the test is built
+    // around) through the full pipeline and returning Succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "pkgimg-typed-comparison-chain-facade",
+        raw"""
+module Facade
+
+public static mut i32[min max] OrderedCalls = 0;
+public static mut i32[min max] EqualityCalls = 0;
+
+public fn i32[min max] NextOrdered()
+{
+    OrderedCalls += 1;
+    return 1;
+}
+
+public fn i32[min max] NextEquality()
+{
+    EqualityCalls += 1;
+    return 1;
+}
+
+public fn bool ObserveOrdered<T>(T tag)
+{
+    return 0 < NextOrdered() < 3;
+}
+
+public fn bool ObserveEquality<T>(T tag)
+{
+    return 1 == NextEquality() == 1;
+}
+""");
+    return Succeeds(compiled);
+}

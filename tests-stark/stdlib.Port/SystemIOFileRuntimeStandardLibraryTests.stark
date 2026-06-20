@@ -1,0 +1,598 @@
+import StdlibPortSupport
+import System
+import System.Runtime.Buffer
+import System.Testing
+import System.Text
+module SystemIOFileRuntimeStandardLibraryTests
+
+// Ported from SystemIOFileRuntimeStandardLibraryTests.StdLibSourceLinuxFileSeekUsesLseekSyscallPath.
+internal fn bool StdLibSourceLinuxFileSeekUsesLseekSyscallPathImpl()
+{
+    // PORT-NOTE: the C# test reads the on-disk stdlib source
+    // stdlib/src/System/Runtime/Platform/Linux.stark and compiles it directly
+    // against a Linux target, then inspects the emitted LLVM IR for the
+    // lseek-syscall lowering of SeekFile. The compile-only host bridge cannot
+    // reach that repository file, so this embeds a minimal driver that exercises
+    // the public file Seek path (which routes through
+    // System.Runtime.Platform.SeekFile) so the host compiler pulls in the Linux
+    // platform module, then keeps the original IR substring assertions verbatim.
+    stack mut ProgramCompile c = CompileProgram("stdlib-linux-file-seek-lseek", raw"""
+        import System
+        module App
+
+        fn i64[min max] CountOrNegative(System.IO.IOResult<u64[0 2 ** 63 - 1]> result)
+        {
+            switch (result)
+            {
+                case System.IO.IOResult<u64[0 2 ** 63 - 1]>.Ok(var value):
+                    return (i64[min max])value;
+                case System.IO.IOResult<u64[0 2 ** 63 - 1]>.Err(var error):
+                    return -1;
+            }
+        }
+
+        export unsafe fn i32[min max] main()
+        {
+            switch (System.IO.File.Open("seek.txt", System.IO.File.FileMode.Read))
+            {
+                case System.IO.IOResult<System.IO.File.File>.Err(var error):
+                    return 1;
+                case System.IO.IOResult<System.IO.File.File>.Ok(var value):
+                    stack mut System.IO.File.File read = value;
+                    if (CountOrNegative(read.Seek(2, System.IO.File.SeekOrigin.Begin)) != 2)
+                    {
+                        return 2;
+                    }
+
+                    return 0;
+            }
+        }
+        """);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    if (!System.Testing.Contains(llvm, "define fastcc noundef i64 @SeekFile("))
+    {
+        return false;
+    }
+
+    if (!System.Testing.Contains(llvm, "@LinuxLseekSyscallNumber"))
+    {
+        return false;
+    }
+
+    if (!System.Testing.Contains(llvm, "call i64 @LinuxSyscall3HandleIntegerInteger("))
+    {
+        return false;
+    }
+
+    if (!System.Testing.DoesNotContain(llvm, "@lseek("))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemIOFileRuntimeStandardLibraryTests.StdLibSourceLinuxFileSyncUsesFsyncSyscallPath.
+internal fn bool StdLibSourceLinuxFileSyncUsesFsyncSyscallPathImpl()
+{
+    // PORT-NOTE: the C# test reads the on-disk stdlib source
+    // stdlib/src/System/Runtime/Platform/Linux.stark and compiles it directly
+    // against a Linux target, then inspects the emitted LLVM IR for the
+    // fsync-syscall lowering of FlushFile. The compile-only host bridge cannot
+    // reach that repository file, so this embeds a minimal driver that exercises
+    // the public file Flush/SyncAll path (which routes through
+    // System.Runtime.Platform.FlushFile) so the host compiler pulls in the Linux
+    // platform module, then keeps the original IR substring assertions verbatim.
+    stack mut ProgramCompile c = CompileProgram("stdlib-linux-file-sync-fsync", raw"""
+        import System
+        module App
+
+        fn bool StatusOk(System.IO.IOStatus status)
+        {
+            switch (status)
+            {
+                case System.IO.IOStatus.Ok:
+                    return true;
+                case System.IO.IOStatus.Err(var error):
+                    return false;
+            }
+        }
+
+        export unsafe fn i32[min max] main()
+        {
+            switch (System.IO.File.Open("sync.txt", System.IO.File.FileMode.Write))
+            {
+                case System.IO.IOResult<System.IO.File.File>.Err(var error):
+                    return 1;
+                case System.IO.IOResult<System.IO.File.File>.Ok(var value):
+                    stack mut System.IO.File.File handle = value;
+                    if (!StatusOk(handle.SyncAll()))
+                    {
+                        return 2;
+                    }
+
+                    return 0;
+            }
+        }
+        """);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    if (!System.Testing.Contains(llvm, "define fastcc noundef i32 @FlushFile("))
+    {
+        return false;
+    }
+
+    if (!System.Testing.Contains(llvm, "@LinuxFsyncSyscallNumber"))
+    {
+        return false;
+    }
+
+    if (!System.Testing.Contains(llvm, "call i64 @LinuxSyscall1Handle("))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemIOFileRuntimeStandardLibraryTests.SourceStdLibFileSeekRoundTripsOnLinux.
+internal fn bool SourceStdLibFileSeekRoundTripsOnLinuxImpl()
+{
+    // PORT-NOTE: the C# test emits a native executable via the CLI (--emit-exe),
+    // runs it against seed file "seek.txt" containing "abcde", and asserts the
+    // process exits 0 with empty stdout/stderr while "seek-result.txt" ends up
+    // holding "cce". The compile-only host bridge cannot link, run, or observe
+    // file-system effects of the produced binary, so this reduces to compiling
+    // the embedded program verbatim and asserting it succeeds.
+    stack mut ProgramCompile c = CompileProgram("stdlib-file-seek-roundtrip", raw"""
+        import System
+        module App
+        fn bool StatusOk(System.IO.IOStatus status)
+        {
+            switch (status)
+            {
+                case System.IO.IOStatus.Ok:
+                    return true;
+                case System.IO.IOStatus.Err(var error):
+                    return false;
+            }
+        }
+
+        fn bool BoolOrFalse(System.IO.IOResult<bool> result)
+        {
+            switch (result)
+            {
+                case System.IO.IOResult<bool>.Ok(var value):
+                    return value;
+                case System.IO.IOResult<bool>.Err(var error):
+                    return false;
+            }
+        }
+
+        fn System.IO.File.File OpenOrEmpty(System.IO.IOResult<System.IO.File.File> result)
+        {
+            switch (result)
+            {
+                case System.IO.IOResult<System.IO.File.File>.Ok(var value):
+                    return value;
+                case System.IO.IOResult<System.IO.File.File>.Err(var error):
+                    return new();
+            }
+        }
+
+        fn i64[min max] CountOrNegative(System.IO.IOResult<u64[0 2 ** 63 - 1]> result)
+        {
+            switch (result)
+            {
+                case System.IO.IOResult<u64[0 2 ** 63 - 1]>.Ok(var value):
+                    return (i64[min max])value;
+                case System.IO.IOResult<u64[0 2 ** 63 - 1]>.Err(var error):
+                    return -1;
+            }
+        }
+
+        export unsafe fn i32[min max] main()
+        {
+            stack mut i8[min max][1] buffer =
+            {
+                0
+            };
+            stack mut System.IO.File.File read = OpenOrEmpty(System.IO.File.Open("seek.txt", System.IO.File.FileMode.Read));
+            if (!read.IsOpen())
+            {
+                return 1;
+            }
+
+            stack mut System.IO.File.File result = OpenOrEmpty(System.IO.File.Open("seek-result.txt", System.IO.File.FileMode.Write));
+            if (!result.IsOpen())
+            {
+                return 2;
+            }
+
+            stack mut i8[min max][] byte = slice(&buffer[0], 1);
+
+            if (CountOrNegative(read.Seek(2, System.IO.File.SeekOrigin.Begin)) != 2)
+            {
+                return 3;
+            }
+
+            if (CountOrNegative(read.Read(byte)) != 1)
+            {
+                return 4;
+            }
+
+            if (CountOrNegative(result.Write(byte)) != 1)
+            {
+                return 5;
+            }
+
+            if (CountOrNegative(read.Seek(-1, System.IO.File.SeekOrigin.Current)) != 2)
+            {
+                return 6;
+            }
+
+            if (CountOrNegative(read.Read(byte)) != 1)
+            {
+                return 7;
+            }
+
+            if (CountOrNegative(result.Write(byte)) != 1)
+            {
+                return 8;
+            }
+
+            if (CountOrNegative(read.Seek(-1, System.IO.File.SeekOrigin.End)) != 4)
+            {
+                return 9;
+            }
+
+            if (CountOrNegative(read.Read(byte)) != 1)
+            {
+                return 10;
+            }
+
+            if (CountOrNegative(result.Write(byte)) != 1)
+            {
+                return 11;
+            }
+
+            if (!StatusOk(read.Close()))
+            {
+                return 12;
+            }
+
+            if (!StatusOk(result.Close()))
+            {
+                return 13;
+            }
+
+            return 0;
+        }
+        """);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemIOFileRuntimeStandardLibraryTests.SourceStdLibWholeFileHelpersRoundTripOnLinux.
+internal fn bool SourceStdLibWholeFileHelpersRoundTripOnLinuxImpl()
+{
+    // PORT-NOTE: the C# test emits a native executable via the CLI (--emit-exe),
+    // runs it, and asserts the process exits 0 with empty stdout/stderr while
+    // "text.txt" holds "alphabet" and "bytes.bin" holds {65,66,67,68} on disk.
+    // The compile-only host bridge cannot link, run, or observe file-system
+    // effects of the produced binary, so this reduces to compiling the embedded
+    // program verbatim and asserting it succeeds.
+    stack mut ProgramCompile c = CompileProgram("stdlib-whole-file-roundtrip", raw"""
+        import System
+        import System.Text
+        import System.Runtime.Buffer
+        module App
+
+        fn bool StatusOk(System.IO.IOStatus status)
+        {
+            switch (status)
+            {
+                case System.IO.IOStatus.Ok:
+                    return true;
+                case System.IO.IOStatus.Err(var error):
+                    return false;
+            }
+        }
+
+        fn bool MemoryStatusOk(System.Memory.MemoryStatus status)
+        {
+            switch (status)
+            {
+                case System.Memory.MemoryStatus.Ok:
+                    return true;
+                case System.Memory.MemoryStatus.Err(var error):
+                    return false;
+            }
+        }
+
+        fn i32[min max] CheckText(System.IO.IOResult<System.Text.OwnedAscii> result)
+        {
+            switch (result)
+            {
+                case System.IO.IOResult<System.Text.OwnedAscii>.Err(var error):
+                    return 10;
+                case System.IO.IOResult<System.Text.OwnedAscii>.Ok(var text):
+                    if (text.Length() != 8)
+                    {
+                        return 11;
+                    }
+
+                    stack i8[min max][] bytes = text.AsSlice();
+                    if (bytes[0] != (i8[min max])97 || bytes[7] != (i8[min max])116)
+                    {
+                        return 12;
+                    }
+
+                    return 0;
+            }
+        }
+
+        fn i32[min max] CheckBytes(System.IO.IOResult<System.Runtime.Buffer.DynamicByteBuffer> result)
+        {
+            switch (result)
+            {
+                case System.IO.IOResult<System.Runtime.Buffer.DynamicByteBuffer>.Err(var error):
+                    return 20;
+                case System.IO.IOResult<System.Runtime.Buffer.DynamicByteBuffer>.Ok(var bytes):
+                    if (bytes.Length() != 4 || bytes.Readable() != 4)
+                    {
+                        return 21;
+                    }
+
+                    stack i8[min max][] view = bytes.ReadSlice();
+                    if (view[0] != (i8[min max])65 || view[1] != (i8[min max])66 || view[2] != (i8[min max])67 || view[3] != (i8[min max])68)
+                    {
+                        return 22;
+                    }
+
+                    return 0;
+            }
+        }
+
+        export unsafe fn i32[min max] main()
+        {
+            if (!StatusOk(System.IO.File.WriteAllText("text.txt", "alphabet")))
+            {
+                return 1;
+            }
+
+            stack i32[min max] textResult = CheckText(System.IO.File.ReadAllText("text.txt"));
+            if (textResult != 0)
+            {
+                return textResult;
+            }
+
+            stack mut System.Text.OwnedAscii appended = new();
+            if (!MemoryStatusOk(appended.AppendAscii("pre:")))
+            {
+                return 2;
+            }
+
+            if (!StatusOk(System.IO.File.ReadAllTextInto("text.txt", appended)))
+            {
+                return 3;
+            }
+
+            if (appended.Length() != 12)
+            {
+                return 4;
+            }
+
+            stack i8[min max][] appendedView = appended.AsSlice();
+            if (appendedView[0] != (i8[min max])112 || appendedView[3] != (i8[min max])58 || appendedView[4] != (i8[min max])97 || appendedView[11] != (i8[min max])116)
+            {
+                return 5;
+            }
+
+            stack mut i8[min max][4] raw =
+            {
+                65, 66, 67, 68
+            };
+            stack i8[min max][] rawSlice = slice(&raw[0], 4);
+            if (!StatusOk(System.IO.File.WriteAllBytes("bytes.bin", rawSlice)))
+            {
+                return 6;
+            }
+
+            stack i32[min max] byteResult = CheckBytes(System.IO.File.ReadAllBytes("bytes.bin"));
+            if (byteResult != 0)
+            {
+                return byteResult;
+            }
+
+            stack mut System.Runtime.Buffer.DynamicByteBuffer byteDestination = new();
+            if (!StatusOk(System.IO.File.ReadAllBytesInto("bytes.bin", byteDestination)))
+            {
+                return 7;
+            }
+
+            if (byteDestination.Length() != 4 || byteDestination.Readable() != 4)
+            {
+                return 8;
+            }
+
+            stack i8[min max][] byteDestinationView = byteDestination.ReadSlice();
+            if (byteDestinationView[0] != (i8[min max])65 || byteDestinationView[3] != (i8[min max])68)
+            {
+                return 9;
+            }
+
+            return 0;
+        }
+        """);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemIOFileRuntimeStandardLibraryTests.SourceStdLibAtomicWholeFileHelpersReplaceOnLinux.
+internal fn bool SourceStdLibAtomicWholeFileHelpersReplaceOnLinuxImpl()
+{
+    // PORT-NOTE: the C# test emits a native executable via the CLI (--emit-exe),
+    // runs it, and asserts the process exits 0 with empty stdout/stderr while
+    // the atomic whole-file helpers leave "atomic.txt" holding "new-value" and
+    // "bytes.bin" holding {80,81,82} on disk. The compile-only host bridge
+    // cannot link, run, or observe file-system effects of the produced binary,
+    // so this reduces to compiling the embedded program verbatim and asserting
+    // it succeeds.
+    stack mut ProgramCompile c = CompileProgram("stdlib-atomic-whole-file-replace", raw"""
+        import System
+        import System.Text
+        import System.Runtime.Buffer
+        module App
+
+        fn bool StatusOk(System.IO.IOStatus status)
+        {
+            switch (status)
+            {
+                case System.IO.IOStatus.Ok:
+                    return true;
+                case System.IO.IOStatus.Err(var error):
+                    return false;
+            }
+        }
+
+        fn i32[min max] CheckText(System.IO.IOResult<System.Text.OwnedAscii> result)
+        {
+            switch (result)
+            {
+                case System.IO.IOResult<System.Text.OwnedAscii>.Err(var error):
+                    return 10;
+                case System.IO.IOResult<System.Text.OwnedAscii>.Ok(var text):
+                    if (text.Length() != 9)
+                    {
+                        return 11;
+                    }
+
+                    stack i8[min max][] bytes = text.AsSlice();
+                    if (bytes[0] != (i8[min max])110 || bytes[8] != (i8[min max])101)
+                    {
+                        return 12;
+                    }
+
+                    return 0;
+            }
+        }
+
+        fn i32[min max] CheckBytes(System.IO.IOResult<System.Runtime.Buffer.DynamicByteBuffer> result)
+        {
+            switch (result)
+            {
+                case System.IO.IOResult<System.Runtime.Buffer.DynamicByteBuffer>.Err(var error):
+                    return 20;
+                case System.IO.IOResult<System.Runtime.Buffer.DynamicByteBuffer>.Ok(var bytes):
+                    if (bytes.Length() != 3 || bytes.Readable() != 3)
+                    {
+                        return 21;
+                    }
+
+                    stack i8[min max][] view = bytes.ReadSlice();
+                    if (view[0] != (i8[min max])80 || view[1] != (i8[min max])81 || view[2] != (i8[min max])82)
+                    {
+                        return 22;
+                    }
+
+                    return 0;
+            }
+        }
+
+        fn bool CreateNewFailsWhenTargetExists()
+        {
+            stack mut System.IO.File.File file = new();
+            switch (System.IO.File.Open("atomic.txt", System.IO.File.FileMode.CreateNew))
+            {
+                case System.IO.IOResult<System.IO.File.File>.Ok(var opened):
+                    file = opened;
+                    file.Close();
+                    return false;
+                case System.IO.IOResult<System.IO.File.File>.Err(var error):
+                    switch (error)
+                    {
+                        case System.IO.IOError.AlreadyExists:
+                            return true;
+                        case System.IO.IOError.NotFound:
+                            return false;
+                        case System.IO.IOError.PermissionDenied:
+                            return false;
+                        case System.IO.IOError.InvalidPath:
+                            return false;
+                        case System.IO.IOError.BrokenPipe:
+                            return false;
+                        case System.IO.IOError.DiskFull:
+                            return false;
+                        case System.IO.IOError.Unknown(var code):
+                            return false;
+                    }
+            }
+        }
+
+        export unsafe fn i32[min max] main()
+        {
+            if (!StatusOk(System.IO.File.WriteAllText("atomic.txt", "old")))
+            {
+                return 1;
+            }
+
+            if (!StatusOk(System.IO.File.WriteAllTextAtomic("atomic.txt", "new-value")))
+            {
+                return 2;
+            }
+
+            stack i32[min max] textResult = CheckText(System.IO.File.ReadAllText("atomic.txt"));
+            if (textResult != 0)
+            {
+                return textResult;
+            }
+
+            if (!CreateNewFailsWhenTargetExists())
+            {
+                return 3;
+            }
+
+            stack mut i8[min max][3] raw =
+            {
+                80, 81, 82
+            };
+            stack i8[min max][] rawSlice = slice(&raw[0], 3);
+            if (!StatusOk(System.IO.File.WriteAllBytesAtomic("bytes.bin", rawSlice)))
+            {
+                return 4;
+            }
+
+            stack i32[min max] byteResult = CheckBytes(System.IO.File.ReadAllBytes("bytes.bin"));
+            if (byteResult != 0)
+            {
+                return byteResult;
+            }
+
+            return 0;
+        }
+        """);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return true;
+}

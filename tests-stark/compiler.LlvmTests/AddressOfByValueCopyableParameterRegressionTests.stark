@@ -1,0 +1,32 @@
+import LlvmTestSupport
+import System.Testing
+module AddressOfByValueCopyableParameterRegressionTests
+
+// Ported from AddressOfByValueCopyableParameterRegressionTests.InliningAMultiBlockBorrowOfAByValueCopyableParameterValidates.
+internal fn bool InliningAMultiBlockBorrowOfAByValueCopyableParameterValidatesImpl()
+{
+    // PORT-NOTE: the C# oracle asserts (a) no STK5002 diagnostic, (b) the
+    // pipeline succeeded, and (c) the LlvmIrModule artifact exists. With the
+    // host bridge helpers the strongest available signal is Succeeds(...) over
+    // the full LLVM emission compile (the inliner runs before validate-ssa, so
+    // a STK5002 regression makes the compile fail). The per-diagnostic-code and
+    // artifact-presence checks are reduced to that success signal.
+    stack mut LlvmCompile c = CompileLlvm(
+        "addressof-byvalue-copyable-param-inline-multiblock",
+        raw"""
+import System.Testing
+module Consumer
+
+public fn bool Probe(borrow i32[min max][] values, i32[min max] needle)
+{
+    return System.Testing.ContainsElement<i32[min max]>(values, needle);
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return DoesNotContain(llvm, "STK5002");
+}

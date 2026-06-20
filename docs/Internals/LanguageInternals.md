@@ -145,9 +145,8 @@ boundaries.
 
 Operationally, the policy is:
 
-- optimize closed-world by default for `-O1`, `-O2`, and `-O3` executable
-  builds when source bodies, package typed bodies, or package optimization facts
-  are available
+- optimize closed-world by default for executable builds when source bodies,
+  package typed bodies, or package optimization facts are available
 - prefer the narrowest opaque boundary that preserves correctness or measured
   performance: function before type, type before module
 - use `[Backend(Opaque)]` for runtime/platform/interop code, fragile backend
@@ -607,5 +606,15 @@ a callable to platform thread creation.
 
 `doctrine` declarations are compile-time-only and do not have a runtime representation.
 That makes them a natural fit for Stark's static dispatch and closed-world specialization model.
+
+The `System.Collections.DictionaryKey<T>` doctrine carries compiler-known equality/hash
+machinery (`SystemCollectionsDictionaryKeyFacts`) that synthesizes element equality for the
+built-in scalar/text key types — bool, the integer widths, `ascii`, and `unicode` — at
+monomorphization. Generic algorithms can therefore call `System.Collections.DictionaryKey.Equals(a, b)`
+directly on an *unbounded* type parameter to get element equality without per-type overloads
+(the same path `Dictionary`/`HashSet` keys use). This is what backs the generic
+`System.Testing.ContainsElement<T>` / `SequenceEqual<T>` helpers; equality does **not** route
+through `==` on a generic `T` (the type-checker's equality gate has no trait-bound branch), so
+the doctrine call is the idiom, not the operator.
 
 This is useful compiler context, but the user-facing rules for writing doctrines remain part of [LanguageReference.md](../Userfacing/LanguageReference.md).

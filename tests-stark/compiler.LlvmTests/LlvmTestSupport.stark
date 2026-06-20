@@ -1,0 +1,115 @@
+import System.Process
+import System.Testing
+import System.Testing.HostCompiler
+import System.Text
+module LlvmTestSupport
+
+// Trimmed host-compile harness for the ported LLVM-text inspection tests.
+// Compiles source against the current C# host compiler through the host test
+// protocol and exposes the rendered `llvm` artifact text for substring
+// assertions. Stark-side port of the C# tests/compiler.Tests LLVM IR emission
+// helpers (Compile / GetLlvmRaw / ExtractDefinition*). Requires
+// STARK_HOST_COMPILER to point at the host compiler executable.
+
+const HostTimeoutMilliseconds = 180000;
+
+// One host compile attempt. `Ok` means the transport, protocol, AND compile all
+// succeeded, so a successful LLVM render is available through `Llvm`.
+public struct LlvmCompile
+{
+    HostCompileOutcome Outcome;
+    bool Ok;
+
+    LlvmCompile()
+    {
+        self.Outcome = new();
+        self.Ok = false;
+    }
+}
+
+// Compiles the source through the full pipeline with the LLVM artifact
+// requested. `Ok` additionally requires the compile itself to succeed.
+public fn LlvmCompile CompileLlvm(ascii id, ascii source)
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = RunHostCompile(id, source, "", "llvm");
+        if (compiled.Ok && !compiled.Outcome.CompileSucceeded())
+        {
+            compiled.Ok = false;
+        }
+
+        return compiled;
+    }
+}
+
+// True when the transport succeeded and the compile reported success.
+public fn bool Succeeds(mut borrow LlvmCompile compiled)
+{
+    unsafe
+    {
+        return compiled.Ok && compiled.Outcome.CompileSucceeded();
+    }
+}
+
+// Returns the LLVM artifact text of a successful compile, or empty text. This
+// is the RAW renderer output (no `noundef`-stripping or whitespace
+// normalization), so header assertions must match the raw `define`/`declare`
+// forms.
+public fn ascii Llvm(mut borrow LlvmCompile compiled)
+{
+    unsafe
+    {
+        return compiled.Outcome.ArtifactText("llvm");
+    }
+}
+
+internal fn LlvmCompile RunHostCompile(ascii id, ascii source, ascii stopAfterPassId, ascii artifactName)
+{
+    unsafe
+    {
+        stack mut OwnedAscii compilerPath = new();
+        stack mut bool havePath = false;
+        switch (CompilerPathFromEnvironment())
+        {
+            case HostResult<OwnedAscii>.Err(var pathError):
+                havePath = false;
+            case HostResult<OwnedAscii>.Ok(var path):
+                compilerPath = path;
+                havePath = true;
+        }
+
+        stack mut HostCompileOutcome outcome = new();
+        stack mut bool transportOk = false;
+        if (havePath)
+        {
+            switch (CompileOnceArtifactIn(
+                compilerPath.View(),
+                id,
+                source,
+                stopAfterPassId,
+                artifactName,
+                "",
+                0,
+                HostTimeoutMilliseconds))
+            {
+                case HostResult<HostCompileOutcome>.Err(var error):
+                    transportOk = false;
+                case HostResult<HostCompileOutcome>.Ok(var captured):
+                    outcome = captured;
+                    transportOk = true;
+            }
+        }
+
+        stack mut bool ok = false;
+        if (transportOk)
+        {
+            ok = !outcome.HadProtocolError();
+        }
+
+        stack mut LlvmCompile compiled = new();
+        compiled.Ok = ok;
+        compiled.Outcome = outcome;
+        return compiled;
+    }
+}
