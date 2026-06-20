@@ -1692,13 +1692,9 @@ internal fn bool ScopedNoAliasProofCarrierAcceptsMatchingParameterRootsImpl()
         raw"""
 module Demo
 
-unsafe fn void Run(mut *i32[min max] left, mut *i32[min max] right)
+unsafe fn void Run(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
 {
-    if disjoint(left, right)
-    {
-        *left = 1;
-    }
-
+    *left = 1;
     return;
 }
 """);
@@ -1719,13 +1715,9 @@ internal fn bool ScopedNoAliasProofCarrierRootMismatchFailsBeforeLlvmEmissionImp
         raw"""
 module Demo
 
-unsafe fn void Run(mut *i32[min max] left, mut *i32[min max] right)
+unsafe fn void Run(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
 {
-    if disjoint(left, right)
-    {
-        *left = 1;
-    }
-
+    *left = 1;
     return;
 }
 """);
@@ -1745,13 +1737,9 @@ internal fn bool ScopedNoAliasProofCarrierDuplicateRootsFailBeforeLlvmEmissionIm
         raw"""
 module Demo
 
-unsafe fn void Run(mut *i32[min max] left, mut *i32[min max] right)
+unsafe fn void Run(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
 {
-    if disjoint(left, right)
-    {
-        *left = 1;
-    }
-
+    *left = 1;
     return;
 }
 """);
@@ -1771,13 +1759,9 @@ internal fn bool ScopedNoAliasProofCarrierIdMismatchFailsBeforeLlvmEmissionImpl(
         raw"""
 module Demo
 
-unsafe fn void Run(mut *i32[min max] left, mut *i32[min max] right)
+unsafe fn void Run(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
 {
-    if disjoint(left, right)
-    {
-        *left = 1;
-    }
-
+    *left = 1;
     return;
 }
 """);
@@ -1798,13 +1782,9 @@ internal fn bool ScopedNoAliasProofCarrierUnknownParameterRootFailsBeforeLlvmEmi
         raw"""
 module Demo
 
-unsafe fn void Run(mut *i32[min max] left, mut *i32[min max] right)
+unsafe fn void Run(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
 {
-    if disjoint(left, right)
-    {
-        *left = 1;
-    }
-
+    *left = 1;
     return;
 }
 """);

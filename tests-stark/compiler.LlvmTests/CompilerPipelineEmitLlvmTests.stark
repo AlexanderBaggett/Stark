@@ -124,8 +124,8 @@ fn u8[0 100] ApplyOffset(u8[0 93] value)
     stack mut i32[min max] step = 0;
     while willexit (step < 2)
     {
-        total = (total / 2) + Offset;
-        total = (total / 3) + Offset;
+        total = (u8[0 100])((total / 2) + Offset);
+        total = (u8[0 100])((total / 3) + Offset);
         total = (total / 2) + (total / 5);
         total = (total / 3) + (total / 7);
         step = step + 1;

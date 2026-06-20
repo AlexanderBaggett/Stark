@@ -3924,6 +3924,13 @@ fn bool ConfiguredTargetInfoIsEmittedInHeader()
 
 [Fact]
 [Collection("llvm-ir")]
+fn bool ImportedInlineCloneSeedFunctionsNarrowOwnedEmissionSurface()
+{
+    return ImportedInlineCloneSeedFunctionsNarrowOwnedEmissionSurfaceImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
 fn bool ShortCircuitAndTernaryEmitBranchesAndPhi()
 {
     return ShortCircuitAndTernaryEmitBranchesAndPhiImpl();
@@ -4488,4 +4495,14 @@ fn bool FixedArraysFollowTheSameSixteenByteThreshold()
 {
     return FixedArraysFollowTheSameSixteenByteThresholdImpl();
 }
+
+// PAINPOINTS #1 failure-diff helpers (`LlvmContains` / `LlvmDoesNotContain` in
+// LlvmTestSupport, backed by System.Testing.ContainsReport / DoesNotContainReport)
+// are verified in the stdlib.Testing suite
+// (ContainsReportReturnsCorrectBooleansAndReportsOnMismatch). They are NOT
+// exercised by a fact here on purpose: the report path pulls Console-IO stdlib
+// internals (System_Text_AsciiView / TryConcatAscii / Memory.Allocate) that a
+// `--filter`ed LlvmTests link prunes (PAINPOINTS #5), which would break filtered
+// dev builds of this large suite. Adopt `LlvmContains`/`LlvmDoesNotContain` in
+// ports as needed — they link in the full suite run.
 

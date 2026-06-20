@@ -921,6 +921,62 @@ public finite law bool DoesNotContain(unicode value, unicode expected)
     return !System.Text.Contains(value, expected);
 }
 
+// Failure-reporting variants of Contains / DoesNotContain. They return the same
+// bool as the `law` versions, but on a MISMATCH they also write a focused report
+// to stderr — the searched-for fragment and a leading window of the actual text —
+// so a failing emitter/SSA/LLVM golden assertion self-explains instead of
+// returning a bare `false` that forces re-running the compiler by hand to see
+// why. They are `fn` (not `law`) because they perform IO; the report goes to
+// stderr so the runner's `ok`/`FAILED` stdout protocol stays clean. Use these in
+// ported text-golden tests where diagnosing a mismatch is otherwise expensive.
+public fn bool ContainsReport(ascii value, ascii expected)
+    where overlap(value, expected)
+{
+    if (System.Text.Contains(value, expected))
+    {
+        return true;
+    }
+
+    ReportTextMismatch("expected to contain", expected, value);
+    return false;
+}
+
+public fn bool DoesNotContainReport(ascii value, ascii unexpected)
+    where overlap(value, unexpected)
+{
+    if (!System.Text.Contains(value, unexpected))
+    {
+        return true;
+    }
+
+    ReportTextMismatch("expected NOT to contain", unexpected, value);
+    return false;
+}
+
+// Writes a two-part text-assertion failure report to stderr: the relation and
+// searched-for fragment, then a leading window (up to 600 units) of the actual
+// text. Kept internal; ContainsReport / DoesNotContainReport are the surface.
+internal fn void ReportTextMismatch(ascii relation, ascii fragment, ascii actual)
+    where overlap(relation, fragment), overlap(relation, actual), overlap(fragment, actual)
+{
+    stack System.IO.IOStatus s0 = System.Console.WriteErrorLine("  [assert] text mismatch:");
+    stack System.IO.IOStatus s1 = System.Console.WriteError("    relation: ");
+    stack System.IO.IOStatus s2 = System.Console.WriteErrorLine(relation);
+    stack System.IO.IOStatus s3 = System.Console.WriteError("    fragment: ");
+    stack System.IO.IOStatus s4 = System.Console.WriteErrorLine(fragment);
+    stack System.IO.IOStatus s5 = System.Console.WriteErrorLine("    actual (leading window):");
+    stack u64[0 2 ** 63 - 1] total = (u64[0 2 ** 63 - 1])System.Text.AsciiLength(actual);
+    stack mut u64[0 2 ** 63 - 1] windowLen = total;
+    if (windowLen > 600)
+    {
+        windowLen = 600;
+    }
+
+    stack ascii window = actual[(i64[min max])0, (i64[min max])windowLen];
+    stack System.IO.IOStatus s6 = System.Console.WriteErrorLine(window);
+    return;
+}
+
 public finite law bool StartsWith(ascii value, ascii expected)
     where overlap(value, expected)
 {
@@ -1003,6 +1059,74 @@ public finite ascii LlvmDefinitionBody(ascii llvm, ascii symbolName)
     }
 
     return "";
+}
+
+// Returns the SSA-text body of the single function `functionName`, from its
+// column-zero `fn <name>(` header line through the line before the next
+// column-zero `fn ` header (or end of text), or empty when none matches. The
+// rendered `ssa` / `optimized-ssa` text lays out each function as a column-zero
+// `fn <name>(...) -> ...` header followed by indented body lines, so scoping a
+// "no surviving call/load" assertion to one function this way matches how the
+// C# SSA oracle navigates a single SsaFunction instead of also matching a
+// callee's own surviving definition header. This is the SSA analogue of
+// LlvmDefinitionBody.
+public finite ascii SsaFunctionBody(ascii ssaText, ascii functionName)
+    where overlap(ssaText, functionName)
+{
+    stack u64[0 2 ** 63 - 1] totalLength = (u64[0 2 ** 63 - 1])System.Text.AsciiLength(ssaText);
+    stack mut u64[0 2 ** 63 - 1] currentLineStart = 0;
+    while willexit (currentLineStart < totalLength)
+    {
+        stack u64[0 2 ** 63 - 1] lineEnd = LineEndFrom(ssaText, currentLineStart);
+        stack ascii line = ssaText[(i64[min max])currentLineStart, (i64[min max])(lineEnd - currentLineStart)];
+        if (SsaLineDefinesFunction(line, functionName))
+        {
+            stack mut u64[0 2 ** 63 - 1] scanLineStart = (u64[0 2 ** 63 - 1])(lineEnd + 1);
+            while willexit (scanLineStart < totalLength)
+            {
+                stack u64[0 2 ** 63 - 1] scanLineEnd = LineEndFrom(ssaText, scanLineStart);
+                stack ascii scanLine = ssaText[(i64[min max])scanLineStart, (i64[min max])(scanLineEnd - scanLineStart)];
+                if (System.Text.StartsWith(scanLine, "fn "))
+                {
+                    return ssaText[(i64[min max])currentLineStart, (i64[min max])(scanLineStart - currentLineStart)];
+                }
+
+                scanLineStart = (u64[0 2 ** 63 - 1])(scanLineEnd + 1);
+            }
+
+            return ssaText[(i64[min max])currentLineStart, (i64[min max])(totalLength - currentLineStart)];
+        }
+
+        currentLineStart = (u64[0 2 ** 63 - 1])(lineEnd + 1);
+    }
+
+    return "";
+}
+
+// True when `line` begins a column-zero SSA function header `fn <name>(`.
+internal finite law bool SsaLineDefinesFunction(ascii line, ascii functionName)
+    where overlap(line, functionName)
+{
+    stack u64[0 2 ** 63 - 1] lineLength = (u64[0 2 ** 63 - 1])System.Text.AsciiLength(line);
+    stack u64[0 2 ** 63 - 1] nameLength = (u64[0 2 ** 63 - 1])System.Text.AsciiLength(functionName);
+    if (lineLength < nameLength + 4)
+    {
+        return false;
+    }
+
+    if (!System.Text.StartsWith(line, "fn "))
+    {
+        return false;
+    }
+
+    if (!IsActualUnit(line, (u64[0 2 ** 63 - 1])(nameLength + 3), "("))
+    {
+        return false;
+    }
+
+    return System.Text.Equals(
+        line[(i64[min max])3, (i64[min max])nameLength],
+        functionName);
 }
 
 // True when any single line of `value` contains both fragments. Ported

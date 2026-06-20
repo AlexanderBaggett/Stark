@@ -404,6 +404,7 @@ internal static class ProjectCliDriver
             return cached;
         }
 
+        var dependencyResults = new List<BuildResult>();
         foreach (var dependency in project.Dependencies.Values)
         {
             var dependencyDirectory = ResolveProjectPath(project.DirectoryPath, dependency.Path);
@@ -421,10 +422,41 @@ internal static class ProjectCliDriver
             {
                 return RememberFailure(project, session);
             }
+
+            dependencyResults.Add(dependencyResult);
         }
 
         var outputDirectory = GetOutputDirectory(project, session);
         Directory.CreateDirectory(outputDirectory);
+
+        // PAINPOINTS #5: derive a deterministic stamp over every input that can change
+        // this project's output (its own sources, the manifest, the stdlib search-path
+        // sources, each dependency's stamp, the build configuration, and the compiler
+        // binary itself). If the stamp matches the one recorded beside a present output,
+        // the build is up to date and we skip recompilation; otherwise we DELETE the
+        // stale outputs before rebuilding so a leftover `.starkpkg`/executable can never
+        // shadow fresh source — removing the need for a manual `rm -rf build` to get
+        // trustworthy pass/fail counts.
+        var inputStamp = ComputeProjectInputStamp(project, session, dependencyResults);
+        var stampPath = Path.Combine(outputDirectory, BuildStampFileName);
+        var earlyOutputPath = GetOutputPath(project, outputDirectory);
+        var earlyPackageDirectory = project.Kind == ProjectKind.Library
+            ? GetPackageDirectory(project, session)
+            : null;
+        if (IsBuildUpToDate(stampPath, inputStamp, earlyOutputPath, project, session))
+        {
+            var upToDate = new BuildResult(
+                true,
+                project,
+                outputDirectory,
+                earlyOutputPath,
+                earlyPackageDirectory,
+                inputStamp);
+            session.BuildResults[project.ManifestPath] = upToDate;
+            return upToDate;
+        }
+
+        CleanProjectStaleOutputs(project, session, outputDirectory, earlyOutputPath);
 
         var rootSourcePath = Path.GetFullPath(Path.Combine(project.DirectoryPath, project.RootFile));
         var rootInputPath = rootSourcePath;
@@ -527,12 +559,28 @@ internal static class ProjectCliDriver
             return RememberFailure(project, session);
         }
 
+        // PAINPOINTS #5: record the input stamp only after a clean build so the next
+        // run can skip recompilation when nothing changed; a failed build leaves no
+        // stamp, forcing a retry.
+        try
+        {
+            await File.WriteAllTextAsync(stampPath, inputStamp);
+        }
+        catch (IOException)
+        {
+            // A missing stamp only costs an extra rebuild next run; never fail the build over it.
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
+
         var success = new BuildResult(
             true,
             project,
             outputDirectory,
             outputPath,
-            packageSearchDirectory);
+            packageSearchDirectory,
+            inputStamp);
         session.BuildResults[project.ManifestPath] = success;
         return success;
     }
@@ -563,6 +611,8 @@ internal static class ProjectCliDriver
             return TestRunnerBuildResult.Fail();
         }
 
+        await WarnUnreachableTestFactsAsync(project, rootSourcePath, session);
+
         if (!generation.GeneratedRunner)
         {
             return TestRunnerBuildResult.NotGenerated();
@@ -575,11 +625,407 @@ internal static class ProjectCliDriver
         return TestRunnerBuildResult.Generated(generatedPath);
     }
 
+    private static readonly System.Text.RegularExpressions.Regex TestModuleDeclarationPattern =
+        new(@"^\s*module\s+([A-Za-z_][\w.]*)",
+            System.Text.RegularExpressions.RegexOptions.Multiline | System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    private static readonly System.Text.RegularExpressions.Regex TestFactAttributePattern =
+        new(@"^\s*\[\s*(Fact|Theory)\b",
+            System.Text.RegularExpressions.RegexOptions.Multiline | System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    // PAINPOINTS #6: the generated test runner collects [Fact]/[Theory] facts ONLY from
+    // the [test] root compilation unit, and an imported module file must be named after
+    // its module to resolve. So warn (non-fatally, to stderr) when a project source file
+    // (a) declares [Fact]/[Theory] but is not the root — those facts silently never run —
+    // or (b) is not the root and its file name does not match its `module` name — that
+    // import will not resolve. Build outputs and the generated runner are skipped.
+    private static async Task WarnUnreachableTestFactsAsync(
+        ProjectManifest project,
+        string rootSourcePath,
+        BuildSession session)
+    {
+        string rootFull;
+        IEnumerable<string> files;
+        try
+        {
+            rootFull = Path.GetFullPath(rootSourcePath);
+            files = Directory.EnumerateFiles(project.DirectoryPath, "*.stark", SearchOption.AllDirectories);
+        }
+        catch
+        {
+            return;
+        }
+
+        foreach (var path in files)
+        {
+            string full;
+            try
+            {
+                full = Path.GetFullPath(path);
+            }
+            catch
+            {
+                continue;
+            }
+
+            var normalized = full.Replace('\\', '/');
+            if (normalized.Contains("/build/")
+                || normalized.Contains("/generated/")
+                || normalized.Contains("/.stark/"))
+            {
+                continue;
+            }
+
+            if (string.Equals(full, rootFull, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            string text;
+            try
+            {
+                text = await File.ReadAllTextAsync(path);
+            }
+            catch
+            {
+                continue;
+            }
+
+            // Blank out string/char literals and comments before scanning. Ported
+            // compiler/CLI/testing tests embed whole Stark programs inside raw"""..."""
+            // literals, and those programs routinely contain `[Fact]`/`[Theory]`/`module`
+            // lines; matching them would misreport every such file as having unreachable
+            // facts. After blanking, only genuine top-level declarations remain.
+            var scan = BlankLiteralsAndComments(text);
+
+            var moduleMatch = TestModuleDeclarationPattern.Match(scan);
+            if (moduleMatch.Success)
+            {
+                var moduleName = moduleMatch.Groups[1].Value;
+                var lastSegment = moduleName.Contains('.')
+                    ? moduleName[(moduleName.LastIndexOf('.') + 1)..]
+                    : moduleName;
+                var fileBase = Path.GetFileNameWithoutExtension(path);
+                if (!string.Equals(lastSegment, fileBase, StringComparison.Ordinal))
+                {
+                    await session.Stderr.WriteLineAsync(
+                        $"{path}: warning: test-project file name '{fileBase}.stark' does not match its module name '{moduleName}'; it will not resolve when imported as '{moduleName}'.");
+                }
+            }
+
+            if (TestFactAttributePattern.IsMatch(scan))
+            {
+                await session.Stderr.WriteLineAsync(
+                    $"{path}: warning: this file declares [Fact]/[Theory] tests but is not the [test] root ('{project.RootFile}'); the test runner only collects facts from the root, so these tests will not run. Move them into the root (or add a [Fact] in the root that calls them).");
+            }
+        }
+    }
+
+    // Replace every string literal, character literal, and comment with blank space
+    // (newlines preserved so line-anchored scans still align), so tokens that appear
+    // INSIDE embedded source programs or comments — most importantly the `[Fact]`,
+    // `[Theory]`, and `module` lines inside raw"""..."""` test fixtures — are not
+    // mistaken for real declarations by the reachability scan above. Mirrors the
+    // StringLiteral / CharacterLiteral / LINE_COMMENT / BLOCK_COMMENT lexer rules in
+    // Stark.g4: raw"""...""", raw"...", "..." (with \-escapes), '...' (with \-escapes),
+    // // to end-of-line, and non-nesting /* ... */.
+    private static string BlankLiteralsAndComments(string text)
+    {
+        var sb = new System.Text.StringBuilder(text.Length);
+        int i = 0;
+        int n = text.Length;
+
+        void Blank(char ch) => sb.Append(ch == '\n' ? '\n' : (ch == '\r' ? '\r' : ' '));
+
+        while (i < n)
+        {
+            char c = text[i];
+
+            // Line comment: // ... to end of line.
+            if (c == '/' && i + 1 < n && text[i + 1] == '/')
+            {
+                while (i < n && text[i] != '\n') { Blank(text[i]); i++; }
+                continue;
+            }
+
+            // Block comment: /* ... */ (does not nest).
+            if (c == '/' && i + 1 < n && text[i + 1] == '*')
+            {
+                Blank(' '); Blank(' '); i += 2;
+                while (i < n && !(text[i] == '*' && i + 1 < n && text[i + 1] == '/')) { Blank(text[i]); i++; }
+                if (i < n) { Blank(' '); Blank(' '); i += 2; }
+                continue;
+            }
+
+            // Raw string: raw"""...""" (multi-line) or raw"..." (single line, no escapes).
+            // `raw` must stand alone as a keyword, i.e. not be the tail of a longer identifier.
+            if (c == 'r'
+                && i + 3 < n && text[i + 1] == 'a' && text[i + 2] == 'w' && text[i + 3] == '"'
+                && (i == 0 || !IsIdentifierPart(text[i - 1])))
+            {
+                if (i + 5 < n && text[i + 4] == '"' && text[i + 5] == '"')
+                {
+                    for (int k = 0; k < 6; k++) { Blank(text[i]); i++; } // raw"""
+                    while (i + 2 < n && !(text[i] == '"' && text[i + 1] == '"' && text[i + 2] == '"')) { Blank(text[i]); i++; }
+                    int q = 0;
+                    while (i < n && q < 3) { Blank(text[i]); i++; q++; } // closing """ (or EOF)
+                }
+                else
+                {
+                    for (int k = 0; k < 4; k++) { Blank(text[i]); i++; } // raw"
+                    while (i < n && text[i] != '"' && text[i] != '\r' && text[i] != '\n') { Blank(text[i]); i++; }
+                    if (i < n && text[i] == '"') { Blank(text[i]); i++; }
+                }
+                continue;
+            }
+
+            // Normal string "..." with \-escapes (single line).
+            if (c == '"')
+            {
+                Blank(c); i++;
+                while (i < n && text[i] != '"' && text[i] != '\r' && text[i] != '\n')
+                {
+                    if (text[i] == '\\' && i + 1 < n) { Blank(text[i]); i++; }
+                    if (i < n) { Blank(text[i]); i++; }
+                }
+                if (i < n && text[i] == '"') { Blank(text[i]); i++; }
+                continue;
+            }
+
+            // Character literal '...' with \-escapes (single line).
+            if (c == '\'')
+            {
+                Blank(c); i++;
+                while (i < n && text[i] != '\'' && text[i] != '\r' && text[i] != '\n')
+                {
+                    if (text[i] == '\\' && i + 1 < n) { Blank(text[i]); i++; }
+                    if (i < n) { Blank(text[i]); i++; }
+                }
+                if (i < n && text[i] == '\'') { Blank(text[i]); i++; }
+                continue;
+            }
+
+            sb.Append(c);
+            i++;
+        }
+
+        return sb.ToString();
+    }
+
+    private static bool IsIdentifierPart(char c) => char.IsLetterOrDigit(c) || c == '_';
+
     private static BuildResult RememberFailure(ProjectManifest project, BuildSession session)
     {
         var failure = new BuildResult(false, project, string.Empty, string.Empty, null);
         session.BuildResults[project.ManifestPath] = failure;
         return failure;
+    }
+
+    // PAINPOINTS #5: the file written beside a project's outputs recording the input
+    // stamp of the build that produced them.
+    private const string BuildStampFileName = ".stark-build-stamp";
+
+    // PAINPOINTS #5: a build is up to date when the recorded stamp matches the freshly
+    // computed one AND the output it described is still present (for libraries, the
+    // package image too). Any mismatch or missing artifact forces a clean rebuild.
+    private static bool IsBuildUpToDate(
+        string stampPath,
+        string inputStamp,
+        string outputPath,
+        ProjectManifest project,
+        BuildSession session)
+    {
+        if (!File.Exists(stampPath) || !File.Exists(outputPath))
+        {
+            return false;
+        }
+
+        string recorded;
+        try
+        {
+            recorded = File.ReadAllText(stampPath);
+        }
+        catch (IOException)
+        {
+            return false;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return false;
+        }
+
+        if (!string.Equals(recorded, inputStamp, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        if (project.Kind == ProjectKind.Library
+            && !File.Exists(GetPackageImagePath(project, session)))
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    // PAINPOINTS #5: before rebuilding a changed project, remove the artifacts a prior
+    // build produced (executable/library, the generated test runner, intermediate
+    // temps, and any emitted package image) so a stale `.starkpkg` can never be
+    // rediscovered and shadow the fresh source.
+    private static void CleanProjectStaleOutputs(
+        ProjectManifest project,
+        BuildSession session,
+        string outputDirectory,
+        string outputPath)
+    {
+        TryDeleteFile(outputPath);
+        TryDeleteFile(Path.Combine(outputDirectory, BuildStampFileName));
+        TryDeleteDirectory(Path.Combine(outputDirectory, "generated"));
+        TryDeleteDirectory(GetIntermediateDirectory(project, session));
+        if (project.Kind == ProjectKind.Library)
+        {
+            TryDeleteDirectory(GetPackageDirectory(project, session));
+        }
+    }
+
+    private static void TryDeleteFile(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
+    }
+
+    private static void TryDeleteDirectory(string path)
+    {
+        try
+        {
+            if (Directory.Exists(path))
+            {
+                Directory.Delete(path, recursive: true);
+            }
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
+    }
+
+    // PAINPOINTS #5: a stable hash over every input that can change this project's
+    // output — its sources and manifest, the stdlib search-path sources, each
+    // dependency's own stamp (so transitive source changes propagate), the build
+    // configuration and test filters, and the compiler binary itself (so a rebuilt
+    // host compiler invalidates everything). File identity uses (path, mtime, size),
+    // which is cheap and flips whenever an editor rewrites a file.
+    private static string ComputeProjectInputStamp(
+        ProjectManifest project,
+        BuildSession session,
+        IReadOnlyList<BuildResult> dependencyResults)
+    {
+        var builder = new StringBuilder();
+        builder.Append("v1\n");
+        builder.Append("profile=").Append(session.Profile).Append('\n');
+        builder.Append("triple=").Append(session.TargetTriple).Append('\n');
+        builder.Append("stage=").Append(session.StageName).Append('\n');
+        builder.Append("kind=").Append(project.Kind).Append('\n');
+        builder.Append("output=").Append(project.OutputName).Append('\n');
+        builder.Append("filters=").Append(string.Join("", session.TestFilters)).Append('\n');
+
+        try
+        {
+            var compilerPath = typeof(ProjectCliDriver).Assembly.Location;
+            if (!string.IsNullOrEmpty(compilerPath) && File.Exists(compilerPath))
+            {
+                builder.Append("compiler=").Append(compilerPath)
+                    .Append('|').Append(File.GetLastWriteTimeUtc(compilerPath).Ticks).Append('\n');
+            }
+        }
+        catch
+        {
+        }
+
+        AppendFileStamp(builder, "manifest", project.ManifestPath);
+
+        foreach (var dependency in dependencyResults)
+        {
+            builder.Append("dep=").Append(dependency.Project.ManifestPath)
+                .Append('|').Append(dependency.InputStamp).Append('\n');
+        }
+
+        AppendDirectoryStarkFileStamps(builder, "src", project.DirectoryPath);
+
+        foreach (var stdlibDirectory in GetStdlibSearchPaths(session)
+                     .Where(static path => path.IncludeInCompilerSearch)
+                     .Select(static path => path.Path)
+                     .Distinct(StringComparer.Ordinal))
+        {
+            AppendDirectoryStarkFileStamps(builder, "stdlib", stdlibDirectory);
+        }
+
+        using var sha = System.Security.Cryptography.SHA256.Create();
+        var hash = sha.ComputeHash(Encoding.UTF8.GetBytes(builder.ToString()));
+        return Convert.ToHexString(hash);
+    }
+
+    private static void AppendDirectoryStarkFileStamps(StringBuilder builder, string label, string directory)
+    {
+        string root;
+        IEnumerable<string> files;
+        try
+        {
+            root = Path.GetFullPath(directory);
+            if (!Directory.Exists(root))
+            {
+                return;
+            }
+
+            files = Directory.EnumerateFiles(root, "*.stark", SearchOption.AllDirectories);
+        }
+        catch
+        {
+            return;
+        }
+
+        foreach (var path in files.OrderBy(static p => p, StringComparer.Ordinal))
+        {
+            var normalized = path.Replace('\\', '/');
+            if (normalized.Contains("/build/")
+                || normalized.Contains("/generated/")
+                || normalized.Contains("/.stark/"))
+            {
+                continue;
+            }
+
+            AppendFileStamp(builder, label, path);
+        }
+    }
+
+    private static void AppendFileStamp(StringBuilder builder, string label, string path)
+    {
+        try
+        {
+            var info = new FileInfo(path);
+            if (info.Exists)
+            {
+                builder.Append(label).Append('=').Append(Path.GetFullPath(path))
+                    .Append('|').Append(info.LastWriteTimeUtc.Ticks)
+                    .Append('|').Append(info.Length).Append('\n');
+            }
+        }
+        catch
+        {
+        }
     }
 
     private static NativeArgumentResult BuildNativeArgs(ProjectManifest project, UserConfig userConfig, TextWriter stderr)
@@ -1622,7 +2068,8 @@ internal static class ProjectCliDriver
         ProjectManifest Project,
         string OutputDirectory,
         string OutputPath,
-        string? PackageSearchDirectory);
+        string? PackageSearchDirectory,
+        string InputStamp = "");
 
     private sealed record StdlibSearchPath(
         string Tier,
