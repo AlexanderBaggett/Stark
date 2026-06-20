@@ -503,3 +503,18 @@ fn bool AllDistinctAcceptsSingleton()
     stack i32[min max][] view = values;
     return System.Testing.AllDistinct(view);
 }
+
+// PAINPOINTS #1 — failure-diff text assertions. ContainsReport /
+// DoesNotContainReport return the same booleans as Contains / DoesNotContain;
+// on a mismatch they additionally write a focused `[assert] text mismatch:`
+// report to stderr (the searched fragment + a leading window of the actual
+// text). The two mismatching calls below exercise that report path (visible in
+// the run's stderr) without changing this fact's pass/fail outcome.
+[Fact]
+fn bool ContainsReportReturnsCorrectBooleansAndReportsOnMismatch()
+{
+    return System.Testing.ContainsReport("define fastcc noundef i32 @Run", "@Run")
+        && !System.Testing.ContainsReport("define fastcc noundef i32 @Run", "@Missing")
+        && System.Testing.DoesNotContainReport("define fastcc noundef i32 @Run", "@Missing")
+        && !System.Testing.DoesNotContainReport("define fastcc noundef i32 @Run", "@Run");
+}

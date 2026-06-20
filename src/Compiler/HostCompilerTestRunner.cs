@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace Stark.Compiler;
 
@@ -263,13 +264,16 @@ internal static class HostCompilerTestRunner
             return new CompilerOptions(
                 EmitLlvmIr: request.EmitLlvmIr
                     ?? artifactRequests.Any(static artifact =>
-                        string.Equals(artifact.ArtifactName, CompilerArtifactKeys.LlvmIrModule.Name, StringComparison.Ordinal)),
+                        string.Equals(artifact.ArtifactName, CompilerArtifactKeys.LlvmIrModule.Name, StringComparison.Ordinal)
+                        || string.Equals(artifact.ArtifactName, NormalizedLlvmArtifactName, StringComparison.Ordinal)),
                 ContinueAfterErrors: request.ContinueAfterErrors ?? false,
                 ModuleResolver: BuildModuleResolver(request, filePath),
                 StopAfterPassId: string.IsNullOrWhiteSpace(request.StopAfterPassId) ? null : request.StopAfterPassId,
                 TargetInfo: BuildTargetInfo(request),
-                QualifyModuleSymbols: request.QualifyModuleSymbols ?? false,
-                InternalizeModulePrivate: request.InternalizeModulePrivate ?? false,
+                QualifyModuleSymbols: (request.QualifyModuleSymbols ?? false)
+                    || HasArtifactFlag(artifactRequests, "qualify"),
+                InternalizeModulePrivate: (request.InternalizeModulePrivate ?? false)
+                    || HasArtifactFlag(artifactRequests, "internalize"),
                 EnforceIntegerRangeStorageRules: request.StrictIntegerRanges ?? true,
                 ImportedInlineCloneSeedFunctions: request.ImportedInlineCloneSeedFunctions is { Count: > 0 } seeds
                     ? new HashSet<string>(seeds, StringComparer.Ordinal)
@@ -311,6 +315,24 @@ internal static class HostCompilerTestRunner
                 .Select(Path.GetFullPath)
                 .Distinct(StringComparer.Ordinal)
                 .ToArray();
+
+            // Resolve stdlib (System.*) modules the same way the CLI does: wrap the
+            // file-system resolver with the target-aware stdlib resolver, using the request
+            // target or the detected host default. Without this wrap the host-test server
+            // cannot resolve ANY stdlib import (the bare FileSystemModuleResolver only sees
+            // the request search directories), so every stdlib-dependent ported test failed
+            // at compile while plain `module Demo` tests passed.
+            var resolverTarget = BuildTargetInfo(request);
+            if (resolverTarget is null && NativeToolchain.TryDetectDefaultTargetInfo(out var detectedTarget))
+            {
+                resolverTarget = detectedTarget;
+            }
+
+            if (resolverTarget is not null)
+            {
+                IModuleSourceResolver inner = new FileSystemModuleResolver(resolved);
+                return new TargetAwareStdLibModuleResolver(inner, resolved, resolverTarget);
+            }
 
             return resolved.Length == 0 ? null : new FileSystemModuleResolver(resolved);
         }
@@ -653,6 +675,17 @@ internal static class HostCompilerTestRunner
                 return ArtifactRenderStatus.Rendered;
             }
 
+            if (string.Equals(artifactName, NormalizedLlvmArtifactName, StringComparison.Ordinal))
+            {
+                if (!result.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? normalizedLlvm) || normalizedLlvm is null)
+                {
+                    return ArtifactRenderStatus.Missing;
+                }
+
+                text = NormalizeLlvm(normalizedLlvm.Text);
+                return ArtifactRenderStatus.Rendered;
+            }
+
             if (string.Equals(artifactName, CompilerArtifactKeys.MidLevelIr.Name, StringComparison.Ordinal))
             {
                 if (!result.Artifacts.TryGet(CompilerArtifactKeys.MidLevelIr, out MidLevelIrModule? mir) || mir is null)
@@ -709,14 +742,74 @@ internal static class HostCompilerTestRunner
 
         private static string NormalizeArtifactName(string artifact)
         {
-            return artifact.Trim().ToLowerInvariant() switch
+            // A requested artifact name may carry ';'-delimited host-test option flags
+            // (e.g. "llvm-normalized;qualify;internalize"). The base before the first
+            // ';' selects which artifact is rendered; the flags are consumed by
+            // BuildOptions (HasArtifactFlag). Stripping them here keeps rendering and
+            // EmitLlvmIr detection working while the full requested name still flows
+            // back to the caller as RequestedName for readback.
+            var trimmed = artifact.Trim();
+            var separator = trimmed.IndexOf(';');
+            var baseName = separator >= 0 ? trimmed[..separator].Trim() : trimmed;
+            return baseName.ToLowerInvariant() switch
             {
                 "llvm" or "llvm-text" or "llvm-ir" => CompilerArtifactKeys.LlvmIrModule.Name,
+                "llvm-normalized" or "llvm-ir-normalized" or "llvm-norm" => NormalizedLlvmArtifactName,
                 "mir" or "mir-text" => CompilerArtifactKeys.MidLevelIr.Name,
                 "ssa" or "ssa-text" => CompilerArtifactKeys.SsaIr.Name,
                 "optimized-ssa" or "optimized-ssa-text" or "opt-ssa" or "opt-ssa-text" => CompilerArtifactKeys.OptimizedSsaIr.Name,
-                _ => artifact.Trim()
+                _ => baseName
             };
+        }
+
+        // True when any requested artifact name carries the given ';'-delimited option
+        // flag (e.g. ";qualify", ";internalize"). Lets a single-source host-test request
+        // opt into CompilerOptions toggles without a dedicated protocol field.
+        private static bool HasArtifactFlag(IReadOnlyList<HostCompilerArtifactRequest> artifactRequests, string flag)
+        {
+            foreach (var artifact in artifactRequests)
+            {
+                var requested = artifact.RequestedName;
+                var separator = requested.IndexOf(';');
+                if (separator < 0)
+                {
+                    continue;
+                }
+
+                foreach (var segment in requested[(separator + 1)..].Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                {
+                    if (string.Equals(segment, flag, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        private const string NormalizedLlvmArtifactName = "llvm-ir-normalized";
+
+        // Mirrors tests/compiler.Tests NormalizeLlvm so the host-test bridge can
+        // serve the same normalized LLVM text the C# oracle asserts against: drop
+        // `noundef`, then collapse whitespace on define/declare header lines. Kept
+        // byte-for-byte in sync with that oracle helper.
+        private static string NormalizeLlvm(string llvm)
+        {
+            var normalized = llvm.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
+            normalized = Regex.Replace(normalized, @"\bnoundef\b", string.Empty, RegexOptions.CultureInvariant);
+            return Regex.Replace(
+                normalized,
+                @"^(?:define|declare)\b[^\n]*$",
+                static match =>
+                {
+                    var line = Regex.Replace(match.Value, @" {2,}", " ", RegexOptions.CultureInvariant);
+                    line = Regex.Replace(line, @"\s+,", ",", RegexOptions.CultureInvariant);
+                    line = Regex.Replace(line, @"\(\s+", "(", RegexOptions.CultureInvariant);
+                    line = Regex.Replace(line, @"\s+\)", ")", RegexOptions.CultureInvariant);
+                    return line;
+                },
+                RegexOptions.Multiline | RegexOptions.CultureInvariant);
         }
 
         private static IReadOnlyList<HostCompilerTestCompileRequest> CollectRequests(HostCompilerTestDocument document)

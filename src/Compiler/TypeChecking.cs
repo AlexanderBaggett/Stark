@@ -12315,9 +12315,32 @@ internal sealed class TypeChecker
                 expression);
         }
 
+        var bothBranchesConst = HasConstProvenance(whenTrue) && HasConstProvenance(whenFalse);
+        if (bothBranchesConst
+            && resultType.Kind != StarkTypeKind.Error
+            && CanRuntimeDisjointTest(resultType))
+        {
+            // PAINPOINTS #8: a conditional whose branches are both read-only const
+            // values (e.g. string literals) yields a read-only const view. Such a
+            // value is static read-only data: it can never be the WRITER in an
+            // aliasing hazard, and it lives in distinct const storage that cannot
+            // alias a mutable argument — so it is disjoint-safe exactly like a direct
+            // string-literal argument (which the disjoint checker already exempts).
+            // Without an independent-storage memory root here, the conditional loses
+            // that provenance and a flag/artifact selection such as
+            // `cond ? "llvm" : "llvm-normalized"` passed alongside sibling text params
+            // spuriously trips STK3030's default non-overlap. The root key is
+            // expression-derived so two distinct conditionals never collide.
+            return new ExpressionBinding(
+                resultType,
+                HasConstProvenance: true,
+                MemoryRootKey: $"const-conditional:{NormalizeExpressionText(expression.GetText())}",
+                MemoryRootIsIndependentStorage: true);
+        }
+
         return new ExpressionBinding(
             resultType,
-            HasConstProvenance: HasConstProvenance(whenTrue) && HasConstProvenance(whenFalse));
+            HasConstProvenance: bothBranchesConst);
     }
 
     private ExpressionBinding EvaluateLogicalOrExpression(

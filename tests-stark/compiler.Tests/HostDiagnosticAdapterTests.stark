@@ -425,7 +425,9 @@ export fn i32[min max] main()
         "",
         outputDir.View(),
         0,
-        AdapterTimeoutMilliseconds))
+        AdapterTimeoutMilliseconds,
+        "",
+        ""))
     {
         case HostResult<HostCompileOutcome>.Err(var error):
             checks = false;

@@ -199,7 +199,7 @@ internal fn bool CleanupRemovesModuloAndDivisionWhenStaticRangeIsBelowPositiveDi
         raw"""
 module Demo
 
-fn i32[min max] Run(i32[0 7] slot)
+fn i32[min max] Run(u8[0 7] slot)
 {
     stack i32[min max] remainder = slot % 8;
     stack i32[min max] quotient = slot / 8;
@@ -218,7 +218,7 @@ internal fn bool CleanupForwardsAggregateFieldThroughPhiWhenIncomingFieldsMatchI
     // through the phi, and asserts the extract is forwarded away and the return is
     // `arg_value`; reconstructed as a diamond that writes the same field value on
     // both arms and reduced to a successful compile through cleanup-ssa.
-    stack mut SsaCompile compiled = CompileSsaAfter(
+    stack mut SsaCompile compiled = CompileSsaAfterOptimized(
         "ssaopt-p1-forward-field-through-phi-match",
         raw"""
 module Demo
@@ -245,7 +245,7 @@ fn i32[min max] Run(bool flag, i32[min max] value)
 }
 """,
         "cleanup-ssa");
-    return SsaContains(compiled, "arg_value");
+    return OptimizedSsaContains(compiled, "arg_value");
 }
 
 // Ported from SsaOptimizationTests.CleanupKeepsAggregateFieldExtractThroughPhiWhenIncomingFieldsDiffer.
@@ -324,7 +324,7 @@ internal fn bool CleanupForwardsAggregateFieldThroughSelectWhenSelectedFieldsMat
     // the selected aggregate, and asserts cleanup empties the block and returns
     // `arg_value`; reconstructed as a select that picks between two aggregates with
     // the same field value and reduced to a successful compile through cleanup-ssa.
-    stack mut SsaCompile compiled = CompileSsaAfter(
+    stack mut SsaCompile compiled = CompileSsaAfterOptimized(
         "ssaopt-p1-forward-field-through-select-match",
         raw"""
 module Demo
@@ -343,7 +343,7 @@ fn i32[min max] Run(bool flag, i32[min max] value)
 }
 """,
         "cleanup-ssa");
-    return SsaContains(compiled, "arg_value");
+    return OptimizedSsaContains(compiled, "arg_value");
 }
 
 // Ported from SsaOptimizationTests.CleanupKeepsAggregateFieldExtractThroughSelectWhenSelectedFieldsDiffer.
@@ -1186,9 +1186,9 @@ internal fn bool ValueFactsJoinLoopPhiInputsToAStableRangeImpl()
         raw"""
 module Demo
 
-fn i32[0 10] Run()
+fn u8[0 10] Run()
 {
-    stack mut i32[0 10] loop_phi = 0;
+    stack mut u8[0 10] loop_phi = 0;
     while willexit (loop_phi < 10)
     {
         loop_phi = 10;
@@ -1247,7 +1247,7 @@ module Demo
 fn unicode Run()
 {
     stack ascii ascii_literal = "Stark";
-    stack unicode unicode_literal = "λ";
+    stack unicode unicode_literal = (unicode)"λ";
     return unicode_literal;
 }
 """);
@@ -1357,10 +1357,9 @@ internal fn bool ValueFactsPublishBoundedRawPointerParameterRegionsImpl()
         raw"""
 module Demo
 
-unsafe fn i32[min max][] Run(#[ElementCount(count)] *i32[min max] input, u8[1 10] count)
+unsafe fn i32[min max] Run(u8[1 10] count, rawptr<i32[min max]>[count] input)
 {
-    stack i32[min max][] slice = slice(input, count);
-    return slice;
+    return *(&input[0]);
 }
 """);
     return Succeeds(compiled);
@@ -1382,7 +1381,7 @@ internal fn bool ValueFactsKeepZeroAllowedBoundedRawPointersNullableImpl()
         raw"""
 module Demo
 
-unsafe fn void Run(#[ElementCount(count)] *i32[min max] input, u8[0 10] count)
+unsafe fn void Run(u8[0 10] count, rawptr<i32[min max]>[count] input)
 {
     return;
 }
@@ -1405,13 +1404,16 @@ internal fn bool ValueFactsTrackDynamicStorageAllocationFieldsAndDataPointerImpl
     stack mut SsaCompile compiled = CompileSsa(
         "ssaopt-p2-dynamic-storage-alloc-fields",
         raw"""
+import System.Collections
+import System.Memory
 module Demo
 
-fn u64[0 max] Run()
+fn u64[0 2 ** 63 - 1] Run()
 {
-    stack i32[min max]~ storage = new i32[min max]~(4);
-    stack u64[0 max] length = storage.Length;
-    stack u64[0 max] capacity = storage.Capacity;
+    stack mut List<i32[min max]> storage = new();
+    stack MemoryStatus reserved = storage.Reserve(4);
+    stack u64[0 2 ** 63 - 1] length = storage.Count();
+    stack u64[0 2 ** 63 - 1] capacity = storage.Capacity();
     return capacity;
 }
 """);
@@ -1432,17 +1434,20 @@ internal fn bool ValueFactsTrackDynamicStorageTryReserveSuccessAndFailureEdgesIm
     stack mut SsaCompile compiled = CompileSsa(
         "ssaopt-p2-dynamic-storage-tryreserve-edges",
         raw"""
+import System.Collections
+import System.Memory
 module Demo
 
-fn u64[0 max] Run()
+fn u64[0 2 ** 63 - 1] Run()
 {
-    stack mut i32[min max]~ items = new i32[min max]~(4);
-    if (items.TryReserve(8))
+    stack mut List<i32[min max]> items = new();
+    switch (items.Reserve(8))
     {
-        return items.Capacity;
+        case MemoryStatus.Err(var error):
+            return items.Capacity();
+        case MemoryStatus.Ok:
+            return items.Capacity();
     }
-
-    return items.Capacity;
 }
 """);
     return Succeeds(compiled);
@@ -1462,15 +1467,17 @@ internal fn bool ValueFactsTrackDynamicStorageMoveLastLengthCommitImpl()
     stack mut SsaCompile compiled = CompileSsa(
         "ssaopt-p2-dynamic-storage-movelast-length",
         raw"""
+import System.Collections
+import System.Memory
 module Demo
 
-fn u64[0 max] Run()
+fn u64[0 2 ** 63 - 1] Run()
 {
-    stack mut i32[min max]~ items = new i32[min max]~(4);
-    items.Add(10);
-    items.Add(20);
-    items.MoveLast();
-    return items.Length;
+    stack mut List<i32[min max]> items = new();
+    stack MemoryStatus a = items.Push(10);
+    stack MemoryStatus b = items.Push(20);
+    items.Clear();
+    return items.Count();
 }
 """);
     return Succeeds(compiled);
@@ -1490,13 +1497,16 @@ internal fn bool ValueFactsTrackDynamicStorageLengthFieldStoreAsPrefixCommitImpl
     stack mut SsaCompile compiled = CompileSsa(
         "ssaopt-p2-dynamic-storage-length-field-prefix-commit",
         raw"""
+import System.Collections
+import System.Memory
 module Demo
 
-unsafe fn u64[0 max] Run()
+fn u64[0 2 ** 63 - 1] Run()
 {
-    stack mut i32[min max]~ items = new i32[min max]~(4);
-    *(&items.Length) = 2;
-    return items.Length;
+    stack mut List<i32[min max]> items = new();
+    stack MemoryStatus a = items.Push(1);
+    stack MemoryStatus b = items.Push(2);
+    return items.Count();
 }
 """);
     return Succeeds(compiled);
@@ -1516,15 +1526,17 @@ internal fn bool ValueFactsTrackDynamicLengthReadDerivedCommitThroughOwnerAddres
     stack mut SsaCompile compiled = CompileSsa(
         "ssaopt-p2-dynamic-length-read-derived-commit",
         raw"""
+import System.Collections
+import System.Memory
 module Demo
 
-unsafe fn u64[0 max] Run()
+fn u64[0 2 ** 63 - 1] Run()
 {
-    stack mut i32[min max]~ items = new i32[min max]~(4);
-    stack u64[0 max] old_length = items.Length;
-    stack u64[0 max] next_length = old_length + 1;
-    *(&items.Length) = next_length;
-    return items.Length;
+    stack mut List<i32[min max]> items = new();
+    stack MemoryStatus a = items.Push(1);
+    stack u64[0 2 ** 63 - 1] old_length = items.Count();
+    stack MemoryStatus b = items.Push(2);
+    return items.Count();
 }
 """);
     return Succeeds(compiled);
@@ -1545,20 +1557,22 @@ internal fn bool ValueFactsDemoteDynamicStorageAfterEscapedDataPointerCallImpl()
     stack mut SsaCompile compiled = CompileSsa(
         "ssaopt-p2-demote-after-escaped-data-pointer",
         raw"""
+import System.Collections
+import System.Memory
 module Demo
 
-unsafe fn void ObserveRaw(*mut i32[min max] data)
+unsafe fn void ObserveRaw(rawptr<i32[min max]> data)
 {
     return;
 }
 
-unsafe fn u64[0 max] Run()
+unsafe fn u64[0 2 ** 63 - 1] Run()
 {
-    stack mut i32[min max]~ items = new i32[min max]~(4);
-    ObserveRaw(&items.Data[0]);
-    stack u64[0 max] after_capacity = items.Capacity;
-    items.Reserve(4);
-    return items.Capacity;
+    stack mut List<i32[min max]> items = new();
+    stack MemoryStatus a = items.Push(10);
+    stack i32[min max][] view = items.AsSlice();
+    ObserveRaw(&view[0]);
+    return items.Count();
 }
 """);
     return Succeeds(compiled);
@@ -1643,12 +1657,13 @@ internal fn bool ValueFactsTrackDynamicStorageZeroInitializerAsNoBackingAllocati
     stack mut SsaCompile compiled = CompileSsa(
         "ssaopt-p2-dynamic-storage-zero-init-no-backing",
         raw"""
+import System.Collections
 module Demo
 
-fn i32[min max]~ Run()
+fn u64[0 2 ** 63 - 1] Run()
 {
-    stack i32[min max]~ storage = default;
-    return storage;
+    stack List<i32[min max]> storage = new();
+    return storage.Count();
 }
 """);
     return Succeeds(compiled);
@@ -1672,9 +1687,8 @@ module Demo
 unsafe fn ascii Run()
 {
     stack mut ascii local = "abc";
-    stack *mut ascii local_address = &local;
-    stack ascii loaded = local;
-    return loaded;
+    stack rawmutptr<ascii> local_address = &local;
+    return local;
 }
 """);
     return Succeeds(compiled);
@@ -1696,9 +1710,9 @@ internal fn bool ValueFactsClampNonWrappingArithmeticToContinuingTypeRangeImpl()
         raw"""
 module Demo
 
-fn u8[0 255] Run(i16[240 250] left, i16[10 20] right)
+fn u8[0 max] Run(u8[240 250] left, u8[10 20] right)
 {
-    stack u8[0 255] sum = (left + right) as u8[0 255];
+    stack u8[0 max] sum = (u8[0 max])(left + right);
     return sum;
 }
 """);
@@ -1721,9 +1735,9 @@ internal fn bool ValueFactsDoNotCreateInvalidRangesWhenNonWrappingArithmeticAlwa
         raw"""
 module Demo
 
-fn u8[0 255] Run(i16[250 255] left, i16[10 20] right)
+fn u8[0 max] Run(u8[250 max] left, u8[10 20] right)
 {
-    stack u8[0 255] sum = (left + right) as u8[0 255];
+    stack u8[0 max] sum = (u8[0 max])(left + right);
     return sum;
 }
 """);
@@ -1745,9 +1759,9 @@ internal fn bool ValueFactsKeepWrappingArithmeticConservativeWhenRangeMayWrapImp
         raw"""
 module Demo
 
-fn u8[0 255] Run(u8[250 255] left, u8[10 20] right)
+fn u8[0 max] Run(u8[250 max] left, u8[10 20] right)
 {
-    stack u8[0 255] sum = left +% right;
+    stack u8[0 max] sum = left +% right;
     return sum;
 }
 """);
@@ -1769,9 +1783,9 @@ internal fn bool ValueFactsClampSaturatingArithmeticInsteadOfUsingWrappingSemant
         raw"""
 module Demo
 
-fn u8[0 255] Run(u8[250 255] left, u8[10 20] right)
+fn u8[0 max] Run(u8[250 max] left, u8[10 20] right)
 {
-    stack u8[0 255] sum = left +| right;
+    stack u8[0 max] sum = left +| right;
     return sum;
 }
 """);
@@ -1793,9 +1807,9 @@ internal fn bool ValueFactsClampIntegerConversionsToTargetRangeImpl()
         raw"""
 module Demo
 
-fn u8[0 255] Run(i16[240 260] value)
+fn u8[0 max] Run(u16[240 260] value)
 {
-    stack u8[0 255] converted = value as u8[0 255];
+    stack u8[0 max] converted = (u8[0 max])value;
     return converted;
 }
 """);
@@ -1847,7 +1861,7 @@ module Demo
 unsafe fn i32[min max] Run(i32[min max] value)
 {
     stack mut i32[min max] local = value;
-    stack *mut i32[min max] addr = &local;
+    stack rawmutptr<i32[min max]> addr = &local;
     return local;
 }
 """);
@@ -1936,7 +1950,7 @@ internal fn bool AliasAwareMemoryOptimizationKeepsStackFixedArrayElementLoadsAcr
         raw"""
 module Demo
 
-fn i32[min max] Run(i32[min max] value, i64[0 3] index)
+fn i32[min max] Run(i32[min max] value, u8[0 3] index)
 {
     stack mut i32[min max][4] items =
     {
@@ -1974,7 +1988,7 @@ struct Pair
     i32[min max] Right;
 }
 
-unsafe fn i32[min max] Run(i32[min max] value, *mut i32[min max] other)
+unsafe fn i32[min max] Run(i32[min max] value, rawmutptr<i32[min max]> other)
 {
     stack mut Pair pair = new Pair() { Left = 0, Right = 0 };
     pair.Left = value;
@@ -2108,7 +2122,7 @@ record Pair(i32[min max] Left, i32[min max] Right)
 {
 }
 
-unsafe fn i32[min max] Run(i32[min max] value, rawptr<i32[min max]> other)
+unsafe fn i32[min max] Run(i32[min max] value, rawmutptr<i32[min max]> other)
 {
     stack mut Pair pair = new Pair(0, 1);
     pair.Left = value;
@@ -2234,7 +2248,7 @@ record Pair(i32[min max] Left, i32[min max] Right)
 {
 }
 
-noinline finite law i32[min max] Touch(rawptr<i32[min max]> value)
+unsafe noinline finite law i32[min max] Touch(rawptr<i32[min max]> value)
 {
     return *value;
 }
@@ -2488,7 +2502,7 @@ module Demo
 
 static i32[min max] Value = 0;
 
-unsafe fn i32[min max] Run(rawptr<i32[min max]> other)
+unsafe fn i32[min max] Run(rawmutptr<i32[min max]> other)
 {
     stack i32[min max] v0 = Value;
     *other = 9;
@@ -2691,7 +2705,7 @@ module Demo
 
 static mut i32[min max] Value = 0;
 
-noinline finite law i32[min max] Read(rawptr<i32[min max]> value)
+unsafe noinline finite law i32[min max] Read(rawptr<i32[min max]> value)
 {
     return *value;
 }
@@ -2758,7 +2772,7 @@ record Box(i32[min max] Value, i32[min max] Other)
 {
 }
 
-noinline finite law i32[min max] Read(rawptr<i32[min max]> value)
+unsafe noinline finite law i32[min max] Read(rawptr<i32[min max]> value)
 {
     return *value;
 }
@@ -2796,7 +2810,7 @@ record Box(i32[min max] Value, i32[min max] Other)
 {
 }
 
-noinline finite law i32[min max] Read(rawptr<i32[min max]> value)
+unsafe noinline finite law i32[min max] Read(rawptr<i32[min max]> value)
 {
     return *value;
 }

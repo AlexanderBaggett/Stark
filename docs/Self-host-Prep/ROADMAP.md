@@ -236,6 +236,23 @@ the workaround in place until fixed.
       `LowerSwitchCore` in `src/Compiler` should treat an all-empty-body
       accepted switch as a no-op (or the checker should reject it with a real
       diagnostic). Found in `System.Collections.Arena.Remove`.
+- [~] **"Silent subject-elision" variant — INVESTIGATED (June 2026): does NOT
+      reproduce; the optimizer is correct.** The earlier hypothesis was that an
+      all-empty-body `switch` over a side-effecting subject
+      (`switch (builder.AppendAscii(name)) { case ...Err(_): case ...Ok: }`)
+      silently dropped the subject call. Re-investigation found this is NOT a
+      compiler bug: `SsaCleanupOptimizer.RemoveUnusedPureInstructions` only drops
+      instructions for which `IsPureRemovableInstruction` is true, and that
+      predicate already excludes `SsaCallRValue` / `SsaIndirectCallRValue` / all
+      dynamic-storage mutators. Verified with 6 faithful repros (global `static mut`
+      mutation, local `OwnedAscii` with literal/param append, empty/discard/default
+      arms, and the `return requested;` move-out) — in EVERY form the optimized SSA
+      retains the mutating call and the later read. So there is nothing to fix here.
+      The genuine, still-open empty-`switch` bug is the **lower-mir STK9999 crash on
+      `case Err(var e)` binding patterns** (the previous bullet) — that DOES
+      reproduce; the original 490/493 phantom symptom was most likely that crash (or
+      a context-specific artifact), mis-attributed to optimizer elision. See
+      PAINPOINTS.md #12.
 - [ ] `lower-mir` cannot resolve the generic drop of a `List<T>` field when a
       *consumer* package drops a value of a type defined in a *different*
       (non-stdlib) library that owns that `List<T>` (STK9999,
