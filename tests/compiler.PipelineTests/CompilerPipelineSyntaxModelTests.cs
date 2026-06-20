@@ -255,6 +255,111 @@ public sealed class CompilerPipelineSyntaxModelTests
     }
 
     [Fact]
+    public void ThreadSafetyLawPredicatesAndAttributesFlowIntoSyntaxModel()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module Demo
+
+                [Grant(Transferable)]
+                struct Box<T>
+                {
+                    [Grant(Shareable) where Transferable(T)]
+                    T Payload;
+                }
+
+                [Deny(Transferable)]
+                enum LocalOnly
+                {
+                    None
+                }
+
+                fn T Move<T>(T value) where Transferable(T), Shareable(T)
+                {
+                    return value;
+                }
+
+                struct Holder
+                {
+                    fn T Relay<T>(T value) where Transferable(T)
+                    {
+                        return value;
+                    }
+                }
+                """),
+            new CompilerOptions(StopAfterPassId: "syntax-model"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.SyntaxModel, out SyntaxModel? syntaxModel));
+        Assert.NotNull(syntaxModel);
+
+        var box = Assert.Single(syntaxModel.Declarations, static declaration => declaration.Kind == DeclarationKind.Struct && declaration.Name == "Box");
+        var boxLaw = Assert.Single(box.ThreadSafetyLaws);
+        Assert.Equal(ThreadSafetyLawAttributeKind.Grant, boxLaw.Kind);
+        Assert.Equal("Transferable", boxLaw.LawName);
+        Assert.Null(boxLaw.Condition);
+
+        var localOnly = Assert.Single(syntaxModel.Declarations, static declaration => declaration.Kind == DeclarationKind.Enum && declaration.Name == "LocalOnly");
+        var localOnlyLaw = Assert.Single(localOnly.ThreadSafetyLaws);
+        Assert.Equal(ThreadSafetyLawAttributeKind.Deny, localOnlyLaw.Kind);
+        Assert.Equal("Transferable", localOnlyLaw.LawName);
+
+        var move = Assert.Single(syntaxModel.Declarations, static declaration => declaration.Name == "Move");
+        Assert.Equal(
+            ["Transferable", "Shareable"],
+            move.Function!.ThreadSafetyLaws.Select(static law => law.LawName).ToArray());
+        Assert.All(move.Function.ThreadSafetyLaws, static law => Assert.Equal("T", law.TypeText));
+
+        var relay = Assert.Single(syntaxModel.Declarations, static declaration => declaration.Name == "Holder.Relay");
+        var relayLaw = Assert.Single(relay.Function!.ThreadSafetyLaws);
+        Assert.Equal("Transferable", relayLaw.LawName);
+        Assert.Equal("T", relayLaw.TypeText);
+    }
+
+    [Theory]
+    [InlineData(
+        """
+        [Grant(Serializable)]
+        struct Box
+        {
+        }
+        """)]
+    [InlineData(
+        """
+        struct Box<T>
+        {
+            [Deny(Shareable) where Transferable(T)]
+            T Payload;
+        }
+        """)]
+    [InlineData(
+        """
+        fn void Run<T>() where Send(T)
+        {
+            ;
+        }
+        """)]
+    public void MalformedThreadSafetyLawSurfaceReportsSyntaxModelDiagnostics(string declaration)
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+
+        var result = pipeline.Run(
+            new CompilationInput(
+                $$"""
+                module Demo
+
+                {{declaration}}
+                """),
+            new CompilerOptions(StopAfterPassId: "syntax-model"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(result.Diagnostics, static diagnostic => diagnostic.Code == "STK3050");
+    }
+
+    [Fact]
     public void BackendOpaqueCallableAttributeForcesNoInlineEffect()
     {
         var pipeline = DefaultCompilerPipeline.Create();

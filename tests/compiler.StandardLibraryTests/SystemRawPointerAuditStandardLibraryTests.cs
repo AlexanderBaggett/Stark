@@ -4,6 +4,7 @@ public sealed class SystemRawPointerAuditStandardLibraryTests : StandardLibraryT
 {
     private static readonly string[] DocumentedRawPointerFiles =
     [
+        "stdlib/src/System/C.stark",
         "stdlib/src/System/Collections.stark",
         "stdlib/src/System/Console.stark",
         "stdlib/src/System/FileSystem.stark",
@@ -11,6 +12,7 @@ public sealed class SystemRawPointerAuditStandardLibraryTests : StandardLibraryT
         "stdlib/src/System/IO/Path.stark",
         "stdlib/src/System/Memory.stark",
         "stdlib/src/System/Net/Tcp.stark",
+        "stdlib/src/System/Process.stark",
         "stdlib/src/System/Runtime.stark",
         "stdlib/src/System/Runtime/Buffer.stark",
         "stdlib/src/System/Runtime/ConsoleInput.stark",
@@ -24,6 +26,7 @@ public sealed class SystemRawPointerAuditStandardLibraryTests : StandardLibraryT
 
     private static readonly string[] PublicRawPointerSurfaceFiles =
     [
+        "stdlib/src/System/C.stark",
         "stdlib/src/System/Text.stark"
     ];
 
@@ -189,7 +192,7 @@ public sealed class SystemRawPointerAuditStandardLibraryTests : StandardLibraryT
 
     private static bool ContainsUnsafeToken(string text)
     {
-        return text.Split([' ', '\t', '\r', '\n', '(', ')', '{', '}', ';'], StringSplitOptions.RemoveEmptyEntries)
+        return text.Split([' ', '\t', '\r', '\n', '(', ')', '{', '}', ';', '<', '>', ','], StringSplitOptions.RemoveEmptyEntries)
             .Contains("unsafe", StringComparer.Ordinal);
     }
 

@@ -25,7 +25,7 @@ internal static class StarkAsmArchitectureFacts
     {
         architecture = architectureText?.Trim().ToLowerInvariant() switch
         {
-            "x86_64" or "amd64" => StarkAsmArchitecture.X86_64,
+            "x86_64" or "x64" or "amd64" => StarkAsmArchitecture.X86_64,
             "aarch64" or "arm64" => StarkAsmArchitecture.AArch64,
             "riscv64" => StarkAsmArchitecture.RiscV64,
             "x86" or "i386" or "i486" or "i586" or "i686" => StarkAsmArchitecture.X86,

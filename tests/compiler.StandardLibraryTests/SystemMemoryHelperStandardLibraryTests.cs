@@ -828,7 +828,6 @@ public sealed class SystemMemoryHelperStandardLibraryTests : StandardLibraryTest
         var result = DefaultCompilerPipeline.Create().Run(
             new CompilationInput(File.ReadAllText(modulePath), modulePath),
             new CompilerOptions(
-                OptimizationLevel: CompilerOptimizationLevel.O0,
                 EmitLlvmIr: true,
                 ModuleResolver: new FileSystemModuleResolver(sourceRoot)));
 
@@ -879,7 +878,6 @@ public sealed class SystemMemoryHelperStandardLibraryTests : StandardLibraryTest
         var result = DefaultCompilerPipeline.Create().Run(
             new CompilationInput(File.ReadAllText(modulePath), modulePath),
             new CompilerOptions(
-                OptimizationLevel: CompilerOptimizationLevel.O3,
                 EmitLlvmIr: true,
                 ModuleResolver: new FileSystemModuleResolver(sourceRoot)));
 
@@ -914,7 +912,7 @@ public sealed class SystemMemoryHelperStandardLibraryTests : StandardLibraryTest
         Directory.CreateDirectory(packageDirectory);
 
         var libraryFileName = OperatingSystem.IsWindows() ? "SystemMemory.lib" : "libSystemMemory.a";
-        var manifestPath = Path.Combine(packageDirectory, Path.GetFileNameWithoutExtension(libraryFileName) + ".starkpkg.json");
+        var manifestPath = Path.Combine(packageDirectory, Path.GetFileNameWithoutExtension(libraryFileName) + ".starkpkg");
         var appPath = Path.Combine(tempDirectory.FullName, "App.stark");
         var llvmPath = Path.Combine(tempDirectory.FullName, "App.ll");
 
@@ -970,7 +968,6 @@ public sealed class SystemMemoryHelperStandardLibraryTests : StandardLibraryTest
             var sourceResult = DefaultCompilerPipeline.Create().Run(
                 new CompilationInput(File.ReadAllText(modulePath), modulePath),
                 new CompilerOptions(
-                    OptimizationLevel: CompilerOptimizationLevel.O3,
                     EmitLlvmIr: true,
                     ModuleResolver: new FileSystemModuleResolver(sourceRoot)));
 
@@ -1034,8 +1031,7 @@ public sealed class SystemMemoryHelperStandardLibraryTests : StandardLibraryTest
             return;
         }
 
-        var repositoryRoot = FindRepositoryRoot();
-        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var sourceRoot = await SharedStdlibPackage.GetDirectoryAsync();
         var tempDirectory = Directory.CreateTempSubdirectory(tempPrefix);
         var appPath = Path.Combine(tempDirectory.FullName, "App.stark");
         var outputPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "App.exe" : "app");

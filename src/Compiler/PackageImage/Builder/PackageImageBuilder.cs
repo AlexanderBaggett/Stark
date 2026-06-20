@@ -19,13 +19,16 @@ internal static partial class PackageImageBuilder
         result.Artifacts.TryGet(CompilerArtifactKeys.OwnershipValidation, out OwnershipValidationModel? ownershipModel);
 
         var modules = new List<StarkPackageModuleManifest>();
-        var packagedModuleNames = loadedModules.Modules.Values
-            .Where(HasPackageImageSurface)
-            .Select(static module => module.SyntaxModel.ModuleName)
-            .ToHashSet(StringComparer.Ordinal);
+        var loadedModuleDocuments = loadedModules.Modules.Values.ToArray();
+        var packagedModuleNames = BuildPackagedModuleNames(loadedModuleDocuments);
 
-        foreach (var module in loadedModules.Modules.Values.OrderBy(static module => module.SyntaxModel.ModuleName, StringComparer.Ordinal))
+        foreach (var module in loadedModuleDocuments.OrderBy(static module => module.SyntaxModel.ModuleName, StringComparer.Ordinal))
         {
+            if (!packagedModuleNames.Contains(module.SyntaxModel.ModuleName))
+            {
+                continue;
+            }
+
             var reExports = module.SyntaxModel.Imports
                 .Where(static import => import.IsReExport)
                 .OrderBy(static import => import.ModuleName, StringComparer.Ordinal)
@@ -161,13 +164,19 @@ internal static partial class PackageImageBuilder
                                 qualifiedName,
                                 visibility,
                                 RenderManifestTypeText(aliasType.TargetType, module.SyntaxModel.ModuleName),
-                                GenericParameters: aliasType.GenericParams.Count == 0 ? null : aliasType.GenericParams.ToArray()));
+                                GenericParameters: aliasType.GenericParams.Count == 0 ? null : aliasType.GenericParams.ToArray(),
+                                ComptimeGenericParameters: BuildComptimeGenericParameterManifests(
+                                    aliasType.ComptimeGenericParams,
+                                    module.SyntaxModel.ModuleName)));
                             typedTypeAliases.Add(new StarkPackageTypedTypeAliasManifest(
                                 declaration.Name,
                                 qualifiedName,
                                 visibility,
                                 BuildTypeReference(aliasType.TargetType, module.SyntaxModel.ModuleName),
-                                GenericParameters: aliasType.GenericParams.Count == 0 ? null : aliasType.GenericParams.ToArray()));
+                                GenericParameters: aliasType.GenericParams.Count == 0 ? null : aliasType.GenericParams.ToArray(),
+                                ComptimeGenericParameters: BuildComptimeGenericParameterManifests(
+                                    aliasType.ComptimeGenericParams,
+                                    module.SyntaxModel.ModuleName)));
                         }
 
                         break;
@@ -217,15 +226,6 @@ internal static partial class PackageImageBuilder
 
             AddModuleConcreteLayoutFacts(module, typeModel, enumLayoutModel, concreteLayouts);
             AddModuleEnumLayoutFacts(module, enumLayoutModel, enumLayouts);
-
-            if (reExports.Length == 0
-                && functions.Count == 0
-                && types.Count == 0
-                && globals.Count == 0
-                && typeAliases.Count == 0)
-            {
-                continue;
-            }
 
             modules.Add(new StarkPackageModuleManifest(
                 module.SyntaxModel.ModuleName,
@@ -290,6 +290,7 @@ internal static partial class PackageImageBuilder
             FloatLiteralText: initializer.FloatLiteralText,
             BoolValue: initializer.BoolValue,
             TextLiteralText: initializer.TextLiteralText,
+            VariantName: initializer.VariantName,
             Elements: initializer.Elements?.Select(element => BuildConstantInitializerManifest(element, moduleName)!).ToArray());
     }
 
@@ -514,6 +515,43 @@ internal static partial class PackageImageBuilder
     private static string LookupName(string moduleName, bool isRoot, string declarationName)
     {
         return isRoot ? declarationName : $"{moduleName}.{declarationName}";
+    }
+
+    private static HashSet<string> BuildPackagedModuleNames(IReadOnlyList<LoadedModuleDocument> modules)
+    {
+        var modulesByName = modules.ToDictionary(
+            static module => module.SyntaxModel.ModuleName,
+            StringComparer.Ordinal);
+        var packagedModuleNames = new HashSet<string>(StringComparer.Ordinal);
+        var pending = new Queue<LoadedModuleDocument>();
+
+        foreach (var module in modules)
+        {
+            if (!HasPackageImageSurface(module)
+                || !packagedModuleNames.Add(module.SyntaxModel.ModuleName))
+            {
+                continue;
+            }
+
+            pending.Enqueue(module);
+        }
+
+        while (pending.Count != 0)
+        {
+            var module = pending.Dequeue();
+            foreach (var import in module.SyntaxModel.Imports)
+            {
+                if (!modulesByName.TryGetValue(import.ModuleName, out var importedModule)
+                    || !packagedModuleNames.Add(importedModule.SyntaxModel.ModuleName))
+                {
+                    continue;
+                }
+
+                pending.Enqueue(importedModule);
+            }
+        }
+
+        return packagedModuleNames;
     }
 
     private static bool HasPackageImageSurface(LoadedModuleDocument module)

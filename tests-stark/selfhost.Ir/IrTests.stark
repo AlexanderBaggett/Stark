@@ -1,0 +1,1978 @@
+import Compiler.Ir
+import Compiler.Mir
+import System.Memory
+import System.Text
+import System.Runtime.Buffer
+import System.Testing
+import System.IO
+[Collection("ir")]
+module IrTests
+
+[Fact]
+fn bool TypedHandleRoundTripsIndex()
+{
+    // A handle wraps its 1-based index and reads it back; a non-zero index is valid.
+    stack TypeId id = TypeIdOf(5);
+    return id.Index() == 5 && id.IsValid();
+}
+
+[Fact]
+fn bool DefaultHandleIsInvalidZero()
+{
+    // A default-constructed handle is the invalid sentinel (index 0), as is `Of(0)`.
+    stack mut TypeId fresh = new();
+    return fresh.Index() == 0
+        && !fresh.IsValid()
+        && !TypeIdOf(0).IsValid();
+}
+
+[Fact]
+fn bool HandleEqualityComparesIndex()
+{
+    // Equality is by index; distinct indices are unequal.
+    return MirValueIdOf(3).Equals(MirValueIdOf(3))
+        && !MirValueIdOf(3).Equals(MirValueIdOf(4));
+}
+
+[Fact]
+fn bool DistinctHandleKindsAreSeparateTypes()
+{
+    // The id kinds are distinct value types over the same index space — a SymbolId
+    // and a TypeId built from the same index are independent values (the compiler
+    // rejects passing one where the other is expected; here we just confirm both
+    // round-trip their index).
+    stack SymbolId sym = SymbolIdOf(7);
+    stack TypeId ty = TypeIdOf(7);
+    return sym.Index() == 7 && ty.Index() == 7;
+}
+
+[Fact]
+fn bool IrTableAddsRowsWithOneBasedIndices()
+{
+    // The first row gets index 1 (0 stays the invalid sentinel), the second index 2,
+    // and `Count` tracks the row total.
+    stack mut IrTable<MirValueId> table = new();
+    stack u32[0 max] first = table.Add(MirValueIdOf(100));
+    stack u32[0 max] second = table.Add(MirValueIdOf(200));
+    return first == 1 && second == 2 && table.Count() == 2;
+}
+
+[Fact]
+fn bool IrTableGetReadsBackTheStoredRow()
+{
+    // A row read back at its index equals what was added.
+    stack mut IrTable<MirValueId> table = new();
+    stack u32[0 max] idx = table.Add(MirValueIdOf(42));
+    stack MirValueId row = table.Get(idx);
+    return table.Contains(idx) && row.Index() == 42;
+}
+
+[Fact]
+fn bool IrTableContainsRejectsZeroAndOutOfRange()
+{
+    // Index 0 (invalid) and indices past the end are not contained.
+    stack mut IrTable<TypeId> table = new();
+    stack u32[0 max] idx = table.Add(TypeIdOf(1));
+    return !table.Contains(0)
+        && table.Contains(1)
+        && !table.Contains(2);
+}
+
+[Fact]
+fn bool ValueFactsDefaultToAbsent()
+{
+    // A fresh fact record has no attached facts.
+    stack ValueFacts vf = new();
+    return !vf.HasAlignment()
+        && vf.AlignmentBytes() == 0
+        && !vf.HasCallingAbi()
+        && !vf.HasNoAlias()
+        && !vf.Volatile();
+}
+
+[Fact]
+fn bool ValueFactsSetAndQuery()
+{
+    // Setting facts makes them present and queryable.
+    stack mut ValueFacts vf = new();
+    vf.SetAlignment(8);
+    vf.SetCallingAbi(AbiKind.CAbi);
+    vf.MarkNoAlias();
+    return vf.HasAlignment()
+        && vf.AlignmentBytes() == 8
+        && vf.HasCallingAbi()
+        && vf.HasNoAlias()
+        && !vf.Volatile();
+}
+
+[Fact]
+fn bool ValueFactsInheritCarriesPresentFactsOnly()
+{
+    // `InheritFrom` copies the source's present facts and leaves the destination's
+    // own facts untouched where the source is absent.
+    stack mut ValueFacts src = new();
+    src.SetAlignment(16);
+    src.MarkNoAlias();
+
+    stack mut ValueFacts dst = new();
+    dst.MarkVolatile();
+    dst.InheritFrom(src);
+
+    return dst.HasAlignment()
+        && dst.AlignmentBytes() == 16
+        && dst.HasNoAlias()
+        && dst.Volatile()
+        && !dst.HasCallingAbi();
+}
+
+[Fact]
+fn bool ValueFactsInheritFromEmptyLeavesDestination()
+{
+    // Inheriting from a source with no facts changes nothing on the destination.
+    stack ValueFacts empty = new();
+    stack mut ValueFacts dst = new();
+    dst.SetAlignment(4);
+    dst.InheritFrom(empty);
+    return dst.HasAlignment() && dst.AlignmentBytes() == 4;
+}
+
+[Fact]
+fn bool ValueFactsStoreInIrTableByHandle()
+{
+    // Fact records attach to values through an `IrTable<ValueFacts>` keyed by the
+    // value handle's index — the "one record per value" layout of doc 24 §4.
+    stack mut IrTable<ValueFacts> facts = new();
+    stack mut ValueFacts vf = new();
+    vf.SetAlignment(32);
+    stack u32[0 max] idx = facts.Add(vf);
+    stack ValueFacts read = facts.Get(idx);
+    return facts.Contains(idx) && read.AlignmentBytes() == 32;
+}
+
+[Fact]
+fn bool MirEmitsSequentialValueIds()
+{
+    // Each emitted instruction gets the next 1-based value id over the instruction
+    // table; the table tracks the count and which values are defined.
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack MirValueId a = MirConstInt(instrs, 10);
+    stack MirValueId b = MirConstInt(instrs, 20);
+    stack MirValueId sum = MirAdd(instrs, a, b);
+    return a.Index() == 1
+        && b.Index() == 2
+        && sum.Index() == 3
+        && instrs.Count() == 3
+        && MirDefines(instrs, sum)
+        && !MirDefines(instrs, MirValueIdOf(4));
+}
+
+[Fact]
+fn bool MirConstInstructionCarriesImmediate()
+{
+    // A `ConstInt` reads back its opcode and immediate.
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack MirValueId c = MirConstInt(instrs, 42);
+    return MirOpcodeOf(instrs, c) == MirOp.ConstInt && MirImmediateOf(instrs, c) == 42;
+}
+
+[Fact]
+fn bool MirBinaryInstructionReferencesOperandsByHandle()
+{
+    // A `Mul` records its opcode and its two operand value ids.
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack MirValueId a = MirConstInt(instrs, 3);
+    stack MirValueId b = MirConstInt(instrs, 4);
+    stack MirValueId prod = MirMul(instrs, a, b);
+    stack MirValueId opA = MirOperandAOf(instrs, prod);
+    stack MirValueId opB = MirOperandBOf(instrs, prod);
+    return MirOpcodeOf(instrs, prod) == MirOp.Mul
+        && opA.Equals(a)
+        && opB.Equals(b);
+}
+
+[Fact]
+fn bool MirReturnInstructionRecordsReturnedValue()
+{
+    // A `Return` records the returned value as operand A.
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack MirValueId v = MirConstInt(instrs, 7);
+    stack MirValueId ret = MirReturn(instrs, v);
+    stack MirValueId retOperand = MirOperandAOf(instrs, ret);
+    return MirOpcodeOf(instrs, ret) == MirOp.Return
+        && retOperand.Equals(v);
+}
+
+[Fact]
+fn bool MirReturnBlockRecordsReturnedValue()
+{
+    // A block terminating in `return v` reads back its terminator kind and value.
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack MirValueId v = MirConstInt(instrs, 99);
+    stack MirBlockId b = MirReturnBlock(blocks, v);
+    stack MirValueId got = MirBlockReturnValue(blocks, b);
+    return b.Index() == 1
+        && MirBlockTerminator(blocks, b) == MirTermKind.Return
+        && got.Equals(v);
+}
+
+[Fact]
+fn bool MirBranchBlockRecordsTarget()
+{
+    // An unconditional branch records its target block id.
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack MirValueId v = MirConstInt(instrs, 1);
+    stack MirBlockId dest = MirReturnBlock(blocks, v);
+    stack MirBlockId br = MirBranchBlock(blocks, dest);
+    stack MirBlockId got = MirBlockBranchTarget(blocks, br);
+    return MirBlockTerminator(blocks, br) == MirTermKind.Branch
+        && got.Equals(dest);
+}
+
+[Fact]
+fn bool MirCondBlockRecordsConditionAndTargets()
+{
+    // A conditional branch records its condition value and both target blocks.
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack MirValueId cond = MirConstInt(instrs, 1);
+    stack MirValueId tv = MirConstInt(instrs, 10);
+    stack MirValueId ev = MirConstInt(instrs, 20);
+    stack MirBlockId thenB = MirReturnBlock(blocks, tv);
+    stack MirBlockId elseB = MirReturnBlock(blocks, ev);
+    stack MirBlockId br = MirCondBlock(blocks, cond, thenB, elseB);
+    stack MirValueId gotCond = MirBlockCondValue(blocks, br);
+    stack MirBlockId gotThen = MirBlockCondThen(blocks, br);
+    stack MirBlockId gotElse = MirBlockCondElse(blocks, br);
+    return MirBlockTerminator(blocks, br) == MirTermKind.CondBranch
+        && gotCond.Equals(cond)
+        && gotThen.Equals(thenB)
+        && gotElse.Equals(elseB);
+}
+
+[Fact]
+fn bool MirBlockTerminatorIsUnterminatedOutOfRange()
+{
+    // Querying a block id that was never created reads as unterminated.
+    stack mut IrTable<MirBlock> blocks = new();
+    return MirBlockTerminator(blocks, MirBlockIdOf(7)) == MirTermKind.Unterminated;
+}
+
+[Fact]
+fn bool MirFunctionRecordsEntryAndRanges()
+{
+    // A function owns the blocks/instructions emitted for it and names its entry.
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    // Body: %1 = const 2; %2 = const 3; %3 = add %1 %2.
+    stack MirValueId a = MirConstInt(instrs, 2);
+    stack MirValueId b = MirConstInt(instrs, 3);
+    stack MirValueId sum = MirAdd(instrs, a, b);
+    // One block returning the sum.
+    stack MirBlockId entry = MirReturnBlock(blocks, sum);
+    stack MirFuncId f = MirDefineFunction(funcs, entry, entry, 1, a, 3);
+    stack MirBlockId gotEntry = MirFunctionEntry(funcs, f);
+    return f.Index() == 1
+        && gotEntry.Equals(entry)
+        && MirFunctionBlockCount(funcs, f) == 1
+        && MirFunctionInstrCount(funcs, f) == 3;
+}
+
+[Fact]
+fn bool MirFunctionOwnershipTracksRanges()
+{
+    // Ownership queries respect each function's half-open block/instruction ranges.
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    // Function 1: instrs %1..%2, block #1.
+    stack MirValueId a = MirConstInt(instrs, 1);
+    stack MirValueId b = MirConstInt(instrs, 2);
+    stack MirBlockId blk1 = MirReturnBlock(blocks, b);
+    stack MirFuncId funcA = MirDefineFunction(funcs, blk1, blk1, 1, a, 2);
+    // Function 2: instr %3, block #2.
+    stack MirValueId c = MirConstInt(instrs, 3);
+    stack MirBlockId blk2 = MirReturnBlock(blocks, c);
+    stack MirFuncId funcB = MirDefineFunction(funcs, blk2, blk2, 1, c, 1);
+    return MirFunctionOwnsBlock(funcs, funcA, blk1)
+        && !MirFunctionOwnsBlock(funcs, funcA, blk2)
+        && MirFunctionOwnsValue(funcs, funcA, a)
+        && !MirFunctionOwnsValue(funcs, funcA, c)
+        && MirFunctionOwnsBlock(funcs, funcB, blk2)
+        && MirFunctionOwnsValue(funcs, funcB, c);
+}
+
+[Fact]
+fn bool MirFunctionQueriesRejectOutOfRange()
+{
+    // An undefined function id yields an invalid entry and zero counts.
+    stack mut IrTable<MirFunction> funcs = new();
+    stack MirBlockId entry = MirFunctionEntry(funcs, MirFuncIdOf(3));
+    return !entry.IsValid()
+        && MirFunctionBlockCount(funcs, MirFuncIdOf(3)) == 0
+        && MirFunctionInstrCount(funcs, MirFuncIdOf(3)) == 0;
+}
+
+// Builds an `OwnedAscii` from `expectedText` and compares it to `actual`.
+fn bool LlvmTextEquals(borrow OwnedAscii actual, const ascii expectedText)
+{
+    stack mut OwnedAscii expected = new();
+    switch (expected.AppendConstAscii(expectedText))
+    {
+        case MemoryStatus.Ok:
+            return OwnedAscii.Equals(actual, expected);
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+[Fact]
+fn bool EmitsLlvmForStraightLineFunction()
+{
+    // The integer MIR lowers to LLVM textual IR: each value is a `%vN` register,
+    // ConstInt materializes via `add i64 0, imm`, and Return becomes `ret i64`.
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack MirValueId a = MirConstInt(instrs, 2);
+    stack MirValueId b = MirConstInt(instrs, 3);
+    stack MirValueId sum = MirAdd(instrs, a, b);
+    stack MirValueId unusedRet = MirReturn(instrs, sum);
+    stack mut OwnedAscii sink = new();
+    switch (EmitLlvmFunction(instrs, "add2", 1, 4, sink))
+    {
+        case MemoryStatus.Ok:
+            return LlvmTextEquals(sink, "define i64 @add2() {\nentry:\n  %v1 = add i64 0, 2\n  %v2 = add i64 0, 3\n  %v3 = add i64 %v1, %v2\n  ret i64 %v3\n}\n");
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+[Fact]
+fn bool EmitsLlvmForMixedArithmetic()
+{
+    // sub/mul opcodes lower to their LLVM mnemonics over `%vN` operands.
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack MirValueId a = MirConstInt(instrs, 10);
+    stack MirValueId b = MirConstInt(instrs, 4);
+    stack MirValueId diff = MirSub(instrs, a, b);
+    stack MirValueId prod = MirMul(instrs, diff, b);
+    stack MirValueId unusedRet = MirReturn(instrs, prod);
+    stack mut OwnedAscii sink = new();
+    switch (EmitLlvmFunction(instrs, "calc", 1, 5, sink))
+    {
+        case MemoryStatus.Ok:
+            return LlvmTextEquals(sink, "define i64 @calc() {\nentry:\n  %v1 = add i64 0, 10\n  %v2 = add i64 0, 4\n  %v3 = sub i64 %v1, %v2\n  %v4 = mul i64 %v3, %v2\n  ret i64 %v4\n}\n");
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+[Fact]
+fn bool EmitsLlvmReturnTerminator()
+{
+    // A Return block lowers to `ret i64 %vN`.
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack MirValueId a = MirConstInt(instrs, 1);
+    stack MirValueId b = MirConstInt(instrs, 2);
+    stack MirValueId sum = MirAdd(instrs, a, b);
+    stack MirBlockId blk = MirReturnBlock(blocks, sum);
+    stack mut OwnedAscii sink = new();
+    switch (EmitLlvmTerminator(instrs, blocks,blk, sink))
+    {
+        case MemoryStatus.Ok:
+            return LlvmTextEquals(sink, "  ret i64 %v3\n");
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+[Fact]
+fn bool EmitsLlvmBranchTerminator()
+{
+    // An unconditional Branch block lowers to `br label %bN`.
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack MirValueId v = MirConstInt(instrs, 5);
+    stack MirBlockId dest = MirReturnBlock(blocks, v);
+    stack MirBlockId br = MirBranchBlock(blocks, dest);
+    stack mut OwnedAscii sink = new();
+    switch (EmitLlvmTerminator(instrs, blocks,br, sink))
+    {
+        case MemoryStatus.Ok:
+            return LlvmTextEquals(sink, "  br label %b1\n");
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+[Fact]
+fn bool EmitsLlvmCondBranchTerminator()
+{
+    // A CondBranch block lowers to `br i1 %vC, label %bT, label %bE`.
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack MirValueId cond = MirConstInt(instrs, 1);
+    stack MirValueId tv = MirConstInt(instrs, 10);
+    stack MirValueId ev = MirConstInt(instrs, 20);
+    stack MirBlockId thenB = MirReturnBlock(blocks, tv);
+    stack MirBlockId elseB = MirReturnBlock(blocks, ev);
+    stack MirBlockId br = MirCondBlock(blocks, cond, thenB, elseB);
+    stack mut OwnedAscii sink = new();
+    switch (EmitLlvmTerminator(instrs, blocks,br, sink))
+    {
+        case MemoryStatus.Ok:
+            return LlvmTextEquals(sink, "  br i1 %v1, label %b1, label %b2\n");
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+[Fact]
+fn bool EmitsLlvmReturnsParameterDirectly()
+{
+    // Regression: an identity function `fn id(x) { return x }` returns its parameter,
+    // which must lower to `ret i64 %p0` — not an undefined `%vN` (a Param emits no
+    // body line). The block terminator routes the value through the param-aware path.
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack MirValueId p0 = MirParam(instrs, 0);
+    stack MirBlockId entry = MirReturnBlock(blocks, p0);
+    stack mut OwnedAscii sink = new();
+    switch (EmitLlvmDefinitionWithParams(instrs, blocks, "id", 1, entry.Index(), 1, 1, sink))
+    {
+        case MemoryStatus.Ok:
+            return LlvmTextEquals(sink, "define i64 @id(i64 %p0) {\nb1:\n  ret i64 %p0\n}\n");
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+[Fact]
+fn bool EmitsLlvmCondBranchOnParameter()
+{
+    // Regression: a CondBranch whose condition is a parameter references `%pK`, not an
+    // undefined `%vN`.
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack MirValueId cond = MirParam(instrs, 0);
+    stack MirValueId tv = MirConstInt(instrs, 1);
+    stack MirValueId ev = MirConstInt(instrs, 2);
+    stack MirBlockId thenB = MirReturnBlock(blocks, tv);
+    stack MirBlockId elseB = MirReturnBlock(blocks, ev);
+    stack MirBlockId br = MirCondBlock(blocks, cond, thenB, elseB);
+    stack mut OwnedAscii sink = new();
+    switch (EmitLlvmTerminator(instrs, blocks, br, sink))
+    {
+        case MemoryStatus.Ok:
+            return LlvmTextEquals(sink, "  br i1 %p0, label %b1, label %b2\n");
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+[Fact]
+fn bool MirDecodersGuardOnOpcode()
+{
+    // Regression: the shared immediate field is not misread across opcodes — a callee
+    // id read as a param index yields 0, and a param index read as a callee is invalid.
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack MirValueId call = MirCall(instrs, MirFuncIdOf(7));
+    stack MirValueId param = MirParam(instrs, 3);
+    return MirParamIndexOf(instrs, call) == 0
+        && !MirCalleeOf(instrs, param).IsValid()
+        && MirParamIndexOf(instrs, param) == 3
+        && MirCalleeOf(instrs, call).Equals(MirFuncIdOf(7));
+}
+
+[Fact]
+fn bool MirFunctionDoesNotOwnInvalidId()
+{
+    // Regression: a function whose recorded range starts at the 0 sentinel never
+    // reports the invalid id 0 as owned.
+    stack mut IrTable<MirFunction> funcs = new();
+    stack MirFuncId f = MirDefineFunction(funcs, MirBlockIdOf(0), MirBlockIdOf(0), 1, MirValueIdOf(0), 1);
+    return !MirFunctionOwnsBlock(funcs, f, MirBlockIdOf(0))
+        && !MirFunctionOwnsValue(funcs, f, MirValueIdOf(0));
+}
+
+[Fact]
+fn bool EmitsLlvmSingleBlockDefinition()
+{
+    // A whole function emits as `define i64 @name() { bN: <instrs> <terminator> }`,
+    // the terminator coming from the entry block (not a MirReturn instruction).
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack MirValueId a = MirConstInt(instrs, 2);
+    stack MirValueId b = MirConstInt(instrs, 3);
+    stack MirValueId sum = MirAdd(instrs, a, b);
+    stack MirBlockId entry = MirReturnBlock(blocks, sum);
+    stack mut OwnedAscii sink = new();
+    switch (EmitLlvmDefinition(instrs, blocks, "f", entry.Index(), 1, 3, sink))
+    {
+        case MemoryStatus.Ok:
+            return LlvmTextEquals(sink, "define i64 @f() {\nb1:\n  %v1 = add i64 0, 2\n  %v2 = add i64 0, 3\n  %v3 = add i64 %v1, %v2\n  ret i64 %v3\n}\n");
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+// Emits two labelled blocks back to back into `sink`, each owning one instruction.
+fn MemoryStatus EmitTwoBlockBody(borrow IrTable<MirInstruction> instrs, borrow IrTable<MirBlock> blocks, u32[0 max] entryIndex, u32[0 max] secondIndex, mut borrow OwnedAscii sink)
+{
+    try EmitLlvmLabeledBlock(instrs, blocks, entryIndex, 1, 1, sink);
+    try EmitLlvmLabeledBlock(instrs, blocks, secondIndex, 2, 1, sink);
+    return MemoryStatus.Ok;
+}
+
+[Fact]
+fn bool EmitsLlvmTwoBlockFunctionBody()
+{
+    // A two-block function: entry computes a value and branches; the second block
+    // computes another value and returns. Each block emits its label, body, terminator.
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack MirValueId v1 = MirConstInt(instrs, 7);
+    stack MirValueId v2 = MirConstInt(instrs, 8);
+    stack MirBlockId second = MirReturnBlock(blocks, v2);
+    stack MirBlockId entry = MirBranchBlock(blocks, second);
+    stack mut OwnedAscii sink = new();
+    switch (EmitTwoBlockBody(instrs, blocks, entry.Index(), second.Index(), sink))
+    {
+        case MemoryStatus.Ok:
+            return LlvmTextEquals(sink, "b2:\n  %v1 = add i64 0, 7\n  br label %b1\nb1:\n  %v2 = add i64 0, 8\n  ret i64 %v2\n");
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+[Fact]
+fn bool MirCallRecordsCallee()
+{
+    // A Call instruction records its opcode and the callee function id.
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack MirValueId result = MirCall(instrs, MirFuncIdOf(5));
+    stack MirFuncId callee = MirCalleeOf(instrs, result);
+    return MirOpcodeOf(instrs, result) == MirOp.Call
+        && callee.Equals(MirFuncIdOf(5));
+}
+
+[Fact]
+fn bool MirParamRecordsIndex()
+{
+    // A Param instruction records its opcode and 0-based parameter index.
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack MirValueId p = MirParam(instrs, 3);
+    return MirOpcodeOf(instrs, p) == MirOp.Param
+        && MirParamIndexOf(instrs, p) == 3;
+}
+
+[Fact]
+fn bool EmitsLlvmFunctionWithParams()
+{
+    // A function over its parameters declares them in the signature and references
+    // them as `%pK` in the body; the Param instructions emit no body lines.
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack MirValueId p0 = MirParam(instrs, 0);
+    stack MirValueId p1 = MirParam(instrs, 1);
+    stack MirValueId sum = MirAdd(instrs, p0, p1);
+    stack MirBlockId entry = MirReturnBlock(blocks, sum);
+    stack mut OwnedAscii sink = new();
+    switch (EmitLlvmDefinitionWithParams(instrs, blocks, "addp", 2, entry.Index(), 1, 3, sink))
+    {
+        case MemoryStatus.Ok:
+            return LlvmTextEquals(sink, "define i64 @addp(i64 %p0, i64 %p1) {\nb1:\n  %v3 = add i64 %p0, %p1\n  ret i64 %v3\n}\n");
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+[Fact]
+fn bool EmitsLlvmCallInstruction()
+{
+    // A Call lowers to `%vN = call i64 @fK()`; its result feeds the return.
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack MirValueId result = MirCall(instrs, MirFuncIdOf(2));
+    stack MirValueId unusedRet = MirReturn(instrs, result);
+    stack mut OwnedAscii sink = new();
+    switch (EmitLlvmFunction(instrs, "caller", 1, 2, sink))
+    {
+        case MemoryStatus.Ok:
+            return LlvmTextEquals(sink, "define i64 @caller() {\nentry:\n  %v1 = call i64 @f2()\n  ret i64 %v1\n}\n");
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+[Fact]
+fn bool EmitsLlvmCallWithArguments()
+{
+    // A two-argument call lowers to `%vN = call i64 @fK(i64 %a, i64 %b)`.
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack MirValueId a = MirConstInt(instrs, 4);
+    stack MirValueId b = MirConstInt(instrs, 5);
+    stack MirValueId result = MirCall2(instrs, MirFuncIdOf(3), a, b);
+    stack MirValueId unusedRet = MirReturn(instrs, result);
+    stack mut OwnedAscii sink = new();
+    switch (EmitLlvmFunction(instrs, "caller", 1, 4, sink))
+    {
+        case MemoryStatus.Ok:
+            return LlvmTextEquals(sink, "define i64 @caller() {\nentry:\n  %v1 = add i64 0, 4\n  %v2 = add i64 0, 5\n  %v3 = call i64 @f3(i64 %v1, i64 %v2)\n  ret i64 %v3\n}\n");
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+[Fact]
+fn bool EmitsLlvmCallForwardingAParameter()
+{
+    // A function that forwards its parameter as a call argument: the param lowers to
+    // `%p0` in the argument position.
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack MirValueId p0 = MirParam(instrs, 0);
+    stack MirValueId result = MirCall1(instrs, MirFuncIdOf(1), p0);
+    stack MirBlockId entry = MirReturnBlock(blocks, result);
+    stack mut OwnedAscii sink = new();
+    switch (EmitLlvmDefinitionWithParams(instrs, blocks, "fwd", 1, entry.Index(), 1, 2, sink))
+    {
+        case MemoryStatus.Ok:
+            return LlvmTextEquals(sink, "define i64 @fwd(i64 %p0) {\nb1:\n  %v2 = call i64 @f1(i64 %p0)\n  ret i64 %v2\n}\n");
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+[Fact]
+fn bool MirComparisonRecordsOpcodeAndOperands()
+{
+    // Comparison instructions record their opcode and both operands.
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack MirValueId a = MirConstInt(instrs, 3);
+    stack MirValueId b = MirConstInt(instrs, 4);
+    stack MirValueId eq = MirCmpEq(instrs, a, b);
+    stack MirValueId ge = MirCmpGe(instrs, a, b);
+    stack MirValueId opA = MirOperandAOf(instrs, eq);
+    stack MirValueId opB = MirOperandBOf(instrs, eq);
+    return MirOpcodeOf(instrs, eq) == MirOp.CmpEq
+        && MirOpcodeOf(instrs, ge) == MirOp.CmpGe
+        && opA.Equals(a)
+        && opB.Equals(b);
+}
+
+[Fact]
+fn bool EmitsLlvmAllComparisonPredicates()
+{
+    // Each comparison opcode lowers to its LLVM `icmp` predicate (signed).
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack MirValueId a = MirConstInt(instrs, 1);
+    stack MirValueId b = MirConstInt(instrs, 2);
+    stack MirValueId e1 = MirCmpEq(instrs, a, b);
+    stack MirValueId e2 = MirCmpNe(instrs, a, b);
+    stack MirValueId e3 = MirCmpLt(instrs, a, b);
+    stack MirValueId e4 = MirCmpLe(instrs, a, b);
+    stack MirValueId e5 = MirCmpGt(instrs, a, b);
+    stack MirValueId e6 = MirCmpGe(instrs, a, b);
+    stack MirBlockId entry = MirReturnBlock(blocks, a);
+    stack mut OwnedAscii sink = new();
+    switch (EmitLlvmDefinitionWithParams(instrs, blocks, "cmps", 0, entry.Index(), 1, 8, sink))
+    {
+        case MemoryStatus.Ok:
+            return LlvmTextEquals(sink, "define i64 @cmps() {\nb1:\n  %v1 = add i64 0, 1\n  %v2 = add i64 0, 2\n  %v3 = icmp eq i64 %v1, %v2\n  %v4 = icmp ne i64 %v1, %v2\n  %v5 = icmp slt i64 %v1, %v2\n  %v6 = icmp sle i64 %v1, %v2\n  %v7 = icmp sgt i64 %v1, %v2\n  %v8 = icmp sge i64 %v1, %v2\n  ret i64 %v1\n}\n");
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+[Fact]
+fn bool EmitsLlvmWellTypedConditionalBranch()
+{
+    // A comparison yields an i1 that feeds a CondBranch — `br i1 %vN` is now
+    // well-typed (the condition register is a genuine icmp result, not an i64).
+    // `fn cmp(x, y) { if x < y then 1 else 0 }`.
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack MirValueId x = MirParam(instrs, 0);
+    stack MirValueId y = MirParam(instrs, 1);
+    stack MirValueId lt = MirCmpLt(instrs, x, y);
+    stack MirValueId tv = MirConstInt(instrs, 1);
+    stack MirValueId ev = MirConstInt(instrs, 0);
+    stack MirBlockId thenB = MirReturnBlock(blocks, tv);
+    stack MirBlockId elseB = MirReturnBlock(blocks, ev);
+    stack MirBlockId entry = MirCondBlock(blocks, lt, thenB, elseB);
+    stack mut OwnedAscii sink = new();
+    switch (EmitLlvmDefinitionWithParams(instrs, blocks, "cmp", 2, entry.Index(), 1, 3, sink))
+    {
+        case MemoryStatus.Ok:
+            return LlvmTextEquals(sink, "define i64 @cmp(i64 %p0, i64 %p1) {\nb3:\n  %v3 = icmp slt i64 %p0, %p1\n  br i1 %v3, label %b1, label %b2\n}\n");
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+[Fact]
+fn bool ByteBufferRoundTripsU32()
+{
+    // A u32 round-trips through 4 little-endian bytes.
+    stack mut IrTable<u8[0 max]> buf = new();
+    WriteU32(buf, 305419896);
+    WriteU32(buf, 0);
+    return buf.Count() == 8
+        && ReadU32(buf, 1) == 305419896
+        && ReadU32(buf, 5) == 0;
+}
+
+[Fact]
+fn bool ByteBufferRoundTripsI64()
+{
+    // An i64 round-trips through 8 little-endian bytes, including a negative value.
+    stack mut IrTable<u8[0 max]> buf = new();
+    WriteI64(buf, 9223372036854775807);
+    WriteI64(buf, -5);
+    return buf.Count() == 16
+        && ReadI64(buf, 1) == 9223372036854775807
+        && ReadI64(buf, 9) == -5;
+}
+
+[Fact]
+fn bool BinaryRoundTripsBlocks()
+{
+    // The block table survives a binary round-trip: terminator kinds and slots.
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack MirValueId v = MirConstInt(instrs, 1);
+    stack MirBlockId retB = MirReturnBlock(blocks, v);
+    stack MirBlockId brB = MirBranchBlock(blocks, retB);
+    stack MirBlockId condB = MirCondBlock(blocks, v, retB, brB);
+    stack mut IrTable<u8[0 max]> buf = new();
+    SerializeBlocks(blocks, buf);
+    stack mut IrTable<MirBlock> back = new();
+    DeserializeBlocks(buf, back);
+    stack MirBlockId brTarget = MirBlockBranchTarget(back, MirBlockIdOf(2));
+    stack MirBlockId condThen = MirBlockCondThen(back, MirBlockIdOf(3));
+    stack MirBlockId condElse = MirBlockCondElse(back, MirBlockIdOf(3));
+    return back.Count() == 3
+        && MirBlockTerminator(back, MirBlockIdOf(1)) == MirTermKind.Return
+        && MirBlockTerminator(back, MirBlockIdOf(2)) == MirTermKind.Branch
+        && MirBlockTerminator(back, MirBlockIdOf(3)) == MirTermKind.CondBranch
+        && brTarget.Equals(MirBlockIdOf(1))
+        && condThen.Equals(MirBlockIdOf(1))
+        && condElse.Equals(MirBlockIdOf(2));
+}
+
+[Fact]
+fn bool BinaryRoundTripsFunctions()
+{
+    // A function record survives a binary round-trip: entry + owned ranges.
+    stack mut IrTable<MirFunction> funcs = new();
+    stack MirFuncId f = MirDefineFunction(funcs, MirBlockIdOf(2), MirBlockIdOf(2), 3, MirValueIdOf(5), 7);
+    stack mut IrTable<u8[0 max]> buf = new();
+    SerializeFunctions(funcs, buf);
+    stack mut IrTable<MirFunction> back = new();
+    DeserializeFunctions(buf, back);
+    stack MirBlockId entry = MirFunctionEntry(back, MirFuncIdOf(1));
+    return back.Count() == 1
+        && entry.Equals(MirBlockIdOf(2))
+        && MirFunctionBlockCount(back, MirFuncIdOf(1)) == 3
+        && MirFunctionInstrCount(back, MirFuncIdOf(1)) == 7;
+}
+
+[Fact]
+fn bool BinaryRoundTripsGlobals()
+{
+    // The globals table survives a binary round-trip, including a negative initializer.
+    stack mut IrTable<MirGlobal> globals = new();
+    stack u32[0 max] g1 = MirDefineGlobal(globals, 100);
+    stack u32[0 max] g2 = MirDefineGlobal(globals, -7);
+    stack mut IrTable<u8[0 max]> buf = new();
+    SerializeGlobals(globals, buf);
+    stack mut IrTable<MirGlobal> back = new();
+    DeserializeGlobals(buf, back);
+    return back.Count() == 2
+        && MirGlobalInitialValue(back, 1) == 100
+        && MirGlobalInitialValue(back, 2) == -7;
+}
+
+[Fact]
+fn bool LowersReturnIntSourceToLlvm()
+{
+    // The first source -> MIR -> LLVM thread (toward bootstrap #33): lex the source
+    // `return 42`, find the integer literal, lower to MIR (const + return), and emit
+    // the LLVM `@main` function.
+    stack mut OwnedAscii sink = new();
+    stack bool ok = LowerReturnIntToLlvm("return 42", sink);
+    return ok
+        && LlvmTextEquals(sink, "define i64 @main() {\nb1:\n  %v1 = add i64 0, 42\n  ret i64 %v1\n}\n");
+}
+
+[Fact]
+fn bool LowersReturnIntRejectsNoLiteral()
+{
+    // Source with no integer literal is rejected by the lowering.
+    stack mut OwnedAscii sink = new();
+    return !LowerReturnIntToLlvm("return", sink);
+}
+
+[Fact]
+fn bool LowersReturnAddExpr()
+{
+    // `return 2 + 3` lexes + lowers to a MIR add and emits the LLVM function.
+    stack mut OwnedAscii sink = new();
+    stack bool ok = LowerReturnExprToLlvm("return 2 + 3", sink);
+    return ok
+        && LlvmTextEquals(sink, "define i64 @main() {\nb1:\n  %v1 = add i64 0, 2\n  %v2 = add i64 0, 3\n  %v3 = add i64 %v1, %v2\n  ret i64 %v3\n}\n");
+}
+
+[Fact]
+fn bool LowersReturnSubAndMulExpr()
+{
+    // `-` and `*` lower to sub/mul.
+    stack mut OwnedAscii sinkSub = new();
+    stack bool okSub = LowerReturnExprToLlvm("return 10 - 4", sinkSub);
+    stack mut OwnedAscii sinkMul = new();
+    stack bool okMul = LowerReturnExprToLlvm("return 6 * 7", sinkMul);
+    return okSub
+        && okMul
+        && LlvmTextEquals(sinkSub, "define i64 @main() {\nb1:\n  %v1 = add i64 0, 10\n  %v2 = add i64 0, 4\n  %v3 = sub i64 %v1, %v2\n  ret i64 %v3\n}\n")
+        && LlvmTextEquals(sinkMul, "define i64 @main() {\nb1:\n  %v1 = add i64 0, 6\n  %v2 = add i64 0, 7\n  %v3 = mul i64 %v1, %v2\n  ret i64 %v3\n}\n");
+}
+
+[Fact]
+fn bool LowersReturnSingleConstViaExpr()
+{
+    // The single-constant case still works through the expression lowering.
+    stack mut OwnedAscii sink = new();
+    stack bool ok = LowerReturnExprToLlvm("return 42", sink);
+    return ok
+        && LlvmTextEquals(sink, "define i64 @main() {\nb1:\n  %v1 = add i64 0, 42\n  ret i64 %v1\n}\n");
+}
+
+[Fact]
+fn bool LowersReturnExpressionChain()
+{
+    // An arbitrary-length operator chain folds left-associatively:
+    // `return 2 + 3 + 4` -> ((2 + 3) + 4).
+    stack mut OwnedAscii sink = new();
+    stack bool ok = LowerReturnExprToLlvm("return 2 + 3 + 4", sink);
+    return ok
+        && LlvmTextEquals(sink, "define i64 @main() {\nb1:\n  %v1 = add i64 0, 2\n  %v2 = add i64 0, 3\n  %v3 = add i64 %v1, %v2\n  %v4 = add i64 0, 4\n  %v5 = add i64 %v3, %v4\n  ret i64 %v5\n}\n");
+}
+
+[Fact]
+fn bool LowersProgramWithLocalVariable()
+{
+    // A two-statement program: a local binds an expression's value, and the return
+    // reuses it by name. `var x = 2 + 3; return x * x` -> x = %v3 (the add), reused.
+    stack mut OwnedAscii sink = new();
+    stack bool ok = LowerProgramToLlvm("var x = 2 + 3; return x * x", sink);
+    return ok
+        && LlvmTextEquals(sink, "define i64 @main() {\nb1:\n  %v1 = add i64 0, 2\n  %v2 = add i64 0, 3\n  %v3 = add i64 %v1, %v2\n  %v4 = mul i64 %v3, %v3\n  ret i64 %v4\n}\n");
+}
+
+[Fact]
+fn bool LowersProgramWithTwoLocals()
+{
+    // Two local declarations, both reused in the return: `var x = 2; var y = 3;
+    // return x + y` -> x = %v1, y = %v2, ret add %v1, %v2.
+    stack mut OwnedAscii sink = new();
+    stack bool ok = LowerProgramToLlvm("var x = 2; var y = 3; return x + y", sink);
+    return ok
+        && LlvmTextEquals(sink, "define i64 @main() {\nb1:\n  %v1 = add i64 0, 2\n  %v2 = add i64 0, 3\n  %v3 = add i64 %v1, %v2\n  ret i64 %v3\n}\n");
+}
+
+[Fact]
+fn bool LowersProgramLocalReferencesEarlierLocal()
+{
+    // A later local can reference an earlier one: `var x = 4; var y = x * x;
+    // return y + x` -> y = x*x (%v2), ret (y + x).
+    stack mut OwnedAscii sink = new();
+    stack bool ok = LowerProgramToLlvm("var x = 4; var y = x * x; return y + x", sink);
+    return ok
+        && LlvmTextEquals(sink, "define i64 @main() {\nb1:\n  %v1 = add i64 0, 4\n  %v2 = mul i64 %v1, %v1\n  %v3 = add i64 %v2, %v1\n  ret i64 %v3\n}\n");
+}
+
+[Fact]
+fn bool LowersProgramReturningLocalPlusConst()
+{
+    // The local appears in a larger expression: `var y = 6 * 7; return y + 1`.
+    stack mut OwnedAscii sink = new();
+    stack bool ok = LowerProgramToLlvm("var y = 6 * 7; return y + 1", sink);
+    return ok
+        && LlvmTextEquals(sink, "define i64 @main() {\nb1:\n  %v1 = add i64 0, 6\n  %v2 = add i64 0, 7\n  %v3 = mul i64 %v1, %v2\n  %v4 = add i64 0, 1\n  %v5 = add i64 %v3, %v4\n  ret i64 %v5\n}\n");
+}
+
+[Fact]
+fn bool LowersFunctionParameterAndCallArgument()
+{
+    // A function with a parameter, called with an argument:
+    // `fn double(x) { return x + x } fn main() { return double(5) }` -> @f1 takes %p0
+    // and doubles it; @f2 calls @f1 with the constant 5.
+    stack mut OwnedAscii sink = new();
+    stack bool ok = LowerModuleToLlvm("fn double(x) { return x + x } fn main() { return double(5) }", sink);
+    return ok
+        && LlvmTextEquals(sink, "define i64 @f1(i64 %p0) {\nb1:\n  %v3 = add i64 %p0, %p0\n  ret i64 %v3\n}\ndefine i64 @f2() {\nb2:\n  %v4 = add i64 0, 5\n  %v5 = call i64 @f1(i64 %v4)\n  ret i64 %v5\n}\n");
+}
+
+[Fact]
+fn bool LowersTwoFunctionsWithCall()
+{
+    // Two function definitions where the second calls the first by name:
+    // `fn helper() { return 7 } fn main() { return helper() }` -> a module with
+    // @f1 (returns 7) and @f2 (calls @f1).
+    stack mut OwnedAscii sink = new();
+    stack bool ok = LowerModuleToLlvm("fn helper() { return 7 } fn main() { return helper() }", sink);
+    return ok
+        && LlvmTextEquals(sink, "define i64 @f1() {\nb1:\n  %v1 = add i64 0, 7\n  ret i64 %v1\n}\ndefine i64 @f2() {\nb2:\n  %v2 = call i64 @f1()\n  ret i64 %v2\n}\n");
+}
+
+[Fact]
+fn bool LowersIfExpressionToBranchingLlvm()
+{
+    // An `if` from source compiles to a branching function with a phi merge:
+    // `if x < y x else y` -> compare x,y; branch; phi selects x or y at the merge.
+    stack mut OwnedAscii sink = new();
+    stack bool ok = LowerIfToLlvm("if x < y x else y", sink);
+    return ok
+        && LlvmTextEquals(sink, "define i64 @main(i64 %p0, i64 %p1) {\nb1:\n  %v3 = icmp slt i64 %p0, %p1\n  br i1 %v3, label %b2, label %b3\nb2:\n  br label %b4\nb3:\n  br label %b4\nb4:\n  %v6 = phi i64 [ %p0, %b2 ], [ %p1, %b3 ]\n  ret i64 %v6\n}\n");
+}
+
+[Fact]
+fn bool LowersIfWithExpressionArms()
+{
+    // The then/else arms are expressions computed in their own blocks:
+    // `if x < y x + 1 else y - 1` -> then block computes x+1, else block computes y-1,
+    // the merge phi selects between them.
+    stack mut OwnedAscii sink = new();
+    stack bool ok = LowerIfToLlvm("if x < y x + 1 else y - 1", sink);
+    return ok
+        && LlvmTextEquals(sink, "define i64 @main(i64 %p0, i64 %p1) {\nb1:\n  %v3 = icmp slt i64 %p0, %p1\n  br i1 %v3, label %b2, label %b3\nb2:\n  %v5 = add i64 0, 1\n  %v6 = add i64 %p0, %v5\n  br label %b4\nb3:\n  %v8 = add i64 0, 1\n  %v9 = sub i64 %p1, %v8\n  br label %b4\nb4:\n  %v10 = phi i64 [ %v6, %b2 ], [ %v9, %b3 ]\n  ret i64 %v10\n}\n");
+}
+
+[Fact]
+fn bool LowersReturnComparison()
+{
+    // `return x < y` lowers to a signed compare then zero-extend to i64 (1 or 0).
+    stack mut OwnedAscii sink = new();
+    stack bool ok = LowerReturnExprToLlvm("return x < y", sink);
+    return ok
+        && LlvmTextEquals(sink, "define i64 @main(i64 %p0, i64 %p1) {\nb1:\n  %v3 = icmp slt i64 %p0, %p1\n  %v4 = zext i1 %v3 to i64\n  ret i64 %v4\n}\n");
+}
+
+[Fact]
+fn bool LowersReturnComparisonBelowArithmetic()
+{
+    // Comparison binds below `+`: `return x + 1 < y` lowers as `(x + 1) < y`.
+    stack mut OwnedAscii sink = new();
+    stack bool ok = LowerReturnExprToLlvm("return x + 1 < y", sink);
+    return ok
+        && LlvmTextEquals(sink, "define i64 @main(i64 %p0, i64 %p1) {\nb1:\n  %v2 = add i64 0, 1\n  %v3 = add i64 %p0, %v2\n  %v5 = icmp slt i64 %v3, %p1\n  %v6 = zext i1 %v5 to i64\n  ret i64 %v6\n}\n");
+}
+
+[Fact]
+fn bool LowersReturnParameterExpression()
+{
+    // An identifier in the expression is the function parameter `x` (lowered to %p0),
+    // and the function gains a parameter: `fn(x) return x + 1`.
+    stack mut OwnedAscii sink = new();
+    stack bool ok = LowerReturnExprToLlvm("return x + 1", sink);
+    return ok
+        && LlvmTextEquals(sink, "define i64 @main(i64 %p0) {\nb1:\n  %v2 = add i64 0, 1\n  %v3 = add i64 %p0, %v2\n  ret i64 %v3\n}\n");
+}
+
+[Fact]
+fn bool LowersReturnParameterSquared()
+{
+    // `return x * x` references the same parameter twice (one symbol-table entry):
+    // `mul i64 %p0, %p0`, one declared parameter.
+    stack mut OwnedAscii sink = new();
+    stack bool ok = LowerReturnExprToLlvm("return x * x", sink);
+    return ok
+        && LlvmTextEquals(sink, "define i64 @main(i64 %p0) {\nb1:\n  %v3 = mul i64 %p0, %p0\n  ret i64 %v3\n}\n");
+}
+
+[Fact]
+fn bool LowersReturnTwoParameters()
+{
+    // Distinct identifiers become distinct parameters via the symbol table:
+    // `x` -> %p0, `y` -> %p1, in first-appearance order.
+    stack mut OwnedAscii sink = new();
+    stack bool ok = LowerReturnExprToLlvm("return x + y", sink);
+    return ok
+        && LlvmTextEquals(sink, "define i64 @main(i64 %p0, i64 %p1) {\nb1:\n  %v3 = add i64 %p0, %p1\n  ret i64 %v3\n}\n");
+}
+
+[Fact]
+fn bool LowersReturnTwoParametersWithPrecedence()
+{
+    // `return x + y * x` -> x + (y * x): y=%p1, x=%p0, mul then add.
+    stack mut OwnedAscii sink = new();
+    stack bool ok = LowerReturnExprToLlvm("return x + y * x", sink);
+    return ok
+        && LlvmTextEquals(sink, "define i64 @main(i64 %p0, i64 %p1) {\nb1:\n  %v4 = mul i64 %p1, %p0\n  %v5 = add i64 %p0, %v4\n  ret i64 %v5\n}\n");
+}
+
+[Fact]
+fn bool LowersReturnDivisionAndRemainder()
+{
+    // `/` and `%` lower to `sdiv`/`srem` in the product tier.
+    stack mut OwnedAscii sinkDiv = new();
+    stack bool okDiv = LowerReturnExprToLlvm("return 12 / 3", sinkDiv);
+    stack mut OwnedAscii sinkMod = new();
+    stack bool okMod = LowerReturnExprToLlvm("return 17 % 5", sinkMod);
+    return okDiv
+        && okMod
+        && LlvmTextEquals(sinkDiv, "define i64 @main() {\nb1:\n  %v1 = add i64 0, 12\n  %v2 = add i64 0, 3\n  %v3 = sdiv i64 %v1, %v2\n  ret i64 %v3\n}\n")
+        && LlvmTextEquals(sinkMod, "define i64 @main() {\nb1:\n  %v1 = add i64 0, 17\n  %v2 = add i64 0, 5\n  %v3 = srem i64 %v1, %v2\n  ret i64 %v3\n}\n");
+}
+
+[Fact]
+fn bool LowersReturnDivisionPrecedence()
+{
+    // `/` binds tighter than `+`: `return 2 + 12 / 3` lowers as `2 + (12 / 3)`.
+    stack mut OwnedAscii sink = new();
+    stack bool ok = LowerReturnExprToLlvm("return 2 + 12 / 3", sink);
+    return ok
+        && LlvmTextEquals(sink, "define i64 @main() {\nb1:\n  %v1 = add i64 0, 2\n  %v2 = add i64 0, 12\n  %v3 = add i64 0, 3\n  %v4 = sdiv i64 %v2, %v3\n  %v5 = add i64 %v1, %v4\n  ret i64 %v5\n}\n");
+}
+
+[Fact]
+fn bool LowersReturnRespectsPrecedence()
+{
+    // `*` binds tighter than `+`: `return 2 + 3 * 4` lowers as `2 + (3 * 4)`, so the
+    // mul is computed first and fed to the add.
+    stack mut OwnedAscii sink = new();
+    stack bool ok = LowerReturnExprToLlvm("return 2 + 3 * 4", sink);
+    return ok
+        && LlvmTextEquals(sink, "define i64 @main() {\nb1:\n  %v1 = add i64 0, 2\n  %v2 = add i64 0, 3\n  %v3 = add i64 0, 4\n  %v4 = mul i64 %v2, %v3\n  %v5 = add i64 %v1, %v4\n  ret i64 %v5\n}\n");
+}
+
+[Fact]
+fn bool LowersReturnMixedOperatorChain()
+{
+    // A mixed chain folds left-to-right: `return 10 - 3 + 2` -> ((10 - 3) + 2).
+    stack mut OwnedAscii sink = new();
+    stack bool ok = LowerReturnExprToLlvm("return 10 - 3 + 2", sink);
+    return ok
+        && LlvmTextEquals(sink, "define i64 @main() {\nb1:\n  %v1 = add i64 0, 10\n  %v2 = add i64 0, 3\n  %v3 = sub i64 %v1, %v2\n  %v4 = add i64 0, 2\n  %v5 = add i64 %v3, %v4\n  ret i64 %v5\n}\n");
+}
+
+[Fact]
+fn bool FfiBindsLibcFunction()
+{
+    // The self-hosted compiler package can declare and call a C function via FFI — the
+    // same mechanism a direct libLLVM C-API binding (#31) will use. libc `abs` resolves
+    // from the system C library that macOS Stark binaries already link.
+    return AbsViaFfi(-5) == 5
+        && AbsViaFfi(7) == 7
+        && AbsViaFfi(0) == 0;
+}
+
+[Fact]
+fn bool EmittedLlvmCompilesToObject()
+{
+    // End-to-end #31 (subprocess route): emit a module's LLVM IR, write the `.ll`,
+    // invoke `clang -c` to compile it, and confirm an object file was produced — the
+    // self-hosted back end producing real native code. Tolerant of a missing toolchain
+    // (passes if clang can't be spawned) so the suite stays portable.
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack MirValueId a = MirConstInt(instrs, 2);
+    stack MirValueId b = MirConstInt(instrs, 3);
+    stack MirValueId s = MirAdd(instrs, a, b);
+    stack MirBlockId blk = MirReturnBlock(blocks, s);
+    stack MirFuncId f = MirDefineFunction(funcs, blk, blk, 1, a, 3);
+    return CompileEmittedLlvmProducesObject(instrs, blocks, funcs);
+}
+
+[Fact]
+fn bool LlvmModuleRoundTripsThroughFile()
+{
+    // The emitted LLVM IR text persists to a `.ll` file and reads back identically —
+    // the self-hosted back end produces a real .ll file on disk (compilable by
+    // clang/llc to an object, the non-FFI path toward #31).
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack MirValueId a = MirConstInt(instrs, 2);
+    stack MirValueId b = MirConstInt(instrs, 3);
+    stack MirValueId s = MirAdd(instrs, a, b);
+    stack MirBlockId blk = MirReturnBlock(blocks, s);
+    stack MirFuncId f = MirDefineFunction(funcs, blk, blk, 1, a, 3);
+    return LlvmModuleFileRoundTrips(instrs, blocks, funcs);
+}
+
+[Fact]
+fn bool PackageImageRoundTripsThroughFile()
+{
+    // End-to-end #32: serialize a module, write it to a temp file, read it back, and
+    // deserialize — the full on-disk path (all I/O inside the module function).
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack MirValueId a = MirConstInt(instrs, 5);
+    stack MirValueId b = MirConstInt(instrs, 6);
+    stack MirValueId s = MirAdd(instrs, a, b);
+    stack mut IrTable<MirBlock> blocks = new();
+    stack MirBlockId blk = MirReturnBlock(blocks, s);
+    stack mut IrTable<MirFunction> funcs = new();
+    stack MirFuncId f = MirDefineFunction(funcs, blk, blk, 1, a, 3);
+    stack mut IrTable<MirGlobal> globals = new();
+    stack u32[0 max] g = MirDefineGlobal(globals, 42);
+    return PackageImageFileRoundTrips(instrs, blocks, funcs, globals);
+}
+
+[Fact]
+fn bool PackageImageBridgesToByteBuffer()
+{
+    // The image bytes convert to the stdlib DynamicByteBuffer (the exact type the file
+    // API consumes/produces) and back without loss — the module survives the trip
+    // through that container, so persisting to disk is a thin wrapper.
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack MirValueId a = MirConstInt(instrs, 7);
+    stack MirValueId b = MirConstInt(instrs, 8);
+    stack MirValueId s = MirAdd(instrs, a, b);
+    stack mut IrTable<MirBlock> blocks = new();
+    stack MirBlockId blk = MirReturnBlock(blocks, s);
+    stack mut IrTable<MirFunction> funcs = new();
+    stack MirFuncId f = MirDefineFunction(funcs, blk, blk, 1, a, 3);
+    stack mut IrTable<MirGlobal> globals = new();
+    stack u32[0 max] g = MirDefineGlobal(globals, -3);
+    stack mut IrTable<u8[0 max]> buf = new();
+    SerializePackageImage(instrs, blocks, funcs, globals, buf);
+    stack mut DynamicByteBuffer dbuf = new();
+    ImageToByteBuffer(buf, dbuf);
+    stack mut IrTable<u8[0 max]> buf2 = new();
+    ImageFromByteBuffer(dbuf, buf2);
+    stack mut IrTable<MirInstruction> bi = new();
+    stack mut IrTable<MirBlock> bb = new();
+    stack mut IrTable<MirFunction> bf = new();
+    stack mut IrTable<MirGlobal> bg = new();
+    stack bool ok = DeserializePackageImage(buf2, bi, bb, bf, bg);
+    return ok
+        && buf2.Count() == buf.Count()
+        && bi.Count() == 3
+        && bg.Count() == 1
+        && MirOpcodeOf(bi, MirValueIdOf(3)) == MirOp.Add
+        && MirGlobalInitialValue(bg, 1) == -3;
+}
+
+[Fact]
+fn bool BinaryRoundTripsPackageImage()
+{
+    // A whole module — instructions, blocks, functions, globals — round-trips through
+    // one combined package image (a section directory + the four streams).
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack mut IrTable<MirGlobal> globals = new();
+    stack MirValueId a = MirConstInt(instrs, 11);
+    stack MirValueId b = MirConstInt(instrs, 22);
+    stack MirValueId s = MirAdd(instrs, a, b);
+    stack MirBlockId blk = MirReturnBlock(blocks, s);
+    stack MirFuncId f = MirDefineFunction(funcs, blk, blk, 1, a, 3);
+    stack u32[0 max] g = MirDefineGlobal(globals, -9);
+    stack mut IrTable<u8[0 max]> buf = new();
+    SerializePackageImage(instrs, blocks, funcs, globals, buf);
+    stack mut IrTable<MirInstruction> bi = new();
+    stack mut IrTable<MirBlock> bb = new();
+    stack mut IrTable<MirFunction> bf = new();
+    stack mut IrTable<MirGlobal> bg = new();
+    stack bool ok = DeserializePackageImage(buf, bi, bb, bf, bg);
+    stack MirBlockId entry = MirFunctionEntry(bf, MirFuncIdOf(1));
+    return ok
+        && bi.Count() == 3
+        && bb.Count() == 1
+        && bf.Count() == 1
+        && bg.Count() == 1
+        && MirOpcodeOf(bi, MirValueIdOf(3)) == MirOp.Add
+        && MirBlockTerminator(bb, MirBlockIdOf(1)) == MirTermKind.Return
+        && entry.Equals(MirBlockIdOf(1))
+        && MirGlobalInitialValue(bg, 1) == -9;
+}
+
+[Fact]
+fn bool PackageImageRejectsBadMagic()
+{
+    // A buffer without the magic header is rejected (nothing deserialized).
+    stack mut IrTable<u8[0 max]> buf = new();
+    WriteU32(buf, 12345);
+    stack mut IrTable<MirInstruction> bi = new();
+    stack mut IrTable<MirBlock> bb = new();
+    stack mut IrTable<MirFunction> bf = new();
+    stack mut IrTable<MirGlobal> bg = new();
+    return !DeserializePackageImage(buf, bi, bb, bf, bg);
+}
+
+[Fact]
+fn bool InspectsPackageImage()
+{
+    // `inspect-pkg` summarizes the section counts from the header alone.
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack mut IrTable<MirGlobal> globals = new();
+    stack MirValueId a = MirConstInt(instrs, 1);
+    stack MirValueId b = MirConstInt(instrs, 2);
+    stack MirBlockId blk = MirReturnBlock(blocks, a);
+    stack MirFuncId f = MirDefineFunction(funcs, blk, blk, 1, a, 2);
+    stack u32[0 max] g1 = MirDefineGlobal(globals, 5);
+    stack u32[0 max] g2 = MirDefineGlobal(globals, 6);
+    stack mut IrTable<u8[0 max]> buf = new();
+    SerializePackageImage(instrs, blocks, funcs, globals, buf);
+    stack mut OwnedAscii sink = new();
+    switch (InspectPackageImage(buf, sink))
+    {
+        case MemoryStatus.Ok:
+            return LlvmTextEquals(sink, "package: 2 instructions, 1 blocks, 1 functions, 2 globals\n");
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+[Fact]
+fn bool BinaryRoundTripsInstructionStream()
+{
+    // A MIR instruction stream survives a binary serialize -> deserialize round-trip:
+    // opcode, result type, operands, and (negative) immediate are all preserved.
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack MirValueId a = MirConstInt(instrs, -42);
+    stack MirValueId b = MirConstIntTyped(instrs, MirType.I32, 7);
+    stack MirValueId s = MirAdd(instrs, a, b);
+    stack MirValueId c = MirCmpLt(instrs, a, b);
+    stack mut IrTable<u8[0 max]> buf = new();
+    SerializeInstructions(instrs, 1, 4, buf);
+    stack mut IrTable<MirInstruction> back = new();
+    DeserializeInstructions(buf, back);
+    stack MirValueId opA = MirOperandAOf(back, MirValueIdOf(3));
+    stack MirValueId opB = MirOperandBOf(back, MirValueIdOf(3));
+    return back.Count() == 4
+        && MirOpcodeOf(back, MirValueIdOf(1)) == MirOp.ConstInt
+        && MirImmediateOf(back, MirValueIdOf(1)) == -42
+        && MirValueType(back, 1) == MirType.I64
+        && MirValueType(back, 2) == MirType.I32
+        && MirOpcodeOf(back, MirValueIdOf(3)) == MirOp.Add
+        && opA.Equals(MirValueIdOf(1))
+        && opB.Equals(MirValueIdOf(2))
+        && MirOpcodeOf(back, MirValueIdOf(4)) == MirOp.CmpLt;
+}
+
+[Fact]
+fn bool EmitsMirTextForArithmetic()
+{
+    // The MIR disassembler dumps the instruction stream in MIR syntax (vN operands).
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack MirValueId a = MirConstInt(instrs, 2);
+    stack MirValueId b = MirConstInt(instrs, 3);
+    stack MirValueId s = MirAdd(instrs, a, b);
+    stack MirValueId d = MirSDiv(instrs, a, b);
+    stack MirValueId r = MirReturn(instrs, s);
+    stack mut OwnedAscii sink = new();
+    switch (EmitMirInstructions(instrs, 1, 5, sink))
+    {
+        case MemoryStatus.Ok:
+            return LlvmTextEquals(sink, "v1 = const 2\nv2 = const 3\nv3 = add v1, v2\nv4 = sdiv v1, v2\nret v3\n");
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+[Fact]
+fn bool EmitsMirTextForControlAndMemory()
+{
+    // Params, globals, comparisons, stores, and calls each dump in MIR syntax.
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack MirValueId p = MirParam(instrs, 0);
+    stack MirValueId g = MirLoadGlobal(instrs, 2);
+    stack MirValueId c = MirCmpLt(instrs, p, g);
+    stack MirValueId st = MirStoreGlobal(instrs, 1, g);
+    stack MirValueId cl = MirCall1(instrs, MirFuncIdOf(4), p);
+    stack mut OwnedAscii sink = new();
+    switch (EmitMirInstructions(instrs, 1, 5, sink))
+    {
+        case MemoryStatus.Ok:
+            return LlvmTextEquals(sink, "v1 = param 0\nv2 = load g2\nv3 = slt v1, v2\nstore g1, v2\nv5 = call f4(v1)\n");
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+[Fact]
+fn bool EmitsMirTextForPhi()
+{
+    // A phi dumps both incoming value@block edges.
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack MirValueId a = MirConstInt(instrs, 10);
+    stack MirValueId b = MirConstInt(instrs, 20);
+    stack MirValueId phi = MirPhi2(instrs, a, MirBlockIdOf(2), b, MirBlockIdOf(3));
+    stack mut OwnedAscii sink = new();
+    switch (EmitMirInstructions(instrs, 1, 3, sink))
+    {
+        case MemoryStatus.Ok:
+            return LlvmTextEquals(sink, "v1 = const 10\nv2 = const 20\nv3 = phi v1@b2, v2@b3\n");
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+[Fact]
+fn bool MirTypedValuesRecordResultType()
+{
+    // A typed value records its result type; untyped values default to i64.
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack MirValueId a = MirConstIntTyped(instrs, MirType.I32, 5);
+    stack MirValueId b = MirConstInt(instrs, 9);
+    stack MirValueId sum = MirAddTyped(instrs, MirType.I32, a, b);
+    return MirValueType(instrs, a.Index()) == MirType.I32
+        && MirValueType(instrs, b.Index()) == MirType.I64
+        && MirValueType(instrs, sum.Index()) == MirType.I32
+        && MirValueType(instrs, 99) == MirType.I64;
+}
+
+[Fact]
+fn bool EmitsLlvmTypedI32Function()
+{
+    // A function over i32 values emits `i32` throughout — signature, body, and return.
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack MirValueId a = MirConstIntTyped(instrs, MirType.I32, 2);
+    stack MirValueId b = MirConstIntTyped(instrs, MirType.I32, 3);
+    stack MirValueId sum = MirAddTyped(instrs, MirType.I32, a, b);
+    stack MirValueId unusedRet = MirReturn(instrs, sum);
+    stack mut OwnedAscii sink = new();
+    switch (EmitLlvmTypedFunction(instrs, "addi32", 1, 4, sink))
+    {
+        case MemoryStatus.Ok:
+            return LlvmTextEquals(sink, "define i32 @addi32() {\nentry:\n  %v1 = add i32 0, 2\n  %v2 = add i32 0, 3\n  %v3 = add i32 %v1, %v2\n  ret i32 %v3\n}\n");
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+[Fact]
+fn bool EmitsLlvmTypedI64FunctionMatchesDefault()
+{
+    // The typed emitter over default (i64) values reproduces the i64 output.
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack MirValueId a = MirConstInt(instrs, 2);
+    stack MirValueId b = MirConstInt(instrs, 3);
+    stack MirValueId sum = MirAdd(instrs, a, b);
+    stack MirValueId unusedRet = MirReturn(instrs, sum);
+    stack mut OwnedAscii sink = new();
+    switch (EmitLlvmTypedFunction(instrs, "addi64", 1, 4, sink))
+    {
+        case MemoryStatus.Ok:
+            return LlvmTextEquals(sink, "define i64 @addi64() {\nentry:\n  %v1 = add i64 0, 2\n  %v2 = add i64 0, 3\n  %v3 = add i64 %v1, %v2\n  ret i64 %v3\n}\n");
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+[Fact]
+fn bool MirExtendedOpsRecordOpcodes()
+{
+    // The extended ALU opcodes round-trip through the instruction.
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack MirValueId a = MirConstInt(instrs, 1);
+    stack MirValueId b = MirConstInt(instrs, 2);
+    stack MirValueId ud = MirUDiv(instrs, a, b);
+    stack MirValueId sr = MirSRem(instrs, a, b);
+    stack MirValueId orv = MirOr(instrs, a, b);
+    stack MirValueId xr = MirXor(instrs, a, b);
+    stack MirValueId ash = MirAShr(instrs, a, b);
+    return MirOpcodeOf(instrs, ud) == MirOp.UDiv
+        && MirOpcodeOf(instrs, sr) == MirOp.SRem
+        && MirOpcodeOf(instrs, orv) == MirOp.Or
+        && MirOpcodeOf(instrs, xr) == MirOp.Xor
+        && MirOpcodeOf(instrs, ash) == MirOp.AShr;
+}
+
+[Fact]
+fn bool EmitsLlvmExtendedArithmetic()
+{
+    // The extended ALU ops lower to their LLVM mnemonics over `%vN` operands.
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack MirValueId a = MirConstInt(instrs, 20);
+    stack MirValueId b = MirConstInt(instrs, 6);
+    stack MirValueId q = MirSDiv(instrs, a, b);
+    stack MirValueId m = MirAnd(instrs, a, b);
+    stack MirValueId s = MirShl(instrs, q, m);
+    stack MirBlockId entry = MirReturnBlock(blocks, s);
+    stack mut OwnedAscii sink = new();
+    switch (EmitLlvmDefinitionWithParams(instrs, blocks, "alu", 0, entry.Index(), 1, 5, sink))
+    {
+        case MemoryStatus.Ok:
+            return LlvmTextEquals(sink, "define i64 @alu() {\nb1:\n  %v1 = add i64 0, 20\n  %v2 = add i64 0, 6\n  %v3 = sdiv i64 %v1, %v2\n  %v4 = and i64 %v1, %v2\n  %v5 = shl i64 %v3, %v4\n  ret i64 %v5\n}\n");
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+[Fact]
+fn bool MirPhiRecordsIncomingEdges()
+{
+    // A 2-incoming phi records both incoming values (operands A/B) and both
+    // predecessor block ids (packed into the immediate, decoded by div/mod).
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack MirValueId a = MirConstInt(instrs, 10);
+    stack MirValueId b = MirConstInt(instrs, 20);
+    stack MirValueId phi = MirPhi2(instrs, a, MirBlockIdOf(2), b, MirBlockIdOf(3));
+    stack MirValueId v0 = MirOperandAOf(instrs, phi);
+    stack MirValueId v1 = MirOperandBOf(instrs, phi);
+    stack MirBlockId blk0 = MirPhiIncomingBlock0(instrs, phi);
+    stack MirBlockId blk1 = MirPhiIncomingBlock1(instrs, phi);
+    return MirOpcodeOf(instrs, phi) == MirOp.Phi
+        && v0.Equals(a)
+        && v1.Equals(b)
+        && blk0.Equals(MirBlockIdOf(2))
+        && blk1.Equals(MirBlockIdOf(3));
+}
+
+[Fact]
+fn bool EmitsLlvmPhiNode()
+{
+    // A phi at a merge lowers to `%vN = phi i64 [ <a>, %bX ], [ <b>, %bY ]`.
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack MirValueId a = MirConstInt(instrs, 10);
+    stack MirValueId b = MirConstInt(instrs, 20);
+    stack MirValueId phi = MirPhi2(instrs, a, MirBlockIdOf(2), b, MirBlockIdOf(3));
+    stack MirBlockId entry = MirReturnBlock(blocks, phi);
+    stack mut OwnedAscii sink = new();
+    switch (EmitLlvmDefinitionWithParams(instrs, blocks, "merge", 0, entry.Index(), 1, 3, sink))
+    {
+        case MemoryStatus.Ok:
+            return LlvmTextEquals(sink, "define i64 @merge() {\nb1:\n  %v1 = add i64 0, 10\n  %v2 = add i64 0, 20\n  %v3 = phi i64 [ %v1, %b2 ], [ %v2, %b3 ]\n  ret i64 %v3\n}\n");
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+[Fact]
+fn bool MirLoadGlobalRecordsTarget()
+{
+    // A LoadGlobal records its opcode and the loaded global id; the opcode guard
+    // keeps a non-load value from being misread.
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack MirValueId v = MirLoadGlobal(instrs, 5);
+    stack MirValueId p = MirParam(instrs, 0);
+    return MirOpcodeOf(instrs, v) == MirOp.LoadGlobal
+        && MirLoadedGlobalOf(instrs, v) == 5
+        && MirLoadedGlobalOf(instrs, p) == 0;
+}
+
+[Fact]
+fn bool EmitsLlvmGlobalLoad()
+{
+    // A function that loads a global and returns it: `%v1 = load i64, ptr @g2`.
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack MirValueId v = MirLoadGlobal(instrs, 2);
+    stack MirBlockId entry = MirReturnBlock(blocks, v);
+    stack mut OwnedAscii sink = new();
+    switch (EmitLlvmDefinitionWithParams(instrs, blocks, "readg", 0, entry.Index(), 1, 1, sink))
+    {
+        case MemoryStatus.Ok:
+            return LlvmTextEquals(sink, "define i64 @readg() {\nb1:\n  %v1 = load i64, ptr @g2\n  ret i64 %v1\n}\n");
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+[Fact]
+fn bool MirStoreGlobalRecordsTargetAndValue()
+{
+    // A StoreGlobal records its opcode, the target global id, and the stored value.
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack MirValueId c = MirConstInt(instrs, 4);
+    stack MirValueId st = MirStoreGlobal(instrs, 3, c);
+    stack MirValueId storedVal = MirOperandAOf(instrs, st);
+    return MirOpcodeOf(instrs, st) == MirOp.StoreGlobal
+        && MirStoredGlobalOf(instrs, st) == 3
+        && MirLoadedGlobalOf(instrs, st) == 0
+        && storedVal.Equals(c);
+}
+
+[Fact]
+fn bool EmitsLlvmGlobalStore()
+{
+    // A function that stores a constant into a global then returns it:
+    // `store i64 %v1, ptr @g1` has no result register.
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack MirValueId c = MirConstInt(instrs, 9);
+    stack MirValueId st = MirStoreGlobal(instrs, 1, c);
+    stack MirBlockId entry = MirReturnBlock(blocks, c);
+    stack mut OwnedAscii sink = new();
+    switch (EmitLlvmDefinitionWithParams(instrs, blocks, "setg", 0, entry.Index(), 1, 2, sink))
+    {
+        case MemoryStatus.Ok:
+            return LlvmTextEquals(sink, "define i64 @setg() {\nb1:\n  %v1 = add i64 0, 9\n  store i64 %v1, ptr @g1\n  ret i64 %v1\n}\n");
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+[Fact]
+fn bool MirGlobalRecordsInitialValue()
+{
+    // A global records its 1-based id and integer initializer.
+    stack mut IrTable<MirGlobal> globals = new();
+    stack u32[0 max] g1 = MirDefineGlobal(globals, 7);
+    stack u32[0 max] g2 = MirDefineGlobal(globals, -3);
+    return g1 == 1
+        && g2 == 2
+        && MirGlobalInitialValue(globals, g1) == 7
+        && MirGlobalInitialValue(globals, g2) == -3
+        && MirGlobalInitialValue(globals, 99) == 0;
+}
+
+[Fact]
+fn bool EmitsLlvmGlobals()
+{
+    // Globals emit one `@gN = global i64 V` line each, in id order (negative ok).
+    stack mut IrTable<MirGlobal> globals = new();
+    stack u32[0 max] unused1 = MirDefineGlobal(globals, 7);
+    stack u32[0 max] unused2 = MirDefineGlobal(globals, -3);
+    stack mut OwnedAscii sink = new();
+    switch (EmitLlvmGlobals(globals, sink))
+    {
+        case MemoryStatus.Ok:
+            return LlvmTextEquals(sink, "@g1 = global i64 7\n@g2 = global i64 -3\n");
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+[Fact]
+fn bool EmitsLlvmEmptyGlobals()
+{
+    // No globals emits no text.
+    stack mut IrTable<MirGlobal> globals = new();
+    stack mut OwnedAscii sink = new();
+    switch (EmitLlvmGlobals(globals, sink))
+    {
+        case MemoryStatus.Ok:
+            return LlvmTextEquals(sink, "");
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+[Fact]
+fn bool EmitsLlvmModuleWithGlobals()
+{
+    // A complete module emits its globals first, then its function definitions.
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack mut IrTable<MirGlobal> globals = new();
+    stack u32[0 max] g = MirDefineGlobal(globals, 42);
+    stack MirValueId a = MirConstInt(instrs, 1);
+    stack MirValueId b = MirConstInt(instrs, 2);
+    stack MirValueId sum = MirAdd(instrs, a, b);
+    stack MirBlockId blk = MirReturnBlock(blocks, sum);
+    stack MirFuncId f = MirDefineFunction(funcs, blk, blk, 1, a, 3);
+    stack mut OwnedAscii sink = new();
+    switch (EmitLlvmModuleWithGlobals(instrs, blocks, funcs, globals, sink))
+    {
+        case MemoryStatus.Ok:
+            return LlvmTextEquals(sink, "@g1 = global i64 42\ndefine i64 @f1() {\nb1:\n  %v1 = add i64 0, 1\n  %v2 = add i64 0, 2\n  %v3 = add i64 %v1, %v2\n  ret i64 %v3\n}\n");
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+[Fact]
+fn bool EmitsLlvmDiamondBranchWithPhi()
+{
+    // A real branching function `max(x, y)`: entry compares and conditionally branches
+    // to two empty blocks that both jump to a merge block, where a phi selects the
+    // value from whichever predecessor ran. Multi-block emission + cond-branch + phi.
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack MirValueId x = MirParam(instrs, 0);
+    stack MirValueId y = MirParam(instrs, 1);
+    stack MirValueId cmp = MirCmpLt(instrs, x, y);
+    stack MirValueId phi = MirPhi2(instrs, y, MirBlockIdOf(2), x, MirBlockIdOf(3));
+    stack MirBlockId entry = MirCondBlock(blocks, cmp, MirBlockIdOf(2), MirBlockIdOf(3));
+    stack MirBlockId thenB = MirBranchBlock(blocks, MirBlockIdOf(4));
+    stack MirBlockId elseB = MirBranchBlock(blocks, MirBlockIdOf(4));
+    stack MirBlockId mergeB = MirReturnBlock(blocks, phi);
+    stack mut OwnedAscii sink = new();
+    switch (EmitLlvmDiamond(instrs, blocks, "main", 2, entry.Index(), 1, 3, thenB.Index(), 1, 0, elseB.Index(), 1, 0, mergeB.Index(), 4, 1, sink))
+    {
+        case MemoryStatus.Ok:
+            return LlvmTextEquals(sink, "define i64 @main(i64 %p0, i64 %p1) {\nb1:\n  %v3 = icmp slt i64 %p0, %p1\n  br i1 %v3, label %b2, label %b3\nb2:\n  br label %b4\nb3:\n  br label %b4\nb4:\n  %v4 = phi i64 [ %p1, %b2 ], [ %p0, %b3 ]\n  ret i64 %v4\n}\n");
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+[Fact]
+fn bool EmitsLlvmNestedIfElseChain()
+{
+    // An else-if chain `if x < 1 -> 10 else if x < 2 -> 20 else -> 30` lowers to two
+    // composed diamonds: the outer if's else arm is itself a diamond whose merge feeds
+    // the outer merge. Seven blocks, two 2-incoming phis (no N-way phi needed), emitted
+    // through the general EmitLlvmBlocks block-sequence emitter.
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack MirValueId x = MirParam(instrs, 0);
+    // entry(b1): cond1 = x < 1
+    stack MirValueId one = MirConstInt(instrs, 1);
+    stack MirValueId cond1 = MirCmpLt(instrs, x, one);
+    // then1(b2): value 10
+    stack MirValueId v10 = MirConstInt(instrs, 10);
+    // inner-entry(b3): cond2 = x < 2
+    stack MirValueId two = MirConstInt(instrs, 2);
+    stack MirValueId cond2 = MirCmpLt(instrs, x, two);
+    // then2(b4): value 20 ; else2(b5): value 30
+    stack MirValueId v20 = MirConstInt(instrs, 20);
+    stack MirValueId v30 = MirConstInt(instrs, 30);
+    // inner-merge(b6): phi [20, b4], [30, b5]
+    stack MirValueId innerPhi = MirPhi2(instrs, v20, MirBlockIdOf(4), v30, MirBlockIdOf(5));
+    // outer-merge(b7): phi [10, b2], [inner, b6]
+    stack MirValueId outerPhi = MirPhi2(instrs, v10, MirBlockIdOf(2), innerPhi, MirBlockIdOf(6));
+    // Blocks in order: entry(b1), then1(b2), inner-entry(b3), then2(b4), else2(b5),
+    // inner-merge(b6), outer-merge(b7).
+    stack MirBlockId entry = MirCondBlock(blocks, cond1, MirBlockIdOf(2), MirBlockIdOf(3));
+    stack MirBlockId then1 = MirBranchBlock(blocks, MirBlockIdOf(7));
+    stack MirBlockId innerEntry = MirCondBlock(blocks, cond2, MirBlockIdOf(4), MirBlockIdOf(5));
+    stack MirBlockId then2 = MirBranchBlock(blocks, MirBlockIdOf(6));
+    stack MirBlockId else2 = MirBranchBlock(blocks, MirBlockIdOf(6));
+    stack MirBlockId innerMerge = MirBranchBlock(blocks, MirBlockIdOf(7));
+    stack MirBlockId outerMerge = MirReturnBlock(blocks, outerPhi);
+
+    stack mut IrTable<BlockEmit> ranges = new();
+    stack u32[0 max] r1 = ranges.Add(MakeBlockEmit(entry.Index(), 1, 3));
+    stack u32[0 max] r2 = ranges.Add(MakeBlockEmit(then1.Index(), 4, 1));
+    stack u32[0 max] r3 = ranges.Add(MakeBlockEmit(innerEntry.Index(), 5, 2));
+    stack u32[0 max] r4 = ranges.Add(MakeBlockEmit(then2.Index(), 7, 1));
+    stack u32[0 max] r5 = ranges.Add(MakeBlockEmit(else2.Index(), 8, 1));
+    stack u32[0 max] r6 = ranges.Add(MakeBlockEmit(innerMerge.Index(), 9, 1));
+    stack u32[0 max] r7 = ranges.Add(MakeBlockEmit(outerMerge.Index(), 10, 1));
+
+    stack mut OwnedAscii sink = new();
+    switch (EmitLlvmBlocks(instrs, blocks, "classify", 1, ranges, sink))
+    {
+        case MemoryStatus.Ok:
+            return LlvmTextEquals(sink, "define i64 @classify(i64 %p0) {\nb1:\n  %v2 = add i64 0, 1\n  %v3 = icmp slt i64 %p0, %v2\n  br i1 %v3, label %b2, label %b3\nb2:\n  %v4 = add i64 0, 10\n  br label %b7\nb3:\n  %v5 = add i64 0, 2\n  %v6 = icmp slt i64 %p0, %v5\n  br i1 %v6, label %b4, label %b5\nb4:\n  %v7 = add i64 0, 20\n  br label %b6\nb5:\n  %v8 = add i64 0, 30\n  br label %b6\nb6:\n  %v9 = phi i64 [ %v7, %b4 ], [ %v8, %b5 ]\n  br label %b7\nb7:\n  %v10 = phi i64 [ %v4, %b2 ], [ %v9, %b6 ]\n  ret i64 %v10\n}\n");
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+[Fact]
+fn bool LowersCountingLoopSourceToLlvm()
+{
+    // Source -> loop CFG: `var i = 0; while i < 10 { i = i + 1 } return i` lexes and
+    // lowers to the four-block loop — preheader constants, an induction phi counting
+    // 0->10, the `slt` guard, the body increment with a back-edge, and the exit return.
+    stack mut OwnedAscii sink = new();
+    stack bool ok = LowerCountingLoopToLlvm("var i = 0; while i < 10 { i = i + 1 } return i", sink);
+    return ok
+        && LlvmTextEquals(sink, "define i64 @main() {\nb1:\n  %v1 = add i64 0, 0\n  %v2 = add i64 0, 10\n  %v3 = add i64 0, 1\n  br label %b2\nb2:\n  %v4 = phi i64 [ %v1, %b1 ], [ %v6, %b3 ]\n  %v5 = icmp slt i64 %v4, %v2\n  br i1 %v5, label %b3, label %b4\nb3:\n  %v6 = add i64 %v4, %v3\n  br label %b2\nb4:\n  ret i64 %v4\n}\n");
+}
+
+[Fact]
+fn bool EmitsLlvmCountingLoopWithBackEdge()
+{
+    // A real loop: `i` is an induction phi (0 from the preheader, i+1 from the body);
+    // while i < n the body increments and branches back to the header; at exit the
+    // function returns i (= n). Four blocks with a back-edge header<-body.
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack MirValueId n = MirParam(instrs, 0);
+    stack MirValueId zero = MirConstInt(instrs, 0);
+    // i = phi [ zero, entry(b1) ], [ inext(%v6), body(b3) ]  (inext is forward-referenced)
+    stack MirValueId iVar = MirPhi2(instrs, zero, MirBlockIdOf(1), MirValueIdOf(6), MirBlockIdOf(3));
+    stack MirValueId cond = MirCmpLt(instrs, iVar, n);
+    stack MirValueId one = MirConstInt(instrs, 1);
+    stack MirValueId iNext = MirAdd(instrs, iVar, one);
+    // Blocks in order: entry(b1), header(b2), body(b3), exit(b4).
+    stack MirBlockId entry = MirBranchBlock(blocks, MirBlockIdOf(2));
+    stack MirBlockId header = MirCondBlock(blocks, cond, MirBlockIdOf(3), MirBlockIdOf(4));
+    stack MirBlockId body = MirBranchBlock(blocks, MirBlockIdOf(2));
+    stack MirBlockId exit = MirReturnBlock(blocks, iVar);
+    stack mut OwnedAscii sink = new();
+    switch (EmitLlvmDiamond(instrs, blocks, "main", 1, entry.Index(), 1, 2, header.Index(), 3, 2, body.Index(), 5, 2, exit.Index(), 7, 0, sink))
+    {
+        case MemoryStatus.Ok:
+            return LlvmTextEquals(sink, "define i64 @main(i64 %p0) {\nb1:\n  %v2 = add i64 0, 0\n  br label %b2\nb2:\n  %v3 = phi i64 [ %v2, %b1 ], [ %v6, %b3 ]\n  %v4 = icmp slt i64 %v3, %p0\n  br i1 %v4, label %b3, label %b4\nb3:\n  %v5 = add i64 0, 1\n  %v6 = add i64 %v3, %v5\n  br label %b2\nb4:\n  ret i64 %v3\n}\n");
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+[Fact]
+fn bool EmitsLlvmEmptyModule()
+{
+    // A module with no functions emits no text.
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack mut OwnedAscii sink = new();
+    switch (EmitLlvmModule(instrs, blocks, funcs, sink))
+    {
+        case MemoryStatus.Ok:
+            return LlvmTextEquals(sink, "");
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+[Fact]
+fn bool EmitsLlvmModuleWithTwoFunctions()
+{
+    // A module emits one `define i64 @fN()` per function, in id order, each a
+    // single-block definition over its entry block and instruction range.
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    // Function 1: %v1=2, %v2=3, %v3=add; block b1 returns %v3.
+    stack MirValueId a1 = MirConstInt(instrs, 2);
+    stack MirValueId a2 = MirConstInt(instrs, 3);
+    stack MirValueId sum = MirAdd(instrs, a1, a2);
+    stack MirBlockId blkA = MirReturnBlock(blocks, sum);
+    stack MirFuncId funcA = MirDefineFunction(funcs, blkA, blkA, 1, a1, 3);
+    // Function 2: %v4=5, %v5=6, %v6=mul; block b2 returns %v6.
+    stack MirValueId c1 = MirConstInt(instrs, 5);
+    stack MirValueId c2 = MirConstInt(instrs, 6);
+    stack MirValueId prod = MirMul(instrs, c1, c2);
+    stack MirBlockId blkB = MirReturnBlock(blocks, prod);
+    stack MirFuncId funcB = MirDefineFunction(funcs, blkB, blkB, 1, c1, 3);
+    stack mut OwnedAscii sink = new();
+    switch (EmitLlvmModule(instrs, blocks, funcs, sink))
+    {
+        case MemoryStatus.Ok:
+            return LlvmTextEquals(sink, "define i64 @f1() {\nb1:\n  %v1 = add i64 0, 2\n  %v2 = add i64 0, 3\n  %v3 = add i64 %v1, %v2\n  ret i64 %v3\n}\ndefine i64 @f2() {\nb2:\n  %v4 = add i64 0, 5\n  %v5 = add i64 0, 6\n  %v6 = mul i64 %v4, %v5\n  ret i64 %v6\n}\n");
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+// === AST front-end facts (reconstructed after an IrTests.stark revert; the implementations
+// in selfhost/Compiler/Mir.stark were intact) ===
+
+[Fact]
+fn bool WhileLoopRejectsUnsupportedShapes()
+{
+    stack mut OwnedAscii s = new();
+    return !CompileWhileLoopToLlvm("var i = 0; while i < n { i = i + 1 } return i", s)
+        && !CompileWhileLoopToLlvm("var i = n; while i < 5 { i = i + 1 } return i", s)
+        && !CompileWhileLoopToLlvm("var i = 0; while i < 5 { j = 5 i = i + 1 } return i", s)
+        && !CompileWhileLoopToLlvm("var i = 0; while i < 5 { i = i + 1 j = 5 } return i", s)
+        && CompileWhileLoopToLlvm("var i = 0; while i < 5 { i = i + 1 } return i", s);
+}
+
+[Fact]
+fn bool AstCallLoweringEmitsCallWithArgument()
+{
+    stack mut IrTable<ExprNode> nodes = new();
+    stack u32[0 max] arg = MakeIntLit(nodes, 5);
+    stack u32[0 max] call = MakeCall(nodes, 1, 1, arg, 0, 0, 0);
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack MirValueId value = LowerExprNode(nodes, call, instrs);
+    stack mut OwnedAscii disasm = new();
+    stack MemoryStatus status = EmitMirInstructions(instrs, 1, (u32[0 max])instrs.Count(), disasm);
+    return LlvmTextEquals(disasm, "v1 = const 5\nv2 = call f1(v1)\n");
+}
+
+[Fact]
+fn bool CompilesModuleWithCallFromAst()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAst("fn double(x) { return x + x } fn main() { return double(5) }", sink);
+    stack mut OwnedAscii ghost = new();
+    return ok
+        && LlvmTextEquals(sink, "define i64 @f1(i64 %p0) {\nb1:\n  %v3 = add i64 %p0, %p0\n  ret i64 %v3\n}\ndefine i64 @f2() {\nb1:\n  %v1 = add i64 0, 5\n  %v2 = call i64 @f1(i64 %v1)\n  ret i64 %v2\n}\n")
+        && !CompileModuleFromAst("fn main() { return ghost() }", ghost);
+}
+
+[Fact]
+fn bool CompilesTwoArgumentCallFromAst()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAst("fn add(a, b) { return a + b } fn main() { return add(3, 4) }", sink);
+    return ok
+        && LlvmTextEquals(sink, "define i64 @f1(i64 %p0, i64 %p1) {\nb1:\n  %v3 = add i64 %p0, %p1\n  ret i64 %v3\n}\ndefine i64 @f2() {\nb1:\n  %v1 = add i64 0, 3\n  %v2 = add i64 0, 4\n  %v3 = call i64 @f1(i64 %v1, i64 %v2)\n  ret i64 %v3\n}\n");
+}
+
+[Fact]
+fn bool CompilesThreeAndFourArgumentCallsFromAst()
+{
+    stack mut OwnedAscii three = new();
+    stack bool threeOk = CompileModuleFromAst("fn add3(a, b, c) { return a + b + c } fn main() { return add3(1, 2, 3) }", three);
+    stack mut OwnedAscii four = new();
+    stack bool fourOk = CompileModuleFromAst("fn add4(a, b, c, d) { return a + b + c + d } fn main() { return add4(1, 2, 3, 4) }", four);
+    stack mut OwnedAscii five = new();
+    return threeOk && ClangVerifiesLlvmText(three)
+        && fourOk && ClangVerifiesLlvmText(four)
+        && !CompileModuleFromAst("fn f5(a, b, c, d, e) { return a } fn main() { return f5(1, 2, 3, 4, 5) }", five);
+}
+
+[Fact]
+fn bool BinaryRoundTripsFourArgumentCall()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack MirValueId a0 = MirConstInt(instrs, 10);
+    stack MirValueId a1 = MirConstInt(instrs, 20);
+    stack MirValueId a2 = MirConstInt(instrs, 30);
+    stack MirValueId a3 = MirConstInt(instrs, 40);
+    stack MirValueId call = MirCall4(instrs, MirFuncIdOf(2), a0, a1, a2, a3);
+    stack mut IrTable<u8[0 max]> buf = new();
+    SerializeInstructions(instrs, 1, 5, buf);
+    stack mut IrTable<MirInstruction> back = new();
+    DeserializeInstructions(buf, back);
+    stack MirInstruction callBack = back.Get(5);
+    return back.Count() == 5
+        && MirOpcodeOf(back, MirValueIdOf(5)) == MirOp.Call
+        && MirImmediateOf(back, MirValueIdOf(5)) == 2
+        && callBack.OperandAIndex() == 1
+        && callBack.OperandBIndex() == 2
+        && callBack.OperandCIndex() == 3
+        && callBack.OperandDIndex() == 4;
+}
+
+[Fact]
+fn bool ModuleCallsAreArityAndTypeChecked()
+{
+    stack mut OwnedAscii s = new();
+    return !CompileModuleFromAst("fn f(x) { return x } fn main() { return f(1 < 2) }", s)
+        && !CompileModuleFromAst("fn k(a, b) { return a } fn main() { return k(1, 2 < 3) }", s)
+        && !CompileModuleFromAst("fn g() { return 1 } fn main() { return g(5) }", s)
+        && !CompileModuleFromAst("fn h(x) { return x } fn main() { return h() }", s)
+        && !CompileModuleFromAst("fn p(a, b, c, d, e) { return a } fn main() { return p(1, 2, 3, 4, 5) }", s)
+        && CompileModuleFromAst("fn f(x) { return x + 1 } fn main() { return f(7) }", s)
+        && CompileModuleFromAst("fn k(x) { return x } fn main() { return k(k(2)) }", s);
+}
+
+[Fact]
+fn bool CompilesModuleFromAstThroughCheckedPipeline()
+{
+    stack mut OwnedAscii checked = new();
+    stack bool checkedOk = CompileModuleFromAstChecked("fn double(x) { return x + x } fn main() { return double(5) }", checked);
+    stack mut OwnedAscii direct = new();
+    stack bool directOk = CompileModuleFromAst("fn double(x) { return x + x } fn main() { return double(5) }", direct);
+    stack mut OwnedAscii dup = new();
+    stack mut OwnedAscii dupChecked = new();
+    return checkedOk && directOk && OwnedAscii.Equals(checked, direct)
+        && CompileModuleFromAst("fn f() { return 1 } fn f() { return 2 } fn main() { return 1 }", dup)
+        && !CompileModuleFromAstChecked("fn f() { return 1 } fn f() { return 2 } fn main() { return 1 }", dupChecked);
+}
+
+[Fact]
+fn bool CompilesModuleFunctionWithLocals()
+{
+    stack mut OwnedAscii s = new();
+    return CompileModuleFromAst("fn f(x) { var y = x + 1; return y + x } fn main() { return f(3) }", s)
+        && !CompileModuleFromAst("fn f(a) { var a = 1; return a } fn main() { return f(2) }", s)
+        && !CompileModuleFromAst("fn f(x) { var y = z; return y } fn main() { return f(2) }", s);
+}
+
+[Fact]
+fn bool ModuleFunctionBoundariesAndLocalTypesChecked()
+{
+    stack mut OwnedAscii s = new();
+    return !CompileModuleFromAst("fn a() { } fn b() { return 1 }", s)
+        && !CompileModuleFromAst("fn a(p) { } fn b(p) { return p }", s)
+        && !CompileModuleFromAst("fn id(x) { return x } fn f(a, b) { var c = a < b; return id(c) }", s)
+        && CompileModuleFromAst("fn id(x) { return x } fn f(a, b) { var c = a + b; return id(c) }", s)
+        && CompileModuleFromAst("fn a() { return 1 } fn b() { return 2 }", s);
+}
+
+[Fact]
+fn bool CompilesRecursiveFunctionFromAst()
+{
+    stack mut OwnedAscii s = new();
+    stack bool ok = CompileModuleFromAst("fn fact(n) { if n < 1 return 1 else return n * fact(n - 1) } fn main() { return fact(5) }", s);
+    return ok && ClangVerifiesLlvmText(s);
+}
+
+[Fact]
+fn bool CompilesUnaryMinusFromAst()
+{
+    stack mut OwnedAscii negText = new();
+    stack bool negOk = CompileFunctionToLlvm("fn neg(x) { return -x }", negText);
+    stack mut OwnedAscii precText = new();
+    stack bool precOk = CompileFunctionToLlvm("fn f(x, y) { return -x * y }", precText);
+    return negOk
+        && LlvmTextEquals(negText, "define i64 @main(i64 %p0) {\nb1:\n  %v1 = add i64 0, 0\n  %v3 = sub i64 %v1, %p0\n  ret i64 %v3\n}\n")
+        && ClangVerifiesLlvmText(negText)
+        && precOk && ClangVerifiesLlvmText(precText);
+}
+
+[Fact]
+fn bool CompilesBooleanValuedIfExpression()
+{
+    stack mut OwnedAscii boolIf = new();
+    stack bool boolOk = CompileIfExpressionToLlvm("if x < y x < 1 else y < 1", boolIf);
+    stack mut OwnedAscii mixed = new();
+    return boolOk && ClangVerifiesLlvmText(boolIf)
+        && !CompileIfExpressionToLlvm("if x < y x + 1 else y < 1", mixed);
+}
+
+[Fact]
+fn bool AstControlFlowCompilesToObjectViaClang()
+{
+    stack mut OwnedAscii ifText = new();
+    stack bool ifOk = CompileIfExpressionToLlvm("if a < b a + 1 else b - 1", ifText);
+    stack mut OwnedAscii whileText = new();
+    stack bool whileOk = CompileWhileLoopToLlvm("var i = 0; while i < 5 { i = i + 1 } return i", whileText);
+    stack mut OwnedAscii localsText = new();
+    stack bool localsOk = CompileFunctionWithLocalsToLlvm("fn g(a) { var x = a + 1; var y = x * 2; return y + a }", localsText);
+    return ifOk && ClangVerifiesLlvmText(ifText)
+        && whileOk && ClangVerifiesLlvmText(whileText)
+        && localsOk && ClangVerifiesLlvmText(localsText);
+}
+
+[Fact]
+fn bool AstModuleCompilesToObjectViaClang()
+{
+    return CompileModuleSourceProducesObject("fn add(a, b) { return a + b } fn lt(a, b) { return a < b } fn main() { var s = add(3, 4); return s + lt(1, 2) }");
+}
+
+[Fact]
+fn bool MirFunctionWellFormednessIsVerified()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack MirValueId a = MirConstInt(instrs, 2);
+    stack MirValueId b = MirConstInt(instrs, 3);
+    stack MirValueId s = MirAdd(instrs, a, b);
+    stack MirBlockId blk = MirReturnBlock(blocks, s);
+    stack MirFuncId good = MirDefineFunction(funcs, blk, blk, 1, a, 3);
+    stack MirFunction goodFn = funcs.Get(good.Index());
+    stack bool goodOk = MirFunctionWellFormed(instrs, blocks, goodFn);
+    stack MirFuncId badEntry = MirDefineFunction(funcs, MirBlockIdOf(99), blk, 1, a, 3);
+    stack MirFunction badEntryFn = funcs.Get(badEntry.Index());
+    stack bool badEntryRejected = !MirFunctionWellFormed(instrs, blocks, badEntryFn);
+    stack mut MirBlock emptyBlock = new();
+    stack u32[0 max] ub = blocks.Add(emptyBlock);
+    stack MirFuncId badBlock = MirDefineFunction(funcs, MirBlockIdOf(ub), MirBlockIdOf(ub), 1, a, 3);
+    stack MirFunction badBlockFn = funcs.Get(badBlock.Index());
+    stack bool badBlockRejected = !MirFunctionWellFormed(instrs, blocks, badBlockFn);
+    return goodOk && badEntryRejected && badBlockRejected;
+}
+
+[Fact]
+fn bool VerifiedModuleEmissionGatesMalformedFunctions()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack MirValueId a = MirConstInt(instrs, 7);
+    stack MirBlockId blk = MirReturnBlock(blocks, a);
+    stack MirFuncId good = MirDefineFunction(funcs, blk, blk, 1, a, 1);
+    stack mut OwnedAscii okSink = new();
+    stack bool okEmit = EmitLlvmModuleVerified(instrs, blocks, funcs, okSink);
+    stack mut MirBlock emptyBlock = new();
+    stack u32[0 max] ub = blocks.Add(emptyBlock);
+    stack MirFuncId bad = MirDefineFunction(funcs, MirBlockIdOf(ub), MirBlockIdOf(ub), 1, a, 1);
+    stack mut OwnedAscii badSink = new();
+    stack bool badRejected = !EmitLlvmModuleVerified(instrs, blocks, funcs, badSink);
+    return okEmit && badRejected;
+}

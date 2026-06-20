@@ -1403,6 +1403,58 @@ public sealed class MidLevelIrRuntimeTests
     }
 
     [Fact]
+    public async Task StoreBorrowFieldsMutateOriginalOwnerAtRuntime()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
+        {
+            return;
+        }
+
+        var exitCode = await CompileAndRunExitCodeAsync(
+            """
+            module Demo
+
+            struct Counter
+            {
+                i32[min max] Value;
+
+                fn Holder Hold(storeborrow mut Counter self)
+                {
+                    return new Holder(self);
+                }
+            }
+
+            struct Holder
+            {
+                storeborrow mut Counter Owner;
+
+                Holder(storeborrow mut Counter owner)
+                {
+                    self.Owner = owner;
+                }
+
+                fn void Bump(mut borrow Holder self)
+                {
+                    self.Owner.Value += 1;
+                }
+            }
+
+            export fn i32[min max] main()
+            {
+                stack mut Counter counter = new Counter()
+                {
+                    Value = 41
+                };
+                stack mut Holder holder = counter.Hold();
+                holder.Bump();
+                return counter.Value == 42 ? 0 : 1;
+            }
+            """);
+
+        Assert.Equal(0, exitCode);
+    }
+
+    [Fact]
     public async Task OutArgumentsWriteBackToCallerLocalsAtRuntime()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
@@ -1708,6 +1760,69 @@ public sealed class MidLevelIrRuntimeTests
             """);
 
         Assert.Equal(42, exitCode);
+    }
+
+    [Fact]
+    public async Task LabeledBreakAndContinueTargetOuterLoopsAtRuntime()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
+        {
+            return;
+        }
+
+        var exitCode = await CompileAndRunExitCodeAsync(
+            """
+            module Demo
+
+            export fn i32[min max] main()
+            {
+                stack mut i32[min max] total = 0;
+                stack mut i32[min max] outer = 0;
+                outerLoop: while willexit (outer < 4)
+                {
+                    outer += 1;
+                    stack mut i32[min max] inner = 0;
+                    while willexit (inner < 4)
+                    {
+                        inner += 1;
+                        if (inner == 1)
+                        {
+                            continue;
+                        }
+
+                        gate: switch (inner)
+                        {
+                            default:
+                                if (inner == 2)
+                                {
+                                    break gate;
+                                }
+
+                                total += 0;
+                        }
+
+                        if (outer == 2)
+                        {
+                            if (inner == 2)
+                            {
+                                continue outerLoop;
+                            }
+                        }
+
+                        if (outer == 4)
+                        {
+                            break outerLoop;
+                        }
+
+                        total += outer * 10 + inner;
+                    }
+                }
+
+                return total;
+            }
+            """);
+
+        Assert.Equal(138, exitCode);
     }
 
     private static async Task<int> CompileAndRunExitCodeAsync(string source)

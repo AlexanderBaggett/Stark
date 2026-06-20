@@ -10,7 +10,7 @@ public sealed class PackageImageCliToolingTests
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-cli-emit-pkg-");
         var sourcePath = Path.Combine(tempDirectory.FullName, "Demo.stark");
-        var packagePath = Path.Combine(tempDirectory.FullName, "Demo.starkpkg.json");
+        var packagePath = Path.Combine(tempDirectory.FullName, "Demo.starkpkg");
         await File.WriteAllTextAsync(sourcePath, DemoSource);
 
         try
@@ -30,9 +30,8 @@ public sealed class PackageImageCliToolingTests
             Assert.Contains("Package library file: libDemoCustom.a", stdout.ToString(), StringComparison.Ordinal);
             Assert.True(File.Exists(packagePath));
 
-            var manifest = StarkPackageManifest.FromJson(await File.ReadAllTextAsync(packagePath));
-            Assert.NotNull(manifest);
-            Assert.Equal("Demo", manifest!.RootModule);
+            Assert.True(PackageImageLoader.TryLoadManifest(packagePath, out var manifest));
+            Assert.Equal("Demo", manifest.RootModule);
             Assert.Equal("libDemoCustom.a", manifest.LibraryFileName);
             Assert.Single(manifest.Modules);
         }
@@ -54,7 +53,7 @@ public sealed class PackageImageCliToolingTests
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-cli-emit-pkg-native-");
         var sourcePath = Path.Combine(tempDirectory.FullName, "Demo.stark");
-        var packagePath = Path.Combine(tempDirectory.FullName, "Demo.starkpkg.json");
+        var packagePath = Path.Combine(tempDirectory.FullName, "Demo.starkpkg");
         var nativeSourcePath = Path.Combine(tempDirectory.FullName, "DemoNative.c");
         var includeDirectory = Path.Combine(tempDirectory.FullName, "include");
         var libraryDirectory = Path.Combine(tempDirectory.FullName, "native");
@@ -94,9 +93,8 @@ public sealed class PackageImageCliToolingTests
             Assert.Equal(0, exitCode);
             Assert.Equal(string.Empty, stderr.ToString());
 
-            var manifest = StarkPackageManifest.FromJson(await File.ReadAllTextAsync(packagePath));
-            Assert.NotNull(manifest);
-            Assert.NotNull(manifest!.NativeDependencies);
+            Assert.True(PackageImageLoader.TryLoadManifest(packagePath, out var manifest));
+            Assert.NotNull(manifest.NativeDependencies);
             Assert.Equal("DemoNative.c", Assert.Single(manifest.NativeDependencies!.Sources!));
             Assert.Equal("include", Assert.Single(manifest.NativeDependencies.IncludeDirectories!));
             Assert.Equal("native", Assert.Single(manifest.NativeDependencies.LibraryDirectories!));
@@ -139,7 +137,7 @@ public sealed class PackageImageCliToolingTests
         Directory.CreateDirectory(packageDirectory);
 
         var sourcePath = Path.Combine(sourceDirectory, "Demo.stark");
-        var packagePath = Path.Combine(packageDirectory, "Demo.starkpkg.json");
+        var packagePath = Path.Combine(packageDirectory, "Demo.starkpkg");
         var nativeSourcePath = Path.Combine(sourceDirectory, "DemoNative.c");
         await File.WriteAllTextAsync(sourcePath, DemoSource);
         await File.WriteAllTextAsync(nativeSourcePath, "int demo_native(void) { return 0; }\n");
@@ -165,9 +163,8 @@ public sealed class PackageImageCliToolingTests
             Assert.Equal(0, exitCode);
             Assert.Equal(string.Empty, stderr.ToString());
 
-            var manifest = StarkPackageManifest.FromJson(await File.ReadAllTextAsync(packagePath));
-            Assert.NotNull(manifest);
-            Assert.NotNull(manifest!.NativeDependencies);
+            Assert.True(PackageImageLoader.TryLoadManifest(packagePath, out var manifest));
+            Assert.NotNull(manifest.NativeDependencies);
 
             var storedSource = Assert.Single(manifest.NativeDependencies!.Sources!);
             Assert.False(Path.IsPathRooted(storedSource));
@@ -273,6 +270,154 @@ public sealed class PackageImageCliToolingTests
             Assert.NotNull(process);
             await process!.WaitForExitAsync();
 
+            Assert.Equal(42, process.ExitCode);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public async Task EmitExecutableCopiesWindowsPackageRuntimeDllsBesideOutput()
+    {
+        if (!OperatingSystem.IsWindows() || !NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
+        {
+            return;
+        }
+
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-cli-pkg-native-runtime-");
+        var packageDirectory = Path.Combine(tempDirectory.FullName, "packages");
+        var nativeDirectory = Path.Combine(tempDirectory.FullName, "native");
+        var appDirectory = Path.Combine(tempDirectory.FullName, "app");
+        Directory.CreateDirectory(packageDirectory);
+        Directory.CreateDirectory(nativeDirectory);
+        Directory.CreateDirectory(appDirectory);
+
+        var packageSourcePath = Path.Combine(packageDirectory, "NativeRuntimeDemo.stark");
+        var nativeSourcePath = Path.Combine(packageDirectory, "NativeRuntimeDemo.c");
+        var dllSourcePath = Path.Combine(nativeDirectory, "DemoRuntime.c");
+        var runtimeDllPath = Path.Combine(nativeDirectory, "demo.dll");
+        var importLibraryPath = Path.Combine(nativeDirectory, "demo.lib");
+        var packageLibraryPath = Path.Combine(packageDirectory, "NativeRuntimeDemo.lib");
+        var appPath = Path.Combine(appDirectory, "App.stark");
+        var executablePath = Path.Combine(appDirectory, "app.exe");
+
+        try
+        {
+            await File.WriteAllTextAsync(
+                dllSourcePath,
+                """
+                __declspec(dllexport) int demo_value(void) {
+                    return 42;
+                }
+                """);
+
+            var dllBuildResult = await RunProcessAsync(
+                "clang",
+                [
+                    "-target", targetInfo.Triple,
+                    "-shared",
+                    dllSourcePath,
+                    "-o", runtimeDllPath,
+                    $"-Wl,/implib:{importLibraryPath}"
+                ],
+                nativeDirectory);
+            Assert.True(
+                dllBuildResult.ExitCode == 0,
+                dllBuildResult.Stdout + Environment.NewLine + dllBuildResult.Stderr);
+            Assert.True(File.Exists(runtimeDllPath));
+            Assert.True(File.Exists(importLibraryPath));
+
+            await File.WriteAllTextAsync(
+                packageSourcePath,
+                """
+                module NativeRuntimeDemo
+
+                unsafe ffi fn i32[min max] stark_native_value();
+
+                public fn i32[min max] GetValue()
+                {
+                    unsafe
+                    {
+                        return stark_native_value();
+                    }
+                }
+                """);
+            await File.WriteAllTextAsync(
+                nativeSourcePath,
+                """
+                __declspec(dllimport) int demo_value(void);
+
+                int stark_native_value(void) {
+                    return demo_value();
+                }
+                """);
+            await File.WriteAllTextAsync(
+                appPath,
+                """
+                import NativeRuntimeDemo
+                module App
+
+                export fn i32[min max] main()
+                {
+                    return GetValue();
+                }
+                """);
+
+            var emitStdout = new StringWriter();
+            var emitStderr = new StringWriter();
+            var emitExitCode = await CompilerCli.RunAsync(
+                [
+                    packageSourcePath,
+                    "--emit-lib",
+                    "-o", packageLibraryPath,
+                    "--native-source", nativeSourcePath,
+                    "--native-library-dir", nativeDirectory,
+                    "--native-library", "demo"
+                ],
+                new StringReader(string.Empty),
+                emitStdout,
+                emitStderr);
+
+            Assert.Equal(0, emitExitCode);
+            Assert.Equal(string.Empty, emitStderr.ToString());
+            File.Delete(packageSourcePath);
+
+            var compileStdout = new StringWriter();
+            var compileStderr = new StringWriter();
+            var compileExitCode = await CompilerCli.RunAsync(
+                [appPath, "--emit-exe", "-I", packageDirectory, "-o", executablePath],
+                new StringReader(string.Empty),
+                compileStdout,
+                compileStderr);
+
+            Assert.True(compileExitCode == 0, compileStderr.ToString());
+            Assert.Contains("Emitted executable:", compileStdout.ToString(), StringComparison.Ordinal);
+            Assert.True(File.Exists(executablePath));
+
+            var stagedRuntimeDllPath = Path.Combine(appDirectory, "demo.dll");
+            Assert.True(File.Exists(stagedRuntimeDllPath));
+            Assert.False(string.Equals(Path.GetFullPath(runtimeDllPath), Path.GetFullPath(stagedRuntimeDllPath), StringComparison.OrdinalIgnoreCase));
+
+            using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = executablePath,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            });
+
+            Assert.NotNull(process);
+            await process!.WaitForExitAsync();
             Assert.Equal(42, process.ExitCode);
         }
         finally
@@ -429,7 +574,7 @@ public sealed class PackageImageCliToolingTests
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-cli-inspect-pkg-");
         var sourcePath = Path.Combine(tempDirectory.FullName, "Demo.stark");
-        var packagePath = Path.Combine(tempDirectory.FullName, "Demo.starkpkg.json");
+        var packagePath = Path.Combine(tempDirectory.FullName, "Demo.starkpkg");
         await File.WriteAllTextAsync(sourcePath, DemoSource);
 
         try
@@ -549,6 +694,38 @@ public sealed class PackageImageCliToolingTests
             return 7;
         }
         """;
+
+    private static async Task<(int ExitCode, string Stdout, string Stderr)> RunProcessAsync(
+        string fileName,
+        IReadOnlyList<string> arguments,
+        string workingDirectory)
+    {
+        var startInfo = new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = fileName,
+            WorkingDirectory = workingDirectory,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+
+        foreach (var argument in arguments)
+        {
+            startInfo.ArgumentList.Add(argument);
+        }
+
+        using var process = System.Diagnostics.Process.Start(startInfo);
+        if (process is null)
+        {
+            return (1, string.Empty, $"Could not start '{fileName}'.");
+        }
+
+        var stdoutTask = process.StandardOutput.ReadToEndAsync();
+        var stderrTask = process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+        return (process.ExitCode, await stdoutTask, await stderrTask);
+    }
 
     private static async Task<string> CreateUnixPkgConfigAsync(
         string directory,

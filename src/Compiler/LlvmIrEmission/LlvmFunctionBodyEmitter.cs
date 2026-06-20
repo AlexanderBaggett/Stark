@@ -11,6 +11,8 @@ internal sealed partial class LlvmFunctionBodyEmitter
     private const string UnicodeEqualityHelperName = "__stark_unicode_equal";
     private const string AsciiCompareHelperName = "__stark_ascii_compare";
     private const string UnicodeCompareHelperName = "__stark_unicode_compare";
+    private const string AsciiHashHelperName = "__stark_ascii_hash";
+    private const string UnicodeHashHelperName = "__stark_unicode_hash";
     private const string FixedArrayCompareHelperNamePrefix = "__stark_fixed_array_compare_";
     private const string ScalarizedAggregateCompareHelperNamePrefix = "__stark_named_compare_";
     private const string IntegerExponentHelperNamePrefix = "__stark_int_pow_i";
@@ -64,9 +66,9 @@ internal sealed partial class LlvmFunctionBodyEmitter
     private readonly IReadOnlyDictionary<string, string> _sameParameterCanonicalRootKeys;
     private readonly ScopedNoAliasMetadataModel? _scopedNoAliasMetadata;
     private readonly IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? _parameterEffects;
+    private readonly IReadOnlyDictionary<string, ConcreteTypeLayout> _publishedConcreteLayouts;
     private readonly bool _enableOptimizedRawPointerLoopIntrinsics;
     private readonly HashSet<string> _allocatedLocalSlots = new(StringComparer.Ordinal);
-    private readonly HashSet<string> _constProvenanceLocalNames;
     private readonly HashSet<string> _invariantLocalNames;
     private readonly IReadOnlyDictionary<string, SsaValue> _singleStoreLocalValues;
     private readonly HashSet<string> _tailCallResultNames;
@@ -122,6 +124,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
         _isStrictFp = isStrictFp;
         _resolveParameterEffects = resolveParameterEffects;
         _resolveFunctionMemoryEffects = resolveFunctionMemoryEffects;
+        _publishedConcreteLayouts = LlvmSpecializationEmissionPlanner.BuildPublishedConcreteLayouts(context.LoadedModules);
         _enableOptimizedRawPointerLoopIntrinsics = enableOptimizedRawPointerLoopIntrinsics;
         _referencedValueNames = CollectReferencedValueNames(ssaFunction);
         _addressTakenParameterNames = CollectAddressTakenParameterNames(ssaFunction);
@@ -145,7 +148,6 @@ internal sealed partial class LlvmFunctionBodyEmitter
         _localStorageClasses = CollectLocalStorageClasses(ssaFunction);
         _singleStoreLocalValues = CollectSingleStoreLocalValues();
         _directAggregateAliasCandidateLocalNames = CollectDirectAggregateAliasCandidateLocalNames();
-        _constProvenanceLocalNames = CollectConstProvenanceLocalNames();
         _invariantLocalNames = CollectInvariantLocalNames();
         _tailCallResultNames = CollectTailCallResultNames(
             ssaFunction,

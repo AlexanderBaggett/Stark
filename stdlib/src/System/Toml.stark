@@ -1,0 +1,4342 @@
+import System.Memory
+import System.Text
+import System.Collections
+import System.IO
+import System.IO.File
+module System.Toml
+
+// Reusable TOML reader for Stark manifests, tools, tests, and user code (the
+// blessed parser per docs/Self-host-Prep/21-system-toml.md). The document is a
+// flat node table with parent links and decoded text storage, mirroring
+// System.Json's proven shape, plus line/column spans on every node.
+//
+// Supported surface: bare/basic/literal keys and strings, multiline basic
+// (`"""..."""`) and multiline literal (`'''...'''`) strings, dotted keys,
+// table headers, arrays of tables (`[[name]]`), inline tables, arrays, decimal
+// and 0x/0o/0b integers with underscores, decimal floats (fractional and/or
+// exponent, underscores stripped), RFC 3339 date-times (offset/local date-time,
+// local date, local time, read back verbatim through DatetimeAt), booleans,
+// comments, and the `\b \t \n \f \r \" \\ \uXXXX \UXXXXXXXX` escapes (with
+// Unicode-scalar-value validation rejecting surrogates and code points beyond
+// U+10FFFF).
+// Float values read through F64At, which defers to the correctly-rounded
+// System.Text.ParseF64Ascii exact window: a significand of at most 2**53 and a
+// base-10 exponent with |exp10| <= 22 convert with a single correctly-rounded
+// IEEE operation; anything outside that window (more significant digits than fit
+// in 2**53, or |exp10| > 22) surfaces as InvalidNumber rather than mis-rounding,
+// so float reads are honest about the supported subset.
+
+public enum TomlKind
+{
+    Table,
+    Array,
+    Text,
+    Integer,
+    Float,
+    True,
+    False,
+    // RFC 3339 offset/local date-time, local date, or local time. The original
+    // token text is stored verbatim and read back through DatetimeAt.
+    Datetime,
+}
+
+// Which RFC 3339 shape a `TomlDateTime` carries. Distinguishes the four TOML
+// date-time forms so callers know which component fields are meaningful.
+public enum TomlDateTimeKind
+{
+    // `YYYY-MM-DDTHH:MM:SS[.fff](Z|+HH:MM|-HH:MM)` — date, time, and zone offset.
+    OffsetDateTime,
+    // `YYYY-MM-DDTHH:MM:SS[.fff]` — date and time, no zone offset.
+    LocalDateTime,
+    // `YYYY-MM-DD` — date only; the time and offset fields are unset (zero).
+    LocalDate,
+    // `HH:MM:SS[.fff]` — time only; the date and offset fields are unset (zero).
+    LocalTime,
+}
+
+// A decoded, calendar-validated RFC 3339 date-time. Produced by
+// `TomlDocument.DateTimeAt`; the verbatim spelling stays available through
+// `DatetimeAt`. Fields not present for the `Kind` are zero (e.g. a `LocalTime`
+// has `Year`/`Month`/`Day` == 0; a `LocalDate` has `Hour`/`Minute`/`Second`
+// == 0). `HasOffset` is true only for `OffsetDateTime`, where `OffsetMinutes`
+// is the signed minutes east of UTC (`Z` decodes as 0).
+public struct TomlDateTime
+{
+    TomlDateTimeKind Kind;
+    u16[0 9999] Year;
+    u8[0 12] Month;
+    u8[0 31] Day;
+    u8[0 23] Hour;
+    u8[0 59] Minute;
+    u8[0 60] Second;
+    u32[0 999999999] Nanosecond;
+    bool HasOffset;
+    i16[-1439 1439] OffsetMinutes;
+
+    TomlDateTime()
+    {
+        self.Kind = TomlDateTimeKind.LocalDate;
+        self.Year = 0;
+        self.Month = 0;
+        self.Day = 0;
+        self.Hour = 0;
+        self.Minute = 0;
+        self.Second = 0;
+        self.Nanosecond = 0;
+        self.HasOffset = false;
+        self.OffsetMinutes = 0;
+    }
+}
+
+public enum TomlError
+{
+    OutOfMemory,
+    UnexpectedEndOfInput
+    {
+        Line: u32[0 max], Column: u32[0 max]
+    },
+    UnexpectedCharacter
+    {
+        Line: u32[0 max], Column: u32[0 max]
+    },
+    InvalidEscape
+    {
+        Line: u32[0 max], Column: u32[0 max]
+    },
+    UnterminatedString
+    {
+        Line: u32[0 max], Column: u32[0 max]
+    },
+    InvalidNumber
+    {
+        Line: u32[0 max], Column: u32[0 max]
+    },
+    // A date-time that is structurally well-formed but carries an out-of-range
+    // calendar field (month, day-of-month including leap years, hour, minute,
+    // second, or zone offset).
+    InvalidDatetime
+    {
+        Line: u32[0 max], Column: u32[0 max]
+    },
+    DuplicateKey
+    {
+        Line: u32[0 max], Column: u32[0 max]
+    },
+    UnsupportedValue
+    {
+        Line: u32[0 max], Column: u32[0 max]
+    },
+    DepthExceeded
+    {
+        Line: u32[0 max], Column: u32[0 max]
+    },
+}
+
+public enum TomlStatus
+{
+    [Ok] Ok,
+    [Err] Err(TomlError),
+}
+
+public enum TomlResult<T>
+{
+    [Ok] Ok(T),
+    [Err] Err(TomlError),
+}
+
+public const TomlRootNode = 0;
+const TomlMaximumDepth = 32;
+
+internal struct TomlNode
+{
+    TomlKind Kind;
+    // Parent node index plus one; zero marks the root table itself.
+    u64[0 2 ** 63 - 1] ParentPlusOne;
+    bool HasKey;
+    u64[0 2 ** 63 - 1] KeyStart;
+    u64[0 2 ** 63 - 1] KeyLength;
+    // Decoded string bytes or the normalized integer token.
+    u64[0 2 ** 63 - 1] TextStart;
+    u64[0 2 ** 63 - 1] TextLength;
+    u64[0 2 ** 63 - 1] ChildCount;
+    u32[0 max] Line;
+    u32[0 max] Column;
+
+    TomlNode()
+    {
+        self.Kind = TomlKind.Table;
+        self.ParentPlusOne = 0;
+        self.HasKey = false;
+        self.KeyStart = 0;
+        self.KeyLength = 0;
+        self.TextStart = 0;
+        self.TextLength = 0;
+        self.ChildCount = 0;
+        self.Line = 0;
+        self.Column = 0;
+    }
+}
+
+internal struct TomlCursor
+{
+    u64[0 2 ** 63 - 1] Position;
+    u32[0 max] Line;
+    u32[0 max] Column;
+
+    TomlCursor()
+    {
+        self.Position = 0;
+        self.Line = 1;
+        self.Column = 1;
+    }
+}
+
+public struct TomlDocument
+{
+    internal dynamic TomlNode Nodes;
+    internal dynamic i8[min max] DecodedText;
+
+    TomlDocument()
+    {
+        self.Nodes = new();
+        self.DecodedText = new();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] Count(borrow TomlDocument self)
+    {
+        return self.Nodes.Length;
+    }
+
+    // Whole-length initialized slice views (every appended slot is written),
+    // used by the emitter so dynamic-storage reads carry an init proof.
+    internal finite law retborrow TomlNode[] NodeSlice(borrow TomlDocument self)
+    {
+        return self.Nodes[0, self.Nodes.Length];
+    }
+
+    internal finite law retborrow i8[min max][] DecodedSlice(borrow TomlDocument self)
+    {
+        return self.DecodedText[0, self.DecodedText.Length];
+    }
+
+    public finite law TomlKind KindAt(borrow TomlDocument self, u64[0 2 ** 63 - 1] node)
+    {
+        if (node >= self.Nodes.Length)
+        {
+            return TomlKind.Table;
+        }
+
+        switch (self.Nodes[node].Kind)
+        {
+            case TomlKind.Table:
+                return TomlKind.Table;
+            case TomlKind.Array:
+                return TomlKind.Array;
+            case TomlKind.Text:
+                return TomlKind.Text;
+            case TomlKind.Integer:
+                return TomlKind.Integer;
+            case TomlKind.Float:
+                return TomlKind.Float;
+            case TomlKind.True:
+                return TomlKind.True;
+            case TomlKind.False:
+                return TomlKind.False;
+            case TomlKind.Datetime:
+                return TomlKind.Datetime;
+        }
+    }
+
+    public finite law u64[0 2 ** 63 - 1] ChildCountAt(borrow TomlDocument self, u64[0 2 ** 63 - 1] node)
+    {
+        if (node >= self.Nodes.Length)
+        {
+            return 0;
+        }
+
+        return self.Nodes[node].ChildCount;
+    }
+
+    public finite law bool BoolAt(borrow TomlDocument self, u64[0 2 ** 63 - 1] node)
+    {
+        return self.KindAt(node) == TomlKind.True;
+    }
+
+    public finite law u32[0 max] LineAt(borrow TomlDocument self, u64[0 2 ** 63 - 1] node)
+    {
+        if (node >= self.Nodes.Length)
+        {
+            return 0;
+        }
+
+        return self.Nodes[node].Line;
+    }
+
+    public finite law u32[0 max] ColumnAt(borrow TomlDocument self, u64[0 2 ** 63 - 1] node)
+    {
+        if (node >= self.Nodes.Length)
+        {
+            return 0;
+        }
+
+        return self.Nodes[node].Column;
+    }
+
+    public finite ascii TextAt(mut borrow TomlDocument self, u64[0 2 ** 63 - 1] node)
+    {
+        if (node >= self.Nodes.Length)
+        {
+            return "";
+        }
+
+        stack u64[0 2 ** 63 - 1] textStart = self.Nodes[node].TextStart;
+        stack u64[0 2 ** 63 - 1] textLength = self.Nodes[node].TextLength;
+        unsafe
+        {
+            return self.ViewRange(textStart, textLength);
+        }
+    }
+
+    // The verbatim RFC 3339 token of a Datetime node (e.g. "1979-05-27T07:32:00Z"),
+    // or "" for any other node kind. Datetimes keep their original spelling.
+    public finite ascii DatetimeAt(mut borrow TomlDocument self, u64[0 2 ** 63 - 1] node)
+    {
+        if (node >= self.Nodes.Length)
+        {
+            return "";
+        }
+
+        if (self.Nodes[node].Kind != TomlKind.Datetime)
+        {
+            return "";
+        }
+
+        stack u64[0 2 ** 63 - 1] textStart = self.Nodes[node].TextStart;
+        stack u64[0 2 ** 63 - 1] textLength = self.Nodes[node].TextLength;
+        unsafe
+        {
+            return self.ViewRange(textStart, textLength);
+        }
+    }
+
+    // Decodes a Datetime node's verbatim token into calendar-validated typed
+    // components (`TomlDateTime`). Returns InvalidDatetime for any other node
+    // kind. The original spelling stays available through `DatetimeAt`.
+    public finite TomlResult<TomlDateTime> DateTimeAt(mut borrow TomlDocument self, u64[0 2 ** 63 - 1] node)
+    {
+        if (node >= self.Nodes.Length)
+        {
+            return TomlResult<TomlDateTime>.Err(TomlError.InvalidDatetime
+            {
+                Line: 0, Column: 0
+            });
+        }
+
+        if (self.Nodes[node].Kind != TomlKind.Datetime)
+        {
+            return TomlResult<TomlDateTime>.Err(TomlError.InvalidDatetime
+            {
+                Line: self.LineAt(node), Column: self.ColumnAt(node)
+            });
+        }
+
+        stack u64[0 2 ** 63 - 1] textStart = self.Nodes[node].TextStart;
+        stack u64[0 2 ** 63 - 1] textLength = self.Nodes[node].TextLength;
+        stack i8[min max][] decoded = self.DecodedSlice();
+        return DecodeDatetimeToken(decoded, textStart, textLength, self.LineAt(node), self.ColumnAt(node));
+    }
+
+    public finite ascii KeyAt(mut borrow TomlDocument self, u64[0 2 ** 63 - 1] node)
+    {
+        if (node >= self.Nodes.Length)
+        {
+            return "";
+        }
+
+        if (!self.Nodes[node].HasKey)
+        {
+            return "";
+        }
+
+        stack u64[0 2 ** 63 - 1] keyStart = self.Nodes[node].KeyStart;
+        stack u64[0 2 ** 63 - 1] keyLength = self.Nodes[node].KeyLength;
+        unsafe
+        {
+            return self.ViewRange(keyStart, keyLength);
+        }
+    }
+
+    public finite TomlResult<i64[min max]> I64At(mut borrow TomlDocument self, u64[0 2 ** 63 - 1] node)
+    {
+        if (self.KindAt(node) != TomlKind.Integer)
+        {
+            return TomlResult<i64[min max]>.Err(TomlError.InvalidNumber
+            {
+                Line: self.LineAt(node), Column: self.ColumnAt(node)
+            });
+        }
+
+        // A 0x/0o/0b prefixed token decodes by its radix; everything else is a
+        // signed decimal token the shared ascii parser handles.
+        if (node < self.Nodes.Length)
+        {
+            stack u64[0 2 ** 63 - 1] textStart = self.Nodes[node].TextStart;
+            stack u64[0 2 ** 63 - 1] textLength = self.Nodes[node].TextLength;
+            if (textLength >= 2)
+            {
+                return self.DecodeRadixToken(node, textStart, textLength);
+            }
+        }
+
+        stack System.Text.TextResult<i64[min max]> parsed = System.Text.ParseI64Ascii(self.TextAt(node));
+        switch (parsed)
+        {
+            case System.Text.TextResult<i64[min max]>.Err(var error):
+                return TomlResult<i64[min max]>.Err(TomlError.InvalidNumber
+                {
+                    Line: self.LineAt(node), Column: self.ColumnAt(node)
+                });
+            case System.Text.TextResult<i64[min max]>.Ok(var value):
+                return TomlResult<i64[min max]>.Ok(value);
+        }
+    }
+
+    // Reads a Float node (or widens an Integer node) to f64. The stored token is
+    // already normalized (underscores stripped at parse time), so it defers to
+    // the shared correctly-rounded ascii parser. ParseF64Ascii signals Overflow
+    // for tokens outside its exact window (significand above 2**53 or
+    // |exp10| > 22); those surface here as InvalidNumber with the node's span.
+    public finite TomlResult<f64> F64At(mut borrow TomlDocument self, u64[0 2 ** 63 - 1] node)
+    {
+        stack TomlKind kind = self.KindAt(node);
+        if (kind != TomlKind.Float && kind != TomlKind.Integer)
+        {
+            return TomlResult<f64>.Err(TomlError.InvalidNumber
+            {
+                Line: self.LineAt(node), Column: self.ColumnAt(node)
+            });
+        }
+
+        stack System.Text.TextResult<f64> parsed = System.Text.ParseF64Ascii(self.TextAt(node));
+        switch (parsed)
+        {
+            case System.Text.TextResult<f64>.Err(var error):
+                return TomlResult<f64>.Err(TomlError.InvalidNumber
+                {
+                    Line: self.LineAt(node), Column: self.ColumnAt(node)
+                });
+            case System.Text.TextResult<f64>.Ok(var value):
+                return TomlResult<f64>.Ok(value);
+        }
+    }
+
+    // Decodes a stored integer token. A 0x/0o/0b prefix selects the radix and
+    // is decoded inline (underscores were already validated away by the
+    // parser); any other token defers to the shared decimal ascii parser.
+    // Reports InvalidNumber on overflow past the positive i64 range.
+    internal finite TomlResult<i64[min max]> DecodeRadixToken(
+        mut borrow TomlDocument self,
+        u64[0 2 ** 63 - 1] node,
+        u64[0 2 ** 63 - 1] textStart,
+        u64[0 2 ** 63 - 1] textLength)
+    {
+        // Bound the whole token span so every byte read below is a proven slot.
+        if (textLength == 0)
+        {
+            return TomlResult<i64[min max]>.Err(TomlError.InvalidNumber
+            {
+                Line: self.LineAt(node), Column: self.ColumnAt(node)
+            });
+        }
+
+        if (textStart + textLength > self.DecodedText.Length)
+        {
+            return TomlResult<i64[min max]>.Err(TomlError.InvalidNumber
+            {
+                Line: self.LineAt(node), Column: self.ColumnAt(node)
+            });
+        }
+
+        // A prefixed token is '0' followed by a radix marker; decimal/signed
+        // tokens never carry a letter in their second byte, so the marker byte
+        // alone classifies the radix. Spell the index's own strict guard to
+        // prove the '[textStart + 1]' slot read.
+        if (textStart + 1 >= self.DecodedText.Length)
+        {
+            return self.DecodeDecimalToken(node);
+        }
+
+        stack i8[min max] markerByte = self.DecodedText[textStart + 1];
+        stack mut u8[0 16] radix = 0;
+        if (markerByte == 120 || markerByte == 88)
+        {
+            radix = 16;
+        }
+        else if (markerByte == 111 || markerByte == 79)
+        {
+            radix = 8;
+        }
+        else if (markerByte == 98 || markerByte == 66)
+        {
+            radix = 2;
+        }
+        else
+        {
+            return self.DecodeDecimalToken(node);
+        }
+
+        stack u8[2 16] radixBase = (u8[2 16])radix;
+        stack u64[0 max] limit = (u64[0 max])(2 ** 63 - 1);
+        stack u64[0 max] base = (u64[0 max])radixBase;
+        stack u64[0 max] cutoff = limit / base;
+        stack u64[0 max] cutlim = limit % base;
+        stack mut u64[0 max] value = 0;
+
+        // The span guard ('textStart + textLength > Length') proves every
+        // '[textStart + offset]' read for 'offset < textLength'. Offsets 0 and 1
+        // are the '0' and radix marker; digits start at offset 2.
+        for willexit (stack mut u64[0 2 ** 63 - 1] offset = 0; offset < textLength; offset += 1)
+        {
+            if (offset < 2)
+            {
+                continue;
+            }
+
+            stack i8[min max] byte = self.DecodedText[textStart + offset];
+            if (byte == 95)
+            {
+                continue;
+            }
+
+            stack i32[min max] digit = RadixDigitValue(byte, radixBase);
+            if (digit < 0)
+            {
+                return TomlResult<i64[min max]>.Err(TomlError.InvalidNumber
+                {
+                    Line: self.LineAt(node), Column: self.ColumnAt(node)
+                });
+            }
+
+            stack u64[0 max] unsignedDigit = (u64[0 max])digit;
+            if (value > cutoff || (value == cutoff && unsignedDigit > cutlim))
+            {
+                return TomlResult<i64[min max]>.Err(TomlError.InvalidNumber
+                {
+                    Line: self.LineAt(node), Column: self.ColumnAt(node)
+                });
+            }
+
+            value = (value * base) + unsignedDigit;
+        }
+
+        return TomlResult<i64[min max]>.Ok((i64[min max])value);
+    }
+
+    // Decodes a plain decimal integer token through the shared ascii parser.
+    internal finite TomlResult<i64[min max]> DecodeDecimalToken(mut borrow TomlDocument self, u64[0 2 ** 63 - 1] node)
+    {
+        stack System.Text.TextResult<i64[min max]> parsed = System.Text.ParseI64Ascii(self.TextAt(node));
+        switch (parsed)
+        {
+            case System.Text.TextResult<i64[min max]>.Err(var error):
+                return TomlResult<i64[min max]>.Err(TomlError.InvalidNumber
+                {
+                    Line: self.LineAt(node), Column: self.ColumnAt(node)
+                });
+            case System.Text.TextResult<i64[min max]>.Ok(var value):
+                return TomlResult<i64[min max]>.Ok(value);
+        }
+    }
+
+    // Finds the value node of a table member by exact decoded key bytes.
+    public finite bool TryFindMember(
+        borrow TomlDocument self,
+        u64[0 2 ** 63 - 1] tableNode,
+        ascii name,
+        out u64[0 2 ** 63 - 1] member)
+    {
+        member = 0;
+        if (self.KindAt(tableNode) != TomlKind.Table)
+        {
+            return false;
+        }
+
+        stack u64[0 2 ** 63 - 1] parentPlusOne = (u64[0 2 ** 63 - 1])(tableNode + 1);
+        for willexit (stack mut u64[0 2 ** 63 - 1] index = parentPlusOne; index < self.Nodes.Length; index += 1)
+        {
+            if (self.Nodes[index].ParentPlusOne != parentPlusOne)
+            {
+                continue;
+            }
+
+            if (!self.Nodes[index].HasKey)
+            {
+                continue;
+            }
+
+            if (self.KeyEquals(index, name))
+            {
+                member = index;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    // Finds the child of an array (or table) container by zero-based order.
+    public fn bool TryChildAt(
+        borrow TomlDocument self,
+        u64[0 2 ** 63 - 1] containerNode,
+        u64[0 2 ** 63 - 1] childIndex,
+        out u64[0 2 ** 63 - 1] child)
+    {
+        child = 0;
+        if (containerNode >= self.Nodes.Length)
+        {
+            return false;
+        }
+
+        stack u64[0 2 ** 63 - 1] parentPlusOne = (u64[0 2 ** 63 - 1])(containerNode + 1);
+        stack mut u64[0 2 ** 63 - 1] seen = 0;
+        for willexit (stack mut u64[0 2 ** 63 - 1] index = parentPlusOne; index < self.Nodes.Length; index += 1)
+        {
+            if (self.Nodes[index].ParentPlusOne != parentPlusOne)
+            {
+                continue;
+            }
+
+            if (seen == childIndex)
+            {
+                child = index;
+                return true;
+            }
+
+            seen += 1;
+        }
+
+        return false;
+    }
+
+    // Convenience: member lookup that requires a specific kind.
+    public finite bool TryFindMemberOfKind(
+        borrow TomlDocument self,
+        u64[0 2 ** 63 - 1] tableNode,
+        ascii name,
+        TomlKind kind,
+        out u64[0 2 ** 63 - 1] member)
+    {
+        stack mut u64[0 2 ** 63 - 1] found = 0;
+        if (!self.TryFindMember(tableNode, name, found))
+        {
+            member = 0;
+            return false;
+        }
+
+        if (self.KindAt(found) != kind)
+        {
+            member = 0;
+            return false;
+        }
+
+        member = found;
+        return true;
+    }
+
+    internal unsafe finite ascii ViewRange(
+        mut borrow TomlDocument self,
+        u64[0 2 ** 63 - 1] start,
+        u64[0 2 ** 63 - 1] length)
+    {
+        if (length == 0 || start + length > self.DecodedText.Length)
+        {
+            return "";
+        }
+
+        stack mut Ascii view = new Ascii();
+        view.Data = &self.DecodedText[start];
+        view.Length = (i64[min max])length;
+        view.Capacity = (i64[min max])length;
+        return System.Text.AsciiView(view);
+    }
+
+    internal finite bool KeyEquals(borrow TomlDocument self, u64[0 2 ** 63 - 1] node, ascii name)
+        where node < self.Nodes.Length
+    {
+        stack i64[min max] signedNameLength = System.Text.AsciiLength(name);
+        if (signedNameLength < 0)
+        {
+            return false;
+        }
+
+        stack u64[0 2 ** 63 - 1] nameLength = (u64[0 2 ** 63 - 1])signedNameLength;
+        if (self.Nodes[node].KeyLength != nameLength)
+        {
+            return false;
+        }
+
+        if (nameLength == 0)
+        {
+            return true;
+        }
+
+        stack u64[0 2 ** 63 - 1] keyStart = self.Nodes[node].KeyStart;
+        // Stored key ranges always lie inside DecodedText; the guard spells
+        // that bound for the dense-prefix proof and never fires in practice.
+        if (keyStart + nameLength > self.DecodedText.Length)
+        {
+            return false;
+        }
+
+        // Only the raw name bytes still need an audited pointer walk.
+        unsafe
+        {
+            stack rawptr<i8[min max]> nameData = System.Text.AsciiData(name);
+            if (nameData == null)
+            {
+                return false;
+            }
+
+            for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < nameLength; index += 1)
+            {
+                if (self.DecodedText[keyStart + index] != *(&nameData[index]))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+    }
+
+    internal finite law bool KeyRangeEquals(
+        borrow TomlDocument self,
+        u64[0 2 ** 63 - 1] node,
+        u64[0 2 ** 63 - 1] otherStart,
+        u64[0 2 ** 63 - 1] otherLength)
+        where node < self.Nodes.Length
+    {
+        if (self.Nodes[node].KeyLength != otherLength)
+        {
+            return false;
+        }
+
+        stack u64[0 2 ** 63 - 1] keyStart = self.Nodes[node].KeyStart;
+        // Stored key ranges always lie inside DecodedText; the guards spell
+        // those bounds for the dense-prefix proof and never fire in practice.
+        if (keyStart + otherLength > self.DecodedText.Length)
+        {
+            return false;
+        }
+
+        if (otherStart + otherLength > self.DecodedText.Length)
+        {
+            return false;
+        }
+
+        for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < otherLength; index += 1)
+        {
+            if (self.DecodedText[keyStart + index] != self.DecodedText[otherStart + index])
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+}
+
+// Parses one TOML document from UTF-8 bytes.
+public fn TomlResult<TomlDocument> Parse(borrow i8[min max][] source)
+{
+    stack mut TomlDocument document = new();
+    stack mut TomlCursor cursor = new();
+
+    // Node 0 is the root table.
+    stack TomlStatus rooted = AppendNode(document, TomlKind.Table, 0, false, 0, 0, 0, 0, 1, 1);
+    switch (rooted)
+    {
+        case TomlStatus.Err(var error):
+            return TomlResult<TomlDocument>.Err(error);
+        case TomlStatus.Ok:
+    }
+
+    stack mut u64[0 2 ** 63 - 1] currentTable = TomlRootNode;
+    while willexit (cursor.Position < source.Length)
+    {
+        SkipTriviaLines(source, cursor);
+        if (cursor.Position >= source.Length)
+        {
+            break;
+        }
+
+        if (source[cursor.Position] == 91)
+        {
+            stack TomlResult<u64[0 2 ** 63 - 1]> header = ParseTableHeader(document, source, cursor);
+            switch (header)
+            {
+                case TomlResult<u64[0 2 ** 63 - 1]>.Err(var error):
+                    return TomlResult<TomlDocument>.Err(error);
+                case TomlResult<u64[0 2 ** 63 - 1]>.Ok(var table):
+                    currentTable = table;
+            }
+        }
+        else
+        {
+            stack TomlStatus pair = ParseKeyValueLine(document, source, cursor, currentTable);
+            switch (pair)
+            {
+                case TomlStatus.Err(var error):
+                    return TomlResult<TomlDocument>.Err(error);
+                case TomlStatus.Ok:
+            }
+        }
+
+        stack TomlStatus ended = ExpectLineEnd(source, cursor);
+        switch (ended)
+        {
+            case TomlStatus.Err(var error):
+                return TomlResult<TomlDocument>.Err(error);
+            case TomlStatus.Ok:
+        }
+    }
+
+    return TomlResult<TomlDocument>.Ok(document);
+}
+
+// Parses one TOML document from an ascii view.
+public unsafe fn TomlResult<TomlDocument> ParseText(ascii source)
+{
+    stack i64[min max] signedLength = System.Text.AsciiLength(source);
+    if (signedLength <= 0)
+    {
+        // An empty document is a valid empty root table.
+        stack mut TomlDocument document = new();
+        stack TomlStatus rooted = AppendNode(document, TomlKind.Table, 0, false, 0, 0, 0, 0, 1, 1);
+        switch (rooted)
+        {
+            case TomlStatus.Err(var error):
+                return TomlResult<TomlDocument>.Err(error);
+            case TomlStatus.Ok:
+        }
+
+        return TomlResult<TomlDocument>.Ok(document);
+    }
+
+    stack rawptr<i8[min max]> data = System.Text.AsciiData(source);
+    if (data == null)
+    {
+        return TomlResult<TomlDocument>.Err(TomlError.UnexpectedEndOfInput
+        {
+            Line: 1, Column: 1
+        });
+    }
+
+    stack i8[min max][] bytes = slice(data, (u64[0 2 ** 63 - 1])signedLength);
+    return Parse(bytes);
+}
+
+// ---------------------------------------------------------------------------
+// Parser internals
+// ---------------------------------------------------------------------------
+
+internal fn void Advance(borrow i8[min max][] source, mut borrow TomlCursor cursor)
+{
+    if (cursor.Position >= source.Length)
+    {
+        return;
+    }
+
+    if (source[cursor.Position] == 10)
+    {
+        cursor.Line = (u32[0 max])(cursor.Line + 1);
+        cursor.Column = 1;
+    }
+    else
+    {
+        cursor.Column = (u32[0 max])(cursor.Column + 1);
+    }
+
+    cursor.Position = (u64[0 2 ** 63 - 1])(cursor.Position + 1);
+    return;
+}
+
+internal finite law bool IsSpaceByte(i8[min max] value)
+{
+    return value == 32 || value == 9;
+}
+
+internal finite law bool IsBareKeyByte(i8[min max] value)
+{
+    if (value >= 48 && value <= 57)
+    {
+        return true;
+    }
+
+    if (value >= 65 && value <= 90)
+    {
+        return true;
+    }
+
+    if (value >= 97 && value <= 122)
+    {
+        return true;
+    }
+
+    return value == 45 || value == 95;
+}
+
+internal finite law bool IsDigitByte(i8[min max] value)
+{
+    return value >= 48 && value <= 57;
+}
+
+internal fn void SkipSpaces(borrow i8[min max][] source, mut borrow TomlCursor cursor)
+{
+    while willexit (cursor.Position < source.Length && IsSpaceByte(source[cursor.Position]))
+    {
+        Advance(source, cursor);
+    }
+
+    return;
+}
+
+internal fn void SkipComment(borrow i8[min max][] source, mut borrow TomlCursor cursor)
+{
+    if (cursor.Position >= source.Length || source[cursor.Position] != 35)
+    {
+        return;
+    }
+
+    while willexit (cursor.Position < source.Length && source[cursor.Position] != 10)
+    {
+        Advance(source, cursor);
+    }
+
+    return;
+}
+
+// Skips spaces, tabs, comments, and blank lines between top-level statements.
+internal fn void SkipTriviaLines(borrow i8[min max][] source, mut borrow TomlCursor cursor)
+{
+    while willexit (cursor.Position < source.Length)
+    {
+        stack i8[min max] value = source[cursor.Position];
+        if (IsSpaceByte(value) || value == 10 || value == 13)
+        {
+            Advance(source, cursor);
+        }
+        else if (value == 35)
+        {
+            SkipComment(source, cursor);
+        }
+        else
+        {
+            return;
+        }
+    }
+
+    return;
+}
+
+// After a header or key/value pair: optional spaces and comment, then a
+// newline or end of input.
+internal fn TomlStatus ExpectLineEnd(borrow i8[min max][] source, mut borrow TomlCursor cursor)
+{
+    SkipSpaces(source, cursor);
+    SkipComment(source, cursor);
+    if (cursor.Position >= source.Length)
+    {
+        return TomlStatus.Ok;
+    }
+
+    if (source[cursor.Position] == 13)
+    {
+        Advance(source, cursor);
+    }
+
+    if (cursor.Position >= source.Length)
+    {
+        return TomlStatus.Ok;
+    }
+
+    if (source[cursor.Position] != 10)
+    {
+        return TomlStatus.Err(TomlError.UnexpectedCharacter
+        {
+            Line: cursor.Line, Column: cursor.Column
+        });
+    }
+
+    Advance(source, cursor);
+    return TomlStatus.Ok;
+}
+
+internal fn TomlStatus AppendNode(
+    mut borrow TomlDocument document,
+    TomlKind kind,
+    u64[0 2 ** 63 - 1] parentPlusOne,
+    bool hasKey,
+    u64[0 2 ** 63 - 1] keyStart,
+    u64[0 2 ** 63 - 1] keyLength,
+    u64[0 2 ** 63 - 1] textStart,
+    u64[0 2 ** 63 - 1] textLength,
+    u32[0 max] line,
+    u32[0 max] column)
+{
+    if (!document.Nodes.TryReserve(1))
+    {
+        return TomlStatus.Err(TomlError.OutOfMemory);
+    }
+
+    stack mut TomlNode node = new();
+    node.Kind = kind;
+    node.ParentPlusOne = parentPlusOne;
+    node.HasKey = hasKey;
+    node.KeyStart = keyStart;
+    node.KeyLength = keyLength;
+    node.TextStart = textStart;
+    node.TextLength = textLength;
+    node.ChildCount = 0;
+    node.Line = line;
+    node.Column = column;
+    init document.Nodes[document.Nodes.Length] = node;
+
+    if (parentPlusOne > 0)
+    {
+        // Parent nodes are always appended before their children, so the
+        // parent slot is initialized; the index arithmetic hides that from
+        // the dense-prefix proof.
+        unsafe
+        {
+            document.Nodes[(u64[0 2 ** 63 - 1])(parentPlusOne - 1)].ChildCount += 1;
+        }
+    }
+
+    return TomlStatus.Ok;
+}
+
+internal fn TomlStatus AppendDecodedByte(mut borrow TomlDocument document, i8[min max] value)
+{
+    if (!document.DecodedText.TryReserve(1))
+    {
+        return TomlStatus.Err(TomlError.OutOfMemory);
+    }
+
+    init document.DecodedText[document.DecodedText.Length] = value;
+    return TomlStatus.Ok;
+}
+
+// Decodes one key (bare, basic-quoted, or literal-quoted) into DecodedText.
+internal fn TomlStatus ParseKey(
+    mut borrow TomlDocument document,
+    borrow i8[min max][] source,
+    mut borrow TomlCursor cursor,
+    out u64[0 2 ** 63 - 1] keyStart,
+    out u64[0 2 ** 63 - 1] keyLength)
+{
+    keyStart = document.DecodedText.Length;
+    keyLength = 0;
+
+    if (cursor.Position >= source.Length)
+    {
+        return TomlStatus.Err(TomlError.UnexpectedEndOfInput
+        {
+            Line: cursor.Line, Column: cursor.Column
+        });
+    }
+
+    stack i8[min max] first = source[cursor.Position];
+    if (first == 34)
+    {
+        stack mut u64[0 2 ** 63 - 1] textStart = 0;
+        stack mut u64[0 2 ** 63 - 1] textLength = 0;
+        stack TomlStatus parsed = ParseBasicString(document, source, cursor, textStart, textLength);
+        switch (parsed)
+        {
+            case TomlStatus.Err(var error):
+                return TomlStatus.Err(error);
+            case TomlStatus.Ok:
+        }
+
+        keyStart = textStart;
+        keyLength = textLength;
+        return TomlStatus.Ok;
+    }
+
+    if (first == 39)
+    {
+        stack mut u64[0 2 ** 63 - 1] textStart = 0;
+        stack mut u64[0 2 ** 63 - 1] textLength = 0;
+        stack TomlStatus parsed = ParseLiteralString(document, source, cursor, textStart, textLength);
+        switch (parsed)
+        {
+            case TomlStatus.Err(var error):
+                return TomlStatus.Err(error);
+            case TomlStatus.Ok:
+        }
+
+        keyStart = textStart;
+        keyLength = textLength;
+        return TomlStatus.Ok;
+    }
+
+    if (!IsBareKeyByte(first))
+    {
+        return TomlStatus.Err(TomlError.UnexpectedCharacter
+        {
+            Line: cursor.Line, Column: cursor.Column
+        });
+    }
+
+    stack mut u64[0 2 ** 63 - 1] copied = 0;
+    while willexit (cursor.Position < source.Length && IsBareKeyByte(source[cursor.Position]))
+    {
+        stack TomlStatus appended = AppendDecodedByte(document, source[cursor.Position]);
+        switch (appended)
+        {
+            case TomlStatus.Err(var error):
+                return TomlStatus.Err(error);
+            case TomlStatus.Ok:
+        }
+
+        copied = (u64[0 2 ** 63 - 1])(copied + 1);
+        Advance(source, cursor);
+    }
+
+    keyLength = copied;
+    return TomlStatus.Ok;
+}
+
+// Resolves one step of a dotted key path under `parent`, creating an implicit
+// table when the member does not exist yet.
+internal fn TomlResult<u64[0 2 ** 63 - 1]> ResolveChildTable(
+    mut borrow TomlDocument document,
+    u64[0 2 ** 63 - 1] parent,
+    u64[0 2 ** 63 - 1] keyStart,
+    u64[0 2 ** 63 - 1] keyLength,
+    u32[0 max] line,
+    u32[0 max] column)
+{
+    stack u64[0 2 ** 63 - 1] parentPlusOne = (u64[0 2 ** 63 - 1])(parent + 1);
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = parentPlusOne; index < document.Nodes.Length; index += 1)
+    {
+        if (document.Nodes[index].ParentPlusOne != parentPlusOne)
+        {
+            continue;
+        }
+
+        if (!document.Nodes[index].HasKey)
+        {
+            continue;
+        }
+
+        if (document.KeyRangeEquals(index, keyStart, keyLength))
+        {
+            stack TomlKind kind = document.KindAt(index);
+            if (kind == TomlKind.Table)
+            {
+                return TomlResult<u64[0 2 ** 63 - 1]>.Ok(index);
+            }
+
+            // A dotted path may descend through an array of tables: `[a.b]` or
+            // `a.b = ...` after `[[a]]` targets the most recent `a` element.
+            if (kind == TomlKind.Array)
+            {
+                stack i64[min max] element = LastArrayTableElement(document, index);
+                if (element >= 0)
+                {
+                    return TomlResult<u64[0 2 ** 63 - 1]>.Ok((u64[0 2 ** 63 - 1])element);
+                }
+            }
+
+            return TomlResult<u64[0 2 ** 63 - 1]>.Err(TomlError.DuplicateKey
+            {
+                Line: line, Column: column
+            });
+        }
+    }
+
+    stack u64[0 2 ** 63 - 1] created = document.Nodes.Length;
+    stack TomlStatus appended = AppendNode(
+        document,
+        TomlKind.Table,
+        parentPlusOne,
+        true,
+        keyStart,
+        keyLength,
+        0,
+        0,
+        line,
+        column);
+    switch (appended)
+    {
+        case TomlStatus.Err(var error):
+            return TomlResult<u64[0 2 ** 63 - 1]>.Err(error);
+        case TomlStatus.Ok:
+    }
+
+    return TomlResult<u64[0 2 ** 63 - 1]>.Ok(created);
+}
+
+// Returns the index of the last table element of an array-of-tables node, or -1
+// when the array carries no table element (e.g. an inline value array).
+internal finite law i64[min max] LastArrayTableElement(
+    borrow TomlDocument document,
+    u64[0 2 ** 63 - 1] arrayNode)
+{
+    stack u64[0 2 ** 63 - 1] parentPlusOne = (u64[0 2 ** 63 - 1])(arrayNode + 1);
+    stack mut i64[min max] found = -1;
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = parentPlusOne; index < document.Nodes.Length; index += 1)
+    {
+        if (document.Nodes[index].ParentPlusOne == parentPlusOne
+            && document.KindAt(index) == TomlKind.Table)
+        {
+            found = (i64[min max])index;
+        }
+    }
+
+    return found;
+}
+
+// Resolves the final segment of a `[[array.of.tables]]` header under `parent`:
+// finds or creates the array-of-tables container, appends a fresh (keyless)
+// table element to it, and returns that element as the new current table.
+internal fn TomlResult<u64[0 2 ** 63 - 1]> ResolveArrayOfTablesEntry(
+    mut borrow TomlDocument document,
+    u64[0 2 ** 63 - 1] parent,
+    u64[0 2 ** 63 - 1] keyStart,
+    u64[0 2 ** 63 - 1] keyLength,
+    u32[0 max] line,
+    u32[0 max] column)
+{
+    stack u64[0 2 ** 63 - 1] parentPlusOne = (u64[0 2 ** 63 - 1])(parent + 1);
+    stack mut i64[min max] arrayNode = -1;
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = parentPlusOne; index < document.Nodes.Length; index += 1)
+    {
+        if (document.Nodes[index].ParentPlusOne != parentPlusOne)
+        {
+            continue;
+        }
+
+        if (!document.Nodes[index].HasKey)
+        {
+            continue;
+        }
+
+        if (document.KeyRangeEquals(index, keyStart, keyLength))
+        {
+            if (document.KindAt(index) != TomlKind.Array)
+            {
+                return TomlResult<u64[0 2 ** 63 - 1]>.Err(TomlError.DuplicateKey
+                {
+                    Line: line, Column: column
+                });
+            }
+
+            arrayNode = (i64[min max])index;
+        }
+    }
+
+    if (arrayNode < 0)
+    {
+        stack u64[0 2 ** 63 - 1] createdArray = document.Nodes.Length;
+        stack TomlStatus arrayAppended = AppendNode(
+            document, TomlKind.Array, parentPlusOne, true, keyStart, keyLength, 0, 0, line, column);
+        switch (arrayAppended)
+        {
+            case TomlStatus.Err(var error):
+                return TomlResult<u64[0 2 ** 63 - 1]>.Err(error);
+            case TomlStatus.Ok:
+        }
+
+        arrayNode = (i64[min max])createdArray;
+    }
+
+    stack u64[0 2 ** 63 - 1] arrayPlusOne = (u64[0 2 ** 63 - 1])((u64[0 2 ** 63 - 1])arrayNode + 1);
+    stack u64[0 2 ** 63 - 1] element = document.Nodes.Length;
+    stack TomlStatus elementAppended = AppendNode(
+        document, TomlKind.Table, arrayPlusOne, false, 0, 0, 0, 0, line, column);
+    switch (elementAppended)
+    {
+        case TomlStatus.Err(var error):
+            return TomlResult<u64[0 2 ** 63 - 1]>.Err(error);
+        case TomlStatus.Ok:
+    }
+
+    return TomlResult<u64[0 2 ** 63 - 1]>.Ok(element);
+}
+
+// Returns true when a member with the decoded key range already exists.
+internal finite law bool MemberExists(
+    borrow TomlDocument document,
+    u64[0 2 ** 63 - 1] parent,
+    u64[0 2 ** 63 - 1] keyStart,
+    u64[0 2 ** 63 - 1] keyLength)
+{
+    stack u64[0 2 ** 63 - 1] parentPlusOne = (u64[0 2 ** 63 - 1])(parent + 1);
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = parentPlusOne; index < document.Nodes.Length; index += 1)
+    {
+        if (document.Nodes[index].ParentPlusOne != parentPlusOne)
+        {
+            continue;
+        }
+
+        if (!document.Nodes[index].HasKey)
+        {
+            continue;
+        }
+
+        if (document.KeyRangeEquals(index, keyStart, keyLength))
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+// Parses `[dotted.key.path]` and returns the resolved table node.
+internal fn TomlResult<u64[0 2 ** 63 - 1]> ParseTableHeader(
+    mut borrow TomlDocument document,
+    borrow i8[min max][] source,
+    mut borrow TomlCursor cursor)
+{
+    // Consume '['. A second '[' opens an array-of-tables header `[[name]]`.
+    Advance(source, cursor);
+    stack mut bool isArrayOfTables = false;
+    if (cursor.Position < source.Length && source[cursor.Position] == 91)
+    {
+        isArrayOfTables = true;
+        Advance(source, cursor);
+    }
+
+    stack mut u64[0 2 ** 63 - 1] table = TomlRootNode;
+    while willexit (true)
+    {
+        SkipSpaces(source, cursor);
+        stack mut u64[0 2 ** 63 - 1] keyStart = 0;
+        stack mut u64[0 2 ** 63 - 1] keyLength = 0;
+        stack TomlStatus key = ParseKey(document, source, cursor, keyStart, keyLength);
+        switch (key)
+        {
+            case TomlStatus.Err(var error):
+                return TomlResult<u64[0 2 ** 63 - 1]>.Err(error);
+            case TomlStatus.Ok:
+        }
+
+        SkipSpaces(source, cursor);
+        if (cursor.Position >= source.Length)
+        {
+            return TomlResult<u64[0 2 ** 63 - 1]>.Err(TomlError.UnexpectedEndOfInput
+            {
+                Line: cursor.Line, Column: cursor.Column
+            });
+        }
+
+        // An intermediate dotted segment: descend through (or create) the table.
+        if (source[cursor.Position] == 46)
+        {
+            Advance(source, cursor);
+            stack TomlResult<u64[0 2 ** 63 - 1]> descended =
+                ResolveChildTable(document, table, keyStart, keyLength, cursor.Line, cursor.Column);
+            switch (descended)
+            {
+                case TomlResult<u64[0 2 ** 63 - 1]>.Err(var error):
+                    return TomlResult<u64[0 2 ** 63 - 1]>.Err(error);
+                case TomlResult<u64[0 2 ** 63 - 1]>.Ok(var node):
+                    table = node;
+            }
+
+            continue;
+        }
+
+        // The final segment, terminated by ']' (or ']]' for an array of tables).
+        if (source[cursor.Position] == 93)
+        {
+            Advance(source, cursor);
+            if (isArrayOfTables)
+            {
+                if (cursor.Position >= source.Length || source[cursor.Position] != 93)
+                {
+                    return TomlResult<u64[0 2 ** 63 - 1]>.Err(TomlError.UnexpectedCharacter
+                    {
+                        Line: cursor.Line, Column: cursor.Column
+                    });
+                }
+
+                Advance(source, cursor);
+                return ResolveArrayOfTablesEntry(document, table, keyStart, keyLength, cursor.Line, cursor.Column);
+            }
+
+            return ResolveChildTable(document, table, keyStart, keyLength, cursor.Line, cursor.Column);
+        }
+
+        return TomlResult<u64[0 2 ** 63 - 1]>.Err(TomlError.UnexpectedCharacter
+        {
+            Line: cursor.Line, Column: cursor.Column
+        });
+    }
+}
+
+// Parses `dotted.key = value` under `currentTable`.
+internal fn TomlStatus ParseKeyValueLine(
+    mut borrow TomlDocument document,
+    borrow i8[min max][] source,
+    mut borrow TomlCursor cursor,
+    u64[0 2 ** 63 - 1] currentTable)
+{
+    stack mut u64[0 2 ** 63 - 1] table = currentTable;
+    while willexit (true)
+    {
+        SkipSpaces(source, cursor);
+        stack u32[0 max] keyLine = cursor.Line;
+        stack u32[0 max] keyColumn = cursor.Column;
+        stack mut u64[0 2 ** 63 - 1] keyStart = 0;
+        stack mut u64[0 2 ** 63 - 1] keyLength = 0;
+        stack TomlStatus key = ParseKey(document, source, cursor, keyStart, keyLength);
+        switch (key)
+        {
+            case TomlStatus.Err(var error):
+                return TomlStatus.Err(error);
+            case TomlStatus.Ok:
+        }
+
+        SkipSpaces(source, cursor);
+        if (cursor.Position >= source.Length)
+        {
+            return TomlStatus.Err(TomlError.UnexpectedEndOfInput
+            {
+                Line: cursor.Line, Column: cursor.Column
+            });
+        }
+
+        if (source[cursor.Position] == 46)
+        {
+            Advance(source, cursor);
+            stack TomlResult<u64[0 2 ** 63 - 1]> resolved =
+                ResolveChildTable(document, table, keyStart, keyLength, keyLine, keyColumn);
+            switch (resolved)
+            {
+                case TomlResult<u64[0 2 ** 63 - 1]>.Err(var error):
+                    return TomlStatus.Err(error);
+                case TomlResult<u64[0 2 ** 63 - 1]>.Ok(var node):
+                    table = node;
+            }
+
+            continue;
+        }
+
+        if (source[cursor.Position] != 61)
+        {
+            return TomlStatus.Err(TomlError.UnexpectedCharacter
+            {
+                Line: cursor.Line, Column: cursor.Column
+            });
+        }
+
+        if (MemberExists(document, table, keyStart, keyLength))
+        {
+            return TomlStatus.Err(TomlError.DuplicateKey
+            {
+                Line: keyLine, Column: keyColumn
+            });
+        }
+
+        // Consume '='.
+        Advance(source, cursor);
+        SkipSpaces(source, cursor);
+        return ParseValue(document, source, cursor, table, true, keyStart, keyLength, 0);
+    }
+}
+
+// Parses one value and appends its node under `parent`.
+internal fn TomlStatus ParseValue(
+    mut borrow TomlDocument document,
+    borrow i8[min max][] source,
+    mut borrow TomlCursor cursor,
+    u64[0 2 ** 63 - 1] parent,
+    bool hasKey,
+    u64[0 2 ** 63 - 1] keyStart,
+    u64[0 2 ** 63 - 1] keyLength,
+    u8[0 32] depth)
+{
+    if (depth >= TomlMaximumDepth)
+    {
+        return TomlStatus.Err(TomlError.DepthExceeded
+        {
+            Line: cursor.Line, Column: cursor.Column
+        });
+    }
+
+    if (cursor.Position >= source.Length)
+    {
+        return TomlStatus.Err(TomlError.UnexpectedEndOfInput
+        {
+            Line: cursor.Line, Column: cursor.Column
+        });
+    }
+
+    stack u32[0 max] valueLine = cursor.Line;
+    stack u32[0 max] valueColumn = cursor.Column;
+    stack u64[0 2 ** 63 - 1] parentPlusOne = (u64[0 2 ** 63 - 1])(parent + 1);
+    stack i8[min max] first = source[cursor.Position];
+
+    if (first == 34)
+    {
+        stack mut u64[0 2 ** 63 - 1] textStart = 0;
+        stack mut u64[0 2 ** 63 - 1] textLength = 0;
+        stack TomlStatus parsed = ParseBasicString(document, source, cursor, textStart, textLength);
+        switch (parsed)
+        {
+            case TomlStatus.Err(var error):
+                return TomlStatus.Err(error);
+            case TomlStatus.Ok:
+        }
+
+        return AppendNode(document, TomlKind.Text, parentPlusOne, hasKey, keyStart, keyLength, textStart, textLength, valueLine, valueColumn);
+    }
+
+    if (first == 39)
+    {
+        stack mut u64[0 2 ** 63 - 1] textStart = 0;
+        stack mut u64[0 2 ** 63 - 1] textLength = 0;
+        stack TomlStatus parsed = ParseLiteralString(document, source, cursor, textStart, textLength);
+        switch (parsed)
+        {
+            case TomlStatus.Err(var error):
+                return TomlStatus.Err(error);
+            case TomlStatus.Ok:
+        }
+
+        return AppendNode(document, TomlKind.Text, parentPlusOne, hasKey, keyStart, keyLength, textStart, textLength, valueLine, valueColumn);
+    }
+
+    if (first == 91)
+    {
+        return ParseArray(document, source, cursor, parent, hasKey, keyStart, keyLength, depth);
+    }
+
+    if (first == 123)
+    {
+        return ParseInlineTable(document, source, cursor, parent, hasKey, keyStart, keyLength, depth);
+    }
+
+    if (first == 116 || first == 102)
+    {
+        return ParseBoolean(document, source, cursor, parentPlusOne, hasKey, keyStart, keyLength);
+    }
+
+    // RFC 3339 date-times are digit-led, so detect them before the numeric
+    // parser: a well-formed date/date-time/time token routes to ParseDatetime,
+    // otherwise the value falls through to the integer/float parser.
+    if (IsDigitByte(first) && MeasureDatetime(source, cursor.Position) > 0)
+    {
+        return ParseDatetime(document, source, cursor, parentPlusOne, hasKey, keyStart, keyLength);
+    }
+
+    if (first == 43 || first == 45 || IsDigitByte(first))
+    {
+        return ParseInteger(document, source, cursor, parentPlusOne, hasKey, keyStart, keyLength);
+    }
+
+    return TomlStatus.Err(TomlError.UnexpectedCharacter
+    {
+        Line: cursor.Line, Column: cursor.Column
+    });
+}
+
+// Parses `[ value, value, ]` arrays (multiline permitted inside the brackets).
+internal fn TomlStatus ParseArray(
+    mut borrow TomlDocument document,
+    borrow i8[min max][] source,
+    mut borrow TomlCursor cursor,
+    u64[0 2 ** 63 - 1] parent,
+    bool hasKey,
+    u64[0 2 ** 63 - 1] keyStart,
+    u64[0 2 ** 63 - 1] keyLength,
+    u8[0 32] depth)
+{
+    stack u32[0 max] arrayLine = cursor.Line;
+    stack u32[0 max] arrayColumn = cursor.Column;
+    stack u64[0 2 ** 63 - 1] parentPlusOne = (u64[0 2 ** 63 - 1])(parent + 1);
+    stack u64[0 2 ** 63 - 1] arrayNode = document.Nodes.Length;
+    stack TomlStatus opened = AppendNode(document, TomlKind.Array, parentPlusOne, hasKey, keyStart, keyLength, 0, 0, arrayLine, arrayColumn);
+    switch (opened)
+    {
+        case TomlStatus.Err(var error):
+            return TomlStatus.Err(error);
+        case TomlStatus.Ok:
+    }
+
+    // Consume '['.
+    Advance(source, cursor);
+
+    while willexit (true)
+    {
+        SkipTriviaLines(source, cursor);
+        if (cursor.Position >= source.Length)
+        {
+            return TomlStatus.Err(TomlError.UnterminatedString
+            {
+                Line: arrayLine, Column: arrayColumn
+            });
+        }
+
+        if (source[cursor.Position] == 93)
+        {
+            Advance(source, cursor);
+            return TomlStatus.Ok;
+        }
+
+        stack TomlStatus element = ParseValue(document, source, cursor, arrayNode, false, 0, 0, (u8[0 32])(depth + 1));
+        switch (element)
+        {
+            case TomlStatus.Err(var error):
+                return TomlStatus.Err(error);
+            case TomlStatus.Ok:
+        }
+
+        SkipTriviaLines(source, cursor);
+        if (cursor.Position >= source.Length)
+        {
+            return TomlStatus.Err(TomlError.UnterminatedString
+            {
+                Line: arrayLine, Column: arrayColumn
+            });
+        }
+
+        if (source[cursor.Position] == 44)
+        {
+            Advance(source, cursor);
+            continue;
+        }
+
+        if (source[cursor.Position] == 93)
+        {
+            Advance(source, cursor);
+            return TomlStatus.Ok;
+        }
+
+        return TomlStatus.Err(TomlError.UnexpectedCharacter
+        {
+            Line: cursor.Line, Column: cursor.Column
+        });
+    }
+}
+
+// Parses `{ key = value, key = value }` inline tables (single line).
+internal fn TomlStatus ParseInlineTable(
+    mut borrow TomlDocument document,
+    borrow i8[min max][] source,
+    mut borrow TomlCursor cursor,
+    u64[0 2 ** 63 - 1] parent,
+    bool hasKey,
+    u64[0 2 ** 63 - 1] keyStart,
+    u64[0 2 ** 63 - 1] keyLength,
+    u8[0 32] depth)
+{
+    stack u32[0 max] tableLine = cursor.Line;
+    stack u32[0 max] tableColumn = cursor.Column;
+    stack u64[0 2 ** 63 - 1] parentPlusOne = (u64[0 2 ** 63 - 1])(parent + 1);
+    stack u64[0 2 ** 63 - 1] tableNode = document.Nodes.Length;
+    stack TomlStatus opened = AppendNode(document, TomlKind.Table, parentPlusOne, hasKey, keyStart, keyLength, 0, 0, tableLine, tableColumn);
+    switch (opened)
+    {
+        case TomlStatus.Err(var error):
+            return TomlStatus.Err(error);
+        case TomlStatus.Ok:
+    }
+
+    // Consume '{'.
+    Advance(source, cursor);
+    SkipSpaces(source, cursor);
+
+    if (cursor.Position < source.Length && source[cursor.Position] == 125)
+    {
+        Advance(source, cursor);
+        return TomlStatus.Ok;
+    }
+
+    while willexit (true)
+    {
+        SkipSpaces(source, cursor);
+        stack u32[0 max] keyLine = cursor.Line;
+        stack u32[0 max] keyColumn = cursor.Column;
+        stack mut u64[0 2 ** 63 - 1] memberKeyStart = 0;
+        stack mut u64[0 2 ** 63 - 1] memberKeyLength = 0;
+        stack TomlStatus key = ParseKey(document, source, cursor, memberKeyStart, memberKeyLength);
+        switch (key)
+        {
+            case TomlStatus.Err(var error):
+                return TomlStatus.Err(error);
+            case TomlStatus.Ok:
+        }
+
+        SkipSpaces(source, cursor);
+        if (cursor.Position >= source.Length || source[cursor.Position] != 61)
+        {
+            return TomlStatus.Err(TomlError.UnexpectedCharacter
+            {
+                Line: cursor.Line, Column: cursor.Column
+            });
+        }
+
+        if (MemberExists(document, tableNode, memberKeyStart, memberKeyLength))
+        {
+            return TomlStatus.Err(TomlError.DuplicateKey
+            {
+                Line: keyLine, Column: keyColumn
+            });
+        }
+
+        // Consume '='.
+        Advance(source, cursor);
+        SkipSpaces(source, cursor);
+        stack TomlStatus member = ParseValue(document, source, cursor, tableNode, true, memberKeyStart, memberKeyLength, (u8[0 32])(depth + 1));
+        switch (member)
+        {
+            case TomlStatus.Err(var error):
+                return TomlStatus.Err(error);
+            case TomlStatus.Ok:
+        }
+
+        SkipSpaces(source, cursor);
+        if (cursor.Position >= source.Length)
+        {
+            return TomlStatus.Err(TomlError.UnterminatedString
+            {
+                Line: tableLine, Column: tableColumn
+            });
+        }
+
+        if (source[cursor.Position] == 44)
+        {
+            Advance(source, cursor);
+            continue;
+        }
+
+        if (source[cursor.Position] == 125)
+        {
+            Advance(source, cursor);
+            return TomlStatus.Ok;
+        }
+
+        return TomlStatus.Err(TomlError.UnexpectedCharacter
+        {
+            Line: cursor.Line, Column: cursor.Column
+        });
+    }
+}
+
+// Parses a `"basic string"` with escapes into DecodedText.
+internal fn TomlStatus ParseBasicString(
+    mut borrow TomlDocument document,
+    borrow i8[min max][] source,
+    mut borrow TomlCursor cursor,
+    out u64[0 2 ** 63 - 1] textStart,
+    out u64[0 2 ** 63 - 1] textLength)
+{
+    stack u64[0 2 ** 63 - 1] startOffset = document.DecodedText.Length;
+    textStart = startOffset;
+    textLength = 0;
+    stack u32[0 max] openLine = cursor.Line;
+    stack u32[0 max] openColumn = cursor.Column;
+
+    // Consume the opening quote.
+    Advance(source, cursor);
+
+    // A third quote opens a multiline basic string `"""..."""`.
+    if (cursor.Position + 1 < source.Length
+        && source[cursor.Position] == 34
+        && source[(u64[0 2 ** 63 - 1])(cursor.Position + 1)] == 34)
+    {
+        // Consume the second and third opening quotes, then decode the body.
+        Advance(source, cursor);
+        Advance(source, cursor);
+        return ParseMultilineBasicStringBody(document, source, cursor, openLine, openColumn, startOffset, textLength);
+    }
+
+    while willexit (true)
+    {
+        if (cursor.Position >= source.Length)
+        {
+            return TomlStatus.Err(TomlError.UnterminatedString
+            {
+                Line: openLine, Column: openColumn
+            });
+        }
+
+        stack i8[min max] value = source[cursor.Position];
+        if (value == 34)
+        {
+            Advance(source, cursor);
+            textLength = (u64[0 2 ** 63 - 1])(document.DecodedText.Length - textStart);
+            return TomlStatus.Ok;
+        }
+
+        if (value == 10 || value == 13)
+        {
+            return TomlStatus.Err(TomlError.UnterminatedString
+            {
+                Line: openLine, Column: openColumn
+            });
+        }
+
+        if (value == 92)
+        {
+            stack TomlStatus escaped = ParseEscape(document, source, cursor);
+            switch (escaped)
+            {
+                case TomlStatus.Err(var error):
+                    return TomlStatus.Err(error);
+                case TomlStatus.Ok:
+            }
+
+            continue;
+        }
+
+        stack TomlStatus appended = AppendDecodedByte(document, value);
+        switch (appended)
+        {
+            case TomlStatus.Err(var error):
+                return TomlStatus.Err(error);
+            case TomlStatus.Ok:
+        }
+
+        Advance(source, cursor);
+    }
+}
+
+// Parses one backslash escape inside a basic string.
+internal fn TomlStatus ParseEscape(
+    mut borrow TomlDocument document,
+    borrow i8[min max][] source,
+    mut borrow TomlCursor cursor)
+{
+    stack u32[0 max] escapeLine = cursor.Line;
+    stack u32[0 max] escapeColumn = cursor.Column;
+
+    // Consume the backslash.
+    Advance(source, cursor);
+    if (cursor.Position >= source.Length)
+    {
+        return TomlStatus.Err(TomlError.UnexpectedEndOfInput
+        {
+            Line: escapeLine, Column: escapeColumn
+        });
+    }
+
+    stack i8[min max] value = source[cursor.Position];
+    if (value == 34 || value == 92)
+    {
+        Advance(source, cursor);
+        return AppendDecodedByte(document, value);
+    }
+
+    if (value == 98)
+    {
+        Advance(source, cursor);
+        return AppendDecodedByte(document, 8);
+    }
+
+    if (value == 116)
+    {
+        Advance(source, cursor);
+        return AppendDecodedByte(document, 9);
+    }
+
+    if (value == 110)
+    {
+        Advance(source, cursor);
+        return AppendDecodedByte(document, 10);
+    }
+
+    if (value == 102)
+    {
+        Advance(source, cursor);
+        return AppendDecodedByte(document, 12);
+    }
+
+    if (value == 114)
+    {
+        Advance(source, cursor);
+        return AppendDecodedByte(document, 13);
+    }
+
+    if (value == 117)
+    {
+        Advance(source, cursor);
+        return ParseUnicodeEscape(document, source, cursor, escapeLine, escapeColumn, 4);
+    }
+
+    if (value == 85)
+    {
+        Advance(source, cursor);
+        return ParseUnicodeEscape(document, source, cursor, escapeLine, escapeColumn, 8);
+    }
+
+    return TomlStatus.Err(TomlError.InvalidEscape
+    {
+        Line: escapeLine, Column: escapeColumn
+    });
+}
+
+internal finite law i32[min max] HexDigitValue(i8[min max] value)
+{
+    if (value >= 48 && value <= 57)
+    {
+        return (i32[min max])(value - 48);
+    }
+
+    if (value >= 65 && value <= 70)
+    {
+        return (i32[min max])(value - 55);
+    }
+
+    if (value >= 97 && value <= 102)
+    {
+        return (i32[min max])(value - 87);
+    }
+
+    return -1;
+}
+
+// Decodes a `\uXXXX` (4-digit, basic multilingual plane) or `\UXXXXXXXX`
+// (8-digit, full Unicode) escape as UTF-8 bytes. `digitCount` is 4 or 8.
+// Code points must be Unicode scalar values: at most U+10FFFF and not in the
+// surrogate range U+D800..U+DFFF, otherwise the escape is rejected.
+internal fn TomlStatus ParseUnicodeEscape(
+    mut borrow TomlDocument document,
+    borrow i8[min max][] source,
+    mut borrow TomlCursor cursor,
+    u32[0 max] escapeLine,
+    u32[0 max] escapeColumn,
+    u8[0 8] digitCount)
+{
+    stack mut u64[0 2 ** 63 - 1] codePoint = 0;
+    for willexit (stack mut u8[0 8] count = 0; count < digitCount; count += 1)
+    {
+        if (cursor.Position >= source.Length)
+        {
+            return TomlStatus.Err(TomlError.UnexpectedEndOfInput
+            {
+                Line: escapeLine, Column: escapeColumn
+            });
+        }
+
+        stack i32[min max] digit = HexDigitValue(source[cursor.Position]);
+        if (digit < 0)
+        {
+            return TomlStatus.Err(TomlError.InvalidEscape
+            {
+                Line: escapeLine, Column: escapeColumn
+            });
+        }
+
+        codePoint = (u64[0 2 ** 63 - 1])(codePoint * 16 + (u64[0 2 ** 63 - 1])digit);
+        Advance(source, cursor);
+    }
+
+    // Reject non-scalar code points (UTF-16 surrogates and beyond U+10FFFF).
+    if (codePoint > 1114111
+        || (codePoint >= 55296 && codePoint <= 57343))
+    {
+        return TomlStatus.Err(TomlError.InvalidEscape
+        {
+            Line: escapeLine, Column: escapeColumn
+        });
+    }
+
+    if (codePoint < 128)
+    {
+        return AppendDecodedByte(document, (i8[min max])codePoint);
+    }
+
+    if (codePoint < 2048)
+    {
+        stack TomlStatus high = AppendDecodedByte(document, (i8[min max])(192 +% (codePoint / 64)));
+        switch (high)
+        {
+            case TomlStatus.Err(var error):
+                return TomlStatus.Err(error);
+            case TomlStatus.Ok:
+        }
+
+        return AppendDecodedByte(document, (i8[min max])(128 +% (codePoint % 64)));
+    }
+
+    if (codePoint < 65536)
+    {
+        stack TomlStatus first = AppendDecodedByte(document, (i8[min max])(224 +% (codePoint / 4096)));
+        switch (first)
+        {
+            case TomlStatus.Err(var error):
+                return TomlStatus.Err(error);
+            case TomlStatus.Ok:
+        }
+
+        stack TomlStatus second = AppendDecodedByte(document, (i8[min max])(128 +% ((codePoint / 64) % 64)));
+        switch (second)
+        {
+            case TomlStatus.Err(var error):
+                return TomlStatus.Err(error);
+            case TomlStatus.Ok:
+        }
+
+        return AppendDecodedByte(document, (i8[min max])(128 +% (codePoint % 64)));
+    }
+
+    // Four-byte UTF-8 for supplementary-plane code points (U+10000..U+10FFFF).
+    stack TomlStatus lead = AppendDecodedByte(document, (i8[min max])(240 +% (codePoint / 262144)));
+    switch (lead)
+    {
+        case TomlStatus.Err(var error):
+            return TomlStatus.Err(error);
+        case TomlStatus.Ok:
+    }
+
+    stack TomlStatus continuation1 = AppendDecodedByte(document, (i8[min max])(128 +% ((codePoint / 4096) % 64)));
+    switch (continuation1)
+    {
+        case TomlStatus.Err(var error):
+            return TomlStatus.Err(error);
+        case TomlStatus.Ok:
+    }
+
+    stack TomlStatus continuation2 = AppendDecodedByte(document, (i8[min max])(128 +% ((codePoint / 64) % 64)));
+    switch (continuation2)
+    {
+        case TomlStatus.Err(var error):
+            return TomlStatus.Err(error);
+        case TomlStatus.Ok:
+    }
+
+    return AppendDecodedByte(document, (i8[min max])(128 +% (codePoint % 64)));
+}
+
+// Parses a `'literal string'` (no escapes) into DecodedText.
+internal fn TomlStatus ParseLiteralString(
+    mut borrow TomlDocument document,
+    borrow i8[min max][] source,
+    mut borrow TomlCursor cursor,
+    out u64[0 2 ** 63 - 1] textStart,
+    out u64[0 2 ** 63 - 1] textLength)
+{
+    stack u64[0 2 ** 63 - 1] startOffset = document.DecodedText.Length;
+    textStart = startOffset;
+    textLength = 0;
+    stack u32[0 max] openLine = cursor.Line;
+    stack u32[0 max] openColumn = cursor.Column;
+
+    // Consume the opening quote.
+    Advance(source, cursor);
+
+    // A third quote opens a multiline literal string `'''...'''`.
+    if (cursor.Position + 1 < source.Length
+        && source[cursor.Position] == 39
+        && source[(u64[0 2 ** 63 - 1])(cursor.Position + 1)] == 39)
+    {
+        // Consume the second and third opening quotes, then decode the body.
+        Advance(source, cursor);
+        Advance(source, cursor);
+        return ParseMultilineLiteralStringBody(document, source, cursor, openLine, openColumn, startOffset, textLength);
+    }
+
+    while willexit (true)
+    {
+        if (cursor.Position >= source.Length)
+        {
+            return TomlStatus.Err(TomlError.UnterminatedString
+            {
+                Line: openLine, Column: openColumn
+            });
+        }
+
+        stack i8[min max] value = source[cursor.Position];
+        if (value == 39)
+        {
+            Advance(source, cursor);
+            textLength = (u64[0 2 ** 63 - 1])(document.DecodedText.Length - textStart);
+            return TomlStatus.Ok;
+        }
+
+        if (value == 10 || value == 13)
+        {
+            return TomlStatus.Err(TomlError.UnterminatedString
+            {
+                Line: openLine, Column: openColumn
+            });
+        }
+
+        stack TomlStatus appended = AppendDecodedByte(document, value);
+        switch (appended)
+        {
+            case TomlStatus.Err(var error):
+                return TomlStatus.Err(error);
+            case TomlStatus.Ok:
+        }
+
+        Advance(source, cursor);
+    }
+}
+
+// Decodes the body of a multiline basic string `"""..."""` after the opening
+// delimiter has been consumed, appending decoded bytes into DecodedText.
+//
+// TOML 1.0 rules applied here:
+//   - a single newline immediately after the opening delimiter is trimmed
+//     (both `\n` and `\r\n`);
+//   - the standard basic-string escapes apply (`\b \t \n \f \r \" \\ \uXXXX`);
+//   - a `\` whose rest of the line is only whitespace before a newline is a
+//     line continuation: the backslash, the trailing whitespace, the newline,
+//     and the leading whitespace of the next line are all trimmed;
+//   - literal newlines inside the body are kept verbatim;
+//   - embedded `"` and `""` are allowed; the closing delimiter is `"""`, and a
+//     run of N consecutive quotes contributes N - 3 literal quotes before the
+//     close.
+internal fn TomlStatus ParseMultilineBasicStringBody(
+    mut borrow TomlDocument document,
+    borrow i8[min max][] source,
+    mut borrow TomlCursor cursor,
+    u32[0 max] openLine,
+    u32[0 max] openColumn,
+    u64[0 2 ** 63 - 1] textStart,
+    out u64[0 2 ** 63 - 1] textLength)
+{
+    textLength = 0;
+
+    // Trim a single newline immediately after the opening delimiter.
+    if (cursor.Position < source.Length && source[cursor.Position] == 13)
+    {
+        Advance(source, cursor);
+    }
+
+    if (cursor.Position < source.Length && source[cursor.Position] == 10)
+    {
+        Advance(source, cursor);
+    }
+
+    while willexit (true)
+    {
+        if (cursor.Position >= source.Length)
+        {
+            return TomlStatus.Err(TomlError.UnterminatedString
+            {
+                Line: openLine, Column: openColumn
+            });
+        }
+
+        stack i8[min max] value = source[cursor.Position];
+
+        // A run of quotes: 3 close the string, any extra (N - 3, up to two)
+        // are literal content quotes emitted before the close.
+        if (value == 34)
+        {
+            stack mut u64[0 2 ** 63 - 1] runStart = cursor.Position;
+            stack mut u64[0 2 ** 63 - 1] runLength = 0;
+            while willexit (cursor.Position < source.Length && source[cursor.Position] == 34)
+            {
+                runLength += 1;
+                Advance(source, cursor);
+            }
+
+            if (runLength < 3)
+            {
+                // Fewer than three quotes are all literal content.
+                for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < runLength; index += 1)
+                {
+                    stack TomlStatus quoteAppended = AppendDecodedByte(document, 34);
+                    switch (quoteAppended)
+                    {
+                        case TomlStatus.Err(var quoteError):
+                            return TomlStatus.Err(quoteError);
+                        case TomlStatus.Ok:
+                    }
+                }
+
+                continue;
+            }
+
+            // Three or more quotes: emit (runLength - 3) literal quotes, then
+            // the final three are the closing delimiter.
+            stack u64[0 2 ** 63 - 1] contentQuotes = (u64[0 2 ** 63 - 1])(runLength - 3);
+            for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < contentQuotes; index += 1)
+            {
+                stack TomlStatus contentAppended = AppendDecodedByte(document, 34);
+                switch (contentAppended)
+                {
+                    case TomlStatus.Err(var contentError):
+                        return TomlStatus.Err(contentError);
+                    case TomlStatus.Ok:
+                }
+            }
+
+            textLength = (u64[0 2 ** 63 - 1])(document.DecodedText.Length - textStart);
+            return TomlStatus.Ok;
+        }
+
+        if (value == 92)
+        {
+            // A line continuation is `\` followed by only whitespace until a
+            // newline. Peek past the backslash to classify without consuming it
+            // when it is an ordinary escape.
+            if (IsLineContinuation(source, cursor.Position))
+            {
+                // Consume the backslash, any trailing spaces/tabs, then all the
+                // following whitespace (spaces, tabs, and newlines) until the
+                // next non-whitespace byte or the closing delimiter.
+                Advance(source, cursor);
+                while willexit (cursor.Position < source.Length && IsMultilineTrimByte(source[cursor.Position]))
+                {
+                    Advance(source, cursor);
+                }
+
+                continue;
+            }
+
+            stack TomlStatus escaped = ParseEscape(document, source, cursor);
+            switch (escaped)
+            {
+                case TomlStatus.Err(var escapeError):
+                    return TomlStatus.Err(escapeError);
+                case TomlStatus.Ok:
+            }
+
+            continue;
+        }
+
+        // Any other byte, including literal newlines, is kept verbatim.
+        stack TomlStatus appended = AppendDecodedByte(document, value);
+        switch (appended)
+        {
+            case TomlStatus.Err(var error):
+                return TomlStatus.Err(error);
+            case TomlStatus.Ok:
+        }
+
+        Advance(source, cursor);
+    }
+}
+
+// True when the backslash at `position` begins a line continuation: it is
+// followed only by spaces/tabs and then a newline (or `\r\n`).
+internal finite law bool IsLineContinuation(borrow i8[min max][] source, u64[0 2 ** 63 - 1] position)
+{
+    stack mut u64[0 2 ** 63 - 1] scan = (u64[0 2 ** 63 - 1])(position + 1);
+    while willexit (scan < source.Length)
+    {
+        stack i8[min max] value = source[scan];
+        if (value == 32 || value == 9)
+        {
+            scan += 1;
+            continue;
+        }
+
+        if (value == 13)
+        {
+            stack u64[0 2 ** 63 - 1] next = (u64[0 2 ** 63 - 1])(scan + 1);
+            return next < source.Length && source[next] == 10;
+        }
+
+        return value == 10;
+    }
+
+    return false;
+}
+
+// True for the whitespace bytes a line continuation trims (spaces, tabs, and
+// newline bytes).
+internal finite law bool IsMultilineTrimByte(i8[min max] value)
+{
+    return value == 32 || value == 9 || value == 10 || value == 13;
+}
+
+// Decodes the body of a multiline literal string `'''...'''` after the opening
+// delimiter has been consumed. Verbatim: no escapes and no line continuation;
+// only a single leading newline (after the opening delimiter) is trimmed. The
+// closing delimiter is `'''`, and a run of N consecutive quotes contributes
+// N - 3 literal quotes before the close.
+internal fn TomlStatus ParseMultilineLiteralStringBody(
+    mut borrow TomlDocument document,
+    borrow i8[min max][] source,
+    mut borrow TomlCursor cursor,
+    u32[0 max] openLine,
+    u32[0 max] openColumn,
+    u64[0 2 ** 63 - 1] textStart,
+    out u64[0 2 ** 63 - 1] textLength)
+{
+    textLength = 0;
+
+    // Trim a single newline immediately after the opening delimiter.
+    if (cursor.Position < source.Length && source[cursor.Position] == 13)
+    {
+        Advance(source, cursor);
+    }
+
+    if (cursor.Position < source.Length && source[cursor.Position] == 10)
+    {
+        Advance(source, cursor);
+    }
+
+    while willexit (true)
+    {
+        if (cursor.Position >= source.Length)
+        {
+            return TomlStatus.Err(TomlError.UnterminatedString
+            {
+                Line: openLine, Column: openColumn
+            });
+        }
+
+        stack i8[min max] value = source[cursor.Position];
+
+        if (value == 39)
+        {
+            stack mut u64[0 2 ** 63 - 1] runLength = 0;
+            while willexit (cursor.Position < source.Length && source[cursor.Position] == 39)
+            {
+                runLength += 1;
+                Advance(source, cursor);
+            }
+
+            if (runLength < 3)
+            {
+                for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < runLength; index += 1)
+                {
+                    stack TomlStatus quoteAppended = AppendDecodedByte(document, 39);
+                    switch (quoteAppended)
+                    {
+                        case TomlStatus.Err(var quoteError):
+                            return TomlStatus.Err(quoteError);
+                        case TomlStatus.Ok:
+                    }
+                }
+
+                continue;
+            }
+
+            stack u64[0 2 ** 63 - 1] contentQuotes = (u64[0 2 ** 63 - 1])(runLength - 3);
+            for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < contentQuotes; index += 1)
+            {
+                stack TomlStatus contentAppended = AppendDecodedByte(document, 39);
+                switch (contentAppended)
+                {
+                    case TomlStatus.Err(var contentError):
+                        return TomlStatus.Err(contentError);
+                    case TomlStatus.Ok:
+                }
+            }
+
+            textLength = (u64[0 2 ** 63 - 1])(document.DecodedText.Length - textStart);
+            return TomlStatus.Ok;
+        }
+
+        // Everything else, including backslashes and literal newlines, is
+        // verbatim.
+        stack TomlStatus appended = AppendDecodedByte(document, value);
+        switch (appended)
+        {
+            case TomlStatus.Err(var error):
+                return TomlStatus.Err(error);
+            case TomlStatus.Ok:
+        }
+
+        Advance(source, cursor);
+    }
+}
+
+// Parses `true` or `false`.
+internal fn TomlStatus ParseBoolean(
+    mut borrow TomlDocument document,
+    borrow i8[min max][] source,
+    mut borrow TomlCursor cursor,
+    u64[0 2 ** 63 - 1] parentPlusOne,
+    bool hasKey,
+    u64[0 2 ** 63 - 1] keyStart,
+    u64[0 2 ** 63 - 1] keyLength)
+{
+    stack u32[0 max] valueLine = cursor.Line;
+    stack u32[0 max] valueColumn = cursor.Column;
+
+    stack bool isTrue = MatchesWord(source, cursor.Position, "true");
+    stack bool isFalse = MatchesWord(source, cursor.Position, "false");
+
+    if (isTrue)
+    {
+        AdvanceBy(source, cursor, 4);
+        return AppendNode(document, TomlKind.True, parentPlusOne, hasKey, keyStart, keyLength, 0, 0, valueLine, valueColumn);
+    }
+
+    if (isFalse)
+    {
+        AdvanceBy(source, cursor, 5);
+        return AppendNode(document, TomlKind.False, parentPlusOne, hasKey, keyStart, keyLength, 0, 0, valueLine, valueColumn);
+    }
+
+    return TomlStatus.Err(TomlError.UnexpectedCharacter
+    {
+        Line: valueLine, Column: valueColumn
+    });
+}
+
+internal finite bool MatchesWord(
+    borrow i8[min max][] source,
+    u64[0 2 ** 63 - 1] position,
+    ascii word)
+{
+    stack i64[min max] signedLength = System.Text.AsciiLength(word);
+    if (signedLength <= 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] wordLength = (u64[0 2 ** 63 - 1])signedLength;
+    if (position + wordLength > source.Length)
+    {
+        return false;
+    }
+
+    // Only the raw word bytes still need an audited pointer walk.
+    unsafe
+    {
+        stack rawptr<i8[min max]> wordData = System.Text.AsciiData(word);
+        if (wordData == null)
+        {
+            return false;
+        }
+
+        for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < wordLength; index += 1)
+        {
+            if (source[position + index] != *(&wordData[index]))
+            {
+                return false;
+            }
+        }
+    }
+
+    // The word must end the token: the next byte may not extend a bare word.
+    stack u64[0 2 ** 63 - 1] next = (u64[0 2 ** 63 - 1])(position + wordLength);
+    if (next < source.Length && IsBareKeyByte(source[next]))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+internal fn void AdvanceBy(
+    borrow i8[min max][] source,
+    mut borrow TomlCursor cursor,
+    u8[0 8] count)
+{
+    for willexit (stack mut u8[0 8] step = 0; step < count; step += 1)
+    {
+        Advance(source, cursor);
+    }
+
+    return;
+}
+
+// Parses a decimal integer with optional sign and underscore separators into
+// a normalized token (sign and digits only) in DecodedText.
+// True when `index` is in range and holds an ASCII digit.
+internal finite law bool IsDigitAt(borrow i8[min max][] source, u64[0 2 ** 63 - 1] index)
+{
+    return index < source.Length && IsDigitByte(source[index]);
+}
+
+// True when `index` is in range and holds `expected`.
+internal finite law bool ByteEquals(borrow i8[min max][] source, u64[0 2 ** 63 - 1] index, i8[min max] expected)
+{
+    return index < source.Length && source[index] == expected;
+}
+
+// Returns the end offset (one past the last byte) of a `YYYY-MM-DD` full date at
+// `start`, or -1 when the bytes are not a full date. Validates structure
+// (separators and digit positions), not calendar ranges.
+internal finite law i64[min max] MeasureDate(borrow i8[min max][] source, u64[0 2 ** 63 - 1] start)
+{
+    if (IsDigitAt(source, start)
+        && IsDigitAt(source, (u64[0 2 ** 63 - 1])(start + 1))
+        && IsDigitAt(source, (u64[0 2 ** 63 - 1])(start + 2))
+        && IsDigitAt(source, (u64[0 2 ** 63 - 1])(start + 3))
+        && ByteEquals(source, (u64[0 2 ** 63 - 1])(start + 4), 45)
+        && IsDigitAt(source, (u64[0 2 ** 63 - 1])(start + 5))
+        && IsDigitAt(source, (u64[0 2 ** 63 - 1])(start + 6))
+        && ByteEquals(source, (u64[0 2 ** 63 - 1])(start + 7), 45)
+        && IsDigitAt(source, (u64[0 2 ** 63 - 1])(start + 8))
+        && IsDigitAt(source, (u64[0 2 ** 63 - 1])(start + 9)))
+    {
+        return (i64[min max])(start + 10);
+    }
+
+    return -1;
+}
+
+// Returns the end offset of a `HH:MM:SS` partial time (with an optional
+// `.` fractional-seconds run) at `start`, or -1 when it is not a partial time.
+internal finite law i64[min max] MeasureTime(borrow i8[min max][] source, u64[0 2 ** 63 - 1] start)
+{
+    if (!IsDigitAt(source, start)
+        || !IsDigitAt(source, (u64[0 2 ** 63 - 1])(start + 1))
+        || !ByteEquals(source, (u64[0 2 ** 63 - 1])(start + 2), 58)
+        || !IsDigitAt(source, (u64[0 2 ** 63 - 1])(start + 3))
+        || !IsDigitAt(source, (u64[0 2 ** 63 - 1])(start + 4))
+        || !ByteEquals(source, (u64[0 2 ** 63 - 1])(start + 5), 58)
+        || !IsDigitAt(source, (u64[0 2 ** 63 - 1])(start + 6))
+        || !IsDigitAt(source, (u64[0 2 ** 63 - 1])(start + 7)))
+    {
+        return -1;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] pos = (u64[0 2 ** 63 - 1])(start + 8);
+    if (ByteEquals(source, pos, 46))
+    {
+        pos = (u64[0 2 ** 63 - 1])(pos + 1);
+        if (!IsDigitAt(source, pos))
+        {
+            return -1;
+        }
+
+        while willexit (IsDigitAt(source, pos))
+        {
+            pos = (u64[0 2 ** 63 - 1])(pos + 1);
+        }
+    }
+
+    return (i64[min max])pos;
+}
+
+// Returns the end offset of a time zone offset (`Z`, `z`, or `(+|-)HH:MM`) at
+// `start`. When no offset byte is present, returns `start` (a zero-length, valid
+// "no offset"); -1 marks a malformed numeric offset.
+internal finite law i64[min max] MeasureOffset(borrow i8[min max][] source, u64[0 2 ** 63 - 1] start)
+{
+    if (start >= source.Length)
+    {
+        return (i64[min max])start;
+    }
+
+    stack i8[min max] marker = source[start];
+    if (marker == 90 || marker == 122)
+    {
+        return (i64[min max])(start + 1);
+    }
+
+    if (marker == 43 || marker == 45)
+    {
+        if (IsDigitAt(source, (u64[0 2 ** 63 - 1])(start + 1))
+            && IsDigitAt(source, (u64[0 2 ** 63 - 1])(start + 2))
+            && ByteEquals(source, (u64[0 2 ** 63 - 1])(start + 3), 58)
+            && IsDigitAt(source, (u64[0 2 ** 63 - 1])(start + 4))
+            && IsDigitAt(source, (u64[0 2 ** 63 - 1])(start + 5)))
+        {
+            return (i64[min max])(start + 6);
+        }
+
+        return -1;
+    }
+
+    return (i64[min max])start;
+}
+
+// Returns the byte length of a complete RFC 3339 date-time token at `start`
+// (local time, local date, local date-time, or offset date-time), or -1 when
+// the bytes are not a valid date-time. A single space may separate the date and
+// time only when a time digit follows it.
+internal finite law i64[min max] MeasureDatetime(borrow i8[min max][] source, u64[0 2 ** 63 - 1] start)
+{
+    // Time-led `HH:MM:SS` is a local time.
+    if (IsDigitAt(source, start)
+        && IsDigitAt(source, (u64[0 2 ** 63 - 1])(start + 1))
+        && ByteEquals(source, (u64[0 2 ** 63 - 1])(start + 2), 58))
+    {
+        stack i64[min max] timeEnd = MeasureTime(source, start);
+        if (timeEnd < 0)
+        {
+            return -1;
+        }
+
+        return (i64[min max])(timeEnd - (i64[min max])start);
+    }
+
+    // Date-led: a full date, optionally followed by a time and offset.
+    stack i64[min max] dateEnd = MeasureDate(source, start);
+    if (dateEnd < 0)
+    {
+        return -1;
+    }
+
+    stack u64[0 2 ** 63 - 1] afterDate = (u64[0 2 ** 63 - 1])dateEnd;
+    if (afterDate >= source.Length)
+    {
+        return (i64[min max])((i64[min max])afterDate - (i64[min max])start);
+    }
+
+    stack i8[min max] separator = source[afterDate];
+    stack mut bool hasTime = separator == 84 || separator == 116;
+    if (separator == 32 && IsDigitAt(source, (u64[0 2 ** 63 - 1])(afterDate + 1)))
+    {
+        hasTime = true;
+    }
+
+    if (!hasTime)
+    {
+        return (i64[min max])((i64[min max])afterDate - (i64[min max])start);
+    }
+
+    stack i64[min max] timeEnd = MeasureTime(source, (u64[0 2 ** 63 - 1])(afterDate + 1));
+    if (timeEnd < 0)
+    {
+        return -1;
+    }
+
+    stack i64[min max] offsetEnd = MeasureOffset(source, (u64[0 2 ** 63 - 1])timeEnd);
+    if (offsetEnd < 0)
+    {
+        return -1;
+    }
+
+    return (i64[min max])(offsetEnd - (i64[min max])start);
+}
+
+// Reads the byte at `index` widened to i32, or -1 when `index` is out of range.
+internal finite law i32[min max] DatetimeByteAt(borrow i8[min max][] source, u64[0 2 ** 63 - 1] index)
+{
+    if (index >= source.Length)
+    {
+        return -1;
+    }
+
+    return (i32[min max])source[index];
+}
+
+// The decimal value (0-9) of the digit byte at `index`, or -1 when the byte is
+// missing or not a digit.
+internal finite law i8[-1 9] DatetimeDigitAt(borrow i8[min max][] source, u64[0 2 ** 63 - 1] index)
+{
+    stack i32[min max] value = DatetimeByteAt(source, index);
+    if (value < 48 || value > 57)
+    {
+        return -1;
+    }
+
+    return (i8[-1 9])(value - 48);
+}
+
+// The two-digit decimal value at `index`, or -1 when either byte is not a digit.
+internal finite law i8[-1 99] DatetimeTwoDigit(borrow i8[min max][] source, u64[0 2 ** 63 - 1] index)
+{
+    stack i8[-1 9] high = DatetimeDigitAt(source, index);
+    stack i8[-1 9] low = DatetimeDigitAt(source, (u64[0 2 ** 63 - 1])(index + 1));
+    if (high < 0 || low < 0)
+    {
+        return -1;
+    }
+
+    return (i8[-1 99])(high * 10 + low);
+}
+
+// The four-digit decimal value at `index`, or -1 when any byte is not a digit.
+internal finite law i16[-1 9999] DatetimeFourDigit(borrow i8[min max][] source, u64[0 2 ** 63 - 1] index)
+{
+    stack i8[-1 99] high = DatetimeTwoDigit(source, index);
+    stack i8[-1 99] low = DatetimeTwoDigit(source, (u64[0 2 ** 63 - 1])(index + 2));
+    if (high < 0 || low < 0)
+    {
+        return -1;
+    }
+
+    // Widen before `* 100`: the i8 operand range would overflow on the multiply.
+    return (i16[-1 9999])((i32[min max])high * 100 + (i32[min max])low);
+}
+
+// Proleptic Gregorian leap-year test used for day-of-month validation.
+internal finite law bool DatetimeIsLeapYear(i32[min max] year)
+{
+    if (year % 4 != 0)
+    {
+        return false;
+    }
+
+    if (year % 100 != 0)
+    {
+        return true;
+    }
+
+    return year % 400 == 0;
+}
+
+// Days in `month` (1-12) of `year`, or 0 for an out-of-range month.
+internal finite law u8[0 31] DatetimeDaysInMonth(i32[min max] year, i32[min max] month)
+{
+    switch (month)
+    {
+        case 1:
+            return 31;
+        case 2:
+            if (DatetimeIsLeapYear(year))
+            {
+                return 29;
+            }
+
+            return 28;
+        case 3:
+            return 31;
+        case 4:
+            return 30;
+        case 5:
+            return 31;
+        case 6:
+            return 30;
+        case 7:
+            return 31;
+        case 8:
+            return 31;
+        case 9:
+            return 30;
+        case 10:
+            return 31;
+        case 11:
+            return 30;
+        case 12:
+            return 31;
+        default:
+            return 0;
+    }
+}
+
+// Decodes the structurally well-formed RFC 3339 token in
+// `source[start, start + length)` into a calendar-validated `TomlDateTime`.
+// Enforces calendar ranges (month, day-of-month with leap years, hour, minute,
+// second, and zone offset) and rejects out-of-range fields as InvalidDatetime
+// at `line`/`column`. Shared by the parser (to reject invalid date-times) and
+// `DateTimeAt` (to project the stored token into typed components).
+internal finite law TomlResult<TomlDateTime> DecodeDatetimeToken(
+    borrow i8[min max][] source,
+    u64[0 2 ** 63 - 1] start,
+    u64[0 2 ** 63 - 1] length,
+    u32[0 max] line,
+    u32[0 max] column)
+{
+    stack mut TomlDateTime result = new();
+    stack u64[0 2 ** 63 - 1] end = (u64[0 2 ** 63 - 1])(start + length);
+    stack mut u64[0 2 ** 63 - 1] timeOffset = start;
+    stack mut bool dateLed = false;
+
+    // Time-led `HH:MM:SS` (a ':' in the third byte) is a local time; otherwise
+    // the token is date-led.
+    if (length >= 3 && DatetimeByteAt(source, (u64[0 2 ** 63 - 1])(start + 2)) == 58)
+    {
+        result.Kind = TomlDateTimeKind.LocalTime;
+        timeOffset = start;
+    }
+    else
+    {
+        dateLed = true;
+        stack i16[-1 9999] year = DatetimeFourDigit(source, start);
+        stack i8[-1 99] month = DatetimeTwoDigit(source, (u64[0 2 ** 63 - 1])(start + 5));
+        stack i8[-1 99] day = DatetimeTwoDigit(source, (u64[0 2 ** 63 - 1])(start + 8));
+        if (year < 0 || month < 1 || month > 12 || day < 1 || day > 31)
+        {
+            return TomlResult<TomlDateTime>.Err(TomlError.InvalidDatetime
+            {
+                Line: line, Column: column
+            });
+        }
+
+        if (day > DatetimeDaysInMonth((i32[min max])year, (i32[min max])month))
+        {
+            return TomlResult<TomlDateTime>.Err(TomlError.InvalidDatetime
+            {
+                Line: line, Column: column
+            });
+        }
+
+        result.Year = (u16[0 9999])year;
+        result.Month = (u8[0 12])month;
+        result.Day = (u8[0 31])day;
+
+        if (length == 10)
+        {
+            result.Kind = TomlDateTimeKind.LocalDate;
+            return TomlResult<TomlDateTime>.Ok(result);
+        }
+
+        // A separator (T/t/space) sits at offset 10; the time starts at 11.
+        result.Kind = TomlDateTimeKind.LocalDateTime;
+        timeOffset = (u64[0 2 ** 63 - 1])(start + 11);
+    }
+
+    stack i8[-1 99] hour = DatetimeTwoDigit(source, timeOffset);
+    stack i8[-1 99] minute = DatetimeTwoDigit(source, (u64[0 2 ** 63 - 1])(timeOffset + 3));
+    stack i8[-1 99] second = DatetimeTwoDigit(source, (u64[0 2 ** 63 - 1])(timeOffset + 6));
+    if (hour < 0 || hour > 23 || minute < 0 || minute > 59 || second < 0 || second > 60)
+    {
+        return TomlResult<TomlDateTime>.Err(TomlError.InvalidDatetime
+        {
+            Line: line, Column: column
+        });
+    }
+
+    result.Hour = (u8[0 23])hour;
+    result.Minute = (u8[0 59])minute;
+    result.Second = (u8[0 60])second;
+
+    // Optional fractional seconds. Accumulate the first nine digits as
+    // nanoseconds (modular u64[0 max] arithmetic; values never exceed 1e9);
+    // any further precision is consumed and truncated per the TOML spec.
+    stack mut u64[0 2 ** 63 - 1] cursor = (u64[0 2 ** 63 - 1])(timeOffset + 8);
+    if (DatetimeByteAt(source, cursor) == 46)
+    {
+        cursor = (u64[0 2 ** 63 - 1])(cursor + 1);
+        stack mut u64[0 max] nanos = 0;
+        stack mut u64[0 max] scale = 100000000;
+        while willexit (cursor < end)
+        {
+            stack i8[-1 9] digit = DatetimeDigitAt(source, cursor);
+            if (digit < 0)
+            {
+                break;
+            }
+
+            if (scale > 0)
+            {
+                nanos = nanos + (u64[0 max])digit * scale;
+                scale = scale / 10;
+            }
+
+            cursor = (u64[0 2 ** 63 - 1])(cursor + 1);
+        }
+
+        if (nanos > 999999999)
+        {
+            nanos = 999999999;
+        }
+
+        result.Nanosecond = (u32[0 999999999])nanos;
+    }
+
+    // Local time and a no-offset local date-time carry no zone offset.
+    if (!dateLed || cursor >= end)
+    {
+        return TomlResult<TomlDateTime>.Ok(result);
+    }
+
+    stack i32[min max] marker = DatetimeByteAt(source, cursor);
+    if (marker == 90 || marker == 122)
+    {
+        result.Kind = TomlDateTimeKind.OffsetDateTime;
+        result.HasOffset = true;
+        result.OffsetMinutes = 0;
+        return TomlResult<TomlDateTime>.Ok(result);
+    }
+
+    if (marker == 43 || marker == 45)
+    {
+        stack i8[-1 99] offsetHour = DatetimeTwoDigit(source, (u64[0 2 ** 63 - 1])(cursor + 1));
+        stack i8[-1 99] offsetMinute = DatetimeTwoDigit(source, (u64[0 2 ** 63 - 1])(cursor + 4));
+        if (offsetHour < 0 || offsetHour > 23 || offsetMinute < 0 || offsetMinute > 59)
+        {
+            return TomlResult<TomlDateTime>.Err(TomlError.InvalidDatetime
+            {
+                Line: line, Column: column
+            });
+        }
+
+        // Widen before `* 60`: the i8 operand range would overflow on the multiply.
+        stack u16[0 1439] total = (u16[0 1439])((i32[min max])offsetHour * 60 + (i32[min max])offsetMinute);
+        result.Kind = TomlDateTimeKind.OffsetDateTime;
+        result.HasOffset = true;
+        if (marker == 45)
+        {
+            result.OffsetMinutes = (i16[-1439 1439])(0 - (i32[min max])total);
+        }
+        else
+        {
+            result.OffsetMinutes = (i16[-1439 1439])total;
+        }
+
+        return TomlResult<TomlDateTime>.Ok(result);
+    }
+
+    return TomlResult<TomlDateTime>.Err(TomlError.InvalidDatetime
+    {
+        Line: line, Column: column
+    });
+}
+
+// Parses an RFC 3339 date-time value, storing its original token bytes verbatim
+// in a Datetime node read back through DatetimeAt.
+internal fn TomlStatus ParseDatetime(
+    mut borrow TomlDocument document,
+    borrow i8[min max][] source,
+    mut borrow TomlCursor cursor,
+    u64[0 2 ** 63 - 1] parentPlusOne,
+    bool hasKey,
+    u64[0 2 ** 63 - 1] keyStart,
+    u64[0 2 ** 63 - 1] keyLength)
+{
+    stack u32[0 max] valueLine = cursor.Line;
+    stack u32[0 max] valueColumn = cursor.Column;
+    stack u64[0 2 ** 63 - 1] textStart = document.DecodedText.Length;
+
+    stack i64[min max] measured = MeasureDatetime(source, cursor.Position);
+    if (measured <= 0)
+    {
+        return TomlStatus.Err(TomlError.InvalidNumber
+        {
+            Line: valueLine, Column: valueColumn
+        });
+    }
+
+    stack u64[0 2 ** 63 - 1] length = (u64[0 2 ** 63 - 1])measured;
+
+    // The token is structurally valid; reject out-of-range calendar fields
+    // (e.g. month 13, day 30 of February, hour 24) before storing it.
+    switch (DecodeDatetimeToken(source, cursor.Position, length, valueLine, valueColumn))
+    {
+        case TomlResult<TomlDateTime>.Err(var error):
+            return TomlStatus.Err(error);
+        case TomlResult<TomlDateTime>.Ok(_):
+    }
+
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < length; index += 1)
+    {
+        stack TomlStatus appended = AppendDecodedByte(document, source[cursor.Position]);
+        switch (appended)
+        {
+            case TomlStatus.Err(var error):
+                return TomlStatus.Err(error);
+            case TomlStatus.Ok:
+        }
+
+        Advance(source, cursor);
+    }
+
+    return AppendNode(document, TomlKind.Datetime, parentPlusOne, hasKey, keyStart, keyLength, textStart, length, valueLine, valueColumn);
+}
+
+internal fn TomlStatus ParseInteger(
+    mut borrow TomlDocument document,
+    borrow i8[min max][] source,
+    mut borrow TomlCursor cursor,
+    u64[0 2 ** 63 - 1] parentPlusOne,
+    bool hasKey,
+    u64[0 2 ** 63 - 1] keyStart,
+    u64[0 2 ** 63 - 1] keyLength)
+{
+    stack u32[0 max] valueLine = cursor.Line;
+    stack u32[0 max] valueColumn = cursor.Column;
+    stack u64[0 2 ** 63 - 1] textStart = document.DecodedText.Length;
+
+    // TOML 1.0 prefixed integers (0x/0o/0b) carry no sign. When the value
+    // opens with a leading zero followed by a radix marker, hand it to the
+    // prefixed parser, which stores the prefix + validated digits verbatim
+    // so I64At can decode the radix later.
+    stack u64[0 2 ** 63 - 1] secondPlusOne = (u64[0 2 ** 63 - 1])(cursor.Position + 1);
+    if (source[cursor.Position] == 48 && secondPlusOne < source.Length)
+    {
+        stack i8[min max] marker = source[secondPlusOne];
+        if (marker == 120 || marker == 88)
+        {
+            return ParsePrefixedInteger(document, source, cursor, parentPlusOne, hasKey, keyStart, keyLength, 16);
+        }
+
+        if (marker == 111 || marker == 79)
+        {
+            return ParsePrefixedInteger(document, source, cursor, parentPlusOne, hasKey, keyStart, keyLength, 8);
+        }
+
+        if (marker == 98 || marker == 66)
+        {
+            return ParsePrefixedInteger(document, source, cursor, parentPlusOne, hasKey, keyStart, keyLength, 2);
+        }
+    }
+
+    if (source[cursor.Position] == 43 || source[cursor.Position] == 45)
+    {
+        if (source[cursor.Position] == 45)
+        {
+            stack TomlStatus sign = AppendDecodedByte(document, 45);
+            switch (sign)
+            {
+                case TomlStatus.Err(var error):
+                    return TomlStatus.Err(error);
+                case TomlStatus.Ok:
+            }
+        }
+
+        Advance(source, cursor);
+    }
+
+    if (cursor.Position >= source.Length || !IsDigitByte(source[cursor.Position]))
+    {
+        return TomlStatus.Err(TomlError.InvalidNumber
+        {
+            Line: valueLine, Column: valueColumn
+        });
+    }
+
+    stack mut bool lastWasDigit = false;
+    while willexit (cursor.Position < source.Length)
+    {
+        stack i8[min max] value = source[cursor.Position];
+        if (IsDigitByte(value))
+        {
+            stack TomlStatus appended = AppendDecodedByte(document, value);
+            switch (appended)
+            {
+                case TomlStatus.Err(var error):
+                    return TomlStatus.Err(error);
+                case TomlStatus.Ok:
+            }
+
+            lastWasDigit = true;
+            Advance(source, cursor);
+            continue;
+        }
+
+        if (value == 95)
+        {
+            if (!lastWasDigit)
+            {
+                return TomlStatus.Err(TomlError.InvalidNumber
+                {
+                    Line: valueLine, Column: valueColumn
+                });
+            }
+
+            lastWasDigit = false;
+            Advance(source, cursor);
+            continue;
+        }
+
+        // A fractional point or exponent marker turns this token into a float;
+        // hand the rest of the token (plus the digits already decoded) to the
+        // float accumulator. A digit must precede the '.'/'e'/'E'.
+        if (value == 46 || value == 101 || value == 69)
+        {
+            if (!lastWasDigit)
+            {
+                return TomlStatus.Err(TomlError.InvalidNumber
+                {
+                    Line: valueLine, Column: valueColumn
+                });
+            }
+
+            return ParseFloatTail(document, source, cursor, parentPlusOne, hasKey, keyStart, keyLength, textStart, valueLine, valueColumn);
+        }
+
+        // ':' marks a time-of-day, which stays unsupported in the staged subset.
+        if (value == 58)
+        {
+            return TomlStatus.Err(TomlError.UnsupportedValue
+            {
+                Line: valueLine, Column: valueColumn
+            });
+        }
+
+        break;
+    }
+
+    if (!lastWasDigit)
+    {
+        return TomlStatus.Err(TomlError.InvalidNumber
+        {
+            Line: valueLine, Column: valueColumn
+        });
+    }
+
+    // A '-' after digits is a date (1979-05-27); reject as unsupported.
+    if (cursor.Position < source.Length && source[cursor.Position] == 45)
+    {
+        return TomlStatus.Err(TomlError.UnsupportedValue
+        {
+            Line: valueLine, Column: valueColumn
+        });
+    }
+
+    stack u64[0 2 ** 63 - 1] textLength = (u64[0 2 ** 63 - 1])(document.DecodedText.Length - textStart);
+    return AppendNode(document, TomlKind.Integer, parentPlusOne, hasKey, keyStart, keyLength, textStart, textLength, valueLine, valueColumn);
+}
+
+// Continues a numeric token as a float once a '.'/'e'/'E' is seen. The integer
+// digits (and any leading sign) are already in DecodedText starting at
+// textStart, and the cursor points at the '.'/'e'/'E' marker. Appends the
+// fractional and exponent characters (skipping underscores, which a later
+// ParseF64Ascii would otherwise reject) and stores the normalized token as a
+// Float node. Underscores must sit between digits, mirroring the integer loop.
+internal fn TomlStatus ParseFloatTail(
+    mut borrow TomlDocument document,
+    borrow i8[min max][] source,
+    mut borrow TomlCursor cursor,
+    u64[0 2 ** 63 - 1] parentPlusOne,
+    bool hasKey,
+    u64[0 2 ** 63 - 1] keyStart,
+    u64[0 2 ** 63 - 1] keyLength,
+    u64[0 2 ** 63 - 1] textStart,
+    u32[0 max] valueLine,
+    u32[0 max] valueColumn)
+{
+    // ParseFloatTail is only entered once a digit has been decoded, so the
+    // mantissa already ends on a digit when the '.'/'e'/'E' marker is reached.
+    stack mut bool sawDot = false;
+    stack mut bool sawExponent = false;
+    stack mut bool lastWasDigit = true;
+    stack mut bool expectDigit = false;
+    while willexit (cursor.Position < source.Length)
+    {
+        stack i8[min max] value = source[cursor.Position];
+        if (IsDigitByte(value))
+        {
+            stack TomlStatus appended = AppendDecodedByte(document, value);
+            switch (appended)
+            {
+                case TomlStatus.Err(var error):
+                    return TomlStatus.Err(error);
+                case TomlStatus.Ok:
+            }
+
+            lastWasDigit = true;
+            expectDigit = false;
+            Advance(source, cursor);
+            continue;
+        }
+
+        // Underscores separate digits and are dropped from the stored token.
+        if (value == 95)
+        {
+            if (!lastWasDigit)
+            {
+                return TomlStatus.Err(TomlError.InvalidNumber
+                {
+                    Line: valueLine, Column: valueColumn
+                });
+            }
+
+            lastWasDigit = false;
+            Advance(source, cursor);
+            continue;
+        }
+
+        // A single fractional point, only before any exponent.
+        if (value == 46)
+        {
+            if (sawDot || sawExponent || !lastWasDigit)
+            {
+                return TomlStatus.Err(TomlError.InvalidNumber
+                {
+                    Line: valueLine, Column: valueColumn
+                });
+            }
+
+            stack TomlStatus appended = AppendDecodedByte(document, value);
+            switch (appended)
+            {
+                case TomlStatus.Err(var error):
+                    return TomlStatus.Err(error);
+                case TomlStatus.Ok:
+            }
+
+            sawDot = true;
+            lastWasDigit = false;
+            expectDigit = true;
+            Advance(source, cursor);
+            continue;
+        }
+
+        // A single exponent marker with an optional sign right after it.
+        if (value == 101 || value == 69)
+        {
+            if (sawExponent || !lastWasDigit)
+            {
+                return TomlStatus.Err(TomlError.InvalidNumber
+                {
+                    Line: valueLine, Column: valueColumn
+                });
+            }
+
+            stack TomlStatus marker = AppendDecodedByte(document, value);
+            switch (marker)
+            {
+                case TomlStatus.Err(var error):
+                    return TomlStatus.Err(error);
+                case TomlStatus.Ok:
+            }
+
+            sawExponent = true;
+            lastWasDigit = false;
+            expectDigit = true;
+            Advance(source, cursor);
+
+            if (cursor.Position < source.Length
+                && (source[cursor.Position] == 43 || source[cursor.Position] == 45))
+            {
+                stack TomlStatus sign = AppendDecodedByte(document, source[cursor.Position]);
+                switch (sign)
+                {
+                    case TomlStatus.Err(var error):
+                        return TomlStatus.Err(error);
+                    case TomlStatus.Ok:
+                }
+
+                Advance(source, cursor);
+            }
+
+            continue;
+        }
+
+        break;
+    }
+
+    // The token must end on a digit: a trailing '.', 'e', or sign is malformed.
+    if (!lastWasDigit || expectDigit)
+    {
+        return TomlStatus.Err(TomlError.InvalidNumber
+        {
+            Line: valueLine, Column: valueColumn
+        });
+    }
+
+    stack u64[0 2 ** 63 - 1] textLength = (u64[0 2 ** 63 - 1])(document.DecodedText.Length - textStart);
+    return AppendNode(document, TomlKind.Float, parentPlusOne, hasKey, keyStart, keyLength, textStart, textLength, valueLine, valueColumn);
+}
+
+// Maps an ASCII byte to its value under the given radix (2, 8, or 16), or
+// returns -1 when the byte is not a digit for that radix. Hex reuses the
+// shared HexDigitValue helper; octal and binary clamp its range.
+internal finite law i32[min max] RadixDigitValue(i8[min max] value, u8[2 16] radix)
+{
+    stack i32[min max] digit = HexDigitValue(value);
+    if (digit < 0 || digit >= (i32[min max])radix)
+    {
+        return -1;
+    }
+
+    return digit;
+}
+
+// Parses a TOML 1.0 prefixed integer (0x/0o/0b). Mirrors the decimal
+// underscore-validation structure: underscores are allowed only between
+// digits, at least one digit is required, and the prefix + digit bytes are
+// stored verbatim in DecodedText so I64At can decode the radix. Prefixed
+// integers carry no sign, so the caller routes here before sign handling.
+internal fn TomlStatus ParsePrefixedInteger(
+    mut borrow TomlDocument document,
+    borrow i8[min max][] source,
+    mut borrow TomlCursor cursor,
+    u64[0 2 ** 63 - 1] parentPlusOne,
+    bool hasKey,
+    u64[0 2 ** 63 - 1] keyStart,
+    u64[0 2 ** 63 - 1] keyLength,
+    u8[2 16] radix)
+{
+    stack u32[0 max] valueLine = cursor.Line;
+    stack u32[0 max] valueColumn = cursor.Column;
+    stack u64[0 2 ** 63 - 1] textStart = document.DecodedText.Length;
+
+    // Store the leading '0'.
+    stack TomlStatus zero = AppendDecodedByte(document, source[cursor.Position]);
+    switch (zero)
+    {
+        case TomlStatus.Err(var error):
+            return TomlStatus.Err(error);
+        case TomlStatus.Ok:
+    }
+
+    Advance(source, cursor);
+
+    // Store the radix marker (x/X/o/O/b/B).
+    stack TomlStatus marker = AppendDecodedByte(document, source[cursor.Position]);
+    switch (marker)
+    {
+        case TomlStatus.Err(var markerError):
+            return TomlStatus.Err(markerError);
+        case TomlStatus.Ok:
+    }
+
+    Advance(source, cursor);
+
+    // At least one radix digit must immediately follow the marker.
+    if (cursor.Position >= source.Length || RadixDigitValue(source[cursor.Position], radix) < 0)
+    {
+        return TomlStatus.Err(TomlError.InvalidNumber
+        {
+            Line: valueLine, Column: valueColumn
+        });
+    }
+
+    stack mut bool lastWasDigit = false;
+    while willexit (cursor.Position < source.Length)
+    {
+        stack i8[min max] value = source[cursor.Position];
+        if (RadixDigitValue(value, radix) >= 0)
+        {
+            stack TomlStatus appended = AppendDecodedByte(document, value);
+            switch (appended)
+            {
+                case TomlStatus.Err(var appendError):
+                    return TomlStatus.Err(appendError);
+                case TomlStatus.Ok:
+            }
+
+            lastWasDigit = true;
+            Advance(source, cursor);
+            continue;
+        }
+
+        if (value == 95)
+        {
+            if (!lastWasDigit)
+            {
+                return TomlStatus.Err(TomlError.InvalidNumber
+                {
+                    Line: valueLine, Column: valueColumn
+                });
+            }
+
+            lastWasDigit = false;
+            Advance(source, cursor);
+            continue;
+        }
+
+        break;
+    }
+
+    // A trailing underscore (digits separator with no following digit) is
+    // rejected, exactly as in the decimal path.
+    if (!lastWasDigit)
+    {
+        return TomlStatus.Err(TomlError.InvalidNumber
+        {
+            Line: valueLine, Column: valueColumn
+        });
+    }
+
+    stack u64[0 2 ** 63 - 1] textLength = (u64[0 2 ** 63 - 1])(document.DecodedText.Length - textStart);
+    return AppendNode(document, TomlKind.Integer, parentPlusOne, hasKey, keyStart, keyLength, textStart, textLength, valueLine, valueColumn);
+}
+
+// ---------------------------------------------------------------------------
+// Deterministic emitter (doc 21 work item: deterministic TOML writing)
+// ---------------------------------------------------------------------------
+//
+// EmitText/Emit serialize a parsed TomlDocument back to canonical TOML text.
+// Output is deterministic: members of every table are written in ascending
+// decoded-key byte order, scalar members precede sub-tables, sub-tables are
+// emitted as bracket headers carrying their full dotted path, and arrays keep
+// their source element order (TOML arrays are ordered). The same document
+// always produces byte-identical text, and re-parsing that text yields the
+// same structure (parse -> emit -> parse stability).
+//
+// Value kinds the staged parser cannot produce (anything outside Table/Array/
+// Text/Integer/True/False) route through an UnsupportedValue diagnostic rather
+// than inventing a spelling.
+
+internal struct TomlChildList
+{
+    dynamic u64[0 2 ** 63 - 1] Indices;
+
+    TomlChildList()
+    {
+        self.Indices = new();
+    }
+
+    finite law u64[0 2 ** 63 - 1] Count(borrow TomlChildList self)
+    {
+        return self.Indices.Length;
+    }
+
+    finite law u64[0 2 ** 63 - 1] At(borrow TomlChildList self, u64[0 2 ** 63 - 1] position)
+    {
+        if (position >= self.Indices.Length)
+        {
+            return 0;
+        }
+
+        return self.Indices[position];
+    }
+
+    fn bool Append(mut borrow TomlChildList self, u64[0 2 ** 63 - 1] node)
+    {
+        if (!self.Indices.TryReserve(1))
+        {
+            return false;
+        }
+
+        init self.Indices[self.Indices.Length] = node;
+        return true;
+    }
+
+    // Whole-length initialized mutable slice view (every appended slot is
+    // written), used by the in-place key sort.
+    finite retborrow mut u64[0 2 ** 63 - 1][] AsMutableSlice(mut borrow TomlChildList self)
+    {
+        return self.Indices[0, self.Indices.Length];
+    }
+}
+
+// Compares two nodes by their decoded key bytes (lexicographic, then shorter
+// key first). A node without a key sorts before one with a key.
+internal finite law System.Collections.Ordering CompareNodeKeys(
+    borrow TomlDocument document,
+    u64[0 2 ** 63 - 1] left,
+    u64[0 2 ** 63 - 1] right)
+{
+    stack TomlNode[] nodes = document.NodeSlice();
+    if (left >= nodes.Length || right >= nodes.Length)
+    {
+        return System.Collections.Ordering.Equal;
+    }
+
+    stack bool leftHasKey = nodes[left].HasKey;
+    stack bool rightHasKey = nodes[right].HasKey;
+    if (!leftHasKey && !rightHasKey)
+    {
+        return System.Collections.Ordering.Equal;
+    }
+
+    if (!leftHasKey)
+    {
+        return System.Collections.Ordering.Less;
+    }
+
+    if (!rightHasKey)
+    {
+        return System.Collections.Ordering.Greater;
+    }
+
+    stack u64[0 2 ** 63 - 1] leftStart = nodes[left].KeyStart;
+    stack u64[0 2 ** 63 - 1] leftLength = nodes[left].KeyLength;
+    stack u64[0 2 ** 63 - 1] rightStart = nodes[right].KeyStart;
+    stack u64[0 2 ** 63 - 1] rightLength = nodes[right].KeyLength;
+
+    stack i8[min max][] decoded = document.DecodedSlice();
+    stack mut u64[0 2 ** 63 - 1] sharedLength = leftLength;
+    if (rightLength < sharedLength)
+    {
+        sharedLength = rightLength;
+    }
+
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < sharedLength; index += 1)
+    {
+        stack u64[0 2 ** 63 - 1] leftPos = (u64[0 2 ** 63 - 1])(leftStart + index);
+        stack u64[0 2 ** 63 - 1] rightPos = (u64[0 2 ** 63 - 1])(rightStart + index);
+        if (leftPos >= decoded.Length || rightPos >= decoded.Length)
+        {
+            return System.Collections.Ordering.Equal;
+        }
+
+        stack i8[min max] leftByte = decoded[leftPos];
+        stack i8[min max] rightByte = decoded[rightPos];
+        stack i32[min max] leftValue = ByteOrderValue(leftByte);
+        stack i32[min max] rightValue = ByteOrderValue(rightByte);
+        if (leftValue < rightValue)
+        {
+            return System.Collections.Ordering.Less;
+        }
+
+        if (leftValue > rightValue)
+        {
+            return System.Collections.Ordering.Greater;
+        }
+    }
+
+    if (leftLength < rightLength)
+    {
+        return System.Collections.Ordering.Less;
+    }
+
+    if (leftLength > rightLength)
+    {
+        return System.Collections.Ordering.Greater;
+    }
+
+    return System.Collections.Ordering.Equal;
+}
+
+internal finite law i32[min max] ByteOrderValue(i8[min max] value)
+{
+    if (value < 0)
+    {
+        return ((i32[min max])value) + 256;
+    }
+
+    return (i32[min max])value;
+}
+
+// Collects the direct children of `parent` into a key-sorted list. Scalar
+// members and sub-tables are gathered separately so the caller can emit all
+// scalars before any sub-table header, matching canonical TOML shape.
+internal fn bool CollectSortedChildren(
+    borrow TomlDocument document,
+    u64[0 2 ** 63 - 1] parent,
+    mut borrow TomlChildList scalars,
+    mut borrow TomlChildList tables)
+{
+    stack u64[0 2 ** 63 - 1] parentPlusOne = (u64[0 2 ** 63 - 1])(parent + 1);
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = parentPlusOne; index < document.Nodes.Length; index += 1)
+    {
+        if (document.Nodes[index].ParentPlusOne != parentPlusOne)
+        {
+            continue;
+        }
+
+        if (document.Nodes[index].Kind == TomlKind.Table)
+        {
+            if (!tables.Append(index))
+            {
+                return false;
+            }
+        }
+        else
+        {
+            if (!scalars.Append(index))
+            {
+                return false;
+            }
+        }
+    }
+
+    SortChildrenByKey(document, scalars);
+    SortChildrenByKey(document, tables);
+    return true;
+}
+
+// Insertion sort by decoded key bytes. Tables and the manifests they hold are
+// small, so the simple stable sort keeps the emitter allocation-light and the
+// output deterministic without depending on hash iteration order.
+internal fn void SortChildrenByKey(borrow TomlDocument document, mut borrow TomlChildList list)
+{
+    stack mut u64[0 2 ** 63 - 1][] indices = list.AsMutableSlice();
+    InsertionSortIndices(document, indices);
+    return;
+}
+
+// In-place insertion sort over a mutable slice of node indices, ordered by
+// decoded key bytes. A `mut borrow` slice parameter keeps element writes
+// assignable; the lists are small (table members), so insertion sort is fine.
+internal fn void InsertionSortIndices(
+    borrow TomlDocument document,
+    mut borrow u64[0 2 ** 63 - 1][] indices)
+{
+    stack u64[0 2 ** 63 - 1] count = indices.Length;
+    if (count < 2)
+    {
+        return;
+    }
+
+    for willexit (stack mut u64[0 2 ** 63 - 1] i = 1; i < count; i += 1)
+    {
+        stack u64[0 2 ** 63 - 1] current = indices[i];
+        stack mut u64[0 2 ** 63 - 1] j = i;
+        // Shift greater predecessors one slot right and stop at the first
+        // predecessor that is not greater. The stop test lives in the loop
+        // guard on purpose: a `break` inside a nested `switch` would only exit
+        // the switch, leaving `j` unchanged and looping forever.
+        while willexit (j > 0 && PredecessorIsGreater(document, indices, j, current))
+        {
+            indices[j] = indices[(u64[0 2 ** 63 - 1])(j - 1)];
+            j -= 1;
+        }
+
+        indices[j] = current;
+    }
+
+    return;
+}
+
+// True when the slot before `j` sorts after `current` by decoded key bytes.
+internal finite law bool PredecessorIsGreater(
+    borrow TomlDocument document,
+    borrow u64[0 2 ** 63 - 1][] indices,
+    u64[0 2 ** 63 - 1] j,
+    u64[0 2 ** 63 - 1] current)
+{
+    if (j == 0 || j > indices.Length)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] previous = indices[(u64[0 2 ** 63 - 1])(j - 1)];
+    return CompareNodeKeys(document, previous, current) == System.Collections.Ordering.Greater;
+}
+
+// True when a decoded byte range is a non-empty bare key (so it can be emitted
+// without quotes and still re-parse as the same key).
+internal finite law bool IsBareKeyRange(
+    borrow TomlDocument document,
+    u64[0 2 ** 63 - 1] start,
+    u64[0 2 ** 63 - 1] length)
+{
+    stack i8[min max][] decoded = document.DecodedSlice();
+    if (length == 0 || start + length > decoded.Length)
+    {
+        return false;
+    }
+
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < length; index += 1)
+    {
+        stack u64[0 2 ** 63 - 1] position = (u64[0 2 ** 63 - 1])(start + index);
+        if (position >= decoded.Length)
+        {
+            return false;
+        }
+
+        if (!IsBareKeyByte(decoded[position]))
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+// Deterministic TOML emitter sink. Output is appended to an owned ascii buffer
+// so the caller owns the result and IO is decoupled from formatting.
+public struct TomlWriter
+{
+    internal System.Text.OwnedAscii Buffer;
+
+    TomlWriter()
+    {
+        self.Buffer = new();
+    }
+
+    public finite ascii View(mut borrow TomlWriter self)
+    {
+        return self.Buffer.View();
+    }
+
+    public finite law retborrow i8[min max][] Bytes(borrow TomlWriter self)
+    {
+        return self.Buffer.AsSlice();
+    }
+
+    public finite law u64[0 2 ** 63 - 1] Length(borrow TomlWriter self)
+    {
+        return self.Buffer.Length();
+    }
+
+    internal fn TomlStatus AppendText(mut borrow TomlWriter self, ascii text)
+    {
+        return TomlStatusFromMemory(self.Buffer.AppendAscii(text));
+    }
+
+    internal fn TomlStatus AppendByte(mut borrow TomlWriter self, i8[min max] value)
+    {
+        return TomlStatusFromMemory(self.Buffer.AppendByte(value));
+    }
+}
+
+internal finite law TomlStatus TomlStatusFromMemory(System.Memory.MemoryStatus status)
+{
+    switch (status)
+    {
+        case System.Memory.MemoryStatus.Ok:
+            return TomlStatus.Ok;
+        case System.Memory.MemoryStatus.Err(var error):
+            return TomlStatus.Err(TomlError.OutOfMemory);
+    }
+}
+
+// Serializes the whole document into the writer using canonical ordering.
+public fn TomlStatus Write(mut borrow TomlWriter writer, mut borrow TomlDocument document)
+{
+    if (document.Nodes.Length == 0)
+    {
+        return TomlStatus.Ok;
+    }
+
+    stack mut OwnedAscii prefix = new();
+    return WriteTable(writer, document, TomlRootNode, prefix, true);
+}
+
+// Emits one table: its scalar members as `key = value` lines, then each
+// sub-table as `[dotted.path]` followed by its own members (depth-first).
+internal fn TomlStatus WriteTable(
+    mut borrow TomlWriter writer,
+    mut borrow TomlDocument document,
+    u64[0 2 ** 63 - 1] table,
+    mut borrow OwnedAscii prefix,
+    bool isRoot)
+{
+    stack mut TomlChildList scalars = new();
+    stack mut TomlChildList tables = new();
+    if (!CollectSortedChildren(document, table, scalars, tables))
+    {
+        return TomlStatus.Err(TomlError.OutOfMemory);
+    }
+
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < scalars.Count(); index += 1)
+    {
+        stack u64[0 2 ** 63 - 1] member = scalars.At(index);
+        stack TomlStatus keyStatus = WriteKey(writer, document, member);
+        switch (keyStatus)
+        {
+            case TomlStatus.Err(var keyError):
+                return TomlStatus.Err(keyError);
+            case TomlStatus.Ok:
+        }
+
+        stack TomlStatus separator = writer.AppendText(" = ");
+        switch (separator)
+        {
+            case TomlStatus.Err(var separatorError):
+                return TomlStatus.Err(separatorError);
+            case TomlStatus.Ok:
+        }
+
+        stack TomlStatus valueStatus = WriteValue(writer, document, member);
+        switch (valueStatus)
+        {
+            case TomlStatus.Err(var valueError):
+                return TomlStatus.Err(valueError);
+            case TomlStatus.Ok:
+        }
+
+        stack TomlStatus newline = writer.AppendByte((i8[min max])10);
+        switch (newline)
+        {
+            case TomlStatus.Err(var newlineError):
+                return TomlStatus.Err(newlineError);
+            case TomlStatus.Ok:
+        }
+    }
+
+    for willexit (stack mut u64[0 2 ** 63 - 1] tableIndex = 0; tableIndex < tables.Count(); tableIndex += 1)
+    {
+        stack u64[0 2 ** 63 - 1] subTable = tables.At(tableIndex);
+
+        stack mut OwnedAscii childPrefix = new();
+        stack TomlStatus prefixStatus = BuildChildPrefix(document, prefix, subTable, childPrefix);
+        switch (prefixStatus)
+        {
+            case TomlStatus.Err(var prefixError):
+                return TomlStatus.Err(prefixError);
+            case TomlStatus.Ok:
+        }
+
+        stack mut bool needBlank = !isRoot || scalars.Count() > 0 || tableIndex > 0;
+        if (needBlank)
+        {
+            stack TomlStatus blank = writer.AppendByte((i8[min max])10);
+            switch (blank)
+            {
+                case TomlStatus.Err(var blankError):
+                    return TomlStatus.Err(blankError);
+                case TomlStatus.Ok:
+            }
+        }
+
+        stack TomlStatus open = writer.AppendByte((i8[min max])91);
+        switch (open)
+        {
+            case TomlStatus.Err(var openError):
+                return TomlStatus.Err(openError);
+            case TomlStatus.Ok:
+        }
+
+        stack TomlStatus header = writer.AppendText(childPrefix.View());
+        switch (header)
+        {
+            case TomlStatus.Err(var headerError):
+                return TomlStatus.Err(headerError);
+            case TomlStatus.Ok:
+        }
+
+        stack TomlStatus close = writer.AppendByte((i8[min max])93);
+        switch (close)
+        {
+            case TomlStatus.Err(var closeError):
+                return TomlStatus.Err(closeError);
+            case TomlStatus.Ok:
+        }
+
+        stack TomlStatus headerNewline = writer.AppendByte((i8[min max])10);
+        switch (headerNewline)
+        {
+            case TomlStatus.Err(var headerNewlineError):
+                return TomlStatus.Err(headerNewlineError);
+            case TomlStatus.Ok:
+        }
+
+        stack TomlStatus recursed = WriteTable(writer, document, subTable, childPrefix, false);
+        switch (recursed)
+        {
+            case TomlStatus.Err(var recursedError):
+                return TomlStatus.Err(recursedError);
+            case TomlStatus.Ok:
+        }
+    }
+
+    return TomlStatus.Ok;
+}
+
+// Appends `prefix + "." + key` (or just `key` at the root) into destination,
+// quoting any key segment that is not a bare key.
+internal fn TomlStatus BuildChildPrefix(
+    mut borrow TomlDocument document,
+    mut borrow OwnedAscii prefix,
+    u64[0 2 ** 63 - 1] node,
+    mut borrow OwnedAscii destination)
+{
+    destination.Clear();
+    if (prefix.Length() > 0)
+    {
+        stack System.Memory.MemoryStatus copyStatus = destination.AppendAscii(prefix.View());
+        switch (copyStatus)
+        {
+            case System.Memory.MemoryStatus.Err(var copyError):
+                return TomlStatus.Err(TomlError.OutOfMemory);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        stack System.Memory.MemoryStatus dotStatus = destination.AppendByte((i8[min max])46);
+        switch (dotStatus)
+        {
+            case System.Memory.MemoryStatus.Err(var dotError):
+                return TomlStatus.Err(TomlError.OutOfMemory);
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
+    return AppendKeyText(document, node, destination);
+}
+
+// Appends one node's key (bare when possible, otherwise basic-quoted with
+// escapes) into the destination owned buffer.
+internal fn TomlStatus AppendKeyText(
+    mut borrow TomlDocument document,
+    u64[0 2 ** 63 - 1] node,
+    mut borrow OwnedAscii destination)
+{
+    stack TomlNode[] nodes = document.NodeSlice();
+    if (node >= nodes.Length || !nodes[node].HasKey)
+    {
+        // A keyless node has nothing to spell; an empty quoted key is valid.
+        return TomlStatusFromMemory(destination.AppendAscii("\"\""));
+    }
+
+    stack u64[0 2 ** 63 - 1] keyStart = nodes[node].KeyStart;
+    stack u64[0 2 ** 63 - 1] keyLength = nodes[node].KeyLength;
+
+    if (IsBareKeyRange(document, keyStart, keyLength))
+    {
+        return AppendRangeBytes(document, keyStart, keyLength, destination);
+    }
+
+    return AppendQuotedRange(document, keyStart, keyLength, destination);
+}
+
+internal fn TomlStatus AppendRangeBytes(
+    mut borrow TomlDocument document,
+    u64[0 2 ** 63 - 1] start,
+    u64[0 2 ** 63 - 1] length,
+    mut borrow OwnedAscii destination)
+{
+    stack i8[min max][] decoded = document.DecodedSlice();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < length; index += 1)
+    {
+        stack u64[0 2 ** 63 - 1] position = (u64[0 2 ** 63 - 1])(start + index);
+        if (position >= decoded.Length)
+        {
+            return TomlStatus.Ok;
+        }
+
+        stack System.Memory.MemoryStatus appended = destination.AppendByte(decoded[position]);
+        switch (appended)
+        {
+            case System.Memory.MemoryStatus.Err(var error):
+                return TomlStatus.Err(TomlError.OutOfMemory);
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
+    return TomlStatus.Ok;
+}
+
+// Appends a `"..."` basic string for a decoded byte range, escaping the
+// control bytes and quote/backslash that the parser also decodes.
+internal fn TomlStatus AppendQuotedRange(
+    mut borrow TomlDocument document,
+    u64[0 2 ** 63 - 1] start,
+    u64[0 2 ** 63 - 1] length,
+    mut borrow OwnedAscii destination)
+{
+    stack System.Memory.MemoryStatus openQuote = destination.AppendByte((i8[min max])34);
+    switch (openQuote)
+    {
+        case System.Memory.MemoryStatus.Err(var openError):
+            return TomlStatus.Err(TomlError.OutOfMemory);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    stack i8[min max][] decoded = document.DecodedSlice();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < length; index += 1)
+    {
+        stack u64[0 2 ** 63 - 1] position = (u64[0 2 ** 63 - 1])(start + index);
+        if (position >= decoded.Length)
+        {
+            break;
+        }
+
+        stack TomlStatus escaped = AppendEscapedByte(destination, decoded[position]);
+        switch (escaped)
+        {
+            case TomlStatus.Err(var escapedError):
+                return TomlStatus.Err(escapedError);
+            case TomlStatus.Ok:
+        }
+    }
+
+    return TomlStatusFromMemory(destination.AppendByte((i8[min max])34));
+}
+
+// Mirrors the parser's basic-string escape set so emitted text re-parses to the
+// same decoded bytes.
+internal fn TomlStatus AppendEscapedByte(mut borrow OwnedAscii destination, i8[min max] unit)
+{
+    if (unit == 34)
+    {
+        return TomlStatusFromMemory(destination.AppendAscii("\\\""));
+    }
+
+    if (unit == 92)
+    {
+        return TomlStatusFromMemory(destination.AppendAscii("\\\\"));
+    }
+
+    if (unit == 8)
+    {
+        return TomlStatusFromMemory(destination.AppendAscii("\\b"));
+    }
+
+    if (unit == 9)
+    {
+        return TomlStatusFromMemory(destination.AppendAscii("\\t"));
+    }
+
+    if (unit == 10)
+    {
+        return TomlStatusFromMemory(destination.AppendAscii("\\n"));
+    }
+
+    if (unit == 12)
+    {
+        return TomlStatusFromMemory(destination.AppendAscii("\\f"));
+    }
+
+    if (unit == 13)
+    {
+        return TomlStatusFromMemory(destination.AppendAscii("\\r"));
+    }
+
+    if (unit >= 0 && unit < 32)
+    {
+        stack System.Memory.MemoryStatus prefix = destination.AppendAscii("\\u00");
+        switch (prefix)
+        {
+            case System.Memory.MemoryStatus.Err(var prefixError):
+                return TomlStatus.Err(TomlError.OutOfMemory);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        stack System.Memory.MemoryStatus high = destination.AppendByte(EmitHexDigit((u64[0 2 ** 63 - 1])(unit / 16)));
+        switch (high)
+        {
+            case System.Memory.MemoryStatus.Err(var highError):
+                return TomlStatus.Err(TomlError.OutOfMemory);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        return TomlStatusFromMemory(destination.AppendByte(EmitHexDigit((u64[0 2 ** 63 - 1])(unit % 16))));
+    }
+
+    return TomlStatusFromMemory(destination.AppendByte(unit));
+}
+
+internal finite law i8[min max] EmitHexDigit(u64[0 2 ** 63 - 1] value)
+{
+    stack u64[0 2 ** 63 - 1] digit = (u64[0 2 ** 63 - 1])(value % 16);
+    if (digit < 10)
+    {
+        return (i8[min max])(48 + digit);
+    }
+
+    return (i8[min max])(97 + digit);
+}
+
+// Emits one node key directly into the writer (used for `key = value` lines).
+internal fn TomlStatus WriteKey(
+    mut borrow TomlWriter writer,
+    mut borrow TomlDocument document,
+    u64[0 2 ** 63 - 1] node)
+{
+    stack mut OwnedAscii keyText = new();
+    stack TomlStatus built = AppendKeyText(document, node, keyText);
+    switch (built)
+    {
+        case TomlStatus.Err(var error):
+            return TomlStatus.Err(error);
+        case TomlStatus.Ok:
+    }
+
+    return writer.AppendText(keyText.View());
+}
+
+// Emits one value node: string, integer token, boolean, or inline array. Inline
+// tables and any value kind the parser cannot produce route through
+// UnsupportedValue so the emitter never invents a spelling it cannot read back.
+internal fn TomlStatus WriteValue(
+    mut borrow TomlWriter writer,
+    mut borrow TomlDocument document,
+    u64[0 2 ** 63 - 1] node)
+{
+    stack TomlNode[] nodes = document.NodeSlice();
+    if (node >= nodes.Length)
+    {
+        return TomlStatus.Err(TomlError.UnsupportedValue
+        {
+            Line: 0, Column: 0
+        });
+    }
+
+    switch (nodes[node].Kind)
+    {
+        case TomlKind.Text:
+            stack u64[0 2 ** 63 - 1] textStart = nodes[node].TextStart;
+            stack u64[0 2 ** 63 - 1] textLength = nodes[node].TextLength;
+            stack mut OwnedAscii quoted = new();
+            stack TomlStatus built = AppendQuotedRange(document, textStart, textLength, quoted);
+            switch (built)
+            {
+                case TomlStatus.Err(var builtError):
+                    return TomlStatus.Err(builtError);
+                case TomlStatus.Ok:
+            }
+
+            return writer.AppendText(quoted.View());
+        case TomlKind.Integer:
+            stack u64[0 2 ** 63 - 1] integerStart = nodes[node].TextStart;
+            stack u64[0 2 ** 63 - 1] integerLength = nodes[node].TextLength;
+            stack mut OwnedAscii integerText = new();
+            stack TomlStatus integerBuilt = AppendRangeBytes(document, integerStart, integerLength, integerText);
+            switch (integerBuilt)
+            {
+                case TomlStatus.Err(var integerError):
+                    return TomlStatus.Err(integerError);
+                case TomlStatus.Ok:
+            }
+
+            return writer.AppendText(integerText.View());
+        case TomlKind.Float:
+            stack u64[0 2 ** 63 - 1] floatStart = nodes[node].TextStart;
+            stack u64[0 2 ** 63 - 1] floatLength = nodes[node].TextLength;
+            stack mut OwnedAscii floatText = new();
+            stack TomlStatus floatBuilt = AppendRangeBytes(document, floatStart, floatLength, floatText);
+            switch (floatBuilt)
+            {
+                case TomlStatus.Err(var floatError):
+                    return TomlStatus.Err(floatError);
+                case TomlStatus.Ok:
+            }
+
+            return writer.AppendText(floatText.View());
+        case TomlKind.Datetime:
+            stack u64[0 2 ** 63 - 1] datetimeStart = nodes[node].TextStart;
+            stack u64[0 2 ** 63 - 1] datetimeLength = nodes[node].TextLength;
+            stack mut OwnedAscii datetimeText = new();
+            stack TomlStatus datetimeBuilt = AppendRangeBytes(document, datetimeStart, datetimeLength, datetimeText);
+            switch (datetimeBuilt)
+            {
+                case TomlStatus.Err(var datetimeError):
+                    return TomlStatus.Err(datetimeError);
+                case TomlStatus.Ok:
+            }
+
+            return writer.AppendText(datetimeText.View());
+        case TomlKind.True:
+            return writer.AppendText("true");
+        case TomlKind.False:
+            return writer.AppendText("false");
+        case TomlKind.Array:
+            return WriteArray(writer, document, node);
+        case TomlKind.Table:
+            return WriteInlineTable(writer, document, node);
+    }
+}
+
+// Emits an inline array `[a, b, c]` preserving element order.
+internal fn TomlStatus WriteArray(
+    mut borrow TomlWriter writer,
+    mut borrow TomlDocument document,
+    u64[0 2 ** 63 - 1] array)
+{
+    stack TomlStatus open = writer.AppendByte((i8[min max])91);
+    switch (open)
+    {
+        case TomlStatus.Err(var openError):
+            return TomlStatus.Err(openError);
+        case TomlStatus.Ok:
+    }
+
+    stack u64[0 2 ** 63 - 1] parentPlusOne = (u64[0 2 ** 63 - 1])(array + 1);
+    stack mut u64[0 2 ** 63 - 1] emitted = 0;
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = parentPlusOne; index < document.Nodes.Length; index += 1)
+    {
+        if (document.Nodes[index].ParentPlusOne != parentPlusOne)
+        {
+            continue;
+        }
+
+        if (emitted > 0)
+        {
+            stack TomlStatus comma = writer.AppendText(", ");
+            switch (comma)
+            {
+                case TomlStatus.Err(var commaError):
+                    return TomlStatus.Err(commaError);
+                case TomlStatus.Ok:
+            }
+        }
+
+        stack TomlStatus element = WriteValue(writer, document, index);
+        switch (element)
+        {
+            case TomlStatus.Err(var elementError):
+                return TomlStatus.Err(elementError);
+            case TomlStatus.Ok:
+        }
+
+        emitted += 1;
+    }
+
+    return writer.AppendByte((i8[min max])93);
+}
+
+// Emits an inline table `{ key = value, ... }` with key-sorted members. This is
+// the shape the parser produces for `{ ... }` values nested inside arrays or
+// other inline tables, so round-tripping stays structurally stable.
+internal fn TomlStatus WriteInlineTable(
+    mut borrow TomlWriter writer,
+    mut borrow TomlDocument document,
+    u64[0 2 ** 63 - 1] table)
+{
+    stack mut TomlChildList scalars = new();
+    stack mut TomlChildList tables = new();
+    if (!CollectSortedChildren(document, table, scalars, tables))
+    {
+        return TomlStatus.Err(TomlError.OutOfMemory);
+    }
+
+    stack TomlStatus open = writer.AppendByte((i8[min max])123);
+    switch (open)
+    {
+        case TomlStatus.Err(var openError):
+            return TomlStatus.Err(openError);
+        case TomlStatus.Ok:
+    }
+
+    stack mut u64[0 2 ** 63 - 1] emitted = 0;
+    switch (WriteInlineMembers(writer, document, scalars, emitted))
+    {
+        case TomlResult<u64[0 2 ** 63 - 1]>.Err(var scalarError):
+            return TomlStatus.Err(scalarError);
+        case TomlResult<u64[0 2 ** 63 - 1]>.Ok(var scalarCount):
+            emitted = scalarCount;
+    }
+
+    switch (WriteInlineMembers(writer, document, tables, emitted))
+    {
+        case TomlResult<u64[0 2 ** 63 - 1]>.Err(var tableError):
+            return TomlStatus.Err(tableError);
+        case TomlResult<u64[0 2 ** 63 - 1]>.Ok(var tableCount):
+            emitted = tableCount;
+    }
+
+    if (emitted > 0)
+    {
+        return writer.AppendText(" }");
+    }
+
+    return writer.AppendByte((i8[min max])125);
+}
+
+// Emits each member of `members` as ` key = value` (space-led for the first,
+// comma-led afterwards) starting from `alreadyEmitted` and returns the running
+// count so the caller can chain scalar then sub-table members.
+internal fn TomlResult<u64[0 2 ** 63 - 1]> WriteInlineMembers(
+    mut borrow TomlWriter writer,
+    mut borrow TomlDocument document,
+    mut borrow TomlChildList members,
+    u64[0 2 ** 63 - 1] alreadyEmitted)
+{
+    stack mut u64[0 2 ** 63 - 1] emitted = alreadyEmitted;
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < members.Count(); index += 1)
+    {
+        stack u64[0 2 ** 63 - 1] member = members.At(index);
+        if (emitted == 0)
+        {
+            switch (writer.AppendByte((i8[min max])32))
+            {
+                case TomlStatus.Err(var spaceError):
+                    return TomlResult<u64[0 2 ** 63 - 1]>.Err(spaceError);
+                case TomlStatus.Ok:
+            }
+        }
+        else
+        {
+            switch (writer.AppendText(", "))
+            {
+                case TomlStatus.Err(var commaError):
+                    return TomlResult<u64[0 2 ** 63 - 1]>.Err(commaError);
+                case TomlStatus.Ok:
+            }
+        }
+
+        switch (WriteKey(writer, document, member))
+        {
+            case TomlStatus.Err(var keyError):
+                return TomlResult<u64[0 2 ** 63 - 1]>.Err(keyError);
+            case TomlStatus.Ok:
+        }
+
+        switch (writer.AppendText(" = "))
+        {
+            case TomlStatus.Err(var separatorError):
+                return TomlResult<u64[0 2 ** 63 - 1]>.Err(separatorError);
+            case TomlStatus.Ok:
+        }
+
+        switch (WriteValue(writer, document, member))
+        {
+            case TomlStatus.Err(var valueError):
+                return TomlResult<u64[0 2 ** 63 - 1]>.Err(valueError);
+            case TomlStatus.Ok:
+        }
+
+        emitted += 1;
+    }
+
+    return TomlResult<u64[0 2 ** 63 - 1]>.Ok(emitted);
+}
+
+// Serializes a document to a fresh owned ascii buffer (canonical form).
+public fn TomlResult<System.Text.OwnedAscii> Emit(mut borrow TomlDocument document)
+{
+    stack mut TomlWriter writer = new();
+    stack TomlStatus status = Write(writer, document);
+    switch (status)
+    {
+        case TomlStatus.Err(var error):
+            return TomlResult<System.Text.OwnedAscii>.Err(error);
+        case TomlStatus.Ok:
+    }
+
+    stack mut System.Text.OwnedAscii result = new();
+    stack System.Memory.MemoryStatus copied = result.AppendAscii(writer.View());
+    switch (copied)
+    {
+        case System.Memory.MemoryStatus.Err(var copyError):
+            return TomlResult<System.Text.OwnedAscii>.Err(TomlError.OutOfMemory);
+        case System.Memory.MemoryStatus.Ok:
+            return TomlResult<System.Text.OwnedAscii>.Ok(result);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// File helpers (doc 21 work item: compose System.IO.File without hiding IO)
+// ---------------------------------------------------------------------------
+//
+// TomlFileError surfaces BOTH parse/emit failures and IO failures explicitly.
+// Read helpers route file IO errors through the Io funnel; parse errors keep
+// their span-carrying TomlError. Write helpers do the same for emit + IO.
+
+public enum TomlFileError
+{
+    Io from System.IO.IOError,
+    Toml from TomlError,
+}
+
+public enum TomlFileResult<T>
+{
+    [Ok] Ok(T),
+    [Err] Err(TomlFileError),
+}
+
+public enum TomlFileStatus
+{
+    [Ok] Ok,
+    [Err] Err(TomlFileError),
+}
+
+// Reads a file with System.IO.File and parses it as TOML. IO failures and parse
+// failures are both returned as data through TomlFileError; nothing is swallowed.
+public fn TomlFileResult<TomlDocument> ReadFile(ascii path)
+{
+    stack mut System.Text.OwnedAscii contents = new();
+    switch (System.IO.File.ReadAllTextInto(path, contents))
+    {
+        case System.IO.IOStatus.Err(var ioError):
+            return TomlFileResult<TomlDocument>.Err(TomlFileError.Io(ioError));
+        case System.IO.IOStatus.Ok:
+    }
+
+    unsafe
+    {
+        switch (ParseText(contents.View()))
+        {
+            case TomlResult<TomlDocument>.Err(var parseError):
+                return TomlFileResult<TomlDocument>.Err(TomlFileError.Toml(parseError));
+            case TomlResult<TomlDocument>.Ok(var document):
+                return TomlFileResult<TomlDocument>.Ok(document);
+        }
+    }
+}
+
+// Emits the document to canonical TOML and writes it with System.IO.File. Emit
+// failures and IO failures are both surfaced explicitly through TomlFileError.
+public fn TomlFileStatus WriteFile(ascii path, mut borrow TomlDocument document)
+{
+    stack mut System.Text.OwnedAscii text = new();
+    switch (Emit(document))
+    {
+        case TomlResult<System.Text.OwnedAscii>.Err(var emitError):
+            return TomlFileStatus.Err(TomlFileError.Toml(emitError));
+        case TomlResult<System.Text.OwnedAscii>.Ok(var emitted):
+            text = emitted;
+    }
+
+    switch (System.IO.File.WriteAllText(path, text.View()))
+    {
+        case System.IO.IOStatus.Err(var ioError):
+            return TomlFileStatus.Err(TomlFileError.Io(ioError));
+        case System.IO.IOStatus.Ok:
+            return TomlFileStatus.Ok;
+    }
+}
+
+// Atomic variant of WriteFile: emits then replaces the target file in one
+// step via System.IO.File.WriteAllTextAtomic, surfacing every failure.
+public fn TomlFileStatus WriteFileAtomic(ascii path, mut borrow TomlDocument document)
+{
+    stack mut System.Text.OwnedAscii text = new();
+    switch (Emit(document))
+    {
+        case TomlResult<System.Text.OwnedAscii>.Err(var emitError):
+            return TomlFileStatus.Err(TomlFileError.Toml(emitError));
+        case TomlResult<System.Text.OwnedAscii>.Ok(var emitted):
+            text = emitted;
+    }
+
+    switch (System.IO.File.WriteAllTextAtomic(path, text.View()))
+    {
+        case System.IO.IOStatus.Err(var ioError):
+            return TomlFileStatus.Err(TomlFileError.Io(ioError));
+        case System.IO.IOStatus.Ok:
+            return TomlFileStatus.Ok;
+    }
+}

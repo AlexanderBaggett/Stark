@@ -49,7 +49,6 @@ public sealed class CompilerCliTests
         Assert.Contains("--target-feature <feature>", text);
         Assert.Contains("--relocation-model <default|static|pic|pie>", text);
         Assert.Contains("--code-model <tiny|small|kernel|medium|large>", text);
-        Assert.Contains("-O0|-Og|-O1|-O2|-O3", text);
         Assert.Contains("--optimize <0|g|1|2|3>", text);
         Assert.Contains("--strict-integer-ranges", text);
         Assert.Contains("--link-arg <arg>", text);
@@ -58,6 +57,8 @@ public sealed class CompilerCliTests
         Assert.Contains("--native-pkg-config <name>", text);
         Assert.Contains("--save-temps <dir>", text);
         Assert.Contains("--toolchain-metrics <path>", text);
+        Assert.Contains("--package-image-output <path>", text);
+        Assert.Contains("--no-stark-path", text);
         Assert.Contains("--diagnostic-format <text|json>", text);
         Assert.Contains("--log-level <info|warning|error>     Set the minimum compiler log severity printed to stderr (default: warning)", text);
         Assert.Contains("--log-verbosity <normal|verbose>", text);
@@ -187,7 +188,7 @@ public sealed class CompilerCliTests
         var rootPath = Path.Combine(tempDirectory.FullName, "Facade.stark");
         var extension = OperatingSystem.IsWindows() ? ".lib" : ".a";
         var outputPath = Path.Combine(tempDirectory.FullName, $"libFacade{extension}");
-        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg");
 
         try
         {
@@ -217,6 +218,123 @@ public sealed class CompilerCliTests
             Assert.Equal(string.Empty, stderr.ToString());
             Assert.True(File.Exists(outputPath));
             Assert.True(File.Exists(manifestPath));
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public async Task EmitLibraryCanRoutePackageImageAwayFromStaticLibrary()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
+        {
+            return;
+        }
+
+        var archiverPath = FindFirstAvailableTool("llvm-ar", "ar");
+        if (archiverPath is null)
+        {
+            return;
+        }
+
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-cli-lib-package-route-");
+        var rootPath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+        var binDirectory = Path.Combine(tempDirectory.FullName, "bin");
+        var packageDirectory = Path.Combine(tempDirectory.FullName, "pkg");
+        Directory.CreateDirectory(binDirectory);
+        Directory.CreateDirectory(packageDirectory);
+
+        var extension = OperatingSystem.IsWindows() ? ".lib" : ".a";
+        var outputPath = Path.Combine(binDirectory, $"libFacade{extension}");
+        var manifestPath = Path.Combine(packageDirectory, "libFacade.starkpkg");
+
+        try
+        {
+            await File.WriteAllTextAsync(
+                rootPath,
+                """
+                module Facade
+
+                public finite law i32[min max] Double(i32[min max] value)
+                {
+                    return value + value;
+                }
+                """);
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+
+            var exitCode = await CompilerCli.RunAsync(
+                [rootPath, "--emit-lib", "-o", outputPath, "--package-image-output", manifestPath, "--archiver", archiverPath],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.Equal(0, exitCode);
+            Assert.Contains("Emitted static library:", stdout.ToString(), StringComparison.Ordinal);
+            Assert.Contains("Emitted package image:", stdout.ToString(), StringComparison.Ordinal);
+            Assert.Equal(string.Empty, stderr.ToString());
+            Assert.True(File.Exists(outputPath));
+            Assert.True(File.Exists(manifestPath));
+            Assert.False(File.Exists(Path.Combine(binDirectory, "libFacade.starkpkg")));
+
+            Assert.True(PackageImageLoader.TryLoadManifest(manifestPath, out var manifest));
+            Assert.Equal(Path.Combine("..", "bin", $"libFacade{extension}"), manifest.LibraryFileName);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public async Task PackageImageOutputRejectsExecutableEmission()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-cli-package-output-exe-");
+        var rootPath = Path.Combine(tempDirectory.FullName, "App.stark");
+        var packagePath = Path.Combine(tempDirectory.FullName, "App.starkpkg.json");
+
+        try
+        {
+            await File.WriteAllTextAsync(
+                rootPath,
+                """
+                module App
+
+                export fn i32[min max] main()
+                {
+                    return 0;
+                }
+                """);
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+
+            var exitCode = await CompilerCli.RunAsync(
+                [rootPath, "--check", "--package-image-output", packagePath],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.Equal(1, exitCode);
+            Assert.Equal(string.Empty, stdout.ToString());
+            Assert.Contains("--package-image-output is only valid for library emission.", stderr.ToString(), StringComparison.Ordinal);
         }
         finally
         {
@@ -1049,153 +1167,6 @@ public sealed class CompilerCliTests
     }
 
     [Fact]
-    public async Task EmitObjectModeForwardsOptimizationLevelToClang()
-    {
-        if (OperatingSystem.IsWindows())
-        {
-            return;
-        }
-
-        var tempDirectory = Directory.CreateTempSubdirectory("stark-cli-opt-level-");
-        var outputPath = Path.Combine(tempDirectory.FullName, "app.o");
-        var clangLogPath = Path.Combine(tempDirectory.FullName, "clang.log");
-        _ = await CreateUnixCaptureClangAsync(tempDirectory.FullName, clangLogPath);
-        var originalPath = Environment.GetEnvironmentVariable("PATH");
-
-        try
-        {
-            Environment.SetEnvironmentVariable("PATH", $"{tempDirectory.FullName}{Path.PathSeparator}{originalPath}");
-
-            var stdout = new StringWriter();
-            var stderr = new StringWriter();
-
-            var exitCode = await CompilerCli.RunAsync(
-                [
-                    "--emit-obj",
-                    "-o", outputPath,
-                    "-O0"
-                ],
-                new StringReader(
-                    """
-                    module Demo
-
-                    fn i32[min max] Run(bool flag)
-                    {
-                        stack mut i32[min max] value = 0;
-                        if (flag)
-                        {
-                            value = 1;
-                        }
-                        else
-                        {
-                            value = 2;
-                        }
-
-                        return value;
-                    }
-                    """),
-                stdout,
-                stderr);
-
-            Assert.Equal(0, exitCode);
-            Assert.Contains("Emitted object file:", stdout.ToString());
-            Assert.Equal(string.Empty, stderr.ToString());
-            Assert.True(File.Exists(outputPath));
-
-            var clangLog = await File.ReadAllTextAsync(clangLogPath);
-            Assert.Contains("-O0", clangLog, StringComparison.Ordinal);
-            Assert.DoesNotContain("-disable-llvm-passes", clangLog, StringComparison.Ordinal);
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("PATH", originalPath);
-
-            try
-            {
-                tempDirectory.Delete(recursive: true);
-            }
-            catch
-            {
-                // Best effort cleanup only.
-            }
-        }
-    }
-
-    [Fact]
-    public async Task EmitObjectModeForwardsDebugFriendlyOptimizationLevelToClang()
-    {
-        if (OperatingSystem.IsWindows())
-        {
-            return;
-        }
-
-        var tempDirectory = Directory.CreateTempSubdirectory("stark-cli-opt-level-og-");
-        var outputPath = Path.Combine(tempDirectory.FullName, "app.o");
-        var clangLogPath = Path.Combine(tempDirectory.FullName, "clang.log");
-        _ = await CreateUnixCaptureClangAsync(tempDirectory.FullName, clangLogPath);
-        var originalPath = Environment.GetEnvironmentVariable("PATH");
-
-        try
-        {
-            Environment.SetEnvironmentVariable("PATH", $"{tempDirectory.FullName}{Path.PathSeparator}{originalPath}");
-
-            var stdout = new StringWriter();
-            var stderr = new StringWriter();
-
-            var exitCode = await CompilerCli.RunAsync(
-                [
-                    "--emit-obj",
-                    "-o", outputPath,
-                    "-Og"
-                ],
-                new StringReader(
-                    """
-                    module Demo
-
-                    fn i32[min max] Run(bool flag)
-                    {
-                        stack mut i32[min max] value = 0;
-                        if (flag)
-                        {
-                            value = 1;
-                        }
-                        else
-                        {
-                            value = 2;
-                        }
-
-                        return value;
-                    }
-                    """),
-                stdout,
-                stderr);
-
-            Assert.Equal(0, exitCode);
-            Assert.Contains("Emitted object file:", stdout.ToString());
-            Assert.Equal(string.Empty, stderr.ToString());
-            Assert.True(File.Exists(outputPath));
-
-            var clangLog = await File.ReadAllTextAsync(clangLogPath);
-            Assert.Contains("-Og", clangLog, StringComparison.Ordinal);
-            Assert.Contains("-Xclang", clangLog, StringComparison.Ordinal);
-            Assert.Contains("-disable-llvm-passes", clangLog, StringComparison.Ordinal);
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("PATH", originalPath);
-
-            try
-            {
-                tempDirectory.Delete(recursive: true);
-            }
-            catch
-            {
-                // Best effort cleanup only.
-            }
-        }
-    }
-
-    [Fact]
     public async Task EmitObjectModeKeepsLlvmPassesForImportedInlineBodyClones()
     {
         if (OperatingSystem.IsWindows())
@@ -1261,7 +1232,6 @@ public sealed class CompilerCliTests
                 [
                     appPath,
                     "--emit-obj",
-                    "-O3",
                     "-I", tempDirectory.FullName,
                     "-o", outputPath
                 ],
@@ -1357,6 +1327,86 @@ public sealed class CompilerCliTests
     }
 
     [Fact]
+    public async Task CheckModeCanUseStarkPathAndCanDisableIt()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-cli-stark-path-");
+        var appDirectory = Path.Combine(tempDirectory.FullName, "app");
+        var packageDirectory = Path.Combine(tempDirectory.FullName, "packages");
+        Directory.CreateDirectory(appDirectory);
+        Directory.CreateDirectory(packageDirectory);
+
+        var appPath = Path.Combine(appDirectory, "App.stark");
+        var supportPath = Path.Combine(packageDirectory, "EnvSupport.stark");
+        var originalStarkPath = Environment.GetEnvironmentVariable("STARK_PATH");
+
+        try
+        {
+            await File.WriteAllTextAsync(
+                supportPath,
+                """
+                module EnvSupport
+
+                public finite law i32[min max] Value()
+                {
+                    return 9;
+                }
+                """);
+
+            await File.WriteAllTextAsync(
+                appPath,
+                """
+                import EnvSupport
+                module App
+
+                fn i32[min max] Run()
+                {
+                    return EnvSupport.Value();
+                }
+                """);
+
+            Environment.SetEnvironmentVariable("STARK_PATH", packageDirectory);
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+
+            var exitCode = await CompilerCli.RunAsync(
+                [appPath, "--check"],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.Equal(0, exitCode);
+            Assert.Contains("Check succeeded.", stdout.ToString(), StringComparison.Ordinal);
+            Assert.Equal(string.Empty, stderr.ToString());
+
+            var disabledStdout = new StringWriter();
+            var disabledStderr = new StringWriter();
+            var disabledExitCode = await CompilerCli.RunAsync(
+                [appPath, "--check", "--no-stark-path"],
+                new StringReader(string.Empty),
+                disabledStdout,
+                disabledStderr);
+
+            Assert.Equal(1, disabledExitCode);
+            Assert.Equal(string.Empty, disabledStdout.ToString());
+            Assert.Contains("Unable to resolve imported module 'EnvSupport'.", disabledStderr.ToString(), StringComparison.Ordinal);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("STARK_PATH", originalStarkPath);
+
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
     public async Task EmitLibraryModeBuildsStaticLibraryAndManifest()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
@@ -1369,7 +1419,7 @@ public sealed class CompilerCliTests
         var dependencyPath = Path.Combine(tempDirectory.FullName, "Math.stark");
         var extension = OperatingSystem.IsWindows() ? ".lib" : ".a";
         var outputPath = Path.Combine(tempDirectory.FullName, $"libFacade{extension}");
-        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg");
 
         try
         {
@@ -1413,21 +1463,20 @@ public sealed class CompilerCliTests
             Assert.True(new FileInfo(outputPath).Length > 0);
             Assert.True(File.Exists(manifestPath));
 
-            using var manifest = System.Text.Json.JsonDocument.Parse(await File.ReadAllTextAsync(manifestPath));
-            var root = manifest.RootElement;
-            Assert.Equal("Facade", root.GetProperty("RootModule").GetString());
+            Assert.True(PackageImageLoader.TryLoadManifest(manifestPath, out var manifest));
+            Assert.Equal("Facade", manifest.RootModule);
             Assert.Contains(
-                root.GetProperty("Modules").EnumerateArray(),
+                manifest.Modules,
                 module =>
                 {
-                    if (module.GetProperty("ModuleName").GetString() != "Facade")
+                    if (module.ModuleName != "Facade")
                     {
                         return false;
                     }
 
-                    var sourceSurface = module.GetProperty("SourceSurface");
-                    return sourceSurface.GetProperty("ReExports").EnumerateArray().Any(reExport => reExport.GetProperty("ModuleName").GetString() == "Math")
-                           && sourceSurface.GetProperty("Functions").EnumerateArray().Any(function => function.GetProperty("SymbolName").GetString() == "Facade.Double");
+                    var sourceSurface = module.SourceSurface;
+                    return sourceSurface?.ReExports?.Any(reExport => reExport.ModuleName == "Math") == true
+                           && sourceSurface.Functions?.Any(function => function.SymbolName == "Facade.Double") == true;
                 });
         }
         finally
@@ -1812,7 +1861,6 @@ public sealed class CompilerCliTests
                 [
                     rootPath,
                     "--emit-exe",
-                    "-O3",
                     "-o", outputPath,
                     "--target", "x86_64-unknown-linux-gnu"
                 ],
@@ -1884,7 +1932,6 @@ public sealed class CompilerCliTests
                 [
                     rootPath,
                     "--emit-exe",
-                    "-O0",
                     "-o", outputPath,
                     "--target", "arm64-apple-darwin"
                 ],
@@ -1961,7 +2008,6 @@ public sealed class CompilerCliTests
                 [
                     rootPath,
                     "--emit-exe",
-                    "-O3",
                     "-I", Path.Combine(repositoryRoot, "stdlib", "src"),
                     "-o", outputPath,
                     "--target", "x86_64-unknown-linux-gnu",
@@ -2057,7 +2103,6 @@ public sealed class CompilerCliTests
                 [
                     rootPath,
                     "--emit-exe",
-                    "-O3",
                     "-I", Path.Combine(repositoryRoot, "stdlib", "src"),
                     "-o", outputPath,
                     "--target", "x86_64-unknown-linux-gnu",
@@ -2165,7 +2210,6 @@ public sealed class CompilerCliTests
                 [
                     rootPath,
                     "--emit-exe",
-                    "-O3",
                     "-I", tempDirectory.FullName,
                     "-o", outputPath,
                     "--target", "x86_64-unknown-linux-gnu",
@@ -2264,7 +2308,7 @@ public sealed class CompilerCliTests
             var buildStdout = new StringWriter();
             var buildStderr = new StringWriter();
             var buildExitCode = await CompilerCli.RunAsync(
-                [facadePath, "--emit-lib", "-O3", "-o", libraryPath, "--save-temps", buildTempsPath],
+                [facadePath, "--emit-lib", "-o", libraryPath, "--save-temps", buildTempsPath],
                 new StringReader(string.Empty),
                 buildStdout,
                 buildStderr);
@@ -2297,7 +2341,7 @@ public sealed class CompilerCliTests
             var stderr = new StringWriter();
 
             var exitCode = await CompilerCli.RunAsync(
-                [appPath, "--emit-exe", "-O3", "-I", packageDirectory, "-o", outputPath],
+                [appPath, "--emit-exe", "-I", packageDirectory, "-o", outputPath],
                 new StringReader(string.Empty),
                 stdout,
                 stderr);
@@ -2492,7 +2536,7 @@ public sealed class CompilerCliTests
         var syscallPath = Path.Combine(packageDirectory, "Syscall.stark");
         var appPath = Path.Combine(appDirectory, "App.stark");
         var libraryPath = Path.Combine(packageDirectory, "libSyscall.a");
-        var manifestPath = Path.Combine(packageDirectory, "libSyscall.starkpkg.json");
+        var manifestPath = Path.Combine(packageDirectory, "libSyscall.starkpkg");
         var outputPath = Path.Combine(appDirectory, "app");
 
         try
@@ -2524,20 +2568,19 @@ public sealed class CompilerCliTests
             Assert.True(File.Exists(libraryPath));
             Assert.True(File.Exists(manifestPath));
 
-            using (var manifest = System.Text.Json.JsonDocument.Parse(await File.ReadAllTextAsync(manifestPath)))
             {
-                var syscallModule = manifest.RootElement.GetProperty("Modules")
-                    .EnumerateArray()
-                    .Single(module => module.GetProperty("ModuleName").GetString() == "Syscall");
-                var syscallFunctions =
-                    syscallModule.GetProperty("Functions").EnumerateArray().ToArray().Length != 0
-                        ? syscallModule.GetProperty("Functions").EnumerateArray()
-                        : syscallModule.GetProperty("SourceSurface").GetProperty("Functions").EnumerateArray();
+                Assert.True(PackageImageLoader.TryLoadManifest(manifestPath, out var manifest));
+                var syscallModule = Assert.Single(
+                    manifest.Modules,
+                    static module => module.ModuleName == "Syscall");
+                var syscallFunctions = syscallModule.Functions.Count != 0
+                    ? syscallModule.Functions
+                    : syscallModule.SourceSurface?.Functions ?? [];
                 var syscallFunction = syscallFunctions
-                    .Single(function => function.GetProperty("Name").GetString() == "Syscall0");
-                Assert.True(syscallFunction.TryGetProperty("Asm", out var asm));
-                Assert.Equal("x86_64", asm.GetProperty("ArchitectureText").GetString());
-                Assert.Equal("syscall", asm.GetProperty("TemplateText").GetString());
+                    .Single(static function => function.Name == "Syscall0");
+                Assert.NotNull(syscallFunction.Asm);
+                Assert.Equal("x86_64", syscallFunction.Asm!.ArchitectureText);
+                Assert.Equal("syscall", syscallFunction.Asm.TemplateText);
             }
 
             File.Delete(syscallPath);
@@ -3092,11 +3135,21 @@ public sealed class CompilerCliTests
         }
 
         var bytes = await File.ReadAllBytesAsync(path);
-        return bytes.Length >= 4
-            && bytes[0] == (byte)'B'
-            && bytes[1] == (byte)'C'
-            && bytes[2] == 0xC0
-            && bytes[3] == 0xDE;
+        if (bytes.Length < 4)
+        {
+            return false;
+        }
+
+        // Raw bitcode ('BC' 0xC0DE) on ELF/COFF targets; Darwin emits the bitcode
+        // wrapper header (0x0B17C0DE little-endian) around the same payload.
+        return (bytes[0] == (byte)'B'
+                && bytes[1] == (byte)'C'
+                && bytes[2] == 0xC0
+                && bytes[3] == 0xDE)
+            || (bytes[0] == 0xDE
+                && bytes[1] == 0xC0
+                && bytes[2] == 0x17
+                && bytes[3] == 0x0B);
     }
 
     private static string? FindFirstAvailableTool(params string[] toolNames)

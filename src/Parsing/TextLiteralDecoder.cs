@@ -57,6 +57,18 @@ internal static class TextLiteralDecoder
         out TextLiteralDiagnostic diagnostic)
     {
         var content = GetContent(literalText);
+        if (kind == TextLiteralKind.String && IsRawStringLiteral(literalText))
+        {
+            if (IsRawMultilineStringLiteral(literalText) && content.Contains('\n', StringComparison.Ordinal))
+            {
+                return TryDecodeRawMultiline(content, out decoded, out diagnostic);
+            }
+
+            decoded = new DecodedTextLiteral(content);
+            diagnostic = default;
+            return true;
+        }
+
         var builder = new StringBuilder(content.Length);
 
         for (var index = 0; index < content.Length; index++)
@@ -248,6 +260,157 @@ internal static class TextLiteralDecoder
         return units;
     }
 
+    private static bool TryDecodeRawMultiline(
+        string content,
+        out DecodedTextLiteral decoded,
+        out TextLiteralDiagnostic diagnostic)
+    {
+        if (!TryNormalizeRawMultilineContent(content, out var normalized, out diagnostic))
+        {
+            decoded = default;
+            return false;
+        }
+
+        decoded = new DecodedTextLiteral(normalized);
+        return true;
+    }
+
+    // Multiline raw strings follow C# raw-string-literal rules: content
+    // starts on the line after the opening quotes, the closing quotes stand
+    // alone on their line, and the whitespace before the closing quotes is
+    // stripped from every content line. Shared with interpolated raw
+    // literals, which normalize before hole splitting.
+    internal static bool TryNormalizeRawMultilineContent(
+        string content,
+        out string normalized,
+        out TextLiteralDiagnostic diagnostic)
+    {
+        // Offsets in diagnostics are relative to the literal text; the
+        // content starts after the six characters of 'raw"""'.
+        const int contentBaseOffset = 6;
+
+        normalized = string.Empty;
+        var lines = SplitLinesKeepingBreaks(content);
+        var openingLine = lines[0].Text;
+        for (var index = 0; index < openingLine.Length; index++)
+        {
+            if (!IsRawIndentationCharacter(openingLine[index]))
+            {
+                diagnostic = new TextLiteralDiagnostic(
+                    contentBaseOffset + index,
+                    "Multiline raw string literals must start their content on the line after the opening quotes.");
+                return false;
+            }
+        }
+
+        var closingLine = lines[^1];
+        for (var index = 0; index < closingLine.Text.Length; index++)
+        {
+            if (!IsRawIndentationCharacter(closingLine.Text[index]))
+            {
+                diagnostic = new TextLiteralDiagnostic(
+                    contentBaseOffset + closingLine.Start + index,
+                    "The closing quotes of a multiline raw string literal must be on their own line.");
+                return false;
+            }
+        }
+
+        var indentation = closingLine.Text;
+        var builder = new StringBuilder(content.Length);
+        for (var index = 1; index < lines.Count - 1; index++)
+        {
+            var line = lines[index];
+            if (index > 1)
+            {
+                builder.Append(lines[index - 1].Break);
+            }
+
+            if (line.Text.StartsWith(indentation, StringComparison.Ordinal))
+            {
+                builder.Append(line.Text, indentation.Length, line.Text.Length - indentation.Length);
+                continue;
+            }
+
+            if (IsWhitespaceOnly(line.Text))
+            {
+                continue;
+            }
+
+            diagnostic = new TextLiteralDiagnostic(
+                contentBaseOffset + line.Start,
+                "Lines inside a multiline raw string literal must start with the same whitespace as the closing quotes.");
+            return false;
+        }
+
+        normalized = builder.ToString();
+        diagnostic = default;
+        return true;
+    }
+
+    private static List<(string Text, string Break, int Start)> SplitLinesKeepingBreaks(string content)
+    {
+        var lines = new List<(string Text, string Break, int Start)>();
+        var lineStart = 0;
+        for (var index = 0; index < content.Length; index++)
+        {
+            if (content[index] != '\n')
+            {
+                continue;
+            }
+
+            var breakStart = index > lineStart && content[index - 1] == '\r' ? index - 1 : index;
+            lines.Add((content[lineStart..breakStart], content[breakStart..(index + 1)], lineStart));
+            lineStart = index + 1;
+        }
+
+        lines.Add((content[lineStart..], string.Empty, lineStart));
+        return lines;
+    }
+
+    private static bool IsRawIndentationCharacter(char ch)
+    {
+        return ch is ' ' or '\t';
+    }
+
+    private static bool IsWhitespaceOnly(string text)
+    {
+        foreach (var ch in text)
+        {
+            if (!IsRawIndentationCharacter(ch))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    public static string GetContent(string literalText)
+    {
+        if (IsRawMultilineStringLiteral(literalText))
+        {
+            return literalText.Length >= 9 ? literalText[6..^3] : literalText;
+        }
+
+        if (IsRawStringLiteral(literalText))
+        {
+            return literalText.Length >= 5 ? literalText[4..^1] : literalText;
+        }
+
+        return literalText.Length >= 2 ? literalText[1..^1] : literalText;
+    }
+
+    public static bool IsRawStringLiteral(string literalText)
+    {
+        return literalText.StartsWith("raw\"", StringComparison.Ordinal);
+    }
+
+    public static bool IsRawMultilineStringLiteral(string literalText)
+    {
+        return literalText.StartsWith("raw\"\"\"", StringComparison.Ordinal)
+            && literalText.EndsWith("\"\"\"", StringComparison.Ordinal);
+    }
+
     private static string Describe(TextLiteralKind kind)
     {
         return kind == TextLiteralKind.String ? "string literal" : "character literal";
@@ -291,11 +454,6 @@ internal static class TextLiteralDecoder
         }
 
         builder.Append(ch);
-    }
-
-    private static string GetContent(string literalText)
-    {
-        return literalText.Length >= 2 ? literalText[1..^1] : literalText;
     }
 
     private static bool TryDecodeHexEscape(string content, int start, int length, out int value)

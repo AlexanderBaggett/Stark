@@ -1,0 +1,22 @@
+[solution]
+name = "StarkRepo"
+members = [
+  "stdlib",
+  "examples/raylib",
+  "examples/breakout",
+]
+
+[defaults]
+build = ["examples/breakout"]
+run = "examples/breakout"
+
+[aliases]
+stdlib = "stdlib"
+raylib = "examples/raylib"
+breakout = "examples/breakout"
+
+[profiles.dev]
+opt = 0
+
+[profiles.release]
+opt = 3

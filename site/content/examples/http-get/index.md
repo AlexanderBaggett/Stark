@@ -12,7 +12,7 @@ code builds the request, checks write/read status, and streams the response;
 ```bash
 cd examples
 dotnet run --project ../src -- build http-get
-./.stark/build/dev/http-get/http-get
+./build/dev/<target-triple>/stage0/bin/http-get/http-get
 ```
 
 Expected behavior: writes the HTTPS response to stdout when the network path

@@ -48,6 +48,20 @@ internal static partial class PackageImageLoader
             return false;
         }
 
+        ImportedTemplateTypedBodyExpressionSummary? traversalSource = null;
+        if (manifest.TraversalSource is not null
+            && !TryBuildImportedTypedTemplateExpression(manifest.TraversalSource, out traversalSource))
+        {
+            return false;
+        }
+
+        ImportedTemplateTypedSwitchFieldPatternSummary? conditionPattern = null;
+        if (manifest.ConditionPattern is not null
+            && !TryBuildImportedTypedTemplateSwitchFieldPattern(manifest.ConditionPattern, out conditionPattern))
+        {
+            return false;
+        }
+
         if (string.Equals(manifest.Kind, "block", StringComparison.Ordinal))
         {
             var bodyStatements = new List<ImportedTemplateTypedBodyStatementSummary>((manifest.BodyStatements ?? []).Count);
@@ -149,6 +163,7 @@ internal static partial class PackageImageLoader
             summary = new ImportedTemplateTypedBodyStatementSummary(
                 ImportedTemplateTypedBodyStatementKind.Switch,
                 expression,
+                Name: manifest.Name,
                 SwitchCaseSummaries: switchCases);
             return true;
         }
@@ -191,11 +206,60 @@ internal static partial class PackageImageLoader
             summary = new ImportedTemplateTypedBodyStatementSummary(
                 ImportedTemplateTypedBodyStatementKind.For,
                 Expression: expression!,
+                Name: manifest.Name,
                 LoopBehavior: manifest.LoopBehavior,
                 InitializerStatements: initializerStatements,
                 IteratorStatements: iteratorStatements,
                 BodyStatements: bodyStatements,
                 LoopContracts: manifest.LoopContracts);
+            return true;
+        }
+
+        if (string.Equals(manifest.Kind, "for-traversal", StringComparison.Ordinal))
+        {
+            if (traversalSource is null
+                || string.IsNullOrWhiteSpace(manifest.LoopBehavior)
+                || string.IsNullOrWhiteSpace(manifest.TraversalElementName)
+                || manifest.TraversalElementType is null)
+            {
+                return false;
+            }
+
+            var hasIndexBinding =
+                manifest.TraversalIndexName is not null
+                || manifest.TraversalIndexStorageClass is not null
+                || manifest.TraversalIndexType is not null;
+            if (hasIndexBinding
+                && (string.IsNullOrWhiteSpace(manifest.TraversalIndexName)
+                    || string.IsNullOrWhiteSpace(manifest.TraversalIndexStorageClass)
+                    || manifest.TraversalIndexType is null))
+            {
+                return false;
+            }
+
+            var bodyStatements = new List<ImportedTemplateTypedBodyStatementSummary>((manifest.BodyStatements ?? []).Count);
+            foreach (var bodyStatement in manifest.BodyStatements ?? [])
+            {
+                if (!TryBuildImportedTypedTemplateStatement(bodyStatement, out var builtBodyStatement))
+                {
+                    return false;
+                }
+
+                bodyStatements.Add(builtBodyStatement);
+            }
+
+            summary = new ImportedTemplateTypedBodyStatementSummary(
+                ImportedTemplateTypedBodyStatementKind.ForTraversal,
+                Name: manifest.Name,
+                LoopBehavior: manifest.LoopBehavior,
+                BodyStatements: bodyStatements,
+                LoopContracts: manifest.LoopContracts,
+                TraversalSourceExpression: traversalSource,
+                TraversalIndexName: manifest.TraversalIndexName,
+                TraversalIndexStorageClass: manifest.TraversalIndexStorageClass,
+                TraversalIndexType: manifest.TraversalIndexType is null ? null : BuildTypeSymbol(manifest.TraversalIndexType),
+                TraversalElementName: manifest.TraversalElementName,
+                TraversalElementType: BuildTypeSymbol(manifest.TraversalElementType));
             return true;
         }
 
@@ -220,8 +284,10 @@ internal static partial class PackageImageLoader
             summary = new ImportedTemplateTypedBodyStatementSummary(
                 ImportedTemplateTypedBodyStatementKind.While,
                 expression,
+                Name: manifest.Name,
                 LoopBehavior: manifest.LoopBehavior,
                 BodyStatements: bodyStatements,
+                ConditionPattern: conditionPattern,
                 LoopContracts: manifest.LoopContracts);
             return true;
         }
@@ -263,7 +329,8 @@ internal static partial class PackageImageLoader
                 ImportedTemplateTypedBodyStatementKind.If,
                 expression,
                 ThenStatements: thenStatements,
-                ElseStatements: elseStatements);
+                ElseStatements: elseStatements,
+                ConditionPattern: conditionPattern);
             return true;
         }
 
@@ -285,14 +352,16 @@ internal static partial class PackageImageLoader
         if (string.Equals(manifest.Kind, "break", StringComparison.Ordinal))
         {
             summary = new ImportedTemplateTypedBodyStatementSummary(
-                ImportedTemplateTypedBodyStatementKind.Break);
+                ImportedTemplateTypedBodyStatementKind.Break,
+                Name: manifest.Name);
             return true;
         }
 
         if (string.Equals(manifest.Kind, "continue", StringComparison.Ordinal))
         {
             summary = new ImportedTemplateTypedBodyStatementSummary(
-                ImportedTemplateTypedBodyStatementKind.Continue);
+                ImportedTemplateTypedBodyStatementKind.Continue,
+                Name: manifest.Name);
             return true;
         }
 
@@ -310,6 +379,10 @@ internal static partial class PackageImageLoader
         {
             kind = ImportedTemplateTypedSwitchCaseKind.Literal;
         }
+        else if (string.Equals(manifest.Kind, "range", StringComparison.Ordinal))
+        {
+            kind = ImportedTemplateTypedSwitchCaseKind.Range;
+        }
         else if (string.Equals(manifest.Kind, "match-all", StringComparison.Ordinal))
         {
             kind = ImportedTemplateTypedSwitchCaseKind.MatchAll;
@@ -326,6 +399,10 @@ internal static partial class PackageImageLoader
         {
             kind = ImportedTemplateTypedSwitchCaseKind.AggregatePattern;
         }
+        else if (string.Equals(manifest.Kind, "list-pattern", StringComparison.Ordinal))
+        {
+            kind = ImportedTemplateTypedSwitchCaseKind.ListPattern;
+        }
         else
         {
             return false;
@@ -334,6 +411,13 @@ internal static partial class PackageImageLoader
         ImportedTemplateTypedBodyExpressionSummary? expression = null;
         if (manifest.Expression is not null
             && !TryBuildImportedTypedTemplateExpression(manifest.Expression, out expression))
+        {
+            return false;
+        }
+
+        ImportedTemplateTypedBodyExpressionSummary? endExpression = null;
+        if (manifest.EndExpression is not null
+            && !TryBuildImportedTypedTemplateExpression(manifest.EndExpression, out endExpression))
         {
             return false;
         }
@@ -352,6 +436,15 @@ internal static partial class PackageImageLoader
         }
 
         if (kind == ImportedTemplateTypedSwitchCaseKind.Literal && expression is null)
+        {
+            return false;
+        }
+
+        if (kind == ImportedTemplateTypedSwitchCaseKind.Range
+            && (expression is null
+                || endExpression is null
+                || expression.Kind != ImportedTemplateTypedBodyExpressionKind.Literal
+                || endExpression.Kind != ImportedTemplateTypedBodyExpressionKind.Literal))
         {
             return false;
         }
@@ -384,6 +477,7 @@ internal static partial class PackageImageLoader
             manifest.Name,
             expression,
             guardExpression,
+            EndExpression: endExpression,
             MemberPatterns: members,
             StatementSummaries: statements);
         return true;
@@ -422,6 +516,25 @@ internal static partial class PackageImageLoader
             summary = new ImportedTemplateTypedSwitchFieldPatternSummary(
                 ImportedTemplateTypedSwitchFieldPatternKind.Literal,
                 Expression: literalExpression);
+            return true;
+        }
+
+        if (string.Equals(manifest.Kind, "range", StringComparison.Ordinal))
+        {
+            if (manifest.Expression is null
+                || manifest.EndExpression is null
+                || !TryBuildImportedTypedTemplateExpression(manifest.Expression, out var startExpression)
+                || !TryBuildImportedTypedTemplateExpression(manifest.EndExpression, out var endExpression)
+                || startExpression.Kind != ImportedTemplateTypedBodyExpressionKind.Literal
+                || endExpression.Kind != ImportedTemplateTypedBodyExpressionKind.Literal)
+            {
+                return false;
+            }
+
+            summary = new ImportedTemplateTypedSwitchFieldPatternSummary(
+                ImportedTemplateTypedSwitchFieldPatternKind.Range,
+                Expression: startExpression,
+                EndExpression: endExpression);
             return true;
         }
 
@@ -477,6 +590,25 @@ internal static partial class PackageImageLoader
             return true;
         }
 
+        if (string.Equals(manifest.Kind, "list-pattern", StringComparison.Ordinal))
+        {
+            var members = new List<ImportedTemplateTypedSwitchFieldPatternSummary>((manifest.Members ?? []).Count);
+            foreach (var member in manifest.Members ?? [])
+            {
+                if (!TryBuildImportedTypedTemplateSwitchFieldPattern(member, out var builtMember))
+                {
+                    return false;
+                }
+
+                members.Add(builtMember);
+            }
+
+            summary = new ImportedTemplateTypedSwitchFieldPatternSummary(
+                ImportedTemplateTypedSwitchFieldPatternKind.ListPattern,
+                MemberPatterns: members);
+            return true;
+        }
+
         return false;
     }
 
@@ -517,6 +649,38 @@ internal static partial class PackageImageLoader
                 ImportedTemplateTypedBodyExpressionKind.Literal,
                 LiteralText: manifest.LiteralText,
                 Type: BuildTypeSymbol(manifest.Type));
+            return true;
+        }
+
+        if (string.Equals(manifest.Kind, "structural-fact", StringComparison.Ordinal))
+        {
+            if (manifest.Name is null
+                || !CompileTimeStructuralFacts.TryGetFactKind(manifest.Name, out _))
+            {
+                return false;
+            }
+
+            summary = new ImportedTemplateTypedBodyExpressionSummary(
+                ImportedTemplateTypedBodyExpressionKind.StructuralFact,
+                Name: manifest.Name,
+                TypeArguments: (manifest.TypeArguments ?? [])
+                    .Select(BuildTypeSymbol)
+                    .ToArray(),
+                ComptimeValueArguments: BuildComptimeValueArgumentSymbols(manifest.ComptimeValueArguments, currentModuleName: null, localNamedTypes: null));
+            return true;
+        }
+
+        if (string.Equals(manifest.Kind, "comptime", StringComparison.Ordinal))
+        {
+            if (manifest.Arguments is not { Count: 1 }
+                || !TryBuildImportedTypedTemplateExpression(manifest.Arguments[0], out var operand))
+            {
+                return false;
+            }
+
+            summary = new ImportedTemplateTypedBodyExpressionSummary(
+                ImportedTemplateTypedBodyExpressionKind.Comptime,
+                Arguments: [operand]);
             return true;
         }
 
@@ -612,6 +776,25 @@ internal static partial class PackageImageLoader
                 ImportedTemplateTypedBodyExpressionKind.Conversion,
                 Arguments: [operand],
                 Type: BuildTypeSymbol(manifest.Type));
+            return true;
+        }
+
+        if (string.Equals(manifest.Kind, "try", StringComparison.Ordinal))
+        {
+            if (manifest.Ordinal is null || manifest.Arguments is not { Count: 1 })
+            {
+                return false;
+            }
+
+            if (!TryBuildImportedTypedTemplateExpression(manifest.Arguments[0], out var operand))
+            {
+                return false;
+            }
+
+            summary = new ImportedTemplateTypedBodyExpressionSummary(
+                ImportedTemplateTypedBodyExpressionKind.TryPropagation,
+                Ordinal: manifest.Ordinal,
+                Arguments: [operand]);
             return true;
         }
 
@@ -962,6 +1145,32 @@ internal static partial class PackageImageLoader
 
             summary = new ImportedTemplateTypedBodyExpressionSummary(
                 ImportedTemplateTypedBodyExpressionKind.DynamicStorageOperation,
+                Ordinal: manifest.Ordinal,
+                Arguments: arguments);
+            return true;
+        }
+
+        if (string.Equals(manifest.Kind, "dyn-trait-from-parts", StringComparison.Ordinal))
+        {
+            if (manifest.Ordinal is null || manifest.Arguments is not { Count: 2 })
+            {
+                return false;
+            }
+
+            var arguments = new List<ImportedTemplateTypedBodyExpressionSummary>(manifest.Arguments.Count);
+            foreach (var argument in manifest.Arguments)
+            {
+                if (!TryBuildImportedTypedTemplateExpression(argument, out var builtArgument))
+                {
+                    return false;
+                }
+
+                arguments.Add(builtArgument);
+            }
+
+            summary = new ImportedTemplateTypedBodyExpressionSummary(
+                ImportedTemplateTypedBodyExpressionKind.DynTraitFromParts,
+                Name: manifest.Name,
                 Ordinal: manifest.Ordinal,
                 Arguments: arguments);
             return true;

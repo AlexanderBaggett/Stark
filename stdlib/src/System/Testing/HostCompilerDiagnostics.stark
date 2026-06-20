@@ -1,0 +1,98 @@
+import System.Testing
+import System.Testing.HostCompiler
+module System.Testing.HostCompilerDiagnostics
+
+// Adapts host compiler outcomes into System.Testing.Diagnostic values so the
+// structured diagnostic predicates in System.Testing (DiagnosticCode,
+// DiagnosticSeverityIs, DiagnosticStage, DiagnosticAt, DiagnosticEndsAt,
+// DiagnosticFilePath, ...) work directly on host-compiled results.
+//
+// The materialized Diagnostic borrows the outcome's owned JsonDocument buffer:
+// its ascii fields (Code, Message, Stage, FilePath) are views into the parsed
+// response, so the outcome must outlive every Diagnostic produced here. That is
+// why HostDiagnosticAt takes `mut borrow HostCompileOutcome self`.
+
+// Maps a host severity string to a DiagnosticSeverity. "error" -> Error,
+// "warning" -> Warning, anything else (including "info") -> Info, matching the
+// host bridge's lower-case severity tokens.
+public finite law DiagnosticSeverity HostSeverityFromAscii(ascii severity)
+{
+    if (severity == "error")
+    {
+        return DiagnosticSeverity.Error;
+    }
+
+    if (severity == "warning")
+    {
+        return DiagnosticSeverity.Warning;
+    }
+
+    return DiagnosticSeverity.Info;
+}
+
+// Number of diagnostics available to adapt; mirrors DiagnosticCount.
+public finite law u64[0 2 ** 63 - 1] HostDiagnosticCount(borrow HostCompileOutcome self)
+{
+    return self.DiagnosticCount();
+}
+
+// Builds a System.Testing.Diagnostic for diagnostic `index` of the outcome.
+// Out-of-range indices yield an empty Info diagnostic with no location. The
+// returned Diagnostic's ascii fields borrow `self`'s document buffer.
+public unsafe fn Diagnostic HostDiagnosticAt(mut borrow HostCompileOutcome self, u64[0 2 ** 63 - 1] index)
+{
+    return new Diagnostic()
+    {
+        Code = self.DiagnosticCodeAt(index),
+        Severity = HostSeverityFromAscii(self.DiagnosticSeverityAt(index)),
+        Message = self.DiagnosticMessageAt(index),
+        Stage = self.DiagnosticStageAt(index),
+        Location = self.DiagnosticLocationAt(index)
+    };
+}
+
+// Number of adapted diagnostics whose severity matches `severity`.
+public unsafe fn u64[0 2 ** 63 - 1] HostSeverityCount(mut borrow HostCompileOutcome self, DiagnosticSeverity severity)
+{
+    stack mut u64[0 2 ** 63 - 1] matches = 0;
+    stack u64[0 2 ** 63 - 1] count = self.DiagnosticCount();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack Diagnostic adapted = HostDiagnosticAt(self, index);
+        if (DiagnosticSeverityIs(severity, adapted))
+        {
+            matches += 1;
+        }
+    }
+
+    return matches;
+}
+
+// Convenience: the compile succeeded and the adapter surfaces no
+// error-severity diagnostic. Warnings and infos are allowed.
+public unsafe fn bool CompileAssertClean(mut borrow HostCompileOutcome self)
+{
+    if (self.HadProtocolError() || !self.CompileSucceeded())
+    {
+        return false;
+    }
+
+    return HostSeverityCount(self, DiagnosticSeverity.Error) == 0;
+}
+
+// Convenience: at least one adapted diagnostic carries `code`. Polarity-neutral
+// (does not require the compile to fail), so it works for warnings too.
+public unsafe fn bool CompileAssertHasCode(mut borrow HostCompileOutcome self, ascii code)
+{
+    stack u64[0 2 ** 63 - 1] count = self.DiagnosticCount();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack Diagnostic adapted = HostDiagnosticAt(self, index);
+        if (DiagnosticCode(code, adapted))
+        {
+            return true;
+        }
+    }
+
+    return false;
+}

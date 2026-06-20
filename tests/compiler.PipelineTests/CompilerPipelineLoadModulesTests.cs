@@ -70,6 +70,76 @@ public sealed class CompilerPipelineLoadModulesTests
     }
 
     [Fact]
+    public void FileSystemResolverDoesNotLetNestedStarkBuildManifestsShadowExplicitSourceRoots()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-source-root-shadow-");
+        var projectDirectory = Path.Combine(tempDirectory.FullName, "app");
+        var buildPackageDirectory = Path.Combine(projectDirectory, ".stark", "build", "dev", ".._stdlib");
+        var sourceRoot = Path.Combine(tempDirectory.FullName, "src");
+        var packageSourcePath = Path.Combine(buildPackageDirectory, "Dep.stark");
+        var sourcePath = Path.Combine(sourceRoot, "Dep.stark");
+        var manifestPath = Path.Combine(buildPackageDirectory, OperatingSystem.IsWindows() ? "Dep.starkpkg.json" : "libDep.starkpkg.json");
+        var libraryPath = Path.Combine(buildPackageDirectory, OperatingSystem.IsWindows() ? "Dep.lib" : "libDep.a");
+
+        try
+        {
+            Directory.CreateDirectory(buildPackageDirectory);
+            Directory.CreateDirectory(sourceRoot);
+            File.WriteAllText(
+                packageSourcePath,
+                """
+                module Dep
+
+                public fn i32[min max] Packaged()
+                {
+                    return 1;
+                }
+                """);
+
+            var pipeline = DefaultCompilerPipeline.Create();
+            var packageResult = pipeline.Run(
+                new CompilationInput(File.ReadAllText(packageSourcePath), packageSourcePath),
+                new CompilerOptions(StopAfterPassId: "lower-abi"));
+            Assert.True(packageResult.Succeeded, string.Join(", ", packageResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            File.WriteAllText(libraryPath, string.Empty);
+            File.WriteAllText(manifestPath, PackageImageBuilder.Create(packageResult, libraryPath).ToJson());
+            File.Delete(packageSourcePath);
+
+            File.WriteAllText(
+                sourcePath,
+                """
+                module Dep
+
+                public fn i32[min max] Source()
+                {
+                    return 2;
+                }
+                """);
+
+            var resolver = new FileSystemModuleResolver([projectDirectory, sourceRoot]);
+            Assert.True(resolver.TryResolveModule("Dep", out var resolved));
+            Assert.Null(resolved.ManifestPath);
+            Assert.Equal(Path.GetFullPath(sourcePath), Path.GetFullPath(resolved.FilePath!));
+
+            var explicitBuildResolver = new FileSystemModuleResolver(buildPackageDirectory);
+            Assert.True(explicitBuildResolver.TryResolveModule("Dep", out var explicitResolved));
+            Assert.Equal(Path.GetFullPath(manifestPath), Path.GetFullPath(explicitResolved.ManifestPath!));
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
     public void ManifestBackedModulesPreservePublishedSemanticFactsFromCompilerFactSections()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-import-semantics-pipeline-");

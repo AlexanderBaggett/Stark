@@ -1,0 +1,24 @@
+module Book.Negative.NonExhaustiveSwitch
+
+enum Token
+{
+    End,
+    Integer(i32[min max]),
+    Word,
+}
+
+finite law i32[min max] Score(Token token)
+{
+    switch (token)
+    {
+        case Token.End:
+            return 0;
+        case Token.Integer(_):
+            return 1;
+    }
+}
+
+export fn i32[min max] main()
+{
+    return Score(Token.Word);
+}

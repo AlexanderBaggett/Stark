@@ -1,0 +1,1229 @@
+import StdlibPortSupport
+import System.Testing
+import System.Threading
+module SystemThreadingStandardLibraryTests
+
+// Ported from SystemThreadingStandardLibraryTests.PackagedStdLibThreadingEntrySchedulerAndThreadLifecycleWorkWithoutSource.
+//
+// PORT-NOTE: the C# test packages System.Threading into libSystem.Threading.a via
+// the CLI (--emit-lib), then compiles the embedded App against the package
+// directory (no source tree, --emit-exe), and runs the produced non-Windows
+// executable asserting exit code 0 with empty stdout/stderr. The compile-only host
+// bridge cannot package the stdlib, link an executable, or run it, so this reduces
+// to compiling the embedded program verbatim through the host stdlib and asserting
+// it succeeds, the strongest signal the bridge can reproduce.
+internal fn bool PackagedStdLibThreadingEntrySchedulerAndThreadLifecycleWorkWithoutSourceImpl()
+{
+    stack mut ProgramCompile c = CompileProgram("packaged-threading-entry-scheduler-lifecycle", raw"""
+import System.Threading
+module App
+
+fn i32[min max] Worker()
+{
+    return 7;
+}
+
+struct WorkerPayload
+{
+    i32[min max] ExitCode;
+}
+
+fn i32[min max] PayloadWorker(WorkerPayload payload)
+{
+    return payload.ExitCode;
+}
+
+fn bool JoinResultIs(System.Threading.ThreadJoinResult result, i32[min max] expected)
+{
+    switch (result)
+    {
+        case System.Threading.ThreadJoinResult.Ok(var value):
+            return value == expected;
+        case System.Threading.ThreadJoinResult.Err(var error):
+            return false;
+    }
+}
+
+fn bool StatusOk(System.Threading.ThreadStatus status)
+{
+    switch (status)
+    {
+        case System.Threading.ThreadStatus.Ok:
+            return true;
+        case System.Threading.ThreadStatus.Err(var error):
+            return false;
+    }
+}
+
+export fn i32[min max] main()
+{
+    stack ThreadEntry entry = Worker;
+    Thread.Yield();
+    Thread.SleepMilliseconds(0);
+    if (entry() != 7)
+    {
+        return 1;
+    }
+
+    stack ThreadEntry lambdaEntry = () => 11;
+    if (lambdaEntry() != 11)
+    {
+        return 7;
+    }
+
+    stack mut Thread worker = new(Worker);
+    if (!worker.IsJoinable())
+    {
+        return 2;
+    }
+
+    stack ThreadJoinResult joined = worker.Join();
+    if (!JoinResultIs(joined, 7))
+    {
+        return 3;
+    }
+
+    if (worker.IsJoinable())
+    {
+        return 4;
+    }
+
+    stack mut Thread detached = new(Worker);
+    stack ThreadStatus detachedStatus = detached.Detach();
+    if (!StatusOk(detachedStatus))
+    {
+        return 5;
+    }
+
+    if (detached.IsJoinable())
+    {
+        return 6;
+    }
+
+    stack mut Thread lambdaWorker = new(() => 13);
+    stack ThreadJoinResult lambdaJoined = lambdaWorker.Join();
+    if (!JoinResultIs(lambdaJoined, 13))
+    {
+        return 8;
+    }
+
+    stack WorkerPayload payload = new WorkerPayload()
+    {
+        ExitCode = 17
+    };
+    stack mut Thread payloadWorker = Thread.Start<WorkerPayload>(PayloadWorker, payload);
+    if (!payloadWorker.IsJoinable())
+    {
+        return 9;
+    }
+
+    stack ThreadJoinResult payloadJoined = payloadWorker.Join();
+    if (!JoinResultIs(payloadJoined, 17))
+    {
+        return 10;
+    }
+
+    return 0;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemThreadingStandardLibraryTests.StdLibSourceThreadingSurfaceSupportsThreadEntryAndSchedulerCalls.
+//
+// PORT-NOTE: the C# test compiles the embedded program against the on-disk stdlib
+// source tree with StopAfterPassId "type-check", then inspects the TypeCheckModel
+// artifact to assert the function-pointer promotions (three Worker promotions plus
+// a ThreadPayloadThunk to fnptr<unsafe fn i32(rawmutptr<i8>)>), the two lambdas
+// promoted to fnptr<fn i32()>, and the indirect-call function-pointer types. The
+// compile-only host bridge cannot stop after a named pass nor surface the
+// TypeCheckModel, so this port compiles the embedded program verbatim through the
+// host stdlib and asserts the compile succeeds, the strongest signal the bridge
+// can reproduce.
+internal fn bool StdLibSourceThreadingSurfaceSupportsThreadEntryAndSchedulerCallsImpl()
+{
+    stack mut ProgramCompile c = CompileProgram("stdlib-threading-thread-entry-scheduler-calls", raw"""
+import System.Threading
+module Demo
+
+fn i32[min max] Worker()
+{
+    return 7;
+}
+
+fn i32[min max] Run()
+{
+    stack System.Threading.ThreadEntry entry = Worker;
+    stack System.Threading.ThreadEntry lambdaEntry = () => 11;
+    System.Threading.Thread.Yield();
+    System.Threading.Thread.SleepMilliseconds(0);
+    stack mut System.Threading.Thread worker = new(Worker);
+    if (!worker.IsJoinable())
+    {
+        return 1;
+    }
+
+    worker.Join();
+    stack mut System.Threading.Thread detached = new(Worker);
+    detached.Detach();
+    stack mut System.Threading.Thread lambdaWorker = new(() => 13);
+    lambdaWorker.Join();
+    return entry() + lambdaEntry();
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemThreadingStandardLibraryTests.StdLibSourceThreadingSurfaceSupportsSynchronizedGuardedState.
+//
+// PORT-NOTE: the C# test compiles the embedded program against the on-disk stdlib
+// source tree with StopAfterPassId "type-check", then inspects the TypeCheckModel
+// named-type keys to assert System.Threading.Synchronized<...> and
+// System.Threading.Locked<...> were instantiated. The compile-only host bridge
+// cannot stop after a named pass nor surface the TypeCheckModel named types, so
+// this port compiles the embedded program verbatim through the host stdlib and
+// asserts the compile succeeds, the strongest signal the bridge can reproduce.
+internal fn bool StdLibSourceThreadingSurfaceSupportsSynchronizedGuardedStateImpl()
+{
+    stack mut ProgramCompile c = CompileProgram("stdlib-threading-synchronized-guarded-state", raw"""
+import System.Threading
+module Demo
+
+struct Counter
+{
+    i32[min max] Value;
+}
+
+fn i32[min max] Run()
+{
+    stack mut System.Threading.Synchronized<Counter> guarded =
+        new System.Threading.Synchronized<Counter>(new Counter()
+        {
+            Value = 1
+        });
+
+    stack mut System.Threading.Locked<Counter> guard = guarded.Lock();
+    guard.Value().Value += 4;
+    return guard.Value().Value;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemThreadingStandardLibraryTests.StdLibSourceThreadingSynchronizedIsShareableWhenPayloadIsTransferable.
+//
+// PORT-NOTE: the C# test compiles the embedded program against the on-disk stdlib
+// source tree with StopAfterPassId "type-check" and asserts only that the compile
+// succeeds (a Synchronized<Counter> over a transferable payload satisfies the
+// where Shareable(T) bound). The compile-only host bridge cannot stop after a
+// named pass, so this port compiles the embedded program verbatim through the
+// host stdlib and asserts the compile succeeds.
+internal fn bool StdLibSourceThreadingSynchronizedIsShareableWhenPayloadIsTransferableImpl()
+{
+    stack mut ProgramCompile c = CompileProgram("stdlib-threading-synchronized-shareable", raw"""
+import System.Threading
+module Demo
+
+struct Counter
+{
+    i32[min max] Value;
+}
+
+fn void RequireShareable<T>(borrow T value) where Shareable(T)
+{
+    return;
+}
+
+fn void Run()
+{
+    stack mut System.Threading.Synchronized<Counter> guarded =
+        new System.Threading.Synchronized<Counter>(new Counter()
+        {
+            Value = 0
+        });
+    RequireShareable(guarded);
+    return;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemThreadingStandardLibraryTests.StdLibSourceThreadingSynchronizedShareabilityRequiresTransferablePayload.
+//
+// PORT-NOTE: the C# original stops after type-check and asserts the compile FAILS
+// with diagnostic STK3049 whose message names the where Shareable(...) bound and
+// the responsible field chain System.Threading.Synchronized<RawHolder>.Value.Pointer
+// (a Synchronized over a non-transferable rawptr payload is not Shareable). The
+// compile-only host bridge cannot inspect individual diagnostic codes or messages,
+// so the expected-rejection check is reduced to asserting the program does NOT
+// compile (!Succeeds).
+internal fn bool StdLibSourceThreadingSynchronizedShareabilityRequiresTransferablePayloadImpl()
+{
+    stack mut ProgramCompile c = CompileProgram("stdlib-threading-synchronized-not-shareable", raw"""
+import System.Threading
+module Demo
+
+struct RawHolder
+{
+    rawptr<i32[min max]> Pointer;
+}
+
+fn void RequireShareable<T>(borrow T value) where Shareable(T)
+{
+    return;
+}
+
+fn void Run()
+{
+    stack mut RawHolder raw = new()
+    {
+        Pointer = null
+    };
+    stack mut System.Threading.Synchronized<RawHolder> guarded =
+        new System.Threading.Synchronized<RawHolder>(raw);
+    RequireShareable(guarded);
+    return;
+}
+""");
+    return !Succeeds(c);
+}
+
+// Ported from SystemThreadingStandardLibraryTests.StdLibSourceThreadingSurfaceRejectsProtectedBorrowEscapingLockedGuard.
+//
+// PORT-NOTE: the C# original runs the full pipeline and asserts the compile FAILS
+// with diagnostic STK4202 whose message contains "Lifetime error" (the protected
+// borrow returned from guard.Value() escapes the Locked guard's lifetime). The
+// compile-only host bridge cannot inspect individual diagnostic codes or messages,
+// so the expected-rejection check is reduced to asserting the program does NOT
+// compile (!Succeeds).
+internal fn bool StdLibSourceThreadingSurfaceRejectsProtectedBorrowEscapingLockedGuardImpl()
+{
+    stack mut ProgramCompile c = CompileProgram("stdlib-threading-synchronized-escape", raw"""
+import System.Threading
+module Demo
+
+struct Counter
+{
+    i32[min max] Value;
+}
+
+static mut System.Threading.Synchronized<Counter> Shared =
+    new System.Threading.Synchronized<Counter>(new Counter()
+    {
+        Value = 0
+    });
+
+fn retborrow mut Counter Bad()
+{
+    stack mut System.Threading.Locked<Counter> guard = Shared.Lock();
+    return guard.Value();
+}
+""");
+    return !Succeeds(c);
+}
+
+// Ported from SystemThreadingStandardLibraryTests.SystemThreadingSynchronizedGuardsSharedMutableStateAtRuntime.
+//
+// PORT-NOTE: the C# test compiles the embedded App against the shared stdlib
+// package via the CLI (--emit-exe), then runs the produced non-Windows executable
+// asserting exit code 0 with empty stdout/stderr (two threads each increment a
+// Synchronized<Counter> 20000 times and the total must be 40000). The compile-only
+// host bridge cannot link an executable or run it, so this reduces to compiling the
+// embedded program verbatim through the host stdlib and asserting it succeeds, the
+// strongest signal the bridge can reproduce.
+internal fn bool SystemThreadingSynchronizedGuardsSharedMutableStateAtRuntimeImpl()
+{
+    stack mut ProgramCompile c = CompileProgram("system-threading-synchronized-guards-runtime", raw"""
+import System.Threading
+module App
+
+struct Counter
+{
+    i64[min max] Value;
+}
+
+static mut System.Threading.Synchronized<Counter> Shared =
+    new System.Threading.Synchronized<Counter>(new Counter()
+    {
+        Value = 0
+    });
+
+fn i32[min max] Worker()
+{
+    stack mut i32[min max] index = 0;
+    while willexit (index < 20000)
+    {
+        stack mut System.Threading.Locked<Counter> guard = Shared.Lock();
+        guard.Value().Value += 1;
+        index += 1;
+    }
+
+    return 0;
+}
+
+export fn i32[min max] main()
+{
+    stack mut System.Threading.Thread a = new(Worker);
+    stack mut System.Threading.Thread b = new(Worker);
+    a.Join();
+    b.Join();
+
+    stack mut System.Threading.Locked<Counter> guard = Shared.Lock();
+    if (guard.Value().Value == 40000)
+    {
+        return 0;
+    }
+
+    return 1;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemThreadingStandardLibraryTests.StdLibSourceThreadingSurfaceSupportsMpscChannels.
+//
+// PORT-NOTE: the C# test compiles the embedded program against the on-disk stdlib
+// source tree with StopAfterPassId "type-check", then inspects the TypeCheckModel
+// named-type keys to assert System.Threading.Channel<...>, .Sender<...>, and
+// .Receiver<...> were instantiated. The compile-only host bridge cannot stop after
+// a named pass nor surface the TypeCheckModel named types, so this port compiles
+// the embedded program verbatim through the host stdlib and asserts the compile
+// succeeds, the strongest signal the bridge can reproduce.
+internal fn bool StdLibSourceThreadingSurfaceSupportsMpscChannelsImpl()
+{
+    stack mut ProgramCompile c = CompileProgram("stdlib-threading-mpsc-channels", raw"""
+import System.Threading
+module Demo
+
+fn bool StatusOk(System.Threading.ChannelStatus status)
+{
+    switch (status)
+    {
+        case System.Threading.ChannelStatus.Ok:
+            return true;
+        case System.Threading.ChannelStatus.Err(var error):
+            return false;
+    }
+}
+
+fn bool ReceiveValue(System.Threading.ChannelReceiveResult<i32[min max]> result, i32[min max] expected)
+{
+    switch (result)
+    {
+        case System.Threading.ChannelReceiveResult<i32[min max]>.Item(var value):
+            return value == expected;
+        case System.Threading.ChannelReceiveResult<i32[min max]>.Err(var error):
+            return false;
+    }
+}
+
+fn bool ReceiveError(System.Threading.ChannelReceiveResult<i32[min max]> result, System.Threading.ChannelError expected)
+{
+    switch (result)
+    {
+        case System.Threading.ChannelReceiveResult<i32[min max]>.Item(var value):
+            return false;
+        case System.Threading.ChannelReceiveResult<i32[min max]>.Err(var error):
+            return error == expected;
+    }
+}
+
+fn bool SenderRejected(System.Threading.ChannelSenderResult<i32[min max]> result, System.Threading.ChannelError expected)
+{
+    switch (result)
+    {
+        case System.Threading.ChannelSenderResult<i32[min max]>.Ok(var sender):
+            return false;
+        case System.Threading.ChannelSenderResult<i32[min max]>.Err(var error):
+            return error == expected;
+    }
+}
+
+fn i32[min max] Run()
+{
+    stack mut System.Threading.Channel<i32[min max]> channel = new();
+
+    switch (channel.CreateReceiver())
+    {
+        case System.Threading.ChannelReceiverResult<i32[min max]>.Err(var error):
+            return 1;
+        case System.Threading.ChannelReceiverResult<i32[min max]>.Ok(var receiverValue):
+            stack mut System.Threading.Receiver<i32[min max]> receiver = receiverValue;
+            switch (channel.CreateSender())
+            {
+                case System.Threading.ChannelSenderResult<i32[min max]>.Err(var error):
+                    return 2;
+                case System.Threading.ChannelSenderResult<i32[min max]>.Ok(var firstValue):
+                    stack mut System.Threading.Sender<i32[min max]> first = firstValue;
+                    switch (channel.CreateSender())
+                    {
+                        case System.Threading.ChannelSenderResult<i32[min max]>.Err(var error):
+                            return 3;
+                        case System.Threading.ChannelSenderResult<i32[min max]>.Ok(var secondValue):
+                            stack mut System.Threading.Sender<i32[min max]> second = secondValue;
+                            if (!StatusOk(first.Send(10)) || !StatusOk(second.Send(20)))
+                            {
+                                return 4;
+                            }
+
+                            if (channel.PendingCount() != 2)
+                            {
+                                return 5;
+                            }
+
+                            if (!ReceiveValue(receiver.Receive(), 10))
+                            {
+                                return 6;
+                            }
+
+                            if (!ReceiveValue(receiver.Receive(), 20))
+                            {
+                                return 7;
+                            }
+
+                            if (!ReceiveError(receiver.Receive(), System.Threading.ChannelError.Empty))
+                            {
+                                return 8;
+                            }
+
+                            first.Close();
+                            second.Close();
+                            if (!ReceiveError(receiver.Receive(), System.Threading.ChannelError.Closed))
+                            {
+                                return 9;
+                            }
+
+                            receiver.Close();
+                            if (!SenderRejected(channel.CreateSender(), System.Threading.ChannelError.Closed))
+                            {
+                                return 10;
+                            }
+
+                            return 0;
+                    }
+            }
+    }
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemThreadingStandardLibraryTests.StdLibSourceThreadingChannelHandlesCarryThreadSafetyLawFacts.
+//
+// PORT-NOTE: the C# test compiles the embedded program against the on-disk stdlib
+// source tree with StopAfterPassId "type-check" and asserts only that the compile
+// succeeds (a Channel<i32> is Shareable and a Sender<i32> is Transferable). The
+// compile-only host bridge cannot stop after a named pass, so this port compiles
+// the embedded program verbatim through the host stdlib and asserts the compile
+// succeeds.
+internal fn bool StdLibSourceThreadingChannelHandlesCarryThreadSafetyLawFactsImpl()
+{
+    stack mut ProgramCompile c = CompileProgram("stdlib-threading-channel-law-facts", raw"""
+import System.Threading
+module Demo
+
+fn void RequireShareable<T>(borrow T value) where Shareable(T)
+{
+    return;
+}
+
+fn void RequireTransfer<T>(T value) where Transferable(T)
+{
+    return;
+}
+
+fn void Run()
+{
+    stack mut System.Threading.Channel<i32[min max]> channel = new();
+    RequireShareable(channel);
+
+    switch (channel.CreateSender())
+    {
+        case System.Threading.ChannelSenderResult<i32[min max]>.Err(var error):
+            return;
+        case System.Threading.ChannelSenderResult<i32[min max]>.Ok(var sender):
+            RequireTransfer(sender);
+            return;
+    }
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemThreadingStandardLibraryTests.StdLibSourceThreadingChannelSendRequiresTransferablePayload.
+//
+// PORT-NOTE: the C# original stops after type-check and asserts the compile FAILS
+// with diagnostic STK3049 whose message names the where Transferable(RawHolder)
+// bound and the responsible field chain RawHolder.Pointer (sending a struct with a
+// rawptr field over a channel is not Transferable). The compile-only host bridge
+// cannot inspect individual diagnostic codes or messages, so the expected-rejection
+// check is reduced to asserting the program does NOT compile (!Succeeds).
+internal fn bool StdLibSourceThreadingChannelSendRequiresTransferablePayloadImpl()
+{
+    stack mut ProgramCompile c = CompileProgram("stdlib-threading-channel-transferable", raw"""
+import System.Threading
+module Demo
+
+struct RawHolder
+{
+    rawptr<i32[min max]> Pointer;
+}
+
+fn void Run()
+{
+    stack mut System.Threading.Channel<RawHolder> channel = new();
+    switch (channel.CreateSender())
+    {
+        case System.Threading.ChannelSenderResult<RawHolder>.Err(var error):
+            return;
+        case System.Threading.ChannelSenderResult<RawHolder>.Ok(var senderValue):
+            stack mut System.Threading.Sender<RawHolder> sender = senderValue;
+            stack RawHolder payload = new RawHolder()
+            {
+                Pointer = null
+            };
+            sender.Send(payload);
+            return;
+    }
+}
+""");
+    return !Succeeds(c);
+}
+
+// Ported from SystemThreadingStandardLibraryTests.SystemThreadingChannelMovesMessagesAndObservesCloseAtRuntime.
+//
+// PORT-NOTE: the C# test compiles the embedded App against the shared stdlib
+// package via the CLI (--emit-exe), then runs the produced non-Windows executable
+// asserting exit code 0 with empty stdout/stderr (messages move across the channel
+// and close is observed, including a dropped-receiver path). The compile-only host
+// bridge cannot link an executable or run it, so this reduces to compiling the
+// embedded program verbatim through the host stdlib and asserting it succeeds, the
+// strongest signal the bridge can reproduce.
+internal fn bool SystemThreadingChannelMovesMessagesAndObservesCloseAtRuntimeImpl()
+{
+    stack mut ProgramCompile c = CompileProgram("system-threading-channel-moves-messages-runtime", raw"""
+import System.Threading
+module App
+
+fn bool StatusOk(System.Threading.ChannelStatus status)
+{
+    switch (status)
+    {
+        case System.Threading.ChannelStatus.Ok:
+            return true;
+        case System.Threading.ChannelStatus.Err(var error):
+            return false;
+    }
+}
+
+fn bool ReceiveValue(System.Threading.ChannelReceiveResult<i32[min max]> result, i32[min max] expected)
+{
+    switch (result)
+    {
+        case System.Threading.ChannelReceiveResult<i32[min max]>.Item(var value):
+            return value == expected;
+        case System.Threading.ChannelReceiveResult<i32[min max]>.Err(var error):
+            return false;
+    }
+}
+
+fn bool ReceiveError(System.Threading.ChannelReceiveResult<i32[min max]> result, System.Threading.ChannelError expected)
+{
+    switch (result)
+    {
+        case System.Threading.ChannelReceiveResult<i32[min max]>.Item(var value):
+            return false;
+        case System.Threading.ChannelReceiveResult<i32[min max]>.Err(var error):
+            return error == expected;
+    }
+}
+
+fn bool SendError(System.Threading.ChannelStatus status, System.Threading.ChannelError expected)
+{
+    switch (status)
+    {
+        case System.Threading.ChannelStatus.Ok:
+            return false;
+        case System.Threading.ChannelStatus.Err(var error):
+            return error == expected;
+    }
+}
+
+fn void DropReceiver(System.Threading.Receiver<i32[min max]> receiver)
+{
+    return;
+}
+
+fn i32[min max] ExerciseReceiverDrop()
+{
+    stack mut System.Threading.Channel<i32[min max]> channel = new();
+    switch (channel.CreateReceiver())
+    {
+        case System.Threading.ChannelReceiverResult<i32[min max]>.Err(var error):
+            return 20;
+        case System.Threading.ChannelReceiverResult<i32[min max]>.Ok(var receiverValue):
+            stack mut System.Threading.Receiver<i32[min max]> receiver = receiverValue;
+            switch (channel.CreateSender())
+            {
+                case System.Threading.ChannelSenderResult<i32[min max]>.Err(var error):
+                    return 21;
+                case System.Threading.ChannelSenderResult<i32[min max]>.Ok(var senderValue):
+                    stack mut System.Threading.Sender<i32[min max]> sender = senderValue;
+                    DropReceiver(receiver);
+                    if (!SendError(sender.Send(99), System.Threading.ChannelError.Closed))
+                    {
+                        return 22;
+                    }
+
+                    sender.Close();
+                    return 0;
+            }
+    }
+}
+
+export fn i32[min max] main()
+{
+    stack mut System.Threading.Channel<i32[min max]> channel = new();
+
+    switch (channel.CreateReceiver())
+    {
+        case System.Threading.ChannelReceiverResult<i32[min max]>.Err(var error):
+            return 1;
+        case System.Threading.ChannelReceiverResult<i32[min max]>.Ok(var receiverValue):
+            stack mut System.Threading.Receiver<i32[min max]> receiver = receiverValue;
+            switch (channel.CreateSender())
+            {
+                case System.Threading.ChannelSenderResult<i32[min max]>.Err(var error):
+                    return 2;
+                case System.Threading.ChannelSenderResult<i32[min max]>.Ok(var firstValue):
+                    stack mut System.Threading.Sender<i32[min max]> first = firstValue;
+                    switch (channel.CreateSender())
+                    {
+                        case System.Threading.ChannelSenderResult<i32[min max]>.Err(var error):
+                            return 3;
+                        case System.Threading.ChannelSenderResult<i32[min max]>.Ok(var secondValue):
+                            stack mut System.Threading.Sender<i32[min max]> second = secondValue;
+                            if (!StatusOk(first.Send(31)) || !StatusOk(second.Send(11)))
+                            {
+                                return 4;
+                            }
+
+                            if (!ReceiveValue(receiver.Receive(), 31))
+                            {
+                                return 5;
+                            }
+
+                            if (!ReceiveValue(receiver.Receive(), 11))
+                            {
+                                return 6;
+                            }
+
+                            first.Close();
+                            second.Close();
+                            if (!ReceiveError(receiver.Receive(), System.Threading.ChannelError.Closed))
+                            {
+                                return 7;
+                            }
+
+                            return ExerciseReceiverDrop();
+                    }
+            }
+    }
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemThreadingStandardLibraryTests.SystemThreadingChannelHandlesContendedProducersAtRuntime.
+//
+// PORT-NOTE: the C# test compiles the embedded App against the shared stdlib
+// package via the CLI (--emit-exe), then runs the produced non-Windows executable
+// asserting exit code 0 with empty stdout/stderr (two payload threads each send 128
+// values, the receiver sums all 256 and must total 144512, with close observed).
+// The compile-only host bridge cannot link an executable or run it, so this reduces
+// to compiling the embedded program verbatim through the host stdlib and asserting
+// it succeeds, the strongest signal the bridge can reproduce.
+internal fn bool SystemThreadingChannelHandlesContendedProducersAtRuntimeImpl()
+{
+    stack mut ProgramCompile c = CompileProgram("system-threading-channel-contended-producers-runtime", raw"""
+import System.Threading
+module App
+
+struct ProducerPayload
+{
+    System.Threading.Sender<i64[min max]> Sender;
+    i64[min max] First;
+    i64[min max] Count;
+}
+
+fn bool StatusOk(System.Threading.ChannelStatus status)
+{
+    switch (status)
+    {
+        case System.Threading.ChannelStatus.Ok:
+            return true;
+        case System.Threading.ChannelStatus.Err(var error):
+            return false;
+    }
+}
+
+fn bool JoinOk(System.Threading.ThreadJoinResult result)
+{
+    switch (result)
+    {
+        case System.Threading.ThreadJoinResult.Ok(var exitCode):
+            return exitCode == 0;
+        case System.Threading.ThreadJoinResult.Err(var error):
+            return false;
+    }
+}
+
+fn bool ReceiveClosed(System.Threading.ChannelReceiveResult<i64[min max]> result)
+{
+    switch (result)
+    {
+        case System.Threading.ChannelReceiveResult<i64[min max]>.Item(var value):
+            return false;
+        case System.Threading.ChannelReceiveResult<i64[min max]>.Err(var error):
+            return error == System.Threading.ChannelError.Closed;
+    }
+}
+
+fn i32[min max] Producer(ProducerPayload payload)
+{
+    stack i64[min max] first = payload.First;
+    stack i64[min max] count = payload.Count;
+    stack mut System.Threading.Sender<i64[min max]> sender = payload.Sender;
+    stack mut i64[min max] offset = 0;
+
+    while willexit (offset < count)
+    {
+        if (!StatusOk(sender.Send(first + offset)))
+        {
+            return 1;
+        }
+
+        offset += 1;
+    }
+
+    sender.Close();
+    return 0;
+}
+
+export fn i32[min max] main()
+{
+    stack mut System.Threading.Channel<i64[min max]> channel = new();
+
+    switch (channel.CreateReceiver())
+    {
+        case System.Threading.ChannelReceiverResult<i64[min max]>.Err(var error):
+            return 1;
+        case System.Threading.ChannelReceiverResult<i64[min max]>.Ok(var receiverValue):
+            stack mut System.Threading.Receiver<i64[min max]> receiver = receiverValue;
+            switch (channel.CreateSender())
+            {
+                case System.Threading.ChannelSenderResult<i64[min max]>.Err(var error):
+                    return 2;
+                case System.Threading.ChannelSenderResult<i64[min max]>.Ok(var firstSenderValue):
+                    stack mut System.Threading.Sender<i64[min max]> firstSender = firstSenderValue;
+                    switch (channel.CreateSender())
+                    {
+                        case System.Threading.ChannelSenderResult<i64[min max]>.Err(var error):
+                            return 3;
+                        case System.Threading.ChannelSenderResult<i64[min max]>.Ok(var secondSenderValue):
+                            stack mut System.Threading.Sender<i64[min max]> secondSender = secondSenderValue;
+                            stack ProducerPayload firstPayload = new ProducerPayload()
+                            {
+                                Sender = firstSender,
+                                First = 1,
+                                Count = 128
+                            };
+                            stack ProducerPayload secondPayload = new ProducerPayload()
+                            {
+                                Sender = secondSender,
+                                First = 1001,
+                                Count = 128
+                            };
+
+                            stack mut System.Threading.Thread firstThread =
+                                System.Threading.Thread.Start<ProducerPayload>(Producer, firstPayload);
+                            stack mut System.Threading.Thread secondThread =
+                                System.Threading.Thread.Start<ProducerPayload>(Producer, secondPayload);
+                            stack mut i64[min max] received = 0;
+                            stack mut i64[min max] sum = 0;
+
+                            while willexit (received < 256)
+                            {
+                                switch (receiver.Receive())
+                                {
+                                    case System.Threading.ChannelReceiveResult<i64[min max]>.Item(var value):
+                                        sum += value;
+                                        received += 1;
+                                    case System.Threading.ChannelReceiveResult<i64[min max]>.Err(var error):
+                                        if (error == System.Threading.ChannelError.Empty)
+                                        {
+                                            System.Threading.Thread.Yield();
+                                        }
+                                        else
+                                        {
+                                            return 4;
+                                        }
+                                }
+                            }
+
+                            if (!JoinOk(firstThread.Join()) || !JoinOk(secondThread.Join()))
+                            {
+                                return 5;
+                            }
+
+                            if (!ReceiveClosed(receiver.Receive()))
+                            {
+                                return 6;
+                            }
+
+                            if (sum != 144512)
+                            {
+                                return 7;
+                            }
+
+                            return 0;
+                    }
+            }
+    }
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemThreadingStandardLibraryTests.StdLibSourceThreadingSurfaceSupportsPayloadThreadStarts.
+//
+// PORT-NOTE: the C# test compiles the embedded program against the on-disk stdlib
+// source tree with StopAfterPassId "type-check", then inspects the TypeCheckModel
+// function-pointer promotions to assert Worker was promoted to
+// fnptr<fn i32(WorkerPayload)> for the payload thread start. The compile-only host
+// bridge cannot stop after a named pass nor surface the TypeCheckModel promotions,
+// so this port compiles the embedded program verbatim through the host stdlib and
+// asserts the compile succeeds, the strongest signal the bridge can reproduce.
+internal fn bool StdLibSourceThreadingSurfaceSupportsPayloadThreadStartsImpl()
+{
+    stack mut ProgramCompile c = CompileProgram("stdlib-threading-payload-thread-starts", raw"""
+import System.Threading
+module Demo
+
+struct WorkerPayload
+{
+    i32[min max] ExitCode;
+}
+
+fn i32[min max] Worker(WorkerPayload payload)
+{
+    return payload.ExitCode;
+}
+
+fn i32[min max] Run()
+{
+    stack WorkerPayload payload = new WorkerPayload()
+    {
+        ExitCode = 9
+    };
+    stack System.Threading.ThreadPayloadEntry<WorkerPayload> entry = Worker;
+    stack mut System.Threading.Thread worker = System.Threading.Thread.Start<WorkerPayload>(entry, payload);
+    worker.Detach();
+    return 0;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemThreadingStandardLibraryTests.StdLibSourceThreadPayloadStartRequiresTransferablePayload.
+//
+// PORT-NOTE: the C# original stops after type-check and asserts the compile FAILS
+// with diagnostic STK3049 whose message names the where Transferable(RawPayload)
+// bound and the responsible field chain RawPayload.Pointer (starting a thread with
+// a payload struct holding a rawptr is not Transferable). The compile-only host
+// bridge cannot inspect individual diagnostic codes or messages, so the
+// expected-rejection check is reduced to asserting the program does NOT compile
+// (!Succeeds).
+internal fn bool StdLibSourceThreadPayloadStartRequiresTransferablePayloadImpl()
+{
+    stack mut ProgramCompile c = CompileProgram("stdlib-threading-payload-transferable", raw"""
+import System.Threading
+module Demo
+
+struct RawPayload
+{
+    rawptr<i32[min max]> Pointer;
+}
+
+fn i32[min max] Worker(RawPayload payload)
+{
+    return 0;
+}
+
+fn void Run()
+{
+    stack RawPayload payload = new RawPayload()
+    {
+        Pointer = null
+    };
+    stack mut System.Threading.Thread worker = System.Threading.Thread.Start<RawPayload>(Worker, payload);
+    worker.Detach();
+    return;
+}
+""");
+    return !Succeeds(c);
+}
+
+// Ported from SystemThreadingStandardLibraryTests.StdLibSourceThreadingErrorEnumsUseCompactLayouts.
+//
+// PORT-NOTE: the C# test reads the on-disk stdlib source stdlib/src/System/Threading.stark,
+// compiles it with StopAfterPassId "enum-layout", then inspects the EnumLayoutModel
+// artifact to assert the ThreadError, ThreadStatus, and ThreadJoinResult enums all
+// carry 8-bit compact tag fields. The compile-only host bridge cannot read the
+// repository source file, stop after a named pass, nor surface the EnumLayoutModel
+// artifact, so this port compiles a driver that pulls those threading error enums
+// in through System.Threading and exercises their switch surface, reducing the
+// assertion to a successful compile, the strongest signal the bridge can reproduce.
+internal fn bool StdLibSourceThreadingErrorEnumsUseCompactLayoutsImpl()
+{
+    stack mut ProgramCompile c = CompileProgram("stdlib-threading-error-enums-compact-layouts", raw"""
+import System.Threading
+module Demo
+
+fn bool StatusOk(System.Threading.ThreadStatus status)
+{
+    switch (status)
+    {
+        case System.Threading.ThreadStatus.Ok:
+            return true;
+        case System.Threading.ThreadStatus.Err(var error):
+            return false;
+    }
+}
+
+fn bool JoinOk(System.Threading.ThreadJoinResult result, i32[min max] expected)
+{
+    switch (result)
+    {
+        case System.Threading.ThreadJoinResult.Ok(var value):
+            return value == expected;
+        case System.Threading.ThreadJoinResult.Err(var error):
+            return false;
+    }
+}
+
+fn i32[min max] Run()
+{
+    stack mut System.Threading.Thread worker = new(() => 0);
+    if (!StatusOk(worker.Detach()))
+    {
+        return 1;
+    }
+
+    stack mut System.Threading.Thread joinable = new(() => 7);
+    if (!JoinOk(joinable.Join(), 7))
+    {
+        return 2;
+    }
+
+    return 0;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemThreadingStandardLibraryTests.StdLibSourceLinuxThreadingUsesRawCloneLifecycleAndSyscallBackedScheduler.
+//
+// PORT-NOTE: the C# test reads the on-disk stdlib source
+// stdlib/src/System/Runtime/Platform/Linux.stark, compiles it for the
+// x86_64-unknown-linux-gnu target with EmitLlvmIr, then scans the emitted LLVM for
+// the raw-clone thread lifecycle (LinuxMapThreadRegion, LinuxCloneThread,
+// LinuxReleaseThreadReference, StartThread/JoinThread/DetachThread,
+// LinuxThreadEntryThunk, FutexWait, the @LinuxMunmapSyscallNumber/@LinuxFutexSyscallNumber
+// globals, LinuxSyscall1Handle/LinuxSyscall2Pointers, YieldThread/SleepThreadMilliseconds)
+// and the absence of pthread_*/ThreadEntryThunk/sched_yield/nanosleep. The
+// compile-only host bridge cannot read that repository source file nor override the
+// LLVM target triple to Linux (it lowers for the host architecture only), so the
+// Linux-specific clone-lifecycle symbols and the negative pthread checks cannot be
+// reproduced. This port compiles a program that imports System.Threading and
+// exercises the thread lifecycle/scheduler surface so the host stdlib pulls those
+// platform thread primitives in, reducing the assertion to a successful compile.
+// The expected Linux IR symbols are retained verbatim as data rows below so the
+// intent stays documented even though only the host architecture can be exercised.
+internal fn bool StdLibSourceLinuxThreadingUsesRawCloneLifecycleAndSyscallBackedSchedulerImpl()
+{
+    stack ascii mapThreadRegion = "define i64 @LinuxMapThreadRegion(";
+    stack ascii cloneThread = "define i64 @LinuxCloneThread(";
+    stack ascii releaseThreadReference = "define i32 @LinuxReleaseThreadReference(";
+    stack ascii startThread = "define fastcc noundef ptr @StartThread(";
+    stack ascii startThreadWithContext = "define fastcc noundef ptr @StartThreadWithContext(";
+    stack ascii joinThread = "define fastcc noundef i32 @JoinThread(";
+    stack ascii detachThread = "define fastcc noundef i32 @DetachThread(";
+    stack ascii linuxThreadEntryThunk = "define fastcc noundef i32 @LinuxThreadEntryThunk(";
+    stack ascii futexWait = "define fastcc noundef i32 @FutexWait(";
+    stack ascii releaseThreadReferenceFn = "define fastcc noundef i32 @ReleaseThreadReference(";
+    stack ascii syscall2Pointers = "define i64 @LinuxSyscall2Pointers(";
+    stack ascii yieldThread = "define fastcc void @YieldThread(";
+    stack ascii sleepThreadMilliseconds = "define fastcc void @SleepThreadMilliseconds(";
+    stack ascii munmapSyscallNumber = "@LinuxMunmapSyscallNumber";
+    stack ascii futexSyscallNumber = "@LinuxFutexSyscallNumber";
+    stack ascii callSyscall1Handle = "call i64 @LinuxSyscall1Handle(";
+    stack ascii noPthreadCreate = "@pthread_create(";
+    stack ascii noPthreadJoin = "@pthread_join(";
+    stack ascii noPthreadDetach = "@pthread_detach(";
+    stack ascii noThreadEntryThunk = "@ThreadEntryThunk(";
+    stack ascii noSchedYield = "@sched_yield(";
+    stack ascii noNanosleep = "@nanosleep(";
+
+    stack mut ProgramCompile c = CompileProgram("stdlib-linux-threading-raw-clone-lifecycle", raw"""
+import System.Threading
+module Demo
+
+fn i32[min max] Worker()
+{
+    return 0;
+}
+
+export fn i32[min max] main()
+{
+    System.Threading.Thread.Yield();
+    System.Threading.Thread.SleepMilliseconds(0);
+    stack mut System.Threading.Thread worker = new(Worker);
+    worker.Join();
+    stack mut System.Threading.Thread detached = new(Worker);
+    detached.Detach();
+    return 0;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemThreadingStandardLibraryTests.StdLibSourceWindowsThreadingUsesWin32LifecycleAndSchedulerCalls.
+//
+// PORT-NOTE: the C# test reads the on-disk stdlib source
+// stdlib/src/System/Runtime/Platform/Windows.stark, compiles it for the
+// x86_64-pc-windows-msvc target with EmitLlvmIr, then scans the emitted LLVM for
+// the Win32 thread lifecycle/scheduler declares and calls (CreateThread,
+// WaitForSingleObject, GetExitCodeThread, CloseHandle, SwitchToThread, Sleep,
+// WaitOnAddress/WakeByAddressSingle/WakeByAddressAll), the ThreadEntryThunk and
+// StartThread/JoinThread/DetachThread/YieldThread/SleepThreadMilliseconds/FutexWait/FutexWake
+// definitions, and the absence of pthread_*. The compile-only host bridge cannot
+// read that repository source file nor override the LLVM target triple to Windows
+// (it lowers for the host architecture only), so the Win32-specific lifecycle
+// symbols and the negative pthread checks cannot be reproduced. This port compiles
+// a program that imports System.Threading and exercises the thread
+// lifecycle/scheduler surface so the host stdlib pulls those platform thread
+// primitives in, reducing the assertion to a successful compile. The expected Win32
+// IR symbols are retained verbatim as data rows below so the intent stays
+// documented even though only the host platform can be exercised.
+internal fn bool StdLibSourceWindowsThreadingUsesWin32LifecycleAndSchedulerCallsImpl()
+{
+    stack ascii createThread = "declare win64cc ptr @CreateThread(";
+    stack ascii waitForSingleObject = "declare i32 @WaitForSingleObject(";
+    stack ascii getExitCodeThread = "declare i32 @GetExitCodeThread(";
+    stack ascii closeHandle = "declare i32 @CloseHandle(";
+    stack ascii switchToThread = "declare i32 @SwitchToThread()";
+    stack ascii sleepDeclare = "declare void @Sleep(i32)";
+    stack ascii waitOnAddress = "declare i32 @WaitOnAddress(";
+    stack ascii wakeByAddressSingle = "declare void @WakeByAddressSingle(";
+    stack ascii wakeByAddressAll = "declare void @WakeByAddressAll(";
+    stack ascii threadEntryThunk = "define win64cc i32 @ThreadEntryThunk(";
+    stack ascii startThread = "define fastcc noundef ptr @StartThread(";
+    stack ascii startThreadWithContext = "define fastcc noundef ptr @StartThreadWithContext(";
+    stack ascii joinThread = "define fastcc noundef i32 @JoinThread(";
+    stack ascii detachThread = "define fastcc noundef i32 @DetachThread(";
+    stack ascii yieldThread = "define fastcc void @YieldThread(";
+    stack ascii sleepThreadMilliseconds = "define fastcc void @SleepThreadMilliseconds(";
+    stack ascii futexWait = "define fastcc noundef i32 @FutexWait(";
+    stack ascii futexWake = "define fastcc noundef i32 @FutexWake(";
+    stack ascii noPthreadCreate = "@pthread_create(";
+    stack ascii noPthreadJoin = "@pthread_join(";
+    stack ascii noPthreadDetach = "@pthread_detach(";
+
+    stack mut ProgramCompile c = CompileProgram("stdlib-windows-threading-win32-lifecycle", raw"""
+import System.Threading
+module Demo
+
+fn i32[min max] Worker()
+{
+    return 0;
+}
+
+export fn i32[min max] main()
+{
+    System.Threading.Thread.Yield();
+    System.Threading.Thread.SleepMilliseconds(0);
+    stack mut System.Threading.Thread worker = new(Worker);
+    worker.Join();
+    stack mut System.Threading.Thread detached = new(Worker);
+    detached.Detach();
+    return 0;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return true;
+}

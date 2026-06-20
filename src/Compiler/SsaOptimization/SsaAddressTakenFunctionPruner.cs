@@ -22,7 +22,10 @@ internal static class SsaAddressTakenFunctionPruner
         }
 
         var prunedFunctions = module.AddressTakenFunctions
-            .Where(referencedFunctions.Contains)
+            // Dyn trait-object drop thunks are referenced only by the synthesized
+            // vtable globals (emitted in the module surface, not present in SSA), so
+            // they are roots that this SSA-reference scan cannot see -- keep them.
+            .Where(name => referencedFunctions.Contains(name) || DynTraitFacts.IsVtableReferencedRoot(name))
             .ToArray();
 
         return prunedFunctions.Length == module.AddressTakenFunctions.Count

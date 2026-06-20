@@ -1,0 +1,119 @@
+import CompilerTestSupport
+import System.Testing
+module OwnershipRoadmapRegressionTests
+
+// Ported slice of tests/compiler.Tests/OwnershipRoadmapRegressionTests.cs.
+//
+// These tests embed a Stark program, run it through the full compiler pipeline,
+// and assert on the ownership-summary roadmap surface: per-function ownership
+// Events (AddressTaken / AssignmentDrop / Move / Reinitialize / FieldMove), the
+// typed StorageRoots (mutability, raw-pointer escape, partial moves, final
+// availability), and that those same ownership facts are carried on the MIR and
+// SSA IR artifacts. The Stark test helpers (Succeeds / diagnostics / Llvm / Mir
+// text) cannot inspect typed ownership Events, StorageRoots, or per-IR ownership
+// summaries, so each port routes the program through the full pipeline and
+// returns Succeeds(...) -- the nearest signal that the program type-checks and
+// lowers cleanly, which is the precondition for all the reduced assertions.
+
+// Ported from OwnershipRoadmapRegressionTests.OwnershipSummaryExposesTypedRootEventsForOptimization.
+internal fn bool OwnershipSummaryExposesTypedRootEventsForOptimizationImpl()
+{
+    {
+        stack mut LlvmCompile compiled = CompileFull(
+            "ownerp1-typed-root-events-for-optimization",
+            raw"""
+module Demo
+
+struct Box
+{
+    i32[min max] Value;
+
+    drop
+    {
+    }
+}
+
+fn void Consume(Box value)
+{
+    return;
+}
+
+unsafe fn i32[min max] Run()
+{
+    stack mut Box box = new Box()
+    {
+        Value = 1
+    };
+    stack rawptr<Box> pointer = &box;
+    box = new Box()
+    {
+        Value = 2
+    };
+    Consume(box);
+    box = new Box()
+    {
+        Value = 3
+    };
+    return box.Value;
+}
+""");
+        // PORT-NOTE: reduced from asserting the typed ownership summary on Run --
+        // the AddressTaken/AssignmentDrop/Move/Reinitialize Events on place "box",
+        // the single "box" StorageRoot (Local, mutable, RequiresDrop, AddressTaken,
+        // HasRawPointerEscape, HasAssignmentDrop, HasMove, HasReinitialization,
+        // FinalAvailability=Initialized), and the carried MIR/SSA ownership facts
+        // (MIR AddressTaken event, SSA "box" root HasRawPointerEscape) -- to a
+        // successful full-pipeline compile, the precondition the helpers can express.
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from OwnershipRoadmapRegressionTests.OwnershipSummaryExposesPartialFieldMovesForOptimization.
+internal fn bool OwnershipSummaryExposesPartialFieldMovesForOptimizationImpl()
+{
+    {
+        stack mut LlvmCompile compiled = CompileFull(
+            "ownerp1-partial-field-moves-for-optimization",
+            raw"""
+module Demo
+
+struct Name
+{
+    i32[min max] Value;
+
+    drop
+    {
+    }
+}
+
+struct Container
+{
+    Name Name;
+    Name Label;
+}
+
+finite law Name Run()
+{
+    stack Container value = new Container()
+    {
+        Name = new Name()
+        {
+            Value = 1
+        },
+        Label = new Name()
+        {
+            Value = 2
+        }
+    };
+    return value.Name;
+}
+""");
+        // PORT-NOTE: reduced from asserting the partial-field-move ownership summary
+        // on Run -- the FieldMove Event on place value.Name (RootName "value",
+        // projection ["Name"], type "Name") and the single "value" StorageRoot
+        // (HasMove, HasPartialMove, HasImplicitDrop, FinalAvailability=
+        // PartiallyInitialized) -- to a successful full-pipeline compile, the
+        // precondition the helpers can express.
+        return Succeeds(compiled);
+    }
+}

@@ -1,0 +1,399 @@
+import StdlibPortSupport
+import System
+import System.Math
+import System.Testing
+module SystemMathStandardLibraryTests
+
+// Ported from SystemMathStandardLibraryTests.PackagedStdLibMathIntrinsicsWorkWithoutSource.
+internal fn bool PackagedStdLibMathIntrinsicsWorkWithoutSourceImpl()
+{
+    // PORT-NOTE: original compiles against the packaged stdlib image (no source on the
+    // include path) for a hardware-asm-capable target, emits an executable via the CLI,
+    // runs it, and asserts process exit code 0 with empty stdout/stderr (the embedded
+    // program self-checks every Math/BitOperations intrinsic and XorShift32 draw via
+    // numbered return codes). The compile-only host bridge cannot select a packaged
+    // image, link, or run the binary, so this reduces to compiling the embedded program
+    // and asserting it succeeds.
+    stack mut ProgramCompile c = CompileProgram("packaged-math-intrinsics-without-source", raw"""
+        import System
+        module App
+
+        export fn i32[min max] main()
+        {
+            stack f64 zero = 0.0;
+            stack f64 one = 1.0;
+            stack f64 two = 2.0;
+            stack f64 three = 3.0;
+            stack f64 eight = 8.0;
+            stack i32[min max] oneI32 = 1;
+            stack i32[min max] twoI32 = 2;
+            stack i32[min max] threeI32 = 3;
+            stack i32[min max] fourI32 = 4;
+            stack i32[min max] thirtyOne = 31;
+            stack i32[min max] minI32 = (i32[min max])(-(2 ** 31));
+            stack i64[min max] oneI64 = 1;
+            stack i64[min max] twoI64 = 2;
+            stack i64[min max] threeI64 = 3;
+            stack i64[min max] fourI64 = 4;
+            stack i64[min max] sixtyThree = 63;
+
+            if (System.Math.Sin(zero) != zero)
+            {
+                return 1;
+            }
+
+            if (System.Math.Cos(zero) != one)
+            {
+                return 2;
+            }
+
+            if (System.Math.Tan(zero) != zero)
+            {
+                return 3;
+            }
+
+            if (System.Math.Exp(zero) != one)
+            {
+                return 4;
+            }
+
+            if (System.Math.Exp2(three) != eight)
+            {
+                return 5;
+            }
+
+            if (System.Math.Log(one) != zero)
+            {
+                return 6;
+            }
+
+            if (System.Math.Log2(eight) != three)
+            {
+                return 7;
+            }
+
+            if (System.Math.Log10(one) != zero)
+            {
+                return 8;
+            }
+
+            if (System.Math.Asin(zero) != zero)
+            {
+                return 9;
+            }
+
+            if (System.Math.Acos(one) != zero)
+            {
+                return 10;
+            }
+
+            if (System.Math.Atan(zero) != zero)
+            {
+                return 11;
+            }
+
+            if (System.Math.Atan2(zero, one) != zero)
+            {
+                return 12;
+            }
+
+            if (System.Math.Pow(two, three) != eight)
+            {
+                return 13;
+            }
+
+            if (System.Math.Sinh(zero) != zero)
+            {
+                return 14;
+            }
+
+            if (System.Math.Cosh(zero) != one)
+            {
+                return 15;
+            }
+
+            if (System.Math.Tanh(zero) != zero)
+            {
+                return 16;
+            }
+
+            stack System.Math.SinCosF64 pair = System.Math.SinCos(zero);
+            if (pair.Sin != zero || pair.Cos != one)
+            {
+                return 17;
+            }
+
+            if (System.Math.Sqrt(9.0) != three)
+            {
+                return 18;
+            }
+
+            stack f32 reciprocal = System.Math.ReciprocalEstimate(4.0);
+            if (reciprocal < 0.24 || reciprocal > 0.26)
+            {
+                return 19;
+            }
+
+            stack f32 reciprocalSqrt = System.Math.ReciprocalSqrtEstimate(4.0);
+            if (reciprocalSqrt < 0.49 || reciprocalSqrt > 0.51)
+            {
+                return 20;
+            }
+
+            if (System.Math.Ceiling(2.25) != three)
+            {
+                return 21;
+            }
+
+            if (System.Math.Floor(2.75) != two)
+            {
+                return 22;
+            }
+
+            if (System.Math.Truncate(-2.75) != -2.0)
+            {
+                return 23;
+            }
+
+            if (System.Math.Round(2.5) != two)
+            {
+                return 24;
+            }
+
+            if (System.Math.Round(3.5) != 4.0)
+            {
+                return 25;
+            }
+
+            if (System.Math.Min(two, three) != two)
+            {
+                return 26;
+            }
+
+            if (System.Math.Max(two, three) != three)
+            {
+                return 27;
+            }
+
+            if (System.BitOperations.LeadingZeroCount(oneI32) != thirtyOne)
+            {
+                return 28;
+            }
+
+            if (System.BitOperations.TrailingZeroCount(fourI32) != twoI32)
+            {
+                return 29;
+            }
+
+            if (System.BitOperations.PopCount(threeI32) != twoI32)
+            {
+                return 30;
+            }
+
+            if (System.BitOperations.RotateLeft(oneI32, thirtyOne) != minI32)
+            {
+                return 31;
+            }
+
+            if (System.BitOperations.RotateRight(twoI32, oneI32) != oneI32)
+            {
+                return 32;
+            }
+
+            if (System.BitOperations.LeadingZeroCount(oneI64) != sixtyThree)
+            {
+                return 33;
+            }
+
+            if (System.BitOperations.TrailingZeroCount(fourI64) != twoI64)
+            {
+                return 34;
+            }
+
+            if (System.BitOperations.PopCount(threeI64) != twoI64)
+            {
+                return 35;
+            }
+
+            stack mut System.Math.XorShift32 rng = System.Math.XorShift32.Seeded(1);
+            if (rng.NextU32() != 270369)
+            {
+                return 36;
+            }
+
+            if (rng.NextU32() != 67634689)
+            {
+                return 37;
+            }
+
+            if (rng.NextI32() != -1647531835)
+            {
+                return 38;
+            }
+
+            stack f32 randomUnit = rng.NextF32();
+            if (randomUnit <= 0.0 || randomUnit >= 1.0)
+            {
+                return 39;
+            }
+
+            return 0;
+        }
+        """);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemMathStandardLibraryTests.PackagedStdLibFusedMultiplyAddWorksWithoutSourceWhenRuntimeSupportsIt.
+internal fn bool PackagedStdLibFusedMultiplyAddWorksWithoutSourceWhenRuntimeSupportsItImpl()
+{
+    // PORT-NOTE: original compiles against the packaged stdlib image (no source on the
+    // include path) for a target whose hardware-asm and FMA runtime are both supported,
+    // emits an executable via the CLI, runs it, and asserts process exit code 0 with
+    // empty stdout/stderr (the embedded program self-checks f64 and f32
+    // FusedMultiplyAdd via numbered return codes). The compile-only host bridge cannot
+    // select a packaged image, link, or run the binary, so this reduces to compiling the
+    // embedded program and asserting it succeeds.
+    stack mut ProgramCompile c = CompileProgram("packaged-math-fma-without-source", raw"""
+        import System
+        module App
+
+        export fn i32[min max] main()
+        {
+            stack f64 two = 2.0;
+            stack f64 three = 3.0;
+            stack f64 four = 4.0;
+            stack f64 value = System.Math.FusedMultiplyAdd(two, three, four);
+            if (value != 10.0)
+            {
+                return 1;
+            }
+
+            stack f32 twoSmall = 2.0;
+            stack f32 threeSmall = 3.0;
+            stack f32 fourSmall = 4.0;
+            stack f32 small = System.Math.FusedMultiplyAdd(twoSmall, threeSmall, fourSmall);
+            if (small != 10.0)
+            {
+                return 2;
+            }
+
+            return 0;
+        }
+        """);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemMathStandardLibraryTests.SourceStdLibMathXorShift32PseudoRandomExecutableRuns.
+internal fn bool SourceStdLibMathXorShift32PseudoRandomExecutableRunsImpl()
+{
+    // PORT-NOTE: original compiles against the stdlib source tree, emits an executable
+    // via the CLI (--emit-exe) for the detected default target, runs it, and asserts
+    // process exit code 0 with empty stdout/stderr (the embedded program self-checks
+    // XorShift32 state, draws, reseeding, and the default-constructed seed via numbered
+    // return codes). The compile-only host bridge cannot link or run the produced binary,
+    // so this reduces to compiling the embedded program and asserting it succeeds.
+    stack mut ProgramCompile c = CompileProgram("source-math-xorshift32-executable-runs", raw"""
+        import System.Math
+        module App
+
+        export fn i32[min max] main()
+        {
+            stack mut System.Math.XorShift32 rng = System.Math.XorShift32.Seeded(1);
+            if (rng.CurrentState() != 1)
+            {
+                return 1;
+            }
+
+            if (rng.NextU32() != 270369)
+            {
+                return 2;
+            }
+
+            if (rng.NextU32() != 67634689)
+            {
+                return 3;
+            }
+
+            if (rng.NextI32() != -1647531835)
+            {
+                return 4;
+            }
+
+            stack f32 unit = rng.NextF32();
+            if (unit <= 0.0 || unit >= 1.0)
+            {
+                return 5;
+            }
+
+            rng.Reseed(0);
+            if (rng.CurrentState() != 2463534242)
+            {
+                return 6;
+            }
+
+            if (rng.NextU32() == 0)
+            {
+                return 7;
+            }
+
+            stack mut System.Math.XorShift32 defaultRng = new System.Math.XorShift32();
+            if (defaultRng.CurrentState() != 2463534242)
+            {
+                return 8;
+            }
+
+            return 0;
+        }
+        """);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemMathStandardLibraryTests.SourceStdLibMathXorShift32PseudoRandomEmitsStraightLineBitOps.
+internal fn bool SourceStdLibMathXorShift32PseudoRandomEmitsStraightLineBitOpsImpl()
+{
+    stack mut ProgramCompile c = CompileProgram("source-math-xorshift32-straightline-bitops", raw"""
+        import System.Math
+        module Demo
+
+        fn u32[0 max] DrawU32(u32[0 max] seed)
+        {
+            stack mut System.Math.XorShift32 rng = System.Math.XorShift32.Seeded(seed);
+            return rng.NextU32();
+        }
+
+        fn f32 DrawF32(u32[0 max] seed)
+        {
+            stack mut System.Math.XorShift32 rng = System.Math.XorShift32.Seeded(seed);
+            return rng.NextF32();
+        }
+        """);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "shl i32")
+        && Contains(llvm, "lshr i32")
+        && Contains(llvm, "xor i32")
+        && Contains(llvm, "fmul fast float")
+        && DoesNotContain(llvm, "fdiv float")
+        && DoesNotContain(llvm, "@rand")
+        && DoesNotContain(llvm, "@random")
+        && DoesNotContain(llvm, "__stark_runtime_alloc");
+}

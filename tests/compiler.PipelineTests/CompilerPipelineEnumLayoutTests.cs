@@ -110,7 +110,9 @@ public sealed class CompilerPipelineEnumLayoutTests
             StarkTypeSymbols.Named("WidePayload"),
             typeModel.NamedTypes,
             enumLayoutModel.Layouts);
-        Assert.Equal(new ConcreteTypeLayout(64, 16), enumTypeLayout);
+        Assert.NotNull(enumTypeLayout);
+        Assert.Equal(64, enumTypeLayout!.SizeBytes);
+        Assert.Equal(16, enumTypeLayout.AlignmentBytes);
     }
 
     [Fact]

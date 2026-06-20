@@ -1,0 +1,19 @@
+module System.Core
+
+// Errors and absence are values in Stark -- returned, never thrown. `Result<T, E>`
+// carries either a success value or an error; `Option<T>` carries either a value
+// or its absence. Both are ordinary generic enums with no compiler privilege: the
+// [Ok]/[Err] role attributes are what make them propagatable with `try`, exactly as
+// those attributes make any other two-variant enum propagatable. Inspect them with
+// `switch` or `is`, or propagate them with `try`.
+public enum Result<T, E>
+{
+    [Ok] Ok(T),
+    [Err] Err(E),
+}
+
+public enum Option<T>
+{
+    [Ok] Some(T),
+    [Err] None,
+}

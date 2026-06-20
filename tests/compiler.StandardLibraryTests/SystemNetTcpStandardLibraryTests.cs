@@ -148,29 +148,15 @@ public sealed class SystemNetTcpStandardLibraryTests : StandardLibraryTestSuite
     [Fact]
     public async Task PackagedStdLibNetTcpClosedHandleLifecycleWorksWithoutSource()
     {
-        var repositoryRoot = FindRepositoryRoot();
-        var systemPath = Path.Combine(repositoryRoot, "stdlib", "src", "System.stark");
         var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-net-tcp-");
-        var packageDirectory = Path.Combine(tempDirectory.FullName, "packages");
-        Directory.CreateDirectory(packageDirectory);
+        var packageDirectory = await SharedStdlibPackage.GetDirectoryAsync();
 
         var libraryFileName = OperatingSystem.IsWindows() ? "System.lib" : "libSystem.a";
-        var manifestPath = Path.Combine(packageDirectory, Path.GetFileNameWithoutExtension(libraryFileName) + ".starkpkg.json");
+        var manifestPath = Path.Combine(packageDirectory, Path.GetFileNameWithoutExtension(libraryFileName) + ".starkpkg");
         var appPath = Path.Combine(tempDirectory.FullName, "App.stark");
 
         try
         {
-            var stdout = new StringWriter();
-            var stderr = new StringWriter();
-            var exitCode = await CompilerCli.RunAsync(
-                [systemPath, "--emit-pkg", "--package-library-file", libraryFileName, "-o", manifestPath],
-                new StringReader(string.Empty),
-                stdout,
-                stderr);
-
-            Assert.True(exitCode == 0, stdout + Environment.NewLine + stderr);
-            Assert.Contains("Emitted package image:", stdout.ToString());
-            Assert.Equal(string.Empty, stderr.ToString());
             Assert.True(File.Exists(manifestPath));
 
             var appSource =
@@ -414,8 +400,8 @@ public sealed class SystemNetTcpStandardLibraryTests : StandardLibraryTestSuite
             llvm,
             "define fastcc noundef ptr @ConnectTcpIPv4(",
             "Expected Linux ConnectTcpIPv4 definition.");
-        Assert.Contains("@LinuxCloseSyscallNumber", connectBody, StringComparison.Ordinal);
-        Assert.Contains("call i64 @LinuxSyscall1Handle(", connectBody, StringComparison.Ordinal);
+        // LinuxCloseSyscallNumber (3) is a comptime constant that folds into the call site.
+        Assert.Contains("call i64 @LinuxSyscall1Handle(i64 3, ", connectBody, StringComparison.Ordinal);
         Assert.DoesNotContain("call fastcc i32 @CloseFile(", connectBody, StringComparison.Ordinal);
     }
 
@@ -481,10 +467,12 @@ public sealed class SystemNetTcpStandardLibraryTests : StandardLibraryTestSuite
             "define fastcc noundef i64 @WriteSocketVector2(",
             "Expected Linux WriteSocketVector2 definition.");
         Assert.Contains("[2 x %LinuxIovec]", readVectorBody, StringComparison.Ordinal);
-        Assert.Contains("@LinuxReadvSyscallNumber", readVectorBody, StringComparison.Ordinal);
+        // LinuxReadvSyscallNumber (19) / LinuxWritevSyscallNumber (20) are comptime
+        // constants that fold into the syscall wrapper call sites.
+        Assert.Contains("call i64 @LinuxSyscall3HandleBuffer(i64 19, ", readVectorBody, StringComparison.Ordinal);
         Assert.Contains("i64 2", readVectorBody, StringComparison.Ordinal);
         Assert.Contains("[2 x %LinuxIovec]", writeVectorBody, StringComparison.Ordinal);
-        Assert.Contains("@LinuxWritevSyscallNumber", writeVectorBody, StringComparison.Ordinal);
+        Assert.Contains("call i64 @LinuxSyscall3HandleBuffer(i64 20, ", writeVectorBody, StringComparison.Ordinal);
         Assert.Contains("i64 2", writeVectorBody, StringComparison.Ordinal);
         Assert.DoesNotContain("@recv(", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("@send(", llvm, StringComparison.Ordinal);
@@ -520,8 +508,8 @@ public sealed class SystemNetTcpStandardLibraryTests : StandardLibraryTestSuite
             llvm,
             "define fastcc noundef ptr @ListenTcpIPv4(",
             "Expected Linux ListenTcpIPv4 definition.");
-        Assert.Contains("@LinuxCloseSyscallNumber", listenBody, StringComparison.Ordinal);
-        Assert.Contains("call i64 @LinuxSyscall1Handle(", listenBody, StringComparison.Ordinal);
+        // LinuxCloseSyscallNumber (3) is a comptime constant that folds into the call site.
+        Assert.Contains("call i64 @LinuxSyscall1Handle(i64 3, ", listenBody, StringComparison.Ordinal);
         Assert.DoesNotContain("call fastcc i32 @CloseFile(", listenBody, StringComparison.Ordinal);
         Assert.DoesNotContain("@bind(", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("@listen(", llvm, StringComparison.Ordinal);
@@ -579,7 +567,7 @@ public sealed class SystemNetTcpStandardLibraryTests : StandardLibraryTestSuite
 
         Assert.Contains("declare i32 @WSAStartup(", llvm, StringComparison.Ordinal);
         Assert.Contains("declare i32 @WSAGetLastError(", llvm, StringComparison.Ordinal);
-        Assert.Contains("declare i32 @InitOnceExecuteOnce(", llvm, StringComparison.Ordinal);
+        Assert.Contains("declare win64cc i32 @InitOnceExecuteOnce(", llvm, StringComparison.Ordinal);
         Assert.Contains("declare ptr @WSASocketW(", llvm, StringComparison.Ordinal);
         Assert.Contains("declare i32 @connect(", llvm, StringComparison.Ordinal);
         Assert.Contains("declare i32 @bind(", llvm, StringComparison.Ordinal);
@@ -606,7 +594,7 @@ public sealed class SystemNetTcpStandardLibraryTests : StandardLibraryTestSuite
         Assert.Contains("define fastcc noundef i32 @CloseSocket(", llvm, StringComparison.Ordinal);
 
         Assert.Contains("call i32 @WSAStartup(", llvm, StringComparison.Ordinal);
-        Assert.Contains("call i32 @InitOnceExecuteOnce(", llvm, StringComparison.Ordinal);
+        Assert.Contains("call win64cc i32 @InitOnceExecuteOnce(", llvm, StringComparison.Ordinal);
         Assert.Contains("call ptr @WSASocketW(", llvm, StringComparison.Ordinal);
         Assert.Contains("call i32 @connect(", llvm, StringComparison.Ordinal);
         Assert.Contains("call i32 @bind(", llvm, StringComparison.Ordinal);

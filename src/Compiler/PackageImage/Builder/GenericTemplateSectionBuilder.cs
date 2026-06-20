@@ -1,4 +1,5 @@
 using Antlr4.Runtime;
+using System.Numerics;
 using System.Text;
 using Stark.Parsing;
 
@@ -154,6 +155,13 @@ internal static partial class PackageImageBuilder
                 static group => group.Key,
                 static group => (IReadOnlyList<BoundOperation>)group.ToArray(),
                 StringComparer.Ordinal);
+        var tryPropagationsByFunction = typeModel.TryPropagations
+            .Where(static record => record.EnclosingFunctionName is not null)
+            .GroupBy(static record => record.EnclosingFunctionName!, StringComparer.Ordinal)
+            .ToDictionary(
+                static group => group.Key,
+                static group => (IReadOnlyList<TryPropagationTypingRecord>)group.ToArray(),
+                StringComparer.Ordinal);
 
         var candidates = DeclaredFunctionSyntaxCollector.Collect(module.ParseResult, module.SyntaxModel)
             .Where(static function => function.HasBody)
@@ -179,6 +187,7 @@ internal static partial class PackageImageBuilder
         var publishedLookupNames = CollectPublishedGenericTemplateLookupNames(
             candidates,
             deferredTriggersByFunction,
+            functionPointerPromotionsByFunction,
             boundOperationsByFunction);
 
         return candidates
@@ -206,6 +215,7 @@ internal static partial class PackageImageBuilder
                 memberCallsByFunction.TryGetValue(lookupName, out var memberCalls);
                 functionPointerPromotionsByFunction.TryGetValue(lookupName, out var functionPointerPromotions);
                 boundOperationsByFunction.TryGetValue(lookupName, out var boundOperations);
+                tryPropagationsByFunction.TryGetValue(lookupName, out var tryPropagations);
                 var effectiveEnumValues = MergeTemplateEnumValues(enumValues, boundOperations);
 
                 var typedBody = BuildPublishedTypedTemplateBody(
@@ -250,12 +260,24 @@ internal static partial class PackageImageBuilder
                     TypedBody: typedBody,
                     DeferredFunctionInstantiations: deferredTriggers is { Count: > 0 }
                         ? deferredTriggers
-                            .Where(static trigger => trigger.Signature.TemplateName is not null && trigger.Signature.TypeArguments is { Count: > 0 })
+                            .Where(static trigger => trigger.Signature.TemplateName is not null
+                                                     && (trigger.Signature.TypeArguments is { Count: > 0 }
+                                                         || trigger.Signature.ComptimeValueArguments is { Count: > 0 }))
                             .Select(trigger => new StarkPackageDeferredFunctionInstantiationManifest(
                                 QualifyPublishedCalledFunctionName(module, trigger.Signature.TemplateName!),
-                                trigger.Signature.TypeArguments!
-                                    .Select(typeArgument => BuildPublishedAbiTypeReference(typeArgument, module))
-                                    .ToArray()))
+                                trigger.Signature.TypeArguments is { Count: > 0 }
+                                    ? trigger.Signature.TypeArguments
+                                        .Select(typeArgument => BuildPublishedAbiTypeReference(typeArgument, module))
+                                        .ToArray()
+                                    : null,
+                                trigger.Signature.ComptimeValueArguments is { Count: > 0 }
+                                    ? trigger.Signature.ComptimeValueArguments
+                                        .Select(argument => BuildPublishedAbiComptimeValueArgument(
+                                            argument,
+                                            module.SyntaxModel.ModuleName,
+                                            GetModuleLocalNamedTypes(module)))
+                                        .ToArray()
+                                    : null))
                             .ToArray()
                         : null,
                     DeferredTypeInstantiations: deferredTypeTriggers is { Count: > 0 }
@@ -274,10 +296,11 @@ internal static partial class PackageImageBuilder
                     Conversions: BuildPublishedTemplateConversions(module, function.Body, conversions),
                     DirectCalls: BuildPublishedTemplateDirectCalls(module, function.Body, directCalls),
                     FieldAccesses: BuildPublishedTemplateFieldAccesses(module, function.Body, fieldAccesses),
-                    MemberCalls: BuildPublishedTemplateMemberCalls(module, function.Body, memberCalls),
+                    MemberCalls: BuildPublishedTemplateMemberCalls(module, function.Body, memberCalls, directCalls),
                     FunctionAddresses: BuildPublishedTemplateFunctionAddresses(module, functionPointerPromotions),
                     BoundOperations: BuildPublishedTemplateBoundOperations(module, function.Body, boundOperations),
-                    BackendOptimizationMode: RenderBackendOptimizationMode(functionSignature.BackendOptimizationMode));
+                    BackendOptimizationMode: RenderBackendOptimizationMode(functionSignature.BackendOptimizationMode),
+                    TryPropagations: BuildPublishedTemplateTryPropagations(module, function.Body, tryPropagations));
             })
             .Where(static template => template is not null)
             .Cast<StarkPackageFunctionTemplateManifest>()
@@ -289,6 +312,7 @@ internal static partial class PackageImageBuilder
     private static HashSet<string> CollectPublishedGenericTemplateLookupNames(
         IReadOnlyList<GenericFunctionTemplateCandidate> candidates,
         IReadOnlyDictionary<string, IReadOnlyList<DeferredFunctionInstantiationTriggerRecord>> deferredTriggersByFunction,
+        IReadOnlyDictionary<string, IReadOnlyList<FunctionPointerPromotionTypingRecord>> functionPointerPromotionsByFunction,
         IReadOnlyDictionary<string, IReadOnlyList<BoundOperation>> boundOperationsByFunction)
     {
         var candidatesByLookupName = candidates.ToDictionary(
@@ -318,6 +342,14 @@ internal static partial class PackageImageBuilder
                 foreach (var trigger in deferredTriggers)
                 {
                     EnqueueTemplate(trigger.Signature.TemplateName);
+                }
+            }
+
+            if (functionPointerPromotionsByFunction.TryGetValue(lookupName, out var functionPointerPromotions))
+            {
+                foreach (var promotion in functionPointerPromotions)
+                {
+                    EnqueueTemplate(promotion.Signature.TemplateName);
                 }
             }
 
@@ -528,6 +560,7 @@ internal static partial class PackageImageBuilder
                     TemplateDirectCallFacts.BuildLookupKey(item.patternContext.Start.Line, item.patternContext.Start.Column + 1)))
             .ToDictionary(static item => item.patternContext, static item => item.ordinal);
         var directCallsByLocation = (directCalls ?? [])
+            .Where(static record => !record.Arguments.Any(static argument => argument.IsReceiver))
             .GroupBy(static record => TemplateDirectCallFacts.BuildLookupKey(record.Location))
             .ToDictionary(static group => group.Key, static group => group.Last(), StringComparer.Ordinal);
         var directCallOrdinals = CollectTemplateArgumentListsByPublishedLocations(functionBody, directCallsByLocation.Keys)
@@ -540,6 +573,15 @@ internal static partial class PackageImageBuilder
         var dynamicStorageOperationOrdinals = CollectTemplateArgumentListsByPublishedLocations(
                 functionBody,
                 dynamicStorageOperationLocations)
+            .Select((argumentList, ordinal) => (argumentList, ordinal))
+            .ToDictionary(static item => item.argumentList, static item => item.ordinal);
+        var dynTraitFromPartsOperationLocations = (boundOperations ?? [])
+            .Where(static operation => operation.Kind == BoundOperationKind.DynTraitFromParts)
+            .Select(static operation => TemplateDirectCallFacts.BuildLookupKey(operation.Location))
+            .ToHashSet(StringComparer.Ordinal);
+        var dynTraitFromPartsOperationOrdinals = CollectTemplateArgumentListsByPublishedLocations(
+                functionBody,
+                dynTraitFromPartsOperationLocations)
             .Select((argumentList, ordinal) => (argumentList, ordinal))
             .ToDictionary(static item => item.argumentList, static item => item.ordinal);
         var memberCallOrdinals = CollectTemplateMemberCallArgumentLists(functionBody)
@@ -565,6 +607,7 @@ internal static partial class PackageImageBuilder
                 functionAddressOrdinals,
                 directCallOrdinals,
                 dynamicStorageOperationOrdinals,
+                dynTraitFromPartsOperationOrdinals,
                 memberCallOrdinals,
                 fieldAccessOrdinals,
                 out var publishedStatements))
@@ -590,6 +633,7 @@ internal static partial class PackageImageBuilder
                 && !string.Equals(publishedStatements[index].Kind, "assignment", StringComparison.Ordinal)
                 && !string.Equals(publishedStatements[index].Kind, "switch", StringComparison.Ordinal)
                 && !string.Equals(publishedStatements[index].Kind, "for", StringComparison.Ordinal)
+                && !string.Equals(publishedStatements[index].Kind, "for-traversal", StringComparison.Ordinal)
                 && !string.Equals(publishedStatements[index].Kind, "while", StringComparison.Ordinal)
                 && !string.Equals(publishedStatements[index].Kind, "if", StringComparison.Ordinal))
             {
@@ -597,7 +641,7 @@ internal static partial class PackageImageBuilder
             }
         }
 
-        return new StarkPackageTypedTemplateBodyManifest(publishedStatements);
+        return AssignTypedTemplateTryOrdinals(new StarkPackageTypedTemplateBodyManifest(publishedStatements));
     }
 
     private static bool CanUsePublishedTypedTemplateImplicitVoidReturnStatement(
@@ -610,8 +654,153 @@ internal static partial class PackageImageBuilder
             || string.Equals(statement.Kind, "assignment", StringComparison.Ordinal)
             || string.Equals(statement.Kind, "switch", StringComparison.Ordinal)
             || string.Equals(statement.Kind, "for", StringComparison.Ordinal)
+            || string.Equals(statement.Kind, "for-traversal", StringComparison.Ordinal)
             || string.Equals(statement.Kind, "while", StringComparison.Ordinal)
             || string.Equals(statement.Kind, "if", StringComparison.Ordinal);
+    }
+
+    private static StarkPackageTypedTemplateBodyManifest AssignTypedTemplateTryOrdinals(
+        StarkPackageTypedTemplateBodyManifest body)
+    {
+        var nextOrdinal = 0;
+        return body with
+        {
+            Statements = AssignStatements(body.Statements)
+        };
+
+        IReadOnlyList<StarkPackageTypedTemplateStatementManifest> AssignStatements(
+            IReadOnlyList<StarkPackageTypedTemplateStatementManifest>? statements)
+        {
+            return (statements ?? [])
+                .Select(AssignStatement)
+                .ToArray();
+        }
+
+        StarkPackageTypedTemplateStatementManifest AssignStatement(
+            StarkPackageTypedTemplateStatementManifest statement)
+        {
+            return statement.Kind switch
+            {
+                "assignment" => statement with
+                {
+                    TargetExpression = AssignExpression(statement.TargetExpression),
+                    Expression = AssignExpression(statement.Expression)!
+                },
+                "for" => statement with
+                {
+                    InitializerStatements = AssignStatements(statement.InitializerStatements),
+                    Expression = AssignExpression(statement.Expression)!,
+                    IteratorStatements = AssignStatements(statement.IteratorStatements),
+                    BodyStatements = AssignStatements(statement.BodyStatements)
+                },
+                "for-traversal" => statement with
+                {
+                    TraversalSource = AssignExpression(statement.TraversalSource),
+                    BodyStatements = AssignStatements(statement.BodyStatements)
+                },
+                "while" => statement with
+                {
+                    Expression = AssignExpression(statement.Expression)!,
+                    ConditionPattern = AssignPattern(statement.ConditionPattern),
+                    BodyStatements = AssignStatements(statement.BodyStatements)
+                },
+                "if" => statement with
+                {
+                    Expression = AssignExpression(statement.Expression)!,
+                    ConditionPattern = AssignPattern(statement.ConditionPattern),
+                    ThenStatements = AssignStatements(statement.ThenStatements),
+                    ElseStatements = AssignStatements(statement.ElseStatements)
+                },
+                "switch" => statement with
+                {
+                    Expression = AssignExpression(statement.Expression)!,
+                    SwitchCases = AssignSwitchCases(statement.SwitchCases)
+                },
+                "block" => statement with
+                {
+                    BodyStatements = AssignStatements(statement.BodyStatements)
+                },
+                _ => statement with
+                {
+                    Expression = AssignExpression(statement.Expression)!,
+                    TargetExpression = AssignExpression(statement.TargetExpression),
+                    TraversalSource = AssignExpression(statement.TraversalSource),
+                    ConditionPattern = AssignPattern(statement.ConditionPattern),
+                    BodyStatements = AssignStatements(statement.BodyStatements),
+                    InitializerStatements = AssignStatements(statement.InitializerStatements),
+                    IteratorStatements = AssignStatements(statement.IteratorStatements),
+                    SwitchCases = AssignSwitchCases(statement.SwitchCases),
+                    ThenStatements = AssignStatements(statement.ThenStatements),
+                    ElseStatements = AssignStatements(statement.ElseStatements)
+                }
+            };
+        }
+
+        IReadOnlyList<StarkPackageTypedTemplateSwitchCaseManifest>? AssignSwitchCases(
+            IReadOnlyList<StarkPackageTypedTemplateSwitchCaseManifest>? switchCases)
+        {
+            return switchCases?.Select(AssignSwitchCase).ToArray();
+        }
+
+        StarkPackageTypedTemplateSwitchCaseManifest AssignSwitchCase(
+            StarkPackageTypedTemplateSwitchCaseManifest switchCase)
+        {
+            return switchCase with
+            {
+                Expression = AssignExpression(switchCase.Expression),
+                EndExpression = AssignExpression(switchCase.EndExpression),
+                GuardExpression = AssignExpression(switchCase.GuardExpression),
+                Members = switchCase.Members?.Select(AssignPattern).Where(static member => member is not null).Cast<StarkPackageTypedTemplatePatternManifest>().ToArray(),
+                Statements = AssignStatements(switchCase.Statements)
+            };
+        }
+
+        StarkPackageTypedTemplatePatternManifest? AssignPattern(
+            StarkPackageTypedTemplatePatternManifest? pattern)
+        {
+            if (pattern is null)
+            {
+                return null;
+            }
+
+            return pattern with
+            {
+                Expression = AssignExpression(pattern.Expression),
+                EndExpression = AssignExpression(pattern.EndExpression),
+                Members = pattern.Members?.Select(AssignPattern).Where(static member => member is not null).Cast<StarkPackageTypedTemplatePatternManifest>().ToArray()
+            };
+        }
+
+        StarkPackageTypedTemplateExpressionManifest? AssignExpression(
+            StarkPackageTypedTemplateExpressionManifest? expression)
+        {
+            if (expression is null)
+            {
+                return null;
+            }
+
+            if (string.Equals(expression.Kind, "try", StringComparison.Ordinal))
+            {
+                return expression with
+                {
+                    Ordinal = nextOrdinal++,
+                    Arguments = AssignExpressions(expression.Arguments),
+                    TargetExpression = AssignExpression(expression.TargetExpression)
+                };
+            }
+
+            return expression with
+            {
+                Arguments = AssignExpressions(expression.Arguments),
+                TargetExpression = AssignExpression(expression.TargetExpression)
+            };
+        }
+
+        IReadOnlyList<StarkPackageTypedTemplateExpressionManifest>? AssignExpressions(
+            IReadOnlyList<StarkPackageTypedTemplateExpressionManifest>? expressions)
+        {
+            return expressions?.Select(AssignExpression).Where(static expression => expression is not null).Cast<StarkPackageTypedTemplateExpressionManifest>().ToArray();
+        }
     }
 
     private static bool TryBuildPublishedTypedTemplateStatementList(
@@ -631,6 +820,7 @@ internal static partial class PackageImageBuilder
         IReadOnlyDictionary<ParserRuleContext, int> functionAddressOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> directCallOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynamicStorageOperationOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynTraitFromPartsOperationOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> memberCallOrdinals,
         IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
         out IReadOnlyList<StarkPackageTypedTemplateStatementManifest> publishedStatements)
@@ -655,6 +845,7 @@ internal static partial class PackageImageBuilder
                     functionAddressOrdinals,
                     directCallOrdinals,
                     dynamicStorageOperationOrdinals,
+                    dynTraitFromPartsOperationOrdinals,
                     memberCallOrdinals,
                     fieldAccessOrdinals,
                     out var publishedStatementGroup))
@@ -687,6 +878,7 @@ internal static partial class PackageImageBuilder
         IReadOnlyDictionary<ParserRuleContext, int> functionAddressOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> directCallOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynamicStorageOperationOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynTraitFromPartsOperationOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> memberCallOrdinals,
         IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
         out IReadOnlyList<StarkPackageTypedTemplateStatementManifest> publishedStatements)
@@ -710,6 +902,7 @@ internal static partial class PackageImageBuilder
                     functionAddressOrdinals,
                     directCallOrdinals,
                     dynamicStorageOperationOrdinals,
+                    dynTraitFromPartsOperationOrdinals,
                     memberCallOrdinals,
                     fieldAccessOrdinals,
                     out var blockStatements))
@@ -777,6 +970,7 @@ internal static partial class PackageImageBuilder
                         functionAddressOrdinals,
                         directCallOrdinals,
                         dynamicStorageOperationOrdinals,
+                        dynTraitFromPartsOperationOrdinals,
                         memberCallOrdinals,
                         fieldAccessOrdinals,
                         out initializer))
@@ -842,6 +1036,7 @@ internal static partial class PackageImageBuilder
                         functionAddressOrdinals,
                         directCallOrdinals,
                         dynamicStorageOperationOrdinals,
+                        dynTraitFromPartsOperationOrdinals,
                         memberCallOrdinals,
                         fieldAccessOrdinals,
                         out var initializer))
@@ -882,6 +1077,7 @@ internal static partial class PackageImageBuilder
                 functionAddressOrdinals,
                 directCallOrdinals,
                 dynamicStorageOperationOrdinals,
+                dynTraitFromPartsOperationOrdinals,
                 memberCallOrdinals,
                 fieldAccessOrdinals,
                 out var publishedStatement))
@@ -911,11 +1107,17 @@ internal static partial class PackageImageBuilder
         IReadOnlyDictionary<ParserRuleContext, int> functionAddressOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> directCallOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynamicStorageOperationOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynTraitFromPartsOperationOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> memberCallOrdinals,
         IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
         out StarkPackageTypedTemplateStatementManifest publishedStatement)
     {
         publishedStatement = null!;
+        var labeledStatement = statement.labeledStatement();
+        var labelName = labeledStatement?.Identifier().GetText();
+        var statementFor = statement.forStatement() ?? labeledStatement?.forStatement();
+        var statementWhile = statement.whileStatement() ?? labeledStatement?.whileStatement();
+        var statementSwitch = statement.switchStatement() ?? labeledStatement?.switchStatement();
 
         if (statement.expressionStatement()?.expression().assignmentExpression() is { } initAssignmentExpression
             && initAssignmentExpression.INIT() is not null
@@ -934,6 +1136,7 @@ internal static partial class PackageImageBuilder
                 functionAddressOrdinals,
                 directCallOrdinals,
                 dynamicStorageOperationOrdinals,
+                dynTraitFromPartsOperationOrdinals,
                 memberCallOrdinals,
                 fieldAccessOrdinals,
                 out var initAssignmentTargetName,
@@ -951,6 +1154,7 @@ internal static partial class PackageImageBuilder
                 functionAddressOrdinals,
                 directCallOrdinals,
                 dynamicStorageOperationOrdinals,
+                dynTraitFromPartsOperationOrdinals,
                 memberCallOrdinals,
                 fieldAccessOrdinals,
                 out var initAssignmentValue))
@@ -980,6 +1184,7 @@ internal static partial class PackageImageBuilder
                 functionAddressOrdinals,
                 directCallOrdinals,
                 dynamicStorageOperationOrdinals,
+                dynTraitFromPartsOperationOrdinals,
                 memberCallOrdinals,
                 fieldAccessOrdinals,
                 out var expressionStatementValue))
@@ -990,7 +1195,92 @@ internal static partial class PackageImageBuilder
             return true;
         }
 
-        if (statement.forStatement() is { } forStatement
+        if (statementFor is { } traversalForStatement
+            && traversalForStatement.forTraversal() is { } forTraversal
+            && TryBuildPublishedTypedTemplateExpression(
+                module,
+                forTraversal.expression(),
+                namedTypes,
+                literalsByLocation,
+                conversionsByLocation,
+                objectCreationOrdinals,
+                enumConstructorOrdinals,
+                enumCallOrdinals,
+                enumValueOrdinals,
+                functionAddressOrdinals,
+                directCallOrdinals,
+                dynamicStorageOperationOrdinals,
+                dynTraitFromPartsOperationOrdinals,
+                memberCallOrdinals,
+                fieldAccessOrdinals,
+                out var traversalSource)
+            && TryBuildPublishedTypedTemplateTraversalBindingType(
+                module,
+                localDeclarationsByLocation,
+                TemplateLocalDeclarationFacts.TraversalElementKind,
+                forTraversal.traversalElementBinding(),
+                forTraversal.traversalElementBinding().type_(),
+                out var traversalElementType)
+            && TryBuildPublishedTypedTemplateBranchStatement(
+                module,
+                traversalForStatement.statement(),
+                namedTypes,
+                literalsByLocation,
+                localDeclarationsByLocation,
+                conversionsByLocation,
+                objectCreationOrdinals,
+                enumConstructorOrdinals,
+                enumCallOrdinals,
+                enumValueOrdinals,
+                enumPatternOrdinals,
+                aggregatePatternOrdinals,
+                localStorageCapacitiesByLocation,
+                functionAddressOrdinals,
+                directCallOrdinals,
+                dynamicStorageOperationOrdinals,
+                dynTraitFromPartsOperationOrdinals,
+                memberCallOrdinals,
+                fieldAccessOrdinals,
+                out var traversalBodyStatements))
+        {
+            string? traversalIndexName = null;
+            string? traversalIndexStorageClass = null;
+            StarkPackageTypeReference? traversalIndexType = null;
+            if (forTraversal.traversalIndexBinding() is { } indexBinding)
+            {
+                if (!TryBuildPublishedTypedTemplateTraversalBindingType(
+                        module,
+                        localDeclarationsByLocation,
+                        TemplateLocalDeclarationFacts.TraversalIndexKind,
+                        indexBinding,
+                        indexBinding.type_(),
+                        out traversalIndexType))
+                {
+                    publishedStatement = null!;
+                    return false;
+                }
+
+                traversalIndexName = indexBinding.Identifier().GetText();
+                traversalIndexStorageClass = indexBinding.storageClass().GetText();
+            }
+
+            publishedStatement = new StarkPackageTypedTemplateStatementManifest(
+                Kind: "for-traversal",
+                Name: labelName,
+                LoopBehavior: traversalForStatement.loopBehavior().GetText(),
+                BodyStatements: traversalBodyStatements,
+                LoopContracts: BuildLoopContracts(traversalForStatement.loopContract()),
+                TraversalSource: traversalSource,
+                TraversalIndexName: traversalIndexName,
+                TraversalIndexStorageClass: traversalIndexStorageClass,
+                TraversalIndexType: traversalIndexType,
+                TraversalElementName: forTraversal.traversalElementBinding().Identifier().GetText(),
+                TraversalElementType: traversalElementType);
+            return true;
+        }
+
+        if (statementFor is { } forStatement
+            && forStatement.forTraversal() is null
             && TryBuildPublishedTypedTemplateForInitializerStatements(
                 module,
                 forStatement.forInitializer(),
@@ -1006,6 +1296,7 @@ internal static partial class PackageImageBuilder
                 functionAddressOrdinals,
                 directCallOrdinals,
                 dynamicStorageOperationOrdinals,
+                dynTraitFromPartsOperationOrdinals,
                 memberCallOrdinals,
                 fieldAccessOrdinals,
                 out var initializerStatements)
@@ -1022,6 +1313,7 @@ internal static partial class PackageImageBuilder
                 functionAddressOrdinals,
                 directCallOrdinals,
                 dynamicStorageOperationOrdinals,
+                dynTraitFromPartsOperationOrdinals,
                 memberCallOrdinals,
                 fieldAccessOrdinals,
                 out var iteratorStatements)
@@ -1038,6 +1330,7 @@ internal static partial class PackageImageBuilder
                 functionAddressOrdinals,
                 directCallOrdinals,
                 dynamicStorageOperationOrdinals,
+                dynTraitFromPartsOperationOrdinals,
                 memberCallOrdinals,
                 fieldAccessOrdinals,
                 out var forCondition)
@@ -1058,12 +1351,14 @@ internal static partial class PackageImageBuilder
                 functionAddressOrdinals,
                 directCallOrdinals,
                 dynamicStorageOperationOrdinals,
+                dynTraitFromPartsOperationOrdinals,
                 memberCallOrdinals,
                 fieldAccessOrdinals,
                 out var forBodyStatements))
         {
             publishedStatement = new StarkPackageTypedTemplateStatementManifest(
                 Kind: "for",
+                Name: labelName,
                 Expression: forCondition!,
                 LoopBehavior: forStatement.loopBehavior().GetText(),
                 InitializerStatements: initializerStatements,
@@ -1073,7 +1368,7 @@ internal static partial class PackageImageBuilder
             return true;
         }
 
-        if (statement.whileStatement() is { } whileStatement
+        if (statementWhile is { } whileStatement
             && TryBuildPublishedTypedTemplateExpression(
                 module,
                 whileStatement.expression(),
@@ -1087,6 +1382,7 @@ internal static partial class PackageImageBuilder
                 functionAddressOrdinals,
                 directCallOrdinals,
                 dynamicStorageOperationOrdinals,
+                dynTraitFromPartsOperationOrdinals,
                 memberCallOrdinals,
                 fieldAccessOrdinals,
                 out var whileCondition)
@@ -1107,15 +1403,31 @@ internal static partial class PackageImageBuilder
                 functionAddressOrdinals,
                 directCallOrdinals,
                 dynamicStorageOperationOrdinals,
+                dynTraitFromPartsOperationOrdinals,
                 memberCallOrdinals,
                 fieldAccessOrdinals,
                 out var whileBodyStatements))
         {
+            StarkPackageTypedTemplatePatternManifest? conditionPattern = null;
+            if (whileStatement.pattern() is { } whilePattern
+                && !TryBuildPublishedTypedTemplateSwitchFieldPattern(
+                    module,
+                    whilePattern,
+                    literalsByLocation,
+                    enumPatternOrdinals,
+                    aggregatePatternOrdinals,
+                    out conditionPattern))
+            {
+                return false;
+            }
+
             publishedStatement = new StarkPackageTypedTemplateStatementManifest(
                 Kind: "while",
+                Name: labelName,
                 Expression: whileCondition,
                 LoopBehavior: whileStatement.loopBehavior().GetText(),
                 BodyStatements: whileBodyStatements,
+                ConditionPattern: conditionPattern,
                 LoopContracts: BuildLoopContracts(whileStatement.loopContract()));
             return true;
         }
@@ -1135,6 +1447,7 @@ internal static partial class PackageImageBuilder
                 functionAddressOrdinals,
                 directCallOrdinals,
                 dynamicStorageOperationOrdinals,
+                dynTraitFromPartsOperationOrdinals,
                 memberCallOrdinals,
                 fieldAccessOrdinals,
                 out var condition)
@@ -1155,10 +1468,24 @@ internal static partial class PackageImageBuilder
                 functionAddressOrdinals,
                 directCallOrdinals,
                 dynamicStorageOperationOrdinals,
+                dynTraitFromPartsOperationOrdinals,
                 memberCallOrdinals,
                 fieldAccessOrdinals,
                 out var thenStatements))
         {
+            StarkPackageTypedTemplatePatternManifest? conditionPattern = null;
+            if (ifStatement.pattern() is { } ifPattern
+                && !TryBuildPublishedTypedTemplateSwitchFieldPattern(
+                    module,
+                    ifPattern,
+                    literalsByLocation,
+                    enumPatternOrdinals,
+                    aggregatePatternOrdinals,
+                    out conditionPattern))
+            {
+                return false;
+            }
+
             IReadOnlyList<StarkPackageTypedTemplateStatementManifest>? elseStatements = null;
             if (ifStatement.statement().Length >= 2
                 && !TryBuildPublishedTypedTemplateBranchStatement(
@@ -1178,6 +1505,7 @@ internal static partial class PackageImageBuilder
                     functionAddressOrdinals,
                     directCallOrdinals,
                     dynamicStorageOperationOrdinals,
+                    dynTraitFromPartsOperationOrdinals,
                     memberCallOrdinals,
                     fieldAccessOrdinals,
                     out elseStatements))
@@ -1189,11 +1517,12 @@ internal static partial class PackageImageBuilder
                 Kind: "if",
                 Expression: condition,
                 ThenStatements: thenStatements,
-                ElseStatements: elseStatements);
+                ElseStatements: elseStatements,
+                ConditionPattern: conditionPattern);
             return true;
         }
 
-        if (statement.switchStatement() is { } switchStatement
+        if (statementSwitch is { } switchStatement
             && TryBuildPublishedTypedTemplateExpression(
                 module,
                 switchStatement.expression(),
@@ -1207,6 +1536,7 @@ internal static partial class PackageImageBuilder
                 functionAddressOrdinals,
                 directCallOrdinals,
                 dynamicStorageOperationOrdinals,
+                dynTraitFromPartsOperationOrdinals,
                 memberCallOrdinals,
                 fieldAccessOrdinals,
                 out var switchExpression)
@@ -1227,12 +1557,14 @@ internal static partial class PackageImageBuilder
                 functionAddressOrdinals,
                 directCallOrdinals,
                 dynamicStorageOperationOrdinals,
+                dynTraitFromPartsOperationOrdinals,
                 memberCallOrdinals,
                 fieldAccessOrdinals,
                 out var switchCases))
         {
             publishedStatement = new StarkPackageTypedTemplateStatementManifest(
                 Kind: "switch",
+                Name: labelName,
                 Expression: switchExpression,
                 SwitchCases: switchCases);
             return true;
@@ -1253,6 +1585,7 @@ internal static partial class PackageImageBuilder
                 functionAddressOrdinals,
                 directCallOrdinals,
                 dynamicStorageOperationOrdinals,
+                dynTraitFromPartsOperationOrdinals,
                 memberCallOrdinals,
                 fieldAccessOrdinals,
                 out var assignmentTargetName,
@@ -1270,6 +1603,7 @@ internal static partial class PackageImageBuilder
                 functionAddressOrdinals,
                 directCallOrdinals,
                 dynamicStorageOperationOrdinals,
+                dynTraitFromPartsOperationOrdinals,
                 memberCallOrdinals,
                 fieldAccessOrdinals,
                 out var assignmentValue))
@@ -1291,7 +1625,7 @@ internal static partial class PackageImageBuilder
                 return true;
             }
 
-            if (TryBuildPublishedTypedTemplateExpression(module, returnStatement.expression(), namedTypes, literalsByLocation, conversionsByLocation, objectCreationOrdinals, enumConstructorOrdinals, enumCallOrdinals, enumValueOrdinals, functionAddressOrdinals, directCallOrdinals, dynamicStorageOperationOrdinals, memberCallOrdinals, fieldAccessOrdinals, out var returnExpression))
+            if (TryBuildPublishedTypedTemplateExpression(module, returnStatement.expression(), namedTypes, literalsByLocation, conversionsByLocation, objectCreationOrdinals, enumConstructorOrdinals, enumCallOrdinals, enumValueOrdinals, functionAddressOrdinals, directCallOrdinals, dynamicStorageOperationOrdinals, dynTraitFromPartsOperationOrdinals, memberCallOrdinals, fieldAccessOrdinals, out var returnExpression))
             {
                 publishedStatement = new StarkPackageTypedTemplateStatementManifest(
                     Kind: "return",
@@ -1300,17 +1634,19 @@ internal static partial class PackageImageBuilder
             }
         }
 
-        if (statement.breakStatement() is not null)
+        if (statement.breakStatement() is { } breakStatement)
         {
             publishedStatement = new StarkPackageTypedTemplateStatementManifest(
-                Kind: "break");
+                Kind: "break",
+                Name: breakStatement.Identifier()?.GetText());
             return true;
         }
 
-        if (statement.continueStatement() is not null)
+        if (statement.continueStatement() is { } continueStatement)
         {
             publishedStatement = new StarkPackageTypedTemplateStatementManifest(
-                Kind: "continue");
+                Kind: "continue",
+                Name: continueStatement.Identifier()?.GetText());
             return true;
         }
 
@@ -1324,6 +1660,28 @@ internal static partial class PackageImageBuilder
             .Select(static contract => contract.GetText())
             .Where(static contract => !string.IsNullOrWhiteSpace(contract))
             .ToArray();
+    }
+
+    private static bool TryBuildPublishedTypedTemplateTraversalBindingType(
+        LoadedModuleDocument module,
+        IReadOnlyDictionary<string, LocalDeclarationTypingRecord> localDeclarationsByLocation,
+        string declarationKind,
+        ParserRuleContext bindingContext,
+        StarkParser.Type_Context typeSyntax,
+        out StarkPackageTypeReference typeReference)
+    {
+        if (localDeclarationsByLocation.TryGetValue(
+                TemplateLocalDeclarationFacts.BuildLookupKey(
+                    declarationKind,
+                    bindingContext.Start.Line,
+                    bindingContext.Start.Column + 1),
+                out var localDeclaration))
+        {
+            typeReference = BuildPublishedAbiTypeReference(localDeclaration.Type, module);
+            return true;
+        }
+
+        return TryBuildPublishedAbiTypeReferenceFromSyntax(module, typeSyntax, out typeReference);
     }
 
     private static bool CanUseTypedTemplateStatementAsTerminal(
@@ -1411,11 +1769,13 @@ internal static partial class PackageImageBuilder
         IReadOnlyDictionary<ParserRuleContext, int> functionAddressOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> directCallOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynamicStorageOperationOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynTraitFromPartsOperationOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> memberCallOrdinals,
         IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
         out IReadOnlyList<StarkPackageTypedTemplateSwitchCaseManifest> switchCases)
     {
-        var builtCases = new List<StarkPackageTypedTemplateSwitchCaseManifest>(sections.Sum(static section => section.switchLabel().Length));
+        var builtCases = new List<StarkPackageTypedTemplateSwitchCaseManifest>(
+            sections.Sum(static section => section.switchLabel().Sum(static label => label.DEFAULT() is not null ? 1 : label.pattern().Length)));
         foreach (var section in sections)
         {
             if (section.switchLabel().Length == 0
@@ -1436,6 +1796,7 @@ internal static partial class PackageImageBuilder
                     functionAddressOrdinals,
                     directCallOrdinals,
                     dynamicStorageOperationOrdinals,
+                    dynTraitFromPartsOperationOrdinals,
                     memberCallOrdinals,
                     fieldAccessOrdinals,
                     out var statements))
@@ -1446,7 +1807,7 @@ internal static partial class PackageImageBuilder
 
             foreach (var label in section.switchLabel())
             {
-                if (!TryBuildPublishedTypedTemplateSwitchCase(
+                if (!TryBuildPublishedTypedTemplateSwitchCases(
                         module,
                         label,
                         namedTypes,
@@ -1462,16 +1823,17 @@ internal static partial class PackageImageBuilder
                         functionAddressOrdinals,
                         directCallOrdinals,
                         dynamicStorageOperationOrdinals,
+                        dynTraitFromPartsOperationOrdinals,
                         memberCallOrdinals,
                         fieldAccessOrdinals,
                         statements,
-                        out var builtCase))
+                        out var labelCases))
                 {
                     switchCases = [];
                     return false;
                 }
 
-                builtCases.Add(builtCase);
+                builtCases.AddRange(labelCases);
             }
         }
 
@@ -1479,7 +1841,7 @@ internal static partial class PackageImageBuilder
         return builtCases.Count > 0;
     }
 
-    private static bool TryBuildPublishedTypedTemplateSwitchCase(
+    private static bool TryBuildPublishedTypedTemplateSwitchCases(
         LoadedModuleDocument module,
         StarkParser.SwitchLabelContext label,
         IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
@@ -1495,12 +1857,13 @@ internal static partial class PackageImageBuilder
         IReadOnlyDictionary<ParserRuleContext, int> functionAddressOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> directCallOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynamicStorageOperationOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynTraitFromPartsOperationOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> memberCallOrdinals,
         IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
         IReadOnlyList<StarkPackageTypedTemplateStatementManifest> statements,
-        out StarkPackageTypedTemplateSwitchCaseManifest switchCase)
+        out IReadOnlyList<StarkPackageTypedTemplateSwitchCaseManifest> switchCases)
     {
-        switchCase = null!;
+        switchCases = [];
 
         StarkPackageTypedTemplateExpressionManifest? guardExpression = null;
         if (label.whenClause()?.expression() is { } guard
@@ -1517,6 +1880,7 @@ internal static partial class PackageImageBuilder
                 functionAddressOrdinals,
                 directCallOrdinals,
                 dynamicStorageOperationOrdinals,
+                dynTraitFromPartsOperationOrdinals,
                 memberCallOrdinals,
                 fieldAccessOrdinals,
                 out guardExpression))
@@ -1526,161 +1890,306 @@ internal static partial class PackageImageBuilder
 
         if (label.DEFAULT() is not null)
         {
-            switchCase = new StarkPackageTypedTemplateSwitchCaseManifest(
-                Kind: "default",
-                Statements: statements);
+            switchCases =
+            [
+                new StarkPackageTypedTemplateSwitchCaseManifest(
+                    Kind: "default",
+                    Statements: statements)
+            ];
             return true;
         }
 
-        if (label.pattern() is not { } pattern)
+        var patterns = label.pattern();
+        if (patterns.Length == 0)
         {
             return false;
         }
 
-        if (pattern.DISCARD() is not null)
+        var builtCases = new List<StarkPackageTypedTemplateSwitchCaseManifest>(patterns.Length);
+        foreach (var pattern in patterns)
         {
-            switchCase = new StarkPackageTypedTemplateSwitchCaseManifest(
-                Kind: guardExpression is null ? "default" : "match-all",
-                GuardExpression: guardExpression,
-                Statements: statements);
-            return true;
-        }
-
-        if (pattern.VAR() is not null)
-        {
-            var captureName = pattern.Identifier()?.GetText();
-            if (captureName is null)
+            if (!TryBuildCaseFromPattern(pattern, out var builtCase))
             {
                 return false;
             }
 
-            switchCase = new StarkPackageTypedTemplateSwitchCaseManifest(
-                Kind: "match-all",
-                Name: captureName,
-                GuardExpression: guardExpression,
-                Statements: statements);
-            return true;
+            builtCases.Add(builtCase);
         }
 
-        if (pattern.literal() is { } literal)
+        switchCases = builtCases;
+        return true;
+
+        bool TryBuildCaseFromPattern(
+            StarkParser.PatternContext pattern,
+            out StarkPackageTypedTemplateSwitchCaseManifest switchCase)
         {
-            if (!TryBuildPublishedTypedTemplateLiteralExpression(module, literal, literalsByLocation, out var literalExpression))
+            switchCase = null!;
+
+            if (pattern.DISCARD() is not null)
             {
-                return false;
+                switchCase = new StarkPackageTypedTemplateSwitchCaseManifest(
+                    Kind: guardExpression is null ? "default" : "match-all",
+                    GuardExpression: guardExpression,
+                    Statements: statements);
+                return true;
             }
 
-            switchCase = new StarkPackageTypedTemplateSwitchCaseManifest(
-                Kind: "literal",
-                Expression: literalExpression,
-                GuardExpression: guardExpression,
-                Statements: statements);
-            return true;
-        }
-
-        if (pattern.enumNamedFieldPattern() is { } enumNamedFieldPattern)
-        {
-            if (!enumPatternOrdinals.TryGetValue(enumNamedFieldPattern, out var ordinal)
-                || !TryBuildPublishedTypedTemplateSwitchFieldPatterns(
-                    module,
-                    literalsByLocation,
-                    enumPatternOrdinals,
-                    aggregatePatternOrdinals,
-                    enumNamedFieldPattern.enumNamedFieldPatternPayload().namedPatternMember().Select(static member => member.pattern()).ToArray(),
-                    out var members))
+            if (pattern.VAR() is not null)
             {
-                return false;
+                var captureName = pattern.Identifier()?.GetText();
+                if (captureName is null)
+                {
+                    return false;
+                }
+
+                switchCase = new StarkPackageTypedTemplateSwitchCaseManifest(
+                    Kind: "match-all",
+                    Name: captureName,
+                    GuardExpression: guardExpression,
+                    Statements: statements);
+                return true;
             }
 
-            switchCase = new StarkPackageTypedTemplateSwitchCaseManifest(
-                Kind: "enum-pattern",
-                Ordinal: ordinal,
-                Members: members,
-                GuardExpression: guardExpression,
-                Statements: statements);
-            return true;
-        }
+            if (pattern.literal() is { } literal)
+            {
+                if (!TryBuildPublishedTypedTemplateLiteralExpression(module, literal, literalsByLocation, out var literalExpression))
+                {
+                    return false;
+                }
 
-        if (pattern.genericEnumAggregatePattern() is { } genericEnumAggregatePattern)
-        {
-            var wholeCaptureName = genericEnumAggregatePattern.aggregatePatternSuffix()?.Identifier()?.GetText();
-            IReadOnlyList<StarkPackageTypedTemplatePatternManifest> members = [];
-            if (!enumPatternOrdinals.TryGetValue(genericEnumAggregatePattern, out var ordinal)
-                || (wholeCaptureName is null
-                    && !TryBuildPublishedTypedTemplateSwitchFieldPatterns(
+                switchCase = new StarkPackageTypedTemplateSwitchCaseManifest(
+                    Kind: "literal",
+                    Expression: literalExpression,
+                    GuardExpression: guardExpression,
+                    Statements: statements);
+                return true;
+            }
+
+            if (pattern.rangePattern() is { } rangePattern)
+            {
+                if (!TryBuildPublishedTypedTemplateRangeEndpointExpressions(
+                        module,
+                        rangePattern,
+                        out var startExpression,
+                        out var endExpression))
+                {
+                    return false;
+                }
+
+                switchCase = new StarkPackageTypedTemplateSwitchCaseManifest(
+                    Kind: "range",
+                    Expression: startExpression,
+                    EndExpression: endExpression,
+                    GuardExpression: guardExpression,
+                    Statements: statements);
+                return true;
+            }
+
+            if (pattern.listPattern() is { } listPattern)
+            {
+                if (!TryBuildPublishedTypedTemplateSwitchFieldPatterns(
                         module,
                         literalsByLocation,
                         enumPatternOrdinals,
                         aggregatePatternOrdinals,
-                        genericEnumAggregatePattern.aggregatePatternSuffix(),
-                        out members)))
-            {
-                return false;
+                        listPattern.pattern(),
+                        out var members))
+                {
+                    return false;
+                }
+
+                switchCase = new StarkPackageTypedTemplateSwitchCaseManifest(
+                    Kind: "list-pattern",
+                    Members: members,
+                    GuardExpression: guardExpression,
+                    Statements: statements);
+                return true;
             }
 
-            switchCase = new StarkPackageTypedTemplateSwitchCaseManifest(
-                Kind: "enum-pattern",
-                Ordinal: ordinal,
-                Name: wholeCaptureName,
-                Members: wholeCaptureName is null ? members : [],
-                GuardExpression: guardExpression,
-                Statements: statements);
-            return true;
-        }
-
-        if (pattern.aggregatePattern() is { } aggregatePattern)
-        {
-            if (enumPatternOrdinals.TryGetValue(aggregatePattern, out var enumOrdinal))
+            if (pattern.enumNamedFieldPattern() is { } enumNamedFieldPattern)
             {
-                var enumWholeCaptureName = aggregatePattern.aggregatePatternSuffix()?.Identifier()?.GetText();
-                IReadOnlyList<StarkPackageTypedTemplatePatternManifest> enumMembers = [];
-                if (enumWholeCaptureName is null
-                    && !TryBuildPublishedTypedTemplateSwitchFieldPatterns(
+                if (enumPatternOrdinals.TryGetValue(enumNamedFieldPattern, out var ordinal))
+                {
+                    if (!TryBuildPublishedTypedTemplateSwitchFieldPatterns(
                         module,
                         literalsByLocation,
                         enumPatternOrdinals,
                         aggregatePatternOrdinals,
-                        aggregatePattern.aggregatePatternSuffix(),
-                        out enumMembers))
+                        enumNamedFieldPattern.namedPatternPayload().namedPatternMember().Select(static member => member.pattern()).ToArray(),
+                        out var members))
+                    {
+                        return false;
+                    }
+
+                    switchCase = new StarkPackageTypedTemplateSwitchCaseManifest(
+                        Kind: "enum-pattern",
+                        Ordinal: ordinal,
+                        Members: members,
+                        GuardExpression: guardExpression,
+                        Statements: statements);
+                    return true;
+                }
+
+                if (aggregatePatternOrdinals.TryGetValue(enumNamedFieldPattern, out var aggregateOrdinal))
+                {
+                    if (!TryBuildPublishedTypedTemplateSwitchFieldPatterns(
+                            module,
+                            literalsByLocation,
+                            enumPatternOrdinals,
+                            aggregatePatternOrdinals,
+                            enumNamedFieldPattern.namedPatternPayload().namedPatternMember().Select(static member => member.pattern()).ToArray(),
+                            out var members))
+                    {
+                        return false;
+                    }
+
+                    switchCase = new StarkPackageTypedTemplateSwitchCaseManifest(
+                        Kind: "aggregate-pattern",
+                        Ordinal: aggregateOrdinal,
+                        Members: members,
+                        GuardExpression: guardExpression,
+                        Statements: statements);
+                    return true;
+                }
+
+                return false;
+            }
+
+            if (pattern.genericEnumAggregatePattern() is { } genericEnumAggregatePattern)
+            {
+                var wholeCaptureName = genericEnumAggregatePattern.aggregatePatternSuffix()?.Identifier()?.GetText();
+                IReadOnlyList<StarkPackageTypedTemplatePatternManifest> members = [];
+                if (!enumPatternOrdinals.TryGetValue(genericEnumAggregatePattern, out var ordinal)
+                    || (wholeCaptureName is null
+                        && !TryBuildPublishedTypedTemplateSwitchFieldPatterns(
+                            module,
+                            literalsByLocation,
+                            enumPatternOrdinals,
+                            aggregatePatternOrdinals,
+                            genericEnumAggregatePattern.aggregatePatternSuffix(),
+                            out members)))
                 {
                     return false;
                 }
 
                 switchCase = new StarkPackageTypedTemplateSwitchCaseManifest(
                     Kind: "enum-pattern",
-                    Ordinal: enumOrdinal,
-                    Name: enumWholeCaptureName,
-                    Members: enumWholeCaptureName is null ? enumMembers : [],
+                    Ordinal: ordinal,
+                    Name: wholeCaptureName,
+                    Members: wholeCaptureName is null ? members : [],
                     GuardExpression: guardExpression,
                     Statements: statements);
                 return true;
             }
 
-            var wholeCaptureName = aggregatePattern.aggregatePatternSuffix()?.Identifier()?.GetText();
-            IReadOnlyList<StarkPackageTypedTemplatePatternManifest> aggregateMembers = [];
-            if (!aggregatePatternOrdinals.TryGetValue(aggregatePattern, out var aggregateOrdinal)
-                || (wholeCaptureName is null
-                    && !TryBuildPublishedTypedTemplateSwitchFieldPatterns(
-                        module,
-                        literalsByLocation,
-                        enumPatternOrdinals,
-                        aggregatePatternOrdinals,
-                        aggregatePattern.aggregatePatternSuffix(),
-                        out aggregateMembers)))
+            if (pattern.aggregatePattern() is { } aggregatePattern)
             {
-                return false;
+                if (enumPatternOrdinals.TryGetValue(aggregatePattern, out var enumOrdinal))
+                {
+                    var enumWholeCaptureName = aggregatePattern.aggregatePatternSuffix()?.Identifier()?.GetText();
+                    IReadOnlyList<StarkPackageTypedTemplatePatternManifest> enumMembers = [];
+                    if (enumWholeCaptureName is null
+                        && !TryBuildPublishedTypedTemplateSwitchFieldPatterns(
+                            module,
+                            literalsByLocation,
+                            enumPatternOrdinals,
+                            aggregatePatternOrdinals,
+                            aggregatePattern.aggregatePatternSuffix(),
+                            out enumMembers))
+                    {
+                        return false;
+                    }
+
+                    switchCase = new StarkPackageTypedTemplateSwitchCaseManifest(
+                        Kind: "enum-pattern",
+                        Ordinal: enumOrdinal,
+                        Name: enumWholeCaptureName,
+                        Members: enumWholeCaptureName is null ? enumMembers : [],
+                        GuardExpression: guardExpression,
+                        Statements: statements);
+                    return true;
+                }
+
+                var wholeCaptureName = aggregatePattern.aggregatePatternSuffix()?.Identifier()?.GetText();
+                IReadOnlyList<StarkPackageTypedTemplatePatternManifest> aggregateMembers = [];
+                if (!aggregatePatternOrdinals.TryGetValue(aggregatePattern, out var aggregateOrdinal)
+                    || (wholeCaptureName is null
+                        && !TryBuildPublishedTypedTemplateSwitchFieldPatterns(
+                            module,
+                            literalsByLocation,
+                            enumPatternOrdinals,
+                            aggregatePatternOrdinals,
+                            aggregatePattern.aggregatePatternSuffix(),
+                            out aggregateMembers)))
+                {
+                    return false;
+                }
+
+                switchCase = new StarkPackageTypedTemplateSwitchCaseManifest(
+                    Kind: "aggregate-pattern",
+                    Ordinal: aggregateOrdinal,
+                    Name: wholeCaptureName,
+                    Members: wholeCaptureName is null ? aggregateMembers : [],
+                    GuardExpression: guardExpression,
+                    Statements: statements);
+                return true;
             }
 
-            switchCase = new StarkPackageTypedTemplateSwitchCaseManifest(
-                Kind: "aggregate-pattern",
-                Ordinal: aggregateOrdinal,
-                Name: wholeCaptureName,
-                Members: wholeCaptureName is null ? aggregateMembers : [],
-                GuardExpression: guardExpression,
-                Statements: statements);
-            return true;
+            return false;
+        }
+    }
+
+    private static bool TryBuildPublishedTypedTemplateRangeEndpointExpressions(
+        LoadedModuleDocument module,
+        StarkParser.RangePatternContext rangePattern,
+        out StarkPackageTypedTemplateExpressionManifest startExpression,
+        out StarkPackageTypedTemplateExpressionManifest endExpression)
+    {
+        startExpression = null!;
+        endExpression = null!;
+
+        var endpoints = rangePattern.signedIntegerLiteral();
+        if (endpoints.Length != 2)
+        {
+            return false;
         }
 
-        return false;
+        startExpression = BuildPublishedTypedTemplateRangeEndpointExpression(module, endpoints[0]);
+        endExpression = BuildPublishedTypedTemplateRangeEndpointExpression(module, endpoints[1]);
+        return true;
+    }
+
+    private static StarkPackageTypedTemplateExpressionManifest BuildPublishedTypedTemplateRangeEndpointExpression(
+        LoadedModuleDocument module,
+        StarkParser.SignedIntegerLiteralContext endpoint)
+    {
+        var value = ParsePublishedSignedIntegerLiteral(endpoint);
+        return new StarkPackageTypedTemplateExpressionManifest(
+            Kind: "literal",
+            LiteralText: endpoint.GetText(),
+            Type: BuildPublishedAbiTypeReference(InferPublishedIntegerLiteralType(value), module));
+    }
+
+    private static BigInteger ParsePublishedSignedIntegerLiteral(StarkParser.SignedIntegerLiteralContext literal)
+    {
+        var value = BigInteger.Parse(literal.IntegerLiteral().GetText());
+        return literal.MINUS() is null ? value : -value;
+    }
+
+    private static StarkTypeSymbol InferPublishedIntegerLiteralType(BigInteger value)
+    {
+        var widths = new[] { 8, 16, 24, 32, 48, 64, 96, 128, 192, 256, 384, 512, 768, 1024 };
+        foreach (var width in widths)
+        {
+            var min = -(BigInteger.One << (width - 1));
+            var max = (BigInteger.One << (width - 1)) - BigInteger.One;
+            if (value >= min && value <= max)
+            {
+                return StarkTypeSymbols.Integer(width, value, value);
+            }
+        }
+
+        return StarkTypeSymbols.CompileTimeInteger;
     }
 
     private static bool TryBuildPublishedTypedTemplateLiteralExpression(
@@ -1723,6 +2232,17 @@ internal static partial class PackageImageBuilder
         {
             members = [];
             return false;
+        }
+
+        if (suffix.namedPatternPayload() is { } namedPayload)
+        {
+            return TryBuildPublishedTypedTemplateSwitchFieldPatterns(
+                module,
+                literalsByLocation,
+                enumPatternOrdinals,
+                aggregatePatternOrdinals,
+                namedPayload.namedPatternMember().Select(static member => member.pattern()).ToArray(),
+                out members);
         }
 
         return TryBuildPublishedTypedTemplateSwitchFieldPatterns(
@@ -1799,25 +2319,86 @@ internal static partial class PackageImageBuilder
             return true;
         }
 
-        if (pattern.enumNamedFieldPattern() is { } enumNamedFieldPattern)
+        if (pattern.rangePattern() is { } rangePattern)
         {
-            if (!enumPatternOrdinals.TryGetValue(enumNamedFieldPattern, out var ordinal)
-                || !TryBuildPublishedTypedTemplateSwitchFieldPatterns(
+            if (!TryBuildPublishedTypedTemplateRangeEndpointExpressions(
+                    module,
+                    rangePattern,
+                    out var startExpression,
+                    out var endExpression))
+            {
+                return false;
+            }
+
+            member = new StarkPackageTypedTemplatePatternManifest(
+                "range",
+                Expression: startExpression,
+                EndExpression: endExpression);
+            return true;
+        }
+
+        if (pattern.listPattern() is { } listPattern)
+        {
+            if (!TryBuildPublishedTypedTemplateSwitchFieldPatterns(
                     module,
                     literalsByLocation,
                     enumPatternOrdinals,
                     aggregatePatternOrdinals,
-                    enumNamedFieldPattern.enumNamedFieldPatternPayload().namedPatternMember().Select(static nestedMember => nestedMember.pattern()).ToArray(),
+                    listPattern.pattern(),
                     out var members))
             {
                 return false;
             }
 
             member = new StarkPackageTypedTemplatePatternManifest(
-                "enum-pattern",
-                Ordinal: ordinal,
+                "list-pattern",
                 Members: members);
             return true;
+        }
+
+        if (pattern.enumNamedFieldPattern() is { } enumNamedFieldPattern)
+        {
+            if (enumPatternOrdinals.TryGetValue(enumNamedFieldPattern, out var ordinal))
+            {
+                if (!TryBuildPublishedTypedTemplateSwitchFieldPatterns(
+                        module,
+                        literalsByLocation,
+                        enumPatternOrdinals,
+                        aggregatePatternOrdinals,
+                        enumNamedFieldPattern.namedPatternPayload().namedPatternMember().Select(static nestedMember => nestedMember.pattern()).ToArray(),
+                        out var members))
+                {
+                    return false;
+                }
+
+                member = new StarkPackageTypedTemplatePatternManifest(
+                    "enum-pattern",
+                    Ordinal: ordinal,
+                    Members: members);
+                return true;
+            }
+
+            if (aggregatePatternOrdinals.TryGetValue(enumNamedFieldPattern, out var aggregateOrdinal))
+            {
+                if (!TryBuildPublishedTypedTemplateSwitchFieldPatterns(
+                        module,
+                        literalsByLocation,
+                        enumPatternOrdinals,
+                        aggregatePatternOrdinals,
+                        enumNamedFieldPattern.namedPatternPayload().namedPatternMember().Select(static nestedMember => nestedMember.pattern()).ToArray(),
+                        out var members))
+                {
+                    return false;
+                }
+
+                member = new StarkPackageTypedTemplatePatternManifest(
+                    "aggregate-pattern",
+                    Ordinal: aggregateOrdinal,
+                    Members: members);
+                return true;
+            }
+
+            return false;
         }
 
         if (pattern.genericEnumAggregatePattern() is { } genericEnumAggregatePattern)
@@ -1914,6 +2495,7 @@ internal static partial class PackageImageBuilder
         IReadOnlyDictionary<ParserRuleContext, int> functionAddressOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> directCallOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynamicStorageOperationOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynTraitFromPartsOperationOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> memberCallOrdinals,
         IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
         out IReadOnlyList<StarkPackageTypedTemplateStatementManifest> publishedStatements)
@@ -1937,6 +2519,7 @@ internal static partial class PackageImageBuilder
                 functionAddressOrdinals,
                 directCallOrdinals,
                 dynamicStorageOperationOrdinals,
+                dynTraitFromPartsOperationOrdinals,
                 memberCallOrdinals,
                 fieldAccessOrdinals,
                 out publishedStatements);
@@ -1959,6 +2542,7 @@ internal static partial class PackageImageBuilder
                 functionAddressOrdinals,
                 directCallOrdinals,
                 dynamicStorageOperationOrdinals,
+                dynTraitFromPartsOperationOrdinals,
                 memberCallOrdinals,
                 fieldAccessOrdinals,
                 out publishedStatements))
@@ -1985,6 +2569,7 @@ internal static partial class PackageImageBuilder
         IReadOnlyDictionary<ParserRuleContext, int> functionAddressOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> directCallOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynamicStorageOperationOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynTraitFromPartsOperationOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> memberCallOrdinals,
         IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
         out IReadOnlyList<StarkPackageTypedTemplateStatementManifest> initializerStatements)
@@ -2036,6 +2621,7 @@ internal static partial class PackageImageBuilder
                         functionAddressOrdinals,
                         directCallOrdinals,
                         dynamicStorageOperationOrdinals,
+                        dynTraitFromPartsOperationOrdinals,
                         memberCallOrdinals,
                         fieldAccessOrdinals,
                         out initializerValue))
@@ -2084,6 +2670,7 @@ internal static partial class PackageImageBuilder
                 functionAddressOrdinals,
                 directCallOrdinals,
                 dynamicStorageOperationOrdinals,
+                dynTraitFromPartsOperationOrdinals,
                 memberCallOrdinals,
                 fieldAccessOrdinals,
                 out initializerStatements);
@@ -2106,6 +2693,7 @@ internal static partial class PackageImageBuilder
         IReadOnlyDictionary<ParserRuleContext, int> functionAddressOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> directCallOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynamicStorageOperationOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynTraitFromPartsOperationOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> memberCallOrdinals,
         IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
         out IReadOnlyList<StarkPackageTypedTemplateStatementManifest> iteratorStatements)
@@ -2129,6 +2717,7 @@ internal static partial class PackageImageBuilder
             functionAddressOrdinals,
             directCallOrdinals,
             dynamicStorageOperationOrdinals,
+            dynTraitFromPartsOperationOrdinals,
             memberCallOrdinals,
             fieldAccessOrdinals,
             out iteratorStatements);
@@ -2147,6 +2736,7 @@ internal static partial class PackageImageBuilder
         IReadOnlyDictionary<ParserRuleContext, int> functionAddressOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> directCallOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynamicStorageOperationOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynTraitFromPartsOperationOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> memberCallOrdinals,
         IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
         out StarkPackageTypedTemplateExpressionManifest? condition)
@@ -2171,6 +2761,7 @@ internal static partial class PackageImageBuilder
             functionAddressOrdinals,
             directCallOrdinals,
             dynamicStorageOperationOrdinals,
+            dynTraitFromPartsOperationOrdinals,
             memberCallOrdinals,
             fieldAccessOrdinals,
             out condition!);
@@ -2189,6 +2780,7 @@ internal static partial class PackageImageBuilder
         IReadOnlyDictionary<ParserRuleContext, int> functionAddressOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> directCallOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynamicStorageOperationOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynTraitFromPartsOperationOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> memberCallOrdinals,
         IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
         out IReadOnlyList<StarkPackageTypedTemplateStatementManifest> assignmentStatements)
@@ -2211,6 +2803,7 @@ internal static partial class PackageImageBuilder
                     functionAddressOrdinals,
                     directCallOrdinals,
                     dynamicStorageOperationOrdinals,
+                    dynTraitFromPartsOperationOrdinals,
                     memberCallOrdinals,
                     fieldAccessOrdinals,
                     out var assignmentTargetName,
@@ -2228,6 +2821,7 @@ internal static partial class PackageImageBuilder
                     functionAddressOrdinals,
                     directCallOrdinals,
                     dynamicStorageOperationOrdinals,
+                    dynTraitFromPartsOperationOrdinals,
                     memberCallOrdinals,
                     fieldAccessOrdinals,
                     out var assignmentValue))
@@ -2261,6 +2855,7 @@ internal static partial class PackageImageBuilder
         IReadOnlyDictionary<ParserRuleContext, int> functionAddressOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> directCallOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynamicStorageOperationOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynTraitFromPartsOperationOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> memberCallOrdinals,
         IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
         out StarkPackageTypedTemplateExpressionManifest publishedExpression)
@@ -2285,6 +2880,7 @@ internal static partial class PackageImageBuilder
             functionAddressOrdinals,
             directCallOrdinals,
             dynamicStorageOperationOrdinals,
+            dynTraitFromPartsOperationOrdinals,
             memberCallOrdinals,
             fieldAccessOrdinals,
             out publishedExpression);
@@ -2303,6 +2899,7 @@ internal static partial class PackageImageBuilder
         IReadOnlyDictionary<ParserRuleContext, int> functionAddressOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> directCallOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynamicStorageOperationOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynTraitFromPartsOperationOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> memberCallOrdinals,
         IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
         out StarkPackageTypedTemplateExpressionManifest publishedExpression)
@@ -2327,6 +2924,7 @@ internal static partial class PackageImageBuilder
                     functionAddressOrdinals,
                     directCallOrdinals,
                     dynamicStorageOperationOrdinals,
+                    dynTraitFromPartsOperationOrdinals,
                     memberCallOrdinals,
                     fieldAccessOrdinals,
                     out var initAssignmentTargetName,
@@ -2344,6 +2942,7 @@ internal static partial class PackageImageBuilder
                     functionAddressOrdinals,
                     directCallOrdinals,
                     dynamicStorageOperationOrdinals,
+                    dynTraitFromPartsOperationOrdinals,
                     memberCallOrdinals,
                     fieldAccessOrdinals,
                     out var initAssignmentValue))
@@ -2376,6 +2975,7 @@ internal static partial class PackageImageBuilder
                     functionAddressOrdinals,
                     directCallOrdinals,
                     dynamicStorageOperationOrdinals,
+                    dynTraitFromPartsOperationOrdinals,
                     memberCallOrdinals,
                     fieldAccessOrdinals,
                     out var assignmentTargetName,
@@ -2393,6 +2993,7 @@ internal static partial class PackageImageBuilder
                     functionAddressOrdinals,
                     directCallOrdinals,
                     dynamicStorageOperationOrdinals,
+                    dynTraitFromPartsOperationOrdinals,
                     memberCallOrdinals,
                     fieldAccessOrdinals,
                     out var assignmentValue))
@@ -2429,6 +3030,7 @@ internal static partial class PackageImageBuilder
                     functionAddressOrdinals,
                     directCallOrdinals,
                     dynamicStorageOperationOrdinals,
+                    dynTraitFromPartsOperationOrdinals,
                     memberCallOrdinals,
                     fieldAccessOrdinals,
                     out var condition)
@@ -2445,6 +3047,7 @@ internal static partial class PackageImageBuilder
                     functionAddressOrdinals,
                     directCallOrdinals,
                     dynamicStorageOperationOrdinals,
+                    dynTraitFromPartsOperationOrdinals,
                     memberCallOrdinals,
                     fieldAccessOrdinals,
                     out var whenTrue)
@@ -2461,6 +3064,7 @@ internal static partial class PackageImageBuilder
                     functionAddressOrdinals,
                     directCallOrdinals,
                     dynamicStorageOperationOrdinals,
+                    dynTraitFromPartsOperationOrdinals,
                     memberCallOrdinals,
                     fieldAccessOrdinals,
                     out var whenFalse))
@@ -2487,6 +3091,7 @@ internal static partial class PackageImageBuilder
             functionAddressOrdinals,
             directCallOrdinals,
             dynamicStorageOperationOrdinals,
+            dynTraitFromPartsOperationOrdinals,
             memberCallOrdinals,
             fieldAccessOrdinals,
             out publishedExpression);
@@ -2506,6 +3111,7 @@ internal static partial class PackageImageBuilder
         IReadOnlyDictionary<ParserRuleContext, int> functionAddressOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> directCallOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynamicStorageOperationOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynTraitFromPartsOperationOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> memberCallOrdinals,
         IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
         out StarkPackageTypedTemplateExpressionManifest publishedExpression)
@@ -2528,6 +3134,7 @@ internal static partial class PackageImageBuilder
                     functionAddressOrdinals,
                     directCallOrdinals,
                     dynamicStorageOperationOrdinals,
+                    dynTraitFromPartsOperationOrdinals,
                     memberCallOrdinals,
                     fieldAccessOrdinals,
                     out publishedExpression))
@@ -2548,6 +3155,7 @@ internal static partial class PackageImageBuilder
                 functionAddressOrdinals,
                 directCallOrdinals,
                 dynamicStorageOperationOrdinals,
+                dynTraitFromPartsOperationOrdinals,
                 memberCallOrdinals,
                 fieldAccessOrdinals,
                 out publishedExpression);
@@ -2569,6 +3177,7 @@ internal static partial class PackageImageBuilder
                 functionAddressOrdinals,
                 directCallOrdinals,
                 dynamicStorageOperationOrdinals,
+                dynTraitFromPartsOperationOrdinals,
                 memberCallOrdinals,
                 fieldAccessOrdinals,
                 out publishedExpression);
@@ -2600,6 +3209,7 @@ internal static partial class PackageImageBuilder
                         functionAddressOrdinals,
                         directCallOrdinals,
                         dynamicStorageOperationOrdinals,
+                        dynTraitFromPartsOperationOrdinals,
                         memberCallOrdinals,
                         fieldAccessOrdinals,
                         out var publishedElement))
@@ -2633,6 +3243,7 @@ internal static partial class PackageImageBuilder
         IReadOnlyDictionary<ParserRuleContext, int> functionAddressOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> directCallOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynamicStorageOperationOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynTraitFromPartsOperationOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> memberCallOrdinals,
         IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
         out StarkPackageTypedTemplateExpressionManifest publishedExpression)
@@ -2659,6 +3270,7 @@ internal static partial class PackageImageBuilder
                         functionAddressOrdinals,
                         directCallOrdinals,
                         dynamicStorageOperationOrdinals,
+                        dynTraitFromPartsOperationOrdinals,
                         memberCallOrdinals,
                         fieldAccessOrdinals,
                         out var argument))
@@ -2701,6 +3313,7 @@ internal static partial class PackageImageBuilder
                         functionAddressOrdinals,
                         directCallOrdinals,
                         dynamicStorageOperationOrdinals,
+                        dynTraitFromPartsOperationOrdinals,
                         memberCallOrdinals,
                         fieldAccessOrdinals,
                         out var argument))
@@ -2734,6 +3347,7 @@ internal static partial class PackageImageBuilder
         IReadOnlyDictionary<ParserRuleContext, int> functionAddressOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> directCallOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynamicStorageOperationOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynTraitFromPartsOperationOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> memberCallOrdinals,
         IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
         out StarkPackageTypedTemplateExpressionManifest publishedExpression)
@@ -2773,6 +3387,7 @@ internal static partial class PackageImageBuilder
                     functionAddressOrdinals,
                     directCallOrdinals,
                     dynamicStorageOperationOrdinals,
+                    dynTraitFromPartsOperationOrdinals,
                     memberCallOrdinals,
                     fieldAccessOrdinals,
                     out var publishedMemberValue))
@@ -2850,6 +3465,7 @@ internal static partial class PackageImageBuilder
         IReadOnlyDictionary<ParserRuleContext, int> functionAddressOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> directCallOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynamicStorageOperationOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynTraitFromPartsOperationOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> memberCallOrdinals,
         IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
         out string? targetName,
@@ -2871,6 +3487,7 @@ internal static partial class PackageImageBuilder
                 functionAddressOrdinals,
                 directCallOrdinals,
                 dynamicStorageOperationOrdinals,
+                dynTraitFromPartsOperationOrdinals,
                 memberCallOrdinals,
                 fieldAccessOrdinals,
                 out var builtTargetExpression)
@@ -2914,6 +3531,7 @@ internal static partial class PackageImageBuilder
         IReadOnlyDictionary<ParserRuleContext, int> functionAddressOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> directCallOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynamicStorageOperationOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynTraitFromPartsOperationOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> memberCallOrdinals,
         IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
         out StarkPackageTypedTemplateExpressionManifest publishedExpression)
@@ -2932,6 +3550,7 @@ internal static partial class PackageImageBuilder
         IReadOnlyDictionary<ParserRuleContext, int> functionAddressOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> directCallOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynamicStorageOperationOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynTraitFromPartsOperationOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> memberCallOrdinals,
         IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
         out StarkPackageTypedTemplateExpressionManifest publishedExpression)
@@ -2957,6 +3576,7 @@ internal static partial class PackageImageBuilder
                 functionAddressOrdinals,
                 directCallOrdinals,
                 dynamicStorageOperationOrdinals,
+                dynTraitFromPartsOperationOrdinals,
                 memberCallOrdinals,
                 fieldAccessOrdinals,
                 out var objectCreationArguments))
@@ -2975,7 +3595,7 @@ internal static partial class PackageImageBuilder
                 enumConstructorExpression.enumConstructorInitializer().enumConstructorMember().Length);
             foreach (var member in enumConstructorExpression.enumConstructorInitializer().enumConstructorMember())
             {
-                if (!TryBuildPublishedTypedTemplateExpression(module, member.expression(), namedTypes, literalsByLocation, conversionsByLocation, objectCreationOrdinals, enumConstructorOrdinals, enumCallOrdinals, enumValueOrdinals, functionAddressOrdinals, directCallOrdinals, dynamicStorageOperationOrdinals, memberCallOrdinals, fieldAccessOrdinals, out var publishedArgument))
+                if (!TryBuildPublishedTypedTemplateExpression(module, member.expression(), namedTypes, literalsByLocation, conversionsByLocation, objectCreationOrdinals, enumConstructorOrdinals, enumCallOrdinals, enumValueOrdinals, functionAddressOrdinals, directCallOrdinals, dynamicStorageOperationOrdinals, dynTraitFromPartsOperationOrdinals, memberCallOrdinals, fieldAccessOrdinals, out var publishedArgument))
                 {
                     return false;
                 }
@@ -3037,7 +3657,7 @@ internal static partial class PackageImageBuilder
             var arguments = new List<StarkPackageTypedTemplateExpressionManifest>(enumArgumentList.argument().Length);
             foreach (var argument in enumArgumentList.argument())
             {
-                if (!TryBuildPublishedTypedTemplateExpression(module, argument.expression(), namedTypes, literalsByLocation, conversionsByLocation, objectCreationOrdinals, enumConstructorOrdinals, enumCallOrdinals, enumValueOrdinals, functionAddressOrdinals, directCallOrdinals, dynamicStorageOperationOrdinals, memberCallOrdinals, fieldAccessOrdinals, out var publishedArgument))
+                if (!TryBuildPublishedTypedTemplateExpression(module, argument.expression(), namedTypes, literalsByLocation, conversionsByLocation, objectCreationOrdinals, enumConstructorOrdinals, enumCallOrdinals, enumValueOrdinals, functionAddressOrdinals, directCallOrdinals, dynamicStorageOperationOrdinals, dynTraitFromPartsOperationOrdinals, memberCallOrdinals, fieldAccessOrdinals, out var publishedArgument))
                 {
                     return false;
                 }
@@ -3068,6 +3688,7 @@ internal static partial class PackageImageBuilder
                     functionAddressOrdinals,
                     directCallOrdinals,
                     dynamicStorageOperationOrdinals,
+                    dynTraitFromPartsOperationOrdinals,
                     memberCallOrdinals,
                     fieldAccessOrdinals,
                     out var groupedPublishedExpression))
@@ -3078,7 +3699,8 @@ internal static partial class PackageImageBuilder
 
         if (baseExpression is null)
         {
-            var name = primaryExpression?.Identifier()?.GetText()
+            var name = primaryExpression?.genericQualifiedName()?.qualifiedName().GetText()
+                ?? primaryExpression?.Identifier()?.GetText()
                 ?? primaryExpression?.qualifiedName()?.GetText();
             if (name is null)
             {
@@ -3110,6 +3732,7 @@ internal static partial class PackageImageBuilder
             functionAddressOrdinals,
             directCallOrdinals,
             dynamicStorageOperationOrdinals,
+            dynTraitFromPartsOperationOrdinals,
             memberCallOrdinals,
             fieldAccessOrdinals,
             out publishedExpression);
@@ -3129,6 +3752,7 @@ internal static partial class PackageImageBuilder
         IReadOnlyDictionary<ParserRuleContext, int> functionAddressOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> directCallOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynamicStorageOperationOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynTraitFromPartsOperationOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> memberCallOrdinals,
         IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
         out List<StarkPackageTypedTemplateExpressionManifest> arguments)
@@ -3152,6 +3776,7 @@ internal static partial class PackageImageBuilder
                         functionAddressOrdinals,
                         directCallOrdinals,
                         dynamicStorageOperationOrdinals,
+                        dynTraitFromPartsOperationOrdinals,
                         memberCallOrdinals,
                         fieldAccessOrdinals,
                         out var publishedArgument))
@@ -3195,6 +3820,7 @@ internal static partial class PackageImageBuilder
                     functionAddressOrdinals,
                     directCallOrdinals,
                     dynamicStorageOperationOrdinals,
+                    dynTraitFromPartsOperationOrdinals,
                     memberCallOrdinals,
                     fieldAccessOrdinals,
                     out var publishedArgument))
@@ -3222,6 +3848,7 @@ internal static partial class PackageImageBuilder
         IReadOnlyDictionary<ParserRuleContext, int> functionAddressOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> directCallOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynamicStorageOperationOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynTraitFromPartsOperationOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> memberCallOrdinals,
         IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
         out StarkPackageTypedTemplateExpressionManifest publishedExpression)
@@ -3254,6 +3881,7 @@ internal static partial class PackageImageBuilder
                         functionAddressOrdinals,
                         directCallOrdinals,
                         dynamicStorageOperationOrdinals,
+                        dynTraitFromPartsOperationOrdinals,
                         memberCallOrdinals,
                         fieldAccessOrdinals,
                         out var publishedIndex))
@@ -3275,7 +3903,7 @@ internal static partial class PackageImageBuilder
                 var arguments = new List<StarkPackageTypedTemplateExpressionManifest>(directArgumentList.argument().Length);
                 foreach (var argument in directArgumentList.argument())
                 {
-                    if (!TryBuildPublishedTypedTemplateExpression(module, argument.expression(), namedTypes, literalsByLocation, conversionsByLocation, objectCreationOrdinals, enumConstructorOrdinals, enumCallOrdinals, enumValueOrdinals, functionAddressOrdinals, directCallOrdinals, dynamicStorageOperationOrdinals, memberCallOrdinals, fieldAccessOrdinals, out var publishedArgument))
+                    if (!TryBuildPublishedTypedTemplateExpression(module, argument.expression(), namedTypes, literalsByLocation, conversionsByLocation, objectCreationOrdinals, enumConstructorOrdinals, enumCallOrdinals, enumValueOrdinals, functionAddressOrdinals, directCallOrdinals, dynamicStorageOperationOrdinals, dynTraitFromPartsOperationOrdinals, memberCallOrdinals, fieldAccessOrdinals, out var publishedArgument))
                     {
                         return false;
                     }
@@ -3289,6 +3917,17 @@ internal static partial class PackageImageBuilder
                     publishedExpression = new StarkPackageTypedTemplateExpressionManifest(
                         Kind: "direct-call",
                         Ordinal: directCallOrdinal,
+                        Arguments: arguments);
+                    continue;
+                }
+
+                if (publishedExpression.Kind == "name"
+                    && dynTraitFromPartsOperationOrdinals.TryGetValue(directArgumentList, out var dynTraitFromPartsOperationOrdinal))
+                {
+                    publishedExpression = new StarkPackageTypedTemplateExpressionManifest(
+                        Kind: "dyn-trait-from-parts",
+                        Name: publishedExpression.Name,
+                        Ordinal: dynTraitFromPartsOperationOrdinal,
                         Arguments: arguments);
                     continue;
                 }
@@ -3310,33 +3949,39 @@ internal static partial class PackageImageBuilder
                 }
 
                 if (index + 1 < postfixParts.Count
-                    && postfixParts[index + 1].argumentList() is { } chainedDirectArgumentList
-                    && publishedExpression.Kind == "name"
-                    && (directCallOrdinals.TryGetValue(chainedDirectArgumentList, out var directCallOrdinal)
-                        || enumCallOrdinals.TryGetValue(chainedDirectArgumentList, out _)))
+                    && postfixParts[index + 1].argumentList() is { } chainedDirectArgumentList)
                 {
-                    var arguments = new List<StarkPackageTypedTemplateExpressionManifest>(chainedDirectArgumentList.argument().Length);
-                    foreach (var argument in chainedDirectArgumentList.argument())
+                    var enumCallOrdinal = -1;
+                    var hasChainedEnumCall = publishedExpression.Kind == "name"
+                        && enumCallOrdinals.TryGetValue(chainedDirectArgumentList, out enumCallOrdinal);
+                    var directCallOrdinal = -1;
+                    var hasChainedDirectCall = !dynamicStorageOperationOrdinals.ContainsKey(chainedDirectArgumentList)
+                        && directCallOrdinals.TryGetValue(chainedDirectArgumentList, out directCallOrdinal);
+                    if (hasChainedEnumCall || hasChainedDirectCall)
                     {
-                        if (!TryBuildPublishedTypedTemplateExpression(module, argument.expression(), namedTypes, literalsByLocation, conversionsByLocation, objectCreationOrdinals, enumConstructorOrdinals, enumCallOrdinals, enumValueOrdinals, functionAddressOrdinals, directCallOrdinals, dynamicStorageOperationOrdinals, memberCallOrdinals, fieldAccessOrdinals, out var publishedArgument))
+                        var arguments = new List<StarkPackageTypedTemplateExpressionManifest>(chainedDirectArgumentList.argument().Length);
+                        foreach (var argument in chainedDirectArgumentList.argument())
                         {
-                            return false;
+                            if (!TryBuildPublishedTypedTemplateExpression(module, argument.expression(), namedTypes, literalsByLocation, conversionsByLocation, objectCreationOrdinals, enumConstructorOrdinals, enumCallOrdinals, enumValueOrdinals, functionAddressOrdinals, directCallOrdinals, dynamicStorageOperationOrdinals, dynTraitFromPartsOperationOrdinals, memberCallOrdinals, fieldAccessOrdinals, out var publishedArgument))
+                            {
+                                return false;
+                            }
+
+                            arguments.Add(publishedArgument);
                         }
 
-                        arguments.Add(publishedArgument);
+                        publishedExpression = hasChainedEnumCall
+                            ? new StarkPackageTypedTemplateExpressionManifest(
+                                Kind: "enum-call",
+                                Ordinal: enumCallOrdinal,
+                                Arguments: arguments)
+                            : new StarkPackageTypedTemplateExpressionManifest(
+                                Kind: "direct-call",
+                                Ordinal: directCallOrdinal,
+                                Arguments: arguments);
+                        index += 1;
+                        continue;
                     }
-
-                    publishedExpression = enumCallOrdinals.TryGetValue(chainedDirectArgumentList, out var enumCallOrdinal)
-                        ? new StarkPackageTypedTemplateExpressionManifest(
-                            Kind: "enum-call",
-                            Ordinal: enumCallOrdinal,
-                            Arguments: arguments)
-                        : new StarkPackageTypedTemplateExpressionManifest(
-                            Kind: "direct-call",
-                            Ordinal: directCallOrdinal,
-                            Arguments: arguments);
-                    index += 1;
-                    continue;
                 }
 
                 if (index + 1 < postfixParts.Count
@@ -3350,7 +3995,7 @@ internal static partial class PackageImageBuilder
 
                     foreach (var argument in dynamicOperationArgumentList.argument())
                     {
-                        if (!TryBuildPublishedTypedTemplateExpression(module, argument.expression(), namedTypes, literalsByLocation, conversionsByLocation, objectCreationOrdinals, enumConstructorOrdinals, enumCallOrdinals, enumValueOrdinals, functionAddressOrdinals, directCallOrdinals, dynamicStorageOperationOrdinals, memberCallOrdinals, fieldAccessOrdinals, out var publishedArgument))
+                        if (!TryBuildPublishedTypedTemplateExpression(module, argument.expression(), namedTypes, literalsByLocation, conversionsByLocation, objectCreationOrdinals, enumConstructorOrdinals, enumCallOrdinals, enumValueOrdinals, functionAddressOrdinals, directCallOrdinals, dynamicStorageOperationOrdinals, dynTraitFromPartsOperationOrdinals, memberCallOrdinals, fieldAccessOrdinals, out var publishedArgument))
                         {
                             return false;
                         }
@@ -3377,7 +4022,7 @@ internal static partial class PackageImageBuilder
 
                     foreach (var argument in memberArgumentList.argument())
                     {
-                        if (!TryBuildPublishedTypedTemplateExpression(module, argument.expression(), namedTypes, literalsByLocation, conversionsByLocation, objectCreationOrdinals, enumConstructorOrdinals, enumCallOrdinals, enumValueOrdinals, functionAddressOrdinals, directCallOrdinals, dynamicStorageOperationOrdinals, memberCallOrdinals, fieldAccessOrdinals, out var publishedArgument))
+                        if (!TryBuildPublishedTypedTemplateExpression(module, argument.expression(), namedTypes, literalsByLocation, conversionsByLocation, objectCreationOrdinals, enumConstructorOrdinals, enumCallOrdinals, enumValueOrdinals, functionAddressOrdinals, directCallOrdinals, dynamicStorageOperationOrdinals, dynTraitFromPartsOperationOrdinals, memberCallOrdinals, fieldAccessOrdinals, out var publishedArgument))
                         {
                             return false;
                         }
@@ -3427,6 +4072,7 @@ internal static partial class PackageImageBuilder
         IReadOnlyDictionary<ParserRuleContext, int> functionAddressOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> directCallOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynamicStorageOperationOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynTraitFromPartsOperationOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> memberCallOrdinals,
         IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
         out StarkPackageTypedTemplateExpressionManifest publishedExpression)
@@ -3444,6 +4090,7 @@ internal static partial class PackageImageBuilder
             functionAddressOrdinals,
             directCallOrdinals,
             dynamicStorageOperationOrdinals,
+            dynTraitFromPartsOperationOrdinals,
             memberCallOrdinals,
             fieldAccessOrdinals,
             out publishedExpression);
@@ -3462,6 +4109,7 @@ internal static partial class PackageImageBuilder
         IReadOnlyDictionary<ParserRuleContext, int> functionAddressOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> directCallOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynamicStorageOperationOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynTraitFromPartsOperationOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> memberCallOrdinals,
         IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
         out StarkPackageTypedTemplateExpressionManifest publishedExpression)
@@ -3480,6 +4128,7 @@ internal static partial class PackageImageBuilder
             functionAddressOrdinals,
             directCallOrdinals,
             dynamicStorageOperationOrdinals,
+            dynTraitFromPartsOperationOrdinals,
             memberCallOrdinals,
             fieldAccessOrdinals,
             TryBuildPublishedTypedTemplateLogicalAndExpression,
@@ -3499,6 +4148,7 @@ internal static partial class PackageImageBuilder
         IReadOnlyDictionary<ParserRuleContext, int> functionAddressOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> directCallOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynamicStorageOperationOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynTraitFromPartsOperationOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> memberCallOrdinals,
         IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
         out StarkPackageTypedTemplateExpressionManifest publishedExpression)
@@ -3517,6 +4167,7 @@ internal static partial class PackageImageBuilder
             functionAddressOrdinals,
             directCallOrdinals,
             dynamicStorageOperationOrdinals,
+            dynTraitFromPartsOperationOrdinals,
             memberCallOrdinals,
             fieldAccessOrdinals,
             TryBuildPublishedTypedTemplateBitwiseOrExpression,
@@ -3536,6 +4187,7 @@ internal static partial class PackageImageBuilder
         IReadOnlyDictionary<ParserRuleContext, int> functionAddressOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> directCallOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynamicStorageOperationOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynTraitFromPartsOperationOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> memberCallOrdinals,
         IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
         out StarkPackageTypedTemplateExpressionManifest publishedExpression)
@@ -3554,6 +4206,7 @@ internal static partial class PackageImageBuilder
             functionAddressOrdinals,
             directCallOrdinals,
             dynamicStorageOperationOrdinals,
+            dynTraitFromPartsOperationOrdinals,
             memberCallOrdinals,
             fieldAccessOrdinals,
             TryBuildPublishedTypedTemplateBitwiseXorExpression,
@@ -3573,6 +4226,7 @@ internal static partial class PackageImageBuilder
         IReadOnlyDictionary<ParserRuleContext, int> functionAddressOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> directCallOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynamicStorageOperationOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynTraitFromPartsOperationOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> memberCallOrdinals,
         IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
         out StarkPackageTypedTemplateExpressionManifest publishedExpression)
@@ -3591,6 +4245,7 @@ internal static partial class PackageImageBuilder
             functionAddressOrdinals,
             directCallOrdinals,
             dynamicStorageOperationOrdinals,
+            dynTraitFromPartsOperationOrdinals,
             memberCallOrdinals,
             fieldAccessOrdinals,
             TryBuildPublishedTypedTemplateBitwiseAndExpression,
@@ -3610,6 +4265,7 @@ internal static partial class PackageImageBuilder
         IReadOnlyDictionary<ParserRuleContext, int> functionAddressOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> directCallOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynamicStorageOperationOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynTraitFromPartsOperationOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> memberCallOrdinals,
         IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
         out StarkPackageTypedTemplateExpressionManifest publishedExpression)
@@ -3628,6 +4284,7 @@ internal static partial class PackageImageBuilder
             functionAddressOrdinals,
             directCallOrdinals,
             dynamicStorageOperationOrdinals,
+            dynTraitFromPartsOperationOrdinals,
             memberCallOrdinals,
             fieldAccessOrdinals,
             TryBuildPublishedTypedTemplateEqualityExpression,
@@ -3647,6 +4304,7 @@ internal static partial class PackageImageBuilder
         IReadOnlyDictionary<ParserRuleContext, int> functionAddressOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> directCallOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynamicStorageOperationOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynTraitFromPartsOperationOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> memberCallOrdinals,
         IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
         out StarkPackageTypedTemplateExpressionManifest publishedExpression)
@@ -3668,6 +4326,7 @@ internal static partial class PackageImageBuilder
                 functionAddressOrdinals,
                 directCallOrdinals,
                 dynamicStorageOperationOrdinals,
+                dynTraitFromPartsOperationOrdinals,
                 memberCallOrdinals,
                 fieldAccessOrdinals,
                 TryBuildPublishedTypedTemplateRelationalExpression,
@@ -3688,6 +4347,7 @@ internal static partial class PackageImageBuilder
             functionAddressOrdinals,
             directCallOrdinals,
             dynamicStorageOperationOrdinals,
+            dynTraitFromPartsOperationOrdinals,
             memberCallOrdinals,
             fieldAccessOrdinals,
             TryBuildPublishedTypedTemplateRelationalExpression,
@@ -3707,6 +4367,7 @@ internal static partial class PackageImageBuilder
         IReadOnlyDictionary<ParserRuleContext, int> functionAddressOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> directCallOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynamicStorageOperationOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynTraitFromPartsOperationOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> memberCallOrdinals,
         IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
         out StarkPackageTypedTemplateExpressionManifest publishedExpression)
@@ -3728,6 +4389,7 @@ internal static partial class PackageImageBuilder
                 functionAddressOrdinals,
                 directCallOrdinals,
                 dynamicStorageOperationOrdinals,
+                dynTraitFromPartsOperationOrdinals,
                 memberCallOrdinals,
                 fieldAccessOrdinals,
                 TryBuildPublishedTypedTemplateShiftExpression,
@@ -3748,6 +4410,7 @@ internal static partial class PackageImageBuilder
             functionAddressOrdinals,
             directCallOrdinals,
             dynamicStorageOperationOrdinals,
+            dynTraitFromPartsOperationOrdinals,
             memberCallOrdinals,
             fieldAccessOrdinals,
             TryBuildPublishedTypedTemplateShiftExpression,
@@ -3767,6 +4430,7 @@ internal static partial class PackageImageBuilder
         IReadOnlyDictionary<ParserRuleContext, int> functionAddressOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> directCallOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynamicStorageOperationOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynTraitFromPartsOperationOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> memberCallOrdinals,
         IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
         out StarkPackageTypedTemplateExpressionManifest publishedExpression)
@@ -3785,6 +4449,7 @@ internal static partial class PackageImageBuilder
             functionAddressOrdinals,
             directCallOrdinals,
             dynamicStorageOperationOrdinals,
+            dynTraitFromPartsOperationOrdinals,
             memberCallOrdinals,
             fieldAccessOrdinals,
             TryBuildPublishedTypedTemplateAdditiveExpression,
@@ -3804,6 +4469,7 @@ internal static partial class PackageImageBuilder
         IReadOnlyDictionary<ParserRuleContext, int> functionAddressOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> directCallOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynamicStorageOperationOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynTraitFromPartsOperationOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> memberCallOrdinals,
         IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
         out StarkPackageTypedTemplateExpressionManifest publishedExpression)
@@ -3822,6 +4488,7 @@ internal static partial class PackageImageBuilder
             functionAddressOrdinals,
             directCallOrdinals,
             dynamicStorageOperationOrdinals,
+            dynTraitFromPartsOperationOrdinals,
             memberCallOrdinals,
             fieldAccessOrdinals,
             TryBuildPublishedTypedTemplateMultiplicativeExpression,
@@ -3841,6 +4508,7 @@ internal static partial class PackageImageBuilder
         IReadOnlyDictionary<ParserRuleContext, int> functionAddressOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> directCallOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynamicStorageOperationOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynTraitFromPartsOperationOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> memberCallOrdinals,
         IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
         out StarkPackageTypedTemplateExpressionManifest publishedExpression)
@@ -3859,6 +4527,7 @@ internal static partial class PackageImageBuilder
             functionAddressOrdinals,
             directCallOrdinals,
             dynamicStorageOperationOrdinals,
+            dynTraitFromPartsOperationOrdinals,
             memberCallOrdinals,
             fieldAccessOrdinals,
             TryBuildPublishedTypedTemplateUnaryExpression,
@@ -3878,6 +4547,7 @@ internal static partial class PackageImageBuilder
         IReadOnlyDictionary<ParserRuleContext, int> functionAddressOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> directCallOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynamicStorageOperationOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynTraitFromPartsOperationOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> memberCallOrdinals,
         IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
         out StarkPackageTypedTemplateExpressionManifest publishedExpression)
@@ -3899,6 +4569,7 @@ internal static partial class PackageImageBuilder
                 functionAddressOrdinals,
                 directCallOrdinals,
                 dynamicStorageOperationOrdinals,
+                dynTraitFromPartsOperationOrdinals,
                 memberCallOrdinals,
                 fieldAccessOrdinals,
                 out publishedExpression);
@@ -3907,6 +4578,72 @@ internal static partial class PackageImageBuilder
         if (unaryExpression.unaryExpression() is not { } operandExpression)
         {
             return false;
+        }
+
+        if (unaryExpression.TRY() is not null)
+        {
+            if (!TryBuildPublishedTypedTemplateUnaryExpression(
+                    module,
+                    operandExpression,
+                    namedTypes,
+                    literalsByLocation,
+                    conversionsByLocation,
+                    objectCreationOrdinals,
+                    enumConstructorOrdinals,
+                    enumCallOrdinals,
+                    enumValueOrdinals,
+                    functionAddressOrdinals,
+                    directCallOrdinals,
+                    dynamicStorageOperationOrdinals,
+                    dynTraitFromPartsOperationOrdinals,
+                    memberCallOrdinals,
+                    fieldAccessOrdinals,
+                    out var publishedOperand))
+            {
+                return false;
+            }
+
+            publishedExpression = new StarkPackageTypedTemplateExpressionManifest(
+                Kind: "try",
+                Arguments: [publishedOperand]);
+            return true;
+        }
+
+        if (unaryExpression.COMPTIME() is not null)
+        {
+            if (TryBuildPublishedTypedTemplateStructuralFactExpression(
+                module,
+                operandExpression,
+                out publishedExpression))
+            {
+                return true;
+            }
+
+            if (!TryBuildPublishedTypedTemplateUnaryExpression(
+                    module,
+                    operandExpression,
+                    namedTypes,
+                    literalsByLocation,
+                    conversionsByLocation,
+                    objectCreationOrdinals,
+                    enumConstructorOrdinals,
+                    enumCallOrdinals,
+                    enumValueOrdinals,
+                    functionAddressOrdinals,
+                    directCallOrdinals,
+                    dynamicStorageOperationOrdinals,
+                    dynTraitFromPartsOperationOrdinals,
+                    memberCallOrdinals,
+                    fieldAccessOrdinals,
+                    out var publishedOperand))
+            {
+                return false;
+            }
+
+            publishedExpression = new StarkPackageTypedTemplateExpressionManifest(
+                Kind: "comptime",
+                Arguments: [publishedOperand]);
+            return true;
         }
 
         if (unaryExpression.conversionType() is { } conversionType)
@@ -3931,6 +4668,7 @@ internal static partial class PackageImageBuilder
                     functionAddressOrdinals,
                     directCallOrdinals,
                     dynamicStorageOperationOrdinals,
+                    dynTraitFromPartsOperationOrdinals,
                     memberCallOrdinals,
                     fieldAccessOrdinals,
                     out var publishedOperand))
@@ -3961,6 +4699,7 @@ internal static partial class PackageImageBuilder
                     functionAddressOrdinals,
                     directCallOrdinals,
                     dynamicStorageOperationOrdinals,
+                    dynTraitFromPartsOperationOrdinals,
                     memberCallOrdinals,
                     fieldAccessOrdinals,
                     out _,
@@ -3990,6 +4729,7 @@ internal static partial class PackageImageBuilder
                 functionAddressOrdinals,
                 directCallOrdinals,
                 dynamicStorageOperationOrdinals,
+                dynTraitFromPartsOperationOrdinals,
                 memberCallOrdinals,
                 fieldAccessOrdinals,
                 out var publishedUnaryOperand))
@@ -4017,6 +4757,7 @@ internal static partial class PackageImageBuilder
         IReadOnlyDictionary<ParserRuleContext, int> functionAddressOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> directCallOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynamicStorageOperationOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynTraitFromPartsOperationOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> memberCallOrdinals,
         IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
         out StarkPackageTypedTemplateExpressionManifest publishedExpression)
@@ -4041,6 +4782,7 @@ internal static partial class PackageImageBuilder
                 functionAddressOrdinals,
                 directCallOrdinals,
                 dynamicStorageOperationOrdinals,
+                dynTraitFromPartsOperationOrdinals,
                 memberCallOrdinals,
                 fieldAccessOrdinals,
                 out var left))
@@ -4067,6 +4809,7 @@ internal static partial class PackageImageBuilder
                 functionAddressOrdinals,
                 directCallOrdinals,
                 dynamicStorageOperationOrdinals,
+                dynTraitFromPartsOperationOrdinals,
                 memberCallOrdinals,
                 fieldAccessOrdinals,
                 out var right))
@@ -4095,6 +4838,7 @@ internal static partial class PackageImageBuilder
         IReadOnlyDictionary<ParserRuleContext, int> functionAddressOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> directCallOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynamicStorageOperationOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynTraitFromPartsOperationOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> memberCallOrdinals,
         IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
         TryBuildPublishedTypedTemplateOperand<TOperandContext> buildOperand,
@@ -4118,6 +4862,7 @@ internal static partial class PackageImageBuilder
                 functionAddressOrdinals,
                 directCallOrdinals,
                 dynamicStorageOperationOrdinals,
+                dynTraitFromPartsOperationOrdinals,
                 memberCallOrdinals,
                 fieldAccessOrdinals,
                 out var current))
@@ -4140,6 +4885,7 @@ internal static partial class PackageImageBuilder
                     functionAddressOrdinals,
                     directCallOrdinals,
                     dynamicStorageOperationOrdinals,
+                    dynTraitFromPartsOperationOrdinals,
                     memberCallOrdinals,
                     fieldAccessOrdinals,
                     out var next))
@@ -4171,6 +4917,7 @@ internal static partial class PackageImageBuilder
         IReadOnlyDictionary<ParserRuleContext, int> functionAddressOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> directCallOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynamicStorageOperationOrdinals,
+        IReadOnlyDictionary<StarkParser.ArgumentListContext, int> dynTraitFromPartsOperationOrdinals,
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> memberCallOrdinals,
         IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
         TryBuildPublishedTypedTemplateOperand<TOperandContext> buildOperand,
@@ -4200,6 +4947,7 @@ internal static partial class PackageImageBuilder
                     functionAddressOrdinals,
                     directCallOrdinals,
                     dynamicStorageOperationOrdinals,
+                    dynTraitFromPartsOperationOrdinals,
                     memberCallOrdinals,
                     fieldAccessOrdinals,
                     out var publishedOperand))
@@ -4317,6 +5065,76 @@ internal static partial class PackageImageBuilder
             .ToArray();
 
         return published.Length == 0 ? null : published;
+    }
+
+    private static IReadOnlyList<StarkPackageTemplateTryPropagationManifest>? BuildPublishedTemplateTryPropagations(
+        LoadedModuleDocument module,
+        ParserRuleContext functionBody,
+        IReadOnlyList<TryPropagationTypingRecord>? tryPropagations)
+    {
+        if (tryPropagations is not { Count: > 0 })
+        {
+            return null;
+        }
+
+        var tryPropagationsByLocation = tryPropagations
+            .GroupBy(static record => TemplateDirectCallFacts.BuildLookupKey(record.Location.Line, record.Location.Column))
+            .ToDictionary(static group => group.Key, static group => group.Last(), StringComparer.Ordinal);
+        var published = CollectTemplateTryPropagationExpressions(functionBody)
+            .Select((tryExpression, ordinal) => tryPropagationsByLocation.TryGetValue(
+                    TemplateDirectCallFacts.BuildLookupKey(tryExpression.Start.Line, tryExpression.Start.Column + 1),
+                    out var record)
+                ? new StarkPackageTemplateTryPropagationManifest(
+                    ordinal,
+                    BuildPublishedAbiTypeReference(record.OperandType, module),
+                    record.OperandOkVariantName,
+                    record.OperandErrVariantName,
+                    BuildPublishedAbiTypeReference(record.ReturnType, module),
+                    record.EnclosingErrVariantName,
+                    SuccessPayloadType: record.SuccessPayloadType is { } successPayloadType
+                        ? BuildPublishedAbiTypeReference(successPayloadType, module)
+                        : null,
+                    OperandFailurePayloadType: record.OperandFailurePayloadType is { } operandFailurePayloadType
+                        ? BuildPublishedAbiTypeReference(operandFailurePayloadType, module)
+                        : null,
+                    EnclosingFailurePayloadType: record.EnclosingFailurePayloadType is { } enclosingFailurePayloadType
+                        ? BuildPublishedAbiTypeReference(enclosingFailurePayloadType, module)
+                        : null,
+                    ConversionFunnelVariant: record.ConversionFunnelVariant)
+                : null)
+            .Where(static tryPropagation => tryPropagation is not null)
+            .Cast<StarkPackageTemplateTryPropagationManifest>()
+            .ToArray();
+
+        return published.Length == 0 ? null : published;
+    }
+
+    /// <summary>
+    /// Collects `try` unary expressions in body order. The same depth-first walk runs on the
+    /// consumer side (MIR lowering of imported template specializations), so the ordinals
+    /// assigned here line up with the consumer's re-parsed body.
+    /// </summary>
+    private static IReadOnlyList<StarkParser.UnaryExpressionContext> CollectTemplateTryPropagationExpressions(ParserRuleContext node)
+    {
+        var tryExpressions = new List<StarkParser.UnaryExpressionContext>();
+        Collect(node, tryExpressions);
+        return tryExpressions;
+
+        static void Collect(
+            Antlr4.Runtime.Tree.IParseTree current,
+            List<StarkParser.UnaryExpressionContext> accumulator)
+        {
+            if (current is StarkParser.UnaryExpressionContext { } unaryExpression
+                && unaryExpression.TRY() is not null)
+            {
+                accumulator.Add(unaryExpression);
+            }
+
+            for (var index = 0; index < current.ChildCount; index++)
+            {
+                Collect(current.GetChild(index), accumulator);
+            }
+        }
     }
 
     private static IReadOnlyList<StarkPackageTemplateEnumCallManifest>? BuildPublishedTemplateEnumCalls(
@@ -4452,13 +5270,20 @@ internal static partial class PackageImageBuilder
             .GroupBy(static record => TemplateDirectCallFacts.BuildLookupKey(record.Location))
             .ToDictionary(static group => group.Key, static group => group.Last(), StringComparer.Ordinal);
         var published = CollectTemplateEnumPatternContexts(functionBody)
-            .Select((patternContext, ordinal) => patternContext is StarkParser.AggregatePatternContext aggregatePattern
-                    && aggregatePatternsByLocation.TryGetValue(
-                        TemplateDirectCallFacts.BuildLookupKey(aggregatePattern.Start.Line, aggregatePattern.Start.Column + 1),
+            .Select((patternContext, ordinal) => aggregatePatternsByLocation.TryGetValue(
+                        TemplateDirectCallFacts.BuildLookupKey(patternContext.Start.Line, patternContext.Start.Column + 1),
                         out var record)
                 ? new StarkPackageTemplateAggregatePatternManifest(
                     ordinal,
-                    BuildPublishedAbiTypeReference(record.Type, module))
+                    BuildPublishedAbiTypeReference(record.Type, module),
+                    record.Members.Count == 0
+                        ? null
+                        : record.Members
+                            .Select(member => new StarkPackageTemplateEnumPatternMemberManifest(
+                                member.FieldName,
+                                member.FieldIndex,
+                                BuildPublishedAbiTypeReference(member.FieldType, module)))
+                            .ToArray())
                 : null)
             .Where(static aggregatePattern => aggregatePattern is not null)
             .Cast<StarkPackageTemplateAggregatePatternManifest>()
@@ -4554,6 +5379,7 @@ internal static partial class PackageImageBuilder
         }
 
         var directCallsByLocation = directCalls
+            .Where(static record => !record.Arguments.Any(static argument => argument.IsReceiver))
             .GroupBy(static record => TemplateDirectCallFacts.BuildLookupKey(record.Location))
             .ToDictionary(static group => group.Key, static group => group.Last(), StringComparer.Ordinal);
         var published = CollectTemplateArgumentListsByPublishedLocations(functionBody, directCallsByLocation.Keys)
@@ -4581,6 +5407,14 @@ internal static partial class PackageImageBuilder
                     TypeArguments: record.Signature.TypeArguments is { Count: > 0 }
                         ? record.Signature.TypeArguments
                             .Select(typeArgument => BuildPublishedAbiTypeReference(typeArgument, module))
+                            .ToArray()
+                        : null,
+                    ComptimeValueArguments: record.Signature.ComptimeValueArguments is { Count: > 0 }
+                        ? record.Signature.ComptimeValueArguments
+                            .Select(argument => BuildPublishedAbiComptimeValueArgument(
+                                argument,
+                                module.SyntaxModel.ModuleName,
+                                GetModuleLocalNamedTypes(module)))
                             .ToArray()
                         : null,
                     DisjointParameterGroups: BuildParameterDisjointGroupManifests(record.Signature.DisjointGroups),
@@ -4627,25 +5461,38 @@ internal static partial class PackageImageBuilder
     private static IReadOnlyList<StarkPackageTemplateMemberCallManifest>? BuildPublishedTemplateMemberCalls(
         LoadedModuleDocument module,
         ParserRuleContext functionBody,
-        IReadOnlyList<MemberCallTypingRecord>? memberCalls)
+        IReadOnlyList<MemberCallTypingRecord>? memberCalls,
+        IReadOnlyList<DirectCallTypingRecord>? directCalls)
     {
-        if (memberCalls is not { Count: > 0 })
+        if (memberCalls is not { Count: > 0 }
+            && directCalls is not { Count: > 0 })
         {
             return null;
         }
 
-        var memberCallsByLocation = memberCalls
+        var memberCallsByLocation = (memberCalls ?? [])
+            .GroupBy(static record => TemplateDirectCallFacts.BuildLookupKey(record.Location))
+            .ToDictionary(static group => group.Key, static group => group.Last(), StringComparer.Ordinal);
+        var directCallsByLocation = (directCalls ?? [])
+            .Where(static record => record.Arguments.Any(static argument => argument.IsReceiver))
             .GroupBy(static record => TemplateDirectCallFacts.BuildLookupKey(record.Location))
             .ToDictionary(static group => group.Key, static group => group.Last(), StringComparer.Ordinal);
         var published = CollectTemplateMemberCallArgumentLists(functionBody)
-            .Select((argumentList, ordinal) => memberCallsByLocation.TryGetValue(
-                    TemplateDirectCallFacts.BuildLookupKey(argumentList.Start.Line, argumentList.Start.Column + 1),
-                    out var record)
-                ? new StarkPackageTemplateMemberCallManifest(
+            .Select((argumentList, ordinal) =>
+            {
+                var lookupKey = TemplateDirectCallFacts.BuildLookupKey(argumentList.Start.Line, argumentList.Start.Column + 1);
+                var signature = memberCallsByLocation.TryGetValue(lookupKey, out var memberRecord)
+                    ? memberRecord.Signature
+                    : directCallsByLocation.TryGetValue(lookupKey, out var directRecord)
+                        ? directRecord.Signature
+                        : null;
+                return signature is null
+                    ? null
+                    : new StarkPackageTemplateMemberCallManifest(
                     ordinal,
-                    QualifyPublishedCalledFunctionName(module, record.Signature.Name),
-                    BuildPublishedAbiTypeReference(record.Signature.ReturnType, module),
-                    record.Signature.Parameters
+                    QualifyPublishedCalledFunctionName(module, signature.Name),
+                    BuildPublishedAbiTypeReference(signature.ReturnType, module),
+                    signature.Parameters
                         .Select(parameter => new StarkPackageTypedParameterManifest(
                             parameter.Name,
                             BuildPublishedAbiTypeReference(parameter.Type, module),
@@ -4653,21 +5500,29 @@ internal static partial class PackageImageBuilder
                             parameter.IsConst,
                             parameter.RawPointerElementCountExpression))
                         .ToArray(),
-                    QualifiedSourceName: record.Signature.SourceName is null
+                    QualifiedSourceName: signature.SourceName is null
                         ? null
-                        : QualifyPublishedCalledFunctionName(module, record.Signature.SourceName),
-                    QualifiedTemplateName: record.Signature.TemplateName is null
+                        : QualifyPublishedCalledFunctionName(module, signature.SourceName),
+                    QualifiedTemplateName: signature.TemplateName is null
                         ? null
-                        : QualifyPublishedCalledFunctionName(module, record.Signature.TemplateName),
-                    TypeArguments: record.Signature.TypeArguments is { Count: > 0 }
-                        ? record.Signature.TypeArguments
+                        : QualifyPublishedCalledFunctionName(module, signature.TemplateName),
+                    TypeArguments: signature.TypeArguments is { Count: > 0 }
+                        ? signature.TypeArguments
                             .Select(typeArgument => BuildPublishedAbiTypeReference(typeArgument, module))
                             .ToArray()
                         : null,
-                    DisjointParameterGroups: BuildParameterDisjointGroupManifests(record.Signature.DisjointGroups),
-                    OverlapParameterGroups: BuildParameterOverlapGroupManifests(record.Signature.OverlapGroups),
-                    SameParameterGroups: BuildParameterSameGroupManifests(record.Signature.SameGroups))
-                : null)
+                    ComptimeValueArguments: signature.ComptimeValueArguments is { Count: > 0 }
+                        ? signature.ComptimeValueArguments
+                            .Select(argument => BuildPublishedAbiComptimeValueArgument(
+                                argument,
+                                module.SyntaxModel.ModuleName,
+                                GetModuleLocalNamedTypes(module)))
+                            .ToArray()
+                        : null,
+                    DisjointParameterGroups: BuildParameterDisjointGroupManifests(signature.DisjointGroups),
+                    OverlapParameterGroups: BuildParameterOverlapGroupManifests(signature.OverlapGroups),
+                    SameParameterGroups: BuildParameterSameGroupManifests(signature.SameGroups));
+            })
             .Where(static memberCall => memberCall is not null)
             .Cast<StarkPackageTemplateMemberCallManifest>()
             .ToArray();
@@ -4720,6 +5575,14 @@ internal static partial class PackageImageBuilder
                 TypeArguments: promotion.Signature.TypeArguments is { Count: > 0 }
                     ? promotion.Signature.TypeArguments
                         .Select(typeArgument => BuildPublishedAbiTypeReference(typeArgument, module))
+                        .ToArray()
+                    : null,
+                ComptimeValueArguments: promotion.Signature.ComptimeValueArguments is { Count: > 0 }
+                    ? promotion.Signature.ComptimeValueArguments
+                        .Select(argument => BuildPublishedAbiComptimeValueArgument(
+                            argument,
+                            module.SyntaxModel.ModuleName,
+                            GetModuleLocalNamedTypes(module)))
                         .ToArray()
                     : null,
                 DisjointParameterGroups: BuildParameterDisjointGroupManifests(promotion.Signature.DisjointGroups),
@@ -4827,6 +5690,16 @@ internal static partial class PackageImageBuilder
             AddOrdinal(BoundOperationKind.DynamicStorageOperation, item.argumentList.Start.Line, item.argumentList.Start.Column + 1, item.ordinal);
         }
 
+        foreach (var item in CollectTemplateArgumentListsByPublishedLocations(
+                     functionBody,
+                     boundOperations
+                         .Where(static operation => operation.Kind == BoundOperationKind.DynTraitFromParts)
+                         .Select(static operation => TemplateDirectCallFacts.BuildLookupKey(operation.Location)))
+                     .Select((argumentList, ordinal) => (argumentList, ordinal)))
+        {
+            AddOrdinal(BoundOperationKind.DynTraitFromParts, item.argumentList.Start.Line, item.argumentList.Start.Column + 1, item.ordinal);
+        }
+
         foreach (var item in CollectTemplateTypeLayoutPrimaryExpressions(functionBody).Select((primaryExpression, ordinal) => (primaryExpression, ordinal)))
         {
             AddOrdinal(BoundOperationKind.LayoutQuery, item.primaryExpression.Start.Line, item.primaryExpression.Start.Column + 1, item.ordinal);
@@ -4921,6 +5794,18 @@ internal static partial class PackageImageBuilder
                 ArgumentCount: dynamicStorage.ArgumentCount,
                 ReceiverIsAddressable: dynamicStorage.ReceiverIsAddressable,
                 ReceiverIsMutable: dynamicStorage.ReceiverIsMutable),
+            BoundDynTraitFromPartsOperation dynFromParts => new StarkPackageTemplateBoundOperationManifest(
+                RenderBoundOperationKind(dynFromParts.Kind),
+                location.Line,
+                location.Column,
+                resultType,
+                Ordinal: ordinal,
+                EnclosingFunctionName: dynFromParts.EnclosingFunctionName,
+                OperationName: dynFromParts.OperationName,
+                TargetType: BuildPublishedAbiTypeReference(dynFromParts.TargetType, module),
+                SourceType: BuildPublishedAbiTypeReference(dynFromParts.ContextType, module),
+                ReceiverType: BuildPublishedAbiTypeReference(dynFromParts.VtableType, module),
+                ArgumentCount: 2),
             BoundObjectCreationOperation objectCreation => new StarkPackageTemplateBoundOperationManifest(
                 RenderBoundOperationKind(objectCreation.Kind),
                 location.Line,
@@ -5065,6 +5950,14 @@ internal static partial class PackageImageBuilder
                     .Select(typeArgument => BuildPublishedAbiTypeReference(typeArgument, module))
                     .ToArray()
                 : null,
+            ComptimeValueArguments: signature.ComptimeValueArguments is { Count: > 0 }
+                ? signature.ComptimeValueArguments
+                    .Select(argument => BuildPublishedAbiComptimeValueArgument(
+                        argument,
+                        module.SyntaxModel.ModuleName,
+                        GetModuleLocalNamedTypes(module)))
+                    .ToArray()
+                : null,
             DisjointParameterGroups: BuildParameterDisjointGroupManifests(signature.DisjointGroups),
             OverlapParameterGroups: BuildParameterOverlapGroupManifests(signature.OverlapGroups),
             SameParameterGroups: BuildParameterSameGroupManifests(signature.SameGroups),
@@ -5125,6 +6018,7 @@ internal static partial class PackageImageBuilder
             BoundOperationKind.EnumCall => "enum-call",
             BoundOperationKind.EnumValue => "enum-value",
             BoundOperationKind.DynamicStorageOperation => "dynamic-storage-operation",
+            BoundOperationKind.DynTraitFromParts => "dyn-trait-from-parts",
             BoundOperationKind.TextInterpolation => "text-interpolation",
             BoundOperationKind.TextBuild => "text-build",
             BoundOperationKind.LayoutQuery => "layout-query",
@@ -5210,6 +6104,108 @@ internal static partial class PackageImageBuilder
             Kind: "type-layout",
             Name: name,
             Type: typeReference);
+        return true;
+    }
+
+    private static bool TryBuildPublishedTypedTemplateStructuralFactExpression(
+        LoadedModuleDocument module,
+        StarkParser.UnaryExpressionContext operandExpression,
+        out StarkPackageTypedTemplateExpressionManifest publishedExpression)
+    {
+        publishedExpression = null!;
+
+        var postfixExpression = TryGetSimplePostfixExpression(operandExpression);
+        if (postfixExpression?.primaryExpression()?.genericQualifiedName() is not { } genericQualifiedName
+            || postfixExpression.postfixPart().Length != 1
+            || postfixExpression.postfixPart()[0].argumentList() is not { } argumentList
+            || argumentList.argument().Length != 0
+            || !CompileTimeStructuralFacts.TryGetFactKind(
+                genericQualifiedName.qualifiedName().GetText(),
+                out _))
+        {
+            return false;
+        }
+
+        var typeArguments = new List<StarkPackageTypeReference>();
+        var comptimeValueArguments = new List<StarkPackageComptimeValueArgumentManifest>();
+        foreach (var genericArgument in genericQualifiedName.typeArgumentList().genericArgument())
+        {
+            if (genericArgument.type_() is { } typeArgument)
+            {
+                if (!TryBuildPublishedAbiTypeReferenceFromSyntax(module, typeArgument, out var publishedTypeArgument))
+                {
+                    return false;
+                }
+
+                typeArguments.Add(publishedTypeArgument);
+                continue;
+            }
+
+            if (!TryBuildPublishedStructuralFactComptimeValueArgument(
+                    module,
+                    genericArgument,
+                    comptimeValueArguments.Count,
+                    out var valueArgument))
+            {
+                return false;
+            }
+
+            comptimeValueArguments.Add(valueArgument);
+        }
+
+        publishedExpression = new StarkPackageTypedTemplateExpressionManifest(
+            Kind: "structural-fact",
+            Name: genericQualifiedName.qualifiedName().GetText(),
+            TypeArguments: typeArguments.Count == 0 ? null : typeArguments,
+            ComptimeValueArguments: comptimeValueArguments.Count == 0 ? null : comptimeValueArguments);
+        return true;
+    }
+
+    private static bool TryBuildPublishedStructuralFactComptimeValueArgument(
+        LoadedModuleDocument module,
+        StarkParser.GenericArgumentContext argument,
+        int valueIndex,
+        out StarkPackageComptimeValueArgumentManifest valueArgument)
+    {
+        valueArgument = null!;
+        var parameterType = BuildPublishedAbiTypeReference(StarkTypeSymbols.CompileTimeInteger, module);
+
+        if (argument.signedIntegerLiteral() is { } literal)
+        {
+            valueArgument = new StarkPackageComptimeValueArgumentManifest(
+                $"value{valueIndex}",
+                ParsePublishedSignedIntegerLiteral(literal).ToString(),
+                parameterType);
+            return true;
+        }
+
+        if (argument.COMPTIME() is null || argument.expression() is not { } expression)
+        {
+            return false;
+        }
+
+        if (CompileTimeExpressionEvaluator.TryEvaluateInteger(expression, out var value))
+        {
+            valueArgument = new StarkPackageComptimeValueArgumentManifest(
+                $"value{valueIndex}",
+                value.ToString(),
+                parameterType);
+            return true;
+        }
+
+        if (TryGetSimplePostfixExpression(expression) is not { } symbolicPostfix
+            || symbolicPostfix.primaryExpression().Identifier()?.GetText() is not { } symbolicName
+            || symbolicPostfix.postfixPart().Length != 0)
+        {
+            return false;
+        }
+
+        valueArgument = new StarkPackageComptimeValueArgumentManifest(
+            $"value{valueIndex}",
+            "0",
+            parameterType,
+            IsSymbolic: true,
+            SymbolicSourceName: symbolicName);
         return true;
     }
 
@@ -5305,6 +6301,11 @@ internal static partial class PackageImageBuilder
         if (type.functionPointerType() is { } functionPointerType)
         {
             var signature = functionPointerType.functionPointerSignature();
+            if (!TryBuildPublishedFunctionPointerAbi(module, signature.functionPointerAbiModifier(), out var functionAbi))
+            {
+                return false;
+            }
+
             StarkPackageTypeReference returnType;
             if (signature.returnType().VOID() is not null)
             {
@@ -5329,6 +6330,8 @@ internal static partial class PackageImageBuilder
             typeReference = new StarkPackageTypeReference(
                 "functionpointer",
                 FunctionKind: RenderPublishedFunctionPointerKind(signature.functionKind().GetText()),
+                FunctionAbi: functionAbi,
+                FunctionIsUnsafe: signature.UNSAFE() is not null ? true : null,
                 ReturnType: returnType,
                 ParameterTypes: parameterTypes.Count == 0 ? null : parameterTypes.ToArray(),
                 OverlapParameterGroups: BuildParameterOverlapGroupManifests(signature.parameterMemoryContractClause()),
@@ -5353,6 +6356,37 @@ internal static partial class PackageImageBuilder
 
         return type.simpleType() is { } simpleType
             && TryBuildPublishedAbiSimpleTypeReferenceFromSyntax(module, simpleType, out typeReference);
+    }
+
+    private static bool TryBuildPublishedFunctionPointerAbi(
+        LoadedModuleDocument module,
+        StarkParser.FunctionPointerAbiModifierContext? modifier,
+        out string? functionAbi)
+    {
+        functionAbi = null;
+        if (modifier is null)
+        {
+            return true;
+        }
+
+        if (modifier.ffiAbiSpecifier() is null)
+        {
+            functionAbi = StarkFfiAbiFacts.DisplayName(StarkFfiAbi.C);
+            return true;
+        }
+
+        if (!FfiAbiSyntaxFacts.TryResolveFfiAbi(
+                modifier.ffiAbiSpecifier().ffiAbi(),
+                module.TargetInfo,
+                out var abi,
+                out _,
+                out _))
+        {
+            return false;
+        }
+
+        functionAbi = StarkFfiAbiFacts.DisplayName(abi);
+        return true;
     }
 
     private static string RenderPublishedFunctionPointerKind(string kind)
@@ -5405,21 +6439,123 @@ internal static partial class PackageImageBuilder
             ? name
             : $"{module.SyntaxModel.ModuleName}.{name}";
         var typeArguments = new List<StarkPackageTypeReference>();
-        var typeArgumentSyntax = type.typeArgumentList()?.type_() ?? Array.Empty<StarkParser.Type_Context>();
-        foreach (var typeArgument in typeArgumentSyntax)
+        var comptimeValueArguments = new List<StarkPackageComptimeValueArgumentManifest>();
+        var genericArgumentSyntax = type.typeArgumentList()?.genericArgument() ?? Array.Empty<StarkParser.GenericArgumentContext>();
+        var declaredComptimeParameters = genericArgumentSyntax.Length == 0
+            ? []
+            : GetPublishedAbiComptimeParameters(module, qualifiedName);
+        foreach (var genericArgument in genericArgumentSyntax)
         {
-            if (!TryBuildPublishedAbiTypeReferenceFromSyntax(module, typeArgument, out var publishedTypeArgument))
+            if (genericArgument.type_() is { } typeArgument)
+            {
+                if (!TryBuildPublishedAbiTypeReferenceFromSyntax(module, typeArgument, out var publishedTypeArgument))
+                {
+                    return false;
+                }
+
+                typeArguments.Add(publishedTypeArgument);
+                continue;
+            }
+
+            var valueParameterIndex = comptimeValueArguments.Count;
+            if (valueParameterIndex >= declaredComptimeParameters.Count
+                || !TryBuildPublishedAbiComptimeValueArgumentFromSyntax(
+                    module,
+                    genericArgument,
+                    declaredComptimeParameters[valueParameterIndex],
+                    out var publishedValueArgument))
             {
                 return false;
             }
 
-            typeArguments.Add(publishedTypeArgument);
+            comptimeValueArguments.Add(publishedValueArgument);
         }
 
         typeReference = new StarkPackageTypeReference(
             "named",
             Name: qualifiedName,
-            TypeArguments: typeArguments.Count == 0 ? null : typeArguments);
+            TypeArguments: typeArguments.Count == 0 ? null : typeArguments,
+            ComptimeValueArguments: comptimeValueArguments.Count == 0 ? null : comptimeValueArguments);
+        return true;
+    }
+
+    private static IReadOnlyList<(string Name, StarkParser.Type_Context Type)> GetPublishedAbiComptimeParameters(
+        LoadedModuleDocument module,
+        string qualifiedName)
+    {
+        var localName = qualifiedName.Contains('.', StringComparison.Ordinal)
+            ? qualifiedName[(qualifiedName.LastIndexOf('.') + 1)..]
+            : qualifiedName;
+        if (qualifiedName.Contains('.', StringComparison.Ordinal)
+            && !qualifiedName.StartsWith($"{module.SyntaxModel.ModuleName}.", StringComparison.Ordinal))
+        {
+            return [];
+        }
+
+        foreach (var declaration in module.ParseResult.Root.topLevelDeclaration())
+        {
+            var typeParameterList =
+                declaration.structDeclaration() is { } structDeclaration
+                    && string.Equals(structDeclaration.Identifier().GetText(), localName, StringComparison.Ordinal)
+                    ? structDeclaration.typeParameterList()
+                : declaration.recordDeclaration() is { } recordDeclaration
+                    && string.Equals(recordDeclaration.Identifier().GetText(), localName, StringComparison.Ordinal)
+                    ? recordDeclaration.typeParameterList()
+                : declaration.enumDeclaration() is { } enumDeclaration
+                    && string.Equals(enumDeclaration.Identifier().GetText(), localName, StringComparison.Ordinal)
+                    ? enumDeclaration.typeParameterList()
+                : declaration.traitDeclaration() is { } traitDeclaration
+                    && string.Equals(traitDeclaration.Identifier().GetText(), localName, StringComparison.Ordinal)
+                    ? traitDeclaration.typeParameterList()
+                : declaration.typeAliasDeclaration() is { } typeAliasDeclaration
+                    && string.Equals(typeAliasDeclaration.Identifier().GetText(), localName, StringComparison.Ordinal)
+                    ? typeAliasDeclaration.typeParameterList()
+                : null;
+            if (typeParameterList is null)
+            {
+                continue;
+            }
+
+            return typeParameterList.typeParameter()
+                .Where(static parameter => parameter.COMPTIME() is not null)
+                .Select(static parameter => (parameter.Identifier().GetText(), parameter.type_()))
+                .ToArray();
+        }
+
+        return [];
+    }
+
+    private static bool TryBuildPublishedAbiComptimeValueArgumentFromSyntax(
+        LoadedModuleDocument module,
+        StarkParser.GenericArgumentContext argument,
+        (string Name, StarkParser.Type_Context Type) parameter,
+        out StarkPackageComptimeValueArgumentManifest valueArgument)
+    {
+        valueArgument = null!;
+
+        BigInteger value;
+        if (argument.signedIntegerLiteral() is { } literal)
+        {
+            value = ParsePublishedSignedIntegerLiteral(literal);
+        }
+        else if (argument.expression() is { } expression
+                 && CompileTimeExpressionEvaluator.TryEvaluateInteger(expression, out value))
+        {
+        }
+        else
+        {
+            return false;
+        }
+
+        if (!TryBuildPublishedAbiTypeReferenceFromSyntax(module, parameter.Type, out var parameterType))
+        {
+            return false;
+        }
+
+        valueArgument = new StarkPackageComptimeValueArgumentManifest(
+            parameter.Name,
+            value.ToString(),
+            parameterType);
         return true;
     }
 
@@ -5490,7 +6626,9 @@ internal static partial class PackageImageBuilder
             List<StarkParser.PrimaryExpressionContext> accumulator)
         {
             if (current is StarkParser.PrimaryExpressionContext primaryExpression
-                && (primaryExpression.Identifier() is not null || primaryExpression.qualifiedName() is not null))
+                && (primaryExpression.Identifier() is not null
+                    || primaryExpression.qualifiedName() is not null
+                    || primaryExpression.genericQualifiedName() is not null))
             {
                 accumulator.Add(primaryExpression);
             }

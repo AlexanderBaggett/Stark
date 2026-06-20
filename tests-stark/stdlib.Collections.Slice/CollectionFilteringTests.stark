@@ -1,0 +1,49 @@
+import System.Testing
+[Collection("shared")]
+module CollectionFilteringTests
+
+// Stark-native end-to-end exercise of the [Collection(...)] test-grouping
+// feature and the `stark test --collection` / `--list-collections` filters.
+//
+// Collection tagging used here (union semantics across module + member):
+//   * The module carries module-level [Collection("shared")], so EVERY fact
+//     below inherits the "shared" collection.
+//   * AlphaOnly       -> member [Collection("alpha")]          => {shared, alpha}
+//   * BetaOnly        -> member [Collection("beta")]           => {shared, beta}
+//   * AlphaAndBeta    -> variadic [Collection("alpha","beta")] => {shared, alpha, beta}
+//   * SharedOnly      -> no member [Collection]                => {shared}
+//
+// This makes the filter behavior demonstrable:
+//   - no filter        runs all 4 facts (alpha, beta, both, neither)
+//   - --collection alpha runs AlphaOnly + AlphaAndBeta (2); BetaOnly is
+//     beta-only and must NOT run under alpha.
+//   - --collection beta  runs BetaOnly + AlphaAndBeta (2).
+//   - --collection alpha,beta runs the union AlphaOnly + BetaOnly +
+//     AlphaAndBeta (3); SharedOnly (neither alpha nor beta) still excluded.
+
+[Fact]
+[Collection("alpha")]
+fn bool AlphaOnly()
+{
+    return System.Testing.Equal(2, 1 + 1);
+}
+
+[Fact]
+[Collection("beta")]
+fn bool BetaOnly()
+{
+    return System.Testing.True(true);
+}
+
+[Fact]
+[Collection("alpha", "beta")]
+fn bool AlphaAndBeta()
+{
+    return System.Testing.Equal(7, 3 + 4);
+}
+
+[Fact]
+fn bool SharedOnly()
+{
+    return true;
+}

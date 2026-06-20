@@ -126,6 +126,10 @@ public sealed class DiagnosticRegressionTests
             struct Box
             {
                 i32[min max] Value;
+
+                drop
+                {
+                }
             }
 
             static Box Current = new Box()
@@ -275,11 +279,16 @@ public sealed class DiagnosticRegressionTests
                     default:
                         return 0;
                 }
-            }
-            """);
+        }
+        """);
 
         Assert.False(result.Succeeded);
-        AssertDiagnostic(result, "STK3008", "Switch capture patterns must currently appear as the only label in their section");
+        AssertDiagnostic(
+            result,
+            "STK3008",
+            "Switch labels that share a body must bind the same capture names with the same types",
+            "Earlier label binds 'capture: i32'",
+            "this label binds no captures");
     }
 
     [Fact]
@@ -2822,6 +2831,143 @@ public sealed class DiagnosticRegressionTests
 
         Assert.False(result.Succeeded);
         AssertDiagnostic(result, "STK3027", "Loop 'independent' contracts", "canonical memory-backed subset", "outside the accepted dependency-validation subset");
+    }
+
+    [Fact]
+    public void CallingAFieldThatShadowsASameNamedMethodNamesTheShadow()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Extents
+            {
+                bool HasExtension;
+
+                unsafe finite law bool HasExtension(borrow Extents self)
+                {
+                    return true;
+                }
+            }
+
+            unsafe fn bool Run(Extents value)
+            {
+                return value.HasExtension();
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3008", "is not callable", "shadows", "HasExtension");
+    }
+
+    [Fact]
+    public void BorrowedGenericParameterLiteralArgumentHintsByValueCopyableFix()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void F<T>(borrow T x)
+            {
+                return;
+            }
+
+            fn void Run()
+            {
+                F(1);
+                return;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(
+            result,
+            "STK3002",
+            "must be an addressable storage location",
+            "borrows from it",
+            "declaring it by value as `T` under `where Copyable(T)` lets callers pass a literal");
+    }
+
+    [Fact]
+    public void BorrowedConcreteParameterLiteralArgumentDoesNotHintGenericFix()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box
+            {
+                i32[min max] Value;
+            }
+
+            fn void F(borrow Box x)
+            {
+                return;
+            }
+
+            fn void Run()
+            {
+                F(new Box()
+                {
+                    Value = 1
+                });
+                return;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(
+            result,
+            "STK3002",
+            "must be an addressable storage location",
+            "borrows from it");
+        Assert.DoesNotContain(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3002"
+                && diagnostic.Message.Contains("where Copyable(T)", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void WhereDoctrinePredicateExplainsDoctrineMisuse()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void F<T>(T value) where DictionaryKey(T)
+            {
+                return;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(
+            result,
+            "STK3050",
+            "'DictionaryKey' is a doctrine, not a `where` law predicate",
+            "DictionaryKey.Equals(a, b)",
+            "Supported `where` laws are Transferable and Shareable");
+    }
+
+    [Fact]
+    public void WhereUnknownLawPredicateKeepsOriginalMessage()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void F<T>(T value) where Bogus(T)
+            {
+                return;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(
+            result,
+            "STK3050",
+            "Unknown thread-safety law predicate 'Bogus'",
+            "Supported laws are Transferable and Shareable");
     }
 
     private static CompilationResult Compile(string source)

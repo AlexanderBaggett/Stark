@@ -610,7 +610,6 @@ public sealed class ExamplesCompileRunTests
                     "--native-library", "Xi",
                     "--native-library", "Xcursor",
                     "--native-library", "Xinerama",
-                    "-O0"
                 ],
                 new StringReader(string.Empty),
                 emitStdout,
@@ -630,7 +629,6 @@ public sealed class ExamplesCompileRunTests
                     "-o", breakoutOutput,
                     "--linker", linkerPath,
                     "--save-temps", tempsDirectory,
-                    "-O0"
                 ],
                 new StringReader(string.Empty),
                 compileStdout,
@@ -873,7 +871,7 @@ public sealed class ExamplesCompileRunTests
         var stderr = new StringWriter();
 
         var exitCode = await CompilerCli.RunAsync(
-            [sourcePath, "--emit-lib", "-o", libraryPath, "-O0"],
+            [sourcePath, "--emit-lib", "-o", libraryPath],
             new StringReader(string.Empty),
             stdout,
             stderr);

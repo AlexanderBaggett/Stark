@@ -299,7 +299,10 @@ internal sealed partial class LlvmFunctionBodyEmitter
 
     private int? GetTypeAlignmentBytes(StarkTypeSymbol type)
     {
-        return TryGetConcreteTypeLayout(NormalizeAggregateType(type)) is { AlignmentBytes: > 1 } layout
+        var layoutType = StarkTypeSymbols.IsPointerBackedBorrowType(type)
+            ? type
+            : NormalizeAggregateType(type);
+        return TryGetConcreteTypeLayout(layoutType) is { AlignmentBytes: > 0 } layout
             ? layout.AlignmentBytes
             : null;
     }
@@ -321,7 +324,9 @@ internal sealed partial class LlvmFunctionBodyEmitter
 
     private int? GetOwnedObjectAlignmentBytes(StarkTypeSymbol type)
     {
-        var normalizedType = NormalizeAggregateType(type);
+        var normalizedType = StarkTypeSymbols.IsPointerBackedBorrowType(type)
+            ? type
+            : NormalizeAggregateType(type);
         if (TryGetConcreteTypeLayout(normalizedType) is not { } layout)
         {
             return null;
@@ -380,7 +385,10 @@ internal sealed partial class LlvmFunctionBodyEmitter
 
     private string GetKnownPointerAlignmentSuffix(SsaValue address, StarkTypeSymbol pointeeType)
     {
-        return GetAlignmentSuffix(GetKnownPointerAlignmentBytes(address, pointeeType));
+        var alignmentBytes = GetKnownPointerAlignmentBytes(address, pointeeType);
+        return GetAlignmentSuffix(
+            alignmentBytes,
+            ShouldEmitExplicitLowAlignment(address, pointeeType, alignmentBytes));
     }
 
     private string GetKnownPointerArgumentAlignmentFragment(SsaValue address, StarkTypeSymbol pointeeType)
@@ -395,14 +403,57 @@ internal sealed partial class LlvmFunctionBodyEmitter
             : null;
     }
 
-    private static string GetAlignmentSuffix(int? alignmentBytes)
+    private static string GetAlignmentSuffix(int? alignmentBytes, bool includeByteAlignment = false)
     {
-        return alignmentBytes is > 1 ? $", align {alignmentBytes.Value}" : string.Empty;
+        return alignmentBytes is > 1 || includeByteAlignment && alignmentBytes is > 0
+            ? $", align {alignmentBytes.Value}"
+            : string.Empty;
     }
 
     private static string GetArgumentAlignmentFragment(int? alignmentBytes)
     {
         return alignmentBytes is > 1 ? $" align {alignmentBytes.Value}" : string.Empty;
+    }
+
+    private bool ShouldEmitExplicitLowAlignment(
+        SsaValue address,
+        StarkTypeSymbol pointeeType,
+        int? alignmentBytes)
+    {
+        return alignmentBytes is > 0
+            && GetTypeAlignmentBytes(pointeeType) is { } naturalAlignmentBytes
+            && alignmentBytes.Value < naturalAlignmentBytes
+            && IsLayoutControlledDerivedAddress(address, new HashSet<string>(StringComparer.Ordinal));
+    }
+
+    private bool IsLayoutControlledDerivedAddress(object address, ISet<string> visitedValueNames)
+    {
+        switch (address)
+        {
+            case SsaValueReference reference:
+                return visitedValueNames.Add(reference.Name)
+                    && _valueDefinitions.TryGetValue(reference.Name, out var definition)
+                    && IsLayoutControlledDerivedAddress(definition, visitedValueNames);
+            case SsaUseRValue use:
+                return IsLayoutControlledDerivedAddress(use.Value, visitedValueNames);
+            case SsaConvertRValue convert:
+                return IsLayoutControlledDerivedAddress(convert.Operand, visitedValueNames);
+            case SsaFieldAddressRValue fieldAddress:
+                return TryResolveLayoutControlledField(
+                           fieldAddress.AggregateType,
+                           fieldAddress.FieldIndex,
+                           out _,
+                           out _,
+                           out _,
+                           out _)
+                       || IsLayoutControlledDerivedAddress(fieldAddress.Address, visitedValueNames);
+            case SsaElementAddressRValue elementAddress:
+                return IsLayoutControlledDerivedAddress(elementAddress.Address, visitedValueNames);
+            case SsaSliceElementAddressRValue sliceElementAddress:
+                return IsLayoutControlledDerivedAddress(sliceElementAddress.Slice, visitedValueNames);
+            default:
+                return false;
+        }
     }
 
     private int? GetLeafAlignmentBytes(int? baseAlignmentBytes, StarkTypeSymbol leafType)
@@ -465,23 +516,22 @@ internal sealed partial class LlvmFunctionBodyEmitter
                         && (string.Equals(candidate.LlvmName, reference.Name, StringComparison.Ordinal)
                             || string.Equals(candidate.SourceName, reference.Name, StringComparison.Ordinal)));
                 if (indirectParameter is not null
-                    && AbiLoweringHeuristics.IsByValueIndirectParameter(indirectParameter)
                     && GetTypeAlignmentBytes(indirectParameter.SourceType) is { } parameterAlignmentBytes)
                 {
                     alignmentBytes = parameterAlignmentBytes;
-                    return alignmentBytes > 1;
+                    return true;
                 }
 
                 return false;
             case SsaGlobalAddressValue globalAddress:
                 alignmentBytes = GetGlobalObjectAlignmentBytes(globalAddress.GlobalName, globalAddress.PointeeType) ?? 1;
-                return alignmentBytes > 1;
+                return true;
             case SsaTextDataAddressValue textData:
                 alignmentBytes = ResolveStringConstant(textData.LiteralText, textData.TextType).AlignmentBytes;
-                return alignmentBytes > 1;
+                return true;
             case SsaAddressOfLocalRValue addressOfLocal:
                 alignmentBytes = GetLocalObjectAlignmentBytes(addressOfLocal.LocalName, addressOfLocal.PointeeType) ?? 1;
-                return alignmentBytes > 1;
+                return true;
             case SsaAddressOfParameterRValue addressOfParameter:
             {
                 var sourceParameter = _abiFunction.UserParameters.FirstOrDefault(
@@ -493,18 +543,17 @@ internal sealed partial class LlvmFunctionBodyEmitter
 
                 if (sourceParameter.Kind == AbiParameterKind.IndirectIn)
                 {
-                    if (AbiLoweringHeuristics.IsByValueIndirectParameter(sourceParameter)
-                        && GetTypeAlignmentBytes(sourceParameter.SourceType) is { } byvalAlignmentBytes)
+                    if (GetTypeAlignmentBytes(sourceParameter.SourceType) is { } indirectAlignmentBytes)
                     {
-                        alignmentBytes = byvalAlignmentBytes;
-                        return alignmentBytes > 1;
+                        alignmentBytes = indirectAlignmentBytes;
+                        return true;
                     }
 
                     return false;
                 }
 
                 alignmentBytes = GetStackObjectAlignmentBytes(addressOfParameter.PointeeType) ?? 1;
-                return alignmentBytes > 1;
+                return true;
             }
             case SsaFieldAddressRValue fieldAddress:
             {
@@ -519,15 +568,29 @@ internal sealed partial class LlvmFunctionBodyEmitter
                     return false;
                 }
 
-                alignmentBytes = Math.Min(baseAlignmentBytes, fieldAlignmentBytes);
-                return alignmentBytes > 1;
+                if (TryGetAggregateElementOffsetBytes(
+                        fieldAddress.AggregateType,
+                        fieldAddress.FieldIndex,
+                        out _,
+                        out var fieldOffsetBytes))
+                {
+                    alignmentBytes = Math.Min(
+                        fieldAlignmentBytes,
+                        GetAlignmentAtOffset(baseAlignmentBytes, fieldOffsetBytes));
+                }
+                else
+                {
+                    alignmentBytes = Math.Min(baseAlignmentBytes, fieldAlignmentBytes);
+                }
+
+                return true;
             }
             case SsaExtractFieldRValue { FieldIndex: 0, Target.Type.Kind: StarkTypeKind.Dynamic } extractField
                 when string.Equals(extractField.FieldName, "Data", StringComparison.Ordinal)
                      && extractField.Target.Type.ElementType is { } dynamicElementType:
             {
                 alignmentBytes = GetTypeAlignmentBytes(dynamicElementType) ?? 1;
-                return alignmentBytes > 1;
+                return true;
             }
             case SsaElementAddressRValue elementAddress:
             {
@@ -544,7 +607,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
                 }
 
                 alignmentBytes = Math.Min(baseAlignmentBytes, elementAlignmentBytes);
-                return alignmentBytes > 1;
+                return true;
             }
             case SsaSliceElementAddressRValue sliceElementAddress:
             {
@@ -560,7 +623,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
                 }
 
                 alignmentBytes = Math.Min(sliceAlignmentBytes, elementAlignmentBytes);
-                return alignmentBytes > 1;
+                return true;
             }
             case SsaUseRValue use:
                 return TryGetKnownPointerAlignmentBytesCore(use.Value, pointeeType, visitedValueNames, out alignmentBytes);
@@ -607,12 +670,12 @@ internal sealed partial class LlvmFunctionBodyEmitter
                 alignmentBytes = GetLocalObjectAlignmentBytes(makeSlice.LocalName, makeSlice.SourceType)
                     ?? GetTypeAlignmentBytes(makeSlice.SourceType.ElementType)
                     ?? 1;
-                return alignmentBytes > 1;
+                return true;
             case SsaMakeSliceFromPointerRValue makeSlice
                 when makeSlice.Pointer.Type.ElementType is { } elementType
                      && TryGetKnownPointerAlignmentBytesCore(makeSlice.Pointer, elementType, visitedValueNames, out var pointerAlignmentBytes):
                 alignmentBytes = pointerAlignmentBytes;
-                return alignmentBytes > 1;
+                return true;
             case SsaLoadLocalRValue loadLocal
                 when TryResolveSingleStoreLocalValue(loadLocal.LocalName, out var storedValue):
                 return TryGetKnownSliceDataAlignmentBytes(storedValue, visitedValueNames, out alignmentBytes);
@@ -620,7 +683,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
             {
                 var unitType = GetTextUnitType(textSlice.TextValue.Type);
                 alignmentBytes = GetTypeAlignmentBytes(unitType) ?? 1;
-                return alignmentBytes > 1;
+                return true;
             }
             default:
                 return false;
@@ -632,5 +695,26 @@ internal sealed partial class LlvmFunctionBodyEmitter
         return type.Kind == StarkTypeKind.RawPointer
             ? type.ElementType
             : null;
+    }
+
+    private static int GetAlignmentAtOffset(int baseAlignmentBytes, long offsetBytes)
+    {
+        if (offsetBytes == 0)
+        {
+            return baseAlignmentBytes;
+        }
+
+        var offsetAlignmentBytes = GreatestPowerOfTwoDivisor(Math.Abs(offsetBytes));
+        return Math.Min(baseAlignmentBytes, offsetAlignmentBytes);
+    }
+
+    private static int GreatestPowerOfTwoDivisor(long value)
+    {
+        if (value == 0)
+        {
+            return 1;
+        }
+
+        return (int)(value & -value);
     }
 }

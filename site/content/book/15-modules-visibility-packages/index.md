@@ -324,7 +324,6 @@ output = "geometry-tests"
 
 [dependencies]
 geometry = { path = "../geometry" }
-stdlib = { path = "../../stdlib" }
 ```
 
 Path dependencies live in the same file:
@@ -332,11 +331,11 @@ Path dependencies live in the same file:
 ```toml
 [dependencies]
 raylib = { path = "../raylib" }
-stdlib = { path = "../../stdlib" }
 ```
 
 This keeps package dependencies in project metadata instead of scattering build
-flags through scripts.
+flags through scripts. The standard library is discovered separately for
+`System.*` imports and is not listed as an ordinary package dependency.
 
 ## Step 6: Add A Solution Only For Multi-Project Work
 

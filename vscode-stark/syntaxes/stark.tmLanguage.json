@@ -160,11 +160,11 @@
       "patterns": [
         {
           "name": "keyword.control.stark",
-          "match": "\\b(if|else|switch|case|default|when|while|for|return|break|continue)\\b"
+          "match": "\\b(if|else|switch|case|default|when|while|for|return|break|continue|try|is)\\b"
         },
         {
           "name": "keyword.declaration.stark",
-          "match": "\\b(import|module|internal|public|export|fn|finite|law|struct|record|enum|trait|doctrine|alias|const|var|where|drop|new)\\b"
+          "match": "\\b(import|module|internal|public|export|fn|finite|law|struct|record|enum|trait|doctrine|alias|const|comptime|var|where|drop|new|from)\\b"
         },
         {
           "name": "keyword.modifier.stark",
@@ -172,7 +172,7 @@
         },
         {
           "name": "keyword.storage.stark",
-          "match": "\\b(stack|heap|register|arena|dynamic|rawptr|rawmutptr|fnptr|closure)\\b"
+          "match": "\\b(stack|heap|register|arena|dynamic|dyn|rawptr|rawmutptr|fnptr|closure)\\b"
         },
         {
           "name": "keyword.operator.ownership.stark",

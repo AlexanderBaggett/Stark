@@ -1,0 +1,985 @@
+import StdlibPortSupport
+import System.Testing
+import System.Threading
+module SystemThreadingAtomicsStandardLibraryTests
+
+// Ported from SystemThreadingAtomicsStandardLibraryTests.AtomicI64SingleThreadedOperationSemanticsAreExactAtRuntime.
+internal fn bool AtomicI64SingleThreadedOperationSemanticsAreExactAtRuntimeImpl()
+{
+    // PORT-NOTE: the C# original compiles this program with the CLI (--emit-exe)
+    // against the packaged stdlib, runs the produced native executable, and
+    // asserts exit code 0 (every fetch-and-modify operation returns the previous
+    // value). The compile-only host bridge cannot link or run the executable, so
+    // this reduces to compiling the embedded program verbatim and asserting it
+    // succeeds.
+    stack mut ProgramCompile c = CompileProgram("stark-stdlib-atomics-single", raw"""
+import System.Threading
+module App
+
+static mut System.Threading.AtomicI64 Counter = new System.Threading.AtomicI64(0);
+
+export fn i32[min max] main()
+{
+    Counter.Store(5);
+    if (Counter.Add(3) != 5)
+    {
+        return 1;
+    }
+
+    if (Counter.Sub(1) != 8)
+    {
+        return 2;
+    }
+
+    if (Counter.And(255) != 7)
+    {
+        return 3;
+    }
+
+    if (Counter.Or(8) != 7)
+    {
+        return 4;
+    }
+
+    if (Counter.Xor(2) != 15)
+    {
+        return 5;
+    }
+
+    if (Counter.Exchange(42) != 13)
+    {
+        return 6;
+    }
+
+    if (!Counter.CompareExchange(42, 100))
+    {
+        return 7;
+    }
+
+    if (Counter.CompareExchange(42, 555))
+    {
+        return 8;
+    }
+
+    if (Counter.Load() != 100)
+    {
+        return 9;
+    }
+
+    return 0;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemThreadingAtomicsStandardLibraryTests.AtomicI64TwoThreadCounterIsExactAtRuntime.
+internal fn bool AtomicI64TwoThreadCounterIsExactAtRuntimeImpl()
+{
+    // PORT-NOTE: the C# original compiles this program with the CLI (--emit-exe)
+    // against the packaged stdlib and runs the produced native executable, where
+    // two threads each bump a shared atomic counter 100000 times and the total
+    // must be exactly 200000 (exit code 0). The compile-only host bridge cannot
+    // link or run the executable or schedule threads, so this reduces to compiling
+    // the embedded program verbatim and asserting it succeeds.
+    stack mut ProgramCompile c = CompileProgram("stark-stdlib-atomics-threads", raw"""
+import System.Threading
+module App
+
+static mut System.Threading.AtomicI64 Counter = new System.Threading.AtomicI64(0);
+
+fn i32[min max] Worker()
+{
+    stack mut i32[min max] i = 0;
+    while willexit (i < 100000)
+    {
+        Counter.Add(1);
+        i += 1;
+    }
+
+    return 0;
+}
+
+export fn i32[min max] main()
+{
+    stack mut System.Threading.Thread a = new(Worker);
+    stack mut System.Threading.Thread b = new(Worker);
+    a.Join();
+    b.Join();
+
+    if (Counter.Load() == 200000)
+    {
+        return 0;
+    }
+
+    return 1;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemThreadingAtomicsStandardLibraryTests.AtomicBoolFlagHandoffAcrossThreadsWorksAtRuntime.
+internal fn bool AtomicBoolFlagHandoffAcrossThreadsWorksAtRuntimeImpl()
+{
+    // PORT-NOTE: the C# original compiles this program with the CLI (--emit-exe)
+    // against the packaged stdlib and runs the produced native executable, where a
+    // worker thread publishes a payload then raises an AtomicBool flag and main
+    // spins until it observes the flag and the published value (exit code 0). The
+    // compile-only host bridge cannot link or run the executable or schedule
+    // threads, so this reduces to compiling the embedded program verbatim and
+    // asserting it succeeds.
+    stack mut ProgramCompile c = CompileProgram("stark-stdlib-atomics-bool", raw"""
+import System.Threading
+module App
+
+static mut System.Threading.AtomicI64 Payload = new System.Threading.AtomicI64(0);
+static mut System.Threading.AtomicBool Ready = new System.Threading.AtomicBool(false);
+
+fn i32[min max] Publisher()
+{
+    Payload.Store(12345);
+    Ready.Store(true);
+    return 0;
+}
+
+export fn i32[min max] main()
+{
+    // Single-threaded AtomicBool semantics first.
+    stack mut System.Threading.AtomicBool flag = new System.Threading.AtomicBool(false);
+    if (flag.Load())
+    {
+        return 1;
+    }
+
+    if (flag.Exchange(true))
+    {
+        return 2;
+    }
+
+    if (!flag.Load())
+    {
+        return 3;
+    }
+
+    if (!flag.CompareExchange(true, false))
+    {
+        return 4;
+    }
+
+    if (flag.CompareExchange(true, false))
+    {
+        return 5;
+    }
+
+    // Cross-thread flag handoff.
+    stack mut System.Threading.Thread publisher = new(Publisher);
+    stack mut i64[min max] spins = 0;
+    while willexit (!Ready.Load() && spins < 1000000000)
+    {
+        spins += 1;
+    }
+
+    if (!Ready.Load())
+    {
+        return 6;
+    }
+
+    if (Payload.Load() != 12345)
+    {
+        return 7;
+    }
+
+    publisher.Join();
+    return 0;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemThreadingAtomicsStandardLibraryTests.AllTier1AtomicWidthsHaveExactSemanticsAtRuntime.
+internal fn bool AllTier1AtomicWidthsHaveExactSemanticsAtRuntimeImpl()
+{
+    // PORT-NOTE: the C# original compiles this program with the CLI (--emit-exe)
+    // against the packaged stdlib and runs the produced native executable,
+    // asserting exit code 0 across every tier-1 atomic width (8/16/32-bit signed
+    // and unsigned plus 64-bit unsigned) including negative and full-range values.
+    // The compile-only host bridge cannot link or run the executable, so this
+    // reduces to compiling the embedded program verbatim and asserting it
+    // succeeds.
+    stack mut ProgramCompile c = CompileProgram("stark-stdlib-atomics-widths", raw"""
+import System.Threading
+module App
+
+static mut System.Threading.AtomicI8 CounterI8 = new System.Threading.AtomicI8(-5);
+static mut System.Threading.AtomicI16 CounterI16 = new System.Threading.AtomicI16(-1000);
+static mut System.Threading.AtomicI32 CounterI32 = new System.Threading.AtomicI32(-100000);
+static mut System.Threading.AtomicU8 CounterU8 = new System.Threading.AtomicU8(200);
+static mut System.Threading.AtomicU16 CounterU16 = new System.Threading.AtomicU16(60000);
+static mut System.Threading.AtomicU32 CounterU32 = new System.Threading.AtomicU32(4000000000);
+static mut System.Threading.AtomicU64 CounterU64 = new System.Threading.AtomicU64(18000000000000000000);
+
+export fn i32[min max] main()
+{
+    // Signed widths preserve sign through load/add/exchange.
+    if (CounterI8.Load() != -5)
+    {
+        return 1;
+    }
+
+    if (CounterI8.Add(10) != -5)
+    {
+        return 2;
+    }
+
+    if (CounterI8.Load() != 5)
+    {
+        return 3;
+    }
+
+    if (CounterI16.Add(1) != -1000)
+    {
+        return 4;
+    }
+
+    if (CounterI16.Load() != -999)
+    {
+        return 5;
+    }
+
+    if (CounterI32.Sub(1) != -100000)
+    {
+        return 6;
+    }
+
+    if (CounterI32.Load() != -100001)
+    {
+        return 7;
+    }
+
+    // Unsigned widths hold their full range.
+    if (CounterU8.Load() != 200)
+    {
+        return 8;
+    }
+
+    if (CounterU8.Add(55) != 200)
+    {
+        return 9;
+    }
+
+    if (CounterU8.Load() != 255)
+    {
+        return 10;
+    }
+
+    if (CounterU16.Load() != 60000)
+    {
+        return 11;
+    }
+
+    if (CounterU32.Exchange(123) != 4000000000)
+    {
+        return 12;
+    }
+
+    if (CounterU64.Load() != 18000000000000000000)
+    {
+        return 13;
+    }
+
+    if (!CounterU64.CompareExchange(18000000000000000000, 42))
+    {
+        return 14;
+    }
+
+    if (CounterU64.Load() != 42)
+    {
+        return 15;
+    }
+
+    return 0;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemThreadingAtomicsStandardLibraryTests.Tier2ContainerAtomicWidthsHaveExactSemanticsAtRuntime.
+internal fn bool Tier2ContainerAtomicWidthsHaveExactSemanticsAtRuntimeImpl()
+{
+    // PORT-NOTE: the C# original compiles this program with the CLI (--emit-exe)
+    // against the packaged stdlib and runs the produced native executable,
+    // asserting exit code 0 across the tier-2 container widths (24/48/128-bit) with
+    // sign/zero-extension round-trips, wrap-around at the value width, and
+    // compare-exchange across the container boundary. The compile-only host bridge
+    // cannot link or run the executable, so this reduces to compiling the embedded
+    // program verbatim and asserting it succeeds.
+    stack mut ProgramCompile c = CompileProgram("stark-stdlib-atomics-tier2", raw"""
+import System.Threading
+module App
+
+static mut System.Threading.AtomicI24 Counter24 = new System.Threading.AtomicI24(-5);
+static mut System.Threading.AtomicI48 Counter48 = new System.Threading.AtomicI48(0);
+static mut System.Threading.AtomicU24 CounterU24 = new System.Threading.AtomicU24(16000000);
+static mut System.Threading.AtomicI128 Counter128 = new System.Threading.AtomicI128(0);
+
+export fn i32[min max] main()
+{
+    // Signed i24: negative values survive the container extension round-trip.
+    if (Counter24.Load() != -5)
+    {
+        return 1;
+    }
+
+    if (Counter24.Add(10) != -5)
+    {
+        return 2;
+    }
+
+    if (Counter24.Load() != 5)
+    {
+        return 3;
+    }
+
+    // Wrap-around at the i24 boundary: max + 1 wraps to min.
+    Counter24.Store(8388607);
+    if (Counter24.Add(1) != 8388607)
+    {
+        return 4;
+    }
+
+    if (Counter24.Load() != -8388608)
+    {
+        return 5;
+    }
+
+    // Compare-exchange across the container boundary with negative values.
+    if (!Counter24.CompareExchange(-8388608, -1))
+    {
+        return 6;
+    }
+
+    if (Counter24.CompareExchange(-8388608, 7))
+    {
+        return 7;
+    }
+
+    if (Counter24.Load() != -1)
+    {
+        return 8;
+    }
+
+    // i48: values wider than 32 bits.
+    Counter48.Store(140737488355327);
+    if (Counter48.Add(-140737488355327) != 140737488355327)
+    {
+        return 9;
+    }
+
+    if (Counter48.Load() != 0)
+    {
+        return 10;
+    }
+
+    // u24: full unsigned range with zero-extension.
+    if (CounterU24.Load() != 16000000)
+    {
+        return 11;
+    }
+
+    if (CounterU24.Exchange(16777215) != 16000000)
+    {
+        return 12;
+    }
+
+    if (CounterU24.Load() != 16777215)
+    {
+        return 13;
+    }
+
+    // i128: values wider than 64 bits through cmpxchg16b-class instructions.
+    Counter128.Store(18446744073709551616);
+    if (Counter128.Load() != 18446744073709551616)
+    {
+        return 14;
+    }
+
+    if (Counter128.Add(1) != 18446744073709551616)
+    {
+        return 15;
+    }
+
+    if (Counter128.Load() != 18446744073709551617)
+    {
+        return 16;
+    }
+
+    if (!Counter128.CompareExchange(18446744073709551617, -18446744073709551616))
+    {
+        return 17;
+    }
+
+    if (Counter128.Load() != -18446744073709551616)
+    {
+        return 18;
+    }
+
+    if (Counter128.And(0) != -18446744073709551616)
+    {
+        return 19;
+    }
+
+    if (Counter128.Load() != 0)
+    {
+        return 20;
+    }
+
+    return 0;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemThreadingAtomicsStandardLibraryTests.Tier2AtomicTwoThreadCountersAreExactAtRuntime.
+internal fn bool Tier2AtomicTwoThreadCountersAreExactAtRuntimeImpl()
+{
+    // PORT-NOTE: the C# original compiles this program with the CLI (--emit-exe)
+    // against the packaged stdlib and runs the produced native executable, where
+    // two threads each bump an i24 (CAS retry loop) and an i128 (cmpxchg16b)
+    // counter 50000 times and both totals must be exactly 100000 (exit code 0).
+    // The compile-only host bridge cannot link or run the executable or schedule
+    // threads, so this reduces to compiling the embedded program verbatim and
+    // asserting it succeeds.
+    stack mut ProgramCompile c = CompileProgram("stark-stdlib-atomics-tier2-threads", raw"""
+import System.Threading
+module App
+
+static mut System.Threading.AtomicI24 Counter24 = new System.Threading.AtomicI24(0);
+static mut System.Threading.AtomicI128 Counter128 = new System.Threading.AtomicI128(0);
+
+fn i32[min max] Worker()
+{
+    stack mut i32[min max] i = 0;
+    while willexit (i < 50000)
+    {
+        Counter24.Add(1);
+        Counter128.Add(1);
+        i += 1;
+    }
+
+    return 0;
+}
+
+export fn i32[min max] main()
+{
+    stack mut System.Threading.Thread a = new(Worker);
+    stack mut System.Threading.Thread b = new(Worker);
+    a.Join();
+    b.Join();
+
+    if (Counter24.Load() != 100000)
+    {
+        return 1;
+    }
+
+    if (Counter128.Load() != 100000)
+    {
+        return 2;
+    }
+
+    return 0;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemThreadingAtomicsStandardLibraryTests.Tier2ContainerAtomicsLowerToLockFreeContainerInstructions.
+internal fn bool Tier2ContainerAtomicsLowerToLockFreeContainerInstructionsImpl()
+{
+    // PORT-NOTE: the C# original emits LLVM IR for an x86_64-unknown-linux-gnu
+    // target via EmitAtomicsAppLlvm and additionally runs a structural scan
+    // (AssertCasLoopsOnlyInArithmeticBuiltins) that walks each defined atomic
+    // builtin body and asserts the compare-exchange retry loop (cas_loop:) appears
+    // only inside _Add/_Sub bodies. The compile-only host bridge lowers for the
+    // host architecture and cannot retarget, and the per-body label scan is not
+    // expressible through the line-oriented Contains helpers, so the +cx16
+    // target-feature and cas_loop-placement assertions are reduced to the
+    // single-instruction container-width Contains checks below.
+    stack mut ProgramCompile c = CompileProgram("stark-stdlib-atomics-tier2-lower", raw"""
+import System.Threading
+module App
+
+static mut System.Threading.AtomicI24 Counter24 = new System.Threading.AtomicI24(0);
+static mut System.Threading.AtomicU128 Counter128 = new System.Threading.AtomicU128(0);
+
+export fn i32[min max] main()
+{
+    Counter24.Store(5);
+    stack i24[min max] previous24 = Counter24.Add(3);
+    stack bool swapped24 = Counter24.CompareExchange(8, 1);
+    stack i24[min max] final24 = Counter24.Load();
+
+    Counter128.Store(5);
+    stack u128[0 max] previous128 = Counter128.Add(3);
+    stack bool swapped128 = Counter128.CompareExchange(8, 1);
+    stack u128[0 max] final128 = Counter128.Load();
+    return 0;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+
+    // i24 operations work on its i32 container.
+    if (!Contains(llvm, "load atomic i32"))
+    {
+        return false;
+    }
+
+    if (!Contains(llvm, "store atomic i32"))
+    {
+        return false;
+    }
+
+    if (!Contains(llvm, "cmpxchg ptr %arg_self, i32"))
+    {
+        return false;
+    }
+
+    // 128-bit operations work on the full i128 container.
+    if (!Contains(llvm, "load atomic i128"))
+    {
+        return false;
+    }
+
+    if (!Contains(llvm, "store atomic i128"))
+    {
+        return false;
+    }
+
+    if (!Contains(llvm, "cmpxchg ptr %arg_self, i128"))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemThreadingAtomicsStandardLibraryTests.PackagedStdLibAtomicsWorkWithoutSource.
+internal fn bool PackagedStdLibAtomicsWorkWithoutSourceImpl()
+{
+    // PORT-NOTE: the C# original first builds System.Threading into a packaged
+    // static library (--emit-lib) with no stdlib source available, then compiles
+    // the embedded consumer program against that package directory (--emit-exe),
+    // runs the produced native executable, and asserts exit code 0 with empty
+    // stdout/stderr (one atomic type per tier driven from two threads). The
+    // compile-only host bridge cannot package the stdlib, link an executable, or
+    // run it, so this reduces to compiling the embedded consumer program verbatim
+    // (against the host-resolved stdlib) and asserting it succeeds.
+    stack mut ProgramCompile c = CompileProgram("stark-stdlib-atomics-pkg", raw"""
+import System.Threading
+module App
+
+static mut System.Threading.AtomicI64 Counter64 = new System.Threading.AtomicI64(0);
+static mut System.Threading.AtomicI24 Counter24 = new System.Threading.AtomicI24(0);
+static mut System.Threading.AtomicI256 Counter256 = new System.Threading.AtomicI256(0);
+
+fn i32[min max] Worker()
+{
+    stack mut i32[min max] i = 0;
+    while willexit (i < 10000)
+    {
+        Counter64.Add(1);
+        Counter24.Add(1);
+        Counter256.Add(1);
+        i += 1;
+    }
+
+    return 0;
+}
+
+export fn i32[min max] main()
+{
+    stack mut Thread a = new(Worker);
+    stack mut Thread b = new(Worker);
+    a.Join();
+    b.Join();
+
+    if (Counter64.Load() != 20000)
+    {
+        return 1;
+    }
+
+    if (Counter24.Load() != 20000)
+    {
+        return 2;
+    }
+
+    if (Counter256.Load() != 20000)
+    {
+        return 3;
+    }
+
+    if (!Counter64.CompareExchange(20000, 7))
+    {
+        return 4;
+    }
+
+    if (Counter64.Load() != 7)
+    {
+        return 5;
+    }
+
+    return 0;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemThreadingAtomicsStandardLibraryTests.Tier3EmbeddedLockAtomicWidthsHaveExactSemanticsAtRuntime.
+internal fn bool Tier3EmbeddedLockAtomicWidthsHaveExactSemanticsAtRuntimeImpl()
+{
+    // PORT-NOTE: the C# original compiles this program with the CLI (--emit-exe)
+    // against the packaged stdlib and runs the produced native executable,
+    // asserting exit code 0 across tier-3 embedded-lock widths (256/1024-bit) with
+    // values far beyond 128 bits (2^150, 2^200), every operation, and the
+    // compare-exchange hit/miss paths. The compile-only host bridge cannot link or
+    // run the executable, so this reduces to compiling the embedded program
+    // verbatim and asserting it succeeds.
+    stack mut ProgramCompile c = CompileProgram("stark-stdlib-atomics-tier3", raw"""
+import System.Threading
+module App
+
+static mut System.Threading.AtomicI256 Counter256 = new System.Threading.AtomicI256(0);
+static mut System.Threading.AtomicU1024 Counter1024 = new System.Threading.AtomicU1024(1);
+
+export fn i32[min max] main()
+{
+    // 2^150 is far beyond any hardware atomic width.
+    Counter256.Store(1427247692705959881058285969449495136382746624);
+    if (Counter256.Load() != 1427247692705959881058285969449495136382746624)
+    {
+        return 1;
+    }
+
+    if (Counter256.Add(1) != 1427247692705959881058285969449495136382746624)
+    {
+        return 2;
+    }
+
+    if (Counter256.Load() != 1427247692705959881058285969449495136382746625)
+    {
+        return 3;
+    }
+
+    if (Counter256.Sub(1427247692705959881058285969449495136382746625) != 1427247692705959881058285969449495136382746625)
+    {
+        return 4;
+    }
+
+    if (Counter256.Load() != 0)
+    {
+        return 5;
+    }
+
+    // Negative values across the full 256-bit width.
+    Counter256.Store(-1427247692705959881058285969449495136382746624);
+    if (Counter256.Load() != -1427247692705959881058285969449495136382746624)
+    {
+        return 6;
+    }
+
+    if (!Counter256.CompareExchange(-1427247692705959881058285969449495136382746624, 77))
+    {
+        return 7;
+    }
+
+    if (Counter256.CompareExchange(-1427247692705959881058285969449495136382746624, 88))
+    {
+        return 8;
+    }
+
+    if (Counter256.Load() != 77)
+    {
+        return 9;
+    }
+
+    if (Counter256.Exchange(-1) != 77)
+    {
+        return 10;
+    }
+
+    if (Counter256.Load() != -1)
+    {
+        return 11;
+    }
+
+    // 1024-bit unsigned with a value around 2^200.
+    Counter1024.Store(1606938044258990275541962092341162602522202993782792835301376);
+    if (Counter1024.Load() != 1606938044258990275541962092341162602522202993782792835301376)
+    {
+        return 12;
+    }
+
+    if (Counter1024.Or(1) != 1606938044258990275541962092341162602522202993782792835301376)
+    {
+        return 13;
+    }
+
+    if (Counter1024.Load() != 1606938044258990275541962092341162602522202993782792835301377)
+    {
+        return 14;
+    }
+
+    return 0;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemThreadingAtomicsStandardLibraryTests.Tier3EmbeddedLockAtomicTwoThreadCounterIsExactAtRuntime.
+internal fn bool Tier3EmbeddedLockAtomicTwoThreadCounterIsExactAtRuntimeImpl()
+{
+    // PORT-NOTE: the C# original compiles this program with the CLI (--emit-exe)
+    // against the packaged stdlib and runs the produced native executable, where
+    // two threads each bump an i256 embedded-lock counter 20000 times and the
+    // total must be exactly 40000 (exit code 0). The compile-only host bridge
+    // cannot link or run the executable or schedule threads, so this reduces to
+    // compiling the embedded program verbatim and asserting it succeeds.
+    stack mut ProgramCompile c = CompileProgram("stark-stdlib-atomics-tier3-threads", raw"""
+import System.Threading
+module App
+
+static mut System.Threading.AtomicI256 Counter = new System.Threading.AtomicI256(0);
+
+fn i32[min max] Worker()
+{
+    stack mut i32[min max] i = 0;
+    while willexit (i < 20000)
+    {
+        Counter.Add(1);
+        i += 1;
+    }
+
+    return 0;
+}
+
+export fn i32[min max] main()
+{
+    stack mut System.Threading.Thread a = new(Worker);
+    stack mut System.Threading.Thread b = new(Worker);
+    a.Join();
+    b.Join();
+
+    if (Counter.Load() == 40000)
+    {
+        return 0;
+    }
+
+    return 1;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemThreadingAtomicsStandardLibraryTests.Tier3EmbeddedLockAtomicsLowerToSpinlockProtectedOperations.
+internal fn bool Tier3EmbeddedLockAtomicsLowerToSpinlockProtectedOperationsImpl()
+{
+    // PORT-NOTE: the C# original emits LLVM IR for an x86_64-unknown-linux-gnu
+    // target via EmitAtomicsAppLlvm. The compile-only host bridge lowers for the
+    // host architecture and cannot retarget, but the tier-3 spinlock lowering
+    // shape (the i256 + i32 struct layout, the seq-cst lock exchange/release, the
+    // full-width value load/store, and the global static reservation) is
+    // architecture-independent and asserted verbatim through Contains below.
+    stack mut ProgramCompile c = CompileProgram("stark-stdlib-atomics-tier3-lower", raw"""
+import System.Threading
+module App
+
+static mut System.Threading.AtomicI256 Counter = new System.Threading.AtomicI256(0);
+
+export fn i32[min max] main()
+{
+    Counter.Store(5);
+    stack i256[min max] previous = Counter.Add(3);
+    stack bool swapped = Counter.CompareExchange(8, 1);
+    stack i256[min max] finalValue = Counter.Load();
+    return 0;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+
+    // The struct embeds the value (i256) and the lock word (i32) - visible layout.
+    if (!Contains(llvm, "%System_Threading_AtomicI256 = type { i256, i32 }"))
+    {
+        return false;
+    }
+
+    // Operations serialize through the embedded seq-cst spinlock.
+    if (!Contains(llvm, "atomicrmw xchg ptr %atomic_lock_addr, i32 1 seq_cst"))
+    {
+        return false;
+    }
+
+    if (!Contains(llvm, "store atomic i32 0, ptr %atomic_lock_addr seq_cst"))
+    {
+        return false;
+    }
+
+    // The value operations work at the full declared width.
+    if (!Contains(llvm, "load i256, ptr %arg_self"))
+    {
+        return false;
+    }
+
+    if (!Contains(llvm, "store i256"))
+    {
+        return false;
+    }
+
+    // The global static reserves space for both the value and the lock word.
+    if (!Contains(llvm, "@Counter = global %System_Threading_AtomicI256"))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemThreadingAtomicsStandardLibraryTests.AtomicI64Tier1BuiltinsLowerToSingleAtomicInstructions.
+internal fn bool AtomicI64Tier1BuiltinsLowerToSingleAtomicInstructionsImpl()
+{
+    // PORT-NOTE: the C# original emits LLVM IR for an x86_64-unknown-linux-gnu
+    // target via EmitAtomicsAppLlvm and additionally runs a structural scan
+    // (AssertAtomicBuiltinBodies) over each @System_Threading_AtomicI64_ builtin
+    // body asserting it is a single seq-cst atomic instruction with no calls
+    // (libcall) and no branches (CAS loop). The compile-only host bridge lowers
+    // for the host architecture and cannot retarget, and the per-body
+    // no-call/no-branch/seq-cst scan is not expressible through the line-oriented
+    // Contains helpers, so that body audit is reduced to the per-operation
+    // single-atomic-instruction Contains checks below.
+    stack mut ProgramCompile c = CompileProgram("stark-stdlib-atomics-tier1-lower", raw"""
+import System.Threading
+module App
+
+static mut System.Threading.AtomicI64 Counter = new System.Threading.AtomicI64(0);
+
+export fn i32[min max] main()
+{
+    Counter.Store(5);
+    stack i64[min max] previousAdd = Counter.Add(3);
+    stack i64[min max] previousSub = Counter.Sub(1);
+    stack i64[min max] previousAnd = Counter.And(255);
+    stack i64[min max] previousOr = Counter.Or(8);
+    stack i64[min max] previousXor = Counter.Xor(2);
+    stack i64[min max] previousExchange = Counter.Exchange(42);
+    stack bool swapped = Counter.CompareExchange(42, 100);
+    stack i64[min max] finalValue = Counter.Load();
+    return (i32[min max])(finalValue - finalValue);
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+
+    // Each operation is a single seq-cst atomic instruction on the i64 value.
+    if (!Contains(llvm, "atomicrmw add ptr"))
+    {
+        return false;
+    }
+
+    if (!Contains(llvm, "atomicrmw sub ptr"))
+    {
+        return false;
+    }
+
+    if (!Contains(llvm, "atomicrmw and ptr"))
+    {
+        return false;
+    }
+
+    if (!Contains(llvm, "atomicrmw or ptr"))
+    {
+        return false;
+    }
+
+    if (!Contains(llvm, "atomicrmw xor ptr"))
+    {
+        return false;
+    }
+
+    if (!Contains(llvm, "atomicrmw xchg ptr"))
+    {
+        return false;
+    }
+
+    if (!Contains(llvm, "cmpxchg ptr"))
+    {
+        return false;
+    }
+
+    if (!Contains(llvm, "load atomic i64"))
+    {
+        return false;
+    }
+
+    if (!Contains(llvm, "store atomic i64"))
+    {
+        return false;
+    }
+
+    return true;
+}

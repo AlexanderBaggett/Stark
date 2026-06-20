@@ -1,0 +1,448 @@
+import StdlibPortSupport
+import System
+import System.Testing
+import System.Text
+module SystemIOPathPackagedStandardLibraryTests
+
+// Ported from SystemIOPathPackagedStandardLibraryTests.PackagedStdLibPathCurrentDirectoryFillsCallerProvidedAsciiBuffer.
+internal fn bool PackagedStdLibPathCurrentDirectoryFillsCallerProvidedAsciiBufferImpl()
+{
+    // PORT-NOTE: original compiles against the packaged stdlib image (no source on the
+    // include path) via the CLI (--emit-exe), runs the produced binary in the app directory,
+    // and asserts process exit code 0 with stdout equal to "<appDirectory>\n" and empty
+    // stderr. The compile-only host bridge cannot select a packaged image, link, run, or
+    // capture process stdout, so this reduces to compiling the embedded program and asserting
+    // it succeeds.
+    stack mut ProgramCompile c = CompileProgram("packaged-path-current-directory-ascii-buffer", raw"""
+        import System
+        import System.Text
+        module App
+
+        fn bool StatusOk(System.IO.IOStatus status)
+        {
+            switch (status)
+            {
+                case System.IO.IOStatus.Ok:
+                    return true;
+                case System.IO.IOStatus.Err(var error):
+                    return false;
+            }
+        }
+
+        fn bool BoolOrFalse(System.IO.IOResult<bool> result)
+        {
+            switch (result)
+            {
+                case System.IO.IOResult<bool>.Ok(var value):
+                    return value;
+                case System.IO.IOResult<bool>.Err(var error):
+                    return false;
+            }
+        }
+
+        fn bool MemoryOk(System.Memory.MemoryStatus status)
+        {
+            switch (status)
+            {
+                case System.Memory.MemoryStatus.Ok:
+                    return true;
+                case System.Memory.MemoryStatus.Err(var error):
+                    return false;
+            }
+        }
+
+        fn System.IO.File.File OpenOrEmpty(System.IO.IOResult<System.IO.File.File> result)
+        {
+            switch (result)
+            {
+                case System.IO.IOResult<System.IO.File.File>.Ok(var value):
+                    return value;
+                case System.IO.IOResult<System.IO.File.File>.Err(var error):
+                    return new();
+            }
+        }
+
+        export fn i32[min max] main()
+        {
+            stack mut System.Text.OwnedAscii owned = new();
+
+            if (!MemoryOk(System.IO.Path.CurrentDirectory(owned)))
+            {
+                return 1;
+            }
+
+            if (owned.Length() <= 0)
+            {
+                return 2;
+            }
+
+            stack System.IO.IOStatus status = System.Console.WriteLine(owned.View());
+            switch (status)
+            {
+                case System.IO.IOStatus.Ok:
+                    return 0;
+                case System.IO.IOStatus.Err(var error):
+                    return 3;
+            }
+
+            return 4;
+        }
+        """);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemIOPathPackagedStandardLibraryTests.PackagedStdLibPathHelpersWorkWithoutSource.
+internal fn bool PackagedStdLibPathHelpersWorkWithoutSourceImpl()
+{
+    // PORT-NOTE: original compiles against the packaged stdlib image (no source on the
+    // include path) via the CLI (--emit-exe), runs the produced binary, and asserts process
+    // exit code 0 with empty stdout/stderr. The compile-only host bridge cannot select a
+    // packaged image, link, or run the binary, so this reduces to compiling the embedded
+    // program and asserting it succeeds.
+    stack mut ProgramCompile c = CompileProgram("packaged-path-helpers-without-source", raw"""
+        import System
+        import System.Text
+        module App
+
+        fn bool MemoryOk(System.Memory.MemoryStatus status)
+        {
+            switch (status)
+            {
+                case System.Memory.MemoryStatus.Ok:
+                    return true;
+                case System.Memory.MemoryStatus.Err(var error):
+                    return false;
+            }
+        }
+
+        fn bool IsJoinedPath(ascii value)
+        {
+            switch (value)
+            {
+                case "alpha/beta.txt":
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        fn bool IsTextExtension(ascii value)
+        {
+            switch (value)
+            {
+                case ".txt":
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        fn bool IsBetaBaseName(ascii value)
+        {
+            switch (value)
+            {
+                case "beta":
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        fn bool IsAlphaDirectory(ascii value)
+        {
+            switch (value)
+            {
+                case "alpha":
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        fn bool IsOwnedJoinedPath(System.Memory.MemoryResult<System.Text.OwnedAscii> result)
+        {
+            switch (result)
+            {
+                case System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(var value):
+                    return value.Length() == 14 && IsJoinedPath(value.View());
+                case System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(var error):
+                    return false;
+            }
+        }
+
+        export unsafe fn i32[min max] main()
+        {
+            stack mut System.Text.OwnedAscii joined = new();
+
+            if (!MemoryOk(System.IO.Path.TryJoin(joined, "alpha", "beta.txt")))
+            {
+                return 1;
+            }
+
+            if (!IsJoinedPath(joined.View()))
+            {
+                return 2;
+            }
+
+            if (!IsTextExtension(System.IO.Path.Extension(joined.View())))
+            {
+                return 3;
+            }
+
+            if (!IsBetaBaseName(System.IO.Path.BaseName(joined.View())))
+            {
+                return 4;
+            }
+
+            if (!IsAlphaDirectory(System.IO.Path.DirectoryName(joined.View())))
+            {
+                return 5;
+            }
+
+            stack System.IO.Path.PathFacts facts = System.IO.Path.GetFacts(joined.View());
+            if (!IsTextExtension(facts.Extension()))
+            {
+                return 10;
+            }
+
+            if (!IsBetaBaseName(facts.BaseName()))
+            {
+                return 11;
+            }
+
+            if (!IsAlphaDirectory(facts.DirectoryName()))
+            {
+                return 12;
+            }
+
+            if (facts.PathLength() != 14 || facts.ExtensionLength() != 4 || facts.BaseNameLength() != 4 || facts.DirectoryNameLength() != 5)
+            {
+                return 13;
+            }
+
+            if (!MemoryOk(System.IO.Path.TryJoin(joined, "alpha/", "/beta.txt")))
+            {
+                return 6;
+            }
+
+            if (!IsJoinedPath(joined.View()))
+            {
+                return 7;
+            }
+
+            if (!IsOwnedJoinedPath(System.IO.Path.Join("alpha", "beta.txt")))
+            {
+                return 8;
+            }
+
+            if (!IsOwnedJoinedPath(System.IO.Path.Join("alpha/", "/beta.txt")))
+            {
+                return 9;
+            }
+
+            return 0;
+        }
+        """);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Ported from SystemIOPathPackagedStandardLibraryTests.PackagedStdLibWindowsUnicodePathsCurrentDirectoryAndOwnedUnicodeWritesWorkWithoutSource.
+internal fn bool PackagedStdLibWindowsUnicodePathsCurrentDirectoryAndOwnedUnicodeWritesWorkWithoutSourceImpl()
+{
+    // PORT-NOTE: original is Windows-only: it builds System.lib via the CLI (--emit-lib),
+    // compiles the app against that packaged image (--emit-exe), runs the produced binary in a
+    // working directory whose name contains non-ASCII characters, and asserts process exit code
+    // 0 with empty stdout/stderr plus on-disk file effects (cwd.txt contents, renamed-β.txt
+    // contents, and the absence of owned-α.txt / delete-γ.txt). The compile-only host bridge
+    // cannot build a library, select a packaged image, link, run, or observe file-system effects,
+    // so this reduces to compiling the embedded app program and asserting it succeeds.
+    stack mut ProgramCompile c = CompileProgram("packaged-windows-unicode-paths-cwd-owned-writes", raw"""
+        import System
+        import System.Text
+        module App
+
+        fn bool StatusOk(System.IO.IOStatus status)
+        {
+            switch (status)
+            {
+                case System.IO.IOStatus.Ok:
+                    return true;
+                case System.IO.IOStatus.Err(var error):
+                    return false;
+            }
+        }
+
+        fn bool BoolOrFalse(System.IO.IOResult<bool> result)
+        {
+            switch (result)
+            {
+                case System.IO.IOResult<bool>.Ok(var value):
+                    return value;
+                case System.IO.IOResult<bool>.Err(var error):
+                    return false;
+            }
+        }
+
+        fn bool MemoryOk(System.Memory.MemoryStatus status)
+        {
+            switch (status)
+            {
+                case System.Memory.MemoryStatus.Ok:
+                    return true;
+                case System.Memory.MemoryStatus.Err(var error):
+                    return false;
+            }
+        }
+
+        fn System.IO.File.File OpenOrEmpty(System.IO.IOResult<System.IO.File.File> result)
+        {
+            switch (result)
+            {
+                case System.IO.IOResult<System.IO.File.File>.Ok(var value):
+                    return value;
+                case System.IO.IOResult<System.IO.File.File>.Err(var error):
+                    return new();
+            }
+        }
+
+        export unsafe fn i32[min max] main()
+        {
+            stack mut System.Text.OwnedAscii cwd = new();
+            stack mut i8[min max][12] ownedNameBytes =
+            {
+                111, 119, 110, 101, 100, 45, -50, -79, 46, 116, 120, 116
+            };
+            stack mut Ascii ownedName = new Ascii()
+            {
+                Data = &ownedNameBytes[0],
+                Length = 12,
+                Capacity = 12
+            };
+            stack mut i8[min max][14] renamedNameBytes =
+            {
+                114, 101, 110, 97, 109, 101, 100, 45, -50, -78, 46, 116, 120, 116
+            };
+            stack mut Ascii renamedName = new Ascii()
+            {
+                Data = &renamedNameBytes[0],
+                Length = 14,
+                Capacity = 14
+            };
+            stack mut i8[min max][13] deleteNameBytes =
+            {
+                100, 101, 108, 101, 116, 101, 45, -50, -77, 46, 116, 120, 116
+            };
+            stack mut Ascii deleteName = new Ascii()
+            {
+                Data = &deleteNameBytes[0],
+                Length = 13,
+                Capacity = 13
+            };
+
+            if (!MemoryOk(System.IO.Path.CurrentDirectory(cwd)))
+            {
+                return 1;
+            }
+
+            stack mut System.IO.File.File cwdFile = OpenOrEmpty(System.IO.File.Open("cwd.txt", System.IO.File.FileMode.Write, System.IO.File.FileBuffering.Line));
+            cwdFile.WriteLine(cwd.View());
+            if (!StatusOk(cwdFile.Close()))
+            {
+                return 3;
+            }
+
+            stack mut System.IO.File.File file = OpenOrEmpty(System.IO.File.Open(System.Text.AsciiView(ownedName), System.IO.File.FileMode.Write, System.IO.File.FileBuffering.Line));
+            file.WriteLine((unicode)"Owned");
+            if (!StatusOk(file.Close()))
+            {
+                return 4;
+            }
+
+            ownedName = new Ascii()
+            {
+                Data = &ownedNameBytes[0],
+                Length = 12,
+                Capacity = 12
+            };
+            if (!BoolOrFalse(System.IO.File.Exists(System.Text.AsciiView(ownedName))))
+            {
+                return 5;
+            }
+
+            ownedName = new Ascii()
+            {
+                Data = &ownedNameBytes[0],
+                Length = 12,
+                Capacity = 12
+            };
+            renamedName = new Ascii()
+            {
+                Data = &renamedNameBytes[0],
+                Length = 14,
+                Capacity = 14
+            };
+            if (!StatusOk(System.IO.File.Move(System.Text.AsciiView(ownedName), System.Text.AsciiView(renamedName))))
+            {
+                return 6;
+            }
+
+            renamedName = new Ascii()
+            {
+                Data = &renamedNameBytes[0],
+                Length = 14,
+                Capacity = 14
+            };
+            if (!BoolOrFalse(System.IO.File.Exists(System.Text.AsciiView(renamedName))))
+            {
+                return 7;
+            }
+
+            stack mut System.IO.File.File deleteFile = OpenOrEmpty(System.IO.File.Open(System.Text.AsciiView(deleteName), System.IO.File.FileMode.Write, System.IO.File.FileBuffering.Line));
+            deleteFile.WriteLine("Delete");
+            if (!StatusOk(deleteFile.Close()))
+            {
+                return 9;
+            }
+
+            deleteName = new Ascii()
+            {
+                Data = &deleteNameBytes[0],
+                Length = 13,
+                Capacity = 13
+            };
+            if (!StatusOk(System.IO.File.Delete(System.Text.AsciiView(deleteName))))
+            {
+                return 10;
+            }
+
+            deleteName = new Ascii()
+            {
+                Data = &deleteNameBytes[0],
+                Length = 13,
+                Capacity = 13
+            };
+            if (BoolOrFalse(System.IO.File.Exists(System.Text.AsciiView(deleteName))))
+            {
+                return 11;
+            }
+
+            return 0;
+        }
+        """);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    return true;
+}

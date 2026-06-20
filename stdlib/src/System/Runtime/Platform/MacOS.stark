@@ -1,3 +1,4 @@
+import System.C
 import System.Runtime.Buffer
 import System.Memory
 module System.Runtime.Platform.MacOS
@@ -34,6 +35,20 @@ internal struct MacOSHandle
     rawmutptr<i8[min max]> AllocationPointer;
 }
 
+// One pointer-sized slot of a C string vector (argv/environ), so slot tables
+// can be walked without nested raw pointer locals.
+internal struct MacOSCStringSlot
+{
+    rawmutptr<i8[min max]> Pointer;
+}
+
+internal struct MacOSThreadContext
+{
+    fnptr<unsafe fn i32[min max](rawmutptr<i8[min max]>)> Entry;
+    rawmutptr<i8[min max]> Context;
+    fnptr<fn i32[min max]()> ThreadEntry;
+}
+
 internal unsafe ffi fn void exit(i32[min max] status);
 internal unsafe ffi fn i32[min max] getpid();
 internal unsafe ffi varargs fn i32[min max] open(rawptr<i8[min max]> path, i32[min max] flags);
@@ -45,7 +60,13 @@ internal unsafe ffi fn i64[min max] lseek(i32[min max] fileDescriptor, i64[min m
 internal unsafe ffi fn i32[min max] unlink(rawptr<i8[min max]> path);
 internal unsafe ffi fn i32[min max] rename(rawptr<i8[min max]> oldPath, rawptr<i8[min max]> newPath);
 internal unsafe ffi fn i32[min max] stat(rawptr<i8[min max]> path, rawmutptr<i8[min max]> buffer);
+internal unsafe ffi fn i32[min max] lstat(rawptr<i8[min max]> path, rawmutptr<i8[min max]> buffer);
+internal unsafe ffi fn i64[min max] readlink(rawptr<i8[min max]> path, rawmutptr<i8[min max]> buffer, u64[0 2 ** 63 - 1] bufferSize)
+    where overlap(path, buffer);
+internal unsafe ffi fn i32[min max] symlink(rawptr<i8[min max]> target, rawptr<i8[min max]> linkPath)
+    where overlap(target, linkPath);
 internal unsafe ffi fn i32[min max] mkdir(rawptr<i8[min max]> path, i32[min max] mode);
+internal unsafe ffi fn i32[min max] chmod(rawptr<i8[min max]> path, i32[min max] mode);
 internal unsafe ffi fn i32[min max] rmdir(rawptr<i8[min max]> path);
 internal unsafe ffi fn rawmutptr<i8[min max]> getcwd(rawmutptr<i8[min max]> buffer, u64[0 2 ** 63 - 1] size);
 internal unsafe ffi fn i32[min max] isatty(i32[min max] fileDescriptor);
@@ -55,12 +76,13 @@ internal unsafe ffi fn i32[min max] closedir(rawptr<i8[min max]> directory);
 internal unsafe ffi fn i32[min max] pthread_create(
     rawmutptr<rawmutptr<i8[min max]>> thread,
     rawptr<i8[min max]> attributes,
-    fnptr<fn rawmutptr<i8[min max]>(fnptr<fn i32[min max]()>)> start,
-    fnptr<fn i32[min max]()> argument);
+    fnptr<unsafe ffi(c) fn rawmutptr<i8[min max]>(rawmutptr<i8[min max]>)> start,
+    rawmutptr<i8[min max]> argument);
 internal unsafe ffi fn i32[min max] pthread_join(rawmutptr<i8[min max]> thread, rawmutptr<rawmutptr<i8[min max]>> value);
 internal unsafe ffi fn i32[min max] pthread_detach(rawmutptr<i8[min max]> thread);
 internal unsafe ffi fn i32[min max] sched_yield();
 internal unsafe ffi fn i32[min max] nanosleep(rawptr<MacOSTimespec> request, rawptr<MacOSTimespec> remaining);
+internal unsafe ffi fn i32[min max] clock_gettime(i32[min max] clockId, rawmutptr<MacOSTimespec> time);
 internal unsafe ffi fn i32[min max] socket(i32[min max] domain, i32[min max] socketType, i32[min max] protocol);
 internal unsafe ffi fn i32[min max] connect(i32[min max] socketHandle, rawptr<i8[min max]> address, i32[min max] addressLength);
 internal unsafe ffi fn i32[min max] bind(i32[min max] socketHandle, rawptr<i8[min max]> address, i32[min max] addressLength);
@@ -77,6 +99,30 @@ internal unsafe ffi fn i32[min max] poll(rawmutptr<MacOSPollFd> descriptors, i32
 internal unsafe ffi fn i32[min max] os_sync_wait_on_address(rawmutptr<i8[min max]> address, i64[min max] value, u64[0 2 ** 63 - 1] size, i32[min max] flags);
 internal unsafe ffi fn i32[min max] os_sync_wake_by_address_any(rawmutptr<i8[min max]> address, u64[0 2 ** 63 - 1] size, i32[min max] flags);
 internal unsafe ffi fn i32[min max] os_sync_wake_by_address_all(rawmutptr<i8[min max]> address, u64[0 2 ** 63 - 1] size, i32[min max] flags);
+internal unsafe ffi fn rawmutptr<i32[min max]> __error();
+internal unsafe ffi fn i32[min max] chdir(rawptr<System.C.c_char> path);
+internal unsafe ffi fn i32[min max] dup2(i32[min max] oldFileDescriptor, i32[min max] newFileDescriptor);
+internal unsafe ffi fn rawptr<System.C.c_char> getenv(rawptr<System.C.c_char> name);
+internal unsafe ffi fn i32[min max] kill(i32[min max] processId, i32[min max] signal);
+internal unsafe ffi fn i32[min max] pipe(rawmutptr<i32[min max]> fileDescriptors);
+internal unsafe ffi fn i32[min max] setenv(rawptr<System.C.c_char> name, rawptr<System.C.c_char> value, i32[min max] overwrite);
+internal unsafe ffi fn i32[min max] unsetenv(rawptr<System.C.c_char> name);
+internal unsafe ffi fn i32[min max] waitpid(i32[min max] processId, rawmutptr<i32[min max]> status, i32[min max] options);
+internal unsafe ffi fn i32[min max] posix_spawnp(
+    rawmutptr<i32[min max]> processId,
+    rawptr<System.C.c_char> file,
+    rawptr<rawmutptr<i8[min max]>> fileActions,
+    rawptr<i8[min max]> attributes,
+    rawptr<rawptr<System.C.c_char>> argv,
+    rawmutptr<MacOSCStringSlot> envp);
+internal unsafe ffi fn i32[min max] posix_spawn_file_actions_init(rawmutptr<rawmutptr<i8[min max]>> fileActions);
+internal unsafe ffi fn i32[min max] posix_spawn_file_actions_destroy(rawmutptr<rawmutptr<i8[min max]>> fileActions);
+internal unsafe ffi fn i32[min max] posix_spawn_file_actions_adddup2(rawmutptr<rawmutptr<i8[min max]>> fileActions, i32[min max] fileDescriptor, i32[min max] targetDescriptor);
+internal unsafe ffi fn i32[min max] posix_spawn_file_actions_addclose(rawmutptr<rawmutptr<i8[min max]>> fileActions, i32[min max] fileDescriptor);
+internal unsafe ffi fn i32[min max] posix_spawn_file_actions_addchdir_np(rawmutptr<rawmutptr<i8[min max]>> fileActions, rawptr<System.C.c_char> path);
+internal unsafe ffi fn rawmutptr<i32[min max]> _NSGetArgc();
+internal unsafe ffi fn rawmutptr<rawmutptr<MacOSCStringSlot>> _NSGetArgv();
+internal unsafe ffi fn rawmutptr<rawmutptr<MacOSCStringSlot>> _NSGetEnviron();
 
 const MacOSPathBufferCapacity = 4096;
 const MacOSOpenReadOnlyFlag = 0;
@@ -84,14 +130,24 @@ const MacOSOpenWriteOnlyFlag = 1;
 const MacOSOpenReadWriteFlag = 2;
 const MacOSOpenAppendFlag = 8;
 const MacOSOpenCreateFlag = 512;
+const MacOSOpenExclusiveFlag = 2048;
 const MacOSOpenTruncateFlag = 1024;
 const MacOSOpenCloseOnExecFlag = 16777216;
 const MacOSDefaultCreateMode = 420;
 const MacOSDefaultDirectoryMode = 493;
 const MacOSStatModeOffset = 4;
+const MacOSStatModifiedSecondsOffset = 48;
+const MacOSStatModifiedNanosecondsOffset = 56;
+const MacOSStatSizeOffset = 96;
 const MacOSStatTypeMask = 61440;
 const MacOSStatRegularType = 32768;
 const MacOSStatDirectoryType = 16384;
+const MacOSStatSymlinkType = 40960;
+const MacOSPathMetadataKindOffset = 0;
+const MacOSPathMetadataPermissionsOffset = 4;
+const MacOSPathMetadataSizeOffset = 8;
+const MacOSPathMetadataModifiedSecondsOffset = 16;
+const MacOSPathMetadataModifiedNanosecondsOffset = 24;
 const MacOSAddressFamilyInet = 2;
 const MacOSSocketStream = 1;
 const MacOSSocketProtocolTcp = 6;
@@ -112,10 +168,33 @@ const MacOSDirectoryEntryDirectoryType = 4;
 const MacOSDirectoryEntrySymlinkType = 10;
 const MacOSSyncAddressSizeI32 = 4;
 const MacOSSyncAddressDefaultFlags = 0;
+const MacOSWaitNoHangOption = 1;
+const MacOSSignalKill = 9;
+const MacOSPollErrorEvent = 8;
+const MacOSPollHangupEvent = 16;
+const MacOSProcessArgumentMaxLength = 1048576;
+
+internal enum FileOpenResult
+{
+    Ok(rawptr<i8[min max]>),
+    Err(i32[min max]),
+}
 
 internal unsafe fn i32[min max] NegativeErrno()
 {
-    return -1;
+    stack rawmutptr<i32[min max]> errorPointer = __error();
+    if (errorPointer == null)
+    {
+        return -1;
+    }
+
+    stack i32[min max] error = *errorPointer;
+    if (error <= 0)
+    {
+        return -1;
+    }
+
+    return -error;
 }
 
 internal unsafe fn rawptr<i8[min max]> FdToHandle(i32[min max] fileDescriptor)
@@ -234,6 +313,27 @@ internal inline fn i32[min max] DirectoryEntryKindFromMacOSType(i32[min max] ent
     }
 
     if (entryType == MacOSDirectoryEntrySymlinkType)
+    {
+        return 3;
+    }
+
+    return 0;
+}
+
+internal inline finite law i32[min max] DirectoryEntryKindFromMacOSMode(i32[min max] mode)
+{
+    stack i32[min max] fileType = mode & MacOSStatTypeMask;
+    if (fileType == MacOSStatRegularType)
+    {
+        return 1;
+    }
+
+    if (fileType == MacOSStatDirectoryType)
+    {
+        return 2;
+    }
+
+    if (fileType == MacOSStatSymlinkType)
     {
         return 3;
     }
@@ -741,7 +841,7 @@ internal unsafe fn i32[min max] WriteStderrBytesLine(rawptr<i8[min max]>[length]
     return WriteBufferLineToFd(2, data, length);
 }
 
-internal unsafe fn rawptr<i8[min max]> OpenFileWithFlags(ascii path, i32[min max] flags, i32[min max] mode)
+internal unsafe fn FileOpenResult OpenFileWithFlagsResult(ascii path, i32[min max] flags, i32[min max] mode)
 {
     stack mut System.Runtime.Buffer.FixedByteBuffer4096 pathBuffer = new System.Runtime.Buffer.FixedByteBuffer4096();
     stack mut Ascii preparedPath = new Ascii();
@@ -751,16 +851,33 @@ internal unsafe fn rawptr<i8[min max]> OpenFileWithFlags(ascii path, i32[min max
 
     if (!TryBuildMacOSPath(&preparedPath, path))
     {
-        return null;
+        return FileOpenResult.Err(-36);
     }
 
     stack i32[min max] fileDescriptor = open(preparedPath.Data, flags, mode);
     if (fileDescriptor < 0)
     {
-        return null;
+        return FileOpenResult.Err(NegativeErrno());
     }
 
-    return FdToHandle(fileDescriptor);
+    stack rawptr<i8[min max]> handle = FdToHandle(fileDescriptor);
+    if (handle == null)
+    {
+        return FileOpenResult.Err(-12);
+    }
+
+    return FileOpenResult.Ok(handle);
+}
+
+internal unsafe fn rawptr<i8[min max]> OpenFileWithFlags(ascii path, i32[min max] flags, i32[min max] mode)
+{
+    switch (OpenFileWithFlagsResult(path, flags, mode))
+    {
+        case FileOpenResult.Ok(var handle):
+            return handle;
+        case FileOpenResult.Err(var error):
+            return null;
+    }
 }
 
 internal unsafe fn rawptr<i8[min max]> OpenStdin()
@@ -846,11 +963,40 @@ internal unsafe fn rawptr<i8[min max]> OpenFileRead(ascii path)
     return OpenFileWithFlags(path, (i32[min max])(MacOSOpenReadOnlyFlag | MacOSOpenCloseOnExecFlag), 0);
 }
 
+internal unsafe fn FileOpenResult OpenFileReadResult(ascii path)
+{
+    return OpenFileWithFlagsResult(path, (i32[min max])(MacOSOpenReadOnlyFlag | MacOSOpenCloseOnExecFlag), 0);
+}
+
 internal unsafe fn rawptr<i8[min max]> OpenFileWrite(ascii path)
 {
     return OpenFileWithFlags(
         path,
         (i32[min max])(MacOSOpenWriteOnlyFlag | MacOSOpenCreateFlag | MacOSOpenTruncateFlag | MacOSOpenCloseOnExecFlag),
+        MacOSDefaultCreateMode);
+}
+
+internal unsafe fn FileOpenResult OpenFileWriteResult(ascii path)
+{
+    return OpenFileWithFlagsResult(
+        path,
+        (i32[min max])(MacOSOpenWriteOnlyFlag | MacOSOpenCreateFlag | MacOSOpenTruncateFlag | MacOSOpenCloseOnExecFlag),
+        MacOSDefaultCreateMode);
+}
+
+internal unsafe fn rawptr<i8[min max]> OpenFileCreateNew(ascii path)
+{
+    return OpenFileWithFlags(
+        path,
+        (i32[min max])(MacOSOpenWriteOnlyFlag | MacOSOpenCreateFlag | MacOSOpenExclusiveFlag | MacOSOpenCloseOnExecFlag),
+        MacOSDefaultCreateMode);
+}
+
+internal unsafe fn FileOpenResult OpenFileCreateNewResult(ascii path)
+{
+    return OpenFileWithFlagsResult(
+        path,
+        (i32[min max])(MacOSOpenWriteOnlyFlag | MacOSOpenCreateFlag | MacOSOpenExclusiveFlag | MacOSOpenCloseOnExecFlag),
         MacOSDefaultCreateMode);
 }
 
@@ -862,9 +1008,22 @@ internal unsafe fn rawptr<i8[min max]> OpenFileAppend(ascii path)
         MacOSDefaultCreateMode);
 }
 
+internal unsafe fn FileOpenResult OpenFileAppendResult(ascii path)
+{
+    return OpenFileWithFlagsResult(
+        path,
+        (i32[min max])(MacOSOpenWriteOnlyFlag | MacOSOpenCreateFlag | MacOSOpenAppendFlag | MacOSOpenCloseOnExecFlag),
+        MacOSDefaultCreateMode);
+}
+
 internal unsafe fn rawptr<i8[min max]> OpenFileReadWrite(ascii path)
 {
     return OpenFileWithFlags(path, (i32[min max])(MacOSOpenReadWriteFlag | MacOSOpenCloseOnExecFlag), 0);
+}
+
+internal unsafe fn FileOpenResult OpenFileReadWriteResult(ascii path)
+{
+    return OpenFileWithFlagsResult(path, (i32[min max])(MacOSOpenReadWriteFlag | MacOSOpenCloseOnExecFlag), 0);
 }
 
 internal unsafe inline fn i32[min max] CloseFile(rawptr<i8[min max]> handle)
@@ -905,6 +1064,74 @@ internal unsafe fn i32[min max] FlushFile(rawptr<i8[min max]> handle)
     }
 
     return NegativeErrno();
+}
+
+// Darwin's CLOCK_MONOTONIC is 6 (Linux uses 1).
+const MacOSClockMonotonic = 6;
+
+internal unsafe fn i64[min max] MonotonicMilliseconds()
+{
+    stack mut MacOSTimespec time = new MacOSTimespec()
+    {
+        Seconds = 0,
+        Nanoseconds = 0
+    };
+    stack i32[min max] result = clock_gettime(MacOSClockMonotonic, &time);
+    if (result != 0)
+    {
+        return (i64[min max])result;
+    }
+
+    return (time.Seconds * 1000) + (time.Nanoseconds / 1000000);
+}
+
+// Raw numeric descriptors (process pipes) are not MacOSHandle allocations, so
+// they close and transfer bytes through the descriptor-based libc calls.
+internal unsafe fn i32[min max] CloseRawDescriptor(i32[min max] descriptor)
+{
+    if (descriptor < 0)
+    {
+        return -1;
+    }
+
+    if (close(descriptor) == 0)
+    {
+        return 0;
+    }
+
+    return NegativeErrno();
+}
+
+internal unsafe fn i64[min max] ReadRawDescriptorBytes(rawmutptr<i8[min max]>[length] buffer, u64[0 2 ** 63 - 1] length, i32[min max] descriptor)
+{
+    if (buffer == null || descriptor < 0)
+    {
+        return -1;
+    }
+
+    stack i64[min max] result = read(descriptor, buffer, length);
+    if (result < 0)
+    {
+        return (i64[min max])NegativeErrno();
+    }
+
+    return result;
+}
+
+internal unsafe fn i64[min max] WriteRawDescriptorBytes(rawptr<i8[min max]>[length] buffer, u64[0 2 ** 63 - 1] length, i32[min max] descriptor)
+{
+    if (buffer == null || descriptor < 0)
+    {
+        return -1;
+    }
+
+    stack i64[min max] result = write(descriptor, buffer, length);
+    if (result < 0)
+    {
+        return (i64[min max])NegativeErrno();
+    }
+
+    return result;
 }
 
 internal unsafe fn i64[min max] ReadFile(rawmutptr<i8[min max]> buffer, i64[min max] size, i64[min max] count, rawptr<i8[min max]> handle)
@@ -1133,6 +1360,216 @@ internal fn bool IsFile(ascii path)
         }
 
         return (mode & MacOSStatTypeMask) == MacOSStatRegularType;
+    }
+}
+
+internal unsafe fn i32[min max] ReadPathMetadata(ascii path, rawmutptr<i8[min max]> metadataData)
+{
+    if (metadataData == null)
+    {
+        return -1;
+    }
+
+    stack mut System.Runtime.Buffer.FixedByteBuffer4096 pathBuffer = new System.Runtime.Buffer.FixedByteBuffer4096();
+    stack mut System.Runtime.Buffer.FixedByteBuffer512 statBuffer = new System.Runtime.Buffer.FixedByteBuffer512();
+    stack mut Ascii preparedPath = new Ascii();
+    preparedPath.Data = pathBuffer.WritePointer();
+    preparedPath.Length = 0;
+    preparedPath.Capacity = pathBuffer.Writable();
+
+    if (!TryBuildMacOSPath(&preparedPath, path))
+    {
+        return -1;
+    }
+
+    stack rawmutptr<i8[min max]> statData = statBuffer.WritePointer();
+    if (statData == null)
+    {
+        return -1;
+    }
+
+    if (stat(preparedPath.Data, statData) != 0)
+    {
+        return NegativeErrno();
+    }
+
+    stack rawptr<i16[min max]> modePointer = (rawptr<i16[min max]>)(&statData[MacOSStatModeOffset]);
+    stack rawptr<i64[min max]> sizePointer = (rawptr<i64[min max]>)(&statData[MacOSStatSizeOffset]);
+    stack rawptr<i64[min max]> modifiedSecondsPointer =
+        (rawptr<i64[min max]>)(&statData[MacOSStatModifiedSecondsOffset]);
+    stack rawptr<i64[min max]> modifiedNanosecondsPointer =
+        (rawptr<i64[min max]>)(&statData[MacOSStatModifiedNanosecondsOffset]);
+
+    stack i32[min max] mode = UnsignedShort(*modePointer);
+    stack mut i64[min max] size = *sizePointer;
+    if (size < 0)
+    {
+        size = 0;
+    }
+
+    stack rawmutptr<i32[min max]> kindPointer =
+        (rawmutptr<i32[min max]>)(&metadataData[MacOSPathMetadataKindOffset]);
+    stack rawmutptr<i32[min max]> permissionsPointer =
+        (rawmutptr<i32[min max]>)(&metadataData[MacOSPathMetadataPermissionsOffset]);
+    stack rawmutptr<i64[min max]> sizeDestination =
+        (rawmutptr<i64[min max]>)(&metadataData[MacOSPathMetadataSizeOffset]);
+    stack rawmutptr<i64[min max]> modifiedSecondsDestination =
+        (rawmutptr<i64[min max]>)(&metadataData[MacOSPathMetadataModifiedSecondsOffset]);
+    stack rawmutptr<i64[min max]> modifiedNanosecondsDestination =
+        (rawmutptr<i64[min max]>)(&metadataData[MacOSPathMetadataModifiedNanosecondsOffset]);
+
+    *kindPointer = DirectoryEntryKindFromMacOSMode(mode);
+    *permissionsPointer = mode & 4095;
+    *sizeDestination = size;
+    *modifiedSecondsDestination = *modifiedSecondsPointer;
+    *modifiedNanosecondsDestination = *modifiedNanosecondsPointer;
+    return 0;
+}
+
+internal unsafe fn i32[min max] ReadLinkMetadata(ascii path, rawmutptr<i8[min max]> metadataData)
+{
+    if (metadataData == null)
+    {
+        return -1;
+    }
+
+    stack mut System.Runtime.Buffer.FixedByteBuffer4096 pathBuffer = new System.Runtime.Buffer.FixedByteBuffer4096();
+    stack mut System.Runtime.Buffer.FixedByteBuffer512 statBuffer = new System.Runtime.Buffer.FixedByteBuffer512();
+    stack mut Ascii preparedPath = new Ascii();
+    preparedPath.Data = pathBuffer.WritePointer();
+    preparedPath.Length = 0;
+    preparedPath.Capacity = pathBuffer.Writable();
+
+    if (!TryBuildMacOSPath(&preparedPath, path))
+    {
+        return -1;
+    }
+
+    stack rawmutptr<i8[min max]> statData = statBuffer.WritePointer();
+    if (statData == null)
+    {
+        return -1;
+    }
+
+    if (lstat(preparedPath.Data, statData) != 0)
+    {
+        return NegativeErrno();
+    }
+
+    stack rawptr<i16[min max]> modePointer = (rawptr<i16[min max]>)(&statData[MacOSStatModeOffset]);
+    stack rawptr<i64[min max]> sizePointer = (rawptr<i64[min max]>)(&statData[MacOSStatSizeOffset]);
+    stack rawptr<i64[min max]> modifiedSecondsPointer =
+        (rawptr<i64[min max]>)(&statData[MacOSStatModifiedSecondsOffset]);
+    stack rawptr<i64[min max]> modifiedNanosecondsPointer =
+        (rawptr<i64[min max]>)(&statData[MacOSStatModifiedNanosecondsOffset]);
+
+    stack i32[min max] mode = UnsignedShort(*modePointer);
+    stack mut i64[min max] size = *sizePointer;
+    if (size < 0)
+    {
+        size = 0;
+    }
+
+    stack rawmutptr<i32[min max]> kindPointer =
+        (rawmutptr<i32[min max]>)(&metadataData[MacOSPathMetadataKindOffset]);
+    stack rawmutptr<i32[min max]> permissionsPointer =
+        (rawmutptr<i32[min max]>)(&metadataData[MacOSPathMetadataPermissionsOffset]);
+    stack rawmutptr<i64[min max]> sizeDestination =
+        (rawmutptr<i64[min max]>)(&metadataData[MacOSPathMetadataSizeOffset]);
+    stack rawmutptr<i64[min max]> modifiedSecondsDestination =
+        (rawmutptr<i64[min max]>)(&metadataData[MacOSPathMetadataModifiedSecondsOffset]);
+    stack rawmutptr<i64[min max]> modifiedNanosecondsDestination =
+        (rawmutptr<i64[min max]>)(&metadataData[MacOSPathMetadataModifiedNanosecondsOffset]);
+
+    *kindPointer = DirectoryEntryKindFromMacOSMode(mode);
+    *permissionsPointer = mode & 4095;
+    *sizeDestination = size;
+    *modifiedSecondsDestination = *modifiedSecondsPointer;
+    *modifiedNanosecondsDestination = *modifiedNanosecondsPointer;
+    return 0;
+}
+
+internal unsafe fn i64[min max] ReadSymlinkInto(
+    ascii path,
+    rawmutptr<i8[min max]>[capacity] buffer,
+    u64[0 2 ** 63 - 1] capacity)
+{
+    if (buffer == null || capacity == 0)
+    {
+        return -1;
+    }
+
+    stack mut System.Runtime.Buffer.FixedByteBuffer4096 pathBuffer = new System.Runtime.Buffer.FixedByteBuffer4096();
+    stack mut Ascii preparedPath = new Ascii();
+    preparedPath.Data = pathBuffer.WritePointer();
+    preparedPath.Length = 0;
+    preparedPath.Capacity = pathBuffer.Writable();
+
+    if (!TryBuildMacOSPath(&preparedPath, path))
+    {
+        return -1;
+    }
+
+    stack i64[min max] written = readlink(preparedPath.Data, (rawmutptr<i8[min max]>)buffer, capacity);
+    if (written < 0)
+    {
+        return (i64[min max])NegativeErrno();
+    }
+
+    return written;
+}
+
+internal fn i32[min max] CreateSymlink(ascii target, ascii linkPath)
+{
+    unsafe
+    {
+        stack mut System.Runtime.Buffer.FixedByteBuffer4096 targetBuffer = new System.Runtime.Buffer.FixedByteBuffer4096();
+        stack mut System.Runtime.Buffer.FixedByteBuffer4096 linkBuffer = new System.Runtime.Buffer.FixedByteBuffer4096();
+        stack mut Ascii preparedTarget = new Ascii();
+        preparedTarget.Data = targetBuffer.WritePointer();
+        preparedTarget.Length = 0;
+        preparedTarget.Capacity = targetBuffer.Writable();
+        stack mut Ascii preparedLink = new Ascii();
+        preparedLink.Data = linkBuffer.WritePointer();
+        preparedLink.Length = 0;
+        preparedLink.Capacity = linkBuffer.Writable();
+
+        if (!TryBuildMacOSPath(&preparedTarget, target)
+            || !TryBuildMacOSPath(&preparedLink, linkPath))
+            {
+            return -1;
+        }
+
+        if (symlink(preparedTarget.Data, preparedLink.Data) == 0)
+        {
+            return 0;
+        }
+
+        return NegativeErrno();
+    }
+}
+
+internal fn i32[min max] SetPermissions(ascii path, i32[min max] mode)
+{
+    unsafe
+    {
+        stack mut System.Runtime.Buffer.FixedByteBuffer4096 pathBuffer = new System.Runtime.Buffer.FixedByteBuffer4096();
+        stack mut Ascii preparedPath = new Ascii();
+        preparedPath.Data = pathBuffer.WritePointer();
+        preparedPath.Length = 0;
+        preparedPath.Capacity = pathBuffer.Writable();
+
+        if (!TryBuildMacOSPath(&preparedPath, path))
+        {
+            return -1;
+        }
+
+        if (chmod(preparedPath.Data, mode) == 0)
+        {
+            return 0;
+        }
+
+        return NegativeErrno();
     }
 }
 
@@ -1445,18 +1882,133 @@ internal unsafe fn bool TryCurrentDirectory(rawmutptr<Ascii> destination)
     return true;
 }
 
-internal unsafe ffi fn rawmutptr<i8[min max]> ThreadEntryThunk(fnptr<fn i32[min max]()> entry)
+internal unsafe fn bool TryTempDirectory(rawmutptr<Ascii> destination)
 {
-    stack i32[min max] exitCode = entry();
+    if (destination == null)
+    {
+        return false;
+    }
+
+    stack rawmutptr<i8[min max]> data = (*destination).Data;
+    stack i64[min max] capacity = (*destination).Capacity;
+    if (data == null || capacity < 4)
+    {
+        *destination = new Ascii()
+        {
+            Data = data,
+            Length = 0,
+            Capacity = capacity
+        };
+        return false;
+    }
+
+    *(&data[0]) = (i8[min max])47;
+    *(&data[1]) = (i8[min max])116;
+    *(&data[2]) = (i8[min max])109;
+    *(&data[3]) = (i8[min max])112;
+
+    *destination = new Ascii()
+    {
+        Data = data,
+        Length = 4,
+        Capacity = capacity
+    };
+    return true;
+}
+
+internal fn i32[min max] ThreadNullEntry()
+{
+    return -1;
+}
+
+internal unsafe fn i32[min max] ThreadNoPayloadContextEntry(rawmutptr<i8[min max]> context)
+{
+    if (context == null)
+    {
+        return -1;
+    }
+
+    stack rawmutptr<MacOSThreadContext> typedContext = (rawmutptr<MacOSThreadContext>)context;
+    return (*typedContext).ThreadEntry();
+}
+
+internal unsafe ffi(c) fn rawmutptr<i8[min max]> ThreadEntryThunk(rawmutptr<i8[min max]> context)
+{
+    if (context == null)
+    {
+        return null;
+    }
+
+    stack rawmutptr<MacOSThreadContext> typedContext = (rawmutptr<MacOSThreadContext>)context;
+    stack rawmutptr<i8[min max]> entryContext = (*typedContext).Context;
+    stack i32[min max] exitCode = (*typedContext).Entry(entryContext);
+    stack System.Memory.Allocation allocation = new System.Memory.Allocation()
+    {
+        Pointer = context,
+        ByteLength = (u64[0 2 ** 63 - 1])sizeof(MacOSThreadContext),
+        Alignment = alignof(MacOSThreadContext),
+        Allocator = System.Memory.Allocator.Default()
+    };
+    System.Memory.Free(allocation);
     return (rawmutptr<i8[min max]>)exitCode;
 }
 
 internal unsafe fn rawmutptr<i8[min max]> StartThread(fnptr<fn i32[min max]()> entry)
 {
+    stack System.Memory.Allocation allocation = System.Memory.Allocate(
+        System.Memory.Allocator.Default(),
+        (u64[0 2 ** 63 - 1])sizeof(MacOSThreadContext),
+        alignof(MacOSThreadContext));
+    if (allocation.Pointer == null)
+    {
+        return null;
+    }
+
+    stack rawmutptr<MacOSThreadContext> context = (rawmutptr<MacOSThreadContext>)allocation.Pointer;
+    *context = new MacOSThreadContext()
+    {
+        Entry = ThreadNoPayloadContextEntry,
+        Context = allocation.Pointer,
+        ThreadEntry = entry
+    };
+
     stack mut rawmutptr<i8[min max]> thread = null;
-    stack i32[min max] result = pthread_create(&thread, null, ThreadEntryThunk, entry);
+    stack i32[min max] result = pthread_create(&thread, null, ThreadEntryThunk, allocation.Pointer);
     if (result != 0)
     {
+        System.Memory.Free(allocation);
+        return null;
+    }
+
+    return thread;
+}
+
+internal unsafe fn rawmutptr<i8[min max]> StartThreadWithContext(
+    fnptr<unsafe fn i32[min max](rawmutptr<i8[min max]>)> entry,
+    rawmutptr<i8[min max]> context)
+{
+    stack System.Memory.Allocation allocation = System.Memory.Allocate(
+        System.Memory.Allocator.Default(),
+        (u64[0 2 ** 63 - 1])sizeof(MacOSThreadContext),
+        alignof(MacOSThreadContext));
+    if (allocation.Pointer == null)
+    {
+        return null;
+    }
+
+    stack rawmutptr<MacOSThreadContext> threadContext = (rawmutptr<MacOSThreadContext>)allocation.Pointer;
+    *threadContext = new MacOSThreadContext()
+    {
+        Entry = entry,
+        Context = context,
+        ThreadEntry = ThreadNullEntry
+    };
+
+    stack mut rawmutptr<i8[min max]> thread = null;
+    stack i32[min max] result = pthread_create(&thread, null, ThreadEntryThunk, allocation.Pointer);
+    if (result != 0)
+    {
+        System.Memory.Free(allocation);
         return null;
     }
 
@@ -1985,4 +2537,495 @@ internal unsafe inline fn i32[min max] ShutdownSocket(rawptr<i8[min max]> handle
 internal unsafe inline fn i32[min max] CloseSocket(rawptr<i8[min max]> handle)
 {
     return CloseFile(handle);
+}
+
+internal unsafe fn void CloseProcessDescriptorIfOpen(i32[min max] descriptor)
+{
+    if (descriptor >= 0)
+    {
+        stack i32[min max] ignoredClose = CloseRawDescriptor(descriptor);
+    }
+
+    return;
+}
+
+internal unsafe fn i32[min max] CreateProcessPipe(rawmutptr<i32[min max]> fileDescriptors)
+{
+    if (fileDescriptors == null)
+    {
+        return -1;
+    }
+
+    if (pipe(fileDescriptors) != 0)
+    {
+        return NegativeErrno();
+    }
+
+    return 0;
+}
+
+internal unsafe fn bool ProcessWorkingDirectoryExists(rawptr<System.C.c_char> path)
+{
+    stack mut System.Runtime.Buffer.FixedByteBuffer512 statBuffer = new System.Runtime.Buffer.FixedByteBuffer512();
+    stack rawmutptr<i8[min max]> statData = statBuffer.WritePointer();
+    if (statData == null)
+    {
+        return false;
+    }
+
+    if (stat(path, statData) != 0)
+    {
+        return false;
+    }
+
+    stack rawptr<i16[min max]> modePointer = (rawptr<i16[min max]>)(&statData[MacOSStatModeOffset]);
+    stack i32[min max] mode = UnsignedShort(*modePointer);
+    return (mode & MacOSStatTypeMask) == MacOSStatDirectoryType;
+}
+
+// Spawns the executable with stdout/stderr (and optionally stdin) routed
+// through fresh pipes, using posix_spawnp with file actions instead of a
+// fork/exec split. Returns 0 with the child id and parent-side pipe
+// descriptors on success and a negative value when the pipes or the spawn
+// itself cannot be created. Setup and exec failures that a fork/exec backend
+// reports through the child's own exit status are returned directly as the
+// shell-convention codes: 126 for a bad working directory and 127 when the
+// executable cannot be found or run.
+internal unsafe fn i32[min max] StartProcessCapture(
+    rawptr<System.C.c_char> executable,
+    borrow rawptr<System.C.c_char>[] argv,
+    rawptr<System.C.c_char> workingDirectory,
+    bool captureStdin,
+    rawmutptr<i32[min max]> processId,
+    rawmutptr<i32[min max]> stdinDescriptor,
+    rawmutptr<i32[min max]> stdoutDescriptor,
+    rawmutptr<i32[min max]> stderrDescriptor)
+    where overlap(executable, argv),
+          overlap(executable, workingDirectory),
+          overlap(argv, workingDirectory),
+          overlap(executable, processId),
+          overlap(executable, stdinDescriptor),
+          overlap(executable, stdoutDescriptor),
+          overlap(executable, stderrDescriptor)
+{
+    if (executable == null
+        || argv.Length == 0
+        || processId == null
+        || stdinDescriptor == null
+        || stdoutDescriptor == null
+        || stderrDescriptor == null)
+    {
+        return -1;
+    }
+
+    stack mut i32[min max][2] stdinPipe;
+    stack mut i32[min max][2] stdoutPipe;
+    stack mut i32[min max][2] stderrPipe;
+    stdinPipe[0] = -1;
+    stdinPipe[1] = -1;
+    stdoutPipe[0] = -1;
+    stdoutPipe[1] = -1;
+    stderrPipe[0] = -1;
+    stderrPipe[1] = -1;
+
+    if (captureStdin)
+    {
+        stack i32[min max] stdinPipeResult = CreateProcessPipe(&stdinPipe[0]);
+        if (stdinPipeResult != 0)
+        {
+            return stdinPipeResult;
+        }
+    }
+
+    stack i32[min max] stdoutPipeResult = CreateProcessPipe(&stdoutPipe[0]);
+    if (stdoutPipeResult != 0)
+    {
+        CloseProcessDescriptorIfOpen(stdinPipe[0]);
+        CloseProcessDescriptorIfOpen(stdinPipe[1]);
+        return stdoutPipeResult;
+    }
+
+    stack i32[min max] stderrPipeResult = CreateProcessPipe(&stderrPipe[0]);
+    if (stderrPipeResult != 0)
+    {
+        CloseProcessDescriptorIfOpen(stdinPipe[0]);
+        CloseProcessDescriptorIfOpen(stdinPipe[1]);
+        CloseProcessDescriptorIfOpen(stdoutPipe[0]);
+        CloseProcessDescriptorIfOpen(stdoutPipe[1]);
+        return stderrPipeResult;
+    }
+
+    // A fork/exec backend reports a bad working directory as child exit 126,
+    // but posix_spawn folds it into the same errno space as a missing
+    // executable, so check the directory before spawning.
+    if (workingDirectory != null && !ProcessWorkingDirectoryExists(workingDirectory))
+    {
+        CloseProcessDescriptorIfOpen(stdinPipe[0]);
+        CloseProcessDescriptorIfOpen(stdinPipe[1]);
+        CloseProcessDescriptorIfOpen(stdoutPipe[0]);
+        CloseProcessDescriptorIfOpen(stdoutPipe[1]);
+        CloseProcessDescriptorIfOpen(stderrPipe[0]);
+        CloseProcessDescriptorIfOpen(stderrPipe[1]);
+        return 126;
+    }
+
+    stack mut rawmutptr<i8[min max]> fileActions = null;
+    stack i32[min max] initResult = posix_spawn_file_actions_init(&fileActions);
+    if (initResult != 0)
+    {
+        CloseProcessDescriptorIfOpen(stdinPipe[0]);
+        CloseProcessDescriptorIfOpen(stdinPipe[1]);
+        CloseProcessDescriptorIfOpen(stdoutPipe[0]);
+        CloseProcessDescriptorIfOpen(stdoutPipe[1]);
+        CloseProcessDescriptorIfOpen(stderrPipe[0]);
+        CloseProcessDescriptorIfOpen(stderrPipe[1]);
+        return -initResult;
+    }
+
+    // Mirror the fork/exec child descriptor dance in file-action order:
+    // close parent-side ends, dup the child-side ends onto 0/1/2, close the
+    // originals, then change directory last.
+    stack mut i32[min max] actionResult = 0;
+    if (captureStdin && actionResult == 0)
+    {
+        actionResult = posix_spawn_file_actions_addclose(&fileActions, stdinPipe[1]);
+    }
+
+    if (actionResult == 0)
+    {
+        actionResult = posix_spawn_file_actions_addclose(&fileActions, stdoutPipe[0]);
+    }
+
+    if (actionResult == 0)
+    {
+        actionResult = posix_spawn_file_actions_addclose(&fileActions, stderrPipe[0]);
+    }
+
+    if (captureStdin && actionResult == 0)
+    {
+        actionResult = posix_spawn_file_actions_adddup2(&fileActions, stdinPipe[0], 0);
+    }
+
+    if (actionResult == 0)
+    {
+        actionResult = posix_spawn_file_actions_adddup2(&fileActions, stdoutPipe[1], 1);
+    }
+
+    if (actionResult == 0)
+    {
+        actionResult = posix_spawn_file_actions_adddup2(&fileActions, stderrPipe[1], 2);
+    }
+
+    if (captureStdin && actionResult == 0)
+    {
+        actionResult = posix_spawn_file_actions_addclose(&fileActions, stdinPipe[0]);
+    }
+
+    if (actionResult == 0)
+    {
+        actionResult = posix_spawn_file_actions_addclose(&fileActions, stdoutPipe[1]);
+    }
+
+    if (actionResult == 0)
+    {
+        actionResult = posix_spawn_file_actions_addclose(&fileActions, stderrPipe[1]);
+    }
+
+    if (workingDirectory != null && actionResult == 0)
+    {
+        actionResult = posix_spawn_file_actions_addchdir_np(&fileActions, workingDirectory);
+    }
+
+    if (actionResult != 0)
+    {
+        stack i32[min max] ignoredDestroyActions = posix_spawn_file_actions_destroy(&fileActions);
+        CloseProcessDescriptorIfOpen(stdinPipe[0]);
+        CloseProcessDescriptorIfOpen(stdinPipe[1]);
+        CloseProcessDescriptorIfOpen(stdoutPipe[0]);
+        CloseProcessDescriptorIfOpen(stdoutPipe[1]);
+        CloseProcessDescriptorIfOpen(stderrPipe[0]);
+        CloseProcessDescriptorIfOpen(stderrPipe[1]);
+        return -actionResult;
+    }
+
+    stack mut i32[min max] spawnedId = -1;
+    stack i32[min max] spawnResult = posix_spawnp(
+        &spawnedId,
+        executable,
+        &fileActions,
+        null,
+        &argv[0],
+        *_NSGetEnviron());
+    stack i32[min max] ignoredDestroy = posix_spawn_file_actions_destroy(&fileActions);
+
+    CloseProcessDescriptorIfOpen(stdinPipe[0]);
+    CloseProcessDescriptorIfOpen(stdoutPipe[1]);
+    CloseProcessDescriptorIfOpen(stderrPipe[1]);
+
+    if (spawnResult != 0)
+    {
+        CloseProcessDescriptorIfOpen(stdinPipe[1]);
+        CloseProcessDescriptorIfOpen(stdoutPipe[0]);
+        CloseProcessDescriptorIfOpen(stderrPipe[0]);
+
+        // ENOENT(2), E2BIG(7), EACCES(13), and ENOTDIR(20) are the exec-stage
+        // failures a fork/exec child reports as exit 127.
+        if (spawnResult == 2 || spawnResult == 7 || spawnResult == 13 || spawnResult == 20)
+        {
+            return 127;
+        }
+
+        return -spawnResult;
+    }
+
+    *processId = spawnedId;
+    if (captureStdin)
+    {
+        *stdinDescriptor = stdinPipe[1];
+    }
+    else
+    {
+        *stdinDescriptor = -1;
+    }
+
+    *stdoutDescriptor = stdoutPipe[0];
+    *stderrDescriptor = stderrPipe[0];
+    return 0;
+}
+
+internal unsafe fn i32[min max] WaitProcess(i32[min max] processId, rawmutptr<i32[min max]> status)
+{
+    if (status == null)
+    {
+        return -1;
+    }
+
+    if (waitpid(processId, status, 0) < 0)
+    {
+        return NegativeErrno();
+    }
+
+    return processId;
+}
+
+internal unsafe fn i32[min max] WaitProcessNoHang(i32[min max] processId, rawmutptr<i32[min max]> status)
+{
+    if (status == null)
+    {
+        return -1;
+    }
+
+    stack i32[min max] waitResult = waitpid(processId, status, MacOSWaitNoHangOption);
+    if (waitResult < 0)
+    {
+        return NegativeErrno();
+    }
+
+    return waitResult;
+}
+
+internal unsafe fn i32[min max] KillProcess(i32[min max] processId)
+{
+    if (kill(processId, MacOSSignalKill) != 0)
+    {
+        return NegativeErrno();
+    }
+
+    return 0;
+}
+
+internal unsafe fn i32[min max] PollProcessPipesTimed(
+    i32[min max] stdoutDescriptor,
+    i32[min max] stderrDescriptor,
+    rawmutptr<i16[min max]> stdoutEvents,
+    rawmutptr<i16[min max]> stderrEvents,
+    i32[min max] timeoutMilliseconds)
+{
+    if (stdoutEvents == null || stderrEvents == null)
+    {
+        return -1;
+    }
+
+    stack mut MacOSPollFd[2] descriptors;
+    descriptors[0] = new MacOSPollFd()
+    {
+        FileDescriptor = stdoutDescriptor,
+        Events = (i16[min max])MacOSPollReadableEvent,
+        Revents = 0
+    };
+    descriptors[1] = new MacOSPollFd()
+    {
+        FileDescriptor = stderrDescriptor,
+        Events = (i16[min max])MacOSPollReadableEvent,
+        Revents = 0
+    };
+
+    stack i32[min max] result = poll(&descriptors[0], 2, timeoutMilliseconds);
+    *stdoutEvents = descriptors[0].Revents;
+    *stderrEvents = descriptors[1].Revents;
+    if (result < 0)
+    {
+        return NegativeErrno();
+    }
+
+    return result;
+}
+
+internal unsafe fn i32[min max] PollProcessIoTimed(
+    i32[min max] stdinDescriptor,
+    i32[min max] stdoutDescriptor,
+    i32[min max] stderrDescriptor,
+    rawmutptr<i16[min max]> stdinEvents,
+    rawmutptr<i16[min max]> stdoutEvents,
+    rawmutptr<i16[min max]> stderrEvents,
+    i32[min max] timeoutMilliseconds)
+{
+    if (stdinEvents == null || stdoutEvents == null || stderrEvents == null)
+    {
+        return -1;
+    }
+
+    stack mut MacOSPollFd[3] descriptors;
+    descriptors[0] = new MacOSPollFd()
+    {
+        FileDescriptor = stdinDescriptor,
+        Events = (i16[min max])MacOSPollWritableEvent,
+        Revents = 0
+    };
+    descriptors[1] = new MacOSPollFd()
+    {
+        FileDescriptor = stdoutDescriptor,
+        Events = (i16[min max])MacOSPollReadableEvent,
+        Revents = 0
+    };
+    descriptors[2] = new MacOSPollFd()
+    {
+        FileDescriptor = stderrDescriptor,
+        Events = (i16[min max])MacOSPollReadableEvent,
+        Revents = 0
+    };
+
+    stack i32[min max] result = poll(&descriptors[0], 3, timeoutMilliseconds);
+    *stdinEvents = descriptors[0].Revents;
+    *stdoutEvents = descriptors[1].Revents;
+    *stderrEvents = descriptors[2].Revents;
+    if (result < 0)
+    {
+        return NegativeErrno();
+    }
+
+    return result;
+}
+
+internal inline finite law bool ProcessPipeReadable(i16[min max] events)
+{
+    return ((i32[min max])events & MacOSPollReadableEvent) != 0;
+}
+
+internal inline finite law bool ProcessPipeWritable(i16[min max] events)
+{
+    return ((i32[min max])events & MacOSPollWritableEvent) != 0;
+}
+
+internal inline finite law bool ProcessPipeClosed(i16[min max] events)
+{
+    stack i32[min max] widened = (i32[min max])events;
+    return (widened & MacOSPollHangupEvent) != 0 || (widened & MacOSPollErrorEvent) != 0;
+}
+
+internal unsafe fn i32[min max] SetEnvironmentRaw(rawptr<System.C.c_char> name, rawptr<System.C.c_char> value)
+    where overlap(name, value)
+{
+    if (name == null || value == null)
+    {
+        return -1;
+    }
+
+    return setenv(name, value, 1);
+}
+
+internal unsafe fn i32[min max] RemoveEnvironmentRaw(rawptr<System.C.c_char> name)
+{
+    if (name == null)
+    {
+        return -1;
+    }
+
+    return unsetenv(name);
+}
+
+internal unsafe fn rawptr<System.C.c_char> GetEnvironmentRaw(rawptr<System.C.c_char> name)
+{
+    if (name == null)
+    {
+        return null;
+    }
+
+    return getenv(name);
+}
+
+internal unsafe fn i32[min max] ChangeCurrentDirectoryRaw(rawptr<System.C.c_char> path)
+{
+    if (path == null)
+    {
+        return -1;
+    }
+
+    return chdir(path);
+}
+
+// Appends the current process argument vector to the destination as
+// NUL-terminated entries, one per argument, matching the byte format Linux
+// reads from /proc/self/cmdline.
+internal unsafe fn i32[min max] ReadArgumentsBlock(mut borrow dynamic i8[min max] destination)
+{
+    stack rawmutptr<i32[min max]> argumentCountPointer = _NSGetArgc();
+    if (argumentCountPointer == null)
+    {
+        return -1;
+    }
+
+    stack i32[min max] argumentCount = *argumentCountPointer;
+    if (argumentCount <= 0)
+    {
+        return 0;
+    }
+
+    stack rawmutptr<MacOSCStringSlot> arguments = *_NSGetArgv();
+    if (arguments == null)
+    {
+        return 0;
+    }
+
+    stack mut i8[min max][1] terminator;
+    terminator[0] = 0;
+    for willexit (stack mut i32[min max] index = 0; index < argumentCount; index += 1)
+    {
+        stack rawmutptr<i8[min max]> argument = (*(&arguments[index])).Pointer;
+        if (argument != null)
+        {
+            stack i64[min max] length = CStringLength(argument, MacOSProcessArgumentMaxLength);
+            if (length > 0)
+            {
+                stack u64[0 2 ** 63 - 1] count = (u64[0 2 ** 63 - 1])length;
+                stack i8[min max][] bytes = slice(argument, count);
+                switch (System.Memory.AppendBytes(destination, bytes, count))
+                {
+                    case System.Memory.MemoryStatus.Err(var appendError):
+                        return -12;
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+        }
+
+        stack i8[min max][] terminatorSlice = slice(&terminator[0], 1);
+        switch (System.Memory.AppendBytes(destination, terminatorSlice, 1))
+        {
+            case System.Memory.MemoryStatus.Err(var terminatorError):
+                return -12;
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
+    return 0;
 }

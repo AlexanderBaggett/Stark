@@ -39,12 +39,6 @@ internal sealed partial class LlvmFunctionBodyEmitter
 
     private bool IsImmutableGlobalName(string globalName) => _context.IsImmutableGlobalName(globalName);
 
-    private bool IsPermanentConstGlobalName(string globalName)
-    {
-        return _context.TypeModel.Globals.TryGetValue(globalName, out var global)
-            && ConstProvenanceFacts.HasPermanentConstProvenance(global.ConstProvenance);
-    }
-
     private static string GetFloatIntrinsicSuffix(StarkTypeSymbol type)
     {
         return type.BitWidth switch

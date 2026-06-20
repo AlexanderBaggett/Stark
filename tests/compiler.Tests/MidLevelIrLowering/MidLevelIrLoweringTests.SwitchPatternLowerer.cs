@@ -283,6 +283,78 @@ public sealed partial class MidLevelIrLoweringTests
     }
 
     [Fact]
+    public void AggregatePropertySwitchPatternBindsNamedFieldsAfterPatternSelection()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Boxed
+            {
+                i32[min max] Value;
+                bool Enabled;
+            }
+
+            unsafe finite law i32[min max] Run(Boxed value)
+            {
+                switch (value)
+                {
+                    case Boxed { Enabled: true, Value: var found }:
+                        return found;
+                    default:
+                        return 0;
+                }
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var function = Assert.Single(GetMir(result).Functions);
+        var statements = function.Blocks.SelectMany(static block => block.Statements).ToArray();
+
+        Assert.True(function.SupportsDirectCodeGeneration);
+        Assert.Contains(function.Locals, static local => local.Name == "found");
+        Assert.Contains(statements, static statement => statement.Value is MidLevelIrExtractFieldRValue { FieldName: "Value" });
+        Assert.Contains(statements, static statement => statement.Value is MidLevelIrExtractFieldRValue { FieldName: "Enabled" });
+        Assert.Contains(
+            function.Blocks,
+            static block => block.Label.Contains("switch_agg_match", StringComparison.Ordinal)
+                && block.Statements.Any(static statement => statement.TargetName == "found"));
+    }
+
+    [Fact]
+    public void ListSwitchPatternBindsFixedArrayElementsAfterPatternSelection()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe finite law i32[min max] Run(i32[min max][2] values)
+            {
+                switch (values)
+                {
+                    case [1, var right]:
+                        return right;
+                    default:
+                        return 0;
+                }
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var function = Assert.Single(GetMir(result).Functions);
+        var statements = function.Blocks.SelectMany(static block => block.Statements).ToArray();
+
+        Assert.True(function.SupportsDirectCodeGeneration);
+        Assert.Contains(function.Locals, static local => local.Name == "right");
+        Assert.Contains(statements, static statement => statement.Value is MidLevelIrExtractIndexRValue { ElementIndex: 0 });
+        Assert.Contains(statements, static statement => statement.Value is MidLevelIrExtractIndexRValue { ElementIndex: 1 });
+        Assert.Contains(
+            function.Blocks,
+            static block => block.Label.Contains("switch_list_match", StringComparison.Ordinal)
+                && block.Statements.Any(static statement => statement.TargetName == "right"));
+    }
+
+    [Fact]
     public void AggregateWholeValueSwitchPatternBindsMatchLocalAfterPatternSelection()
     {
         var result = Compile(
@@ -763,6 +835,8 @@ public sealed partial class MidLevelIrLoweringTests
                         return word == (unicode)"cat" ? 7 : 3;
                     case Token.Empty:
                         return 0;
+                    default:
+                        return -1;
                 }
             }
             """);

@@ -4,15 +4,6 @@ namespace Stark.Compiler;
 
 public sealed record CompilationInput(string SourceText, string? FilePath = null);
 
-public enum CompilerOptimizationLevel
-{
-    O0,
-    Og,
-    O1,
-    O2,
-    O3
-}
-
 public sealed record CompilerOptions(
     bool EmitLlvmIr = false,
     bool ContinueAfterErrors = false,
@@ -20,16 +11,20 @@ public sealed record CompilerOptions(
     string? StopAfterPassId = null,
     LlvmTargetInfo? TargetInfo = null,
     bool QualifyModuleSymbols = false,
-    CompilerOptimizationLevel OptimizationLevel = CompilerOptimizationLevel.O3,
     bool InternalizeModulePrivate = false,
     bool EnforceIntegerRangeStorageRules = true,
-    IReadOnlySet<string>? ImportedInlineCloneSeedFunctions = null);
+    IReadOnlySet<string>? ImportedInlineCloneSeedFunctions = null,
+    int MaximumCompileTimeLoopIterations = CompileTimeFunctionEvaluator.DefaultMaximumCompileTimeLoopIterations,
+    SharedSourceModuleParseCache? SharedSourceModuleParseCache = null,
+    bool PruneUnusedLoweredFunctions = false);
 
 public readonly record struct ArtifactKey<T>(string Name);
 
 public sealed class ArtifactStore
 {
     private readonly Dictionary<string, object?> _values = new(StringComparer.Ordinal);
+
+    public IReadOnlyList<string> Names => _values.Keys.Order(StringComparer.Ordinal).ToArray();
 
     public void Set<T>(ArtifactKey<T> key, T value)
     {
@@ -255,6 +250,11 @@ public sealed class CompilerPipelineBuilder
 
 public sealed class CompilerPipeline
 {
+    // Diagnostic: when STARK_PASS_TRACE is set, print each pass start/finish to stderr
+    // (flushed) so a hanging pass is identifiable by a [pass-start] with no [pass-done].
+    private static readonly bool PassTraceEnabled =
+        Environment.GetEnvironmentVariable("STARK_PASS_TRACE") is not null;
+
     private readonly IReadOnlyList<ICompilerPass> _passes;
 
     internal CompilerPipeline(IReadOnlyList<ICompilerPass> passes)
@@ -329,12 +329,22 @@ public sealed class CompilerPipeline
             }
 
             var diagnosticsBefore = state.Diagnostics.Count;
+            if (PassTraceEnabled)
+            {
+                Console.Error.WriteLine($"[pass-start] {pass.Id} (phase={pass.Phase})");
+                Console.Error.Flush();
+            }
             var stopwatch = Stopwatch.StartNew();
 
             try
             {
                 pass.Execute(context);
                 stopwatch.Stop();
+                if (PassTraceEnabled)
+                {
+                    Console.Error.WriteLine($"[pass-done]  {pass.Id} {stopwatch.ElapsedMilliseconds}ms");
+                    Console.Error.Flush();
+                }
 
                 state.Executions.Add(new PassExecutionRecord(
                     pass.Id,
@@ -376,9 +386,12 @@ public sealed class CompilerPipeline
             catch (Exception ex)
             {
                 stopwatch.Stop();
+                var crashDetail = Environment.GetEnvironmentVariable("STARK_DEBUG_PASS_CRASH") == "1"
+                    ? $"{ex.Message}{Environment.NewLine}{ex.StackTrace}"
+                    : ex.Message;
                 state.Diagnostics.Error(
                     "STK9999",
-                    $"Pass '{pass.Id}' crashed: {ex.Message}",
+                    $"Pass '{pass.Id}' crashed: {crashDetail}",
                     pass.Id);
 
                 state.Executions.Add(new PassExecutionRecord(

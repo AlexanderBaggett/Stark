@@ -1,0 +1,112 @@
+import System.Process
+import System.Testing
+import System.Testing.HostCompiler
+import System.Text
+module StdlibPortSupport
+
+// Host-compile harness for the ported standard-library tests. Compiles a Stark
+// program (which may `import System.*`) against the current C# host compiler
+// through the host test protocol and exposes success plus the rendered `llvm`
+// artifact text. Stark-side port helper for tests/compiler.StandardLibraryTests.
+// Requires STARK_HOST_COMPILER to point at the host compiler executable.
+//
+// Runtime/native-execution, package-image-byte, and CLI assertions in the
+// original C# stdlib tests cannot be reproduced through the compile-only
+// bridge; those ports compile the embedded program and assert Succeeds, with a
+// // PORT-NOTE in the body naming the reduction.
+
+const HostTimeoutMilliseconds = 180000;
+
+public struct ProgramCompile
+{
+    HostCompileOutcome Outcome;
+    bool Ok;
+
+    ProgramCompile()
+    {
+        self.Outcome = new();
+        self.Ok = false;
+    }
+}
+
+// Compiles the program through the full pipeline with the LLVM artifact
+// requested. `Ok` additionally requires the compile itself to succeed.
+public fn ProgramCompile CompileProgram(ascii id, ascii source)
+{
+    unsafe
+    {
+        stack mut ProgramCompile compiled = RunHostCompile(id, source, "", "llvm");
+        if (compiled.Ok && !compiled.Outcome.CompileSucceeded())
+        {
+            compiled.Ok = false;
+        }
+
+        return compiled;
+    }
+}
+
+public fn bool Succeeds(mut borrow ProgramCompile compiled)
+{
+    unsafe
+    {
+        return compiled.Ok && compiled.Outcome.CompileSucceeded();
+    }
+}
+
+public fn ascii Llvm(mut borrow ProgramCompile compiled)
+{
+    unsafe
+    {
+        return compiled.Outcome.ArtifactText("llvm");
+    }
+}
+
+internal fn ProgramCompile RunHostCompile(ascii id, ascii source, ascii stopAfterPassId, ascii artifactName)
+{
+    unsafe
+    {
+        stack mut OwnedAscii compilerPath = new();
+        stack mut bool havePath = false;
+        switch (CompilerPathFromEnvironment())
+        {
+            case HostResult<OwnedAscii>.Err(var pathError):
+                havePath = false;
+            case HostResult<OwnedAscii>.Ok(var path):
+                compilerPath = path;
+                havePath = true;
+        }
+
+        stack mut HostCompileOutcome outcome = new();
+        stack mut bool transportOk = false;
+        if (havePath)
+        {
+            switch (CompileOnceArtifactIn(
+                compilerPath.View(),
+                id,
+                source,
+                stopAfterPassId,
+                artifactName,
+                "",
+                0,
+                HostTimeoutMilliseconds))
+            {
+                case HostResult<HostCompileOutcome>.Err(var error):
+                    transportOk = false;
+                case HostResult<HostCompileOutcome>.Ok(var captured):
+                    outcome = captured;
+                    transportOk = true;
+            }
+        }
+
+        stack mut bool ok = false;
+        if (transportOk)
+        {
+            ok = !outcome.HadProtocolError();
+        }
+
+        stack mut ProgramCompile compiled = new();
+        compiled.Ok = ok;
+        compiled.Outcome = outcome;
+        return compiled;
+    }
+}

@@ -24,6 +24,9 @@ public sealed class PackageImageCallableValueTests
                 }
 
                 public fn void Register(fnptr<fn void()> callback);
+                public fn void RegisterC(fnptr<ffi(c) fn void()> callback);
+                public fn void RegisterWin64(fnptr<ffi(win64) fn void()> callback);
+                public fn void RegisterPlatform(fnptr<unsafe ffi(platform(windows.x64: win64, linux.x64: sysv, default: c)) fn void()> callback);
                 public fn void RegisterOverlap(fnptr<fn void(borrow mut Token, borrow mut Token) where overlap(arg0, arg1)> callback);
                 public fn void RegisterSame(fnptr<fn void(borrow mut Token, borrow mut Token) where same(arg0, arg1)> callback);
                 public fn void RegisterFinite(fnptr<finite u32[0 2 ** 31 - 1]()> callback);
@@ -31,8 +34,10 @@ public sealed class PackageImageCallableValueTests
                 public fn void RegisterFiniteLaw(fnptr<finite law u32[0 2 ** 31 - 1]()> callback);
                 public unsafe fn void RegisterBounded(fnptr<fn void(rawptr<i32[min max]>[arg1], u8[1 10])> callback);
                 public unsafe fn void Dangerous();
+                public unsafe ffi(win64) fn void NativeWin64();
                 """,
-                sourcePath));
+                sourcePath),
+                new CompilerOptions(TargetInfo: new LlvmTargetInfo("x86_64-pc-windows-msvc", null)));
 
             Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
 
@@ -47,6 +52,13 @@ public sealed class PackageImageCallableValueTests
             Assert.Equal("fn", callbackType.FunctionKind);
             Assert.Equal("void", callbackType.ReturnType!.Kind);
             Assert.Empty(callbackType.ParameterTypes ?? []);
+            var cCallbackType = Assert.Single(module.EffectiveTypedInterface!.Functions, static function => function.Name == "RegisterC").Parameters.Single().Type;
+            Assert.Equal("c", cCallbackType.FunctionAbi);
+            var win64CallbackType = Assert.Single(module.EffectiveTypedInterface!.Functions, static function => function.Name == "RegisterWin64").Parameters.Single().Type;
+            Assert.Equal("win64", win64CallbackType.FunctionAbi);
+            var platformCallbackType = Assert.Single(module.EffectiveTypedInterface!.Functions, static function => function.Name == "RegisterPlatform").Parameters.Single().Type;
+            Assert.Equal("win64", platformCallbackType.FunctionAbi);
+            Assert.True(platformCallbackType.FunctionIsUnsafe);
             var overlapCallbackType = Assert.Single(module.EffectiveTypedInterface!.Functions, static function => function.Name == "RegisterOverlap").Parameters.Single().Type;
             var overlapGroup = Assert.Single(overlapCallbackType.OverlapParameterGroups ?? []);
             Assert.Equal(["arg0", "arg1"], overlapGroup.ParameterNames);
@@ -61,6 +73,8 @@ public sealed class PackageImageCallableValueTests
 
             var dangerous = Assert.Single(module.EffectiveTypedInterface!.Functions, static function => function.Name == "Dangerous");
             Assert.True(dangerous.IsUnsafe);
+            var nativeWin64 = Assert.Single(module.EffectiveTypedInterface!.Functions, static function => function.Name == "NativeWin64");
+            Assert.Equal("win64", nativeWin64.FfiAbi);
 
             Assert.True(PackageImageLoader.TryBuildModuleSource(
                 new ResolvedPackageModule(
@@ -70,12 +84,192 @@ public sealed class PackageImageCallableValueTests
                     module),
                 out var sourceText));
             Assert.Contains("public unsafe fn void Dangerous();", sourceText, StringComparison.Ordinal);
+            Assert.Contains("RegisterC(fnptr<ffi(c) fn void()> callback)", sourceText, StringComparison.Ordinal);
+            Assert.Contains("RegisterWin64(fnptr<ffi(win64) fn void()> callback)", sourceText, StringComparison.Ordinal);
+            Assert.Contains("RegisterPlatform(fnptr<unsafe ffi(win64) fn void()> callback)", sourceText, StringComparison.Ordinal);
+            Assert.Contains("public unsafe ffi(win64) fn void NativeWin64();", sourceText, StringComparison.Ordinal);
             Assert.Contains("RegisterOverlap", sourceText, StringComparison.Ordinal);
             Assert.Contains("where overlap(arg0, arg1)", sourceText, StringComparison.Ordinal);
             Assert.Contains("RegisterSame", sourceText, StringComparison.Ordinal);
             Assert.Contains("where same(arg0, arg1)", sourceText, StringComparison.Ordinal);
             Assert.Contains("RegisterBounded", sourceText, StringComparison.Ordinal);
             Assert.Contains("[arg1]", sourceText, StringComparison.Ordinal);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public void PackageImagePreservesDynTraitVtablePointerTypes()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-dyn-vtable-type-");
+        var sourcePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+        var manifestPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.starkpkg.json" : "libFacade.starkpkg.json");
+        var libraryPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public dyn trait Speaker
+                {
+                    finite law i32[min max] Speak(borrow Self self);
+                }
+
+                public unsafe finite law i32[min max] Use(rawptr<Speaker.Vtable> table)
+                {
+                    return 1;
+                }
+                """,
+                sourcePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(Environment.NewLine, libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            var manifest = PackageImageBuilder.Create(libraryResult, libraryPath);
+            var module = Assert.Single(manifest.Modules, static item => item.ModuleName == "Facade");
+            var use = Assert.Single(module.EffectiveTypedInterface!.Functions, static function => function.Name == "Use");
+            var parameterType = Assert.Single(use.Parameters).Type;
+            Assert.Equal("rawpointer", parameterType.Kind);
+            Assert.Equal("named", parameterType.ElementType!.Kind);
+            Assert.Equal("Speaker.Vtable", parameterType.ElementType.Name);
+
+            File.WriteAllText(manifestPath, manifest.ToJson());
+            File.Delete(sourcePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    unsafe finite law i32[min max] Probe(rawptr<Facade.Speaker.Vtable> table)
+                    {
+                        return Facade.Use(table);
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    StopAfterPassId: "type-check",
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
+
+            Assert.True(consumerResult.Succeeded, string.Join(Environment.NewLine, consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeModel));
+            Assert.NotNull(typeModel);
+            Assert.True(typeModel.Functions.TryGetValue("Probe", out var signature));
+            Assert.Equal("rawptr<Facade.Speaker.Vtable>", Assert.Single(signature.Parameters).Type.DisplayName);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public void PackageImagePreservesTargetSelectedPlatformAbiInTypedTemplateStructuralFacts()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-platform-fnptr-template-");
+        var sourcePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+
+        try
+        {
+            var result = DefaultCompilerPipeline.Create().Run(
+                new CompilationInput(
+                    """
+                    module Facade
+
+                    public finite law bool PlatformCallbackUsesWin64<T>()
+                    {
+                        return comptime System.Compiler.FunctionPointerAbiIsWin64<fnptr<unsafe ffi(platform(windows.x64: win64, linux.x64: sysv, default: c)) fn void()>>();
+                    }
+                    """,
+                    sourcePath),
+                new CompilerOptions(TargetInfo: new LlvmTargetInfo("x86_64-pc-windows-msvc", null)));
+
+            Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(
+                result,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            var module = Assert.Single(manifest.Modules, static item => item.ModuleName == "Facade");
+            var template = Assert.Single(
+                module.EffectiveGenericTemplates!.Functions,
+                static item => item.QualifiedName == "Facade.PlatformCallbackUsesWin64");
+            var returnStatement = Assert.Single(template.TypedBody!.Statements);
+            Assert.Equal("return", returnStatement.Kind);
+            Assert.Equal("structural-fact", returnStatement.Expression.Kind);
+
+            var callbackType = Assert.Single(returnStatement.Expression.TypeArguments!);
+            Assert.Equal("functionpointer", callbackType.Kind);
+            Assert.Equal("win64", callbackType.FunctionAbi);
+            Assert.True(callbackType.FunctionIsUnsafe);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public void PackageImagePreservesTargetSelectedPlatformAbiInTypedConstructorParameters()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-platform-fnptr-constructor-");
+        var sourcePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+
+        try
+        {
+            var result = DefaultCompilerPipeline.Create().Run(
+                new CompilationInput(
+                    """
+                    module Facade
+
+                    public struct Handler
+                    {
+                        Handler(fnptr<unsafe ffi(platform(windows.x64: win64, linux.x64: sysv, default: c)) fn void()> callback)
+                        {
+                        }
+                    }
+                    """,
+                    sourcePath),
+                new CompilerOptions(TargetInfo: new LlvmTargetInfo("x86_64-pc-windows-msvc", null)));
+
+            Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(
+                result,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            var module = Assert.Single(manifest.Modules, static item => item.ModuleName == "Facade");
+            var handler = Assert.Single(module.EffectiveTypedInterface!.Types, static item => item.Name == "Handler");
+            var constructor = Assert.Single(handler.Constructors!);
+            var callbackType = Assert.Single(constructor.Parameters).Type;
+
+            Assert.Equal("functionpointer", callbackType.Kind);
+            Assert.Equal("win64", callbackType.FunctionAbi);
+            Assert.True(callbackType.FunctionIsUnsafe);
         }
         finally
         {
@@ -380,7 +574,6 @@ public sealed class PackageImageCallableValueTests
                     Path.Combine(tempDirectory.FullName, "Demo.stark")),
                 new CompilerOptions(
                     ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName),
-                    OptimizationLevel: CompilerOptimizationLevel.O0,
                     StopAfterPassId: "emit-llvm"));
 
             Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
@@ -460,7 +653,6 @@ public sealed class PackageImageCallableValueTests
                     Path.Combine(tempDirectory.FullName, "Demo.stark")),
                 new CompilerOptions(
                     ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName),
-                    OptimizationLevel: CompilerOptimizationLevel.O0,
                     StopAfterPassId: "emit-llvm"));
 
             Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));

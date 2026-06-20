@@ -1,0 +1,832 @@
+import System.Testing
+import System.Text
+import System.Memory
+import System.Collections
+[Collection("text")]
+module TextBuilderTests
+
+// Stark-native tests for the System.Text compiler-grade builder slice (stdlib
+// gap S02): incremental append, append-repeated, join over a slice of owned
+// parts, and split into a List of owned segments.
+//
+// Heap-corruption note (investigated): a former toolchain claim held that code
+// compiled INTO the test executable corrupts the heap when it grows `dynamic`
+// storage, so these builder facts historically drove all `dynamic` building
+// through imported stdlib entry points (Split*/Repeat*/Decimal*/Labeled*/
+// SplitJoin*) and only READ the results. A full investigation (reproduce +
+// IR-diff + SSA-fact/emission/allocator analysis + adversarial review) could NOT
+// reproduce that corruption on this tree
+// or the de225a9 baseline, at opt=0 or opt=3, even under guard-page memory
+// checking, and refuted all three suspected causes. The Guard* facts at the END
+// of this file now grow `dynamic` storage DIRECTLY in the fact body and assert
+// the content survived (and the List guard also frees on drop), locking that in.
+// The other builder facts still drive growth through stdlib because that is what
+// they test (the System.Text builder slice), not because direct growth is unsafe.
+
+fn bool IsOk(System.Memory.MemoryStatus status)
+{
+    switch (status)
+    {
+        case System.Memory.MemoryStatus.Ok:
+            return true;
+        case System.Memory.MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+fn bool IsErr(System.Memory.MemoryStatus status)
+{
+    switch (status)
+    {
+        case System.Memory.MemoryStatus.Ok:
+            return false;
+        case System.Memory.MemoryStatus.Err(var error):
+            return true;
+    }
+}
+
+// Read a split segment through the whole slice (passed as an argument), which
+// avoids chaining a method onto a List<OwnedAscii> borrow-returning method.
+fn bool SegmentEquals(borrow OwnedAscii[] segments, u64[0 2 ** 63 - 1] index, ascii expected)
+{
+    if (index >= segments.Length)
+    {
+        return false;
+    }
+
+    return OwnedAsciiEqualsAscii(segments[index], expected);
+}
+
+fn bool SegmentIsEmpty(borrow OwnedAscii[] segments, u64[0 2 ** 63 - 1] index)
+{
+    if (index >= segments.Length)
+    {
+        return false;
+    }
+
+    return segments[index].IsEmpty();
+}
+
+// Unicode mirrors of the ASCII segment readers.
+fn bool USegmentEquals(borrow OwnedUnicode[] segments, u64[0 2 ** 63 - 1] index, unicode expected)
+{
+    if (index >= segments.Length)
+    {
+        return false;
+    }
+
+    return OwnedUnicodeEqualsUnicode(segments[index], expected);
+}
+
+fn bool USegmentIsEmpty(borrow OwnedUnicode[] segments, u64[0 2 ** 63 - 1] index)
+{
+    if (index >= segments.Length)
+    {
+        return false;
+    }
+
+    return segments[index].IsEmpty();
+}
+
+// ----- Append integer (AppendU64) -----------------------------------------
+
+[Fact]
+fn bool DecimalU64FormatsValue()
+{
+    stack mut OwnedAscii result = new();
+    stack System.Memory.MemoryStatus s = DecimalU64Ascii(result, (u64[0 max])1234567890);
+    return IsOk(s) && System.Testing.Equal("1234567890", result.View());
+}
+
+[Fact]
+fn bool DecimalU64FormatsZero()
+{
+    stack mut OwnedAscii result = new();
+    stack System.Memory.MemoryStatus s = DecimalU64Ascii(result, (u64[0 max])0);
+    return IsOk(s) && System.Testing.Equal("0", result.View());
+}
+
+// ----- Append text then integer (AppendAscii + AppendU64 composition) ------
+
+[Fact]
+fn bool LabeledU64ComposesPrefixAndValue()
+{
+    stack mut OwnedAscii result = new();
+    stack System.Memory.MemoryStatus s = LabeledU64Ascii(result, "count=", (u64[0 max])42);
+    return IsOk(s) && System.Testing.Equal("count=42", result.View());
+}
+
+// ----- AppendRepeated (text and char) -------------------------------------
+
+[Fact]
+fn bool RepeatAsciiRepeatsView()
+{
+    stack mut OwnedAscii result = new();
+    stack System.Memory.MemoryStatus s = RepeatAscii(result, "ab", (u64[0 2 ** 63 - 1])3);
+    return IsOk(s) && System.Testing.Equal("ababab", result.View());
+}
+
+[Fact]
+fn bool RepeatAsciiZeroIsEmpty()
+{
+    stack mut OwnedAscii result = new();
+    stack System.Memory.MemoryStatus s = RepeatAscii(result, "ab", (u64[0 2 ** 63 - 1])0);
+    return IsOk(s) && result.IsEmpty();
+}
+
+[Fact]
+fn bool RepeatAsciiCharRepeatsChar()
+{
+    stack mut OwnedAscii result = new();
+    stack System.Memory.MemoryStatus s = RepeatAsciiChar(result, 45, (u64[0 2 ** 63 - 1])5);   // '-'
+    return IsOk(s) && System.Testing.Equal("-----", result.View());
+}
+
+[Fact]
+fn bool RepeatAsciiCharRejectsNonAscii()
+{
+    stack mut OwnedAscii result = new();
+    stack System.Memory.MemoryStatus s = RepeatAsciiChar(result, 200, (u64[0 2 ** 63 - 1])3);
+    return IsErr(s);
+}
+
+// ----- Split --------------------------------------------------------------
+
+[Fact]
+fn bool SplitAsciiOnSingleChar()
+{
+    stack mut System.Collections.List<OwnedAscii> segments = new();
+    stack System.Memory.MemoryStatus s = SplitAscii(segments, "a,b,c", ",");
+    if (!IsOk(s) || segments.Count() != 3)
+    {
+        return false;
+    }
+
+    return SegmentEquals(segments.AsSlice(), (u64[0 2 ** 63 - 1])0, "a")
+        && SegmentEquals(segments.AsSlice(), (u64[0 2 ** 63 - 1])1, "b")
+        && SegmentEquals(segments.AsSlice(), (u64[0 2 ** 63 - 1])2, "c");
+}
+
+[Fact]
+fn bool SplitAsciiEmptySegments()
+{
+    stack mut System.Collections.List<OwnedAscii> segments = new();
+    stack System.Memory.MemoryStatus s = SplitAscii(segments, ",x,", ",");
+    if (!IsOk(s) || segments.Count() != 3)
+    {
+        return false;
+    }
+
+    return SegmentIsEmpty(segments.AsSlice(), (u64[0 2 ** 63 - 1])0)
+        && SegmentEquals(segments.AsSlice(), (u64[0 2 ** 63 - 1])1, "x")
+        && SegmentIsEmpty(segments.AsSlice(), (u64[0 2 ** 63 - 1])2);
+}
+
+[Fact]
+fn bool SplitAsciiNoDelimiterIsWhole()
+{
+    stack mut System.Collections.List<OwnedAscii> segments = new();
+    stack System.Memory.MemoryStatus s = SplitAscii(segments, "whole", ",");
+    return IsOk(s)
+        && segments.Count() == 1
+        && SegmentEquals(segments.AsSlice(), (u64[0 2 ** 63 - 1])0, "whole");
+}
+
+[Fact]
+fn bool SplitAsciiEmptySourceIsOneEmptySegment()
+{
+    stack mut System.Collections.List<OwnedAscii> segments = new();
+    stack System.Memory.MemoryStatus s = SplitAscii(segments, "", ",");
+    return IsOk(s)
+        && segments.Count() == 1
+        && SegmentIsEmpty(segments.AsSlice(), (u64[0 2 ** 63 - 1])0);
+}
+
+[Fact]
+fn bool SplitAsciiOnMultiCharDelimiter()
+{
+    stack mut System.Collections.List<OwnedAscii> segments = new();
+    stack System.Memory.MemoryStatus s = SplitAscii(segments, "one::two::three", "::");
+    if (!IsOk(s) || segments.Count() != 3)
+    {
+        return false;
+    }
+
+    return SegmentEquals(segments.AsSlice(), (u64[0 2 ** 63 - 1])0, "one")
+        && SegmentEquals(segments.AsSlice(), (u64[0 2 ** 63 - 1])1, "two")
+        && SegmentEquals(segments.AsSlice(), (u64[0 2 ** 63 - 1])2, "three");
+}
+
+[Fact]
+fn bool SplitAsciiTrailingDelimiterYieldsEmptyTail()
+{
+    stack mut System.Collections.List<OwnedAscii> segments = new();
+    stack System.Memory.MemoryStatus s = SplitAscii(segments, "a,", ",");
+    if (!IsOk(s) || segments.Count() != 2)
+    {
+        return false;
+    }
+
+    return SegmentEquals(segments.AsSlice(), (u64[0 2 ** 63 - 1])0, "a")
+        && SegmentIsEmpty(segments.AsSlice(), (u64[0 2 ** 63 - 1])1);
+}
+
+[Fact]
+fn bool SplitAsciiRejectsEmptyDelimiter()
+{
+    stack mut System.Collections.List<OwnedAscii> segments = new();
+    return IsErr(SplitAscii(segments, "abc", ""));
+}
+
+// ----- Unicode AppendRepeated (text and char) -----------------------------
+
+[Fact]
+fn bool RepeatUnicodeRepeatsView()
+{
+    stack mut OwnedUnicode result = new();
+    stack System.Memory.MemoryStatus s = RepeatUnicode(result, (unicode)"ab", (u64[0 2 ** 63 - 1])3);
+    return IsOk(s) && System.Testing.Equal((unicode)"ababab", result.View());
+}
+
+[Fact]
+fn bool RepeatUnicodeZeroIsEmpty()
+{
+    stack mut OwnedUnicode result = new();
+    stack System.Memory.MemoryStatus s = RepeatUnicode(result, (unicode)"ab", (u64[0 2 ** 63 - 1])0);
+    return IsOk(s) && result.IsEmpty();
+}
+
+[Fact]
+fn bool RepeatUnicodeCharRepeatsChar()
+{
+    stack mut OwnedUnicode result = new();
+    stack System.Memory.MemoryStatus s = RepeatUnicodeChar(result, 45, (u64[0 2 ** 63 - 1])5);   // '-'
+    return IsOk(s) && System.Testing.Equal((unicode)"-----", result.View());
+}
+
+[Fact]
+fn bool RepeatUnicodeCharRejectsInvalidScalar()
+{
+    stack mut OwnedUnicode result = new();
+    stack System.Memory.MemoryStatus s = RepeatUnicodeChar(result, 1114112, (u64[0 2 ** 63 - 1])3);
+    return IsErr(s);
+}
+
+// ----- Unicode range helpers (AppendOwnedUnicodeRange / RangeEquals) -------
+
+[Fact]
+fn bool AppendUnicodeRangeCopiesMiddleSlice()
+{
+    stack mut OwnedUnicode result = new();
+    stack System.Memory.MemoryStatus s = AppendUnicodeRangeFrom(result, (unicode)"hello", (u64[0 2 ** 63 - 1])1, (u64[0 2 ** 63 - 1])3);
+    return IsOk(s) && System.Testing.Equal((unicode)"ell", result.View());
+}
+
+[Fact]
+fn bool AppendUnicodeRangeZeroCountIsEmpty()
+{
+    stack mut OwnedUnicode result = new();
+    stack System.Memory.MemoryStatus s = AppendUnicodeRangeFrom(result, (unicode)"hello", (u64[0 2 ** 63 - 1])1, (u64[0 2 ** 63 - 1])0);
+    return IsOk(s) && result.IsEmpty();
+}
+
+[Fact]
+fn bool AppendUnicodeRangeOutOfBoundsErrs()
+{
+    stack mut OwnedUnicode result = new();
+    stack System.Memory.MemoryStatus s = AppendUnicodeRangeFrom(result, (unicode)"hello", (u64[0 2 ** 63 - 1])3, (u64[0 2 ** 63 - 1])5);
+    return IsErr(s);
+}
+
+[Fact]
+fn bool UnicodeRangeEqualsMatchingSlice()
+{
+    return UnicodeRangeEqualsFrom((unicode)"hello", (u64[0 2 ** 63 - 1])1, (u64[0 2 ** 63 - 1])3, (unicode)"ell");
+}
+
+[Fact]
+fn bool UnicodeRangeEqualsLengthMismatchIsFalse()
+{
+    return !UnicodeRangeEqualsFrom((unicode)"hello", (u64[0 2 ** 63 - 1])1, (u64[0 2 ** 63 - 1])3, (unicode)"ello");
+}
+
+[Fact]
+fn bool UnicodeRangeEqualsOutOfBoundsIsFalse()
+{
+    return !UnicodeRangeEqualsFrom((unicode)"hello", (u64[0 2 ** 63 - 1])3, (u64[0 2 ** 63 - 1])5, (unicode)"hello");
+}
+
+// ----- Unicode Split ------------------------------------------------------
+
+[Fact]
+fn bool SplitUnicodeOnSingleChar()
+{
+    stack mut System.Collections.List<OwnedUnicode> segments = new();
+    stack System.Memory.MemoryStatus s = SplitUnicode(segments, (unicode)"a,b,c", (unicode)",");
+    if (!IsOk(s) || segments.Count() != 3)
+    {
+        return false;
+    }
+
+    return USegmentEquals(segments.AsSlice(), (u64[0 2 ** 63 - 1])0, (unicode)"a")
+        && USegmentEquals(segments.AsSlice(), (u64[0 2 ** 63 - 1])1, (unicode)"b")
+        && USegmentEquals(segments.AsSlice(), (u64[0 2 ** 63 - 1])2, (unicode)"c");
+}
+
+[Fact]
+fn bool SplitUnicodeEmptySegments()
+{
+    stack mut System.Collections.List<OwnedUnicode> segments = new();
+    stack System.Memory.MemoryStatus s = SplitUnicode(segments, (unicode)",x,", (unicode)",");
+    if (!IsOk(s) || segments.Count() != 3)
+    {
+        return false;
+    }
+
+    return USegmentIsEmpty(segments.AsSlice(), (u64[0 2 ** 63 - 1])0)
+        && USegmentEquals(segments.AsSlice(), (u64[0 2 ** 63 - 1])1, (unicode)"x")
+        && USegmentIsEmpty(segments.AsSlice(), (u64[0 2 ** 63 - 1])2);
+}
+
+[Fact]
+fn bool SplitUnicodeNoDelimiterIsWhole()
+{
+    stack mut System.Collections.List<OwnedUnicode> segments = new();
+    stack System.Memory.MemoryStatus s = SplitUnicode(segments, (unicode)"whole", (unicode)",");
+    return IsOk(s)
+        && segments.Count() == 1
+        && USegmentEquals(segments.AsSlice(), (u64[0 2 ** 63 - 1])0, (unicode)"whole");
+}
+
+[Fact]
+fn bool SplitUnicodeEmptySourceIsOneEmptySegment()
+{
+    stack mut System.Collections.List<OwnedUnicode> segments = new();
+    stack System.Memory.MemoryStatus s = SplitUnicode(segments, (unicode)"", (unicode)",");
+    return IsOk(s)
+        && segments.Count() == 1
+        && USegmentIsEmpty(segments.AsSlice(), (u64[0 2 ** 63 - 1])0);
+}
+
+[Fact]
+fn bool SplitUnicodeOnMultiCharDelimiter()
+{
+    stack mut System.Collections.List<OwnedUnicode> segments = new();
+    stack System.Memory.MemoryStatus s = SplitUnicode(segments, (unicode)"one::two::three", (unicode)"::");
+    if (!IsOk(s) || segments.Count() != 3)
+    {
+        return false;
+    }
+
+    return USegmentEquals(segments.AsSlice(), (u64[0 2 ** 63 - 1])0, (unicode)"one")
+        && USegmentEquals(segments.AsSlice(), (u64[0 2 ** 63 - 1])1, (unicode)"two")
+        && USegmentEquals(segments.AsSlice(), (u64[0 2 ** 63 - 1])2, (unicode)"three");
+}
+
+[Fact]
+fn bool SplitUnicodeTrailingDelimiterYieldsEmptyTail()
+{
+    stack mut System.Collections.List<OwnedUnicode> segments = new();
+    stack System.Memory.MemoryStatus s = SplitUnicode(segments, (unicode)"a,", (unicode)",");
+    if (!IsOk(s) || segments.Count() != 2)
+    {
+        return false;
+    }
+
+    return USegmentEquals(segments.AsSlice(), (u64[0 2 ** 63 - 1])0, (unicode)"a")
+        && USegmentIsEmpty(segments.AsSlice(), (u64[0 2 ** 63 - 1])1);
+}
+
+[Fact]
+fn bool SplitUnicodeRejectsEmptyDelimiter()
+{
+    stack mut System.Collections.List<OwnedUnicode> segments = new();
+    return IsErr(SplitUnicode(segments, (unicode)"abc", (unicode)""));
+}
+
+
+// ----- ParseF64Ascii (correctly-rounded exact-window text->f64 parser) ------
+//
+// ParseF64Ascii returns a scalar f64, so these facts only call it and compare
+// the result with a Stark f64 literal. Both the parsed value and the literal go
+// through the same correctly-rounded text->f64 conversion, so equality is a
+// bit-exact check (no epsilon needed) inside the supported window. These facts
+// route through the `System.Testing.Equal(f64, f64)` overload, which performs
+// the exact bit-equality `==` on f64 scalars.
+
+fn bool ParseF64AsciiEquals(ascii source, f64 expected)
+{
+    switch (System.Text.ParseF64Ascii(source))
+    {
+        case System.Text.TextResult<f64>.Ok(var value):
+            return System.Testing.Equal(expected, value);
+        case System.Text.TextResult<f64>.Err(var error):
+            return false;
+    }
+}
+
+fn bool ParseF64AsciiOverflows(ascii source)
+{
+    switch (System.Text.ParseF64Ascii(source))
+    {
+        case System.Text.TextResult<f64>.Ok(var value):
+            return false;
+        case System.Text.TextResult<f64>.Err(var error):
+            switch (error)
+            {
+                case System.Text.TextError.Overflow:
+                    return true;
+                case System.Text.TextError.InvalidFormat:
+                    return false;
+            }
+    }
+}
+
+[Fact]
+fn bool ParseF64AsciiReadsHalf()
+{
+    return ParseF64AsciiEquals("1.5", 1.5);
+}
+
+[Fact]
+fn bool ParseF64AsciiReadsPi()
+{
+    return ParseF64AsciiEquals("3.14", 3.14);
+}
+
+[Fact]
+fn bool ParseF64AsciiReadsNegativeZero()
+{
+    return ParseF64AsciiEquals("-0.0", -0.0);
+}
+
+[Fact]
+fn bool ParseF64AsciiReadsTenth()
+{
+    return ParseF64AsciiEquals("0.1", 0.1);
+}
+
+[Fact]
+fn bool ParseF64AsciiReadsExponent()
+{
+    return ParseF64AsciiEquals("1e3", 1000.0);
+}
+
+[Fact]
+fn bool ParseF64AsciiReadsFractionalThousands()
+{
+    return ParseF64AsciiEquals("1234.5", 1234.5);
+}
+
+[Fact]
+fn bool ParseF64AsciiReadsNegative()
+{
+    return ParseF64AsciiEquals("-2.5", -2.5);
+}
+
+[Fact]
+fn bool ParseF64AsciiReadsUpperExponentWithSign()
+{
+    return ParseF64AsciiEquals("1.25E+2", 125.0);
+}
+
+[Fact]
+fn bool ParseF64AsciiRejectsGarbage()
+{
+    switch (System.Text.ParseF64Ascii("1.2.3"))
+    {
+        case System.Text.TextResult<f64>.Ok(var value):
+            return false;
+        case System.Text.TextResult<f64>.Err(var error):
+            return true;
+    }
+}
+
+[Fact]
+fn bool ParseF64AsciiOverflowsOutsideExponentWindow()
+{
+    // |exp10| > 22 is outside the correctly-rounded window and must signal
+    // Overflow rather than mis-round.
+    return ParseF64AsciiOverflows("1e40");
+}
+
+[Fact]
+fn bool ParseF64AsciiOverflowsTooManySignificantDigits()
+{
+    // A 20-digit significand exceeds 2**53 and must signal Overflow.
+    return ParseF64AsciiOverflows("12345678901234567890");
+}
+
+// ----- ParseF32Ascii (defers to ParseF64Ascii then range-checks) ------------
+
+fn bool ParseF32AsciiEquals(ascii source, f32 expected)
+{
+    switch (System.Text.ParseF32Ascii(source))
+    {
+        case System.Text.TextResult<f32>.Ok(var value):
+            return value == expected;
+        case System.Text.TextResult<f32>.Err(var error):
+            return false;
+    }
+}
+
+[Fact]
+fn bool ParseF32AsciiReadsHalf()
+{
+    return ParseF32AsciiEquals("1.5", 1.5f);
+}
+
+[Fact]
+fn bool ParseF32AsciiPropagatesOutOfWindowOverflow()
+{
+    // The f64 exact window caps magnitude at 10**22, which is below the f32
+    // maximum (~3.4e38), so the f32 range-check branch is unreachable for
+    // in-window inputs. What is observable is that an out-of-window f64 input
+    // (|exp10| > 22) propagates its Overflow through the f32 delegation.
+    switch (System.Text.ParseF32Ascii("1e40"))
+    {
+        case System.Text.TextResult<f32>.Ok(var value):
+            return false;
+        case System.Text.TextResult<f32>.Err(var error):
+            return true;
+    }
+}
+
+// System.Testing.ApproxEqual coverage. `0.1 + 0.2` rounds to 0.30000000000000004,
+// one ULP off the literal 0.3 — exact Equal is false, but ApproxEqual within a few
+// ULPs accepts it. These exercise the relative-epsilon tolerance directly (the
+// ParseF64Ascii facts above only ever assert bit-exact Equal).
+[Fact]
+fn bool ApproxEqualAcceptsOneUlpRoundingError()
+{
+    return !System.Testing.Equal(0.3, 0.1 + 0.2)
+        && System.Testing.ApproxEqual(0.3, 0.1 + 0.2, 4);
+}
+
+[Fact]
+fn bool ApproxEqualRejectsFarApartValues()
+{
+    return !System.Testing.ApproxEqual(1.0, 1.5, 4);
+}
+
+[Fact]
+fn bool ApproxEqualExactValuesMatchWithZeroTolerance()
+{
+    return System.Testing.ApproxEqual(2.5, 2.5, 0);
+}
+
+// ----- Heap-corruption guards ---------------------------------------------
+// These grow `dynamic` storage DIRECTLY in the [Fact] body — the exact pattern
+// the historical workaround forbade — and verify the content survived. They lock
+// in the investigation finding that in-fact growth is correct. If a regression
+// reintroduced the corruption, the content compare
+// or the drop/free would fail or trap.
+
+[Fact]
+fn bool GuardDirectOwnedAsciiGrowthReadsBackExact()
+{
+    // 40 AppendByte calls force ~6 reallocations from the initial capacity.
+    stack mut OwnedAscii result = new();
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < 40)
+    {
+        stack System.Memory.MemoryStatus status = result.AppendByte((i8[min max])65);
+        if (IsErr(status))
+        {
+            return false;
+        }
+
+        index += 1;
+    }
+
+    return System.Testing.Equal("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", result.View());
+}
+
+[Fact]
+fn bool GuardDirectOwnedAsciiLargeGrowthIntegrity()
+{
+    // 2000 AppendByte calls (~11 reallocations) writing the repeating pattern
+    // "0123456789"; verify the length plus the first and last 10 bytes survived.
+    stack mut OwnedAscii result = new();
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < 2000)
+    {
+        stack u64[0 2 ** 63 - 1] code = 48 + index % 10;
+        stack System.Memory.MemoryStatus status = result.AppendByte((i8[min max])code);
+        if (IsErr(status))
+        {
+            return false;
+        }
+
+        index += 1;
+    }
+
+    // The slice at [1990, 10] would be out of bounds if growth had not reached
+    // 2000 bytes, so these two checks verify both length-reached and content at
+    // each end survived the ~11 reallocations.
+    stack ascii view = result.View();
+    return System.Testing.Equal("0123456789", view[0, 10])
+        && System.Testing.Equal("0123456789", view[1990, 10]);
+}
+
+[Fact]
+fn bool GuardDirectListGrowthReadsBackCorrectly()
+{
+    // Grow a List<i32> directly in-fact (200 pushes, ~6 reallocations), verify
+    // every element survived, and let it free on drop at scope end.
+    stack mut System.Collections.List<i32[min max]> values = new();
+    stack mut u64[0 2 ** 63 - 1] index = 0;
+    while willexit (index < 200)
+    {
+        stack u64[0 2 ** 63 - 1] product = index * 3;
+        stack System.Memory.MemoryStatus status = values.Push((i32[min max])product);
+        if (IsErr(status))
+        {
+            return false;
+        }
+
+        index += 1;
+    }
+
+    if (values.Count() != 200)
+    {
+        return false;
+    }
+
+    stack i32[min max][] slice = values.AsSlice();
+    stack mut u64[0 2 ** 63 - 1] check = 0;
+    while willexit (check < 200)
+    {
+        stack u64[0 2 ** 63 - 1] expected = check * 3;
+        if (slice[check] != (i32[min max])expected)
+        {
+            return false;
+        }
+
+        check += 1;
+    }
+
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// Diagnostic source-caret rendering (System.Text.AppendSourceCaret*), stdlib
+// gap S02. Outputs are pinned to the host compiler's diagnostic snippet format.
+// ---------------------------------------------------------------------------
+
+[Fact]
+fn bool SourceCaretSinglePointUnderlinesColumn()
+{
+    unsafe
+    {
+        stack mut System.Text.OwnedAscii writer = new();
+        switch (System.Text.AppendSourceCaretText(writer, "let x = 1;\n", 1, 5, 0, 0))
+        {
+            case System.Memory.MemoryStatus.Err(_):
+                return false;
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        return System.Text.Equals(writer.View(), "  1 | let x = 1;\n    |     ^");
+    }
+}
+
+[Fact]
+fn bool SourceCaretSpanUnderlinesRange()
+{
+    unsafe
+    {
+        stack mut System.Text.OwnedAscii writer = new();
+        switch (System.Text.AppendSourceCaretText(writer, "fn f() {\n    return foo(bar);\n}\n", 2, 12, 2, 19))
+        {
+            case System.Memory.MemoryStatus.Err(_):
+                return false;
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        return System.Text.Equals(writer.View(), "  2 |     return foo(bar);\n    |            ^^^^^^^^");
+    }
+}
+
+[Fact]
+fn bool SourceCaretExpandsTabsToFourColumnStops()
+{
+    unsafe
+    {
+        stack mut System.Text.OwnedAscii writer = new();
+        switch (System.Text.AppendSourceCaretText(writer, "\tx = 1;\n", 1, 2, 0, 0))
+        {
+            case System.Memory.MemoryStatus.Err(_):
+                return false;
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        return System.Text.Equals(writer.View(), "  1 |     x = 1;\n    |     ^");
+    }
+}
+
+[Fact]
+fn bool SourceCaretUnderlinesEveryLineOfAMultiLineSpan()
+{
+    unsafe
+    {
+        stack mut System.Text.OwnedAscii writer = new();
+        switch (System.Text.AppendSourceCaretText(writer, "a(\n  b,\n  c)\n", 1, 1, 3, 4))
+        {
+            case System.Memory.MemoryStatus.Err(_):
+                return false;
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        return System.Text.Equals(
+            writer.View(),
+            "  1 | a(\n    | ^^\n  2 |   b,\n    | ^^^^\n  3 |   c)\n    | ^^^^");
+    }
+}
+
+[Fact]
+fn bool SourceCaretBeyondLastLineRendersNothing()
+{
+    unsafe
+    {
+        stack mut System.Text.OwnedAscii writer = new();
+        switch (System.Text.AppendSourceCaretText(writer, "x\n", 99, 1, 0, 0))
+        {
+            case System.Memory.MemoryStatus.Err(_):
+                return false;
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        return System.Text.AsciiLength(writer.View()) == 0;
+    }
+}
+
+[Fact]
+fn bool SourceCaretPadsMultiDigitLineNumbers()
+{
+    unsafe
+    {
+        stack mut System.Text.OwnedAscii writer = new();
+        switch (System.Text.AppendSourceCaretText(writer, "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\nlast item\n", 12, 6, 12, 9))
+        {
+            case System.Memory.MemoryStatus.Err(_):
+                return false;
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        return System.Text.Equals(writer.View(), "  12 | last item\n     |      ^^^^");
+    }
+}
+
+[Fact]
+fn bool SourceCaretExtendsPastEndOfLine()
+{
+    unsafe
+    {
+        stack mut System.Text.OwnedAscii writer = new();
+        switch (System.Text.AppendSourceCaretText(writer, "ab\n", 1, 1, 1, 5))
+        {
+            case System.Memory.MemoryStatus.Err(_):
+                return false;
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        return System.Text.Equals(writer.View(), "  1 | ab\n    | ^^^^^");
+    }
+}
+
+[Fact]
+fn bool SourceCaretHandlesCarriageReturnNewlines()
+{
+    unsafe
+    {
+        stack mut System.Text.OwnedAscii writer = new();
+        switch (System.Text.AppendSourceCaretText(writer, "alpha\r\nbeta\r\n", 2, 1, 2, 4))
+        {
+            case System.Memory.MemoryStatus.Err(_):
+                return false;
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        return System.Text.Equals(writer.View(), "  2 | beta\n    | ^^^^");
+    }
+}
+
+[Fact]
+fn bool SourceCaretRendersEmptySourceLikeHost()
+{
+    unsafe
+    {
+        stack mut System.Text.OwnedAscii writer = new();
+        switch (System.Text.AppendSourceCaretText(writer, "", 1, 1, 1, 1))
+        {
+            case System.Memory.MemoryStatus.Err(_):
+                return false;
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        // The host's `SplitLines("")` yields a single empty line, so a line-1
+        // diagnostic on an empty file still underlines column 1.
+        return System.Text.Equals(writer.View(), "  1 | \n    | ^");
+    }
+}

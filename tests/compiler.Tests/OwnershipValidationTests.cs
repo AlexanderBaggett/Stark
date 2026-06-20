@@ -14,6 +14,10 @@ public sealed class OwnershipValidationTests
             struct Box
             {
                 i32[min max] Value;
+
+                drop
+                {
+                }
             }
 
             finite i32[min max] Run()
@@ -41,6 +45,10 @@ public sealed class OwnershipValidationTests
             struct Box
             {
                 i32[min max] Value;
+
+                drop
+                {
+                }
             }
 
             finite law void Consume(Box value)
@@ -78,6 +86,10 @@ public sealed class OwnershipValidationTests
             struct Box
             {
                 i32[min max] Value;
+
+                drop
+                {
+                }
             }
 
             finite law void Consume(Box value)
@@ -125,6 +137,10 @@ public sealed class OwnershipValidationTests
                 finite law void Consume(Box box)
                 {
                     return;
+                }
+
+                drop
+                {
                 }
             }
 
@@ -215,6 +231,10 @@ public sealed class OwnershipValidationTests
             struct Box
             {
                 i32[min max] Value;
+
+                drop
+                {
+                }
             }
 
             finite law i32[min max] Run()
@@ -246,6 +266,10 @@ public sealed class OwnershipValidationTests
             struct Box
             {
                 i32[min max] Value;
+
+                drop
+                {
+                }
             }
 
             finite law void Consume(Box value)
@@ -282,6 +306,10 @@ public sealed class OwnershipValidationTests
             struct Box
             {
                 i32[min max] Value;
+
+                drop
+                {
+                }
             }
 
             finite law Box Make()
@@ -310,6 +338,10 @@ public sealed class OwnershipValidationTests
             struct Name
             {
                 i32[min max] Value;
+
+                drop
+                {
+                }
             }
 
             struct Container
@@ -351,6 +383,10 @@ public sealed class OwnershipValidationTests
             struct Name
             {
                 i32[min max] Value;
+
+                drop
+                {
+                }
             }
 
             struct NameBox
@@ -393,6 +429,10 @@ public sealed class OwnershipValidationTests
             struct Box
             {
                 i32[min max] Value;
+
+                drop
+                {
+                }
             }
 
             doctrine Sink
@@ -428,6 +468,10 @@ public sealed class OwnershipValidationTests
             struct Box<T>
             {
                 T Value;
+
+                drop
+                {
+                }
             }
 
             doctrine Sink<T>
@@ -502,6 +546,10 @@ public sealed class OwnershipValidationTests
                         public struct OwnedAscii
                         {
                             ascii Text;
+
+                            drop
+                            {
+                            }
                         }
 
                         public fn System.Memory.MemoryResult<OwnedAscii> ConcatAscii(ascii left, u64[0 2 ** 63 - 1] leftLength, System.Memory.MemoryResult<OwnedAscii> right);

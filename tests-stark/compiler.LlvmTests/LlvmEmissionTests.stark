@@ -1,0 +1,4491 @@
+import LlvmTestSupport
+import System.Testing
+import AddressOfByValueCopyableParameterRegressionTests
+import BenchmarkSourceTests
+import CommentTriviaTests
+import CompilerPipelineEmitLlvmTests
+import CompilerPipelineFullIntegrationTests
+import CompilerPipelineOptimizeSsaTests
+import CompilerPipelineSyntaxModelTests
+import FixedArrayOrderedComparisonEmissionTests
+import GenericUseSiteInstantiationRegressionTests
+import LlvmEmitterConversionTests
+import LlvmIrEmissionTests
+import OutParameterDropRegressionTests
+import PackageImageCallableValueTests
+import RawMultilineStringParityTests
+import SsaOptimizationTests
+import TryPropagationImportedModuleTests
+import V1LoweringContractTests
+[Collection("compiler", "llvm")]
+module LlvmEmissionTests
+
+// Ported slice of tests/compiler.Tests LLVM IR emission tests, running against
+// the current C# host compiler through the host test protocol. Each fact
+// compiles a small source program, requests the rendered `llvm` artifact, and
+// asserts on raw LLVM-IR substrings / structure with System.Testing text
+// helpers. Requires STARK_HOST_COMPILER to point at the host compiler
+// executable. The original C# tests remain in tests/compiler.Tests as the
+// oracle until cutover.
+//
+// The host bridge renders the RAW optimized LLVM (no `noundef`-stripping or
+// whitespace normalization), matching the C# `GetLlvmRaw`. Facts that the C#
+// suite asserted over the whitespace-normalized `GetLlvm` text are re-expressed
+// here over the equivalent raw body-instruction substrings.
+
+// ---------------------------------------------------------------------------
+// LlvmIrEmissionTests
+// ---------------------------------------------------------------------------
+
+// Ported from StraightLineFunctionEmitsOptimizedLlvmBody.
+[Fact]
+fn bool StraightLineFunctionEmitsOptimizedLlvmBody()
+{
+    {
+        stack mut LlvmCompile compiled = CompileLlvm(
+            "llvm-straight-line",
+            raw"""
+module Demo
+
+unsafe finite law i32[min max] Run()
+{
+    stack mut i32[min max] value = 1;
+    value = value + 1;
+    return value;
+}
+""");
+        if (!Succeeds(compiled))
+        {
+            return false;
+        }
+
+        stack ascii llvm = Llvm(compiled);
+        return Contains(llvm, "define fastcc noundef i32 @Run()")
+            && Contains(llvm, "ret i32 2")
+            && DoesNotContain(llvm, "add i32")
+            && DoesNotContain(llvm, "alloca i32")
+            && DoesNotContain(llvm, "declare fastcc i32 @Run()");
+    }
+}
+
+// Ported from FunctionPointerCallsEmitFastccIndirectCall. The long divide chain
+// keeps Add above the inliner threshold so the call survives.
+[Fact]
+[Collection("closures")]
+fn bool FunctionPointerCallsEmitFastccIndirectCall()
+{
+    {
+        stack mut LlvmCompile compiled = CompileLlvm(
+            "llvm-fnptr-indirect-call",
+            raw"""
+module Demo
+
+unsafe fn i32[min max] Add(i32[min max] left, i32[min max] right)
+{
+    stack i32[min max] a = left + (right / 3);
+    stack i32[min max] b = a - (a / 5);
+    stack i32[min max] c = b + (b / 7);
+    stack i32[min max] d = c - (c / 11);
+    stack i32[min max] e = d + (d / 13);
+    stack i32[min max] f = e - (e / 17);
+    stack i32[min max] g = f + (f / 19);
+    stack i32[min max] h = g - (g / 23);
+    stack i32[min max] i = h + (h / 29);
+    stack i32[min max] j = i - (i / 31);
+    stack i32[min max] k = j + (j / 37);
+    stack i32[min max] l = k - (k / 41);
+    stack i32[min max] m = l + (l / 43);
+    return m;
+}
+
+unsafe fn i32[min max] Run()
+{
+    stack fnptr<unsafe fn i32[min max](i32[min max], i32[min max])> op = Add;
+    return op(40, 2);
+}
+""");
+        if (!Succeeds(compiled))
+        {
+            return false;
+        }
+
+        stack ascii llvm = Llvm(compiled);
+        return Contains(llvm, "call fastcc i32 @Add(");
+    }
+}
+
+// Ported from DynTraitObjectDispatchLoadsVtableSlotAndCallsIndirectly.
+[Fact]
+[Collection("traits")]
+fn bool DynTraitObjectDispatchLoadsVtableSlotAndCallsIndirectly()
+{
+    {
+        stack mut LlvmCompile compiled = CompileLlvm(
+            "llvm-dyn-trait-dispatch",
+            raw"""
+module Demo
+
+dyn trait Speaker
+{
+    finite law i32[min max] Speak(borrow Self self);
+}
+
+struct Dog : Speaker
+{
+    i32[min max] Volume;
+
+    finite law i32[min max] Speak(borrow Dog self)
+    {
+        return self.Volume;
+    }
+}
+
+export fn i32[min max] Announce(borrow dyn Speaker speaker)
+{
+    return speaker.Speak();
+}
+
+export fn i32[min max] main()
+{
+    stack Dog d = new Dog() { Volume = 7 };
+    stack borrow dyn Speaker s = d;
+    return Announce(s);
+}
+""");
+        if (!Succeeds(compiled))
+        {
+            return false;
+        }
+
+        stack ascii llvm = Llvm(compiled);
+        stack ascii announceBody = LlvmDefinitionBody(llvm, "Announce");
+        return Contains(llvm, "@__stark_vtable_Dog__Speaker")
+            && Contains(announceBody, "getelementptr ptr,")
+            && Contains(announceBody, "load ptr,")
+            && Contains(announceBody, "call fastcc i32 %")
+            && Contains(announceBody, "nosync nofree");
+    }
+}
+
+// Ported from NonCapturingClosureValuesLowerToInvokeAndEnvironmentPair. The
+// closure crosses an export boundary so the devirtualizer cannot collapse the
+// invoke-pointer call to a direct lambda call.
+[Fact]
+[Collection("closures")]
+fn bool NonCapturingClosureValuesLowerToInvokeAndEnvironmentPair()
+{
+    {
+        stack mut LlvmCompile compiled = CompileLlvm(
+            "llvm-noncapturing-closure-pair",
+            raw"""
+module Demo
+
+export fn i32[min max] Apply(closure<finite law i32[min max](i32[min max])> op)
+{
+    stack i32[min max] r = op(41);
+    stack i32[min max] a = r + (r / 3);
+    stack i32[min max] b = a - (a / 5);
+    stack i32[min max] c = b + (b / 7);
+    stack i32[min max] d = c - (c / 11);
+    stack i32[min max] e = d + (d / 13);
+    stack i32[min max] f = e - (e / 17);
+    stack i32[min max] g = f + (f / 19);
+    stack i32[min max] h = g - (g / 23);
+    stack i32[min max] i = h + (h / 29);
+    stack i32[min max] j = i - (i / 31);
+    stack i32[min max] k = j + (j / 37);
+    stack i32[min max] l = k - (k / 41);
+    stack i32[min max] m = l + (l / 43);
+    return m;
+}
+
+fn i32[min max] Run()
+{
+    stack closure<finite law i32[min max](i32[min max])> op =
+        (i32[min max] value) => value + 1;
+
+    return Apply(op);
+}
+""");
+        if (!Succeeds(compiled))
+        {
+            return false;
+        }
+
+        stack ascii llvm = Llvm(compiled);
+        stack ascii applyBody = LlvmDefinitionBody(llvm, "Apply");
+        return Contains(llvm, "{ ptr @Run___lambda_")
+            && Contains(llvm, "ptr null")
+            && Contains(applyBody, "extractvalue { ptr, ptr }")
+            && Contains(applyBody, "call fastcc i32 %")
+            && Contains(applyBody, "willreturn")
+            && Contains(applyBody, "mustprogress");
+    }
+}
+
+// Ported from OptimizedFunctionItemClosurePromotionDevirtualizesAndPrunesAdapter.
+[Fact]
+[Collection("closures")]
+fn bool OptimizedFunctionItemClosurePromotionDevirtualizesAndPrunesAdapter()
+{
+    {
+        stack mut LlvmCompile compiled = CompileLlvm(
+            "llvm-closure-promotion-devirt",
+            raw"""
+module Demo
+
+fn i32[min max] AddOne(i32[min max] value)
+{
+    return value + 1;
+}
+
+fn i32[min max] Apply(borrow closure<fn i32[min max](i32[min max])> op, i32[min max] value)
+{
+    return op(value);
+}
+
+fn i32[min max] Run()
+{
+    return Apply(AddOne, 41);
+}
+""");
+        if (!Succeeds(compiled))
+        {
+            return false;
+        }
+
+        stack ascii llvm = Llvm(compiled);
+        stack ascii runBody = LlvmDefinitionBody(llvm, "Run");
+        return Contains(runBody, "ret i32 42")
+            && DoesNotContain(llvm, "closure_adapter")
+            && DoesNotContain(runBody, "alloca { ptr, ptr }")
+            && DoesNotContain(runBody, "extractvalue { ptr, ptr }")
+            && DoesNotContain(runBody, "call fastcc");
+    }
+}
+
+// Ported from SmallRangeUnsignedIntegerOperationsUseUnsignedLlvmOpcodes.
+[Fact]
+[Collection("integers")]
+fn bool SmallRangeUnsignedIntegerOperationsUseUnsignedLlvmOpcodes()
+{
+    {
+        stack mut LlvmCompile compiled = CompileLlvm(
+            "llvm-small-unsigned-opcodes",
+            raw"""
+module Demo
+
+unsafe fn bool Less(u8[0 127] left, u8[0 127] right)
+{
+    return left < right;
+}
+
+unsafe fn u8[0 127] Divide(u8[0 127] left, u8[0 127] right)
+{
+    return left / right;
+}
+
+unsafe fn u8[0 127] Remainder(u8[0 127] left, u8[0 127] right)
+{
+    return left % right;
+}
+
+unsafe fn u8[0 127] ShiftDown(u8[0 127] left, u8[0 127] right)
+{
+    return left >> right;
+}
+""");
+        if (!Succeeds(compiled))
+        {
+            return false;
+        }
+
+        stack ascii llvm = Llvm(compiled);
+        return Contains(llvm, "icmp ult i8")
+            && Contains(llvm, "udiv i8")
+            && Contains(llvm, "urem i8")
+            && Contains(llvm, "lshr i8")
+            && DoesNotContain(llvm, "icmp slt i8")
+            && DoesNotContain(llvm, "sdiv i8")
+            && DoesNotContain(llvm, "srem i8")
+            && DoesNotContain(llvm, "ashr i8");
+    }
+}
+
+// Ported from NonCapturingLambdaArgumentsLowerToFunctionPointers. The long body
+// keeps Apply opaque so the lambda stays a function-pointer argument.
+[Fact]
+[Collection("closures")]
+fn bool NonCapturingLambdaArgumentsLowerToFunctionPointers()
+{
+    {
+        stack mut LlvmCompile compiled = CompileLlvm(
+            "llvm-lambda-arg-fnptr",
+            raw"""
+module Demo
+
+unsafe fn i32[min max] Apply(fnptr<fn i32[min max](i32[min max])> op)
+{
+    stack i32[min max] r = op(41);
+    stack i32[min max] a = r + (r / 3);
+    stack i32[min max] b = a - (a / 5);
+    stack i32[min max] c = b + (b / 7);
+    stack i32[min max] d = c - (c / 11);
+    stack i32[min max] e = d + (d / 13);
+    stack i32[min max] f = e - (e / 17);
+    stack i32[min max] g = f + (f / 19);
+    stack i32[min max] h = g - (g / 23);
+    stack i32[min max] i = h + (h / 29);
+    stack i32[min max] j = i - (i / 31);
+    stack i32[min max] k = j + (j / 37);
+    stack i32[min max] l = k - (k / 41);
+    stack i32[min max] m = l + (l / 43);
+    return m;
+}
+
+unsafe fn i32[min max] Run()
+{
+    return Apply((i32[min max] value) => value + 1);
+}
+""");
+        if (!Succeeds(compiled))
+        {
+            return false;
+        }
+
+        stack ascii llvm = Llvm(compiled);
+        return Contains(llvm, "; synthetic definition: Run.__lambda_")
+            && Contains(llvm, "call fastcc i32 @Apply(ptr nonnull @Run___lambda_");
+    }
+}
+
+// Ported from GenericSizeofAndAlignofLowerAfterConcreteInstantiation.
+[Fact]
+[Collection("comptime")]
+fn bool GenericSizeofAndAlignofLowerAfterConcreteInstantiation()
+{
+    {
+        stack mut LlvmCompile compiled = CompileLlvm(
+            "llvm-generic-sizeof-alignof",
+            raw"""
+module Demo
+
+unsafe fn i64[min max] Layout<T>(T value)
+{
+    return sizeof(T) + alignof(T);
+}
+
+unsafe fn i64[min max] Run()
+{
+    return Layout(1);
+}
+""");
+        if (!Succeeds(compiled))
+        {
+            return false;
+        }
+
+        stack ascii llvm = Llvm(compiled);
+        stack ascii runBody = LlvmDefinitionBody(llvm, "Run");
+        return Contains(runBody, "ret i64 2")
+            && DoesNotContain(llvm, "LLVM body emission fallback");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Integer arithmetic and operators
+// ---------------------------------------------------------------------------
+
+// Ported from BitwiseXorEmitsConcreteLlvmXorInstruction (header re-expressed
+// over the raw `@Run(` symbol form; the C# version asserted the
+// whitespace-normalized header).
+[Fact]
+[Collection("integers")]
+fn bool BitwiseXorEmitsConcreteLlvmXorInstruction()
+{
+    {
+        stack mut LlvmCompile compiled = CompileLlvm(
+            "llvm-bitwise-xor",
+            raw"""
+module Demo
+
+unsafe fn i32[min max] Run(i32[min max] left, i32[min max] right)
+{
+    return left ^ right;
+}
+""");
+        if (!Succeeds(compiled))
+        {
+            return false;
+        }
+
+        stack ascii llvm = Llvm(compiled);
+        return Contains(llvm, "@Run(i32 noundef %arg_left, i32 noundef %arg_right)")
+            && Contains(llvm, "xor i32");
+    }
+}
+
+// Ported from BitwiseAndShiftExpressionsEmitConcreteLlvmInstructions.
+[Fact]
+[Collection("integers")]
+fn bool BitwiseAndShiftExpressionsEmitConcreteLlvmInstructions()
+{
+    {
+        stack mut LlvmCompile compiled = CompileLlvm(
+            "llvm-bitwise-shift",
+            raw"""
+module Demo
+
+unsafe fn i32[min max] Run(i32[min max] left, i32[min max] middle, i32[min max] right, i32[min max] mask)
+{
+    return left | middle ^ right & mask << 1 >> 1;
+}
+""");
+        if (!Succeeds(compiled))
+        {
+            return false;
+        }
+
+        stack ascii llvm = Llvm(compiled);
+        return Contains(llvm, "shl i32")
+            && Contains(llvm, "ashr exact i32")
+            && Contains(llvm, "and i32")
+            && Contains(llvm, "xor i32")
+            && Contains(llvm, "or i32");
+    }
+}
+
+// Ported from IntegerAndBoolUnaryOperatorsEmitConcreteLlvmInstructions.
+[Fact]
+[Collection("integers")]
+fn bool IntegerAndBoolUnaryOperatorsEmitConcreteLlvmInstructions()
+{
+    {
+        stack mut LlvmCompile compiled = CompileLlvm(
+            "llvm-unary-operators",
+            raw"""
+module Demo
+
+unsafe fn i32[min max] Negate(i32[min max] value)
+{
+    return -value;
+}
+
+unsafe fn bool LogicalNot(bool value)
+{
+    return !value;
+}
+
+unsafe fn i32[min max] BitwiseNot(i32[min max] value)
+{
+    return ~value;
+}
+""");
+        if (!Succeeds(compiled))
+        {
+            return false;
+        }
+
+        stack ascii llvm = Llvm(compiled);
+        return Contains(llvm, "sub i32 0, %arg_value")
+            && Contains(llvm, "xor i1 %arg_value, true")
+            && Contains(llvm, "xor i32 %arg_value, -1")
+            && DoesNotContain(llvm, "; LLVM body emission fallback");
+    }
+}
+
+// Ported from OrdinaryIntegerArithmeticEmitsSignedNoWrapFlags.
+[Fact]
+[Collection("integers")]
+fn bool OrdinaryIntegerArithmeticEmitsSignedNoWrapFlags()
+{
+    {
+        stack mut LlvmCompile compiled = CompileLlvm(
+            "llvm-arith-nsw",
+            raw"""
+module Demo
+
+unsafe fn i32[min max] Add(i32[min max] left, i32[min max] right)
+{
+    return left + right;
+}
+
+unsafe fn i32[min max] Sub(i32[min max] left, i32[min max] right)
+{
+    return left - right;
+}
+
+unsafe fn i32[min max] Mul(i32[min max] left, i32[min max] right)
+{
+    return left * right;
+}
+""");
+        if (!Succeeds(compiled))
+        {
+            return false;
+        }
+
+        stack ascii llvm = Llvm(compiled);
+        return Contains(llvm, "add nsw i32")
+            && Contains(llvm, "sub nsw i32")
+            && Contains(llvm, "mul nsw i32")
+            && DoesNotContain(llvm, "add nuw")
+            && DoesNotContain(llvm, "sub nuw")
+            && DoesNotContain(llvm, "mul nuw");
+    }
+}
+
+// Ported from UnconstrainedUnsignedOrdinaryArithmeticEmitsUnsignedNoWrapByContract.
+[Fact]
+[Collection("integers")]
+fn bool UnconstrainedUnsignedOrdinaryArithmeticEmitsUnsignedNoWrapByContract()
+{
+    {
+        stack mut LlvmCompile compiled = CompileLlvm(
+            "llvm-arith-nuw",
+            raw"""
+module Demo
+
+unsafe fn u32[0 max] Add(u32[0 max] left, u32[0 max] right)
+{
+    return left + right;
+}
+
+unsafe fn u32[0 max] Sub(u32[0 max] left, u32[0 max] right)
+{
+    return left - right;
+}
+
+unsafe fn u32[0 max] Mul(u32[0 max] left, u32[0 max] right)
+{
+    return left * right;
+}
+""");
+        if (!Succeeds(compiled))
+        {
+            return false;
+        }
+
+        stack ascii llvm = Llvm(compiled);
+        return Contains(llvm, "add nuw i32")
+            && Contains(llvm, "sub nuw i32")
+            && Contains(llvm, "mul nuw i32")
+            && DoesNotContain(llvm, "add nuw nsw i32")
+            && DoesNotContain(llvm, "sub nuw nsw i32")
+            && DoesNotContain(llvm, "mul nuw nsw i32");
+    }
+}
+
+// Ported from NonNegativeConstrainedOrdinaryArithmeticEmitsUnsignedNoWrapWhenProven.
+[Fact]
+[Collection("integers")]
+fn bool NonNegativeConstrainedOrdinaryArithmeticEmitsUnsignedNoWrapWhenProven()
+{
+    {
+        stack mut LlvmCompile compiled = CompileLlvm(
+            "llvm-arith-nuw-nsw-proven",
+            raw"""
+module Demo
+
+unsafe fn i32[min max] Add(u8[0 10] left, u8[0 20] right)
+{
+    return left + right;
+}
+
+unsafe fn i32[min max] Sub(u8[20 30] left, u8[0 10] right)
+{
+    return left - right;
+}
+
+unsafe fn i32[min max] Mul(u8[0 10] left, u8[0 5] right)
+{
+    return left * right;
+}
+""");
+        if (!Succeeds(compiled))
+        {
+            return false;
+        }
+
+        stack ascii llvm = Llvm(compiled);
+        return Contains(llvm, "add nuw nsw i8")
+            && Contains(llvm, "sub nuw nsw i8")
+            && Contains(llvm, "mul nuw nsw i32");
+    }
+}
+
+// Ported from WrappingArithmeticEmitsConcreteLlvmInstructions.
+[Fact]
+[Collection("integers")]
+fn bool WrappingArithmeticEmitsConcreteLlvmInstructions()
+{
+    {
+        stack mut LlvmCompile compiled = CompileLlvm(
+            "llvm-wrapping-arith",
+            raw"""
+module Demo
+
+unsafe fn i32[min max] Run(i32[min max] left, i32[min max] right)
+{
+    return -%left +% right *% 2 -% right;
+}
+""");
+        if (!Succeeds(compiled))
+        {
+            return false;
+        }
+
+        stack ascii llvm = Llvm(compiled);
+        return Contains(llvm, "sub i32 0, %arg_left")
+            && Contains(llvm, "mul i32")
+            && Contains(llvm, "add i32")
+            && DoesNotContain(llvm, "sub nsw")
+            && DoesNotContain(llvm, "sub nuw")
+            && DoesNotContain(llvm, "mul nsw")
+            && DoesNotContain(llvm, "mul nuw")
+            && DoesNotContain(llvm, "add nsw")
+            && DoesNotContain(llvm, "add nuw");
+    }
+}
+
+// Ported from SaturatingArithmeticEmitsWideClampSequence.
+[Fact]
+[Collection("integers")]
+fn bool SaturatingArithmeticEmitsWideClampSequence()
+{
+    {
+        stack mut LlvmCompile compiled = CompileLlvm(
+            "llvm-saturating-arith",
+            raw"""
+module Demo
+
+unsafe fn i32[min max] Run(i32[min max] left, i32[min max] right)
+{
+    return left +| right *| 2 -| 1;
+}
+""");
+        if (!Succeeds(compiled))
+        {
+            return false;
+        }
+
+        stack ascii llvm = Llvm(compiled);
+        return Contains(llvm, "sext i32")
+            && Contains(llvm, "mul i64")
+            && Contains(llvm, "add i64")
+            && Contains(llvm, "sub i64")
+            && Contains(llvm, "icmp sgt i64")
+            && Contains(llvm, "icmp slt i64")
+            && Contains(llvm, "select i1")
+            && Contains(llvm, "trunc i64")
+            && DoesNotContain(llvm, "add nsw i64")
+            && DoesNotContain(llvm, "add nuw i64")
+            && DoesNotContain(llvm, "sub nsw i64")
+            && DoesNotContain(llvm, "mul nsw i64");
+    }
+}
+
+// Ported from ExplicitWrappingAndSaturatingArithmeticStayFlagFreeEvenWhenOrdinaryProofsExist.
+[Fact]
+[Collection("integers")]
+fn bool ExplicitWrappingAndSaturatingArithmeticStayFlagFree()
+{
+    {
+        stack mut LlvmCompile compiled = CompileLlvm(
+            "llvm-explicit-arith-flag-free",
+            raw"""
+module Demo
+
+unsafe fn i32[min max] Wrap(u8[0 10] left, u8[0 5] right)
+{
+    return left +% right *% 2 -% 1;
+}
+
+unsafe fn i32[min max] Sat(u8[0 10] left, u8[0 5] right)
+{
+    return left +| right *| 2 -| 1;
+}
+""");
+        if (!Succeeds(compiled))
+        {
+            return false;
+        }
+
+        stack ascii llvm = Llvm(compiled);
+        return Contains(llvm, "mul i8")
+            && Contains(llvm, "add i8")
+            && Contains(llvm, "sub i8")
+            && Contains(llvm, "mul i16")
+            && Contains(llvm, "add i16")
+            && Contains(llvm, "sub i16")
+            && DoesNotContain(llvm, "nuw")
+            && DoesNotContain(llvm, "nsw")
+            && DoesNotContain(llvm, "exact");
+    }
+}
+
+// Ported from ExplicitIntegerArithmeticConstantsFoldBeforeLlvmEmission. The
+// final Assert.Equal(2, ...) count is re-expressed with CountOccurrences.
+[Fact]
+[Collection("integers")]
+fn bool ExplicitIntegerArithmeticConstantsFoldBeforeLlvmEmission()
+{
+    {
+        stack mut LlvmCompile compiled = CompileLlvm(
+            "llvm-explicit-arith-const-fold",
+            raw"""
+module Demo
+
+unsafe fn i32[min max] Wrap()
+{
+    return 2147483647 +% 1;
+}
+
+unsafe fn i32[min max] SatAdd()
+{
+    return 2147483647 +| 1;
+}
+
+unsafe fn i32[min max] SatMul()
+{
+    return 1073741824 *| 4;
+}
+""");
+        if (!Succeeds(compiled))
+        {
+            return false;
+        }
+
+        stack ascii llvm = Llvm(compiled);
+        return Contains(llvm, "@Wrap()")
+            && Contains(llvm, "ret i32 -2147483648")
+            && Contains(llvm, "@SatAdd()")
+            && Contains(llvm, "@SatMul()")
+            && CountOccurrences(llvm, "ret i32 2147483647") == 2;
+    }
+}
+
+// Ported from FloatLiteralArgumentsEmitValidHexFloatConstants.
+[Fact]
+[Collection("floats")]
+fn bool FloatLiteralArgumentsEmitValidHexFloatConstants()
+{
+    {
+        stack mut LlvmCompile compiled = CompileLlvm(
+            "llvm-float-hex-constants",
+            raw"""
+module Demo
+
+noinline unsafe fn f64 Echo(f64 value)
+{
+    return value;
+}
+
+unsafe fn i32[min max] Run()
+{
+    if (Echo(0.0) != 0.0)
+    {
+        return 1;
+    }
+
+    if (Echo(3.0) != 3.0)
+    {
+        return 2;
+    }
+
+    return 0;
+}
+""");
+        if (!Succeeds(compiled))
+        {
+            return false;
+        }
+
+        stack ascii llvm = Llvm(compiled);
+        return Contains(llvm, "call fast fastcc double @Echo(double 0x0000000000000000)")
+            && Contains(llvm, "fcmp fast one double %")
+            && Contains(llvm, ", 0x0000000000000000")
+            && Contains(llvm, "call fast fastcc double @Echo(double 0x4008000000000000)")
+            && Contains(llvm, ", 0x4008000000000000")
+            && DoesNotContain(llvm, "call fast fastcc double @Echo(double 0)")
+            && DoesNotContain(llvm, "call fast fastcc double @Echo(double 3)")
+            && DoesNotContain(llvm, "double 3.0");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Control flow and switches
+// ---------------------------------------------------------------------------
+
+// Ported from LoopHeaderEmitsBackedgePhi.
+[Fact]
+[Collection("control-flow")]
+fn bool LoopHeaderEmitsBackedgePhi()
+{
+    {
+        stack mut LlvmCompile compiled = CompileLlvm(
+            "llvm-loop-backedge-phi",
+            raw"""
+module Demo
+
+unsafe fn i32[min max] Run()
+{
+    stack mut i32[min max] i = 0;
+    while willexit (i < 4)
+    {
+        i = i + 1;
+    }
+
+    return i;
+}
+""");
+        if (!Succeeds(compiled))
+        {
+            return false;
+        }
+
+        stack ascii llvm = Llvm(compiled);
+        return Contains(llvm, "phi i32")
+            && Contains(llvm, "%bb2")
+            && Contains(llvm, "icmp slt i32");
+    }
+}
+
+// Ported from GuardedSwitchBodyEmitsCompareAndGuardBranches.
+[Fact]
+[Collection("control-flow", "patterns")]
+fn bool GuardedSwitchBodyEmitsCompareAndGuardBranches()
+{
+    {
+        stack mut LlvmCompile compiled = CompileLlvm(
+            "llvm-guarded-switch",
+            raw"""
+module Demo
+
+unsafe fn i32[min max] Run(i32[min max] value, bool allow)
+{
+    switch (value)
+    {
+        case 1 when allow:
+            return 1;
+        default:
+            return 2;
+    }
+}
+""");
+        if (!Succeeds(compiled))
+        {
+            return false;
+        }
+
+        stack ascii llvm = Llvm(compiled);
+        return Contains(llvm, "@Run(i32")
+            && Contains(llvm, "icmp eq i32")
+            && Contains(llvm, "select i1 %arg_allow, i32 1, i32 2")
+            && DoesNotContain(llvm, "declare fastcc i32 @Run(i32, i1)");
+    }
+}
+
+// Ported from OrPatternLiteralSwitchPreservesNativeSwitchLowering.
+[Fact]
+[Collection("control-flow", "patterns")]
+fn bool OrPatternLiteralSwitchPreservesNativeSwitchLowering()
+{
+    {
+        stack mut LlvmCompile compiled = CompileLlvm(
+            "llvm-orpattern-native-switch",
+            raw"""
+module Demo
+
+unsafe fn i32[min max] Run(u8[0 3] value)
+{
+    switch (value)
+    {
+        case 0 | 2:
+            return 10;
+        case 1 | 3:
+            return 20;
+    }
+}
+""");
+        if (!Succeeds(compiled))
+        {
+            return false;
+        }
+
+        stack ascii llvm = Llvm(compiled);
+        return Contains(llvm, "switch i8 %arg_value")
+            && Contains(llvm, "i8 0, label")
+            && Contains(llvm, "i8 1, label")
+            && Contains(llvm, "i8 2, label")
+            && Contains(llvm, "i8 3, label")
+            && DoesNotContain(llvm, "declare fastcc i32 @Run(i8)");
+    }
+}
+
+// Ported from RangePatternIntegerSwitchEmitsGuardedComparisons.
+[Fact]
+[Collection("control-flow", "patterns")]
+fn bool RangePatternIntegerSwitchEmitsGuardedComparisons()
+{
+    {
+        stack mut LlvmCompile compiled = CompileLlvm(
+            "llvm-range-pattern-int-switch",
+            raw"""
+module Demo
+
+unsafe fn i32[min max] Run(u8[0 30] value)
+{
+    switch (value)
+    {
+        case 0..9:
+            return 10;
+        case 12..20:
+            return 20;
+        default:
+            return 30;
+    }
+}
+""");
+        if (!Succeeds(compiled))
+        {
+            return false;
+        }
+
+        stack ascii llvm = Llvm(compiled);
+        return DoesNotContain(llvm, "switch i8 %arg_value")
+            && Contains(llvm, "icmp ule i8 %arg_value, 9")
+            && Contains(llvm, "icmp uge i8 %arg_value, 12")
+            && DoesNotContain(llvm, "declare fastcc i32 @Run(i8)");
+    }
+}
+
+// Ported from RangePatternEnumPayloadSwitchEmitsPayloadComparison.
+[Fact]
+[Collection("control-flow", "patterns")]
+fn bool RangePatternEnumPayloadSwitchEmitsPayloadComparison()
+{
+    {
+        stack mut LlvmCompile compiled = CompileLlvm(
+            "llvm-range-pattern-enum-switch",
+            raw"""
+module Demo
+
+enum Token
+{
+    Number(i32[min max]),
+    End,
+}
+
+unsafe fn i32[min max] Run(Token token)
+{
+    switch (token)
+    {
+        case Token.Number(0..9):
+            return 1;
+        case Token.Number(_):
+            return 2;
+        case Token.End:
+            return 0;
+    }
+}
+""");
+        if (!Succeeds(compiled))
+        {
+            return false;
+        }
+
+        stack ascii llvm = Llvm(compiled);
+        return Contains(llvm, "@Run(%Token")
+            && Contains(llvm, "icmp eq i8")
+            && Contains(llvm, "icmp sge i32")
+            && Contains(llvm, "icmp sle i32")
+            && DoesNotContain(llvm, "declare fastcc i32 @Run(%Token)");
+    }
+}
+
+// Ported from OrPatternEnumCapturesShareBodyLocal.
+[Fact]
+[Collection("control-flow", "patterns")]
+fn bool OrPatternEnumCapturesShareBodyLocal()
+{
+    {
+        stack mut LlvmCompile compiled = CompileLlvm(
+            "llvm-orpattern-enum-capture",
+            raw"""
+module Demo
+
+enum Token
+{
+    Left(i32[min max]),
+    Right(i32[min max]),
+    End,
+}
+
+unsafe fn i32[min max] Run(Token token)
+{
+    switch (token)
+    {
+        case Token.Left(var value) | Token.Right(var value):
+            return value;
+        case Token.End:
+            return 0;
+    }
+}
+""");
+        if (!Succeeds(compiled))
+        {
+            return false;
+        }
+
+        stack ascii llvm = Llvm(compiled);
+        return Contains(llvm, "@Run(%Token")
+            && Contains(llvm, "icmp eq i8")
+            && Contains(llvm, "ret i32")
+            && DoesNotContain(llvm, "declare fastcc i32 @Run(%Token)");
+    }
+}
+
+// Ported from ComparisonChainEmitsShortCircuitBranchesAndSingleSharedEvaluation.
+// The C# Assert.Equal counts are re-expressed with CountOccurrences.
+[Fact]
+[Collection("control-flow")]
+fn bool ComparisonChainEmitsShortCircuitBranchesAndSingleSharedEvaluation()
+{
+    {
+        stack mut LlvmCompile compiled = CompileLlvm(
+            "llvm-comparison-chain",
+            raw"""
+module Demo
+
+noinline unsafe fn i32[min max] Next()
+{
+    return 1;
+}
+
+unsafe fn bool Run()
+{
+    return 0 < Next() < 3;
+}
+""");
+        if (!Succeeds(compiled))
+        {
+            return false;
+        }
+
+        stack ascii llvm = Llvm(compiled);
+        return CountOccurrences(llvm, "call fastcc i32 @Next()") == 1
+            && CountOccurrences(llvm, "icmp slt i32") == 2
+            && Contains(llvm, "br i1")
+            && DoesNotContain(llvm, "declare fastcc i1 @Run()");
+    }
+}
+
+// Ported from FloatComparisonChainsUseOrderedPredicates.
+[Fact]
+[Collection("control-flow", "floats")]
+fn bool FloatComparisonChainsUseOrderedPredicates()
+{
+    {
+        stack mut LlvmCompile compiled = CompileLlvm(
+            "llvm-float-comparison-chain",
+            raw"""
+module Demo
+
+unsafe fn bool Run(f32 low, f32 value, f32 high)
+{
+    return low < value <= high;
+}
+""");
+        if (!Succeeds(compiled))
+        {
+            return false;
+        }
+
+        stack ascii llvm = Llvm(compiled);
+        return Contains(llvm, "fcmp fast olt float")
+            && Contains(llvm, "fcmp fast ole float")
+            && Contains(llvm, "br i1");
+    }
+}
+
+// Ported from TextLiteralSwitchEmitsLengthAndByteComparisons.
+[Fact]
+[Collection("control-flow", "text")]
+fn bool TextLiteralSwitchEmitsLengthAndByteComparisons()
+{
+    {
+        stack mut LlvmCompile compiled = CompileLlvm(
+            "llvm-text-literal-switch",
+            raw"""
+module Demo
+
+unsafe fn i32[min max] Run(ascii value, bool allow)
+{
+    switch (value)
+    {
+        case "ab":
+            return 1;
+        case "cd" when allow:
+            return 2;
+        default:
+            return 3;
+    }
+}
+""");
+        if (!Succeeds(compiled))
+        {
+            return false;
+        }
+
+        stack ascii llvm = Llvm(compiled);
+        return Contains(llvm, "extractvalue %stark_ascii %arg_value, 0")
+            && Contains(llvm, "extractvalue %stark_ascii %arg_value, 1")
+            && Contains(llvm, "icmp eq i64")
+            && Contains(llvm, "load i8, ptr")
+            && Contains(llvm, "select i1 %arg_allow")
+            && DoesNotContain(llvm, "switch %stark_ascii")
+            && DoesNotContain(llvm, "declare fastcc i32 @Run(%stark_ascii, i1)");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// FFI
+// ---------------------------------------------------------------------------
+
+// Ported from HelloWorldStyleFfiPutsEmitsStringGlobalAndMainBody. The C#
+// `define i32 @main()` header (over normalized text) is re-expressed as the raw
+// `@main() nounwind` substring.
+[Fact]
+[Collection("ffi")]
+fn bool HelloWorldStyleFfiPutsEmitsStringGlobalAndMainBody()
+{
+    {
+        stack mut LlvmCompile compiled = CompileLlvm(
+            "llvm-ffi-puts-hello-world",
+            raw"""
+module Hello
+
+unsafe ffi fn i32[min max] puts(ascii text);
+export unsafe fn i32[min max] main()
+{
+    puts("Hello, world!\n");
+    return 0;
+}
+""");
+        if (!Succeeds(compiled))
+        {
+            return false;
+        }
+
+        stack ascii llvm = Llvm(compiled);
+        return Contains(llvm, "@.str.0 = private unnamed_addr constant")
+            && Contains(llvm, "%stark_ascii = type { ptr, i64 }")
+            && Contains(llvm, "declare i32 @puts(ptr readonly) nounwind")
+            && Contains(llvm, "@main() nounwind")
+            && Contains(llvm, "call i32 @puts(ptr getelementptr inbounds nuw ([15 x i8], ptr @.str.0, i32 0, i32 0))")
+            && DoesNotContain(llvm, "invoke i32 @puts");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// LlvmTextOrderedComparisonEmissionTests
+// ---------------------------------------------------------------------------
+
+// Ported from TextOrderedComparisonsEmitLexicographicHelperCalls.
+[Fact]
+[Collection("text")]
+fn bool TextOrderedComparisonsEmitLexicographicHelperCalls()
+{
+    {
+        stack mut LlvmCompile compiled = CompileLlvm(
+            "llvm-text-ordered-comparisons",
+            raw"""
+module Demo
+
+unsafe fn bool LessAscii(ascii left, ascii right)
+{
+    return left < right;
+}
+
+unsafe fn bool GreaterOrEqualUnicode(unicode left, unicode right)
+{
+    return left >= right;
+}
+
+unsafe fn bool BoolLess(bool left, bool right)
+{
+    return left < right;
+}
+
+unsafe fn bool PointerLess(rawptr<i32[min max]> left, rawptr<i32[min max]> right)
+{
+    return left < right;
+}
+""");
+        if (!Succeeds(compiled))
+        {
+            return false;
+        }
+
+        stack ascii llvm = Llvm(compiled);
+        return Contains(llvm, "define internal dso_local i32 @__stark_ascii_compare(%stark_ascii %left, %stark_ascii %right)")
+            && Contains(llvm, "define internal dso_local i32 @__stark_unicode_compare(%stark_unicode %left, %stark_unicode %right)")
+            && Contains(llvm, "call i32 @__stark_ascii_compare(%stark_ascii %arg_left, %stark_ascii %arg_right)")
+            && Contains(llvm, "call i32 @__stark_unicode_compare(%stark_unicode %arg_left, %stark_unicode %arg_right)")
+            && Contains(llvm, "icmp slt i32")
+            && Contains(llvm, "icmp sge i32")
+            && Contains(llvm, "icmp ult i1")
+            && Contains(llvm, "icmp ult ptr")
+            && DoesNotContain(llvm, "; LLVM body emission fallback for LessAscii")
+            && DoesNotContain(llvm, "; LLVM body emission fallback for GreaterOrEqualUnicode")
+            && DoesNotContain(llvm, "; LLVM body emission fallback for BoolLess")
+            && DoesNotContain(llvm, "; LLVM body emission fallback for PointerLess");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Ported [Fact] wrappers (bodies in imported companion modules). [Collection] tags
+// give each fact a domain; the module-level tag carries the pipeline stage.
+// ---------------------------------------------------------------------------
+[Fact]
+[Collection("address-of-by-value-copyable-parameter")]
+fn bool InliningAMultiBlockBorrowOfAByValueCopyableParameterValidates()
+{
+    return InliningAMultiBlockBorrowOfAByValueCopyableParameterValidatesImpl();
+}
+
+[Fact]
+[Collection("benchmark-source")]
+fn bool BenchmarkSourcesCompile()
+{
+    return BenchmarkSourcesCompileImpl();
+}
+
+[Fact]
+[Collection("benchmark-source")]
+fn bool MemoryCopyFillHotLoopUsesInfallibleHelpers()
+{
+    return MemoryCopyFillHotLoopUsesInfallibleHelpersImpl();
+}
+
+[Fact]
+[Collection("benchmark-source")]
+fn bool WindowsDirectoryEnumerationUsesAllocationFreeInfoPath()
+{
+    return WindowsDirectoryEnumerationUsesAllocationFreeInfoPathImpl();
+}
+
+[Fact]
+[Collection("benchmark-source")]
+fn bool DirectoryEnumerationDoesNotExposeLargeDirectoryPayloadAsSsaValue()
+{
+    return DirectoryEnumerationDoesNotExposeLargeDirectoryPayloadAsSsaValueImpl();
+}
+
+[Fact]
+[Collection("benchmark-source")]
+fn bool FileOpenDoesNotExposeLargeFilePayloadAsSsaValue()
+{
+    return FileOpenDoesNotExposeLargeFilePayloadAsSsaValueImpl();
+}
+
+[Fact]
+[Collection("benchmark-source")]
+fn bool DictionaryInsertDropFieldUpdatesDoNotStoreDeferredAggregateValues()
+{
+    return DictionaryInsertDropFieldUpdatesDoNotStoreDeferredAggregateValuesImpl();
+}
+
+[Fact]
+[Collection("benchmark-source")]
+fn bool TextFormattingBenchmarksSpecializeConstantIntegerFormatting()
+{
+    return TextFormattingBenchmarksSpecializeConstantIntegerFormattingImpl();
+}
+
+[Fact]
+[Collection("comment-trivia")]
+fn bool LineBlockAndXmlCommentsAreIgnoredBeforeLowering()
+{
+    return LineBlockAndXmlCommentsAreIgnoredBeforeLoweringImpl();
+}
+
+[Fact]
+[Collection("compiler-pipeline-emit-llvm")]
+fn bool SourceBackedImportedInlineFunctionsEmitInternalLlvmBodyClones()
+{
+    return SourceBackedImportedInlineFunctionsEmitInternalLlvmBodyClonesImpl();
+}
+
+[Fact]
+[Collection("compiler-pipeline-emit-llvm")]
+fn bool SourceBackedImportedInlineFunctionsDeclareModulePrivateConstsUsedByClone()
+{
+    return SourceBackedImportedInlineFunctionsDeclareModulePrivateConstsUsedByCloneImpl();
+}
+
+[Fact]
+[Collection("compiler-pipeline-emit-llvm")]
+fn bool SourceBackedImportedInlineFunctionsCloneModulePrivateCalleeDependencies()
+{
+    return SourceBackedImportedInlineFunctionsCloneModulePrivateCalleeDependenciesImpl();
+}
+
+[Fact]
+[Collection("compiler-pipeline-emit-llvm")]
+fn bool SourceBackedImportedInlineCloneSeedsRestrictEmissionToReachableRootPath()
+{
+    return SourceBackedImportedInlineCloneSeedsRestrictEmissionToReachableRootPathImpl();
+}
+
+[Fact]
+[Collection("compiler-pipeline-emit-llvm")]
+fn bool SourceBackedImportedNoInlineFunctionsStayAbiDeclarations()
+{
+    return SourceBackedImportedNoInlineFunctionsStayAbiDeclarationsImpl();
+}
+
+[Fact]
+[Collection("compiler-pipeline-emit-llvm")]
+fn bool ManifestBackedColdNoInlineGenericInstantiationsPreserveTypedInterfaceModifiersWithoutCompilerFacts()
+{
+    return ManifestBackedColdNoInlineGenericInstantiationsPreserveTypedInterfaceModifiersWithoutCompilerFactsImpl();
+}
+
+[Fact]
+[Collection("compiler-pipeline-emit-llvm")]
+fn bool PackageBackedImportedGenericInlineBodiesEmitReachableInlineClonesFromTypedFacts()
+{
+    return PackageBackedImportedGenericInlineBodiesEmitReachableInlineClonesFromTypedFactsImpl();
+}
+
+[Fact]
+[Collection("compiler-pipeline-emit-llvm")]
+fn bool ManifestBackedImportedGenericSpecializationsUseTemplateSemanticAttributesWhenFunctionSemanticsAreMissing()
+{
+    return ManifestBackedImportedGenericSpecializationsUseTemplateSemanticAttributesWhenFunctionSemanticsAreMissingImpl();
+}
+
+[Fact]
+[Collection("compiler-pipeline-emit-llvm")]
+fn bool ManifestBackedImportedGenericSpecializationsPreserveRegionFactsWithoutSourceBodies()
+{
+    return ManifestBackedImportedGenericSpecializationsPreserveRegionFactsWithoutSourceBodiesImpl();
+}
+
+[Fact]
+[Collection("compiler-pipeline-emit-llvm")]
+fn bool ManifestBackedImportedPlainFnGenericsThatStrengthenToLawInlineWhenTemplateSemanticsSurviveWithoutFunctionSemantics()
+{
+    return ManifestBackedImportedPlainFnGenericsThatStrengthenToLawInlineWhenTemplateSemanticsSurviveWithoutFunctionSemanticsImpl();
+}
+
+[Fact]
+[Collection("compiler-pipeline-emit-llvm")]
+fn bool ManifestBackedMemberCallForwarderGenericsUseOptimizationSummaryForPlanningAndCodegen()
+{
+    return ManifestBackedMemberCallForwarderGenericsUseOptimizationSummaryForPlanningAndCodegenImpl();
+}
+
+[Fact]
+[Collection("compiler-pipeline-emit-llvm")]
+fn bool ManifestBackedFieldAccessWrapperGenericsUseOptimizationSummaryForPlanningAndCodegen()
+{
+    return ManifestBackedFieldAccessWrapperGenericsUseOptimizationSummaryForPlanningAndCodegenImpl();
+}
+
+[Fact]
+[Collection("compiler-pipeline-emit-llvm")]
+fn bool ManifestBackedIndexAccessWrapperGenericsUseOptimizationSummaryForPlanningAndCodegen()
+{
+    return ManifestBackedIndexAccessWrapperGenericsUseOptimizationSummaryForPlanningAndCodegenImpl();
+}
+
+[Fact]
+[Collection("compiler-pipeline-emit-llvm")]
+fn bool ManifestBackedConversionWrapperGenericsUseOptimizationSummaryForPlanningAndCodegen()
+{
+    return ManifestBackedConversionWrapperGenericsUseOptimizationSummaryForPlanningAndCodegenImpl();
+}
+
+[Fact]
+[Collection("compiler-pipeline-emit-llvm")]
+fn bool ManifestBackedAddressOfWrapperGenericsUseOptimizationSummaryForPlanningAndCodegen()
+{
+    return ManifestBackedAddressOfWrapperGenericsUseOptimizationSummaryForPlanningAndCodegenImpl();
+}
+
+[Fact]
+[Collection("compiler-pipeline-emit-llvm")]
+fn bool ManifestBackedBinaryOperatorWrapperGenericsUseOptimizationSummaryForPlanningAndCodegen()
+{
+    return ManifestBackedBinaryOperatorWrapperGenericsUseOptimizationSummaryForPlanningAndCodegenImpl();
+}
+
+[Fact]
+[Collection("compiler-pipeline-emit-llvm")]
+fn bool ManifestBackedComparisonWrapperGenericsUseOptimizationSummaryForPlanningAndCodegen()
+{
+    return ManifestBackedComparisonWrapperGenericsUseOptimizationSummaryForPlanningAndCodegenImpl();
+}
+
+[Fact]
+[Collection("compiler-pipeline-emit-llvm")]
+fn bool ManifestBackedTerminalIfSelectionWrapperGenericsUseOptimizationSummaryForPlanningAndCodegen()
+{
+    return ManifestBackedTerminalIfSelectionWrapperGenericsUseOptimizationSummaryForPlanningAndCodegenImpl();
+}
+
+[Fact]
+[Collection("compiler-pipeline-emit-llvm")]
+fn bool ManifestBackedTerminalSwitchSelectionWrapperGenericsUseOptimizationSummaryForPlanningAndCodegen()
+{
+    return ManifestBackedTerminalSwitchSelectionWrapperGenericsUseOptimizationSummaryForPlanningAndCodegenImpl();
+}
+
+[Fact]
+[Collection("compiler-pipeline-emit-llvm")]
+fn bool ManifestBackedObjectConstructionWrapperGenericsUseOptimizationSummaryForPlanningAndCodegen()
+{
+    return ManifestBackedObjectConstructionWrapperGenericsUseOptimizationSummaryForPlanningAndCodegenImpl();
+}
+
+[Fact]
+[Collection("compiler-pipeline-emit-llvm")]
+fn bool ManifestBackedEnumConstructionWrapperGenericsUseOptimizationSummaryForPlanningAndCodegen()
+{
+    return ManifestBackedEnumConstructionWrapperGenericsUseOptimizationSummaryForPlanningAndCodegenImpl();
+}
+
+[Fact]
+[Collection("compiler-pipeline-emit-llvm")]
+fn bool ManifestBackedLocalUpdateWrapperGenericsUseOptimizationSummaryForPlanningAndCodegen()
+{
+    return ManifestBackedLocalUpdateWrapperGenericsUseOptimizationSummaryForPlanningAndCodegenImpl();
+}
+
+[Fact]
+[Collection("compiler-pipeline-emit-llvm")]
+fn bool ConstGlobalDerivedLoadsEmitInvariantLoadMetadataWithoutTaggingLocalLoads()
+{
+    return ConstGlobalDerivedLoadsEmitInvariantLoadMetadataWithoutTaggingLocalLoadsImpl();
+}
+
+[Fact]
+[Collection("compiler-pipeline-full")]
+fn bool PipelineFoldsImportedConstantLawCallsAcrossMirSsaAndLlvm()
+{
+    return PipelineFoldsImportedConstantLawCallsAcrossMirSsaAndLlvmImpl();
+}
+
+[Fact]
+[Collection("compiler-pipeline-full")]
+fn bool NestedAggregateRuntimeDropsDoNotTriggerUnsupportedMirLowering()
+{
+    return NestedAggregateRuntimeDropsDoNotTriggerUnsupportedMirLoweringImpl();
+}
+
+[Fact]
+[Collection("compiler-pipeline-full")]
+fn bool NestedInitializersEmitLlvmWithoutUnsupportedLoweringLogs()
+{
+    return NestedInitializersEmitLlvmWithoutUnsupportedLoweringLogsImpl();
+}
+
+[Fact]
+[Collection("compiler-pipeline-full")]
+fn bool ReadonlyScalarArrayGlobalsCanUseVectorizationFriendlyAlignment()
+{
+    return ReadonlyScalarArrayGlobalsCanUseVectorizationFriendlyAlignmentImpl();
+}
+
+[Fact]
+[Collection("compiler-pipeline-full")]
+fn bool SupportedComparisonFamiliesEmitLlvmWithoutUnsupportedLoweringLogs()
+{
+    return SupportedComparisonFamiliesEmitLlvmWithoutUnsupportedLoweringLogsImpl();
+}
+
+[Fact]
+[Collection("compiler-pipeline-full")]
+fn bool ExpressionStatementsEmitLlvmWithoutUnsupportedLoweringLogs()
+{
+    return ExpressionStatementsEmitLlvmWithoutUnsupportedLoweringLogsImpl();
+}
+
+[Fact]
+[Collection("compiler-pipeline-full")]
+fn bool NestedPlaceUpdatesEmitLlvmWithoutUnsupportedLoweringLogs()
+{
+    return NestedPlaceUpdatesEmitLlvmWithoutUnsupportedLoweringLogsImpl();
+}
+
+[Fact]
+[Collection("compiler-pipeline-full")]
+fn bool HeapAllocatorLoweringAvoidsLlvmFallbackLogs()
+{
+    return HeapAllocatorLoweringAvoidsLlvmFallbackLogsImpl();
+}
+
+[Fact]
+[Collection("compiler-pipeline-full")]
+fn bool UnusedTypeAliasesDoNotBlockTheCurrentPipeline()
+{
+    return UnusedTypeAliasesDoNotBlockTheCurrentPipelineImpl();
+}
+
+[Fact]
+[Collection("compiler-pipeline-full")]
+fn bool InternalEnumsDeriveDirectTagLayoutsAndFlowThroughTheFullPipeline()
+{
+    return InternalEnumsDeriveDirectTagLayoutsAndFlowThroughTheFullPipelineImpl();
+}
+
+[Fact]
+[Collection("compiler-pipeline-optimize-ssa")]
+fn bool AsciiToUnicodeLiteralSpecializationHandlesLoopBackedgePhiSuccessors()
+{
+    return AsciiToUnicodeLiteralSpecializationHandlesLoopBackedgePhiSuccessorsImpl();
+}
+
+[Fact]
+[Collection("compiler-pipeline-syntax-model")]
+fn bool BackendOpaqueCallableEmitsLlvmOptimizationBoundary()
+{
+    return BackendOpaqueCallableEmitsLlvmOptimizationBoundaryImpl();
+}
+
+[Fact]
+[Collection("fixed-array-ordered-comparison")]
+fn bool FixedArrayOrderedComparisonsEmitLexicographicHelperCalls()
+{
+    return FixedArrayOrderedComparisonsEmitLexicographicHelperCallsImpl();
+}
+
+[Fact]
+[Collection("generic-use-site-instantiation")]
+fn bool ImportedSourceOnlyInstantiationsMaterializeFromBodyUseSites()
+{
+    return ImportedSourceOnlyInstantiationsMaterializeFromBodyUseSitesImpl();
+}
+
+[Fact]
+[Collection("llvm-emitter-conversion")]
+fn bool FloatToIntegerConversionEmitsFptosi()
+{
+    return FloatToIntegerConversionEmitsFptosiImpl();
+}
+
+[Fact]
+[Collection("llvm-emitter-conversion")]
+fn bool IntegerToRawPointerConversionEmitsInttoptr()
+{
+    return IntegerToRawPointerConversionEmitsInttoptrImpl();
+}
+
+[Fact]
+[Collection("llvm-emitter-conversion")]
+fn bool RawPointerToIntegerConversionEmitsPtrtoint()
+{
+    return RawPointerToIntegerConversionEmitsPtrtointImpl();
+}
+
+[Fact]
+[Collection("llvm-emitter-conversion")]
+fn bool RawPointerToRawPointerConversionIsLlvmNoOp()
+{
+    return RawPointerToRawPointerConversionIsLlvmNoOpImpl();
+}
+
+[Fact]
+[Collection("llvm-emitter-conversion")]
+fn bool SameWidthIntegerConversionIsEmittedAsAlias()
+{
+    return SameWidthIntegerConversionIsEmittedAsAliasImpl();
+}
+
+[Fact]
+[Collection("llvm-emitter-conversion")]
+fn bool SameWidthFloatConversionIsEmittedAsAlias()
+{
+    return SameWidthFloatConversionIsEmittedAsAliasImpl();
+}
+
+[Fact]
+[Collection("llvm-emitter-conversion")]
+fn bool FloatUseRValueIsEmittedAsAlias()
+{
+    return FloatUseRValueIsEmittedAsAliasImpl();
+}
+
+[Fact]
+[Collection("llvm-emitter-conversion")]
+fn bool RawPointerUseRValueIsEmittedAsAlias()
+{
+    return RawPointerUseRValueIsEmittedAsAliasImpl();
+}
+
+[Fact]
+[Collection("llvm-emitter-conversion")]
+fn bool AggregateUseRValueIsEmittedAsAlias()
+{
+    return AggregateUseRValueIsEmittedAsAliasImpl();
+}
+
+[Fact]
+[Collection("llvm-emitter-conversion")]
+fn bool AsciiToUnicodeReinterpretCastIsNotLowered()
+{
+    return AsciiToUnicodeReinterpretCastIsNotLoweredImpl();
+}
+
+[Fact]
+[Collection("llvm-emitter-conversion")]
+fn bool UnicodeToAsciiReinterpretCastIsNotLowered()
+{
+    return UnicodeToAsciiReinterpretCastIsNotLoweredImpl();
+}
+
+[Fact]
+[Collection("llvm-emitter-conversion")]
+fn bool SourceBodyFallbackDeclarationCanBeStrictlyOmitted()
+{
+    return SourceBodyFallbackDeclarationCanBeStrictlyOmittedImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool DynamicRawPointerStorageSliceLowersToSlicePairInLocalAndArgumentPositions()
+{
+    return DynamicRawPointerStorageSliceLowersToSlicePairInLocalAndArgumentPositionsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool DynamicRawPointerStorageSliceReassignmentLowersToSlicePair()
+{
+    return DynamicRawPointerStorageSliceReassignmentLowersToSlicePairImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool CapturingClosureCopyLowersThroughEnvironmentStorage()
+{
+    return CapturingClosureCopyLowersThroughEnvironmentStorageImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool MutCapturingClosureWritesThroughCapturedAddress()
+{
+    return MutCapturingClosureWritesThroughCapturedAddressImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool HeapCapturingClosureAllocatesHeapEnvironmentAndClearsNoFreeAttributes()
+{
+    return HeapCapturingClosureAllocatesHeapEnvironmentAndClearsNoFreeAttributesImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool HeapClosureMoveCaptureDropReleasesOwnedFieldsBeforeEnvironment()
+{
+    return HeapClosureMoveCaptureDropReleasesOwnedFieldsBeforeEnvironmentImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool OnceHeapClosureMoveCaptureTransfersOwnedFieldAndFreesEnvironment()
+{
+    return OnceHeapClosureMoveCaptureTransfersOwnedFieldAndFreesEnvironmentImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool OnceHeapClosureDropsUnmovedOwnedCapturesBeforeFreeingEnvironment()
+{
+    return OnceHeapClosureDropsUnmovedOwnedCapturesBeforeFreeingEnvironmentImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool OptimizedInlineClosureCallSpecializesAwayRuntimeClosure()
+{
+    return OptimizedInlineClosureCallSpecializesAwayRuntimeClosureImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool OptimizedInlineClosureWithNamedBorrowParameterSpecializesAwayRuntimeClosure()
+{
+    return OptimizedInlineClosureWithNamedBorrowParameterSpecializesAwayRuntimeClosureImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool OptimizedInlineClosureThroughNestedWrapperSpecializesAwayRuntimeClosure()
+{
+    return OptimizedInlineClosureThroughNestedWrapperSpecializesAwayRuntimeClosureImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool OptimizedInlineClosureInsideControlFlowSpecializesAwayRuntimeClosure()
+{
+    return OptimizedInlineClosureInsideControlFlowSpecializesAwayRuntimeClosureImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool OptimizedMutableInlineClosureSpecializesAwayRuntimeClosure()
+{
+    return OptimizedMutableInlineClosureSpecializesAwayRuntimeClosureImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool OptimizedOnceInlineClosureSpecializesAwayRuntimeClosure()
+{
+    return OptimizedOnceInlineClosureSpecializesAwayRuntimeClosureImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool FiniteLawFunctionPointerCallsEmitIndirectCallEffectAttributes()
+{
+    return FiniteLawFunctionPointerCallsEmitIndirectCallEffectAttributesImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool FunctionPointerCallSiteEffectAttributesFollowPointerKind()
+{
+    return FunctionPointerCallSiteEffectAttributesFollowPointerKindImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool UnusedPlainFunctionPointerCallsAreNotRemovedBySsaCleanup()
+{
+    return UnusedPlainFunctionPointerCallsAreNotRemovedBySsaCleanupImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool FunctionPointerCallsWithFiniteKnownTargetSetsEmitCalleesMetadata()
+{
+    return FunctionPointerCallsWithFiniteKnownTargetSetsEmitCalleesMetadataImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ClosureFunctionItemLocalDevirtualizesAndInlinesAdapterAtO3()
+{
+    return ClosureFunctionItemLocalDevirtualizesAndInlinesAdapterAtO3Impl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ClosureCallsWithFiniteKnownTargetSetsEmitCalleesMetadata()
+{
+    return ClosureCallsWithFiniteKnownTargetSetsEmitCalleesMetadataImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool FunctionPointerCallsWithOpaqueTargetsDoNotEmitCalleesMetadata()
+{
+    return FunctionPointerCallsWithOpaqueTargetsDoNotEmitCalleesMetadataImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool FunctionPointerCallsWithSingletonKnownTargetExpressionsBecomeDirectCalls()
+{
+    return FunctionPointerCallsWithSingletonKnownTargetExpressionsBecomeDirectCallsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool LawFunctionPointerCallsWithBorrowParametersEmitReadonlyMemoryEffects()
+{
+    return LawFunctionPointerCallsWithBorrowParametersEmitReadonlyMemoryEffectsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool FunctionPointerCallSiteEffectAttributesComposeWithOutAndAggregateAbi()
+{
+    return FunctionPointerCallSiteEffectAttributesComposeWithOutAndAggregateAbiImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool FunctionPointerCallsWithBorrowParametersUsePointerAbi()
+{
+    return FunctionPointerCallsWithBorrowParametersUsePointerAbiImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool FunctionPointerReturnsEmitNonnullAbiAttribute()
+{
+    return FunctionPointerReturnsEmitNonnullAbiAttributeImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool FunctionPointerCallsWithOutParametersUseCallerStorage()
+{
+    return FunctionPointerCallsWithOutParametersUseCallerStorageImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool FunctionPointerCallsWithInitParametersUseCallerStorage()
+{
+    return FunctionPointerCallsWithInitParametersUseCallerStorageImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool FunctionPointerCallsWithRawPointerParametersEmitNoAliasCallAttributes()
+{
+    return FunctionPointerCallsWithRawPointerParametersEmitNoAliasCallAttributesImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool FunctionPointerOverlapContractsSuppressIndirectNoAliasCallAttributes()
+{
+    return FunctionPointerOverlapContractsSuppressIndirectNoAliasCallAttributesImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool FunctionPointerSameContractsSuppressIndirectNoAliasBetweenSameArguments()
+{
+    return FunctionPointerSameContractsSuppressIndirectNoAliasBetweenSameArgumentsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool FunctionPointerCallsWithLargeByValueParametersUseByvalAbi()
+{
+    return FunctionPointerCallsWithLargeByValueParametersUseByvalAbiImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool FunctionPointerCallsWithLargeReturnValuesUseSretAbi()
+{
+    return FunctionPointerCallsWithLargeReturnValuesUseSretAbiImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool DirectVoidStatementCallsWithOutParametersUseCallerStorage()
+{
+    return DirectVoidStatementCallsWithOutParametersUseCallerStorageImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool DirectCallsWithLargeByValueTemporaryConstructDirectlyIntoByvalCallSlot()
+{
+    return DirectCallsWithLargeByValueTemporaryConstructDirectlyIntoByvalCallSlotImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool DirectCallsWithLargeByValueCurrentParameterUseByvalParameterPointer()
+{
+    return DirectCallsWithLargeByValueCurrentParameterUseByvalParameterPointerImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool DynamicStorageAllocationIndexInitAndDropEmitRuntimeAllocatorCalls()
+{
+    return DynamicStorageAllocationIndexInitAndDropEmitRuntimeAllocatorCallsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool DynamicStorageDropEmitsElementDestructorLoopBeforeFree()
+{
+    return DynamicStorageDropEmitsElementDestructorLoopBeforeFreeImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool DynamicStorageElementLoadsAndStoresCarryElementAlignment()
+{
+    return DynamicStorageElementLoadsAndStoresCarryElementAlignmentImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool DynamicStorageReserveEmitsDirectReallocatePath()
+{
+    return DynamicStorageReserveEmitsDirectReallocatePathImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool OptimizedDynamicStorageReserveNoopElidesRuntimeReservePath()
+{
+    return OptimizedDynamicStorageReserveNoopElidesRuntimeReservePathImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool OptimizedDynamicStorageZeroCapacityDropElidesRuntimeFreePath()
+{
+    return OptimizedDynamicStorageZeroCapacityDropElidesRuntimeFreePathImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool DynamicStorageTryReserveEmitsDirectFallibleReallocatePath()
+{
+    return DynamicStorageTryReserveEmitsDirectFallibleReallocatePathImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool OptimizedDynamicStorageTryReserveSuccessPrunesImpossibleCapacityBranch()
+{
+    return OptimizedDynamicStorageTryReserveSuccessPrunesImpossibleCapacityBranchImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool DynamicStorageTryReserveCapacityEmitsExactFallibleReallocatePath()
+{
+    return DynamicStorageTryReserveCapacityEmitsExactFallibleReallocatePathImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool DynamicStorageInitSliceWritesCommitOwnerLength()
+{
+    return DynamicStorageInitSliceWritesCommitOwnerLengthImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool OptimizedDynamicStorageInitSlicePreservesPointerDefinitionAndAlignment()
+{
+    return OptimizedDynamicStorageInitSlicePreservesPointerDefinitionAndAlignmentImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool InitSliceParametersKeepReadableSliceHeaderContract()
+{
+    return InitSliceParametersKeepReadableSliceHeaderContractImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool InitSliceElementStoresDoNotReadDestinationElementBeforeWrite()
+{
+    return InitSliceElementStoresDoNotReadDestinationElementBeforeWriteImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool DynamicStorageMoveLastEmitsDirectLengthUpdateAndLoad()
+{
+    return DynamicStorageMoveLastEmitsDirectLengthUpdateAndLoadImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool OptimizedDynamicStorageMoveLastSkipsEmptyCheckWhenPrefixFactsProveNonEmpty()
+{
+    return OptimizedDynamicStorageMoveLastSkipsEmptyCheckWhenPrefixFactsProveNonEmptyImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool DynamicStorageMoveAtEmitsDirectLengthUpdateLoadAndMemmove()
+{
+    return DynamicStorageMoveAtEmitsDirectLengthUpdateLoadAndMemmoveImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool OptimizedDynamicStorageMoveAtSkipsBoundsCheckWhenPrefixFactsProveInBounds()
+{
+    return OptimizedDynamicStorageMoveAtSkipsBoundsCheckWhenPrefixFactsProveInBoundsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool LargeDynamicStorageMoveLastIntoLocalUsesDestinationSlot()
+{
+    return LargeDynamicStorageMoveLastIntoLocalUsesDestinationSlotImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool LargeDynamicStorageMoveLastReturnCopiesDirectlyIntoSRetBuffer()
+{
+    return LargeDynamicStorageMoveLastReturnCopiesDirectlyIntoSRetBufferImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool LargeDynamicStorageMoveAtReturnCopiesBeforeTailShift()
+{
+    return LargeDynamicStorageMoveAtReturnCopiesBeforeTailShiftImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool LargeDynamicStorageMoveLastIntoOutParameterUsesOutStorage()
+{
+    return LargeDynamicStorageMoveLastIntoOutParameterUsesOutStorageImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool LargeDynamicStorageMoveAtIntoOutParameterCopiesBeforeTailShift()
+{
+    return LargeDynamicStorageMoveAtIntoOutParameterCopiesBeforeTailShiftImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool LargeDynamicStorageMoveLastIntoGlobalUsesGlobalStorage()
+{
+    return LargeDynamicStorageMoveLastIntoGlobalUsesGlobalStorageImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool UnsafeDynamicStorageNonTailMoveEmitsDirectElementLoad()
+{
+    return UnsafeDynamicStorageNonTailMoveEmitsDirectElementLoadImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool AggregateLoadedFromDynamicSlotKeepsSnapshotAfterSlotReplacement()
+{
+    return AggregateLoadedFromDynamicSlotKeepsSnapshotAfterSlotReplacementImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool NonCapturingLambdaFunctionPointersEmitSyntheticFunctionDefinitions()
+{
+    return NonCapturingLambdaFunctionPointersEmitSyntheticFunctionDefinitionsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool DebugMetadataIsEmittedForFunctionsParametersAndStackLocals()
+{
+    return DebugMetadataIsEmittedForFunctionsParametersAndStackLocalsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool DebugMetadataMarksBuildsAsOptimized()
+{
+    return DebugMetadataMarksBuildsAsOptimizedImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ConstantBranchConditionsCanFoldAllTheWayToReturn()
+{
+    return ConstantBranchConditionsCanFoldAllTheWayToReturnImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool BranchJoinCanOptimizeToDirectReturns()
+{
+    return BranchJoinCanOptimizeToDirectReturnsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool IfWeightAnnotationEmitsBranchWeightMetadata()
+{
+    return IfWeightAnnotationEmitsBranchWeightMetadataImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool SwitchWeightAnnotationEmitsDistributedBranchWeightMetadata()
+{
+    return SwitchWeightAnnotationEmitsDistributedBranchWeightMetadataImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ColdCallBranchTargetsInferUnlikelyBranchWeightMetadata()
+{
+    return ColdCallBranchTargetsInferUnlikelyBranchWeightMetadataImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool GlobalsUseVisibilityAwareLinkageAndConstantKinds()
+{
+    return GlobalsUseVisibilityAwareLinkageAndConstantKindsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool MutableGlobalsEmitRealDefinitionsStoresAndLoads()
+{
+    return MutableGlobalsEmitRealDefinitionsStoresAndLoadsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool MutableGlobalLoadsAreNotForwardedAcrossDestructorBackedCalls()
+{
+    return MutableGlobalLoadsAreNotForwardedAcrossDestructorBackedCallsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool LibraryBuildQualifiesRootGlobalSymbolsAndPreservesExportNames()
+{
+    return LibraryBuildQualifiesRootGlobalSymbolsAndPreservesExportNamesImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ExecutableInternalizationCanMakeRootModulePrivateFunctionsLocal()
+{
+    return ExecutableInternalizationCanMakeRootModulePrivateFunctionsLocalImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool RootFunctionSymbolIsQualifiedWhenItWouldCollideWithFfiImport()
+{
+    return RootFunctionSymbolIsQualifiedWhenItWouldCollideWithFfiImportImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool FfiVarargsDeclarationsAndCallsUseLlvmVarargFunctionType()
+{
+    return FfiVarargsDeclarationsAndCallsUseLlvmVarargFunctionTypeImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool FfiVarargsPercentSAcceptsRawCCharPointer()
+{
+    return FfiVarargsPercentSAcceptsRawCCharPointerImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool InternalizedImmutableGlobalsUseUnnamedAddrOnlyWhenAddressesStayInsignificant()
+{
+    return InternalizedImmutableGlobalsUseUnnamedAddrOnlyWhenAddressesStayInsignificantImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool AggregateAndArrayGlobalsEmitConcreteInitializers()
+{
+    return AggregateAndArrayGlobalsEmitConcreteInitializersImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool IntegralAndScientificFloatConstantsEmitValidHexFloatLiterals()
+{
+    return IntegralAndScientificFloatConstantsEmitValidHexFloatLiteralsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool GlobalsAndUnicodeStringConstantsEmitConcreteAlignment()
+{
+    return GlobalsAndUnicodeStringConstantsEmitConcreteAlignmentImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool LongTextLiteralDataUsesVectorizationFriendlyAlignment()
+{
+    return LongTextLiteralDataUsesVectorizationFriendlyAlignmentImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ImmutableGlobalsWithoutAddressTakenEmitLocalUnnamedAddr()
+{
+    return ImmutableGlobalsWithoutAddressTakenEmitLocalUnnamedAddrImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ConstArithmeticGlobalsEmitConcreteInitializers()
+{
+    return ConstArithmeticGlobalsEmitConcreteInitializersImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool RecordPrimaryConstructorGlobalsEmitConcreteInitializers()
+{
+    return RecordPrimaryConstructorGlobalsEmitConcreteInitializersImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ConstFixedArrayGlobalsEmitFrozenDefinitions()
+{
+    return ConstFixedArrayGlobalsEmitFrozenDefinitionsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool NestedConstObjectGraphsEmitConcreteConstantInitializers()
+{
+    return NestedConstObjectGraphsEmitConcreteConstantInitializersImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool NestedAggregateLiteralsFoldIntoFrozenGlobalInitializers()
+{
+    return NestedAggregateLiteralsFoldIntoFrozenGlobalInitializersImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool MutableAggregateGlobalsEmitConcreteInitializersAndStores()
+{
+    return MutableAggregateGlobalsEmitConcreteInitializersAndStoresImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool StaticGenericConstructorInitializersCanForwardAggregateArguments()
+{
+    return StaticGenericConstructorInitializersCanForwardAggregateArgumentsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool AggregateArrayFieldsEmitConcreteInitializers()
+{
+    return AggregateArrayFieldsEmitConcreteInitializersImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ImmutableGlobalLoadsEmitInvariantMetadataThroughFieldAndIndexChains()
+{
+    return ImmutableGlobalLoadsEmitInvariantMetadataThroughFieldAndIndexChainsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool OnceInitializedReadonlyStackStorageEmitsInvariantStartWithoutInvariantLoadMetadata()
+{
+    return OnceInitializedReadonlyStackStorageEmitsInvariantStartWithoutInvariantLoadMetadataImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ReadonlyStackDropTempsPassedByAddressDoNotEmitInvariantMetadata()
+{
+    return ReadonlyStackDropTempsPassedByAddressDoNotEmitInvariantMetadataImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool FrozenRawPointerLoadsDoNotEmitInvariantMetadataWithoutConstProvenance()
+{
+    return FrozenRawPointerLoadsDoNotEmitInvariantMetadataWithoutConstProvenanceImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool StaticReadonlyPointerLoadsDoNotConferDeepConstProvenance()
+{
+    return StaticReadonlyPointerLoadsDoNotConferDeepConstProvenanceImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ImmutableRawPointerLocalsDoNotConferDeepConstProvenance()
+{
+    return ImmutableRawPointerLocalsDoNotConferDeepConstProvenanceImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ReadonlyRawPointerLocalsDoNotConferDeepConstProvenance()
+{
+    return ReadonlyRawPointerLocalsDoNotConferDeepConstProvenanceImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool IntegerLaunderedMutablePointersDoNotEmitInvariantMetadata()
+{
+    return IntegerLaunderedMutablePointersDoNotEmitInvariantMetadataImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool TypedScalarLoadsAndStoresEmitConservativeStarkTbaa()
+{
+    return TypedScalarLoadsAndStoresEmitConservativeStarkTbaaImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool TypedFieldAndFixedArrayElementLoadsEmitStructPathTbaa()
+{
+    return TypedFieldAndFixedArrayElementLoadsEmitStructPathTbaaImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool RawPointerAndPointerIntegerEscapesSuppressTbaa()
+{
+    return RawPointerAndPointerIntegerEscapesSuppressTbaaImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ExclusiveBorrowMemoryAccessesEmitScopedNoAliasMetadata()
+{
+    return ExclusiveBorrowMemoryAccessesEmitScopedNoAliasMetadataImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool SameRawPointerParametersShareAliasScopeAgainstDefaultDisjointParameters()
+{
+    return SameRawPointerParametersShareAliasScopeAgainstDefaultDisjointParametersImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool SameSliceParametersEmitDataAndLengthAssumes()
+{
+    return SameSliceParametersEmitDataAndLengthAssumesImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool DynamicLocalStorageAccessesEmitScopedNoAliasMetadata()
+{
+    return DynamicLocalStorageAccessesEmitScopedNoAliasMetadataImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool RawPointerMemoryAccessesDoNotEmitScopedNoAliasMetadata()
+{
+    return RawPointerMemoryAccessesDoNotEmitScopedNoAliasMetadataImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool OverlappingConstViewsDoNotInferNoAliasFromConstness()
+{
+    return OverlappingConstViewsDoNotInferNoAliasFromConstnessImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool RawPointerEscapesSuppressScopedNoAliasMetadataForAffectedAccesses()
+{
+    return RawPointerEscapesSuppressScopedNoAliasMetadataForAffectedAccessesImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool IntegerLaunderedRawPointersSuppressScopedNoAliasMetadataForAffectedAccesses()
+{
+    return IntegerLaunderedRawPointersSuppressScopedNoAliasMetadataForAffectedAccessesImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool RawPointerConstNullGlobalsRemainExternalPlaceholders()
+{
+    return RawPointerConstNullGlobalsRemainExternalPlaceholdersImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool UnsignedOrdinaryArithmeticDoesNotInventSignedNoWrapForHighBitResults()
+{
+    return UnsignedOrdinaryArithmeticDoesNotInventSignedNoWrapForHighBitResultsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool PropagatedValueFactsEmitUnsignedNoWrapForJoinedRanges()
+{
+    return PropagatedValueFactsEmitUnsignedNoWrapForJoinedRangesImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool PropagatedValueFactsEmitNarrowerReturnRangeAttributes()
+{
+    return PropagatedValueFactsEmitNarrowerReturnRangeAttributesImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool SameWidthSignednessChangingIntegerConversionsTranslateReturnRangeFacts()
+{
+    return SameWidthSignednessChangingIntegerConversionsTranslateReturnRangeFactsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ProvenNonNegativeSignedDivisionAndModuloUseUnsignedLlvmOpcodes()
+{
+    return ProvenNonNegativeSignedDivisionAndModuloUseUnsignedLlvmOpcodesImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool OrdinaryIntegerArithmeticDoesNotEmitUnsignedNoWrapWhenNegativeValuesArePossible()
+{
+    return OrdinaryIntegerArithmeticDoesNotEmitUnsignedNoWrapWhenNegativeValuesArePossibleImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ProvenShiftLeftRangesEmitNoWrapFlags()
+{
+    return ProvenShiftLeftRangesEmitNoWrapFlagsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool UnsignedIntegerOperationsUseUnsignedLlvmOpcodes()
+{
+    return UnsignedIntegerOperationsUseUnsignedLlvmOpcodesImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ShiftRightAndSignedDivisionEmitExactWhenDivisibilityIsProven()
+{
+    return ShiftRightAndSignedDivisionEmitExactWhenDivisibilityIsProvenImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ShiftAndDivisionFlagsAreOmittedWhenProofFactsAreInsufficient()
+{
+    return ShiftAndDivisionFlagsAreOmittedWhenProofFactsAreInsufficientImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ExplicitWrappingAndSaturatingArithmeticStayFlagFreeEvenWhenOrdinaryProofsExist()
+{
+    return ExplicitWrappingAndSaturatingArithmeticStayFlagFreeEvenWhenOrdinaryProofsExistImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ConstantFloatExponentExpressionsFoldBeforeLlvmEmission()
+{
+    return ConstantFloatExponentExpressionsFoldBeforeLlvmEmissionImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool IntegerExponentExpressionsEmitInternalPowHelpers()
+{
+    return IntegerExponentExpressionsEmitInternalPowHelpersImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool SmallConstantIntegerExponentExpressionsLowerToStraightLineMultiplies()
+{
+    return SmallConstantIntegerExponentExpressionsLowerToStraightLineMultipliesImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ConstantLiteralSwitchesFoldBeforeLlvmEmission()
+{
+    return ConstantLiteralSwitchesFoldBeforeLlvmEmissionImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool EnumSwitchExpressionCallEmitsSingleEvaluation()
+{
+    return EnumSwitchExpressionCallEmitsSingleEvaluationImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool LargeEnumSwitchLoadsTagWithRangeMetadataAndZeroTagsUnitCase()
+{
+    return LargeEnumSwitchLoadsTagWithRangeMetadataAndZeroTagsUnitCaseImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool CaptureSwitchPatternEmitsConcreteBody()
+{
+    return CaptureSwitchPatternEmitsConcreteBodyImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool MultiLabelGuardedSwitchEmitsDecisionTreeBody()
+{
+    return MultiLabelGuardedSwitchEmitsDecisionTreeBodyImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool LargeTextLiteralSwitchEmitsLengthPartitionedDispatch()
+{
+    return LargeTextLiteralSwitchEmitsLengthPartitionedDispatchImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool UnicodeTextLiteralSwitchEmitsConcreteBody()
+{
+    return UnicodeTextLiteralSwitchEmitsConcreteBodyImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool TextSlicesEmitShiftedAsciiAndUnicodeViews()
+{
+    return TextSlicesEmitShiftedAsciiAndUnicodeViewsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ExplicitAsciiLiteralToUnicodeConversionEmitsUnicodeConstant()
+{
+    return ExplicitAsciiLiteralToUnicodeConversionEmitsUnicodeConstantImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool CompileTimeTextConcatenationEmitsSingleTextConstant()
+{
+    return CompileTimeTextConcatenationEmitsSingleTextConstantImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool CompileTimeInterpolatedTextEmitsFoldedTextConstant()
+{
+    return CompileTimeInterpolatedTextEmitsFoldedTextConstantImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool RawAndMultilineTextLiteralsEmitExactTextConstants()
+{
+    return RawAndMultilineTextLiteralsEmitExactTextConstantsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool SystemTextOwnedConcatAndViewBuiltinsEmitConcreteDefinitions()
+{
+    return SystemTextOwnedConcatAndViewBuiltinsEmitConcreteDefinitionsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool SystemTextAsciiToUnicodeBuiltinEmitsDirectWideningLoop()
+{
+    return SystemTextAsciiToUnicodeBuiltinEmitsDirectWideningLoopImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool SystemTextAsciiToUnicodeLiteralCallSpecializesAtCallSite()
+{
+    return SystemTextAsciiToUnicodeLiteralCallSpecializesAtCallSiteImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool SystemTextAsciiToUnicodeSlicedLiteralSourceSpecializesAtCallSite()
+{
+    return SystemTextAsciiToUnicodeSlicedLiteralSourceSpecializesAtCallSiteImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool SystemTextAsciiToUnicodeDynamicSliceSourceKeepsBuiltinCall()
+{
+    return SystemTextAsciiToUnicodeDynamicSliceSourceKeepsBuiltinCallImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool SystemTextAsciiToUnicodeLargeLiteralSpecializationUsesMemcpy()
+{
+    return SystemTextAsciiToUnicodeLargeLiteralSpecializationUsesMemcpyImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool SystemTextAsciiToUnicodeDynamicSourceKeepsBuiltinCall()
+{
+    return SystemTextAsciiToUnicodeDynamicSourceKeepsBuiltinCallImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool SystemTextAsciiToUnicodeLocalLiteralSourceSpecializesAtCallSite()
+{
+    return SystemTextAsciiToUnicodeLocalLiteralSourceSpecializesAtCallSiteImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool SystemTextAsciiToUnicodeConstLiteralSourceSpecializesAtCallSite()
+{
+    return SystemTextAsciiToUnicodeConstLiteralSourceSpecializesAtCallSiteImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool SystemTextAsciiToUnicodePhiJoinedIdenticalLiteralSourceSpecializesAtCallSite()
+{
+    return SystemTextAsciiToUnicodePhiJoinedIdenticalLiteralSourceSpecializesAtCallSiteImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool SystemTextAsciiToUnicodeEscapedAsciiLiteralSpecializesAtCallSite()
+{
+    return SystemTextAsciiToUnicodeEscapedAsciiLiteralSpecializesAtCallSiteImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool SystemTextAsciiToUnicodeEmptyLiteralSpecializationAvoidsDataLoad()
+{
+    return SystemTextAsciiToUnicodeEmptyLiteralSpecializationAvoidsDataLoadImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool SystemTextAsciiToUnicodeLiteralSpecializationHandlesNullDestination()
+{
+    return SystemTextAsciiToUnicodeLiteralSpecializationHandlesNullDestinationImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool SystemTextAsciiToUnicodeLiteralSpecializationChecksCapacity()
+{
+    return SystemTextAsciiToUnicodeLiteralSpecializationChecksCapacityImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool SystemTextAsciiToUnicodeLiteralSpecializationChecksNullDestinationData()
+{
+    return SystemTextAsciiToUnicodeLiteralSpecializationChecksNullDestinationDataImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool SystemTextAsciiToUnicodeLiteralSpecializationRewritesForwardPhiIncomingLabel()
+{
+    return SystemTextAsciiToUnicodeLiteralSpecializationRewritesForwardPhiIncomingLabelImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool SystemTextAsciiToUnicodeNonAsciiLiteralKeepsBuiltinCall()
+{
+    return SystemTextAsciiToUnicodeNonAsciiLiteralKeepsBuiltinCallImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool SystemMathBuiltinsEmitConcreteDefinitionsAndLlvmIntrinsics()
+{
+    return SystemMathBuiltinsEmitConcreteDefinitionsAndLlvmIntrinsicsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool SystemBitOperationsBuiltinsEmitConcreteDefinitionsAndLlvmIntrinsics()
+{
+    return SystemBitOperationsBuiltinsEmitConcreteDefinitionsAndLlvmIntrinsicsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ImportedSystemMathHardwareBuiltinsAreInternalizedIntoConsumerIr()
+{
+    return ImportedSystemMathHardwareBuiltinsAreInternalizedIntoConsumerIrImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool UnusedImportedSystemMathHardwareBuiltinsDoNotMaterializeIntoConsumerIr()
+{
+    return UnusedImportedSystemMathHardwareBuiltinsDoNotMaterializeIntoConsumerIrImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ImportedSystemBitOperationsBuiltinsAreInternalizedIntoConsumerIr()
+{
+    return ImportedSystemBitOperationsBuiltinsAreInternalizedIntoConsumerIrImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool InternalStringFunctionsUseConcreteStringAbi()
+{
+    return InternalStringFunctionsUseConcreteStringAbiImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool CharacterLiteralsEmitConcreteStringValues()
+{
+    return CharacterLiteralsEmitConcreteStringValuesImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool UnicodeStringLiteralsUseUtf32CodeUnitLengthInRuntimeValues()
+{
+    return UnicodeStringLiteralsUseUtf32CodeUnitLengthInRuntimeValuesImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool EquivalentAsciiLiteralPayloadsShareOneHelperGlobalAcrossGlobalAndFunctionUses()
+{
+    return EquivalentAsciiLiteralPayloadsShareOneHelperGlobalAcrossGlobalAndFunctionUsesImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool EquivalentUnicodeLiteralPayloadsShareOneHelperGlobal()
+{
+    return EquivalentUnicodeLiteralPayloadsShareOneHelperGlobalImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool PlainFnsEmitInferredPureAndFiniteAttributes()
+{
+    return PlainFnsEmitInferredPureAndFiniteAttributesImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool BorrowParametersEmitCapturesAttributes()
+{
+    return BorrowParametersEmitCapturesAttributesImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool StoreBorrowParametersEmitEscapingCaptureAttributes()
+{
+    return StoreBorrowParametersEmitEscapingCaptureAttributesImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool RetborrowScalarReturnsUsePointerAbiAndCanBeWrittenThrough()
+{
+    return RetborrowScalarReturnsUsePointerAbiAndCanBeWrittenThroughImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ScalarAbiValuesEmitNoundefOnParametersAndReturns()
+{
+    return ScalarAbiValuesEmitNoundefOnParametersAndReturnsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool BorrowedPointerAbiValuesEmitNoundefOnParametersAndReturns()
+{
+    return BorrowedPointerAbiValuesEmitNoundefOnParametersAndReturnsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool FullyDefinedNonFfiAbiSurfacesEmitNoundef()
+{
+    return FullyDefinedNonFfiAbiSurfacesEmitNoundefImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool PointerAbiContractsDistinguishSafeBorrowsAndNullableRawPointers()
+{
+    return PointerAbiContractsDistinguishSafeBorrowsAndNullableRawPointersImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool RawMutablePointerDeclarationsMayReadAndWriteArgumentMemory()
+{
+    return RawMutablePointerDeclarationsMayReadAndWriteArgumentMemoryImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool FfiRawMutablePointerCallsPropagateWrapperArgumentWrites()
+{
+    return FfiRawMutablePointerCallsPropagateWrapperArgumentWritesImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ConstrainedIntegerLoadsAndCallResultsEmitRangeMetadata()
+{
+    return ConstrainedIntegerLoadsAndCallResultsEmitRangeMetadataImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ConstrainedIntegerAbiSurfacesEmitRangeAttributes()
+{
+    return ConstrainedIntegerAbiSurfacesEmitRangeAttributesImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool BranchRefinedIntegerComparisonsEmitTargetedAssumes()
+{
+    return BranchRefinedIntegerComparisonsEmitTargetedAssumesImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool BranchRefinedRawPointerNullChecksEmitNonnullAssumeBundle()
+{
+    return BranchRefinedRawPointerNullChecksEmitNonnullAssumeBundleImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool BranchRefinedPointerEqualityToKnownAddressEmitsAlignmentAssumeBundle()
+{
+    return BranchRefinedPointerEqualityToKnownAddressEmitsAlignmentAssumeBundleImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool BoundaryFactsAndPlainBoolBranchesDoNotEmitAssumeIntrinsic()
+{
+    return BoundaryFactsAndPlainBoolBranchesDoNotEmitAssumeIntrinsicImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool SignedConstrainedIntegerLoadsEmitWrappingRangeMetadata()
+{
+    return SignedConstrainedIntegerLoadsEmitWrappingRangeMetadataImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool MemoryAttributesDistinguishArgumentAndOtherMemoryEffects()
+{
+    return MemoryAttributesDistinguishArgumentAndOtherMemoryEffectsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool MemoryAttributesKeepArgumentEffectsWhenSyntheticTemporariesAreNeeded()
+{
+    return MemoryAttributesKeepArgumentEffectsWhenSyntheticTemporariesAreNeededImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool EscapedTextLiteralsEmitDecodedBytes()
+{
+    return EscapedTextLiteralsEmitDecodedBytesImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool FfiStringCallsExtractPointerFromConcreteStringValues()
+{
+    return FfiStringCallsExtractPointerFromConcreteStringValuesImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool StructFieldAccessCanFoldToScalarReturn()
+{
+    return StructFieldAccessCanFoldToScalarReturnImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool FieldAssignmentCanFoldToScalarReturn()
+{
+    return FieldAssignmentCanFoldToScalarReturnImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool RegisterObjectCreationCanFoldToScalarReturn()
+{
+    return RegisterObjectCreationCanFoldToScalarReturnImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool NonStrictFpFunctionsEmitFastMathFlagsOnBinaryOpsAndCalls()
+{
+    return NonStrictFpFunctionsEmitFastMathFlagsOnBinaryOpsAndCallsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool TailPositionDirectCallsEmitTailMarkerWhenAbiCompatible()
+{
+    return TailPositionDirectCallsEmitTailMarkerWhenAbiCompatibleImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool NonStrictFpFunctionsEmitFastMathFlagsOnRemainingFloatInstructions()
+{
+    return NonStrictFpFunctionsEmitFastMathFlagsOnRemainingFloatInstructionsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool NonStrictFpMultiplyAddExpressionsUseContractionFriendlyIntrinsic()
+{
+    return NonStrictFpMultiplyAddExpressionsUseContractionFriendlyIntrinsicImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool StrictFpFunctionsOptOutOfFastMathFlags()
+{
+    return StrictFpFunctionsOptOutOfFastMathFlagsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool StrictFpFunctionPointerCallsComposeWithKindedCallSiteAttributes()
+{
+    return StrictFpFunctionPointerCallsComposeWithKindedCallSiteAttributesImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool StrictFpMultiplyAddExpressionsDoNotUseContractionIntrinsic()
+{
+    return StrictFpMultiplyAddExpressionsDoNotUseContractionIntrinsicImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool StrictFpConversionsUseConstrainedFloatingPointIntrinsics()
+{
+    return StrictFpConversionsUseConstrainedFloatingPointIntrinsicsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool UnrecoverableUnreachablePathsLowerThroughColdTrapHelper()
+{
+    return UnrecoverableUnreachablePathsLowerThroughColdTrapHelperImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool HeapObjectCreationUsesAllocatorLowering()
+{
+    return HeapObjectCreationUsesAllocatorLoweringImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool HeapFieldInitializationDoesNotReadUninitializedAggregateStorage()
+{
+    return HeapFieldInitializationDoesNotReadUninitializedAggregateStorageImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool SystemMemoryInternalAllocatorBuiltinsLowerToRuntimeAllocatorContract()
+{
+    return SystemMemoryInternalAllocatorBuiltinsLowerToRuntimeAllocatorContractImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool StackLocalsEmitInstructionAlignmentWhenLayoutsAreKnown()
+{
+    return StackLocalsEmitInstructionAlignmentWhenLayoutsAreKnownImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool AddressValueFactsEmitKnownPointeeAlignmentForIndirectLoads()
+{
+    return AddressValueFactsEmitKnownPointeeAlignmentForIndirectLoadsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool RawPointerParametersDoNotInventPointeeAlignment()
+{
+    return RawPointerParametersDoNotInventPointeeAlignmentImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool OwnedScalarArrayStoragePreservesVectorizationFriendlyAlignment()
+{
+    return OwnedScalarArrayStoragePreservesVectorizationFriendlyAlignmentImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool StaticStackAndAbiTemporaryAllocasEmitInEntryBlock()
+{
+    return StaticStackAndAbiTemporaryAllocasEmitInEntryBlockImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool SmallRecordEqualityAndInequalityEmitScalarLeafComparisons()
+{
+    return SmallRecordEqualityAndInequalityEmitScalarLeafComparisonsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool SmallFixedArrayEqualityAndInequalityEmitScalarLeafComparisons()
+{
+    return SmallFixedArrayEqualityAndInequalityEmitScalarLeafComparisonsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool SmallEnumEqualityAndInequalityEmitScalarLeafComparisons()
+{
+    return SmallEnumEqualityAndInequalityEmitScalarLeafComparisonsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool LargerRecordEqualityAndInequalityEmitScalarLeafComparisons()
+{
+    return LargerRecordEqualityAndInequalityEmitScalarLeafComparisonsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool LargerRecordOrderedComparisonsEmitScalarLeafLexicographicHelperCalls()
+{
+    return LargerRecordOrderedComparisonsEmitScalarLeafLexicographicHelperCallsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ScalarizableEnumOrderedComparisonsEmitScalarLeafLexicographicHelperCalls()
+{
+    return ScalarizableEnumOrderedComparisonsEmitScalarLeafLexicographicHelperCallsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool LargerFixedArrayEqualityAndInequalityEmitScalarLeafComparisons()
+{
+    return LargerFixedArrayEqualityAndInequalityEmitScalarLeafComparisonsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool LargerEnumEqualityAndInequalityEmitScalarLeafComparisons()
+{
+    return LargerEnumEqualityAndInequalityEmitScalarLeafComparisonsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool TextEqualityAndInequalityEmitHelperCalls()
+{
+    return TextEqualityAndInequalityEmitHelperCallsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool AggregatesWithTextFieldsEmitScalarLeafTextComparisons()
+{
+    return AggregatesWithTextFieldsEmitScalarLeafTextComparisonsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool SliceEqualityAndInequalityEmitPointerAndLengthComparisons()
+{
+    return SliceEqualityAndInequalityEmitPointerAndLengthComparisonsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool AggregatesWithSliceFieldsEmitScalarLeafSliceComparisons()
+{
+    return AggregatesWithSliceFieldsEmitScalarLeafSliceComparisonsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool MixedCallMemberAndIndexPostfixChainsEmitCallAndExtracts()
+{
+    return MixedCallMemberAndIndexPostfixChainsEmitCallAndExtractsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool RecordTypeUsesConcreteAggregateLayoutAndCanFoldFieldReads()
+{
+    return RecordTypeUsesConcreteAggregateLayoutAndCanFoldFieldReadsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool PlainObjectCreationWithoutInitializerReturnsZeroInitializedAggregate()
+{
+    return PlainObjectCreationWithoutInitializerReturnsZeroInitializedAggregateImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool PrimaryRecordConstructorArgumentsEmitOrderedAggregateUpdates()
+{
+    return PrimaryRecordConstructorArgumentsEmitOrderedAggregateUpdatesImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool InternalAggregateParameterUsesDirectValueAbi()
+{
+    return InternalAggregateParameterUsesDirectValueAbiImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool BorrowedPaddedAggregateEmitsDerivedAlignmentAndLayoutFacts()
+{
+    return BorrowedPaddedAggregateEmitsDerivedAlignmentAndLayoutFactsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool PackedCStructLayoutEmitsPackedPhysicalTypeAndUnalignedFieldAccess()
+{
+    return PackedCStructLayoutEmitsPackedPhysicalTypeAndUnalignedFieldAccessImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ExplicitStructLayoutEmitsByteStorageAndFieldOffsetAccess()
+{
+    return ExplicitStructLayoutEmitsByteStorageAndFieldOffsetAccessImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool TypeAliasesPreserveTheUnderlyingAggregateAbi()
+{
+    return TypeAliasesPreserveTheUnderlyingAggregateAbiImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool SmallPackedAddressableAggregateCopyUsesScalarFieldLoadsAndStores()
+{
+    return SmallPackedAddressableAggregateCopyUsesScalarFieldLoadsAndStoresImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool SmallPaddedAggregateCopyPreservesWholeAggregateTransfer()
+{
+    return SmallPaddedAggregateCopyPreservesWholeAggregateTransferImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool LargeAddressableAggregateCopyUsesInlineMemcpy()
+{
+    return LargeAddressableAggregateCopyUsesInlineMemcpyImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool VeryLargeAddressableAggregateCopyUsesRegularMemcpy()
+{
+    return VeryLargeAddressableAggregateCopyUsesRegularMemcpyImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool LargeLocalFixedArrayConstantIndexUpdateUsesScalarProjectionAccess()
+{
+    return LargeLocalFixedArrayConstantIndexUpdateUsesScalarProjectionAccessImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool LargeEnumPayloadProjectionIntoAddressableLocalUsesAddressCopy()
+{
+    return LargeEnumPayloadProjectionIntoAddressableLocalUsesAddressCopyImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool LargeEnumPayloadImmediateMoveIntoMethodLocalAliasesPayloadStorage()
+{
+    return LargeEnumPayloadImmediateMoveIntoMethodLocalAliasesPayloadStorageImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool LargeLocalAggregateInsertedIntoEnumPayloadUsesAddressCopy()
+{
+    return LargeLocalAggregateInsertedIntoEnumPayloadUsesAddressCopyImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool SmallEnumPayloadProjectionKeepsScalarLowering()
+{
+    return SmallEnumPayloadProjectionKeepsScalarLoweringImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool AddressForwardedAggregateStoreDoesNotReadEndedLocalLifetime()
+{
+    return AddressForwardedAggregateStoreDoesNotReadEndedLocalLifetimeImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool LargeZeroInitializedAggregateStoresUseInlineMemset()
+{
+    return LargeZeroInitializedAggregateStoresUseInlineMemsetImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool AggregateMoveInvalidatesAddressableSourceStorage()
+{
+    return AggregateMoveInvalidatesAddressableSourceStorageImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool AddressableAggregateConditionalUsesSingleAggregateAlloca()
+{
+    return AddressableAggregateConditionalUsesSingleAggregateAllocaImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool InternalAggregateReturnUsesDirectValueAbi()
+{
+    return InternalAggregateReturnUsesDirectValueAbiImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool LargeAggregateReturnUsesSRetAbi()
+{
+    return LargeAggregateReturnUsesSRetAbiImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool LargeAggregateReturnedThroughSRetMaterializesBeforeNestedInsert()
+{
+    return LargeAggregateReturnedThroughSRetMaterializesBeforeNestedInsertImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool LargeAggregateInitializerReturnMaterializesDirectlyIntoSRetBuffer()
+{
+    return LargeAggregateInitializerReturnMaterializesDirectlyIntoSRetBufferImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool LargeGenericEnumAggregateReturnMaterializesDirectlyIntoSRetBuffer()
+{
+    return LargeGenericEnumAggregateReturnMaterializesDirectlyIntoSRetBufferImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool LargeAggregateForwardReturnForwardsDirectCallIntoSRetBuffer()
+{
+    return LargeAggregateForwardReturnForwardsDirectCallIntoSRetBufferImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool LargeAggregateLocalForwardReturnKeepsDirectCallInSRetBuffer()
+{
+    return LargeAggregateLocalForwardReturnKeepsDirectCallInSRetBufferImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool LargeAggregateReturnOfIndirectParameterSkipsEntryLoad()
+{
+    return LargeAggregateReturnOfIndirectParameterSkipsEntryLoadImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool LargeAggregateIndirectParameterForwardingUsesOriginalPointer()
+{
+    return LargeAggregateIndirectParameterForwardingUsesOriginalPointerImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool LargeAggregateParametersUseByValueIndirectAbi()
+{
+    return LargeAggregateParametersUseByValueIndirectAbiImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool AggregateCallReturnRegressionBenchmarkKeepsSmallAggregatesOnDirectAbi()
+{
+    return AggregateCallReturnRegressionBenchmarkKeepsSmallAggregatesOnDirectAbiImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool AggregateCallReturnRegressionBenchmarkKeepsLargeAggregatesOnIndirectAbi()
+{
+    return AggregateCallReturnRegressionBenchmarkKeepsLargeAggregatesOnIndirectAbiImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool AggregateBranchJoinEmitsByValuePhiNode()
+{
+    return AggregateBranchJoinEmitsByValuePhiNodeImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ValueReceiverMethodsLowerToDirectAggregateCalls()
+{
+    return ValueReceiverMethodsLowerToDirectAggregateCallsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool BorrowReceiverMethodsLowerToPointerReceiverCalls()
+{
+    return BorrowReceiverMethodsLowerToPointerReceiverCallsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool IndexedFieldAddressBehindRawPointerEmitsDirectParameterGeps()
+{
+    return IndexedFieldAddressBehindRawPointerEmitsDirectParameterGepsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool IndexedRawPointerElementsEmitDirectParameterGeps()
+{
+    return IndexedRawPointerElementsEmitDirectParameterGepsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool BorrowReceiverIndexedFieldAddressesEmitDirectReceiverGeps()
+{
+    return BorrowReceiverIndexedFieldAddressesEmitDirectReceiverGepsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool MutableBorrowedAggregateWriterEmitsWriteOnlyNoCaptureParameterFacts()
+{
+    return MutableBorrowedAggregateWriterEmitsWriteOnlyNoCaptureParameterFactsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool MutableBorrowReturnedSliceWritesDoNotEmitReadonlyParameterFacts()
+{
+    return MutableBorrowReturnedSliceWritesDoNotEmitReadonlyParameterFactsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool FixedArrayInitializerAndIndexCanFoldToScalarReturn()
+{
+    return FixedArrayInitializerAndIndexCanFoldToScalarReturnImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool FixedArrayIndexAssignmentCanFoldToScalarReturn()
+{
+    return FixedArrayIndexAssignmentCanFoldToScalarReturnImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool DynamicArrayIndexEmitsAddressBasedLoad()
+{
+    return DynamicArrayIndexEmitsAddressBasedLoadImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool NonAddressableFixedArrayDynamicIndexSpillsOnlyTheTemporarySource()
+{
+    return NonAddressableFixedArrayDynamicIndexSpillsOnlyTheTemporarySourceImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool SliceParameterUsesConcreteSliceAbiAndDynamicIndexLoad()
+{
+    return SliceParameterUsesConcreteSliceAbiAndDynamicIndexLoadImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool FixedArrayBackedSliceAndKnownTextSliceCarryProvenGepFlags()
+{
+    return FixedArrayBackedSliceAndKnownTextSliceCarryProvenGepFlagsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool PropagatedSliceAndTextLengthFactsCarryProvenGepFlags()
+{
+    return PropagatedSliceAndTextLengthFactsCarryProvenGepFlagsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool FixedArrayParameterUsesDirectValueAbi()
+{
+    return FixedArrayParameterUsesDirectValueAbiImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool FixedArrayParameterDynamicIndexUsesParameterSlotAddressing()
+{
+    return FixedArrayParameterDynamicIndexUsesParameterSlotAddressingImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool FixedArrayDynamicIndexEmitsGepFlagsOnlyWhenRangeProvesObjectBounds()
+{
+    return FixedArrayDynamicIndexEmitsGepFlagsOnlyWhenRangeProvesObjectBoundsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool FixedArrayReturnUsesDirectValueAbi()
+{
+    return FixedArrayReturnUsesDirectValueAbiImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool DynamicArrayIndexMutationEmitsAddressBasedStoreAndLoad()
+{
+    return DynamicArrayIndexMutationEmitsAddressBasedStoreAndLoadImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool SliceMutationEmitsIndirectStoreAndLoad()
+{
+    return SliceMutationEmitsIndirectStoreAndLoadImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ImportedStarkFunctionUsesQualifiedDependencySymbol()
+{
+    return ImportedStarkFunctionUsesQualifiedDependencySymbolImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ImportedSourceAsmFunctionsEmitExternalDeclarationsAndCalls()
+{
+    return ImportedSourceAsmFunctionsEmitExternalDeclarationsAndCallsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ImportedGlobalsUseQualifiedDependencySymbolsAndFoldConstValues()
+{
+    return ImportedGlobalsUseQualifiedDependencySymbolsAndFoldConstValuesImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ImportedReadonlyScalarArrayDeclarationsCarryVectorizationFriendlyAlignment()
+{
+    return ImportedReadonlyScalarArrayDeclarationsCarryVectorizationFriendlyAlignmentImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool PackageImageBackedImportedReadonlyDataPreservesInvariantMetadata()
+{
+    return PackageImageBackedImportedReadonlyDataPreservesInvariantMetadataImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ImmutableGlobalAddressesLowerWithoutPointerCasts()
+{
+    return ImmutableGlobalAddressesLowerWithoutPointerCastsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ImportedAggregateFunctionsUseCrossModuleAbiDeclarations()
+{
+    return ImportedAggregateFunctionsUseCrossModuleAbiDeclarationsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ConstantImportedLawCallsFoldBeforeClosedWorldCloneEmission()
+{
+    return ConstantImportedLawCallsFoldBeforeClosedWorldCloneEmissionImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ConstantImportedLawCallsStillFoldInsideImpureCallers()
+{
+    return ConstantImportedLawCallsStillFoldInsideImpureCallersImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool MixedLawAndNonLawRootCallersUseSelectiveImportedDoctrineLawClones()
+{
+    return MixedLawAndNonLawRootCallersUseSelectiveImportedDoctrineLawClonesImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool MixedLawAndNonLawRootCallersUseSelectiveImportedTopLevelLawClones()
+{
+    return MixedLawAndNonLawRootCallersUseSelectiveImportedTopLevelLawClonesImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ImpureRootFunctionsDoNotCloneImportedLawBodiesIntoRootLlvm()
+{
+    return ImpureRootFunctionsDoNotCloneImportedLawBodiesIntoRootLlvmImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ImportedLawEntrypointsWithExplicitInlineHintDoNotSpecializeIntoClones()
+{
+    return ImportedLawEntrypointsWithExplicitInlineHintDoNotSpecializeIntoClonesImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ClosedWorldModulePrivateLawHelpersEmitAlwaysInline()
+{
+    return ClosedWorldModulePrivateLawHelpersEmitAlwaysInlineImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ModulePrivateDirectCallForwardersEmitAlwaysInline()
+{
+    return ModulePrivateDirectCallForwardersEmitAlwaysInlineImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ModulePrivateMemberCallForwardersEmitAlwaysInline()
+{
+    return ModulePrivateMemberCallForwardersEmitAlwaysInlineImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ModulePrivateFieldAccessWrappersEmitAlwaysInline()
+{
+    return ModulePrivateFieldAccessWrappersEmitAlwaysInlineImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ModulePrivateIndexAccessWrappersEmitAlwaysInline()
+{
+    return ModulePrivateIndexAccessWrappersEmitAlwaysInlineImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ModulePrivateConversionWrappersEmitAlwaysInline()
+{
+    return ModulePrivateConversionWrappersEmitAlwaysInlineImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ModulePrivateAddressOfWrappersEmitAlwaysInline()
+{
+    return ModulePrivateAddressOfWrappersEmitAlwaysInlineImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ModulePrivateBinaryOperatorWrappersEmitAlwaysInline()
+{
+    return ModulePrivateBinaryOperatorWrappersEmitAlwaysInlineImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ModulePrivateComparisonWrappersEmitAlwaysInline()
+{
+    return ModulePrivateComparisonWrappersEmitAlwaysInlineImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ModulePrivateTerminalIfSelectionWrappersEmitAlwaysInline()
+{
+    return ModulePrivateTerminalIfSelectionWrappersEmitAlwaysInlineImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ModulePrivateTerminalSwitchSelectionWrappersEmitAlwaysInline()
+{
+    return ModulePrivateTerminalSwitchSelectionWrappersEmitAlwaysInlineImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ModulePrivateObjectConstructionWrappersEmitAlwaysInline()
+{
+    return ModulePrivateObjectConstructionWrappersEmitAlwaysInlineImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ModulePrivateEnumConstructionWrappersEmitAlwaysInline()
+{
+    return ModulePrivateEnumConstructionWrappersEmitAlwaysInlineImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ModulePrivateLocalUpdateWrappersEmitAlwaysInline()
+{
+    return ModulePrivateLocalUpdateWrappersEmitAlwaysInlineImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool HotFunctionsEmitHotAttribute()
+{
+    return HotFunctionsEmitHotAttributeImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool LibraryBuildQualifiesPublicRootSymbols()
+{
+    return LibraryBuildQualifiesPublicRootSymbolsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ModulePrivateFunctionsLowerWithInternalLinkage()
+{
+    return ModulePrivateFunctionsLowerWithInternalLinkageImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool SourceBackedGenericCallsInlineSmallConcreteMonomorphizedSymbols()
+{
+    return SourceBackedGenericCallsInlineSmallConcreteMonomorphizedSymbolsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool BackendOpaqueGenericFunctionsRemainOptimizationBoundariesAfterMonomorphization()
+{
+    return BackendOpaqueGenericFunctionsRemainOptimizationBoundariesAfterMonomorphizationImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool BackendOpaqueGenericTypeMethodsRemainOptimizationBoundariesAfterMonomorphization()
+{
+    return BackendOpaqueGenericTypeMethodsRemainOptimizationBoundariesAfterMonomorphizationImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool BackendOpaqueStructAndRecordMethodsRemainNarrowOptimizationBoundaries()
+{
+    return BackendOpaqueStructAndRecordMethodsRemainNarrowOptimizationBoundariesImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool BackendOpaqueDoctrineMethodsRemainNarrowOptimizationBoundaries()
+{
+    return BackendOpaqueDoctrineMethodsRemainNarrowOptimizationBoundariesImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool NestedSourceBackedGenericCallsInlineTransitiveSmallConcreteMonomorphizedSymbols()
+{
+    return NestedSourceBackedGenericCallsInlineTransitiveSmallConcreteMonomorphizedSymbolsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ImportedSourceBackedGenericSpecializationsUseLinkOnceOdrComdatDefinitionsAndInlineSmallCalls()
+{
+    return ImportedSourceBackedGenericSpecializationsUseLinkOnceOdrComdatDefinitionsAndInlineSmallCallsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ImportedSourceBackedMutableBorrowGenericSpecializationsDoNotDenyArgumentMemoryAccess()
+{
+    return ImportedSourceBackedMutableBorrowGenericSpecializationsDoNotDenyArgumentMemoryAccessImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ManifestBackedGenericCallsInlineSmallConcreteMonomorphizedSymbolsFromPackageImageTemplates()
+{
+    return ManifestBackedGenericCallsInlineSmallConcreteMonomorphizedSymbolsFromPackageImageTemplatesImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ManifestBackedGenericInlineClosureCallSpecializesFromPackageImageTypedBody()
+{
+    return ManifestBackedGenericInlineClosureCallSpecializesFromPackageImageTypedBodyImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ManifestBackedNestedGenericCallsInlineTransitiveSmallConcreteMonomorphizedSymbolsFromPackageImageTemplates()
+{
+    return ManifestBackedNestedGenericCallsInlineTransitiveSmallConcreteMonomorphizedSymbolsFromPackageImageTemplatesImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool RepeatedManifestBackedNestedGenericCallsStayInternalAndDeduplicatedAtLlvmEmission()
+{
+    return RepeatedManifestBackedNestedGenericCallsStayInternalAndDeduplicatedAtLlvmEmissionImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool LocalFixedArrayCanBeCoercedToSliceForCalls()
+{
+    return LocalFixedArrayCanBeCoercedToSliceForCallsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool BorrowedSliceParametersAcceptReusableSliceViews()
+{
+    return BorrowedSliceParametersAcceptReusableSliceViewsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool BorrowedAggregateCallReusesPromotedLocalSlot()
+{
+    return BorrowedAggregateCallReusesPromotedLocalSlotImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool MutableBorrowReceiverForwardingReusesOriginalParameterPointer()
+{
+    return MutableBorrowReceiverForwardingReusesOriginalParameterPointerImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool MutableBorrowFieldReceiverUsesOriginalFieldAddress()
+{
+    return MutableBorrowFieldReceiverUsesOriginalFieldAddressImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool StoreBorrowFieldsUsePointerStorageAndProjectThroughBorrowedValue()
+{
+    return StoreBorrowFieldsUsePointerStorageAndProjectThroughBorrowedValueImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool RawPointerLoopBackedgeCastsMaterializePhiIncomingValues()
+{
+    return RawPointerLoopBackedgeCastsMaterializePhiIncomingValuesImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ManifestBackedMutableBorrowMethodsStayWritableAtImportedDeclarations()
+{
+    return ManifestBackedMutableBorrowMethodsStayWritableAtImportedDeclarationsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool DoctrineLawCallsEmitDirectReadonlyNoCaptureSignatures()
+{
+    return DoctrineLawCallsEmitDirectReadonlyNoCaptureSignaturesImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ConfiguredTargetInfoIsEmittedInHeader()
+{
+    return ConfiguredTargetInfoIsEmittedInHeaderImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ShortCircuitAndTernaryEmitBranchesAndPhi()
+{
+    return ShortCircuitAndTernaryEmitBranchesAndPhiImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool PointerOperatorsAndExplicitConversionsEmitRawMemoryAccess()
+{
+    return PointerOperatorsAndExplicitConversionsEmitRawMemoryAccessImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool RuntimeDisjointRawPointerConditionEmitsByteRangeComparisons()
+{
+    return RuntimeDisjointRawPointerConditionEmitsByteRangeComparisonsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool RuntimeDisjointRawPointerRegionsUseElementCounts()
+{
+    return RuntimeDisjointRawPointerRegionsUseElementCountsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool RuntimeDisjointBorrowConditionEmitsAddressRangeComparisons()
+{
+    return RuntimeDisjointBorrowConditionEmitsAddressRangeComparisonsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool RuntimeDisjointSliceConditionUsesViewDataAndLength()
+{
+    return RuntimeDisjointSliceConditionUsesViewDataAndLengthImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool RuntimeDisjointTrueBranchEmitsScopedNoAliasMetadata()
+{
+    return RuntimeDisjointTrueBranchEmitsScopedNoAliasMetadataImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool RuntimeDisjointSameBaseRawPointerSubregionsEmitScopedNoAliasMetadata()
+{
+    return RuntimeDisjointSameBaseRawPointerSubregionsEmitScopedNoAliasMetadataImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool RuntimeDisjointSameBaseSubregionScopedNoAliasDoesNotEscapeTrueBranch()
+{
+    return RuntimeDisjointSameBaseSubregionScopedNoAliasDoesNotEscapeTrueBranchImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool UnsafeAssumeDisjointEmitsScopedNoAliasMetadataWithoutRuntimeCheck()
+{
+    return UnsafeAssumeDisjointEmitsScopedNoAliasMetadataWithoutRuntimeCheckImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool RuntimeScopedNoAliasFactsAttachToEligibleDirectCalls()
+{
+    return RuntimeScopedNoAliasFactsAttachToEligibleDirectCallsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool IndependentLoopLawCallsEmitAccessGroupMetadata()
+{
+    return IndependentLoopLawCallsEmitAccessGroupMetadataImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool FfiCallsDoNotReceiveScopedNoAliasOrAccessGroupMetadata()
+{
+    return FfiCallsDoNotReceiveScopedNoAliasOrAccessGroupMetadataImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool DisjointRawPointerParametersEmitNoAliasAttributes()
+{
+    return DisjointRawPointerParametersEmitNoAliasAttributesImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool DefaultNonOverlapRawPointerParametersEmitNoAliasAttributes()
+{
+    return DefaultNonOverlapRawPointerParametersEmitNoAliasAttributesImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool OverlapRawPointerParametersDoNotEmitNoAliasAttributes()
+{
+    return OverlapRawPointerParametersDoNotEmitNoAliasAttributesImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ConstantBoundedRawPointerParametersEmitDereferenceabilityAttributes()
+{
+    return ConstantBoundedRawPointerParametersEmitDereferenceabilityAttributesImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool PositiveVariableBoundedRawPointerParametersEmitMinimumDereferenceabilityAttributes()
+{
+    return PositiveVariableBoundedRawPointerParametersEmitMinimumDereferenceabilityAttributesImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ZeroLengthBoundedRawPointerParametersDoNotEmitNonnullOrDereferenceabilityAttributes()
+{
+    return ZeroLengthBoundedRawPointerParametersDoNotEmitNonnullOrDereferenceabilityAttributesImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool FunctionPointerCallsWithPositiveVariableBoundedRawPointerParametersEmitCallAttributes()
+{
+    return FunctionPointerCallsWithPositiveVariableBoundedRawPointerParametersEmitCallAttributesImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool BoundedRawPointerArgumentFactsStrengthenDirectAndIndirectCallAttributes()
+{
+    return BoundedRawPointerArgumentFactsStrengthenDirectAndIndirectCallAttributesImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool BoundedRawPointerRegionFactsEmitInboundsGepForProvenParameterIndexes()
+{
+    return BoundedRawPointerRegionFactsEmitInboundsGepForProvenParameterIndexesImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool RawSlicesCarryBoundedRegionFactsIntoSliceElementGepFlags()
+{
+    return RawSlicesCarryBoundedRegionFactsIntoSliceElementGepFlagsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool DisjointRawPointerParameterAccessesEmitScopedNoAliasMetadata()
+{
+    return DisjointRawPointerParameterAccessesEmitScopedNoAliasMetadataImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool DefaultNonOverlapRawPointerParameterAccessesEmitScopedNoAliasMetadata()
+{
+    return DefaultNonOverlapRawPointerParameterAccessesEmitScopedNoAliasMetadataImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ConstRawPointerParametersEmitReadonlyAttributes()
+{
+    return ConstRawPointerParametersEmitReadonlyAttributesImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ConstRawPointerParameterLoadsDoNotEmitInvariantLoadMetadata()
+{
+    return ConstRawPointerParameterLoadsDoNotEmitInvariantLoadMetadataImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool RawSlicesPreserveRuntimeDisjointScopedNoAliasMetadata()
+{
+    return RawSlicesPreserveRuntimeDisjointScopedNoAliasMetadataImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool RawSlicesFromConstPointersDoNotEmitInvariantLoadMetadata()
+{
+    return RawSlicesFromConstPointersDoNotEmitInvariantLoadMetadataImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool RawSlicesFromConstPointerLocalsDoNotEmitInvariantLoadMetadata()
+{
+    return RawSlicesFromConstPointerLocalsDoNotEmitInvariantLoadMetadataImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool WillexitScalarLoopsEmitMustProgressLoopMetadata()
+{
+    return WillexitScalarLoopsEmitMustProgressLoopMetadataImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool NonDeterministicScalarLoopsDoNotEmitMustProgressLoopMetadata()
+{
+    return NonDeterministicScalarLoopsDoNotEmitMustProgressLoopMetadataImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool IndependentScalarLoopsEmitMustProgressLoopMetadata()
+{
+    return IndependentScalarLoopsEmitMustProgressLoopMetadataImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool IndependentForLoopsEmitMustProgressLoopMetadata()
+{
+    return IndependentForLoopsEmitMustProgressLoopMetadataImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool IndependentSliceLoopsEmitAccessGroupAndParallelLoopMetadata()
+{
+    return IndependentSliceLoopsEmitAccessGroupAndParallelLoopMetadataImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool FixedArrayToSliceCallArgumentsMaterializeSliceAbiSlots()
+{
+    return FixedArrayToSliceCallArgumentsMaterializeSliceAbiSlotsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool IndependentSliceLoopsWithConditionalsEmitAccessGroupAndParallelLoopMetadata()
+{
+    return IndependentSliceLoopsWithConditionalsEmitAccessGroupAndParallelLoopMetadataImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool IndependentSliceLoopsWithMemberProjectionsEmitAccessGroupAndParallelLoopMetadata()
+{
+    return IndependentSliceLoopsWithMemberProjectionsEmitAccessGroupAndParallelLoopMetadataImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool IndependentBoundedRawPointerLoopsEmitAccessGroupAndParallelLoopMetadata()
+{
+    return IndependentBoundedRawPointerLoopsEmitAccessGroupAndParallelLoopMetadataImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool IndependentBoundedRawPointerLoopsUseRuntimeRegionFactsForParallelMetadata()
+{
+    return IndependentBoundedRawPointerLoopsUseRuntimeRegionFactsForParallelMetadataImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool BoundedRawPointerCopyLoopLowersToMemcpyWhenNoAliasIsProven()
+{
+    return BoundedRawPointerCopyLoopLowersToMemcpyWhenNoAliasIsProvenImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool BoundedRawPointerCopyLoopInsideNontrivialFunctionLowersToMemcpy()
+{
+    return BoundedRawPointerCopyLoopInsideNontrivialFunctionLowersToMemcpyImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool BoundedRawPointerCopyLoopWithoutNoAliasProofKeepsScalarLowering()
+{
+    return BoundedRawPointerCopyLoopWithoutNoAliasProofKeepsScalarLoweringImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool BoundedRawPointerCopyLoopInsideNontrivialFunctionWithoutNoAliasProofKeepsScalarLowering()
+{
+    return BoundedRawPointerCopyLoopInsideNontrivialFunctionWithoutNoAliasProofKeepsScalarLoweringImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool BoundedRawPointerOverlapSafeTemporaryCopyLowersToMemmove()
+{
+    return BoundedRawPointerOverlapSafeTemporaryCopyLowersToMemmoveImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool BoundedRawPointerOverlapSafeTemporaryCopyInsideNontrivialFunctionLowersToMemmove()
+{
+    return BoundedRawPointerOverlapSafeTemporaryCopyInsideNontrivialFunctionLowersToMemmoveImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool BoundedRawPointerForwardBackwardMoveLoopLowersToMemmove()
+{
+    return BoundedRawPointerForwardBackwardMoveLoopLowersToMemmoveImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool SliceForwardBackwardMoveLoopLowersToMemmoveWhenByteLengthIsRepresentable()
+{
+    return SliceForwardBackwardMoveLoopLowersToMemmoveWhenByteLengthIsRepresentableImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool BoundedRawPointerOverlapSafeTemporaryCopyWithTemporaryEpilogueUseKeepsScalarLowering()
+{
+    return BoundedRawPointerOverlapSafeTemporaryCopyWithTemporaryEpilogueUseKeepsScalarLoweringImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool BoundedRawPointerByteFillLoopLowersToMemset()
+{
+    return BoundedRawPointerByteFillLoopLowersToMemsetImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool InitSliceByteFillLoopLowersToMemset()
+{
+    return InitSliceByteFillLoopLowersToMemsetImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool DynamicTailInitByteFillLoopLowersToMemsetAndCommitsLength()
+{
+    return DynamicTailInitByteFillLoopLowersToMemsetAndCommitsLengthImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool DynamicAppendThroughLengthByteFillLoopLowersToMemsetAndCommitsLengthOnce()
+{
+    return DynamicAppendThroughLengthByteFillLoopLowersToMemsetAndCommitsLengthOnceImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool DisjointInitSliceCopyLoopLowersToMemcpy()
+{
+    return DisjointInitSliceCopyLoopLowersToMemcpyImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool InitSliceOverlapSafeTemporaryCopyLowersToMemmove()
+{
+    return InitSliceOverlapSafeTemporaryCopyLowersToMemmoveImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool BoundedRawPointerByteFillLoopInsideNontrivialFunctionLowersToMemset()
+{
+    return BoundedRawPointerByteFillLoopInsideNontrivialFunctionLowersToMemsetImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool IndependentBoundedRawPointerFillAndTransformLoopsEmitParallelMetadata()
+{
+    return IndependentBoundedRawPointerFillAndTransformLoopsEmitParallelMetadataImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool IntegerArithmeticFoldEmitsSingleMultiplyForRepeatedUnknownAdds()
+{
+    return IntegerArithmeticFoldEmitsSingleMultiplyForRepeatedUnknownAddsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool IntegerArithmeticFoldEmitsMultiplySubtractForRepeatedSubtractionChains()
+{
+    return IntegerArithmeticFoldEmitsMultiplySubtractForRepeatedSubtractionChainsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool IntegerArithmeticFoldLowersRepeatedProductRunsWithoutPowHelper()
+{
+    return IntegerArithmeticFoldLowersRepeatedProductRunsWithoutPowHelperImpl();
+}
+
+[Fact]
+[Collection("out-parameter-drop")]
+fn bool AssigningIntoAnOutParameterDoesNotFreeTheTransferredValueOnReturn()
+{
+    return AssigningIntoAnOutParameterDoesNotFreeTheTransferredValueOnReturnImpl();
+}
+
+[Fact]
+[Collection("package-image-callable-value")]
+fn bool PackageImageBackedCallableAliasDrivesIndirectCallSiteEffectAttributes()
+{
+    return PackageImageBackedCallableAliasDrivesIndirectCallSiteEffectAttributesImpl();
+}
+
+[Fact]
+[Collection("package-image-callable-value")]
+fn bool PackageImageBackedGenericTemplateFnptrCallKeepsKindedIndirectCallAttributes()
+{
+    return PackageImageBackedGenericTemplateFnptrCallKeepsKindedIndirectCallAttributesImpl();
+}
+
+[Fact]
+[Collection("package-image-callable-value")]
+fn bool PackageImageBackedFunctionPointerParametersTargetTypeNonCapturingLambdas()
+{
+    return PackageImageBackedFunctionPointerParametersTargetTypeNonCapturingLambdasImpl();
+}
+
+[Fact]
+[Collection("package-image-callable-value")]
+fn bool PackageImageBackedAcceptedProgramEmitsLlvmWithoutFallbackLogs()
+{
+    return PackageImageBackedAcceptedProgramEmitsLlvmWithoutFallbackLogsImpl();
+}
+
+[Fact]
+[Collection("raw-multiline-string-parity")]
+fn bool MultilineRawStringsStripDelimiterNewlinesAndClosingIndentation()
+{
+    return MultilineRawStringsStripDelimiterNewlinesAndClosingIndentationImpl();
+}
+
+[Fact]
+[Collection("raw-multiline-string-parity")]
+fn bool WhitespaceOnlyLinesShorterThanTheClosingIndentationBecomeEmptyLines()
+{
+    return WhitespaceOnlyLinesShorterThanTheClosingIndentationBecomeEmptyLinesImpl();
+}
+
+[Fact]
+[Collection("raw-multiline-string-parity")]
+fn bool SingleLineRawTripleQuoteStringsKeepTheirContentVerbatim()
+{
+    return SingleLineRawTripleQuoteStringsKeepTheirContentVerbatimImpl();
+}
+
+[Fact]
+[Collection("raw-multiline-string-parity")]
+fn bool InterpolatedRawMultilineStringsNormalizeBeforeHoleSplitting()
+{
+    return InterpolatedRawMultilineStringsNormalizeBeforeHoleSplittingImpl();
+}
+
+[Fact]
+[Collection("ssa-optimization")]
+fn bool ConstantPropagationFoldsConstantBranchesInLlvm()
+{
+    return ConstantPropagationFoldsConstantBranchesInLlvmImpl();
+}
+
+[Fact]
+[Collection("ssa-optimization")]
+fn bool ConstantPropagationFoldsConstantSwitchesInLlvm()
+{
+    return ConstantPropagationFoldsConstantSwitchesInLlvmImpl();
+}
+
+[Fact]
+[Collection("try-propagation-imported-module")]
+fn bool TryInsideImportedSourceModuleLowersThroughTheWholePipeline()
+{
+    return TryInsideImportedSourceModuleLowersThroughTheWholePipelineImpl();
+}
+
+[Fact]
+[Collection("v1-lowering-contract")]
+fn bool InternalScalarFunctionsUseFastccAndDirectScalarAbi()
+{
+    return InternalScalarFunctionsUseFastccAndDirectScalarAbiImpl();
+}
+
+[Fact]
+[Collection("v1-lowering-contract")]
+fn bool InternalTextAndSliceValuesKeepConcretePtrLengthAbi()
+{
+    return InternalTextAndSliceValuesKeepConcretePtrLengthAbiImpl();
+}
+
+[Fact]
+[Collection("v1-lowering-contract")]
+fn bool FfiAsciiBoundaryDoesNotUseFastccAndLowersToPointerAbi()
+{
+    return FfiAsciiBoundaryDoesNotUseFastccAndLowersToPointerAbiImpl();
+}
+
+[Fact]
+[Collection("v1-lowering-contract")]
+fn bool SafeExportedMainDoesNotNeedUnsafeOrFfiAndUsesNativeCallingConvention()
+{
+    return SafeExportedMainDoesNotNeedUnsafeOrFfiAndUsesNativeCallingConventionImpl();
+}
+
+[Fact]
+[Collection("v1-lowering-contract")]
+fn bool ExportedStarkFunctionsUseNativeCallingConventionWithoutFfiUnsafe()
+{
+    return ExportedStarkFunctionsUseNativeCallingConventionWithoutFfiUnsafeImpl();
+}
+
+[Fact]
+[Collection("v1-lowering-contract")]
+fn bool BorrowedAggregatesRemainIndirectWithReadonlyFacts()
+{
+    return BorrowedAggregatesRemainIndirectWithReadonlyFactsImpl();
+}
+
+[Fact]
+[Collection("v1-lowering-contract")]
+fn bool SixteenByteAggregatesStayDirectByValue()
+{
+    return SixteenByteAggregatesStayDirectByValueImpl();
+}
+
+[Fact]
+[Collection("v1-lowering-contract")]
+fn bool AggregatesLargerThanSixteenBytesUseIndirectAbi()
+{
+    return AggregatesLargerThanSixteenBytesUseIndirectAbiImpl();
+}
+
+[Fact]
+[Collection("v1-lowering-contract")]
+fn bool FixedArraysFollowTheSameSixteenByteThreshold()
+{
+    return FixedArraysFollowTheSameSixteenByteThresholdImpl();
+}
+

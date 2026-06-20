@@ -1,15 +1,38 @@
 # Stark Package Image
 
-This document defines Stark's package image model for the `v1.1` package-boundary work.
+This document defines Stark's package image model for the `v1.1`
+package-boundary work and records the self-hosting format direction.
 
-The `.starkpkg.json` artifact is a compiler-owned package image, not a narrow hand-authored distribution manifest.
-It is the package-boundary source artifact the compiler emits, inspects, diffs, validates, and loads directly.
+The package image is a compiler-owned package-boundary artifact, not a narrow
+hand-authored distribution manifest. It preserves structured package facts for
+downstream compilation and inspection.
+
+Current host status:
+
+- the C# host emits and loads a binary `.starkpkg` container (STARKPKG magic,
+  format version, Brotli-compressed canonical JSON payload); legacy
+  `.starkpkg.json` files still load, and `--package-image-json` writes the
+  indented JSON inspection sidecar on demand
+- the JSON artifact is compiler-owned and not intended to be hand-authored
+- current tests and tooling often inspect or diff that JSON directly
+
+Self-hosting direction:
+
+- the normal compiler load artifact becomes a binary package image
+- deterministic JSON/text forms remain inspection and export views
+- builds may emit binary, JSON, text, or any requested combination
+- JSON/text sidecars are views of the package image, not independent sources of
+  truth
 
 Historical note:
 
-- some internal type names and older comments still use `Manifest` because the feature started as a smaller package-manifest slice
-- the file extension remains `.starkpkg.json`
-- user-facing docs and tooling should treat that file as a package image
+- some internal type names and older comments still use `Manifest` because the
+  feature started as a smaller package-manifest slice
+- the current host file extension is `.starkpkg` (binary); `.starkpkg.json`
+  remains the legacy/inspection JSON form
+- self-hosting format work is tracked in `docs/Self-host-Prep/20-package-image-format.md`
+- user-facing docs and tooling should treat package images as compiler-owned
+  artifacts regardless of the concrete file format
 
 ## Goals
 
@@ -19,20 +42,26 @@ The package image exists so Stark can preserve enough package-boundary informati
 - type-check and lower imported declarations directly from structured compiler facts
 - specialize imported generics without reparsing lossy source text
 - preserve richer interprocedural optimization facts for future package-aware optimization work
-- keep the artifact readable and diffable in Git
+- keep inspection output readable and diffable in Git
 
 ## Principles
 
 The package image contract is:
 
-- text-based and diffable
-- compiler-owned rather than routinely hand-edited
+- structured and compiler-owned rather than routinely hand-edited
+- binary-loadable on the normal compiler hot path
+- inspectable through deterministic JSON/text views
 - sectioned so new compiler data can be added without flattening everything into one record
-- loaded directly by the compiler when structured sections are available
-- allowed to evolve with the compiler source tree without an embedded format-version field
+- loaded directly by the compiler from the binary artifact when structured
+  sections are available
+- compatible with explicit format/schema/version checks before the host is
+  dropped
 
-Stark intentionally does not treat the package image as a permanently stable third-party interchange format in `v1.1`.
-The compiler and image format evolve together in source control.
+Stark intentionally does not treat the package image as a permanently stable
+third-party interchange format in `v1.1`. The compiler and image format evolve
+together in source control. The binary self-hosted format still needs enough
+explicit compatibility data to reject mismatched package images cleanly across
+bootstrap stages and releases.
 
 ## Artifact Shape
 
@@ -71,7 +100,7 @@ The roles are:
 - compiler-only compatibility data:
   temporary legacy flat fields and bridge-oriented fallback content that still exist only while the older reconstruction path is being retired
 
-No section in `.starkpkg.json` is intended to be the normal place a user writes package APIs by hand.
+No section in the package image is intended to be the normal place a user writes package APIs by hand.
 Users author Stark source; the compiler emits the package image.
 
 ## Native Dependency Metadata
@@ -85,6 +114,7 @@ The current package-author CLI surface is:
 ```bash
 compiler Raylib.stark --emit-lib \
   -o dist/libRaylibStark.a \
+  --package-image-output dist/pkg/libRaylibStark.starkpkg \
   --native-source RaylibNative.c \
   --native-pkg-config raylib
 ```
@@ -202,6 +232,13 @@ preserves optimizer-relevant facts such as:
 - typed direct-call, member-call, and field-access targets
 - typed object-creation and initializer-member facts
 - typed enum constructor, enum call, enum value, enum pattern, and aggregate pattern facts
+- `try` propagation facts (ordinal-keyed roles, payload types, and `from` funnel
+  resolution per `try` expression), so downstream specialization lowers `try` without
+  re-type-checking the imported body
+
+Published enum types additionally carry their `[Ok]`/`[Err]` propagation roles and
+`from` funnel markers on every variant, in the source-surface, typed-interface, and
+compiler-facts sections alike, so imported enums stay `try`-propagatable.
 
 That richer surface lets future cross-package inlining and other package-aware
 optimizations reason about imported generic bodies from structured package-image
@@ -229,17 +266,25 @@ That richer shape is what makes package-boundary generic specialization and stru
 The current user-facing commands are:
 
 - `--emit-lib`:
-  emits a static library plus a sidecar package image
+  emits a static library plus a package image; `--package-image-output <path>`
+  can route the image away from the library, in which case the image records a
+  relative library reference for downstream linking
 - `--emit-pkg` or `--emit-package`:
-  emits the package image JSON without linker or archiver steps
+  currently emits the host JSON package image without linker or archiver steps;
+  self-hosting should let builds choose binary, JSON, text, or any requested
+  combination
 - `--inspect-pkg` or `--inspect-package`:
-  validates and renders a readable summary of a package image
+  validates a package image and renders deterministic text or JSON inspection
+  output
 
 ## Compatibility Note
 
 The repository still contains some legacy uses of the word `manifest` in internal identifiers and compatibility paths.
 That legacy naming does not change the intended model:
 
-- `.starkpkg.json` is Stark's compiler-owned package image
+- `.starkpkg` is the current host's compiler-owned binary package image;
+  `.starkpkg.json` is its deterministic JSON inspection form
+- binary package images are the self-hosted compiler's normal load path
+- JSON/text inspection output remains compiler-owned and deterministic
 - direct structured loading is the primary path
 - legacy manifest-style reconstruction is temporary bridge behavior, not the semantic source of truth for imported package handling

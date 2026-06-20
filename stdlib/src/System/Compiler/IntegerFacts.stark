@@ -1,0 +1,1027 @@
+module System.Compiler.IntegerFacts
+
+public enum IntegerFactError
+{
+    InvalidBitWidth,
+    InvalidShiftAmount,
+    EmptyRange,
+    NegativeUnsigned,
+    Overflow,
+    ConflictingKnownBits,
+    MismatchedBitWidth,
+}
+
+public enum IntegerFactResult<T>
+{
+    [Ok] Ok(T),
+    [Err] Err(IntegerFactError),
+}
+
+public enum IntegerRangeStorageViolationKind
+{
+    None,
+    NonNegativeSigned,
+    WiderThanNeeded,
+}
+
+public struct IntegerTypeBounds
+{
+    i1024[min max] SignedMin;
+    i1024[min max] SignedMax;
+    u1024[0 max] UnsignedMax;
+    bool IsUnsigned;
+    u16[1 1024] BitWidth;
+}
+
+public struct IntegerStorageClass
+{
+    bool IsUnsigned;
+    u16[1 1024] BitWidth;
+}
+
+public struct IntegerStorageSuggestion
+{
+    IntegerStorageClass Storage;
+    IntegerRangeStorageViolationKind Violation;
+}
+
+public struct SignedRange
+{
+    i1024[min max] Min;
+    i1024[min max] Max;
+}
+
+public struct UnsignedRange
+{
+    u1024[0 max] Min;
+    u1024[0 max] Max;
+}
+
+public struct IntegerTagType
+{
+    u16[1 1024] BitWidth;
+    u1024[0 max] MaxTag;
+}
+
+public struct KnownBits
+{
+    u16[1 1024] BitWidth;
+    u1024[0 max] KnownZero;
+    u1024[0 max] KnownOne;
+}
+
+internal inline finite law i1024[min max] I1024Min()
+{
+    return (i1024[min max])(-(2 ** 1023));
+}
+
+internal inline finite law i1024[min max] I1024Max()
+{
+    return (i1024[min max])(2 ** 1023 - 1);
+}
+
+internal inline finite law u1024[0 max] U1024Max()
+{
+    return (u1024[0 max])(2 ** 1024 - 1);
+}
+
+internal inline finite law u1024[0 max] BitMaskUnchecked(u64[0 max] bitCount)
+{
+    if (bitCount == 0)
+    {
+        return 0;
+    }
+
+    if (bitCount == 1024)
+    {
+        return U1024Max();
+    }
+
+    return (u1024[0 max])(((u1024[0 max])1 << bitCount) - (u1024[0 max])1);
+}
+
+internal inline finite law i1024[min max] SignedMinUnchecked(u64[0 max] bitWidth)
+{
+    if (bitWidth == 1024)
+    {
+        return I1024Min();
+    }
+
+    stack u1024[0 max] magnitude = (u1024[0 max])1 << (bitWidth - 1);
+    return 0 - (i1024[min max])magnitude;
+}
+
+internal inline finite law i1024[min max] SignedMaxUnchecked(u64[0 max] bitWidth)
+{
+    if (bitWidth == 1024)
+    {
+        return I1024Max();
+    }
+
+    return ((i1024[min max])1 << (bitWidth - 1)) - 1;
+}
+
+public inline finite law bool IsValidBitWidth(u64[0 max] bitWidth)
+{
+    return bitWidth >= 1 && bitWidth <= 1024;
+}
+
+public inline finite law bool IsValidBitCount(u64[0 max] bitCount)
+{
+    return bitCount <= 1024;
+}
+
+public inline finite law bool IsSupportedIntegerWidth(u64[0 max] bitWidth)
+{
+    return bitWidth == 8
+        || bitWidth == 16
+        || bitWidth == 24
+        || bitWidth == 32
+        || bitWidth == 48
+        || bitWidth == 64
+        || bitWidth == 96
+        || bitWidth == 128
+        || bitWidth == 192
+        || bitWidth == 256
+        || bitWidth == 384
+        || bitWidth == 512
+        || bitWidth == 768
+        || bitWidth == 1024;
+}
+
+public inline finite law i1024[min max] MinSigned(i1024[min max] left, i1024[min max] right)
+{
+    if (left < right)
+    {
+        return left;
+    }
+
+    return right;
+}
+
+public inline finite law i1024[min max] MaxSigned(i1024[min max] left, i1024[min max] right)
+{
+    if (left > right)
+    {
+        return left;
+    }
+
+    return right;
+}
+
+public inline finite law u1024[0 max] MinUnsigned(u1024[0 max] left, u1024[0 max] right)
+{
+    if (left < right)
+    {
+        return left;
+    }
+
+    return right;
+}
+
+public inline finite law u1024[0 max] MaxUnsigned(u1024[0 max] left, u1024[0 max] right)
+{
+    if (left > right)
+    {
+        return left;
+    }
+
+    return right;
+}
+
+public inline finite law IntegerFactResult<u1024[0 max]> BitMask(u64[0 max] bitCount)
+{
+    if (!IsValidBitCount(bitCount))
+    {
+        return IntegerFactResult<u1024[0 max]>.Err(IntegerFactError.InvalidBitWidth);
+    }
+
+    return IntegerFactResult<u1024[0 max]>.Ok(BitMaskUnchecked(bitCount));
+}
+
+public inline finite law IntegerFactResult<u1024[0 max]> UnsignedMaxForBitWidth(u64[0 max] bitWidth)
+{
+    if (!IsValidBitWidth(bitWidth))
+    {
+        return IntegerFactResult<u1024[0 max]>.Err(IntegerFactError.InvalidBitWidth);
+    }
+
+    return BitMask(bitWidth);
+}
+
+public inline finite law IntegerFactResult<i1024[min max]> SignedMinForBitWidth(u64[0 max] bitWidth)
+{
+    if (!IsValidBitWidth(bitWidth))
+    {
+        return IntegerFactResult<i1024[min max]>.Err(IntegerFactError.InvalidBitWidth);
+    }
+
+    return IntegerFactResult<i1024[min max]>.Ok(SignedMinUnchecked(bitWidth));
+}
+
+public inline finite law IntegerFactResult<i1024[min max]> SignedMaxForBitWidth(u64[0 max] bitWidth)
+{
+    if (!IsValidBitWidth(bitWidth))
+    {
+        return IntegerFactResult<i1024[min max]>.Err(IntegerFactError.InvalidBitWidth);
+    }
+
+    return IntegerFactResult<i1024[min max]>.Ok(SignedMaxUnchecked(bitWidth));
+}
+
+public inline finite law IntegerFactResult<IntegerTypeBounds> GetIntegerTypeBounds(
+    u64[0 max] bitWidth,
+    bool isUnsigned)
+{
+    if (!IsValidBitWidth(bitWidth))
+    {
+        return IntegerFactResult<IntegerTypeBounds>.Err(IntegerFactError.InvalidBitWidth);
+    }
+
+    if (isUnsigned)
+    {
+        stack mut u1024[0 max] max = BitMaskUnchecked(bitWidth);
+        stack mut i1024[min max] signedMax = I1024Max();
+        if (max <= (u1024[0 max])I1024Max())
+        {
+            signedMax = (i1024[min max])max;
+        }
+
+        return IntegerFactResult<IntegerTypeBounds>.Ok(new IntegerTypeBounds()
+        {
+            SignedMin = 0,
+            SignedMax = signedMax,
+            UnsignedMax = max,
+            IsUnsigned = true,
+            BitWidth = (u16[1 1024])bitWidth,
+        });
+    }
+
+    return IntegerFactResult<IntegerTypeBounds>.Ok(new IntegerTypeBounds()
+    {
+        SignedMin = SignedMinUnchecked(bitWidth),
+        SignedMax = SignedMaxUnchecked(bitWidth),
+        UnsignedMax = BitMaskUnchecked(bitWidth),
+        IsUnsigned = false,
+        BitWidth = (u16[1 1024])bitWidth,
+    });
+}
+
+public inline finite law bool FitsUnsigned(u1024[0 max] value, u64[0 max] bitWidth)
+{
+    stack IntegerFactResult<u1024[0 max]> maxResult = UnsignedMaxForBitWidth(bitWidth);
+    switch (maxResult)
+    {
+        case IntegerFactResult<u1024[0 max]>.Err(var error):
+            return false;
+        case IntegerFactResult<u1024[0 max]>.Ok(var max):
+            return value <= max;
+    }
+}
+
+public inline finite law bool FitsSigned(i1024[min max] value, u64[0 max] bitWidth)
+{
+    stack IntegerFactResult<i1024[min max]> minResult = SignedMinForBitWidth(bitWidth);
+    stack IntegerFactResult<i1024[min max]> maxResult = SignedMaxForBitWidth(bitWidth);
+    switch (minResult)
+    {
+        case IntegerFactResult<i1024[min max]>.Err(var minError):
+            return false;
+        case IntegerFactResult<i1024[min max]>.Ok(var min):
+            switch (maxResult)
+            {
+                case IntegerFactResult<i1024[min max]>.Err(var maxError):
+                    return false;
+                case IntegerFactResult<i1024[min max]>.Ok(var max):
+                    return value >= min && value <= max;
+            }
+    }
+}
+
+public inline finite law IntegerFactResult<u1024[0 max]> TrySignedToUnsigned(i1024[min max] value)
+{
+    if (value < 0)
+    {
+        return IntegerFactResult<u1024[0 max]>.Err(IntegerFactError.NegativeUnsigned);
+    }
+
+    return IntegerFactResult<u1024[0 max]>.Ok((u1024[0 max])value);
+}
+
+public inline finite law IntegerFactResult<i1024[min max]> TryUnsignedToSigned(u1024[0 max] value)
+{
+    if (value > (u1024[0 max])I1024Max())
+    {
+        return IntegerFactResult<i1024[min max]>.Err(IntegerFactError.Overflow);
+    }
+
+    return IntegerFactResult<i1024[min max]>.Ok((i1024[min max])value);
+}
+
+public inline finite law IntegerFactResult<SignedRange> CreateSignedRange(
+    i1024[min max] min,
+    i1024[min max] max)
+{
+    if (min > max)
+    {
+        return IntegerFactResult<SignedRange>.Err(IntegerFactError.EmptyRange);
+    }
+
+    return IntegerFactResult<SignedRange>.Ok(new SignedRange()
+    {
+        Min = min,
+        Max = max,
+    });
+}
+
+public inline finite law IntegerFactResult<UnsignedRange> CreateUnsignedRange(
+    u1024[0 max] min,
+    u1024[0 max] max)
+{
+    if (min > max)
+    {
+        return IntegerFactResult<UnsignedRange>.Err(IntegerFactError.EmptyRange);
+    }
+
+    return IntegerFactResult<UnsignedRange>.Ok(new UnsignedRange()
+    {
+        Min = min,
+        Max = max,
+    });
+}
+
+public inline finite law bool ContainsSigned(borrow SignedRange range, i1024[min max] value)
+{
+    return value >= range.Min && value <= range.Max;
+}
+
+public inline finite law bool ContainsUnsigned(borrow UnsignedRange range, u1024[0 max] value)
+{
+    return value >= range.Min && value <= range.Max;
+}
+
+public inline finite law IntegerFactResult<SignedRange> IntersectSignedRanges(
+    borrow SignedRange left,
+    borrow SignedRange right)
+{
+    return CreateSignedRange(MaxSigned(left.Min, right.Min), MinSigned(left.Max, right.Max));
+}
+
+public inline finite law SignedRange UnionSignedRanges(borrow SignedRange left, borrow SignedRange right)
+{
+    return new SignedRange()
+    {
+        Min = MinSigned(left.Min, right.Min),
+        Max = MaxSigned(left.Max, right.Max),
+    };
+}
+
+public inline finite law IntegerFactResult<UnsignedRange> IntersectUnsignedRanges(
+    borrow UnsignedRange left,
+    borrow UnsignedRange right)
+{
+    return CreateUnsignedRange(MaxUnsigned(left.Min, right.Min), MinUnsigned(left.Max, right.Max));
+}
+
+public inline finite law UnsignedRange UnionUnsignedRanges(borrow UnsignedRange left, borrow UnsignedRange right)
+{
+    return new UnsignedRange()
+    {
+        Min = MinUnsigned(left.Min, right.Min),
+        Max = MaxUnsigned(left.Max, right.Max),
+    };
+}
+
+internal inline finite law IntegerFactResult<IntegerStorageClass> MakeStorageClass(
+    bool isUnsigned,
+    u64[0 max] bitWidth)
+{
+    if (!IsSupportedIntegerWidth(bitWidth))
+    {
+        return IntegerFactResult<IntegerStorageClass>.Err(IntegerFactError.Overflow);
+    }
+
+    return IntegerFactResult<IntegerStorageClass>.Ok(new IntegerStorageClass()
+    {
+        IsUnsigned = isUnsigned,
+        BitWidth = (u16[1 1024])bitWidth,
+    });
+}
+
+public finite law IntegerFactResult<IntegerStorageClass> SmallestUnsignedStorageForRange(
+    u1024[0 max] min,
+    u1024[0 max] max)
+{
+    if (min > max)
+    {
+        return IntegerFactResult<IntegerStorageClass>.Err(IntegerFactError.EmptyRange);
+    }
+
+    if (max <= BitMaskUnchecked(8))
+    {
+        return MakeStorageClass(true, 8);
+    }
+
+    if (max <= BitMaskUnchecked(16))
+    {
+        return MakeStorageClass(true, 16);
+    }
+
+    if (max <= BitMaskUnchecked(24))
+    {
+        return MakeStorageClass(true, 24);
+    }
+
+    if (max <= BitMaskUnchecked(32))
+    {
+        return MakeStorageClass(true, 32);
+    }
+
+    if (max <= BitMaskUnchecked(48))
+    {
+        return MakeStorageClass(true, 48);
+    }
+
+    if (max <= BitMaskUnchecked(64))
+    {
+        return MakeStorageClass(true, 64);
+    }
+
+    if (max <= BitMaskUnchecked(96))
+    {
+        return MakeStorageClass(true, 96);
+    }
+
+    if (max <= BitMaskUnchecked(128))
+    {
+        return MakeStorageClass(true, 128);
+    }
+
+    if (max <= BitMaskUnchecked(192))
+    {
+        return MakeStorageClass(true, 192);
+    }
+
+    if (max <= BitMaskUnchecked(256))
+    {
+        return MakeStorageClass(true, 256);
+    }
+
+    if (max <= BitMaskUnchecked(384))
+    {
+        return MakeStorageClass(true, 384);
+    }
+
+    if (max <= BitMaskUnchecked(512))
+    {
+        return MakeStorageClass(true, 512);
+    }
+
+    if (max <= BitMaskUnchecked(768))
+    {
+        return MakeStorageClass(true, 768);
+    }
+
+    return MakeStorageClass(true, 1024);
+}
+
+public finite law IntegerFactResult<IntegerStorageClass> SmallestSignedStorageForRange(
+    i1024[min max] min,
+    i1024[min max] max)
+{
+    if (min > max)
+    {
+        return IntegerFactResult<IntegerStorageClass>.Err(IntegerFactError.EmptyRange);
+    }
+
+    if (min >= 0)
+    {
+        return SmallestUnsignedStorageForRange((u1024[0 max])min, (u1024[0 max])max);
+    }
+
+    if (min >= SignedMinUnchecked(8) && max <= SignedMaxUnchecked(8))
+    {
+        return MakeStorageClass(false, 8);
+    }
+
+    if (min >= SignedMinUnchecked(16) && max <= SignedMaxUnchecked(16))
+    {
+        return MakeStorageClass(false, 16);
+    }
+
+    if (min >= SignedMinUnchecked(24) && max <= SignedMaxUnchecked(24))
+    {
+        return MakeStorageClass(false, 24);
+    }
+
+    if (min >= SignedMinUnchecked(32) && max <= SignedMaxUnchecked(32))
+    {
+        return MakeStorageClass(false, 32);
+    }
+
+    if (min >= SignedMinUnchecked(48) && max <= SignedMaxUnchecked(48))
+    {
+        return MakeStorageClass(false, 48);
+    }
+
+    if (min >= SignedMinUnchecked(64) && max <= SignedMaxUnchecked(64))
+    {
+        return MakeStorageClass(false, 64);
+    }
+
+    if (min >= SignedMinUnchecked(96) && max <= SignedMaxUnchecked(96))
+    {
+        return MakeStorageClass(false, 96);
+    }
+
+    if (min >= SignedMinUnchecked(128) && max <= SignedMaxUnchecked(128))
+    {
+        return MakeStorageClass(false, 128);
+    }
+
+    if (min >= SignedMinUnchecked(192) && max <= SignedMaxUnchecked(192))
+    {
+        return MakeStorageClass(false, 192);
+    }
+
+    if (min >= SignedMinUnchecked(256) && max <= SignedMaxUnchecked(256))
+    {
+        return MakeStorageClass(false, 256);
+    }
+
+    if (min >= SignedMinUnchecked(384) && max <= SignedMaxUnchecked(384))
+    {
+        return MakeStorageClass(false, 384);
+    }
+
+    if (min >= SignedMinUnchecked(512) && max <= SignedMaxUnchecked(512))
+    {
+        return MakeStorageClass(false, 512);
+    }
+
+    if (min >= SignedMinUnchecked(768) && max <= SignedMaxUnchecked(768))
+    {
+        return MakeStorageClass(false, 768);
+    }
+
+    return MakeStorageClass(false, 1024);
+}
+
+public finite law IntegerFactResult<IntegerStorageSuggestion> GetStorageViolation(
+    u64[0 max] currentBitWidth,
+    bool currentIsUnsigned,
+    i1024[min max] min,
+    i1024[min max] max)
+{
+    if (!IsSupportedIntegerWidth(currentBitWidth))
+    {
+        return IntegerFactResult<IntegerStorageSuggestion>.Err(IntegerFactError.InvalidBitWidth);
+    }
+
+    stack IntegerFactResult<IntegerStorageClass> suggestedResult = SmallestSignedStorageForRange(min, max);
+    switch (suggestedResult)
+    {
+        case IntegerFactResult<IntegerStorageClass>.Err(var error):
+            return IntegerFactResult<IntegerStorageSuggestion>.Err(error);
+        case IntegerFactResult<IntegerStorageClass>.Ok(var suggested):
+            stack mut IntegerRangeStorageViolationKind violation = IntegerRangeStorageViolationKind.None;
+
+            if (suggested.BitWidth != currentBitWidth || suggested.IsUnsigned != currentIsUnsigned)
+            {
+                if (!currentIsUnsigned && min >= 0)
+                {
+                    violation = IntegerRangeStorageViolationKind.NonNegativeSigned;
+                }
+                else
+                {
+                    violation = IntegerRangeStorageViolationKind.WiderThanNeeded;
+                }
+            }
+
+            return IntegerFactResult<IntegerStorageSuggestion>.Ok(new IntegerStorageSuggestion()
+            {
+                Storage = suggested,
+                Violation = violation,
+            });
+    }
+}
+
+public finite law IntegerFactResult<IntegerTagType> TagTypeForVariantCount(u64[0 max] variantCount)
+{
+    if (variantCount > 4294967296)
+    {
+        return IntegerFactResult<IntegerTagType>.Err(IntegerFactError.Overflow);
+    }
+
+    stack mut u16[1 1024] bitWidth = 8;
+    if (variantCount > 256)
+    {
+        bitWidth = 16;
+    }
+
+    if (variantCount > 2 ** 16)
+    {
+        bitWidth = 32;
+    }
+
+    stack mut u1024[0 max] maxTag = 0;
+    if (variantCount != 0)
+    {
+        maxTag = (u1024[0 max])(variantCount - 1);
+    }
+
+    return IntegerFactResult<IntegerTagType>.Ok(new IntegerTagType()
+    {
+        BitWidth = bitWidth,
+        MaxTag = maxTag,
+    });
+}
+
+public finite law IntegerFactResult<i1024[min max]> CheckedAddSigned(
+    i1024[min max] left,
+    i1024[min max] right)
+{
+    if (right > 0 && left > I1024Max() - right)
+    {
+        return IntegerFactResult<i1024[min max]>.Err(IntegerFactError.Overflow);
+    }
+
+    if (right < 0)
+    {
+        if (right == I1024Min())
+        {
+            if (left < 0)
+            {
+                return IntegerFactResult<i1024[min max]>.Err(IntegerFactError.Overflow);
+            }
+        }
+        else
+        {
+            stack i1024[min max] magnitude = 0 - right;
+            if (left < I1024Min() + magnitude)
+            {
+                return IntegerFactResult<i1024[min max]>.Err(IntegerFactError.Overflow);
+            }
+        }
+    }
+
+    return IntegerFactResult<i1024[min max]>.Ok(left + right);
+}
+
+public finite law IntegerFactResult<i1024[min max]> CheckedSubSigned(
+    i1024[min max] left,
+    i1024[min max] right)
+{
+    if (right == I1024Min())
+    {
+        if (left >= 0)
+        {
+            return IntegerFactResult<i1024[min max]>.Err(IntegerFactError.Overflow);
+        }
+
+        return IntegerFactResult<i1024[min max]>.Ok(I1024Max() + left + 1);
+    }
+
+    return CheckedAddSigned(left, 0 - right);
+}
+
+public finite law IntegerFactResult<u1024[0 max]> CheckedAddUnsigned(
+    u1024[0 max] left,
+    u1024[0 max] right)
+{
+    if (left > U1024Max() - right)
+    {
+        return IntegerFactResult<u1024[0 max]>.Err(IntegerFactError.Overflow);
+    }
+
+    return IntegerFactResult<u1024[0 max]>.Ok(left + right);
+}
+
+public inline finite law IntegerFactResult<u1024[0 max]> CheckedSubUnsigned(
+    u1024[0 max] left,
+    u1024[0 max] right)
+{
+    if (left < right)
+    {
+        return IntegerFactResult<u1024[0 max]>.Err(IntegerFactError.Overflow);
+    }
+
+    return IntegerFactResult<u1024[0 max]>.Ok(left - right);
+}
+
+public finite law IntegerFactResult<u1024[0 max]> CheckedMulUnsigned(
+    u1024[0 max] left,
+    u1024[0 max] right)
+{
+    if (left != 0 && right > U1024Max() / left)
+    {
+        return IntegerFactResult<u1024[0 max]>.Err(IntegerFactError.Overflow);
+    }
+
+    return IntegerFactResult<u1024[0 max]>.Ok(left * right);
+}
+
+public finite law IntegerFactResult<u1024[0 max]> CheckedShiftLeftUnsigned(
+    u1024[0 max] value,
+    u64[0 max] amount,
+    u64[0 max] bitWidth)
+{
+    if (!IsValidBitWidth(bitWidth))
+    {
+        return IntegerFactResult<u1024[0 max]>.Err(IntegerFactError.InvalidBitWidth);
+    }
+
+    if (amount > 1024)
+    {
+        return IntegerFactResult<u1024[0 max]>.Err(IntegerFactError.InvalidShiftAmount);
+    }
+
+    stack u1024[0 max] mask = BitMaskUnchecked(bitWidth);
+    if ((value & (mask ^ U1024Max())) != 0)
+    {
+        return IntegerFactResult<u1024[0 max]>.Err(IntegerFactError.Overflow);
+    }
+
+    if (amount >= bitWidth)
+    {
+        if (value == 0)
+        {
+            return IntegerFactResult<u1024[0 max]>.Ok(0);
+        }
+
+        return IntegerFactResult<u1024[0 max]>.Err(IntegerFactError.Overflow);
+    }
+
+    if (value > (mask >> amount))
+    {
+        return IntegerFactResult<u1024[0 max]>.Err(IntegerFactError.Overflow);
+    }
+
+    return IntegerFactResult<u1024[0 max]>.Ok((value << amount) & mask);
+}
+
+public finite law IntegerFactResult<u1024[0 max]> ShiftLeftMaskedUnsigned(
+    u1024[0 max] value,
+    u64[0 max] amount,
+    u64[0 max] bitWidth)
+{
+    if (!IsValidBitWidth(bitWidth))
+    {
+        return IntegerFactResult<u1024[0 max]>.Err(IntegerFactError.InvalidBitWidth);
+    }
+
+    if (amount > 1024)
+    {
+        return IntegerFactResult<u1024[0 max]>.Err(IntegerFactError.InvalidShiftAmount);
+    }
+
+    stack u1024[0 max] mask = BitMaskUnchecked(bitWidth);
+    if (amount >= bitWidth)
+    {
+        return IntegerFactResult<u1024[0 max]>.Ok(0);
+    }
+
+    return IntegerFactResult<u1024[0 max]>.Ok((value << amount) & mask);
+}
+
+public finite law IntegerFactResult<u1024[0 max]> ShiftRightMaskedUnsigned(
+    u1024[0 max] value,
+    u64[0 max] amount,
+    u64[0 max] bitWidth)
+{
+    if (!IsValidBitWidth(bitWidth))
+    {
+        return IntegerFactResult<u1024[0 max]>.Err(IntegerFactError.InvalidBitWidth);
+    }
+
+    if (amount > 1024)
+    {
+        return IntegerFactResult<u1024[0 max]>.Err(IntegerFactError.InvalidShiftAmount);
+    }
+
+    stack u1024[0 max] mask = BitMaskUnchecked(bitWidth);
+    if (amount >= bitWidth)
+    {
+        return IntegerFactResult<u1024[0 max]>.Ok(0);
+    }
+
+    return IntegerFactResult<u1024[0 max]>.Ok((value & mask) >> amount);
+}
+
+internal inline finite law IntegerFactResult<KnownBits> CreateKnownBitsUnchecked(
+    u16[1 1024] bitWidth,
+    u1024[0 max] knownZero,
+    u1024[0 max] knownOne)
+{
+    return IntegerFactResult<KnownBits>.Ok(new KnownBits()
+    {
+        BitWidth = bitWidth,
+        KnownZero = knownZero,
+        KnownOne = knownOne,
+    });
+}
+
+public finite law IntegerFactResult<KnownBits> CreateKnownBits(
+    u64[0 max] bitWidth,
+    u1024[0 max] knownZero,
+    u1024[0 max] knownOne)
+{
+    if (!IsValidBitWidth(bitWidth))
+    {
+        return IntegerFactResult<KnownBits>.Err(IntegerFactError.InvalidBitWidth);
+    }
+
+    stack u1024[0 max] mask = BitMaskUnchecked(bitWidth);
+    if (((knownZero | knownOne) & (mask ^ U1024Max())) != 0)
+    {
+        return IntegerFactResult<KnownBits>.Err(IntegerFactError.Overflow);
+    }
+
+    if ((knownZero & knownOne) != 0)
+    {
+        return IntegerFactResult<KnownBits>.Err(IntegerFactError.ConflictingKnownBits);
+    }
+
+    return CreateKnownBitsUnchecked((u16[1 1024])bitWidth, knownZero, knownOne);
+}
+
+public inline finite law IntegerFactResult<KnownBits> UnknownKnownBits(u64[0 max] bitWidth)
+{
+    return CreateKnownBits(bitWidth, 0, 0);
+}
+
+public finite law IntegerFactResult<KnownBits> KnownBitsFromUnsignedConstant(
+    u1024[0 max] value,
+    u64[0 max] bitWidth)
+{
+    if (!IsValidBitWidth(bitWidth))
+    {
+        return IntegerFactResult<KnownBits>.Err(IntegerFactError.InvalidBitWidth);
+    }
+
+    stack u1024[0 max] mask = BitMaskUnchecked(bitWidth);
+    if ((value & (mask ^ U1024Max())) != 0)
+    {
+        return IntegerFactResult<KnownBits>.Err(IntegerFactError.Overflow);
+    }
+
+    return CreateKnownBits(bitWidth, mask ^ value, value);
+}
+
+public finite law IntegerFactResult<KnownBits> KnownBitsAnd(borrow KnownBits left, borrow KnownBits right)
+    where overlap(left, right)
+{
+    if (left.BitWidth != right.BitWidth)
+    {
+        return IntegerFactResult<KnownBits>.Err(IntegerFactError.MismatchedBitWidth);
+    }
+
+    stack u1024[0 max] mask = BitMaskUnchecked(left.BitWidth);
+    return CreateKnownBits(
+        left.BitWidth,
+        (left.KnownZero | right.KnownZero) & mask,
+        left.KnownOne & right.KnownOne);
+}
+
+public finite law IntegerFactResult<KnownBits> KnownBitsOr(borrow KnownBits left, borrow KnownBits right)
+    where overlap(left, right)
+{
+    if (left.BitWidth != right.BitWidth)
+    {
+        return IntegerFactResult<KnownBits>.Err(IntegerFactError.MismatchedBitWidth);
+    }
+
+    stack u1024[0 max] mask = BitMaskUnchecked(left.BitWidth);
+    return CreateKnownBits(
+        left.BitWidth,
+        left.KnownZero & right.KnownZero,
+        (left.KnownOne | right.KnownOne) & mask);
+}
+
+public finite law IntegerFactResult<KnownBits> KnownBitsXor(borrow KnownBits left, borrow KnownBits right)
+    where overlap(left, right)
+{
+    if (left.BitWidth != right.BitWidth)
+    {
+        return IntegerFactResult<KnownBits>.Err(IntegerFactError.MismatchedBitWidth);
+    }
+
+    stack u1024[0 max] mask = BitMaskUnchecked(left.BitWidth);
+    return CreateKnownBits(
+        left.BitWidth,
+        ((left.KnownZero & right.KnownZero) | (left.KnownOne & right.KnownOne)) & mask,
+        ((left.KnownOne & right.KnownZero) | (left.KnownZero & right.KnownOne)) & mask);
+}
+
+public finite law IntegerFactResult<KnownBits> KnownBitsShiftLeft(
+    borrow KnownBits value,
+    u64[0 max] amount)
+{
+    if (amount > 1024)
+    {
+        return IntegerFactResult<KnownBits>.Err(IntegerFactError.InvalidShiftAmount);
+    }
+
+    stack u1024[0 max] mask = BitMaskUnchecked(value.BitWidth);
+    if (amount >= value.BitWidth)
+    {
+        return CreateKnownBits(value.BitWidth, mask, 0);
+    }
+
+    stack u1024[0 max] lowZeroMask = BitMaskUnchecked(amount);
+    return CreateKnownBits(
+        value.BitWidth,
+        ((value.KnownZero << amount) | lowZeroMask) & mask,
+        (value.KnownOne << amount) & mask);
+}
+
+public finite law IntegerFactResult<KnownBits> KnownBitsLogicalShiftRight(
+    borrow KnownBits value,
+    u64[0 max] amount)
+{
+    if (amount > 1024)
+    {
+        return IntegerFactResult<KnownBits>.Err(IntegerFactError.InvalidShiftAmount);
+    }
+
+    stack u1024[0 max] mask = BitMaskUnchecked(value.BitWidth);
+    if (amount >= value.BitWidth)
+    {
+        return CreateKnownBits(value.BitWidth, mask, 0);
+    }
+
+    stack u1024[0 max] remainingMask = BitMaskUnchecked(value.BitWidth - amount);
+    stack u1024[0 max] highZeroMask = mask ^ remainingMask;
+    return CreateKnownBits(
+        value.BitWidth,
+        ((value.KnownZero >> amount) | highZeroMask) & mask,
+        (value.KnownOne >> amount) & mask);
+}
+
+public inline finite law u1024[0 max] KnownMask(borrow KnownBits value)
+{
+    return value.KnownZero | value.KnownOne;
+}
+
+public finite law IntegerFactResult<u1024[0 max]> TwosComplementNormalize(
+    i1024[min max] value,
+    u64[0 max] bitWidth)
+{
+    if (!IsValidBitWidth(bitWidth))
+    {
+        return IntegerFactResult<u1024[0 max]>.Err(IntegerFactError.InvalidBitWidth);
+    }
+
+    if (!FitsSigned(value, bitWidth))
+    {
+        return IntegerFactResult<u1024[0 max]>.Err(IntegerFactError.Overflow);
+    }
+
+    if (value >= 0)
+    {
+        return IntegerFactResult<u1024[0 max]>.Ok((u1024[0 max])value);
+    }
+
+    stack u1024[0 max] mask = BitMaskUnchecked(bitWidth);
+    stack mut u1024[0 max] magnitude = 0;
+    if (value == I1024Min())
+    {
+        magnitude = (u1024[0 max])(2 ** 1023);
+    }
+    else
+    {
+        magnitude = (u1024[0 max])(0 - value);
+    }
+
+    return IntegerFactResult<u1024[0 max]>.Ok((u1024[0 max])((mask - magnitude) + (u1024[0 max])1));
+}
+
+public finite law IntegerFactResult<i1024[min max]> SignExtendUnsigned(
+    u1024[0 max] value,
+    u64[0 max] bitWidth)
+{
+    if (!IsValidBitWidth(bitWidth))
+    {
+        return IntegerFactResult<i1024[min max]>.Err(IntegerFactError.InvalidBitWidth);
+    }
+
+    stack u1024[0 max] mask = BitMaskUnchecked(bitWidth);
+    if ((value & (mask ^ U1024Max())) != 0)
+    {
+        return IntegerFactResult<i1024[min max]>.Err(IntegerFactError.Overflow);
+    }
+
+    stack u1024[0 max] signBit = (u1024[0 max])1 << (bitWidth - 1);
+    if ((value & signBit) == 0)
+    {
+        return TryUnsignedToSigned(value);
+    }
+
+    stack u1024[0 max] magnitude = (u1024[0 max])((mask - value) + (u1024[0 max])1);
+    if (magnitude == (u1024[0 max])(2 ** 1023))
+    {
+        return IntegerFactResult<i1024[min max]>.Ok(I1024Min());
+    }
+
+    return IntegerFactResult<i1024[min max]>.Ok(0 - (i1024[min max])magnitude);
+}

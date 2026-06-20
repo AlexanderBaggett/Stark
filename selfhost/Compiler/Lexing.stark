@@ -1,0 +1,1901 @@
+import System.Text
+module Compiler.Lexing
+
+// Stage 1 handwritten lexer (docs/Self-host-Prep/09: handwritten lexer/token
+// stream with exact source spans; Stark.g4 stays the grammar authority and
+// this file mirrors its lexer rules, including ANTLR's longest-match and
+// rule-order behavior).
+//
+// Mirrored grammar decisions worth calling out:
+// - `<` and `>` are always single tokens (the grammar has no `<<`/`>>`; the
+//   parser combines adjacent tokens for shifts, disambiguating generics).
+// - `$"..."` is two tokens: Dollar then StringLiteral; interpolation holes are
+//   parsed later from the literal text.
+// - String/character token spans include their delimiters and the `raw`
+//   prefix, matching the host compiler's LiteralText expectations. Escape
+//   CONTENT is validated by the later text-literal decoder, not the lexer;
+//   the lexer only tracks `\X` pairs to find the closing delimiter.
+// - `w` + digits is a weight literal; `i`/`u`/`f` + digits classify as the
+//   valid width-type tokens or the INVALID_* error tokens, exactly one of
+//   each per word, never identifiers.
+// - `non-deterministic` is one keyword token even though it contains `-`.
+// - Comments and whitespace are skipped trivia, but they advance line/column
+//   so token spans stay exact.
+
+public enum TokenKind
+{
+    EndOfFile,
+    ErrorToken,
+
+    Identifier,
+    Discard,
+    IntegerLiteral,
+    FloatLiteral,
+    CharacterLiteral,
+    StringLiteral,
+    WeightLiteral,
+    IntegerType,
+    FloatType,
+    InvalidIntegerType,
+    InvalidFloatType,
+
+    Import,
+    Module,
+    Internal,
+    Public,
+    Export,
+    Fn,
+    Finite,
+    Law,
+    Inline,
+    Noinline,
+    Inlinehint,
+    Hot,
+    Cold,
+    Ffi,
+    Varargs,
+    Unsafe,
+    Strictfp,
+    Asm,
+    Clobber,
+    In,
+    Struct,
+    Record,
+    Enum,
+    Trait,
+    Doctrine,
+    Alias,
+    Drop,
+    From,
+    Stack,
+    Heap,
+    Register,
+    Static,
+    Arena,
+    Sizeof,
+    Alignof,
+    Borrow,
+    Retborrow,
+    Storeborrow,
+    Frozen,
+    Shared,
+    Out,
+    Init,
+    Dyn,
+    Dynamic,
+    Rawptr,
+    Rawmutptr,
+    Fnptr,
+    Closure,
+    Mut,
+    Once,
+    Disjoint,
+    Overlap,
+    Same,
+    Assume,
+    If,
+    Is,
+    Else,
+    Switch,
+    Case,
+    Default,
+    When,
+    While,
+    For,
+    Return,
+    Break,
+    Continue,
+    Try,
+    Comptime,
+    New,
+    Const,
+    Where,
+    Var,
+    Infinite,
+    NonDeterministic,
+    Willexit,
+    Independent,
+    Void,
+    Bool,
+    AsciiView,
+    UnicodeView,
+    AsciiOwned,
+    UnicodeOwned,
+    True,
+    False,
+    Null,
+
+    WrapAddAssign,
+    WrapSubAssign,
+    WrapMulAssign,
+    SatAddAssign,
+    SatSubAssign,
+    SatMulAssign,
+    AddAssign,
+    SubAssign,
+    MulAssign,
+    DivAssign,
+    ModAssign,
+    AndAssign,
+    OrAssign,
+    XorAssign,
+    EqEq,
+    Neq,
+    Lte,
+    Gte,
+    AndAnd,
+    OrOr,
+    Pow,
+    WrapAdd,
+    WrapSub,
+    WrapMul,
+    SatAdd,
+    SatSub,
+    SatMul,
+    Arrow,
+    Range,
+    Assign,
+    Lt,
+    Gt,
+    Plus,
+    Minus,
+    Star,
+    Div,
+    Mod,
+    And,
+    Or,
+    Caret,
+    Bang,
+    Tilde,
+    Question,
+    Colon,
+    Semi,
+    Comma,
+    Dot,
+    Dollar,
+    LParen,
+    RParen,
+    LBrace,
+    RBrace,
+    LBrack,
+    RBrack,
+}
+
+public enum LexDiagnosticKind
+{
+    // Answer for probes past the diagnostic table; never recorded.
+    None,
+    UnexpectedCharacter,
+    UnterminatedString,
+    UnterminatedCharacter,
+    UnterminatedBlockComment,
+}
+
+public struct LexDiagnostic
+{
+    LexDiagnosticKind Kind;
+    u32[0 max] Line;
+    u32[0 max] Column;
+
+    LexDiagnostic()
+    {
+        self.Kind = LexDiagnosticKind.UnexpectedCharacter;
+        self.Line = 0;
+        self.Column = 0;
+    }
+}
+
+public struct Token
+{
+    TokenKind Kind;
+    u64[0 2 ** 63 - 1] Start;
+    u64[0 2 ** 63 - 1] Length;
+    u32[0 max] Line;
+    u32[0 max] Column;
+
+    Token()
+    {
+        self.Kind = TokenKind.EndOfFile;
+        self.Start = 0;
+        self.Length = 0;
+        self.Line = 0;
+        self.Column = 0;
+    }
+}
+
+public enum LexError
+{
+    OutOfMemory,
+}
+
+public enum LexResult<T>
+{
+    [Ok] Ok(T),
+    [Err] Err(LexError),
+}
+
+public struct TokenStream
+{
+    internal dynamic Token Tokens;
+    internal dynamic LexDiagnostic Diagnostics;
+
+    TokenStream()
+    {
+        self.Tokens = new();
+        self.Diagnostics = new();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] Count(borrow TokenStream self)
+    {
+        return self.Tokens.Length;
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] DiagnosticCount(borrow TokenStream self)
+    {
+        return self.Diagnostics.Length;
+    }
+
+    // Reads past the token table answer as EndOfFile so parsers can probe
+    // ahead without bounds bookkeeping.
+    public finite law TokenKind KindAt(borrow TokenStream self, u64[0 2 ** 63 - 1] index)
+    {
+        if (index >= self.Tokens.Length)
+        {
+            return TokenKind.EndOfFile;
+        }
+
+        return self.Tokens[index].Kind;
+    }
+
+    // Contract-checked core: callers prove the bound, the body skips it.
+    finite law Token TokenAtProven(borrow TokenStream self, u64[0 2 ** 63 - 1] index)
+        where index < self.Tokens.Length
+    {
+        return self.Tokens[index];
+    }
+
+    // Whole-token copy: past-the-end probes answer a synthetic EndOfFile
+    // token so parser lookahead needs no bounds bookkeeping.
+    public finite law Token TokenAt(borrow TokenStream self, u64[0 2 ** 63 - 1] index)
+    {
+        if (index >= self.Tokens.Length)
+        {
+            stack mut Token endOfFile = new();
+            endOfFile.Kind = TokenKind.EndOfFile;
+            return endOfFile;
+        }
+
+        return self.TokenAtProven(index);
+    }
+
+    public finite law u64[0 2 ** 63 - 1] StartAt(borrow TokenStream self, u64[0 2 ** 63 - 1] index)
+    {
+        if (index >= self.Tokens.Length)
+        {
+            return 0;
+        }
+
+        return self.Tokens[index].Start;
+    }
+
+    public finite law u64[0 2 ** 63 - 1] LengthAt(borrow TokenStream self, u64[0 2 ** 63 - 1] index)
+    {
+        if (index >= self.Tokens.Length)
+        {
+            return 0;
+        }
+
+        return self.Tokens[index].Length;
+    }
+
+    public finite law u32[0 max] LineAt(borrow TokenStream self, u64[0 2 ** 63 - 1] index)
+    {
+        if (index >= self.Tokens.Length)
+        {
+            return 0;
+        }
+
+        return self.Tokens[index].Line;
+    }
+
+    public finite law u32[0 max] ColumnAt(borrow TokenStream self, u64[0 2 ** 63 - 1] index)
+    {
+        if (index >= self.Tokens.Length)
+        {
+            return 0;
+        }
+
+        return self.Tokens[index].Column;
+    }
+
+    // Probes past the diagnostic table answer as None.
+    public finite law LexDiagnosticKind DiagnosticKindAt(borrow TokenStream self, u64[0 2 ** 63 - 1] index)
+    {
+        if (index >= self.Diagnostics.Length)
+        {
+            return LexDiagnosticKind.None;
+        }
+
+        return self.Diagnostics[index].Kind;
+    }
+
+    public finite law u32[0 max] DiagnosticLineAt(borrow TokenStream self, u64[0 2 ** 63 - 1] index)
+    {
+        if (index >= self.Diagnostics.Length)
+        {
+            return 0;
+        }
+
+        return self.Diagnostics[index].Line;
+    }
+
+    public finite law u32[0 max] DiagnosticColumnAt(borrow TokenStream self, u64[0 2 ** 63 - 1] index)
+    {
+        if (index >= self.Diagnostics.Length)
+        {
+            return 0;
+        }
+
+        return self.Diagnostics[index].Column;
+    }
+}
+
+// Returns the exact source text of one token as a zero-copy view into the
+// lexed source text.
+public finite law ascii TokenTextOf(
+    ascii source,
+    borrow TokenStream stream,
+    u64[0 2 ** 63 - 1] index)
+{
+    if (index >= stream.Tokens.Length)
+    {
+        return "";
+    }
+
+    stack u64[0 2 ** 63 - 1] start = stream.Tokens[index].Start;
+    stack u64[0 2 ** 63 - 1] length = stream.Tokens[index].Length;
+    stack i64[min max] sourceLength = System.Text.AsciiLength(source);
+    if (length == 0 || sourceLength < 0 || start + length > (u64[0 2 ** 63 - 1])sourceLength)
+    {
+        return "";
+    }
+
+    return source[(i64[min max])start, (i64[min max])length];
+}
+
+internal struct LexCursor
+{
+    u64[0 2 ** 63 - 1] Position;
+    u32[0 max] Line;
+    u32[0 max] Column;
+
+    LexCursor()
+    {
+        self.Position = 0;
+        self.Line = 1;
+        self.Column = 1;
+    }
+}
+
+// Lexes one source buffer into a token stream. Lexing always produces a
+// stream (errors become diagnostics plus ErrorToken entries); only allocation
+// failure is a hard error. The final token is always EndOfFile.
+public fn LexResult<TokenStream> Lex(borrow i8[min max][] source)
+{
+    stack mut TokenStream stream = new();
+    stack mut LexCursor cursor = new();
+
+    while willexit (true)
+    {
+        if (!SkipTrivia(source, cursor, stream))
+        {
+            return LexResult<TokenStream>.Err(LexError.OutOfMemory);
+        }
+
+        if (cursor.Position >= source.Length)
+        {
+            break;
+        }
+
+        if (!LexNextToken(source, cursor, stream))
+        {
+            return LexResult<TokenStream>.Err(LexError.OutOfMemory);
+        }
+    }
+
+    stack u64[0 2 ** 63 - 1] endPosition = cursor.Position;
+    if (!AppendToken(stream, TokenKind.EndOfFile, endPosition, 0, cursor.Line, cursor.Column))
+    {
+        return LexResult<TokenStream>.Err(LexError.OutOfMemory);
+    }
+
+    return LexResult<TokenStream>.Ok(stream);
+}
+
+// Lexes an ascii view (test convenience).
+public fn LexResult<TokenStream> LexText(ascii source)
+{
+    stack i64[min max] signedLength = System.Text.AsciiLength(source);
+    if (signedLength <= 0)
+    {
+        stack mut TokenStream stream = new();
+        if (!AppendToken(stream, TokenKind.EndOfFile, 0, 0, 1, 1))
+        {
+            return LexResult<TokenStream>.Err(LexError.OutOfMemory);
+        }
+
+        return LexResult<TokenStream>.Ok(stream);
+    }
+
+    // Only materializing the byte slice from the text view is unsafe.
+    unsafe
+    {
+        stack rawptr<i8[min max]> data = System.Text.AsciiData(source);
+        if (data == null)
+        {
+            return LexResult<TokenStream>.Err(LexError.OutOfMemory);
+        }
+
+        stack i8[min max][] bytes = slice(data, (u64[0 2 ** 63 - 1])signedLength);
+        return Lex(bytes);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Lexer internals. All Append* helpers return false only on allocation
+// failure; scanning errors are recorded as diagnostics plus ErrorToken
+// entries so lexing continues.
+// ---------------------------------------------------------------------------
+
+internal fn bool AppendToken(
+    mut borrow TokenStream stream,
+    TokenKind kind,
+    u64[0 2 ** 63 - 1] start,
+    u64[0 2 ** 63 - 1] length,
+    u32[0 max] line,
+    u32[0 max] column)
+{
+    if (!stream.Tokens.TryReserve(1))
+    {
+        return false;
+    }
+
+    stack mut Token token = new();
+    token.Kind = kind;
+    token.Start = start;
+    token.Length = length;
+    token.Line = line;
+    token.Column = column;
+    init stream.Tokens[stream.Tokens.Length] = token;
+    return true;
+}
+
+internal fn bool AppendDiagnostic(
+    mut borrow TokenStream stream,
+    LexDiagnosticKind kind,
+    u32[0 max] line,
+    u32[0 max] column)
+{
+    if (!stream.Diagnostics.TryReserve(1))
+    {
+        return false;
+    }
+
+    stack mut LexDiagnostic diagnostic = new();
+    diagnostic.Kind = kind;
+    diagnostic.Line = line;
+    diagnostic.Column = column;
+    init stream.Diagnostics[stream.Diagnostics.Length] = diagnostic;
+    return true;
+}
+
+internal fn void Advance(borrow i8[min max][] source, mut borrow LexCursor cursor)
+{
+    if (cursor.Position >= source.Length)
+    {
+        return;
+    }
+
+    if (source[cursor.Position] == 10)
+    {
+        cursor.Line = cursor.Line + 1;
+        cursor.Column = 1;
+    }
+    else
+    {
+        cursor.Column = cursor.Column + 1;
+    }
+
+    cursor.Position = cursor.Position + 1;
+    return;
+}
+
+internal inline finite law bool IsDigitByte(i8[min max] value)
+{
+    return value >= 48 && value <= 57;
+}
+
+internal inline finite law bool IsIdentifierStartByte(i8[min max] value)
+{
+    if (value >= 65 && value <= 90)
+    {
+        return true;
+    }
+
+    if (value >= 97 && value <= 122)
+    {
+        return true;
+    }
+
+    return value == 95;
+}
+
+internal inline finite law bool IsIdentifierPartByte(i8[min max] value)
+{
+    return IsIdentifierStartByte(value) || IsDigitByte(value);
+}
+
+internal inline finite law bool IsWhitespaceByte(i8[min max] value)
+{
+    // Space, tab, CR, LF, and form feed, mirroring the grammar's WS rule.
+    return value == 32 || value == 9 || value == 13 || value == 10 || value == 12;
+}
+
+// Skips whitespace and comments, recording a diagnostic for an unterminated
+// block comment. Returns false only on allocation failure.
+internal fn bool SkipTrivia(
+    borrow i8[min max][] source,
+    mut borrow LexCursor cursor,
+    mut borrow TokenStream stream)
+{
+    while willexit (cursor.Position < source.Length)
+    {
+        stack i8[min max] value = source[cursor.Position];
+        if (IsWhitespaceByte(value))
+        {
+            Advance(source, cursor);
+            continue;
+        }
+
+        if (value == 47 && cursor.Position + 1 < source.Length)
+        {
+            stack i8[min max] next = source[cursor.Position + 1];
+            if (next == 47)
+            {
+                while willexit (cursor.Position < source.Length && source[cursor.Position] != 10)
+                {
+                    Advance(source, cursor);
+                }
+
+                continue;
+            }
+
+            if (next == 42)
+            {
+                stack u32[0 max] openLine = cursor.Line;
+                stack u32[0 max] openColumn = cursor.Column;
+                Advance(source, cursor);
+                Advance(source, cursor);
+                stack mut bool closed = false;
+                while willexit (cursor.Position < source.Length)
+                {
+                    if (source[cursor.Position] == 42
+                        && cursor.Position + 1 < source.Length
+                        && source[cursor.Position + 1] == 47)
+                    {
+                        Advance(source, cursor);
+                        Advance(source, cursor);
+                        closed = true;
+                        break;
+                    }
+
+                    Advance(source, cursor);
+                }
+
+                if (!closed)
+                {
+                    return AppendDiagnostic(stream, LexDiagnosticKind.UnterminatedBlockComment, openLine, openColumn);
+                }
+
+                continue;
+            }
+
+            return true;
+        }
+
+        return true;
+    }
+
+    return true;
+}
+
+// Compares a source span against an expected keyword spelling.
+internal finite bool SpanEquals(
+    borrow i8[min max][] source,
+    u64[0 2 ** 63 - 1] start,
+    u64[0 2 ** 63 - 1] length,
+    ascii word)
+{
+    stack i64[min max] signedLength = System.Text.AsciiLength(word);
+    if (signedLength < 0 || (u64[0 2 ** 63 - 1])signedLength != length)
+    {
+        return false;
+    }
+
+    // Only the raw byte walk over the comparison word needs unsafe; the
+    // source reads are ordinary slice indexing.
+    unsafe
+    {
+        stack rawptr<i8[min max]> wordData = System.Text.AsciiData(word);
+        if (wordData == null)
+        {
+            return false;
+        }
+
+        for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < length; index += 1)
+        {
+            if (source[start + index] != *(&wordData[index]))
+            {
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
+
+internal finite bool WidthDigitsAreValidInteger(
+    borrow i8[min max][] source,
+    u64[0 2 ** 63 - 1] start,
+    u64[0 2 ** 63 - 1] length)
+{
+    return SpanEquals(source, start, length, "8")
+        || SpanEquals(source, start, length, "16")
+        || SpanEquals(source, start, length, "24")
+        || SpanEquals(source, start, length, "32")
+        || SpanEquals(source, start, length, "48")
+        || SpanEquals(source, start, length, "64")
+        || SpanEquals(source, start, length, "96")
+        || SpanEquals(source, start, length, "128")
+        || SpanEquals(source, start, length, "192")
+        || SpanEquals(source, start, length, "256")
+        || SpanEquals(source, start, length, "384")
+        || SpanEquals(source, start, length, "512")
+        || SpanEquals(source, start, length, "768")
+        || SpanEquals(source, start, length, "1024");
+}
+
+internal finite bool WidthDigitsAreValidFloat(
+    borrow i8[min max][] source,
+    u64[0 2 ** 63 - 1] start,
+    u64[0 2 ** 63 - 1] length)
+{
+    return SpanEquals(source, start, length, "16")
+        || SpanEquals(source, start, length, "32")
+        || SpanEquals(source, start, length, "64")
+        || SpanEquals(source, start, length, "80")
+        || SpanEquals(source, start, length, "128");
+}
+
+// Classifies an identifier-shaped word span: keyword, weight literal, width
+// type, invalid width type, discard, or plain identifier.
+internal finite TokenKind ClassifyWord(
+    borrow i8[min max][] source,
+    u64[0 2 ** 63 - 1] start,
+    u64[0 2 ** 63 - 1] length)
+{
+    if (length == 1 && source[start] == 95)
+    {
+        return TokenKind.Discard;
+    }
+
+    stack i8[min max] first = source[start];
+
+    // Width-type and weight-literal shapes: one marker letter plus digits.
+    if (length >= 2 && (first == 105 || first == 117 || first == 102 || first == 119))
+    {
+        stack mut bool restAreDigits = true;
+        for willexit (stack mut u64[0 2 ** 63 - 1] index = 1; index < length; index += 1)
+        {
+            if (!IsDigitByte(source[start + index]))
+            {
+                restAreDigits = false;
+                break;
+            }
+        }
+
+        if (restAreDigits)
+        {
+            stack u64[0 2 ** 63 - 1] digitsStart = start + 1;
+            stack u64[0 2 ** 63 - 1] digitsLength = length - 1;
+            if (first == 119)
+            {
+                return TokenKind.WeightLiteral;
+            }
+
+            if (first == 102)
+            {
+                if (WidthDigitsAreValidFloat(source, digitsStart, digitsLength))
+                {
+                    return TokenKind.FloatType;
+                }
+
+                return TokenKind.InvalidFloatType;
+            }
+
+            if (WidthDigitsAreValidInteger(source, digitsStart, digitsLength))
+            {
+                return TokenKind.IntegerType;
+            }
+
+            return TokenKind.InvalidIntegerType;
+        }
+    }
+
+    if (first == 97)
+    {
+        if (SpanEquals(source, start, length, "alias"))
+        {
+            return TokenKind.Alias;
+        }
+
+        if (SpanEquals(source, start, length, "alignof"))
+        {
+            return TokenKind.Alignof;
+        }
+
+        if (SpanEquals(source, start, length, "arena"))
+        {
+            return TokenKind.Arena;
+        }
+
+        if (SpanEquals(source, start, length, "ascii"))
+        {
+            return TokenKind.AsciiView;
+        }
+
+        if (SpanEquals(source, start, length, "asm"))
+        {
+            return TokenKind.Asm;
+        }
+
+        if (SpanEquals(source, start, length, "assume"))
+        {
+            return TokenKind.Assume;
+        }
+
+        return TokenKind.Identifier;
+    }
+
+    if (first == 98)
+    {
+        if (SpanEquals(source, start, length, "bool"))
+        {
+            return TokenKind.Bool;
+        }
+
+        if (SpanEquals(source, start, length, "borrow"))
+        {
+            return TokenKind.Borrow;
+        }
+
+        if (SpanEquals(source, start, length, "break"))
+        {
+            return TokenKind.Break;
+        }
+
+        return TokenKind.Identifier;
+    }
+
+    if (first == 99)
+    {
+        if (SpanEquals(source, start, length, "case"))
+        {
+            return TokenKind.Case;
+        }
+
+        if (SpanEquals(source, start, length, "clobber"))
+        {
+            return TokenKind.Clobber;
+        }
+
+        if (SpanEquals(source, start, length, "closure"))
+        {
+            return TokenKind.Closure;
+        }
+
+        if (SpanEquals(source, start, length, "cold"))
+        {
+            return TokenKind.Cold;
+        }
+
+        if (SpanEquals(source, start, length, "comptime"))
+        {
+            return TokenKind.Comptime;
+        }
+
+        if (SpanEquals(source, start, length, "const"))
+        {
+            return TokenKind.Const;
+        }
+
+        if (SpanEquals(source, start, length, "continue"))
+        {
+            return TokenKind.Continue;
+        }
+
+        return TokenKind.Identifier;
+    }
+
+    if (first == 100)
+    {
+        if (SpanEquals(source, start, length, "default"))
+        {
+            return TokenKind.Default;
+        }
+
+        if (SpanEquals(source, start, length, "disjoint"))
+        {
+            return TokenKind.Disjoint;
+        }
+
+        if (SpanEquals(source, start, length, "doctrine"))
+        {
+            return TokenKind.Doctrine;
+        }
+
+        if (SpanEquals(source, start, length, "drop"))
+        {
+            return TokenKind.Drop;
+        }
+
+        if (SpanEquals(source, start, length, "dyn"))
+        {
+            return TokenKind.Dyn;
+        }
+
+        if (SpanEquals(source, start, length, "dynamic"))
+        {
+            return TokenKind.Dynamic;
+        }
+
+        return TokenKind.Identifier;
+    }
+
+    if (first == 101)
+    {
+        if (SpanEquals(source, start, length, "else"))
+        {
+            return TokenKind.Else;
+        }
+
+        if (SpanEquals(source, start, length, "enum"))
+        {
+            return TokenKind.Enum;
+        }
+
+        if (SpanEquals(source, start, length, "export"))
+        {
+            return TokenKind.Export;
+        }
+
+        return TokenKind.Identifier;
+    }
+
+    if (first == 102)
+    {
+        if (SpanEquals(source, start, length, "false"))
+        {
+            return TokenKind.False;
+        }
+
+        if (SpanEquals(source, start, length, "ffi"))
+        {
+            return TokenKind.Ffi;
+        }
+
+        if (SpanEquals(source, start, length, "finite"))
+        {
+            return TokenKind.Finite;
+        }
+
+        if (SpanEquals(source, start, length, "fn"))
+        {
+            return TokenKind.Fn;
+        }
+
+        if (SpanEquals(source, start, length, "fnptr"))
+        {
+            return TokenKind.Fnptr;
+        }
+
+        if (SpanEquals(source, start, length, "for"))
+        {
+            return TokenKind.For;
+        }
+
+        if (SpanEquals(source, start, length, "frozen"))
+        {
+            return TokenKind.Frozen;
+        }
+
+        if (SpanEquals(source, start, length, "from"))
+        {
+            return TokenKind.From;
+        }
+
+        return TokenKind.Identifier;
+    }
+
+    if (first == 104)
+    {
+        if (SpanEquals(source, start, length, "heap"))
+        {
+            return TokenKind.Heap;
+        }
+
+        if (SpanEquals(source, start, length, "hot"))
+        {
+            return TokenKind.Hot;
+        }
+
+        return TokenKind.Identifier;
+    }
+
+    if (first == 105)
+    {
+        if (SpanEquals(source, start, length, "if"))
+        {
+            return TokenKind.If;
+        }
+
+        if (SpanEquals(source, start, length, "import"))
+        {
+            return TokenKind.Import;
+        }
+
+        if (SpanEquals(source, start, length, "in"))
+        {
+            return TokenKind.In;
+        }
+
+        if (SpanEquals(source, start, length, "independent"))
+        {
+            return TokenKind.Independent;
+        }
+
+        if (SpanEquals(source, start, length, "infinite"))
+        {
+            return TokenKind.Infinite;
+        }
+
+        if (SpanEquals(source, start, length, "init"))
+        {
+            return TokenKind.Init;
+        }
+
+        if (SpanEquals(source, start, length, "inline"))
+        {
+            return TokenKind.Inline;
+        }
+
+        if (SpanEquals(source, start, length, "inlinehint"))
+        {
+            return TokenKind.Inlinehint;
+        }
+
+        if (SpanEquals(source, start, length, "internal"))
+        {
+            return TokenKind.Internal;
+        }
+
+        if (SpanEquals(source, start, length, "is"))
+        {
+            return TokenKind.Is;
+        }
+
+        return TokenKind.Identifier;
+    }
+
+    if (first == 108)
+    {
+        if (SpanEquals(source, start, length, "law"))
+        {
+            return TokenKind.Law;
+        }
+
+        return TokenKind.Identifier;
+    }
+
+    if (first == 109)
+    {
+        if (SpanEquals(source, start, length, "module"))
+        {
+            return TokenKind.Module;
+        }
+
+        if (SpanEquals(source, start, length, "mut"))
+        {
+            return TokenKind.Mut;
+        }
+
+        return TokenKind.Identifier;
+    }
+
+    if (first == 110)
+    {
+        if (SpanEquals(source, start, length, "new"))
+        {
+            return TokenKind.New;
+        }
+
+        if (SpanEquals(source, start, length, "noinline"))
+        {
+            return TokenKind.Noinline;
+        }
+
+        if (SpanEquals(source, start, length, "null"))
+        {
+            return TokenKind.Null;
+        }
+
+        return TokenKind.Identifier;
+    }
+
+    if (first == 111)
+    {
+        if (SpanEquals(source, start, length, "once"))
+        {
+            return TokenKind.Once;
+        }
+
+        if (SpanEquals(source, start, length, "out"))
+        {
+            return TokenKind.Out;
+        }
+
+        if (SpanEquals(source, start, length, "overlap"))
+        {
+            return TokenKind.Overlap;
+        }
+
+        return TokenKind.Identifier;
+    }
+
+    if (first == 112)
+    {
+        if (SpanEquals(source, start, length, "public"))
+        {
+            return TokenKind.Public;
+        }
+
+        return TokenKind.Identifier;
+    }
+
+    if (first == 114)
+    {
+        if (SpanEquals(source, start, length, "rawmutptr"))
+        {
+            return TokenKind.Rawmutptr;
+        }
+
+        if (SpanEquals(source, start, length, "rawptr"))
+        {
+            return TokenKind.Rawptr;
+        }
+
+        if (SpanEquals(source, start, length, "record"))
+        {
+            return TokenKind.Record;
+        }
+
+        if (SpanEquals(source, start, length, "register"))
+        {
+            return TokenKind.Register;
+        }
+
+        if (SpanEquals(source, start, length, "retborrow"))
+        {
+            return TokenKind.Retborrow;
+        }
+
+        if (SpanEquals(source, start, length, "return"))
+        {
+            return TokenKind.Return;
+        }
+
+        return TokenKind.Identifier;
+    }
+
+    if (first == 115)
+    {
+        if (SpanEquals(source, start, length, "same"))
+        {
+            return TokenKind.Same;
+        }
+
+        if (SpanEquals(source, start, length, "shared"))
+        {
+            return TokenKind.Shared;
+        }
+
+        if (SpanEquals(source, start, length, "sizeof"))
+        {
+            return TokenKind.Sizeof;
+        }
+
+        if (SpanEquals(source, start, length, "stack"))
+        {
+            return TokenKind.Stack;
+        }
+
+        if (SpanEquals(source, start, length, "static"))
+        {
+            return TokenKind.Static;
+        }
+
+        if (SpanEquals(source, start, length, "storeborrow"))
+        {
+            return TokenKind.Storeborrow;
+        }
+
+        if (SpanEquals(source, start, length, "strictfp"))
+        {
+            return TokenKind.Strictfp;
+        }
+
+        if (SpanEquals(source, start, length, "struct"))
+        {
+            return TokenKind.Struct;
+        }
+
+        if (SpanEquals(source, start, length, "switch"))
+        {
+            return TokenKind.Switch;
+        }
+
+        return TokenKind.Identifier;
+    }
+
+    if (first == 116)
+    {
+        if (SpanEquals(source, start, length, "trait"))
+        {
+            return TokenKind.Trait;
+        }
+
+        if (SpanEquals(source, start, length, "true"))
+        {
+            return TokenKind.True;
+        }
+
+        if (SpanEquals(source, start, length, "try"))
+        {
+            return TokenKind.Try;
+        }
+
+        return TokenKind.Identifier;
+    }
+
+    if (first == 117)
+    {
+        if (SpanEquals(source, start, length, "unicode"))
+        {
+            return TokenKind.UnicodeView;
+        }
+
+        if (SpanEquals(source, start, length, "unsafe"))
+        {
+            return TokenKind.Unsafe;
+        }
+
+        return TokenKind.Identifier;
+    }
+
+    if (first == 118)
+    {
+        if (SpanEquals(source, start, length, "var"))
+        {
+            return TokenKind.Var;
+        }
+
+        if (SpanEquals(source, start, length, "varargs"))
+        {
+            return TokenKind.Varargs;
+        }
+
+        if (SpanEquals(source, start, length, "void"))
+        {
+            return TokenKind.Void;
+        }
+
+        return TokenKind.Identifier;
+    }
+
+    if (first == 119)
+    {
+        if (SpanEquals(source, start, length, "when"))
+        {
+            return TokenKind.When;
+        }
+
+        if (SpanEquals(source, start, length, "where"))
+        {
+            return TokenKind.Where;
+        }
+
+        if (SpanEquals(source, start, length, "while"))
+        {
+            return TokenKind.While;
+        }
+
+        if (SpanEquals(source, start, length, "willexit"))
+        {
+            return TokenKind.Willexit;
+        }
+
+        return TokenKind.Identifier;
+    }
+
+    if (first == 65)
+    {
+        if (SpanEquals(source, start, length, "Ascii"))
+        {
+            return TokenKind.AsciiOwned;
+        }
+
+        return TokenKind.Identifier;
+    }
+
+    if (first == 85)
+    {
+        if (SpanEquals(source, start, length, "Unicode"))
+        {
+            return TokenKind.UnicodeOwned;
+        }
+
+        return TokenKind.Identifier;
+    }
+
+    return TokenKind.Identifier;
+}
+
+// Lexes exactly one token at the cursor (trivia already skipped). Returns
+// false only on allocation failure.
+internal fn bool LexNextToken(
+    borrow i8[min max][] source,
+    mut borrow LexCursor cursor,
+    mut borrow TokenStream stream)
+{
+    stack u64[0 2 ** 63 - 1] start = cursor.Position;
+    stack u32[0 max] line = cursor.Line;
+    stack u32[0 max] column = cursor.Column;
+    stack i8[min max] first = source[cursor.Position];
+
+    if (IsIdentifierStartByte(first))
+    {
+        while willexit (cursor.Position < source.Length && IsIdentifierPartByte(source[cursor.Position]))
+        {
+            Advance(source, cursor);
+        }
+
+        stack u64[0 2 ** 63 - 1] wordLength = cursor.Position - start;
+
+        // `raw"` / `raw"""` start a raw string literal whose span includes
+        // the prefix.
+        if (ByteAtIs(source, cursor.Position, 34)
+            && SpanEquals(source, start, wordLength, "raw"))
+        {
+            return LexRawString(source, cursor, stream, start, line, column);
+        }
+
+        // `non-deterministic` is one keyword token (longest match in the
+        // grammar) even though `-` is not an identifier byte.
+        if (SpanEquals(source, start, wordLength, "non")
+            && cursor.Position + 14 <= source.Length
+            && SpanEquals(source, cursor.Position, 14, "-deterministic"))
+        {
+            for willexit (stack mut u8[0 14] step = 0; step < 14; step += 1)
+            {
+                Advance(source, cursor);
+            }
+
+            return AppendToken(
+                stream,
+                TokenKind.NonDeterministic,
+                start,
+                cursor.Position - start,
+                line,
+                column);
+        }
+
+        return AppendToken(stream, ClassifyWord(source, start, wordLength), start, wordLength, line, column);
+    }
+
+    if (IsDigitByte(first))
+    {
+        return LexNumber(source, cursor, stream, start, line, column);
+    }
+
+    if (first == 34)
+    {
+        return LexString(source, cursor, stream, start, line, column);
+    }
+
+    if (first == 39)
+    {
+        return LexCharacter(source, cursor, stream, start, line, column);
+    }
+
+    return LexOperator(source, cursor, stream, start, line, column);
+}
+
+internal inline finite law bool ByteAtIs(
+    borrow i8[min max][] source,
+    u64[0 2 ** 63 - 1] position,
+    i8[min max] value)
+{
+    return position < source.Length && source[position] == value;
+}
+
+// Numbers: DIGIT+ ( '.' DIGIT+ Exponent? Suffix? | Exponent Suffix? )?
+// A '.' not followed by a digit stays with the next token (member access or
+// ranges), and an 'e' without a complete exponent stays an identifier start,
+// mirroring ANTLR's alternative fallback.
+internal fn bool LexNumber(
+    borrow i8[min max][] source,
+    mut borrow LexCursor cursor,
+    mut borrow TokenStream stream,
+    u64[0 2 ** 63 - 1] start,
+    u32[0 max] line,
+    u32[0 max] column)
+{
+    while willexit (cursor.Position < source.Length && IsDigitByte(source[cursor.Position]))
+    {
+        Advance(source, cursor);
+    }
+
+    stack mut bool isFloat = false;
+    if (ByteAtIs(source, cursor.Position, 46)
+        && cursor.Position + 1 < source.Length
+        && IsDigitByte(source[cursor.Position + 1]))
+    {
+        isFloat = true;
+        Advance(source, cursor);
+        while willexit (cursor.Position < source.Length && IsDigitByte(source[cursor.Position]))
+        {
+            Advance(source, cursor);
+        }
+    }
+
+    // Exponent part: [eE] [+-]? DIGIT+ — only consumed when complete.
+    if (cursor.Position < source.Length
+        && (source[cursor.Position] == 101 || source[cursor.Position] == 69))
+    {
+        stack mut u64[0 2 ** 63 - 1] probe = cursor.Position + 1;
+        if (probe < source.Length && (source[probe] == 43 || source[probe] == 45))
+        {
+            probe = probe + 1;
+        }
+
+        if (probe < source.Length && IsDigitByte(source[probe]))
+        {
+            isFloat = true;
+            while willexit (cursor.Position < probe)
+            {
+                Advance(source, cursor);
+            }
+
+            while willexit (cursor.Position < source.Length && IsDigitByte(source[cursor.Position]))
+            {
+                Advance(source, cursor);
+            }
+        }
+    }
+
+    if (isFloat
+        && cursor.Position < source.Length
+        && (source[cursor.Position] == 102 || source[cursor.Position] == 70))
+    {
+        Advance(source, cursor);
+    }
+
+    stack TokenKind kind = isFloat ? TokenKind.FloatLiteral : TokenKind.IntegerLiteral;
+    return AppendToken(stream, kind, start, cursor.Position - start, line, column);
+}
+
+// Strings: raw"""...""" (may span lines), raw"..." (no escapes, single line),
+// and "..." with \X escape pairs (single line). Spans include delimiters.
+internal fn bool LexString(
+    borrow i8[min max][] source,
+    mut borrow LexCursor cursor,
+    mut borrow TokenStream stream,
+    u64[0 2 ** 63 - 1] start,
+    u32[0 max] line,
+    u32[0 max] column)
+{
+    // Consume the opening quote.
+    Advance(source, cursor);
+
+    while willexit (cursor.Position < source.Length)
+    {
+        stack i8[min max] value = source[cursor.Position];
+        if (value == 34)
+        {
+            Advance(source, cursor);
+            return AppendToken(stream, TokenKind.StringLiteral, start, cursor.Position - start, line, column);
+        }
+
+        if (value == 10 || value == 13)
+        {
+            break;
+        }
+
+        if (value == 92 && cursor.Position + 1 < source.Length)
+        {
+            Advance(source, cursor);
+            Advance(source, cursor);
+            continue;
+        }
+
+        Advance(source, cursor);
+    }
+
+    if (!AppendDiagnostic(stream, LexDiagnosticKind.UnterminatedString, line, column))
+    {
+        return false;
+    }
+
+    return AppendToken(stream, TokenKind.ErrorToken, start, cursor.Position - start, line, column);
+}
+
+// Raw strings are reached from the identifier path when the word `raw` is
+// immediately followed by a quote. The caller has consumed `raw`.
+internal fn bool LexRawString(
+    borrow i8[min max][] source,
+    mut borrow LexCursor cursor,
+    mut borrow TokenStream stream,
+    u64[0 2 ** 63 - 1] start,
+    u32[0 max] line,
+    u32[0 max] column)
+{
+    // Consume the first quote.
+    Advance(source, cursor);
+
+    stack mut bool isMultiline = false;
+    if (ByteAtIs(source, cursor.Position, 34)
+        && ByteAtIs(source, cursor.Position + 1, 34))
+    {
+        isMultiline = true;
+        Advance(source, cursor);
+        Advance(source, cursor);
+    }
+
+    if (isMultiline)
+    {
+        while willexit (cursor.Position < source.Length)
+        {
+            if (source[cursor.Position] == 34
+                && ByteAtIs(source, cursor.Position + 1, 34)
+                && ByteAtIs(source, cursor.Position + 2, 34))
+            {
+                Advance(source, cursor);
+                Advance(source, cursor);
+                Advance(source, cursor);
+                return AppendToken(stream, TokenKind.StringLiteral, start, cursor.Position - start, line, column);
+            }
+
+            Advance(source, cursor);
+        }
+
+        if (!AppendDiagnostic(stream, LexDiagnosticKind.UnterminatedString, line, column))
+        {
+            return false;
+        }
+
+        return AppendToken(stream, TokenKind.ErrorToken, start, cursor.Position - start, line, column);
+    }
+
+    while willexit (cursor.Position < source.Length)
+    {
+        stack i8[min max] value = source[cursor.Position];
+        if (value == 34)
+        {
+            Advance(source, cursor);
+            return AppendToken(stream, TokenKind.StringLiteral, start, cursor.Position - start, line, column);
+        }
+
+        if (value == 10 || value == 13)
+        {
+            break;
+        }
+
+        Advance(source, cursor);
+    }
+
+    if (!AppendDiagnostic(stream, LexDiagnosticKind.UnterminatedString, line, column))
+    {
+        return false;
+    }
+
+    return AppendToken(stream, TokenKind.ErrorToken, start, cursor.Position - start, line, column);
+}
+
+internal fn bool LexCharacter(
+    borrow i8[min max][] source,
+    mut borrow LexCursor cursor,
+    mut borrow TokenStream stream,
+    u64[0 2 ** 63 - 1] start,
+    u32[0 max] line,
+    u32[0 max] column)
+{
+    // Consume the opening quote.
+    Advance(source, cursor);
+
+    while willexit (cursor.Position < source.Length)
+    {
+        stack i8[min max] value = source[cursor.Position];
+        if (value == 39)
+        {
+            Advance(source, cursor);
+            return AppendToken(stream, TokenKind.CharacterLiteral, start, cursor.Position - start, line, column);
+        }
+
+        if (value == 10 || value == 13)
+        {
+            break;
+        }
+
+        if (value == 92 && cursor.Position + 1 < source.Length)
+        {
+            Advance(source, cursor);
+            Advance(source, cursor);
+            continue;
+        }
+
+        Advance(source, cursor);
+    }
+
+    if (!AppendDiagnostic(stream, LexDiagnosticKind.UnterminatedCharacter, line, column))
+    {
+        return false;
+    }
+
+    return AppendToken(stream, TokenKind.ErrorToken, start, cursor.Position - start, line, column);
+}
+
+// Operators and punctuation with grammar-faithful longest match: three-byte
+// forms first, then two-byte, then single bytes. `<`/`>` stay single tokens.
+internal fn bool LexOperator(
+    borrow i8[min max][] source,
+    mut borrow LexCursor cursor,
+    mut borrow TokenStream stream,
+    u64[0 2 ** 63 - 1] start,
+    u32[0 max] line,
+    u32[0 max] column)
+{
+    stack i8[min max] first = source[cursor.Position];
+    stack mut i8[min max] second = 0;
+    stack mut i8[min max] third = 0;
+    if (cursor.Position + 1 < source.Length)
+    {
+        second = source[cursor.Position + 1];
+    }
+
+    if (cursor.Position + 2 < source.Length)
+    {
+        third = source[cursor.Position + 2];
+    }
+
+    stack mut TokenKind kind = TokenKind.ErrorToken;
+    stack mut u8[0 3] width = 0;
+
+    if (first == 43 && second == 37 && third == 61)
+    {
+        kind = TokenKind.WrapAddAssign;
+        width = 3;
+    }
+    else if (first == 45 && second == 37 && third == 61)
+    {
+        kind = TokenKind.WrapSubAssign;
+        width = 3;
+    }
+    else if (first == 42 && second == 37 && third == 61)
+    {
+        kind = TokenKind.WrapMulAssign;
+        width = 3;
+    }
+    else if (first == 43 && second == 124 && third == 61)
+    {
+        kind = TokenKind.SatAddAssign;
+        width = 3;
+    }
+    else if (first == 45 && second == 124 && third == 61)
+    {
+        kind = TokenKind.SatSubAssign;
+        width = 3;
+    }
+    else if (first == 42 && second == 124 && third == 61)
+    {
+        kind = TokenKind.SatMulAssign;
+        width = 3;
+    }
+    else if (first == 43 && second == 61)
+    {
+        kind = TokenKind.AddAssign;
+        width = 2;
+    }
+    else if (first == 45 && second == 61)
+    {
+        kind = TokenKind.SubAssign;
+        width = 2;
+    }
+    else if (first == 42 && second == 61)
+    {
+        kind = TokenKind.MulAssign;
+        width = 2;
+    }
+    else if (first == 47 && second == 61)
+    {
+        kind = TokenKind.DivAssign;
+        width = 2;
+    }
+    else if (first == 37 && second == 61)
+    {
+        kind = TokenKind.ModAssign;
+        width = 2;
+    }
+    else if (first == 38 && second == 61)
+    {
+        kind = TokenKind.AndAssign;
+        width = 2;
+    }
+    else if (first == 124 && second == 61)
+    {
+        kind = TokenKind.OrAssign;
+        width = 2;
+    }
+    else if (first == 94 && second == 61)
+    {
+        kind = TokenKind.XorAssign;
+        width = 2;
+    }
+    else if (first == 61 && second == 61)
+    {
+        kind = TokenKind.EqEq;
+        width = 2;
+    }
+    else if (first == 33 && second == 61)
+    {
+        kind = TokenKind.Neq;
+        width = 2;
+    }
+    else if (first == 60 && second == 61)
+    {
+        kind = TokenKind.Lte;
+        width = 2;
+    }
+    else if (first == 62 && second == 61)
+    {
+        kind = TokenKind.Gte;
+        width = 2;
+    }
+    else if (first == 38 && second == 38)
+    {
+        kind = TokenKind.AndAnd;
+        width = 2;
+    }
+    else if (first == 124 && second == 124)
+    {
+        kind = TokenKind.OrOr;
+        width = 2;
+    }
+    else if (first == 42 && second == 42)
+    {
+        kind = TokenKind.Pow;
+        width = 2;
+    }
+    else if (first == 43 && second == 37)
+    {
+        kind = TokenKind.WrapAdd;
+        width = 2;
+    }
+    else if (first == 45 && second == 37)
+    {
+        kind = TokenKind.WrapSub;
+        width = 2;
+    }
+    else if (first == 42 && second == 37)
+    {
+        kind = TokenKind.WrapMul;
+        width = 2;
+    }
+    else if (first == 43 && second == 124)
+    {
+        kind = TokenKind.SatAdd;
+        width = 2;
+    }
+    else if (first == 45 && second == 124)
+    {
+        kind = TokenKind.SatSub;
+        width = 2;
+    }
+    else if (first == 42 && second == 124)
+    {
+        kind = TokenKind.SatMul;
+        width = 2;
+    }
+    else if (first == 61 && second == 62)
+    {
+        kind = TokenKind.Arrow;
+        width = 2;
+    }
+    else if (first == 46 && second == 46)
+    {
+        kind = TokenKind.Range;
+        width = 2;
+    }
+    else if (first == 61)
+    {
+        kind = TokenKind.Assign;
+        width = 1;
+    }
+    else if (first == 60)
+    {
+        kind = TokenKind.Lt;
+        width = 1;
+    }
+    else if (first == 62)
+    {
+        kind = TokenKind.Gt;
+        width = 1;
+    }
+    else if (first == 43)
+    {
+        kind = TokenKind.Plus;
+        width = 1;
+    }
+    else if (first == 45)
+    {
+        kind = TokenKind.Minus;
+        width = 1;
+    }
+    else if (first == 42)
+    {
+        kind = TokenKind.Star;
+        width = 1;
+    }
+    else if (first == 47)
+    {
+        kind = TokenKind.Div;
+        width = 1;
+    }
+    else if (first == 37)
+    {
+        kind = TokenKind.Mod;
+        width = 1;
+    }
+    else if (first == 38)
+    {
+        kind = TokenKind.And;
+        width = 1;
+    }
+    else if (first == 124)
+    {
+        kind = TokenKind.Or;
+        width = 1;
+    }
+    else if (first == 94)
+    {
+        kind = TokenKind.Caret;
+        width = 1;
+    }
+    else if (first == 33)
+    {
+        kind = TokenKind.Bang;
+        width = 1;
+    }
+    else if (first == 126)
+    {
+        kind = TokenKind.Tilde;
+        width = 1;
+    }
+    else if (first == 63)
+    {
+        kind = TokenKind.Question;
+        width = 1;
+    }
+    else if (first == 58)
+    {
+        kind = TokenKind.Colon;
+        width = 1;
+    }
+    else if (first == 59)
+    {
+        kind = TokenKind.Semi;
+        width = 1;
+    }
+    else if (first == 44)
+    {
+        kind = TokenKind.Comma;
+        width = 1;
+    }
+    else if (first == 46)
+    {
+        kind = TokenKind.Dot;
+        width = 1;
+    }
+    else if (first == 36)
+    {
+        kind = TokenKind.Dollar;
+        width = 1;
+    }
+    else if (first == 40)
+    {
+        kind = TokenKind.LParen;
+        width = 1;
+    }
+    else if (first == 41)
+    {
+        kind = TokenKind.RParen;
+        width = 1;
+    }
+    else if (first == 123)
+    {
+        kind = TokenKind.LBrace;
+        width = 1;
+    }
+    else if (first == 125)
+    {
+        kind = TokenKind.RBrace;
+        width = 1;
+    }
+    else if (first == 91)
+    {
+        kind = TokenKind.LBrack;
+        width = 1;
+    }
+    else if (first == 93)
+    {
+        kind = TokenKind.RBrack;
+        width = 1;
+    }
+
+    if (width == 0)
+    {
+        Advance(source, cursor);
+        if (!AppendDiagnostic(stream, LexDiagnosticKind.UnexpectedCharacter, line, column))
+        {
+            return false;
+        }
+
+        return AppendToken(stream, TokenKind.ErrorToken, start, 1, line, column);
+    }
+
+    for willexit (stack mut u8[0 3] step = 0; step < width; step += 1)
+    {
+        Advance(source, cursor);
+    }
+
+    return AppendToken(stream, kind, start, cursor.Position - start, line, column);
+}

@@ -1,0 +1,17 @@
+[project]
+name = "compiler-feature-tests"
+version = "0.1.0"
+kind = "test"
+
+[test]
+root = "FeatureTests.stark"
+output = "compiler-feature-tests"
+
+[dependencies]
+stdlib = { path = "../../stdlib" }
+
+[profiles.dev]
+opt = 0
+
+[profiles.release]
+opt = 3

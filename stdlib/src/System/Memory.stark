@@ -10,14 +10,14 @@ public enum MemoryError
 
 public enum MemoryStatus
 {
-    Ok,
-    Err(MemoryError),
+    [Ok] Ok,
+    [Err] Err(MemoryError),
 }
 
 public enum MemoryResult<T>
 {
-    Ok(T),
-    Err(MemoryError),
+    [Ok] Ok(T),
+    [Err] Err(MemoryError),
 }
 
 public struct Allocator

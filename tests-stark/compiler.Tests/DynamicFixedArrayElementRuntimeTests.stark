@@ -1,0 +1,73 @@
+import CompilerTestSupport
+import System.Testing
+module DynamicFixedArrayElementRuntimeTests
+
+// Ported from DynamicFixedArrayElementRuntimeTests.DynamicOfFixedArrayWritesReadsAndSlicesPreserveRows.
+internal fn bool DynamicOfFixedArrayWritesReadsAndSlicesPreserveRowsImpl()
+{
+    // PORT-NOTE: original emits the embedded program with --emit-exe, then runs
+    // the linked executable and asserts the compile CLI exit is 0 and the
+    // process exit code is 0 (each `return N` guards a row-preservation check).
+    // The compile helpers cannot link or observe a runtime exit code; reduced to
+    // driving the embedded program through the full pipeline and returning
+    // Succeeds.
+    stack mut LlvmCompile compiled = CompileFull(
+        "dynamic-fixed-array-writes-reads-slices",
+        raw"""
+module Demo
+
+export unsafe fn i32[min max] main()
+{
+    stack mut dynamic i8[min max][2] rows = new();
+    if (!rows.TryReserve(2))
+    {
+        return 1;
+    }
+
+    stack mut i8[min max][2] first;
+    first[0] = 5;
+    first[1] = 6;
+    init rows[rows.Length] = first;
+
+    stack mut i8[min max][2] second;
+    second[0] = 7;
+    second[1] = 8;
+    init rows[rows.Length] = second;
+
+    stack i8[min max][2][] view = rows[0, rows.Length];
+    if (view.Length != 2)
+    {
+        return 2;
+    }
+
+    if (view[0][0] != 5)
+    {
+        return 10;
+    }
+
+    if (view[0][1] != 6)
+    {
+        return 11;
+    }
+
+    if (view[1][0] != 7)
+    {
+        return 12;
+    }
+
+    if (view[1][1] != 8)
+    {
+        return 13;
+    }
+
+    stack i8[min max][2] copied = rows[1];
+    if (copied[0] != 7 || copied[1] != 8)
+    {
+        return 4;
+    }
+
+    return 0;
+}
+""");
+    return Succeeds(compiled);
+}

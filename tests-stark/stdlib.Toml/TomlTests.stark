@@ -1,0 +1,1932 @@
+import System.Testing
+import System.Toml
+import System.Text
+import System.IO
+[Collection("toml")]
+module TomlTests
+
+// Stark-native tests for the System.Toml reader (doc 21 work items:
+// conformance, malformed input, source spans, and manifest decoding against
+// the repo's real manifest shape).
+
+fn bool IsDuplicateKey(TomlError error)
+{
+    switch (error)
+    {
+        case TomlError.DuplicateKey
+        {
+            Line: var line, Column: var column
+        }:
+            return true;
+        default:
+            return false;
+    }
+}
+
+fn bool IsUnterminatedString(TomlError error)
+{
+    switch (error)
+    {
+        case TomlError.UnterminatedString
+        {
+            Line: var line, Column: var column
+        }:
+            return true;
+        default:
+            return false;
+    }
+}
+
+fn bool IsUnsupportedValue(TomlError error)
+{
+    switch (error)
+    {
+        case TomlError.UnsupportedValue
+        {
+            Line: var line, Column: var column
+        }:
+            return true;
+        default:
+            return false;
+    }
+}
+
+fn bool IsInvalidNumber(TomlError error)
+{
+    switch (error)
+    {
+        case TomlError.InvalidNumber
+        {
+            Line: var line, Column: var column
+        }:
+            return true;
+        default:
+            return false;
+    }
+}
+
+fn bool IsUnexpectedCharacterAt(TomlError error, u32[0 max] line, u32[0 max] column)
+{
+    switch (error)
+    {
+        case TomlError.UnexpectedCharacter
+        {
+            Line: var errorLine, Column: var errorColumn
+        }:
+            return errorLine == line && errorColumn == column;
+        default:
+            return false;
+    }
+}
+
+[Fact]
+fn bool EmptyDocumentParsesToRootTable()
+{
+    unsafe
+    {
+        switch (ParseText(""))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                stack mut TomlDocument document = value;
+                return document.Count() == 1
+                    && document.KindAt(TomlRootNode) == TomlKind.Table
+                    && document.ChildCountAt(TomlRootNode) == 0;
+        }
+    }
+}
+
+[Fact]
+fn bool SimpleKeyValuesParse()
+{
+    unsafe
+    {
+        switch (ParseText(raw"""
+name = "stark"
+count = 42
+ready = true
+closed = false
+"""))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                stack mut TomlDocument document = value;
+                if (document.ChildCountAt(TomlRootNode) != 4)
+                {
+                    return false;
+                }
+
+                stack mut u64[0 2 ** 63 - 1] name = 0;
+                if (!document.TryFindMember(TomlRootNode, "name", name))
+                {
+                    return false;
+                }
+
+                if (document.TextAt(name) != "stark")
+                {
+                    return false;
+                }
+
+                stack mut u64[0 2 ** 63 - 1] count = 0;
+                if (!document.TryFindMember(TomlRootNode, "count", count))
+                {
+                    return false;
+                }
+
+                switch (document.I64At(count))
+                {
+                    case TomlResult<i64[min max]>.Err(var countError):
+                        return false;
+                    case TomlResult<i64[min max]>.Ok(var countValue):
+                        if (countValue != 42)
+                        {
+                            return false;
+                        }
+                }
+
+                stack mut u64[0 2 ** 63 - 1] ready = 0;
+                if (!document.TryFindMember(TomlRootNode, "ready", ready))
+                {
+                    return false;
+                }
+
+                stack mut u64[0 2 ** 63 - 1] closed = 0;
+                if (!document.TryFindMember(TomlRootNode, "closed", closed))
+                {
+                    return false;
+                }
+
+                return document.BoolAt(ready)
+                    && document.KindAt(closed) == TomlKind.False;
+        }
+    }
+}
+
+[Fact]
+fn bool TableHeadersResolveAndNest()
+{
+    unsafe
+    {
+        switch (ParseText(raw"""
+[project]
+name = "demo"
+
+[project.settings]
+level = 3
+"""))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                stack mut TomlDocument document = value;
+                stack mut u64[0 2 ** 63 - 1] project = 0;
+                if (!document.TryFindMemberOfKind(TomlRootNode, "project", TomlKind.Table, project))
+                {
+                    return false;
+                }
+
+                stack mut u64[0 2 ** 63 - 1] name = 0;
+                if (!document.TryFindMember(project, "name", name))
+                {
+                    return false;
+                }
+
+                stack mut u64[0 2 ** 63 - 1] settings = 0;
+                if (!document.TryFindMemberOfKind(project, "settings", TomlKind.Table, settings))
+                {
+                    return false;
+                }
+
+                stack mut u64[0 2 ** 63 - 1] level = 0;
+                if (!document.TryFindMember(settings, "level", level))
+                {
+                    return false;
+                }
+
+                return document.TextAt(name) == "demo"
+                    && document.KindAt(level) == TomlKind.Integer;
+        }
+    }
+}
+
+[Fact]
+fn bool DottedKeysCreateNestedTables()
+{
+    unsafe
+    {
+        switch (ParseText(raw"""
+project.name = "demo"
+project.version = "0.1.0"
+"""))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                stack mut TomlDocument document = value;
+                stack mut u64[0 2 ** 63 - 1] project = 0;
+                if (!document.TryFindMemberOfKind(TomlRootNode, "project", TomlKind.Table, project))
+                {
+                    return false;
+                }
+
+                stack mut u64[0 2 ** 63 - 1] version = 0;
+                if (!document.TryFindMember(project, "version", version))
+                {
+                    return false;
+                }
+
+                return document.ChildCountAt(project) == 2
+                    && document.TextAt(version) == "0.1.0";
+        }
+    }
+}
+
+[Fact]
+fn bool InlineTablesParse()
+{
+    unsafe
+    {
+        switch (ParseText(raw"""
+[dependencies]
+raylib = { path = "../raylib" }
+empty = {}
+"""))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                stack mut TomlDocument document = value;
+                stack mut u64[0 2 ** 63 - 1] dependencies = 0;
+                if (!document.TryFindMemberOfKind(TomlRootNode, "dependencies", TomlKind.Table, dependencies))
+                {
+                    return false;
+                }
+
+                stack mut u64[0 2 ** 63 - 1] raylib = 0;
+                if (!document.TryFindMemberOfKind(dependencies, "raylib", TomlKind.Table, raylib))
+                {
+                    return false;
+                }
+
+                stack mut u64[0 2 ** 63 - 1] path = 0;
+                if (!document.TryFindMember(raylib, "path", path))
+                {
+                    return false;
+                }
+
+                stack mut u64[0 2 ** 63 - 1] empty = 0;
+                if (!document.TryFindMemberOfKind(dependencies, "empty", TomlKind.Table, empty))
+                {
+                    return false;
+                }
+
+                return document.TextAt(path) == "../raylib"
+                    && document.ChildCountAt(empty) == 0;
+        }
+    }
+}
+
+[Fact]
+fn bool ArraysParseInOrder()
+{
+    unsafe
+    {
+        switch (ParseText(raw"""
+members = [
+  "stdlib",
+  "examples/raylib",
+  "examples/breakout",
+]
+"""))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                stack mut TomlDocument document = value;
+                stack mut u64[0 2 ** 63 - 1] members = 0;
+                if (!document.TryFindMemberOfKind(TomlRootNode, "members", TomlKind.Array, members))
+                {
+                    return false;
+                }
+
+                if (document.ChildCountAt(members) != 3)
+                {
+                    return false;
+                }
+
+                stack mut u64[0 2 ** 63 - 1] first = 0;
+                if (!document.TryChildAt(members, 0, first))
+                {
+                    return false;
+                }
+
+                stack mut u64[0 2 ** 63 - 1] last = 0;
+                if (!document.TryChildAt(members, 2, last))
+                {
+                    return false;
+                }
+
+                return document.TextAt(first) == "stdlib"
+                    && document.TextAt(last) == "examples/breakout";
+        }
+    }
+}
+
+[Fact]
+fn bool BasicStringEscapesDecode()
+{
+    unsafe
+    {
+        switch (ParseText(raw"""
+text = "line\nnext\tcol \"quoted\" back\\slash A"
+"""))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                stack mut TomlDocument document = value;
+                stack mut u64[0 2 ** 63 - 1] text = 0;
+                if (!document.TryFindMember(TomlRootNode, "text", text))
+                {
+                    return false;
+                }
+
+                return document.TextAt(text) == "line\nnext\tcol \"quoted\" back\\slash A";
+        }
+    }
+}
+
+[Fact]
+fn bool LiteralStringsAreVerbatim()
+{
+    unsafe
+    {
+        switch (ParseText(raw"""
+pattern = '\d+\.\d+'
+"""))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                stack mut TomlDocument document = value;
+                stack mut u64[0 2 ** 63 - 1] pattern = 0;
+                if (!document.TryFindMember(TomlRootNode, "pattern", pattern))
+                {
+                    return false;
+                }
+
+                return document.TextAt(pattern) == raw"\d+\.\d+";
+        }
+    }
+}
+
+[Fact]
+fn bool MultilineBasicStringTrimsLeadingNewlineEscapesAndContinues()
+{
+    // Built as an escaped ascii literal (not a raw string) so the `"""`
+    // delimiters do not collide with the test file's own raw-string syntax.
+    //   key = """<newline>The quick brown \<newline>   fox\tjumps."""<newline>
+    // Expected decoding:
+    //   - the leading newline after the opening `"""` is trimmed;
+    //   - the trailing `\` is a line continuation: it trims the backslash, the
+    //     newline, and the next line's leading whitespace, so `brown ` joins
+    //     `fox` with the single source space preserved;
+    //   - `\t` decodes to a real tab.
+    unsafe
+    {
+        switch (ParseText("key = \"\"\"\nThe quick brown \\\n   fox\\tjumps.\"\"\"\n"))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                stack mut TomlDocument document = value;
+                stack mut u64[0 2 ** 63 - 1] key = 0;
+                if (!document.TryFindMember(TomlRootNode, "key", key))
+                {
+                    return false;
+                }
+
+                return document.KindAt(key) == TomlKind.Text
+                    && document.TextAt(key) == "The quick brown fox\tjumps.";
+        }
+    }
+}
+
+[Fact]
+fn bool MultilineBasicStringAllowsEmbeddedQuotes()
+{
+    // Two embedded quotation marks (`""`) are valid content; the closing `"""`
+    // still terminates the string.
+    //   key = """Here are two quotes: "". Done."""
+    unsafe
+    {
+        switch (ParseText("key = \"\"\"Here are two quotes: \"\". Done.\"\"\"\n"))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                stack mut TomlDocument document = value;
+                stack mut u64[0 2 ** 63 - 1] key = 0;
+                if (!document.TryFindMember(TomlRootNode, "key", key))
+                {
+                    return false;
+                }
+
+                return document.TextAt(key) == "Here are two quotes: \"\". Done.";
+        }
+    }
+}
+
+[Fact]
+fn bool MultilineBasicStringKeepsLiteralNewlines()
+{
+    // Without a line continuation, literal newlines inside the body are kept
+    // verbatim. The leading newline after `"""` is still trimmed.
+    //   key = """first<newline>second"""
+    unsafe
+    {
+        switch (ParseText("key = \"\"\"first\nsecond\"\"\"\n"))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                stack mut TomlDocument document = value;
+                stack mut u64[0 2 ** 63 - 1] key = 0;
+                if (!document.TryFindMember(TomlRootNode, "key", key))
+                {
+                    return false;
+                }
+
+                return document.TextAt(key) == "first\nsecond";
+        }
+    }
+}
+
+[Fact]
+fn bool MultilineLiteralStringIsVerbatim()
+{
+    // Multiline literal strings apply no escapes and no line continuation; the
+    // leading newline after `'''` is trimmed and everything else is verbatim.
+    //   path = '''<newline>C:\Users\nodejs\templates'''
+    unsafe
+    {
+        switch (ParseText("path = '''\nC:\\Users\\nodejs\\templates'''\n"))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                stack mut TomlDocument document = value;
+                stack mut u64[0 2 ** 63 - 1] path = 0;
+                if (!document.TryFindMember(TomlRootNode, "path", path))
+                {
+                    return false;
+                }
+
+                return document.KindAt(path) == TomlKind.Text
+                    && document.TextAt(path) == "C:\\Users\\nodejs\\templates";
+        }
+    }
+}
+
+[Fact]
+fn bool MultilineLiteralStringKeepsNewlinesAndBackslashTrailing()
+{
+    // A backslash at the end of a line in a literal string is NOT a line
+    // continuation; it and the newline are kept verbatim.
+    //   key = '''a\<newline>b'''
+    unsafe
+    {
+        switch (ParseText("key = '''a\\\nb'''\n"))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                stack mut TomlDocument document = value;
+                stack mut u64[0 2 ** 63 - 1] key = 0;
+                if (!document.TryFindMember(TomlRootNode, "key", key))
+                {
+                    return false;
+                }
+
+                return document.TextAt(key) == "a\\\nb";
+        }
+    }
+}
+
+[Fact]
+fn bool UnterminatedMultilineBasicStringIsRejected()
+{
+    // An opening `"""` with no closing delimiter is an unterminated string.
+    unsafe
+    {
+        switch (ParseText("key = \"\"\"no closing here\n"))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return IsUnterminatedString(error);
+            case TomlResult<TomlDocument>.Ok(var value):
+                return false;
+        }
+    }
+}
+
+[Fact]
+fn bool MultilineBasicStringRoundTripsThroughEmitter()
+{
+    // A multiline basic string decodes to the same bytes as the equivalent
+    // single-line basic string, so the canonical emitter (which always writes
+    // single-line basic strings) re-emits it identically to the single-line
+    // form. This confirms multiline `Text` nodes round-trip.
+    return EmitMatches(
+        "key = \"\"\"first\nsecond\"\"\"\n",
+        "key = \"first\\nsecond\"\n");
+}
+
+[Fact]
+fn bool UnderscoredIntegersNormalize()
+{
+    unsafe
+    {
+        switch (ParseText(raw"""
+big = 1_000_000
+negative = -42
+"""))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                stack mut TomlDocument document = value;
+                stack mut u64[0 2 ** 63 - 1] big = 0;
+                if (!document.TryFindMember(TomlRootNode, "big", big))
+                {
+                    return false;
+                }
+
+                stack mut u64[0 2 ** 63 - 1] negative = 0;
+                if (!document.TryFindMember(TomlRootNode, "negative", negative))
+                {
+                    return false;
+                }
+
+                stack mut i64[min max] bigValue = 0;
+                switch (document.I64At(big))
+                {
+                    case TomlResult<i64[min max]>.Err(var bigError):
+                        return false;
+                    case TomlResult<i64[min max]>.Ok(var parsedBig):
+                        bigValue = parsedBig;
+                }
+
+                stack mut i64[min max] negativeValue = 0;
+                switch (document.I64At(negative))
+                {
+                    case TomlResult<i64[min max]>.Err(var negativeError):
+                        return false;
+                    case TomlResult<i64[min max]>.Ok(var parsedNegative):
+                        negativeValue = parsedNegative;
+                }
+
+                return bigValue == 1000000 && negativeValue == -42;
+        }
+    }
+}
+
+[Fact]
+fn bool CommentsAndBlankLinesAreSkipped()
+{
+    unsafe
+    {
+        switch (ParseText(raw"""
+# leading comment
+
+name = "demo" # trailing comment
+
+# closing comment
+"""))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                stack mut TomlDocument document = value;
+                stack mut u64[0 2 ** 63 - 1] name = 0;
+                if (!document.TryFindMember(TomlRootNode, "name", name))
+                {
+                    return false;
+                }
+
+                return document.ChildCountAt(TomlRootNode) == 1
+                    && document.TextAt(name) == "demo";
+        }
+    }
+}
+
+[Fact]
+fn bool SpansRecordLineAndColumn()
+{
+    unsafe
+    {
+        switch (ParseText("first = 1\nsecond = \"two\"\n"))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                stack mut TomlDocument document = value;
+                stack mut u64[0 2 ** 63 - 1] first = 0;
+                if (!document.TryFindMember(TomlRootNode, "first", first))
+                {
+                    return false;
+                }
+
+                stack mut u64[0 2 ** 63 - 1] second = 0;
+                if (!document.TryFindMember(TomlRootNode, "second", second))
+                {
+                    return false;
+                }
+
+                return document.LineAt(first) == 1
+                    && document.ColumnAt(first) == 9
+                    && document.LineAt(second) == 2
+                    && document.ColumnAt(second) == 10;
+        }
+    }
+}
+
+[Fact]
+fn bool DuplicateKeysAreRejected()
+{
+    unsafe
+    {
+        switch (ParseText(raw"""
+name = "first"
+name = "second"
+"""))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return IsDuplicateKey(error);
+            case TomlResult<TomlDocument>.Ok(var value):
+                return false;
+        }
+    }
+}
+
+[Fact]
+fn bool UnterminatedStringsAreRejected()
+{
+    unsafe
+    {
+        switch (ParseText(raw"""
+name = "missing end
+"""))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return IsUnterminatedString(error);
+            case TomlResult<TomlDocument>.Ok(var value):
+                return false;
+        }
+    }
+}
+
+// F64At returns a scalar f64, so these read the value and compare it with a
+// Stark f64 literal. The parsed token and the literal go through the same
+// correctly-rounded text->f64 conversion, so `==` is a bit-exact check inside
+// the supported window (significand <= 2**53, |exp10| <= 22).
+fn bool MemberF64Equals(mut borrow TomlDocument document, ascii key, f64 expected)
+{
+    stack mut u64[0 2 ** 63 - 1] node = 0;
+    if (!document.TryFindMember(TomlRootNode, key, node))
+    {
+        return false;
+    }
+
+    switch (document.F64At(node))
+    {
+        case TomlResult<f64>.Err(var error):
+            return false;
+        case TomlResult<f64>.Ok(var value):
+            return value == expected;
+    }
+}
+
+[Fact]
+fn bool FloatsParseToExactValues()
+{
+    unsafe
+    {
+        switch (ParseText(raw"""
+half = 1.5
+pi = 3.14
+negzero = -0.0
+tenth = 0.1
+thousand = 1e3
+fractional = 1234.5
+underscored = 9_224.0
+"""))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                stack mut TomlDocument document = value;
+                stack mut u64[0 2 ** 63 - 1] half = 0;
+                if (!document.TryFindMember(TomlRootNode, "half", half))
+                {
+                    return false;
+                }
+
+                if (document.KindAt(half) != TomlKind.Float)
+                {
+                    return false;
+                }
+
+                return MemberF64Equals(document, "half", 1.5)
+                    && MemberF64Equals(document, "pi", 3.14)
+                    && MemberF64Equals(document, "negzero", -0.0)
+                    && MemberF64Equals(document, "tenth", 0.1)
+                    && MemberF64Equals(document, "thousand", 1000.0)
+                    && MemberF64Equals(document, "fractional", 1234.5)
+                    && MemberF64Equals(document, "underscored", 9224.0);
+        }
+    }
+}
+
+[Fact]
+fn bool FloatOutsideExactWindowReportsInvalidNumber()
+{
+    // |exp10| > 22 is outside the correctly-rounded window: F64At must report
+    // InvalidNumber rather than mis-round the value.
+    unsafe
+    {
+        switch (ParseText(raw"""
+tiny = 1e40
+"""))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                stack mut TomlDocument document = value;
+                stack mut u64[0 2 ** 63 - 1] tiny = 0;
+                if (!document.TryFindMember(TomlRootNode, "tiny", tiny))
+                {
+                    return false;
+                }
+
+                switch (document.F64At(tiny))
+                {
+                    case TomlResult<f64>.Err(var error):
+                        return IsInvalidNumber(error);
+                    case TomlResult<f64>.Ok(var parsedValue):
+                        return false;
+                }
+        }
+    }
+}
+
+[Fact]
+fn bool PrefixedIntegersDecodeByRadix()
+{
+    unsafe
+    {
+        switch (ParseText(raw"""
+hex = 0xDEAD
+upperhex = 0XdeAd
+octal = 0o755
+binary = 0b1010
+"""))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                stack mut TomlDocument document = value;
+                stack mut u64[0 2 ** 63 - 1] hex = 0;
+                if (!document.TryFindMember(TomlRootNode, "hex", hex))
+                {
+                    return false;
+                }
+
+                stack mut u64[0 2 ** 63 - 1] upperhex = 0;
+                if (!document.TryFindMember(TomlRootNode, "upperhex", upperhex))
+                {
+                    return false;
+                }
+
+                stack mut u64[0 2 ** 63 - 1] octal = 0;
+                if (!document.TryFindMember(TomlRootNode, "octal", octal))
+                {
+                    return false;
+                }
+
+                stack mut u64[0 2 ** 63 - 1] binary = 0;
+                if (!document.TryFindMember(TomlRootNode, "binary", binary))
+                {
+                    return false;
+                }
+
+                stack mut i64[min max] hexValue = 0;
+                switch (document.I64At(hex))
+                {
+                    case TomlResult<i64[min max]>.Err(var hexError):
+                        return false;
+                    case TomlResult<i64[min max]>.Ok(var parsedHex):
+                        hexValue = parsedHex;
+                }
+
+                stack mut i64[min max] upperhexValue = 0;
+                switch (document.I64At(upperhex))
+                {
+                    case TomlResult<i64[min max]>.Err(var upperhexError):
+                        return false;
+                    case TomlResult<i64[min max]>.Ok(var parsedUpperhex):
+                        upperhexValue = parsedUpperhex;
+                }
+
+                stack mut i64[min max] octalValue = 0;
+                switch (document.I64At(octal))
+                {
+                    case TomlResult<i64[min max]>.Err(var octalError):
+                        return false;
+                    case TomlResult<i64[min max]>.Ok(var parsedOctal):
+                        octalValue = parsedOctal;
+                }
+
+                stack mut i64[min max] binaryValue = 0;
+                switch (document.I64At(binary))
+                {
+                    case TomlResult<i64[min max]>.Err(var binaryError):
+                        return false;
+                    case TomlResult<i64[min max]>.Ok(var parsedBinary):
+                        binaryValue = parsedBinary;
+                }
+
+                return hexValue == 57005
+                    && upperhexValue == 57005
+                    && octalValue == 493
+                    && binaryValue == 10;
+        }
+    }
+}
+
+[Fact]
+fn bool UnderscoredPrefixedIntegersNormalize()
+{
+    unsafe
+    {
+        switch (ParseText(raw"""
+hex = 0xDE_AD
+binary = 0b1010_0101
+"""))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                stack mut TomlDocument document = value;
+                stack mut u64[0 2 ** 63 - 1] hex = 0;
+                if (!document.TryFindMember(TomlRootNode, "hex", hex))
+                {
+                    return false;
+                }
+
+                stack mut u64[0 2 ** 63 - 1] binary = 0;
+                if (!document.TryFindMember(TomlRootNode, "binary", binary))
+                {
+                    return false;
+                }
+
+                stack mut i64[min max] hexValue = 0;
+                switch (document.I64At(hex))
+                {
+                    case TomlResult<i64[min max]>.Err(var hexError):
+                        return false;
+                    case TomlResult<i64[min max]>.Ok(var parsedHex):
+                        hexValue = parsedHex;
+                }
+
+                stack mut i64[min max] binaryValue = 0;
+                switch (document.I64At(binary))
+                {
+                    case TomlResult<i64[min max]>.Err(var binaryError):
+                        return false;
+                    case TomlResult<i64[min max]>.Ok(var parsedBinary):
+                        binaryValue = parsedBinary;
+                }
+
+                return hexValue == 57005 && binaryValue == 165;
+        }
+    }
+}
+
+[Fact]
+fn bool PrefixedIntegerWithoutDigitsIsRejected()
+{
+    unsafe
+    {
+        switch (ParseText(raw"""
+x = 0x
+"""))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return IsInvalidNumber(error);
+            case TomlResult<TomlDocument>.Ok(var value):
+                return false;
+        }
+    }
+}
+
+[Fact]
+fn bool PrefixedIntegerWithBadDigitIsRejected()
+{
+    unsafe
+    {
+        switch (ParseText(raw"""
+x = 0xG
+"""))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return IsInvalidNumber(error);
+            case TomlResult<TomlDocument>.Ok(var value):
+                return false;
+        }
+    }
+}
+
+[Fact]
+fn bool PrefixedIntegerWithLeadingUnderscoreIsRejected()
+{
+    unsafe
+    {
+        switch (ParseText(raw"""
+x = 0x_DE
+"""))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return IsInvalidNumber(error);
+            case TomlResult<TomlDocument>.Ok(var value):
+                return false;
+        }
+    }
+}
+
+[Fact]
+fn bool ArraysOfTablesParse()
+{
+    unsafe
+    {
+        switch (ParseText(raw"""
+[[bin]]
+name = "tool"
+
+[[bin]]
+name = "helper"
+"""))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                stack mut TomlDocument document = value;
+                stack mut u64[0 2 ** 63 - 1] bin = 0;
+                if (!document.TryFindMember(TomlRootNode, "bin", bin))
+                {
+                    return false;
+                }
+
+                if (document.KindAt(bin) != TomlKind.Array || document.ChildCountAt(bin) != 2)
+                {
+                    return false;
+                }
+
+                stack mut u64[0 2 ** 63 - 1] first = 0;
+                stack mut u64[0 2 ** 63 - 1] firstName = 0;
+                if (!document.TryChildAt(bin, 0, first)
+                    || !document.TryFindMember(first, "name", firstName)
+                    || document.TextAt(firstName) != "tool")
+                {
+                    return false;
+                }
+
+                stack mut u64[0 2 ** 63 - 1] second = 0;
+                stack mut u64[0 2 ** 63 - 1] secondName = 0;
+                if (!document.TryChildAt(bin, 1, second)
+                    || !document.TryFindMember(second, "name", secondName)
+                    || document.TextAt(secondName) != "helper")
+                {
+                    return false;
+                }
+
+                return true;
+        }
+    }
+}
+
+[Fact]
+fn bool ArrayOfTablesSubTableReopensLastElement()
+{
+    // `[a.b]` after `[[a]]` must add `b` under the most recent `a` element.
+    unsafe
+    {
+        switch (ParseText(raw"""
+[[product]]
+sku = 1
+
+[product.meta]
+color = "red"
+"""))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                stack mut TomlDocument document = value;
+                stack mut u64[0 2 ** 63 - 1] product = 0;
+                stack mut u64[0 2 ** 63 - 1] element = 0;
+                stack mut u64[0 2 ** 63 - 1] meta = 0;
+                stack mut u64[0 2 ** 63 - 1] color = 0;
+                if (!document.TryFindMember(TomlRootNode, "product", product)
+                    || document.ChildCountAt(product) != 1
+                    || !document.TryChildAt(product, 0, element)
+                    || !document.TryFindMember(element, "meta", meta)
+                    || !document.TryFindMember(meta, "color", color))
+                {
+                    return false;
+                }
+
+                return document.TextAt(color) == "red";
+        }
+    }
+}
+
+[Fact]
+fn bool DatetimeValuesParse()
+{
+    unsafe
+    {
+        switch (ParseText(raw"""
+odt = 1979-05-27T07:32:00Z
+ldt = 1979-05-27T07:32:00
+ld = 1979-05-27
+lt = 07:32:00.999
+spaced = 1979-05-27 07:32:00-07:00
+"""))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                stack mut TomlDocument document = value;
+                stack mut u64[0 2 ** 63 - 1] odt = 0;
+                stack mut u64[0 2 ** 63 - 1] ldt = 0;
+                stack mut u64[0 2 ** 63 - 1] ld = 0;
+                stack mut u64[0 2 ** 63 - 1] lt = 0;
+                stack mut u64[0 2 ** 63 - 1] spaced = 0;
+                if (!document.TryFindMember(TomlRootNode, "odt", odt)
+                    || !document.TryFindMember(TomlRootNode, "ldt", ldt)
+                    || !document.TryFindMember(TomlRootNode, "ld", ld)
+                    || !document.TryFindMember(TomlRootNode, "lt", lt)
+                    || !document.TryFindMember(TomlRootNode, "spaced", spaced))
+                {
+                    return false;
+                }
+
+                if (document.KindAt(odt) != TomlKind.Datetime
+                    || document.KindAt(ldt) != TomlKind.Datetime
+                    || document.KindAt(ld) != TomlKind.Datetime
+                    || document.KindAt(lt) != TomlKind.Datetime
+                    || document.KindAt(spaced) != TomlKind.Datetime)
+                {
+                    return false;
+                }
+
+                return document.DatetimeAt(odt) == "1979-05-27T07:32:00Z"
+                    && document.DatetimeAt(ldt) == "1979-05-27T07:32:00"
+                    && document.DatetimeAt(ld) == "1979-05-27"
+                    && document.DatetimeAt(lt) == "07:32:00.999"
+                    && document.DatetimeAt(spaced) == "1979-05-27 07:32:00-07:00";
+        }
+    }
+}
+
+[Fact]
+fn bool MalformedDatetimeIsRejected()
+{
+    // A time-of-day requires seconds; `12:34` is not a valid local time.
+    unsafe
+    {
+        switch (ParseText("t = 12:34\n"))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return true;
+            case TomlResult<TomlDocument>.Ok(var value):
+                return false;
+        }
+    }
+}
+
+// True when `toml` fails to parse (used for calendar-rejection facts).
+unsafe fn bool DatetimeRejected(ascii toml)
+{
+    switch (ParseText(toml))
+    {
+        case TomlResult<TomlDocument>.Err(var error):
+            return true;
+        case TomlResult<TomlDocument>.Ok(var value):
+            return false;
+    }
+}
+
+[Fact]
+fn bool DateTimeAtDecodesOffsetDateTime()
+{
+    unsafe
+    {
+        switch (ParseText("a = 1979-05-27T07:32:00Z\n"))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                stack mut TomlDocument document = value;
+                stack mut u64[0 2 ** 63 - 1] a = 0;
+                if (!document.TryFindMember(TomlRootNode, "a", a))
+                {
+                    return false;
+                }
+
+                switch (document.DateTimeAt(a))
+                {
+                    case TomlResult<TomlDateTime>.Err(var dtError):
+                        return false;
+                    case TomlResult<TomlDateTime>.Ok(var dt):
+                        return dt.Kind == TomlDateTimeKind.OffsetDateTime
+                            && dt.Year == 1979
+                            && dt.Month == 5
+                            && dt.Day == 27
+                            && dt.Hour == 7
+                            && dt.Minute == 32
+                            && dt.Second == 0
+                            && dt.Nanosecond == 0
+                            && dt.HasOffset
+                            && dt.OffsetMinutes == 0;
+                }
+        }
+    }
+}
+
+[Fact]
+fn bool DateTimeAtDecodesNegativeOffsetAndFraction()
+{
+    unsafe
+    {
+        // `.999999` is six fractional digits -> 999999000 ns; `-07:00` -> -420.
+        switch (ParseText("a = 1979-05-27T00:32:00.999999-07:00\n"))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                stack mut TomlDocument document = value;
+                stack mut u64[0 2 ** 63 - 1] a = 0;
+                if (!document.TryFindMember(TomlRootNode, "a", a))
+                {
+                    return false;
+                }
+
+                switch (document.DateTimeAt(a))
+                {
+                    case TomlResult<TomlDateTime>.Err(var dtError):
+                        return false;
+                    case TomlResult<TomlDateTime>.Ok(var dt):
+                        return dt.Kind == TomlDateTimeKind.OffsetDateTime
+                            && dt.Hour == 0
+                            && dt.Minute == 32
+                            && dt.Nanosecond == 999999000
+                            && dt.HasOffset
+                            && dt.OffsetMinutes == -420;
+                }
+        }
+    }
+}
+
+[Fact]
+fn bool DateTimeAtDecodesLocalDateAndLocalTime()
+{
+    unsafe
+    {
+        switch (ParseText("d = 1979-05-27\nt = 07:32:00.5\n"))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                stack mut TomlDocument document = value;
+                stack mut u64[0 2 ** 63 - 1] d = 0;
+                stack mut u64[0 2 ** 63 - 1] t = 0;
+                if (!document.TryFindMember(TomlRootNode, "d", d)
+                    || !document.TryFindMember(TomlRootNode, "t", t))
+                {
+                    return false;
+                }
+
+                stack mut bool dateOk = false;
+                switch (document.DateTimeAt(d))
+                {
+                    case TomlResult<TomlDateTime>.Err(var dError):
+                        return false;
+                    case TomlResult<TomlDateTime>.Ok(var dt):
+                        dateOk = dt.Kind == TomlDateTimeKind.LocalDate
+                            && dt.Year == 1979
+                            && dt.Month == 5
+                            && dt.Day == 27
+                            && dt.Hour == 0
+                            && dt.Second == 0
+                            && !dt.HasOffset;
+                }
+
+                switch (document.DateTimeAt(t))
+                {
+                    case TomlResult<TomlDateTime>.Err(var tError):
+                        return false;
+                    case TomlResult<TomlDateTime>.Ok(var tt):
+                        return dateOk
+                            && tt.Kind == TomlDateTimeKind.LocalTime
+                            && tt.Year == 0
+                            && tt.Month == 0
+                            && tt.Hour == 7
+                            && tt.Minute == 32
+                            && tt.Second == 0
+                            && tt.Nanosecond == 500000000
+                            && !tt.HasOffset;
+                }
+        }
+    }
+}
+
+[Fact]
+fn bool DateTimeAtAcceptsLeapDays()
+{
+    unsafe
+    {
+        // 2020 and 2000 are leap years (2000 via the 400-year rule); Feb 29 is
+        // valid in both.
+        switch (ParseText("a = 2020-02-29\nb = 2000-02-29\n"))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                stack mut TomlDocument document = value;
+                stack mut u64[0 2 ** 63 - 1] a = 0;
+                stack mut u64[0 2 ** 63 - 1] b = 0;
+                if (!document.TryFindMember(TomlRootNode, "a", a)
+                    || !document.TryFindMember(TomlRootNode, "b", b))
+                {
+                    return false;
+                }
+
+                stack mut bool firstOk = false;
+                switch (document.DateTimeAt(a))
+                {
+                    case TomlResult<TomlDateTime>.Err(var aError):
+                        return false;
+                    case TomlResult<TomlDateTime>.Ok(var dt):
+                        firstOk = dt.Month == 2 && dt.Day == 29;
+                }
+
+                switch (document.DateTimeAt(b))
+                {
+                    case TomlResult<TomlDateTime>.Err(var bError):
+                        return false;
+                    case TomlResult<TomlDateTime>.Ok(var dt):
+                        return firstOk && dt.Month == 2 && dt.Day == 29;
+                }
+        }
+    }
+}
+
+[Fact]
+fn bool InvalidCalendarDatetimeIsRejected()
+{
+    unsafe
+    {
+        // Day-of-month past the month length (with leap-year and century rules),
+        // out-of-range month/hour/minute/second, and an out-of-range zone offset
+        // are all rejected even though each is structurally well-formed.
+        return DatetimeRejected("d = 2020-02-30\n")
+            && DatetimeRejected("d = 2021-02-29\n")
+            && DatetimeRejected("d = 1900-02-29\n")
+            && DatetimeRejected("d = 2021-04-31\n")
+            && DatetimeRejected("d = 2021-13-01\n")
+            && DatetimeRejected("d = 2021-00-01\n")
+            && DatetimeRejected("d = 2021-01-00\n")
+            && DatetimeRejected("t = 24:00:00\n")
+            && DatetimeRejected("t = 07:60:00\n")
+            && DatetimeRejected("a = 1979-05-27T07:32:00+24:00\n");
+    }
+}
+
+[Fact]
+fn bool DateTimeAtAllowsLeapSecondAndMaxOffset()
+{
+    unsafe
+    {
+        // RFC 3339 permits a leap second (`:60`); `+23:59` is the largest offset.
+        switch (ParseText("a = 1990-12-31T23:59:60+23:59\n"))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                stack mut TomlDocument document = value;
+                stack mut u64[0 2 ** 63 - 1] a = 0;
+                if (!document.TryFindMember(TomlRootNode, "a", a))
+                {
+                    return false;
+                }
+
+                switch (document.DateTimeAt(a))
+                {
+                    case TomlResult<TomlDateTime>.Err(var dtError):
+                        return false;
+                    case TomlResult<TomlDateTime>.Ok(var dt):
+                        return dt.Kind == TomlDateTimeKind.OffsetDateTime
+                            && dt.Hour == 23
+                            && dt.Minute == 59
+                            && dt.Second == 60
+                            && dt.HasOffset
+                            && dt.OffsetMinutes == 1439;
+                }
+        }
+    }
+}
+
+[Fact]
+fn bool DateTimeAtTruncatesExcessFractionalDigits()
+{
+    unsafe
+    {
+        // More than nanosecond precision is truncated, not rounded: the tenth
+        // fractional digit (`0`) is dropped, leaving 123456789 ns.
+        switch (ParseText("a = 00:00:00.1234567890\n"))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                stack mut TomlDocument document = value;
+                stack mut u64[0 2 ** 63 - 1] a = 0;
+                if (!document.TryFindMember(TomlRootNode, "a", a))
+                {
+                    return false;
+                }
+
+                switch (document.DateTimeAt(a))
+                {
+                    case TomlResult<TomlDateTime>.Err(var dtError):
+                        return false;
+                    case TomlResult<TomlDateTime>.Ok(var dt):
+                        return dt.Kind == TomlDateTimeKind.LocalTime
+                            && dt.Nanosecond == 123456789;
+                }
+        }
+    }
+}
+
+[Fact]
+fn bool DateTimeAtRejectsNonDatetimeNode()
+{
+    unsafe
+    {
+        switch (ParseText("a = 42\n"))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                stack mut TomlDocument document = value;
+                stack mut u64[0 2 ** 63 - 1] a = 0;
+                if (!document.TryFindMember(TomlRootNode, "a", a))
+                {
+                    return false;
+                }
+
+                switch (document.DateTimeAt(a))
+                {
+                    case TomlResult<TomlDateTime>.Err(var dtError):
+                        return true;
+                    case TomlResult<TomlDateTime>.Ok(var dt):
+                        return false;
+                }
+        }
+    }
+}
+
+[Fact]
+fn bool EightDigitUnicodeEscapeDecodes()
+{
+    // `\U0001F600` is U+1F600 (a supplementary-plane scalar), encoded as four
+    // UTF-8 bytes; `é` is U+00E9 (é), encoded as two. The escape decoder
+    // must produce the right byte counts for both widths.
+    unsafe
+    {
+        switch (ParseText("wide = \"\\U0001F600\"\nbmp = \"\\u00E9\"\n"))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                stack mut TomlDocument document = value;
+                stack mut u64[0 2 ** 63 - 1] wide = 0;
+                stack mut u64[0 2 ** 63 - 1] bmp = 0;
+                if (!document.TryFindMember(TomlRootNode, "wide", wide)
+                    || !document.TryFindMember(TomlRootNode, "bmp", bmp))
+                {
+                    return false;
+                }
+
+                return System.Text.AsciiLength(document.TextAt(wide)) == 4
+                    && System.Text.AsciiLength(document.TextAt(bmp)) == 2;
+        }
+    }
+}
+
+[Fact]
+fn bool InvalidUnicodeEscapeIsRejected()
+{
+    // A surrogate code point (U+D800) is not a Unicode scalar value.
+    unsafe
+    {
+        switch (ParseText("s = \"\\uD800\"\n"))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return true;
+            case TomlResult<TomlDocument>.Ok(var value):
+                return false;
+        }
+    }
+}
+
+[Fact]
+fn bool DatetimeAndArrayOfTablesRoundTrip()
+{
+    // Parse -> emit -> parse must preserve datetimes and array-of-tables shape.
+    unsafe
+    {
+        stack mut TomlDocument first = new();
+        switch (ParseText(raw"""
+when = 1979-05-27T07:32:00Z
+
+[[entry]]
+id = 1
+
+[[entry]]
+id = 2
+"""))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                first = value;
+        }
+
+        stack mut System.Text.OwnedAscii emitted = new();
+        switch (Emit(first))
+        {
+            case TomlResult<System.Text.OwnedAscii>.Err(var emitError):
+                return false;
+            case TomlResult<System.Text.OwnedAscii>.Ok(var emittedText):
+                emitted = emittedText;
+        }
+
+        switch (ParseText(emitted.View()))
+        {
+            case TomlResult<TomlDocument>.Err(var reparseError):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var reparsed):
+                stack mut TomlDocument document = reparsed;
+                stack mut u64[0 2 ** 63 - 1] whenNode = 0;
+                stack mut u64[0 2 ** 63 - 1] entry = 0;
+                if (!document.TryFindMember(TomlRootNode, "when", whenNode)
+                    || document.KindAt(whenNode) != TomlKind.Datetime
+                    || document.DatetimeAt(whenNode) != "1979-05-27T07:32:00Z"
+                    || !document.TryFindMember(TomlRootNode, "entry", entry)
+                    || document.KindAt(entry) != TomlKind.Array
+                    || document.ChildCountAt(entry) != 2)
+                {
+                    return false;
+                }
+
+                return true;
+        }
+    }
+}
+
+[Fact]
+fn bool TrailingGarbageAfterValueIsRejected()
+{
+    unsafe
+    {
+        switch (ParseText("name = \"demo\" extra\n"))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return IsUnexpectedCharacterAt(error, 1, 15);
+            case TomlResult<TomlDocument>.Ok(var value):
+                return false;
+        }
+    }
+}
+
+[Fact]
+[Collection("manifests", "acceptance")]
+fn bool RealProjectManifestDecodes()
+{
+    unsafe
+    {
+        switch (ParseText(raw"""
+[project]
+name = "compiler-feature-tests"
+version = "0.1.0"
+kind = "test"
+
+[test]
+root = "FeatureTests.stark"
+output = "compiler-feature-tests"
+
+[dependencies]
+stdlib = { path = "../../stdlib" }
+
+[profiles.dev]
+opt = 0
+
+[profiles.release]
+opt = 3
+"""))
+        {
+            case TomlResult<TomlDocument>.Err(var error):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                stack mut TomlDocument document = value;
+
+                stack mut u64[0 2 ** 63 - 1] project = 0;
+                if (!document.TryFindMemberOfKind(TomlRootNode, "project", TomlKind.Table, project))
+                {
+                    return false;
+                }
+
+                stack mut u64[0 2 ** 63 - 1] name = 0;
+                if (!document.TryFindMember(project, "name", name))
+                {
+                    return false;
+                }
+
+                stack mut u64[0 2 ** 63 - 1] kind = 0;
+                if (!document.TryFindMember(project, "kind", kind))
+                {
+                    return false;
+                }
+
+                stack mut u64[0 2 ** 63 - 1] test = 0;
+                if (!document.TryFindMemberOfKind(TomlRootNode, "test", TomlKind.Table, test))
+                {
+                    return false;
+                }
+
+                stack mut u64[0 2 ** 63 - 1] root = 0;
+                if (!document.TryFindMember(test, "root", root))
+                {
+                    return false;
+                }
+
+                stack mut u64[0 2 ** 63 - 1] dependencies = 0;
+                if (!document.TryFindMemberOfKind(TomlRootNode, "dependencies", TomlKind.Table, dependencies))
+                {
+                    return false;
+                }
+
+                stack mut u64[0 2 ** 63 - 1] stdlibDependency = 0;
+                if (!document.TryFindMemberOfKind(dependencies, "stdlib", TomlKind.Table, stdlibDependency))
+                {
+                    return false;
+                }
+
+                stack mut u64[0 2 ** 63 - 1] path = 0;
+                if (!document.TryFindMember(stdlibDependency, "path", path))
+                {
+                    return false;
+                }
+
+                stack mut u64[0 2 ** 63 - 1] profiles = 0;
+                if (!document.TryFindMemberOfKind(TomlRootNode, "profiles", TomlKind.Table, profiles))
+                {
+                    return false;
+                }
+
+                stack mut u64[0 2 ** 63 - 1] dev = 0;
+                if (!document.TryFindMemberOfKind(profiles, "dev", TomlKind.Table, dev))
+                {
+                    return false;
+                }
+
+                stack mut u64[0 2 ** 63 - 1] opt = 0;
+                if (!document.TryFindMember(dev, "opt", opt))
+                {
+                    return false;
+                }
+
+                stack mut i64[min max] optValue = -1;
+                switch (document.I64At(opt))
+                {
+                    case TomlResult<i64[min max]>.Err(var optError):
+                        return false;
+                    case TomlResult<i64[min max]>.Ok(var parsedOpt):
+                        optValue = parsedOpt;
+                }
+
+                return document.TextAt(name) == "compiler-feature-tests"
+                    && document.TextAt(kind) == "test"
+                    && document.TextAt(root) == "FeatureTests.stark"
+                    && document.TextAt(path) == "../../stdlib"
+                    && optValue == 0;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Emitter + file-helper tests (doc 21 work item: deterministic writing and
+// file helpers composing System.IO.File with System.Toml).
+// ---------------------------------------------------------------------------
+
+fn bool IsIoError(TomlFileError error)
+{
+    switch (error)
+    {
+        case TomlFileError.Io(var ioError):
+            return true;
+        case TomlFileError.Toml(var tomlError):
+            return false;
+    }
+}
+
+// Parses `source`, emits it, and compares the emitted bytes to `expected`.
+fn bool EmitMatches(ascii source, ascii expected)
+{
+    unsafe
+    {
+        switch (ParseText(source))
+        {
+            case TomlResult<TomlDocument>.Err(var parseError):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                stack mut TomlDocument document = value;
+                switch (Emit(document))
+                {
+                    case TomlResult<System.Text.OwnedAscii>.Err(var emitError):
+                        return false;
+                    case TomlResult<System.Text.OwnedAscii>.Ok(var emitted):
+                        stack mut System.Text.OwnedAscii text = emitted;
+                        return text.View() == expected;
+                }
+        }
+    }
+}
+
+// Parses two sources and asserts they emit byte-identically.
+fn bool EmitsIdentically(ascii left, ascii right)
+{
+    unsafe
+    {
+        stack mut System.Text.OwnedAscii leftText = new();
+        switch (ParseText(left))
+        {
+            case TomlResult<TomlDocument>.Err(var leftParseError):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var leftValue):
+                stack mut TomlDocument leftDocument = leftValue;
+                switch (Emit(leftDocument))
+                {
+                    case TomlResult<System.Text.OwnedAscii>.Err(var leftEmitError):
+                        return false;
+                    case TomlResult<System.Text.OwnedAscii>.Ok(var leftEmitted):
+                        leftText = leftEmitted;
+                }
+        }
+
+        switch (ParseText(right))
+        {
+            case TomlResult<TomlDocument>.Err(var rightParseError):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var rightValue):
+                stack mut TomlDocument rightDocument = rightValue;
+                switch (Emit(rightDocument))
+                {
+                    case TomlResult<System.Text.OwnedAscii>.Err(var rightEmitError):
+                        return false;
+                    case TomlResult<System.Text.OwnedAscii>.Ok(var rightEmitted):
+                        stack mut System.Text.OwnedAscii rightText = rightEmitted;
+                        return leftText.View() == rightText.View();
+                }
+        }
+    }
+}
+
+[Fact]
+fn bool EmitSortsRootMembersByKey()
+{
+    return EmitMatches(
+        "name = \"stark\"\ncount = 42\nready = true\nclosed = false\n",
+        "closed = false\ncount = 42\nname = \"stark\"\nready = true\n");
+}
+
+[Fact]
+fn bool EmitWritesTablesAsHeaders()
+{
+    return EmitMatches(
+        "[project]\nname = \"demo\"\n",
+        "[project]\nname = \"demo\"\n");
+}
+
+[Fact]
+fn bool EmitNestsSubTablesWithDottedHeaders()
+{
+    return EmitMatches(
+        "[project]\nname = \"demo\"\n\n[project.settings]\nlevel = 3\n",
+        "[project]\nname = \"demo\"\n\n[project.settings]\nlevel = 3\n");
+}
+
+[Fact]
+fn bool EmitWritesArraysInOrder()
+{
+    return EmitMatches(
+        "members = [\n  \"stdlib\",\n  \"examples/raylib\",\n]\n",
+        "members = [\"stdlib\", \"examples/raylib\"]\n");
+}
+
+[Fact]
+fn bool EmitWritesTopLevelInlineTablesAsHeaders()
+{
+    // A top-level `dep = { ... }` inline table is semantically a `[dep]`
+    // section; the emitter writes the canonical header form, with members
+    // sorted by key. Re-parsing yields the same structure (round-trip stable).
+    return EmitMatches(
+        "dep = { path = \"../raylib\", version = \"1.0\" }\n",
+        "[dep]\npath = \"../raylib\"\nversion = \"1.0\"\n");
+}
+
+[Fact]
+fn bool EmitWritesInlineTablesInsideArrays()
+{
+    // Inline tables nested inside an array keep the inline `{ ... }` spelling
+    // (the array element cannot become a header), with members sorted by key.
+    return EmitMatches(
+        "items = [{ b = 2, a = 1 }]\n",
+        "items = [{ a = 1, b = 2 }]\n");
+}
+
+[Fact]
+fn bool EmitEscapesControlBytes()
+{
+    return EmitMatches(
+        "text = \"a\\tb\\nc\"\n",
+        "text = \"a\\tb\\nc\"\n");
+}
+
+[Fact]
+fn bool EmitIsDeterministicAcrossKeyOrder()
+{
+    return EmitsIdentically(
+        "name = \"demo\"\ncount = 7\n",
+        "count = 7\nname = \"demo\"\n");
+}
+
+[Fact]
+fn bool RoundTripEmitIsIdempotent()
+{
+    unsafe
+    {
+        stack ascii source = "name = \"demo\"\ncount = 7\n\n[project]\nkind = \"test\"\n";
+        stack mut System.Text.OwnedAscii firstText = new();
+        switch (ParseText(source))
+        {
+            case TomlResult<TomlDocument>.Err(var parseError):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                stack mut TomlDocument document = value;
+                switch (Emit(document))
+                {
+                    case TomlResult<System.Text.OwnedAscii>.Err(var emitError):
+                        return false;
+                    case TomlResult<System.Text.OwnedAscii>.Ok(var emitted):
+                        firstText = emitted;
+                }
+        }
+
+        // Re-parsing the emitted text and emitting again must be byte-identical.
+        switch (ParseText(firstText.View()))
+        {
+            case TomlResult<TomlDocument>.Err(var reparseError):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var reparsed):
+                stack mut TomlDocument reparsedDocument = reparsed;
+                switch (Emit(reparsedDocument))
+                {
+                    case TomlResult<System.Text.OwnedAscii>.Err(var secondEmitError):
+                        return false;
+                    case TomlResult<System.Text.OwnedAscii>.Ok(var secondEmitted):
+                        stack mut System.Text.OwnedAscii secondText = secondEmitted;
+                        return firstText.View() == secondText.View();
+                }
+        }
+    }
+}
+
+[Fact]
+fn bool WriteFileThenReadFileRoundTrips()
+{
+    unsafe
+    {
+        stack mut System.Testing.TempDirectory fixture = new();
+        switch (System.Testing.CreateTempDirectory("toml-emit"))
+        {
+            case System.IO.IOResult<System.Testing.TempDirectory>.Err(var createError):
+                return false;
+            case System.IO.IOResult<System.Testing.TempDirectory>.Ok(var created):
+                fixture = created;
+        }
+
+        stack mut System.Text.OwnedAscii path = new();
+        switch (fixture.PathFor("config.toml"))
+        {
+            case System.IO.IOResult<System.Text.OwnedAscii>.Err(var pathError):
+                return false;
+            case System.IO.IOResult<System.Text.OwnedAscii>.Ok(var built):
+                path = built;
+        }
+
+        stack mut TomlDocument document = new();
+        switch (ParseText("name = \"demo\"\ncount = 7\n"))
+        {
+            case TomlResult<TomlDocument>.Err(var parseError):
+                return false;
+            case TomlResult<TomlDocument>.Ok(var value):
+                document = value;
+        }
+
+        switch (WriteFile(path.View(), document))
+        {
+            case TomlFileStatus.Err(var writeError):
+                return false;
+            case TomlFileStatus.Ok:
+        }
+
+        stack mut TomlDocument loaded = new();
+        switch (ReadFile(path.View()))
+        {
+            case TomlFileResult<TomlDocument>.Err(var readError):
+                return false;
+            case TomlFileResult<TomlDocument>.Ok(var readValue):
+                loaded = readValue;
+        }
+
+        stack mut u64[0 2 ** 63 - 1] name = 0;
+        if (!loaded.TryFindMember(TomlRootNode, "name", name))
+        {
+            return false;
+        }
+
+        stack mut u64[0 2 ** 63 - 1] count = 0;
+        if (!loaded.TryFindMember(TomlRootNode, "count", count))
+        {
+            return false;
+        }
+
+        stack mut i64[min max] countValue = -1;
+        switch (loaded.I64At(count))
+        {
+            case TomlResult<i64[min max]>.Err(var countError):
+                return false;
+            case TomlResult<i64[min max]>.Ok(var parsedCount):
+                countValue = parsedCount;
+        }
+
+        return loaded.TextAt(name) == "demo" && countValue == 7;
+    }
+}
+
+[Fact]
+fn bool ReadFileMissingSurfacesIoError()
+{
+    unsafe
+    {
+        stack mut System.Testing.TempDirectory fixture = new();
+        switch (System.Testing.CreateTempDirectory("toml-missing"))
+        {
+            case System.IO.IOResult<System.Testing.TempDirectory>.Err(var createError):
+                return false;
+            case System.IO.IOResult<System.Testing.TempDirectory>.Ok(var created):
+                fixture = created;
+        }
+
+        stack mut System.Text.OwnedAscii path = new();
+        switch (fixture.PathFor("absent.toml"))
+        {
+            case System.IO.IOResult<System.Text.OwnedAscii>.Err(var pathError):
+                return false;
+            case System.IO.IOResult<System.Text.OwnedAscii>.Ok(var built):
+                path = built;
+        }
+
+        switch (ReadFile(path.View()))
+        {
+            case TomlFileResult<TomlDocument>.Err(var readError):
+                return IsIoError(readError);
+            case TomlFileResult<TomlDocument>.Ok(var readValue):
+                return false;
+        }
+    }
+}

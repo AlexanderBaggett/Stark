@@ -1498,6 +1498,126 @@ public sealed class SsaIrValidationTests
     }
 
     [Fact]
+    public void ScopedNoAliasProofCarrierAcceptsMatchingParameterRoots()
+    {
+        var pointer = StarkTypeSymbols.RawPointer(I32, isMutable: true);
+        var group = BuildAliasProofGroup(
+            AliasProofCarrierKind.RuntimeDisjointCondition,
+            "runtime-disjoint-0",
+            ["param:left", "param:right"]);
+        var function = BuildVoidFunction(
+            [
+                new SsaStoreIndirectInstruction(
+                    new SsaValueReference("arg_left", pointer),
+                    I32,
+                    new SsaIntegerConstant(1, I32),
+                    ScopedNoAliasGroups: [group])
+            ],
+            parameters: BuildPointerParameters(pointer));
+
+        var diagnostics = Validate(function, BuildRunPointerAbi(pointer));
+
+        Assert.Empty(diagnostics);
+    }
+
+    [Fact]
+    public void ScopedNoAliasProofCarrierRootMismatchFailsBeforeLlvmEmission()
+    {
+        var pointer = StarkTypeSymbols.RawPointer(I32, isMutable: true);
+        var group = BuildAliasProofGroup(
+            AliasProofCarrierKind.RuntimeDisjointCondition,
+            "runtime-disjoint-0",
+            ["param:left", "param:right"],
+            proofRoots: ["param:left", "param:other"]);
+        var function = BuildVoidFunction(
+            [
+                new SsaStoreIndirectInstruction(
+                    new SsaValueReference("arg_left", pointer),
+                    I32,
+                    new SsaIntegerConstant(1, I32),
+                    ScopedNoAliasGroups: [group])
+            ],
+            parameters: BuildPointerParameters(pointer));
+
+        var diagnostics = Validate(function, BuildRunPointerAbi(pointer));
+
+        AssertDiagnostic(diagnostics, "STK5002", "roots do not match", "runtime-disjoint-0");
+        AssertDiagnostic(diagnostics, "STK5002", "unknown parameter memory-root key 'param:other'");
+    }
+
+    [Fact]
+    public void ScopedNoAliasProofCarrierDuplicateRootsFailBeforeLlvmEmission()
+    {
+        var pointer = StarkTypeSymbols.RawPointer(I32, isMutable: true);
+        var group = BuildAliasProofGroup(
+            AliasProofCarrierKind.RuntimeDisjointCondition,
+            "runtime-disjoint-0",
+            ["param:left", "param:left"]);
+        var function = BuildVoidFunction(
+            [
+                new SsaStoreIndirectInstruction(
+                    new SsaValueReference("arg_left", pointer),
+                    I32,
+                    new SsaIntegerConstant(1, I32),
+                    ScopedNoAliasGroups: [group])
+            ],
+            parameters: BuildPointerParameters(pointer));
+
+        var diagnostics = Validate(function, BuildRunPointerAbi(pointer));
+
+        AssertDiagnostic(diagnostics, "STK5002", "contains blank or duplicate memory roots");
+    }
+
+    [Fact]
+    public void ScopedNoAliasProofCarrierIdMismatchFailsBeforeLlvmEmission()
+    {
+        var pointer = StarkTypeSymbols.RawPointer(I32, isMutable: true);
+        var group = new ScopedNoAliasGroup(
+            "runtime-disjoint-0",
+            ["param:left", "param:right"],
+            new AliasProofCarrier(
+                AliasProofCarrierKind.RuntimeDisjointCondition,
+                "wrong-proof",
+                ["param:left", "param:right"]));
+        var function = BuildVoidFunction(
+            [
+                new SsaStoreIndirectInstruction(
+                    new SsaValueReference("arg_left", pointer),
+                    I32,
+                    new SsaIntegerConstant(1, I32),
+                    ScopedNoAliasGroups: [group])
+            ],
+            parameters: BuildPointerParameters(pointer));
+
+        var diagnostics = Validate(function, BuildRunPointerAbi(pointer));
+
+        AssertDiagnostic(diagnostics, "STK5002", "alias proof carrier 'wrong-proof'", "does not match scoped noalias group 'runtime-disjoint-0'");
+    }
+
+    [Fact]
+    public void ScopedNoAliasProofCarrierUnknownParameterRootFailsBeforeLlvmEmission()
+    {
+        var pointer = StarkTypeSymbols.RawPointer(I32, isMutable: true);
+        var group = BuildAliasProofGroup(
+            AliasProofCarrierKind.UnsafeAssumeDisjoint,
+            "unsafe-assume-disjoint-0",
+            ["param:left", "param:missing"]);
+        var function = BuildVoidFunction(
+            [
+                new SsaStoreIndirectInstruction(
+                    new SsaValueReference("arg_left", pointer),
+                    I32,
+                    new SsaIntegerConstant(1, I32),
+                    ScopedNoAliasGroups: [group])
+            ],
+            parameters: BuildPointerParameters(pointer));
+
+        var diagnostics = Validate(function, BuildRunPointerAbi(pointer));
+
+        AssertDiagnostic(diagnostics, "STK5002", "unknown parameter memory-root key 'param:missing'");
+    }
+
+    [Fact]
     public void StringConstantNonTextTypeFailsBeforeLlvmEmission()
     {
         var function = BuildVoidFunction([
@@ -1765,7 +1885,7 @@ public sealed class SsaIrValidationTests
     }
 
     [Fact]
-    public void SystemCollectionsDictionaryKeyUnsupportedKeyFailsBeforeLlvmEmission()
+    public void SystemCollectionsDictionaryKeyAsciiKeyPassesBuiltinValidation()
     {
         var typeModel = BuildTypeModelForModule(
             "System.Collections",
@@ -1781,7 +1901,30 @@ public sealed class SsaIrValidationTests
 
         var diagnostics = Validate(BuildVoidFunction([]), typeModel: typeModel);
 
-        AssertDiagnostic(diagnostics, "STK5002", "System.Collections DictionaryKey builtin", "does not support key type 'ascii'");
+        Assert.DoesNotContain(diagnostics, static diagnostic =>
+            diagnostic.Code == "STK5002"
+            && diagnostic.Message.Contains("System.Collections DictionaryKey builtin", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void SystemCollectionsDictionaryKeyUnsupportedKeyFailsBeforeLlvmEmission()
+    {
+        var sliceType = StarkTypeSymbols.Slice(StarkTypeSymbols.Integer(8));
+        var typeModel = BuildTypeModelForModule(
+            "System.Collections",
+            [
+                new TypedFunctionSignature(
+                    "__stark_mono_fn_System_Collections__System_Collections_DictionaryKey_Hash__i8_slice",
+                    StarkTypeSymbols.Integer(64, isUnsigned: true),
+                    [new TypedParameterSymbol("value", sliceType with { BorrowKind = StarkBorrowKind.Borrow })],
+                    SourceName: "System.Collections.DictionaryKey.Hash",
+                    TemplateName: "System.Collections.DictionaryKey.Hash",
+                    TypeArguments: [sliceType])
+            ]);
+
+        var diagnostics = Validate(BuildVoidFunction([]), typeModel: typeModel);
+
+        AssertDiagnostic(diagnostics, "STK5002", "System.Collections DictionaryKey builtin", "does not support key type 'i8[]'");
     }
 
     [Fact]
@@ -1917,6 +2060,41 @@ public sealed class SsaIrValidationTests
         }
 
         return new AbiModel("Demo", abiFunctions);
+    }
+
+    private static IReadOnlyList<TypedParameterSymbol> BuildPointerParameters(StarkTypeSymbol pointer)
+    {
+        return
+        [
+            new TypedParameterSymbol("left", pointer),
+            new TypedParameterSymbol("right", pointer)
+        ];
+    }
+
+    private static AbiModel BuildRunPointerAbi(StarkTypeSymbol pointer)
+    {
+        return BuildAbiModel(new AbiFunctionSignature(
+            "Run",
+            "Run",
+            StarkTypeSymbols.Void,
+            StarkTypeSymbols.Void,
+            [
+                new AbiParameterSymbol("left", "arg_left", pointer, pointer, AbiParameterKind.Direct),
+                new AbiParameterSymbol("right", "arg_right", pointer, pointer, AbiParameterKind.Direct)
+            ],
+            IsFfi: false));
+    }
+
+    private static ScopedNoAliasGroup BuildAliasProofGroup(
+        AliasProofCarrierKind kind,
+        string proofId,
+        IReadOnlyList<string> roots,
+        IReadOnlyList<string>? proofRoots = null)
+    {
+        return new ScopedNoAliasGroup(
+            proofId,
+            roots,
+            new AliasProofCarrier(kind, proofId, proofRoots ?? roots));
     }
 
     private static SsaFunction BuildVoidFunction(
