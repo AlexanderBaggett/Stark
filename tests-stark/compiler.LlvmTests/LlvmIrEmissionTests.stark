@@ -175,7 +175,58 @@ fn i32[min max] Run()
         && Contains(llvm, "align 4")
         && Contains(llvm, "noalias")
         && Contains(llvm, "readonly")
-        && Contains(llvm, "nocapture");
+        && Contains(llvm, "captures(none)");
+}
+
+// Ported from LlvmIrEmissionTests.ReadCapturingClosureIndirectCallEmitsReadProvenanceCapture.
+internal fn bool ReadCapturingClosureIndirectCallEmitsReadProvenanceCaptureImpl()
+{
+    // PORT-NOTE: the C# extracts the single closure invoke call line by regex.
+    // The port scopes the attribute checks to the exported Apply body, which
+    // contains the opaque closure invoke and not the synthetic lambda header.
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-read-capturing-closure-read-provenance",
+        raw"""
+module Demo
+
+struct Box
+{
+    i32[min max] Value;
+}
+
+export finite law i32[min max] Apply(closure<finite law i32[min max]()> op)
+{
+    stack i32[min max] r = op();
+    stack i32[min max] a = r + (r / 3);
+    stack i32[min max] b = a - (a / 5);
+    stack i32[min max] c = b + (b / 7);
+    stack i32[min max] d = c - (c / 11);
+    return d;
+}
+
+finite law i32[min max] Run()
+{
+    stack Box box = new Box()
+    {
+        Value = 42
+    };
+    stack closure<finite law i32[min max]()> op =
+        capture(read box) () => box.Value;
+
+    return Apply(op);
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    stack ascii applyBody = LlvmDefinitionBody(llvm, "Apply");
+    return Contains(applyBody, "call fastcc i32 %")
+        && Contains(applyBody, "ptr readonly captures(address, read_provenance)")
+        && DoesNotContain(applyBody, "captures(none)")
+        && Contains(applyBody, "memory(argmem: read)");
 }
 
 // Ported from LlvmIrEmissionTests.MutCapturingClosureWritesThroughCapturedAddress.
@@ -1131,8 +1182,9 @@ fn i32[min max] Use(fnptr<fn fnptr<fn i32[min max]()>()> producer)
 internal fn bool FunctionPointerCallsWithOutParametersUseCallerStorageImpl()
 {
     // PORT-NOTE: the C# `Assert.Matches(@"call fastcc i1 %arg_op\(ptr nonnull
-    // noalias writeonly captures(address, provenance) dereferenceable(4) align 4
-    // %arg_value\)")` is reduced to the equivalent concrete substring.
+    // noalias writeonly dereferenceable(4) writable initializes((0, 4))
+    // captures(address, provenance) align 4 %arg_value\)")` is reduced to the
+    // equivalent concrete substring.
     stack mut LlvmCompile c = CompileLlvm(
         "llvm-fnptr-out-caller-storage",
         raw"""
@@ -1170,7 +1222,42 @@ unsafe fn u32[0 max] Run()
     stack ascii applyBody = LlvmDefinitionBody(llvm, "Apply");
     return DoesNotContain(llvm, "; LLVM body emission fallback for Apply")
         && Contains(header, "ptr noundef nonnull %arg_op")
-        && Contains(applyBody, "call fastcc i1 %arg_op(ptr nonnull noalias writeonly captures(address, provenance) dereferenceable(4) align 4 %arg_value)");
+        && Contains(applyBody, "call fastcc i1 %arg_op(ptr nonnull noalias writeonly dereferenceable(4) writable initializes((0, 4)) captures(address, provenance) align 4 %arg_value)");
+}
+
+// Ported from LlvmIrEmissionTests.OutDestinationParametersEmitInitializesAndWritableButNotDeadOnReturn.
+internal fn bool OutDestinationParametersEmitInitializesAndWritableButNotDeadOnReturnImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-out-destination-initializes-writable",
+        raw"""
+module Demo
+
+fn bool Write(out u32[0 max] value)
+{
+    value = 7;
+    return true;
+}
+
+unsafe fn bool Apply(fnptr<fn bool(out u32[0 max])> op, out u32[0 max] value)
+{
+    return op(value);
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    stack ascii writeHeader = LlvmDefinitionHeader(llvm, "Write");
+    stack ascii applyBody = LlvmDefinitionBody(llvm, "Apply");
+    return Contains(writeHeader, "writeonly")
+        && Contains(writeHeader, "writable")
+        && Contains(writeHeader, "initializes((0, 4))")
+        && DoesNotContain(writeHeader, "dead_on_return")
+        && Contains(applyBody, "writeonly dereferenceable(4) writable initializes((0, 4))")
+        && DoesNotContain(applyBody, "dead_on_return");
 }
 
 // Ported from LlvmIrEmissionTests.FunctionPointerCallsWithInitParametersUseCallerStorage.
@@ -1511,7 +1598,7 @@ unsafe fn i32[min max] Run(i32[min max] seed)
 internal fn bool DirectCallsWithLargeByValueTemporaryConstructDirectlyIntoByvalCallSlotImpl()
 {
     // PORT-NOTE: the C# `Assert.Matches(@"call fastcc i64 @Read\(ptr nonnull
-    // byval(%Big) noalias readonly nocapture dereferenceable(32) align 8
+    // byval(%Big) noalias readonly captures(none) dereferenceable(32) align 8
     // %abi_callarg_value_\d+\)")` carries a numeric SSA suffix; the host helpers
     // cannot anchor a numeric capture, so it is reduced to the stable substring
     // prefix through the `%abi_callarg_value_` slot name.
@@ -1567,7 +1654,7 @@ unsafe fn i64[min max] Run()
         && Contains(runHeader, "memory(none)")
         && DoesNotContain(runHeader, "memory(readwrite")
         && Contains(llvm, "define fastcc noundef i64 @Read(ptr noundef nonnull byval(%Big)")
-        && Contains(runBody, "call fastcc i64 @Read(ptr nonnull byval(%Big) noalias readonly nocapture dereferenceable(32) align 8 %abi_callarg_value_")
+        && Contains(runBody, "call fastcc i64 @Read(ptr nonnull byval(%Big) noalias readonly captures(none) dereferenceable(32) align 8 %abi_callarg_value_")
         && DoesNotContain(runBody, "%slot_value")
         && DoesNotContain(runBody, "load %Big")
         && DoesNotContain(runBody, "store %Big");
@@ -1625,7 +1712,7 @@ unsafe fn i64[min max] Forward(Big value)
         && Contains(llvm, "define fastcc noundef i64 @Forward(ptr noundef nonnull byval(%Big)")
         && Contains(llvm, "memory(argmem: read)")
         && DoesNotContain(llvm, "memory(readwrite")
-        && Contains(llvm, "call fastcc i64 @Read(ptr nonnull byval(%Big) noalias readonly nocapture dereferenceable(32) align 8 %arg_value)")
+        && Contains(llvm, "call fastcc i64 @Read(ptr nonnull byval(%Big) noalias readonly captures(none) dereferenceable(32) align 8 %arg_value)")
         && DoesNotContain(llvm, "%abi_callarg_value")
         && DoesNotContain(llvm, "load %Big");
 }
@@ -1663,6 +1750,34 @@ unsafe fn u64[0 2 ** 63 - 1] Run()
         && Contains(llvm, "i32 1")
         && Contains(llvm, "store i64")
         && Contains(llvm, "memory(readwrite");
+}
+
+// Ported from LlvmIrEmissionTests.PositiveDynamicStorageAllocationElidesZeroAndOverflowBranches.
+internal fn bool PositiveDynamicStorageAllocationElidesZeroAndOverflowBranchesImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-dynamic-positive-alloc-direct",
+        raw"""
+module Demo
+
+unsafe fn u64[0 2 ** 63 - 1] Run()
+{
+    stack mut dynamic u32[0 2 ** 31 - 1] values = new(4);
+    return values.Capacity;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    // PORT-NOTE: the original scoped these absence checks to the Run body; the
+    // labels are generated only by the slow allocation branch, so whole-module
+    // absence preserves the regression intent.
+    return Contains(llvm, "@__stark_runtime_alloc")
+        && DoesNotContain(llvm, "dynamic_alloc_is_zero")
+        && DoesNotContain(llvm, "dynamic_alloc_overflow");
 }
 
 // Ported from LlvmIrEmissionTests.DynamicStorageDropEmitsElementDestructorLoopBeforeFree.
@@ -2048,8 +2163,11 @@ unsafe fn void Fill(init u64[0 2 ** 63 - 1][] dest)
     stack ascii llvm = Llvm(c);
     // PORT-NOTE: original scoped the header checks to the Fill header via
     // ExtractDefinitionHeader; matched against the whole module text here.
-    return Contains(llvm, "ptr noundef nonnull noalias nocapture dereferenceable(16) align 8 %arg_dest")
-        && DoesNotContain(llvm, "writeonly");
+    return Contains(llvm, "ptr noundef nonnull noalias captures(none) dereferenceable(16) align 8 %arg_dest")
+        && DoesNotContain(llvm, "writeonly")
+        && DoesNotContain(llvm, "writable")
+        && DoesNotContain(llvm, "initializes(")
+        && DoesNotContain(llvm, "dead_on_return");
 }
 
 // Ported from LlvmIrEmissionTests.InitSliceElementStoresDoNotReadDestinationElementBeforeWrite.
@@ -2368,7 +2486,7 @@ unsafe fn bool Pop(mut borrow dynamic Big values, out Big value)
     // PORT-NOTE: original matched the memcpy with a numbered element pointer via regex
     // over the Pop body; the helper matches the stable, de-numbered memcpy prefix
     // against the whole module text.
-    return Contains(llvm, "ptr noundef nonnull noalias writeonly nocapture dereferenceable(520) align 8 %arg_value")
+    return Contains(llvm, "ptr noundef nonnull noalias writeonly dereferenceable(520) writable initializes((0, 520)) captures(none) align 8 %arg_value")
         && Contains(llvm, "call void @llvm.memcpy.p0.p0.i64(ptr align 8 %arg_value, ptr align 8 %abi_dynamic_move_element_ptr_")
         && DoesNotContain(llvm, "%abi_dynamic_move_result_slot_")
         && DoesNotContain(llvm, "load %Big")
@@ -3792,7 +3910,7 @@ unsafe fn i32[min max] ReadMutable(i32[min max] input)
     // PORT-NOTE: the original sliced the `@ReadMutable` definition tail to prove
     // no `!invariant.load` appears there; the module-wide DoesNotContain on
     // `!invariant.load` already subsumes that per-function check here.
-    return Contains(llvm, "declare ptr @llvm.invariant.start.p0(i64 immarg, ptr nocapture)")
+    return Contains(llvm, "declare ptr @llvm.invariant.start.p0(i64 immarg, ptr captures(none))")
         && Contains(llvm, "call ptr @llvm.invariant.start.p0(i64 4, ptr %slot_value)")
         && DoesNotContain(llvm, "!invariant.load")
         && Contains(llvm, "call ptr @llvm.invariant.start.p0(i64 4, ptr %slot_escaped)")
@@ -3837,7 +3955,7 @@ fn i32[min max] Read(Box value)
     // PORT-NOTE: original asserted against `ExtractDefinitionBody("Read")`;
     // reduced to whole-module substring checks (the drop-temp call form is
     // unique to Read so the signal carries over).
-    return Contains(llvm, "call fastcc void @Box_Clear(ptr nonnull noalias writeonly nocapture dereferenceable(4) align 4 %slot__tmp1_drop)")
+    return Contains(llvm, "call fastcc void @Box_Clear(ptr nonnull noalias writeonly captures(none) dereferenceable(4) align 4 %slot__tmp1_drop)")
         && DoesNotContain(llvm, "llvm.invariant.start.p0(i64 4, ptr %slot__tmp1_drop)")
         && DoesNotContain(llvm, "!invariant.load");
 }
@@ -4304,6 +4422,8 @@ unsafe fn u64[0 2 ** 63 - 1] Run()
     // literal metadata fragments they require (`!alias.scope`, `!noalias`).
     return Contains(llvm, "!\"stark.noalias.Run.dynamic.left\"")
         && Contains(llvm, "!\"stark.noalias.Run.dynamic.right\"")
+        && Contains(llvm, "\"separate_storage\"")
+        && Contains(llvm, "call void @llvm.assume(i1 true) [\"separate_storage\"(ptr ")
         && Contains(llvm, "!alias.scope")
         && Contains(llvm, "!noalias");
 }
@@ -4330,7 +4450,8 @@ unsafe fn u8[0 100] Read(rawptr<u8[0 100]> left, rawptr<u8[0 100]> right)
     stack ascii llvm = Llvm(c);
     return DoesNotContain(llvm, "!alias.scope")
         && DoesNotContain(llvm, "!noalias")
-        && DoesNotContain(llvm, "!\"stark.noalias");
+        && DoesNotContain(llvm, "!\"stark.noalias")
+        && DoesNotContain(llvm, "\"separate_storage\"");
 }
 
 // Ported from LlvmIrEmissionTests.OverlappingConstViewsDoNotInferNoAliasFromConstness.
@@ -6457,12 +6578,77 @@ unsafe fn i32[min max] Read(borrow Box box)
         && Contains(llvm, "memory(argmem: read)");
 }
 
+// Ported from LlvmIrEmissionTests.ClosedWorldNoRecurseEmitsForKnownNonRecursiveBodiesOnly.
+internal fn bool ClosedWorldNoRecurseEmitsForKnownNonRecursiveBodiesOnlyImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-ir-emit-closed-world-norecurse",
+        raw"""
+module Demo
+
+unsafe ffi fn i32[min max] Native(i32[min max] value);
+
+unsafe fn i32[min max] Leaf(i32[min max] value)
+{
+    return value;
+}
+
+unsafe fn i32[min max] Caller(i32[min max] value)
+{
+    return Leaf(value);
+}
+
+unsafe fn i32[min max] SelfRecursive(i32[min max] value)
+{
+    return SelfRecursive(value);
+}
+
+unsafe fn i32[min max] MutualA(i32[min max] value)
+{
+    return MutualB(value);
+}
+
+unsafe fn i32[min max] MutualB(i32[min max] value)
+{
+    return MutualA(value);
+}
+
+unsafe fn i32[min max] Apply(
+    fnptr<unsafe fn i32[min max](i32[min max])> op,
+    i32[min max] value)
+{
+    return op(value);
+}
+
+unsafe fn i32[min max] CallsApply(i32[min max] value)
+{
+    return Apply(Leaf, value);
+}
+
+unsafe fn i32[min max] CallsFfi(i32[min max] value)
+{
+    return Native(value);
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(LlvmDefinitionHeader(llvm, "Leaf"), "norecurse")
+        && Contains(LlvmDefinitionHeader(llvm, "Caller"), "norecurse")
+        && DoesNotContain(LlvmDefinitionHeader(llvm, "SelfRecursive"), "norecurse")
+        && DoesNotContain(LlvmDefinitionHeader(llvm, "MutualA"), "norecurse")
+        && DoesNotContain(LlvmDefinitionHeader(llvm, "MutualB"), "norecurse")
+        && DoesNotContain(LlvmDefinitionHeader(llvm, "Apply"), "norecurse")
+        && DoesNotContain(LlvmDefinitionHeader(llvm, "CallsApply"), "norecurse")
+        && DoesNotContain(LlvmDefinitionHeader(llvm, "CallsFfi"), "norecurse");
+}
+
 // Ported from LlvmIrEmissionTests.BorrowParametersEmitCapturesAttributes.
 internal fn bool BorrowParametersEmitCapturesAttributesImpl()
 {
-    // PORT-NOTE: original scopes the header assertion to the `Echo` define line
-    // via ExtractDefinitionHeader over GetLlvmRaw; reduced to whole-module
-    // Contains on the raw `llvm` text.
     stack mut LlvmCompile c = CompileLlvm(
         "llvm-ir-emit-borrow-captures-attrs",
         raw"""
@@ -6473,7 +6659,17 @@ struct Box
     i32[min max] Value;
 }
 
+finite law i32[min max] Read(borrow Box value)
+{
+    return value.Value;
+}
+
 unsafe fn retborrow Box Echo(retborrow Box value)
+{
+    return value;
+}
+
+unsafe fn storeborrow Box Hold(storeborrow Box value)
 {
     return value;
 }
@@ -6484,8 +6680,19 @@ unsafe fn retborrow Box Echo(retborrow Box value)
     }
 
     stack ascii llvm = Llvm(c);
-    return Contains(llvm, "define fastcc noundef nonnull dereferenceable(4) align 4 ptr @Echo(ptr noundef")
-        && Contains(llvm, "captures(ret: address, read_provenance)");
+    stack ascii readHeader = LlvmDefinitionHeader(llvm, "Read");
+    stack ascii echoHeader = LlvmDefinitionHeader(llvm, "Echo");
+    stack ascii holdHeader = LlvmDefinitionHeader(llvm, "Hold");
+    return Contains(readHeader, "ptr noundef nonnull noalias readonly captures(none) dereferenceable(4) align 4 %arg_value")
+        && DoesNotContain(readHeader, "captures(address")
+        && DoesNotContain(readHeader, "captures(ret:")
+        && Contains(echoHeader, "define fastcc noundef nonnull dereferenceable(4) align 4 ptr @Echo(ptr noundef")
+        && Contains(echoHeader, "captures(ret: address, read_provenance)")
+        && DoesNotContain(echoHeader, "captures(none)")
+        && Contains(holdHeader, "define fastcc noundef nonnull dereferenceable(4) align 4 ptr @Hold(ptr noundef")
+        && Contains(holdHeader, "captures(address, read_provenance)")
+        && DoesNotContain(holdHeader, "captures(none)")
+        && DoesNotContain(holdHeader, "captures(ret:");
 }
 
 // Ported from LlvmIrEmissionTests.StoreBorrowParametersEmitEscapingCaptureAttributes.
@@ -6494,7 +6701,7 @@ internal fn bool StoreBorrowParametersEmitEscapingCaptureAttributesImpl()
     // PORT-NOTE: original scopes every assertion to the `Hold` header via
     // ExtractDefinitionHeader over GetLlvmRaw; reduced to whole-module
     // Contains/DoesNotContain on the raw `llvm` text. The whole-module
-    // DoesNotContain on `nocapture`/`captures(ret:` is broader than the original
+    // DoesNotContain on `captures(none)`/`captures(ret:` is broader than the original
     // header-scoped check but holds because no other declaration in this module
     // emits those tokens.
     stack mut LlvmCompile c = CompileLlvm(
@@ -6520,7 +6727,7 @@ unsafe fn storeborrow Box Hold(storeborrow Box value)
     stack ascii llvm = Llvm(c);
     return Contains(llvm, "define fastcc noundef nonnull dereferenceable(4) align 4 ptr @Hold(ptr noundef")
         && Contains(llvm, "captures(address, read_provenance)")
-        && DoesNotContain(llvm, "nocapture")
+        && DoesNotContain(llvm, "captures(none)")
         && DoesNotContain(llvm, "captures(ret:");
 }
 
@@ -6724,9 +6931,9 @@ unsafe ffi fn void RawForeign(rawptr<Box> ptr);
     }
 
     stack ascii llvm = Llvm(c);
-    return Contains(llvm, "define fastcc noundef i32 @ReadBorrow(ptr noundef nonnull noalias readonly nocapture dereferenceable(4) align 4 %arg_box)")
-        && Contains(llvm, "define fastcc noundef i32 @ReadView(ptr noundef nonnull noalias readonly nocapture dereferenceable(16) align 8 %arg_view, i32 noundef %arg_index)")
-        && Contains(llvm, "ptr noundef readonly nocapture %arg_ptr")
+    return Contains(llvm, "define fastcc noundef i32 @ReadBorrow(ptr noundef nonnull noalias readonly captures(none) dereferenceable(4) align 4 %arg_box)")
+        && Contains(llvm, "define fastcc noundef i32 @ReadView(ptr noundef nonnull noalias readonly captures(none) dereferenceable(16) align 8 %arg_view, i32 noundef %arg_index)")
+        && Contains(llvm, "ptr noundef readonly captures(none) %arg_ptr")
         && Contains(llvm, "declare void @RawForeign(ptr readonly)")
         && DoesNotContain(llvm, "declare void @RawForeign(ptr nonnull")
         && DoesNotContain(llvm, "declare void @RawForeign(ptr dereferenceable")
@@ -6926,6 +7133,49 @@ unsafe fn u8[0 10] CallBounded(u8[0 10] input)
         && Contains(llvm, "!{i8 0, i8 11}");
 }
 
+// Ported from LlvmIrEmissionTests.IntegerRangeFactsCoverGlobalsAndNarrowActualCallArguments.
+internal fn bool IntegerRangeFactsCoverGlobalsAndNarrowActualCallArgumentsImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "p6-int-range-globals-narrow-call-arg",
+        raw"""
+module Demo
+
+static mut u8[0 10] GlobalValue = 3;
+
+unsafe noinline fn u8[0 max] UseWide(u8[0 max] value)
+{
+    return value;
+}
+
+unsafe fn u8[0 max] CallWithNarrowActual(u8[0 10] value)
+{
+    return UseWide(value);
+}
+
+unsafe fn u8[0 10] ReadGlobal()
+{
+    return GlobalValue;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    stack ascii useWideHeader = LlvmDefinitionHeader(llvm, "UseWide");
+    stack ascii callWithNarrowActualBody = LlvmDefinitionBody(llvm, "CallWithNarrowActual");
+    stack ascii readGlobalBody = LlvmDefinitionBody(llvm, "ReadGlobal");
+    // PORT-NOTE: C# Assert.Matches over the global load line is reduced to
+    // stable substrings for the load, range metadata, and metadata node.
+    return DoesNotContain(useWideHeader, "range(i8 0, 11) %arg_value")
+        && Contains(callWithNarrowActualBody, "call fastcc i8 @UseWide(i8 range(i8 0, 11) %arg_value)")
+        && Contains(readGlobalBody, "load i8, ptr @GlobalValue")
+        && Contains(readGlobalBody, ", !range !")
+        && Contains(llvm, "!{i8 0, i8 11}");
+}
+
 // Ported from LlvmIrEmissionTests.BranchRefinedIntegerComparisonsEmitTargetedAssumes.
 internal fn bool BranchRefinedIntegerComparisonsEmitTargetedAssumesImpl()
 {
@@ -7114,9 +7364,64 @@ unsafe fn void TouchArg(borrow mut Box box)
     stack ascii llvm = Llvm(c);
     return Contains(llvm, "define fastcc i32 @ReadGlobal()")
         && Contains(llvm, "memory(read, argmem: none)")
-        && Contains(llvm, "define fastcc void @TouchArg(ptr nonnull noalias writeonly nocapture dereferenceable(4) align 4 %arg_box)")
+        && Contains(llvm, "define fastcc void @TouchArg(ptr nonnull noalias writeonly captures(none) dereferenceable(4) align 4 %arg_box)")
         && Contains(llvm, "memory(argmem: readwrite)")
         && DoesNotContain(llvm, "load %Box, ptr %arg_box");
+}
+
+// Ported from LlvmIrEmissionTests.FunctionMemoryEffectsUseStructuredMemoryAttributesInsteadOfLegacyForms.
+internal fn bool FunctionMemoryEffectsUseStructuredMemoryAttributesInsteadOfLegacyFormsImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "p6-memory-attrs-structured-not-legacy",
+        raw"""
+module Demo
+
+struct Box
+{
+    i32[min max] Value;
+}
+
+static mut i32[min max] Counter = 0;
+
+unsafe fn i32[min max] Add(i32[min max] left, i32[min max] right)
+{
+    return left + right;
+}
+
+unsafe fn i32[min max] ReadGlobal()
+{
+    return Counter;
+}
+
+unsafe fn void TouchArg(borrow mut Box box)
+{
+    box.Value = 1;
+    return;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    stack ascii addHeader = LlvmDefinitionHeader(llvm, "Add");
+    stack ascii readGlobalHeader = LlvmDefinitionHeader(llvm, "ReadGlobal");
+    stack ascii touchArgHeader = LlvmDefinitionHeader(llvm, "TouchArg");
+
+    return Contains(addHeader, "memory(none)")
+        && DoesNotContain(addHeader, "readnone")
+        && DoesNotContain(addHeader, "readonly")
+        && DoesNotContain(addHeader, "argmemonly")
+        && Contains(readGlobalHeader, "memory(read, argmem: none)")
+        && DoesNotContain(readGlobalHeader, "readnone")
+        && DoesNotContain(readGlobalHeader, "readonly")
+        && DoesNotContain(readGlobalHeader, "argmemonly")
+        && Contains(touchArgHeader, "memory(argmem: readwrite)")
+        && DoesNotContain(touchArgHeader, "readnone")
+        && DoesNotContain(touchArgHeader, "readonly")
+        && DoesNotContain(touchArgHeader, "argmemonly");
 }
 
 // Ported from LlvmIrEmissionTests.MemoryAttributesKeepArgumentEffectsWhenSyntheticTemporariesAreNeeded.
@@ -8800,7 +9105,7 @@ unsafe fn void Touch(borrow Pair pair)
     }
 
     stack ascii llvm = Llvm(c);
-    return Contains(llvm, "define fastcc void @Touch(ptr nonnull noalias readonly nocapture dereferenceable(8) align 4 %arg_pair)");
+    return Contains(llvm, "define fastcc void @Touch(ptr nonnull noalias readonly captures(none) dereferenceable(8) align 4 %arg_pair)");
 }
 
 // Ported from LlvmIrEmissionTests.PackedCStructLayoutEmitsPackedPhysicalTypeAndUnalignedFieldAccess.
@@ -10022,7 +10327,7 @@ unsafe fn Big Forward(Big value)
     stack ascii llvm = Llvm(c);
     // PORT-NOTE: the memcpy Assert.Matches regex (optional `align N`) is reduced
     // to the canonical aligned-pointer form the renderer emits.
-    return Contains(llvm, "define fastcc void @Forward(ptr noalias sret(%Big) nonnull dereferenceable(32) align 8 %ret, ptr nonnull byval(%Big) noalias readonly nocapture dereferenceable(32) align 8 %arg_value)")
+    return Contains(llvm, "define fastcc void @Forward(ptr noalias sret(%Big) nonnull dereferenceable(32) align 8 %ret, ptr nonnull byval(%Big) noalias readonly captures(none) dereferenceable(32) align 8 %arg_value)")
         && Contains(llvm, "call void @llvm.memcpy.inline.p0.p0.i64(ptr align 8 %ret, ptr align 8 %arg_value, i64 32, i1 false)")
         && DoesNotContain(llvm, "load %Big, ptr %arg_value")
         && DoesNotContain(llvm, "%abi_arg_value_value")
@@ -10088,9 +10393,9 @@ unsafe fn Big Forward(Big value)
     stack ascii llvm = Llvm(c);
     // PORT-NOTE: the original DoesNotContain checks were scoped to the Forward
     // body via a regex; they are matched against the whole module text here.
-    return Contains(llvm, "define fastcc void @Forward(ptr noalias sret(%Big) nonnull dereferenceable(32) align 8 %ret, ptr nonnull byval(%Big) noalias readonly nocapture dereferenceable(32) align 8 %arg_value)")
+    return Contains(llvm, "define fastcc void @Forward(ptr noalias sret(%Big) nonnull dereferenceable(32) align 8 %ret, ptr nonnull byval(%Big) noalias readonly captures(none) dereferenceable(32) align 8 %arg_value)")
         && Contains(llvm, "call fastcc void @Step(ptr noalias sret(%Big) nonnull dereferenceable(32) align 8 %ret")
-        && Contains(llvm, "ptr nonnull byval(%Big) noalias readonly nocapture dereferenceable(32) align 8 %arg_value")
+        && Contains(llvm, "ptr nonnull byval(%Big) noalias readonly captures(none) dereferenceable(32) align 8 %arg_value")
         && DoesNotContain(llvm, "%abi_callret_slot_")
         && DoesNotContain(llvm, "load %Big, ptr %abi_callret_slot_");
 }
@@ -10143,9 +10448,9 @@ unsafe fn i64[min max] Run()
 
     stack ascii llvm = Llvm(c);
     return Contains(llvm, "define fastcc i64 @Read(")
-        && Contains(llvm, "ptr nonnull byval(%Big) noalias readonly nocapture dereferenceable(24) align 8 %arg_value")
+        && Contains(llvm, "ptr nonnull byval(%Big) noalias readonly captures(none) dereferenceable(24) align 8 %arg_value")
         && Contains(llvm, "memory(argmem: read)")
-        && Contains(llvm, "call fastcc i64 @Read(ptr nonnull byval(%Big) noalias readonly nocapture dereferenceable(24) align 8")
+        && Contains(llvm, "call fastcc i64 @Read(ptr nonnull byval(%Big) noalias readonly captures(none) dereferenceable(24) align 8")
         && DoesNotContain(llvm, "define fastcc i64 @Read(%Big");
 }
 
@@ -10270,9 +10575,9 @@ unsafe fn i64[min max] Run()
     }
 
     stack ascii llvm = Llvm(c);
-    return Contains(llvm, "define fastcc void @Step(ptr noalias sret(%Big) nonnull dereferenceable(32) align 8 %ret, ptr nonnull byval(%Big) noalias readonly nocapture dereferenceable(32) align 8 %arg_value, i64 %arg_delta)")
+    return Contains(llvm, "define fastcc void @Step(ptr noalias sret(%Big) nonnull dereferenceable(32) align 8 %ret, ptr nonnull byval(%Big) noalias readonly captures(none) dereferenceable(32) align 8 %arg_value, i64 %arg_delta)")
         && Contains(llvm, "call fastcc void @Step(ptr noalias sret(%Big)")
-        && Contains(llvm, "ptr nonnull byval(%Big) noalias readonly nocapture dereferenceable(32) align 8")
+        && Contains(llvm, "ptr nonnull byval(%Big) noalias readonly captures(none) dereferenceable(32) align 8")
         && DoesNotContain(llvm, "define fastcc %Big @Step(");
 }
 
@@ -10405,8 +10710,8 @@ unsafe fn i32[min max] Run(borrow Box box)
     }
 
     stack ascii llvm = Llvm(c);
-    return Contains(llvm, "define fastcc i32 @Box_Read(ptr nonnull noalias readonly nocapture dereferenceable(4) align 4 %arg_box)")
-        && Contains(llvm, "define fastcc i32 @Run(ptr nonnull noalias readonly nocapture dereferenceable(4) align 4 %arg_box)")
+    return Contains(llvm, "define fastcc i32 @Box_Read(ptr nonnull noalias readonly captures(none) dereferenceable(4) align 4 %arg_box)")
+        && Contains(llvm, "define fastcc i32 @Run(ptr nonnull noalias readonly captures(none) dereferenceable(4) align 4 %arg_box)")
         && Contains(llvm, "call fastcc i32 @Box_Read(ptr nonnull")
         && DoesNotContain(llvm, "tail call fastcc i32 @Box_Read");
 }
@@ -10437,7 +10742,7 @@ unsafe fn i32[min max] Touch(rawmutptr<Buffer> buffer, i64[min max] index, i8[mi
     }
 
     stack ascii llvm = Llvm(c);
-    return Contains(llvm, "define fastcc range(i32 -128, 128) i32 @Touch(ptr nocapture %arg_buffer, i64 %arg_index, i8 %arg_value)")
+    return Contains(llvm, "define fastcc range(i32 -128, 128) i32 @Touch(ptr captures(none) %arg_buffer, i64 %arg_index, i8 %arg_value)")
         && Contains(llvm, "getelementptr inbounds nuw %Buffer, ptr %arg_buffer, i32 0, i32 0")
         && Contains(llvm, "getelementptr [16 x i8], ptr")
         && DoesNotContain(llvm, "getelementptr inbounds [16 x i8], ptr")
@@ -10465,7 +10770,7 @@ unsafe fn i32[min max] Touch(rawmutptr<i8[min max]> data, i64[min max] index, i8
     }
 
     stack ascii llvm = Llvm(c);
-    return Contains(llvm, "define fastcc range(i32 -128, 128) i32 @Touch(ptr nocapture %arg_data, i64 %arg_index, i8 %arg_value)")
+    return Contains(llvm, "define fastcc range(i32 -128, 128) i32 @Touch(ptr captures(none) %arg_data, i64 %arg_index, i8 %arg_value)")
         && Contains(llvm, "getelementptr i8, ptr %arg_data, i64 %arg_index")
         && DoesNotContain(llvm, "getelementptr inbounds i8, ptr %arg_data, i64 %arg_index")
         && DoesNotContain(llvm, "alloca ptr");
@@ -10501,8 +10806,8 @@ struct Buffer
     }
 
     stack ascii llvm = Llvm(c);
-    return Contains(llvm, "define fastcc void @Buffer_Put(ptr nonnull noalias nocapture dereferenceable(16) %arg_self, i64 %arg_index, i8 %arg_value)")
-        && Contains(llvm, "define fastcc range(i32 -128, 128) i32 @Buffer_Read(ptr nonnull noalias readonly nocapture dereferenceable(16) %arg_self, i64 %arg_index)")
+    return Contains(llvm, "define fastcc void @Buffer_Put(ptr nonnull noalias captures(none) dereferenceable(16) %arg_self, i64 %arg_index, i8 %arg_value)")
+        && Contains(llvm, "define fastcc range(i32 -128, 128) i32 @Buffer_Read(ptr nonnull noalias readonly captures(none) dereferenceable(16) %arg_self, i64 %arg_index)")
         && Contains(llvm, "getelementptr inbounds nuw %Buffer, ptr %arg_self, i32 0, i32 0")
         && Contains(llvm, "getelementptr [16 x i8], ptr %v")
         && DoesNotContain(llvm, "alloca %Buffer");
@@ -10533,7 +10838,7 @@ unsafe fn void Touch(borrow mut Box box)
     }
 
     stack ascii llvm = Llvm(c);
-    return Contains(llvm, "define fastcc void @Touch(ptr nonnull noalias writeonly nocapture dereferenceable(4) align 4 %arg_box)")
+    return Contains(llvm, "define fastcc void @Touch(ptr nonnull noalias writeonly captures(none) dereferenceable(4) align 4 %arg_box)")
         && DoesNotContain(llvm, "define fastcc void @Touch(ptr nonnull noalias readonly");
 }
 
@@ -10661,8 +10966,8 @@ unsafe fn i32[min max] Run(i32[min max] index)
     // PORT-NOTE: the GEP Assert.Matches regex is reduced to its literal form.
     return Contains(llvm, "define fastcc i32 @Run(i32 %arg_index)")
         && Contains(llvm, "alloca [3 x i32]")
-        && Contains(llvm, "declare void @llvm.lifetime.start.p0(i64 immarg, ptr nocapture)")
-        && Contains(llvm, "declare void @llvm.lifetime.end.p0(i64 immarg, ptr nocapture)")
+        && Contains(llvm, "declare void @llvm.lifetime.start.p0(i64 immarg, ptr captures(none))")
+        && Contains(llvm, "declare void @llvm.lifetime.end.p0(i64 immarg, ptr captures(none))")
         && Contains(llvm, "call void @llvm.lifetime.start.p0(i64 12, ptr %slot_values)")
         && Contains(llvm, "call void @llvm.lifetime.end.p0(i64 12, ptr %slot_values)")
         && Contains(llvm, "getelementptr [3 x i32], ptr %slot_values, i32 0, i32 %arg_index")
@@ -12495,8 +12800,8 @@ unsafe fn void Forward(borrow Box box)
     // PORT-NOTE: the `Assert.Matches(@"call fastcc void @Touch\(ptr [^\n]*%arg_box\)")`
     // is reduced to a substring on the de-parameterized call prefix; the alias
     // slot being promoted away is checked by the two `DoesNotContain` guards.
-    return Contains(llvm, "define fastcc void @Touch(ptr nonnull noalias readonly nocapture dereferenceable(4) align 4 %arg_box)")
-        && Contains(llvm, "define fastcc void @Forward(ptr nonnull noalias readonly nocapture dereferenceable(4) align 4 %arg_box)")
+    return Contains(llvm, "define fastcc void @Touch(ptr nonnull noalias readonly captures(none) dereferenceable(4) align 4 %arg_box)")
+        && Contains(llvm, "define fastcc void @Forward(ptr nonnull noalias readonly captures(none) dereferenceable(4) align 4 %arg_box)")
         && Contains(llvm, "call fastcc void @Touch(ptr")
         && DoesNotContain(llvm, "abi_borrow_ptr_load")
         && DoesNotContain(llvm, "callarg_box");
@@ -12536,8 +12841,8 @@ struct Counter
     stack ascii llvm = Llvm(c);
     // PORT-NOTE: the `Assert.Matches(@"call fastcc void @Counter_Reset\(ptr [^\n]*%arg_self\)")`
     // is reduced to a substring on the de-parameterized call prefix.
-    return Contains(llvm, "define fastcc void @Counter_Reset(ptr nonnull noalias writeonly nocapture dereferenceable(4) align 4 %arg_self)")
-        && Contains(llvm, "define fastcc void @Counter_ResetThenAdd(ptr nonnull noalias writeonly nocapture dereferenceable(4) align 4 %arg_self, i32 %arg_value)")
+    return Contains(llvm, "define fastcc void @Counter_Reset(ptr nonnull noalias writeonly captures(none) dereferenceable(4) align 4 %arg_self)")
+        && Contains(llvm, "define fastcc void @Counter_ResetThenAdd(ptr nonnull noalias writeonly captures(none) dereferenceable(4) align 4 %arg_self, i32 %arg_value)")
         && Contains(llvm, "call fastcc void @Counter_Reset(ptr")
         && DoesNotContain(llvm, "callarg_self");
 }
@@ -12591,7 +12896,7 @@ struct Outer
     }
 
     stack ascii llvm = Llvm(c);
-    return Contains(llvm, "define fastcc void @Inner_Set(ptr nonnull noalias writeonly nocapture dereferenceable(4) align 4 %arg_self")
+    return Contains(llvm, "define fastcc void @Inner_Set(ptr nonnull noalias writeonly captures(none) dereferenceable(4) align 4 %arg_self")
         && Contains(llvm, "call fastcc void @Inner_Set(ptr nonnull")
         && DoesNotContain(llvm, "call fastcc void @Inner_Set(ptr %slot_")
         && DoesNotContain(llvm, "alloca %Inner");
@@ -12656,7 +12961,7 @@ unsafe fn i32[min max] Run()
 
     stack ascii llvm = Llvm(c);
     // PORT-NOTE: the original sliced the Counter_Hold / Holder_Set / Run headers
-    // (`captures(address...)` on Hold, no `nocapture`/`noalias`/`writeonly` on the
+    // (`captures(address...)` on Hold, no `captures(none)`/`noalias`/`writeonly` on the
     // borrow methods, no `memory(none)` on Run) and matched the TBAA descriptor
     // node graph (stark.ptr/stark.bool field offsets in the stark.Holder node)
     // with regex. Reduced to whole-module substring checks on the type layout,
@@ -12755,8 +13060,8 @@ unsafe fn void Run()
     }
 
     stack ascii llvm = Llvm(c);
-    return Contains(llvm, "nonnull noalias writeonly nocapture dereferenceable(4) align 4")
-        && DoesNotContain(llvm, "nonnull noalias readonly nocapture dereferenceable(4) align 4");
+    return Contains(llvm, "nonnull noalias writeonly captures(none) dereferenceable(4) align 4")
+        && DoesNotContain(llvm, "nonnull noalias readonly captures(none) dereferenceable(4) align 4");
 }
 
 // Ported from LlvmIrEmissionTests.DoctrineLawCallsEmitDirectReadonlyNoCaptureSignatures.
@@ -12804,8 +13109,8 @@ unsafe finite law i32[min max] Run(borrow mut Box box)
     }
 
     stack ascii llvm = Llvm(c);
-    return Contains(llvm, "define fastcc i32 @Inspect_Read(ptr nonnull noalias readonly nocapture dereferenceable(4) align 4 %arg_box)")
-        && Contains(llvm, "define fastcc i32 @Run(ptr nonnull noalias readonly nocapture dereferenceable(4) align 4 %arg_box)")
+    return Contains(llvm, "define fastcc i32 @Inspect_Read(ptr nonnull noalias readonly captures(none) dereferenceable(4) align 4 %arg_box)")
+        && Contains(llvm, "define fastcc i32 @Run(ptr nonnull noalias readonly captures(none) dereferenceable(4) align 4 %arg_box)")
         && Contains(llvm, "call fastcc i32 @Inspect_Read(ptr nonnull");
 }
 
@@ -13105,7 +13410,8 @@ unsafe fn i32[min max] Check(rawmutptr<i32[min max]>[8] ptr)
     return Contains(llvm, "stark.noalias.Check.runtime-disjoint-0.param.ptr[0..3]")
         && Contains(llvm, "stark.noalias.Check.runtime-disjoint-0.param.ptr[4..7]")
         && Contains(llvm, "!alias.scope")
-        && Contains(llvm, "!noalias");
+        && Contains(llvm, "!noalias")
+        && DoesNotContain(llvm, "\"separate_storage\"");
 }
 
 // Ported from LlvmIrEmissionTests.RuntimeDisjointSameBaseSubregionScopedNoAliasDoesNotEscapeTrueBranch.
@@ -13179,7 +13485,8 @@ unsafe fn i32[min max] Check(
         && Contains(llvm, "stark.noalias.Check.unsafe-assume-disjoint-0.param.right")
         && Contains(llvm, "!alias.scope")
         && Contains(llvm, "!noalias")
-        && DoesNotContain(llvm, "icmp ule ptr");
+        && DoesNotContain(llvm, "icmp ule ptr")
+        && DoesNotContain(llvm, "\"separate_storage\"");
 }
 
 // Ported from LlvmIrEmissionTests.RuntimeScopedNoAliasFactsAttachToEligibleDirectCalls.
@@ -13331,8 +13638,8 @@ unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right
     stack ascii llvm = Llvm(c);
     // PORT-NOTE: the original asserted against the sliced `@Touch` header; reduced
     // to whole-module substring checks on the two noalias parameter fragments.
-    return Contains(llvm, "ptr noundef noalias nocapture %arg_left")
-        && Contains(llvm, "ptr noundef noalias nocapture %arg_right");
+    return Contains(llvm, "ptr noundef noalias captures(none) %arg_left")
+        && Contains(llvm, "ptr noundef noalias captures(none) %arg_right");
 }
 
 // Ported from LlvmIrEmissionTests.DefaultNonOverlapRawPointerParametersEmitNoAliasAttributes.
@@ -13357,8 +13664,8 @@ unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right
     stack ascii llvm = Llvm(c);
     // PORT-NOTE: the original asserted against the sliced `@Touch` header; reduced
     // to whole-module substring checks on the two noalias parameter fragments.
-    return Contains(llvm, "ptr noundef noalias nocapture %arg_left")
-        && Contains(llvm, "ptr noundef noalias nocapture %arg_right");
+    return Contains(llvm, "ptr noundef noalias captures(none) %arg_left")
+        && Contains(llvm, "ptr noundef noalias captures(none) %arg_right");
 }
 
 // Ported from LlvmIrEmissionTests.OverlapRawPointerParametersDoNotEmitNoAliasAttributes.
@@ -13384,11 +13691,11 @@ unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right
     stack ascii llvm = Llvm(c);
     // PORT-NOTE: the original asserted against the sliced `@Touch` header,
     // including a header-scoped `DoesNotContain("noalias")`. The helper cannot
-    // scope to the header, so the positive nocapture parameter fragments are
+    // scope to the header, so the positive captures(none) parameter fragments are
     // checked via substring; the header-scoped noalias-absence guard is dropped (a
     // whole-module `noalias` absence would over-match unrelated emission).
-    return Contains(llvm, "ptr noundef nocapture %arg_left")
-        && Contains(llvm, "ptr noundef nocapture %arg_right");
+    return Contains(llvm, "ptr noundef captures(none) %arg_left")
+        && Contains(llvm, "ptr noundef captures(none) %arg_right");
 }
 
 // Ported from LlvmIrEmissionTests.ConstantBoundedRawPointerParametersEmitDereferenceabilityAttributes.
@@ -13412,7 +13719,7 @@ unsafe fn void Touch(rawptr<i32[min max]>[4] input)
     stack ascii llvm = Llvm(c);
     // PORT-NOTE: the original asserted against the sliced `@Touch` header; reduced
     // to a whole-module substring check on the dereferenceable parameter fragment.
-    return Contains(llvm, "ptr noundef nonnull dereferenceable(16) align 4 readonly nocapture %arg_input");
+    return Contains(llvm, "ptr noundef nonnull dereferenceable(16) align 4 readonly captures(none) %arg_input");
 }
 
 // Ported from LlvmIrEmissionTests.PositiveVariableBoundedRawPointerParametersEmitMinimumDereferenceabilityAttributes.
@@ -13445,8 +13752,8 @@ unsafe fn void TouchMaybeEmpty(rawptr<i32[min max]>[count] input, u8[0 10] count
     // checked via substring (they differ enough to distinguish the two functions);
     // the per-header negative guards are dropped, while the module-wide
     // `DoesNotContain("declare void @llvm.assume(i1 noundef)")` guard is preserved.
-    return Contains(llvm, "ptr noundef nonnull dereferenceable(4) align 4 readonly nocapture %arg_input")
-        && Contains(llvm, "ptr noundef readonly nocapture %arg_input")
+    return Contains(llvm, "ptr noundef nonnull dereferenceable(4) align 4 readonly captures(none) %arg_input")
+        && Contains(llvm, "ptr noundef readonly captures(none) %arg_input")
         && DoesNotContain(llvm, "declare void @llvm.assume(i1 noundef)");
 }
 
@@ -13473,7 +13780,7 @@ unsafe fn void TouchEmpty(rawptr<i32[min max]>[0] input)
     // no `nonnull` / `dereferenceable(`. With a single function in the module the
     // header is effectively the whole module, so the positive parameter fragment is
     // checked via substring and the two negative guards are applied module-wide.
-    return Contains(llvm, "ptr noundef readonly nocapture %arg_input")
+    return Contains(llvm, "ptr noundef readonly captures(none) %arg_input")
         && DoesNotContain(llvm, "nonnull")
         && DoesNotContain(llvm, "dereferenceable(");
 }
@@ -13516,7 +13823,7 @@ unsafe fn void Run(rawptr<i32[min max]>[count] input, u8[1 10] count)
     // whole-module substring checks on the two header parameter fragments and the
     // indirect call-site attribute fragment.
     return Contains(llvm, "ptr noundef nonnull %arg_op")
-        && Contains(llvm, "ptr noundef nonnull dereferenceable(4) align 4 readonly nocapture %arg_input")
+        && Contains(llvm, "ptr noundef nonnull dereferenceable(4) align 4 readonly captures(none) %arg_input")
         && Contains(llvm, "call fastcc void %arg_op(ptr nonnull dereferenceable(4) align 4 readonly captures(address, read_provenance) %arg_input, i8 range(i8 1, 11) %arg_count)");
 }
 
@@ -13558,8 +13865,8 @@ unsafe fn i32[min max] Indirect(
     // whole-module substring checks on the declared param fragment and the two
     // strengthened call-site fragments; the header-scoped `DoesNotContain("nonnull")`
     // guard is dropped (the strengthened call sites legitimately carry `nonnull`).
-    return Contains(llvm, "ptr noundef readonly nocapture %arg_input")
-        && Contains(llvm, "call fastcc i32 @Touch(ptr nonnull dereferenceable(16) align 4 readonly nocapture %arg_input, i8 range(i8 0, 11) %arg_count)")
+    return Contains(llvm, "ptr noundef readonly captures(none) %arg_input")
+        && Contains(llvm, "call fastcc i32 @Touch(ptr nonnull dereferenceable(16) align 4 readonly captures(none) %arg_input, i8 range(i8 0, 11) %arg_count)")
         && Contains(llvm, "call fastcc i32 %arg_op(ptr nonnull dereferenceable(16) align 4 readonly captures(address, read_provenance) %arg_input, i8 range(i8 0, 11) %arg_count)");
 }
 
@@ -13703,7 +14010,7 @@ unsafe fn void Inspect(const rawmutptr<i32[min max]> ptr)
     stack ascii llvm = Llvm(c);
     // PORT-NOTE: the original asserted against the sliced `@Inspect` header; reduced
     // to a whole-module substring check on the readonly parameter fragment.
-    return Contains(llvm, "ptr noundef readonly nocapture %arg_ptr");
+    return Contains(llvm, "ptr noundef readonly captures(none) %arg_ptr");
 }
 
 // Ported slice of tests/compiler.Tests/LlvmIrEmissionTests.cs, running against
@@ -14213,7 +14520,7 @@ unsafe fn void Copy(
     // PORT-NOTE: the four Assert.Matches regexes (zext count, byte mul, the
     // aligned memcpy call, the scoped-noalias memcpy call) are reduced to
     // literal Contains probes for their stable fragments.
-    return Contains(llvm, "declare void @llvm.memcpy.p0.p0.i64(ptr nocapture writeonly, ptr nocapture readonly, i64, i1 immarg)")
+    return Contains(llvm, "declare void @llvm.memcpy.p0.p0.i64(ptr captures(none) writeonly, ptr captures(none) readonly, i64, i1 immarg)")
         && Contains(llvm, " = zext i8 %arg_count to i64")
         && Contains(llvm, ", 4")
         && Contains(llvm, "call void @llvm.memcpy.p0.p0.i64(ptr align 4 %arg_output, ptr align 4 %arg_input, i64 ")
@@ -14256,7 +14563,7 @@ unsafe fn void Copy(
     stack ascii llvm = Llvm(c);
     // PORT-NOTE: the aligned-memcpy Assert.Matches regex is reduced to a literal
     // Contains on its stable prefix.
-    return Contains(llvm, "declare void @llvm.memcpy.p0.p0.i64(ptr nocapture writeonly, ptr nocapture readonly, i64, i1 immarg)")
+    return Contains(llvm, "declare void @llvm.memcpy.p0.p0.i64(ptr captures(none) writeonly, ptr captures(none) readonly, i64, i1 immarg)")
         && Contains(llvm, "call void @llvm.memcpy.p0.p0.i64(ptr align 4 %arg_output, ptr align 4 %arg_input, i64 ")
         && DoesNotContain(llvm, "!\"llvm.loop.parallel_accesses\"");
 }
@@ -14375,7 +14682,7 @@ unsafe fn void CopyOverlapSafe(
     stack ascii llvm = Llvm(c);
     // PORT-NOTE: the aligned-memmove Assert.Matches regex is reduced to a
     // literal Contains on the fully-fixed call (length 16 here).
-    return Contains(llvm, "declare void @llvm.memmove.p0.p0.i64(ptr nocapture writeonly, ptr nocapture readonly, i64, i1 immarg)")
+    return Contains(llvm, "declare void @llvm.memmove.p0.p0.i64(ptr captures(none) writeonly, ptr captures(none) readonly, i64, i1 immarg)")
         && Contains(llvm, "call void @llvm.memmove.p0.p0.i64(ptr align 4 %arg_output, ptr align 4 %arg_input, i64 16, i1 false)")
         && DoesNotContain(llvm, "@llvm.memcpy.p0.p0.i64")
         && DoesNotContain(llvm, "%slot_temporary");
@@ -14420,7 +14727,7 @@ unsafe fn void CopyOverlapSafe(
     stack ascii llvm = Llvm(c);
     // PORT-NOTE: the aligned-memmove Assert.Matches regex is reduced to a
     // literal Contains on the fully-fixed call (length 16 here).
-    return Contains(llvm, "declare void @llvm.memmove.p0.p0.i64(ptr nocapture writeonly, ptr nocapture readonly, i64, i1 immarg)")
+    return Contains(llvm, "declare void @llvm.memmove.p0.p0.i64(ptr captures(none) writeonly, ptr captures(none) readonly, i64, i1 immarg)")
         && Contains(llvm, "call void @llvm.memmove.p0.p0.i64(ptr align 4 %arg_output, ptr align 4 %arg_input, i64 16, i1 false)")
         && Contains(llvm, "store i32 17")
         && DoesNotContain(llvm, "@llvm.memcpy.p0.p0.i64");
@@ -14474,7 +14781,7 @@ unsafe fn void MoveOverlapSafe(
     stack ascii llvm = Llvm(c);
     // PORT-NOTE: the byte-mul and aligned-memmove Assert.Matches regexes are
     // reduced to literal Contains on their stable fragments.
-    return Contains(llvm, "declare void @llvm.memmove.p0.p0.i64(ptr nocapture writeonly, ptr nocapture readonly, i64, i1 immarg)")
+    return Contains(llvm, "declare void @llvm.memmove.p0.p0.i64(ptr captures(none) writeonly, ptr captures(none) readonly, i64, i1 immarg)")
         && Contains(llvm, ", 4")
         && Contains(llvm, "call void @llvm.memmove.p0.p0.i64(ptr align 4 %arg_output, ptr align 4 %arg_input, i64 ")
         && DoesNotContain(llvm, "icmp ult ptr")
@@ -14529,7 +14836,7 @@ unsafe fn void MoveOverlapSafe(
     stack ascii llvm = Llvm(c);
     // PORT-NOTE: the byte-mul and aligned-memmove Assert.Matches regexes are
     // reduced to literal Contains on their stable fragments.
-    return Contains(llvm, "declare void @llvm.memmove.p0.p0.i64(ptr nocapture writeonly, ptr nocapture readonly, i64, i1 immarg)")
+    return Contains(llvm, "declare void @llvm.memmove.p0.p0.i64(ptr captures(none) writeonly, ptr captures(none) readonly, i64, i1 immarg)")
         && Contains(llvm, " = mul i64 %arg_count, 4")
         && Contains(llvm, "call void @llvm.memmove.p0.p0.i64(ptr align 4 %abi_rawptr_loop_destination_data_")
         && DoesNotContain(llvm, "icmp ult ptr")
@@ -14609,7 +14916,7 @@ unsafe fn void Fill(
     stack ascii llvm = Llvm(c);
     // PORT-NOTE: the zext-count and memset Assert.Matches regexes are reduced to
     // literal Contains on their stable fragments.
-    return Contains(llvm, "declare void @llvm.memset.p0.i64(ptr nocapture writeonly, i8, i64, i1 immarg)")
+    return Contains(llvm, "declare void @llvm.memset.p0.i64(ptr captures(none) writeonly, i8, i64, i1 immarg)")
         && Contains(llvm, " = zext i8 %arg_count to i64")
         && Contains(llvm, "call void @llvm.memset.p0.i64(ptr %arg_output, i8 %arg_value, i64 ")
         && DoesNotContain(llvm, "!\"llvm.loop.parallel_accesses\"");
@@ -14641,7 +14948,7 @@ unsafe fn void Fill(init i8[min max][] output, i8[min max] value, u8[0 10] count
     stack ascii llvm = Llvm(c);
     // PORT-NOTE: the zext-count and memset Assert.Matches regexes are reduced to
     // literal Contains; the v0_phi DoesNotContain probe is kept as-is.
-    return Contains(llvm, "declare void @llvm.memset.p0.i64(ptr nocapture writeonly, i8, i64, i1 immarg)")
+    return Contains(llvm, "declare void @llvm.memset.p0.i64(ptr captures(none) writeonly, i8, i64, i1 immarg)")
         && Contains(llvm, " = zext i8 %arg_count to i64")
         && Contains(llvm, "call void @llvm.memset.p0.i64(ptr %abi_rawptr_loop_destination_data_")
         && DoesNotContain(llvm, "%v0_phi = phi");
@@ -14676,7 +14983,7 @@ unsafe fn u64[0 2 ** 63 - 1] Fill(i8[min max] value, u8[0 10] count)
     // PORT-NOTE: ExtractDefinitionBody(llvm, "Fill") scoping is reduced to
     // whole-module Contains; the memset Assert.Matches regex is reduced to a
     // literal Contains on its stable prefix.
-    return Contains(llvm, "declare void @llvm.memset.p0.i64(ptr nocapture writeonly, i8, i64, i1 immarg)")
+    return Contains(llvm, "declare void @llvm.memset.p0.i64(ptr captures(none) writeonly, i8, i64, i1 immarg)")
         && Contains(llvm, "call void @llvm.memset.p0.i64(ptr %abi_rawptr_loop_destination_data_")
         && Contains(llvm, "dynamic_length_final")
         && DoesNotContain(llvm, "%v0_phi = phi");
@@ -14716,7 +15023,7 @@ unsafe fn u64[0 2 ** 63 - 1] Fill(i8[min max] value, u8[0 10] count)
     // whole-module Contains; the memset Assert.Matches regex is reduced to a
     // literal Contains on its stable prefix. The _for_body/v7_phi
     // DoesNotContain probes are kept as-is.
-    return Contains(llvm, "declare void @llvm.memset.p0.i64(ptr nocapture writeonly, i8, i64, i1 immarg)")
+    return Contains(llvm, "declare void @llvm.memset.p0.i64(ptr captures(none) writeonly, i8, i64, i1 immarg)")
         && Contains(llvm, "call void @llvm.memset.p0.i64(ptr %dynamic_append_tail, i8 %arg_value, i64 ")
         && Contains(llvm, "%dynamic_append_final_length = add")
         && DoesNotContain(llvm, "_for_body")
@@ -14752,7 +15059,7 @@ unsafe fn void Copy(
     stack ascii llvm = Llvm(c);
     // PORT-NOTE: the byte-mul and memcpy Assert.Matches regexes are reduced to
     // literal Contains on their stable fragments.
-    return Contains(llvm, "declare void @llvm.memcpy.p0.p0.i64(ptr nocapture writeonly, ptr nocapture readonly, i64, i1 immarg)")
+    return Contains(llvm, "declare void @llvm.memcpy.p0.p0.i64(ptr captures(none) writeonly, ptr captures(none) readonly, i64, i1 immarg)")
         && Contains(llvm, ", 4")
         && Contains(llvm, "call void @llvm.memcpy.p0.p0.i64(ptr align 4 %abi_rawptr_loop_destination_data_")
         && DoesNotContain(llvm, "%v0_phi = phi");
@@ -14796,7 +15103,7 @@ unsafe fn void CopyOverlapSafe(
     stack ascii llvm = Llvm(c);
     // PORT-NOTE: the aligned-memmove Assert.Matches regex is reduced to a
     // literal Contains on its stable prefix (length 16 here).
-    return Contains(llvm, "declare void @llvm.memmove.p0.p0.i64(ptr nocapture writeonly, ptr nocapture readonly, i64, i1 immarg)")
+    return Contains(llvm, "declare void @llvm.memmove.p0.p0.i64(ptr captures(none) writeonly, ptr captures(none) readonly, i64, i1 immarg)")
         && Contains(llvm, "call void @llvm.memmove.p0.p0.i64(ptr align 4 %abi_rawptr_loop_destination_data_")
         && DoesNotContain(llvm, "%slot_temporary");
 }
@@ -14835,7 +15142,7 @@ unsafe fn void Fill(
     stack ascii llvm = Llvm(c);
     // PORT-NOTE: the memset Assert.Matches regex is reduced to a literal
     // Contains on its stable prefix.
-    return Contains(llvm, "declare void @llvm.memset.p0.i64(ptr nocapture writeonly, i8, i64, i1 immarg)")
+    return Contains(llvm, "declare void @llvm.memset.p0.i64(ptr captures(none) writeonly, i8, i64, i1 immarg)")
         && Contains(llvm, "call void @llvm.memset.p0.i64(ptr %arg_output, i8 %arg_value, i64 ")
         && DoesNotContain(llvm, "!\"llvm.loop.parallel_accesses\"");
 }

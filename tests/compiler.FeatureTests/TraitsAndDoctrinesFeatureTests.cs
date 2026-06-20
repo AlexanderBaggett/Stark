@@ -124,17 +124,17 @@ public sealed class TraitsAndDoctrinesFeatureTests : FeatureLlvmTestBase
         var runHeader = ExtractDefinitionHeader(llvm, "Run");
         var runBody = ExtractDefinitionBody(llvm, "Run");
 
-        Assert.Contains("ptr noundef nonnull noalias readonly nocapture dereferenceable(4) align 4 %arg_box", inspectHeader);
+        Assert.Contains("ptr noundef nonnull noalias readonly captures(none) dereferenceable(4) align 4 %arg_box", inspectHeader);
         Assert.Contains("nounwind willreturn mustprogress nosync nofree memory(argmem: read)", inspectHeader);
         Assert.Contains("alwaysinline", inspectHeader);
         Assert.DoesNotContain("memory(readwrite", inspectHeader);
 
-        Assert.Contains("ptr noundef nonnull noalias readonly nocapture dereferenceable(4) align 4 %arg_box", runHeader);
+        Assert.Contains("ptr noundef nonnull noalias readonly captures(none) dereferenceable(4) align 4 %arg_box", runHeader);
         Assert.Contains("nounwind willreturn mustprogress nosync nofree memory(argmem: read)", runHeader);
         Assert.Contains("alwaysinline", runHeader);
         Assert.DoesNotContain("memory(readwrite", runHeader);
 
-        Assert.Contains("call fastcc i32 @Inspect_Read(ptr nonnull noalias readonly nocapture dereferenceable(4) align 4", runBody);
+        Assert.Contains("call fastcc i32 @Inspect_Read(ptr nonnull noalias readonly captures(none) dereferenceable(4) align 4", runBody);
         Assert.DoesNotContain("vtable", llvm, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("fnptr", llvm, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("dispatch", llvm, StringComparison.OrdinalIgnoreCase);
@@ -194,18 +194,18 @@ public sealed class TraitsAndDoctrinesFeatureTests : FeatureLlvmTestBase
         var runBody = ExtractDefinitionBody(llvm, "Run");
 
         Assert.Contains("define internal dso_local fastcc noundef i32 @__stark_mono_fn_Demo__Inspect_Read__i32(", specializationHeader);
-        Assert.Contains("ptr noundef nonnull noalias readonly nocapture dereferenceable(4) align 4 %arg_box", specializationHeader);
+        Assert.Contains("ptr noundef nonnull noalias readonly captures(none) dereferenceable(4) align 4 %arg_box", specializationHeader);
         Assert.Contains("nounwind willreturn mustprogress nosync nofree memory(argmem: read)", specializationHeader);
         Assert.Contains("alwaysinline", specializationHeader);
         Assert.DoesNotContain("memory(readwrite", specializationHeader);
 
-        Assert.Contains("ptr noundef nonnull noalias readonly nocapture dereferenceable(4) align 4 %arg_box", runHeader);
+        Assert.Contains("ptr noundef nonnull noalias readonly captures(none) dereferenceable(4) align 4 %arg_box", runHeader);
         Assert.Contains("nounwind willreturn mustprogress nosync nofree memory(argmem: read)", runHeader);
         Assert.Contains("alwaysinline", runHeader);
         Assert.DoesNotContain("memory(readwrite", runHeader);
 
         Assert.Contains(
-            "call fastcc i32 @__stark_mono_fn_Demo__Inspect_Read__i32(ptr nonnull noalias readonly nocapture dereferenceable(4) align 4",
+            "call fastcc i32 @__stark_mono_fn_Demo__Inspect_Read__i32(ptr nonnull noalias readonly captures(none) dereferenceable(4) align 4",
             runBody);
         Assert.DoesNotContain("declare fastcc noundef ptr @Inspect_Read(", llvm);
         Assert.DoesNotContain("define fastcc noundef ptr @Inspect_Read(", llvm);

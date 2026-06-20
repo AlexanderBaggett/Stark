@@ -302,6 +302,48 @@ public sealed class FunctionSemanticsTests
     }
 
     [Fact]
+    public void SemanticValidationSummariesCarryFullObjectDestinationInitializationRanges()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn bool Write(out u32[0 max] value)
+            {
+                value = 7;
+                return true;
+            }
+
+            unsafe fn void Fill(init u32[0 max][] values)
+            {
+                init values[0] = 7;
+                return;
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.SemanticValidation, out SemanticValidationModel? validation));
+        Assert.NotNull(validation);
+
+        var outParameter = Assert.Single(validation.Functions["Write"].Parameters!);
+        Assert.True(outParameter.GuaranteedWriteOnly);
+        var range = Assert.Single(outParameter.InitializationRanges!);
+        Assert.Equal(0, range.StartByte);
+        Assert.Equal(4, range.EndByte);
+        Assert.False(outParameter.PointeeDeadOnReturn);
+        Assert.NotNull(validation.Functions["Write"].MemoryEffects);
+        Assert.True(validation.Functions["Write"].MemoryEffects!.InitializesArgumentMemory);
+        Assert.False(validation.Functions["Write"].MemoryEffects!.HasPointeeDeadOnReturnArgument);
+
+        var initSliceParameter = Assert.Single(validation.Functions["Fill"].Parameters!);
+        Assert.Empty(initSliceParameter.InitializationRanges!);
+        Assert.False(initSliceParameter.PointeeDeadOnReturn);
+        Assert.NotNull(validation.Functions["Fill"].MemoryEffects);
+        Assert.False(validation.Functions["Fill"].MemoryEffects!.InitializesArgumentMemory);
+        Assert.False(validation.Functions["Fill"].MemoryEffects!.HasPointeeDeadOnReturnArgument);
+    }
+
+    [Fact]
     public void DefaultNonOverlapParameterContractsFlowIntoSemanticNoAliasFacts()
     {
         var result = Compile(

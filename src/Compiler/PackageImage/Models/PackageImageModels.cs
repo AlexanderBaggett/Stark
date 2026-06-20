@@ -798,7 +798,8 @@ internal sealed record StarkPackageFunctionEffectManifest(
     bool IsStrictFp,
     bool IsVarargs = false,
     string? FfiAbi = null,
-    string? BackendOptimizationMode = null);
+    string? BackendOptimizationMode = null,
+    bool NoRecurse = false);
 
 internal sealed record StarkPackageAbiParameterManifest(
     string SourceName,
@@ -825,7 +826,13 @@ internal sealed record StarkPackageFunctionMemoryEffectsManifest(
     bool WritesArgumentMemory,
     bool CapturesArgumentMemory,
     bool ReadsOtherMemory,
-    bool WritesOtherMemory);
+    bool WritesOtherMemory,
+    bool InitializesArgumentMemory = false,
+    bool HasPointeeDeadOnReturnArgument = false);
+
+internal sealed record StarkPackageParameterInitializationRangeManifest(
+    long StartByte,
+    long EndByte);
 
 internal sealed record StarkPackageParameterMemoryEffectsManifest(
     string Name,
@@ -839,7 +846,9 @@ internal sealed record StarkPackageParameterMemoryEffectsManifest(
     int? AlignmentBytes,
     bool Reads,
     bool Writes,
-    string CaptureKind);
+    string CaptureKind,
+    IReadOnlyList<StarkPackageParameterInitializationRangeManifest>? InitializationRanges = null,
+    bool PointeeDeadOnReturn = false);
 
 internal sealed record StarkPackageCallArgumentMemoryEffectsManifest(
     int ArgumentIndex,
@@ -863,7 +872,8 @@ internal sealed record StarkPackageFunctionSemanticManifest(
     IReadOnlyList<StarkPackageParameterMemoryEffectsManifest>? Parameters = null,
     IReadOnlyList<StarkPackageFunctionCallManifest>? Calls = null,
     StarkPackageFunctionOptimizationManifest? Optimization = null,
-    StarkPackageFunctionOwnershipManifest? Ownership = null);
+    StarkPackageFunctionOwnershipManifest? Ownership = null,
+    bool? HasOpaqueCall = null);
 
 internal sealed record StarkPackageFunctionOwnershipManifest(
     bool OwnershipValid,

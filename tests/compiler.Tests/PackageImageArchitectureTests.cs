@@ -1230,6 +1230,103 @@ public sealed class PackageImageArchitectureTests
     }
 
     [Fact]
+    public void PackageImagePreservesNoRecurseFunctionEffectFacts()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-norecurse-");
+
+        try
+        {
+            var sourcePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+            var result = DefaultCompilerPipeline.Create().Run(
+                new CompilationInput(
+                    """
+                    module Facade
+
+                    public fn i32[min max] Leaf(i32[min max] value)
+                    {
+                        return value;
+                    }
+
+                    public fn i32[min max] Apply(
+                        fnptr<fn i32[min max](i32[min max])> op,
+                        i32[min max] value)
+                    {
+                        return op(value);
+                    }
+
+                    public fn i32[min max] CallsApply(i32[min max] value)
+                    {
+                        return Apply(Leaf, value);
+                    }
+
+                    public fn i32[min max] Recursive(i32[min max] value)
+                    {
+                        return Recursive(value);
+                    }
+                    """,
+                    sourcePath),
+                new CompilerOptions(StopAfterPassId: "lower-abi"));
+
+            Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(
+                result,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            var facadeModule = Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade");
+            var compilerFacts = facadeModule.CompilerSections?.CompilerFacts;
+            Assert.NotNull(compilerFacts);
+
+            var leafEffect = Assert.Single(
+                compilerFacts!.FunctionEffects,
+                static function => function.QualifiedResolvedName == "Facade.Leaf");
+            var applyEffect = Assert.Single(
+                compilerFacts.FunctionEffects,
+                static function => function.QualifiedResolvedName == "Facade.Apply");
+            var callsApplyEffect = Assert.Single(
+                compilerFacts.FunctionEffects,
+                static function => function.QualifiedResolvedName == "Facade.CallsApply");
+            var recursiveEffect = Assert.Single(
+                compilerFacts.FunctionEffects,
+                static function => function.QualifiedResolvedName == "Facade.Recursive");
+
+            Assert.True(leafEffect.NoRecurse);
+            Assert.False(applyEffect.NoRecurse);
+            Assert.False(callsApplyEffect.NoRecurse);
+            Assert.False(recursiveEffect.NoRecurse);
+
+            var leafSemantics = Assert.Single(
+                compilerFacts.FunctionSemantics ?? [],
+                static function => function.QualifiedResolvedName == "Facade.Leaf");
+            var applySemantics = Assert.Single(
+                compilerFacts.FunctionSemantics ?? [],
+                static function => function.QualifiedResolvedName == "Facade.Apply");
+            Assert.False(leafSemantics.HasOpaqueCall);
+            Assert.True(applySemantics.HasOpaqueCall);
+
+            Assert.Contains("\"NoRecurse\": true", manifest.ToJson(), StringComparison.Ordinal);
+
+            Assert.True(PackageImageLoader.TryBuildLoadedPackageImageFacts(CreateResolvedPackageModule(facadeModule), out var facts));
+            Assert.True(facts.FunctionEffects["Facade.Leaf"].NoRecurse);
+            Assert.False(facts.FunctionEffects["Facade.Apply"].NoRecurse);
+            Assert.False(facts.FunctionEffects["Facade.CallsApply"].NoRecurse);
+            Assert.False(facts.FunctionEffects["Facade.Recursive"].NoRecurse);
+            Assert.False(facts.FunctionSemantics["Facade.Leaf"].HasOpaqueCall);
+            Assert.True(facts.FunctionSemantics["Facade.Apply"].HasOpaqueCall);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup.
+            }
+        }
+    }
+
+    [Fact]
     public void PackageImagePreservesConstDefaultNonOverlapAndExplicitRelationQualifiers()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-parameter-qualifiers-");

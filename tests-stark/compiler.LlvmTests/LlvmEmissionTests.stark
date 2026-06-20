@@ -1677,6 +1677,13 @@ fn bool CapturingClosureCopyLowersThroughEnvironmentStorage()
 
 [Fact]
 [Collection("llvm-ir")]
+fn bool ReadCapturingClosureIndirectCallEmitsReadProvenanceCapture()
+{
+    return ReadCapturingClosureIndirectCallEmitsReadProvenanceCaptureImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
 fn bool MutCapturingClosureWritesThroughCapturedAddress()
 {
     return MutCapturingClosureWritesThroughCapturedAddressImpl();
@@ -1845,6 +1852,13 @@ fn bool FunctionPointerCallsWithOutParametersUseCallerStorage()
 
 [Fact]
 [Collection("llvm-ir")]
+fn bool OutDestinationParametersEmitInitializesAndWritableButNotDeadOnReturn()
+{
+    return OutDestinationParametersEmitInitializesAndWritableButNotDeadOnReturnImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
 fn bool FunctionPointerCallsWithInitParametersUseCallerStorage()
 {
     return FunctionPointerCallsWithInitParametersUseCallerStorageImpl();
@@ -1911,6 +1925,13 @@ fn bool DirectCallsWithLargeByValueCurrentParameterUseByvalParameterPointer()
 fn bool DynamicStorageAllocationIndexInitAndDropEmitRuntimeAllocatorCalls()
 {
     return DynamicStorageAllocationIndexInitAndDropEmitRuntimeAllocatorCallsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool PositiveDynamicStorageAllocationElidesZeroAndOverflowBranches()
+{
+    return PositiveDynamicStorageAllocationElidesZeroAndOverflowBranchesImpl();
 }
 
 [Fact]
@@ -2811,6 +2832,13 @@ fn bool PlainFnsEmitInferredPureAndFiniteAttributes()
 
 [Fact]
 [Collection("llvm-ir")]
+fn bool ClosedWorldNoRecurseEmitsForKnownNonRecursiveBodiesOnly()
+{
+    return ClosedWorldNoRecurseEmitsForKnownNonRecursiveBodiesOnlyImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
 fn bool BorrowParametersEmitCapturesAttributes()
 {
     return BorrowParametersEmitCapturesAttributesImpl();
@@ -2888,6 +2916,13 @@ fn bool ConstrainedIntegerAbiSurfacesEmitRangeAttributes()
 
 [Fact]
 [Collection("llvm-ir")]
+fn bool IntegerRangeFactsCoverGlobalsAndNarrowActualCallArguments()
+{
+    return IntegerRangeFactsCoverGlobalsAndNarrowActualCallArgumentsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
 fn bool BranchRefinedIntegerComparisonsEmitTargetedAssumes()
 {
     return BranchRefinedIntegerComparisonsEmitTargetedAssumesImpl();
@@ -2926,6 +2961,13 @@ fn bool SignedConstrainedIntegerLoadsEmitWrappingRangeMetadata()
 fn bool MemoryAttributesDistinguishArgumentAndOtherMemoryEffects()
 {
     return MemoryAttributesDistinguishArgumentAndOtherMemoryEffectsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool FunctionMemoryEffectsUseStructuredMemoryAttributesInsteadOfLegacyForms()
+{
+    return FunctionMemoryEffectsUseStructuredMemoryAttributesInsteadOfLegacyFormsImpl();
 }
 
 [Fact]
@@ -4488,4 +4530,3 @@ fn bool FixedArraysFollowTheSameSixteenByteThreshold()
 {
     return FixedArraysFollowTheSameSixteenByteThresholdImpl();
 }
-

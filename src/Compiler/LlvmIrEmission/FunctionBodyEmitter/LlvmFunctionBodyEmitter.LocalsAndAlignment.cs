@@ -30,6 +30,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
 
     private void EmitLifetimeEnd(SsaLifetimeEndInstruction lifetimeEnd)
     {
+        ForgetFreshDynamicLocalStorage(lifetimeEnd.LocalName, lifetimeEnd.LocalType);
         if (ShouldSuppressLifetimeEnd(lifetimeEnd))
         {
             return;
@@ -40,6 +41,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
 
     private void EmitDeallocateLocal(SsaDeallocateLocalInstruction deallocateLocal)
     {
+        ForgetFreshDynamicLocalStorage(deallocateLocal.LocalName, deallocateLocal.LocalType);
         if (deallocateLocal.StorageClass != "heap")
         {
             throw new UnsupportedBodyEmissionException(

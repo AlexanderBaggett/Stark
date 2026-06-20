@@ -6,6 +6,7 @@ namespace Stark.Compiler.LlvmIrEmission;
 
 internal sealed class LlvmBuiltinAndHelperEmitter
 {
+    private const string CapturesNoneAttribute = "captures(none)";
     private const string AsciiEqualityHelperName = "__stark_ascii_equal";
     private const string UnicodeEqualityHelperName = "__stark_unicode_equal";
     private const string AsciiCompareHelperName = "__stark_ascii_compare";
@@ -169,13 +170,13 @@ internal sealed class LlvmBuiltinAndHelperEmitter
 
         if (_usesLifetimeMarkers())
         {
-            declarations.Add("declare void @llvm.lifetime.start.p0(i64 immarg, ptr nocapture)");
-            declarations.Add("declare void @llvm.lifetime.end.p0(i64 immarg, ptr nocapture)");
+            declarations.Add($"declare void @llvm.lifetime.start.p0(i64 immarg, ptr {CapturesNoneAttribute})");
+            declarations.Add($"declare void @llvm.lifetime.end.p0(i64 immarg, ptr {CapturesNoneAttribute})");
         }
 
         if (_usesInvariantStartIntrinsic())
         {
-            declarations.Add("declare ptr @llvm.invariant.start.p0(i64 immarg, ptr nocapture)");
+            declarations.Add($"declare ptr @llvm.invariant.start.p0(i64 immarg, ptr {CapturesNoneAttribute})");
         }
 
         if (_usesAssumeIntrinsic())
@@ -207,27 +208,27 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             || _usesMemcpyIntrinsic()
             || UsesAsciiToUnicodeLiteralMemcpySpecialization())
         {
-            declarations.Add("declare void @llvm.memcpy.p0.p0.i64(ptr nocapture writeonly, ptr nocapture readonly, i64, i1 immarg)");
+            declarations.Add($"declare void @llvm.memcpy.p0.p0.i64(ptr {CapturesNoneAttribute} writeonly, ptr {CapturesNoneAttribute} readonly, i64, i1 immarg)");
         }
 
         if (_usesMemsetIntrinsic())
         {
-            declarations.Add("declare void @llvm.memset.p0.i64(ptr nocapture writeonly, i8, i64, i1 immarg)");
+            declarations.Add($"declare void @llvm.memset.p0.i64(ptr {CapturesNoneAttribute} writeonly, i8, i64, i1 immarg)");
         }
 
         if (usesRuntimeAllocator || _usesMemmoveIntrinsic())
         {
-            declarations.Add("declare void @llvm.memmove.p0.p0.i64(ptr nocapture writeonly, ptr nocapture readonly, i64, i1 immarg)");
+            declarations.Add($"declare void @llvm.memmove.p0.p0.i64(ptr {CapturesNoneAttribute} writeonly, ptr {CapturesNoneAttribute} readonly, i64, i1 immarg)");
         }
 
         if (_usesMemcpyInlineIntrinsic())
         {
-            declarations.Add("declare void @llvm.memcpy.inline.p0.p0.i64(ptr nocapture writeonly, ptr nocapture readonly, i64 immarg, i1 immarg)");
+            declarations.Add($"declare void @llvm.memcpy.inline.p0.p0.i64(ptr {CapturesNoneAttribute} writeonly, ptr {CapturesNoneAttribute} readonly, i64 immarg, i1 immarg)");
         }
 
         if (_usesMemsetInlineIntrinsic())
         {
-            declarations.Add("declare void @llvm.memset.inline.p0.i64(ptr nocapture writeonly, i8, i64 immarg, i1 immarg)");
+            declarations.Add($"declare void @llvm.memset.inline.p0.i64(ptr {CapturesNoneAttribute} writeonly, i8, i64 immarg, i1 immarg)");
         }
 
         if (DebugInfoEnabled)
@@ -379,7 +380,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         builder.AppendLine("  ret { i128, i128 } %with_remainder");
         builder.AppendLine("}");
         builder.AppendLine();
-        builder.AppendLine($"define linkonce_odr dso_local <2 x i64> @{WindowsI128DivideHelperName}(ptr nocapture readonly %left, ptr nocapture readonly %right) unnamed_addr nounwind comdat {{");
+        builder.AppendLine($"define linkonce_odr dso_local <2 x i64> @{WindowsI128DivideHelperName}(ptr {CapturesNoneAttribute} readonly %left, ptr {CapturesNoneAttribute} readonly %right) unnamed_addr nounwind comdat {{");
         builder.AppendLine("entry:");
         builder.AppendLine("  %left_value = load i128, ptr %left, align 8");
         builder.AppendLine("  %right_value = load i128, ptr %right, align 8");
@@ -397,7 +398,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         EmitI128VectorReturn(builder, "%quotient");
         builder.AppendLine("}");
         builder.AppendLine();
-        builder.AppendLine($"define linkonce_odr dso_local <2 x i64> @{WindowsI128ModuloHelperName}(ptr nocapture readonly %left, ptr nocapture readonly %right) unnamed_addr nounwind comdat {{");
+        builder.AppendLine($"define linkonce_odr dso_local <2 x i64> @{WindowsI128ModuloHelperName}(ptr {CapturesNoneAttribute} readonly %left, ptr {CapturesNoneAttribute} readonly %right) unnamed_addr nounwind comdat {{");
         builder.AppendLine("entry:");
         builder.AppendLine("  %left_value = load i128, ptr %left, align 8");
         builder.AppendLine("  %right_value = load i128, ptr %right, align 8");
@@ -581,7 +582,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             : "%new_count";
 
         builder.AppendLine(
-            $"define linkonce_odr hidden void @{DynamicStorageReserveHelperName}(ptr nocapture %storage, i64 noundef %additional, {AllocatorSizeType} noundef %element_size, {AllocatorSizeType} noundef allocalign %alignment, i64 noundef %max_count) unnamed_addr nounwind{ComdatDefinitionSuffix()} {{");
+            $"define linkonce_odr hidden void @{DynamicStorageReserveHelperName}(ptr {CapturesNoneAttribute} %storage, i64 noundef %additional, {AllocatorSizeType} noundef %element_size, {AllocatorSizeType} noundef allocalign %alignment, i64 noundef %max_count) unnamed_addr nounwind{ComdatDefinitionSuffix()} {{");
         builder.AppendLine("entry:");
         builder.AppendLine("  %current = load { ptr, i64, i64 }, ptr %storage");
         builder.AppendLine("  %ptr = extractvalue { ptr, i64, i64 } %current, 0");
@@ -640,7 +641,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             : "%new_count";
 
         builder.AppendLine(
-            $"define linkonce_odr hidden i1 @{DynamicStorageTryReserveHelperName}(ptr nocapture %storage, i64 noundef %additional, {AllocatorSizeType} noundef %element_size, {AllocatorSizeType} noundef allocalign %alignment, i64 noundef %max_count) unnamed_addr nounwind{ComdatDefinitionSuffix()} {{");
+            $"define linkonce_odr hidden i1 @{DynamicStorageTryReserveHelperName}(ptr {CapturesNoneAttribute} %storage, i64 noundef %additional, {AllocatorSizeType} noundef %element_size, {AllocatorSizeType} noundef allocalign %alignment, i64 noundef %max_count) unnamed_addr nounwind{ComdatDefinitionSuffix()} {{");
         builder.AppendLine("entry:");
         builder.AppendLine("  %current = load { ptr, i64, i64 }, ptr %storage");
         builder.AppendLine("  %ptr = extractvalue { ptr, i64, i64 } %current, 0");
@@ -702,7 +703,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             : "%target_count";
 
         builder.AppendLine(
-            $"define linkonce_odr hidden i1 @{DynamicStorageTryReserveCapacityHelperName}(ptr nocapture %storage, i64 noundef %target_capacity, {AllocatorSizeType} noundef %element_size, {AllocatorSizeType} noundef allocalign %alignment, i64 noundef %max_count) unnamed_addr nounwind{ComdatDefinitionSuffix()} {{");
+            $"define linkonce_odr hidden i1 @{DynamicStorageTryReserveCapacityHelperName}(ptr {CapturesNoneAttribute} %storage, i64 noundef %target_capacity, {AllocatorSizeType} noundef %element_size, {AllocatorSizeType} noundef allocalign %alignment, i64 noundef %max_count) unnamed_addr nounwind{ComdatDefinitionSuffix()} {{");
         builder.AppendLine("entry:");
         builder.AppendLine("  %current = load { ptr, i64, i64 }, ptr %storage");
         builder.AppendLine("  %ptr = extractvalue { ptr, i64, i64 } %current, 0");
@@ -744,7 +745,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
     private void EmitDynamicStorageMoveLastPointerHelperDefinition(StringBuilder builder)
     {
         builder.AppendLine(
-            $"define linkonce_odr hidden nonnull ptr @{DynamicStorageMoveLastPointerHelperName}(ptr nocapture %storage, i64 noundef %element_size) unnamed_addr nounwind{ComdatDefinitionSuffix()} {{");
+            $"define linkonce_odr hidden nonnull ptr @{DynamicStorageMoveLastPointerHelperName}(ptr {CapturesNoneAttribute} %storage, i64 noundef %element_size) unnamed_addr nounwind{ComdatDefinitionSuffix()} {{");
         builder.AppendLine("entry:");
         builder.AppendLine("  %current = load { ptr, i64, i64 }, ptr %storage");
         builder.AppendLine("  %length = extractvalue { ptr, i64, i64 } %current, 1");
@@ -769,7 +770,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
     private void EmitDynamicStorageMoveAtToOutHelperDefinition(StringBuilder builder)
     {
         builder.AppendLine(
-            $"define linkonce_odr hidden void @{DynamicStorageMoveAtToOutHelperName}(ptr nocapture %storage, i64 noundef %index, ptr nocapture writeonly %out, i64 noundef %element_size) unnamed_addr nounwind{ComdatDefinitionSuffix()} {{");
+            $"define linkonce_odr hidden void @{DynamicStorageMoveAtToOutHelperName}(ptr {CapturesNoneAttribute} %storage, i64 noundef %index, ptr {CapturesNoneAttribute} writeonly %out, i64 noundef %element_size) unnamed_addr nounwind{ComdatDefinitionSuffix()} {{");
         builder.AppendLine("entry:");
         builder.AppendLine("  %current = load { ptr, i64, i64 }, ptr %storage");
         builder.AppendLine("  %length = extractvalue { ptr, i64, i64 } %current, 1");

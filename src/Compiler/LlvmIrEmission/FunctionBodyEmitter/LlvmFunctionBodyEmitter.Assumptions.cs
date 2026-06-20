@@ -170,6 +170,8 @@ internal sealed partial class LlvmFunctionBodyEmitter
             LlvmAssumeOperandBundleKind.NonNull => $"\"nonnull\"(ptr {FormatValue(bundle.Pointer)})",
             LlvmAssumeOperandBundleKind.Align when bundle.AlignmentBytes is int alignmentBytes =>
                 $"\"align\"(ptr {FormatValue(bundle.Pointer)}, i64 {alignmentBytes})",
+            LlvmAssumeOperandBundleKind.SeparateStorage when bundle.OtherPointer is { } otherPointer =>
+                $"\"separate_storage\"(ptr {FormatValue(bundle.Pointer)}, ptr {FormatValue(otherPointer)})",
             _ => throw new UnsupportedBodyEmissionException("Unsupported llvm.assume operand bundle.")
         };
     }

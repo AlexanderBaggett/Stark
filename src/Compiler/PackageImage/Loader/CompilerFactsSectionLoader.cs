@@ -230,7 +230,8 @@ internal static partial class PackageImageLoader
                     InlinePreference: inlinePreference,
                     IsStrictFp: functionEffect.IsStrictFp,
                     BackendOptimizationMode: functionBackendOptimizationMode,
-                    FfiAbi: ParsePackageFunctionFfiAbi(functionEffect.FfiAbi));
+                    FfiAbi: ParsePackageFunctionFfiAbi(functionEffect.FfiAbi),
+                    NoRecurse: functionEffect.NoRecurse);
             }
 
             foreach (var abiFunction in compilerFacts.AbiFunctions ?? [])
@@ -1471,7 +1472,13 @@ internal static partial class PackageImageLoader
                     parameter.AlignmentBytes,
                     parameter.Reads,
                     parameter.Writes,
-                    captureKind));
+                    captureKind,
+                    parameter.InitializationRanges?
+                        .Select(static range => new ParameterInitializationRangeSummary(
+                            range.StartByte,
+                            range.EndByte))
+                        .ToArray(),
+                    parameter.PointeeDeadOnReturn));
             }
         }
 
@@ -1482,7 +1489,9 @@ internal static partial class PackageImageLoader
                 functionSemantic.MemoryEffects.WritesArgumentMemory,
                 functionSemantic.MemoryEffects.CapturesArgumentMemory,
                 functionSemantic.MemoryEffects.ReadsOtherMemory,
-                functionSemantic.MemoryEffects.WritesOtherMemory);
+                functionSemantic.MemoryEffects.WritesOtherMemory,
+                functionSemantic.MemoryEffects.InitializesArgumentMemory,
+                functionSemantic.MemoryEffects.HasPointeeDeadOnReturnArgument);
 
         List<CallMemoryEffectSummary>? calls = null;
         if (functionSemantic.Calls is { } publishedCalls)
@@ -1514,7 +1523,9 @@ internal static partial class PackageImageLoader
                         call.MemoryEffects.WritesArgumentMemory,
                         call.MemoryEffects.CapturesArgumentMemory,
                         call.MemoryEffects.ReadsOtherMemory,
-                        call.MemoryEffects.WritesOtherMemory),
+                        call.MemoryEffects.WritesOtherMemory,
+                        call.MemoryEffects.InitializesArgumentMemory,
+                        call.MemoryEffects.HasPointeeDeadOnReturnArgument),
                     arguments));
             }
         }
@@ -1556,7 +1567,8 @@ internal static partial class PackageImageLoader
             parameters,
             calls,
             optimizationSummary,
-            ownershipSummary);
+            ownershipSummary,
+            HasOpaqueCall: functionSemantic.HasOpaqueCall ?? true);
         return true;
     }
 

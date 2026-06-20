@@ -124,13 +124,15 @@ internal sealed partial class LlvmFunctionBodyEmitter
     private enum LlvmAssumeOperandBundleKind
     {
         NonNull,
-        Align
+        Align,
+        SeparateStorage
     }
 
     private sealed record LlvmAssumeOperandBundle(
         LlvmAssumeOperandBundleKind Kind,
         SsaValue Pointer,
-        int? AlignmentBytes = null);
+        int? AlignmentBytes = null,
+        SsaValue? OtherPointer = null);
 
     private sealed record LlvmAssumeFact(
         SsaValue? Condition,

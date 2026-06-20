@@ -5,6 +5,8 @@ namespace Stark.Compiler.LlvmIrEmission;
 
 internal sealed class LlvmFunctionAttributeBuilder
 {
+    private const string CapturesNoneAttribute = "captures(none)";
+
     private readonly LlvmEmissionContext _context;
 
     public LlvmFunctionAttributeBuilder(LlvmEmissionContext context)
@@ -179,6 +181,11 @@ internal sealed class LlvmFunctionAttributeBuilder
             _ => "inlinehint"
         });
 
+        if (effects.NoRecurse)
+        {
+            attributes.Add("norecurse");
+        }
+
         // Stark's x86-64 baseline includes cmpxchg16b (every x86-64 CPU since ~2006):
         // 128-bit atomics (System.Threading.AtomicI96/I128/U96/U128) lower to it. The
         // feature must be stamped on every function — not just the atomic builtins — so
@@ -264,6 +271,7 @@ internal sealed class LlvmFunctionAttributeBuilder
             }
 
             AppendPointerMemoryAccessAttributes(attributes, parameter, parameterEffects);
+            AppendDestinationInitializationAttributes(attributes, abiFunction, parameter, parameterEffects);
             AppendCaptureAttribute(attributes, parameterEffects);
             AppendDereferenceableAttributes(attributes, parameter.SourceType);
 
@@ -302,6 +310,7 @@ internal sealed class LlvmFunctionAttributeBuilder
         }
 
         AppendPointerMemoryAccessAttributes(attributes, parameter, parameterEffects);
+        AppendDestinationInitializationAttributes(attributes, abiFunction, parameter, parameterEffects);
         AppendCaptureAttribute(attributes, parameterEffects);
 
         // Plain raw pointers remain nullable and may carry arbitrary raw/FFI
@@ -431,15 +440,7 @@ internal sealed class LlvmFunctionAttributeBuilder
 
     private void AppendDereferenceableAttributes(List<string> attributes, StarkTypeSymbol type)
     {
-        var storageType = type.BorrowKind != StarkBorrowKind.None
-                          || type.InitializationKind != StarkInitializationKind.None
-            ? StarkTypeSymbols.WithQualifiers(
-                type,
-                borrowKind: StarkBorrowKind.None,
-                accessKind: StarkAccessKind.None,
-                initializationKind: StarkInitializationKind.None,
-                isMutableView: false)
-            : type;
+        var storageType = GetPointerBackedStorageType(type);
         if (TryGetConcreteTypeLayout(storageType) is not { } layout)
         {
             return;
@@ -450,6 +451,140 @@ internal sealed class LlvmFunctionAttributeBuilder
         {
             AddOrStrengthenAlignAttribute(attributes, layout.AlignmentBytes);
         }
+    }
+
+    private void AppendDestinationInitializationAttributes(
+        List<string> attributes,
+        AbiFunctionSignature? abiFunction,
+        AbiParameterSymbol parameter,
+        ParameterMemoryEffectSummary? parameterEffects)
+    {
+        if (abiFunction?.IsFfi == true
+            || parameter.Kind == AbiParameterKind.SRet
+            || !string.Equals(MapType(parameter.LlvmType), "ptr", StringComparison.Ordinal)
+            || !TryGetDestinationInitializationRanges(parameter, parameterEffects, out var ranges))
+        {
+            return;
+        }
+
+        var highWaterMark = ranges.Max(static range => range.EndByte);
+        if (highWaterMark > 0)
+        {
+            AddOrStrengthenDereferenceableAttribute(attributes, highWaterMark);
+        }
+
+        AddUniqueAttribute(attributes, "writable");
+        attributes.Add(RenderInitializesAttribute(ranges));
+
+        if (parameterEffects?.PointeeDeadOnReturn == true)
+        {
+            attributes.Add("dead_on_return");
+        }
+    }
+
+    private bool TryGetDestinationInitializationRanges(
+        AbiParameterSymbol parameter,
+        ParameterMemoryEffectSummary? parameterEffects,
+        out IReadOnlyList<ParameterInitializationRangeSummary> ranges)
+    {
+        if (TryNormalizeInitializationRanges(parameterEffects?.InitializationRanges, out ranges))
+        {
+            return true;
+        }
+
+        if (parameterEffects?.GuaranteedWriteOnly == true
+            && parameterEffects.DereferenceableBytes is > 0
+            && parameter.SourceType.Kind != StarkTypeKind.Slice)
+        {
+            ranges = [new ParameterInitializationRangeSummary(0, parameterEffects.DereferenceableBytes.Value)];
+            return true;
+        }
+
+        if (!TryBuildFullDestinationInitializationRange(parameter.SourceType, out var fullRange))
+        {
+            ranges = [];
+            return false;
+        }
+
+        ranges = [fullRange];
+        return true;
+    }
+
+    private bool TryBuildFullDestinationInitializationRange(
+        StarkTypeSymbol type,
+        out ParameterInitializationRangeSummary range)
+    {
+        range = default!;
+        if (type.InitializationKind == StarkInitializationKind.None)
+        {
+            return false;
+        }
+
+        var storageType = GetPointerBackedStorageType(type);
+        if (type.InitializationKind == StarkInitializationKind.Init
+            && storageType.Kind == StarkTypeKind.Slice)
+        {
+            return false;
+        }
+
+        if (TryGetConcreteTypeLayout(storageType) is not { SizeBytes: > 0 } layout)
+        {
+            return false;
+        }
+
+        range = new ParameterInitializationRangeSummary(0, layout.SizeBytes);
+        return true;
+    }
+
+    private static bool TryNormalizeInitializationRanges(
+        IReadOnlyList<ParameterInitializationRangeSummary>? candidateRanges,
+        out IReadOnlyList<ParameterInitializationRangeSummary> ranges)
+    {
+        ranges = [];
+        if (candidateRanges is not { Count: > 0 })
+        {
+            return false;
+        }
+
+        var normalized = candidateRanges
+            .Where(static range => range.StartByte < range.EndByte)
+            .OrderBy(static range => range.StartByte)
+            .ToArray();
+        if (normalized.Length == 0)
+        {
+            return false;
+        }
+
+        for (var index = 1; index < normalized.Length; index++)
+        {
+            if (normalized[index].StartByte <= normalized[index - 1].EndByte)
+            {
+                return false;
+            }
+        }
+
+        ranges = normalized;
+        return true;
+    }
+
+    private static string RenderInitializesAttribute(IReadOnlyList<ParameterInitializationRangeSummary> ranges)
+    {
+        var renderedRanges = ranges.Select(static range =>
+            $"({range.StartByte.ToString(CultureInfo.InvariantCulture)}, {range.EndByte.ToString(CultureInfo.InvariantCulture)})");
+        return $"initializes({string.Join(", ", renderedRanges)})";
+    }
+
+    private static StarkTypeSymbol GetPointerBackedStorageType(StarkTypeSymbol type)
+    {
+        return type.BorrowKind != StarkBorrowKind.None
+               || type.InitializationKind != StarkInitializationKind.None
+            ? StarkTypeSymbols.WithQualifiers(
+                type,
+                borrowKind: StarkBorrowKind.None,
+                accessKind: StarkAccessKind.None,
+                initializationKind: StarkInitializationKind.None,
+                isMutableView: false)
+            : type;
     }
 
     private static void AddUniqueAttribute(List<string> attributes, string attribute, int? insertionIndex = null)
@@ -648,7 +783,7 @@ internal sealed class LlvmFunctionAttributeBuilder
 
         if (parameterEffects.CaptureKind == ParameterCaptureKind.None)
         {
-            attributes.Add("nocapture");
+            attributes.Add(CapturesNoneAttribute);
             return;
         }
 

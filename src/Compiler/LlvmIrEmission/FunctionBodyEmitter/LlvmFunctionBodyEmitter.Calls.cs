@@ -1521,7 +1521,9 @@ internal sealed partial class LlvmFunctionBodyEmitter
         return new FunctionMemoryEffectSummary(
             ReadsArgumentMemory: parameters.Any(static parameter => parameter.Reads),
             WritesArgumentMemory: parameters.Any(static parameter => parameter.Writes),
-            CapturesArgumentMemory: parameters.Any(static parameter => parameter.CaptureKind != ParameterCaptureKind.None));
+            CapturesArgumentMemory: parameters.Any(static parameter => parameter.CaptureKind != ParameterCaptureKind.None),
+            InitializesArgumentMemory: parameters.Any(static parameter => parameter.InitializationRanges is { Count: > 0 }),
+            HasPointeeDeadOnReturnArgument: parameters.Any(static parameter => parameter.PointeeDeadOnReturn));
     }
 
     private string GetCallInstructionMetadataSuffix(
@@ -2032,7 +2034,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
             publishedConcreteLayouts: _publishedConcreteLayouts);
     }
 
-    private static IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? BuildIndirectCallParameterEffects(
+    private IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? BuildIndirectCallParameterEffects(
         AbiFunctionSignature abiCallee,
         StarkTypeSymbol functionPointerType)
     {
@@ -2056,6 +2058,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
                     var guaranteedWriteOnly = parameter.SourceType.InitializationKind != StarkInitializationKind.None;
                     var reads = !guaranteedWriteOnly;
                     var writes = guaranteedWriteOnly || !guaranteedReadOnly;
+                    var initializationRanges = TryGetFunctionPointerParameterInitializationRanges(parameter.SourceType);
                     return new ParameterMemoryEffectSummary(
                         parameter.SourceName,
                         parameter.SourceType.DisplayName,
@@ -2072,9 +2075,43 @@ internal sealed partial class LlvmFunctionBodyEmitter
                         AlignmentBytes: null,
                         Reads: reads,
                         Writes: writes,
-                        CaptureKind: ParameterCaptureKind.Escape);
+                        CaptureKind: ParameterCaptureKind.Escape,
+                        InitializationRanges: initializationRanges);
                 },
                 StringComparer.Ordinal);
+    }
+
+    private IReadOnlyList<ParameterInitializationRangeSummary>? TryGetFunctionPointerParameterInitializationRanges(
+        StarkTypeSymbol type)
+    {
+        if (type.InitializationKind == StarkInitializationKind.None)
+        {
+            return null;
+        }
+
+        var storageType = StarkTypeSymbols.IsPointerBackedBorrowType(type)
+            ? StarkTypeSymbols.BorrowReturnValueType(type)
+            : type;
+        if (type.InitializationKind == StarkInitializationKind.Init
+            && storageType.Kind == StarkTypeKind.Slice)
+        {
+            return null;
+        }
+
+        if (storageType.BorrowKind != StarkBorrowKind.None
+            || storageType.InitializationKind != StarkInitializationKind.None)
+        {
+            storageType = StarkTypeSymbols.WithQualifiers(
+                storageType,
+                borrowKind: StarkBorrowKind.None,
+                accessKind: StarkAccessKind.None,
+                initializationKind: StarkInitializationKind.None,
+                isMutableView: false);
+        }
+
+        return TryGetConcreteTypeLayout(storageType) is { SizeBytes: > 0 } layout
+            ? [new ParameterInitializationRangeSummary(0, layout.SizeBytes)]
+            : null;
     }
 
     private static bool IsFunctionPointerParameterNoAliasAgainstAll(
