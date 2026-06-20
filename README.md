@@ -1,13 +1,19 @@
 # Stark
 
-Stark is a performance-focused programming language targeting LLVM. It is built
-around a simple rule: ordinary safe code should make ownership, aliasing,
-allocation, and backend facts explicit enough for the compiler to produce
-predictable native code.
+Stark is a performance-focused programming language targeting LLVM. It's about intentionality. This language forces you to be clear about your intentions for your types and the result is fast, safe, native code.
+
+- Immutability by default, opt-out with `mut`
+- Borrows don't escape by default, opt-in to escaping with `retborrow` or `storeborrow`
+- Disjoint pointer memory by default,  opt-in to aliasing with `where overlap(...)` or `where same(...)`
+- Integer ranges, be clear about what values you expect
+- String types for differenet uses `Ascii` and `Unicode`, pick the right one for the job instead of paying for one size fits all
+- Opt-in to deep interior immutability via `const`
+
+The result is clear intentions and blazing fast code. In fact, in our benchmark suite, Stark beats Rust on most scenarios. Run the benchmark suite in /benchmarks to see for yourself.
 
 The syntax is C#-adjacent, but the semantics are systems-oriented:
 explicit storage classes, deterministic ownership, no hidden exceptions, no
-hidden allocation, safe borrows, package-image-backed libraries, and a standard
+hidden allocation, safe borrows, and a standard
 library designed around visible costs.
 
 This repository contains the compiler, the `System` standard library, a broad
