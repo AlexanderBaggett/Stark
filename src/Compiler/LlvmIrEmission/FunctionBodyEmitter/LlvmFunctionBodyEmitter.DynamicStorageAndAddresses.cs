@@ -53,6 +53,14 @@ internal sealed partial class LlvmFunctionBodyEmitter
         var resultType = MapType(allocation.Type);
         var capacityI64 = EmitUnsignedIntegerAsI64(allocation.Capacity, "dynamic_capacity");
         var maxCount = GetMaximumDynamicStorageElementCount(elementLayout.SizeBytes);
+        if (TryGetIntegerValueRange(allocation.Capacity, out var capacityRange)
+            && capacityRange.Min > BigInteger.Zero
+            && capacityRange.Max <= new BigInteger(maxCount))
+        {
+            EmitDynamicStorageRuntimeAllocationValue(result, resultType, capacityI64, elementLayout);
+            return;
+        }
+
         if (!CanSplitCurrentBlockForCallSiteControlFlow())
         {
             AppendLine(
@@ -67,9 +75,6 @@ internal sealed partial class LlvmFunctionBodyEmitter
         var doneLabel = EscapeIdentifier(CreateAbiTempName("dynamic_alloc_done"));
         var capacityIsZero = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_alloc_is_zero"))}";
         var allocatedValue = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_alloc_value"))}";
-        var withPointer = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_alloc_with_ptr"))}";
-        var withLength = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_alloc_with_length"))}";
-        var allocatedPointer = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_alloc_ptr"))}";
         var overflowProfile = _context.GetMetadataTupleRef([
             "!\"branch_weights\"",
             $"i32 {TrapEdgeUnlikelyWeight}",
@@ -103,6 +108,23 @@ internal sealed partial class LlvmFunctionBodyEmitter
             AppendLine($"{allocateLabel}:");
         }
 
+        EmitDynamicStorageRuntimeAllocationValue(allocatedValue, resultType, capacityI64, elementLayout);
+        AppendLine($"  br label %{doneLabel}");
+        AppendLine(string.Empty);
+        AppendLine($"{doneLabel}:");
+        AppendLine($"  {result} = phi {resultType} [ zeroinitializer, %{zeroLabel} ], [ {allocatedValue}, %{allocateLabel} ]");
+        RecordCurrentBlockExitLabel(doneLabel);
+    }
+
+    private void EmitDynamicStorageRuntimeAllocationValue(
+        string result,
+        string resultType,
+        string capacityI64,
+        ConcreteTypeLayout elementLayout)
+    {
+        var allocatedPointer = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_alloc_ptr"))}";
+        var withPointer = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_alloc_with_ptr"))}";
+        var withLength = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_alloc_with_length"))}";
         var allocatorCount = EmitI64AsAllocatorSize(capacityI64, "dynamic_alloc_count");
         var byteLength = allocatorCount;
         if (elementLayout.SizeBytes != 1)
@@ -115,12 +137,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
             $"  {allocatedPointer} = call noalias nonnull noundef ptr @{RuntimeAllocateHelperName}({AllocatorSizeType} noundef {byteLength}, {AllocatorSizeType} noundef {Math.Max(1, elementLayout.AlignmentBytes)})");
         AppendLine($"  {withPointer} = insertvalue {resultType} zeroinitializer, ptr {allocatedPointer}, 0");
         AppendLine($"  {withLength} = insertvalue {resultType} {withPointer}, i64 0, 1");
-        AppendLine($"  {allocatedValue} = insertvalue {resultType} {withLength}, i64 {capacityI64}, 2");
-        AppendLine($"  br label %{doneLabel}");
-        AppendLine(string.Empty);
-        AppendLine($"{doneLabel}:");
-        AppendLine($"  {result} = phi {resultType} [ zeroinitializer, %{zeroLabel} ], [ {allocatedValue}, %{allocateLabel} ]");
-        RecordCurrentBlockExitLabel(doneLabel);
+        AppendLine($"  {result} = insertvalue {resultType} {withLength}, i64 {capacityI64}, 2");
     }
 
     private void EmitDynamicStorageFree(SsaDynamicStorageFreeRValue free)

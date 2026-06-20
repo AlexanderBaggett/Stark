@@ -39,7 +39,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
         }
 
         var segments = new List<string> { MapType(parameter.LlvmType) };
-        if (LlvmValueRangeFacts.TryBuildRangeAttribute(parameter.SourceType, out var rangeAttribute))
+        if (TryBuildDirectArgumentRangeAttribute(parameter, argument, out var rangeAttribute))
         {
             segments.Add(rangeAttribute);
         }
@@ -53,6 +53,24 @@ internal sealed partial class LlvmFunctionBodyEmitter
 
         segments.Add(FormatDirectAbiArgumentValue(parameter, argument));
         return string.Join(" ", segments);
+    }
+
+    private bool TryBuildDirectArgumentRangeAttribute(
+        AbiParameterSymbol parameter,
+        SsaValue argument,
+        out string rangeAttribute)
+    {
+        if (MapType(argument.Type) == MapType(parameter.LlvmType)
+            && TryGetIntegerValueRange(argument, new HashSet<string>(StringComparer.Ordinal), out var min, out var max)
+            && LlvmValueRangeFacts.TryBuildRangeAttribute(
+                parameter.SourceType,
+                new SsaIntegerRangeFact(min, max),
+                out rangeAttribute))
+        {
+            return true;
+        }
+
+        return LlvmValueRangeFacts.TryBuildRangeAttribute(parameter.SourceType, out rangeAttribute);
     }
 
     private string FormatDirectAbiArgumentValue(AbiParameterSymbol parameter, SsaValue argument)

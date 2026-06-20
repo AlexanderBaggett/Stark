@@ -3023,6 +3023,9 @@ public static class DefaultCompilerPipeline
             var importedRecursiveFunctions = FindRecursiveFunctions(
                 importedCallGraph,
                 importedDeclarations.ContainsKey);
+            var opaqueReachableFunctions = FindFunctionsThatReachOpaqueCalls(
+                validationModel.Functions,
+                importedSemantics);
             var importedLawOnlyCallTargets = FindImportedLawOnlyCallTargets(
                 validationModel.Functions,
                 importedDeclarations,
@@ -3063,6 +3066,14 @@ public static class DefaultCompilerPipeline
                     importedLawOnlyCallTargets,
                     importedRecursiveLawFunctions,
                     importedRecursiveFunctions);
+                var noRecurse = DetermineNoRecurse(
+                    name,
+                    summary,
+                    importedSummary,
+                    existing,
+                    recursiveFunctions,
+                    importedRecursiveFunctions,
+                    opaqueReachableFunctions);
 
                 refined[name] = existing with
                 {
@@ -3075,7 +3086,8 @@ public static class DefaultCompilerPipeline
                     NoFree = isLaw,
                     WillReturn = isFinite,
                     MustProgress = isFinite,
-                    InlinePreference = inlinePreference
+                    InlinePreference = inlinePreference,
+                    NoRecurse = noRecurse
                 };
             }
 
@@ -3097,7 +3109,15 @@ public static class DefaultCompilerPipeline
                         NoSync = isLaw,
                         NoFree = isLaw,
                         WillReturn = isFinite,
-                        MustProgress = isFinite
+                        MustProgress = isFinite,
+                        NoRecurse = DetermineNoRecurse(
+                            lambda.FunctionName,
+                            lambdaSummary,
+                            importedSummary: null,
+                            lambdaEffects,
+                            recursiveFunctions,
+                            importedRecursiveFunctions,
+                            opaqueReachableFunctions)
                     };
                 }
 
@@ -3122,7 +3142,15 @@ public static class DefaultCompilerPipeline
                         NoSync = isLaw,
                         NoFree = isLaw,
                         WillReturn = isFinite,
-                        MustProgress = isFinite
+                        MustProgress = isFinite,
+                        NoRecurse = DetermineNoRecurse(
+                            lambda.FunctionName,
+                            lambdaSummary,
+                            importedSummary: null,
+                            lambdaEffects,
+                            recursiveFunctions,
+                            importedRecursiveFunctions,
+                            opaqueReachableFunctions)
                     };
                 }
 
@@ -3146,6 +3174,37 @@ public static class DefaultCompilerPipeline
                     rootDeclarations,
                     importedDeclarations,
                     importedRecursiveLawFunctions));
+        }
+
+        private static bool DetermineNoRecurse(
+            string functionName,
+            FunctionValidationSummary? summary,
+            ImportedFunctionSemanticSummary? importedSummary,
+            FunctionEffectProfile existing,
+            ISet<string> recursiveFunctions,
+            ISet<string> importedRecursiveFunctions,
+            ISet<string> opaqueReachableFunctions)
+        {
+            if (existing.IsFfi || existing.IsVarargs)
+            {
+                return false;
+            }
+
+            if (summary is not null)
+            {
+                return summary.HasBody
+                    && !opaqueReachableFunctions.Contains(functionName)
+                    && !recursiveFunctions.Contains(functionName);
+            }
+
+            if (importedSummary is not null)
+            {
+                return existing.NoRecurse
+                    && !opaqueReachableFunctions.Contains(functionName)
+                    && !importedRecursiveFunctions.Contains(functionName);
+            }
+
+            return existing.NoRecurse && !opaqueReachableFunctions.Contains(functionName);
         }
 
         private static InlinePreference DetermineInlinePreference(
@@ -3572,6 +3631,85 @@ public static class DefaultCompilerPipeline
             }
 
             return callGraph;
+        }
+
+        private static HashSet<string> FindFunctionsThatReachOpaqueCalls(
+            IReadOnlyDictionary<string, FunctionValidationSummary> validationSummaries,
+            IReadOnlyDictionary<string, ImportedFunctionSemanticSummary> importedSemantics)
+        {
+            var graph = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
+            var directOpaque = new HashSet<string>(StringComparer.Ordinal);
+
+            foreach (var (name, summary) in validationSummaries)
+            {
+                graph[name] = summary.CalledFunctions;
+                if (summary.HasOpaqueCall)
+                {
+                    directOpaque.Add(name);
+                }
+            }
+
+            foreach (var (name, summary) in importedSemantics)
+            {
+                graph[name] = summary.CalledFunctions;
+                if (summary.HasOpaqueCall)
+                {
+                    directOpaque.Add(name);
+                }
+            }
+
+            var reachesOpaque = new HashSet<string>(StringComparer.Ordinal);
+            var memo = new Dictionary<string, bool>(StringComparer.Ordinal);
+            var visiting = new HashSet<string>(StringComparer.Ordinal);
+
+            foreach (var name in graph.Keys)
+            {
+                if (ReachesOpaque(name))
+                {
+                    reachesOpaque.Add(name);
+                }
+            }
+
+            return reachesOpaque;
+
+            bool ReachesOpaque(string name)
+            {
+                if (memo.TryGetValue(name, out var cached))
+                {
+                    return cached;
+                }
+
+                if (directOpaque.Contains(name))
+                {
+                    memo[name] = true;
+                    return true;
+                }
+
+                if (!graph.TryGetValue(name, out var callees))
+                {
+                    memo[name] = true;
+                    return true;
+                }
+
+                if (!visiting.Add(name))
+                {
+                    return false;
+                }
+
+                foreach (var callee in callees)
+                {
+                    if (ReachesOpaque(callee))
+                    {
+                        visiting.Remove(name);
+                        memo[name] = true;
+                        return true;
+                    }
+                }
+
+                visiting.Remove(name);
+                memo[name] = false;
+                return false;
+            }
         }
 
         private static HashSet<string> CollectDirectCallNames(Antlr4.Runtime.Tree.IParseTree node)

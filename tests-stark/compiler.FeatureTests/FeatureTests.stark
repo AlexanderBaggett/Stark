@@ -40,7 +40,7 @@ fn i32[min max] Read(borrow Box box)
 
         return Contains(
             Llvm(compiled),
-            "define fastcc noundef i32 @Read(ptr noundef nonnull noalias readonly nocapture dereferenceable(4) align 4 %arg_box)");
+            "define fastcc noundef i32 @Read(ptr noundef nonnull noalias readonly captures(none) dereferenceable(4) align 4 %arg_box)");
     }
 }
 
@@ -2134,7 +2134,7 @@ finite law i64[min max] Run(Big value)
             && DoesNotContain(runHeader, "memory(readwrite")
             && Contains(specializationHeader, "memory(argmem: read)")
             && DoesNotContain(specializationHeader, "memory(readwrite")
-            && Contains(runBody, "call fastcc i64 @__stark_mono_fn_Demo__Read__Big(ptr nonnull byval(%Big) noalias readonly nocapture dereferenceable(32) align 8 %arg_value)")
+            && Contains(runBody, "call fastcc i64 @__stark_mono_fn_Demo__Read__Big(ptr nonnull byval(%Big) noalias readonly captures(none) dereferenceable(32) align 8 %arg_value)")
             && DoesNotContain(runBody, "%abi_callarg_value");
     }
 }
@@ -2281,15 +2281,15 @@ law i32[min max] Run(borrow Box box)
         stack ascii inspectHeader = LlvmDefinitionHeader(llvm, "Inspect_Read");
         stack ascii runHeader = LlvmDefinitionHeader(llvm, "Run");
         stack ascii runBody = LlvmDefinitionBody(llvm, "Run");
-        return Contains(inspectHeader, "ptr noundef nonnull noalias readonly nocapture dereferenceable(4) align 4 %arg_box")
+        return Contains(inspectHeader, "ptr noundef nonnull noalias readonly captures(none) dereferenceable(4) align 4 %arg_box")
             && Contains(inspectHeader, "nounwind willreturn mustprogress nosync nofree memory(argmem: read)")
             && Contains(inspectHeader, "alwaysinline")
             && DoesNotContain(inspectHeader, "memory(readwrite")
-            && Contains(runHeader, "ptr noundef nonnull noalias readonly nocapture dereferenceable(4) align 4 %arg_box")
+            && Contains(runHeader, "ptr noundef nonnull noalias readonly captures(none) dereferenceable(4) align 4 %arg_box")
             && Contains(runHeader, "nounwind willreturn mustprogress nosync nofree memory(argmem: read)")
             && Contains(runHeader, "alwaysinline")
             && DoesNotContain(runHeader, "memory(readwrite")
-            && Contains(runBody, "call fastcc i32 @Inspect_Read(ptr nonnull noalias readonly nocapture dereferenceable(4) align 4")
+            && Contains(runBody, "call fastcc i32 @Inspect_Read(ptr nonnull noalias readonly captures(none) dereferenceable(4) align 4")
             && DoesNotContain(llvm, "vtable")
             && DoesNotContain(llvm, "Vtable")
             && DoesNotContain(llvm, "fnptr")
@@ -2359,15 +2359,15 @@ finite law i32[min max] Run(borrow Box<i32[min max]> box)
         stack ascii specializationHeader = LlvmDefinitionHeader(llvm, "__stark_mono_fn_Demo__Inspect_Read__i32");
         stack ascii runBody = LlvmDefinitionBody(llvm, "Run");
         return Contains(specializationHeader, "define internal dso_local fastcc noundef i32 @__stark_mono_fn_Demo__Inspect_Read__i32(")
-            && Contains(specializationHeader, "ptr noundef nonnull noalias readonly nocapture dereferenceable(4) align 4 %arg_box")
+            && Contains(specializationHeader, "ptr noundef nonnull noalias readonly captures(none) dereferenceable(4) align 4 %arg_box")
             && Contains(specializationHeader, "nounwind willreturn mustprogress nosync nofree memory(argmem: read)")
             && Contains(specializationHeader, "alwaysinline")
             && DoesNotContain(specializationHeader, "memory(readwrite")
-            && Contains(runHeader, "ptr noundef nonnull noalias readonly nocapture dereferenceable(4) align 4 %arg_box")
+            && Contains(runHeader, "ptr noundef nonnull noalias readonly captures(none) dereferenceable(4) align 4 %arg_box")
             && Contains(runHeader, "nounwind willreturn mustprogress nosync nofree memory(argmem: read)")
             && Contains(runHeader, "alwaysinline")
             && DoesNotContain(runHeader, "memory(readwrite")
-            && Contains(runBody, "call fastcc i32 @__stark_mono_fn_Demo__Inspect_Read__i32(ptr nonnull noalias readonly nocapture dereferenceable(4) align 4")
+            && Contains(runBody, "call fastcc i32 @__stark_mono_fn_Demo__Inspect_Read__i32(ptr nonnull noalias readonly captures(none) dereferenceable(4) align 4")
             && DoesNotContain(llvm, "declare fastcc noundef ptr @Inspect_Read(")
             && DoesNotContain(llvm, "define fastcc noundef ptr @Inspect_Read(")
             && DoesNotContain(llvm, "define fastcc noundef i32 @Inspect_Read(")

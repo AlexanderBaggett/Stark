@@ -2011,7 +2011,10 @@ internal sealed class LlvmIrEmitter
 
     private bool UsesAssumeIntrinsic()
     {
-        return _ssa.Functions.Any(LlvmFunctionBodyEmitter.MayEmitAssumeIntrinsic);
+        return _ssa.Functions.Any(function =>
+            LlvmFunctionBodyEmitter.MayEmitAssumeIntrinsic(
+                function,
+                _ssaValueFacts?.Functions.GetValueOrDefault(function.Name)));
     }
 
     private string GetAllocatorSizeType()

@@ -3810,6 +3810,7 @@ internal sealed class SemanticValidator
         {
             if (target.Type.Kind == StarkTypeKind.FunctionPointer)
             {
+                summary.MarkOpaqueCall();
                 ValidateIndirectCallKind(target.Type, currentFunction, summary, arguments);
                 return new ValidationValue(
                     target.Type.FunctionPointerReturnType ?? StarkTypeSymbols.Error,
@@ -3818,6 +3819,7 @@ internal sealed class SemanticValidator
 
             if (target.Type.Kind == StarkTypeKind.Closure)
             {
+                summary.MarkOpaqueCall();
                 ValidateClosureCallKind(target.Type, currentFunction, summary, arguments);
                 return new ValidationValue(
                     target.Type.ClosureReturnType ?? StarkTypeSymbols.Error,
@@ -3843,6 +3845,8 @@ internal sealed class SemanticValidator
 
             if (calleeEffects.IsFfi)
             {
+                summary.MarkOpaqueCall();
+
                 if (target.Receiver is not null
                     && target.Function.Parameters.Count != 0
                     && target.Receiver.Type.BorrowKind != StarkBorrowKind.None)
@@ -3865,12 +3869,19 @@ internal sealed class SemanticValidator
                     arguments.Start));
                 return new ValidationValue(target.Function.ReturnType, NamedType: ResolveNamedTypeSymbol(target.Function.ReturnType));
             }
+
+            if (!target.Function.HasBody && !_importedFunctionSemantics.ContainsKey(target.Function.Name))
+            {
+                summary.MarkOpaqueCall();
+            }
         }
 
         ValidatePendingCallArguments(target, argumentValues, receiverOffset, explicitParameterCount, summary, arguments);
 
         if (target.Receiver?.Type.Kind == StarkTypeKind.DynTrait)
         {
+            summary.MarkOpaqueCall();
+
             // A dynamic dispatch invokes an unknown concrete implementation that
             // accesses the object behind the trait object's data pointer -- memory
             // that is NOT this function's argument memory. Recording the abstract
@@ -3906,6 +3917,7 @@ internal sealed class SemanticValidator
     /// </summary>
     private static ValidationValue UnresolvedCallValue(FunctionValidationBuilder summary)
     {
+        summary.MarkOpaqueCall();
         summary.ApplyFunctionMemoryEffects(new FunctionMemoryEffectSummary(
             ReadsArgumentMemory: true,
             WritesArgumentMemory: true,
@@ -5408,7 +5420,9 @@ internal sealed class SemanticValidator
             left.WritesArgumentMemory || right.WritesArgumentMemory,
             left.CapturesArgumentMemory || right.CapturesArgumentMemory,
             left.ReadsOtherMemory || right.ReadsOtherMemory,
-            left.WritesOtherMemory || right.WritesOtherMemory);
+            left.WritesOtherMemory || right.WritesOtherMemory,
+            left.InitializesArgumentMemory || right.InitializesArgumentMemory,
+            left.HasPointeeDeadOnReturnArgument || right.HasPointeeDeadOnReturnArgument);
     }
 
     private void InferEffectiveFunctionKindsAndValidateDeclaredContracts()
@@ -7587,6 +7601,9 @@ internal sealed class SemanticValidator
             var concreteLayout = ConcreteTypeLayoutHelper.TryGetConcreteTypeLayout(layoutType, namedTypes, enumLayouts);
             DereferenceableBytes = GuaranteedNonNull && concreteLayout is not null ? concreteLayout.SizeBytes : null;
             AlignmentBytes = GuaranteedNonNull && concreteLayout is not null ? concreteLayout.AlignmentBytes : null;
+            InitializationRanges = TryBuildDestinationInitializationRanges(parameter.Type, concreteLayout, out var initializationRanges)
+                ? initializationRanges
+                : [];
         }
 
         public string Name { get; }
@@ -7606,6 +7623,10 @@ internal sealed class SemanticValidator
         public int? DereferenceableBytes { get; }
 
         public int? AlignmentBytes { get; }
+
+        public IReadOnlyList<ParameterInitializationRangeSummary> InitializationRanges { get; }
+
+        public bool PointeeDeadOnReturn { get; } = false;
 
         public bool Reads { get; set; }
 
@@ -7652,7 +7673,9 @@ internal sealed class SemanticValidator
                 AlignmentBytes,
                 effects.Reads,
                 effects.Writes,
-                effects.CaptureKind);
+                effects.CaptureKind,
+                InitializationRanges,
+                PointeeDeadOnReturn);
         }
 
         public bool Apply(ArgumentEffects effects)
@@ -7681,9 +7704,41 @@ internal sealed class SemanticValidator
 
         private static StarkTypeSymbol GetParameterDereferenceableLayoutType(StarkTypeSymbol type)
         {
-            return StarkTypeSymbols.IsPointerBackedBorrowType(type)
+            var storageType = StarkTypeSymbols.IsPointerBackedBorrowType(type)
                 ? StarkTypeSymbols.BorrowReturnValueType(type)
                 : type;
+            return storageType.BorrowKind != StarkBorrowKind.None
+                   || storageType.InitializationKind != StarkInitializationKind.None
+                ? StarkTypeSymbols.WithQualifiers(
+                    storageType,
+                    borrowKind: StarkBorrowKind.None,
+                    accessKind: StarkAccessKind.None,
+                    initializationKind: StarkInitializationKind.None,
+                    isMutableView: false)
+                : storageType;
+        }
+
+        private static bool TryBuildDestinationInitializationRanges(
+            StarkTypeSymbol type,
+            ConcreteTypeLayout? concreteLayout,
+            out IReadOnlyList<ParameterInitializationRangeSummary> ranges)
+        {
+            ranges = [];
+            if (type.InitializationKind == StarkInitializationKind.None
+                || concreteLayout is not { SizeBytes: > 0 })
+            {
+                return false;
+            }
+
+            var storageType = GetParameterDereferenceableLayoutType(type);
+            if (type.InitializationKind == StarkInitializationKind.Init
+                && storageType.Kind == StarkTypeKind.Slice)
+            {
+                return false;
+            }
+
+            ranges = [new ParameterInitializationRangeSummary(0, concreteLayout.SizeBytes)];
+            return true;
         }
     }
 
@@ -7727,6 +7782,8 @@ internal sealed class SemanticValidator
         public bool ReadsOtherMemory { get; private set; }
 
         public bool WritesOtherMemory { get; private set; }
+
+        public bool HasOpaqueCall { get; private set; }
 
         public FunctionOptimizationSummary? OptimizationSummary { get; private set; }
 
@@ -7799,6 +7856,11 @@ internal sealed class SemanticValidator
         public void MarkOtherMemoryWrite()
         {
             WritesOtherMemory = true;
+        }
+
+        public void MarkOpaqueCall()
+        {
+            HasOpaqueCall = true;
         }
 
         public bool ApplyArgumentEffects(string parameterName, ArgumentEffects effects)
@@ -7881,7 +7943,9 @@ internal sealed class SemanticValidator
                 parameterEffects.Any(static parameter => parameter.Writes),
                 parameterEffects.Any(static parameter => parameter.CaptureKind != ParameterCaptureKind.None),
                 ReadsOtherMemory,
-                WritesOtherMemory);
+                WritesOtherMemory,
+                Parameters.Values.Any(static parameter => parameter.InitializationRanges.Count > 0),
+                Parameters.Values.Any(static parameter => parameter.PointeeDeadOnReturn));
         }
 
         public FunctionValidationSummary Build()
@@ -7895,7 +7959,9 @@ internal sealed class SemanticValidator
                 parameterSummaries.Any(static parameter => parameter.Writes),
                 parameterSummaries.Any(static parameter => parameter.CaptureKind != ParameterCaptureKind.None),
                 ReadsOtherMemory,
-                WritesOtherMemory);
+                WritesOtherMemory,
+                parameterSummaries.Any(static parameter => parameter.InitializationRanges is { Count: > 0 }),
+                parameterSummaries.Any(static parameter => parameter.PointeeDeadOnReturn));
 
             return new FunctionValidationSummary(
                 Name,
@@ -7907,7 +7973,9 @@ internal sealed class SemanticValidator
                 memoryEffects,
                 parameterSummaries,
                 ResolvedCalls.ToArray(),
-                OptimizationSummary);
+                OptimizationSummary,
+                HasBody,
+                HasOpaqueCall);
         }
     }
 }

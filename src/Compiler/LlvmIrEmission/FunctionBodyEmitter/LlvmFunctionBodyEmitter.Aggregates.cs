@@ -25,11 +25,13 @@ internal sealed partial class LlvmFunctionBodyEmitter
                 GetLocalSlotAlignmentBytes(storeLocal.LocalName, storeLocal.LocalType),
                 GetDirectTbaaMetadataSuffix(CreateTbaaLocalRootKey(storeLocal.LocalName), storeLocal.LocalType));
             EmitInvariantStartForLocalIfNeeded(storeLocal.LocalName, storeLocal.LocalType);
+            TrackFreshDynamicLocalStorageAfterStore(storeLocal);
             return;
         }
 
         if (TryEmitDirectAggregateAliasStoreLocal(storeLocal))
         {
+            TrackFreshDynamicLocalStorageAfterStore(storeLocal);
             return;
         }
 
@@ -42,6 +44,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
             GetLocalSlotAlignmentBytes(storeLocal.LocalName, storeLocal.LocalType),
             GetDirectTbaaMetadataSuffix(CreateTbaaLocalRootKey(storeLocal.LocalName), storeLocal.LocalType));
         EmitInvariantStartForLocalIfNeeded(storeLocal.LocalName, storeLocal.LocalType);
+        TrackFreshDynamicLocalStorageAfterStore(storeLocal);
     }
 
     private bool TryEmitDirectAggregateAliasStoreLocal(SsaStoreLocalInstruction storeLocal)

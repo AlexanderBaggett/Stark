@@ -83,10 +83,13 @@ internal sealed partial class LlvmFunctionBodyEmitter
     private readonly HashSet<string> _materializedAliasCandidateLocalNames = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _materializedParameters = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _valueAliases = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, FreshDynamicStoragePointer> _freshDynamicLocalStoragePointers = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _emittedSeparateStoragePairs = new(StringComparer.Ordinal);
     private IReadOnlyDictionary<int, RawPointerLoopIntrinsicPlan> _embeddedOptimizedRawPointerLoopPlansByPreheader =
         new Dictionary<int, RawPointerLoopIntrinsicPlan>();
     private HashSet<int> _embeddedOptimizedRawPointerLoopSkippedBlockIds = new();
     private HashSet<int> _embeddedOptimizedRawPointerLoopExitBlockIds = new();
+    private BlockDominanceIndex? _blockDominance;
     private readonly Dictionary<int, string> _blockExitLabels = [];
     private SourceLocation? _currentDebugLocation;
     private SsaBasicBlock? _currentBlock;
@@ -159,7 +162,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
         _assumptionsByBlock = BuildAssumptionsByBlock();
     }
 
-    public static bool MayEmitAssumeIntrinsic(SsaFunction function)
+    public static bool MayEmitAssumeIntrinsic(SsaFunction function, SsaFunctionFactModel? valueFacts = null)
     {
         if (function.SameGroups.Any(static group =>
                 group.ParameterNames.Distinct(StringComparer.Ordinal).Count() >= 2))
@@ -168,6 +171,11 @@ internal sealed partial class LlvmFunctionBodyEmitter
         }
 
         var valueDefinitions = CollectValueDefinitions(function);
+        if (MayEmitSeparateStorageAssume(function, valueDefinitions, valueFacts?.Values))
+        {
+            return true;
+        }
+
         var blockOrderById = CollectBlockOrder(function);
         var predecessorCounts = CountPredecessors(function);
 

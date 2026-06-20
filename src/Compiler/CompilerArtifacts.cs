@@ -1417,7 +1417,8 @@ public sealed record FunctionEffectProfile(
     // or the object behind a `dyn` trait object's data pointer). Optimizers that
     // compute a precise per-call local read/write set must treat these as a barrier.
     bool ReadsOtherMemory = false,
-    bool WritesOtherMemory = false);
+    bool WritesOtherMemory = false,
+    bool NoRecurse = false);
 
 public sealed record FunctionEffectModel(
     string ModuleName,
@@ -3648,6 +3649,10 @@ public enum ParameterCaptureKind
     Escape
 }
 
+public sealed record ParameterInitializationRangeSummary(
+    long StartByte,
+    long EndByte);
+
 public sealed record ParameterMemoryEffectSummary(
     string Name,
     string Type,
@@ -3660,7 +3665,9 @@ public sealed record ParameterMemoryEffectSummary(
     int? AlignmentBytes,
     bool Reads,
     bool Writes,
-    ParameterCaptureKind CaptureKind);
+    ParameterCaptureKind CaptureKind,
+    IReadOnlyList<ParameterInitializationRangeSummary>? InitializationRanges = null,
+    bool PointeeDeadOnReturn = false);
 
 public sealed record ConcreteFieldLayout(
     string Name,
@@ -4305,11 +4312,13 @@ public sealed record FunctionMemoryEffectSummary(
     bool WritesArgumentMemory,
     bool CapturesArgumentMemory,
     bool ReadsOtherMemory = false,
-    bool WritesOtherMemory = false)
+    bool WritesOtherMemory = false,
+    bool InitializesArgumentMemory = false,
+    bool HasPointeeDeadOnReturnArgument = false)
 {
     public bool ReadsMemory => ReadsArgumentMemory || ReadsOtherMemory;
 
-    public bool WritesMemory => WritesArgumentMemory || WritesOtherMemory;
+    public bool WritesMemory => WritesArgumentMemory || WritesOtherMemory || InitializesArgumentMemory;
 }
 
 public sealed record CallArgumentMemoryEffectSummary(
@@ -4379,7 +4388,9 @@ public sealed record FunctionValidationSummary(
     FunctionMemoryEffectSummary? MemoryEffects = null,
     IReadOnlyList<ParameterMemoryEffectSummary>? Parameters = null,
     IReadOnlyList<CallMemoryEffectSummary>? Calls = null,
-    FunctionOptimizationSummary? OptimizationSummary = null)
+    FunctionOptimizationSummary? OptimizationSummary = null,
+    bool HasBody = false,
+    bool HasOpaqueCall = false)
 {
     public bool CanStrengthenKind => FunctionKindFacts.Rank(EffectiveKind) > FunctionKindFacts.Rank(DeclaredKind);
 }
@@ -4393,7 +4404,8 @@ public sealed record ImportedFunctionSemanticSummary(
     IReadOnlyList<ParameterMemoryEffectSummary>? Parameters = null,
     IReadOnlyList<CallMemoryEffectSummary>? CallSummaries = null,
     FunctionOptimizationSummary? OptimizationSummary = null,
-    FunctionOwnershipSummary? OwnershipSummary = null)
+    FunctionOwnershipSummary? OwnershipSummary = null,
+    bool HasOpaqueCall = true)
 {
     public IReadOnlyList<CallMemoryEffectSummary> Calls => CallSummaries ?? [];
 

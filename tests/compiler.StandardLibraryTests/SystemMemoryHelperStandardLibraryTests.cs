@@ -980,8 +980,8 @@ public sealed class SystemMemoryHelperStandardLibraryTests : StandardLibraryTest
                 sourceLlvm,
                 "define fastcc noundef %MemoryStatus @FillBytes(");
 
-            string[] copyAttributes = ["readonly nocapture", "noalias nocapture", "nounwind willreturn mustprogress", "alwaysinline"];
-            string[] fillAttributes = ["noalias nocapture", "memory(write, argmem: readwrite)", "nounwind willreturn mustprogress", "alwaysinline"];
+            string[] copyAttributes = ["readonly captures(none)", "noalias captures(none)", "nounwind willreturn mustprogress", "alwaysinline"];
+            string[] fillAttributes = ["noalias captures(none)", "memory(write, argmem: readwrite)", "nounwind willreturn mustprogress", "alwaysinline"];
             AssertContainsAll(copyDeclaration, copyAttributes);
             AssertContainsAll(copyDefinition, copyAttributes);
             AssertContainsAll(fillDeclaration, fillAttributes);
