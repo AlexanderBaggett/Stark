@@ -319,6 +319,12 @@ public sealed class FunctionSemanticsTests
                 init values[0] = 7;
                 return;
             }
+
+            unsafe fn bool WriteAndConsume(out u32[0 max] value) where dead_on_return(value)
+            {
+                value = 7;
+                return true;
+            }
             """);
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
@@ -341,6 +347,16 @@ public sealed class FunctionSemanticsTests
         Assert.NotNull(validation.Functions["Fill"].MemoryEffects);
         Assert.False(validation.Functions["Fill"].MemoryEffects!.InitializesArgumentMemory);
         Assert.False(validation.Functions["Fill"].MemoryEffects!.HasPointeeDeadOnReturnArgument);
+
+        var deadOnReturnParameter = Assert.Single(validation.Functions["WriteAndConsume"].Parameters!);
+        Assert.True(deadOnReturnParameter.GuaranteedWriteOnly);
+        var deadOnReturnRange = Assert.Single(deadOnReturnParameter.InitializationRanges!);
+        Assert.Equal(0, deadOnReturnRange.StartByte);
+        Assert.Equal(4, deadOnReturnRange.EndByte);
+        Assert.True(deadOnReturnParameter.PointeeDeadOnReturn);
+        Assert.NotNull(validation.Functions["WriteAndConsume"].MemoryEffects);
+        Assert.True(validation.Functions["WriteAndConsume"].MemoryEffects!.InitializesArgumentMemory);
+        Assert.True(validation.Functions["WriteAndConsume"].MemoryEffects!.HasPointeeDeadOnReturnArgument);
     }
 
     [Fact]
@@ -883,6 +899,28 @@ public sealed class FunctionSemanticsTests
         Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Code == "STK4105" && diagnostic.Message.Contains("ReadGlobal", StringComparison.Ordinal));
         Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Code == "STK4102" && diagnostic.Message.Contains("Allocate", StringComparison.Ordinal));
         Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Code == "STK4104" && diagnostic.Message.Contains("WriteGlobal", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void LawBodiesRejectArenaStorageSelectorAllocation()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe law u64[0 max] Bad()
+            {
+                stack mut dynamic i32[min max] values = new(arena, 4);
+                return values.Length;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "semantic-validate"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK4102"
+                && diagnostic.Message.Contains("new(arena", StringComparison.Ordinal));
     }
 
     [Fact]

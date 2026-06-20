@@ -5012,9 +5012,10 @@ internal static partial class PackageImageBuilder
                         objectCreation.Start.Column + 1),
                     out var record)
                 ? new StarkPackageTemplateObjectCreationManifest(
-                    BuildPublishedAbiTypeReference(record.CreatedType, module),
-                    BuildPublishedConstructorShape(module, record.Constructor),
-                    record.Members.Count == 0
+                    CreatedType: BuildPublishedAbiTypeReference(record.CreatedType, module),
+                    Constructor: BuildPublishedConstructorShape(module, record.Constructor),
+                    StorageSelector: record.StorageSelector,
+                    InitializerMembers: record.Members.Count == 0
                         ? null
                         : record.Members
                             .Select(member => new StarkPackageTemplateObjectInitializerMemberManifest(
@@ -5419,7 +5420,8 @@ internal static partial class PackageImageBuilder
                         : null,
                     DisjointParameterGroups: BuildParameterDisjointGroupManifests(record.Signature.DisjointGroups),
                     OverlapParameterGroups: BuildParameterOverlapGroupManifests(record.Signature.OverlapGroups),
-                    SameParameterGroups: BuildParameterSameGroupManifests(record.Signature.SameGroups))
+                    SameParameterGroups: BuildParameterSameGroupManifests(record.Signature.SameGroups),
+                    PointeeDeadOnReturnParameterNames: BuildPointeeDeadOnReturnParameterNames(record.Signature.PointeeDeadOnReturnParameters))
                 : null)
             .Where(static directCall => directCall is not null)
             .Cast<StarkPackageTemplateDirectCallManifest>()
@@ -5521,7 +5523,8 @@ internal static partial class PackageImageBuilder
                         : null,
                     DisjointParameterGroups: BuildParameterDisjointGroupManifests(signature.DisjointGroups),
                     OverlapParameterGroups: BuildParameterOverlapGroupManifests(signature.OverlapGroups),
-                    SameParameterGroups: BuildParameterSameGroupManifests(signature.SameGroups));
+                    SameParameterGroups: BuildParameterSameGroupManifests(signature.SameGroups),
+                    PointeeDeadOnReturnParameterNames: BuildPointeeDeadOnReturnParameterNames(signature.PointeeDeadOnReturnParameters));
             })
             .Where(static memberCall => memberCall is not null)
             .Cast<StarkPackageTemplateMemberCallManifest>()
@@ -5587,7 +5590,8 @@ internal static partial class PackageImageBuilder
                     : null,
                 DisjointParameterGroups: BuildParameterDisjointGroupManifests(promotion.Signature.DisjointGroups),
                 OverlapParameterGroups: BuildParameterOverlapGroupManifests(promotion.Signature.OverlapGroups),
-                SameParameterGroups: BuildParameterSameGroupManifests(promotion.Signature.SameGroups)))
+                SameParameterGroups: BuildParameterSameGroupManifests(promotion.Signature.SameGroups),
+                PointeeDeadOnReturnParameterNames: BuildPointeeDeadOnReturnParameterNames(promotion.Signature.PointeeDeadOnReturnParameters)))
             .ToArray();
 
         return published.Length == 0 ? null : published;
@@ -5816,6 +5820,7 @@ internal static partial class PackageImageBuilder
                 ExpressionText: objectCreation.ExpressionText,
                 CreatedType: BuildPublishedAbiTypeReference(objectCreation.CreatedType, module),
                 Constructor: BuildPublishedConstructorShape(module, objectCreation.Constructor),
+                StorageSelector: objectCreation.StorageSelector,
                 InitializerMembers: objectCreation.Members.Count == 0
                     ? null
                     : objectCreation.Members
@@ -5961,6 +5966,7 @@ internal static partial class PackageImageBuilder
             DisjointParameterGroups: BuildParameterDisjointGroupManifests(signature.DisjointGroups),
             OverlapParameterGroups: BuildParameterOverlapGroupManifests(signature.OverlapGroups),
             SameParameterGroups: BuildParameterSameGroupManifests(signature.SameGroups),
+            PointeeDeadOnReturnParameterNames: BuildPointeeDeadOnReturnParameterNames(signature.PointeeDeadOnReturnParameters),
             CallArguments: BuildPublishedTemplateCallArguments(module, arguments),
             ReceiverType: ReceiverType,
             ReceiverIsAddressable: ReceiverIsAddressable,
@@ -6078,6 +6084,7 @@ internal static partial class PackageImageBuilder
     {
         return expression.type_() is null
             || expression.objectInitializer() is not null
+            || expression.arenaObjectCreationArgumentList() is not null
             || expression.argumentList() is { } argumentList && argumentList.argument().Length > 0;
     }
 
@@ -6332,10 +6339,12 @@ internal static partial class PackageImageBuilder
                 FunctionKind: RenderPublishedFunctionPointerKind(signature.functionKind().GetText()),
                 FunctionAbi: functionAbi,
                 FunctionIsUnsafe: signature.UNSAFE() is not null ? true : null,
+                FunctionIsTailCallable: signature.tailKeyword() is not null ? true : null,
                 ReturnType: returnType,
                 ParameterTypes: parameterTypes.Count == 0 ? null : parameterTypes.ToArray(),
                 OverlapParameterGroups: BuildParameterOverlapGroupManifests(signature.parameterMemoryContractClause()),
-                SameParameterGroups: BuildParameterSameGroupManifests(signature.parameterMemoryContractClause()));
+                SameParameterGroups: BuildParameterSameGroupManifests(signature.parameterMemoryContractClause()),
+                PointeeDeadOnReturnParameterNames: BuildPointeeDeadOnReturnParameterNames(signature.parameterMemoryContractClause()));
             return true;
         }
 

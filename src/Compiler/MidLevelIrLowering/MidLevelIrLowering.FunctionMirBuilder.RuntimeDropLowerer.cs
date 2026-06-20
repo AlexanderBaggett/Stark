@@ -388,6 +388,11 @@ internal sealed partial class MidLevelIrLowerer
                     EmitDynamicStorageElementDropsCore(operand, type, elementType);
                 }
 
+                if (IsArenaBackedDynamicStorageOperand(operand))
+                {
+                    return;
+                }
+
                 Emit(
                     MidLevelIrStatementKind.Evaluate,
                     $"drop {operand.Text}",
@@ -438,6 +443,13 @@ internal sealed partial class MidLevelIrLowerer
             }
 
             EmitStructFieldDropsCore(temporary, type, new HashSet<string>(StringComparer.Ordinal));
+        }
+
+        private bool IsArenaBackedDynamicStorageOperand(MidLevelIrOperand operand)
+        {
+            return operand is MidLevelIrLocalOperand local
+                && _dynamicStorageAllocationKindByLocal.TryGetValue(local.Name, out var allocationKind)
+                && allocationKind == DynamicStorageAllocationKind.Arena;
         }
 
         private void EmitHeapClosureDropCore(MidLevelIrOperand operand, StarkTypeSymbol type)

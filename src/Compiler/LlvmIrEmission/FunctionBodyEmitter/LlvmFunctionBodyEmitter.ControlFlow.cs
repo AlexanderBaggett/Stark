@@ -57,12 +57,14 @@ internal sealed partial class LlvmFunctionBodyEmitter
                         terminator.Value,
                         GetTypeAlignmentBytes(_function.ReturnType),
                         scopedNoAliasMetadataSuffix: GetScopedNoAliasMetadataSuffix(CreateScopedAliasParameterRootKey(_abiFunction.ReturnBufferParameter.SourceName)));
+                    EmitArenaFrameLeave();
                     AppendLine("  ret void");
                     return;
                 }
 
                 if (_function.ReturnType.Kind == StarkTypeKind.Void)
                 {
+                    EmitArenaFrameLeave();
                     AppendLine("  ret void");
                     return;
                 }
@@ -72,7 +74,11 @@ internal sealed partial class LlvmFunctionBodyEmitter
                     throw new UnsupportedBodyEmissionException("SSA return is missing a return value.");
                 }
 
+                EmitArenaFrameLeave();
                 AppendLine($"  ret {MapType(_abiFunction.LlvmReturnType)} {FormatValue(terminator.Value)}");
+                return;
+            case SsaTerminatorKind.TailCall:
+                EmitTailCallTerminator(terminator);
                 return;
             case SsaTerminatorKind.Unreachable:
                 AppendLine($"  call {TrapCallingConventionPrefix()}void @{UnreachableTrapHelperName}()");

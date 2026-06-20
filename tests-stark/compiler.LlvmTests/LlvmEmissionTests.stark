@@ -1320,6 +1320,34 @@ fn bool SourceBackedImportedInlineFunctionsEmitInternalLlvmBodyClones()
 
 [Fact]
 [Collection("compiler-pipeline-emit-llvm")]
+fn bool TailFunctionBecomeEmitsMustTailUnderTailcc()
+{
+    return TailFunctionBecomeEmitsMustTailUnderTailccImpl();
+}
+
+[Fact]
+[Collection("compiler-pipeline-emit-llvm")]
+fn bool MutualTailFunctionsEmitMustTailOnBothEdges()
+{
+    return MutualTailFunctionsEmitMustTailOnBothEdgesImpl();
+}
+
+[Fact]
+[Collection("compiler-pipeline-emit-llvm")]
+fn bool TailCallableFunctionPointerBecomeEmitsIndirectMustTail()
+{
+    return TailCallableFunctionPointerBecomeEmitsIndirectMustTailImpl();
+}
+
+[Fact]
+[Collection("compiler-pipeline-emit-llvm")]
+fn bool TailDynTraitDispatchBecomeEmitsIndirectMustTail()
+{
+    return TailDynTraitDispatchBecomeEmitsIndirectMustTailImpl();
+}
+
+[Fact]
+[Collection("compiler-pipeline-emit-llvm")]
 fn bool SourceBackedImportedInlineFunctionsDeclareModulePrivateConstsUsedByClone()
 {
     return SourceBackedImportedInlineFunctionsDeclareModulePrivateConstsUsedByCloneImpl();
@@ -1859,6 +1887,20 @@ fn bool OutDestinationParametersEmitInitializesAndWritableButNotDeadOnReturn()
 
 [Fact]
 [Collection("llvm-ir")]
+fn bool ExplicitDeadOnReturnDestinationParametersEmitLlvmAttribute()
+{
+    return ExplicitDeadOnReturnDestinationParametersEmitLlvmAttributeImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool FunctionPointerDeadOnReturnContractsEmitCallSiteAttribute()
+{
+    return FunctionPointerDeadOnReturnContractsEmitCallSiteAttributeImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
 fn bool FunctionPointerCallsWithInitParametersUseCallerStorage()
 {
     return FunctionPointerCallsWithInitParametersUseCallerStorageImpl();
@@ -1932,6 +1974,13 @@ fn bool DynamicStorageAllocationIndexInitAndDropEmitRuntimeAllocatorCalls()
 fn bool PositiveDynamicStorageAllocationElidesZeroAndOverflowBranches()
 {
     return PositiveDynamicStorageAllocationElidesZeroAndOverflowBranchesImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ArenaDynamicStorageAllocationUsesFrameAllocatorAndDropsWithoutFreeingOwner()
+{
+    return ArenaDynamicStorageAllocationUsesFrameAllocatorAndDropsWithoutFreeingOwnerImpl();
 }
 
 [Fact]
@@ -3080,6 +3129,13 @@ fn bool UnrecoverableUnreachablePathsLowerThroughColdTrapHelper()
 fn bool HeapObjectCreationUsesAllocatorLowering()
 {
     return HeapObjectCreationUsesAllocatorLoweringImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ArenaObjectCreationUsesFrameAllocatorLowering()
+{
+    return ArenaObjectCreationUsesFrameAllocatorLoweringImpl();
 }
 
 [Fact]

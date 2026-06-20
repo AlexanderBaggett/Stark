@@ -58,3 +58,333 @@ public fn System.Memory.MemoryResult<OwnedAscii> ConcatAscii(ascii left, u64[0 2
         return FailsWithDiagnosticMessage(compiled, "STK4200", "was moved and must be reinitialized");
     }
 }
+
+internal fn bool ArenaDynamicStorageCannotReturnOutOfArenaScopeImpl()
+{
+    {
+        stack mut LlvmCompile compiled = CompileFull(
+            "own-arena-dynamic-return",
+            raw"""
+module Demo
+
+fn dynamic u32[0 max] Bad()
+{
+    stack mut dynamic u32[0 max] values = new(arena, 4);
+    return values;
+}
+""");
+        return FailsWithDiagnosticMessage(compiled, "STK4202", "arena-backed value 'values'")
+            && CountDiagnosticsWithCodeAndMessage(compiled, "STK4202", "arena dynamic storage for 'values' is here") >= 1;
+    }
+}
+
+internal fn bool ArenaStorageRawPointersCannotReturnOutOfArenaScopeImpl()
+{
+    {
+        stack mut LlvmCompile compiled = CompileFull(
+            "own-arena-rawptr-return",
+            raw"""
+module Demo
+
+struct Box
+{
+    i32[min max] Value;
+}
+
+unsafe fn rawptr<Box> Bad()
+{
+    arena Box box = new Box()
+    {
+        Value = 1
+    };
+    return &box;
+}
+""");
+        return FailsWithDiagnosticMessage(compiled, "STK4202", "arena-backed storage")
+            && CountDiagnosticsWithCodeAndMessage(compiled, "STK4202", "arena storage for 'box' is here") >= 1;
+    }
+}
+
+internal fn bool ArenaObjectInitializerFieldsCannotReturnOutOfArenaScopeImpl()
+{
+    {
+        stack mut LlvmCompile compiled = CompileFull(
+            "own-arena-object-initializer-return",
+            raw"""
+module Demo
+
+struct Box
+{
+    i32[min max] Value;
+}
+
+struct Holder
+{
+    rawptr<Box> Ptr;
+}
+
+unsafe fn Holder Bad()
+{
+    arena Box box = new Box()
+    {
+        Value = 1
+    };
+    stack Holder holder = new Holder()
+    {
+        Ptr = &box
+    };
+    return holder;
+}
+""");
+        return FailsWithDiagnosticMessage(compiled, "STK4202", "arena-backed value 'holder'")
+            && CountDiagnosticsWithCodeAndMessage(compiled, "STK4202", "arena storage for 'box' is here") >= 1;
+    }
+}
+
+internal fn bool ArenaPrimaryConstructorFieldsCannotReturnOutOfArenaScopeImpl()
+{
+    {
+        stack mut LlvmCompile compiled = CompileFull(
+            "own-arena-primary-constructor-return",
+            raw"""
+module Demo
+
+struct Box
+{
+    i32[min max] Value;
+}
+
+record Holder(rawptr<Box> Ptr)
+{
+}
+
+unsafe fn Holder Bad()
+{
+    arena Box box = new Box()
+    {
+        Value = 1
+    };
+    return new Holder(&box);
+}
+""");
+        return FailsWithDiagnosticMessage(compiled, "STK4202", "arena-backed storage")
+            && CountDiagnosticsWithCodeAndMessage(compiled, "STK4202", "arena storage for 'box' is here") >= 1;
+    }
+}
+
+internal fn bool ArenaEnumPayloadsCannotReturnOutOfArenaScopeImpl()
+{
+    {
+        stack mut LlvmCompile compiled = CompileFull(
+            "own-arena-enum-payload-return",
+            raw"""
+module Demo
+
+struct Box
+{
+    i32[min max] Value;
+}
+
+enum Holder
+{
+    Ptr(rawptr<Box>)
+}
+
+unsafe fn Holder Bad()
+{
+    arena Box box = new Box()
+    {
+        Value = 1
+    };
+    return Holder.Ptr(&box);
+}
+""");
+        return FailsWithDiagnosticMessage(compiled, "STK4202", "arena-backed storage")
+            && CountDiagnosticsWithCodeAndMessage(compiled, "STK4202", "arena storage for 'box' is here") >= 1;
+    }
+}
+
+internal fn bool ArenaFixedArrayElementsCannotReturnOutOfArenaScopeImpl()
+{
+    {
+        stack mut LlvmCompile compiled = CompileFull(
+            "own-arena-fixed-array-return",
+            raw"""
+module Demo
+
+struct Box
+{
+    i32[min max] Value;
+}
+
+unsafe fn rawptr<Box>[1] Bad()
+{
+    arena Box box = new Box()
+    {
+        Value = 1
+    };
+    stack rawptr<Box>[1] values =
+    {
+        &box
+    };
+    return values;
+}
+""");
+        return FailsWithDiagnosticMessage(compiled, "STK4202", "arena-backed value 'values'")
+            && CountDiagnosticsWithCodeAndMessage(compiled, "STK4202", "arena storage for 'box' is here") >= 1;
+    }
+}
+
+internal fn bool ArenaBorrowsCannotBePassedToRetainingParametersImpl()
+{
+    {
+        stack mut LlvmCompile compiled = CompileFull(
+            "own-arena-retaining-param",
+            raw"""
+module Demo
+
+struct Box
+{
+    i32[min max] Value;
+}
+
+fn void Retain(storeborrow Box box);
+
+fn void Bad()
+{
+    arena Box box = new Box()
+    {
+        Value = 1
+    };
+    Retain(box);
+    return;
+}
+""");
+        return FailsWithDiagnosticMessage(compiled, "STK4202", "callee may retain")
+            && CountDiagnosticsWithCodeAndMessage(compiled, "STK4202", "arena storage for 'box' is here") >= 1;
+    }
+}
+
+internal fn bool ArenaPointersCannotBeStoredInHeapStorageImpl()
+{
+    {
+        stack mut LlvmCompile compiled = CompileFull(
+            "own-arena-heap-storage",
+            raw"""
+module Demo
+
+struct Box
+{
+    i32[min max] Value;
+}
+
+struct Holder
+{
+    rawptr<Box> Ptr;
+}
+
+unsafe fn void Bad()
+{
+    heap mut Holder holder = new Holder()
+    {
+        Ptr = null
+    };
+    arena Box box = new Box()
+    {
+        Value = 1
+    };
+    holder.Ptr = &box;
+    return;
+}
+""");
+        return FailsWithDiagnosticMessage(compiled, "STK4202", "heap storage 'holder'")
+            && CountDiagnosticsWithCodeAndMessage(compiled, "STK4202", "arena storage for 'box' is here") >= 1;
+    }
+}
+
+internal fn bool ArenaPointersCannotBeStoredInStaticStorageImpl()
+{
+    {
+        stack mut LlvmCompile compiled = CompileFull(
+            "own-arena-static-storage",
+            raw"""
+module Demo
+
+struct Box
+{
+    i32[min max] Value;
+}
+
+static mut rawptr<Box> Saved = null;
+
+unsafe fn void Bad()
+{
+    arena Box box = new Box()
+    {
+        Value = 1
+    };
+    Saved = &box;
+    return;
+}
+""");
+        return FailsWithDiagnosticMessage(compiled, "STK4202", "global or static storage 'Saved'")
+            && CountDiagnosticsWithCodeAndMessage(compiled, "STK4202", "arena storage for 'box' is here") >= 1;
+    }
+}
+
+internal fn bool ArenaBorrowsCanBePassedToNonRetainingBorrowParametersImpl()
+{
+    {
+        stack mut LlvmCompile compiled = CompileFull(
+            "own-arena-nonretaining-param",
+            raw"""
+module Demo
+
+struct Box
+{
+    i32[min max] Value;
+}
+
+finite law i32[min max] Read(borrow Box box)
+{
+    return box.Value;
+}
+
+fn i32[min max] Run()
+{
+    arena Box box = new Box()
+    {
+        Value = 2
+    };
+    return Read(box);
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+internal fn bool ArenaReadCapturesCannotBeRetainedInHeapClosuresImpl()
+{
+    {
+        stack mut LlvmCompile compiled = CompileFull(
+            "own-arena-heap-read-capture",
+            raw"""
+module Demo
+
+struct Box
+{
+    i32[min max] Value;
+}
+
+fn heap closure<fn i32[min max]()> Bad()
+{
+    arena Box box = new Box()
+    {
+        Value = 1
+    };
+    return heap capture(read box) () => box.Value;
+}
+""");
+        return FailsWithDiagnosticMessage(compiled, "STK3008", "Heap closure capture mode 'read'");
+    }
+}

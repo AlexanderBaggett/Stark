@@ -252,6 +252,22 @@ fn bool MirCondBlockRecordsConditionAndTargets()
 }
 
 [Fact]
+fn bool MirTailCallBlockRecordsPayload()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack MirValueId p0 = MirParam(instrs, 0);
+    stack MirValueId tail = MirTailCall1(instrs, MirFuncIdOf(3), p0);
+    stack MirBlockId b = MirTailCallBlock(blocks, tail);
+    stack MirValueId got = MirBlockTailCallValue(blocks, b);
+    return MirOpcodeOf(instrs, tail) == MirOp.TailCall
+        && MirCalleeOf(instrs, tail).Index() == 3
+        && MirOperandAOf(instrs, tail).Equals(p0)
+        && MirBlockTerminator(blocks, b) == MirTermKind.TailCall
+        && got.Equals(tail);
+}
+
+[Fact]
 fn bool MirBlockTerminatorIsUnterminatedOutOfRange()
 {
     // Querying a block id that was never created reads as unterminated.
@@ -646,6 +662,48 @@ fn bool EmitsLlvmCallForwardingAParameter()
 }
 
 [Fact]
+fn bool EmitsLlvmTailCallTerminator()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<u32[0 max]> tailFlags = new();
+    stack u32[0 max] f1Tail = tailFlags.Add(1);
+    stack MirValueId p0 = MirParam(instrs, 0);
+    stack MirValueId tail = MirTailCall1(instrs, MirFuncIdOf(1), p0);
+    stack MirBlockId entry = MirTailCallBlock(blocks, tail);
+    stack mut OwnedAscii sink = new();
+    switch (EmitLlvmDefinitionWithParamsTail(instrs, tailFlags, blocks, "fwd", 1, entry.Index(), 1, 2, sink))
+    {
+        case MemoryStatus.Ok:
+            return LlvmTextEquals(sink, "define tailcc i64 @fwd(i64 %p0) {\nb1:\n  %v2 = musttail call tailcc i64 @f1(i64 %p0)\n  ret i64 %v2\n}\n");
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+[Fact]
+fn bool EmitsLlvmOrdinaryCallToTailCallableWithTailcc()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<u32[0 max]> tailFlags = new();
+    stack u32[0 max] f1Tail = tailFlags.Add(1);
+    stack MirValueId p0 = MirParam(instrs, 0);
+    stack MirValueId result = MirCall1(instrs, MirFuncIdOf(1), p0);
+    stack MirBlockId entry = MirReturnBlock(blocks, result);
+    stack mut IrTable<BlockEmit> ranges = new();
+    stack u32[0 max] r1 = ranges.Add(MakeBlockEmit(entry.Index(), 1, 2));
+    stack mut OwnedAscii sink = new();
+    switch (EmitLlvmBlocksWithTailCallees(instrs, tailFlags, blocks, "caller", false, 1, ranges, sink))
+    {
+        case MemoryStatus.Ok:
+            return LlvmTextEquals(sink, "define i64 @caller(i64 %p0) {\nb1:\n  %v2 = call tailcc i64 @f1(i64 %p0)\n  ret i64 %v2\n}\n");
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+[Fact]
 fn bool MirComparisonRecordsOpcodeAndOperands()
 {
     // Comparison instructions record their opcode and both operands.
@@ -747,6 +805,8 @@ fn bool BinaryRoundTripsBlocks()
     stack MirBlockId retB = MirReturnBlock(blocks, v);
     stack MirBlockId brB = MirBranchBlock(blocks, retB);
     stack MirBlockId condB = MirCondBlock(blocks, v, retB, brB);
+    stack MirValueId tail = MirTailCall1(instrs, MirFuncIdOf(1), v);
+    stack MirBlockId tailB = MirTailCallBlock(blocks, tail);
     stack mut IrTable<u8[0 max]> buf = new();
     SerializeBlocks(blocks, buf);
     stack mut IrTable<MirBlock> back = new();
@@ -754,13 +814,16 @@ fn bool BinaryRoundTripsBlocks()
     stack MirBlockId brTarget = MirBlockBranchTarget(back, MirBlockIdOf(2));
     stack MirBlockId condThen = MirBlockCondThen(back, MirBlockIdOf(3));
     stack MirBlockId condElse = MirBlockCondElse(back, MirBlockIdOf(3));
-    return back.Count() == 3
+    stack MirValueId tailPayload = MirBlockTailCallValue(back, MirBlockIdOf(4));
+    return back.Count() == 4
         && MirBlockTerminator(back, MirBlockIdOf(1)) == MirTermKind.Return
         && MirBlockTerminator(back, MirBlockIdOf(2)) == MirTermKind.Branch
         && MirBlockTerminator(back, MirBlockIdOf(3)) == MirTermKind.CondBranch
+        && MirBlockTerminator(back, MirBlockIdOf(4)) == MirTermKind.TailCall
         && brTarget.Equals(MirBlockIdOf(1))
         && condThen.Equals(MirBlockIdOf(1))
-        && condElse.Equals(MirBlockIdOf(2));
+        && condElse.Equals(MirBlockIdOf(2))
+        && tailPayload.Equals(tail);
 }
 
 [Fact]
@@ -1792,6 +1855,30 @@ fn bool CompilesModuleWithCallFromAst()
 }
 
 [Fact]
+fn bool CompilesTailBecomeFromAst()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("tail fn done(x) { return x } tail fn bounce(x) { become done(x) } fn main() { return bounce(5) }", sink);
+    stack mut OwnedAscii nonTailFunction = new();
+    stack mut OwnedAscii nonTailTarget = new();
+    stack mut OwnedAscii mismatchedAbi = new();
+    return ok
+        && LlvmTextEquals(sink, "define tailcc i64 @f1(i64 %p0) {\nb1:\n  ret i64 %p0\n}\ndefine tailcc i64 @f2(i64 %p0) {\nb1:\n  %v2 = musttail call tailcc i64 @f1(i64 %p0)\n  ret i64 %v2\n}\ndefine i64 @f3() {\nb1:\n  %v1 = add i64 0, 5\n  %v2 = call tailcc i64 @f2(i64 %v1)\n  ret i64 %v2\n}\n")
+        && !CompileModuleFromAst("tail fn done(x) { return x } fn bad(x) { become done(x) }", nonTailFunction)
+        && !CompileModuleFromAst("fn plain(x) { return x } tail fn bad(x) { become plain(x) }", nonTailTarget)
+        && !CompileModuleFromAst("tail fn one(x) { return x } tail fn two(x, y) { become one(x) }", mismatchedAbi);
+}
+
+[Fact]
+fn bool CompilesTailRecursiveBranchFromAst()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("tail fn count(n, acc) { if n == 0 return acc else become count(n - 1, acc + 1) } fn main() { return count(3, 0) }", sink);
+    return ok
+        && LlvmTextEquals(sink, "define tailcc i64 @f1(i64 %p0, i64 %p1) {\nb1:\n  %v2 = add i64 0, 0\n  %v3 = icmp eq i64 %p0, %v2\n  br i1 %v3, label %b2, label %b3\nb2:\n  ret i64 %p1\nb3:\n  %v6 = add i64 0, 1\n  %v7 = sub i64 %p0, %v6\n  %v9 = add i64 0, 1\n  %v10 = add i64 %p1, %v9\n  %v11 = musttail call tailcc i64 @f1(i64 %v7, i64 %v10)\n  ret i64 %v11\n}\ndefine i64 @f2() {\nb1:\n  %v1 = add i64 0, 3\n  %v2 = add i64 0, 0\n  %v3 = call tailcc i64 @f1(i64 %v1, i64 %v2)\n  ret i64 %v3\n}\n");
+}
+
+[Fact]
 fn bool CompilesTwoArgumentCallFromAst()
 {
     stack mut OwnedAscii sink = new();
@@ -1829,6 +1916,29 @@ fn bool BinaryRoundTripsFourArgumentCall()
     stack MirInstruction callBack = back.Get(5);
     return back.Count() == 5
         && MirOpcodeOf(back, MirValueIdOf(5)) == MirOp.Call
+        && MirImmediateOf(back, MirValueIdOf(5)) == 2
+        && callBack.OperandAIndex() == 1
+        && callBack.OperandBIndex() == 2
+        && callBack.OperandCIndex() == 3
+        && callBack.OperandDIndex() == 4;
+}
+
+[Fact]
+fn bool BinaryRoundTripsFourArgumentTailCall()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack MirValueId a0 = MirConstInt(instrs, 10);
+    stack MirValueId a1 = MirConstInt(instrs, 20);
+    stack MirValueId a2 = MirConstInt(instrs, 30);
+    stack MirValueId a3 = MirConstInt(instrs, 40);
+    stack MirValueId call = MirTailCall4(instrs, MirFuncIdOf(2), a0, a1, a2, a3);
+    stack mut IrTable<u8[0 max]> buf = new();
+    SerializeInstructions(instrs, 1, 5, buf);
+    stack mut IrTable<MirInstruction> back = new();
+    DeserializeInstructions(buf, back);
+    stack MirInstruction callBack = back.Get(5);
+    return back.Count() == 5
+        && MirOpcodeOf(back, MirValueIdOf(5)) == MirOp.TailCall
         && MirImmediateOf(back, MirValueIdOf(5)) == 2
         && callBack.OperandAIndex() == 1
         && callBack.OperandBIndex() == 2

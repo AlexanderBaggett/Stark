@@ -6694,7 +6694,12 @@ internal sealed partial class MidLevelIrLowerer
                 slotParameterTypes.Add(methodParameters[index].Type);
             }
 
-            var slotFunctionPointerType = StarkTypeSymbols.FunctionPointer(signature.Kind, signature.ReturnType, slotParameterTypes);
+            var slotFunctionPointerType = StarkTypeSymbols.FunctionPointer(
+                signature.Kind,
+                signature.ReturnType,
+                slotParameterTypes,
+                isTailCallable: signature.IsTailCallable,
+                pointeeDeadOnReturnParameterNames: MapPointeeDeadOnReturnParameters(signature));
             var vtablePointer = EmitTemporary(
                 new MidLevelIrExtractIndexRValue(
                     receiver,
@@ -7018,16 +7023,19 @@ internal sealed partial class MidLevelIrLowerer
                                 storageAddress,
                                 receiver.Type,
                                 capacity,
+                                DynamicStorageAllocationKind.Runtime,
                                 text),
                             "TryReserveCapacity" => new MidLevelIrDynamicStorageTryReserveCapacityRValue(
                                 storageAddress,
                                 receiver.Type,
                                 capacity,
+                                DynamicStorageAllocationKind.Runtime,
                                 text),
                             _ => new MidLevelIrDynamicStorageReserveRValue(
                                 storageAddress,
                                 receiver.Type,
                                 capacity,
+                                DynamicStorageAllocationKind.Runtime,
                                 text)
                         };
                         ValidateImportedTypedTemplateDynamicStorageResult(operation, expectedResultType, operationName);
@@ -7198,7 +7206,10 @@ internal sealed partial class MidLevelIrLowerer
             var createdType = ApplyGenericSubstitution(publishedObjectCreation.CreatedType);
             if (createdType.Kind == StarkTypeKind.Dynamic)
             {
-                return LowerImportedTypedTemplateDynamicStorageCreation(expression, createdType);
+                return LowerImportedTypedTemplateDynamicStorageCreation(
+                    expression,
+                    createdType,
+                    publishedObjectCreation.StorageSelector);
             }
 
             MidLevelIrOperand current = new MidLevelIrZeroInitializerOperand(createdType);
@@ -7293,7 +7304,8 @@ internal sealed partial class MidLevelIrLowerer
 
         private MidLevelIrOperand? LowerImportedTypedTemplateDynamicStorageCreation(
             ImportedTemplateTypedBodyExpressionSummary expression,
-            StarkTypeSymbol createdType)
+            StarkTypeSymbol createdType,
+            ObjectCreationStorageSelector storageSelector)
         {
             if (createdType.ElementType is null)
             {
@@ -7332,6 +7344,9 @@ internal sealed partial class MidLevelIrLowerer
                 new MidLevelIrDynamicStorageAllocationRValue(
                     capacity,
                     createdType,
+                    storageSelector == ObjectCreationStorageSelector.Arena
+                        ? DynamicStorageAllocationKind.Arena
+                        : DynamicStorageAllocationKind.Runtime,
                     RenderImportedTypedTemplateExpressionCore(expression)),
                 "dynamic");
         }

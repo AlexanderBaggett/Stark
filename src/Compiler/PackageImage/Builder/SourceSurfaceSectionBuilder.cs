@@ -130,6 +130,7 @@ internal static partial class PackageImageBuilder
                 functionDeclaration.parameterMemoryContractClause()),
             OverlapParameterGroups = BuildParameterOverlapGroupManifests(functionDeclaration.parameterMemoryContractClause()),
             SameParameterGroups = BuildParameterSameGroupManifests(functionDeclaration.parameterMemoryContractClause()),
+            PointeeDeadOnReturnParameterNames = BuildPointeeDeadOnReturnParameterNames(functionDeclaration.parameterMemoryContractClause()),
             TypeParameterConstraints = BuildSourceSurfaceTypeParameterConstraints(
                 module,
                 functionDeclaration.typeParameterConstraints()),
@@ -378,6 +379,36 @@ internal static partial class PackageImageBuilder
         return predicates;
     }
 
+    private static IReadOnlyList<string>? BuildPointeeDeadOnReturnParameterNames(
+        IReadOnlyList<StarkParser.ParameterMemoryContractClauseContext> memoryContractClauses)
+    {
+        List<string>? names = null;
+        foreach (var clause in memoryContractClauses)
+        {
+            foreach (var contract in clause.parameterMemoryContract())
+            {
+                if (contract.deadOnReturnContract()?.expressionList() is not { } expressionList)
+                {
+                    continue;
+                }
+
+                names ??= [];
+                names.AddRange(expressionList.expression().Select(static expression => expression.GetText()));
+            }
+        }
+
+        if (names is not { Count: > 0 })
+        {
+            return null;
+        }
+
+        var distinctNames = names
+            .Where(static name => !string.IsNullOrWhiteSpace(name))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        return distinctNames.Length == 0 ? null : distinctNames;
+    }
+
     private static IReadOnlyList<StarkPackageTypeParameterConstraintManifest>? BuildSourceSurfaceTypeParameterConstraints(
         LoadedModuleDocument module,
         IReadOnlyList<StarkParser.TypeParameterConstraintsContext> constraintContexts)
@@ -498,6 +529,7 @@ internal static partial class PackageImageBuilder
                     method.parameterMemoryContractClause()),
                 OverlapParameterGroups = BuildParameterOverlapGroupManifests(method.parameterMemoryContractClause()),
                 SameParameterGroups = BuildParameterSameGroupManifests(method.parameterMemoryContractClause()),
+                PointeeDeadOnReturnParameterNames = BuildPointeeDeadOnReturnParameterNames(method.parameterMemoryContractClause()),
                 TypeParameterConstraints = BuildSourceSurfaceTypeParameterConstraints(
                     module,
                     method.typeParameterConstraints()),
@@ -561,6 +593,7 @@ internal static partial class PackageImageBuilder
                     method.parameterMemoryContractClause()),
                 OverlapParameterGroups = BuildParameterOverlapGroupManifests(method.parameterMemoryContractClause()),
                 SameParameterGroups = BuildParameterSameGroupManifests(method.parameterMemoryContractClause()),
+                PointeeDeadOnReturnParameterNames = BuildPointeeDeadOnReturnParameterNames(method.parameterMemoryContractClause()),
                 TypeParameterConstraints = BuildSourceSurfaceTypeParameterConstraints(
                     module,
                     method.typeParameterConstraints()),
@@ -624,6 +657,7 @@ internal static partial class PackageImageBuilder
                     method.parameterMemoryContractClause()),
                 OverlapParameterGroups = BuildParameterOverlapGroupManifests(method.parameterMemoryContractClause()),
                 SameParameterGroups = BuildParameterSameGroupManifests(method.parameterMemoryContractClause()),
+                PointeeDeadOnReturnParameterNames = BuildPointeeDeadOnReturnParameterNames(method.parameterMemoryContractClause()),
                 TypeParameterConstraints = BuildSourceSurfaceTypeParameterConstraints(
                     module,
                     method.typeParameterConstraints()),

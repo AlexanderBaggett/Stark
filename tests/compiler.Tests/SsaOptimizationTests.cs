@@ -3129,6 +3129,7 @@ public sealed class SsaOptimizationTests
                                     new SsaDynamicStorageAllocationRValue(
                                         new SsaIntegerConstant(4, countType),
                                         storageType,
+                                        DynamicStorageAllocationKind.Runtime,
                                         "new(4)")),
                                 new SsaValueInstruction(
                                     "length",
@@ -3209,6 +3210,7 @@ public sealed class SsaOptimizationTests
                                     new SsaDynamicStorageAllocationRValue(
                                         new SsaIntegerConstant(4, countType),
                                         storageType,
+                                        DynamicStorageAllocationKind.Runtime,
                                         "new(4)")),
                                 new SsaStoreLocalInstruction(
                                     "items",
@@ -3227,6 +3229,7 @@ public sealed class SsaOptimizationTests
                                         new SsaValueReference("items_address", storagePointerType),
                                         storageType,
                                         new SsaIntegerConstant(8, countType),
+                                        DynamicStorageAllocationKind.Runtime,
                                         "items.TryReserve(8)"))
                             ],
                             new SsaTerminator(
@@ -3326,6 +3329,7 @@ public sealed class SsaOptimizationTests
                                     new SsaDynamicStorageAllocationRValue(
                                         new SsaIntegerConstant(4, countType),
                                         storageType,
+                                        DynamicStorageAllocationKind.Runtime,
                                         "new(4)")),
                                 new SsaValueInstruction(
                                     "initialized",
@@ -3416,6 +3420,7 @@ public sealed class SsaOptimizationTests
                                     new SsaDynamicStorageAllocationRValue(
                                         new SsaIntegerConstant(4, countType),
                                         storageType,
+                                        DynamicStorageAllocationKind.Runtime,
                                         "new(4)")),
                                 new SsaStoreLocalInstruction(
                                     "items",
@@ -3503,6 +3508,7 @@ public sealed class SsaOptimizationTests
                                     new SsaDynamicStorageAllocationRValue(
                                         new SsaIntegerConstant(4, countType),
                                         storageType,
+                                        DynamicStorageAllocationKind.Runtime,
                                         "new(4)")),
                                 new SsaStoreLocalInstruction(
                                     "items",
@@ -3681,6 +3687,7 @@ public sealed class SsaOptimizationTests
                 new SsaDynamicStorageAllocationRValue(
                     new SsaIntegerConstant(4, countType),
                     storageType,
+                    DynamicStorageAllocationKind.Runtime,
                     "new(4)")),
             new SsaStoreLocalInstruction(
                 "items",
@@ -3752,6 +3759,7 @@ public sealed class SsaOptimizationTests
                         new SsaValueReference("items_address", storagePointerType),
                         storageType,
                         new SsaIntegerConstant(4, countType),
+                        DynamicStorageAllocationKind.Runtime,
                         "items.Reserve(4)")),
                 new SsaValueInstruction(
                     "after_reserve",

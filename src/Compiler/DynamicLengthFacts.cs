@@ -86,6 +86,7 @@ internal static class DynamicLengthFacts
         }
 
         if (statement.returnStatement() is not null
+            || statement.becomeStatement() is not null
             || statement.breakStatement() is not null
             || statement.continueStatement() is not null)
         {
@@ -130,7 +131,8 @@ internal static class DynamicLengthFacts
             return false;
         }
 
-        if (statement.returnStatement() is not null)
+        if (statement.returnStatement() is not null
+            || statement.becomeStatement() is not null)
         {
             return true;
         }

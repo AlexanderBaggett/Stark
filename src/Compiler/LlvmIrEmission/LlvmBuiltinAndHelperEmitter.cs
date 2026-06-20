@@ -18,6 +18,10 @@ internal sealed class LlvmBuiltinAndHelperEmitter
     private const string IntegerExponentHelperNamePrefix = "__stark_int_pow_i";
     private const string HeapAllocateHelperName = "__stark_heap_alloc";
     private const string HeapFreeHelperName = "__stark_heap_free";
+    private const string ArenaEnterHelperName = "__stark_arena_enter";
+    private const string ArenaLeaveHelperName = "__stark_arena_leave";
+    private const string ArenaAllocateHelperName = "__stark_arena_alloc";
+    private const string ArenaDynamicStorageAllocateHelperName = "__stark_arena_dynamic_alloc";
     private const string RuntimeAllocateHelperName = "__stark_runtime_alloc";
     private const string RuntimeTryAllocateHelperName = "__stark_runtime_try_alloc";
     private const string RuntimeReallocateHelperName = "__stark_runtime_realloc";
@@ -33,6 +37,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
     private const string OsReallocateHelperName = "__stark_os_reallocate";
     private const string OsFreeHelperName = "__stark_os_free";
     private const string HeapAllocatorFamilyAttribute = "\"alloc-family\"=\"__stark_heap_alloc\"";
+    private const string ArenaAllocatorFamilyAttribute = "\"alloc-family\"=\"__stark_arena_alloc\"";
     private const string RuntimeAllocatorFamilyAttribute = "\"alloc-family\"=\"__stark_runtime_alloc\"";
     private const string OsAllocatorFamilyAttribute = "\"alloc-family\"=\"__stark_os_allocate\"";
     private const string RuntimeAllocatorLockName = "__stark_alloc_lock";
@@ -131,7 +136,9 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         var usesSystemMemoryFree = systemMemoryBuiltins.Contains(SystemMemoryBuiltinKind.Free);
         var usesSystemMemoryTrap = usesSystemMemoryAllocate || usesSystemMemoryReallocate;
         var usesDynamicStorageAllocator = UsesDynamicStorageAllocator();
+        var usesArenaAllocator = UsesArenaAllocator();
         var usesRuntimeAllocator = _usesHeapAllocator()
+            || usesArenaAllocator
             || usesDynamicStorageAllocator
             || string.Equals(CurrentModuleName, "System.Memory", StringComparison.Ordinal)
             || usesSystemMemoryAllocate
@@ -256,6 +263,8 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             || systemMemoryBuiltins.Contains(SystemMemoryBuiltinKind.Reallocate)
             || systemMemoryBuiltins.Contains(SystemMemoryBuiltinKind.Free);
         var usesDynamicStorageAllocator = UsesDynamicStorageAllocator();
+        var usesArenaAllocator = UsesArenaAllocator();
+        var usesArenaDynamicStorageAllocateHelper = UsesArenaDynamicStorageAllocateHelper();
 
         foreach (var textType in CollectTextEqualityTypes(signatureList))
         {
@@ -318,19 +327,38 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         {
             EmitTrapHelperDefinition(builder, OutOfMemoryTrapHelperName);
             builder.AppendLine();
-            EmitRuntimeAllocatorHelperDefinitions(builder);
+            EmitRuntimeAllocatorHelperDefinitions(
+                builder,
+                includeDynamicStorageHelpers: usesDynamicStorageAllocator,
+                includeArenaHelperComdats: usesArenaAllocator,
+                includeArenaDynamicStorageAllocateHelper: usesArenaDynamicStorageAllocateHelper);
             builder.AppendLine();
+            if (usesArenaAllocator)
+            {
+                EmitArenaHelperDefinitions(builder, usesArenaDynamicStorageAllocateHelper);
+                builder.AppendLine();
+            }
+
             EmitHeapAllocateHelperDefinition(builder);
             builder.AppendLine();
             EmitHeapFreeHelperDefinition(builder);
             builder.AppendLine();
         }
-        else if (usesDynamicStorageAllocator || CurrentModuleName == "System.Memory" || usesSystemMemoryAllocator)
+        else if (usesArenaAllocator || usesDynamicStorageAllocator || CurrentModuleName == "System.Memory" || usesSystemMemoryAllocator)
         {
             EmitTrapHelperDefinition(builder, OutOfMemoryTrapHelperName);
             builder.AppendLine();
-            EmitRuntimeAllocatorHelperDefinitions(builder);
+            EmitRuntimeAllocatorHelperDefinitions(
+                builder,
+                includeDynamicStorageHelpers: usesDynamicStorageAllocator,
+                includeArenaHelperComdats: usesArenaAllocator,
+                includeArenaDynamicStorageAllocateHelper: usesArenaDynamicStorageAllocateHelper);
             builder.AppendLine();
+            if (usesArenaAllocator)
+            {
+                EmitArenaHelperDefinitions(builder, usesArenaDynamicStorageAllocateHelper);
+                builder.AppendLine();
+            }
         }
     }
 
@@ -456,9 +484,176 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         builder.AppendLine("}");
     }
 
-    private void EmitRuntimeAllocatorHelperDefinitions(StringBuilder builder)
+    private void EmitArenaHelperDefinitions(StringBuilder builder, bool includeDynamicStorageAllocateHelper)
     {
-        EmitRuntimeAllocatorComdatDefinitions(builder);
+        EmitArenaEnterHelperDefinition(builder);
+        builder.AppendLine();
+        EmitArenaLeaveHelperDefinition(builder);
+        builder.AppendLine();
+        EmitArenaAllocateHelperDefinition(builder);
+        if (includeDynamicStorageAllocateHelper)
+        {
+            builder.AppendLine();
+            EmitArenaDynamicStorageAllocateHelperDefinition(builder);
+        }
+    }
+
+    private void EmitArenaEnterHelperDefinition(StringBuilder builder)
+    {
+        builder.AppendLine($"define linkonce_odr hidden void @{ArenaEnterHelperName}(ptr {CapturesNoneAttribute} %frame) unnamed_addr nounwind{ComdatDefinitionSuffix()} {{");
+        builder.AppendLine("entry:");
+        builder.AppendLine("  %head_slot = getelementptr { ptr, ptr, ptr }, ptr %frame, i32 0, i32 0");
+        builder.AppendLine("  %cursor_slot = getelementptr { ptr, ptr, ptr }, ptr %frame, i32 0, i32 1");
+        builder.AppendLine("  %end_slot = getelementptr { ptr, ptr, ptr }, ptr %frame, i32 0, i32 2");
+        builder.AppendLine("  store ptr null, ptr %head_slot, align 8");
+        builder.AppendLine("  store ptr null, ptr %cursor_slot, align 8");
+        builder.AppendLine("  store ptr null, ptr %end_slot, align 8");
+        builder.AppendLine("  ret void");
+        builder.AppendLine("}");
+    }
+
+    private void EmitArenaLeaveHelperDefinition(StringBuilder builder)
+    {
+        builder.AppendLine($"define linkonce_odr hidden void @{ArenaLeaveHelperName}(ptr {CapturesNoneAttribute} %frame) unnamed_addr nounwind{ComdatDefinitionSuffix()} {{");
+        builder.AppendLine("entry:");
+        builder.AppendLine("  %head_slot = getelementptr { ptr, ptr, ptr }, ptr %frame, i32 0, i32 0");
+        builder.AppendLine("  %cursor_slot = getelementptr { ptr, ptr, ptr }, ptr %frame, i32 0, i32 1");
+        builder.AppendLine("  %end_slot = getelementptr { ptr, ptr, ptr }, ptr %frame, i32 0, i32 2");
+        builder.AppendLine("  %head = load ptr, ptr %head_slot, align 8");
+        builder.AppendLine("  br label %loop");
+        builder.AppendLine();
+        builder.AppendLine("loop:");
+        builder.AppendLine("  %current = phi ptr [ %head, %entry ], [ %next, %free ]");
+        builder.AppendLine("  %done = icmp eq ptr %current, null");
+        builder.AppendLine("  br i1 %done, label %exit, label %free");
+        builder.AppendLine();
+        builder.AppendLine("free:");
+        builder.AppendLine("  %next = load ptr, ptr %current, align 8");
+        builder.AppendLine($"  call void @{RuntimeFreeHelperName}(ptr %current)");
+        builder.AppendLine("  br label %loop");
+        builder.AppendLine();
+        builder.AppendLine("exit:");
+        builder.AppendLine("  store ptr null, ptr %head_slot, align 8");
+        builder.AppendLine("  store ptr null, ptr %cursor_slot, align 8");
+        builder.AppendLine("  store ptr null, ptr %end_slot, align 8");
+        builder.AppendLine("  ret void");
+        builder.AppendLine("}");
+    }
+
+    private void EmitArenaAllocateHelperDefinition(StringBuilder builder)
+    {
+        builder.AppendLine(
+            $"define linkonce_odr hidden noalias nonnull noundef ptr @{ArenaAllocateHelperName}(ptr {CapturesNoneAttribute} %frame, {AllocatorSizeType} noundef %size, {AllocatorSizeType} noundef allocalign %alignment) unnamed_addr allocsize(1) allockind(\"alloc,uninitialized,aligned\") {ArenaAllocatorFamilyAttribute} nounwind{ComdatDefinitionSuffix()} {{");
+        builder.AppendLine("entry:");
+        builder.AppendLine("  %head_slot = getelementptr { ptr, ptr, ptr }, ptr %frame, i32 0, i32 0");
+        builder.AppendLine("  %cursor_slot = getelementptr { ptr, ptr, ptr }, ptr %frame, i32 0, i32 1");
+        builder.AppendLine("  %end_slot = getelementptr { ptr, ptr, ptr }, ptr %frame, i32 0, i32 2");
+        builder.AppendLine("  %cursor = load ptr, ptr %cursor_slot, align 8");
+        builder.AppendLine("  %has_block = icmp ne ptr %cursor, null");
+        builder.AppendLine("  br i1 %has_block, label %try_current, label %allocate");
+        builder.AppendLine();
+        builder.AppendLine("try_current:");
+        builder.AppendLine($"  %cursor_int = ptrtoint ptr %cursor to {AllocatorSizeType}");
+        builder.AppendLine("  %alignment_minus_one = sub i64 %alignment, 1");
+        builder.AppendLine("  %biased = add i64 %cursor_int, %alignment_minus_one");
+        builder.AppendLine("  %mask = xor i64 %alignment_minus_one, -1");
+        builder.AppendLine("  %aligned_int = and i64 %biased, %mask");
+        builder.AppendLine("  %new_cursor_int = add i64 %aligned_int, %size");
+        builder.AppendLine("  %end = load ptr, ptr %end_slot, align 8");
+        builder.AppendLine($"  %end_int = ptrtoint ptr %end to {AllocatorSizeType}");
+        builder.AppendLine("  %fits = icmp ule i64 %new_cursor_int, %end_int");
+        builder.AppendLine("  br i1 %fits, label %current_done, label %allocate");
+        builder.AppendLine();
+        builder.AppendLine("current_done:");
+        builder.AppendLine("  %aligned_ptr = inttoptr i64 %aligned_int to ptr");
+        builder.AppendLine("  %new_cursor = inttoptr i64 %new_cursor_int to ptr");
+        builder.AppendLine("  store ptr %new_cursor, ptr %cursor_slot, align 8");
+        builder.AppendLine("  ret ptr %aligned_ptr");
+        builder.AppendLine();
+        builder.AppendLine("allocate:");
+        builder.AppendLine("  %minimum_payload_raw = add i64 %size, %alignment");
+        builder.AppendLine("  %minimum_payload_overflow = icmp ult i64 %minimum_payload_raw, %size");
+        builder.AppendLine("  br i1 %minimum_payload_overflow, label %overflow, label %allocate_size");
+        builder.AppendLine();
+        builder.AppendLine("overflow:");
+        builder.AppendLine("  call void @llvm.trap()");
+        builder.AppendLine("  unreachable");
+        builder.AppendLine();
+        builder.AppendLine("allocate_size:");
+        builder.AppendLine("  %use_slab = icmp ult i64 %minimum_payload_raw, 4096");
+        builder.AppendLine("  %payload_size = select i1 %use_slab, i64 4096, i64 %minimum_payload_raw");
+        builder.AppendLine("  %block_size = add i64 %payload_size, 8");
+        builder.AppendLine($"  %block = call noalias nonnull noundef align 16 ptr @{RuntimeAllocateHelperName}({AllocatorSizeType} noundef %block_size, {AllocatorSizeType} noundef 16)");
+        builder.AppendLine("  %old_head = load ptr, ptr %head_slot, align 8");
+        builder.AppendLine("  store ptr %old_head, ptr %block, align 8");
+        builder.AppendLine("  %data = getelementptr i8, ptr %block, i64 8");
+        builder.AppendLine($"  %data_int = ptrtoint ptr %data to {AllocatorSizeType}");
+        builder.AppendLine("  %new_biased = add i64 %data_int, %alignment_minus_one");
+        builder.AppendLine("  %new_aligned_int = and i64 %new_biased, %mask");
+        builder.AppendLine("  %allocated_cursor_int = add i64 %new_aligned_int, %size");
+        builder.AppendLine("  %new_aligned_ptr = inttoptr i64 %new_aligned_int to ptr");
+        builder.AppendLine("  %allocated_cursor = inttoptr i64 %allocated_cursor_int to ptr");
+        builder.AppendLine("  %block_end = getelementptr i8, ptr %block, i64 %block_size");
+        builder.AppendLine("  store ptr %block, ptr %head_slot, align 8");
+        builder.AppendLine("  store ptr %allocated_cursor, ptr %cursor_slot, align 8");
+        builder.AppendLine("  store ptr %block_end, ptr %end_slot, align 8");
+        builder.AppendLine("  ret ptr %new_aligned_ptr");
+        builder.AppendLine("}");
+    }
+
+    private void EmitArenaDynamicStorageAllocateHelperDefinition(StringBuilder builder)
+    {
+        var capacityAllocator = AllocatorSizeType == "i64"
+            ? "%capacity"
+            : "%capacity_size";
+
+        builder.AppendLine(
+            $"define linkonce_odr hidden {{ ptr, i64, i64 }} @{ArenaDynamicStorageAllocateHelperName}(ptr {CapturesNoneAttribute} %frame, i64 noundef %capacity, {AllocatorSizeType} noundef %element_size, {AllocatorSizeType} noundef allocalign %alignment, i64 noundef %max_count) unnamed_addr nounwind{ComdatDefinitionSuffix()} {{");
+        builder.AppendLine("entry:");
+        builder.AppendLine("  %is_zero = icmp eq i64 %capacity, 0");
+        builder.AppendLine("  br i1 %is_zero, label %zero, label %check");
+        builder.AppendLine();
+        builder.AppendLine("zero:");
+        builder.AppendLine("  br label %done");
+        builder.AppendLine();
+        builder.AppendLine("check:");
+        builder.AppendLine("  %too_large = icmp ugt i64 %capacity, %max_count");
+        builder.AppendLine("  br i1 %too_large, label %overflow, label %allocate");
+        builder.AppendLine();
+        builder.AppendLine("overflow:");
+        builder.AppendLine("  call void @llvm.trap()");
+        builder.AppendLine("  unreachable");
+        builder.AppendLine();
+        builder.AppendLine("allocate:");
+        if (AllocatorSizeType != "i64")
+        {
+            builder.AppendLine($"  {capacityAllocator} = trunc i64 %capacity to {AllocatorSizeType}");
+        }
+
+        builder.AppendLine($"  %byte_length = mul {AllocatorSizeType} {capacityAllocator}, %element_size");
+        builder.AppendLine($"  %ptr = call noalias nonnull noundef ptr @{ArenaAllocateHelperName}(ptr %frame, {AllocatorSizeType} noundef %byte_length, {AllocatorSizeType} noundef %alignment)");
+        builder.AppendLine("  %with_ptr = insertvalue { ptr, i64, i64 } zeroinitializer, ptr %ptr, 0");
+        builder.AppendLine("  %with_length = insertvalue { ptr, i64, i64 } %with_ptr, i64 0, 1");
+        builder.AppendLine("  %value = insertvalue { ptr, i64, i64 } %with_length, i64 %capacity, 2");
+        builder.AppendLine("  br label %done");
+        builder.AppendLine();
+        builder.AppendLine("done:");
+        builder.AppendLine("  %result = phi { ptr, i64, i64 } [ zeroinitializer, %zero ], [ %value, %allocate ]");
+        builder.AppendLine("  ret { ptr, i64, i64 } %result");
+        builder.AppendLine("}");
+    }
+
+    private void EmitRuntimeAllocatorHelperDefinitions(
+        StringBuilder builder,
+        bool includeDynamicStorageHelpers,
+        bool includeArenaHelperComdats,
+        bool includeArenaDynamicStorageAllocateHelper)
+    {
+        EmitRuntimeAllocatorComdatDefinitions(
+            builder,
+            includeDynamicStorageHelpers,
+            includeArenaHelperComdats,
+            includeArenaDynamicStorageAllocateHelper);
         builder.AppendLine();
         EmitRuntimeAllocatorGlobalDefinitions(builder);
         builder.AppendLine();
@@ -474,8 +669,12 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         builder.AppendLine();
         EmitRuntimeFreeHelperDefinition(builder);
         builder.AppendLine();
-        EmitDynamicStorageHelperDefinitions(builder);
-        builder.AppendLine();
+        if (includeDynamicStorageHelpers)
+        {
+            EmitDynamicStorageHelperDefinitions(builder);
+            builder.AppendLine();
+        }
+
         EmitOsAllocateHelperDefinition(builder);
         builder.AppendLine();
         if (CanUseOsReallocateFastPath())
@@ -487,7 +686,11 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         EmitOsFreeHelperDefinition(builder);
     }
 
-    private void EmitRuntimeAllocatorComdatDefinitions(StringBuilder builder)
+    private void EmitRuntimeAllocatorComdatDefinitions(
+        StringBuilder builder,
+        bool includeDynamicStorageHelpers,
+        bool includeArenaHelperComdats,
+        bool includeArenaDynamicStorageAllocateHelper)
     {
         if (!SupportsComdat())
         {
@@ -507,12 +710,26 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         builder.AppendLine($"${RuntimeReallocateHelperName} = comdat any");
         builder.AppendLine($"${RuntimeTryReallocateHelperName} = comdat any");
         builder.AppendLine($"${RuntimeFreeHelperName} = comdat any");
-        builder.AppendLine($"${DynamicStorageAllocateHelperName} = comdat any");
-        builder.AppendLine($"${DynamicStorageReserveHelperName} = comdat any");
-        builder.AppendLine($"${DynamicStorageTryReserveHelperName} = comdat any");
-        builder.AppendLine($"${DynamicStorageTryReserveCapacityHelperName} = comdat any");
-        builder.AppendLine($"${DynamicStorageMoveLastPointerHelperName} = comdat any");
-        builder.AppendLine($"${DynamicStorageMoveAtToOutHelperName} = comdat any");
+        if (includeArenaHelperComdats)
+        {
+            builder.AppendLine($"${ArenaEnterHelperName} = comdat any");
+            builder.AppendLine($"${ArenaLeaveHelperName} = comdat any");
+            builder.AppendLine($"${ArenaAllocateHelperName} = comdat any");
+            if (includeArenaDynamicStorageAllocateHelper)
+            {
+                builder.AppendLine($"${ArenaDynamicStorageAllocateHelperName} = comdat any");
+            }
+        }
+
+        if (includeDynamicStorageHelpers)
+        {
+            builder.AppendLine($"${DynamicStorageAllocateHelperName} = comdat any");
+            builder.AppendLine($"${DynamicStorageReserveHelperName} = comdat any");
+            builder.AppendLine($"${DynamicStorageTryReserveHelperName} = comdat any");
+            builder.AppendLine($"${DynamicStorageTryReserveCapacityHelperName} = comdat any");
+            builder.AppendLine($"${DynamicStorageMoveLastPointerHelperName} = comdat any");
+            builder.AppendLine($"${DynamicStorageMoveAtToOutHelperName} = comdat any");
+        }
     }
 
     private void EmitDynamicStorageHelperDefinitions(StringBuilder builder)
@@ -814,7 +1031,16 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             {
                 foreach (var instruction in block.Instructions)
                 {
-                    if (instruction is SsaValueInstruction { Value: SsaDynamicStorageAllocationRValue or SsaDynamicStorageFreeRValue or SsaDynamicStorageReserveRValue or SsaDynamicStorageTryReserveRValue or SsaDynamicStorageTryReserveCapacityRValue or SsaDynamicStorageMoveLastRValue or SsaDynamicStorageMoveAtRValue })
+                    if (instruction is SsaValueInstruction
+                        {
+                            Value: SsaDynamicStorageAllocationRValue { AllocationKind: not DynamicStorageAllocationKind.Arena }
+                                or SsaDynamicStorageFreeRValue
+                                or SsaDynamicStorageReserveRValue { AllocationKind: not DynamicStorageAllocationKind.Arena }
+                                or SsaDynamicStorageTryReserveRValue { AllocationKind: not DynamicStorageAllocationKind.Arena }
+                                or SsaDynamicStorageTryReserveCapacityRValue { AllocationKind: not DynamicStorageAllocationKind.Arena }
+                                or SsaDynamicStorageMoveLastRValue
+                                or SsaDynamicStorageMoveAtRValue
+                        })
                     {
                         return true;
                     }
@@ -823,6 +1049,84 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         }
 
         return false;
+    }
+
+    private bool UsesArenaAllocator()
+    {
+        foreach (var function in _enumerateSsaFunctions())
+        {
+            foreach (var block in function.Blocks)
+            {
+                foreach (var instruction in block.Instructions)
+                {
+                    switch (instruction)
+                    {
+                        case SsaAllocateLocalInstruction { StorageClass: "arena" }:
+                        case SsaValueInstruction { Value: SsaDynamicStorageAllocationRValue { AllocationKind: DynamicStorageAllocationKind.Arena } }:
+                            return true;
+                    }
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private bool UsesArenaDynamicStorageAllocateHelper()
+    {
+        foreach (var function in _enumerateSsaFunctions())
+        {
+            foreach (var block in function.Blocks)
+            {
+                foreach (var instruction in block.Instructions)
+                {
+                    if (instruction is SsaValueInstruction
+                        {
+                            Value: SsaDynamicStorageAllocationRValue
+                            {
+                                AllocationKind: DynamicStorageAllocationKind.Arena
+                            } allocation
+                        }
+                        && NeedsArenaDynamicStorageAllocateHelper(allocation))
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private bool NeedsArenaDynamicStorageAllocateHelper(SsaDynamicStorageAllocationRValue allocation)
+    {
+        if (allocation.Type.Kind != StarkTypeKind.Dynamic
+            || allocation.Type.ElementType is not { } elementType
+            || TryGetConcreteTypeLayout(elementType) is not { } elementLayout
+            || elementLayout.SizeBytes <= 0)
+        {
+            return false;
+        }
+
+        if (allocation.Capacity is not SsaIntegerConstant capacity)
+        {
+            return true;
+        }
+
+        var maxCount = GetMaximumDynamicStorageElementCount(elementLayout.SizeBytes);
+        return capacity.Value <= BigInteger.Zero || capacity.Value > new BigInteger(maxCount);
+    }
+
+    private ulong GetMaximumDynamicStorageElementCount(int elementSizeBytes)
+    {
+        var maxAllocatorSize = AllocatorSizeType switch
+        {
+            "i64" => ulong.MaxValue,
+            "i32" => uint.MaxValue,
+            _ => ulong.MaxValue
+        };
+
+        return maxAllocatorSize / (ulong)elementSizeBytes;
     }
 
     private void EmitRuntimeAllocatorGlobalDefinitions(StringBuilder builder)
@@ -4011,6 +4315,11 @@ internal sealed class LlvmBuiltinAndHelperEmitter
 
     private static string GetCallConventionPrefix(AbiFunctionSignature abiFunction)
     {
+        if (abiFunction.UsesTailCallingConvention)
+        {
+            return "tailcc ";
+        }
+
         if (abiFunction.UsesFastCallingConvention)
         {
             return "fastcc ";

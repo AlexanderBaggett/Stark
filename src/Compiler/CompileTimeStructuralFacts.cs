@@ -8381,7 +8381,10 @@ internal static class CompileTimeStructuralFacts
                     right.FunctionPointerParameterRawPointerElementCountExpressions)
                 && ListEquivalent(left.FunctionPointerDisjointParameterGroups, right.FunctionPointerDisjointParameterGroups)
                 && ListEquivalent(left.FunctionPointerOverlapParameterGroups, right.FunctionPointerOverlapParameterGroups)
-                && ListEquivalent(left.FunctionPointerSameParameterGroups, right.FunctionPointerSameParameterGroups),
+                && ListEquivalent(left.FunctionPointerSameParameterGroups, right.FunctionPointerSameParameterGroups)
+                && StringListEquivalent(
+                    left.FunctionPointerPointeeDeadOnReturnParameterNames,
+                    right.FunctionPointerPointeeDeadOnReturnParameterNames),
             StarkTypeKind.Closure =>
                 left.ClosureStorageKind == right.ClosureStorageKind
                 && left.ClosureCallCapability == right.ClosureCallCapability
@@ -8393,7 +8396,10 @@ internal static class CompileTimeStructuralFacts
                     right.ClosureParameterRawPointerElementCountExpressions)
                 && ListEquivalent(left.ClosureDisjointParameterGroups, right.ClosureDisjointParameterGroups)
                 && ListEquivalent(left.ClosureOverlapParameterGroups, right.ClosureOverlapParameterGroups)
-                && ListEquivalent(left.ClosureSameParameterGroups, right.ClosureSameParameterGroups),
+                && ListEquivalent(left.ClosureSameParameterGroups, right.ClosureSameParameterGroups)
+                && StringListEquivalent(
+                    left.ClosurePointeeDeadOnReturnParameterNames,
+                    right.ClosurePointeeDeadOnReturnParameterNames),
             StarkTypeKind.Named =>
                 NamedTypesEquivalent(left, right),
             StarkTypeKind.DynTrait =>

@@ -230,6 +230,8 @@ The proposed surface has two parts:
 
 - `tail` is a callable contract modifier. It says the function uses Stark's
   tail-callable internal ABI and can participate in guaranteed tail-call edges.
+  It is contextual in callable modifier/signature positions; `tail` remains a
+  valid ordinary identifier elsewhere.
 - `become` is a terminating statement. It says "replace this stack frame with
   the callee" and must lower to an LLVM `musttail` call followed immediately by
   the matching `ret`.
@@ -326,6 +328,15 @@ Lowering contract:
 - the emitter must reject or avoid ABI lowering that inserts incompatible
   `sret`, `byval`, varargs, or other ABI-impacting differences that break
   `musttail` verification.
+- source pointer-like parameters such as `borrow T` may participate in
+  `musttail` when the lowered LLVM ABI type matches; hidden by-value aggregate
+  indirect ABI parameters remain illegal for guaranteed tail calls.
+- dynamic trait dispatch is legal for `become` only when the trait slot carries
+  the `tail` contract and the caller/callee erased ABI shapes are compatible.
+- SSA optimizers must treat tail-call terminator targets, arguments, and
+  indirect argument addresses as normal uses so cleanup, alias, scalar
+  replacement, ownership, inlining, and address-taken pruning cannot delete
+  values needed by the final `musttail` edge.
 - package images must preserve the tail-callable function contract on function
   declarations, function pointer types, and imported callable summaries.
 - self-recursive and mutually recursive `become` cycles are allowed; `finite`
@@ -401,12 +412,34 @@ object rather than an open-ended slice span, can say that the first access to
 `[0, sizeof(T))` is a write. Dynamic spans such as `init T[]` need an extent
 that LLVM can name before Stark can emit a precise range.
 
+True pointee-dead-after-return destinations are explicit source contracts:
+
+```stark
+fn bool Destroy(out u32[0 max] value) where dead_on_return(value)
+{
+    value = 0;
+    return true;
+}
+
+unsafe fn bool Apply(
+    fnptr<fn bool(out u32[0 max]) where dead_on_return(arg0)> op,
+    out u32[0 max] value)
+    where dead_on_return(value)
+{
+    return op(value);
+}
+```
+
+The contract marks a whole memory-backed parameter as unavailable to the caller
+after the call returns. It lowers to LLVM `dead_on_return` on the parameter or
+indirect-call operand, composes with `writeonly`, `writable`, and
+`initializes((0, N))` when the destination is a full known object, and is part of
+callable type compatibility so a destructive callback cannot be silently stored
+in a plain function pointer slot. Ordinary `out` and `init` parameters still do
+not emit `dead_on_return`: callers read initialized outputs after those calls.
+
 Known gaps:
 
-- LLVM accepts `dead_on_return`, but ordinary Stark `out` and `init`
-  parameters must not emit it: callers read the initialized output after the
-  call. Stark needs a separate source contract for true "this pointee is dead
-  when the callee returns" before lowering to that attribute.
 - `init T[]` and other dynamically sized destinations need a named extent model
   before Stark can emit non-constant `initializes(...)` ranges.
 
@@ -669,31 +702,46 @@ Benchmark notes:
       through package-image summaries.
 - [x] Add regression tests that reject legacy whole-function
       `readonly`/`readnone`/`argmemonly` replacements.
-- [ ] Add `tail` as a function/callable modifier that composes with `fn`,
+- [x] Add `tail` as a function/callable modifier that composes with `fn`,
       `law`, `finite`, and `finite law`.
-- [ ] Add source syntax and type-model support for tail-callable function
-      pointer, closure, trait, and dynamic dispatch callable types.
-- [ ] Add the `become` terminating statement and reject it when the call is not
+- [x] Add source syntax and type-model support for tail-callable function
+      pointer and closure callable types.
+- [x] Complete and test tail-callable trait-method and dynamic-dispatch
+      callable surfaces, including slot compatibility and legal `become`
+      through dispatch targets that carry the tail contract.
+- [x] Add the `become` terminating statement and reject it when the call is not
       in true tail position.
-- [ ] Type-check `become` so the caller is `tail`, the callee is tail-callable,
+- [x] Type-check `become` so the caller is `tail`, the callee is tail-callable,
       and the ordinary effect/call-capability rules still hold.
-- [ ] Reject `become` when pending drops, defers, cleanups, conversions, or
-      ownership finalization would need to run after the call.
-- [ ] Lower `tail` Stark functions to LLVM `tailcc` and lower every `become` to
+- [x] Finish the lifetime and cleanup audit for `become`: reject any edge where
+      pending drops, defers, ownership finalization, conversions, or
+      caller-local storage lifetimes would need work after the tail transfer or
+      would be invalidated before the tail-call arguments are consumed.
+- [x] Lower `tail` Stark functions to LLVM `tailcc` and lower every `become` to
       `musttail call tailcc` followed immediately by the matching `ret`.
-- [ ] Reject or avoid ABI shapes that cannot satisfy LLVM `musttail`, including
-      unsupported `sret`, incompatible `byval`, FFI, varargs, and assembly
-      targets.
-- [ ] Preserve the tail-callable contract through package-image function
+- [x] Add backend rejection for ABI shapes that cannot satisfy LLVM `musttail`,
+      including unsupported `sret`, incompatible `byval`, FFI, varargs, and
+      assembly targets.
+- [x] Replace backend tail-call ABI exceptions with front-end diagnostics that
+      name the illegal ABI shape before LLVM emission.
+- [x] Preserve the tail-callable contract through package-image function
       summaries, function pointer types, imported templates, and dynamic/trait
       callable surfaces that can legally support it.
-- [ ] Add passing C# parser, type-checking, MIR/SSA, package-image, and LLVM
-      emission tests for `tail` and `become`, including self recursion, mutual
-      recursion, indirect calls through tail-callable function pointers, and
-      negative diagnostics for non-tail position and ABI blockers.
-- [ ] Add matching Stark self-hosted compiler tests for `tail` and `become`;
+- [x] Add initial passing C# parser, type-checking, and LLVM emission tests for
+      `tail` and `become`.
+- [x] Add passing C# and Stark self-hosted compiler tests for tail-call
+      ABI-blocker diagnostics, including FFI/varargs, indirect return, and
+      indirect parameter shapes.
+- [x] Add passing C# MIR/SSA, package-image, mutual-recursion, indirect
+      tail-callable function-pointer, and trait/dynamic dispatch tests for
+      `tail` and `become`.
+- [x] Add initial Stark self-hosted compiler tests for `tail` and `become`;
       these may remain in-progress or expected-failing until the self-hosted
-      parser, checker, and emitter implement the feature.
+      checker and emitter implement the feature.
+- [x] Update the Stark self-hosted parser, AST/syntax model, and parser tests to
+      parse contextual `tail` function modifiers, contextual `tail` callable
+      signatures, and `become` statements without reserving `tail` as an
+      identifier.
 - [x] Replace non-escaping parameter `nocapture` emission with
       `captures(none)` once the targeted LLVM version accepts the new spelling.
 - [x] Audit `capture(read x)` closure environments and retained readonly borrow
@@ -713,10 +761,16 @@ Benchmark notes:
       and `dead_on_return` in the LLVM version Stark targets.
 - [x] Emit `initializes((0, N))` and `writable` for eligible full-object
       destination parameters.
-- [ ] Define and implement a Stark source contract for true
+- [x] Define and implement a Stark source contract for true
       pointee-dead-after-return destinations before emitting LLVM
       `dead_on_return`; ordinary `out`/`init` outputs must not use it because
       callers read the initialized value.
+- [x] Add passing C# parser/semantic, ownership, callable compatibility, package
+      image, and LLVM emission tests for `where dead_on_return(...)`.
+- [x] Add matching Stark self-hosted compiler tests for `dead_on_return`
+      lexing/parsing, ownership diagnostics, and LLVM emission; these may remain
+      in-progress or expected-failing until the self-hosted checker and emitter
+      implement the feature.
 - [x] Add passing C# LLVM emission tests for `writeonly` plus
       `initializes(...)` on known full-range init destinations, including
       negative tests when the callee may read old contents first.
@@ -733,40 +787,60 @@ Benchmark notes:
 - [x] Add matching Stark self-hosted compiler tests for `separate_storage`
       assume bundles; these may remain in-progress or expected-failing until
       the self-hosted emitter implements the feature.
-- [ ] Activate `arena` as an executable local storage class instead of rejecting
-      it as reserved.
-- [ ] Define the source grammar and semantic model for `arena` locals and the
-      `new(arena, ...)` storage-selector form, keeping `arena` as a language
-      keyword rather than a `System.Memory.Arena` value.
-- [ ] Add arena lifetime/root facts to the type, borrow, and ownership models so
-      arena-backed locals, dynamic backing storage, slices/views, borrows, and
-      raw pointers can be tracked through moves and projections.
-- [ ] Implement escape diagnostics for arena-backed storage: returning it,
-      storing it into heap/static/global or longer-lived aggregate state,
+- [x] Activate `arena` as an executable local storage class through semantic
+      validation and SSA validation.
+- [x] Add host grammar and type-checking support for `new(arena, ...)` as a
+      dynamic-storage allocation selector, keeping `arena` as a language keyword
+      rather than a `System.Memory.Arena` value.
+- [x] Lower arena object locals to a hidden LLVM arena frame with
+      `@__stark_arena_enter`, `@__stark_arena_alloc`, and
+      `@__stark_arena_leave`, without heap allocator calls or stack `alloca` for
+      the arena-owned object.
+- [x] Lower positive constant-capacity arena dynamic storage allocation to a
+      direct `@__stark_arena_alloc` call, skip per-owner runtime free on drop,
+      and avoid emitting unused generic dynamic-storage helpers for arena-only
+      allocation modules.
+- [x] Add passing C# semantic and LLVM emission tests for executable arena
+      locals, arena object allocation attributes, direct arena dynamic
+      allocation, and no per-owner runtime free.
+- [x] Add Stark self-hosted parser coverage for `new(arena, ...)` and typed
+      `new Type(...)`, plus Stark host-protocol LLVM tests for arena object and
+      arena dynamic allocation lowering.
+- [x] Add ownership-level arena lifetime/root facts so arena-backed locals,
+      dynamic backing storage, slices/views, borrows, raw pointers, aggregate
+      construction, moves, projections, and branch/loop merges preserve the
+      relevant arena provenance.
+- [x] Implement safe-code escape diagnostics for arena-backed storage: returning
+      it, storing it into heap/static/global or longer-lived aggregate state,
       retaining it in escaping closures, or passing it to callees that may retain
-      the borrow must be rejected in safe code.
-- [ ] Reject `arena` allocation in `law` functions while preserving ordinary
-      `finite` checking for arena-using functions.
-- [ ] Add MIR/SSA representation for hidden arena frame creation, arena
-      allocation, live-value drops, dynamic arena-backed growth, and arena frame
-      cleanup on all supported exits.
-- [ ] Ensure drop lowering drops live arena-backed values and elements but does
-      not emit per-object frees for arena backing storage.
-- [ ] Lower arena allocation to backend-owned helpers such as
-      `@__stark_arena_alloc`, with fresh-result `noalias`, `nonnull`, `noundef`,
-      concrete `align`, `dereferenceable(N)`, `allocsize`, `allocalign`,
-      `allockind("alloc,uninitialized,aligned")`, and an arena allocation
-      family.
+      the borrow must be rejected.
+- [x] Reject every arena allocation form in `law` functions, including
+      `arena` locals and `new(arena, ...)`, while preserving ordinary `finite`
+      checking for arena-using functions.
+- [ ] Add explicit MIR/SSA representation for arena frame creation, arena
+      allocation operations, arena lifetime facts, live-value drops, and frame
+      cleanup on all supported normal and early-exit paths.
+- [ ] Implement arena-backed dynamic storage `Reserve`, `TryReserve`, and
+      `TryReserveCapacity` with allocate-copy growth that leaves old backing
+      storage for arena-frame cleanup; never lower arena growth to runtime
+      `realloc` or per-object `free`.
+- [ ] Ensure drop lowering drops arena-backed values and initialized dynamic
+      elements with destructors before frame cleanup while still avoiding
+      per-object frees for arena backing storage.
 - [ ] Preserve arena lifetime and escape-relevant facts through package-image
       summaries for callable surfaces that mention arena-backed values or
       borrows.
-- [ ] Add passing C# parser, semantic, borrow/escape, MIR/SSA, package-image,
-      and LLVM emission tests for arena locals, `new(arena, ...)`, dynamic
-      growth, drop-with-bulk-cleanup, fresh allocation attributes, and negative
-      escape diagnostics.
-- [ ] Add matching Stark self-hosted compiler tests for arena storage and arena
-      allocation lowering; these may remain in-progress or expected-failing
-      until the self-hosted parser, checker, and emitter implement the feature.
+- [x] Add passing C# borrow/escape and law-effect tests for arena lifetime
+      returns, raw pointers, aggregate construction, heap/static storage,
+      retaining callees, retained captures, non-retaining borrows, and
+      `new(arena, ...)` in `law` functions.
+- [x] Add matching Stark self-hosted checker tests for arena borrow/escape and
+      law-effect diagnostics through the host compiler protocol.
+- [ ] Add passing C# MIR/SSA, package-image, dynamic growth, destructor-drop,
+      and remaining negative diagnostic tests for the remaining arena semantics.
+- [ ] Add matching Stark self-hosted MIR/SSA and LLVM-emission tests for the
+      remaining arena semantics; these may remain in-progress or expected-failing
+      until the self-hosted checker and emitter implement the feature.
 - [ ] Promote stable user-facing text into `docs/Userfacing/LanguageReference.md`.
 - [ ] Append the completed Documentation section from this file into
       `docs/Internals/LanguageInternals.md`, preserving the implementation

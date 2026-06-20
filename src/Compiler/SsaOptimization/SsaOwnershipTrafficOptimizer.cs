@@ -85,6 +85,14 @@ internal sealed class SsaOwnershipTrafficOptimizer
                 AddInstructionUseDef(instruction, definitions, candidateRoots, use, def, defined);
             }
 
+            AddTerminatorUses(block.Terminator, definitions, candidateRoots, root =>
+            {
+                if (!defined.Contains(root))
+                {
+                    use.Add(root);
+                }
+            });
+
             transfers[block.Id] = new BlockTransfer(use, def);
         }
 
@@ -161,6 +169,8 @@ internal sealed class SsaOwnershipTrafficOptimizer
         var live = new HashSet<string>(liveOut, StringComparer.Ordinal);
         var instructions = new List<SsaInstruction>(block.Instructions.Count);
         var blockChanged = false;
+
+        AddTerminatorUses(block.Terminator, definitions, candidateRoots, root => live.Add(root));
 
         for (var index = block.Instructions.Count - 1; index >= 0; index--)
         {
@@ -307,6 +317,38 @@ internal sealed class SsaOwnershipTrafficOptimizer
             case SsaDeallocateLocalInstruction deallocate:
                 AddWholeLocalDefinition(deallocate.LocalName, candidateRoots, def, defined);
                 break;
+        }
+    }
+
+    private static void AddTerminatorUses(
+        SsaTerminator terminator,
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        IReadOnlySet<string> candidateRoots,
+        Action<string> addUse)
+    {
+        if (terminator.Condition is not null)
+        {
+            AddAddressUse(terminator.Condition, definitions, candidateRoots, addUse);
+        }
+
+        if (terminator.Value is not null)
+        {
+            AddAddressUse(terminator.Value, definitions, candidateRoots, addUse);
+        }
+
+        if (terminator.TailDirectCall is not null)
+        {
+            AddCallUses(terminator.TailDirectCall, definitions, candidateRoots, addUse);
+        }
+
+        if (terminator.TailIndirectCall is not null)
+        {
+            AddCallUses(terminator.TailIndirectCall, definitions, candidateRoots, addUse);
+        }
+
+        foreach (var switchCase in terminator.SwitchCases ?? [])
+        {
+            AddAddressUse(switchCase.MatchValue, definitions, candidateRoots, addUse);
         }
     }
 

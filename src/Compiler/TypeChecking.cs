@@ -1957,6 +1957,7 @@ internal sealed class TypeChecker
                         functionSyntax,
                         parameters,
                         allowWholeParameterDisjointContracts: isFfi || isAsm);
+                    ValidatePointeeDeadOnReturnContracts(functionSyntax, parameters);
 
                     if (declarationModel.Function?.Asm is not null)
                     {
@@ -2000,7 +2001,12 @@ internal sealed class TypeChecker
                         Visibility: declarationModel.Visibility,
                         ValueParameterContracts: declarationModel.Function?.ValueContracts is { Count: > 0 } valueContracts
                             ? valueContracts
-                            : null);
+                            : null,
+                        IsTailCallable: declarationModel.Function?.Modifiers.IsTailCallable == true,
+                        PointeeDeadOnReturnParameterNames: declarationModel.Function?.PointeeDeadOnReturnParameters is { Count: > 0 } pointeeDeadOnReturnParameters
+                            ? pointeeDeadOnReturnParameters
+                            : null,
+                        DeclarationLocation: Location(functionSyntax.DeclarationContext));
                     RegisterFunctionSignature(signature, seenOverloadKeys, functionSyntax.DeclarationContext);
                     _functionSyntaxByQualifiedName[signature.Name] = functionSyntax;
                 }
@@ -2616,6 +2622,59 @@ internal sealed class TypeChecker
                         "STK3029",
                         $"Whole-parameter 'where disjoint({string.Join(", ", wholeParameterNames)})' is redundant because Stark memory-backed parameters are non-overlapping by default. Remove the clause; use 'where overlap(...)' for intentional overlap, 'where same(...)' for identical storage, or keep 'where disjoint(parameter[start, count], other[start, count])' for subregions.",
                         contract);
+                }
+            }
+        }
+    }
+
+    private void ValidatePointeeDeadOnReturnContracts(
+        DeclaredFunctionSyntax functionSyntax,
+        IReadOnlyList<TypedParameterSymbol> parameters)
+    {
+        var parameterSymbols = parameters.ToDictionary(static parameter => parameter.Name, StringComparer.Ordinal);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var clause in GetParameterMemoryContractClauses(functionSyntax.DeclarationContext))
+        {
+            foreach (var contract in clause.parameterMemoryContract())
+            {
+                if (contract.deadOnReturnContract()?.expressionList() is not { } expressionList)
+                {
+                    continue;
+                }
+
+                foreach (var operand in expressionList.expression())
+                {
+                    if (!TryGetSimpleParameterExpression(operand, out var name))
+                    {
+                        ReportError(
+                            "STK3029",
+                            "Dead-on-return contract operands must be whole parameter names.",
+                            operand);
+                        continue;
+                    }
+
+                    if (!parameterSymbols.TryGetValue(name, out var symbol))
+                    {
+                        ReportError(
+                            "STK3029",
+                            $"Dead-on-return contract references unknown parameter '{name}'.",
+                            operand);
+                    }
+                    else if (!CanRuntimeDisjointTest(symbol.Type))
+                    {
+                        ReportError(
+                            "STK3029",
+                            $"Dead-on-return contract references parameter '{name}' with non-memory-backed type '{symbol.Type.DisplayName}'. Memory contracts require memory-backed parameters such as slices, text views, borrows, initialization views, or raw pointers.",
+                            operand);
+                    }
+                    else if (!seen.Add(name))
+                    {
+                        ReportError(
+                            "STK3029",
+                            $"Dead-on-return contract repeats parameter '{name}'.",
+                            operand);
+                    }
                 }
             }
         }
@@ -4541,10 +4600,206 @@ internal sealed class TypeChecker
             return;
         }
 
+        if (statement.becomeStatement() is { } becomeStatement)
+        {
+            CheckBecomeStatement(becomeStatement, scope, returnType);
+            return;
+        }
+
         if (statement.expressionStatement() is { } expressionStatement)
         {
             EvaluateExpression(expressionStatement.expression(), scope, allowFunctionReference: false);
         }
+    }
+
+    private void CheckBecomeStatement(
+        StarkParser.BecomeStatementContext becomeStatement,
+        Scope scope,
+        StarkTypeSymbol returnType)
+    {
+        if (_insideConstructorBody)
+        {
+            ReportError("STK3002", "Constructor bodies cannot use 'become'.", becomeStatement);
+            return;
+        }
+
+        if (_currentFunctionName is not { } currentFunctionName
+            || !_functions.TryGetValue(currentFunctionName, out var currentFunction))
+        {
+            ReportError("STK3002", "'become' can only be used inside a function body.", becomeStatement);
+            return;
+        }
+
+        if (!currentFunction.IsTailCallable)
+        {
+            ReportError(
+                "STK3002",
+                $"Function '{currentFunction.DisplaySourceName}' must be declared 'tail' before it can use 'become'.",
+                becomeStatement);
+        }
+
+        if (!IsRootCallExpression(becomeStatement.expression()))
+        {
+            ReportError(
+                "STK3002",
+                "'become' requires a single call expression in tail position, for example `become next(state);`.",
+                becomeStatement.expression());
+        }
+
+        var operationStart = _boundOperations.Count;
+        var value = EvaluateExpression(
+            becomeStatement.expression(),
+            scope,
+            allowFunctionReference: false,
+            expectedType: returnType.Kind == StarkTypeKind.Void ? null : returnType);
+
+        if (returnType.Kind != StarkTypeKind.Void)
+        {
+            EnsureReturnCompatible(returnType, value, becomeStatement.expression());
+        }
+        else if (value.Type.Kind != StarkTypeKind.Void && value.Type.Kind != StarkTypeKind.Error)
+        {
+            ReportError("STK3002", "Void functions can only become calls that return void.", becomeStatement.expression());
+        }
+
+        var tailCall = _boundOperations
+            .Skip(operationStart)
+            .LastOrDefault(static operation => operation is BoundDirectCallOperation
+                or BoundMemberCallOperation
+                or BoundFunctionPointerCallOperation
+                or BoundClosureCallOperation);
+        if (tailCall is null)
+        {
+            ReportError(
+                "STK3002",
+                "'become' requires its expression to lower to a direct, member, function-pointer, or closure call.",
+                becomeStatement.expression());
+            return;
+        }
+
+        if (!IsTailCallableOperation(tailCall))
+        {
+            ReportError(
+                "STK3002",
+                $"The target of 'become' is not tail-callable. Declare the callee or callable type with 'tail'.",
+                becomeStatement.expression());
+        }
+    }
+
+    private static bool IsTailCallableOperation(BoundOperation operation)
+    {
+        return operation switch
+        {
+            BoundDirectCallOperation direct => direct.Signature.IsTailCallable,
+            BoundMemberCallOperation member => member.Signature.IsTailCallable,
+            BoundFunctionPointerCallOperation functionPointer => functionPointer.FunctionPointerType.FunctionPointerIsTailCallable,
+            BoundClosureCallOperation closure => closure.ClosureType.ClosureIsTailCallable,
+            _ => false
+        };
+    }
+
+    private static bool IsRootCallExpression(StarkParser.ExpressionContext expression)
+    {
+        return IsRootCallAssignmentExpression(expression.assignmentExpression());
+    }
+
+    private static bool IsRootCallAssignmentExpression(StarkParser.AssignmentExpressionContext expression)
+    {
+        return expression.ChildCount == 1
+            && expression.conditionalExpression() is { } conditional
+            && IsRootCallConditionalExpression(conditional);
+    }
+
+    private static bool IsRootCallConditionalExpression(StarkParser.ConditionalExpressionContext expression)
+    {
+        return expression.ChildCount == 1
+            && IsRootCallLogicalOrExpression(expression.logicalOrExpression());
+    }
+
+    private static bool IsRootCallLogicalOrExpression(StarkParser.LogicalOrExpressionContext expression)
+    {
+        return expression.ChildCount == 1
+            && IsRootCallLogicalAndExpression(expression.logicalAndExpression(0));
+    }
+
+    private static bool IsRootCallLogicalAndExpression(StarkParser.LogicalAndExpressionContext expression)
+    {
+        return expression.ChildCount == 1
+            && IsRootCallBitwiseOrExpression(expression.bitwiseOrExpression(0));
+    }
+
+    private static bool IsRootCallBitwiseOrExpression(StarkParser.BitwiseOrExpressionContext expression)
+    {
+        return expression.ChildCount == 1
+            && IsRootCallBitwiseXorExpression(expression.bitwiseXorExpression(0));
+    }
+
+    private static bool IsRootCallBitwiseXorExpression(StarkParser.BitwiseXorExpressionContext expression)
+    {
+        return expression.ChildCount == 1
+            && IsRootCallBitwiseAndExpression(expression.bitwiseAndExpression(0));
+    }
+
+    private static bool IsRootCallBitwiseAndExpression(StarkParser.BitwiseAndExpressionContext expression)
+    {
+        return expression.ChildCount == 1
+            && IsRootCallEqualityExpression(expression.equalityExpression(0));
+    }
+
+    private static bool IsRootCallEqualityExpression(StarkParser.EqualityExpressionContext expression)
+    {
+        return expression.ChildCount == 1
+            && IsRootCallRelationalExpression(expression.relationalExpression(0));
+    }
+
+    private static bool IsRootCallRelationalExpression(StarkParser.RelationalExpressionContext expression)
+    {
+        return expression.ChildCount == 1
+            && IsRootCallShiftExpression(expression.shiftExpression(0));
+    }
+
+    private static bool IsRootCallShiftExpression(StarkParser.ShiftExpressionContext expression)
+    {
+        return expression.ChildCount == 1
+            && IsRootCallAdditiveExpression(expression.additiveExpression(0));
+    }
+
+    private static bool IsRootCallAdditiveExpression(StarkParser.AdditiveExpressionContext expression)
+    {
+        return expression.ChildCount == 1
+            && IsRootCallMultiplicativeExpression(expression.multiplicativeExpression(0));
+    }
+
+    private static bool IsRootCallMultiplicativeExpression(StarkParser.MultiplicativeExpressionContext expression)
+    {
+        return expression.ChildCount == 1
+            && IsRootCallUnaryExpression(expression.unaryExpression(0));
+    }
+
+    private static bool IsRootCallUnaryExpression(StarkParser.UnaryExpressionContext expression)
+    {
+        return expression.ChildCount == 1
+            && expression.powerExpression() is { } power
+            && IsRootCallPowerExpression(power);
+    }
+
+    private static bool IsRootCallPowerExpression(StarkParser.PowerExpressionContext expression)
+    {
+        return expression.ChildCount == 1
+            && IsRootCallPostfixExpression(expression.postfixExpression());
+    }
+
+    private static bool IsRootCallPostfixExpression(StarkParser.PostfixExpressionContext expression)
+    {
+        var parts = expression.postfixPart();
+        if (parts.Length > 0)
+        {
+            return parts[^1].argumentList() is not null;
+        }
+
+        var primary = expression.primaryExpression();
+        return primary.expression() is { } parenthesized
+            && IsRootCallExpression(parenthesized);
     }
 
     private void CheckAssumeStatement(
@@ -7174,7 +7429,8 @@ internal sealed class TypeChecker
     /// </summary>
     private bool StatementGuaranteesFunctionExit(StarkParser.StatementContext statement)
     {
-        if (statement.returnStatement() is not null)
+        if (statement.returnStatement() is not null
+            || statement.becomeStatement() is not null)
         {
             return true;
         }
@@ -13924,7 +14180,16 @@ internal sealed class TypeChecker
         ConstructorShape? matchedConstructor = null;
         IReadOnlyList<ObjectInitializerMemberTypingRecord>? initializerMembers = null;
 
-        matchedConstructor = CheckObjectCreationArguments(expression.argumentList(), expression, createdType, scope);
+        var storageSelector = GetObjectCreationStorageSelector(expression);
+        if (storageSelector == ObjectCreationStorageSelector.Arena && createdType.Kind != StarkTypeKind.Dynamic)
+        {
+            ReportError(
+                "STK3010",
+                "The `new(arena, ...)` storage selector is only valid for dynamic storage creation. Use an `arena` local declaration for arena-backed object storage.",
+                expression.arenaObjectCreationArgumentList());
+        }
+
+        matchedConstructor = CheckObjectCreationArguments(expression, createdType, scope);
 
         if (createdType.Kind == StarkTypeKind.Dynamic
             && expression.objectInitializer() is { } dynamicObjectInitializer)
@@ -13969,11 +14234,13 @@ internal sealed class TypeChecker
                 typedConstructor,
                 location,
                 _currentFunctionName,
+                storageSelector,
                 initializerMembers));
             _boundOperations.Add(new BoundObjectCreationOperation(
                 expression.GetText(),
                 createdType,
                 typedConstructor,
+                storageSelector,
                 initializerMembers,
                 location,
                 _currentFunctionName));
@@ -13986,7 +14253,15 @@ internal sealed class TypeChecker
     {
         return expression.type_() is null
             || expression.objectInitializer() is not null
+            || expression.arenaObjectCreationArgumentList() is not null
             || expression.argumentList() is { } argumentList && argumentList.argument().Length > 0;
+    }
+
+    private static ObjectCreationStorageSelector GetObjectCreationStorageSelector(StarkParser.ObjectCreationExpressionContext expression)
+    {
+        return expression.arenaObjectCreationArgumentList() is null
+            ? ObjectCreationStorageSelector.Default
+            : ObjectCreationStorageSelector.Arena;
     }
 
     private StarkTypeSymbol ResolveObjectCreationType(
@@ -16833,9 +17108,11 @@ internal sealed class TypeChecker
             expectedParameters,
             SourceName: displayTargetName,
             Kind: target.Type.FunctionPointerKind ?? StarkFunctionKind.Fn,
+            IsTailCallable: target.Type.FunctionPointerIsTailCallable,
             DisjointParameterGroups: target.Type.FunctionPointerDisjointParameterGroups ?? [],
             OverlapParameterGroups: target.Type.FunctionPointerOverlapParameterGroups ?? [],
-            SameParameterGroups: target.Type.FunctionPointerSameParameterGroups ?? []);
+            SameParameterGroups: target.Type.FunctionPointerSameParameterGroups ?? [],
+            PointeeDeadOnReturnParameterNames: target.Type.FunctionPointerPointeeDeadOnReturnParameterNames ?? []);
         var argumentBindings = EvaluateArguments(arguments, expectedParameters, scope);
 
         if (parameterTypes.Count != arguments.argument().Length)
@@ -16924,9 +17201,11 @@ internal sealed class TypeChecker
             expectedParameters,
             SourceName: displayTargetName,
             Kind: target.Type.ClosureFunctionKind ?? StarkFunctionKind.Fn,
+            IsTailCallable: target.Type.ClosureIsTailCallable,
             DisjointParameterGroups: target.Type.ClosureDisjointParameterGroups ?? [],
             OverlapParameterGroups: target.Type.ClosureOverlapParameterGroups ?? [],
-            SameParameterGroups: target.Type.ClosureSameParameterGroups ?? []);
+            SameParameterGroups: target.Type.ClosureSameParameterGroups ?? [],
+            PointeeDeadOnReturnParameterNames: target.Type.ClosurePointeeDeadOnReturnParameterNames ?? []);
         var argumentBindings = EvaluateArguments(arguments, expectedParameters, scope);
 
         if (parameterTypes.Count != arguments.argument().Length)
@@ -18306,9 +18585,10 @@ internal sealed class TypeChecker
 
         if (candidates.Length == 0)
         {
+            var candidateDetail = FormatFunctionPointerPromotionCandidateTypes(functions);
             ReportError(
                 "STK3002",
-                $"Function item '{name}' cannot be promoted to '{targetType.DisplayName}'.",
+                $"Function item '{name}' cannot be promoted to '{targetType.DisplayName}'.{candidateDetail}",
                 token);
             return new ExpressionBinding(StarkTypeSymbols.Error);
         }
@@ -18338,7 +18618,9 @@ internal sealed class TypeChecker
             type.FunctionPointerSameParameterGroups,
             type.FunctionPointerParameterRawPointerElementCountExpressions,
             type.FunctionPointerAbi,
-            isUnsafe: true);
+            isUnsafe: true,
+            isTailCallable: type.FunctionPointerIsTailCallable,
+            pointeeDeadOnReturnParameterNames: type.FunctionPointerPointeeDeadOnReturnParameterNames);
     }
 
     private ExpressionBinding ResolveClosureFunctionPromotion(
@@ -18409,6 +18691,21 @@ internal sealed class TypeChecker
     private static StarkTypeSymbol FunctionPointerTypeForSignature(TypedFunctionSignature function)
     {
         return TypeCompatibilityFacts.FunctionPointerTypeForSignature(function);
+    }
+
+    private static string FormatFunctionPointerPromotionCandidateTypes(IReadOnlyList<TypedFunctionSignature> functions)
+    {
+        var candidateTypes = functions
+            .Where(static function => !function.IsGeneric)
+            .Select(FunctionPointerTypeForSignature)
+            .Select(static type => type.DisplayName)
+            .Distinct(StringComparer.Ordinal)
+            .Take(4)
+            .ToArray();
+
+        return candidateTypes.Length == 0
+            ? string.Empty
+            : $" Candidate callable type(s): {string.Join(", ", candidateTypes.Select(static type => $"'{type}'"))}.";
     }
 
     private void RecordAddressTakenFunction(TypedFunctionSignature function, SourceLocation location)
@@ -20225,7 +20522,9 @@ internal sealed class TypeChecker
                     strippedType.FunctionPointerSameParameterGroups,
                     strippedType.FunctionPointerParameterRawPointerElementCountExpressions,
                     strippedType.FunctionPointerAbi,
-                    strippedType.FunctionPointerIsUnsafe),
+                    strippedType.FunctionPointerIsUnsafe,
+                    strippedType.FunctionPointerIsTailCallable,
+                    strippedType.FunctionPointerPointeeDeadOnReturnParameterNames),
                 borrowKind: type.BorrowKind,
                 accessKind: type.AccessKind,
                 initializationKind: type.InitializationKind,
@@ -20246,7 +20545,9 @@ internal sealed class TypeChecker
                     strippedType.ClosureDisjointParameterGroups,
                     strippedType.ClosureOverlapParameterGroups,
                     strippedType.ClosureSameParameterGroups,
-                    strippedType.ClosureParameterRawPointerElementCountExpressions),
+                    strippedType.ClosureParameterRawPointerElementCountExpressions,
+                    strippedType.ClosureIsTailCallable,
+                    strippedType.ClosurePointeeDeadOnReturnParameterNames),
                 borrowKind: type.BorrowKind,
                 accessKind: type.AccessKind,
                 initializationKind: type.InitializationKind,
@@ -20769,7 +21070,9 @@ internal sealed class TypeChecker
                 coreType.FunctionPointerSameParameterGroups,
                 coreType.FunctionPointerParameterRawPointerElementCountExpressions,
                 coreType.FunctionPointerAbi,
-                coreType.FunctionPointerIsUnsafe);
+                coreType.FunctionPointerIsUnsafe,
+                coreType.FunctionPointerIsTailCallable,
+                coreType.FunctionPointerPointeeDeadOnReturnParameterNames);
         }
         else if (coreType.Kind == StarkTypeKind.Closure
             && coreType.ClosureFunctionKind is { } closureFunctionKind
@@ -20785,7 +21088,9 @@ internal sealed class TypeChecker
                 coreType.ClosureDisjointParameterGroups,
                 coreType.ClosureOverlapParameterGroups,
                 coreType.ClosureSameParameterGroups,
-                coreType.ClosureParameterRawPointerElementCountExpressions);
+                coreType.ClosureParameterRawPointerElementCountExpressions,
+                coreType.ClosureIsTailCallable,
+                coreType.ClosurePointeeDeadOnReturnParameterNames);
         }
         else
         {
@@ -21648,13 +21953,18 @@ internal sealed class TypeChecker
     }
 
     private ConstructorShape? CheckObjectCreationArguments(
-        StarkParser.ArgumentListContext? arguments,
-        ParserRuleContext diagnosticContext,
+        StarkParser.ObjectCreationExpressionContext expression,
         StarkTypeSymbol createdType,
         Scope scope)
     {
-        var suppliedArguments = arguments?.argument() ?? [];
+        var arguments = expression.argumentList();
+        var suppliedArguments = GetObjectCreationArguments(expression);
         var argumentCount = suppliedArguments.Length;
+        if (GetObjectCreationStorageSelector(expression) == ObjectCreationStorageSelector.Arena
+            && createdType.Kind != StarkTypeKind.Dynamic)
+        {
+            return null;
+        }
 
         if (createdType.Kind == StarkTypeKind.Dynamic)
         {
@@ -21663,7 +21973,7 @@ internal sealed class TypeChecker
                 ReportError(
                     "STK3009",
                     $"Dynamic storage creation expects zero arguments or one capacity argument, but received {argumentCount}.",
-                    diagnosticContext);
+                    expression);
                 return null;
             }
 
@@ -21703,7 +22013,7 @@ internal sealed class TypeChecker
             ReportError(
                 "STK3009",
                 $"Type '{createdType.DisplayName}' does not declare constructors and cannot be created with arguments.",
-                diagnosticContext);
+                expression);
             return null;
         }
 
@@ -21722,7 +22032,7 @@ internal sealed class TypeChecker
             ReportError(
                 "STK3009",
                 $"Type '{createdType.DisplayName}' does not declare a constructor that accepts {argumentCount} argument{Pluralize(argumentCount)}.",
-                diagnosticContext);
+                expression);
             return null;
         }
 
@@ -21736,7 +22046,7 @@ internal sealed class TypeChecker
             ReportError(
                 "STK3009",
                 $"Type '{createdType.DisplayName}' does not declare a constructor that accepts {argumentCount} argument{Pluralize(argumentCount)}. Available constructor arities: {availableArities}.",
-                diagnosticContext);
+                expression);
             return null;
         }
 
@@ -21778,6 +22088,13 @@ internal sealed class TypeChecker
         }
 
         return hadMismatch ? null : matchedConstructor;
+    }
+
+    private static StarkParser.ArgumentContext[] GetObjectCreationArguments(StarkParser.ObjectCreationExpressionContext expression)
+    {
+        return expression.arenaObjectCreationArgumentList() is { } arenaArguments
+            ? arenaArguments.argument()
+            : expression.argumentList()?.argument() ?? [];
     }
 
     private StarkTypeSymbol[] EvaluateArgumentTypes(

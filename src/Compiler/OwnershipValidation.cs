@@ -23,6 +23,8 @@ internal sealed class OwnershipValidator
     private ISet<string>? _currentFunctionGenericParameters;
     private IReadOnlyDictionary<string, ComptimeGenericParameterSymbol>? _currentFunctionComptimeGenericParameters;
     private IReadOnlyDictionary<string, ClosureWriteContract>? _activeClosureWriteContracts;
+    private StarkParser.ArgumentListContext? _currentBecomeRootCallArguments;
+    private StarkParser.BecomeStatementContext? _currentBecomeStatement;
     private int _unsafeDepth;
 
     public OwnershipValidator(
@@ -534,9 +536,46 @@ internal sealed class OwnershipValidator
                 {
                     ValidateReturnedBorrowLifetime(value, summary, expression);
                 }
+
+                ValidateReturnedArenaLifetime(value, summary, expression);
             }
 
             ValidateActiveClosureWriteContracts(state, summary, returnStatement);
+            return;
+        }
+
+        if (statement.becomeStatement() is { } becomeStatement)
+        {
+            var previousBecomeRootCallArguments = _currentBecomeRootCallArguments;
+            var previousBecomeStatement = _currentBecomeStatement;
+            _currentBecomeRootCallArguments = TryGetRootCallArguments(becomeStatement.expression());
+            _currentBecomeStatement = becomeStatement;
+            ExpressionInfo value;
+            try
+            {
+                value = EvaluateExpression(
+                    becomeStatement.expression(),
+                    state,
+                    signature,
+                    summary,
+                    ValueUse.ForReturn(signature.ReturnType, _copyability),
+                    allowFunctionReference: false);
+            }
+            finally
+            {
+                _currentBecomeRootCallArguments = previousBecomeRootCallArguments;
+                _currentBecomeStatement = previousBecomeStatement;
+            }
+
+            if (signature.ReturnType.BorrowKind != StarkBorrowKind.None)
+            {
+                ValidateReturnedBorrowLifetime(value, summary, becomeStatement.expression());
+            }
+
+            ValidateReturnedArenaLifetime(value, summary, becomeStatement.expression());
+
+            ValidateActiveClosureWriteContracts(state, summary, becomeStatement);
+            ValidateBecomeHasNoPendingCleanup(state, summary, becomeStatement);
             return;
         }
 
@@ -571,6 +610,160 @@ internal sealed class OwnershipValidator
         {
             state.ExitScope(assumeScope, summary, ValidateScopeExitState, RecordImplicitDrops);
         }
+    }
+
+    private void ValidateBecomeHasNoPendingCleanup(
+        FlowState state,
+        FunctionOwnershipBuilder summary,
+        StarkParser.BecomeStatementContext becomeStatement)
+    {
+        foreach (var (variable, variableState) in state.VisibleVariableStates())
+        {
+            foreach (var target in GetImplicitDropTargets(variable, variableState))
+            {
+                OwnershipError(
+                    summary,
+                    "STK4207",
+                    $"Tail-call error: 'become' cannot leave '{target}' to be implicitly dropped after the tail transfer. Move the owned value into the tail call or end its scope before 'become'.",
+                    becomeStatement);
+            }
+        }
+    }
+
+    private bool IsCurrentBecomeRootCall(StarkParser.ArgumentListContext arguments) =>
+        ReferenceEquals(arguments, _currentBecomeRootCallArguments);
+
+    private void ValidateBecomeTailArgumentLifetime(
+        ExpressionInfo value,
+        StarkTypeSymbol parameterType,
+        string argumentDescription,
+        FunctionOwnershipBuilder summary,
+        ParserRuleContext context)
+    {
+        if (_currentBecomeStatement is null)
+        {
+            return;
+        }
+
+        var requiresBorrowedStorage =
+            parameterType.BorrowKind != StarkBorrowKind.None
+            || parameterType.InitializationKind is StarkInitializationKind.Init or StarkInitializationKind.Out;
+        var knownPointerIntoStorage = parameterType.Kind == StarkTypeKind.RawPointer
+            && value.BorrowLifetime.Kind is not BorrowLifetimeKind.None and not BorrowLifetimeKind.External;
+        var knownClosureIntoStorage = parameterType.Kind == StarkTypeKind.Closure
+            && value.BorrowLifetime.Kind is not BorrowLifetimeKind.None and not BorrowLifetimeKind.External;
+        if (!requiresBorrowedStorage && !knownPointerIntoStorage && !knownClosureIntoStorage)
+        {
+            return;
+        }
+
+        var sourceLifetime = value.BorrowLifetime.Kind == BorrowLifetimeKind.None
+            ? InferBorrowLifetimeFromValue(value, context.Start)
+            : value.BorrowLifetime;
+        if (sourceLifetime.Kind == BorrowLifetimeKind.External)
+        {
+            return;
+        }
+
+        var reason = sourceLifetime.Kind switch
+        {
+            BorrowLifetimeKind.LocalScope => "because it is tied to caller-local storage",
+            BorrowLifetimeKind.Temporary => "because it is tied to a temporary value",
+            BorrowLifetimeKind.Unknown => "because its source lifetime could not be proven",
+            _ => "because its source lifetime does not outlive the tail transfer"
+        };
+
+        OwnershipError(
+            summary,
+            "STK4207",
+            $"Tail-call lifetime error: 'become' cannot pass {DescribeBorrowSource(value)} as {argumentDescription} {reason}.",
+            context);
+        ReportBorrowSourceNote(summary, sourceLifetime);
+    }
+
+    private static StarkParser.ArgumentListContext? TryGetRootCallArguments(StarkParser.ExpressionContext expression) =>
+        TryGetRootCallArguments(expression.assignmentExpression());
+
+    private static StarkParser.ArgumentListContext? TryGetRootCallArguments(StarkParser.AssignmentExpressionContext expression)
+    {
+        if (expression.ChildCount != 1
+            || expression.conditionalExpression() is not { } conditional)
+        {
+            return null;
+        }
+
+        return TryGetRootCallArguments(conditional);
+    }
+
+    private static StarkParser.ArgumentListContext? TryGetRootCallArguments(StarkParser.ConditionalExpressionContext expression)
+    {
+        if (expression.ChildCount != 1)
+        {
+            return null;
+        }
+
+        return TryGetRootCallArguments(expression.logicalOrExpression());
+    }
+
+    private static StarkParser.ArgumentListContext? TryGetRootCallArguments(StarkParser.LogicalOrExpressionContext expression) =>
+        expression.ChildCount == 1 ? TryGetRootCallArguments(expression.logicalAndExpression(0)) : null;
+
+    private static StarkParser.ArgumentListContext? TryGetRootCallArguments(StarkParser.LogicalAndExpressionContext expression) =>
+        expression.ChildCount == 1 ? TryGetRootCallArguments(expression.bitwiseOrExpression(0)) : null;
+
+    private static StarkParser.ArgumentListContext? TryGetRootCallArguments(StarkParser.BitwiseOrExpressionContext expression) =>
+        expression.ChildCount == 1 ? TryGetRootCallArguments(expression.bitwiseXorExpression(0)) : null;
+
+    private static StarkParser.ArgumentListContext? TryGetRootCallArguments(StarkParser.BitwiseXorExpressionContext expression) =>
+        expression.ChildCount == 1 ? TryGetRootCallArguments(expression.bitwiseAndExpression(0)) : null;
+
+    private static StarkParser.ArgumentListContext? TryGetRootCallArguments(StarkParser.BitwiseAndExpressionContext expression) =>
+        expression.ChildCount == 1 ? TryGetRootCallArguments(expression.equalityExpression(0)) : null;
+
+    private static StarkParser.ArgumentListContext? TryGetRootCallArguments(StarkParser.EqualityExpressionContext expression) =>
+        expression.ChildCount == 1 ? TryGetRootCallArguments(expression.relationalExpression(0)) : null;
+
+    private static StarkParser.ArgumentListContext? TryGetRootCallArguments(StarkParser.RelationalExpressionContext expression) =>
+        expression.ChildCount == 1 ? TryGetRootCallArguments(expression.shiftExpression(0)) : null;
+
+    private static StarkParser.ArgumentListContext? TryGetRootCallArguments(StarkParser.ShiftExpressionContext expression) =>
+        expression.ChildCount == 1 ? TryGetRootCallArguments(expression.additiveExpression(0)) : null;
+
+    private static StarkParser.ArgumentListContext? TryGetRootCallArguments(StarkParser.AdditiveExpressionContext expression) =>
+        expression.ChildCount == 1 ? TryGetRootCallArguments(expression.multiplicativeExpression(0)) : null;
+
+    private static StarkParser.ArgumentListContext? TryGetRootCallArguments(StarkParser.MultiplicativeExpressionContext expression) =>
+        expression.ChildCount == 1 ? TryGetRootCallArguments(expression.unaryExpression(0)) : null;
+
+    private static StarkParser.ArgumentListContext? TryGetRootCallArguments(StarkParser.UnaryExpressionContext expression)
+    {
+        if (expression.ChildCount != 1)
+        {
+            return null;
+        }
+
+        return expression.powerExpression() is { } power
+            ? TryGetRootCallArguments(power)
+            : null;
+    }
+
+    private static StarkParser.ArgumentListContext? TryGetRootCallArguments(StarkParser.PowerExpressionContext expression) =>
+        expression.ChildCount == 1 ? TryGetRootCallArguments(expression.postfixExpression()) : null;
+
+    private static StarkParser.ArgumentListContext? TryGetRootCallArguments(StarkParser.PostfixExpressionContext expression)
+    {
+        var postfixParts = expression.postfixPart();
+        if (postfixParts.Length > 0 && postfixParts[^1].argumentList() is { } arguments)
+        {
+            return arguments;
+        }
+
+        if (postfixParts.Length == 0 && expression.primaryExpression().expression() is { } parenthesized)
+        {
+            return TryGetRootCallArguments(parenthesized);
+        }
+
+        return null;
     }
 
     private void CheckForVariableDeclaration(
@@ -862,9 +1055,22 @@ internal sealed class OwnershipValidator
                     isMutable,
                     isConstant,
                     borrowLifetime,
-                    DeclarationLocation: Location(declarator.Identifier.Symbol)),
+                    DeclarationLocation: Location(declarator.Identifier.Symbol),
+                    ArenaStorageLifetime: InferArenaStorageLifetimeForLocal(
+                        storageClass,
+                        state,
+                        declarator.Identifier.Symbol,
+                        declarator.Identifier.GetText())),
                     isInitialized: true,
-                    aggregateState: value.AggregateState);
+                    aggregateState: value.AggregateState,
+                    arenaValueLifetime: InferArenaLifetimeForLocalDeclaration(
+                        storageClass,
+                        declaredType,
+                        value,
+                        state,
+                        declarator.Identifier.Symbol,
+                        declarator.Identifier.GetText(),
+                        summary.Name));
                 summary.DeclareRoot(variable, requiresDrop: IsAutomaticallyDropped(variable.Type, variable.StorageClass, _copyability));
                 RecordDeclaredDynamicStorageState(declarator.Identifier.GetText(), declaredType, value, state, initializer: null);
             }
@@ -880,9 +1086,23 @@ internal sealed class OwnershipValidator
                     isMutable,
                     isConstant,
                     borrowLifetime,
-                    DeclarationLocation: Location(declarator.Identifier.Symbol)),
+                    DeclarationLocation: Location(declarator.Identifier.Symbol),
+                    ArenaStorageLifetime: InferArenaStorageLifetimeForLocal(
+                        storageClass,
+                        state,
+                        declarator.Identifier.Symbol,
+                        declarator.Identifier.GetText())),
                     isInitialized: true,
-                    aggregateState: value.AggregateState);
+                    aggregateState: value.AggregateState,
+                    arenaValueLifetime: InferArenaLifetimeForLocalDeclaration(
+                        storageClass,
+                        declaredType,
+                        value,
+                        state,
+                        declarator.Identifier.Symbol,
+                        declarator.Identifier.GetText(),
+                        summary.Name,
+                        initializer));
                 summary.DeclareRoot(variable, requiresDrop: IsAutomaticallyDropped(variable.Type, variable.StorageClass, _copyability));
                 RecordDeclaredDynamicStorageState(declarator.Identifier.GetText(), declaredType, value, state, initializer);
                 TryRecordDynamicInitSliceState(declarator.Identifier.GetText(), declaredType, initializer, state, summary);
@@ -897,8 +1117,19 @@ internal sealed class OwnershipValidator
                     isMutable,
                     isConstant,
                     borrowLifetime,
-                    DeclarationLocation: Location(declarator.Identifier.Symbol)),
-                    isInitialized: false);
+                    DeclarationLocation: Location(declarator.Identifier.Symbol),
+                    ArenaStorageLifetime: InferArenaStorageLifetimeForLocal(
+                        storageClass,
+                        state,
+                        declarator.Identifier.Symbol,
+                        declarator.Identifier.GetText())),
+                    isInitialized: false,
+                    arenaValueLifetime: InferArenaLifetimeForUninitializedLocal(
+                        storageClass,
+                        declaredType,
+                        state,
+                        declarator.Identifier.Symbol,
+                        declarator.Identifier.GetText()));
                 summary.DeclareRoot(variable, requiresDrop: IsAutomaticallyDropped(variable.Type, variable.StorageClass, _copyability));
             }
         }
@@ -1085,14 +1316,15 @@ internal sealed class OwnershipValidator
 
         if (initializer.objectInitializer() is { } objectInitializer)
         {
-            EvaluateObjectInitializerMembers(objectInitializer, declaredType, state, signature, summary);
+            var arenaLifetime = EvaluateObjectInitializerMembers(objectInitializer, declaredType, state, signature, summary);
 
-            return new ExpressionInfo(declaredType);
+            return new ExpressionInfo(declaredType, ArenaLifetime: arenaLifetime);
         }
 
         if (initializer.arrayInitializer() is { } arrayInitializer)
         {
-            EvaluateArrayInitializerItems(arrayInitializer, declaredType, state, signature, summary);
+            var arenaLifetime = EvaluateArrayInitializerItems(arrayInitializer, declaredType, state, signature, summary);
+            return new ExpressionInfo(declaredType, ArenaLifetime: arenaLifetime);
         }
 
         return new ExpressionInfo(declaredType);
@@ -1362,6 +1594,7 @@ internal sealed class OwnershipValidator
         if (left.Variable is { } variable)
         {
             state.InvalidateDynamicLengthFactsFor(variable.Name);
+            ValidateArenaAssignment(left, right, state, summary, context);
             if (variable.Origin == VariableOrigin.Global)
             {
                 if (IsMoveOnly(left.Type))
@@ -1398,9 +1631,11 @@ internal sealed class OwnershipValidator
                 ValidateAssignedBorrowLifetime(left, right, state, summary, context);
             }
 
+            var arenaValueLifetime = InferArenaLifetimeForAssignment(left.Type, right);
+
             if (left.ProjectionPath is { Length: > 0 } projectionPath)
             {
-                state.MarkFieldInitialized(variable.Id, projectionPath[0]);
+                state.MarkFieldInitialized(variable.Id, projectionPath[0], arenaValueLifetime);
             }
             else
             {
@@ -1411,7 +1646,7 @@ internal sealed class OwnershipValidator
                     summary.RecordReinitialization(variable, left.Type, Location(context.Start));
                 }
 
-                state.SetInitialized(variable.Id, borrowLifetime, right.AggregateState);
+                state.SetInitialized(variable.Id, borrowLifetime, arenaValueLifetime, right.AggregateState);
             }
 
             if (left.Type.Kind == StarkTypeKind.Dynamic)
@@ -2429,7 +2664,16 @@ internal sealed class OwnershipValidator
             var pointerLifetime = addressOperand.BorrowLifetime.Kind != BorrowLifetimeKind.None
                 ? addressOperand.BorrowLifetime
                 : InferBorrowLifetimeFromValue(addressOperand, expression.Start);
-            return ApplyUse(new ExpressionInfo(pointerType, BorrowLifetime: pointerLifetime), state, summary, use, expression);
+            return ApplyUse(
+                new ExpressionInfo(
+                    pointerType,
+                    BorrowLifetime: pointerLifetime,
+                    ArenaLifetime: GetArenaLifetimeForDerivedView(addressOperand, expression.Start),
+                    AddressedPlace: addressOperand),
+                state,
+                summary,
+                use,
+                expression);
         }
 
         if (op == "*")
@@ -2591,7 +2835,10 @@ internal sealed class OwnershipValidator
         var borrowLifetime = pointer.BorrowLifetime.Kind != BorrowLifetimeKind.None
             ? pointer.BorrowLifetime
             : InferBorrowLifetimeFromValue(pointer, arguments.Start);
-        binding = new ExpressionInfo(sliceType, BorrowLifetime: borrowLifetime);
+        binding = new ExpressionInfo(
+            sliceType,
+            BorrowLifetime: borrowLifetime,
+            ArenaLifetime: pointer.EffectiveArenaLifetime);
         return true;
     }
 
@@ -2837,7 +3084,7 @@ internal sealed class OwnershipValidator
         FunctionOwnershipBuilder summary,
         ValueUse use)
     {
-        EvaluateLambdaCaptureUses(expression, state, summary);
+        var captureArenaLifetime = EvaluateLambdaCaptureUses(expression, state, summary);
 
         var targetType = use.TargetType ?? StarkTypeSymbols.Error;
         var borrowLifetime = targetType.Kind == StarkTypeKind.Closure
@@ -2846,19 +3093,30 @@ internal sealed class OwnershipValidator
                 ? BorrowLifetime.ExternalAt(Location(expression.Start), "noncapturing closure target")
                 : BorrowLifetime.TemporaryAt(Location(expression.Start), "capturing closure environment")
             : BorrowLifetime.None;
-        return ApplyUse(new ExpressionInfo(targetType, BorrowLifetime: borrowLifetime), state, summary, use, expression);
+        return ApplyUse(
+            new ExpressionInfo(
+                targetType,
+                BorrowLifetime: borrowLifetime,
+                ArenaLifetime: targetType.Kind == StarkTypeKind.Closure && TypeCanCarryArenaValue(targetType)
+                    ? captureArenaLifetime
+                    : ArenaLifetime.None),
+            state,
+            summary,
+            use,
+            expression);
     }
 
-    private void EvaluateLambdaCaptureUses(
+    private ArenaLifetime EvaluateLambdaCaptureUses(
         StarkParser.LambdaExpressionContext expression,
         FlowState state,
         FunctionOwnershipBuilder summary)
     {
         if (expression.captureClause() is not { } captureClause)
         {
-            return;
+            return ArenaLifetime.None;
         }
 
+        var arenaLifetime = ArenaLifetime.None;
         foreach (var capture in captureClause.captureBinding())
         {
             var mode = capture.captureMode().GetText();
@@ -2871,11 +3129,21 @@ internal sealed class OwnershipValidator
             };
 
             var value = ResolveValue(capture.Identifier().GetText(), token, state, summary, use, allowFunctionReference: false);
+            var captureLifetime = mode switch
+            {
+                "copy" when !TypeCanCarryArenaValue(value.Type) => ArenaLifetime.None,
+                "copy" => value.EffectiveArenaLifetime,
+                "move" => InferArenaLifetimeForAssignment(value.Type, value),
+                _ => GetArenaLifetimeForDerivedView(value, token)
+            };
+            arenaLifetime = ArenaLifetime.Merge(arenaLifetime, captureLifetime);
             if (string.Equals(mode, "move", StringComparison.Ordinal))
             {
                 MarkMoveCapture(value, state, summary, token);
             }
         }
+
+        return arenaLifetime;
     }
 
     private void MarkMoveCapture(
@@ -3192,22 +3460,34 @@ internal sealed class OwnershipValidator
         FunctionOwnershipBuilder summary,
         ValueUse use)
     {
-        var type = expression.type_() is { } explicitType
+        var type = StoredValueType(expression.type_() is { } explicitType
             ? ResolveType(explicitType)
-            : use.TargetType ?? StarkTypeSymbols.Error;
-
-        if (expression.argumentList() is { } argumentList)
-        {
-            foreach (var argument in argumentList.argument())
-            {
-                EvaluateExpression(argument.expression(), state, signature, summary, ValueUse.ConsumeTemporary, allowFunctionReference: false);
-            }
-        }
+            : use.TargetType ?? StarkTypeSymbols.Error);
+        var isArenaObjectCreation = IsArenaObjectCreation(expression, summary.Name);
+        var objectCreationRecord = TryGetObjectCreationTypingRecord(expression, summary.Name, out var matchedObjectCreation)
+            ? matchedObjectCreation
+            : null;
+        var arenaLifetime = EvaluateObjectCreationArguments(
+            expression,
+            objectCreationRecord,
+            state,
+            signature,
+            summary);
 
         if (expression.objectInitializer() is { } objectInitializer)
         {
-            EvaluateObjectInitializerMembers(objectInitializer, type, state, signature, summary);
+            arenaLifetime = ArenaLifetime.Merge(
+                arenaLifetime,
+                EvaluateObjectInitializerMembers(objectInitializer, type, state, signature, summary));
         }
+
+        var allocationArenaLifetime = isArenaObjectCreation && TypeCanCarryArenaValue(type)
+            ? ArenaLifetime.Local(
+                state.CurrentScope.Id,
+                Location(expression.Start),
+                "arena allocation result")
+            : ArenaLifetime.None;
+        arenaLifetime = ArenaLifetime.Merge(arenaLifetime, allocationArenaLifetime);
 
         return new ExpressionInfo(
             type,
@@ -3215,7 +3495,105 @@ internal sealed class OwnershipValidator
             AggregateState: CreateInitializedAggregateState(type),
             DynamicInitializedPrefix: type.Kind == StarkTypeKind.Dynamic
                 ? DynamicStoragePrefixState.Empty
-                : null);
+                : null,
+            ArenaLifetime: arenaLifetime);
+    }
+
+    private bool IsArenaObjectCreation(StarkParser.ObjectCreationExpressionContext expression, string functionName)
+    {
+        if (expression.arenaObjectCreationArgumentList() is not null)
+        {
+            return true;
+        }
+
+        return TryGetObjectCreationTypingRecord(expression, functionName, out var record)
+            && record.StorageSelector == ObjectCreationStorageSelector.Arena;
+    }
+
+    private bool TryGetObjectCreationTypingRecord(
+        StarkParser.ObjectCreationExpressionContext expression,
+        string functionName,
+        out ObjectCreationTypingRecord record)
+    {
+        var location = Location(expression.Start);
+        var expressionText = expression.GetText();
+        foreach (var candidate in _typeModel.ObjectCreations)
+        {
+            if (!string.Equals(candidate.EnclosingFunctionName, functionName, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (string.Equals(candidate.ExpressionText, expressionText, StringComparison.Ordinal)
+                || candidate.Location.Line == location.Line && candidate.Location.Column == location.Column)
+            {
+                record = candidate;
+                return true;
+            }
+        }
+
+        record = null!;
+        return false;
+    }
+
+    private ArenaLifetime EvaluateObjectCreationArguments(
+        StarkParser.ObjectCreationExpressionContext expression,
+        ObjectCreationTypingRecord? objectCreationRecord,
+        FlowState state,
+        TypedFunctionSignature signature,
+        FunctionOwnershipBuilder summary)
+    {
+        var arguments = GetObjectCreationArguments(expression);
+        var primaryConstructor = objectCreationRecord?.Constructor is { IsPrimaryShape: true } constructor
+            && constructor.Parameters.Count == arguments.Length
+            ? constructor
+            : null;
+        var arenaLifetime = ArenaLifetime.None;
+
+        for (var index = 0; index < arguments.Length; index++)
+        {
+            var argument = arguments[index];
+            var parameter = primaryConstructor is not null
+                ? primaryConstructor.Parameters[index]
+                : null;
+            var argumentValue = EvaluateExpression(
+                argument.expression(),
+                state,
+                signature,
+                summary,
+                parameter is null
+                    ? ValueUse.ConsumeTemporary
+                    : ValueUse.ForAssignment(parameter.Type, _copyability),
+                allowFunctionReference: false);
+
+            if (parameter is null)
+            {
+                continue;
+            }
+
+            ValidateStoredBorrowLifetime(
+                parameter.Type,
+                argumentValue,
+                summary,
+                argument,
+                $"constructor field '{parameter.Name}'");
+            ValidateArenaStoredValue(
+                parameter.Type,
+                argumentValue,
+                summary,
+                argument,
+                $"constructor field '{parameter.Name}'");
+            arenaLifetime = MergeArenaInitializerLifetime(arenaLifetime, parameter.Type, argumentValue);
+        }
+
+        return arenaLifetime;
+    }
+
+    private static StarkParser.ArgumentContext[] GetObjectCreationArguments(StarkParser.ObjectCreationExpressionContext expression)
+    {
+        return expression.arenaObjectCreationArgumentList() is { } arenaArguments
+            ? arenaArguments.argument()
+            : expression.argumentList()?.argument() ?? [];
     }
 
     private ExpressionInfo EvaluateEnumConstructorExpression(
@@ -3230,24 +3608,42 @@ internal sealed class OwnershipValidator
             return new ExpressionInfo(StarkTypeSymbols.Error);
         }
 
+        var arenaLifetime = ArenaLifetime.None;
         foreach (var member in expression.enumConstructorInitializer().enumConstructorMember())
         {
-            EvaluateExpression(
+            var memberName = member.Identifier().GetText();
+            var memberType = variant.Fields.FirstOrDefault(field => string.Equals(field.Name, memberName, StringComparison.Ordinal))?.Type
+                ?? StarkTypeSymbols.Error;
+            var memberValue = EvaluateExpression(
                 member.expression(),
                 state,
                 signature,
                 summary,
-                ValueUse.ConsumeTemporary,
+                ValueUse.ForAssignment(memberType, _copyability),
                 allowFunctionReference: false);
+            ValidateStoredBorrowLifetime(
+                memberType,
+                memberValue,
+                summary,
+                member,
+                $"enum field '{memberName}'");
+            ValidateArenaStoredValue(
+                memberType,
+                memberValue,
+                summary,
+                member,
+                $"enum field '{memberName}'");
+            arenaLifetime = MergeArenaInitializerLifetime(arenaLifetime, memberType, memberValue);
         }
 
         return new ExpressionInfo(
             enumTypeSymbol,
             BorrowLifetime: BorrowLifetime.None,
-            AggregateState: CreateEnumAggregateState(enumType, variant));
+            AggregateState: CreateEnumAggregateState(enumType, variant),
+            ArenaLifetime: arenaLifetime);
     }
 
-    private void EvaluateObjectInitializerMembers(
+    private ArenaLifetime EvaluateObjectInitializerMembers(
         StarkParser.ObjectInitializerContext objectInitializer,
         StarkTypeSymbol targetType,
         FlowState state,
@@ -3260,6 +3656,7 @@ internal sealed class OwnershipValidator
             _typeModel.NamedTypes.TryGetValue(targetType.NamedType, out namedType);
         }
 
+        var arenaLifetime = ArenaLifetime.None;
         foreach (var memberInitializer in objectInitializer.memberInitializer())
         {
             var memberType = namedType is not null && namedType.Fields.TryGetValue(memberInitializer.Identifier().GetText(), out var field)
@@ -3272,10 +3669,19 @@ internal sealed class OwnershipValidator
                 summary,
                 memberInitializer,
                 $"stored field '{memberInitializer.Identifier().GetText()}'");
+            ValidateArenaStoredValue(
+                memberType,
+                memberValue,
+                summary,
+                memberInitializer,
+                $"stored field '{memberInitializer.Identifier().GetText()}'");
+            arenaLifetime = MergeArenaInitializerLifetime(arenaLifetime, memberType, memberValue);
         }
+
+        return arenaLifetime;
     }
 
-    private void EvaluateArrayInitializerItems(
+    private ArenaLifetime EvaluateArrayInitializerItems(
         StarkParser.ArrayInitializerContext arrayInitializer,
         StarkTypeSymbol targetType,
         FlowState state,
@@ -3283,10 +3689,36 @@ internal sealed class OwnershipValidator
         FunctionOwnershipBuilder summary)
     {
         var elementType = targetType.ElementType ?? StarkTypeSymbols.Error;
+        var arenaLifetime = ArenaLifetime.None;
         foreach (var item in arrayInitializer.variableInitializer())
         {
-            EvaluateVariableInitializer(item, state, signature, summary, elementType);
+            var itemValue = EvaluateVariableInitializer(item, state, signature, summary, elementType);
+            ValidateStoredBorrowLifetime(
+                elementType,
+                itemValue,
+                summary,
+                item,
+                "array initializer element");
+            ValidateArenaStoredValue(
+                elementType,
+                itemValue,
+                summary,
+                item,
+                "array initializer element");
+            arenaLifetime = MergeArenaInitializerLifetime(arenaLifetime, elementType, itemValue);
         }
+
+        return arenaLifetime;
+    }
+
+    private ArenaLifetime MergeArenaInitializerLifetime(
+        ArenaLifetime current,
+        StarkTypeSymbol targetType,
+        ExpressionInfo value)
+    {
+        return TypeCanCarryArenaValue(targetType)
+            ? ArenaLifetime.Merge(current, value.EffectiveArenaLifetime)
+            : current;
     }
 
     private ExpressionInfo ResolveValue(
@@ -3315,6 +3747,7 @@ internal sealed class OwnershipValidator
                 variable.Type,
                 Variable: variable,
                 BorrowLifetime: variableState.BorrowLifetime,
+                ArenaLifetime: variableState.ArenaValueLifetime,
                 IsPlace: true,
                 IsDirectVariable: true,
                 AggregateState: variableState.AggregateState);
@@ -3967,17 +4400,38 @@ internal sealed class OwnershipValidator
         FunctionOwnershipBuilder summary,
         ValueUse use)
     {
+        var isBecomeRootCall = IsCurrentBecomeRootCall(arguments);
+        var currentSignature = _signatures[summary.Name];
         if (target.EnumConstructor is not null)
         {
-            foreach (var argument in arguments.argument())
+            var arenaLifetime = ArenaLifetime.None;
+            for (var index = 0; index < arguments.argument().Length; index++)
             {
-                EvaluateExpression(
+                var argument = arguments.argument(index);
+                var field = index < target.EnumConstructor.Variant.Fields.Count
+                    ? target.EnumConstructor.Variant.Fields[index]
+                    : null;
+                var fieldType = field?.Type ?? StarkTypeSymbols.Error;
+                var argumentValue = EvaluateExpression(
                     argument.expression(),
                     state,
-                    _signatures[summary.Name],
+                    currentSignature,
                     summary,
-                    ValueUse.ConsumeTemporary,
+                    ValueUse.ForAssignment(fieldType, _copyability),
                     allowFunctionReference: false);
+                ValidateStoredBorrowLifetime(
+                    fieldType,
+                    argumentValue,
+                    summary,
+                    argument,
+                    $"enum field '{field?.Name ?? $"arg{index + 1}"}'");
+                ValidateArenaStoredValue(
+                    fieldType,
+                    argumentValue,
+                    summary,
+                    argument,
+                    $"enum field '{field?.Name ?? $"arg{index + 1}"}'");
+                arenaLifetime = MergeArenaInitializerLifetime(arenaLifetime, fieldType, argumentValue);
             }
 
             var aggregateState = target.Type.NamedType is not null
@@ -3987,7 +4441,11 @@ internal sealed class OwnershipValidator
                 : null;
 
             return ApplyUse(
-                new ExpressionInfo(target.Type, BorrowLifetime: BorrowLifetime.None, AggregateState: aggregateState),
+                new ExpressionInfo(
+                    target.Type,
+                    BorrowLifetime: BorrowLifetime.None,
+                    AggregateState: aggregateState,
+                    ArenaLifetime: arenaLifetime),
                 state,
                 summary,
                 use,
@@ -3998,7 +4456,7 @@ internal sealed class OwnershipValidator
             .Select(argument => EvaluateExpression(
                 argument.expression(),
                 state,
-                _signatures[summary.Name],
+                currentSignature,
                 summary,
                 ValueUse.Read,
                 allowFunctionReference: false))
@@ -4041,21 +4499,61 @@ internal sealed class OwnershipValidator
             if (target.Type.Kind == StarkTypeKind.FunctionPointer)
             {
                 var parameterTypes = target.Type.FunctionPointerParameterTypes ?? [];
+                var deadOnReturnParameters = target.Type.FunctionPointerPointeeDeadOnReturnParameterNames ?? [];
+                var functionPointerArenaArguments = new List<ArenaLifetime>();
                 for (var index = 0; index < argumentValues.Length; index++)
                 {
                     var parameterType = index < parameterTypes.Count
                         ? parameterTypes[index]
                         : argumentValues[index].Type;
-                    ApplyUse(
+                    var usedArgument = ApplyUse(
                         argumentValues[index],
                         state,
                         summary,
                         ValueUse.ForCallArgument(parameterType, _copyability),
                         arguments.argument(index));
+                    ValidateArenaCallArgumentLifetime(
+                        usedArgument,
+                        parameterType,
+                        summary,
+                        arguments.argument(index),
+                        $"argument {index + 1}");
+                    if (usedArgument.EffectiveArenaLifetime.Kind != ArenaLifetimeKind.None)
+                    {
+                        functionPointerArenaArguments.Add(usedArgument.EffectiveArenaLifetime);
+                    }
+
+                    if (isBecomeRootCall)
+                    {
+                        ValidateBecomeTailArgumentLifetime(
+                            usedArgument,
+                            parameterType,
+                            $"argument {index + 1}",
+                            summary,
+                            arguments.argument(index));
+                    }
+
+                    if (deadOnReturnParameters.Contains($"arg{index}", StringComparer.Ordinal))
+                    {
+                        ApplyPointeeDeadOnReturn(
+                            usedArgument,
+                            parameterType,
+                            currentSignature,
+                            state,
+                            summary,
+                            arguments.argument(index),
+                            $"argument {index + 1}");
+                    }
                 }
 
                 return ApplyUse(
-                    new ExpressionInfo(target.Type.FunctionPointerReturnType ?? StarkTypeSymbols.Error),
+                    new ExpressionInfo(
+                        target.Type.FunctionPointerReturnType ?? StarkTypeSymbols.Error,
+                        ArenaLifetime: InferArenaLifetimeForCallReturn(
+                            target.Type.FunctionPointerReturnType ?? StarkTypeSymbols.Error,
+                            functionPointerArenaArguments,
+                            arguments.Start,
+                            "function-pointer call result")),
                     state,
                     summary,
                     use,
@@ -4065,26 +4563,75 @@ internal sealed class OwnershipValidator
             if (target.Type.Kind == StarkTypeKind.Closure)
             {
                 var parameterTypes = target.Type.ClosureParameterTypes ?? [];
+                var deadOnReturnParameters = target.Type.ClosurePointeeDeadOnReturnParameterNames ?? [];
+                var closureArenaArguments = new List<ArenaLifetime>();
                 for (var index = 0; index < argumentValues.Length; index++)
                 {
                     var parameterType = index < parameterTypes.Count
                         ? parameterTypes[index]
                         : argumentValues[index].Type;
-                    ApplyUse(
+                    var usedArgument = ApplyUse(
                         argumentValues[index],
                         state,
                         summary,
                         ValueUse.ForCallArgument(parameterType, _copyability),
                         arguments.argument(index));
+                    ValidateArenaCallArgumentLifetime(
+                        usedArgument,
+                        parameterType,
+                        summary,
+                        arguments.argument(index),
+                        $"argument {index + 1}");
+                    if (usedArgument.EffectiveArenaLifetime.Kind != ArenaLifetimeKind.None)
+                    {
+                        closureArenaArguments.Add(usedArgument.EffectiveArenaLifetime);
+                    }
+
+                    if (isBecomeRootCall)
+                    {
+                        ValidateBecomeTailArgumentLifetime(
+                            usedArgument,
+                            parameterType,
+                            $"argument {index + 1}",
+                            summary,
+                            arguments.argument(index));
+                    }
+
+                    if (deadOnReturnParameters.Contains($"arg{index}", StringComparer.Ordinal))
+                    {
+                        ApplyPointeeDeadOnReturn(
+                            usedArgument,
+                            parameterType,
+                            currentSignature,
+                            state,
+                            summary,
+                            arguments.argument(index),
+                            $"argument {index + 1}");
+                    }
                 }
 
                 var closureUse = target.Type.ClosureCallCapability == StarkClosureCallCapability.Once
                     ? ValueUse.ConsumeClosure
                     : ValueUse.Read;
-                ApplyUse(target, state, summary, closureUse, arguments);
+                var usedTarget = ApplyUse(target, state, summary, closureUse, arguments);
+                if (isBecomeRootCall)
+                {
+                    ValidateBecomeTailArgumentLifetime(
+                        usedTarget,
+                        target.Type,
+                        "closure target",
+                        summary,
+                        arguments);
+                }
 
                 return ApplyUse(
-                    new ExpressionInfo(target.Type.ClosureReturnType ?? StarkTypeSymbols.Error),
+                    new ExpressionInfo(
+                        target.Type.ClosureReturnType ?? StarkTypeSymbols.Error,
+                        ArenaLifetime: InferArenaLifetimeForCallReturn(
+                            target.Type.ClosureReturnType ?? StarkTypeSymbols.Error,
+                            closureArenaArguments,
+                            arguments.Start,
+                            "closure call result")),
                     state,
                     summary,
                     use,
@@ -4097,6 +4644,7 @@ internal sealed class OwnershipValidator
         CheckValueContractObligations(target.Function, target.Receiver, arguments, state, summary);
 
         var borrowArguments = new List<BorrowLifetime>();
+        var arenaArguments = new List<ArenaLifetime>();
         var receiverOffset = target.Receiver is null ? 0 : 1;
         var explicitParameterCount = Math.Max(0, target.Function.Parameters.Count - receiverOffset);
 
@@ -4104,9 +4652,41 @@ internal sealed class OwnershipValidator
         {
             var receiverParameterType = target.Function.Parameters[0].Type;
             var receiverValue = ApplyUse(target.Receiver, state, summary, ValueUse.ForCallArgument(receiverParameterType, _copyability), arguments);
+            ValidateArenaCallArgumentLifetime(
+                receiverValue,
+                receiverParameterType,
+                summary,
+                arguments,
+                "receiver");
+            if (isBecomeRootCall)
+            {
+                ValidateBecomeTailArgumentLifetime(
+                    receiverValue,
+                    receiverParameterType,
+                    "receiver",
+                    summary,
+                    arguments);
+            }
+
             if (receiverParameterType.BorrowKind != StarkBorrowKind.None)
             {
                 borrowArguments.Add(receiverValue.BorrowLifetime);
+            }
+            if (receiverValue.EffectiveArenaLifetime.Kind != ArenaLifetimeKind.None)
+            {
+                arenaArguments.Add(receiverValue.EffectiveArenaLifetime);
+            }
+
+            if (target.Function.PointeeDeadOnReturnParameters.Contains(target.Function.Parameters[0].Name, StringComparer.Ordinal))
+            {
+                ApplyPointeeDeadOnReturn(
+                    receiverValue,
+                    receiverParameterType,
+                    currentSignature,
+                    state,
+                    summary,
+                    arguments,
+                    "receiver");
             }
         }
 
@@ -4124,10 +4704,43 @@ internal sealed class OwnershipValidator
                 summary,
                 ValueUse.ForCallArgument(parameterType, _copyability),
                 arguments.argument(index));
+            ValidateArenaCallArgumentLifetime(
+                usedArgument,
+                parameterType,
+                summary,
+                arguments.argument(index),
+                $"argument {index + 1}");
 
             if (parameterType.BorrowKind != StarkBorrowKind.None)
             {
                 borrowArguments.Add(usedArgument.BorrowLifetime);
+            }
+            if (usedArgument.EffectiveArenaLifetime.Kind != ArenaLifetimeKind.None)
+            {
+                arenaArguments.Add(usedArgument.EffectiveArenaLifetime);
+            }
+
+            if (isBecomeRootCall)
+            {
+                ValidateBecomeTailArgumentLifetime(
+                    usedArgument,
+                    parameterType,
+                    $"argument {index + 1}",
+                    summary,
+                    arguments.argument(index));
+            }
+
+            if (index + receiverOffset < target.Function.Parameters.Count
+                && target.Function.PointeeDeadOnReturnParameters.Contains(target.Function.Parameters[index + receiverOffset].Name, StringComparer.Ordinal))
+            {
+                ApplyPointeeDeadOnReturn(
+                    usedArgument,
+                    parameterType,
+                    currentSignature,
+                    state,
+                    summary,
+                    arguments.argument(index),
+                    $"argument {index + 1}");
             }
         }
 
@@ -4139,11 +4752,127 @@ internal sealed class OwnershipValidator
                 $"borrow source for call '{target.Function.DisplaySourceName}'");
 
         return ApplyUse(
-            new ExpressionInfo(target.Function.ReturnType, BorrowLifetime: borrowLifetime),
+            new ExpressionInfo(
+                target.Function.ReturnType,
+                BorrowLifetime: borrowLifetime,
+                ArenaLifetime: InferArenaLifetimeForCallReturn(
+                    target.Function.ReturnType,
+                    arenaArguments,
+                    arguments.Start,
+                    $"call '{target.Function.DisplaySourceName}' result")),
             state,
             summary,
             use,
             arguments);
+    }
+
+    private void ApplyPointeeDeadOnReturn(
+        ExpressionInfo argument,
+        StarkTypeSymbol parameterType,
+        TypedFunctionSignature currentSignature,
+        FlowState state,
+        FunctionOwnershipBuilder summary,
+        ParserRuleContext context,
+        string argumentDescription)
+    {
+        ApplyPointeeDeadOnReturn(
+            argument,
+            parameterType,
+            currentSignature,
+            state,
+            summary,
+            context.Start,
+            argumentDescription);
+    }
+
+    private void ApplyPointeeDeadOnReturn(
+        ExpressionInfo argument,
+        StarkTypeSymbol parameterType,
+        TypedFunctionSignature currentSignature,
+        FlowState state,
+        FunctionOwnershipBuilder summary,
+        IToken token,
+        string argumentDescription)
+    {
+        var deadPlace = argument.AddressedPlace ?? argument;
+        if (argument.AddressedPlace is null
+            && parameterType.Kind == StarkTypeKind.RawPointer
+            && _unsafeDepth != 0)
+        {
+            return;
+        }
+
+        if (deadPlace.Variable is not { } variable)
+        {
+            return;
+        }
+
+        if (variable.Origin == VariableOrigin.Global)
+        {
+            OwnershipError(
+                summary,
+                "STK4203",
+                $"Cannot pass global or static storage '{variable.Name}' as {argumentDescription} to a dead_on_return parameter because Stark cannot make that storage unavailable after the call.",
+                token);
+            return;
+        }
+
+        if (variable.Origin == VariableOrigin.Parameter
+            && !currentSignature.PointeeDeadOnReturnParameters.Contains(variable.Name, StringComparer.Ordinal))
+        {
+            OwnershipError(
+                summary,
+                "STK4203",
+                $"Cannot pass parameter '{variable.Name}' as {argumentDescription} to a dead_on_return parameter unless function '{currentSignature.DisplaySourceName}' also declares 'where dead_on_return({variable.Name})'.",
+                token);
+            return;
+        }
+
+        if (argument.AddressedPlace is null
+            && variable.Origin != VariableOrigin.Parameter
+            && IsNonOwningMemoryViewType(variable.Type))
+        {
+            OwnershipError(
+                summary,
+                "STK4203",
+                $"Cannot pass local view '{variable.Name}' as {argumentDescription} to a dead_on_return parameter because the compiler cannot identify and invalidate the pointee storage. Pass the storage root directly or use an unsafe raw pointer when the lifetime promise is external.",
+                token);
+            return;
+        }
+
+        if (deadPlace.HasIndexProjection
+            || deadPlace.ProjectionPath is { Length: > 1 })
+        {
+            OwnershipError(
+                summary,
+                "STK4203",
+                $"Cannot pass indexed or nested projection '{FormatProjection(variable.Name, deadPlace.ProjectionPath ?? Array.Empty<string>(), deadPlace.HasIndexProjection)}' as {argumentDescription} to a dead_on_return parameter because the compiler cannot make that exact pointee unavailable after the call.",
+                token);
+            return;
+        }
+
+        if (!state.TryGetState(variable.Id, out _))
+        {
+            OwnershipError(summary, "STK4200", $"Value '{variable.Name}' is not available in the current flow state.", token);
+            return;
+        }
+
+        if (deadPlace.ProjectionPath is { Length: 1 } projectionPath)
+        {
+            state.MarkFieldMoved(variable.Id, projectionPath[0], deadPlace.BorrowLifetime, Location(token));
+            summary.RecordMove(variable, projectionPath[0], deadPlace.Type, Location(token));
+            return;
+        }
+
+        state.SetMoved(variable.Id, deadPlace.BorrowLifetime, Location(token));
+        summary.RecordMove(deadPlace, Location(token));
+    }
+
+    private static bool IsNonOwningMemoryViewType(StarkTypeSymbol type)
+    {
+        return type.Kind is StarkTypeKind.RawPointer or StarkTypeKind.Slice or StarkTypeKind.Ascii or StarkTypeKind.Unicode
+            || type.BorrowKind != StarkBorrowKind.None
+            || type.InitializationKind != StarkInitializationKind.None;
     }
 
     private ExpressionInfo ApplyIndex(
@@ -4164,7 +4893,10 @@ internal sealed class OwnershipValidator
                 ? target.BorrowLifetime
                 : InferBorrowLifetimeFromValue(target, expressionList.Start);
 
-            return new ExpressionInfo(target.Type, BorrowLifetime: borrowLifetime);
+            return new ExpressionInfo(
+                target.Type,
+                BorrowLifetime: borrowLifetime,
+                ArenaLifetime: GetArenaLifetimeForDerivedView(target, expressionList.Start));
         }
 
         foreach (var index in expressionList.expression())
@@ -4204,6 +4936,7 @@ internal sealed class OwnershipValidator
             elementType,
             Variable: target.Variable,
             BorrowLifetime: target.BorrowLifetime,
+            ArenaLifetime: target.EffectiveArenaLifetime,
             IsPlace: target.IsPlace,
             IsIndirectPlace: true,
             ProjectionPath: target.ProjectionPath,
@@ -4329,6 +5062,7 @@ internal sealed class OwnershipValidator
                 field.Type,
                 Variable: target.Variable,
                 BorrowLifetime: target.BorrowLifetime,
+                ArenaLifetime: target.EffectiveArenaLifetime,
                 IsPlace: target.IsPlace,
                 IsIndirectPlace: true,
             ProjectionPath: target.Variable is null
@@ -4444,6 +5178,13 @@ internal sealed class OwnershipValidator
             value = value with { BorrowLifetime = InferBorrowLifetimeFromValue(value, token) };
         }
 
+        if (use.TargetType is { } targetType
+            && ShouldInferArenaLifetimeFromStorage(targetType)
+            && value.EffectiveArenaLifetime.Kind == ArenaLifetimeKind.None)
+        {
+            value = value with { ArenaLifetime = GetArenaLifetimeForDerivedView(value, token) };
+        }
+
         if (use.TargetType is { BorrowKind: not StarkBorrowKind.None, IsMutableView: true }
             && value.Variable is { } mutBorrowedVariable)
         {
@@ -4552,6 +5293,241 @@ internal sealed class OwnershipValidator
         return InferBorrowLifetimeFromValue(value, context.Start);
     }
 
+    private ArenaLifetime InferArenaStorageLifetimeForLocal(
+        StorageClass storageClass,
+        FlowState state,
+        IToken token,
+        string name)
+    {
+        return storageClass == StorageClass.Arena
+            ? ArenaLifetime.Local(state.CurrentScope.Id, Location(token), $"arena storage for '{name}'")
+            : ArenaLifetime.None;
+    }
+
+    private ArenaLifetime InferArenaLifetimeForUninitializedLocal(
+        StorageClass storageClass,
+        StarkTypeSymbol declaredType,
+        FlowState state,
+        IToken token,
+        string name)
+    {
+        return storageClass == StorageClass.Arena && declaredType.Kind == StarkTypeKind.Dynamic
+            ? ArenaLifetime.Local(state.CurrentScope.Id, Location(token), $"arena dynamic storage for '{name}'")
+            : ArenaLifetime.None;
+    }
+
+    private ArenaLifetime InferArenaLifetimeForLocalDeclaration(
+        StorageClass storageClass,
+        StarkTypeSymbol declaredType,
+        ExpressionInfo value,
+        FlowState state,
+        IToken token,
+        string name,
+        string functionName,
+        StarkParser.VariableInitializerContext? initializer = null)
+    {
+        if (declaredType.Kind == StarkTypeKind.Dynamic && IsArenaDynamicObjectCreationInitializer(initializer, functionName))
+        {
+            return ArenaLifetime.Local(state.CurrentScope.Id, Location(token), $"arena dynamic storage for '{name}'");
+        }
+
+        if (value.EffectiveArenaLifetime.Kind != ArenaLifetimeKind.None && TypeCanCarryArenaStoredValue(declaredType))
+        {
+            return value.EffectiveArenaLifetime;
+        }
+
+        return InferArenaLifetimeForUninitializedLocal(storageClass, declaredType, state, token, name);
+    }
+
+    private bool IsArenaDynamicObjectCreationInitializer(StarkParser.VariableInitializerContext? initializer, string functionName)
+    {
+        if (initializer?.expression() is not { } expression
+            || TryGetSimpleUnaryExpression(expression) is not { } unary
+            || unary.powerExpression()?.postfixExpression()?.primaryExpression().objectCreationExpression() is not { } objectCreation)
+        {
+            return false;
+        }
+
+        return IsArenaObjectCreation(objectCreation, functionName);
+    }
+
+    private ArenaLifetime InferArenaLifetimeForAssignment(StarkTypeSymbol targetType, ExpressionInfo value)
+    {
+        return value.EffectiveArenaLifetime.Kind != ArenaLifetimeKind.None && TypeCanCarryArenaStoredValue(targetType)
+            ? value.EffectiveArenaLifetime
+            : ArenaLifetime.None;
+    }
+
+    private ArenaLifetime InferArenaLifetimeForCallReturn(
+        StarkTypeSymbol returnType,
+        IReadOnlyList<ArenaLifetime> argumentLifetimes,
+        IToken token,
+        string originDescription)
+    {
+        return TypeCanCarryArenaValue(returnType)
+            ? ArenaLifetime.InferFromCall(argumentLifetimes, Location(token), originDescription)
+            : ArenaLifetime.None;
+    }
+
+    private ArenaLifetime GetArenaLifetimeForDerivedView(ExpressionInfo value, IToken token)
+    {
+        if (value.EffectiveArenaLifetime.Kind != ArenaLifetimeKind.None)
+        {
+            return value.EffectiveArenaLifetime;
+        }
+
+        return InferArenaLifetimeFromStorage(value, token);
+    }
+
+    private ArenaLifetime InferArenaLifetimeFromStorage(ExpressionInfo value, IToken token)
+    {
+        if (value.Variable is { } variable && value.IsPlace)
+        {
+            return variable.EffectiveArenaStorageLifetime.Kind == ArenaLifetimeKind.None
+                ? ArenaLifetime.None
+                : variable.EffectiveArenaStorageLifetime;
+        }
+
+        return value.Type.Kind == StarkTypeKind.Error && value.IsPlace
+            ? ArenaLifetime.UnknownAt(Location(token), "arena storage source")
+            : ArenaLifetime.None;
+    }
+
+    private void ValidateReturnedArenaLifetime(ExpressionInfo value, FunctionOwnershipBuilder summary, ParserRuleContext context)
+    {
+        var arenaLifetime = value.EffectiveArenaLifetime;
+        if (arenaLifetime.Kind == ArenaLifetimeKind.None)
+        {
+            return;
+        }
+
+        var reason = arenaLifetime.Kind switch
+        {
+            ArenaLifetimeKind.LocalScope => "because it is backed by arena storage that ends in the current function.",
+            ArenaLifetimeKind.Unknown => "because its arena lifetime could not be proven for this return path.",
+            _ => "because the arena storage does not outlive the return."
+        };
+
+        OwnershipError(
+            summary,
+            "STK4202",
+            $"Arena lifetime error: cannot return {DescribeArenaSource(value)} {reason}",
+            context);
+        ReportArenaSourceNote(summary, arenaLifetime);
+    }
+
+    private void ValidateArenaAssignment(
+        ExpressionInfo left,
+        ExpressionInfo right,
+        FlowState state,
+        FunctionOwnershipBuilder summary,
+        ParserRuleContext context)
+    {
+        var arenaLifetime = right.EffectiveArenaLifetime;
+        if (arenaLifetime.Kind == ArenaLifetimeKind.None || left.Variable is not { } variable)
+        {
+            return;
+        }
+
+        if (!TypeCanCarryArenaStoredValue(left.Type))
+        {
+            return;
+        }
+
+        if (variable.Origin == VariableOrigin.Global || variable.StorageClass == StorageClass.Static)
+        {
+            OwnershipError(
+                summary,
+                "STK4202",
+                $"Arena lifetime error: cannot store {DescribeArenaSource(right)} in global or static storage '{variable.Name}' because arena storage cannot outlive its arena scope.",
+                context);
+            ReportArenaSourceNote(summary, arenaLifetime);
+            return;
+        }
+
+        if (variable.StorageClass == StorageClass.Heap)
+        {
+            OwnershipError(
+                summary,
+                "STK4202",
+                $"Arena lifetime error: cannot store {DescribeArenaSource(right)} in heap storage '{variable.Name}' because heap storage may outlive the arena scope.",
+                context);
+            ReportArenaSourceNote(summary, arenaLifetime);
+            return;
+        }
+
+        if (!DoesArenaLifetimeOutliveScope(arenaLifetime, variable.DeclarationScopeId, state))
+        {
+            OwnershipError(
+                summary,
+                "STK4202",
+                $"Arena lifetime error: cannot assign {DescribeArenaSource(right)} to '{variable.Name}' because the arena scope ends before the destination scope.",
+                context);
+            ReportArenaSourceNote(summary, arenaLifetime);
+        }
+    }
+
+    private void ValidateArenaStoredValue(
+        StarkTypeSymbol targetType,
+        ExpressionInfo value,
+        FunctionOwnershipBuilder summary,
+        ParserRuleContext context,
+        string destinationDescription)
+    {
+        var arenaLifetime = value.EffectiveArenaLifetime;
+        if (arenaLifetime.Kind == ArenaLifetimeKind.None || !TypeCanCarryArenaStoredValue(targetType))
+        {
+            return;
+        }
+
+        if (targetType.BorrowKind != StarkBorrowKind.StoreBorrow
+            && targetType.Kind != StarkTypeKind.Closure)
+        {
+            return;
+        }
+
+        OwnershipError(
+            summary,
+            "STK4202",
+            $"Arena lifetime error: cannot store {DescribeArenaSource(value)} in {destinationDescription} because retained storage may outlive the arena scope.",
+            context);
+        ReportArenaSourceNote(summary, arenaLifetime);
+    }
+
+    private void ValidateArenaCallArgumentLifetime(
+        ExpressionInfo argument,
+        StarkTypeSymbol parameterType,
+        FunctionOwnershipBuilder summary,
+        ParserRuleContext context,
+        string argumentDescription)
+    {
+        var arenaLifetime = argument.EffectiveArenaLifetime;
+        if (arenaLifetime.Kind == ArenaLifetimeKind.None || !TypeCanCarryArenaStoredValue(parameterType))
+        {
+            return;
+        }
+
+        var retained =
+            parameterType.BorrowKind == StarkBorrowKind.StoreBorrow
+            || parameterType.Kind == StarkTypeKind.Closure
+                && (parameterType.ClosureStorageKind == StarkClosureStorageKind.Heap
+                    || parameterType.BorrowKind == StarkBorrowKind.StoreBorrow)
+            || parameterType.BorrowKind == StarkBorrowKind.None
+                && parameterType.Kind is StarkTypeKind.Dynamic or StarkTypeKind.Slice or StarkTypeKind.Ascii or StarkTypeKind.Unicode;
+
+        if (!retained)
+        {
+            return;
+        }
+
+        OwnershipError(
+            summary,
+            "STK4202",
+            $"Arena lifetime error: cannot pass {DescribeArenaSource(argument)} as {argumentDescription} because the callee may retain arena-backed storage.",
+            context);
+        ReportArenaSourceNote(summary, arenaLifetime);
+    }
+
     private void ValidateReturnedBorrowLifetime(ExpressionInfo value, FunctionOwnershipBuilder summary, ParserRuleContext context)
     {
         if (value.BorrowLifetime.Kind == BorrowLifetimeKind.LocalScope)
@@ -4584,6 +5560,17 @@ internal sealed class OwnershipValidator
             BorrowLifetimeKind.Temporary => false,
             BorrowLifetimeKind.Unknown => false,
             BorrowLifetimeKind.LocalScope => state.ScopeContains(lifetime.ScopeId!.Value, targetScopeId),
+            _ => false
+        };
+    }
+
+    private bool DoesArenaLifetimeOutliveScope(ArenaLifetime lifetime, int targetScopeId, FlowState state)
+    {
+        return lifetime.Kind switch
+        {
+            ArenaLifetimeKind.None => true,
+            ArenaLifetimeKind.Unknown => false,
+            ArenaLifetimeKind.LocalScope => state.ScopeContains(lifetime.ScopeId!.Value, targetScopeId),
             _ => false
         };
     }
@@ -5520,7 +6507,7 @@ internal sealed class OwnershipValidator
             return;
         }
 
-        state.SetInitialized(variable.Id, variableState.BorrowLifetime, CreateEnumAggregateState(enumType, variant));
+        state.SetInitialized(variable.Id, variableState.BorrowLifetime, variableState.ArenaValueLifetime, CreateEnumAggregateState(enumType, variant));
     }
 
     private AggregateFieldState? CreateInitializedAggregateState(StarkTypeSymbol type)
@@ -5572,6 +6559,120 @@ internal sealed class OwnershipValidator
         };
     }
 
+    private static string DescribeArenaSource(ExpressionInfo value)
+    {
+        if (value.Variable is { } variable)
+        {
+            return $"arena-backed value '{variable.Name}'";
+        }
+
+        return value.EffectiveArenaLifetime.Kind switch
+        {
+            ArenaLifetimeKind.LocalScope => "arena-backed storage",
+            ArenaLifetimeKind.Unknown => "a value with an unknown arena lifetime",
+            _ => "this arena-backed value"
+        };
+    }
+
+    private void ReportArenaSourceNote(FunctionOwnershipBuilder summary, ArenaLifetime lifetime)
+    {
+        if (lifetime.OriginLocation is null)
+        {
+            return;
+        }
+
+        OwnershipNote(
+            summary,
+            "STK4202",
+            lifetime.OriginDescription is null ? "Arena storage source is here." : $"{lifetime.OriginDescription} is here.",
+            lifetime.OriginLocation);
+    }
+
+    private bool ShouldInferArenaLifetimeFromStorage(StarkTypeSymbol targetType)
+    {
+        return targetType.BorrowKind != StarkBorrowKind.None
+            || targetType.InitializationKind != StarkInitializationKind.None
+            || targetType.Kind is StarkTypeKind.RawPointer or StarkTypeKind.Slice or StarkTypeKind.Ascii or StarkTypeKind.Unicode;
+    }
+
+    private bool TypeCanCarryArenaStoredValue(StarkTypeSymbol type)
+    {
+        return TypeCanCarryArenaValue(StoredValueType(type));
+    }
+
+    private static StarkTypeSymbol StoredValueType(StarkTypeSymbol type)
+    {
+        return type.InitializationKind == StarkInitializationKind.None
+            ? type
+            : type with { InitializationKind = StarkInitializationKind.None };
+    }
+
+    private bool TypeCanCarryArenaValue(StarkTypeSymbol type)
+    {
+        return TypeCanCarryArenaValue(type, []);
+    }
+
+    private bool TypeCanCarryArenaValue(StarkTypeSymbol type, HashSet<string> activeNamedTypes)
+    {
+        if (type.BorrowKind != StarkBorrowKind.None
+            || type.InitializationKind != StarkInitializationKind.None)
+        {
+            return true;
+        }
+
+        if (type.Kind is StarkTypeKind.Dynamic
+            or StarkTypeKind.RawPointer
+            or StarkTypeKind.Slice
+            or StarkTypeKind.Ascii
+            or StarkTypeKind.Unicode
+            or StarkTypeKind.Closure
+            or StarkTypeKind.DynTrait)
+        {
+            return true;
+        }
+
+        if (type.Kind is StarkTypeKind.FixedArray
+            && type.ElementType is { } elementType)
+        {
+            return TypeCanCarryArenaValue(elementType, activeNamedTypes);
+        }
+
+        if (type.Kind != StarkTypeKind.Named || type.NamedType is not { } namedTypeName)
+        {
+            return false;
+        }
+
+        var key = StarkTypeSymbols.GetGenericBaseName(namedTypeName);
+        if (!activeNamedTypes.Add(key))
+        {
+            return false;
+        }
+
+        try
+        {
+            if (!_typeModel.NamedTypes.TryGetValue(key, out var namedType))
+            {
+                return false;
+            }
+
+            if (namedType.Kind is DeclarationKind.Struct or DeclarationKind.Record)
+            {
+                return namedType.OrderedFields.Any(field => TypeCanCarryArenaValue(field.Type, activeNamedTypes));
+            }
+
+            if (namedType.Kind == DeclarationKind.Enum)
+            {
+                return namedType.EnumVariants?.Any(variant => variant.Fields.Any(field => TypeCanCarryArenaValue(field.Type, activeNamedTypes))) == true;
+            }
+
+            return false;
+        }
+        finally
+        {
+            activeNamedTypes.Remove(key);
+        }
+    }
+
     private static StarkParser.ExpressionContext WrapExpression(StarkParser.ExpressionContext expression) => expression;
 
     private enum VariableOrigin
@@ -5597,6 +6698,13 @@ internal sealed class OwnershipValidator
         External,
         LocalScope,
         Temporary,
+        Unknown
+    }
+
+    private enum ArenaLifetimeKind
+    {
+        None,
+        LocalScope,
         Unknown
     }
 
@@ -5713,6 +6821,55 @@ internal sealed class OwnershipValidator
         }
     }
 
+    private sealed record ArenaLifetime(ArenaLifetimeKind Kind, int? ScopeId = null)
+    {
+        public static readonly ArenaLifetime None = new(ArenaLifetimeKind.None);
+        public static readonly ArenaLifetime Unknown = new(ArenaLifetimeKind.Unknown);
+
+        public SourceLocation? OriginLocation { get; init; }
+
+        public string? OriginDescription { get; init; }
+
+        public static ArenaLifetime Local(int scopeId, SourceLocation? originLocation = null, string? originDescription = null) =>
+            new(ArenaLifetimeKind.LocalScope, scopeId) { OriginLocation = originLocation, OriginDescription = originDescription };
+
+        public static ArenaLifetime UnknownAt(SourceLocation originLocation, string? originDescription = null) =>
+            new(ArenaLifetimeKind.Unknown) { OriginLocation = originLocation, OriginDescription = originDescription };
+
+        public static ArenaLifetime Merge(ArenaLifetime left, ArenaLifetime right)
+        {
+            if (left == right)
+            {
+                return left;
+            }
+
+            if (left.Kind == ArenaLifetimeKind.None)
+            {
+                return right;
+            }
+
+            if (right.Kind == ArenaLifetimeKind.None)
+            {
+                return left;
+            }
+
+            return Unknown;
+        }
+
+        public static ArenaLifetime InferFromCall(IReadOnlyList<ArenaLifetime> arguments, SourceLocation? originLocation = null, string? originDescription = null)
+        {
+            var nonNone = arguments.Where(static argument => argument.Kind != ArenaLifetimeKind.None).Distinct().ToArray();
+            if (nonNone.Length == 0)
+            {
+                return None;
+            }
+
+            return nonNone.Length == 1
+                ? nonNone[0]
+                : originLocation is null ? Unknown : UnknownAt(originLocation, originDescription);
+        }
+    }
+
     private sealed record VariableInfo(
         string Name,
         StarkTypeSymbol Type,
@@ -5721,34 +6878,64 @@ internal sealed class OwnershipValidator
         bool IsMutable,
         bool IsConstant,
         BorrowLifetime BorrowLifetime,
-        SourceLocation? DeclarationLocation)
+        SourceLocation? DeclarationLocation,
+        ArenaLifetime ArenaStorageLifetime = null!)
     {
         public int Id { get; init; }
 
         public int DeclarationScopeId { get; init; }
+
+        public ArenaLifetime EffectiveArenaStorageLifetime =>
+            ArenaStorageLifetime ?? ArenaLifetime.None;
     }
 
     private sealed record VariableState(
         bool IsDefinitelyInitialized,
         bool MayBeInitialized,
         BorrowLifetime BorrowLifetime,
+        ArenaLifetime ArenaValueLifetime,
         UnavailableValueKind UnavailableKind,
         AggregateFieldState? AggregateState = null,
         SourceLocation? UnavailableLocation = null)
     {
-        public static VariableState Initialized(BorrowLifetime borrowLifetime, AggregateFieldState? aggregateState) =>
-            new(true, true, borrowLifetime.Kind == BorrowLifetimeKind.None ? BorrowLifetime.None : borrowLifetime, UnavailableValueKind.None, aggregateState);
+        public static VariableState Initialized(BorrowLifetime borrowLifetime, ArenaLifetime arenaValueLifetime, AggregateFieldState? aggregateState) =>
+            new(
+                true,
+                true,
+                borrowLifetime.Kind == BorrowLifetimeKind.None ? BorrowLifetime.None : borrowLifetime,
+                arenaValueLifetime.Kind == ArenaLifetimeKind.None ? ArenaLifetime.None : arenaValueLifetime,
+                UnavailableValueKind.None,
+                aggregateState);
 
-        public static VariableState Uninitialized(BorrowLifetime borrowLifetime, AggregateFieldState? aggregateState) =>
-            new(false, false, borrowLifetime.Kind == BorrowLifetimeKind.None ? BorrowLifetime.None : borrowLifetime, UnavailableValueKind.NeverInitialized, aggregateState);
+        public static VariableState Uninitialized(BorrowLifetime borrowLifetime, ArenaLifetime arenaValueLifetime, AggregateFieldState? aggregateState) =>
+            new(
+                false,
+                false,
+                borrowLifetime.Kind == BorrowLifetimeKind.None ? BorrowLifetime.None : borrowLifetime,
+                arenaValueLifetime.Kind == ArenaLifetimeKind.None ? ArenaLifetime.None : arenaValueLifetime,
+                UnavailableValueKind.NeverInitialized,
+                aggregateState);
 
-        public static VariableState Moved(BorrowLifetime borrowLifetime, AggregateFieldState? aggregateState, SourceLocation? unavailableLocation) =>
-            new(false, false, borrowLifetime.Kind == BorrowLifetimeKind.None ? BorrowLifetime.None : borrowLifetime, UnavailableValueKind.Moved, aggregateState, unavailableLocation);
+        public static VariableState Moved(BorrowLifetime borrowLifetime, ArenaLifetime arenaValueLifetime, AggregateFieldState? aggregateState, SourceLocation? unavailableLocation) =>
+            new(
+                false,
+                false,
+                borrowLifetime.Kind == BorrowLifetimeKind.None ? BorrowLifetime.None : borrowLifetime,
+                arenaValueLifetime.Kind == ArenaLifetimeKind.None ? ArenaLifetime.None : arenaValueLifetime,
+                UnavailableValueKind.Moved,
+                aggregateState,
+                unavailableLocation);
 
-        public static VariableState PartiallyInitialized(BorrowLifetime borrowLifetime, AggregateFieldState aggregateState) =>
-            new(false, aggregateState.MayHaveAnyAvailableFields, borrowLifetime.Kind == BorrowLifetimeKind.None ? BorrowLifetime.None : borrowLifetime, UnavailableValueKind.PartiallyInitialized, aggregateState);
+        public static VariableState PartiallyInitialized(BorrowLifetime borrowLifetime, ArenaLifetime arenaValueLifetime, AggregateFieldState aggregateState) =>
+            new(
+                false,
+                aggregateState.MayHaveAnyAvailableFields,
+                borrowLifetime.Kind == BorrowLifetimeKind.None ? BorrowLifetime.None : borrowLifetime,
+                arenaValueLifetime.Kind == ArenaLifetimeKind.None ? ArenaLifetime.None : arenaValueLifetime,
+                UnavailableValueKind.PartiallyInitialized,
+                aggregateState);
 
-        public static VariableState Merge(VariableState left, VariableState right, BorrowLifetime borrowLifetime)
+        public static VariableState Merge(VariableState left, VariableState right, BorrowLifetime borrowLifetime, ArenaLifetime arenaValueLifetime)
         {
             var isDefinitelyInitialized = left.IsDefinitelyInitialized && right.IsDefinitelyInitialized;
             var mayBeInitialized = left.MayBeInitialized || right.MayBeInitialized;
@@ -5756,15 +6943,15 @@ internal sealed class OwnershipValidator
 
             if (isDefinitelyInitialized)
             {
-                return Initialized(borrowLifetime, aggregateState);
+                return Initialized(borrowLifetime, arenaValueLifetime, aggregateState);
             }
 
             if (mayBeInitialized || left.UnavailableKind != right.UnavailableKind)
             {
-                return new VariableState(false, mayBeInitialized, borrowLifetime, UnavailableValueKind.ControlFlow, aggregateState);
+                return new VariableState(false, mayBeInitialized, borrowLifetime, arenaValueLifetime, UnavailableValueKind.ControlFlow, aggregateState);
             }
 
-            return new VariableState(false, false, borrowLifetime, left.UnavailableKind, aggregateState, left.UnavailableLocation ?? right.UnavailableLocation);
+            return new VariableState(false, false, borrowLifetime, arenaValueLifetime, left.UnavailableKind, aggregateState, left.UnavailableLocation ?? right.UnavailableLocation);
         }
     }
 
@@ -5834,12 +7021,16 @@ internal sealed class OwnershipValidator
         EnumConstructorBinding? EnumConstructor = null,
         AggregateFieldState? AggregateState = null,
         DynamicStorageIndexAccess? DynamicStorageAccess = null,
-        DynamicStoragePrefixState? DynamicInitializedPrefix = null)
+        DynamicStoragePrefixState? DynamicInitializedPrefix = null,
+        ExpressionInfo? AddressedPlace = null,
+        ArenaLifetime ArenaLifetime = null!)
     {
         public ExpressionInfo(StarkTypeSymbol type)
             : this(type, BorrowLifetime: BorrowLifetime.None)
         {
         }
+
+        public ArenaLifetime EffectiveArenaLifetime => ArenaLifetime ?? ArenaLifetime.None;
     }
 
     private sealed record EnumConstructorBinding(
@@ -5966,7 +7157,8 @@ internal sealed class OwnershipValidator
             VariableInfo variable,
             bool isInitialized,
             AggregateFieldState? aggregateState = null,
-            FunctionOwnershipBuilder? summary = null)
+            FunctionOwnershipBuilder? summary = null,
+            ArenaLifetime? arenaValueLifetime = null)
         {
             var id = _nextVariableId++;
             var bound = variable with { Id = id, DeclarationScopeId = CurrentScope.Id };
@@ -5975,8 +7167,8 @@ internal sealed class OwnershipValidator
             _variables[id] = bound;
             aggregateState ??= CreateAggregateState(bound.Type, isInitialized);
             _states[id] = isInitialized
-                ? VariableState.Initialized(bound.BorrowLifetime, aggregateState)
-                : VariableState.Uninitialized(bound.BorrowLifetime, aggregateState);
+                ? VariableState.Initialized(bound.BorrowLifetime, arenaValueLifetime ?? ArenaLifetime.None, aggregateState)
+                : VariableState.Uninitialized(bound.BorrowLifetime, arenaValueLifetime ?? ArenaLifetime.None, aggregateState);
             summary?.DeclareRoot(bound, requiresDrop: IsAutomaticallyDropped(bound.Type, bound.StorageClass, _copyability));
             InvalidateDynamicLengthFactsFor(bound.Name);
             return bound;
@@ -6000,6 +7192,28 @@ internal sealed class OwnershipValidator
         }
 
         public bool TryGetState(int variableId, out VariableState state) => _states.TryGetValue(variableId, out state!);
+
+        public IEnumerable<(VariableInfo Variable, VariableState State)> VisibleVariableStates()
+        {
+            var scopeStack = new Stack<ScopeFrame>();
+            for (var scope = CurrentScope; scope is not null; scope = scope.Parent)
+            {
+                scopeStack.Push(scope);
+            }
+
+            while (scopeStack.Count > 0)
+            {
+                var scope = scopeStack.Pop();
+                foreach (var variableId in scope.DeclaredVariables)
+                {
+                    if (_variables.TryGetValue(variableId, out var variable)
+                        && _states.TryGetValue(variableId, out var state))
+                    {
+                        yield return (variable, state);
+                    }
+                }
+            }
+        }
 
         public bool TryGetDynamicStoragePrefix(string rootKey, out DynamicStoragePrefixState state) =>
             _dynamicStorageStates.TryGetValue(rootKey, out state!);
@@ -6029,16 +7243,20 @@ internal sealed class OwnershipValidator
             }
         }
 
-        public void SetInitialized(int variableId, BorrowLifetime borrowLifetime, AggregateFieldState? aggregateState = null)
+        public void SetInitialized(
+            int variableId,
+            BorrowLifetime borrowLifetime,
+            ArenaLifetime arenaValueLifetime,
+            AggregateFieldState? aggregateState = null)
         {
             if (_states.ContainsKey(variableId) && _variables.TryGetValue(variableId, out var variable))
             {
                 aggregateState ??= CreateAggregateState(variable.Type, isInitialized: true);
-                _states[variableId] = VariableState.Initialized(borrowLifetime, aggregateState);
+                _states[variableId] = VariableState.Initialized(borrowLifetime, arenaValueLifetime, aggregateState);
             }
         }
 
-        public void MarkFieldInitialized(int variableId, string fieldName)
+        public void MarkFieldInitialized(int variableId, string fieldName, ArenaLifetime fieldArenaLifetime)
         {
             if (!_states.TryGetValue(variableId, out var currentState)
                 || !_variables.TryGetValue(variableId, out var variable)
@@ -6049,9 +7267,10 @@ internal sealed class OwnershipValidator
 
             var aggregateState = (currentState.AggregateState ?? AggregateFieldState.Empty).MarkInitialized(fieldName);
             var isFullyInitialized = aggregateState.IsComplete(namedType);
+            var arenaValueLifetime = ArenaLifetime.Merge(currentState.ArenaValueLifetime, fieldArenaLifetime);
             _states[variableId] = isFullyInitialized
-                ? VariableState.Initialized(currentState.BorrowLifetime, aggregateState)
-                : VariableState.PartiallyInitialized(currentState.BorrowLifetime, aggregateState);
+                ? VariableState.Initialized(currentState.BorrowLifetime, arenaValueLifetime, aggregateState)
+                : VariableState.PartiallyInitialized(currentState.BorrowLifetime, arenaValueLifetime, aggregateState);
         }
 
         public void MarkFieldMoved(int variableId, string fieldName, BorrowLifetime borrowLifetime, SourceLocation unavailableLocation)
@@ -6066,8 +7285,8 @@ internal sealed class OwnershipValidator
             var aggregateState = (currentState.AggregateState ?? AggregateFieldState.Empty).MarkMoved(fieldName, unavailableLocation);
             var isFullyInitialized = aggregateState.IsComplete(namedType);
             _states[variableId] = isFullyInitialized
-                ? VariableState.Initialized(borrowLifetime, aggregateState)
-                : VariableState.PartiallyInitialized(borrowLifetime, aggregateState);
+                ? VariableState.Initialized(borrowLifetime, currentState.ArenaValueLifetime, aggregateState)
+                : VariableState.PartiallyInitialized(borrowLifetime, currentState.ArenaValueLifetime, aggregateState);
         }
 
         public void SetMoved(int variableId, BorrowLifetime borrowLifetime, SourceLocation unavailableLocation)
@@ -6079,6 +7298,7 @@ internal sealed class OwnershipValidator
                     : CreateAggregateState(variable.Type, isInitialized: false);
                 _states[variableId] = VariableState.Moved(
                     borrowLifetime,
+                    currentState.ArenaValueLifetime,
                     aggregateState,
                     unavailableLocation);
             }
@@ -6335,12 +7555,16 @@ internal sealed class OwnershipValidator
             {
                 var left = thenState._states.TryGetValue(id, out var thenVar)
                     ? thenVar
-                    : VariableState.Uninitialized(BorrowLifetime.None, aggregateState: null);
+                    : VariableState.Uninitialized(BorrowLifetime.None, ArenaLifetime.None, aggregateState: null);
                 var right = elseState is null
-                    ? _states.TryGetValue(id, out var original) ? original : VariableState.Uninitialized(BorrowLifetime.None, aggregateState: null)
-                    : elseState._states.TryGetValue(id, out var elseVar) ? elseVar : VariableState.Uninitialized(BorrowLifetime.None, aggregateState: null);
+                    ? _states.TryGetValue(id, out var original) ? original : VariableState.Uninitialized(BorrowLifetime.None, ArenaLifetime.None, aggregateState: null)
+                    : elseState._states.TryGetValue(id, out var elseVar) ? elseVar : VariableState.Uninitialized(BorrowLifetime.None, ArenaLifetime.None, aggregateState: null);
 
-                _states[id] = VariableState.Merge(left, right, BorrowLifetime.Merge(left.BorrowLifetime, right.BorrowLifetime));
+                _states[id] = VariableState.Merge(
+                    left,
+                    right,
+                    BorrowLifetime.Merge(left.BorrowLifetime, right.BorrowLifetime),
+                    ArenaLifetime.Merge(left.ArenaValueLifetime, right.ArenaValueLifetime));
             }
 
             MergeDynamicStorageStates(thenState, elseState ?? this);
@@ -6362,6 +7586,7 @@ internal sealed class OwnershipValidator
                 var initialized = true;
                 var mayBeInitialized = false;
                 BorrowLifetime lifetime = BorrowLifetime.None;
+                ArenaLifetime arenaValueLifetime = ArenaLifetime.None;
                 var unavailableKind = UnavailableValueKind.None;
                 var first = true;
 
@@ -6369,9 +7594,10 @@ internal sealed class OwnershipValidator
                 {
                     var state = branch._states.TryGetValue(id, out var stateValue)
                         ? stateValue
-                        : VariableState.Uninitialized(BorrowLifetime.None, aggregateState: null);
+                        : VariableState.Uninitialized(BorrowLifetime.None, ArenaLifetime.None, aggregateState: null);
                     initialized &= state.IsDefinitelyInitialized;
                     lifetime = first ? state.BorrowLifetime : BorrowLifetime.Merge(lifetime, state.BorrowLifetime);
+                    arenaValueLifetime = first ? state.ArenaValueLifetime : ArenaLifetime.Merge(arenaValueLifetime, state.ArenaValueLifetime);
                     mayBeInitialized |= state.MayBeInitialized;
                     unavailableKind = first ? state.UnavailableKind : unavailableKind == state.UnavailableKind ? unavailableKind : UnavailableValueKind.ControlFlow;
                     first = false;
@@ -6381,8 +7607,8 @@ internal sealed class OwnershipValidator
                     .Select(branch => branch._states.TryGetValue(id, out var stateValue) ? stateValue.AggregateState : null)
                     .Aggregate(AggregateFieldState.Merge);
                 _states[id] = initialized
-                    ? VariableState.Initialized(lifetime, aggregateState)
-                    : new VariableState(false, mayBeInitialized, lifetime, mayBeInitialized ? UnavailableValueKind.ControlFlow : unavailableKind, aggregateState);
+                    ? VariableState.Initialized(lifetime, arenaValueLifetime, aggregateState)
+                    : new VariableState(false, mayBeInitialized, lifetime, arenaValueLifetime, mayBeInitialized ? UnavailableValueKind.ControlFlow : unavailableKind, aggregateState);
             }
 
             MergeDynamicStorageStates(branchList);
@@ -6395,9 +7621,13 @@ internal sealed class OwnershipValidator
             var visibleIds = GetVisibleVariableIds();
             foreach (var id in visibleIds)
             {
-                var before = _states.TryGetValue(id, out var beforeState) ? beforeState : VariableState.Uninitialized(BorrowLifetime.None, aggregateState: null);
-                var after = loopState._states.TryGetValue(id, out var afterState) ? afterState : VariableState.Uninitialized(BorrowLifetime.None, aggregateState: null);
-                _states[id] = VariableState.Merge(before, after, BorrowLifetime.Merge(before.BorrowLifetime, after.BorrowLifetime));
+                var before = _states.TryGetValue(id, out var beforeState) ? beforeState : VariableState.Uninitialized(BorrowLifetime.None, ArenaLifetime.None, aggregateState: null);
+                var after = loopState._states.TryGetValue(id, out var afterState) ? afterState : VariableState.Uninitialized(BorrowLifetime.None, ArenaLifetime.None, aggregateState: null);
+                _states[id] = VariableState.Merge(
+                    before,
+                    after,
+                    BorrowLifetime.Merge(before.BorrowLifetime, after.BorrowLifetime),
+                    ArenaLifetime.Merge(before.ArenaValueLifetime, after.ArenaValueLifetime));
             }
 
             MergeDynamicStorageStates(this, loopState);

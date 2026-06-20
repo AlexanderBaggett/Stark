@@ -9858,6 +9858,38 @@ finite law i32[min max] Run()
 }
 
 [Fact]
+fn bool DeadOnReturnCallMakesLocalStorageUnavailable()
+{
+    {
+        stack mut LlvmCompile compiled = CompileFull(
+            "own-dead-on-return-local-use-invalid",
+            raw"""
+module Demo
+
+fn bool WriteAndConsume(out u32[0 max] value) where dead_on_return(value)
+{
+    value = 7;
+    return true;
+}
+
+fn u32[0 max] Run()
+{
+    stack mut u32[0 max] value = 1;
+    if (!WriteAndConsume(value))
+    {
+        return 0;
+    }
+
+    return value;
+}
+""");
+        return FailsWithDiagnosticMessage(compiled, "STK4200", "Move error")
+            && AnyDiagnosticMessageContains(compiled, "value 'value'")
+            && AnyDiagnosticMessageContains(compiled, "was moved");
+    }
+}
+
+[Fact]
 [Collection("ownership", "diagnostics")]
 fn bool MoveDiagnosticsAreNotDuplicatedForTheSameUse()
 {
@@ -14181,6 +14213,13 @@ fn bool LawBodiesRejectMutableExternalStateObservationAllocationAndVisibleWrites
 }
 
 [Fact]
+[Collection("diagnostics", "function-semantics", "arena")]
+fn bool LawBodiesRejectArenaStorageSelectorAllocation()
+{
+    return LawBodiesRejectArenaStorageSelectorAllocationImpl();
+}
+
+[Fact]
 [Collection("diagnostics", "function-semantics")]
 fn bool LawBodiesRejectExternallyVisibleImplicitDropEffects()
 {
@@ -15235,6 +15274,83 @@ fn bool OwnershipSummaryExposesPartialFieldMovesForOptimization()
 fn bool RuntimeTextConcatenationConsumesOwnedTextResult()
 {
     return RuntimeTextConcatenationConsumesOwnedTextResultImpl();
+}
+
+[Fact]
+[Collection("ownership", "arena")]
+fn bool ArenaDynamicStorageCannotReturnOutOfArenaScope()
+{
+    return ArenaDynamicStorageCannotReturnOutOfArenaScopeImpl();
+}
+
+[Fact]
+[Collection("ownership", "arena")]
+fn bool ArenaStorageRawPointersCannotReturnOutOfArenaScope()
+{
+    return ArenaStorageRawPointersCannotReturnOutOfArenaScopeImpl();
+}
+
+[Fact]
+[Collection("ownership", "arena")]
+fn bool ArenaObjectInitializerFieldsCannotReturnOutOfArenaScope()
+{
+    return ArenaObjectInitializerFieldsCannotReturnOutOfArenaScopeImpl();
+}
+
+[Fact]
+[Collection("ownership", "arena")]
+fn bool ArenaPrimaryConstructorFieldsCannotReturnOutOfArenaScope()
+{
+    return ArenaPrimaryConstructorFieldsCannotReturnOutOfArenaScopeImpl();
+}
+
+[Fact]
+[Collection("ownership", "arena")]
+fn bool ArenaEnumPayloadsCannotReturnOutOfArenaScope()
+{
+    return ArenaEnumPayloadsCannotReturnOutOfArenaScopeImpl();
+}
+
+[Fact]
+[Collection("ownership", "arena")]
+fn bool ArenaFixedArrayElementsCannotReturnOutOfArenaScope()
+{
+    return ArenaFixedArrayElementsCannotReturnOutOfArenaScopeImpl();
+}
+
+[Fact]
+[Collection("ownership", "arena")]
+fn bool ArenaBorrowsCannotBePassedToRetainingParameters()
+{
+    return ArenaBorrowsCannotBePassedToRetainingParametersImpl();
+}
+
+[Fact]
+[Collection("ownership", "arena")]
+fn bool ArenaPointersCannotBeStoredInHeapStorage()
+{
+    return ArenaPointersCannotBeStoredInHeapStorageImpl();
+}
+
+[Fact]
+[Collection("ownership", "arena")]
+fn bool ArenaPointersCannotBeStoredInStaticStorage()
+{
+    return ArenaPointersCannotBeStoredInStaticStorageImpl();
+}
+
+[Fact]
+[Collection("ownership", "arena")]
+fn bool ArenaBorrowsCanBePassedToNonRetainingBorrowParameters()
+{
+    return ArenaBorrowsCanBePassedToNonRetainingBorrowParametersImpl();
+}
+
+[Fact]
+[Collection("ownership", "arena")]
+fn bool ArenaReadCapturesCannotBeRetainedInHeapClosures()
+{
+    return ArenaReadCapturesCannotBeRetainedInHeapClosuresImpl();
 }
 
 [Fact]
@@ -17280,4 +17396,3 @@ fn bool EnumsWithMoreThan128VariantsCompileThroughTheWholePipeline()
 {
     return EnumsWithMoreThan128VariantsCompileThroughTheWholePipelineImpl();
 }
-

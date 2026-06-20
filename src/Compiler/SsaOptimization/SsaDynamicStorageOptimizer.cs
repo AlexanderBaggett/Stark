@@ -1576,7 +1576,8 @@ internal sealed class SsaDynamicStorageOptimizer
         var backingKind = InferDynamicStorageBackingAllocationKind(
             existingRegion?.BackingAllocationKind ?? SsaDynamicStorageBackingAllocationKind.Unknown,
             capacityRange);
-        var backingAllocationId = backingKind == SsaDynamicStorageBackingAllocationKind.RuntimeAllocation
+        var backingAllocationId = backingKind is SsaDynamicStorageBackingAllocationKind.RuntimeAllocation
+                or SsaDynamicStorageBackingAllocationKind.ArenaAllocation
             ? existingRegion?.BackingAllocationId
             : null;
 
@@ -1664,9 +1665,14 @@ internal sealed class SsaDynamicStorageOptimizer
             return SsaDynamicStorageBackingAllocationKind.None;
         }
 
-        return capacityRange.Min > BigInteger.Zero
-            ? SsaDynamicStorageBackingAllocationKind.RuntimeAllocation
-            : SsaDynamicStorageBackingAllocationKind.Unknown;
+        if (capacityRange.Min <= BigInteger.Zero)
+        {
+            return SsaDynamicStorageBackingAllocationKind.Unknown;
+        }
+
+        return existingKind == SsaDynamicStorageBackingAllocationKind.ArenaAllocation
+            ? SsaDynamicStorageBackingAllocationKind.ArenaAllocation
+            : SsaDynamicStorageBackingAllocationKind.RuntimeAllocation;
     }
 
     private static SsaIntegerRangeFact? TryCreateDynamicStorageSpareCapacityRange(
@@ -1759,7 +1765,8 @@ internal sealed class SsaDynamicStorageOptimizer
             DynamicStorageRegion = new SsaDynamicStorageRegionFact(
                 sameOwnerRoot ? leftRegion.OwnerRootName : null,
                 backingKind,
-                sameBackingIdentity && backingKind == SsaDynamicStorageBackingAllocationKind.RuntimeAllocation
+                sameBackingIdentity && backingKind is SsaDynamicStorageBackingAllocationKind.RuntimeAllocation
+                    or SsaDynamicStorageBackingAllocationKind.ArenaAllocation
                     ? leftRegion.BackingAllocationId
                     : null,
                 elementType,

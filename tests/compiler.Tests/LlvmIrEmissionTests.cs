@@ -1363,6 +1363,58 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
+    public void ExplicitDeadOnReturnDestinationParametersEmitLlvmAttribute()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn bool WriteAndConsume(out u32[0 max] value) where dead_on_return(value)
+            {
+                value = 7;
+                return true;
+            }
+            """,
+            options: new CompilerOptions());
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+        var header = ExtractDefinitionHeader(llvm, "WriteAndConsume");
+
+        Assert.Contains("writeonly", header, StringComparison.Ordinal);
+        Assert.Contains("writable", header, StringComparison.Ordinal);
+        Assert.Contains("initializes((0, 4))", header, StringComparison.Ordinal);
+        Assert.Contains("dead_on_return", header, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void FunctionPointerDeadOnReturnContractsEmitCallSiteAttribute()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn bool Apply(
+                fnptr<fn bool(out u32[0 max]) where dead_on_return(arg0)> op,
+                out u32[0 max] value)
+                where dead_on_return(value)
+            {
+                return op(value);
+            }
+            """,
+            options: new CompilerOptions());
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+        var applyHeader = ExtractDefinitionHeader(llvm, "Apply");
+        var indirectCall = ExtractFirstIndirectCall(llvm, "Apply", "op");
+
+        Assert.Contains("dead_on_return", applyHeader, StringComparison.Ordinal);
+        Assert.Contains("dead_on_return", indirectCall, StringComparison.Ordinal);
+        Assert.Contains("writable initializes((0, 4))", indirectCall, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void FunctionPointerCallsWithInitParametersUseCallerStorage()
     {
         var result = Compile(
@@ -1835,6 +1887,40 @@ public sealed class LlvmIrEmissionTests
         Assert.DoesNotContain("dynamic_alloc_is_zero", runBody, StringComparison.Ordinal);
         Assert.DoesNotContain("dynamic_alloc_overflow", runBody, StringComparison.Ordinal);
         Assert.DoesNotContain("@__stark_dynamic_alloc", runBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ArenaDynamicStorageAllocationUsesFrameAllocatorAndDropsWithoutFreeingOwner()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn u64[0 2 ** 63 - 1] Run()
+            {
+                stack mut dynamic u32[0 2 ** 31 - 1] values = new(arena, 4);
+                return values.Capacity;
+            }
+            """,
+            options: new CompilerOptions());
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+        var runBody = ExtractDefinitionBody(llvm, "Run");
+
+        Assert.DoesNotContain("; LLVM body emission fallback for Run", llvm);
+        Assert.Contains("%__stark_arena_frame = alloca { ptr, ptr, ptr }, align 8", runBody, StringComparison.Ordinal);
+        Assert.Contains("call void @__stark_arena_enter(ptr nonnull %__stark_arena_frame)", runBody, StringComparison.Ordinal);
+        Assert.Contains("call void @__stark_arena_leave(ptr nonnull %__stark_arena_frame)", runBody, StringComparison.Ordinal);
+        Assert.Contains("call noalias nonnull noundef align 4 ptr @__stark_arena_alloc(ptr nonnull %__stark_arena_frame", runBody, StringComparison.Ordinal);
+        Assert.Contains("insertvalue { ptr, i64, i64 }", runBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("dynamic_alloc_is_zero", runBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("dynamic_alloc_overflow", runBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@__stark_dynamic_alloc", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("@__stark_arena_dynamic_alloc", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("dynamic_free_ptr", runBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@__stark_runtime_free", runBody, StringComparison.Ordinal);
+        Assert.Contains("define linkonce_odr hidden noalias nonnull noundef ptr @__stark_arena_alloc(ptr captures(none) %frame, i64 noundef %size, i64 noundef allocalign %alignment) unnamed_addr allocsize(1) allockind(\"alloc,uninitialized,aligned\") \"alloc-family\"=\"__stark_arena_alloc\" nounwind comdat", llvm, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -8545,6 +8631,49 @@ public sealed class LlvmIrEmissionTests
         Assert.Contains("call void @__stark_heap_free(ptr %slot_box)", llvm);
         Assert.DoesNotContain("alloca %Box", llvm);
         Assert.DoesNotContain("; LLVM body emission fallback for Run", llvm);
+    }
+
+    [Fact]
+    public void ArenaObjectCreationUsesFrameAllocatorLowering()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box
+            {
+                i32[min max] Value;
+            }
+
+            unsafe fn i32[min max] Run()
+            {
+                arena Box box = new Box()
+                {
+                    Value = 7
+                };
+                return box.Value;
+            }
+            """,
+            options: new CompilerOptions(TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null)));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+        var runBody = ExtractDefinitionBody(llvm, "Run");
+
+        Assert.DoesNotContain("; LLVM body emission fallback for Run", llvm);
+        Assert.DoesNotContain("@malloc(", llvm);
+        Assert.DoesNotContain("@realloc(", llvm);
+        Assert.DoesNotContain("@free(", llvm);
+        Assert.DoesNotContain("@__stark_heap_alloc", llvm);
+        Assert.DoesNotContain("@__stark_heap_free", llvm);
+        Assert.DoesNotContain("alloca %Box", runBody, StringComparison.Ordinal);
+        Assert.Contains("%__stark_arena_frame = alloca { ptr, ptr, ptr }, align 8", runBody, StringComparison.Ordinal);
+        Assert.Contains("call void @__stark_arena_enter(ptr nonnull %__stark_arena_frame)", runBody, StringComparison.Ordinal);
+        Assert.Contains("call void @__stark_arena_leave(ptr nonnull %__stark_arena_frame)", runBody, StringComparison.Ordinal);
+        Assert.Contains("call noalias nonnull noundef align 4 dereferenceable(4) ptr @__stark_arena_alloc(ptr nonnull %__stark_arena_frame", runBody, StringComparison.Ordinal);
+        Assert.Contains("define linkonce_odr hidden void @__stark_arena_enter(ptr captures(none) %frame) unnamed_addr nounwind comdat", llvm, StringComparison.Ordinal);
+        Assert.Contains("define linkonce_odr hidden void @__stark_arena_leave(ptr captures(none) %frame) unnamed_addr nounwind comdat", llvm, StringComparison.Ordinal);
+        Assert.Contains("define linkonce_odr hidden noalias nonnull noundef ptr @__stark_arena_alloc(ptr captures(none) %frame, i64 noundef %size, i64 noundef allocalign %alignment) unnamed_addr allocsize(1) allockind(\"alloc,uninitialized,aligned\") \"alloc-family\"=\"__stark_arena_alloc\" nounwind comdat", llvm, StringComparison.Ordinal);
     }
 
     [Fact]

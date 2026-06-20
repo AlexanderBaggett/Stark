@@ -222,6 +222,39 @@ internal static class SsaAddressTakenFunctionPruner
             AddReferencedFunctionAddress(terminator.Value, referencedFunctions);
         }
 
+        if (terminator.TailDirectCall is not null)
+        {
+            foreach (var argument in terminator.TailDirectCall.Arguments)
+            {
+                AddReferencedFunctionAddress(argument, referencedFunctions);
+            }
+
+            foreach (var address in terminator.TailDirectCall.IndirectArgumentAddresses ?? [])
+            {
+                if (address is not null)
+                {
+                    AddReferencedFunctionAddress(address, referencedFunctions);
+                }
+            }
+        }
+
+        if (terminator.TailIndirectCall is not null)
+        {
+            AddReferencedFunctionAddress(terminator.TailIndirectCall.Target, referencedFunctions);
+            foreach (var argument in terminator.TailIndirectCall.Arguments)
+            {
+                AddReferencedFunctionAddress(argument, referencedFunctions);
+            }
+
+            foreach (var address in terminator.TailIndirectCall.IndirectArgumentAddresses ?? [])
+            {
+                if (address is not null)
+                {
+                    AddReferencedFunctionAddress(address, referencedFunctions);
+                }
+            }
+        }
+
         if (terminator.SwitchCases is null)
         {
             return;

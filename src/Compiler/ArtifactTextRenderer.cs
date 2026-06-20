@@ -153,6 +153,7 @@ internal static class ArtifactTextRenderer
             MidLevelIrTerminatorKind.Branch => [$"branch {terminator.ConditionText ?? terminator.Condition?.Text ?? "<cond>"} -> bb{terminator.Targets[0]}, bb{terminator.Targets[1]}"],
             MidLevelIrTerminatorKind.Switch => RenderMirSwitch(terminator),
             MidLevelIrTerminatorKind.Return => [$"return {terminator.ValueText ?? string.Empty}".TrimEnd()],
+            MidLevelIrTerminatorKind.TailCall => [$"tailcall {terminator.TailCall?.Text ?? terminator.ValueText ?? string.Empty}".TrimEnd()],
             MidLevelIrTerminatorKind.Unreachable => ["unreachable"],
             _ => [$"terminator {terminator.Kind}"]
         };
@@ -215,6 +216,7 @@ internal static class ArtifactTextRenderer
             SsaTerminatorKind.Branch => [$"branch {FormatSsaValue(terminator.Condition)} -> bb{terminator.Targets[0]}, bb{terminator.Targets[1]}"],
             SsaTerminatorKind.Switch => RenderSsaSwitch(terminator),
             SsaTerminatorKind.Return => [$"return {FormatSsaValue(terminator.Value)}"],
+            SsaTerminatorKind.TailCall => [$"tailcall {terminator.TailDirectCall?.Text ?? terminator.TailIndirectCall?.Text ?? string.Empty}".TrimEnd()],
             SsaTerminatorKind.Unreachable => ["unreachable"],
             _ => [$"terminator {terminator.Kind}"]
         };

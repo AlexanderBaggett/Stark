@@ -161,6 +161,205 @@ law i32[min max] Run()
     }
 }
 
+[Fact]
+[Collection("lowering")]
+fn bool TailAbiBlockersReportFrontEndDiagnostics()
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = CompileFull(
+            "tail-abi-blocker-diagnostics",
+            raw"""
+module Demo
+
+struct Big
+{
+    i64[min max] A;
+    i64[min max] B;
+    i64[min max] C;
+}
+
+unsafe tail ffi varargs fn void Native(i32[min max] value);
+
+tail fn Big Make(i64[min max] value)
+{
+    return new Big()
+    {
+        A = value,
+        B = value,
+        C = value
+    };
+}
+
+tail fn i64[min max] Read(Big value)
+{
+    return value.A;
+}
+""");
+        return FailsWithDiagnosticMessage(compiled, "STK4121", "FFI")
+            && AnyDiagnosticMessageContains(compiled, "varargs")
+            && AnyDiagnosticMessageContains(compiled, "cannot return 'Big' by indirect ABI")
+            && AnyDiagnosticMessageContains(compiled, "parameter 'value'")
+            && !HasDiagnostic(compiled, "STK9999");
+    }
+}
+
+[Fact]
+[Collection("lowering")]
+fn bool TailTraitMethodConformanceRequiresMatchingTailContract()
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = CompileFull(
+            "tail-trait-method-conformance",
+            raw"""
+module Demo
+
+trait Stepper
+{
+    tail fn i32[min max] Step(borrow Self self, i32[min max] value);
+}
+
+struct Bad : Stepper
+{
+    fn i32[min max] Step(borrow Bad self, i32[min max] value)
+    {
+        return value;
+    }
+}
+""");
+        return FailsWithDiagnosticMessage(compiled, "STK3033", "must be declared 'tail'");
+    }
+}
+
+[Fact]
+[Collection("lowering")]
+fn bool TailCallableFunctionPointerParameterBecomeReportsAbiMismatchBeforeEmit()
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = CompileFull(
+            "tail-fnptr-parameter-abi-mismatch",
+            raw"""
+module Demo
+
+tail fn i32[min max] Bad(fnptr<tail fn i32[min max](i32[min max])> next, i32[min max] value)
+{
+    become next(value);
+}
+""");
+        return FailsWithDiagnosticMessage(compiled, "STK5002", "has 1 ABI parameter(s), but caller 'Bad' has 2")
+            && !HasDiagnostic(compiled, "STK5001");
+    }
+}
+
+[Fact]
+[Collection("lowering")]
+fn bool BecomeRejectsPendingOwnedCleanupOnTailEdge()
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = CompileFull(
+            "tail-become-pending-owned-cleanup",
+            raw"""
+module Demo
+
+struct Box
+{
+    i32[min max] Value;
+
+    drop
+    {
+    }
+}
+
+tail fn i32[min max] Done(i32[min max] value)
+{
+    return value;
+}
+
+tail fn i32[min max] Bad(i32[min max] value)
+{
+    stack Box box = new Box()
+    {
+        Value = value
+    };
+    become Done(value);
+}
+""");
+        return FailsWithDiagnosticMessage(compiled, "STK4207", "implicitly dropped")
+            && AnyDiagnosticMessageContains(compiled, "box");
+    }
+}
+
+[Fact]
+[Collection("lowering")]
+fn bool BecomeAllowsOwnedParameterMovedIntoTailCall()
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = CompileFull(
+            "tail-become-moves-owned-parameter",
+            raw"""
+module Demo
+
+struct Box
+{
+    i32[min max] Value;
+
+    drop
+    {
+    }
+}
+
+tail fn i32[min max] Consume(Box box)
+{
+    return box.Value;
+}
+
+tail fn i32[min max] Forward(Box box)
+{
+    become Consume(box);
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+[Fact]
+[Collection("lowering")]
+fn bool BecomeRejectsBorrowOfCallerLocalStorage()
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = CompileFull(
+            "tail-become-local-borrow",
+            raw"""
+module Demo
+
+struct Box
+{
+    i32[min max] Value;
+}
+
+tail fn i32[min max] Read(borrow Box box)
+{
+    return box.Value;
+}
+
+tail fn i32[min max] Bad(i32[min max] value)
+{
+    stack Box box = new Box()
+    {
+        Value = value
+    };
+    become Read(box);
+}
+""");
+        return FailsWithDiagnosticMessage(compiled, "STK4207", "caller-local storage");
+    }
+}
+
 // ---------------------------------------------------------------------------
 // IntegerFeatureTests
 // ---------------------------------------------------------------------------

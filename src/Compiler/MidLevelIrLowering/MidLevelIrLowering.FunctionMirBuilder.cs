@@ -313,6 +313,7 @@ internal sealed partial class MidLevelIrLowerer
         private readonly List<MidLevelIrLocal> _locals = [];
         private readonly Dictionary<string, MidLevelIrLocal> _localsByName = new(StringComparer.Ordinal);
         private readonly Dictionary<string, DynamicInitSliceProvenance> _dynamicInitSliceProvenanceByLocal = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, DynamicStorageAllocationKind> _dynamicStorageAllocationKindByLocal = new(StringComparer.Ordinal);
         private readonly Dictionary<string, TypedParameterSymbol> _parametersByName;
         private readonly Dictionary<string, bool> _runtimeDropStates = new(StringComparer.Ordinal);
         private readonly Dictionary<string, string> _closureCaptureMoveSourcesByTempName = new(StringComparer.Ordinal);
@@ -338,6 +339,7 @@ internal sealed partial class MidLevelIrLowerer
         private string? _moduleNameOverride;
         private SourceLocation? _currentStatementLocation;
         private MidLevelIrOperand? _closureEnvironmentAddress;
+        private DynamicStorageAllocationKind? _currentObjectCreationAllocationKind;
         private IReadOnlyDictionary<StarkParser.ObjectCreationExpressionContext, int>? _importedObjectCreationOrdinals;
         private IReadOnlyDictionary<StarkParser.EnumConstructorExpressionContext, int>? _importedEnumConstructorOrdinals;
         private IReadOnlyDictionary<StarkParser.ArgumentListContext, int>? _importedEnumCallOrdinals;
@@ -922,6 +924,12 @@ internal sealed partial class MidLevelIrLowerer
                     return;
                 }
 
+                if (statement.becomeStatement() is { } becomeStatement)
+                {
+                    LowerBecome(becomeStatement);
+                    return;
+                }
+
                 if (statement.breakStatement() is not null)
                 {
                     if (!TryResolveBreakTarget(statement.breakStatement()!.Identifier()?.GetText(), out var breakTarget))
@@ -1360,7 +1368,7 @@ internal sealed partial class MidLevelIrLowerer
 
                 if (declarator.variableInitializer() is { } initializer)
                 {
-                    var initializerHasConstProvenance = LowerVariableInitializer(localName, declaredType, initializer);
+                    var initializerHasConstProvenance = LowerVariableInitializer(localName, declaredType, initializer, storageClass);
                     if (!isMutable && initializerHasConstProvenance)
                     {
                         MarkLocalHasConstProvenance(localName);
@@ -1406,7 +1414,7 @@ internal sealed partial class MidLevelIrLowerer
                 InitializeRuntimeDropState(declaredLocalName, declaredType, isActive: false);
                 if (initializer is not null)
                 {
-                    LowerVariableInitializer(declaredLocalName, declaredType, initializer);
+                    LowerVariableInitializer(declaredLocalName, declaredType, initializer, storageClass);
                     SetRuntimeDropState(declaredLocalName, isActive: true);
                 }
 
@@ -1965,11 +1973,15 @@ internal sealed partial class MidLevelIrLowerer
                 : $"System.Text.{name}";
         }
 
-        private bool LowerVariableInitializer(string name, StarkTypeSymbol declaredType, StarkParser.VariableInitializerContext initializer)
+        private bool LowerVariableInitializer(
+            string name,
+            StarkTypeSymbol declaredType,
+            StarkParser.VariableInitializerContext initializer,
+            string storageClass = "stack")
         {
             if (initializer.expression() is { } expression)
             {
-                var hasConstProvenance = EmitAssignmentFromExpression(name, declaredType, expression, expression.GetText());
+                var hasConstProvenance = EmitAssignmentFromExpression(name, declaredType, expression, expression.GetText(), storageClass);
                 TryRecordDynamicInitSliceProvenance(name, declaredType, expression);
                 return hasConstProvenance;
             }
@@ -2186,6 +2198,61 @@ internal sealed partial class MidLevelIrLowerer
                 Targets: [],
                 ValueText: returnStatement.expression().GetText(),
                 Value: operand);
+        }
+
+        private void LowerBecome(StarkParser.BecomeStatementContext becomeStatement)
+        {
+            if (!TryLowerExpressionAsTailCallStatement(becomeStatement.expression(), out var call))
+            {
+                throw LoweringInvariantViolation(
+                    becomeStatement.expression(),
+                    "'become' expression was accepted but did not lower to a tail-call operation.");
+            }
+
+            if (_function.Signature.ReturnType.Kind == StarkTypeKind.Void)
+            {
+                if (call.ReturnType.Kind != StarkTypeKind.Void)
+                {
+                    throw LoweringInvariantViolation(
+                        becomeStatement.expression(),
+                        $"Void tail function cannot become call '{call.Text}' returning '{call.ReturnType.DisplayName}'.");
+                }
+            }
+            else if (call.ReturnType.Kind != _function.Signature.ReturnType.Kind
+                || !string.Equals(call.ReturnType.DisplayName, _function.Signature.ReturnType.DisplayName, StringComparison.Ordinal))
+            {
+                throw LoweringInvariantViolation(
+                    becomeStatement.expression(),
+                    $"Tail call '{call.Text}' returns '{call.ReturnType.DisplayName}' instead of '{_function.Signature.ReturnType.DisplayName}'.");
+            }
+
+            EmitStorageDeadBeyondDepth(0);
+            EmitOnceClosureEnvironmentCleanup();
+            CurrentBlock.Terminator = new MidLevelIrTerminator(
+                MidLevelIrTerminatorKind.TailCall,
+                Targets: [],
+                ValueText: becomeStatement.expression().GetText(),
+                TailCall: call,
+                Location: CreateSourceLocation(becomeStatement.Start) ?? _currentStatementLocation ?? _functionLocation);
+        }
+
+        private bool TryLowerExpressionAsTailCallStatement(
+            StarkParser.ExpressionContext expression,
+            out MidLevelIrCallStatementOperation call)
+        {
+            if (TryLowerExpressionAsCallStatement(expression, out call))
+            {
+                return true;
+            }
+
+            if (TryGetSimplePostfixExpression(expression) is { } postfix
+                && postfix.postfixPart().Length == 0
+                && postfix.primaryExpression().expression() is { } parenthesized)
+            {
+                return TryLowerExpressionAsTailCallStatement(parenthesized, out call);
+            }
+
+            return false;
         }
 
         private MidLevelIrOperand LowerReturnExpressionToRequiredOperand(StarkParser.ExpressionContext expression, StarkTypeSymbol returnType)
@@ -3887,7 +3954,7 @@ internal sealed partial class MidLevelIrLowerer
                         InitializeRuntimeDropState(localName, declaredType, isActive: false);
                         if (declarator.variableInitializer() is { } initializer)
                         {
-                            var initializerHasConstProvenance = LowerVariableInitializer(localName, declaredType, initializer);
+                            var initializerHasConstProvenance = LowerVariableInitializer(localName, declaredType, initializer, storageClass);
                             if (!isMutable && initializerHasConstProvenance)
                             {
                                 MarkLocalHasConstProvenance(localName);
@@ -6403,6 +6470,9 @@ internal sealed partial class MidLevelIrLowerer
                 : expression.type_() is { } explicitType
                     ? ResolveTypeWithGenericSubstitution(explicitType, CurrentModuleName)
                     : expectedType;
+            var storageSelector = hasBoundObjectCreation
+                ? boundObjectCreation.StorageSelector
+                : publishedObjectCreation?.StorageSelector ?? GetObjectCreationStorageSelector(expression);
             if (createdType is null || createdType.Kind == StarkTypeKind.Error)
             {
                 throw LoweringInvariantViolation(
@@ -6412,7 +6482,7 @@ internal sealed partial class MidLevelIrLowerer
 
             if (createdType.Kind == StarkTypeKind.Dynamic)
             {
-                return LowerDynamicStorageCreation(expression, createdType, expectedType);
+                return LowerDynamicStorageCreation(expression, createdType, expectedType, storageSelector);
             }
 
             var constructor = hasBoundObjectCreation
@@ -6489,7 +6559,8 @@ internal sealed partial class MidLevelIrLowerer
         private MidLevelIrOperand? LowerDynamicStorageCreation(
             StarkParser.ObjectCreationExpressionContext expression,
             StarkTypeSymbol createdType,
-            StarkTypeSymbol? expectedType)
+            StarkTypeSymbol? expectedType,
+            ObjectCreationStorageSelector storageSelector)
         {
             if (createdType.ElementType is null)
             {
@@ -6501,7 +6572,7 @@ internal sealed partial class MidLevelIrLowerer
                 throw LoweringInvariantViolation(expression.objectInitializer(), "Dynamic storage creation does not support object initializers.");
             }
 
-            var arguments = expression.argumentList()?.argument() ?? [];
+            var arguments = GetObjectCreationArguments(expression);
             if (arguments.Length == 0)
             {
                 var empty = new MidLevelIrZeroInitializerOperand(createdType);
@@ -6530,6 +6601,7 @@ internal sealed partial class MidLevelIrLowerer
                 new MidLevelIrDynamicStorageAllocationRValue(
                     capacity,
                     createdType,
+                    GetDynamicStorageAllocationKind(storageSelector),
                     expression.GetText()),
                 "dynamic");
             if (allocation is null)
@@ -6538,6 +6610,30 @@ internal sealed partial class MidLevelIrLowerer
             }
 
             return expectedType is null ? allocation : CoerceOperand(allocation, expectedType);
+        }
+
+        private DynamicStorageAllocationKind GetDynamicStorageAllocationKind(ObjectCreationStorageSelector storageSelector)
+        {
+            if (storageSelector == ObjectCreationStorageSelector.Arena)
+            {
+                return DynamicStorageAllocationKind.Arena;
+            }
+
+            return _currentObjectCreationAllocationKind ?? DynamicStorageAllocationKind.Runtime;
+        }
+
+        private static ObjectCreationStorageSelector GetObjectCreationStorageSelector(StarkParser.ObjectCreationExpressionContext expression)
+        {
+            return expression.arenaObjectCreationArgumentList() is null
+                ? ObjectCreationStorageSelector.Default
+                : ObjectCreationStorageSelector.Arena;
+        }
+
+        private static StarkParser.ArgumentContext[] GetObjectCreationArguments(StarkParser.ObjectCreationExpressionContext expression)
+        {
+            return expression.arenaObjectCreationArgumentList() is { } arenaArguments
+                ? arenaArguments.argument()
+                : expression.argumentList()?.argument() ?? [];
         }
 
         private MidLevelIrOperand? LowerObjectInitializer(StarkTypeSymbol targetType, StarkParser.ObjectInitializerContext objectInitializer)
@@ -8988,7 +9084,12 @@ internal sealed partial class MidLevelIrLowerer
                 slotParameterTypes.Add(methodParameters[index].Type);
             }
 
-            var slotFunctionPointerType = StarkTypeSymbols.FunctionPointer(signature.Kind, signature.ReturnType, slotParameterTypes);
+            var slotFunctionPointerType = StarkTypeSymbols.FunctionPointer(
+                signature.Kind,
+                signature.ReturnType,
+                slotParameterTypes,
+                isTailCallable: signature.IsTailCallable,
+                pointeeDeadOnReturnParameterNames: MapPointeeDeadOnReturnParameters(signature));
 
             var vtablePointer = EmitTemporary(
                 new MidLevelIrExtractIndexRValue(
@@ -9061,6 +9162,22 @@ internal sealed partial class MidLevelIrLowerer
                 indirectArgumentAddresses,
                 MayFree: false);
             return true;
+        }
+
+        private static IReadOnlyList<string>? MapPointeeDeadOnReturnParameters(TypedFunctionSignature signature)
+        {
+            if (signature.PointeeDeadOnReturnParameters.Count == 0)
+            {
+                return null;
+            }
+
+            var deadParameters = signature.PointeeDeadOnReturnParameters.ToHashSet(StringComparer.Ordinal);
+            var mapped = signature.Parameters
+                .Select((parameter, index) => deadParameters.Contains(parameter.Name) ? $"arg{index}" : null)
+                .Where(static name => name is not null)
+                .Select(static name => name!)
+                .ToArray();
+            return mapped.Length == 0 ? null : mapped;
         }
 
         private bool TryGetDynTraitSlot(
@@ -14066,6 +14183,11 @@ internal sealed partial class MidLevelIrLowerer
                 isConstant: false,
                 hasConstProvenance: RValueHasConstProvenance(value));
             Emit(MidLevelIrStatementKind.Assign, $"{name} = {value.Text}", name, value.Type, value);
+            if (value is MidLevelIrDynamicStorageAllocationRValue dynamicAllocation)
+            {
+                _dynamicStorageAllocationKindByLocal[name] = dynamicAllocation.AllocationKind;
+            }
+
             if (value is MidLevelIrCallRValue call)
             {
                 EmitPostCallDynamicLengthCommits(call);
@@ -14232,26 +14354,49 @@ internal sealed partial class MidLevelIrLowerer
                 throw LoweringInvariantViolation(expression, $"Dynamic storage {memberName} requires an addressable dynamic owner.");
             }
 
+            var allocationKind = GetDynamicStorageAllocationKindForPlace(currentPlace);
             reserve = operationKind switch
             {
                 DynamicStorageOperationKind.TryReserve => new MidLevelIrDynamicStorageTryReserveRValue(
                     storageAddress,
                     currentValue.Type,
                     capacityOperand,
+                    allocationKind,
                     expression.GetText()),
                 DynamicStorageOperationKind.TryReserveCapacity => new MidLevelIrDynamicStorageTryReserveCapacityRValue(
                     storageAddress,
                     currentValue.Type,
                     capacityOperand,
+                    allocationKind,
                     expression.GetText()),
                 DynamicStorageOperationKind.Reserve => new MidLevelIrDynamicStorageReserveRValue(
                     storageAddress,
                     currentValue.Type,
                     capacityOperand,
+                    allocationKind,
                     expression.GetText()),
                 _ => throw LoweringInvariantViolation(arguments, $"Dynamic storage operation '{operationName}' is not a reserve-family operation.")
             };
             return true;
+        }
+
+        private DynamicStorageAllocationKind GetDynamicStorageAllocationKindForPlace(PlaceTarget place)
+        {
+            if (place.RootName is { } rootName)
+            {
+                if (_dynamicStorageAllocationKindByLocal.TryGetValue(rootName, out var allocationKind))
+                {
+                    return allocationKind;
+                }
+
+                if (_localsByName.TryGetValue(rootName, out var local)
+                    && string.Equals(local.StorageClass, "arena", StringComparison.Ordinal))
+                {
+                    return DynamicStorageAllocationKind.Arena;
+                }
+            }
+
+            return DynamicStorageAllocationKind.Runtime;
         }
 
         private bool TryLowerDynamicStorageMoveLastExpression(
@@ -14741,9 +14886,28 @@ internal sealed partial class MidLevelIrLowerer
             string targetName,
             StarkTypeSymbol targetType,
             StarkParser.ExpressionContext expression,
-            string text)
+            string text,
+            string storageClass = "stack")
         {
-            var operand = LowerExpressionToOperand(expression, targetType);
+            var previousAllocationKind = _currentObjectCreationAllocationKind;
+            var destinationArenaObjectCreation = targetType.Kind == StarkTypeKind.Dynamic
+                && string.Equals(storageClass, "arena", StringComparison.Ordinal)
+                && TryGetStandaloneObjectCreationExpression(expression, out var objectCreation)
+                && objectCreation.arenaObjectCreationArgumentList() is null;
+            if (destinationArenaObjectCreation)
+            {
+                _currentObjectCreationAllocationKind = DynamicStorageAllocationKind.Arena;
+            }
+
+            MidLevelIrOperand? operand;
+            try
+            {
+                operand = LowerExpressionToOperand(expression, targetType);
+            }
+            finally
+            {
+                _currentObjectCreationAllocationKind = previousAllocationKind;
+            }
             if (operand is null)
             {
                 throw LoweringInvariantViolation(
@@ -14758,8 +14922,54 @@ internal sealed partial class MidLevelIrLowerer
                 targetType,
                 new MidLevelIrUseRValue(operand),
                 writeKind: MemoryWriteKind.Initialization);
+            RecordDynamicStorageAllocationKind(targetName, targetType, operand, destinationArenaObjectCreation);
             RecordMoveFromOperand(operand, targetType);
             return OperandHasConstProvenance(operand);
+        }
+
+        private void RecordDynamicStorageAllocationKind(
+            string targetName,
+            StarkTypeSymbol targetType,
+            MidLevelIrOperand operand,
+            bool destinationArenaObjectCreation = false)
+        {
+            if (targetType.Kind != StarkTypeKind.Dynamic)
+            {
+                return;
+            }
+
+            if (destinationArenaObjectCreation)
+            {
+                _dynamicStorageAllocationKindByLocal[targetName] = DynamicStorageAllocationKind.Arena;
+                return;
+            }
+
+            if (operand is MidLevelIrLocalOperand localOperand
+                && _dynamicStorageAllocationKindByLocal.TryGetValue(localOperand.Name, out var allocationKind))
+            {
+                _dynamicStorageAllocationKindByLocal[targetName] = allocationKind;
+                return;
+            }
+
+            _dynamicStorageAllocationKindByLocal[targetName] = DynamicStorageAllocationKind.Runtime;
+        }
+
+        private static bool TryGetStandaloneObjectCreationExpression(
+            StarkParser.ExpressionContext expression,
+            out StarkParser.ObjectCreationExpressionContext objectCreation)
+        {
+            objectCreation = null!;
+            if (!TryExtractSimpleUnaryExpression(expression, out var unaryExpression)
+                || unaryExpression.unaryOperator() is not null
+                || unaryExpression.powerExpression()?.postfixExpression() is not { } postfix
+                || postfix.postfixPart().Length != 0
+                || postfix.primaryExpression().objectCreationExpression() is not { } candidate)
+            {
+                return false;
+            }
+
+            objectCreation = candidate;
+            return true;
         }
 
         private string DeclareLocal(string sourceName, StarkTypeSymbol type, string storageClass, bool isMutable, bool isConstant)
@@ -15676,12 +15886,12 @@ internal sealed partial class MidLevelIrLowerer
 
         private static bool ShouldAddressLocal(StarkTypeSymbol type, string storageClass)
         {
-            if (storageClass == "heap")
+            if (storageClass is "heap" or "arena")
             {
                 return true;
             }
 
-            return storageClass is "arena" or "static"
+            return storageClass is "static"
                 && type.Kind is StarkTypeKind.Named or StarkTypeKind.FixedArray;
         }
 

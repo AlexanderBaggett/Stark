@@ -842,6 +842,7 @@ public sealed class SsaIrValidationTests
                 new SsaDynamicStorageAllocationRValue(
                     new SsaIntegerConstant(1, I32),
                     StarkTypeSymbols.Dynamic(StarkTypeSymbols.Void),
+                    DynamicStorageAllocationKind.Runtime,
                     "new dynamic void"))
         ]);
 
@@ -860,6 +861,7 @@ public sealed class SsaIrValidationTests
                 new SsaDynamicStorageAllocationRValue(
                     new SsaIntegerConstant(1, i128),
                     StarkTypeSymbols.Dynamic(I32),
+                    DynamicStorageAllocationKind.Runtime,
                     "new dynamic i32"))
         ]);
 
@@ -878,6 +880,7 @@ public sealed class SsaIrValidationTests
                     new SsaIntegerConstant(0, I32),
                     StarkTypeSymbols.Dynamic(I32),
                     new SsaIntegerConstant(1, I32),
+                    DynamicStorageAllocationKind.Runtime,
                     "reserve"))
         ]);
 
