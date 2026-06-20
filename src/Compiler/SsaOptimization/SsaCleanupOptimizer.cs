@@ -80,6 +80,7 @@ internal sealed class SsaCleanupOptimizer
             current = RemoveUnusedPureInstructions(current);
         }
 
+        current = RemoveUnusedArenaFrameInstructions(current);
         return RemoveStalePhiIncomings(PruneUnreachableBlocks(current));
     }
 
@@ -2298,6 +2299,60 @@ internal sealed class SsaCleanupOptimizer
             and not SsaDynamicStorageTryReserveCapacityRValue
             and not SsaDynamicStorageMoveLastRValue
             and not SsaDynamicStorageMoveAtRValue;
+    }
+
+    private static SsaFunction RemoveUnusedArenaFrameInstructions(SsaFunction function)
+    {
+        if (UsesArenaFrameStorage(function))
+        {
+            return function;
+        }
+
+        var changed = false;
+        var blocks = function.Blocks
+            .Select(block =>
+            {
+                var instructions = block.Instructions
+                    .Where(instruction =>
+                    {
+                        if (instruction is not (SsaArenaFrameEnterInstruction or SsaArenaFrameLeaveInstruction))
+                        {
+                            return true;
+                        }
+
+                        changed = true;
+                        return false;
+                    })
+                    .ToArray();
+
+                return changed && instructions.Length != block.Instructions.Count
+                    ? block with { Instructions = instructions }
+                    : block;
+            })
+            .ToArray();
+
+        return changed ? function with { Blocks = blocks } : function;
+    }
+
+    private static bool UsesArenaFrameStorage(SsaFunction function)
+    {
+        foreach (var block in function.Blocks)
+        {
+            foreach (var instruction in block.Instructions)
+            {
+                switch (instruction)
+                {
+                    case SsaAllocateLocalInstruction { StorageClass: "arena" }:
+                    case SsaValueInstruction { Value: SsaDynamicStorageAllocationRValue { AllocationKind: DynamicStorageAllocationKind.Arena } }:
+                    case SsaValueInstruction { Value: SsaDynamicStorageReserveRValue { AllocationKind: DynamicStorageAllocationKind.Arena } }:
+                    case SsaValueInstruction { Value: SsaDynamicStorageTryReserveRValue { AllocationKind: DynamicStorageAllocationKind.Arena } }:
+                    case SsaValueInstruction { Value: SsaDynamicStorageTryReserveCapacityRValue { AllocationKind: DynamicStorageAllocationKind.Arena } }:
+                        return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     private static SsaFunction RemoveStoresToWriteOnlyLocalStorage(SsaFunction function)

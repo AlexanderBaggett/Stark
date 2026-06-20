@@ -817,30 +817,88 @@ Benchmark notes:
 - [x] Reject every arena allocation form in `law` functions, including
       `arena` locals and `new(arena, ...)`, while preserving ordinary `finite`
       checking for arena-using functions.
-- [ ] Add explicit MIR/SSA representation for arena frame creation, arena
+- [x] Add explicit MIR/SSA representation for arena frame creation, arena
       allocation operations, arena lifetime facts, live-value drops, and frame
       cleanup on all supported normal and early-exit paths.
-- [ ] Implement arena-backed dynamic storage `Reserve`, `TryReserve`, and
+- [x] Implement arena-backed dynamic storage `Reserve`, `TryReserve`, and
       `TryReserveCapacity` with allocate-copy growth that leaves old backing
       storage for arena-frame cleanup; never lower arena growth to runtime
       `realloc` or per-object `free`.
-- [ ] Ensure drop lowering drops arena-backed values and initialized dynamic
+- [x] Ensure drop lowering drops arena-backed values and initialized dynamic
       elements with destructors before frame cleanup while still avoiding
       per-object frees for arena backing storage.
-- [ ] Preserve arena lifetime and escape-relevant facts through package-image
+- [x] Preserve arena lifetime and escape-relevant facts through package-image
       summaries for callable surfaces that mention arena-backed values or
       borrows.
+- [x] Add passing C# package-image tests for arena generic allocation facts,
+      typed-body source reconstruction, sourceless package consumption, and
+      retaining-borrow arena escape diagnostics.
+- [x] Add matching Stark host-protocol coverage for the arena generic allocation
+      and imported retaining-borrow diagnostic surfaces; direct package-manifest
+      inspection remains C#-only until the self-hosted package harness grows that
+      capability.
 - [x] Add passing C# borrow/escape and law-effect tests for arena lifetime
       returns, raw pointers, aggregate construction, heap/static storage,
       retaining callees, retained captures, non-retaining borrows, and
       `new(arena, ...)` in `law` functions.
 - [x] Add matching Stark self-hosted checker tests for arena borrow/escape and
       law-effect diagnostics through the host compiler protocol.
-- [ ] Add passing C# MIR/SSA, package-image, dynamic growth, destructor-drop,
-      and remaining negative diagnostic tests for the remaining arena semantics.
-- [ ] Add matching Stark self-hosted MIR/SSA and LLVM-emission tests for the
+- [x] Add passing C# MIR/SSA and remaining negative diagnostic tests for arena
+      semantics not covered by the completed package-image, dynamic-growth, and
+      destructor-drop tests above.
+- [x] Add matching Stark self-hosted MIR/SSA and LLVM-emission tests for the
       remaining arena semantics; these may remain in-progress or expected-failing
       until the self-hosted checker and emitter implement the feature.
+- [ ] Implement self-hosted integer range fact lowering for every LLVM surface
+      the self-hosted emitter can currently generate: direct parameters,
+      returns, loads, and call results should use `range(...)` or `!range`;
+      branch refinements should keep using ordinary boolean `llvm.assume`
+      conditions while Stark targets LLVM versions without bounded range assume
+      bundles.
+- [ ] Implement self-hosted function-effect lowering for the function kinds the
+      self-hosted front end accepts: `law`, `finite`, and `finite law` should
+      preserve enough semantic effect data to emit structured `memory(...)`,
+      `nosync`, `nofree`, `willreturn`, `mustprogress`, and proven `norecurse`
+      without regressing to legacy whole-function `readonly`, `readnone`, or
+      `argmemonly` replacements.
+- [ ] Complete self-hosted `tail` and `become` semantic checking by carrying the
+      parsed tail-callable flags through binding and typing, enforcing true tail
+      position, caller and callee tail-callability, ordinary effect rules,
+      cleanup/drop blockers, and ABI blockers before MIR lowering.
+- [ ] Complete self-hosted `tail` and `become` MIR/LLVM lowering for every
+      callable arity and result shape supported by the self-hosted ABI, including
+      `tailcc` function definitions and verifier-valid `musttail call tailcc`
+      plus immediate matching `ret` terminators.
+- [ ] Implement self-hosted granular pointer-parameter attribute lowering for
+      callable surfaces the self-hosted compiler can represent:
+      `captures(none)`, `captures(ret: address, read_provenance)`,
+      `captures(address, read_provenance)`, provenance-writing capture forms,
+      `writeonly`, `writable`, `initializes((0, N))`, and source-checked
+      `dead_on_return`.
+- [ ] Implement self-hosted callable compatibility and diagnostics for
+      `where dead_on_return(...)`, including direct functions, function pointer
+      types, callback calls, and package/imported callable summaries that the
+      self-hosted compiler supports.
+- [ ] Add self-hosted distinct-allocation root facts and lower proven
+      whole-allocation disjoint roots to `llvm.assume(i1 true)` with
+      `"separate_storage"(ptr %left, ptr %right)` bundles; same-allocation
+      subranges must stay on scoped alias metadata or remain unsupported until
+      that metadata model exists.
+- [ ] Implement the self-hosted arena semantic model: `arena` executable local
+      storage, `new(arena, ...)`, arena lifetime/root propagation through moves,
+      projections and borrows, `law` rejection, and escape diagnostics for
+      returns, heap/static/global stores, escaping captures, and retaining
+      callees.
+- [ ] Implement self-hosted arena MIR/LLVM lowering with hidden arena frames,
+      arena helper declarations and allocator attributes, arena object
+      allocation, positive constant-capacity arena dynamic storage allocation,
+      live-value drops before frame leave, and no runtime `realloc` or
+      per-object `free` for arena backing storage.
+- [ ] Implement self-hosted arena-backed dynamic growth for `Reserve`,
+      `TryReserve`, and `TryReserveCapacity` using allocate-copy growth that
+      leaves old backing storage for arena-frame cleanup, or reject those
+      operations in the self-hosted checker until the allocate-copy lowering is
+      implemented.
 - [ ] Promote stable user-facing text into `docs/Userfacing/LanguageReference.md`.
 - [ ] Append the completed Documentation section from this file into
       `docs/Internals/LanguageInternals.md`, preserving the implementation

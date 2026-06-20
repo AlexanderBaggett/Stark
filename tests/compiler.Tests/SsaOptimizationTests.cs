@@ -47,6 +47,40 @@ public sealed class SsaOptimizationTests
     }
 
     [Fact]
+    public void CleanupRemovesArenaFrameScopeWhenNoArenaStorageRemains()
+    {
+        var module = new SsaIrModule(
+            "Demo",
+            [
+                new SsaFunction(
+                    "Run",
+                    StarkTypeSymbols.Void,
+                    [],
+                    HasBody: true,
+                    SupportsDirectCodeGeneration: true,
+                    EntryBlockId: 0,
+                    Blocks:
+                    [
+                        new SsaBasicBlock(
+                            0,
+                            "bb0_entry",
+                            [],
+                            [
+                                new SsaArenaFrameEnterInstruction(),
+                                new SsaArenaFrameLeaveInstruction()
+                            ],
+                            new SsaTerminator(SsaTerminatorKind.Return, []))
+                    ])
+            ]);
+
+        var optimized = new SsaCleanupOptimizer().Optimize(module);
+        var function = Assert.Single(optimized.Functions);
+        var block = Assert.Single(function.Blocks);
+
+        Assert.Empty(block.Instructions);
+    }
+
+    [Fact]
     public void CleanupPrunesPhiIncomingsForRemovedCfgEdges()
     {
         var valueType = StarkTypeSymbols.Integer(32);

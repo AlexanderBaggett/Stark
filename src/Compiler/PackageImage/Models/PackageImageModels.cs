@@ -505,7 +505,8 @@ internal sealed record StarkPackageTemplateObjectCreationManifest(
     StarkPackageTypeReference CreatedType,
     StarkPackagePublishedConstructorShapeManifest? Constructor,
     ObjectCreationStorageSelector StorageSelector = ObjectCreationStorageSelector.Default,
-    IReadOnlyList<StarkPackageTemplateObjectInitializerMemberManifest>? InitializerMembers = null);
+    IReadOnlyList<StarkPackageTemplateObjectInitializerMemberManifest>? InitializerMembers = null,
+    string? ExpressionText = null);
 
 internal sealed record StarkPackageTemplateEnumConstructorMemberManifest(
     string FieldName,

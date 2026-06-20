@@ -356,6 +356,7 @@ internal sealed partial class MidLevelIrLowerer
         private int _nextRuntimeDisjointScopeId;
         private int _nextLoopAccessGroupId;
         private string? _lastCallBuildFailureReason;
+        private bool _arenaFrameStatementsFinalized;
 
         public FunctionMirBuilder(
             HighLevelIrFunction function,
@@ -592,9 +593,16 @@ internal sealed partial class MidLevelIrLowerer
 
         public IReadOnlyList<MidLevelIrLocal> Locals => _locals;
 
-        public IReadOnlyList<MidLevelIrBasicBlock> Blocks => _blocks
-            .Select(static block => block.Build())
-            .ToArray();
+        public IReadOnlyList<MidLevelIrBasicBlock> Blocks
+        {
+            get
+            {
+                AddArenaFrameStatementsIfNeeded();
+                return _blocks
+                    .Select(static block => block.Build())
+                    .ToArray();
+            }
+        }
 
         private BasicBlockBuilder CurrentBlock { get; set; }
         private string CurrentModuleName => _moduleNameOverride ?? _currentModuleName;
@@ -15245,6 +15253,17 @@ internal sealed partial class MidLevelIrLowerer
 
                     return;
 
+                case MidLevelIrStatementKind.ArenaFrameEnter:
+                case MidLevelIrStatementKind.ArenaFrameLeave:
+                    if (targetName is not null || targetType is not null || value is not null || address is not null || call is not null)
+                    {
+                        throw LoweringInvariantViolation(
+                            null,
+                            $"Arena frame statement '{kind}' cannot have target, value, call, or address payloads.");
+                    }
+
+                    return;
+
                 case MidLevelIrStatementKind.Assign:
                     if (targetName is null || targetType is null || value is null || address is not null || call is not null)
                     {
@@ -15289,6 +15308,73 @@ internal sealed partial class MidLevelIrLowerer
                 default:
                     throw LoweringInvariantViolation(null, $"MIR statement kind '{kind}' has no validation case.");
             }
+        }
+
+        private void AddArenaFrameStatementsIfNeeded()
+        {
+            if (_arenaFrameStatementsFinalized)
+            {
+                return;
+            }
+
+            _arenaFrameStatementsFinalized = true;
+            if (!UsesArenaFrame())
+            {
+                return;
+            }
+
+            if (_blocks.Count == 0)
+            {
+                return;
+            }
+
+            var entryBlock = _blocks[0];
+            if (entryBlock.Statements.All(static statement => statement.Kind != MidLevelIrStatementKind.ArenaFrameEnter))
+            {
+                entryBlock.Statements.Insert(
+                    0,
+                    new MidLevelIrStatement(
+                        MidLevelIrStatementKind.ArenaFrameEnter,
+                        "arena-frame.enter",
+                        Location: _functionLocation));
+            }
+
+            foreach (var block in _blocks)
+            {
+                if (block.Terminator?.Kind != MidLevelIrTerminatorKind.Return
+                    || block.Statements.Any(static statement => statement.Kind == MidLevelIrStatementKind.ArenaFrameLeave))
+                {
+                    continue;
+                }
+
+                block.Statements.Add(new MidLevelIrStatement(
+                    MidLevelIrStatementKind.ArenaFrameLeave,
+                    "arena-frame.leave",
+                    Location: block.Terminator.Location ?? _functionLocation));
+            }
+        }
+
+        private bool UsesArenaFrame()
+        {
+            if (_locals.Any(static local => string.Equals(local.StorageClass, "arena", StringComparison.Ordinal))
+                || _dynamicStorageAllocationKindByLocal.Values.Any(static kind => kind == DynamicStorageAllocationKind.Arena))
+            {
+                return true;
+            }
+
+            return _blocks.Any(static block => block.Statements.Any(static statement => IsArenaDynamicStorageValue(statement.Value)));
+        }
+
+        private static bool IsArenaDynamicStorageValue(MidLevelIrRValue? value)
+        {
+            return value switch
+            {
+                MidLevelIrDynamicStorageAllocationRValue { AllocationKind: DynamicStorageAllocationKind.Arena } => true,
+                MidLevelIrDynamicStorageReserveRValue { AllocationKind: DynamicStorageAllocationKind.Arena } => true,
+                MidLevelIrDynamicStorageTryReserveRValue { AllocationKind: DynamicStorageAllocationKind.Arena } => true,
+                MidLevelIrDynamicStorageTryReserveCapacityRValue { AllocationKind: DynamicStorageAllocationKind.Arena } => true,
+                _ => false
+            };
         }
 
         private IReadOnlyList<ScopedNoAliasGroup>? CurrentScopedNoAliasGroups()

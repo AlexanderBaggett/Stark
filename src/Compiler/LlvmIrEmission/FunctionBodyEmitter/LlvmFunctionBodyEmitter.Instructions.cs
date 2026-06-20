@@ -32,6 +32,12 @@ internal sealed partial class LlvmFunctionBodyEmitter
             case SsaDeallocateLocalInstruction deallocateLocal:
                 EmitDeallocateLocal(deallocateLocal);
                 return;
+            case SsaArenaFrameEnterInstruction:
+                EmitArenaFrameEnter();
+                return;
+            case SsaArenaFrameLeaveInstruction:
+                EmitArenaFrameLeave();
+                return;
             case SsaStoreLocalInstruction storeLocal:
                 EmitStoreLocal(storeLocal);
                 return;

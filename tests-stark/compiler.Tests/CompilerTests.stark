@@ -15522,6 +15522,20 @@ fn bool PackageImageGenericTemplatesPublishAllBoundOperationFamilies()
 }
 
 [Fact]
+[Collection("package-image", "package-image-architecture", "arena")]
+fn bool PackageImagePreservesArenaObjectCreationStorageSelectorInGenericTemplateFacts()
+{
+    return PackageImagePreservesArenaObjectCreationStorageSelectorInGenericTemplateFactsImpl();
+}
+
+[Fact]
+[Collection("package-image", "package-image-architecture", "arena")]
+fn bool PackageImageBackedRetainingBorrowSurfaceRejectsArenaBackedArguments()
+{
+    return PackageImageBackedRetainingBorrowSurfaceRejectsArenaBackedArgumentsImpl();
+}
+
+[Fact]
 [Collection("package-image", "package-image-architecture")]
 fn bool PackageImageGenericTemplatesPreservePropertyAndListSwitchPatterns()
 {

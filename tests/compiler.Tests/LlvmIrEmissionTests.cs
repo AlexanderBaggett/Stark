@@ -2200,6 +2200,183 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
+    public void ArenaDynamicStorageReserveEmitsGrowCopyWithoutRuntimeReallocate()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn u64[0 max] Run()
+            {
+                stack mut dynamic u64[0 max] values = new(arena, 1);
+                init values[0] = 41;
+                values.Reserve(8);
+                return values[0] +% (u64[0 max])values.Capacity;
+            }
+            """,
+            options: new CompilerOptions());
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+        var runBody = ExtractDefinitionBody(llvm, "Run");
+
+        Assert.DoesNotContain("; LLVM body emission fallback for Run", llvm);
+        Assert.Contains("dynamic_reserve_arena", runBody, StringComparison.Ordinal);
+        Assert.Contains("call noalias nonnull noundef align 8 ptr @__stark_arena_alloc", runBody, StringComparison.Ordinal);
+        Assert.Contains("call void @llvm.memcpy.p0.p0.i64(ptr align 8", runBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@__stark_runtime_realloc", runBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@__stark_runtime_try_realloc", runBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@__stark_runtime_free", runBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ArenaDynamicStorageTryReserveEmitsFallibleGrowCopy()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn u64[0 max] Run()
+            {
+                stack mut dynamic u64[0 max] values = new(arena, 1);
+                init values[0] = 41;
+                if (!values.TryReserve(8))
+                {
+                    return 0;
+                }
+
+                return values[0] +% (u64[0 max])values.Capacity;
+            }
+            """,
+            options: new CompilerOptions());
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+        var runBody = ExtractDefinitionBody(llvm, "Run");
+
+        Assert.DoesNotContain("; LLVM body emission fallback for Run", llvm);
+        Assert.Contains("dynamic_try_reserve_arena", runBody, StringComparison.Ordinal);
+        Assert.Contains("call noalias noundef ptr @__stark_arena_try_alloc", runBody, StringComparison.Ordinal);
+        Assert.Contains("call void @llvm.memcpy.p0.p0.i64(ptr align 8", runBody, StringComparison.Ordinal);
+        Assert.Contains("phi i1", runBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@__stark_runtime_realloc", runBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@__stark_runtime_try_realloc", runBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@__stark_runtime_free", runBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ArenaDynamicStorageTryReserveCapacityEmitsExactFallibleGrowCopy()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn u64[0 max] Run()
+            {
+                stack mut dynamic u64[0 max] values = new(arena, 1);
+                init values[0] = 41;
+                if (!values.TryReserveCapacity(8))
+                {
+                    return 0;
+                }
+
+                return values[0] +% (u64[0 max])values.Capacity;
+            }
+            """,
+            options: new CompilerOptions());
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+        var runBody = ExtractDefinitionBody(llvm, "Run");
+
+        Assert.DoesNotContain("; LLVM body emission fallback for Run", llvm);
+        Assert.Contains("dynamic_try_reserve_capacity_arena", runBody, StringComparison.Ordinal);
+        Assert.Contains("call noalias noundef ptr @__stark_arena_try_alloc", runBody, StringComparison.Ordinal);
+        Assert.Contains("call void @llvm.memcpy.p0.p0.i64(ptr align 8", runBody, StringComparison.Ordinal);
+        Assert.Contains("phi i1", runBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("dynamic_try_reserve_minimum", runBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("dynamic_try_reserve_new_capacity", runBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@__stark_runtime_realloc", runBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@__stark_runtime_try_realloc", runBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@__stark_runtime_free", runBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ArenaDynamicStorageDropEmitsElementDestructorLoopBeforeFrameCleanupWithoutFreeingOwner()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            static mut i32[min max] Counter = 0;
+
+            unsafe fn void Bump(i32[min max] value)
+            {
+                stack i32[min max] a = value + (value / 3);
+                stack i32[min max] b = a - (a / 5);
+                stack i32[min max] c = b + (b / 7);
+                stack i32[min max] d = c - (c / 11);
+                stack i32[min max] e = d + (d / 13);
+                stack i32[min max] f = e - (e / 17);
+                stack i32[min max] g = f + (f / 19);
+                stack i32[min max] h = g - (g / 23);
+                stack i32[min max] i = h + (h / 29);
+                stack i32[min max] j = i - (i / 31);
+                stack i32[min max] k = j + (j / 37);
+                stack i32[min max] l = k - (k / 41);
+                stack i32[min max] m = l + (l / 43);
+                Counter = Counter + m;
+                return;
+            }
+
+            struct Token
+            {
+                i32[min max] Value;
+
+                drop
+                {
+                    Bump(self.Value);
+                }
+            }
+
+            unsafe fn void Run()
+            {
+                stack mut dynamic Token values = new(arena, 1);
+                init values[0] = new Token()
+                {
+                    Value = 1
+                };
+                values.Reserve(4);
+                init values[1] = new Token()
+                {
+                    Value = 2
+                };
+                return;
+            }
+            """,
+            options: new CompilerOptions());
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+        var runBody = ExtractDefinitionBody(llvm, "Run");
+
+        Assert.DoesNotContain("; LLVM body emission fallback for Run", llvm);
+        Assert.Contains("dynamic_reserve_arena", runBody, StringComparison.Ordinal);
+        Assert.Contains("call noalias nonnull noundef align 4 ptr @__stark_arena_alloc", runBody, StringComparison.Ordinal);
+        Assert.Contains("call void @llvm.memcpy.p0.p0.i64(ptr align 4", runBody, StringComparison.Ordinal);
+        Assert.Contains("call fastcc void @Bump", runBody, StringComparison.Ordinal);
+        Assert.Contains("call void @__stark_arena_leave(ptr nonnull %__stark_arena_frame)", runBody, StringComparison.Ordinal);
+        Assert.True(
+            runBody.IndexOf("call fastcc void @Bump", StringComparison.Ordinal)
+            < runBody.IndexOf("@__stark_arena_leave", StringComparison.Ordinal),
+            runBody);
+        Assert.DoesNotContain("dynamic_free_ptr", runBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@__stark_runtime_realloc", runBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@__stark_runtime_try_realloc", runBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@__stark_runtime_free", runBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void DynamicStorageInitSliceWritesCommitOwnerLength()
     {
         var result = Compile(

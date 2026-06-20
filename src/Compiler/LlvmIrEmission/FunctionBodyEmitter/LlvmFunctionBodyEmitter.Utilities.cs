@@ -87,6 +87,8 @@ internal sealed partial class LlvmFunctionBodyEmitter
             SsaLifetimeStartInstruction lifetimeStart => lifetimeStart.Location,
             SsaLifetimeEndInstruction lifetimeEnd => lifetimeEnd.Location,
             SsaDeallocateLocalInstruction deallocateLocal => deallocateLocal.Location,
+            SsaArenaFrameEnterInstruction arenaFrameEnter => arenaFrameEnter.Location,
+            SsaArenaFrameLeaveInstruction arenaFrameLeave => arenaFrameLeave.Location,
             SsaStoreLocalInstruction storeLocal => storeLocal.Location,
             SsaCopyMemoryInstruction copyMemory => copyMemory.Location,
             SsaStoreIndirectInstruction storeIndirect => storeIndirect.Location,

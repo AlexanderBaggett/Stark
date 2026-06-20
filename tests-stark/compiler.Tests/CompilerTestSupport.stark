@@ -125,6 +125,22 @@ public fn LlvmCompile CompileTypeCheckWithModule(
     }
 }
 
+// Full-pipeline variant of CompileTypeCheckWithModule. `Ok` covers
+// transport/protocol only, so failing compiles can be asserted with
+// FailsWithDiagnostic.
+public fn LlvmCompile CompileFullWithModule(
+    ascii id,
+    ascii source,
+    ascii moduleDirectory,
+    ascii moduleFileName,
+    ascii moduleSource)
+{
+    unsafe
+    {
+        return RunWithModule(id, source, "", "", moduleDirectory, moduleFileName, moduleSource);
+    }
+}
+
 // Full-pipeline variant of CompileTypeCheckWithModule with the LLVM artifact
 // requested. `Ok` additionally requires the compile itself to succeed.
 public fn LlvmCompile CompileLlvmWithModule(

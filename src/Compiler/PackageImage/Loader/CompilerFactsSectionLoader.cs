@@ -353,7 +353,8 @@ internal static partial class PackageImageLoader
                                 initializerMember.FieldName,
                                 initializerMember.FieldIndex,
                                 BuildTypeSymbol(initializerMember.FieldType)))
-                            .ToArray()))
+                            .ToArray(),
+                        objectCreation.ExpressionText))
                     .ToArray(),
                 EnumConstructorSummaries: functionTemplate.EnumConstructors?
                     .Select(enumConstructor => new ImportedTemplateEnumConstructorSummary(
