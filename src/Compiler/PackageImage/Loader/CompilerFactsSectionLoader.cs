@@ -54,6 +54,7 @@ internal static partial class PackageImageLoader
                 DisjointParameterGroups: BuildParameterDisjointGroups(function.Parameters, function.DisjointParameterGroups),
                 OverlapParameterGroups: BuildParameterOverlapGroups(function.OverlapParameterGroups),
                 SameParameterGroups: BuildParameterSameGroups(function.SameParameterGroups),
+                PointeeDeadOnReturnParameterNames: function.PointeeDeadOnReturnParameterNames,
                 TypeParameterConstraints: BuildTypeParameterConstraints(
                     function.TypeParameterConstraints,
                     module.Module.ModuleName,
@@ -114,6 +115,7 @@ internal static partial class PackageImageLoader
                     DisjointParameterGroups: BuildParameterDisjointGroups(method.Parameters, method.DisjointParameterGroups),
                     OverlapParameterGroups: BuildParameterOverlapGroups(method.OverlapParameterGroups),
                     SameParameterGroups: BuildParameterSameGroups(method.SameParameterGroups),
+                    PointeeDeadOnReturnParameterNames: method.PointeeDeadOnReturnParameterNames,
                     TypeParameterConstraints: BuildTypeParameterConstraints(
                         method.TypeParameterConstraints,
                         module.Module.ModuleName,
@@ -229,6 +231,7 @@ internal static partial class PackageImageLoader
                     IsCold: functionEffect.IsCold,
                     InlinePreference: inlinePreference,
                     IsStrictFp: functionEffect.IsStrictFp,
+                    IsTailCallable: functionEffect.IsTailCallable,
                     BackendOptimizationMode: functionBackendOptimizationMode,
                     FfiAbi: ParsePackageFunctionFfiAbi(functionEffect.FfiAbi),
                     NoRecurse: functionEffect.NoRecurse);
@@ -344,6 +347,7 @@ internal static partial class PackageImageLoader
                                     .Select(BuildTypedParameterSymbol)
                                     .ToArray(),
                                 objectCreation.Constructor.IsPrimaryShape),
+                        objectCreation.StorageSelector,
                         objectCreation.InitializerMembers?
                             .Select(initializerMember => new ImportedTemplateObjectInitializerMemberSummary(
                                 initializerMember.FieldName,
@@ -425,7 +429,8 @@ internal static partial class PackageImageLoader
                             ComptimeValueArguments: BuildComptimeValueArgumentSymbols(directCall.ComptimeValueArguments, null, null),
                             DisjointParameterGroups: BuildParameterDisjointGroups(directCall.Parameters, directCall.DisjointParameterGroups),
                             OverlapParameterGroups: BuildParameterOverlapGroups(directCall.OverlapParameterGroups),
-                            SameParameterGroups: BuildParameterSameGroups(directCall.SameParameterGroups))))
+                            SameParameterGroups: BuildParameterSameGroups(directCall.SameParameterGroups),
+                            PointeeDeadOnReturnParameterNames: directCall.PointeeDeadOnReturnParameterNames)))
                     .ToArray(),
                 FieldAccessSummaries: functionTemplate.FieldAccesses?
                     .Select(fieldAccess => new ImportedTemplateFieldAccessSummary(
@@ -449,7 +454,8 @@ internal static partial class PackageImageLoader
                             ComptimeValueArguments: BuildComptimeValueArgumentSymbols(memberCall.ComptimeValueArguments, null, null),
                             DisjointParameterGroups: BuildParameterDisjointGroups(memberCall.Parameters, memberCall.DisjointParameterGroups),
                             OverlapParameterGroups: BuildParameterOverlapGroups(memberCall.OverlapParameterGroups),
-                            SameParameterGroups: BuildParameterSameGroups(memberCall.SameParameterGroups))))
+                            SameParameterGroups: BuildParameterSameGroups(memberCall.SameParameterGroups),
+                            PointeeDeadOnReturnParameterNames: memberCall.PointeeDeadOnReturnParameterNames)))
                     .ToArray(),
                 FunctionAddressSummaries: functionTemplate.FunctionAddresses?
                     .Select(functionAddress => new ImportedTemplateFunctionAddressSummary(
@@ -466,7 +472,8 @@ internal static partial class PackageImageLoader
                             ComptimeValueArguments: BuildComptimeValueArgumentSymbols(functionAddress.ComptimeValueArguments, null, null),
                             DisjointParameterGroups: BuildParameterDisjointGroups(functionAddress.Parameters, functionAddress.DisjointParameterGroups),
                             OverlapParameterGroups: BuildParameterOverlapGroups(functionAddress.OverlapParameterGroups),
-                            SameParameterGroups: BuildParameterSameGroups(functionAddress.SameParameterGroups)),
+                            SameParameterGroups: BuildParameterSameGroups(functionAddress.SameParameterGroups),
+                            PointeeDeadOnReturnParameterNames: functionAddress.PointeeDeadOnReturnParameterNames),
                         BuildTypeSymbol(functionAddress.TargetType)))
                     .ToArray(),
                 BoundOperationSummaries: boundOperationSummaries,
@@ -1168,6 +1175,7 @@ internal static partial class PackageImageLoader
                     operation.ExpressionText ?? string.Empty,
                     BuildTypeSymbol(operation.CreatedType),
                     BuildImportedTemplateConstructorShape(operation.Constructor),
+                    operation.StorageSelector,
                     operation.InitializerMembers?
                         .Select(member => new ObjectInitializerMemberTypingRecord(
                             member.FieldName,
@@ -1333,7 +1341,8 @@ internal static partial class PackageImageLoader
             ComptimeValueArguments: BuildComptimeValueArgumentSymbols(operation.ComptimeValueArguments, null, null),
             DisjointParameterGroups: BuildParameterDisjointGroups(parameters, operation.DisjointParameterGroups),
             OverlapParameterGroups: BuildParameterOverlapGroups(operation.OverlapParameterGroups),
-            SameParameterGroups: BuildParameterSameGroups(operation.SameParameterGroups));
+            SameParameterGroups: BuildParameterSameGroups(operation.SameParameterGroups),
+            PointeeDeadOnReturnParameterNames: operation.PointeeDeadOnReturnParameterNames);
         return true;
     }
 
@@ -1425,7 +1434,8 @@ internal static partial class PackageImageLoader
             SourceName: abiFunction.SourceName,
             UsesFastCallingConvention: abiFunction.UsesFastCallingConvention,
             IsVarargs: abiFunction.IsVarargs,
-            FfiAbi: ParsePackageFunctionFfiAbi(abiFunction.FfiAbi));
+            FfiAbi: ParsePackageFunctionFfiAbi(abiFunction.FfiAbi),
+            UsesTailCallingConvention: abiFunction.UsesTailCallingConvention);
         return true;
     }
 

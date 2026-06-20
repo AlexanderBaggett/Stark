@@ -34,6 +34,7 @@ internal static partial class PackageImageBuilder
             InlinePreference: RenderInlinePreference(effects.InlinePreference),
             IsStrictFp: effects.IsStrictFp,
             IsVarargs: effects.IsVarargs,
+            IsTailCallable: effects.IsTailCallable,
             FfiAbi: effects.FfiAbi is { } ffiAbi ? StarkFfiAbiFacts.DisplayName(ffiAbi) : null,
             BackendOptimizationMode: RenderBackendOptimizationMode(effects.BackendOptimizationMode),
             NoRecurse: effects.NoRecurse);
@@ -77,7 +78,8 @@ internal static partial class PackageImageBuilder
             SourceName: abiFunction.SourceName,
             UsesFastCallingConvention: abiFunction.UsesFastCallingConvention,
             IsVarargs: abiFunction.IsVarargs,
-            FfiAbi: abiFunction.FfiAbi is { } ffiAbi ? StarkFfiAbiFacts.DisplayName(ffiAbi) : null);
+            FfiAbi: abiFunction.FfiAbi is { } ffiAbi ? StarkFfiAbiFacts.DisplayName(ffiAbi) : null,
+            UsesTailCallingConvention: abiFunction.UsesTailCallingConvention);
         return true;
     }
 

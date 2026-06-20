@@ -733,6 +733,136 @@ public fn i32[min max] Bump<T>(borrow Box box, i32[min max] delta, T tag)
     return Succeeds(c);
 }
 
+internal fn bool TailFunctionBecomeEmitsMustTailUnderTailccImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "emit-llvm-tail-become-musttail",
+        raw"""
+module Demo
+
+tail fn i32[min max] Done(i32[min max] value)
+{
+    return value;
+}
+
+tail fn i32[min max] Bounce(i32[min max] value)
+{
+    become Done(value);
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "define tailcc noundef i32 @Done(")
+        && Contains(llvm, "define tailcc noundef i32 @Bounce(")
+        && Contains(llvm, "musttail call tailcc i32 @Done(");
+}
+
+internal fn bool MutualTailFunctionsEmitMustTailOnBothEdgesImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "emit-llvm-tail-mutual-musttail",
+        raw"""
+module Demo
+
+tail fn i32[min max] Left(i32[min max] value)
+{
+    become Right(value);
+}
+
+tail fn i32[min max] Right(i32[min max] value)
+{
+    become Left(value);
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    stack ascii leftBody = LlvmDefinitionBody(llvm, "Left");
+    stack ascii rightBody = LlvmDefinitionBody(llvm, "Right");
+    return Contains(llvm, "define tailcc noundef i32 @Left(")
+        && Contains(llvm, "define tailcc noundef i32 @Right(")
+        && Contains(leftBody, "musttail call tailcc i32 @Right(")
+        && Contains(rightBody, "musttail call tailcc i32 @Left(");
+}
+
+internal fn bool TailCallableFunctionPointerBecomeEmitsIndirectMustTailImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "emit-llvm-tail-fnptr-indirect-musttail",
+        raw"""
+module Demo
+
+tail fn i32[min max] Done(i32[min max] value)
+{
+    return value;
+}
+
+static mut fnptr<tail fn i32[min max](i32[min max])> Next = Done;
+
+tail fn i32[min max] Bounce(i32[min max] value)
+{
+    become Next(value);
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    stack ascii bounceBody = LlvmDefinitionBody(llvm, "Bounce");
+    return Contains(llvm, "define tailcc noundef i32 @Bounce(")
+        && Contains(bounceBody, "musttail call tailcc i32 %")
+        && Contains(bounceBody, "ret i32");
+}
+
+internal fn bool TailDynTraitDispatchBecomeEmitsIndirectMustTailImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "emit-llvm-tail-dyn-dispatch-musttail",
+        raw"""
+module Demo
+
+dyn trait Stepper
+{
+    tail fn i32[min max] Step(borrow Self self, i32[min max] value);
+}
+
+struct Done : Stepper
+{
+    tail fn i32[min max] Step(borrow Done self, i32[min max] value)
+    {
+        return value;
+    }
+}
+
+tail fn i32[min max] Dispatch(borrow dyn Stepper stepper, i32[min max] value)
+{
+    become stepper.Step(value);
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    stack ascii dispatchBody = LlvmDefinitionBody(llvm, "Dispatch");
+    return Contains(llvm, "define tailcc noundef i32 @Dispatch(")
+        && Contains(llvm, "@__stark_vtable_Done__Stepper")
+        && Contains(dispatchBody, "getelementptr ptr,")
+        && Contains(dispatchBody, "load ptr,")
+        && Contains(dispatchBody, "musttail call tailcc i32 %")
+        && Contains(dispatchBody, "ret i32");
+}
+
 // Ported from CompilerPipelineEmitLlvmTests.ConstGlobalDerivedLoadsEmitInvariantLoadMetadataWithoutTaggingLocalLoads.
 internal fn bool ConstGlobalDerivedLoadsEmitInvariantLoadMetadataWithoutTaggingLocalLoadsImpl()
 {

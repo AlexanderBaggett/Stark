@@ -267,6 +267,7 @@ public struct DeclItem
     u32[0 max] NameToken;
     u32[0 max] StartToken;
     u32[0 max] EndToken;
+    bool IsTailCallable;
 
     DeclItem()
     {
@@ -275,6 +276,7 @@ public struct DeclItem
         self.NameToken = 0;
         self.StartToken = 0;
         self.EndToken = 0;
+        self.IsTailCallable = false;
     }
 }
 
@@ -285,6 +287,7 @@ public struct DeclarationList
     internal dynamic u32[0 max] NameTokens;
     internal dynamic u32[0 max] StartTokens;
     internal dynamic u32[0 max] EndTokens;
+    internal dynamic u32[0 max] TailCallableFlags;
 
     DeclarationList()
     {
@@ -293,6 +296,7 @@ public struct DeclarationList
         self.NameTokens = new();
         self.StartTokens = new();
         self.EndTokens = new();
+        self.TailCallableFlags = new();
     }
 
     public inline finite law u64[0 2 ** 63 - 1] Count(borrow DeclarationList self)
@@ -325,6 +329,11 @@ public struct DeclarationList
             {
                 item.EndToken = self.EndTokens[index];
             }
+
+            if (index < self.TailCallableFlags.Length)
+            {
+                item.IsTailCallable = self.TailCallableFlags[index] != 0;
+            }
         }
 
         return item;
@@ -336,9 +345,16 @@ public struct DeclarationList
             || !self.KeywordTokens.TryReserve(1)
             || !self.NameTokens.TryReserve(1)
             || !self.StartTokens.TryReserve(1)
-            || !self.EndTokens.TryReserve(1))
+            || !self.EndTokens.TryReserve(1)
+            || !self.TailCallableFlags.TryReserve(1))
         {
             return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        }
+
+        stack mut u32[0 max] tailFlag = 0;
+        if (item.IsTailCallable)
+        {
+            tailFlag = 1;
         }
 
         init self.Kinds[self.Kinds.Length] = item.Kind;
@@ -346,6 +362,7 @@ public struct DeclarationList
         init self.NameTokens[self.NameTokens.Length] = item.NameToken;
         init self.StartTokens[self.StartTokens.Length] = item.StartToken;
         init self.EndTokens[self.EndTokens.Length] = item.EndToken;
+        init self.TailCallableFlags[self.TailCallableFlags.Length] = tailFlag;
         return System.Memory.MemoryStatus.Ok;
     }
 }
@@ -505,9 +522,20 @@ finite law u32[0 max] FindDeclarationName(borrow TokenStream stream, Declaration
     return nameToken;
 }
 
+finite law bool IsContextualTailToken(borrow TokenStream stream, u32[0 max] token)
+{
+    return stream.ContextualKindAt((u64[0 2 ** 63 - 1])token) == ContextualKeywordKind.Tail;
+}
+
+finite law bool IsContextualDeadOnReturnToken(borrow TokenStream stream, u32[0 max] token)
+{
+    return stream.ContextualKindAt((u64[0 2 ** 63 - 1])token) == ContextualKeywordKind.DeadOnReturn;
+}
+
 // True for a keyword that can lead a declaration before its kind keyword
-// (visibility plus function modifiers).
-finite law bool IsDeclarationModifier(TokenKind kind)
+// (visibility plus function modifiers), excluding contextual `tail` which is
+// recognized by token position rather than by `TokenKind`.
+finite law bool IsDeclarationModifierKind(TokenKind kind)
 {
     switch (kind)
     {
@@ -542,6 +570,32 @@ finite law bool IsDeclarationModifier(TokenKind kind)
         default:
             return false;
     }
+}
+
+finite law bool IsDeclarationModifierAt(borrow TokenStream stream, u32[0 max] token)
+{
+    if (IsContextualTailToken(stream, token))
+    {
+        return true;
+    }
+
+    return IsDeclarationModifierKind(stream.KindAt((u64[0 2 ** 63 - 1])token));
+}
+
+finite law bool ModifierSpanHasTail(borrow TokenStream stream, u32[0 max] start, u32[0 max] endExclusive)
+{
+    stack mut u32[0 max] scan = start;
+    while willexit (scan < endExclusive)
+    {
+        if (IsContextualTailToken(stream, scan))
+        {
+            return true;
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return false;
 }
 
 // Maps a declaration keyword to its `DeclarationKind`, or `Unknown`.
@@ -633,7 +687,7 @@ public fn ParseResult<DeclarationList> ParseDeclarations(borrow TokenStream stre
     while willexit (stream.KindAt((u64[0 2 ** 63 - 1])index) != TokenKind.EndOfFile)
     {
         stack mut u32[0 max] cursor = index;
-        while willexit (IsDeclarationModifier(stream.KindAt((u64[0 2 ** 63 - 1])cursor)))
+        while willexit (IsDeclarationModifierAt(stream, cursor))
         {
             cursor = (u32[0 max])(cursor + 1);
         }
@@ -651,6 +705,7 @@ public fn ParseResult<DeclarationList> ParseDeclarations(borrow TokenStream stre
         item.NameToken = FindDeclarationName(stream, kind, cursor);
         item.StartToken = index;
         item.EndToken = endToken;
+        item.IsTailCallable = kind == DeclarationKind.Function && ModifierSpanHasTail(stream, index, cursor);
         switch (list.Append(item))
         {
             case System.Memory.MemoryStatus.Err(var appendError):
@@ -1354,7 +1409,7 @@ public fn ParseResult<FieldList> ParseStructFields(borrow TokenStream stream, u3
         stack u32[0 max] memberEnd = SkipDeclarationBody(stream, memberStart);
 
         stack mut u32[0 max] cursor = memberStart;
-        while willexit (IsDeclarationModifier(stream.KindAt((u64[0 2 ** 63 - 1])cursor)))
+        while willexit (IsDeclarationModifierAt(stream, cursor))
         {
             cursor = (u32[0 max])(cursor + 1);
         }
@@ -1428,6 +1483,7 @@ public fn ParseResult<FieldList> ParseStructFields(borrow TokenStream stream, u3
 public struct FunctionSignature
 {
     u32[0 max] NameToken;
+    bool IsTailCallable;
     // The head identifier token of the return type when it names a user type
     // (e.g. `Foo` in `fn Foo g()` / `List` in `fn List<u32> g()`); 0 when the
     // return type is a built-in (`fn void f()` / `fn i32 n()`).
@@ -1436,6 +1492,7 @@ public struct FunctionSignature
     // return type (a built-in like `void`/`i32` or a user-type identifier), used
     // to classify the return type (e.g. to detect a `void` return).
     u32[0 max] ReturnTypeToken;
+    bool ReturnTypeIsTailCallable;
     internal dynamic u32[0 max] ParamNameTokens;
     // Per-parameter type head identifier (0 for a built-in parameter type), kept
     // in lockstep with `ParamNameTokens`.
@@ -1444,20 +1501,35 @@ public struct FunctionSignature
     // type token like `i32`/`bool`, or a user-type identifier), used to classify
     // the parameter's value type. In lockstep with `ParamNameTokens`.
     internal dynamic u32[0 max] ParamTypeTokens;
+    internal dynamic u32[0 max] ParamTypeTailCallableFlags;
+    u32[0 max] ReturnTypeDeadOnReturnArgumentCount;
+    internal dynamic u32[0 max] ParamTypeDeadOnReturnArgumentCounts;
+    internal dynamic u32[0 max] DeadOnReturnParamNameTokens;
 
     FunctionSignature()
     {
         self.NameToken = 0;
+        self.IsTailCallable = false;
         self.ReturnTypeHead = 0;
         self.ReturnTypeToken = 0;
+        self.ReturnTypeIsTailCallable = false;
         self.ParamNameTokens = new();
         self.ParamTypeHeads = new();
         self.ParamTypeTokens = new();
+        self.ParamTypeTailCallableFlags = new();
+        self.ReturnTypeDeadOnReturnArgumentCount = 0;
+        self.ParamTypeDeadOnReturnArgumentCounts = new();
+        self.DeadOnReturnParamNameTokens = new();
     }
 
     public inline finite law u32[0 max] Name(borrow FunctionSignature self)
     {
         return self.NameToken;
+    }
+
+    public inline finite law bool TailCallable(borrow FunctionSignature self)
+    {
+        return self.IsTailCallable;
     }
 
     // The return type's head identifier token (0 for a built-in return type).
@@ -1471,6 +1543,16 @@ public struct FunctionSignature
     public inline finite law u32[0 max] ReturnTypeTokenAt(borrow FunctionSignature self)
     {
         return self.ReturnTypeToken;
+    }
+
+    public inline finite law bool ReturnTypeTailCallable(borrow FunctionSignature self)
+    {
+        return self.ReturnTypeIsTailCallable;
+    }
+
+    public inline finite law u32[0 max] ReturnTypeDeadOnReturnParamCount(borrow FunctionSignature self)
+    {
+        return self.ReturnTypeDeadOnReturnArgumentCount;
     }
 
     public inline finite law u64[0 2 ** 63 - 1] ParamCount(borrow FunctionSignature self)
@@ -1512,6 +1594,55 @@ public struct FunctionSignature
         }
 
         return token;
+    }
+
+    public law bool ParamTypeTailCallable(borrow FunctionSignature self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut bool isTail = false;
+        if (index < self.ParamTypeTailCallableFlags.Length)
+        {
+            isTail = self.ParamTypeTailCallableFlags[index] != 0;
+        }
+
+        return isTail;
+    }
+
+    public law u32[0 max] ParamTypeDeadOnReturnParamCount(borrow FunctionSignature self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] count = 0;
+        if (index < self.ParamTypeDeadOnReturnArgumentCounts.Length)
+        {
+            count = self.ParamTypeDeadOnReturnArgumentCounts[index];
+        }
+
+        return count;
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] DeadOnReturnParamCount(borrow FunctionSignature self)
+    {
+        return self.DeadOnReturnParamNameTokens.Length;
+    }
+
+    public law u32[0 max] DeadOnReturnParamNameAt(borrow FunctionSignature self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.DeadOnReturnParamNameTokens.Length)
+        {
+            token = self.DeadOnReturnParamNameTokens[index];
+        }
+
+        return token;
+    }
+
+    internal fn System.Memory.MemoryStatus AppendDeadOnReturnParamName(mut borrow FunctionSignature self, u32[0 max] token)
+    {
+        if (!self.DeadOnReturnParamNameTokens.TryReserve(1))
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        }
+
+        init self.DeadOnReturnParamNameTokens[self.DeadOnReturnParamNameTokens.Length] = token;
+        return System.Memory.MemoryStatus.Ok;
     }
 
     // Appends the parameter whose tokens are `[start, end)`: its name is the last
@@ -1568,9 +1699,19 @@ public struct FunctionSignature
             return System.Memory.MemoryStatus.Ok;
         }
 
+        stack mut u32[0 max] tailFlag = 0;
+        if (TypeSpanContainsTailCallableSignature(stream, start, nameToken))
+        {
+            tailFlag = 1;
+        }
+
+        stack u32[0 max] deadOnReturnArgumentCount = TypeSpanDeadOnReturnArgumentCount(stream, start, nameToken);
+
         if (!self.ParamNameTokens.TryReserve(1)
             || !self.ParamTypeHeads.TryReserve(1)
-            || !self.ParamTypeTokens.TryReserve(1))
+            || !self.ParamTypeTokens.TryReserve(1)
+            || !self.ParamTypeTailCallableFlags.TryReserve(1)
+            || !self.ParamTypeDeadOnReturnArgumentCounts.TryReserve(1))
         {
             return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
         }
@@ -1578,8 +1719,272 @@ public struct FunctionSignature
         init self.ParamNameTokens[self.ParamNameTokens.Length] = nameToken;
         init self.ParamTypeHeads[self.ParamTypeHeads.Length] = prevIdentifier;
         init self.ParamTypeTokens[self.ParamTypeTokens.Length] = typeToken;
+        init self.ParamTypeTailCallableFlags[self.ParamTypeTailCallableFlags.Length] = tailFlag;
+        init self.ParamTypeDeadOnReturnArgumentCounts[self.ParamTypeDeadOnReturnArgumentCounts.Length] = deadOnReturnArgumentCount;
         return System.Memory.MemoryStatus.Ok;
     }
+}
+
+finite law bool TokenCanStartCallableFunctionKind(TokenKind kind)
+{
+    return kind == TokenKind.Fn || kind == TokenKind.Finite || kind == TokenKind.Law;
+}
+
+finite law bool TypeSpanContainsTailCallableSignature(borrow TokenStream stream, u32[0 max] start, u32[0 max] endExclusive)
+{
+    stack mut u32[0 max] scan = start;
+    while willexit (scan < endExclusive)
+    {
+        if (IsContextualTailToken(stream, scan)
+            && TokenCanStartCallableFunctionKind(stream.KindAt((u64[0 2 ** 63 - 1])(scan + 1))))
+        {
+            return true;
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return false;
+}
+
+finite u32[0 max] DeadOnReturnArgumentCountInCall(borrow TokenStream stream, u32[0 max] lparen)
+{
+    stack mut u32[0 max] count = 0;
+    stack mut u32[0 max] scan = (u32[0 max])(lparen + 1);
+    stack mut u32[0 max] depth = 0;
+    stack mut u64[0 2 ** 63 - 1] guard = stream.Count();
+    while willexit (guard > 0)
+    {
+        guard = (u64[0 2 ** 63 - 1])(guard - 1);
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (kind == TokenKind.EndOfFile)
+        {
+            return count;
+        }
+
+        if (kind == TokenKind.RParen && depth == 0)
+        {
+            return count;
+        }
+
+        if (kind == TokenKind.LParen || kind == TokenKind.LBrack
+            || kind == TokenKind.LBrace || kind == TokenKind.Lt)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == TokenKind.RParen || kind == TokenKind.RBrack
+            || kind == TokenKind.RBrace || kind == TokenKind.Gt)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+        else if (kind == TokenKind.Identifier && depth == 0)
+        {
+            count = (u32[0 max])(count + 1);
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return count;
+}
+
+finite u32[0 max] TypeSpanDeadOnReturnArgumentCount(borrow TokenStream stream, u32[0 max] start, u32[0 max] endExclusive)
+{
+    stack mut u32[0 max] count = 0;
+    stack mut u32[0 max] scan = start;
+    while willexit (scan < endExclusive)
+    {
+        if (IsContextualDeadOnReturnToken(stream, scan)
+            && stream.KindAt((u64[0 2 ** 63 - 1])(scan + 1)) == TokenKind.LParen)
+        {
+            count = (u32[0 max])(count + DeadOnReturnArgumentCountInCall(stream, (u32[0 max])(scan + 1)));
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return count;
+}
+
+internal fn System.Memory.MemoryStatus AppendDeadOnReturnArgumentTokensFromCall(
+    mut borrow FunctionSignature signature,
+    borrow TokenStream stream,
+    u32[0 max] lparen)
+{
+    stack mut u32[0 max] scan = (u32[0 max])(lparen + 1);
+    stack mut u32[0 max] depth = 0;
+    stack mut u64[0 2 ** 63 - 1] guard = stream.Count();
+    while willexit (guard > 0)
+    {
+        guard = (u64[0 2 ** 63 - 1])(guard - 1);
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (kind == TokenKind.EndOfFile)
+        {
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        if (kind == TokenKind.RParen && depth == 0)
+        {
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        if (kind == TokenKind.LParen || kind == TokenKind.LBrack
+            || kind == TokenKind.LBrace || kind == TokenKind.Lt)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == TokenKind.RParen || kind == TokenKind.RBrack
+            || kind == TokenKind.RBrace || kind == TokenKind.Gt)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+        else if (kind == TokenKind.Identifier && depth == 0)
+        {
+            switch (signature.AppendDeadOnReturnParamName(scan))
+            {
+                case System.Memory.MemoryStatus.Err(var appendError):
+                    return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus CollectDeadOnReturnContracts(
+    mut borrow FunctionSignature signature,
+    borrow TokenStream stream,
+    u32[0 max] start)
+{
+    stack mut u32[0 max] scan = start;
+    stack mut u32[0 max] depth = 0;
+    stack mut u64[0 2 ** 63 - 1] guard = stream.Count();
+    while willexit (guard > 0)
+    {
+        guard = (u64[0 2 ** 63 - 1])(guard - 1);
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (kind == TokenKind.EndOfFile)
+        {
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        if (depth == 0 && (kind == TokenKind.LBrace || kind == TokenKind.Semi))
+        {
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        if (depth == 0
+            && IsContextualDeadOnReturnToken(stream, scan)
+            && stream.KindAt((u64[0 2 ** 63 - 1])(scan + 1)) == TokenKind.LParen)
+        {
+            switch (AppendDeadOnReturnArgumentTokensFromCall(signature, stream, (u32[0 max])(scan + 1)))
+            {
+                case System.Memory.MemoryStatus.Err(var appendError):
+                    return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+
+        if (kind == TokenKind.LParen || kind == TokenKind.LBrack
+            || kind == TokenKind.LBrace || kind == TokenKind.Lt)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == TokenKind.RParen || kind == TokenKind.RBrack
+            || kind == TokenKind.RBrace || kind == TokenKind.Gt)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+finite law u32[0 max] MatchingOpenParenBefore(borrow TokenStream stream, u32[0 max] closeParen)
+{
+    stack mut u32[0 max] cursor = closeParen;
+    stack mut u32[0 max] depth = 0;
+    while willexit (cursor > 0)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])cursor);
+        if (kind == TokenKind.RParen)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == TokenKind.LParen)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+                if (depth == 0)
+                {
+                    return cursor;
+                }
+            }
+        }
+
+        cursor = (u32[0 max])(cursor - 1);
+    }
+
+    return closeParen;
+}
+
+finite law bool FunctionHasTailModifierBefore(borrow TokenStream stream, u32[0 max] fnKeyword)
+{
+    if (fnKeyword == 0)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] cursor = fnKeyword;
+    stack mut u64[0 2 ** 63 - 1] guard = stream.Count();
+    while willexit (cursor > 0 && guard > 0)
+    {
+        guard = (u64[0 2 ** 63 - 1])(guard - 1);
+        stack u32[0 max] previous = (u32[0 max])(cursor - 1);
+        stack TokenKind previousKind = stream.KindAt((u64[0 2 ** 63 - 1])previous);
+
+        if (IsContextualTailToken(stream, previous))
+        {
+            return true;
+        }
+
+        if (previousKind == TokenKind.RParen)
+        {
+            stack u32[0 max] open = MatchingOpenParenBefore(stream, previous);
+            if (open > 0 && stream.KindAt((u64[0 2 ** 63 - 1])(open - 1)) == TokenKind.Ffi)
+            {
+                cursor = (u32[0 max])(open - 1);
+                continue;
+            }
+
+            return false;
+        }
+
+        if (IsDeclarationModifierKind(previousKind))
+        {
+            cursor = previous;
+            continue;
+        }
+
+        return false;
+    }
+
+    return false;
 }
 
 // Parses the signature of the function whose `fn` keyword is at `fnKeyword`: the
@@ -1590,6 +1995,7 @@ public struct FunctionSignature
 public fn ParseResult<FunctionSignature> ParseFunctionSignature(borrow TokenStream stream, u32[0 max] fnKeyword)
 {
     stack mut FunctionSignature signature = new();
+    signature.IsTailCallable = FunctionHasTailModifierBefore(stream, fnKeyword);
     stack mut u32[0 max] index = (u32[0 max])(fnKeyword + 1);
     stack mut u32[0 max] lastIdentifier = 0;
     stack mut u32[0 max] prevIdentifier = 0;
@@ -1646,6 +2052,8 @@ public fn ParseResult<FunctionSignature> ParseFunctionSignature(borrow TokenStre
         signature.NameToken = lastIdentifier;
         signature.ReturnTypeHead = prevIdentifier;
         signature.ReturnTypeToken = returnTypeToken;
+        signature.ReturnTypeIsTailCallable = TypeSpanContainsTailCallableSignature(stream, (u32[0 max])(fnKeyword + 1), lastIdentifier);
+        signature.ReturnTypeDeadOnReturnArgumentCount = TypeSpanDeadOnReturnArgumentCount(stream, (u32[0 max])(fnKeyword + 1), lastIdentifier);
     }
 
     index = (u32[0 max])(index + 1);
@@ -1694,6 +2102,16 @@ public fn ParseResult<FunctionSignature> ParseFunctionSignature(borrow TokenStre
         index = (u32[0 max])(index + 1);
     }
 
+    if (stream.KindAt((u64[0 2 ** 63 - 1])index) == TokenKind.RParen)
+    {
+        switch (CollectDeadOnReturnContracts(signature, stream, (u32[0 max])(index + 1)))
+        {
+            case System.Memory.MemoryStatus.Err(var collectError):
+                return ParseResult<FunctionSignature>.Err(ParseError.OutOfMemory);
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
     return ParseResult<FunctionSignature>.Ok(signature);
 }
 
@@ -1701,6 +2119,7 @@ public fn ParseResult<FunctionSignature> ParseFunctionSignature(borrow TokenStre
 public enum StatementKind
 {
     Return,
+    Become,
     If,
     While,
     For,
@@ -2012,6 +2431,8 @@ finite law StatementKind ClassifyStatementKind(TokenKind kind)
     {
         case TokenKind.Return:
             return StatementKind.Return;
+        case TokenKind.Become:
+            return StatementKind.Become;
         case TokenKind.If:
             return StatementKind.If;
         case TokenKind.While:
@@ -2140,6 +2561,10 @@ public finite law bool IsTypeStartToken(TokenKind kind)
         case TokenKind.AsciiOwned:
             return true;
         case TokenKind.UnicodeOwned:
+            return true;
+        case TokenKind.Fnptr:
+            return true;
+        case TokenKind.Closure:
             return true;
         default:
             return false;
@@ -2888,11 +3313,11 @@ internal fn System.Memory.MemoryStatus ParseBlock(borrow TokenStream stream, mut
         stack mut u32[0 max] localName = 0;
         stack mut u32[0 max] localType = 0;
         stack mut u32[0 max] localHead = 0;
-        if (kind == StatementKind.Return
+        if ((kind == StatementKind.Return || kind == StatementKind.Become)
             && stream.KindAt((u64[0 2 ** 63 - 1])(statementStart + 1)) != TokenKind.Semi)
         {
-            stack ExprParse returned = ParseAssignment(stream, list.Expressions, (u32[0 max])(statementStart + 1));
-            exprRoot = returned.Node;
+            stack ExprParse terminalExpression = ParseAssignment(stream, list.Expressions, (u32[0 max])(statementStart + 1));
+            exprRoot = terminalExpression.Node;
         }
         else if (kind == StatementKind.Expression)
         {
@@ -3136,6 +3561,12 @@ public enum ExprKind
     Member,
     Call,
     Index,
+    // `New` carries the `new` token. `Left` is the optional named type head
+    // node, `Right` is the first flat argument slot, and `Aux` is the argument
+    // count. `StorageSelector` represents selector tokens such as `arena` in
+    // `new(arena, ...)`; they are syntax selectors, not value identifiers.
+    New,
+    StorageSelector,
     // `Assign` carries the assignment-operator token, the assignment target in
     // `Left`, and the assigned value in `Right`.
     Assign,
@@ -3156,11 +3587,12 @@ public struct ExprTree
     internal dynamic u32[0 max] Tokens;
     internal dynamic u32[0 max] Lefts;
     internal dynamic u32[0 max] Rights;
-    // Per-node auxiliary slot: for a `Call` node it holds the argument count;
-    // unused (0) for other kinds.
+    // Per-node auxiliary slot: for `Call` and `New` nodes it holds the argument
+    // count; for `Conditional` it holds the else-branch node; unused (0) for
+    // other kinds.
     internal dynamic u32[0 max] Aux;
-    // Flat argument list: a `Call` node's `Right` is the 1-based index of its
-    // first argument node here, and `Aux` is how many it spans.
+    // Flat argument list: a `Call` or `New` node's `Right` is the 1-based index
+    // of its first argument node here, and `Aux` is how many it spans.
     internal dynamic u32[0 max] ArgNodes;
     u32[0 max] Root;
 
@@ -3276,8 +3708,8 @@ public struct ExprTree
         return child;
     }
 
-    // The 1-based node index of `Call` node `node`'s argument `arg`, or 0 when
-    // out of range.
+    // The 1-based node index of `Call`/`New` node `node`'s argument `arg`, or 0
+    // when out of range.
     public law u32[0 max] CallArgAt(borrow ExprTree self, u32[0 max] node, u32[0 max] arg)
     {
         stack mut u32[0 max] result = 0;
@@ -3402,6 +3834,87 @@ struct IndexBuffer
     }
 }
 
+// A parsed parenthesized argument list. `Start` is the first flat argument slot
+// in the expression tree, `Count` is the number of argument nodes, and `Pos` is
+// the token position after the closing `)` when present.
+struct ArgumentParse
+{
+    u32[0 max] Start;
+    u32[0 max] Count;
+    u32[0 max] Pos;
+
+    ArgumentParse()
+    {
+        self.Start = 0;
+        self.Count = 0;
+        self.Pos = 0;
+    }
+}
+
+// Parses a comma-separated argument list starting at `lparen`. When
+// `allowStorageSelector` is true, a leading `arena` token is captured as a
+// storage selector node so `new(arena, ...)` remains distinguishable from a
+// value call argument.
+fn ArgumentParse ParseArgumentList(borrow TokenStream stream, mut borrow ExprTree tree, u32[0 max] lparen, bool allowStorageSelector)
+{
+    stack mut ArgumentParse result = new();
+    stack mut IndexBuffer argBuffer = new();
+    stack mut u32[0 max] argCursor = (u32[0 max])(lparen + 1);
+    stack mut u64[0 2 ** 63 - 1] argGuard = stream.Count();
+    while willexit (argGuard > 0)
+    {
+        argGuard = (u64[0 2 ** 63 - 1])(argGuard - 1);
+        stack TokenKind argKind = stream.KindAt((u64[0 2 ** 63 - 1])argCursor);
+        if (argKind == TokenKind.RParen || argKind == TokenKind.EndOfFile)
+        {
+            break;
+        }
+
+        if (argKind == TokenKind.Comma)
+        {
+            argCursor = (u32[0 max])(argCursor + 1);
+            continue;
+        }
+
+        stack mut u32[0 max] argNode = 0;
+        if (allowStorageSelector && argKind == TokenKind.Arena && argBuffer.Length() == 0)
+        {
+            argNode = tree.AddNode(ExprKind.StorageSelector, argCursor, 0, 0);
+            argCursor = (u32[0 max])(argCursor + 1);
+        }
+        else
+        {
+            stack ExprParse arg = ParseBinaryExpr(stream, tree, argCursor, 1);
+            argNode = arg.Node;
+            argCursor = arg.Pos;
+        }
+
+        switch (argBuffer.Push(argNode))
+        {
+            default:
+        }
+    }
+
+    for willexit (stack mut u64[0 2 ** 63 - 1] i = 0; i < argBuffer.Length(); i += 1)
+    {
+        stack u32[0 max] argIndex = tree.AddArg(argBuffer.At(i));
+        if (result.Count == 0)
+        {
+            result.Start = argIndex;
+        }
+
+        result.Count = (u32[0 max])(result.Count + 1);
+    }
+
+    result.Pos = argCursor;
+    if (stream.KindAt((u64[0 2 ** 63 - 1])result.Pos) == TokenKind.RParen)
+    {
+        result.Pos = (u32[0 max])(result.Pos + 1);
+    }
+
+    return result;
+}
+
 // Binary operator precedence (higher binds tighter); 0 means "not a binary
 // operator". Mirrors the C-like precedence ladder in Stark.g4.
 finite law u32[0 max] BinaryPrecedence(TokenKind kind)
@@ -3473,8 +3986,36 @@ finite law bool IsRightAssociative(TokenKind kind)
     }
 }
 
-// Parses a primary expression at `pos`: a literal, identifier, or parenthesized
-// expression. Unknown tokens produce a `0` (error) node and advance one token.
+fn ExprParse ParseNewExpr(borrow TokenStream stream, mut borrow ExprTree tree, u32[0 max] pos)
+{
+    stack mut ExprParse result = new();
+    stack mut u32[0 max] cursor = (u32[0 max])(pos + 1);
+    stack mut u32[0 max] typeNode = 0;
+    stack mut u32[0 max] argStart = 0;
+    stack mut u32[0 max] argCount = 0;
+
+    if (stream.KindAt((u64[0 2 ** 63 - 1])cursor) == TokenKind.Identifier)
+    {
+        typeNode = tree.AddNode(ExprKind.Identifier, cursor, 0, 0);
+        cursor = (u32[0 max])(cursor + 1);
+    }
+
+    if (stream.KindAt((u64[0 2 ** 63 - 1])cursor) == TokenKind.LParen)
+    {
+        stack ArgumentParse args = ParseArgumentList(stream, tree, cursor, true);
+        argStart = args.Start;
+        argCount = args.Count;
+        cursor = args.Pos;
+    }
+
+    result.Node = tree.AddRaw(ExprKind.New, pos, typeNode, argStart, argCount);
+    result.Pos = cursor;
+    return result;
+}
+
+// Parses a primary expression at `pos`: a literal, identifier, `new`, or
+// parenthesized expression. Unknown tokens produce a `0` (error) node and
+// advance one token.
 fn ExprParse ParsePrimaryExpr(borrow TokenStream stream, mut borrow ExprTree tree, u32[0 max] pos)
 {
     stack mut ExprParse result = new();
@@ -3503,6 +4044,10 @@ fn ExprParse ParsePrimaryExpr(borrow TokenStream stream, mut borrow ExprTree tre
     {
         result.Node = tree.AddNode(ExprKind.Identifier, pos, 0, 0);
         result.Pos = (u32[0 max])(pos + 1);
+    }
+    else if (kind == TokenKind.New)
+    {
+        result = ParseNewExpr(stream, tree, pos);
     }
     else if (kind == TokenKind.LParen)
     {
@@ -3546,58 +4091,9 @@ fn ExprParse ParsePostfixExpr(borrow TokenStream stream, mut borrow ExprTree tre
         }
         else if (kind == TokenKind.LParen)
         {
-            // Collect this call's argument node indices in a local buffer first,
-            // then append them contiguously to the tree's flat argument list, so
-            // a nested call's arguments (appended during parsing) cannot
-            // interleave with this call's.
-            stack mut IndexBuffer argBuffer = new();
-            stack mut u32[0 max] argCursor = (u32[0 max])(cursor + 1);
-            stack mut u64[0 2 ** 63 - 1] argGuard = stream.Count();
-            while willexit (argGuard > 0)
-            {
-                argGuard = (u64[0 2 ** 63 - 1])(argGuard - 1);
-                stack TokenKind argKind = stream.KindAt((u64[0 2 ** 63 - 1])argCursor);
-                if (argKind == TokenKind.RParen || argKind == TokenKind.EndOfFile)
-                {
-                    break;
-                }
-
-                if (argKind == TokenKind.Comma)
-                {
-                    argCursor = (u32[0 max])(argCursor + 1);
-                    continue;
-                }
-
-                stack ExprParse arg = ParseBinaryExpr(stream, tree, argCursor, 1);
-                switch (argBuffer.Push(arg.Node))
-                {
-                    default:
-                }
-
-                argCursor = arg.Pos;
-            }
-
-            stack mut u32[0 max] argStart = 0;
-            stack mut u32[0 max] argCount = 0;
-            for willexit (stack mut u64[0 2 ** 63 - 1] i = 0; i < argBuffer.Length(); i += 1)
-            {
-                stack u32[0 max] argIndex = tree.AddArg(argBuffer.At(i));
-                if (argCount == 0)
-                {
-                    argStart = argIndex;
-                }
-
-                argCount = (u32[0 max])(argCount + 1);
-            }
-
-            stack mut u32[0 max] afterParen = argCursor;
-            if (stream.KindAt((u64[0 2 ** 63 - 1])afterParen) == TokenKind.RParen)
-            {
-                afterParen = (u32[0 max])(afterParen + 1);
-            }
-
-            node = tree.AddRaw(ExprKind.Call, cursor, node, argStart, argCount);
-            cursor = afterParen;
+            stack ArgumentParse args = ParseArgumentList(stream, tree, cursor, false);
+            node = tree.AddRaw(ExprKind.Call, cursor, node, args.Start, args.Count);
+            cursor = args.Pos;
         }
         else if (kind == TokenKind.LBrack)
         {

@@ -230,7 +230,10 @@ internal static class CallableValueFacts
             returnType,
             parameters,
             SourceName: lambda.FunctionName,
-            Kind: lambda.FunctionPointerType.FunctionPointerKind ?? StarkFunctionKind.Fn);
+            Kind: lambda.FunctionPointerType.FunctionPointerKind ?? StarkFunctionKind.Fn,
+            PointeeDeadOnReturnParameterNames: MapFunctionPointerParameterNamesToLambdaParameterNames(
+                lambda.FunctionPointerType.FunctionPointerPointeeDeadOnReturnParameterNames,
+                lambda.ParameterNames));
     }
 
     public static TypedFunctionSignature BuildClosureLambdaSignature(ClosureLambdaTypingRecord lambda)
@@ -258,7 +261,10 @@ internal static class CallableValueFacts
             returnType,
             parameters.ToArray(),
             SourceName: lambda.FunctionName,
-            Kind: lambda.ClosureType.ClosureFunctionKind ?? StarkFunctionKind.Fn);
+            Kind: lambda.ClosureType.ClosureFunctionKind ?? StarkFunctionKind.Fn,
+            PointeeDeadOnReturnParameterNames: MapFunctionPointerParameterNamesToLambdaParameterNames(
+                lambda.ClosureType.ClosurePointeeDeadOnReturnParameterNames,
+                lambda.ParameterNames));
     }
 
     public static TypedFunctionSignature BuildClosureFunctionAdapterSignature(ClosureFunctionPromotionTypingRecord adapter)
@@ -284,7 +290,10 @@ internal static class CallableValueFacts
             returnType,
             parameters,
             SourceName: adapter.AdapterFunctionName,
-            Kind: adapter.ClosureType.ClosureFunctionKind ?? StarkFunctionKind.Fn);
+            Kind: adapter.ClosureType.ClosureFunctionKind ?? StarkFunctionKind.Fn,
+            PointeeDeadOnReturnParameterNames: ShiftPointeeDeadOnReturnParameters(
+                adapter.ClosureType.ClosurePointeeDeadOnReturnParameterNames ?? [],
+                offset: 1));
     }
 
     public static TypedFunctionSignature BuildClosureDropSignature(string functionName)
@@ -419,7 +428,11 @@ internal static class CallableValueFacts
             ShiftDisjointGroups(closureType.ClosureDisjointParameterGroups ?? [], offset: 1),
             ShiftOverlapGroups(closureType.ClosureOverlapParameterGroups ?? [], offset: 1),
             ShiftSameGroups(closureType.ClosureSameParameterGroups ?? [], offset: 1),
-            rawPointerBounds);
+            rawPointerBounds,
+            isTailCallable: closureType.ClosureIsTailCallable,
+            pointeeDeadOnReturnParameterNames: ShiftPointeeDeadOnReturnParameters(
+                closureType.ClosurePointeeDeadOnReturnParameterNames ?? [],
+                offset: 1));
     }
 
     private static IReadOnlyList<ParameterDisjointGroup> ShiftDisjointGroups(
@@ -453,6 +466,16 @@ internal static class CallableValueFacts
     {
         return groups
             .Select(group => new ParameterSameGroup(group.ParameterNames.Select(name => ShiftSyntheticArgumentName(name, offset)).ToArray()))
+            .ToArray();
+    }
+
+    private static IReadOnlyList<string> ShiftPointeeDeadOnReturnParameters(
+        IReadOnlyList<string> parameters,
+        int offset)
+    {
+        return parameters
+            .Select(name => ShiftSyntheticArgumentName(name, offset))
+            .Distinct(StringComparer.Ordinal)
             .ToArray();
     }
 
@@ -495,28 +518,55 @@ internal static class CallableValueFacts
         return parameterNames[parameterIndex];
     }
 
+    private static IReadOnlyList<string> MapFunctionPointerParameterNamesToLambdaParameterNames(
+        IReadOnlyList<string>? names,
+        IReadOnlyList<string> parameterNames)
+    {
+        return (names ?? [])
+            .Select(name => name.StartsWith("arg", StringComparison.Ordinal)
+                && int.TryParse(name[3..], out var parameterIndex)
+                && parameterIndex >= 0
+                && parameterIndex < parameterNames.Count
+                    ? parameterNames[parameterIndex]
+                    : name)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+    }
+
     public static FunctionEffectProfile BuildLambdaEffectProfile(LambdaTypingRecord lambda)
     {
         var kind = lambda.FunctionPointerType.FunctionPointerKind ?? StarkFunctionKind.Fn;
-        return BuildLambdaEffectProfile(lambda.FunctionName, kind);
+        return BuildLambdaEffectProfile(
+            lambda.FunctionName,
+            kind,
+            lambda.FunctionPointerType.FunctionPointerIsTailCallable);
     }
 
     public static FunctionEffectProfile BuildClosureLambdaEffectProfile(ClosureLambdaTypingRecord lambda)
     {
         var kind = lambda.ClosureType.ClosureFunctionKind ?? StarkFunctionKind.Fn;
-        return BuildLambdaEffectProfile(lambda.FunctionName, kind);
+        return BuildLambdaEffectProfile(
+            lambda.FunctionName,
+            kind,
+            lambda.ClosureType.ClosureIsTailCallable);
     }
 
     public static FunctionEffectProfile BuildClosureFunctionAdapterEffectProfile(ClosureFunctionPromotionTypingRecord adapter)
     {
         var kind = adapter.ClosureType.ClosureFunctionKind ?? adapter.Signature.Kind;
-        return BuildLambdaEffectProfile(adapter.AdapterFunctionName, kind) with
+        return BuildLambdaEffectProfile(
+            adapter.AdapterFunctionName,
+            kind,
+            adapter.ClosureType.ClosureIsTailCallable) with
         {
             InlinePreference = InlinePreference.Inline
         };
     }
 
-    private static FunctionEffectProfile BuildLambdaEffectProfile(string functionName, StarkFunctionKind kind)
+    private static FunctionEffectProfile BuildLambdaEffectProfile(
+        string functionName,
+        StarkFunctionKind kind,
+        bool isTailCallable)
     {
         var isLaw = FunctionKindFacts.IsLaw(kind);
         var isFinite = FunctionKindFacts.IsFinite(kind);
@@ -531,7 +581,8 @@ internal static class CallableValueFacts
             NoUnwind: true,
             WillReturn: isFinite,
             MustProgress: isFinite,
-            UseFastCallingConvention: true,
+            UseFastCallingConvention: !isTailCallable,
+            IsTailCallable: isTailCallable,
             IsFfi: false,
             IsVarargs: false,
             IsHot: false,
@@ -558,7 +609,8 @@ public sealed record FunctionModifierSet(
     bool IsVarargs,
     bool IsStrictFp,
     bool IsUnsafe = false,
-    StarkFfiAbi? FfiAbi = null);
+    StarkFfiAbi? FfiAbi = null,
+    bool IsTailCallable = false);
 
 public enum StarkAsmArchitecture
 {
@@ -683,6 +735,7 @@ public sealed record FunctionDeclarationModel(
     IReadOnlyList<ParameterDisjointGroup>? DisjointParameterGroups = null,
     IReadOnlyList<ParameterOverlapGroup>? OverlapParameterGroups = null,
     IReadOnlyList<ParameterSameGroup>? SameParameterGroups = null,
+    IReadOnlyList<string>? PointeeDeadOnReturnParameterNames = null,
     IReadOnlyList<ThreadSafetyLawPredicateModel>? ThreadSafetyLawPredicates = null,
     IReadOnlyList<ParameterValueContract>? ValueParameterContracts = null)
 {
@@ -692,6 +745,7 @@ public sealed record FunctionDeclarationModel(
     public IReadOnlyList<ParameterDisjointGroup> DisjointGroups => DisjointParameterGroups ?? [];
     public IReadOnlyList<ParameterOverlapGroup> OverlapGroups => OverlapParameterGroups ?? [];
     public IReadOnlyList<ParameterSameGroup> SameGroups => SameParameterGroups ?? [];
+    public IReadOnlyList<string> PointeeDeadOnReturnParameters => PointeeDeadOnReturnParameterNames ?? [];
     public IReadOnlyList<ThreadSafetyLawPredicateModel> ThreadSafetyLaws => ThreadSafetyLawPredicates ?? [];
     public IReadOnlyList<ParameterValueContract> ValueContracts => ValueParameterContracts ?? [];
 }
@@ -1238,6 +1292,7 @@ public sealed record ImportedTemplateLocalDeclarationSummary(
 public sealed record ImportedTemplateObjectCreationSummary(
     StarkTypeSymbol CreatedType,
     TypedConstructorShape? Constructor,
+    ObjectCreationStorageSelector StorageSelector = ObjectCreationStorageSelector.Default,
     IReadOnlyList<ImportedTemplateObjectInitializerMemberSummary>? InitializerMemberSummaries = null)
 {
     public IReadOnlyList<ImportedTemplateObjectInitializerMemberSummary> InitializerMembers =>
@@ -1418,7 +1473,8 @@ public sealed record FunctionEffectProfile(
     // compute a precise per-call local read/write set must treat these as a barrier.
     bool ReadsOtherMemory = false,
     bool WritesOtherMemory = false,
-    bool NoRecurse = false);
+    bool NoRecurse = false,
+    bool IsTailCallable = false);
 
 public sealed record FunctionEffectModel(
     string ModuleName,
@@ -1542,6 +1598,7 @@ public sealed record StarkTypeSymbol(
     int? FixedLength = null,
     string? FixedLengthParameterName = null,
     StarkFunctionKind? FunctionPointerKind = null,
+    bool FunctionPointerIsTailCallable = false,
     StarkFfiAbi? FunctionPointerAbi = null,
     bool FunctionPointerIsUnsafe = false,
     StarkTypeSymbol? FunctionPointerReturnType = null,
@@ -1550,15 +1607,18 @@ public sealed record StarkTypeSymbol(
     IReadOnlyList<ParameterDisjointGroup>? FunctionPointerDisjointParameterGroups = null,
     IReadOnlyList<ParameterOverlapGroup>? FunctionPointerOverlapParameterGroups = null,
     IReadOnlyList<ParameterSameGroup>? FunctionPointerSameParameterGroups = null,
+    IReadOnlyList<string>? FunctionPointerPointeeDeadOnReturnParameterNames = null,
     StarkClosureStorageKind ClosureStorageKind = StarkClosureStorageKind.Unspecified,
     StarkClosureCallCapability ClosureCallCapability = StarkClosureCallCapability.None,
     StarkFunctionKind? ClosureFunctionKind = null,
+    bool ClosureIsTailCallable = false,
     StarkTypeSymbol? ClosureReturnType = null,
     IReadOnlyList<StarkTypeSymbol>? ClosureParameterTypes = null,
     IReadOnlyList<string?>? ClosureParameterRawPointerElementCountExpressions = null,
     IReadOnlyList<ParameterDisjointGroup>? ClosureDisjointParameterGroups = null,
     IReadOnlyList<ParameterOverlapGroup>? ClosureOverlapParameterGroups = null,
     IReadOnlyList<ParameterSameGroup>? ClosureSameParameterGroups = null,
+    IReadOnlyList<string>? ClosurePointeeDeadOnReturnParameterNames = null,
     BigInteger? RangeMin = null,
     BigInteger? RangeMax = null,
     bool IsUnsigned = false,
@@ -1726,13 +1786,16 @@ public static class StarkTypeSymbols
         IReadOnlyList<ParameterSameGroup>? sameGroups = null,
         IReadOnlyList<string?>? parameterRawPointerElementCountExpressions = null,
         StarkFfiAbi? ffiAbi = null,
-        bool isUnsafe = false)
+        bool isUnsafe = false,
+        bool isTailCallable = false,
+        IReadOnlyList<string>? pointeeDeadOnReturnParameterNames = null)
     {
         var displayKind = FormatCallableFunctionKind(functionKind);
         var abiPrefix = ffiAbi is { } abi
             ? $"ffi({StarkFfiAbiFacts.DisplayName(abi)}) "
             : string.Empty;
         var unsafePrefix = isUnsafe ? "unsafe " : string.Empty;
+        var tailPrefix = isTailCallable ? "tail " : string.Empty;
         var effectiveRawPointerElementCountExpressions =
             NormalizeFunctionPointerParameterRawPointerElementCountExpressions(
                 parameterTypes,
@@ -1747,6 +1810,9 @@ public static class StarkTypeSymbols
             .ToArray();
         var effectiveOverlapGroups = overlapGroups ?? [];
         var effectiveSameGroups = sameGroups ?? [];
+        var effectivePointeeDeadOnReturnParameters = NormalizePointeeDeadOnReturnParameters(
+            pointeeDeadOnReturnParameterNames,
+            parameterTypes.Count);
         var effectiveDisjointGroups = disjointGroups
             ?? ParameterMemoryContractFacts.BuildEffectiveDisjointGroups(
                 parameters,
@@ -1754,11 +1820,12 @@ public static class StarkTypeSymbols
                 overlapGroups: effectiveOverlapGroups,
                 sameGroups: effectiveSameGroups,
                 applyDefaultNonOverlap: true);
-        var displayName = $"fnptr<{unsafePrefix}{abiPrefix}{displayKind} {returnType.DisplayName}({string.Join(", ", parameterTypes.Select((parameter, index) => FormatFunctionPointerParameterDisplayName(parameter, effectiveRawPointerElementCountExpressions, index)))}){FormatFunctionPointerMemoryContracts(effectiveOverlapGroups, effectiveSameGroups)}>";
+        var displayName = $"fnptr<{unsafePrefix}{abiPrefix}{tailPrefix}{displayKind} {returnType.DisplayName}({string.Join(", ", parameterTypes.Select((parameter, index) => FormatFunctionPointerParameterDisplayName(parameter, effectiveRawPointerElementCountExpressions, index)))}){FormatFunctionPointerMemoryContracts(effectiveOverlapGroups, effectiveSameGroups, effectivePointeeDeadOnReturnParameters)}>";
         return new StarkTypeSymbol(
             StarkTypeKind.FunctionPointer,
             displayName,
             FunctionPointerKind: functionKind,
+            FunctionPointerIsTailCallable: isTailCallable,
             FunctionPointerAbi: ffiAbi,
             FunctionPointerIsUnsafe: isUnsafe,
             FunctionPointerReturnType: returnType,
@@ -1766,7 +1833,8 @@ public static class StarkTypeSymbols
             FunctionPointerParameterRawPointerElementCountExpressions: effectiveRawPointerElementCountExpressions,
             FunctionPointerDisjointParameterGroups: effectiveDisjointGroups,
             FunctionPointerOverlapParameterGroups: effectiveOverlapGroups,
-            FunctionPointerSameParameterGroups: effectiveSameGroups);
+            FunctionPointerSameParameterGroups: effectiveSameGroups,
+            FunctionPointerPointeeDeadOnReturnParameterNames: effectivePointeeDeadOnReturnParameters);
     }
 
     public static StarkTypeSymbol Closure(
@@ -1778,7 +1846,9 @@ public static class StarkTypeSymbols
         IReadOnlyList<ParameterDisjointGroup>? disjointGroups = null,
         IReadOnlyList<ParameterOverlapGroup>? overlapGroups = null,
         IReadOnlyList<ParameterSameGroup>? sameGroups = null,
-        IReadOnlyList<string?>? parameterRawPointerElementCountExpressions = null)
+        IReadOnlyList<string?>? parameterRawPointerElementCountExpressions = null,
+        bool isTailCallable = false,
+        IReadOnlyList<string>? pointeeDeadOnReturnParameterNames = null)
     {
         var displayKind = FormatCallableFunctionKind(functionKind);
         var storagePrefix = storageKind switch
@@ -1793,6 +1863,7 @@ public static class StarkTypeSymbols
             StarkClosureCallCapability.Once => "once ",
             _ => string.Empty
         };
+        var tailPrefix = isTailCallable ? "tail " : string.Empty;
         var effectiveRawPointerElementCountExpressions =
             NormalizeFunctionPointerParameterRawPointerElementCountExpressions(
                 parameterTypes,
@@ -1807,6 +1878,9 @@ public static class StarkTypeSymbols
             .ToArray();
         var effectiveOverlapGroups = overlapGroups ?? [];
         var effectiveSameGroups = sameGroups ?? [];
+        var effectivePointeeDeadOnReturnParameters = NormalizePointeeDeadOnReturnParameters(
+            pointeeDeadOnReturnParameterNames,
+            parameterTypes.Count);
         var effectiveDisjointGroups = disjointGroups
             ?? ParameterMemoryContractFacts.BuildEffectiveDisjointGroups(
                 parameters,
@@ -1814,19 +1888,21 @@ public static class StarkTypeSymbols
                 overlapGroups: effectiveOverlapGroups,
                 sameGroups: effectiveSameGroups,
                 applyDefaultNonOverlap: true);
-        var displayName = $"{storagePrefix}closure<{capabilityPrefix}{displayKind} {returnType.DisplayName}({string.Join(", ", parameterTypes.Select((parameter, index) => FormatFunctionPointerParameterDisplayName(parameter, effectiveRawPointerElementCountExpressions, index)))}){FormatFunctionPointerMemoryContracts(effectiveOverlapGroups, effectiveSameGroups)}>";
+        var displayName = $"{storagePrefix}closure<{capabilityPrefix}{tailPrefix}{displayKind} {returnType.DisplayName}({string.Join(", ", parameterTypes.Select((parameter, index) => FormatFunctionPointerParameterDisplayName(parameter, effectiveRawPointerElementCountExpressions, index)))}){FormatFunctionPointerMemoryContracts(effectiveOverlapGroups, effectiveSameGroups, effectivePointeeDeadOnReturnParameters)}>";
         return new StarkTypeSymbol(
             StarkTypeKind.Closure,
             displayName,
             ClosureStorageKind: storageKind,
             ClosureCallCapability: callCapability,
             ClosureFunctionKind: functionKind,
+            ClosureIsTailCallable: isTailCallable,
             ClosureReturnType: returnType,
             ClosureParameterTypes: parameterTypes.ToArray(),
             ClosureParameterRawPointerElementCountExpressions: effectiveRawPointerElementCountExpressions,
             ClosureDisjointParameterGroups: effectiveDisjointGroups,
             ClosureOverlapParameterGroups: effectiveOverlapGroups,
-            ClosureSameParameterGroups: effectiveSameGroups);
+            ClosureSameParameterGroups: effectiveSameGroups,
+            ClosurePointeeDeadOnReturnParameterNames: effectivePointeeDeadOnReturnParameters);
     }
 
     // A `dyn Trait` trait object: a two-word fat pointer { data_ptr, vtable_ptr }.
@@ -1969,15 +2045,41 @@ public static class StarkTypeSymbols
 
     private static string FormatFunctionPointerMemoryContracts(
         IReadOnlyList<ParameterOverlapGroup> overlapGroups,
-        IReadOnlyList<ParameterSameGroup> sameGroups)
+        IReadOnlyList<ParameterSameGroup> sameGroups,
+        IReadOnlyList<string> pointeeDeadOnReturnParameters)
     {
         var clauses = overlapGroups
             .Select(static group => $"overlap({string.Join(", ", group.ParameterNames)})")
             .Concat(sameGroups.Select(static group => $"same({string.Join(", ", group.ParameterNames)})"))
+            .Concat(pointeeDeadOnReturnParameters.Select(static name => $"dead_on_return({name})"))
             .ToArray();
         return clauses.Length == 0
             ? string.Empty
             : $" where {string.Join(", ", clauses)}";
+    }
+
+    private static IReadOnlyList<string> NormalizePointeeDeadOnReturnParameters(
+        IReadOnlyList<string>? parameterNames,
+        int parameterCount)
+    {
+        if (parameterNames is not { Count: > 0 })
+        {
+            return [];
+        }
+
+        return parameterNames
+            .Where(name => TryParseSyntheticArgumentIndex(name, out var index)
+                && index >= 0
+                && index < parameterCount)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    private static bool TryParseSyntheticArgumentIndex(string name, out int index)
+    {
+        index = -1;
+        return name.StartsWith("arg", StringComparison.Ordinal)
+            && int.TryParse(name[3..], out index);
     }
 
     public static StarkTypeSymbol Named(string name) => new(StarkTypeKind.Named, name, NamedType: name);
@@ -2280,7 +2382,9 @@ public static class StarkTypeSymbols
                     type.FunctionPointerSameParameterGroups,
                     type.FunctionPointerParameterRawPointerElementCountExpressions,
                     type.FunctionPointerAbi,
-                    type.FunctionPointerIsUnsafe),
+                    type.FunctionPointerIsUnsafe,
+                    type.FunctionPointerIsTailCallable,
+                    type.FunctionPointerPointeeDeadOnReturnParameterNames),
             StarkTypeKind.Closure when type.ClosureFunctionKind is { } closureFunctionKind
                                        && type.ClosureReturnType is { } closureReturnType
                                        && type.ClosureParameterTypes is { } closureParameterTypes
@@ -2293,7 +2397,9 @@ public static class StarkTypeSymbols
                     type.ClosureDisjointParameterGroups,
                     type.ClosureOverlapParameterGroups,
                     type.ClosureSameParameterGroups,
-                    type.ClosureParameterRawPointerElementCountExpressions),
+                    type.ClosureParameterRawPointerElementCountExpressions,
+                    type.ClosureIsTailCallable,
+                    type.ClosurePointeeDeadOnReturnParameterNames),
             StarkTypeKind.Named when type.NamedType == OwnedAsciiName => OwnedAscii,
             StarkTypeKind.Named when type.NamedType == OwnedUnicodeName => OwnedUnicode,
             StarkTypeKind.Named when (type.TypeArguments is { Count: > 0 } || type.ComptimeValueArguments is { Count: > 0 })
@@ -2613,11 +2719,14 @@ public sealed record TypedFunctionSignature(
     IReadOnlyList<ParameterDisjointGroup>? DisjointParameterGroups = null,
     IReadOnlyList<ParameterOverlapGroup>? OverlapParameterGroups = null,
     IReadOnlyList<ParameterSameGroup>? SameParameterGroups = null,
+    IReadOnlyList<string>? PointeeDeadOnReturnParameterNames = null,
     IReadOnlyList<TypeParameterConstraint>? TypeParameterConstraints = null,
     bool HasBody = true,
     IReadOnlyList<ThreadSafetyLawPredicateSymbol>? ThreadSafetyLawPredicates = null,
     StarkVisibility Visibility = StarkVisibility.Module,
-    IReadOnlyList<ParameterValueContract>? ValueParameterContracts = null)
+    IReadOnlyList<ParameterValueContract>? ValueParameterContracts = null,
+    bool IsTailCallable = false,
+    SourceLocation? DeclarationLocation = null)
 {
     public string DisplaySourceName => SourceName ?? Name;
     public IReadOnlyList<string> GenericParams => GenericParameterNames ?? [];
@@ -2630,6 +2739,7 @@ public sealed record TypedFunctionSignature(
     public IReadOnlyList<ParameterDisjointGroup> DisjointGroups => DisjointParameterGroups ?? [];
     public IReadOnlyList<ParameterOverlapGroup> OverlapGroups => OverlapParameterGroups ?? [];
     public IReadOnlyList<ParameterSameGroup> SameGroups => SameParameterGroups ?? [];
+    public IReadOnlyList<string> PointeeDeadOnReturnParameters => PointeeDeadOnReturnParameterNames ?? [];
     public IReadOnlyList<ThreadSafetyLawPredicateSymbol> ThreadSafetyLaws => ThreadSafetyLawPredicates ?? [];
     public IReadOnlyList<ParameterValueContract> ValueContracts => ValueParameterContracts ?? [];
 }
@@ -2953,6 +3063,7 @@ public sealed record BoundObjectCreationOperation(
     string ExpressionText,
     StarkTypeSymbol CreatedType,
     TypedConstructorShape? Constructor,
+    ObjectCreationStorageSelector StorageSelector,
     IReadOnlyList<ObjectInitializerMemberTypingRecord>? InitializerMembers,
     SourceLocation Location,
     string? EnclosingFunctionName = null)
@@ -3167,10 +3278,17 @@ public sealed record ObjectCreationTypingRecord(
     TypedConstructorShape? Constructor,
     SourceLocation Location,
     string? EnclosingFunctionName = null,
+    ObjectCreationStorageSelector StorageSelector = ObjectCreationStorageSelector.Default,
     IReadOnlyList<ObjectInitializerMemberTypingRecord>? InitializerMembers = null)
 {
     public IReadOnlyList<ObjectInitializerMemberTypingRecord> Members =>
         InitializerMembers ?? [];
+}
+
+public enum ObjectCreationStorageSelector
+{
+    Default,
+    Arena
 }
 
 public sealed record EnumConstructorTypingRecord(
@@ -3625,7 +3743,8 @@ public sealed record AbiFunctionSignature(
     string? SourceName = null,
     bool UsesFastCallingConvention = false,
     bool IsVarargs = false,
-    StarkFfiAbi? FfiAbi = null)
+    StarkFfiAbi? FfiAbi = null,
+    bool UsesTailCallingConvention = false)
 {
     public string DisplaySourceName => SourceName ?? Name;
 
@@ -4589,6 +4708,7 @@ public enum MidLevelIrTerminatorKind
     Branch,
     Switch,
     Return,
+    TailCall,
     Unreachable
 }
 
@@ -5195,6 +5315,7 @@ public sealed record MidLevelIrMakeSliceFromPointerRValue(
 public sealed record MidLevelIrDynamicStorageAllocationRValue(
     MidLevelIrOperand Capacity,
     StarkTypeSymbol Type,
+    DynamicStorageAllocationKind AllocationKind,
     string Text)
     : MidLevelIrRValue(Type, Text);
 
@@ -5212,6 +5333,7 @@ public sealed record MidLevelIrDynamicStorageReserveRValue(
     MidLevelIrOperand StorageAddress,
     StarkTypeSymbol StorageType,
     MidLevelIrOperand AdditionalCapacity,
+    DynamicStorageAllocationKind AllocationKind,
     string Text)
     : MidLevelIrRValue(StarkTypeSymbols.Void, Text);
 
@@ -5219,6 +5341,7 @@ public sealed record MidLevelIrDynamicStorageTryReserveRValue(
     MidLevelIrOperand StorageAddress,
     StarkTypeSymbol StorageType,
     MidLevelIrOperand AdditionalCapacity,
+    DynamicStorageAllocationKind AllocationKind,
     string Text)
     : MidLevelIrRValue(StarkTypeSymbols.Bool, Text);
 
@@ -5226,6 +5349,7 @@ public sealed record MidLevelIrDynamicStorageTryReserveCapacityRValue(
     MidLevelIrOperand StorageAddress,
     StarkTypeSymbol StorageType,
     MidLevelIrOperand TargetCapacity,
+    DynamicStorageAllocationKind AllocationKind,
     string Text)
     : MidLevelIrRValue(StarkTypeSymbols.Bool, Text);
 
@@ -5347,6 +5471,7 @@ public sealed record MidLevelIrTerminator(
     string? ValueText = null,
     MidLevelIrOperand? Condition = null,
     MidLevelIrOperand? Value = null,
+    MidLevelIrCallStatementOperation? TailCall = null,
     IReadOnlyList<MidLevelIrSwitchCase>? SwitchCases = null,
     int? DefaultTarget = null,
     SourceLocation? Location = null,
@@ -5799,6 +5924,7 @@ public sealed record SsaMakeSliceFromPointerRValue(
 public sealed record SsaDynamicStorageAllocationRValue(
     SsaValue Capacity,
     StarkTypeSymbol Type,
+    DynamicStorageAllocationKind AllocationKind,
     string Text)
     : SsaRValue(Type, Text);
 
@@ -5816,6 +5942,7 @@ public sealed record SsaDynamicStorageReserveRValue(
     SsaValue StorageAddress,
     StarkTypeSymbol StorageType,
     SsaValue AdditionalCapacity,
+    DynamicStorageAllocationKind AllocationKind,
     string Text)
     : SsaRValue(StarkTypeSymbols.Void, Text);
 
@@ -5823,6 +5950,7 @@ public sealed record SsaDynamicStorageTryReserveRValue(
     SsaValue StorageAddress,
     StarkTypeSymbol StorageType,
     SsaValue AdditionalCapacity,
+    DynamicStorageAllocationKind AllocationKind,
     string Text)
     : SsaRValue(StarkTypeSymbols.Bool, Text);
 
@@ -5830,6 +5958,7 @@ public sealed record SsaDynamicStorageTryReserveCapacityRValue(
     SsaValue StorageAddress,
     StarkTypeSymbol StorageType,
     SsaValue TargetCapacity,
+    DynamicStorageAllocationKind AllocationKind,
     string Text)
     : SsaRValue(StarkTypeSymbols.Bool, Text);
 
@@ -6050,6 +6179,7 @@ public enum SsaTerminatorKind
     Branch,
     Switch,
     Return,
+    TailCall,
     Unreachable
 }
 
@@ -6058,6 +6188,8 @@ public sealed record SsaTerminator(
     IReadOnlyList<int> Targets,
     SsaValue? Condition = null,
     SsaValue? Value = null,
+    ISsaDirectCallOperation? TailDirectCall = null,
+    ISsaIndirectCallOperation? TailIndirectCall = null,
     IReadOnlyList<SsaSwitchCase>? SwitchCases = null,
     int? DefaultTarget = null,
     SourceLocation? Location = null,
@@ -6136,13 +6268,21 @@ public enum SsaDynamicStorageBackingAllocationKind
 {
     Unknown,
     None,
-    RuntimeAllocation
+    RuntimeAllocation,
+    ArenaAllocation
 }
 
 public enum SsaDynamicStorageAllocatorProvenanceKind
 {
     Unknown,
-    RuntimeDefault
+    RuntimeDefault,
+    ArenaFrame
+}
+
+public enum DynamicStorageAllocationKind
+{
+    Runtime,
+    Arena
 }
 
 public sealed record SsaDynamicStorageRegionFact(

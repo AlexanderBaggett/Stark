@@ -18,6 +18,12 @@ internal sealed partial class LlvmFunctionBodyEmitter
     private const string IntegerExponentHelperNamePrefix = "__stark_int_pow_i";
     private const string HeapAllocateHelperName = "__stark_heap_alloc";
     private const string HeapFreeHelperName = "__stark_heap_free";
+    private const string ArenaEnterHelperName = "__stark_arena_enter";
+    private const string ArenaLeaveHelperName = "__stark_arena_leave";
+    private const string ArenaAllocateHelperName = "__stark_arena_alloc";
+    private const string ArenaDynamicStorageAllocateHelperName = "__stark_arena_dynamic_alloc";
+    private const string ArenaFrameSlotName = "%__stark_arena_frame";
+    private const string ArenaFrameLlvmType = "{ ptr, ptr, ptr }";
     private const string RuntimeAllocateHelperName = "__stark_runtime_alloc";
     private const string RuntimeReallocateHelperName = "__stark_runtime_realloc";
     private const string RuntimeTryReallocateHelperName = "__stark_runtime_try_realloc";
@@ -74,6 +80,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
     private readonly HashSet<string> _tailCallResultNames;
     private readonly List<string> _entryStaticAllocas = [];
     private readonly Dictionary<string, string> _localStorageClasses;
+    private readonly bool _usesArenaAllocator;
     private readonly Dictionary<string, bool> _aggregateValueMaterializationRequirements = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _indirectAggregateValueSlots = new(StringComparer.Ordinal);
     private readonly Dictionary<string, LocalSlotAlias> _localSlotAliases = new(StringComparer.Ordinal);
@@ -149,6 +156,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
         _sameParameterCanonicalRootKeys = BuildSameParameterCanonicalRootKeys();
         _scopedNoAliasMetadata = BuildScopedNoAliasMetadata(parameterEffects);
         _localStorageClasses = CollectLocalStorageClasses(ssaFunction);
+        _usesArenaAllocator = UsesArenaAllocator(ssaFunction);
         _singleStoreLocalValues = CollectSingleStoreLocalValues();
         _directAggregateAliasCandidateLocalNames = CollectDirectAggregateAliasCandidateLocalNames();
         _invariantLocalNames = CollectInvariantLocalNames();
@@ -295,6 +303,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
                 EmitEntryParameterSlots();
                 EmitEntryParameterDebugInfo();
                 EmitEntrySameParameterAssumptions();
+                EmitArenaFrameEnter();
             }
 
             foreach (var phi in block.Phis)

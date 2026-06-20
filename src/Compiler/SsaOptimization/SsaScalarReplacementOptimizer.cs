@@ -1775,6 +1775,40 @@ internal sealed class SsaScalarReplacementOptimizer
             yield return terminator.Value;
         }
 
+        if (terminator.TailDirectCall is not null)
+        {
+            foreach (var argument in terminator.TailDirectCall.Arguments)
+            {
+                yield return argument;
+            }
+
+            foreach (var address in terminator.TailDirectCall.IndirectArgumentAddresses ?? [])
+            {
+                if (address is not null)
+                {
+                    yield return address;
+                }
+            }
+        }
+
+        if (terminator.TailIndirectCall is not null)
+        {
+            yield return terminator.TailIndirectCall.Target;
+
+            foreach (var argument in terminator.TailIndirectCall.Arguments)
+            {
+                yield return argument;
+            }
+
+            foreach (var address in terminator.TailIndirectCall.IndirectArgumentAddresses ?? [])
+            {
+                if (address is not null)
+                {
+                    yield return address;
+                }
+            }
+        }
+
         if (terminator.SwitchCases is not null)
         {
             foreach (var switchCase in terminator.SwitchCases)

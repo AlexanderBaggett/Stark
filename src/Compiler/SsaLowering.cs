@@ -394,6 +394,7 @@ internal sealed class SsaLowerer
                     terminator.Targets,
                     Value: terminator.Value is null ? null : LowerOperand(blockId, block, terminator.Value),
                     Location: terminator.Location ?? _function.Location),
+                MidLevelIrTerminatorKind.TailCall => LowerTailCallTerminator(blockId, block, terminator),
                 MidLevelIrTerminatorKind.Unreachable => new SsaTerminator(SsaTerminatorKind.Unreachable, terminator.Targets, Location: terminator.Location ?? _function.Location),
                 MidLevelIrTerminatorKind.Switch => new SsaTerminator(
                     SsaTerminatorKind.Switch,
@@ -413,6 +414,49 @@ internal sealed class SsaLowerer
                     LoopContracts: terminator.LoopContracts,
                     LoopAccessGroups: terminator.LoopAccessGroups),
                 _ => throw new InvalidOperationException($"Unsupported MIR terminator kind '{terminator.Kind}'.")
+            };
+        }
+
+        private SsaTerminator LowerTailCallTerminator(
+            int blockId,
+            SsaBlockBuilder block,
+            MidLevelIrTerminator terminator)
+        {
+            return terminator.TailCall switch
+            {
+                MidLevelIrDirectCallStatementOperation directCall => new SsaTerminator(
+                    SsaTerminatorKind.TailCall,
+                    terminator.Targets,
+                    TailDirectCall: new SsaCallInstruction(
+                        directCall.FunctionName,
+                        directCall.Arguments.Select(argument => LowerOperand(blockId, block, argument)).ToArray(),
+                        directCall.ReturnType,
+                        directCall.Text,
+                        directCall.IndirectArgumentLocalNames,
+                        directCall.SourceReturnType,
+                        directCall.IndirectArgumentAddresses?
+                            .Select(address => address is null ? null : LowerOperand(blockId, block, address))
+                            .ToArray(),
+                        Location: terminator.Location ?? _function.Location),
+                    Location: terminator.Location ?? _function.Location),
+                MidLevelIrIndirectCallStatementOperation indirectCall => new SsaTerminator(
+                    SsaTerminatorKind.TailCall,
+                    terminator.Targets,
+                    TailIndirectCall: new SsaIndirectCallInstruction(
+                        LowerOperand(blockId, block, indirectCall.Target),
+                        indirectCall.Arguments.Select(argument => LowerOperand(blockId, block, argument)).ToArray(),
+                        indirectCall.ReturnType,
+                        indirectCall.Text,
+                        indirectCall.SourceReturnType,
+                        indirectCall.IndirectArgumentLocalNames,
+                        indirectCall.IndirectArgumentAddresses?
+                            .Select(address => address is null ? null : LowerOperand(blockId, block, address))
+                            .ToArray(),
+                        indirectCall.MayFree,
+                        Location: terminator.Location ?? _function.Location),
+                    Location: terminator.Location ?? _function.Location),
+                null => throw new InvalidOperationException("MIR tail-call terminator is missing its call operation."),
+                _ => throw new InvalidOperationException($"Unsupported MIR tail-call operation '{terminator.TailCall.GetType().Name}'.")
             };
         }
 
@@ -479,6 +523,7 @@ internal sealed class SsaLowerer
                 MidLevelIrDynamicStorageAllocationRValue allocation => EmitValue(block, new SsaDynamicStorageAllocationRValue(
                     LowerOperand(blockId, block, allocation.Capacity),
                     allocation.Type,
+                    allocation.AllocationKind,
                     allocation.Text)),
                 MidLevelIrDynamicStorageFreeRValue free => EmitValue(block, new SsaDynamicStorageFreeRValue(
                     LowerOperand(blockId, block, free.Storage),
@@ -490,16 +535,19 @@ internal sealed class SsaLowerer
                     LowerOperand(blockId, block, reserve.StorageAddress),
                     reserve.StorageType,
                     LowerOperand(blockId, block, reserve.AdditionalCapacity),
+                    reserve.AllocationKind,
                     reserve.Text)),
                 MidLevelIrDynamicStorageTryReserveRValue reserve => EmitValue(block, new SsaDynamicStorageTryReserveRValue(
                     LowerOperand(blockId, block, reserve.StorageAddress),
                     reserve.StorageType,
                     LowerOperand(blockId, block, reserve.AdditionalCapacity),
+                    reserve.AllocationKind,
                     reserve.Text)),
                 MidLevelIrDynamicStorageTryReserveCapacityRValue reserve => EmitValue(block, new SsaDynamicStorageTryReserveCapacityRValue(
                     LowerOperand(blockId, block, reserve.StorageAddress),
                     reserve.StorageType,
                     LowerOperand(blockId, block, reserve.TargetCapacity),
+                    reserve.AllocationKind,
                     reserve.Text)),
                 MidLevelIrDynamicStorageMoveLastRValue moveLast => EmitValue(block, new SsaDynamicStorageMoveLastRValue(
                     LowerOperand(blockId, block, moveLast.StorageAddress),
@@ -1759,6 +1807,7 @@ internal sealed class SsaLowerer
                 SsaDynamicStorageAllocationRValue allocation => new SsaDynamicStorageAllocationRValue(
                     RewriteValue(allocation.Capacity, replacements),
                     allocation.Type,
+                    allocation.AllocationKind,
                     allocation.Text),
                 SsaDynamicStorageFreeRValue free => new SsaDynamicStorageFreeRValue(
                     RewriteValue(free.Storage, replacements),
@@ -1770,16 +1819,19 @@ internal sealed class SsaLowerer
                     RewriteValue(reserve.StorageAddress, replacements),
                     reserve.StorageType,
                     RewriteValue(reserve.AdditionalCapacity, replacements),
+                    reserve.AllocationKind,
                     reserve.Text),
                 SsaDynamicStorageTryReserveRValue reserve => new SsaDynamicStorageTryReserveRValue(
                     RewriteValue(reserve.StorageAddress, replacements),
                     reserve.StorageType,
                     RewriteValue(reserve.AdditionalCapacity, replacements),
+                    reserve.AllocationKind,
                     reserve.Text),
                 SsaDynamicStorageTryReserveCapacityRValue reserve => new SsaDynamicStorageTryReserveCapacityRValue(
                     RewriteValue(reserve.StorageAddress, replacements),
                     reserve.StorageType,
                     RewriteValue(reserve.TargetCapacity, replacements),
+                    reserve.AllocationKind,
                     reserve.Text),
                 SsaDynamicStorageMoveLastRValue moveLast => new SsaDynamicStorageMoveLastRValue(
                     RewriteValue(moveLast.StorageAddress, replacements),
@@ -1846,6 +1898,8 @@ internal sealed class SsaLowerer
                 terminator.Targets.Select(resolveTarget).ToArray(),
                 Condition: terminator.Condition is null ? null : RewriteValue(terminator.Condition, replacements),
                 Value: terminator.Value is null ? null : RewriteValue(terminator.Value, replacements),
+                TailDirectCall: RewriteTailDirectCall(terminator.TailDirectCall, replacements),
+                TailIndirectCall: RewriteTailIndirectCall(terminator.TailIndirectCall, replacements),
                 SwitchCases: terminator.SwitchCases?.Select(switchCase => new SsaSwitchCase(
                     switchCase.Label,
                     resolveTarget(switchCase.TargetBlockId),
@@ -1858,6 +1912,69 @@ internal sealed class SsaLowerer
                 LoopBehavior: terminator.LoopBehavior,
                 LoopContracts: terminator.LoopContracts,
                 LoopAccessGroups: terminator.LoopAccessGroups);
+        }
+
+        private static ISsaDirectCallOperation? RewriteTailDirectCall(
+            ISsaDirectCallOperation? call,
+            IReadOnlyDictionary<string, SsaValue> replacements)
+        {
+            if (call is null)
+            {
+                return null;
+            }
+
+            var arguments = call.Arguments.Select(argument => RewriteValue(argument, replacements)).ToArray();
+            var indirectArgumentAddresses = call.IndirectArgumentAddresses?
+                .Select(address => address is null ? null : RewriteValue(address, replacements))
+                .ToArray();
+
+            return call switch
+            {
+                SsaCallInstruction instruction => instruction with
+                {
+                    Arguments = arguments,
+                    IndirectArgumentAddresses = indirectArgumentAddresses
+                },
+                SsaCallRValue rValue => rValue with
+                {
+                    Arguments = arguments,
+                    IndirectArgumentAddresses = indirectArgumentAddresses
+                },
+                _ => call
+            };
+        }
+
+        private static ISsaIndirectCallOperation? RewriteTailIndirectCall(
+            ISsaIndirectCallOperation? call,
+            IReadOnlyDictionary<string, SsaValue> replacements)
+        {
+            if (call is null)
+            {
+                return null;
+            }
+
+            var target = RewriteValue(call.Target, replacements);
+            var arguments = call.Arguments.Select(argument => RewriteValue(argument, replacements)).ToArray();
+            var indirectArgumentAddresses = call.IndirectArgumentAddresses?
+                .Select(address => address is null ? null : RewriteValue(address, replacements))
+                .ToArray();
+
+            return call switch
+            {
+                SsaIndirectCallInstruction instruction => instruction with
+                {
+                    Target = target,
+                    Arguments = arguments,
+                    IndirectArgumentAddresses = indirectArgumentAddresses
+                },
+                SsaIndirectCallRValue rValue => rValue with
+                {
+                    Target = target,
+                    Arguments = arguments,
+                    IndirectArgumentAddresses = indirectArgumentAddresses
+                },
+                _ => call
+            };
         }
     }
 }

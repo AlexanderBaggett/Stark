@@ -607,9 +607,10 @@ internal static class LlvmSpecializationEmissionPlanner
             parameters,
             isFfi,
             SourceName: function.SourceName,
-            UsesFastCallingConvention: !isFfi,
+            UsesFastCallingConvention: !function.IsTailCallable && !isFfi,
             IsVarargs: isVarargs,
-            FfiAbi: ffiAbi);
+            FfiAbi: ffiAbi,
+            UsesTailCallingConvention: function.IsTailCallable);
     }
 
     private static IReadOnlyDictionary<string, ImportedFunctionSemanticSummary> BuildPublishedFunctionSemantics(LoadedModuleSet loadedModules)

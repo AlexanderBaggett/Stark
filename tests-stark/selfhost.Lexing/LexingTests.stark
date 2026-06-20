@@ -38,13 +38,13 @@ fn bool EmptySourceLexesToEndOfFile()
 fn bool KeywordsClassifyAgainstIdentifiers()
 {
     stack mut TokenStream stream = new();
-    if (!LexOk(LexText("import module finite law fnptr willexit non-deterministic ascii Ascii importx lawful Module"), stream))
+    if (!LexOk(LexText("import module finite law fnptr willexit non-deterministic ascii Ascii become importx lawful Module"), stream))
     {
         return false;
     }
 
     return stream.DiagnosticCount() == 0
-        && stream.Count() == 13
+        && stream.Count() == 14
         && stream.KindAt(0) == TokenKind.Import
         && stream.KindAt(1) == TokenKind.Module
         && stream.KindAt(2) == TokenKind.Finite
@@ -54,10 +54,32 @@ fn bool KeywordsClassifyAgainstIdentifiers()
         && stream.KindAt(6) == TokenKind.NonDeterministic
         && stream.KindAt(7) == TokenKind.AsciiView
         && stream.KindAt(8) == TokenKind.AsciiOwned
-        && stream.KindAt(9) == TokenKind.Identifier
+        && stream.KindAt(9) == TokenKind.Become
         && stream.KindAt(10) == TokenKind.Identifier
         && stream.KindAt(11) == TokenKind.Identifier
-        && stream.KindAt(12) == TokenKind.EndOfFile;
+        && stream.KindAt(12) == TokenKind.Identifier
+        && stream.KindAt(13) == TokenKind.EndOfFile;
+}
+
+[Fact]
+fn bool TailLexesAsContextualIdentifier()
+{
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText("tail dead_on_return tailx dead_on_returnx"), stream))
+    {
+        return false;
+    }
+
+    return stream.DiagnosticCount() == 0
+        && stream.KindAt(0) == TokenKind.Identifier
+        && stream.ContextualKindAt(0) == ContextualKeywordKind.Tail
+        && stream.KindAt(1) == TokenKind.Identifier
+        && stream.ContextualKindAt(1) == ContextualKeywordKind.DeadOnReturn
+        && stream.KindAt(2) == TokenKind.Identifier
+        && stream.ContextualKindAt(2) == ContextualKeywordKind.None
+        && stream.KindAt(3) == TokenKind.Identifier
+        && stream.ContextualKindAt(3) == ContextualKeywordKind.None
+        && stream.KindAt(4) == TokenKind.EndOfFile;
 }
 
 [Fact]

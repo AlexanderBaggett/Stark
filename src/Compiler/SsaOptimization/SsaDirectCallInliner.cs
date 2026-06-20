@@ -1595,6 +1595,28 @@ internal sealed class SsaDirectCallInliner
             CollectUsedValueNames(terminator.Value, names);
         }
 
+        if (terminator.TailDirectCall is not null)
+        {
+            CollectDirectCallUsedValueNames(terminator.TailDirectCall, names);
+        }
+
+        if (terminator.TailIndirectCall is not null)
+        {
+            CollectUsedValueNames(terminator.TailIndirectCall.Target, names);
+            foreach (var argument in terminator.TailIndirectCall.Arguments)
+            {
+                CollectUsedValueNames(argument, names);
+            }
+
+            foreach (var address in terminator.TailIndirectCall.IndirectArgumentAddresses ?? [])
+            {
+                if (address is not null)
+                {
+                    CollectUsedValueNames(address, names);
+                }
+            }
+        }
+
         foreach (var switchCase in terminator.SwitchCases ?? [])
         {
             CollectUsedValueNames(switchCase.MatchValue, names);

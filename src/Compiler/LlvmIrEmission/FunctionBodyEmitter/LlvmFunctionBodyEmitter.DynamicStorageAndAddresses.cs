@@ -53,16 +53,24 @@ internal sealed partial class LlvmFunctionBodyEmitter
         var resultType = MapType(allocation.Type);
         var capacityI64 = EmitUnsignedIntegerAsI64(allocation.Capacity, "dynamic_capacity");
         var maxCount = GetMaximumDynamicStorageElementCount(elementLayout.SizeBytes);
+        var isArenaAllocation = allocation.AllocationKind == DynamicStorageAllocationKind.Arena;
         if (TryGetIntegerValueRange(allocation.Capacity, out var capacityRange)
             && capacityRange.Min > BigInteger.Zero
             && capacityRange.Max <= new BigInteger(maxCount))
         {
-            EmitDynamicStorageRuntimeAllocationValue(result, resultType, capacityI64, elementLayout);
+            EmitDynamicStorageAllocationValue(result, resultType, capacityI64, elementLayout, isArenaAllocation);
             return;
         }
 
         if (!CanSplitCurrentBlockForCallSiteControlFlow())
         {
+            if (isArenaAllocation)
+            {
+                AppendLine(
+                    $"  {result} = call {resultType} @{ArenaDynamicStorageAllocateHelperName}(ptr nonnull {ArenaFrameSlotName}, i64 noundef {capacityI64}, {AllocatorSizeType} noundef {elementLayout.SizeBytes.ToString(CultureInfo.InvariantCulture)}, {AllocatorSizeType} noundef {Math.Max(1, elementLayout.AlignmentBytes).ToString(CultureInfo.InvariantCulture)}, i64 noundef {FormatUnsignedI64Constant(maxCount)})");
+                return;
+            }
+
             AppendLine(
                 $"  {result} = call {resultType} @{DynamicStorageAllocateHelperName}(i64 noundef {capacityI64}, {AllocatorSizeType} noundef {elementLayout.SizeBytes.ToString(CultureInfo.InvariantCulture)}, {AllocatorSizeType} noundef {Math.Max(1, elementLayout.AlignmentBytes).ToString(CultureInfo.InvariantCulture)}, i64 noundef {FormatUnsignedI64Constant(maxCount)})");
             return;
@@ -108,7 +116,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
             AppendLine($"{allocateLabel}:");
         }
 
-        EmitDynamicStorageRuntimeAllocationValue(allocatedValue, resultType, capacityI64, elementLayout);
+        EmitDynamicStorageAllocationValue(allocatedValue, resultType, capacityI64, elementLayout, isArenaAllocation);
         AppendLine($"  br label %{doneLabel}");
         AppendLine(string.Empty);
         AppendLine($"{doneLabel}:");
@@ -122,6 +130,16 @@ internal sealed partial class LlvmFunctionBodyEmitter
         string capacityI64,
         ConcreteTypeLayout elementLayout)
     {
+        EmitDynamicStorageAllocationValue(result, resultType, capacityI64, elementLayout, useArena: false);
+    }
+
+    private void EmitDynamicStorageAllocationValue(
+        string result,
+        string resultType,
+        string capacityI64,
+        ConcreteTypeLayout elementLayout,
+        bool useArena)
+    {
         var allocatedPointer = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_alloc_ptr"))}";
         var withPointer = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_alloc_with_ptr"))}";
         var withLength = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_alloc_with_length"))}";
@@ -133,8 +151,16 @@ internal sealed partial class LlvmFunctionBodyEmitter
             AppendLine($"  {byteLength} = mul {AllocatorSizeType} {allocatorCount}, {elementLayout.SizeBytes}");
         }
 
+        var alignmentBytes = Math.Max(1, elementLayout.AlignmentBytes);
+        var allocationAttributes = alignmentBytes > 1
+            ? $"noalias nonnull noundef align {alignmentBytes}"
+            : "noalias nonnull noundef";
+        var allocationArguments = useArena
+            ? $"ptr nonnull {ArenaFrameSlotName}, {AllocatorSizeType} noundef {byteLength}, {AllocatorSizeType} noundef {alignmentBytes}"
+            : $"{AllocatorSizeType} noundef {byteLength}, {AllocatorSizeType} noundef {alignmentBytes}";
+        var allocatorName = useArena ? ArenaAllocateHelperName : RuntimeAllocateHelperName;
         AppendLine(
-            $"  {allocatedPointer} = call noalias nonnull noundef ptr @{RuntimeAllocateHelperName}({AllocatorSizeType} noundef {byteLength}, {AllocatorSizeType} noundef {Math.Max(1, elementLayout.AlignmentBytes)})");
+            $"  {allocatedPointer} = call {allocationAttributes} ptr @{allocatorName}({allocationArguments})");
         AppendLine($"  {withPointer} = insertvalue {resultType} zeroinitializer, ptr {allocatedPointer}, 0");
         AppendLine($"  {withLength} = insertvalue {resultType} {withPointer}, i64 0, 1");
         AppendLine($"  {result} = insertvalue {resultType} {withLength}, i64 {capacityI64}, 2");
@@ -166,6 +192,11 @@ internal sealed partial class LlvmFunctionBodyEmitter
 
     private void EmitDynamicStorageReserve(SsaDynamicStorageReserveRValue reserve)
     {
+        if (reserve.AllocationKind == DynamicStorageAllocationKind.Arena)
+        {
+            throw new UnsupportedBodyEmissionException("Arena-backed dynamic storage Reserve requires arena grow-copy lowering, which is not implemented yet.");
+        }
+
         if (reserve.StorageType.Kind != StarkTypeKind.Dynamic
             || reserve.StorageType.ElementType is not { } elementType)
         {
@@ -278,6 +309,11 @@ internal sealed partial class LlvmFunctionBodyEmitter
 
     private void EmitDynamicStorageTryReserve(string result, SsaDynamicStorageTryReserveRValue reserve)
     {
+        if (reserve.AllocationKind == DynamicStorageAllocationKind.Arena)
+        {
+            throw new UnsupportedBodyEmissionException("Arena-backed dynamic storage TryReserve requires fallible arena grow-copy lowering, which is not implemented yet.");
+        }
+
         if (reserve.StorageType.Kind != StarkTypeKind.Dynamic
             || reserve.StorageType.ElementType is not { } elementType)
         {
@@ -396,6 +432,11 @@ internal sealed partial class LlvmFunctionBodyEmitter
 
     private void EmitDynamicStorageTryReserveCapacity(string result, SsaDynamicStorageTryReserveCapacityRValue reserve)
     {
+        if (reserve.AllocationKind == DynamicStorageAllocationKind.Arena)
+        {
+            throw new UnsupportedBodyEmissionException("Arena-backed dynamic storage TryReserveCapacity requires fallible arena grow-copy lowering, which is not implemented yet.");
+        }
+
         if (reserve.StorageType.Kind != StarkTypeKind.Dynamic
             || reserve.StorageType.ElementType is not { } elementType)
         {

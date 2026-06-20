@@ -1,0 +1,68 @@
+import System.Process
+module Benchmarks.Micro.TailCalls
+
+const Iterations = 300000;
+const SelfTestIterations = 64;
+const SelfTestSeed = 17;
+const SelfTestExpected = 318451075583008527;
+
+noinline tail law u64[0 max] StepA(u64[0 max] remaining, u64[0 max] value)
+{
+    if (remaining == 0)
+    {
+        return value;
+    }
+
+    become StepB(remaining -% 1, (((value *% 1664525) +% remaining) ^ 1013904223));
+}
+
+noinline tail law u64[0 max] StepB(u64[0 max] remaining, u64[0 max] value)
+{
+    if (remaining == 0)
+    {
+        return value;
+    }
+
+    become StepC(
+        remaining -% 1,
+        (((value +% (remaining *% 1103515245)) ^ (value >> 7)) +% 12345));
+}
+
+noinline tail law u64[0 max] StepC(u64[0 max] remaining, u64[0 max] value)
+{
+    if (remaining == 0)
+    {
+        return value;
+    }
+
+    become StepD(
+        remaining -% 1,
+        (((value ^ (remaining +% 2654435769)) *% 22695477) +% 1));
+}
+
+noinline tail law u64[0 max] StepD(u64[0 max] remaining, u64[0 max] value)
+{
+    if (remaining == 0)
+    {
+        return value;
+    }
+
+    become StepA(remaining -% 1, ((value +% (remaining ^ 747796405)) *% 2891336453));
+}
+
+export unsafe ffi fn i32[min max] main()
+{
+    if (StepA(SelfTestIterations, SelfTestSeed) != SelfTestExpected)
+    {
+        return 1;
+    }
+
+    stack u64[0 max] seed = ((u64[0 max])System.Process.CurrentId()) +% SelfTestSeed;
+    stack u64[0 max] result = StepA(Iterations, seed);
+    if (result == 0 || result == seed)
+    {
+        return 1;
+    }
+
+    return 0;
+}

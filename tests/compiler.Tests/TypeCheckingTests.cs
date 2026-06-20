@@ -515,6 +515,75 @@ public sealed class TypeCheckingTests
     }
 
     [Fact]
+    public void FunctionPointerDeadOnReturnContractsArePreservedByPromotion()
+    {
+        var accepted = Compile(
+            """
+            module Demo
+
+            struct Box
+            {
+                i32[min max] Value;
+            }
+
+            fn bool Destroy(out Box box) where dead_on_return(box)
+            {
+                box = new Box()
+                {
+                    Value = 0
+                };
+                return true;
+            }
+
+            unsafe fn void Run()
+            {
+                stack fnptr<fn bool(out Box) where dead_on_return(arg0)> op = Destroy;
+                return;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(accepted.Succeeded, string.Join(", ", accepted.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(accepted.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+        var promotion = Assert.Single(typeCheckModel.FunctionPointerPromotions);
+        Assert.Equal(["arg0"], promotion.TargetType.FunctionPointerPointeeDeadOnReturnParameterNames);
+
+        var rejected = Compile(
+            """
+            module Demo
+
+            struct Box
+            {
+                i32[min max] Value;
+            }
+
+            fn bool Destroy(out Box box) where dead_on_return(box)
+            {
+                box = new Box()
+                {
+                    Value = 0
+                };
+                return true;
+            }
+
+            unsafe fn void Run()
+            {
+                stack fnptr<fn bool(out Box)> op = Destroy;
+                return;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(rejected.Succeeded);
+        Assert.Contains(
+            rejected.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3002"
+                && diagnostic.Message.Contains("cannot be promoted", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("dead_on_return(arg0)", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void FunctionPointerSameTargetsAcceptOverlapFunctionsAndRequireSameArguments()
     {
         var result = Compile(

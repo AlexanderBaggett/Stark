@@ -723,6 +723,7 @@ public static class DefaultCompilerPipeline
 
             var isLaw = function.Kind is StarkFunctionKind.Law or StarkFunctionKind.FiniteLaw;
             var isFinite = function.Kind is StarkFunctionKind.Finite or StarkFunctionKind.FiniteLaw;
+            var isTailCallable = function.Modifiers.IsTailCallable;
             var readsArgumentMemory = isLaw && function.Parameters.Any(static parameter => IsMemoryBackedType(parameter.TypeText));
             var inlinePreference = function.BackendOptimizationMode == ModuleBackendOptimizationMode.Opaque
                 ? InlinePreference.NoInline
@@ -738,7 +739,8 @@ public static class DefaultCompilerPipeline
                 NoUnwind: true,
                 WillReturn: isFinite,
                 MustProgress: isFinite,
-                UseFastCallingConvention: !function.Modifiers.IsFfi && visibility != StarkVisibility.Export,
+                UseFastCallingConvention: !isTailCallable && !function.Modifiers.IsFfi && visibility != StarkVisibility.Export,
+                IsTailCallable: isTailCallable,
                 IsFfi: function.Modifiers.IsFfi,
                 IsVarargs: function.Modifiers.IsVarargs,
                 FfiAbi: function.Modifiers.FfiAbi,
@@ -4413,7 +4415,8 @@ public static class DefaultCompilerPipeline
                         FfiAbi: declarationModel?.Function?.Modifiers.FfiAbi,
                         DisjointParameterGroups: disjointGroups,
                         OverlapParameterGroups: overlapGroups,
-                        SameParameterGroups: sameGroups);
+                        SameParameterGroups: sameGroups,
+                        PointeeDeadOnReturnParameterNames: declarationModel?.Function?.PointeeDeadOnReturnParameters);
                 }
             }
 
@@ -5378,7 +5381,7 @@ public static class DefaultCompilerPipeline
             var enumLayoutModel = context.Artifacts.GetRequired(CompilerArtifactKeys.EnumLayoutModel);
             var effectModel = context.Artifacts.GetRequired(CompilerArtifactKeys.FunctionEffects);
             var hir = context.Artifacts.GetRequired(CompilerArtifactKeys.HighLevelIr);
-            var abiModel = new AbiLowerer(syntaxModel, loadedModules, typeModel, enumLayoutModel, effectModel, hir, context.Options).Lower();
+            var abiModel = new AbiLowerer(syntaxModel, loadedModules, typeModel, enumLayoutModel, effectModel, hir, context.Options, context.Diagnostics).Lower();
             context.Artifacts.Set(CompilerArtifactKeys.AbiModel, abiModel);
         }
     }

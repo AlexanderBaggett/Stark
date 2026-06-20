@@ -2470,6 +2470,43 @@ internal sealed class SsaCleanupOptimizer
             AddLocalRoots(terminator.Value, definitions, requiredLocals);
         }
 
+        if (terminator.TailDirectCall is not null)
+        {
+            foreach (var argument in terminator.TailDirectCall.Arguments)
+            {
+                AddLocalRoots(argument, definitions, requiredLocals);
+            }
+
+            foreach (var address in terminator.TailDirectCall.IndirectArgumentAddresses?.OfType<SsaValue>() ?? [])
+            {
+                AddLocalRoots(address, definitions, requiredLocals);
+            }
+
+            foreach (var localName in terminator.TailDirectCall.IndirectArgumentLocalNames?.OfType<string>() ?? [])
+            {
+                requiredLocals.Add(localName);
+            }
+        }
+
+        if (terminator.TailIndirectCall is not null)
+        {
+            AddLocalRoots(terminator.TailIndirectCall.Target, definitions, requiredLocals);
+            foreach (var argument in terminator.TailIndirectCall.Arguments)
+            {
+                AddLocalRoots(argument, definitions, requiredLocals);
+            }
+
+            foreach (var address in terminator.TailIndirectCall.IndirectArgumentAddresses?.OfType<SsaValue>() ?? [])
+            {
+                AddLocalRoots(address, definitions, requiredLocals);
+            }
+
+            foreach (var localName in terminator.TailIndirectCall.IndirectArgumentLocalNames?.OfType<string>() ?? [])
+            {
+                requiredLocals.Add(localName);
+            }
+        }
+
         foreach (var switchCase in terminator.SwitchCases ?? [])
         {
             AddLocalRoots(switchCase.MatchValue, definitions, requiredLocals);
@@ -2849,6 +2886,40 @@ internal sealed class SsaCleanupOptimizer
         if (terminator.Value is not null)
         {
             yield return terminator.Value;
+        }
+
+        if (terminator.TailDirectCall is not null)
+        {
+            foreach (var argument in terminator.TailDirectCall.Arguments)
+            {
+                yield return argument;
+            }
+
+            foreach (var address in terminator.TailDirectCall.IndirectArgumentAddresses ?? [])
+            {
+                if (address is not null)
+                {
+                    yield return address;
+                }
+            }
+        }
+
+        if (terminator.TailIndirectCall is not null)
+        {
+            yield return terminator.TailIndirectCall.Target;
+
+            foreach (var argument in terminator.TailIndirectCall.Arguments)
+            {
+                yield return argument;
+            }
+
+            foreach (var address in terminator.TailIndirectCall.IndirectArgumentAddresses ?? [])
+            {
+                if (address is not null)
+                {
+                    yield return address;
+                }
+            }
         }
 
         if (terminator.SwitchCases is not null)
@@ -3613,6 +3684,7 @@ internal sealed class SsaCleanupOptimizer
             SsaDynamicStorageAllocationRValue allocation => new SsaDynamicStorageAllocationRValue(
                 RewriteValue(allocation.Capacity, replacements),
                 allocation.Type,
+                allocation.AllocationKind,
                 allocation.Text),
             SsaDynamicStorageFreeRValue free => new SsaDynamicStorageFreeRValue(
                 RewriteValue(free.Storage, replacements),
@@ -3624,16 +3696,19 @@ internal sealed class SsaCleanupOptimizer
                 RewriteValue(reserve.StorageAddress, replacements),
                 reserve.StorageType,
                 RewriteValue(reserve.AdditionalCapacity, replacements),
+                reserve.AllocationKind,
                 reserve.Text),
             SsaDynamicStorageTryReserveRValue reserve => new SsaDynamicStorageTryReserveRValue(
                 RewriteValue(reserve.StorageAddress, replacements),
                 reserve.StorageType,
                 RewriteValue(reserve.AdditionalCapacity, replacements),
+                reserve.AllocationKind,
                 reserve.Text),
             SsaDynamicStorageTryReserveCapacityRValue reserve => new SsaDynamicStorageTryReserveCapacityRValue(
                 RewriteValue(reserve.StorageAddress, replacements),
                 reserve.StorageType,
                 RewriteValue(reserve.TargetCapacity, replacements),
+                reserve.AllocationKind,
                 reserve.Text),
             SsaDynamicStorageMoveLastRValue moveLast => new SsaDynamicStorageMoveLastRValue(
                 RewriteValue(moveLast.StorageAddress, replacements),
@@ -3724,6 +3799,8 @@ internal sealed class SsaCleanupOptimizer
             terminator.Targets.Select(resolveTarget).ToArray(),
             Condition: terminator.Condition is null ? null : RewriteValue(terminator.Condition, replacements),
             Value: terminator.Value is null ? null : RewriteValue(terminator.Value, replacements),
+            TailDirectCall: RewriteTailDirectCall(terminator.TailDirectCall, replacements),
+            TailIndirectCall: RewriteTailIndirectCall(terminator.TailIndirectCall, replacements),
             SwitchCases: terminator.SwitchCases?.Select(switchCase => new SsaSwitchCase(
                 switchCase.Label,
                 resolveTarget(switchCase.TargetBlockId),
@@ -3736,6 +3813,69 @@ internal sealed class SsaCleanupOptimizer
             LoopBehavior: terminator.LoopBehavior,
             LoopContracts: terminator.LoopContracts,
             LoopAccessGroups: terminator.LoopAccessGroups);
+    }
+
+    private static ISsaDirectCallOperation? RewriteTailDirectCall(
+        ISsaDirectCallOperation? call,
+        IReadOnlyDictionary<string, SsaValue>? replacements)
+    {
+        if (call is null)
+        {
+            return null;
+        }
+
+        var arguments = call.Arguments.Select(argument => RewriteValue(argument, replacements)).ToArray();
+        var indirectArgumentAddresses = call.IndirectArgumentAddresses?
+            .Select(address => address is null ? null : RewriteValue(address, replacements))
+            .ToArray();
+
+        return call switch
+        {
+            SsaCallInstruction instruction => instruction with
+            {
+                Arguments = arguments,
+                IndirectArgumentAddresses = indirectArgumentAddresses
+            },
+            SsaCallRValue rValue => rValue with
+            {
+                Arguments = arguments,
+                IndirectArgumentAddresses = indirectArgumentAddresses
+            },
+            _ => call
+        };
+    }
+
+    private static ISsaIndirectCallOperation? RewriteTailIndirectCall(
+        ISsaIndirectCallOperation? call,
+        IReadOnlyDictionary<string, SsaValue>? replacements)
+    {
+        if (call is null)
+        {
+            return null;
+        }
+
+        var target = RewriteValue(call.Target, replacements);
+        var arguments = call.Arguments.Select(argument => RewriteValue(argument, replacements)).ToArray();
+        var indirectArgumentAddresses = call.IndirectArgumentAddresses?
+            .Select(address => address is null ? null : RewriteValue(address, replacements))
+            .ToArray();
+
+        return call switch
+        {
+            SsaIndirectCallInstruction instruction => instruction with
+            {
+                Target = target,
+                Arguments = arguments,
+                IndirectArgumentAddresses = indirectArgumentAddresses
+            },
+            SsaIndirectCallRValue rValue => rValue with
+            {
+                Target = target,
+                Arguments = arguments,
+                IndirectArgumentAddresses = indirectArgumentAddresses
+            },
+            _ => call
+        };
     }
 
     private static SsaValue RewriteValue(

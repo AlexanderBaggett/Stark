@@ -1260,6 +1260,62 @@ unsafe fn bool Apply(fnptr<fn bool(out u32[0 max])> op, out u32[0 max] value)
         && DoesNotContain(applyBody, "dead_on_return");
 }
 
+// Ported from LlvmIrEmissionTests.ExplicitDeadOnReturnDestinationParametersEmitLlvmAttribute.
+internal fn bool ExplicitDeadOnReturnDestinationParametersEmitLlvmAttributeImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-explicit-dead-on-return-destination",
+        raw"""
+module Demo
+
+fn bool WriteAndConsume(out u32[0 max] value) where dead_on_return(value)
+{
+    value = 7;
+    return true;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    stack ascii header = LlvmDefinitionHeader(llvm, "WriteAndConsume");
+    return Contains(header, "writeonly")
+        && Contains(header, "writable")
+        && Contains(header, "initializes((0, 4))")
+        && Contains(header, "dead_on_return");
+}
+
+// Ported from LlvmIrEmissionTests.FunctionPointerDeadOnReturnContractsEmitCallSiteAttribute.
+internal fn bool FunctionPointerDeadOnReturnContractsEmitCallSiteAttributeImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-fnptr-dead-on-return-callsite",
+        raw"""
+module Demo
+
+unsafe fn bool Apply(
+    fnptr<fn bool(out u32[0 max]) where dead_on_return(arg0)> op,
+    out u32[0 max] value)
+    where dead_on_return(value)
+{
+    return op(value);
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    stack ascii applyHeader = LlvmDefinitionHeader(llvm, "Apply");
+    stack ascii applyBody = LlvmDefinitionBody(llvm, "Apply");
+    return Contains(applyHeader, "dead_on_return")
+        && Contains(applyBody, "dead_on_return")
+        && Contains(applyBody, "writable initializes((0, 4))");
+}
+
 // Ported from LlvmIrEmissionTests.FunctionPointerCallsWithInitParametersUseCallerStorage.
 internal fn bool FunctionPointerCallsWithInitParametersUseCallerStorageImpl()
 {
@@ -1778,6 +1834,40 @@ unsafe fn u64[0 2 ** 63 - 1] Run()
     return Contains(llvm, "@__stark_runtime_alloc")
         && DoesNotContain(llvm, "dynamic_alloc_is_zero")
         && DoesNotContain(llvm, "dynamic_alloc_overflow");
+}
+
+// Ported from LlvmIrEmissionTests.ArenaDynamicStorageAllocationUsesFrameAllocatorAndDropsWithoutFreeingOwner.
+internal fn bool ArenaDynamicStorageAllocationUsesFrameAllocatorAndDropsWithoutFreeingOwnerImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-arena-dynamic-positive-alloc-direct",
+        raw"""
+module Demo
+
+unsafe fn u64[0 2 ** 63 - 1] Run()
+{
+    stack mut dynamic u32[0 2 ** 31 - 1] values = new(arena, 4);
+    return values.Capacity;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return DoesNotContain(llvm, "; LLVM body emission fallback for Run")
+        && Contains(llvm, "%__stark_arena_frame = alloca { ptr, ptr, ptr }, align 8")
+        && Contains(llvm, "call void @__stark_arena_enter(ptr nonnull %__stark_arena_frame)")
+        && Contains(llvm, "call void @__stark_arena_leave(ptr nonnull %__stark_arena_frame)")
+        && Contains(llvm, "call noalias nonnull noundef align 4 ptr @__stark_arena_alloc(ptr nonnull %__stark_arena_frame")
+        && Contains(llvm, "insertvalue { ptr, i64, i64 }")
+        && DoesNotContain(llvm, "dynamic_alloc_is_zero")
+        && DoesNotContain(llvm, "dynamic_alloc_overflow")
+        && DoesNotContain(llvm, "@__stark_dynamic_alloc")
+        && DoesNotContain(llvm, "@__stark_arena_dynamic_alloc")
+        && DoesNotContain(llvm, "dynamic_free_ptr")
+        && Contains(llvm, "define linkonce_odr hidden noalias nonnull noundef ptr @__stark_arena_alloc(ptr captures(none) %frame, i64 noundef %size, i64 noundef allocalign %alignment) unnamed_addr allocsize(1) allockind(\"alloc,uninitialized,aligned\") \"alloc-family\"=\"__stark_arena_alloc\" nounwind comdat");
 }
 
 // Ported from LlvmIrEmissionTests.DynamicStorageDropEmitsElementDestructorLoopBeforeFree.
@@ -8049,6 +8139,50 @@ unsafe fn i32[min max] Run()
         && Contains(llvm, "call void @__stark_heap_free(ptr %slot_box)")
         && DoesNotContain(llvm, "alloca %Box")
         && DoesNotContain(llvm, "; LLVM body emission fallback for Run");
+}
+
+// Ported from LlvmIrEmissionTests.ArenaObjectCreationUsesFrameAllocatorLowering.
+internal fn bool ArenaObjectCreationUsesFrameAllocatorLoweringImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "p6-arena-object-allocator",
+        raw"""
+module Demo
+
+struct Box
+{
+    i32[min max] Value;
+}
+
+unsafe fn i32[min max] Run()
+{
+    arena Box box = new Box()
+    {
+        Value = 7
+    };
+    return box.Value;
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return DoesNotContain(llvm, "; LLVM body emission fallback for Run")
+        && DoesNotContain(llvm, "@malloc(")
+        && DoesNotContain(llvm, "@realloc(")
+        && DoesNotContain(llvm, "@free(")
+        && DoesNotContain(llvm, "@__stark_heap_alloc")
+        && DoesNotContain(llvm, "@__stark_heap_free")
+        && DoesNotContain(llvm, "alloca %Box")
+        && Contains(llvm, "%__stark_arena_frame = alloca { ptr, ptr, ptr }, align 8")
+        && Contains(llvm, "call void @__stark_arena_enter(ptr nonnull %__stark_arena_frame)")
+        && Contains(llvm, "call void @__stark_arena_leave(ptr nonnull %__stark_arena_frame)")
+        && Contains(llvm, "call noalias nonnull noundef align 4 dereferenceable(4) ptr @__stark_arena_alloc(ptr nonnull %__stark_arena_frame")
+        && Contains(llvm, "define linkonce_odr hidden void @__stark_arena_enter(ptr captures(none) %frame) unnamed_addr nounwind comdat")
+        && Contains(llvm, "define linkonce_odr hidden void @__stark_arena_leave(ptr captures(none) %frame) unnamed_addr nounwind comdat")
+        && Contains(llvm, "define linkonce_odr hidden noalias nonnull noundef ptr @__stark_arena_alloc(ptr captures(none) %frame, i64 noundef %size, i64 noundef allocalign %alignment) unnamed_addr allocsize(1) allockind(\"alloc,uninitialized,aligned\") \"alloc-family\"=\"__stark_arena_alloc\" nounwind comdat");
 }
 
 // Ported from LlvmIrEmissionTests.HeapFieldInitializationDoesNotReadUninitializedAggregateStorage.

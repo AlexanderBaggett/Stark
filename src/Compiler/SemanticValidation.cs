@@ -144,13 +144,6 @@ internal sealed class SemanticValidator
     {
         switch (storageClass)
         {
-            case LocalStorageClass.Arena:
-                _context.Diagnostics.Error(
-                    "STK4017",
-                    "Local 'arena' storage is reserved for allocator-backed region storage and is not a valid executable local storage class. Use 'stack' or 'heap' storage.",
-                    "semantic-validate",
-                    Location(context));
-                break;
             case LocalStorageClass.Static:
                 _context.Diagnostics.Error(
                     "STK4017",
@@ -240,7 +233,7 @@ internal sealed class SemanticValidator
         var selfType = StarkTypeSymbols.Named(qualifiedTypeName);
         var selfParameter = new TypedParameterSymbol("self", selfType, IsConst: !destructor.IsMutable);
         summary.Configure(StarkTypeSymbols.Void, hasBody: true, StarkFunctionKind.Fn);
-        summary.SetParameters([selfParameter], [], _typeModel.NamedTypes, _enumLayoutModel.Layouts);
+        summary.SetParameters([selfParameter], [], [], _typeModel.NamedTypes, _enumLayoutModel.Layouts);
 
         var declaration = new FunctionDeclarationModel(
             summary.Name,
@@ -575,7 +568,12 @@ internal sealed class SemanticValidator
 
         var summary = GetOrCreateSummary(name);
         summary.Configure(signature.ReturnType, syntaxDeclaration.Function.HasBody, syntaxDeclaration.Function.Kind);
-        summary.SetParameters(signature.Parameters, signature.DisjointGroups, _typeModel.NamedTypes, _enumLayoutModel.Layouts);
+        summary.SetParameters(
+            signature.Parameters,
+            signature.DisjointGroups,
+            signature.PointeeDeadOnReturnParameters,
+            _typeModel.NamedTypes,
+            _enumLayoutModel.Layouts);
         ApplyBuiltinDeclarationMemoryEffects(syntaxDeclaration.Function, summary);
         ValidateFunctionSignature(functionDeclaration, syntaxDeclaration.Function, signature, effects, summary);
 
@@ -878,6 +876,17 @@ internal sealed class SemanticValidator
                                     "semantic-validate",
                                     Location(entry));
                             }
+                            else if (implSignature.IsTailCallable != requiredMethod.IsTailCallable)
+                            {
+                                var requiredTailText = requiredMethod.IsTailCallable
+                                    ? "must be declared 'tail'"
+                                    : "must not be declared 'tail'";
+                                _context.Diagnostics.Error(
+                                    "STK3033",
+                                    $"'{ownerName}.{requiredMethodName}' {requiredTailText} to satisfy trait method '{requiredMethod.DisplaySourceName}'.",
+                                    "semantic-validate",
+                                    Location(entry));
+                            }
                             else if (!TraitMethodSignatureConforms(requiredMethod, implSignature, named, resolved))
                             {
                                 _context.Diagnostics.Error(
@@ -1054,9 +1063,11 @@ internal sealed class SemanticValidator
             || left.FunctionPointerKind != right.FunctionPointerKind
             || left.FunctionPointerAbi != right.FunctionPointerAbi
             || left.FunctionPointerIsUnsafe != right.FunctionPointerIsUnsafe
+            || left.FunctionPointerIsTailCallable != right.FunctionPointerIsTailCallable
             || left.ClosureFunctionKind != right.ClosureFunctionKind
             || left.ClosureStorageKind != right.ClosureStorageKind
             || left.ClosureCallCapability != right.ClosureCallCapability
+            || left.ClosureIsTailCallable != right.ClosureIsTailCallable
             || !string.Equals(left.AssociatedTypeName, right.AssociatedTypeName, StringComparison.Ordinal))
         {
             return false;
@@ -1538,6 +1549,20 @@ internal sealed class SemanticValidator
                 RecordReturnCapture(returnedValue, function, summary);
             }
 
+            return;
+        }
+
+        if (statement.becomeStatement() is { } becomeStatement)
+        {
+            var returnedValue = EvaluateExpression(
+                becomeStatement.expression(),
+                scope,
+                function,
+                effects,
+                summary,
+                allowFunctionReference: false,
+                ExpressionObservation.Read);
+            RecordReturnCapture(returnedValue, function, summary);
             return;
         }
 
@@ -2962,7 +2987,12 @@ internal sealed class SemanticValidator
 
             var summary = GetOrCreateSummary(lambda.FunctionName);
             summary.Configure(signature.ReturnType, hasBody: true, signature.Kind);
-            summary.SetParameters(signature.Parameters, signature.DisjointGroups, _typeModel.NamedTypes, _enumLayoutModel.Layouts);
+            summary.SetParameters(
+                signature.Parameters,
+                signature.DisjointGroups,
+                signature.PointeeDeadOnReturnParameters,
+                _typeModel.NamedTypes,
+                _enumLayoutModel.Layouts);
 
             var scope = ValidationScope.CreateRoot();
             foreach (var parameter in signature.Parameters)
@@ -3030,7 +3060,12 @@ internal sealed class SemanticValidator
 
             var summary = GetOrCreateSummary(lambda.FunctionName);
             summary.Configure(signature.ReturnType, hasBody: true, signature.Kind);
-            summary.SetParameters(signature.Parameters, signature.DisjointGroups, _typeModel.NamedTypes, _enumLayoutModel.Layouts);
+            summary.SetParameters(
+                signature.Parameters,
+                signature.DisjointGroups,
+                signature.PointeeDeadOnReturnParameters,
+                _typeModel.NamedTypes,
+                _enumLayoutModel.Layouts);
 
             var scope = ValidationScope.CreateRoot();
             DeclareLambdaCaptures(scope, summary, lambda.Location, lambda.EnclosingFunctionName, expression.Start);
@@ -3154,12 +3189,9 @@ internal sealed class SemanticValidator
             ValidateTypeUsage(explicitObjectType, createdType, TypeUsage.Conversion);
         }
 
-        if (expression.argumentList() is { } argumentList)
+        foreach (var argument in GetObjectCreationArguments(expression))
         {
-            foreach (var argument in argumentList.argument())
-            {
-                EvaluateExpression(argument.expression(), scope, function, effects, summary, allowFunctionReference: false, ExpressionObservation.Read);
-            }
+            EvaluateExpression(argument.expression(), scope, function, effects, summary, allowFunctionReference: false, ExpressionObservation.Read);
         }
 
         if (expression.objectInitializer() is { } objectInitializer)
@@ -3170,12 +3202,23 @@ internal sealed class SemanticValidator
             }
         }
 
-        if (createdType.Kind == StarkTypeKind.Dynamic)
+        if (expression.arenaObjectCreationArgumentList() is not null)
+        {
+            RecordArenaAllocationRuntimeEffects(function, effects, summary, expression.arenaObjectCreationArgumentList());
+        }
+        else if (createdType.Kind == StarkTypeKind.Dynamic)
         {
             RecordDynamicStorageRuntimeEffects(function, effects, summary, expression);
         }
 
         return new ValidationValue(createdType, NamedType: ResolveNamedTypeSymbol(createdType));
+    }
+
+    private static StarkParser.ArgumentContext[] GetObjectCreationArguments(StarkParser.ObjectCreationExpressionContext expression)
+    {
+        return expression.arenaObjectCreationArgumentList() is { } arenaArguments
+            ? arenaArguments.argument()
+            : expression.argumentList()?.argument() ?? [];
     }
 
     private ValidationValue ResolveGenericMemberReference(
@@ -3218,6 +3261,22 @@ internal sealed class SemanticValidator
             allowFunctionReference,
             observation,
             genericMemberReference.Start);
+    }
+
+    private void RecordArenaAllocationRuntimeEffects(
+        FunctionDeclarationModel function,
+        FunctionEffectProfile effects,
+        FunctionValidationBuilder summary,
+        ParserRuleContext context)
+    {
+        summary.DisqualifyLaw();
+        summary.MarkOtherMemoryRead();
+        summary.MarkOtherMemoryWrite();
+
+        if (effects.IsPure)
+        {
+            EffectError(summary, "STK4102", $"Law '{function.Name}' cannot allocate arena storage with `new(arena, ...)`.", context);
+        }
     }
 
     private void RecordDynamicStorageRuntimeEffects(
@@ -7158,7 +7217,8 @@ internal sealed class SemanticValidator
         int nestedLoopDepth = 0,
         int nestedSwitchDepth = 0)
     {
-        if (statement.returnStatement() is not null)
+        if (statement.returnStatement() is not null
+            || statement.becomeStatement() is not null)
         {
             return true;
         }
@@ -7235,7 +7295,8 @@ internal sealed class SemanticValidator
         int nestedLoopDepth = 0,
         int nestedSwitchDepth = 0)
     {
-        if (statement.returnStatement() is not null)
+        if (statement.returnStatement() is not null
+            || statement.becomeStatement() is not null)
         {
             return true;
         }
@@ -7587,6 +7648,7 @@ internal sealed class SemanticValidator
             TypedParameterSymbol parameter,
             IReadOnlyList<TypedParameterSymbol> parameters,
             IReadOnlyList<ParameterDisjointGroup> disjointGroups,
+            IReadOnlySet<string> pointeeDeadOnReturnParameters,
             IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
             IReadOnlyDictionary<string, EnumLayoutSymbol> enumLayouts)
         {
@@ -7604,6 +7666,7 @@ internal sealed class SemanticValidator
             InitializationRanges = TryBuildDestinationInitializationRanges(parameter.Type, concreteLayout, out var initializationRanges)
                 ? initializationRanges
                 : [];
+            PointeeDeadOnReturn = pointeeDeadOnReturnParameters.Contains(parameter.Name);
         }
 
         public string Name { get; }
@@ -7626,7 +7689,7 @@ internal sealed class SemanticValidator
 
         public IReadOnlyList<ParameterInitializationRangeSummary> InitializationRanges { get; }
 
-        public bool PointeeDeadOnReturn { get; } = false;
+        public bool PointeeDeadOnReturn { get; }
 
         public bool Reads { get; set; }
 
@@ -7800,12 +7863,20 @@ internal sealed class SemanticValidator
         public void SetParameters(
             IReadOnlyList<TypedParameterSymbol> parameters,
             IReadOnlyList<ParameterDisjointGroup> disjointGroups,
+            IReadOnlyList<string> pointeeDeadOnReturnParameters,
             IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
             IReadOnlyDictionary<string, EnumLayoutSymbol> enumLayouts)
         {
+            var pointeeDeadOnReturnSet = pointeeDeadOnReturnParameters.ToHashSet(StringComparer.Ordinal);
             foreach (var parameter in parameters)
             {
-                Parameters[parameter.Name] = new ParameterSummaryBuilder(parameter, parameters, disjointGroups, namedTypes, enumLayouts);
+                Parameters[parameter.Name] = new ParameterSummaryBuilder(
+                    parameter,
+                    parameters,
+                    disjointGroups,
+                    pointeeDeadOnReturnSet,
+                    namedTypes,
+                    enumLayouts);
             }
         }
 

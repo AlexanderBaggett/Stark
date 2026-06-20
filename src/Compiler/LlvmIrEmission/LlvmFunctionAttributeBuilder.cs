@@ -272,6 +272,7 @@ internal sealed class LlvmFunctionAttributeBuilder
 
             AppendPointerMemoryAccessAttributes(attributes, parameter, parameterEffects);
             AppendDestinationInitializationAttributes(attributes, abiFunction, parameter, parameterEffects);
+            AppendPointeeDeadOnReturnAttribute(attributes, parameterEffects);
             AppendCaptureAttribute(attributes, parameterEffects);
             AppendDereferenceableAttributes(attributes, parameter.SourceType);
 
@@ -311,6 +312,7 @@ internal sealed class LlvmFunctionAttributeBuilder
 
         AppendPointerMemoryAccessAttributes(attributes, parameter, parameterEffects);
         AppendDestinationInitializationAttributes(attributes, abiFunction, parameter, parameterEffects);
+        AppendPointeeDeadOnReturnAttribute(attributes, parameterEffects);
         AppendCaptureAttribute(attributes, parameterEffects);
 
         // Plain raw pointers remain nullable and may carry arbitrary raw/FFI
@@ -475,10 +477,15 @@ internal sealed class LlvmFunctionAttributeBuilder
 
         AddUniqueAttribute(attributes, "writable");
         attributes.Add(RenderInitializesAttribute(ranges));
+    }
 
+    private static void AppendPointeeDeadOnReturnAttribute(
+        List<string> attributes,
+        ParameterMemoryEffectSummary? parameterEffects)
+    {
         if (parameterEffects?.PointeeDeadOnReturn == true)
         {
-            attributes.Add("dead_on_return");
+            AddUniqueAttribute(attributes, "dead_on_return");
         }
     }
 
