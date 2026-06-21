@@ -1,6 +1,9 @@
 # Raylib Bindings
 
-This directory contains Stark bindings for Raylib 5.5, split by Raylib area for readability.
+This directory contains standalone Stark bindings for Raylib 5.5, split by
+Raylib area for readability. New code can also use the bundled `Vendor.Raylib`
+package under `/vendor`; both bindings use Stark's direct C ABI aggregate
+carrier lowering for C-layout Raylib structs.
 
 - `Raylib/Types.stark`: structs, aliases, callback pointer aliases, enum constants, color helpers, and small constructors.
 - `Raylib/Core.stark`
@@ -10,9 +13,10 @@ This directory contains Stark bindings for Raylib 5.5, split by Raylib area for 
 - `Raylib/Models.stark`
 - `Raylib/Audio.stark`
 - `Raylib.stark`: convenience re-export module.
-- `RaylibNative.c`: C ABI shim for Raylib functions that pass or return structs by value.
 
-Stark direct FFI is used for scalar and pointer-only Raylib calls. Calls that pass or return Raylib structs by value go through `RaylibNative.c`, which keeps the C ABI layout and calling convention on the C side while exposing normal Stark functions. `GetFileModTime` also goes through the shim so Stark sees a stable `i64` instead of C's platform-dependent `long`.
+The binding uses `[LinkName("...")]`, `[StructLayout(C)]`, and `ffi(c)` for
+direct calls, including small by-value structs such as `Vector2`, `Rectangle`,
+and `Color`. No Raylib-specific C shim is required for these aggregate carriers.
 
 Raylib's `TraceLog` and `TextFormat` are declared with `ffi varargs`; pass extra arguments only with C-varargs-stable types such as `i32`, wider integers, `f64`, raw pointers, or text. Callback typedefs are exposed as raw callback pointers until Stark has a dedicated C-callable callback ABI. Raylib color macros are exposed as zero-cost constructor functions such as `RAYWHITE()` because the current compiler does not materialize narrowed byte-field aggregate constants directly.
 
@@ -32,8 +36,10 @@ that package image:
 
 ```bash
 bash examples/raylib/build-package.sh
-./stark examples/raylib/RaylibSmoke.stark --emit-exe -I examples/raylib/dist -o /tmp/stark-raylib-smoke -O0
-/tmp/stark-raylib-smoke
+tmpdir="$(mktemp -d /tmp/stark-raylib-smoke-XXXXXX)"
+cp examples/raylib/RaylibSmoke.stark "$tmpdir/RaylibSmoke.stark"
+./stark "$tmpdir/RaylibSmoke.stark" --emit-exe -I examples/raylib/dist -o "$tmpdir/stark-raylib-smoke"
+"$tmpdir/stark-raylib-smoke"
 ```
 
 If Raylib is visible through `pkg-config`, the helper script uses
@@ -48,9 +54,9 @@ If neither `pkg-config` nor `RAYLIB_SRC_DIR` can provide Raylib, the helper
 script now stops early and prints the same guidance instead of failing later
 while linking a downstream example.
 
-The emitted package keeps `RaylibNative.c` package-relative, so downstream
-builds only need `-I examples/raylib/dist` and do not have to repeat the shim
-source path.
+The emitted package keeps Raylib native dependency metadata package-relative, so
+downstream builds only need `-I examples/raylib/dist` and do not have to repeat
+Raylib library flags.
 
 `RaylibSmoke.stark` is intentionally headless. Playable graphical examples should be run manually on machines with a display server.
 

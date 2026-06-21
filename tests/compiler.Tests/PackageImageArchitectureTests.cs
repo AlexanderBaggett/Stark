@@ -1230,6 +1230,215 @@ public sealed class PackageImageArchitectureTests
     }
 
     [Fact]
+    public void PackageImagePreservesFfiLinkNameFactsAndBridgeSource()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-link-name-");
+
+        try
+        {
+            var sourcePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+            var result = DefaultCompilerPipeline.Create().Run(
+                new CompilationInput(
+                    """
+                    module Facade
+
+                    [LinkName("native_alias_i32")]
+                    public unsafe ffi(c) fn i32[min max] StarkAlias(i32[min max] value);
+                    """,
+                    sourcePath),
+                new CompilerOptions(StopAfterPassId: "lower-abi"));
+
+            Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(
+                result,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            var facadeModule = Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade");
+            var function = Assert.Single(facadeModule.CompilerSections?.TypedInterface?.Functions ?? []);
+            var abiFunction = Assert.Single(facadeModule.CompilerSections?.CompilerFacts?.AbiFunctions ?? []);
+
+            Assert.Equal("StarkAlias", function.Name);
+            Assert.Equal("native_alias_i32", function.SymbolName);
+            Assert.Equal("native_alias_i32", function.LinkName);
+            Assert.Equal("native_alias_i32", abiFunction.SymbolName);
+            Assert.Equal("native_alias_i32", abiFunction.LinkName);
+
+            Assert.True(PackageImageLoader.TryBuildLoadedPackageImageFacts(CreateResolvedPackageModule(facadeModule), out var facts));
+            var loadedSignature = Assert.Single(facts.FunctionSignatures.Values);
+            Assert.Equal("native_alias_i32", loadedSignature.ExternalLinkName);
+
+            Assert.True(PackageImageLoader.TryBuildModuleSource(CreateResolvedPackageModule(facadeModule), out var sourceText));
+            Assert.Contains("[LinkName(\"native_alias_i32\")]", sourceText, StringComparison.Ordinal);
+            Assert.Contains("public unsafe ffi(c) fn i32[", sourceText, StringComparison.Ordinal);
+            Assert.Contains("StarkAlias(i32[min max] value);", sourceText, StringComparison.Ordinal);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup.
+            }
+        }
+    }
+
+    [Fact]
+    public void PackageImageImportedFfiLinkNameDrivesConsumerLlvmCall()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-link-name-call-");
+
+        try
+        {
+            var sourcePath = Path.Combine(tempDirectory.FullName, "NativeAlias.stark");
+            var manifestPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "NativeAlias.starkpkg.json" : "libNativeAlias.starkpkg.json");
+            var libraryPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "NativeAlias.lib" : "libNativeAlias.a");
+            var result = DefaultCompilerPipeline.Create().Run(
+                new CompilationInput(
+                    """
+                    module NativeAlias
+
+                    [LinkName("native_alias_i32")]
+                    public unsafe ffi(c) fn i32[min max] StarkAlias(i32[min max] value);
+                    """,
+                    sourcePath),
+                new CompilerOptions(StopAfterPassId: "lower-abi"));
+
+            Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(result, libraryPath);
+            File.WriteAllText(manifestPath, manifest.ToJson());
+            File.Delete(sourcePath);
+
+            var consumerResult = DefaultCompilerPipeline.Create().Run(
+                new CompilationInput(
+                    """
+                    import NativeAlias
+                    module App
+
+                    export fn i32[min max] main()
+                    {
+                        unsafe
+                        {
+                            return StarkAlias(41);
+                        }
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "App.stark")),
+                new CompilerOptions(
+                    EmitLlvmIr: true,
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule));
+            Assert.NotNull(llvmModule);
+            Assert.Contains("declare i32 @native_alias_i32", llvmModule!.Text, StringComparison.Ordinal);
+            Assert.Contains("call i32 @native_alias_i32(", llvmModule.Text, StringComparison.Ordinal);
+            Assert.DoesNotContain("@StarkAlias", llvmModule.Text, StringComparison.Ordinal);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup.
+            }
+        }
+    }
+
+    [Fact]
+    public void PackageImagePreservesExpandedFfiAggregateCarrierFacts()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-ffi-aggregate-carriers-");
+
+        try
+        {
+            var sourcePath = Path.Combine(tempDirectory.FullName, "NativeRect.stark");
+            var manifestPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "NativeRect.starkpkg.json" : "libNativeRect.starkpkg.json");
+            var libraryPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "NativeRect.lib" : "libNativeRect.a");
+            var result = DefaultCompilerPipeline.Create().Run(
+                new CompilationInput(
+                    """
+                    module NativeRect
+
+                    [StructLayout(C)]
+                    public struct Rectangle
+                    {
+                        public f32 X;
+                        public f32 Y;
+                        public f32 Width;
+                        public f32 Height;
+                    }
+
+                    [LinkName("DrawRectangleRec")]
+                    public unsafe ffi(c) fn void Draw(Rectangle rec);
+                    """,
+                    sourcePath),
+                new CompilerOptions(StopAfterPassId: "lower-abi"));
+
+            Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(result, libraryPath);
+            var nativeRectModule = Assert.Single(manifest.Modules, static module => module.ModuleName == "NativeRect");
+            var abiFunction = Assert.Single(nativeRectModule.CompilerSections?.CompilerFacts?.AbiFunctions ?? []);
+            var recParameter = Assert.Single(abiFunction.Parameters, static parameter => parameter.SourceName == "rec");
+            Assert.Equal("llvmstruct", recParameter.LlvmType.Kind);
+            Assert.NotNull(recParameter.LlvmParameterTypes);
+            Assert.Equal(["llvmvector", "llvmvector"], recParameter.LlvmParameterTypes!.Select(static type => type.Kind).ToArray());
+
+            File.WriteAllText(manifestPath, manifest.ToJson());
+            File.Delete(sourcePath);
+
+            var consumerResult = DefaultCompilerPipeline.Create().Run(
+                new CompilationInput(
+                    """
+                    import NativeRect
+                    module App
+
+                    export unsafe fn i32[min max] main()
+                    {
+                        stack Rectangle rec = new Rectangle()
+                        {
+                            X = 1.0,
+                            Y = 2.0,
+                            Width = 3.0,
+                            Height = 4.0
+                        };
+                        Draw(rec);
+                        return 0;
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "App.stark")),
+                new CompilerOptions(
+                    EmitLlvmIr: true,
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule));
+            Assert.NotNull(llvmModule);
+            Assert.Contains("declare void @DrawRectangleRec(<2 x float>, <2 x float>) nounwind", llvmModule!.Text, StringComparison.Ordinal);
+            Assert.Contains("call void @DrawRectangleRec(<2 x float>", llvmModule.Text, StringComparison.Ordinal);
+            Assert.DoesNotContain("@Draw(", llvmModule.Text, StringComparison.Ordinal);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup.
+            }
+        }
+    }
+
+    [Fact]
     public void PackageImagePreservesNoRecurseFunctionEffectFacts()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-norecurse-");

@@ -29,7 +29,6 @@ if [[ -n "${RAYLIB_SRC_DIR:-}" ]]; then
   fi
 
   native_args=(
-    --native-source "${script_dir}/RaylibNative.c"
     --native-include-dir "${RAYLIB_SRC_DIR}"
     --native-library-dir "${RAYLIB_SRC_DIR}"
     --native-library raylib
@@ -59,8 +58,7 @@ fi
   --emit-lib \
   -I "${script_dir}" \
   -o "${raylib_dist}/libRaylibStark.a" \
-  "${native_args[@]}" \
-  -O0
+  "${native_args[@]}"
 
 echo "Built ${raylib_dist}/libRaylibStark.a"
-echo "Built ${raylib_dist}/libRaylibStark.starkpkg.json"
+echo "Built ${raylib_dist}/libRaylibStark.starkpkg"

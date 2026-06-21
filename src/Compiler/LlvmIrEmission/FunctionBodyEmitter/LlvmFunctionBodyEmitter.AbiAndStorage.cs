@@ -55,6 +55,62 @@ internal sealed partial class LlvmFunctionBodyEmitter
         return string.Join(" ", segments);
     }
 
+    private IReadOnlyList<string> RenderDirectArguments(
+        AbiFunctionSignature abiFunction,
+        AbiParameterSymbol parameter,
+        SsaValue argument,
+        IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? parameterEffects,
+        bool includeContractAttributes)
+    {
+        if (!parameter.IsExpandedDirectParameter)
+        {
+            return [RenderDirectArgument(abiFunction, parameter, argument, parameterEffects, includeContractAttributes)];
+        }
+
+        var carrierValues = MaterializeCAbiCarriersFromSourceValue(
+            parameter.SourceType,
+            parameter.EffectiveLlvmParameterTypes,
+            argument,
+            $"ffi_arg_{parameter.SourceName}");
+        var rendered = new List<string>(carrierValues.Count);
+        for (var index = 0; index < carrierValues.Count; index++)
+        {
+            var carrierParameter = parameter with
+            {
+                LlvmName = parameter.GetLlvmValueName(index),
+                LlvmType = parameter.EffectiveLlvmParameterTypes[index],
+                LlvmParameterTypes = null
+            };
+            rendered.Add(RenderDirectCarrierArgument(
+                abiFunction,
+                carrierParameter,
+                carrierValues[index],
+                parameterEffects,
+                includeContractAttributes));
+        }
+
+        return rendered;
+    }
+
+    private string RenderDirectCarrierArgument(
+        AbiFunctionSignature abiFunction,
+        AbiParameterSymbol parameter,
+        string carrierValue,
+        IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? parameterEffects,
+        bool includeContractAttributes)
+    {
+        var segments = new List<string> { MapType(parameter.LlvmType) };
+
+        if (includeContractAttributes)
+        {
+            var attributes = _attributeBuilder.GetAbiParameterAttributes(parameter, parameterEffects, abiFunction).ToList();
+            segments.AddRange(attributes);
+        }
+
+        segments.Add(carrierValue);
+        return string.Join(" ", segments);
+    }
+
     private bool TryBuildDirectArgumentRangeAttribute(
         AbiParameterSymbol parameter,
         SsaValue argument,
@@ -129,6 +185,64 @@ internal sealed partial class LlvmFunctionBodyEmitter
         return carrierValue;
     }
 
+    private IReadOnlyList<string> MaterializeCAbiCarriersFromSourceValue(
+        StarkTypeSymbol sourceType,
+        IReadOnlyList<StarkTypeSymbol> carrierTypes,
+        SsaValue sourceValue,
+        string tempPrefix)
+    {
+        if (carrierTypes.Count == 1)
+        {
+            return [MaterializeCAbiCarrierFromSourceValue(sourceType, carrierTypes[0], sourceValue, tempPrefix)];
+        }
+
+        if (TryGetConcreteTypeLayout(sourceType) is not { } sourceLayout)
+        {
+            throw new UnsupportedBodyEmissionException(
+                $"Unable to lower '{sourceType.DisplayName}' to expanded C ABI carriers because the source type has no concrete layout.");
+        }
+
+        string sourceAddress;
+        int? sourceAlignmentBytes;
+        if (!TryResolveAggregateSourceAddress(sourceValue, sourceType, out sourceAddress, out sourceAlignmentBytes))
+        {
+            sourceAddress = $"%{EscapeIdentifier(CreateAbiTempName($"{tempPrefix}_source"))}";
+            QueueStaticAlloca(sourceAddress, sourceType);
+            sourceAlignmentBytes = GetStackObjectAlignmentBytes(sourceType);
+            EmitValueToAddress(sourceAddress, sourceType, sourceValue, sourceAlignmentBytes);
+        }
+
+        var values = new List<string>(carrierTypes.Count);
+        var sourceOffsetBytes = 0;
+        for (var index = 0; index < carrierTypes.Count; index++)
+        {
+            var carrierType = carrierTypes[index];
+            if (TryGetConcreteTypeLayout(carrierType) is not { } carrierLayout
+                || sourceOffsetBytes + carrierLayout.SizeBytes > sourceLayout.SizeBytes)
+            {
+                throw new UnsupportedBodyEmissionException(
+                    $"Unable to lower '{sourceType.DisplayName}' to expanded C ABI carrier '{carrierType.DisplayName}'.");
+            }
+
+            var carrierPointer = sourceAddress;
+            if (sourceOffsetBytes != 0)
+            {
+                carrierPointer = $"%{EscapeIdentifier(CreateAbiTempName($"{tempPrefix}_carrier_ptr"))}";
+                AppendLine($"  {carrierPointer} = getelementptr i8, ptr {sourceAddress}, i64 {sourceOffsetBytes}");
+            }
+
+            var carrierValue = $"%{EscapeIdentifier(CreateAbiTempName($"{tempPrefix}_carrier_{index}"))}";
+            var carrierAlignmentBytes = sourceAlignmentBytes is { } alignmentBytes
+                ? Math.Min(GetAlignmentAtOffset(alignmentBytes, sourceOffsetBytes), GetTypeAlignmentBytes(carrierType) ?? alignmentBytes)
+                : GetTypeAlignmentBytes(carrierType);
+            AppendLine($"  {carrierValue} = load {MapType(carrierType)}, ptr {carrierPointer}{GetAlignmentSuffix(carrierAlignmentBytes)}");
+            values.Add(carrierValue);
+            sourceOffsetBytes = checked(sourceOffsetBytes + carrierLayout.SizeBytes);
+        }
+
+        return values;
+    }
+
     private string MaterializeSourceValueFromCAbiCarrier(
         string carrierValue,
         StarkTypeSymbol carrierType,
@@ -157,6 +271,66 @@ internal sealed partial class LlvmFunctionBodyEmitter
             Math.Min(sourceLayout.SizeBytes, carrierLayout.SizeBytes),
             GetArgumentAlignmentFragment(sourceAlignmentBytes),
             GetArgumentAlignmentFragment(carrierAlignmentBytes));
+
+        _indirectAggregateValueSlots[resultName] = sourceAddress;
+        var sourceValue = $"%{EscapeIdentifier(materializedValueName ?? resultName)}";
+        AppendLine($"  {sourceValue} = load {MapType(sourceType)}, ptr {sourceAddress}{GetAlignmentSuffix(sourceAlignmentBytes)}{GetValueRangeMetadataSuffix(sourceType)}");
+        return sourceValue;
+    }
+
+    private string MaterializeSourceValueFromCAbiCarriers(
+        AbiParameterSymbol parameter,
+        StarkTypeSymbol sourceType,
+        string resultName,
+        string tempPrefix,
+        string? materializedValueName = null)
+    {
+        if (!parameter.IsExpandedDirectParameter)
+        {
+            return MaterializeSourceValueFromCAbiCarrier(
+                $"%{EscapeIdentifier(parameter.LlvmName)}",
+                parameter.LlvmType,
+                sourceType,
+                resultName,
+                tempPrefix,
+                materializedValueName);
+        }
+
+        if (TryGetConcreteTypeLayout(sourceType) is not { } sourceLayout)
+        {
+            throw new UnsupportedBodyEmissionException(
+                $"Unable to materialize expanded C ABI parameter '{parameter.SourceName}' because '{sourceType.DisplayName}' has no concrete layout.");
+        }
+
+        var sourceAddress = $"%{EscapeIdentifier(CreateAbiTempName($"{tempPrefix}_source"))}";
+        QueueStaticAlloca(sourceAddress, sourceType);
+        var sourceAlignmentBytes = GetStackObjectAlignmentBytes(sourceType);
+        AppendLine($"  call void @llvm.memset.inline.p0.i64(ptr{GetArgumentAlignmentFragment(sourceAlignmentBytes)} {sourceAddress}, i8 0, i64 {sourceLayout.SizeBytes}, i1 false)");
+
+        var sourceOffsetBytes = 0;
+        for (var index = 0; index < parameter.EffectiveLlvmParameterTypes.Count; index++)
+        {
+            var carrierType = parameter.EffectiveLlvmParameterTypes[index];
+            if (TryGetConcreteTypeLayout(carrierType) is not { } carrierLayout
+                || sourceOffsetBytes + carrierLayout.SizeBytes > sourceLayout.SizeBytes)
+            {
+                throw new UnsupportedBodyEmissionException(
+                    $"Unable to materialize expanded C ABI carrier '{carrierType.DisplayName}' for parameter '{parameter.SourceName}'.");
+            }
+
+            var carrierPointer = sourceAddress;
+            if (sourceOffsetBytes != 0)
+            {
+                carrierPointer = $"%{EscapeIdentifier(CreateAbiTempName($"{tempPrefix}_carrier_ptr"))}";
+                AppendLine($"  {carrierPointer} = getelementptr i8, ptr {sourceAddress}, i64 {sourceOffsetBytes}");
+            }
+
+            var carrierAlignmentBytes = sourceAlignmentBytes is { } alignmentBytes
+                ? Math.Min(GetAlignmentAtOffset(alignmentBytes, sourceOffsetBytes), GetTypeAlignmentBytes(carrierType) ?? alignmentBytes)
+                : GetTypeAlignmentBytes(carrierType);
+            AppendLine($"  store {MapType(carrierType)} %{EscapeIdentifier(parameter.GetLlvmValueName(index))}, ptr {carrierPointer}{GetAlignmentSuffix(carrierAlignmentBytes)}");
+            sourceOffsetBytes = checked(sourceOffsetBytes + carrierLayout.SizeBytes);
+        }
 
         _indirectAggregateValueSlots[resultName] = sourceAddress;
         var sourceValue = $"%{EscapeIdentifier(materializedValueName ?? resultName)}";
@@ -597,9 +771,8 @@ internal sealed partial class LlvmFunctionBodyEmitter
                     || _addressTakenParameterNames.Contains(parameter.SourceName)))
             {
                 var carrierMaterializedName = EscapeIdentifier(CreateAbiTempName($"arg_{parameter.SourceName}_value"));
-                var materializedValue = MaterializeSourceValueFromCAbiCarrier(
-                    $"%{EscapeIdentifier(parameter.LlvmName)}",
-                    parameter.LlvmType,
+                var materializedValue = MaterializeSourceValueFromCAbiCarriers(
+                    parameter,
                     parameter.SourceType,
                     parameter.LlvmName,
                     $"arg_{parameter.SourceName}",
@@ -672,6 +845,26 @@ internal sealed partial class LlvmFunctionBodyEmitter
             if (parameter.Kind == AbiParameterKind.IndirectIn)
             {
                 AppendLine($"  call void @llvm.dbg.declare(metadata ptr %{EscapeIdentifier(parameter.LlvmName)}, metadata {variableRef}, metadata !DIExpression())");
+                continue;
+            }
+
+            if (CAbiAggregateClassifier.IsCarrierType(parameter.SourceType, parameter.LlvmType))
+            {
+                if (!_materializedParameters.TryGetValue(parameter.LlvmName, out var materializedValue))
+                {
+                    var carrierMaterializedName = EscapeIdentifier(CreateAbiTempName($"dbg_arg_{parameter.SourceName}_value"));
+                    materializedValue = MaterializeSourceValueFromCAbiCarriers(
+                        parameter,
+                        parameter.SourceType,
+                        parameter.LlvmName,
+                        $"dbg_arg_{parameter.SourceName}",
+                        carrierMaterializedName);
+                    _materializedParameters[parameter.LlvmName] = materializedValue;
+                    _materializedParameters[parameter.SourceName] = materializedValue;
+                }
+
+                AppendLine(
+                    $"  call void @llvm.dbg.value(metadata {MapType(parameter.SourceType)} {materializedValue}, metadata {variableRef}, metadata !DIExpression())");
                 continue;
             }
 

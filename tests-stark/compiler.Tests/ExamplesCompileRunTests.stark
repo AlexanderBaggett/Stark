@@ -1617,9 +1617,9 @@ export unsafe fn i32[min max] main() {
 
 // Ported from ExamplesCompileRunTests.RaylibStarkModulesCheckWithoutNativeExecution.
 // PORT-NOTE: original runs `--check` (type-check only, no native execution) on two
-// programs that resolve sibling/import modules from disk: examples/raylib/Raylib.stark
-// (re-exports the Raylib.* submodules) and examples/breakout/BreakoutRaylib.stark
-// (imports Raylib + System.Text). Disk-based module resolution of the Raylib.* and
+// programs that resolve sibling/import modules from disk: vendor/src/Vendor/Raylib.stark
+// (re-exports the Vendor.Raylib.* submodules) and examples/breakout/BreakoutRaylib.stark
+// (imports Vendor.Raylib + System.Text). Disk-based module resolution of the Vendor.Raylib.* and
 // System.Text trees is not available through the single-source host protocol, so
 // each program is type-checked on its own; reduced to type-check success of both
 // embedded programs (true iff both pass).
@@ -1628,20 +1628,20 @@ internal fn bool RaylibStarkModulesCheckWithoutNativeExecutionImpl()
     stack mut LlvmCompile raylib = CompileTypeCheck(
         "examples-raylib-facade",
         raw"""
-export import Raylib.Types
-export import Raylib.Core
-export import Raylib.Shapes
-export import Raylib.Textures
-export import Raylib.Text
-export import Raylib.Models
-export import Raylib.Audio
-module Raylib
+export import Vendor.Raylib.Types
+export import Vendor.Raylib.Core
+export import Vendor.Raylib.Shapes
+export import Vendor.Raylib.Textures
+export import Vendor.Raylib.Text
+export import Vendor.Raylib.Models
+export import Vendor.Raylib.Audio
+module Vendor.Raylib
 """);
 
     stack mut LlvmCompile breakoutRaylib = CompileTypeCheck(
         "examples-breakout-raylib",
         raw"""
-import Raylib
+import Vendor.Raylib
 import System.Text
 module BreakoutRaylib
 
@@ -1904,7 +1904,80 @@ export unsafe fn i32[min max] main() {
 }
 """);
 
-    return Succeeds(raylib) && Succeeds(breakoutRaylib);
+    stack mut LlvmCompile safeWrappers = CompileTypeCheck(
+        "examples-vendor-raylib-safe-wrappers",
+        raw"""
+import Vendor.Raylib
+module VendorRaylibSafeWrappers
+
+fn i32[min max] Probe()
+{
+    stack mut Image image = DefaultImage();
+    image = ImageFormat(image, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
+    image = ImageAlphaPremultiply(image);
+    image = ImageDrawPixel(image, 1, 1, RED());
+
+    stack f32[1] kernel =
+    {
+        1.0f
+    };
+    stack mut Image filtered = DefaultImage();
+    if (ImageKernelConvolution(image, kernel, filtered) != RaylibStatus.Ok)
+    {
+        return 1;
+    }
+
+    image = filtered;
+
+    stack Vector2[3] points =
+    {
+        Vec2(0.0f, 0.0f),
+        Vec2(1.0f, 1.0f),
+        Vec2(2.0f, 0.0f)
+    };
+
+    if (DrawLineStrip(points, BLACK()) != RaylibStatus.Ok)
+    {
+        return 2;
+    }
+
+    stack CollisionPointResult collision = CheckCollisionLines(
+        Vec2(0.0f, 0.0f),
+        Vec2(1.0f, 1.0f),
+        Vec2(0.0f, 1.0f),
+        Vec2(1.0f, 0.0f));
+    if (collision.Hit)
+    {
+        image = ImageDrawPixelV(image, collision.Point, WHITE());
+    }
+
+    stack mut Image drawn = DefaultImage();
+    if (ImageDrawTriangleFan(image, points, WHITE(), drawn) != RaylibStatus.Ok)
+    {
+        return 3;
+    }
+
+    stack mut Camera camera = DefaultCamera3D();
+    camera = UpdateCamera(camera, CAMERA_FREE);
+    camera = UpdateCameraPro(camera, Vec3(0.0f, 0.0f, 0.0f), Vec3(0.0f, 0.0f, 0.0f), 0.0f);
+
+    stack mut Wave wave = DefaultWave();
+    wave = WaveFormat(wave, 44100, 16, 2);
+
+    stack mut Texture2D texture = DefaultTexture();
+    texture = GenTextureMipmaps(texture);
+
+    stack mut Mesh mesh = DefaultMesh();
+    mesh = GenMeshTangents(mesh);
+
+    stack mut Material material = DefaultMaterial();
+    material = SetMaterialTexture(material, MATERIAL_MAP_DIFFUSE, texture);
+
+    return 0;
+}
+""");
+
+    return Succeeds(raylib) && Succeeds(breakoutRaylib) && Succeeds(safeWrappers);
 }
 
 // Ported from ExamplesCompileRunTests.DataModelExampleCompilesAndRuns.

@@ -297,6 +297,15 @@ temporary `System.Experimental.*` comparison modules used during promotion have
 been removed from `stdlib/src`, and package images are expected to contain only
 canonical modules and root re-exports.
 
+Vendor bindings live under a separate bundled `Vendor.*` root rather than inside
+`System.*`. The project driver treats `Vendor` as a second bundled-library
+family backed by the repo or installed `vendor` directory, with the same
+stage-local, `dist` package-image, `src` source-tree, and installed-bundle
+discovery tiers used for `System`/`stdlib`. Native-backed vendor packages are
+expected to carry package-image native dependency metadata so final executable
+links get the required C sources, `pkg-config` packages, libraries, and user
+configured fallback paths without a package manager.
+
 Promoted collection, text, runtime-buffer, IO, filesystem, console, and network
 modules keep the dynamic-storage contracts validated during the comparison
 period. `dynamic T.TryReserve(additional)` returns an explicit success bit,
@@ -381,6 +390,81 @@ By contrast, `ffi` boundaries preserve foreign ABI expectations and should be tr
 
 This is an implementation detail.
 It matters for code generation and interop, but it is not meant to change how ordinary Stark code is written.
+
+### 3.1 FFI Link Names
+
+An imported FFI function has two names in the compiler:
+
+- the Stark source/resolved name used for lookup, overload resolution, function
+  items, wrappers, package APIs, and diagnostics
+- the external link name used for the LLVM global symbol
+
+Without `[LinkName("...")]`, the external link name is the Stark declaration
+name, preserving the original FFI behavior. With `[LinkName("foreign_symbol")]`,
+type checking stores the decoded symbol on the `TypedFunctionSignature` as the
+function's external link name. MIR and SSA continue to refer to the resolved
+Stark function symbol; ABI lowering copies the external link name into
+`AbiFunctionSignature.SymbolName`.
+
+LLVM emission consumes `AbiFunctionSignature.SymbolName` for:
+
+- external FFI `declare` signatures
+- direct FFI call targets
+- function-address materialization for FFI function items promoted to `fnptr`
+
+Non-FFI Stark definitions continue to use the normal internal/export symbol
+rules. `LinkName` does not affect ABI classification, calling convention,
+varargs, sret/indirect aggregate lowering, parameter attributes, ownership, or
+effect facts.
+
+Package images preserve the lowered symbol in ABI facts and the explicit link
+name in typed/source surfaces. Source bridging re-emits `[LinkName("...")]`
+when an imported FFI declaration's foreign symbol differs from the Stark source
+name, so downstream packages do not need the original source file to call the
+correct native symbol.
+
+ABI lowering rejects conflicting FFI declarations that map to the same
+`(resolved FFI ABI, external link name)` but lower to incompatible LLVM
+signatures. Compatibility is checked on the lowered ABI return, parameter kinds,
+parameter LLVM types, and varargs flag, because that is the boundary LLVM and
+the native linker observe.
+
+### 3.2 C ABI Aggregate Carriers
+
+`[StructLayout(C)]` controls memory layout; `ffi(c)` controls the call ABI. When
+both apply to a by-value aggregate parameter or return, ABI lowering classifies
+the source Stark struct with the active target's C ABI and records the selected
+LLVM carrier shape in `AbiFunctionSignature`.
+
+The source type is not rewritten. MIR and ordinary Stark calls still see the
+named aggregate. The ABI edge packs a Stark aggregate value into one or more
+LLVM carrier values before a call, and materializes returned or incoming carrier
+values back into the source aggregate type at the Stark boundary.
+
+On x86_64 System V, current lowering follows Clang's small-aggregate carrier
+forms:
+
+- `struct { f32, f32 }`: one `<2 x float>` carrier for parameters and returns.
+- `struct { f32, f32, f32 }`: parameter carriers `<2 x float>, float`; return
+  carrier `{ <2 x float>, float }`.
+- `struct { f32, f32, f32, f32 }`: parameter carriers `<2 x float>, <2 x
+  float>`; return carrier `{ <2 x float>, <2 x float> }`.
+- integer/pointer storage of up to two eightbytes uses integer carriers such as
+  `i32`, `i64`, or `{ i64, i64 }` for returns and split integer parameters.
+- aggregates larger than 16 bytes, misaligned aggregates, and unclassifiable
+  shapes use the target ABI's indirect form (`sret`, `byval`, or equivalent).
+
+The ABI model can represent zero, one, or many LLVM values for one Stark source
+parameter. `AbiParameterSymbol.LlvmParameterTypes` stores expanded parameter
+carriers; the return `LlvmType` stores the direct return carrier or the indirect
+source aggregate as appropriate. LLVM declaration, call, return, and function
+pointer emission must render the lowered carrier list rather than the source
+parameter list.
+
+Package images preserve these facts. Compiler-facts ABI manifests serialize the
+source type, return carrier, and expanded parameter carrier list so downstream
+packages can emit the same external declaration even when the original Stark
+source file is absent.
 
 ## 4. Runtime and C-Runtime Boundaries
 

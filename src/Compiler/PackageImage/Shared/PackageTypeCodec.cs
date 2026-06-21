@@ -620,6 +620,11 @@ internal static partial class PackageImageLoader
                 type.IsUnsigned == true),
             "float" => StarkTypeSymbols.Float(type.BitWidth ?? 32),
             "rawpointer" => StarkTypeSymbols.RawPointer(BuildTypeSymbol(type.ElementType!, currentModuleName, localNamedTypes), type.IsMutablePointer),
+            "llvmvector" => StarkTypeSymbols.LlvmVector(
+                BuildTypeSymbol(type.ElementType!, currentModuleName, localNamedTypes),
+                type.FixedLength ?? 0),
+            "llvmstruct" => StarkTypeSymbols.LlvmStruct(
+                (type.TypeArguments ?? []).Select(argument => BuildTypeSymbol(argument, currentModuleName, localNamedTypes)).ToArray()),
             "fixedarray" => StarkTypeSymbols.FixedArray(BuildTypeSymbol(type.ElementType!, currentModuleName, localNamedTypes), type.FixedLength, type.FixedLengthParameterName),
             "slice" => StarkTypeSymbols.Slice(BuildTypeSymbol(type.ElementType!, currentModuleName, localNamedTypes)),
             "dynamic" => StarkTypeSymbols.Dynamic(BuildTypeSymbol(type.ElementType!, currentModuleName, localNamedTypes)),

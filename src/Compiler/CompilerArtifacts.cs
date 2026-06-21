@@ -737,7 +737,8 @@ public sealed record FunctionDeclarationModel(
     IReadOnlyList<ParameterSameGroup>? SameParameterGroups = null,
     IReadOnlyList<string>? PointeeDeadOnReturnParameterNames = null,
     IReadOnlyList<ThreadSafetyLawPredicateModel>? ThreadSafetyLawPredicates = null,
-    IReadOnlyList<ParameterValueContract>? ValueParameterContracts = null)
+    IReadOnlyList<ParameterValueContract>? ValueParameterContracts = null,
+    string? ExternalLinkName = null)
 {
     public IReadOnlyList<string> GenericParams => GenericParameterNames ?? [];
     public IReadOnlyList<ComptimeGenericParameterSymbol> ComptimeGenericParams => ComptimeGenericParameterNames ?? [];
@@ -1579,6 +1580,8 @@ public enum StarkTypeKind
     Integer,
     Float,
     RawPointer,
+    LlvmVector,
+    LlvmStruct,
     FixedArray,
     Slice,
     Dynamic,
@@ -1759,6 +1762,19 @@ public static class StarkTypeSymbols
             $"{(isMutable ? "rawmutptr" : "rawptr")}<{elementType.DisplayName}>",
             ElementType: elementType,
             IsMutablePointer: isMutable);
+
+    public static StarkTypeSymbol LlvmVector(StarkTypeSymbol elementType, int elementCount) =>
+        new(
+            StarkTypeKind.LlvmVector,
+            $"llvmvector<{elementCount} x {elementType.DisplayName}>",
+            ElementType: elementType,
+            FixedLength: elementCount);
+
+    public static StarkTypeSymbol LlvmStruct(IReadOnlyList<StarkTypeSymbol> fieldTypes) =>
+        new(
+            StarkTypeKind.LlvmStruct,
+            $"llvmstruct<{string.Join(", ", fieldTypes.Select(static field => field.DisplayName))}>",
+            TypeArguments: fieldTypes.ToArray());
 
     public static StarkTypeSymbol FixedArray(StarkTypeSymbol elementType, int? fixedLength, string? fixedLengthParameterName = null) =>
         new(
@@ -2727,7 +2743,8 @@ public sealed record TypedFunctionSignature(
     StarkVisibility Visibility = StarkVisibility.Module,
     IReadOnlyList<ParameterValueContract>? ValueParameterContracts = null,
     bool IsTailCallable = false,
-    SourceLocation? DeclarationLocation = null)
+    SourceLocation? DeclarationLocation = null,
+    string? ExternalLinkName = null)
 {
     public string DisplaySourceName => SourceName ?? Name;
     public IReadOnlyList<string> GenericParams => GenericParameterNames ?? [];
@@ -3732,7 +3749,22 @@ public sealed record AbiParameterSymbol(
     StarkTypeSymbol SourceType,
     StarkTypeSymbol LlvmType,
     AbiParameterKind Kind,
-    string? RawPointerElementCountExpression = null);
+    string? RawPointerElementCountExpression = null,
+    IReadOnlyList<StarkTypeSymbol>? LlvmParameterTypes = null)
+{
+    public IReadOnlyList<StarkTypeSymbol> EffectiveLlvmParameterTypes =>
+        LlvmParameterTypes is { Count: > 0 }
+            ? LlvmParameterTypes
+            : [LlvmType];
+
+    public bool IsExpandedDirectParameter =>
+        Kind == AbiParameterKind.Direct && EffectiveLlvmParameterTypes.Count > 1;
+
+    public string GetLlvmValueName(int carrierIndex) =>
+        IsExpandedDirectParameter
+            ? $"{LlvmName}_{carrierIndex.ToString(System.Globalization.CultureInfo.InvariantCulture)}"
+            : LlvmName;
+}
 
 public sealed record AbiFunctionSignature(
     string Name,
@@ -3755,6 +3787,17 @@ public sealed record AbiFunctionSignature(
 
     public IReadOnlyList<AbiParameterSymbol> UserParameters => Parameters
         .Where(static parameter => parameter.Kind != AbiParameterKind.SRet)
+        .ToArray();
+
+    public IReadOnlyList<AbiParameterSymbol> LlvmParameters => Parameters
+        .SelectMany(static parameter => parameter.IsExpandedDirectParameter
+            ? parameter.EffectiveLlvmParameterTypes.Select((carrierType, carrierIndex) => parameter with
+            {
+                LlvmName = parameter.GetLlvmValueName(carrierIndex),
+                LlvmType = carrierType,
+                LlvmParameterTypes = null
+            })
+            : [parameter])
         .ToArray();
 }
 

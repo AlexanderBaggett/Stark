@@ -2601,7 +2601,8 @@ internal sealed class TypeChecker
                         PointeeDeadOnReturnParameterNames: declarationModel.Function?.PointeeDeadOnReturnParameters is { Count: > 0 } pointeeDeadOnReturnParameters
                             ? pointeeDeadOnReturnParameters
                             : null,
-                        DeclarationLocation: Location(functionSyntax.DeclarationContext));
+                        DeclarationLocation: Location(functionSyntax.DeclarationContext),
+                        ExternalLinkName: declarationModel.Function?.ExternalLinkName);
                     RegisterFunctionSignature(signature, seenOverloadKeys, functionSyntax.DeclarationContext);
                     _functionSyntaxByQualifiedName[signature.Name] = functionSyntax;
                 }

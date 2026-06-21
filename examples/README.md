@@ -242,19 +242,20 @@ dotnet run --project src -- examples/breakout/BreakoutCore.stark --emit-exe -o e
 
 First playable Raylib Breakout shell. It keeps the scope intentionally small: a keyboard/mouse controlled paddle, a bouncing ball, fixed colored bricks, brick destruction, and score text.
 
-Build Raylib as described in `examples/raylib/README.md`, then let the helper
-script build the Stark Raylib package image and compile Breakout from it:
+Install Raylib for `pkg-config`, or set `RAYLIB_SRC_DIR` to a local Raylib
+source directory, then let the helper script build the bundled
+`Vendor.Raylib` package image and compile Breakout from it:
 
 ```bash
 bash examples/breakout/run-raylib.sh
 ./examples/breakout/breakout-raylib
 ```
 
-## `raylib/`
+## `../vendor/`
 
-Raylib 5.5 binding surface for future graphical examples. The bindings are split into `Raylib.Core`, `Raylib.Shapes`, `Raylib.Textures`, `Raylib.Text`, `Raylib.Models`, `Raylib.Audio`, and `Raylib.Types`, with `RaylibNative.c` providing C ABI shims for by-value Raylib structs.
+Raylib 5.5 binding surface for future graphical examples. The bindings are split into `Vendor.Raylib.Core`, `Vendor.Raylib.Shapes`, `Vendor.Raylib.Textures`, `Vendor.Raylib.Text`, `Vendor.Raylib.Models`, `Vendor.Raylib.Audio`, and `Vendor.Raylib.Types`. Direct Raylib calls bind with `[LinkName("...")]`; C-layout aggregates such as `Vector2`, `Rectangle`, and `Color` pass through Stark's C ABI carrier lowering without a Raylib-specific C shim.
 
-See `examples/raylib/README.md` for the local Raylib build and headless smoke-test commands.
+See `vendor/build-raylib-package.sh` for the local Raylib package build command.
 
 ## `arithmetic/Arithmetic.stark`
 

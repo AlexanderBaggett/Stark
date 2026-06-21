@@ -3,7 +3,7 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "${script_dir}/../.." && pwd)"
-raylib_dir="${repo_root}/examples/raylib"
+vendor_dir="${repo_root}/vendor"
 stdlib_dir="${repo_root}/stdlib/src"
 compiler_path="${STARK_COMPILER:-${repo_root}/stark}"
 
@@ -14,14 +14,13 @@ else
 fi
 
 cd "${repo_root}"
-bash "${raylib_dir}/build-package.sh"
+bash "${vendor_dir}/build-raylib-package.sh"
 
 "${compiler_cmd[@]}" "${script_dir}/BreakoutRaylib.stark" \
   --emit-exe \
-  -I "${raylib_dir}/dist" \
+  -I "${vendor_dir}/dist" \
   -I "${stdlib_dir}" \
-  -o "${script_dir}/breakout-raylib" \
-  -O0
+  -o "${script_dir}/breakout-raylib"
 
 echo "Built ${script_dir}/breakout-raylib"
 echo "Run it with: ${script_dir}/breakout-raylib"

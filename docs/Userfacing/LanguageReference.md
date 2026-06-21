@@ -43,6 +43,15 @@ Rules:
 * `export import` is the only re export form
 * importing a module makes its visible top level declarations available by final name, so `import System.Collections` allows `List<T>` instead of `System.Collections.List<T>`
 
+`System.*` modules are Stark's standard library. `Vendor.*` modules are a
+separate bundled vendor library for bindings to established native libraries;
+for example, `import Vendor.Raylib` imports the bundled raylib binding surface.
+Project builds discover `Vendor` artifacts beside `System` artifacts: first
+from the active stage, then repo `vendor/dist` package images or `vendor/src`
+source, then an installed compiler bundle. Native-backed vendor packages carry
+their link metadata, so machine-local include/library paths belong in
+`Stark.user.toml` or user config rather than in source.
+
 ### 2.1 Comments
 
 Comments are source trivia. They are ignored before parsing, type checking, and lowering, so commented-out Stark code has no semantic or generated-code effect.
@@ -106,9 +115,9 @@ The meanings:
 * `public` is source visibility
 * `export` is binary visibility
 
-Visibility applies to top level declarations and to member functions inside `struct` and `record` bodies. Member functions inherit the visibility of their enclosing type unless explicitly overridden, and a member function may not be more visible than its enclosing type. `export` is the careful edge: an `export struct` or `export record` makes omitted member visibility `public`, not `export`, so binary visible member functions must write `export` explicitly.
+Visibility applies to top level declarations and to fields and member functions inside `struct` and `record` bodies. Fields and member functions inherit the visibility of their enclosing type unless explicitly overridden, and neither may be more visible than its enclosing type. `export` is the careful edge: an `export struct` or `export record` makes omitted field and member-function visibility `public`, not `export`, so binary visible member functions must write `export` explicitly. Field visibility controls source access, including field projection and object initializer members; it does not by itself create a binary symbol.
 
-Visibility does not apply to locals, statements, expressions, or fields.
+Visibility does not apply to locals, statements, or expressions.
 
 ### 4.1 Package Owned Native Dependencies
 
@@ -117,10 +126,10 @@ Interop packages can describe the native source files and native libraries they 
 The current package author surface is CLI metadata:
 
 ```bash
-compiler Raylib.stark --emit-lib \
-  -o dist/libRaylibStark.a \
-  --package-image-output dist/pkg/libRaylibStark.starkpkg.json \
-  --native-source RaylibNative.c \
+compiler vendor/src/Vendor/Raylib.stark --emit-lib \
+  -I vendor/src \
+  -o vendor/dist/libVendorRaylib.a \
+  --package-image-output vendor/dist/libVendorRaylib.starkpkg \
   --native-pkg-config raylib
 ```
 
@@ -129,10 +138,10 @@ The package records those native dependency declarations. A downstream executabl
 When the native dependency is not available through `pkg-config`, the package can use explicit metadata:
 
 ```bash
-compiler Raylib.stark --emit-lib \
-  -o dist/libRaylibStark.a \
-  --package-image-output dist/pkg/libRaylibStark.starkpkg.json \
-  --native-source RaylibNative.c \
+compiler vendor/src/Vendor/Raylib.stark --emit-lib \
+  -I vendor/src \
+  -o vendor/dist/libVendorRaylib.a \
+  --package-image-output vendor/dist/libVendorRaylib.starkpkg \
   --native-include-dir /path/to/raylib/src \
   --native-library-dir /path/to/raylib/src \
   --native-library raylib
@@ -1615,6 +1624,29 @@ struct WordParts
 
 `[Pack(N)]` caps each field's effective alignment at `min(naturalAlignment, N)`, which removes the inter-field padding that field alignment would otherwise add. `[Pack(1)]` is the fully packed form. `[Align(N)]` only raises the aggregate alignment; it never caps a field alignment or moves a field except through the final tail-padding rule. When both appear, field offsets come from `Pack(N)` and `Align(N)` then raises the whole-struct alignment. `N` for `Pack`, `Align`, and `FieldOffset` is a byte count; `Pack(N)` and `Align(N)` require a positive power-of-two literal (`1, 2, 4, 8, 16, 32, 64, ...`).
 
+`[StructLayout(C)]` plus `ffi(c)` is also enough for by-value C aggregate
+parameters and returns. The Stark source type stays the named struct, while the
+compiler lowers the call boundary through the active target's C ABI carriers.
+For example, on x86_64 System V a raylib-style `Vector2 { f32 X; f32 Y; }`
+parameter or return uses one `<2 x float>` LLVM carrier, `Rectangle { f32 X; f32
+Y; f32 Width; f32 Height; }` uses two `<2 x float>` carriers, and `Color { u8 R;
+u8 G; u8 B; u8 A; }` uses one integer carrier. Larger or target-unclassifiable
+aggregates use the target ABI's indirect form. Binding authors should use a C
+shim only when the native signature needs real adaptation, not just because a
+C struct is passed or returned by value.
+
+```stark
+[StructLayout(C)]
+public struct Vector2
+{
+    public f32 X;
+    public f32 Y;
+}
+
+[LinkName("GetMonitorPosition")]
+internal unsafe ffi(c) fn Vector2 raylib_GetMonitorPosition(i32[min max] monitor);
+```
+
 `[StructLayout(C)]` does not make every field type FFI-safe. C-layout field types are limited to:
 
 * Stark sized integer and floating point primitives
@@ -2624,9 +2656,33 @@ public unsafe ffi(stdcall) fn i32[min max] LegacyCall(i32[min max] value);
 
 Supported ABI names are `c` (the default), `cdecl`, `stdcall`, `fastcall`, `thiscall`, `vectorcall`, `sysv`, `win64`, `aapcs`, and `aapcs64`; each is honored only on targets that support it. A bare `unsafe ffi fn` (no parentheses) means `ffi(c)`.
 
-Imported FFI declarations preserve the foreign symbol spelling. Identifiers may
-start with `_` so C symbols such as `__error` can be declared directly; bare
-`_` remains the discard token/pattern, not a bindable name.
+Imported FFI declarations use the Stark declaration name as the foreign symbol
+by default. Identifiers may start with `_` so C symbols such as `__error` can be
+declared directly; bare `_` remains the discard token/pattern, not a bindable
+name.
+
+When the Stark-facing name should differ from the linker symbol, put
+`[LinkName("symbol")]` on the imported FFI declaration:
+
+```stark
+[LinkName("InitWindow")]
+internal unsafe ffi(c) fn void RaylibInitWindow(
+    i32[min max] width,
+    i32[min max] height,
+    ascii title);
+```
+
+Call sites use `RaylibInitWindow`; LLVM declares and calls `@InitWindow`.
+`LinkName` changes only symbol identity. It does not change calling convention,
+parameter lowering, return lowering, safety, ownership, or unwind rules. The
+attribute is valid only on imported `ffi` function declarations that end in `;`,
+including `ffi(c)`, `ffi(platform(...))`, and `ffi varargs`. It is not valid on
+ordinary Stark functions, `export` functions, methods, fields, types,
+constructors, destructors, globals, or `ffi asm(...)` bodies.
+
+The attribute takes exactly one non-empty printable ASCII string literal.
+Declarations that map to the same `(ABI, LinkName)` must lower to compatible
+LLVM ABI signatures; incompatible duplicates are rejected.
 
 One declaration can select a different ABI per target with `ffi(platform(...))`. Keys are `os.arch` (such as `windows.x64`), a bare `os`, or `default`; the most specific matching key wins, and a missing match with no `default` is a compile-time error:
 

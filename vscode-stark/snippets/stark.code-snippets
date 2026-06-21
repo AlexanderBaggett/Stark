@@ -222,6 +222,29 @@
     ],
     "description": "Declare a native FFI function"
   },
+  "FFI LinkName Declaration": {
+    "prefix": "linkname ffi",
+    "body": [
+      "[LinkName(\"${1:foreign_symbol}\")]",
+      "unsafe ffi(c) fn ${2:i32[min max]} ${3:LocalName}(${4});"
+    ],
+    "description": "Declare a native FFI function with an explicit foreign linker symbol"
+  },
+  "C Aggregate FFI Declaration": {
+    "prefix": "c aggregate ffi",
+    "body": [
+      "[StructLayout(C)]",
+      "public struct ${1:NativeStruct}",
+      "{",
+      "\tpublic ${2:f32} ${3:X};",
+      "\tpublic ${4:f32} ${5:Y};",
+      "}",
+      "",
+      "[LinkName(\"${6:NativeSymbol}\")]",
+      "unsafe ffi(c) fn ${1:NativeStruct} ${7:LocalName}(${8});"
+    ],
+    "description": "Declare a C-layout aggregate and a direct by-value FFI function"
+  },
   "Assembly Function": {
     "prefix": "asmfn",
     "body": [

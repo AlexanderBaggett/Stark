@@ -72,7 +72,14 @@ internal sealed partial class LlvmFunctionBodyEmitter
                     throw new UnsupportedBodyEmissionException("SSA return is missing a return value.");
                 }
 
-                AppendLine($"  ret {MapType(_abiFunction.LlvmReturnType)} {FormatValue(terminator.Value)}");
+                var returnValue = CAbiAggregateClassifier.IsCarrierType(_function.ReturnType, _abiFunction.LlvmReturnType)
+                    ? MaterializeCAbiCarrierFromSourceValue(
+                        _function.ReturnType,
+                        _abiFunction.LlvmReturnType,
+                        terminator.Value,
+                        "ffi_ret")
+                    : FormatValue(terminator.Value);
+                AppendLine($"  ret {MapType(_abiFunction.LlvmReturnType)} {returnValue}");
                 return;
             case SsaTerminatorKind.TailCall:
                 EmitTailCallTerminator(terminator);

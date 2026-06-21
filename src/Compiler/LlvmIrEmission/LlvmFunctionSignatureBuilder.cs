@@ -116,7 +116,7 @@ internal sealed class LlvmFunctionSignatureBuilder
         bool includeNames,
         IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? parameterEffects)
     {
-        var parameters = abiFunction.Parameters
+        var parameters = abiFunction.LlvmParameters
             .Select(parameter => _attributeBuilder.RenderAbiParameter(abiFunction, parameter, includeNames, parameterEffects))
             .ToList();
 
