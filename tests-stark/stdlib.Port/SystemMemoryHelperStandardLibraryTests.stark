@@ -261,7 +261,7 @@ fn MemoryStatus AppendFillBytes(
 // the CLI (--emit-pkg), then compiles a consuming App.stark against the packaged
 // manifest and compares the imported helper *declarations* (InitializeBytesDisjoint
 // / FillBytes) against the from-source helper *definitions*, asserting both
-// carry the same LLVM attribute fragments (readonly nocapture, noalias nocapture,
+// carry the same LLVM attribute fragments (readonly captures(none), noalias captures(none),
 // memory(write, argmem: readwrite), nounwind willreturn mustprogress, alwaysinline).
 // The compile-only bridge cannot run the packaging CLI nor diff a packaged
 // declaration against a source definition, so the consuming App.stark program is
@@ -297,8 +297,8 @@ fn System.Memory.MemoryStatus UseFill(
     }
 
     stack ascii llvm = Llvm(c);
-    return Contains(llvm, "readonly nocapture")
-        && Contains(llvm, "noalias nocapture")
+    return Contains(llvm, "readonly captures(none)")
+        && Contains(llvm, "noalias captures(none)")
         && Contains(llvm, "memory(write, argmem: readwrite)")
         && Contains(llvm, "nounwind willreturn mustprogress")
         && Contains(llvm, "alwaysinline");

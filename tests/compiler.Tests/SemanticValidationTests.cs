@@ -353,7 +353,7 @@ public sealed class SemanticValidationTests
     }
 
     [Fact]
-    public void ArenaLocalStorageIsRejectedUntilArenaLoweringExists()
+    public void ArenaLocalStorageIsAcceptedAsExecutableLocalStorage()
     {
         var result = Compile(
             """
@@ -367,12 +367,7 @@ public sealed class SemanticValidationTests
             """,
             new CompilerOptions(StopAfterPassId: "semantic-validate"));
 
-        Assert.False(result.Succeeded);
-        Assert.Contains(
-            result.Diagnostics,
-            static diagnostic => diagnostic.Code == "STK4017"
-                && diagnostic.Message.Contains("Local 'arena' storage", StringComparison.Ordinal)
-                && diagnostic.Message.Contains("not a valid executable local storage class", StringComparison.Ordinal));
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
     }
 
     [Fact]

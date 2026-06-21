@@ -9,10 +9,12 @@ Programming language repository: [github.com/AlexanderBaggett/Stark](https://git
 - Syntax highlighting for `.stark` files, including:
   - modules and imports
   - attributes
-  - functions, `finite`, `law`, and `finite law`
+  - functions, `finite`, `law`, `finite law`, `tail`, and `become`
   - structs, records, enums, traits, doctrines, and aliases
   - ownership and borrow qualifiers
-  - storage classes
+  - storage classes, including arena storage
+  - memory contracts, including `disjoint`, `overlap`, `same`, and `dead_on_return`
+  - arena-backed dynamic storage allocation with `new(arena, ...)`
   - integer range types and floating point types
   - wrapping and saturating arithmetic operators
   - switch patterns, loop behavior keywords, and layout queries

@@ -74,6 +74,9 @@ internal sealed partial class LlvmFunctionBodyEmitter
 
                 AppendLine($"  ret {MapType(_abiFunction.LlvmReturnType)} {FormatValue(terminator.Value)}");
                 return;
+            case SsaTerminatorKind.TailCall:
+                EmitTailCallTerminator(terminator);
+                return;
             case SsaTerminatorKind.Unreachable:
                 AppendLine($"  call {TrapCallingConventionPrefix()}void @{UnreachableTrapHelperName}()");
                 AppendLine("  unreachable");

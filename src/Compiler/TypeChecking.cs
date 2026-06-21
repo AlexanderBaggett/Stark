@@ -210,6 +210,7 @@ internal sealed class TypeChecker
         CollectTypeAliasSources();
         CheckTypeAliasDeclarations();
         PopulateNamedTypeFields();
+        ValidateNamedTypeInlineLayoutCycles();
         BuildConstructorShapes();
         BuildFunctionSignatures();
         _canValidateDictionaryKeyConstraints = true;
@@ -796,6 +797,600 @@ internal sealed class TypeChecker
                 }
             }
         }
+    }
+
+    private sealed record InlineLayoutTypeFrame(string TypeKey, string DisplayName);
+
+    private sealed record InlineLayoutMemberFrame(string DisplayName, ParserRuleContext? Context);
+
+    private sealed record InlineLayoutMember(string DisplayName, StarkTypeSymbol Type, ParserRuleContext? Context);
+
+    private sealed record InlineLayoutCycle(
+        IReadOnlyList<string> TypePath,
+        IReadOnlyList<string> MemberPath,
+        ParserRuleContext? Context);
+
+    private void ValidateNamedTypeInlineLayoutCycles()
+    {
+        var memberContexts = BuildInlineLayoutMemberContextMap();
+        var knownFiniteTypes = new HashSet<string>(StringComparer.Ordinal);
+        var reportedCycles = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var (typeKey, namedType) in _namedTypes.OrderBy(static pair => pair.Key, StringComparer.Ordinal))
+        {
+            if (!IsInlineLayoutAggregateKind(namedType.Kind))
+            {
+                continue;
+            }
+
+            var activeTypes = new List<InlineLayoutTypeFrame>();
+            var activeTypeIndices = new Dictionary<string, int>(StringComparer.Ordinal);
+            var memberPath = new List<InlineLayoutMemberFrame>();
+
+            if (!TryFindInlineLayoutCycleInNamedType(
+                    typeKey,
+                    namedType,
+                    typeSubstitution: null,
+                    valueSubstitution: null,
+                    memberContexts,
+                    activeTypes,
+                    activeTypeIndices,
+                    memberPath,
+                    knownFiniteTypes,
+                    out var cycle))
+            {
+                continue;
+            }
+
+            var cycleKey = BuildInlineLayoutCycleKey(cycle);
+            if (!reportedCycles.Add(cycleKey))
+            {
+                continue;
+            }
+
+            var typePath = string.Join(" -> ", cycle.TypePath);
+            var memberPathText = cycle.MemberPath.Count == 0
+                ? "<unknown>"
+                : string.Join(" -> ", cycle.MemberPath);
+            var message = $"Recursive inline layout is not allowed: {typePath}. "
+                + $"The by-value storage chain is {memberPathText}. "
+                + "Struct, record, and enum payload storage must have a finite size; "
+                + "use an explicit indirection such as rawptr<T>, rawmutptr<T>, dynamic T, or another pointer-backed owner.";
+
+            if (cycle.Context is { } context)
+            {
+                ReportError("STK3056", message, context);
+            }
+            else
+            {
+                ReportError("STK3056", message, SourceLocation.Synthetic());
+            }
+        }
+    }
+
+    private Dictionary<string, ParserRuleContext> BuildInlineLayoutMemberContextMap()
+    {
+        var contexts = new Dictionary<string, ParserRuleContext>(StringComparer.Ordinal);
+        foreach (var module in _loadedModules.Modules.Values)
+        {
+            if (!module.Reference.IsRoot
+                && module.PackageImageFacts is { NamedTypes.Count: > 0 })
+            {
+                continue;
+            }
+
+            foreach (var declaration in module.ParseResult.Root.topLevelDeclaration())
+            {
+                if (declaration.structDeclaration() is { } structDeclaration)
+                {
+                    var ownerName = QualifyName(module, structDeclaration.Identifier().GetText());
+                    foreach (var member in structDeclaration.structBody().structMember())
+                    {
+                        if (member.fieldDeclaration() is { } field)
+                        {
+                            AddFieldInlineLayoutContexts(contexts, ownerName, field);
+                        }
+                    }
+
+                    continue;
+                }
+
+                if (declaration.recordDeclaration() is { } recordDeclaration)
+                {
+                    var ownerName = QualifyName(module, recordDeclaration.Identifier().GetText());
+                    if (recordDeclaration.primaryConstructorParameters() is { } primaryConstructor)
+                    {
+                        foreach (var parameter in primaryConstructor.parameterList().parameter())
+                        {
+                            contexts[InlineLayoutFieldContextKey(ownerName, parameter.Identifier().GetText())] = parameter.type_();
+                        }
+                    }
+
+                    foreach (var member in recordDeclaration.recordBody().recordMember())
+                    {
+                        if (member.fieldDeclaration() is { } field)
+                        {
+                            AddFieldInlineLayoutContexts(contexts, ownerName, field);
+                        }
+                    }
+
+                    continue;
+                }
+
+                if (declaration.enumDeclaration() is { } enumDeclaration)
+                {
+                    var ownerName = QualifyName(module, enumDeclaration.Identifier().GetText());
+                    foreach (var variant in enumDeclaration.enumBody().enumVariantDeclaration())
+                    {
+                        var payload = variant.enumVariantPayload();
+                        if (payload is null)
+                        {
+                            continue;
+                        }
+
+                        var variantName = variant.Identifier().GetText();
+                        if (payload.FROM() is not null)
+                        {
+                            contexts[InlineLayoutEnumFieldContextKey(ownerName, variantName, "0")] = payload.type_(0);
+                            continue;
+                        }
+
+                        if (payload.enumVariantFieldDeclaration().Length != 0)
+                        {
+                            foreach (var field in payload.enumVariantFieldDeclaration())
+                            {
+                                contexts[InlineLayoutEnumFieldContextKey(ownerName, variantName, field.Identifier().GetText())] = field.type_();
+                            }
+
+                            continue;
+                        }
+
+                        foreach (var (fieldType, index) in payload.type_().Select((fieldType, index) => (fieldType, index)))
+                        {
+                            contexts[InlineLayoutEnumFieldContextKey(ownerName, variantName, index.ToString(CultureInfo.InvariantCulture))] = fieldType;
+                        }
+                    }
+                }
+            }
+        }
+
+        return contexts;
+    }
+
+    private static void AddFieldInlineLayoutContexts(
+        Dictionary<string, ParserRuleContext> contexts,
+        string ownerName,
+        StarkParser.FieldDeclarationContext field)
+    {
+        foreach (var declarator in field.variableDeclarators().variableDeclarator())
+        {
+            contexts[InlineLayoutFieldContextKey(ownerName, declarator.Identifier().GetText())] = field.type_();
+        }
+    }
+
+    private bool TryFindInlineLayoutCycleInNamedType(
+        string typeKey,
+        NamedTypeSymbol namedType,
+        IReadOnlyDictionary<string, StarkTypeSymbol>? typeSubstitution,
+        IReadOnlyDictionary<string, BigInteger>? valueSubstitution,
+        IReadOnlyDictionary<string, ParserRuleContext> memberContexts,
+        List<InlineLayoutTypeFrame> activeTypes,
+        Dictionary<string, int> activeTypeIndices,
+        List<InlineLayoutMemberFrame> memberPath,
+        HashSet<string> knownFiniteTypes,
+        out InlineLayoutCycle cycle)
+    {
+        cycle = null!;
+        if (knownFiniteTypes.Contains(typeKey))
+        {
+            return false;
+        }
+
+        if (activeTypeIndices.TryGetValue(typeKey, out var cycleStart))
+        {
+            cycle = BuildInlineLayoutCycle(typeKey, cycleStart, activeTypes, memberPath);
+            return true;
+        }
+
+        if (!IsInlineLayoutAggregateKind(namedType.Kind))
+        {
+            knownFiniteTypes.Add(typeKey);
+            return false;
+        }
+
+        activeTypeIndices[typeKey] = activeTypes.Count;
+        activeTypes.Add(new InlineLayoutTypeFrame(typeKey, typeKey));
+
+        foreach (var member in EnumerateInlineLayoutMembers(typeKey, namedType, typeSubstitution, valueSubstitution, memberContexts))
+        {
+            memberPath.Add(new InlineLayoutMemberFrame(member.DisplayName, member.Context));
+            if (TryFindInlineLayoutCycleInType(
+                    member.Type,
+                    memberContexts,
+                    activeTypes,
+                    activeTypeIndices,
+                    memberPath,
+                    knownFiniteTypes,
+                    out cycle))
+            {
+                activeTypes.RemoveAt(activeTypes.Count - 1);
+                activeTypeIndices.Remove(typeKey);
+                return true;
+            }
+
+            memberPath.RemoveAt(memberPath.Count - 1);
+        }
+
+        activeTypes.RemoveAt(activeTypes.Count - 1);
+        activeTypeIndices.Remove(typeKey);
+        knownFiniteTypes.Add(typeKey);
+        return false;
+    }
+
+    private bool TryFindInlineLayoutCycleInType(
+        StarkTypeSymbol type,
+        IReadOnlyDictionary<string, ParserRuleContext> memberContexts,
+        List<InlineLayoutTypeFrame> activeTypes,
+        Dictionary<string, int> activeTypeIndices,
+        List<InlineLayoutMemberFrame> memberPath,
+        HashSet<string> knownFiniteTypes,
+        out InlineLayoutCycle cycle)
+    {
+        cycle = null!;
+        if (type.Kind == StarkTypeKind.Error
+            || type.BorrowKind != StarkBorrowKind.None
+            || type.InitializationKind != StarkInitializationKind.None)
+        {
+            return false;
+        }
+
+        var coreType = StarkTypeSymbols.WithQualifiers(
+            type,
+            borrowKind: StarkBorrowKind.None,
+            accessKind: StarkAccessKind.None,
+            initializationKind: StarkInitializationKind.None,
+            isMutableView: false);
+
+        if (coreType.Kind == StarkTypeKind.FixedArray && coreType.ElementType is { } elementType)
+        {
+            return TryFindInlineLayoutCycleInType(
+                elementType,
+                memberContexts,
+                activeTypes,
+                activeTypeIndices,
+                memberPath,
+                knownFiniteTypes,
+                out cycle);
+        }
+
+        if (coreType.Kind != StarkTypeKind.Named
+            || coreType.NamedType is not { } namedTypeName
+            || !TryResolveInlineLayoutNamedType(
+                coreType,
+                namedTypeName,
+                out var typeKey,
+                out var namedType,
+                out var typeSubstitution,
+                out var valueSubstitution))
+        {
+            return false;
+        }
+
+        return TryFindInlineLayoutCycleInNamedType(
+            typeKey,
+            namedType,
+            typeSubstitution,
+            valueSubstitution,
+            memberContexts,
+            activeTypes,
+            activeTypeIndices,
+            memberPath,
+            knownFiniteTypes,
+            out cycle);
+    }
+
+    private bool TryResolveInlineLayoutNamedType(
+        StarkTypeSymbol coreType,
+        string namedTypeName,
+        out string typeKey,
+        out NamedTypeSymbol namedType,
+        out IReadOnlyDictionary<string, StarkTypeSymbol>? typeSubstitution,
+        out IReadOnlyDictionary<string, BigInteger>? valueSubstitution)
+    {
+        typeKey = namedTypeName;
+        typeSubstitution = null;
+        valueSubstitution = null;
+
+        if (_namedTypes.TryGetValue(typeKey, out namedType!))
+        {
+            return true;
+        }
+
+        if (!StarkTypeSymbols.IsGenericInstantiation(coreType))
+        {
+            namedType = null!;
+            return false;
+        }
+
+        var baseName = StarkTypeSymbols.GetGenericBaseName(namedTypeName);
+        if (!_namedTypes.TryGetValue(baseName, out namedType!))
+        {
+            return false;
+        }
+
+        typeSubstitution = BuildInlineLayoutTypeSubstitution(namedType, coreType);
+        valueSubstitution = BuildInlineLayoutValueSubstitution(namedType, coreType);
+        return true;
+    }
+
+    private static IReadOnlyDictionary<string, StarkTypeSymbol>? BuildInlineLayoutTypeSubstitution(
+        NamedTypeSymbol template,
+        StarkTypeSymbol genericInstance)
+    {
+        if (template.GenericParams.Count == 0)
+        {
+            return null;
+        }
+
+        var typeArguments = genericInstance.TypeArguments ?? [];
+        if (template.GenericParams.Count != typeArguments.Count)
+        {
+            return null;
+        }
+
+        var substitution = new Dictionary<string, StarkTypeSymbol>(StringComparer.Ordinal);
+        for (var index = 0; index < template.GenericParams.Count; index++)
+        {
+            substitution[template.GenericParams[index]] = typeArguments[index];
+        }
+
+        return substitution;
+    }
+
+    private static IReadOnlyDictionary<string, BigInteger>? BuildInlineLayoutValueSubstitution(
+        NamedTypeSymbol template,
+        StarkTypeSymbol genericInstance)
+    {
+        if (template.ComptimeGenericParams.Count == 0)
+        {
+            return null;
+        }
+
+        var valueArguments = genericInstance.ComptimeValueArguments ?? [];
+        if (template.ComptimeGenericParams.Count != valueArguments.Count)
+        {
+            return null;
+        }
+
+        var substitution = new Dictionary<string, BigInteger>(StringComparer.Ordinal);
+        for (var index = 0; index < template.ComptimeGenericParams.Count; index++)
+        {
+            var argument = valueArguments[index];
+            if (!argument.IsSymbolic)
+            {
+                substitution[template.ComptimeGenericParams[index].Name] = argument.IntegerValue;
+            }
+        }
+
+        return substitution.Count == 0 ? null : substitution;
+    }
+
+    private IEnumerable<InlineLayoutMember> EnumerateInlineLayoutMembers(
+        string typeKey,
+        NamedTypeSymbol namedType,
+        IReadOnlyDictionary<string, StarkTypeSymbol>? typeSubstitution,
+        IReadOnlyDictionary<string, BigInteger>? valueSubstitution,
+        IReadOnlyDictionary<string, ParserRuleContext> memberContexts)
+    {
+        if (namedType.Kind is DeclarationKind.Struct or DeclarationKind.Record)
+        {
+            foreach (var field in namedType.OrderedFields)
+            {
+                yield return new InlineLayoutMember(
+                    $"{typeKey}.{field.Name}",
+                    SubstituteInlineLayoutType(field.Type, typeSubstitution, valueSubstitution),
+                    ResolveInlineLayoutFieldContext(memberContexts, namedType.Name, field.Name));
+            }
+
+            yield break;
+        }
+
+        if (namedType.Kind != DeclarationKind.Enum)
+        {
+            yield break;
+        }
+
+        foreach (var variant in namedType.Variants)
+        {
+            foreach (var field in variant.Fields)
+            {
+                var fieldKey = variant.UsesNamedFields && field.Name is { } fieldName
+                    ? fieldName
+                    : field.Position.ToString(CultureInfo.InvariantCulture);
+                var displayName = variant.UsesNamedFields && field.Name is not null
+                    ? $"{typeKey}.{variant.Name}.{field.Name}"
+                    : $"{typeKey}.{variant.Name}#{field.Position.ToString(CultureInfo.InvariantCulture)}";
+                yield return new InlineLayoutMember(
+                    displayName,
+                    SubstituteInlineLayoutType(field.Type, typeSubstitution, valueSubstitution),
+                    ResolveInlineLayoutEnumFieldContext(memberContexts, namedType.Name, variant.Name, fieldKey));
+            }
+        }
+    }
+
+    private StarkTypeSymbol SubstituteInlineLayoutType(
+        StarkTypeSymbol type,
+        IReadOnlyDictionary<string, StarkTypeSymbol>? typeSubstitution,
+        IReadOnlyDictionary<string, BigInteger>? valueSubstitution)
+    {
+        if ((typeSubstitution is null || typeSubstitution.Count == 0)
+            && (valueSubstitution is null || valueSubstitution.Count == 0))
+        {
+            return type;
+        }
+
+        var coreType = StarkTypeSymbols.WithQualifiers(
+            type,
+            borrowKind: StarkBorrowKind.None,
+            accessKind: StarkAccessKind.None,
+            initializationKind: StarkInitializationKind.None,
+            isMutableView: false);
+
+        StarkTypeSymbol substitutedCore;
+        if (coreType.Kind == StarkTypeKind.Named && coreType.NamedType is { } namedType)
+        {
+            if (typeSubstitution is not null && typeSubstitution.TryGetValue(namedType, out var substitutedType))
+            {
+                substitutedCore = StarkTypeSymbols.WithQualifiers(
+                    substitutedType,
+                    borrowKind: StarkBorrowKind.None,
+                    accessKind: StarkAccessKind.None,
+                    initializationKind: StarkInitializationKind.None,
+                    isMutableView: false);
+            }
+            else if (StarkTypeSymbols.IsGenericInstantiation(coreType))
+            {
+                var substitutedArguments = (coreType.TypeArguments ?? [])
+                    .Select(argument => SubstituteInlineLayoutType(argument, typeSubstitution, valueSubstitution))
+                    .ToArray();
+                substitutedCore = StarkTypeSymbols.GenericInstantiation(
+                    StarkTypeSymbols.GetGenericBaseName(namedType),
+                    substitutedArguments,
+                    coreType.ComptimeValueArguments);
+            }
+            else
+            {
+                substitutedCore = coreType;
+            }
+        }
+        else if (coreType.ElementType is { } elementType)
+        {
+            var substitutedElement = SubstituteInlineLayoutType(elementType, typeSubstitution, valueSubstitution);
+            var fixedLength = coreType.FixedLength;
+            var fixedLengthParameterName = coreType.FixedLengthParameterName;
+            if (fixedLengthParameterName is not null
+                && valueSubstitution is not null
+                && valueSubstitution.TryGetValue(fixedLengthParameterName, out var concreteLength)
+                && concreteLength >= BigInteger.Zero
+                && concreteLength <= int.MaxValue)
+            {
+                fixedLength = (int)concreteLength;
+                fixedLengthParameterName = null;
+            }
+
+            substitutedCore = coreType.Kind switch
+            {
+                StarkTypeKind.FixedArray => StarkTypeSymbols.FixedArray(substitutedElement, fixedLength, fixedLengthParameterName),
+                StarkTypeKind.Slice => StarkTypeSymbols.Slice(substitutedElement),
+                StarkTypeKind.RawPointer => StarkTypeSymbols.RawPointer(substitutedElement, coreType.IsMutablePointer),
+                StarkTypeKind.Dynamic => StarkTypeSymbols.Dynamic(substitutedElement),
+                _ => coreType
+            };
+        }
+        else
+        {
+            substitutedCore = coreType;
+        }
+
+        return StarkTypeSymbols.WithQualifiers(
+            substitutedCore,
+            borrowKind: type.BorrowKind,
+            accessKind: type.AccessKind,
+            initializationKind: type.InitializationKind,
+            isMutableView: type.IsMutableView);
+    }
+
+    private static InlineLayoutCycle BuildInlineLayoutCycle(
+        string closingTypeKey,
+        int cycleStart,
+        IReadOnlyList<InlineLayoutTypeFrame> activeTypes,
+        IReadOnlyList<InlineLayoutMemberFrame> memberPath)
+    {
+        var typePath = activeTypes
+            .Skip(cycleStart)
+            .Select(static frame => frame.DisplayName)
+            .Concat([closingTypeKey])
+            .ToArray();
+        var cycleMembers = memberPath
+            .Skip(cycleStart)
+            .Select(static frame => frame.DisplayName)
+            .ToArray();
+        return new InlineLayoutCycle(
+            typePath,
+            cycleMembers,
+            memberPath.Count == 0 ? null : memberPath[^1].Context);
+    }
+
+    private static string BuildInlineLayoutCycleKey(InlineLayoutCycle cycle)
+    {
+        return string.Join(
+            "|",
+            cycle.TypePath
+                .Distinct(StringComparer.Ordinal)
+                .Order(StringComparer.Ordinal));
+    }
+
+    private static bool IsInlineLayoutAggregateKind(DeclarationKind kind)
+    {
+        return kind is DeclarationKind.Struct or DeclarationKind.Record or DeclarationKind.Enum;
+    }
+
+    private static ParserRuleContext? ResolveInlineLayoutFieldContext(
+        IReadOnlyDictionary<string, ParserRuleContext> memberContexts,
+        string ownerName,
+        string fieldName)
+    {
+        return TryGetInlineLayoutContext(memberContexts, InlineLayoutFieldContextKey(ownerName, fieldName), out var context)
+            ? context
+            : null;
+    }
+
+    private static ParserRuleContext? ResolveInlineLayoutEnumFieldContext(
+        IReadOnlyDictionary<string, ParserRuleContext> memberContexts,
+        string ownerName,
+        string variantName,
+        string fieldKey)
+    {
+        return TryGetInlineLayoutContext(memberContexts, InlineLayoutEnumFieldContextKey(ownerName, variantName, fieldKey), out var context)
+            ? context
+            : null;
+    }
+
+    private static bool TryGetInlineLayoutContext(
+        IReadOnlyDictionary<string, ParserRuleContext> memberContexts,
+        string key,
+        out ParserRuleContext context)
+    {
+        if (memberContexts.TryGetValue(key, out context!))
+        {
+            return true;
+        }
+
+        var separator = key.IndexOf('|', StringComparison.Ordinal);
+        if (separator <= 0)
+        {
+            return false;
+        }
+
+        var ownerName = key[..separator];
+        var baseOwnerName = StarkTypeSymbols.GetGenericBaseName(ownerName);
+        if (string.Equals(ownerName, baseOwnerName, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var baseKey = baseOwnerName + key[separator..];
+        return memberContexts.TryGetValue(baseKey, out context!);
+    }
+
+    private static string InlineLayoutFieldContextKey(string ownerName, string fieldName)
+    {
+        return $"{ownerName}|field|{fieldName}";
+    }
+
+    private static string InlineLayoutEnumFieldContextKey(string ownerName, string variantName, string fieldKey)
+    {
+        return $"{ownerName}|enum|{variantName}|{fieldKey}";
     }
 
     private NamedTypeSymbol BuildStructLikeNamedType(
@@ -1957,6 +2552,7 @@ internal sealed class TypeChecker
                         functionSyntax,
                         parameters,
                         allowWholeParameterDisjointContracts: isFfi || isAsm);
+                    ValidatePointeeDeadOnReturnContracts(functionSyntax, parameters);
 
                     if (declarationModel.Function?.Asm is not null)
                     {
@@ -2000,7 +2596,12 @@ internal sealed class TypeChecker
                         Visibility: declarationModel.Visibility,
                         ValueParameterContracts: declarationModel.Function?.ValueContracts is { Count: > 0 } valueContracts
                             ? valueContracts
-                            : null);
+                            : null,
+                        IsTailCallable: declarationModel.Function?.Modifiers.IsTailCallable == true,
+                        PointeeDeadOnReturnParameterNames: declarationModel.Function?.PointeeDeadOnReturnParameters is { Count: > 0 } pointeeDeadOnReturnParameters
+                            ? pointeeDeadOnReturnParameters
+                            : null,
+                        DeclarationLocation: Location(functionSyntax.DeclarationContext));
                     RegisterFunctionSignature(signature, seenOverloadKeys, functionSyntax.DeclarationContext);
                     _functionSyntaxByQualifiedName[signature.Name] = functionSyntax;
                 }
@@ -2616,6 +3217,59 @@ internal sealed class TypeChecker
                         "STK3029",
                         $"Whole-parameter 'where disjoint({string.Join(", ", wholeParameterNames)})' is redundant because Stark memory-backed parameters are non-overlapping by default. Remove the clause; use 'where overlap(...)' for intentional overlap, 'where same(...)' for identical storage, or keep 'where disjoint(parameter[start, count], other[start, count])' for subregions.",
                         contract);
+                }
+            }
+        }
+    }
+
+    private void ValidatePointeeDeadOnReturnContracts(
+        DeclaredFunctionSyntax functionSyntax,
+        IReadOnlyList<TypedParameterSymbol> parameters)
+    {
+        var parameterSymbols = parameters.ToDictionary(static parameter => parameter.Name, StringComparer.Ordinal);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var clause in GetParameterMemoryContractClauses(functionSyntax.DeclarationContext))
+        {
+            foreach (var contract in clause.parameterMemoryContract())
+            {
+                if (contract.deadOnReturnContract()?.expressionList() is not { } expressionList)
+                {
+                    continue;
+                }
+
+                foreach (var operand in expressionList.expression())
+                {
+                    if (!TryGetSimpleParameterExpression(operand, out var name))
+                    {
+                        ReportError(
+                            "STK3029",
+                            "Dead-on-return contract operands must be whole parameter names.",
+                            operand);
+                        continue;
+                    }
+
+                    if (!parameterSymbols.TryGetValue(name, out var symbol))
+                    {
+                        ReportError(
+                            "STK3029",
+                            $"Dead-on-return contract references unknown parameter '{name}'.",
+                            operand);
+                    }
+                    else if (!CanRuntimeDisjointTest(symbol.Type))
+                    {
+                        ReportError(
+                            "STK3029",
+                            $"Dead-on-return contract references parameter '{name}' with non-memory-backed type '{symbol.Type.DisplayName}'. Memory contracts require memory-backed parameters such as slices, text views, borrows, initialization views, or raw pointers.",
+                            operand);
+                    }
+                    else if (!seen.Add(name))
+                    {
+                        ReportError(
+                            "STK3029",
+                            $"Dead-on-return contract repeats parameter '{name}'.",
+                            operand);
+                    }
                 }
             }
         }
@@ -4541,10 +5195,206 @@ internal sealed class TypeChecker
             return;
         }
 
+        if (statement.becomeStatement() is { } becomeStatement)
+        {
+            CheckBecomeStatement(becomeStatement, scope, returnType);
+            return;
+        }
+
         if (statement.expressionStatement() is { } expressionStatement)
         {
             EvaluateExpression(expressionStatement.expression(), scope, allowFunctionReference: false);
         }
+    }
+
+    private void CheckBecomeStatement(
+        StarkParser.BecomeStatementContext becomeStatement,
+        Scope scope,
+        StarkTypeSymbol returnType)
+    {
+        if (_insideConstructorBody)
+        {
+            ReportError("STK3002", "Constructor bodies cannot use 'become'.", becomeStatement);
+            return;
+        }
+
+        if (_currentFunctionName is not { } currentFunctionName
+            || !_functions.TryGetValue(currentFunctionName, out var currentFunction))
+        {
+            ReportError("STK3002", "'become' can only be used inside a function body.", becomeStatement);
+            return;
+        }
+
+        if (!currentFunction.IsTailCallable)
+        {
+            ReportError(
+                "STK3002",
+                $"Function '{currentFunction.DisplaySourceName}' must be declared 'tail' before it can use 'become'.",
+                becomeStatement);
+        }
+
+        if (!IsRootCallExpression(becomeStatement.expression()))
+        {
+            ReportError(
+                "STK3002",
+                "'become' requires a single call expression in tail position, for example `become next(state);`.",
+                becomeStatement.expression());
+        }
+
+        var operationStart = _boundOperations.Count;
+        var value = EvaluateExpression(
+            becomeStatement.expression(),
+            scope,
+            allowFunctionReference: false,
+            expectedType: returnType.Kind == StarkTypeKind.Void ? null : returnType);
+
+        if (returnType.Kind != StarkTypeKind.Void)
+        {
+            EnsureReturnCompatible(returnType, value, becomeStatement.expression());
+        }
+        else if (value.Type.Kind != StarkTypeKind.Void && value.Type.Kind != StarkTypeKind.Error)
+        {
+            ReportError("STK3002", "Void functions can only become calls that return void.", becomeStatement.expression());
+        }
+
+        var tailCall = _boundOperations
+            .Skip(operationStart)
+            .LastOrDefault(static operation => operation is BoundDirectCallOperation
+                or BoundMemberCallOperation
+                or BoundFunctionPointerCallOperation
+                or BoundClosureCallOperation);
+        if (tailCall is null)
+        {
+            ReportError(
+                "STK3002",
+                "'become' requires its expression to lower to a direct, member, function-pointer, or closure call.",
+                becomeStatement.expression());
+            return;
+        }
+
+        if (!IsTailCallableOperation(tailCall))
+        {
+            ReportError(
+                "STK3002",
+                $"The target of 'become' is not tail-callable. Declare the callee or callable type with 'tail'.",
+                becomeStatement.expression());
+        }
+    }
+
+    private static bool IsTailCallableOperation(BoundOperation operation)
+    {
+        return operation switch
+        {
+            BoundDirectCallOperation direct => direct.Signature.IsTailCallable,
+            BoundMemberCallOperation member => member.Signature.IsTailCallable,
+            BoundFunctionPointerCallOperation functionPointer => functionPointer.FunctionPointerType.FunctionPointerIsTailCallable,
+            BoundClosureCallOperation closure => closure.ClosureType.ClosureIsTailCallable,
+            _ => false
+        };
+    }
+
+    private static bool IsRootCallExpression(StarkParser.ExpressionContext expression)
+    {
+        return IsRootCallAssignmentExpression(expression.assignmentExpression());
+    }
+
+    private static bool IsRootCallAssignmentExpression(StarkParser.AssignmentExpressionContext expression)
+    {
+        return expression.ChildCount == 1
+            && expression.conditionalExpression() is { } conditional
+            && IsRootCallConditionalExpression(conditional);
+    }
+
+    private static bool IsRootCallConditionalExpression(StarkParser.ConditionalExpressionContext expression)
+    {
+        return expression.ChildCount == 1
+            && IsRootCallLogicalOrExpression(expression.logicalOrExpression());
+    }
+
+    private static bool IsRootCallLogicalOrExpression(StarkParser.LogicalOrExpressionContext expression)
+    {
+        return expression.ChildCount == 1
+            && IsRootCallLogicalAndExpression(expression.logicalAndExpression(0));
+    }
+
+    private static bool IsRootCallLogicalAndExpression(StarkParser.LogicalAndExpressionContext expression)
+    {
+        return expression.ChildCount == 1
+            && IsRootCallBitwiseOrExpression(expression.bitwiseOrExpression(0));
+    }
+
+    private static bool IsRootCallBitwiseOrExpression(StarkParser.BitwiseOrExpressionContext expression)
+    {
+        return expression.ChildCount == 1
+            && IsRootCallBitwiseXorExpression(expression.bitwiseXorExpression(0));
+    }
+
+    private static bool IsRootCallBitwiseXorExpression(StarkParser.BitwiseXorExpressionContext expression)
+    {
+        return expression.ChildCount == 1
+            && IsRootCallBitwiseAndExpression(expression.bitwiseAndExpression(0));
+    }
+
+    private static bool IsRootCallBitwiseAndExpression(StarkParser.BitwiseAndExpressionContext expression)
+    {
+        return expression.ChildCount == 1
+            && IsRootCallEqualityExpression(expression.equalityExpression(0));
+    }
+
+    private static bool IsRootCallEqualityExpression(StarkParser.EqualityExpressionContext expression)
+    {
+        return expression.ChildCount == 1
+            && IsRootCallRelationalExpression(expression.relationalExpression(0));
+    }
+
+    private static bool IsRootCallRelationalExpression(StarkParser.RelationalExpressionContext expression)
+    {
+        return expression.ChildCount == 1
+            && IsRootCallShiftExpression(expression.shiftExpression(0));
+    }
+
+    private static bool IsRootCallShiftExpression(StarkParser.ShiftExpressionContext expression)
+    {
+        return expression.ChildCount == 1
+            && IsRootCallAdditiveExpression(expression.additiveExpression(0));
+    }
+
+    private static bool IsRootCallAdditiveExpression(StarkParser.AdditiveExpressionContext expression)
+    {
+        return expression.ChildCount == 1
+            && IsRootCallMultiplicativeExpression(expression.multiplicativeExpression(0));
+    }
+
+    private static bool IsRootCallMultiplicativeExpression(StarkParser.MultiplicativeExpressionContext expression)
+    {
+        return expression.ChildCount == 1
+            && IsRootCallUnaryExpression(expression.unaryExpression(0));
+    }
+
+    private static bool IsRootCallUnaryExpression(StarkParser.UnaryExpressionContext expression)
+    {
+        return expression.ChildCount == 1
+            && expression.powerExpression() is { } power
+            && IsRootCallPowerExpression(power);
+    }
+
+    private static bool IsRootCallPowerExpression(StarkParser.PowerExpressionContext expression)
+    {
+        return expression.ChildCount == 1
+            && IsRootCallPostfixExpression(expression.postfixExpression());
+    }
+
+    private static bool IsRootCallPostfixExpression(StarkParser.PostfixExpressionContext expression)
+    {
+        var parts = expression.postfixPart();
+        if (parts.Length > 0)
+        {
+            return parts[^1].argumentList() is not null;
+        }
+
+        var primary = expression.primaryExpression();
+        return primary.expression() is { } parenthesized
+            && IsRootCallExpression(parenthesized);
     }
 
     private void CheckAssumeStatement(
@@ -7174,7 +8024,8 @@ internal sealed class TypeChecker
     /// </summary>
     private bool StatementGuaranteesFunctionExit(StarkParser.StatementContext statement)
     {
-        if (statement.returnStatement() is not null)
+        if (statement.returnStatement() is not null
+            || statement.becomeStatement() is not null)
         {
             return true;
         }
@@ -13947,7 +14798,16 @@ internal sealed class TypeChecker
         ConstructorShape? matchedConstructor = null;
         IReadOnlyList<ObjectInitializerMemberTypingRecord>? initializerMembers = null;
 
-        matchedConstructor = CheckObjectCreationArguments(expression.argumentList(), expression, createdType, scope);
+        var storageSelector = GetObjectCreationStorageSelector(expression);
+        if (storageSelector == ObjectCreationStorageSelector.Arena && createdType.Kind != StarkTypeKind.Dynamic)
+        {
+            ReportError(
+                "STK3010",
+                "The `new(arena, ...)` storage selector is only valid for dynamic storage creation. Use an `arena` local declaration for arena-backed object storage.",
+                expression.arenaObjectCreationArgumentList());
+        }
+
+        matchedConstructor = CheckObjectCreationArguments(expression, createdType, scope);
 
         if (createdType.Kind == StarkTypeKind.Dynamic
             && expression.objectInitializer() is { } dynamicObjectInitializer)
@@ -13992,11 +14852,13 @@ internal sealed class TypeChecker
                 typedConstructor,
                 location,
                 _currentFunctionName,
+                storageSelector,
                 initializerMembers));
             _boundOperations.Add(new BoundObjectCreationOperation(
                 expression.GetText(),
                 createdType,
                 typedConstructor,
+                storageSelector,
                 initializerMembers,
                 location,
                 _currentFunctionName));
@@ -14009,7 +14871,15 @@ internal sealed class TypeChecker
     {
         return expression.type_() is null
             || expression.objectInitializer() is not null
+            || expression.arenaObjectCreationArgumentList() is not null
             || expression.argumentList() is { } argumentList && argumentList.argument().Length > 0;
+    }
+
+    private static ObjectCreationStorageSelector GetObjectCreationStorageSelector(StarkParser.ObjectCreationExpressionContext expression)
+    {
+        return expression.arenaObjectCreationArgumentList() is null
+            ? ObjectCreationStorageSelector.Default
+            : ObjectCreationStorageSelector.Arena;
     }
 
     private StarkTypeSymbol ResolveObjectCreationType(
@@ -16856,9 +17726,11 @@ internal sealed class TypeChecker
             expectedParameters,
             SourceName: displayTargetName,
             Kind: target.Type.FunctionPointerKind ?? StarkFunctionKind.Fn,
+            IsTailCallable: target.Type.FunctionPointerIsTailCallable,
             DisjointParameterGroups: target.Type.FunctionPointerDisjointParameterGroups ?? [],
             OverlapParameterGroups: target.Type.FunctionPointerOverlapParameterGroups ?? [],
-            SameParameterGroups: target.Type.FunctionPointerSameParameterGroups ?? []);
+            SameParameterGroups: target.Type.FunctionPointerSameParameterGroups ?? [],
+            PointeeDeadOnReturnParameterNames: target.Type.FunctionPointerPointeeDeadOnReturnParameterNames ?? []);
         var argumentBindings = EvaluateArguments(arguments, expectedParameters, scope);
 
         if (parameterTypes.Count != arguments.argument().Length)
@@ -16947,9 +17819,11 @@ internal sealed class TypeChecker
             expectedParameters,
             SourceName: displayTargetName,
             Kind: target.Type.ClosureFunctionKind ?? StarkFunctionKind.Fn,
+            IsTailCallable: target.Type.ClosureIsTailCallable,
             DisjointParameterGroups: target.Type.ClosureDisjointParameterGroups ?? [],
             OverlapParameterGroups: target.Type.ClosureOverlapParameterGroups ?? [],
-            SameParameterGroups: target.Type.ClosureSameParameterGroups ?? []);
+            SameParameterGroups: target.Type.ClosureSameParameterGroups ?? [],
+            PointeeDeadOnReturnParameterNames: target.Type.ClosurePointeeDeadOnReturnParameterNames ?? []);
         var argumentBindings = EvaluateArguments(arguments, expectedParameters, scope);
 
         if (parameterTypes.Count != arguments.argument().Length)
@@ -18329,9 +19203,10 @@ internal sealed class TypeChecker
 
         if (candidates.Length == 0)
         {
+            var candidateDetail = FormatFunctionPointerPromotionCandidateTypes(functions);
             ReportError(
                 "STK3002",
-                $"Function item '{name}' cannot be promoted to '{targetType.DisplayName}'.",
+                $"Function item '{name}' cannot be promoted to '{targetType.DisplayName}'.{candidateDetail}",
                 token);
             return new ExpressionBinding(StarkTypeSymbols.Error);
         }
@@ -18361,7 +19236,9 @@ internal sealed class TypeChecker
             type.FunctionPointerSameParameterGroups,
             type.FunctionPointerParameterRawPointerElementCountExpressions,
             type.FunctionPointerAbi,
-            isUnsafe: true);
+            isUnsafe: true,
+            isTailCallable: type.FunctionPointerIsTailCallable,
+            pointeeDeadOnReturnParameterNames: type.FunctionPointerPointeeDeadOnReturnParameterNames);
     }
 
     private ExpressionBinding ResolveClosureFunctionPromotion(
@@ -18432,6 +19309,21 @@ internal sealed class TypeChecker
     private static StarkTypeSymbol FunctionPointerTypeForSignature(TypedFunctionSignature function)
     {
         return TypeCompatibilityFacts.FunctionPointerTypeForSignature(function);
+    }
+
+    private static string FormatFunctionPointerPromotionCandidateTypes(IReadOnlyList<TypedFunctionSignature> functions)
+    {
+        var candidateTypes = functions
+            .Where(static function => !function.IsGeneric)
+            .Select(FunctionPointerTypeForSignature)
+            .Select(static type => type.DisplayName)
+            .Distinct(StringComparer.Ordinal)
+            .Take(4)
+            .ToArray();
+
+        return candidateTypes.Length == 0
+            ? string.Empty
+            : $" Candidate callable type(s): {string.Join(", ", candidateTypes.Select(static type => $"'{type}'"))}.";
     }
 
     private void RecordAddressTakenFunction(TypedFunctionSignature function, SourceLocation location)
@@ -20248,7 +21140,9 @@ internal sealed class TypeChecker
                     strippedType.FunctionPointerSameParameterGroups,
                     strippedType.FunctionPointerParameterRawPointerElementCountExpressions,
                     strippedType.FunctionPointerAbi,
-                    strippedType.FunctionPointerIsUnsafe),
+                    strippedType.FunctionPointerIsUnsafe,
+                    strippedType.FunctionPointerIsTailCallable,
+                    strippedType.FunctionPointerPointeeDeadOnReturnParameterNames),
                 borrowKind: type.BorrowKind,
                 accessKind: type.AccessKind,
                 initializationKind: type.InitializationKind,
@@ -20269,7 +21163,9 @@ internal sealed class TypeChecker
                     strippedType.ClosureDisjointParameterGroups,
                     strippedType.ClosureOverlapParameterGroups,
                     strippedType.ClosureSameParameterGroups,
-                    strippedType.ClosureParameterRawPointerElementCountExpressions),
+                    strippedType.ClosureParameterRawPointerElementCountExpressions,
+                    strippedType.ClosureIsTailCallable,
+                    strippedType.ClosurePointeeDeadOnReturnParameterNames),
                 borrowKind: type.BorrowKind,
                 accessKind: type.AccessKind,
                 initializationKind: type.InitializationKind,
@@ -20792,7 +21688,9 @@ internal sealed class TypeChecker
                 coreType.FunctionPointerSameParameterGroups,
                 coreType.FunctionPointerParameterRawPointerElementCountExpressions,
                 coreType.FunctionPointerAbi,
-                coreType.FunctionPointerIsUnsafe);
+                coreType.FunctionPointerIsUnsafe,
+                coreType.FunctionPointerIsTailCallable,
+                coreType.FunctionPointerPointeeDeadOnReturnParameterNames);
         }
         else if (coreType.Kind == StarkTypeKind.Closure
             && coreType.ClosureFunctionKind is { } closureFunctionKind
@@ -20808,7 +21706,9 @@ internal sealed class TypeChecker
                 coreType.ClosureDisjointParameterGroups,
                 coreType.ClosureOverlapParameterGroups,
                 coreType.ClosureSameParameterGroups,
-                coreType.ClosureParameterRawPointerElementCountExpressions);
+                coreType.ClosureParameterRawPointerElementCountExpressions,
+                coreType.ClosureIsTailCallable,
+                coreType.ClosurePointeeDeadOnReturnParameterNames);
         }
         else
         {
@@ -21671,13 +22571,18 @@ internal sealed class TypeChecker
     }
 
     private ConstructorShape? CheckObjectCreationArguments(
-        StarkParser.ArgumentListContext? arguments,
-        ParserRuleContext diagnosticContext,
+        StarkParser.ObjectCreationExpressionContext expression,
         StarkTypeSymbol createdType,
         Scope scope)
     {
-        var suppliedArguments = arguments?.argument() ?? [];
+        var arguments = expression.argumentList();
+        var suppliedArguments = GetObjectCreationArguments(expression);
         var argumentCount = suppliedArguments.Length;
+        if (GetObjectCreationStorageSelector(expression) == ObjectCreationStorageSelector.Arena
+            && createdType.Kind != StarkTypeKind.Dynamic)
+        {
+            return null;
+        }
 
         if (createdType.Kind == StarkTypeKind.Dynamic)
         {
@@ -21686,7 +22591,7 @@ internal sealed class TypeChecker
                 ReportError(
                     "STK3009",
                     $"Dynamic storage creation expects zero arguments or one capacity argument, but received {argumentCount}.",
-                    diagnosticContext);
+                    expression);
                 return null;
             }
 
@@ -21726,7 +22631,7 @@ internal sealed class TypeChecker
             ReportError(
                 "STK3009",
                 $"Type '{createdType.DisplayName}' does not declare constructors and cannot be created with arguments.",
-                diagnosticContext);
+                expression);
             return null;
         }
 
@@ -21745,7 +22650,7 @@ internal sealed class TypeChecker
             ReportError(
                 "STK3009",
                 $"Type '{createdType.DisplayName}' does not declare a constructor that accepts {argumentCount} argument{Pluralize(argumentCount)}.",
-                diagnosticContext);
+                expression);
             return null;
         }
 
@@ -21759,7 +22664,7 @@ internal sealed class TypeChecker
             ReportError(
                 "STK3009",
                 $"Type '{createdType.DisplayName}' does not declare a constructor that accepts {argumentCount} argument{Pluralize(argumentCount)}. Available constructor arities: {availableArities}.",
-                diagnosticContext);
+                expression);
             return null;
         }
 
@@ -21801,6 +22706,13 @@ internal sealed class TypeChecker
         }
 
         return hadMismatch ? null : matchedConstructor;
+    }
+
+    private static StarkParser.ArgumentContext[] GetObjectCreationArguments(StarkParser.ObjectCreationExpressionContext expression)
+    {
+        return expression.arenaObjectCreationArgumentList() is { } arenaArguments
+            ? arenaArguments.argument()
+            : expression.argumentList()?.argument() ?? [];
     }
 
     private StarkTypeSymbol[] EvaluateArgumentTypes(

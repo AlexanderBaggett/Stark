@@ -190,7 +190,7 @@ public sealed class SystemPromotedNetTcpStandardLibraryTests : StandardLibraryTe
         var dynamicRead = ExtractLlvmFunctionBody(llvm, "@TcpClient_Read__mutborrowTcpClient_mutborrowSystem_Runtime_Buffer_DynamicByteBuffer_");
         var fixedReads = string.Join(Environment.NewLine, [fixed512Read, fixed4096Read, fixed8192Read]);
 
-        Assert.Contains("ptr noundef nonnull noalias nocapture dereferenceable(528) align 8 %arg_destination", fixed512Read, StringComparison.Ordinal);
+        Assert.Contains("ptr noundef nonnull noalias captures(none) dereferenceable(528) align 8 %arg_destination", fixed512Read, StringComparison.Ordinal);
         Assert.Contains("LinuxSyscall3HandleBuffer", fixedReads, StringComparison.Ordinal);
         Assert.Contains("System_Runtime_Platform_ReadSocketVector2", llvm, StringComparison.Ordinal);
         Assert.Contains("System_Runtime_Platform_WriteSocketVector2", llvm, StringComparison.Ordinal);

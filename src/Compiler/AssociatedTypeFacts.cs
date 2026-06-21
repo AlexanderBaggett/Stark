@@ -163,7 +163,9 @@ internal static class AssociatedTypeFacts
                 coreType.FunctionPointerSameParameterGroups,
                 coreType.FunctionPointerParameterRawPointerElementCountExpressions,
                 coreType.FunctionPointerAbi,
-                coreType.FunctionPointerIsUnsafe);
+                coreType.FunctionPointerIsUnsafe,
+                coreType.FunctionPointerIsTailCallable,
+                coreType.FunctionPointerPointeeDeadOnReturnParameterNames);
         }
         else if (coreType.Kind == StarkTypeKind.Closure
             && coreType.ClosureFunctionKind is { } closureFunctionKind
@@ -179,7 +181,9 @@ internal static class AssociatedTypeFacts
                 coreType.ClosureDisjointParameterGroups,
                 coreType.ClosureOverlapParameterGroups,
                 coreType.ClosureSameParameterGroups,
-                coreType.ClosureParameterRawPointerElementCountExpressions);
+                coreType.ClosureParameterRawPointerElementCountExpressions,
+                coreType.ClosureIsTailCallable,
+                coreType.ClosurePointeeDeadOnReturnParameterNames);
         }
         else
         {
@@ -254,7 +258,9 @@ internal static class AssociatedTypeFacts
                 coreType.FunctionPointerSameParameterGroups,
                 coreType.FunctionPointerParameterRawPointerElementCountExpressions,
                 coreType.FunctionPointerAbi,
-                coreType.FunctionPointerIsUnsafe);
+                coreType.FunctionPointerIsUnsafe,
+                coreType.FunctionPointerIsTailCallable,
+                coreType.FunctionPointerPointeeDeadOnReturnParameterNames);
         }
         else if (coreType.Kind == StarkTypeKind.Closure
             && coreType.ClosureFunctionKind is { } closureFunctionKind
@@ -270,7 +276,9 @@ internal static class AssociatedTypeFacts
                 coreType.ClosureDisjointParameterGroups,
                 coreType.ClosureOverlapParameterGroups,
                 coreType.ClosureSameParameterGroups,
-                coreType.ClosureParameterRawPointerElementCountExpressions);
+                coreType.ClosureParameterRawPointerElementCountExpressions,
+                coreType.ClosureIsTailCallable,
+                coreType.ClosurePointeeDeadOnReturnParameterNames);
         }
         else
         {

@@ -73,6 +73,7 @@ import ParserEdgeCaseTests
 import ParserSmokeTests
 import ProjectCliTests
 import RawMultilineStringParityTests
+import RecursiveInlineLayoutValidationTests
 import SemanticValidationTests
 import StandardLibrarySourceTests
 import StructLayoutInteropRuntimeTests
@@ -9858,6 +9859,38 @@ finite law i32[min max] Run()
 }
 
 [Fact]
+fn bool DeadOnReturnCallMakesLocalStorageUnavailable()
+{
+    {
+        stack mut LlvmCompile compiled = CompileFull(
+            "own-dead-on-return-local-use-invalid",
+            raw"""
+module Demo
+
+fn bool WriteAndConsume(out u32[0 max] value) where dead_on_return(value)
+{
+    value = 7;
+    return true;
+}
+
+fn u32[0 max] Run()
+{
+    stack mut u32[0 max] value = 1;
+    if (!WriteAndConsume(value))
+    {
+        return 0;
+    }
+
+    return value;
+}
+""");
+        return FailsWithDiagnosticMessage(compiled, "STK4200", "Move error")
+            && AnyDiagnosticMessageContains(compiled, "value 'value'")
+            && AnyDiagnosticMessageContains(compiled, "was moved");
+    }
+}
+
+[Fact]
 [Collection("ownership", "diagnostics")]
 fn bool MoveDiagnosticsAreNotDuplicatedForTheSameUse()
 {
@@ -13803,6 +13836,41 @@ fn bool FieldAssignedOnAnyEarlierPathIsNotFlagged()
 }
 
 [Fact]
+[Collection("diagnostics", "recursive-inline-layout")]
+fn bool DirectRecursiveStructFieldIsRejected()
+{
+    return DirectRecursiveStructFieldIsRejectedImpl();
+}
+
+[Fact]
+[Collection("diagnostics", "recursive-inline-layout")]
+fn bool MutuallyRecursiveStructFieldsAreRejected()
+{
+    return MutuallyRecursiveStructFieldsAreRejectedImpl();
+}
+
+[Fact]
+[Collection("diagnostics", "recursive-inline-layout")]
+fn bool RecursiveEnumPayloadIsRejected()
+{
+    return RecursiveEnumPayloadIsRejectedImpl();
+}
+
+[Fact]
+[Collection("diagnostics", "recursive-inline-layout")]
+fn bool GenericInlineRecursionAtUseSiteIsRejected()
+{
+    return GenericInlineRecursionAtUseSiteIsRejectedImpl();
+}
+
+[Fact]
+[Collection("diagnostics", "recursive-inline-layout")]
+fn bool PointerAndDynamicSelfReferencesAreAllowed()
+{
+    return PointerAndDynamicSelfReferencesAreAllowedImpl();
+}
+
+[Fact]
 [Collection("diagnostics", "copyable-doctrine")]
 fn bool WhereCopyableBoundAcceptsCopyableAndRejectsOwningOrDestructorTypes()
 {
@@ -14178,6 +14246,13 @@ fn bool StaticModifierIsRejectedOutsideStructAndRecordMemberFunctions()
 fn bool LawBodiesRejectMutableExternalStateObservationAllocationAndVisibleWrites()
 {
     return LawBodiesRejectMutableExternalStateObservationAllocationAndVisibleWritesImpl();
+}
+
+[Fact]
+[Collection("diagnostics", "function-semantics", "arena")]
+fn bool LawBodiesRejectArenaStorageSelectorAllocation()
+{
+    return LawBodiesRejectArenaStorageSelectorAllocationImpl();
 }
 
 [Fact]
@@ -15238,6 +15313,83 @@ fn bool RuntimeTextConcatenationConsumesOwnedTextResult()
 }
 
 [Fact]
+[Collection("ownership", "arena")]
+fn bool ArenaDynamicStorageCannotReturnOutOfArenaScope()
+{
+    return ArenaDynamicStorageCannotReturnOutOfArenaScopeImpl();
+}
+
+[Fact]
+[Collection("ownership", "arena")]
+fn bool ArenaStorageRawPointersCannotReturnOutOfArenaScope()
+{
+    return ArenaStorageRawPointersCannotReturnOutOfArenaScopeImpl();
+}
+
+[Fact]
+[Collection("ownership", "arena")]
+fn bool ArenaObjectInitializerFieldsCannotReturnOutOfArenaScope()
+{
+    return ArenaObjectInitializerFieldsCannotReturnOutOfArenaScopeImpl();
+}
+
+[Fact]
+[Collection("ownership", "arena")]
+fn bool ArenaPrimaryConstructorFieldsCannotReturnOutOfArenaScope()
+{
+    return ArenaPrimaryConstructorFieldsCannotReturnOutOfArenaScopeImpl();
+}
+
+[Fact]
+[Collection("ownership", "arena")]
+fn bool ArenaEnumPayloadsCannotReturnOutOfArenaScope()
+{
+    return ArenaEnumPayloadsCannotReturnOutOfArenaScopeImpl();
+}
+
+[Fact]
+[Collection("ownership", "arena")]
+fn bool ArenaFixedArrayElementsCannotReturnOutOfArenaScope()
+{
+    return ArenaFixedArrayElementsCannotReturnOutOfArenaScopeImpl();
+}
+
+[Fact]
+[Collection("ownership", "arena")]
+fn bool ArenaBorrowsCannotBePassedToRetainingParameters()
+{
+    return ArenaBorrowsCannotBePassedToRetainingParametersImpl();
+}
+
+[Fact]
+[Collection("ownership", "arena")]
+fn bool ArenaPointersCannotBeStoredInHeapStorage()
+{
+    return ArenaPointersCannotBeStoredInHeapStorageImpl();
+}
+
+[Fact]
+[Collection("ownership", "arena")]
+fn bool ArenaPointersCannotBeStoredInStaticStorage()
+{
+    return ArenaPointersCannotBeStoredInStaticStorageImpl();
+}
+
+[Fact]
+[Collection("ownership", "arena")]
+fn bool ArenaBorrowsCanBePassedToNonRetainingBorrowParameters()
+{
+    return ArenaBorrowsCanBePassedToNonRetainingBorrowParametersImpl();
+}
+
+[Fact]
+[Collection("ownership", "arena")]
+fn bool ArenaReadCapturesCannotBeRetainedInHeapClosures()
+{
+    return ArenaReadCapturesCannotBeRetainedInHeapClosuresImpl();
+}
+
+[Fact]
 [Collection("package-image", "package-image-architecture")]
 fn bool PackageImagePreservesAssociatedTypesAcrossTypedInterfaceSourceBridgeAndFacts()
 {
@@ -15403,6 +15555,20 @@ fn bool PackageImageBackedRetborrowDynamicIndexTemplatesReturnElementAddresses()
 fn bool PackageImageGenericTemplatesPublishAllBoundOperationFamilies()
 {
     return PackageImageGenericTemplatesPublishAllBoundOperationFamiliesImpl();
+}
+
+[Fact]
+[Collection("package-image", "package-image-architecture", "arena")]
+fn bool PackageImagePreservesArenaObjectCreationStorageSelectorInGenericTemplateFacts()
+{
+    return PackageImagePreservesArenaObjectCreationStorageSelectorInGenericTemplateFactsImpl();
+}
+
+[Fact]
+[Collection("package-image", "package-image-architecture", "arena")]
+fn bool PackageImageBackedRetainingBorrowSurfaceRejectsArenaBackedArguments()
+{
+    return PackageImageBackedRetainingBorrowSurfaceRejectsArenaBackedArgumentsImpl();
 }
 
 [Fact]
@@ -17280,4 +17446,3 @@ fn bool EnumsWithMoreThan128VariantsCompileThroughTheWholePipeline()
 {
     return EnumsWithMoreThan128VariantsCompileThroughTheWholePipelineImpl();
 }
-

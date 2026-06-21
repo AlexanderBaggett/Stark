@@ -51,11 +51,13 @@ internal static partial class PackageImageBuilder
             HasExplicitInlinePreference: declarationFunction.Modifiers.HasExplicitInlinePreference,
             IsUnsafe: declarationFunction.Modifiers.IsUnsafe,
             IsVarargs: effects.IsVarargs,
+            IsTailCallable: effects.IsTailCallable,
             FfiAbi: effects.FfiAbi is { } ffiAbi ? StarkFfiAbiFacts.DisplayName(ffiAbi) : null,
             BackendOptimizationMode: RenderBackendOptimizationMode(declarationFunction.BackendOptimizationMode),
             DisjointParameterGroups: BuildParameterDisjointGroupManifests(function.DisjointGroups),
             OverlapParameterGroups: BuildParameterOverlapGroupManifests(function.OverlapGroups),
             SameParameterGroups: BuildParameterSameGroupManifests(function.SameGroups),
+            PointeeDeadOnReturnParameterNames: BuildPointeeDeadOnReturnParameterNames(function.PointeeDeadOnReturnParameters),
             ComptimeGenericParameters: BuildComptimeGenericParameterManifests(
                 function.ComptimeGenericParams,
                 moduleName: ModuleNameFromQualifiedName(qualifiedName)),
@@ -110,11 +112,13 @@ internal static partial class PackageImageBuilder
             HasExplicitInlinePreference: manifest.HasExplicitInlinePreference,
             IsUnsafe: manifest.IsUnsafe,
             IsVarargs: manifest.IsVarargs,
+            IsTailCallable: manifest.IsTailCallable,
             FfiAbi: manifest.FfiAbi,
             BackendOptimizationMode: manifest.BackendOptimizationMode,
             DisjointParameterGroups: BuildParameterDisjointGroupManifests(function.DisjointGroups),
             OverlapParameterGroups: BuildParameterOverlapGroupManifests(function.OverlapGroups),
             SameParameterGroups: BuildParameterSameGroupManifests(function.SameGroups),
+            PointeeDeadOnReturnParameterNames: BuildPointeeDeadOnReturnParameterNames(function.PointeeDeadOnReturnParameters),
             HasBody: declarationFunction.HasBody,
             ComptimeGenericParameters: BuildComptimeGenericParameterManifests(function.ComptimeGenericParams, moduleName),
             TypeParameterConstraints: BuildTypedTypeParameterConstraintManifests(function.Constraints, moduleName),
@@ -608,12 +612,14 @@ internal static partial class PackageImageBuilder
                     IsStatic: declaration.Function.IsStatic,
                     IsUnsafe: declaration.Function.Modifiers.IsUnsafe,
                     IsVarargs: effects.IsVarargs,
+                    IsTailCallable: effects.IsTailCallable,
                     FfiAbi: effects.FfiAbi is { } ffiAbi ? StarkFfiAbiFacts.DisplayName(ffiAbi) : null,
                     Visibility: declaration.Visibility.ToString().ToLowerInvariant(),
                     BackendOptimizationMode: RenderBackendOptimizationMode(declaration.Function.BackendOptimizationMode),
                     DisjointParameterGroups: BuildParameterDisjointGroupManifests(function.DisjointGroups),
                     OverlapParameterGroups: BuildParameterOverlapGroupManifests(function.OverlapGroups),
                     SameParameterGroups: BuildParameterSameGroupManifests(function.SameGroups),
+                    PointeeDeadOnReturnParameterNames: BuildPointeeDeadOnReturnParameterNames(function.PointeeDeadOnReturnParameters),
                     ComptimeGenericParameters: BuildComptimeGenericParameterManifests(
                         function.ComptimeGenericParams,
                         module.SyntaxModel.ModuleName),
@@ -688,11 +694,13 @@ internal static partial class PackageImageBuilder
                     Visibility: declaration.Visibility.ToString().ToLowerInvariant(),
                     IsUnsafe: declaration.Function.Modifiers.IsUnsafe,
                     IsVarargs: effects.IsVarargs,
+                    IsTailCallable: effects.IsTailCallable,
                     FfiAbi: effects.FfiAbi is { } ffiAbi ? StarkFfiAbiFacts.DisplayName(ffiAbi) : null,
                     BackendOptimizationMode: RenderBackendOptimizationMode(declaration.Function.BackendOptimizationMode),
                     DisjointParameterGroups: BuildParameterDisjointGroupManifests(function.DisjointGroups),
                     OverlapParameterGroups: BuildParameterOverlapGroupManifests(function.OverlapGroups),
                     SameParameterGroups: BuildParameterSameGroupManifests(function.SameGroups),
+                    PointeeDeadOnReturnParameterNames: BuildPointeeDeadOnReturnParameterNames(function.PointeeDeadOnReturnParameters),
                     HasBody: declaration.Function.HasBody,
                     ComptimeGenericParameters: BuildComptimeGenericParameterManifests(
                         function.ComptimeGenericParams,
@@ -813,6 +821,15 @@ internal static partial class PackageImageBuilder
         IReadOnlyList<ParameterSameGroup> groups)
     {
         return BuildParameterRelationGroupManifests(groups.Select(static group => group.ParameterNames));
+    }
+
+    private static IReadOnlyList<string>? BuildPointeeDeadOnReturnParameterNames(IReadOnlyList<string> names)
+    {
+        var distinctNames = names
+            .Where(static name => !string.IsNullOrWhiteSpace(name))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        return distinctNames.Length == 0 ? null : distinctNames;
     }
 
     private static IReadOnlyList<StarkPackageValueContractManifest>? BuildParameterValueContractManifests(

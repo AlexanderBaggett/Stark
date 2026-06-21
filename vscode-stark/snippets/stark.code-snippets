@@ -15,6 +15,13 @@
     ],
     "description": "Import a Stark module"
   },
+  "Export Import": {
+    "prefix": "export import",
+    "body": [
+      "export import ${1:System.Console}"
+    ],
+    "description": "Re-export a Stark module"
+  },
   "Function": {
     "prefix": "fn",
     "body": [
@@ -34,6 +41,16 @@
       "}"
     ],
     "description": "Declare a pure terminating function"
+  },
+  "Tail Function": {
+    "prefix": "tail fn",
+    "body": [
+      "tail fn ${1:i64[min max]} ${2:Name}(${3:i64[min max] value})",
+      "{",
+      "\tbecome ${4:Next}(${5:value});",
+      "}"
+    ],
+    "description": "Declare a tail-callable function"
   },
   "Main Void": {
     "prefix": "main",
@@ -147,6 +164,47 @@
     ],
     "description": "Declare a Stark for loop"
   },
+  "For Independent": {
+    "prefix": "for independent",
+    "body": [
+      "for willexit independent (${1:stack mut u64[0 max] index = 0}; ${2:index < count}; ${3:index += 1})",
+      "{",
+      "\t$0",
+      "}"
+    ],
+    "description": "Declare an independent Stark for loop"
+  },
+  "Where Disjoint": {
+    "prefix": "where disjoint",
+    "body": [
+      "where disjoint(${1:left}, ${2:right})"
+    ],
+    "description": "Add a disjoint memory contract"
+  },
+  "Where Dead On Return": {
+    "prefix": "where dead_on_return",
+    "body": [
+      "where dead_on_return(${1:value})"
+    ],
+    "description": "Add a pointee-dead-after-return contract"
+  },
+  "Become": {
+    "prefix": "become",
+    "body": [
+      "become ${1:Next}(${2:value});"
+    ],
+    "description": "Transfer to a tail-callable callee"
+  },
+  "If Disjoint": {
+    "prefix": "if disjoint",
+    "body": [
+      "if disjoint(${1:left}, ${2:right})",
+      "{",
+      "\t$0",
+      "}"
+    ],
+    "description": "Create a runtime disjointness branch"
+  },
   "Unsafe Block": {
     "prefix": "unsafe",
     "body": [
@@ -182,6 +240,20 @@
       "stack ${1:mut }${2:i32[0 max]} ${3:name} = ${4:0};"
     ],
     "description": "Declare a stack local"
+  },
+  "Arena Local": {
+    "prefix": "arena",
+    "body": [
+      "arena ${1:mut }${2:Node} ${3:name} = new ${2:Node}();"
+    ],
+    "description": "Declare an arena-backed local"
+  },
+  "Arena Dynamic Storage": {
+    "prefix": "new arena",
+    "body": [
+      "stack mut dynamic ${1:u8[0 max]} ${2:items} = new(arena, ${3:capacity});"
+    ],
+    "description": "Declare dynamic storage with arena-backed capacity"
   },
   "Constant": {
     "prefix": "const",

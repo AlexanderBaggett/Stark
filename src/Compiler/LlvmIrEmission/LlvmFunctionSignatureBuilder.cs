@@ -28,7 +28,11 @@ internal sealed class LlvmFunctionSignatureBuilder
             segments.Add("internal");
         }
 
-        if (effects.UseFastCallingConvention)
+        if (abiFunction.UsesTailCallingConvention)
+        {
+            segments.Add("tailcc");
+        }
+        else if (effects.UseFastCallingConvention)
         {
             segments.Add("fastcc");
         }
@@ -71,7 +75,11 @@ internal sealed class LlvmFunctionSignatureBuilder
             segments.Add(preemptionKeyword);
         }
 
-        if (effects.UseFastCallingConvention)
+        if (abiFunction.UsesTailCallingConvention)
+        {
+            segments.Add("tailcc");
+        }
+        else if (effects.UseFastCallingConvention)
         {
             segments.Add("fastcc");
         }

@@ -667,6 +667,41 @@ public sealed class DiagnosticRegressionTests
     }
 
     [Fact]
+    public void DeadOnReturnContractsRejectNonMemoryBackedOperands()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Run(i32[min max] value) where dead_on_return(value)
+            {
+                return;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3029", "Dead-on-return", "parameter 'value'", "non-memory-backed", "i32");
+    }
+
+    [Fact]
+    public void FunctionPointerDeadOnReturnContractsRejectUnknownSyntheticOperands()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn void Run(
+                fnptr<fn void(out i32[min max]) where dead_on_return(arg1)> op)
+                {
+                    return;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3029", "Function pointer", "dead_on_return", "unknown parameter 'arg1'");
+    }
+
+    [Fact]
     public void DefaultNonOverlapAcceptsMutableRawPointerInitializersFromDistinctRoots()
     {
         var result = Compile(

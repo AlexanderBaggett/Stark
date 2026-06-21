@@ -37,6 +37,50 @@ public sealed class SsaLoweringTests
     }
 
     [Fact]
+    public void ArenaMirFrameScopeLowersToExplicitSsaInstructions()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn u64[0 max] Run(bool flag)
+            {
+                stack mut dynamic u32[0 max] values = new(arena, 4);
+                if (flag)
+                {
+                    return values.Capacity;
+                }
+
+                values.Reserve(8);
+                return values.Capacity;
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var function = Assert.Single(GetSsa(result).Functions);
+        var entryBlock = Assert.Single(function.Blocks, block => block.Id == function.EntryBlockId);
+
+        Assert.IsType<SsaArenaFrameEnterInstruction>(Assert.Single(entryBlock.Instructions.Take(1)));
+
+        var returnBlocks = function.Blocks
+            .Where(static block => block.Terminator.Kind == SsaTerminatorKind.Return)
+            .ToArray();
+        Assert.Equal(2, returnBlocks.Length);
+        Assert.All(returnBlocks, static block =>
+        {
+            Assert.NotEmpty(block.Instructions);
+            Assert.IsType<SsaArenaFrameLeaveInstruction>(block.Instructions[^1]);
+        });
+
+        Assert.Equal(
+            returnBlocks.Length,
+            function.Blocks
+                .SelectMany(static block => block.Instructions)
+                .OfType<SsaArenaFrameLeaveInstruction>()
+                .Count());
+    }
+
+    [Fact]
     public void CommutativeRepeatedExpressionsShareAValueNumber()
     {
         var result = Compile(

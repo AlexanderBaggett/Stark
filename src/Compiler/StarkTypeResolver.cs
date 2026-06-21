@@ -534,6 +534,7 @@ internal sealed class StarkTypeResolver
         ValidateFunctionPointerRelationConflicts(signature);
         var overlapGroups = CreateFunctionPointerOverlapGroups(signature, parameters);
         var sameGroups = CreateFunctionPointerSameGroups(signature, parameters);
+        var pointeeDeadOnReturnParameters = CreateFunctionPointerPointeeDeadOnReturnParameters(signature, parameters);
         var disjointGroups = ParameterMemoryContractFacts.BuildEffectiveDisjointGroups(
             parameters,
             explicitDisjointGroups: [],
@@ -549,7 +550,9 @@ internal sealed class StarkTypeResolver
             sameGroups,
             rawPointerElementCountExpressions,
             ffiAbi,
-            isUnsafe);
+            isUnsafe,
+            signature.tailKeyword() is not null,
+            pointeeDeadOnReturnParameters);
     }
 
     private StarkTypeSymbol ResolveClosureType(
@@ -585,6 +588,7 @@ internal sealed class StarkTypeResolver
         ValidateClosureRelationConflicts(signature);
         var overlapGroups = CreateClosureOverlapGroups(signature, parameters);
         var sameGroups = CreateClosureSameGroups(signature, parameters);
+        var pointeeDeadOnReturnParameters = CreateClosurePointeeDeadOnReturnParameters(signature, parameters);
         var disjointGroups = ParameterMemoryContractFacts.BuildEffectiveDisjointGroups(
             parameters,
             explicitDisjointGroups: [],
@@ -603,7 +607,9 @@ internal sealed class StarkTypeResolver
             disjointGroups,
             overlapGroups,
             sameGroups,
-            rawPointerElementCountExpressions);
+            rawPointerElementCountExpressions,
+            signature.tailKeyword() is not null,
+            pointeeDeadOnReturnParameters);
     }
 
     private void ValidateFunctionPointerBoundedRawPointerParameterCounts(
@@ -750,6 +756,86 @@ internal sealed class StarkTypeResolver
                 static contract => contract.sameContract()?.expressionList())
             .Select(static group => new ParameterSameGroup(group))
             .ToArray();
+    }
+
+    private IReadOnlyList<string> CreateFunctionPointerPointeeDeadOnReturnParameters(
+        StarkParser.FunctionPointerSignatureContext signature,
+        IReadOnlyList<TypedParameterSymbol> parameters)
+    {
+        return CreateCallablePointeeDeadOnReturnParameters(
+            signature.parameterMemoryContractClause(),
+            parameters,
+            callableKind: "Function pointer");
+    }
+
+    private IReadOnlyList<string> CreateClosurePointeeDeadOnReturnParameters(
+        StarkParser.ClosureSignatureContext signature,
+        IReadOnlyList<TypedParameterSymbol> parameters)
+    {
+        return CreateCallablePointeeDeadOnReturnParameters(
+            signature.parameterMemoryContractClause(),
+            parameters,
+            callableKind: "Closure");
+    }
+
+    private IReadOnlyList<string> CreateCallablePointeeDeadOnReturnParameters(
+        IReadOnlyList<StarkParser.ParameterMemoryContractClauseContext> clauses,
+        IReadOnlyList<TypedParameterSymbol> parameters,
+        string callableKind)
+    {
+        var parameterByName = parameters.ToDictionary(static parameter => parameter.Name, StringComparer.Ordinal);
+        var names = new List<string>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var clause in clauses)
+        {
+            foreach (var contract in clause.parameterMemoryContract())
+            {
+                if (contract.deadOnReturnContract()?.expressionList() is not { } expressionList)
+                {
+                    continue;
+                }
+
+                foreach (var expression in expressionList.expression())
+                {
+                    if (!TryGetFunctionPointerContractParameterName(expression, out var name))
+                    {
+                        ReportError(
+                            "STK3029",
+                            $"{callableKind} 'dead_on_return' contracts must use synthetic parameter names of the form 'arg0', 'arg1', and so on.",
+                            expression);
+                        continue;
+                    }
+
+                    if (!parameterByName.TryGetValue(name, out var parameter))
+                    {
+                        ReportError(
+                            "STK3029",
+                            $"{callableKind} 'dead_on_return' contract references unknown parameter '{name}'.",
+                            expression);
+                    }
+                    else if (!ParameterMemoryContractFacts.IsMemoryBacked(parameter.Type))
+                    {
+                        ReportError(
+                            "STK3029",
+                            $"{callableKind} 'dead_on_return' contract references parameter '{name}' with non-memory-backed type '{parameter.Type.DisplayName}'. Memory contracts require memory-backed parameters such as slices, text views, borrows, initialization views, or raw pointers.",
+                            expression);
+                    }
+                    else if (!seen.Add(name))
+                    {
+                        ReportError(
+                            "STK3029",
+                            $"{callableKind} 'dead_on_return' contract repeats parameter '{name}'.",
+                            expression);
+                    }
+                    else
+                    {
+                        names.Add(name);
+                    }
+                }
+            }
+        }
+
+        return names.ToArray();
     }
 
     private IReadOnlyList<IReadOnlyList<string>> CreateClosureRelationGroups(
@@ -2397,7 +2483,9 @@ internal sealed class StarkTypeResolver
                 coreType.FunctionPointerSameParameterGroups,
                 coreType.FunctionPointerParameterRawPointerElementCountExpressions,
                 coreType.FunctionPointerAbi,
-                coreType.FunctionPointerIsUnsafe);
+                coreType.FunctionPointerIsUnsafe,
+                coreType.FunctionPointerIsTailCallable,
+                coreType.FunctionPointerPointeeDeadOnReturnParameterNames);
         }
         else if (coreType.Kind == StarkTypeKind.Closure
             && coreType.ClosureFunctionKind is { } closureFunctionKind
@@ -2413,7 +2501,9 @@ internal sealed class StarkTypeResolver
                 coreType.ClosureDisjointParameterGroups,
                 coreType.ClosureOverlapParameterGroups,
                 coreType.ClosureSameParameterGroups,
-                coreType.ClosureParameterRawPointerElementCountExpressions);
+                coreType.ClosureParameterRawPointerElementCountExpressions,
+                coreType.ClosureIsTailCallable,
+                coreType.ClosurePointeeDeadOnReturnParameterNames);
         }
         else
         {

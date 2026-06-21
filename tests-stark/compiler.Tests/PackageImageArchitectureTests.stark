@@ -2600,3 +2600,100 @@ public unsafe ffi(c) fn System.C.c_long Count(System.C.c_int fd);
         return Succeeds(compiled);
     }
 }
+
+// Ported from PackageImageArchitectureTests.PackageImagePreservesArenaObjectCreationStorageSelectorInGenericTemplateFacts.
+internal fn bool PackageImagePreservesArenaObjectCreationStorageSelectorInGenericTemplateFactsImpl()
+{
+    {
+        // PORT-NOTE: The C# test publishes `Facade.Count<T>` to a package image and asserts the
+        // generic template facts preserve the arena object-creation storage selector plus the
+        // `new(arena,1)` expression text, then deletes the source and compiles a consumer from the
+        // package image. The Stark host-test harness cannot build or inspect package manifests, so
+        // this mirror resolves `Facade` as a sibling source module and asserts the same arena-backed
+        // generic body remains accepted when instantiated by the consumer.
+        stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+            "package-image-preserves-arena-object-creation-storage-selector-generic-template-facts",
+            raw"""
+import Facade
+module Demo
+
+fn u64[0 max] Run()
+{
+    stack Facade.Box box = new Facade.Box()
+    {
+        Value = 7
+    };
+    return Facade.Count(box);
+}
+""",
+            "",
+            "Facade.stark",
+            raw"""
+module Facade
+
+public struct Box
+{
+    public i32[min max] Value;
+}
+
+public fn u64[0 max] Count<T>(T item)
+{
+    stack mut dynamic T values = new(arena, 1);
+    init values[0] = item;
+    return values.Length;
+}
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from PackageImageArchitectureTests.PackageImageBackedRetainingBorrowSurfaceRejectsArenaBackedArguments.
+internal fn bool PackageImageBackedRetainingBorrowSurfaceRejectsArenaBackedArgumentsImpl()
+{
+    {
+        // PORT-NOTE: The C# test verifies the package-image function-semantics summary for
+        // `storeborrow` parameters survives source removal and rejects an arena-backed argument in
+        // the consumer. The Stark host-test harness cannot publish package images, so this mirror
+        // resolves the same callable surface as a sibling source module and asserts the arena escape
+        // diagnostic through the full host pipeline.
+        stack mut LlvmCompile compiled = CompileFullWithModule(
+            "package-image-backed-retaining-borrow-surface-rejects-arena-backed-arguments",
+            raw"""
+import Facade
+module Demo
+
+fn void Bad()
+{
+    arena Facade.Box box = new Facade.Box()
+    {
+        Value = 1
+    };
+    Facade.Observe(box);
+    Facade.Retain(box);
+    return;
+}
+""",
+            "",
+            "Facade.stark",
+            raw"""
+module Facade
+
+public struct Box
+{
+    public i32[min max] Value;
+}
+
+public fn void Observe(borrow Box box)
+{
+    return;
+}
+
+public fn void Retain(storeborrow Box box)
+{
+    return;
+}
+""");
+        return FailsWithDiagnosticMessage(compiled, "STK4202", "callee may retain")
+            && CountDiagnosticsWithCodeAndMessage(compiled, "STK4202", "arena storage for 'box' is here") >= 1;
+    }
+}

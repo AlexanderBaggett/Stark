@@ -132,6 +132,8 @@ internal static class ArtifactTextRenderer
         {
             MidLevelIrStatementKind.StorageLive => $"storage-live {statement.TargetName}",
             MidLevelIrStatementKind.StorageDead => $"storage-dead {statement.TargetName}",
+            MidLevelIrStatementKind.ArenaFrameEnter => "arena-frame.enter",
+            MidLevelIrStatementKind.ArenaFrameLeave => "arena-frame.leave",
             MidLevelIrStatementKind.Assign => statement.WriteKind == MemoryWriteKind.Initialization
                 ? $"init {statement.Text}"
                 : statement.Text,
@@ -153,6 +155,7 @@ internal static class ArtifactTextRenderer
             MidLevelIrTerminatorKind.Branch => [$"branch {terminator.ConditionText ?? terminator.Condition?.Text ?? "<cond>"} -> bb{terminator.Targets[0]}, bb{terminator.Targets[1]}"],
             MidLevelIrTerminatorKind.Switch => RenderMirSwitch(terminator),
             MidLevelIrTerminatorKind.Return => [$"return {terminator.ValueText ?? string.Empty}".TrimEnd()],
+            MidLevelIrTerminatorKind.TailCall => [$"tailcall {terminator.TailCall?.Text ?? terminator.ValueText ?? string.Empty}".TrimEnd()],
             MidLevelIrTerminatorKind.Unreachable => ["unreachable"],
             _ => [$"terminator {terminator.Kind}"]
         };
@@ -193,6 +196,8 @@ internal static class ArtifactTextRenderer
             SsaLifetimeStartInstruction lifetimeStart => $"lifetime.start {lifetimeStart.LocalName}",
             SsaLifetimeEndInstruction lifetimeEnd => $"lifetime.end {lifetimeEnd.LocalName}",
             SsaDeallocateLocalInstruction deallocateLocal => $"dealloc[{deallocateLocal.StorageClass}] {deallocateLocal.LocalName}",
+            SsaArenaFrameEnterInstruction => "arena-frame.enter",
+            SsaArenaFrameLeaveInstruction => "arena-frame.leave",
             SsaStoreLocalInstruction storeLocal => storeLocal.WriteKind == MemoryWriteKind.Initialization
                 ? $"init-store {FormatSsaValue(storeLocal.Value)} -> {storeLocal.LocalName}"
                 : $"store {FormatSsaValue(storeLocal.Value)} -> {storeLocal.LocalName}",
@@ -215,6 +220,7 @@ internal static class ArtifactTextRenderer
             SsaTerminatorKind.Branch => [$"branch {FormatSsaValue(terminator.Condition)} -> bb{terminator.Targets[0]}, bb{terminator.Targets[1]}"],
             SsaTerminatorKind.Switch => RenderSsaSwitch(terminator),
             SsaTerminatorKind.Return => [$"return {FormatSsaValue(terminator.Value)}"],
+            SsaTerminatorKind.TailCall => [$"tailcall {terminator.TailDirectCall?.Text ?? terminator.TailIndirectCall?.Text ?? string.Empty}".TrimEnd()],
             SsaTerminatorKind.Unreachable => ["unreachable"],
             _ => [$"terminator {terminator.Kind}"]
         };
@@ -269,6 +275,8 @@ internal static class ArtifactTextRenderer
             SsaLifetimeStartInstruction lifetimeStart => lifetimeStart.Location,
             SsaLifetimeEndInstruction lifetimeEnd => lifetimeEnd.Location,
             SsaDeallocateLocalInstruction deallocateLocal => deallocateLocal.Location,
+            SsaArenaFrameEnterInstruction arenaFrameEnter => arenaFrameEnter.Location,
+            SsaArenaFrameLeaveInstruction arenaFrameLeave => arenaFrameLeave.Location,
             SsaStoreLocalInstruction storeLocal => storeLocal.Location,
             SsaCopyMemoryInstruction copyMemory => copyMemory.Location,
             SsaStoreIndirectInstruction storeIndirect => storeIndirect.Location,

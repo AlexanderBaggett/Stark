@@ -278,6 +278,11 @@ internal static partial class PackageImageLoader
                         builder.Append("unsafe ");
                     }
 
+                    if (method.IsTailCallable)
+                    {
+                        builder.Append("tail ");
+                    }
+
                     if (method.IsFfi)
                     {
                         builder.Append(RenderFfiModifier(method.FfiAbi, isAsm: false));
@@ -300,6 +305,7 @@ internal static partial class PackageImageLoader
                         method.DisjointParameterGroups,
                         method.OverlapParameterGroups,
                         method.SameParameterGroups,
+                        method.PointeeDeadOnReturnParameterNames,
                         emitDisjointGroups: method.IsFfi);
                     AppendThreadSafetyLawPredicates(builder, method.ThreadSafetyLawPredicates);
                     AppendValueContracts(builder, method.ValueContracts);
@@ -642,6 +648,7 @@ internal static partial class PackageImageLoader
         IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? disjointGroups,
         IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? overlapGroups,
         IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? sameGroups,
+        IReadOnlyList<string>? pointeeDeadOnReturnParameterNames,
         bool emitDisjointGroups)
     {
         var disjointGroupsToEmit = emitDisjointGroups
@@ -656,6 +663,26 @@ internal static partial class PackageImageLoader
 
         AppendParameterMemoryContractGroups(builder, parameters, "overlap", overlapGroups, skipFullyPrefixedDisjointGroups: false);
         AppendParameterMemoryContractGroups(builder, parameters, "same", sameGroups, skipFullyPrefixedDisjointGroups: false);
+        AppendPointeeDeadOnReturnContracts(builder, pointeeDeadOnReturnParameterNames);
+    }
+
+    private static void AppendPointeeDeadOnReturnContracts(
+        StringBuilder builder,
+        IReadOnlyList<string>? parameterNames)
+    {
+        if (parameterNames is not { Count: > 0 })
+        {
+            return;
+        }
+
+        foreach (var name in parameterNames
+                     .Where(static name => !string.IsNullOrWhiteSpace(name))
+                     .Distinct(StringComparer.Ordinal))
+        {
+            builder.Append(" where dead_on_return(");
+            builder.Append(name);
+            builder.Append(')');
+        }
     }
 
     private static void AppendThreadSafetyLawPredicates(
@@ -847,6 +874,11 @@ internal static partial class PackageImageLoader
             builder.Append("varargs ");
         }
 
+        if (function.IsTailCallable)
+        {
+            builder.Append("tail ");
+        }
+
         if (function.Asm is not null)
         {
             builder.Append("asm(");
@@ -872,6 +904,7 @@ internal static partial class PackageImageLoader
             function.DisjointParameterGroups,
             function.OverlapParameterGroups,
             function.SameParameterGroups,
+            function.PointeeDeadOnReturnParameterNames,
             emitDisjointContracts);
         AppendThreadSafetyLawPredicates(builder, function.ThreadSafetyLawPredicates);
         AppendValueContracts(builder, function.ValueContracts);
@@ -960,11 +993,13 @@ internal static partial class PackageImageLoader
         bool isStatic = false,
         string? publishedOverloadKey = null,
         bool isUnsafe = false,
+        bool isTailCallable = false,
         string? ffiAbi = null,
         ModuleBackendOptimizationMode backendOptimizationMode = ModuleBackendOptimizationMode.Default,
         IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? disjointParameterGroups = null,
         IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? overlapParameterGroups = null,
         IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? sameParameterGroups = null,
+        IReadOnlyList<string>? pointeeDeadOnReturnParameterNames = null,
         IReadOnlyList<StarkPackageTypedThreadSafetyLawPredicateManifest>? threadSafetyLawPredicates = null,
         IReadOnlyList<StarkPackageValueContractManifest>? valueContracts = null)
     {
@@ -990,7 +1025,8 @@ internal static partial class PackageImageLoader
                 IsVarargs: isVarargs,
                 IsStrictFp: isStrictFp,
                 IsUnsafe: isUnsafe,
-                FfiAbi: ParsePackageFfiAbi(ffiAbi)),
+                FfiAbi: ParsePackageFfiAbi(ffiAbi),
+                IsTailCallable: isTailCallable),
             HasBody: hasBody,
             Asm: CreateAsmModel(asm),
             GenericParameterNames: genericParameters ?? [],
@@ -1002,8 +1038,20 @@ internal static partial class PackageImageLoader
             DisjointParameterGroups: BuildParameterDisjointGroups(parameters, disjointParameterGroups),
             OverlapParameterGroups: BuildParameterOverlapGroups(overlapParameterGroups),
             SameParameterGroups: BuildParameterSameGroups(sameParameterGroups),
+            PointeeDeadOnReturnParameterNames: pointeeDeadOnReturnParameterNames is { Count: > 0 }
+                ? NormalizePointeeDeadOnReturnParameterNames(pointeeDeadOnReturnParameterNames)
+                : null,
             ThreadSafetyLawPredicates: BuildThreadSafetyLawPredicateModels(threadSafetyLawPredicates),
             ValueParameterContracts: BuildParameterValueContracts(valueContracts));
+    }
+
+    private static IReadOnlyList<string>? NormalizePointeeDeadOnReturnParameterNames(IReadOnlyList<string> names)
+    {
+        var distinctNames = names
+            .Where(static name => !string.IsNullOrWhiteSpace(name))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        return distinctNames.Length == 0 ? null : distinctNames;
     }
 
     private static IReadOnlyList<ThreadSafetyLawPredicateModel>? BuildThreadSafetyLawPredicateModels(
@@ -1151,8 +1199,14 @@ internal static partial class PackageImageLoader
 
         foreach (var template in module.EffectiveGenericTemplates?.Functions ?? [])
         {
-            if (template.TypedBody is not null)
+            if (template.TypedBody is { } typedBody)
             {
+                if (!CanOmitBridgeBodyText(typedBody)
+                    && TryRenderGenericTemplateBody(template, out var renderedBodyText))
+                {
+                    templates[BuildGenericTemplateLookupKey(template.QualifiedName, template.OverloadKey)] = renderedBodyText;
+                }
+
                 continue;
             }
 
@@ -1167,22 +1221,7 @@ internal static partial class PackageImageLoader
 
     private static Dictionary<string, string> BuildRenderableGenericTemplateBodyLookup(StarkPackageModuleManifest module)
     {
-        var templates = new Dictionary<string, string>(StringComparer.Ordinal);
-
-        foreach (var template in module.EffectiveGenericTemplates?.Functions ?? [])
-        {
-            if (template.TypedBody is not null)
-            {
-                continue;
-            }
-
-            if (!string.IsNullOrEmpty(template.BodyText))
-            {
-                templates[BuildGenericTemplateLookupKey(template.QualifiedName, template.OverloadKey)] = template.BodyText;
-            }
-        }
-
-        return templates;
+        return BuildGenericTemplateBodyLookup(module);
     }
 
     private static bool TryRenderGenericTemplateBody(
@@ -2382,7 +2421,20 @@ internal static partial class PackageImageLoader
         IReadOnlyDictionary<int, StarkPackageTemplateFieldAccessManifest> fieldAccessesByOrdinal,
         IReadOnlyDictionary<int, StarkPackageTemplateMemberCallManifest> memberCallsByOrdinal)
     {
+        if (expression.Args.Count == 0
+            && !string.IsNullOrWhiteSpace(objectCreation.ExpressionText))
+        {
+            return objectCreation.ExpressionText;
+        }
+
         var arguments = string.Join(", ", expression.Args.Select(argument => RenderImportedTypedTemplateExpression(argument, objectCreationsByOrdinal, enumConstructorsByOrdinal, enumCallsByOrdinal, enumValuesByOrdinal, directCallsByOrdinal, fieldAccessesByOrdinal, memberCallsByOrdinal)));
+
+        if (objectCreation.StorageSelector == ObjectCreationStorageSelector.Arena)
+        {
+            return string.IsNullOrEmpty(arguments)
+                ? "new(arena)"
+                : $"new(arena, {arguments})";
+        }
 
         if (objectCreation.Constructor is not null)
         {
@@ -2913,11 +2965,13 @@ internal static partial class PackageImageLoader
             function.HasExplicitInlinePreference,
             function.IsUnsafe,
             function.IsVarargs,
+            function.IsTailCallable,
             function.FfiAbi,
             function.BackendOptimizationMode,
             DisjointParameterGroups: function.DisjointParameterGroups,
             OverlapParameterGroups: function.OverlapParameterGroups,
             SameParameterGroups: function.SameParameterGroups,
+            PointeeDeadOnReturnParameterNames: function.PointeeDeadOnReturnParameterNames,
             ComptimeGenericParameters: function.ComptimeGenericParameters,
             TypeParameterConstraints: ConvertTypeParameterConstraints(function.TypeParameterConstraints),
             ThreadSafetyLawPredicates: ConvertThreadSafetyLawPredicates(function.ThreadSafetyLawPredicates),
@@ -2984,11 +3038,13 @@ internal static partial class PackageImageLoader
                 method.Visibility,
                 method.IsUnsafe,
                 method.IsVarargs,
+                method.IsTailCallable,
                 method.FfiAbi,
                 method.BackendOptimizationMode,
                 DisjointParameterGroups: method.DisjointParameterGroups,
                 OverlapParameterGroups: method.OverlapParameterGroups,
                 SameParameterGroups: method.SameParameterGroups,
+                PointeeDeadOnReturnParameterNames: method.PointeeDeadOnReturnParameterNames,
                 ComptimeGenericParameters: method.ComptimeGenericParameters,
                 TypeParameterConstraints: ConvertTypeParameterConstraints(method.TypeParameterConstraints),
                 ThreadSafetyLawPredicates: ConvertThreadSafetyLawPredicates(method.ThreadSafetyLawPredicates),

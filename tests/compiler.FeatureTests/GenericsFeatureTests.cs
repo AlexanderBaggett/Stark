@@ -526,7 +526,7 @@ public sealed class GenericsFeatureTests : FeatureLlvmTestBase
         Assert.Contains("memory(argmem: read)", specializationHeader);
         Assert.DoesNotContain("memory(readwrite", specializationHeader);
         Assert.Contains(
-            "call fastcc i64 @__stark_mono_fn_Demo__Read__Big(ptr nonnull byval(%Big) noalias readonly nocapture dereferenceable(32) align 8 %arg_value)",
+            "call fastcc i64 @__stark_mono_fn_Demo__Read__Big(ptr nonnull byval(%Big) noalias readonly captures(none) dereferenceable(32) align 8 %arg_value)",
             runBody);
         Assert.DoesNotContain("%abi_callarg_value", runBody);
     }

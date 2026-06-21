@@ -418,6 +418,47 @@ public sealed class SsaIrValidationTests
     }
 
     [Fact]
+    public void ArenaFrameInstructionsAreAcceptedAroundArenaAllocation()
+    {
+        var function = BuildVoidFunction([
+            new SsaArenaFrameEnterInstruction(),
+            new SsaAllocateLocalInstruction("scratch", I32, StorageClass: "arena"),
+            new SsaArenaFrameLeaveInstruction()
+        ]);
+
+        var diagnostics = Validate(function);
+
+        Assert.Empty(diagnostics);
+    }
+
+    [Fact]
+    public void ArenaAllocationWithoutFrameScopeFailsBeforeLlvmEmission()
+    {
+        var function = BuildVoidFunction([
+            new SsaAllocateLocalInstruction("scratch", I32, StorageClass: "arena")
+        ]);
+
+        var diagnostics = Validate(function);
+
+        AssertDiagnostic(diagnostics, "STK5002", "arena-using function", "exactly one arena frame enter", "found 0");
+        AssertDiagnostic(diagnostics, "STK5002", "arena-using return block", "arena frame leave before return");
+    }
+
+    [Fact]
+    public void MisplacedArenaFrameInstructionsFailBeforeLlvmEmission()
+    {
+        var function = BuildVoidFunction([
+            new SsaAllocateLocalInstruction("scratch", I32, StorageClass: "arena"),
+            new SsaArenaFrameEnterInstruction(),
+            new SsaArenaFrameLeaveInstruction()
+        ]);
+
+        var diagnostics = Validate(function);
+
+        AssertDiagnostic(diagnostics, "STK5002", "arena frame enter", "first SSA instruction in the entry block");
+    }
+
+    [Fact]
     public void LocalUseWithoutAllocationFailsBeforeLlvmEmission()
     {
         var function = BuildVoidFunction([
@@ -842,6 +883,7 @@ public sealed class SsaIrValidationTests
                 new SsaDynamicStorageAllocationRValue(
                     new SsaIntegerConstant(1, I32),
                     StarkTypeSymbols.Dynamic(StarkTypeSymbols.Void),
+                    DynamicStorageAllocationKind.Runtime,
                     "new dynamic void"))
         ]);
 
@@ -860,6 +902,7 @@ public sealed class SsaIrValidationTests
                 new SsaDynamicStorageAllocationRValue(
                     new SsaIntegerConstant(1, i128),
                     StarkTypeSymbols.Dynamic(I32),
+                    DynamicStorageAllocationKind.Runtime,
                     "new dynamic i32"))
         ]);
 
@@ -878,6 +921,7 @@ public sealed class SsaIrValidationTests
                     new SsaIntegerConstant(0, I32),
                     StarkTypeSymbols.Dynamic(I32),
                     new SsaIntegerConstant(1, I32),
+                    DynamicStorageAllocationKind.Runtime,
                     "reserve"))
         ]);
 

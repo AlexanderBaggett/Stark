@@ -1320,6 +1320,34 @@ fn bool SourceBackedImportedInlineFunctionsEmitInternalLlvmBodyClones()
 
 [Fact]
 [Collection("compiler-pipeline-emit-llvm")]
+fn bool TailFunctionBecomeEmitsMustTailUnderTailcc()
+{
+    return TailFunctionBecomeEmitsMustTailUnderTailccImpl();
+}
+
+[Fact]
+[Collection("compiler-pipeline-emit-llvm")]
+fn bool MutualTailFunctionsEmitMustTailOnBothEdges()
+{
+    return MutualTailFunctionsEmitMustTailOnBothEdgesImpl();
+}
+
+[Fact]
+[Collection("compiler-pipeline-emit-llvm")]
+fn bool TailCallableFunctionPointerBecomeEmitsIndirectMustTail()
+{
+    return TailCallableFunctionPointerBecomeEmitsIndirectMustTailImpl();
+}
+
+[Fact]
+[Collection("compiler-pipeline-emit-llvm")]
+fn bool TailDynTraitDispatchBecomeEmitsIndirectMustTail()
+{
+    return TailDynTraitDispatchBecomeEmitsIndirectMustTailImpl();
+}
+
+[Fact]
+[Collection("compiler-pipeline-emit-llvm")]
 fn bool SourceBackedImportedInlineFunctionsDeclareModulePrivateConstsUsedByClone()
 {
     return SourceBackedImportedInlineFunctionsDeclareModulePrivateConstsUsedByCloneImpl();
@@ -1677,6 +1705,13 @@ fn bool CapturingClosureCopyLowersThroughEnvironmentStorage()
 
 [Fact]
 [Collection("llvm-ir")]
+fn bool ReadCapturingClosureIndirectCallEmitsReadProvenanceCapture()
+{
+    return ReadCapturingClosureIndirectCallEmitsReadProvenanceCaptureImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
 fn bool MutCapturingClosureWritesThroughCapturedAddress()
 {
     return MutCapturingClosureWritesThroughCapturedAddressImpl();
@@ -1845,6 +1880,27 @@ fn bool FunctionPointerCallsWithOutParametersUseCallerStorage()
 
 [Fact]
 [Collection("llvm-ir")]
+fn bool OutDestinationParametersEmitInitializesAndWritableButNotDeadOnReturn()
+{
+    return OutDestinationParametersEmitInitializesAndWritableButNotDeadOnReturnImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ExplicitDeadOnReturnDestinationParametersEmitLlvmAttribute()
+{
+    return ExplicitDeadOnReturnDestinationParametersEmitLlvmAttributeImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool FunctionPointerDeadOnReturnContractsEmitCallSiteAttribute()
+{
+    return FunctionPointerDeadOnReturnContractsEmitCallSiteAttributeImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
 fn bool FunctionPointerCallsWithInitParametersUseCallerStorage()
 {
     return FunctionPointerCallsWithInitParametersUseCallerStorageImpl();
@@ -1915,6 +1971,20 @@ fn bool DynamicStorageAllocationIndexInitAndDropEmitRuntimeAllocatorCalls()
 
 [Fact]
 [Collection("llvm-ir")]
+fn bool PositiveDynamicStorageAllocationElidesZeroAndOverflowBranches()
+{
+    return PositiveDynamicStorageAllocationElidesZeroAndOverflowBranchesImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ArenaDynamicStorageAllocationUsesFrameAllocatorAndDropsWithoutFreeingOwner()
+{
+    return ArenaDynamicStorageAllocationUsesFrameAllocatorAndDropsWithoutFreeingOwnerImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
 fn bool DynamicStorageDropEmitsElementDestructorLoopBeforeFree()
 {
     return DynamicStorageDropEmitsElementDestructorLoopBeforeFreeImpl();
@@ -1967,6 +2037,34 @@ fn bool OptimizedDynamicStorageTryReserveSuccessPrunesImpossibleCapacityBranch()
 fn bool DynamicStorageTryReserveCapacityEmitsExactFallibleReallocatePath()
 {
     return DynamicStorageTryReserveCapacityEmitsExactFallibleReallocatePathImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ArenaDynamicStorageReserveEmitsGrowCopyWithoutRuntimeReallocate()
+{
+    return ArenaDynamicStorageReserveEmitsGrowCopyWithoutRuntimeReallocateImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ArenaDynamicStorageTryReserveEmitsFallibleGrowCopy()
+{
+    return ArenaDynamicStorageTryReserveEmitsFallibleGrowCopyImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ArenaDynamicStorageTryReserveCapacityEmitsExactFallibleGrowCopy()
+{
+    return ArenaDynamicStorageTryReserveCapacityEmitsExactFallibleGrowCopyImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ArenaDynamicStorageDropEmitsElementDestructorLoopBeforeFrameCleanupWithoutFreeingOwner()
+{
+    return ArenaDynamicStorageDropEmitsElementDestructorLoopBeforeFrameCleanupWithoutFreeingOwnerImpl();
 }
 
 [Fact]
@@ -2811,6 +2909,13 @@ fn bool PlainFnsEmitInferredPureAndFiniteAttributes()
 
 [Fact]
 [Collection("llvm-ir")]
+fn bool ClosedWorldNoRecurseEmitsForKnownNonRecursiveBodiesOnly()
+{
+    return ClosedWorldNoRecurseEmitsForKnownNonRecursiveBodiesOnlyImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
 fn bool BorrowParametersEmitCapturesAttributes()
 {
     return BorrowParametersEmitCapturesAttributesImpl();
@@ -2888,6 +2993,13 @@ fn bool ConstrainedIntegerAbiSurfacesEmitRangeAttributes()
 
 [Fact]
 [Collection("llvm-ir")]
+fn bool IntegerRangeFactsCoverGlobalsAndNarrowActualCallArguments()
+{
+    return IntegerRangeFactsCoverGlobalsAndNarrowActualCallArgumentsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
 fn bool BranchRefinedIntegerComparisonsEmitTargetedAssumes()
 {
     return BranchRefinedIntegerComparisonsEmitTargetedAssumesImpl();
@@ -2926,6 +3038,13 @@ fn bool SignedConstrainedIntegerLoadsEmitWrappingRangeMetadata()
 fn bool MemoryAttributesDistinguishArgumentAndOtherMemoryEffects()
 {
     return MemoryAttributesDistinguishArgumentAndOtherMemoryEffectsImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool FunctionMemoryEffectsUseStructuredMemoryAttributesInsteadOfLegacyForms()
+{
+    return FunctionMemoryEffectsUseStructuredMemoryAttributesInsteadOfLegacyFormsImpl();
 }
 
 [Fact]
@@ -3038,6 +3157,13 @@ fn bool UnrecoverableUnreachablePathsLowerThroughColdTrapHelper()
 fn bool HeapObjectCreationUsesAllocatorLowering()
 {
     return HeapObjectCreationUsesAllocatorLoweringImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
+fn bool ArenaObjectCreationUsesFrameAllocatorLowering()
+{
+    return ArenaObjectCreationUsesFrameAllocatorLoweringImpl();
 }
 
 [Fact]
@@ -4495,14 +4621,3 @@ fn bool FixedArraysFollowTheSameSixteenByteThreshold()
 {
     return FixedArraysFollowTheSameSixteenByteThresholdImpl();
 }
-
-// PAINPOINTS #1 failure-diff helpers (`LlvmContains` / `LlvmDoesNotContain` in
-// LlvmTestSupport, backed by System.Testing.ContainsReport / DoesNotContainReport)
-// are verified in the stdlib.Testing suite
-// (ContainsReportReturnsCorrectBooleansAndReportsOnMismatch). They are NOT
-// exercised by a fact here on purpose: the report path pulls Console-IO stdlib
-// internals (System_Text_AsciiView / TryConcatAscii / Memory.Allocate) that a
-// `--filter`ed LlvmTests link prunes (PAINPOINTS #5), which would break filtered
-// dev builds of this large suite. Adopt `LlvmContains`/`LlvmDoesNotContain` in
-// ports as needed — they link in the full suite run.
-
