@@ -1,5 +1,7 @@
+import Compiler.AsmFacts
 import System.Collections
 import System.Memory
+import System.Text
 module Compiler.Ir
 
 // The self-hosted compiler's IR memory model: typed handle indices into dense
@@ -444,6 +446,476 @@ public struct ValueFacts
             self.HasRange = true;
             self.RangeLower = src.RangeLower;
             self.RangeUpperExclusive = src.RangeUpperExclusive;
+        }
+    }
+}
+
+// An inline-assembly metadata row id. These rows describe source `unsafe ffi asm`
+// declarations after parsing/binding, independent of the parser's token stream.
+public struct AsmFunctionId
+{
+    u32[0 max] Value;
+
+    AsmFunctionId()
+    {
+        self.Value = 0;
+    }
+
+    public inline finite law u32[0 max] Index(borrow AsmFunctionId self)
+    {
+        return self.Value;
+    }
+
+    public inline finite law bool IsValid(borrow AsmFunctionId self)
+    {
+        return self.Value != 0;
+    }
+
+    public inline finite law bool Equals(borrow AsmFunctionId self, AsmFunctionId other)
+    {
+        return self.Value == other.Value;
+    }
+}
+
+public fn AsmFunctionId AsmFunctionIdOf(u32[0 max] index)
+{
+    stack mut AsmFunctionId id = new();
+    id.Value = index;
+    return id;
+}
+
+// A byte range in `AsmMetadataTable.TextBytes`. Ranges are 0-based internally so
+// they copy directly from slices and serialize without sentinel adjustment.
+public struct AsmTextRange
+{
+    u32[0 max] StartByte;
+    u32[0 max] ByteCount;
+
+    AsmTextRange()
+    {
+        self.StartByte = 0;
+        self.ByteCount = 0;
+    }
+
+    public inline finite law u32[0 max] Start(borrow AsmTextRange self)
+    {
+        return self.StartByte;
+    }
+
+    public inline finite law u32[0 max] Length(borrow AsmTextRange self)
+    {
+        return self.ByteCount;
+    }
+
+    public inline finite law bool IsEmpty(borrow AsmTextRange self)
+    {
+        return self.ByteCount == 0;
+    }
+}
+
+public fn AsmTextRange AsmTextRangeOf(u32[0 max] start, u32[0 max] length)
+{
+    stack mut AsmTextRange range = new();
+    range.StartByte = start;
+    range.ByteCount = length;
+    return range;
+}
+
+public struct AsmInputOperand
+{
+    AsmTextRange RegisterText;
+    AsmTextRange ValueText;
+
+    AsmInputOperand()
+    {
+        self.RegisterText = new();
+        self.ValueText = new();
+    }
+
+    public inline finite law AsmTextRange Register(borrow AsmInputOperand self)
+    {
+        return self.RegisterText;
+    }
+
+    public inline finite law AsmTextRange Value(borrow AsmInputOperand self)
+    {
+        return self.ValueText;
+    }
+}
+
+public struct AsmOutputOperand
+{
+    AsmTextRange RegisterText;
+    AsmTextRange ValueText;
+    bool ReturnBinding;
+
+    AsmOutputOperand()
+    {
+        self.RegisterText = new();
+        self.ValueText = new();
+        self.ReturnBinding = false;
+    }
+
+    public inline finite law AsmTextRange Register(borrow AsmOutputOperand self)
+    {
+        return self.RegisterText;
+    }
+
+    public inline finite law AsmTextRange Value(borrow AsmOutputOperand self)
+    {
+        return self.ValueText;
+    }
+
+    public inline finite law bool BindsReturn(borrow AsmOutputOperand self)
+    {
+        return self.ReturnBinding;
+    }
+}
+
+public struct AsmFunctionMetadata
+{
+    MirFuncId MirFunction;
+    Compiler.AsmFacts.StarkAsmArchitecture ArchitectureValue;
+    AsmTextRange TemplateText;
+    u32[0 max] FirstInputRow;
+    u32[0 max] InputRowCount;
+    u32[0 max] FirstOutputRow;
+    u32[0 max] OutputRowCount;
+    u32[0 max] FirstClobberRow;
+    u32[0 max] ClobberRowCount;
+
+    AsmFunctionMetadata()
+    {
+        self.MirFunction = new();
+        self.ArchitectureValue = Compiler.AsmFacts.StarkAsmArchitecture.Unknown;
+        self.TemplateText = new();
+        self.FirstInputRow = 0;
+        self.InputRowCount = 0;
+        self.FirstOutputRow = 0;
+        self.OutputRowCount = 0;
+        self.FirstClobberRow = 0;
+        self.ClobberRowCount = 0;
+    }
+
+    public inline finite law MirFuncId Function(borrow AsmFunctionMetadata self)
+    {
+        return self.MirFunction;
+    }
+
+    public inline finite law Compiler.AsmFacts.StarkAsmArchitecture Architecture(borrow AsmFunctionMetadata self)
+    {
+        return self.ArchitectureValue;
+    }
+
+    public inline finite law AsmTextRange Template(borrow AsmFunctionMetadata self)
+    {
+        return self.TemplateText;
+    }
+
+    public inline finite law u32[0 max] FirstInput(borrow AsmFunctionMetadata self)
+    {
+        return self.FirstInputRow;
+    }
+
+    public inline finite law u32[0 max] InputCount(borrow AsmFunctionMetadata self)
+    {
+        return self.InputRowCount;
+    }
+
+    public inline finite law u32[0 max] FirstOutput(borrow AsmFunctionMetadata self)
+    {
+        return self.FirstOutputRow;
+    }
+
+    public inline finite law u32[0 max] OutputCount(borrow AsmFunctionMetadata self)
+    {
+        return self.OutputRowCount;
+    }
+
+    public inline finite law u32[0 max] FirstClobber(borrow AsmFunctionMetadata self)
+    {
+        return self.FirstClobberRow;
+    }
+
+    public inline finite law u32[0 max] ClobberCount(borrow AsmFunctionMetadata self)
+    {
+        return self.ClobberRowCount;
+    }
+}
+
+// Dense append-only metadata for source assembly declarations. Textual facts live
+// in one byte pool and all cross-references are fixed-width row/range values, so
+// later package-image serialization is a straight linear write.
+public struct AsmMetadataTable
+{
+    internal dynamic i8[min max] TextBytes;
+    internal dynamic AsmInputOperand InputRows;
+    internal dynamic AsmOutputOperand OutputRows;
+    internal dynamic AsmTextRange ClobberRows;
+    internal dynamic AsmFunctionMetadata FunctionRows;
+
+    AsmMetadataTable()
+    {
+        self.TextBytes = new();
+        self.InputRows = new();
+        self.OutputRows = new();
+        self.ClobberRows = new();
+        self.FunctionRows = new();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] TextByteCount(borrow AsmMetadataTable self)
+    {
+        return self.TextBytes.Length;
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] InputCount(borrow AsmMetadataTable self)
+    {
+        return self.InputRows.Length;
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] OutputCount(borrow AsmMetadataTable self)
+    {
+        return self.OutputRows.Length;
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] ClobberCount(borrow AsmMetadataTable self)
+    {
+        return self.ClobberRows.Length;
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] FunctionCount(borrow AsmMetadataTable self)
+    {
+        return self.FunctionRows.Length;
+    }
+
+    public fn MemoryStatus AppendText(mut borrow AsmMetadataTable self, ascii text, out AsmTextRange range)
+    {
+        range = new();
+        stack i64[min max] signedLength = System.Text.AsciiLength(text);
+        if (signedLength < 0)
+        {
+            return MemoryStatus.Err(MemoryError.OutOfMemory);
+        }
+
+        range.StartByte = (u32[0 max])self.TextBytes.Length;
+        range.ByteCount = (u32[0 max])signedLength;
+        if (signedLength == 0)
+        {
+            return MemoryStatus.Ok;
+        }
+
+        unsafe
+        {
+            stack rawptr<i8[min max]> data = System.Text.AsciiData(text);
+            if (data == null)
+            {
+                return MemoryStatus.Err(MemoryError.OutOfMemory);
+            }
+
+            if (!self.TextBytes.TryReserve((u64[0 2 ** 63 - 1])signedLength))
+            {
+                return MemoryStatus.Err(MemoryError.OutOfMemory);
+            }
+
+            for willexit (stack mut i64[min max] index = 0; index < signedLength; index += 1)
+            {
+                init self.TextBytes[self.TextBytes.Length] = *(&data[index]);
+            }
+        }
+
+        return MemoryStatus.Ok;
+    }
+
+    public fn MemoryStatus AppendTextByte(mut borrow AsmMetadataTable self, i8[min max] value)
+    {
+        if (!self.TextBytes.TryReserve(1))
+        {
+            return MemoryStatus.Err(MemoryError.OutOfMemory);
+        }
+
+        init self.TextBytes[self.TextBytes.Length] = value;
+        return MemoryStatus.Ok;
+    }
+
+    public fn MemoryStatus AppendInputOperand(mut borrow AsmMetadataTable self, AsmTextRange registerText, AsmTextRange valueText)
+    {
+        if (!self.InputRows.TryReserve(1))
+        {
+            return MemoryStatus.Err(MemoryError.OutOfMemory);
+        }
+
+        stack mut AsmInputOperand row = new();
+        row.RegisterText = registerText;
+        row.ValueText = valueText;
+        init self.InputRows[self.InputRows.Length] = row;
+        return MemoryStatus.Ok;
+    }
+
+    public fn MemoryStatus AppendOutputOperand(mut borrow AsmMetadataTable self, AsmTextRange registerText, AsmTextRange valueText, bool bindsReturn)
+    {
+        if (!self.OutputRows.TryReserve(1))
+        {
+            return MemoryStatus.Err(MemoryError.OutOfMemory);
+        }
+
+        stack mut AsmOutputOperand row = new();
+        row.RegisterText = registerText;
+        row.ValueText = valueText;
+        row.ReturnBinding = bindsReturn;
+        init self.OutputRows[self.OutputRows.Length] = row;
+        return MemoryStatus.Ok;
+    }
+
+    public fn MemoryStatus AppendClobber(mut borrow AsmMetadataTable self, AsmTextRange registerText)
+    {
+        if (!self.ClobberRows.TryReserve(1))
+        {
+            return MemoryStatus.Err(MemoryError.OutOfMemory);
+        }
+
+        init self.ClobberRows[self.ClobberRows.Length] = registerText;
+        return MemoryStatus.Ok;
+    }
+
+    public fn MemoryStatus AppendFunction(
+        mut borrow AsmMetadataTable self,
+        MirFuncId functionId,
+        Compiler.AsmFacts.StarkAsmArchitecture architecture,
+        AsmTextRange templateText,
+        u32[0 max] firstInput,
+        u32[0 max] inputCount,
+        u32[0 max] firstOutput,
+        u32[0 max] outputCount,
+        u32[0 max] firstClobber,
+        u32[0 max] clobberCount,
+        out AsmFunctionId asmFunctionId)
+    {
+        asmFunctionId = new();
+        if (!self.FunctionRows.TryReserve(1))
+        {
+            return MemoryStatus.Err(MemoryError.OutOfMemory);
+        }
+
+        stack mut AsmFunctionMetadata row = new();
+        row.MirFunction = functionId;
+        row.ArchitectureValue = architecture;
+        row.TemplateText = templateText;
+        row.FirstInputRow = firstInput;
+        row.InputRowCount = inputCount;
+        row.FirstOutputRow = firstOutput;
+        row.OutputRowCount = outputCount;
+        row.FirstClobberRow = firstClobber;
+        row.ClobberRowCount = clobberCount;
+        init self.FunctionRows[self.FunctionRows.Length] = row;
+        asmFunctionId = AsmFunctionIdOf((u32[0 max])self.FunctionRows.Length);
+        return MemoryStatus.Ok;
+    }
+
+    public law AsmFunctionMetadata FunctionAt(borrow AsmMetadataTable self, AsmFunctionId id)
+    {
+        if (id.Index() != 0)
+        {
+            stack u64[0 2 ** 63 - 1] index = (u64[0 2 ** 63 - 1])(id.Index() - 1);
+            if (index < self.FunctionRows.Length)
+            {
+                return self.FunctionRows[index];
+            }
+        }
+
+        return new AsmFunctionMetadata();
+    }
+
+    public law AsmInputOperand InputAt(borrow AsmMetadataTable self, u32[0 max] rowIndex)
+    {
+        if (rowIndex != 0)
+        {
+            stack u64[0 2 ** 63 - 1] index = (u64[0 2 ** 63 - 1])(rowIndex - 1);
+            if (index < self.InputRows.Length)
+            {
+                return self.InputRows[index];
+            }
+        }
+
+        return new AsmInputOperand();
+    }
+
+    public law AsmOutputOperand OutputAt(borrow AsmMetadataTable self, u32[0 max] rowIndex)
+    {
+        if (rowIndex != 0)
+        {
+            stack u64[0 2 ** 63 - 1] index = (u64[0 2 ** 63 - 1])(rowIndex - 1);
+            if (index < self.OutputRows.Length)
+            {
+                return self.OutputRows[index];
+            }
+        }
+
+        return new AsmOutputOperand();
+    }
+
+    public law AsmTextRange ClobberAt(borrow AsmMetadataTable self, u32[0 max] rowIndex)
+    {
+        if (rowIndex != 0)
+        {
+            stack u64[0 2 ** 63 - 1] index = (u64[0 2 ** 63 - 1])(rowIndex - 1);
+            if (index < self.ClobberRows.Length)
+            {
+                return self.ClobberRows[index];
+            }
+        }
+
+        return new AsmTextRange();
+    }
+
+    public finite law i8[min max] TextByteAt(borrow AsmMetadataTable self, u64[0 2 ** 63 - 1] index)
+    {
+        if (index < self.TextBytes.Length)
+        {
+            return self.TextBytes[index];
+        }
+
+        return 0;
+    }
+
+    public finite law bool TextRangeEquals(borrow AsmMetadataTable self, AsmTextRange range, ascii expected)
+        where overlap(self, expected)
+    {
+        unsafe
+        {
+            stack i64[min max] signedLength = System.Text.AsciiLength(expected);
+            if (signedLength < 0 || (u32[0 max])signedLength != range.Length())
+            {
+                return false;
+            }
+
+            stack u64[0 2 ** 63 - 1] start = (u64[0 2 ** 63 - 1])range.Start();
+            stack u64[0 2 ** 63 - 1] length = (u64[0 2 ** 63 - 1])range.Length();
+            if (start + length > self.TextBytes.Length)
+            {
+                return false;
+            }
+
+            if (length == 0)
+            {
+                return true;
+            }
+
+            stack rawptr<i8[min max]> expectedData = System.Text.AsciiData(expected);
+            if (expectedData == null)
+            {
+                return false;
+            }
+
+            for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < length; index += 1)
+            {
+                stack u64[0 2 ** 63 - 1] byteIndex = start + index;
+                if (self.TextBytes[byteIndex] != *(&expectedData[(i64[min max])index]))
+                {
+                    return false;
+                }
+            }
+
+            return true;
         }
     }
 }

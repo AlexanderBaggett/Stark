@@ -56,6 +56,11 @@ internal sealed partial class MidLevelIrLowerer
                     $"Bound switch dispatch type '{ApplyGenericSubstitution(boundSwitch.SwitchType).DisplayName}' does not match lowered switch value type '{switchValue.Type.DisplayName}'.");
             }
 
+            if (IsGuardlessEmptySwitch(switchStatement))
+            {
+                return;
+            }
+
             var lowered = hasBoundSwitch
                 ? boundSwitch.Family switch
                 {
@@ -85,6 +90,24 @@ internal sealed partial class MidLevelIrLowerer
             throw LoweringInvariantViolation(
                 switchStatement,
                 "Accepted switch shape could not be lowered by native, partitioned text, or guarded switch lowering.");
+        }
+
+        private static bool IsGuardlessEmptySwitch(StarkParser.SwitchStatementContext switchStatement)
+        {
+            foreach (var section in switchStatement.switchSection())
+            {
+                if (section.statement().Length != 0)
+                {
+                    return false;
+                }
+
+                if (section.switchLabel().Any(static label => label.whenClause() is not null))
+                {
+                    return false;
+                }
+            }
+
+            return true;
         }
 
         private bool TryLowerNativeSwitch(

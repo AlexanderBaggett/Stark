@@ -1,134 +1,277 @@
-# Self-Host-Prep — Consolidated Task List
+# Self-Host-Prep Tasks
 
-Single index of everything left to satisfy the goal: **"self-host-prep Roadmap fully implemented and all tests runnable on macOS pass."**
+This is the executable task list for self-host prep. Keep this file as a work
+queue plus any instructions needed to execute the work. Do not use it as a
+progress ledger, and do not rewrite task descriptions just to record partial
+progress.
 
-This rolls up three existing trackers (and adds the one dimension none of them track — per-suite **pass-state**):
-- [docs/Self-host-Prep/ROADMAP.md](docs/Self-host-Prep/ROADMAP.md) — the master roadmap (79 done / 40 open).
+Use `[x]` for complete, `[~]` for partially implemented, and `[ ]` for open.
+Track status by flipping checkboxes only; put evidence, counts, and triage notes
+in [TestPassLedger.md](TestPassLedger.md) or the relevant companion document.
 
----
+Primary goal: implement the self-host-prep roadmap and make all tests runnable
+on macOS pass. The test-pass work is last-mile work; most failing tests depend
+on compiler infrastructure that is still being implemented.
 
-## 1. Make all ported tests pass — 3179 facts across 19 suites
+Execution constraints:
 
-Porting is effectively done (2637/2638). The remaining test work is making the ported facts **pass on macOS**. **All 19 suites baselined** with clean `rm -rf build && stark test` runs (2026-06-19).
-
-**Summary: ~2796 / 3143 run-facts passing (~89%). 13 of 19 suites are 100% green. 347 failures live in just 6 suites.** (Counts are runner `ok`/`FAILED`; `[Theory]` rows expand, so run-fact totals differ slightly from the static `[Fact]` attribute counts.)
-
-| Suite | Passing | Failing | Notes |
-|---|---:|---:|---|
-| compiler.Tests | 1090 | **112** | largest suite — semantic/lowering diag, type-check, ownership, pipeline, runtime, package-image, CLI, examples |
-| compiler.SsaTests | 346 | **61** | SSA lowering / validation / optimization text. **ArithmeticFold + ValueFacts + AliasAware + ScopedNoAlias + InlineSsa families now green** (62 fixed, verified) — see §1c #11; remaining are per-family text-format / source-port fixes + a few cross-module (need `CompileSsaWithModule`), NOT a structured subsystem |
-| compiler.LlvmTests | 484 | **9** | fully triaged → §1a (ConfiguredTargetInfo datalayout now green) |
-| stdlib.Port | 177 | **50** | stdlib behavior ports |
-| compiler.MirTests | 101 | **36** | MIR lowering text |
-| compiler.FeatureTests | 212 | **1** | one stray failure |
-| selfhost.Ir | 122 | 0 | ✓ green |
-| selfhost.Binding | 82 | 0 | ✓ green |
-| stdlib.Text | 59 | 0 | ✓ green |
-| stdlib.Toml | 55 | 0 | ✓ green |
-| selfhost.Parsing | 51 | 0 | ✓ green |
-| stdlib.Testing | 34 | 0 | ✓ green |
-| selfhost.Lexing | 18 | 0 | ✓ green |
-| stdlib.IO.Path | 12 | 0 | ✓ green |
-| stdlib.FileSystem | 10 | 0 | ✓ green |
-| stdlib.Collections.Arena | 9 | 0 | ✓ green |
-| selfhost.Typing | 5 | 0 | ✓ green |
-| stdlib.Collections.Slice | 4 | 0 | ✓ green |
-| stdlib.Json | 3 | 0 | ✓ green |
-
-Suites still needing work (the only 6 with failures):
-- [~] **compiler.SsaTests** — 346/407, **61 failing** (ArithmeticFold + ValueFacts + AliasAware + ScopedNoAlias + InlineSsa done + verified, 62 fixed; same raw-vs-artifact-selection class as LlvmTests + source-port fixes + a new `System.Testing.SsaFunctionBody` slicer, NOT a structured-subsystem need — see §1c #11. Remaining families: Cleanup*, ScalarReplacement, FunctionAddress, ConstantText, TextView, DynamicStorage, + 2 cross-module InlineSsa.)
-- [ ] **compiler.Tests** — 1090/1202, **112 failing** (broad; needs sub-categorization by failure family)
-- [ ] **stdlib.Port** — 177/227, **50 failing**
-- [ ] **compiler.MirTests** — 101/137, **36 failing** (MIR text)
-- [ ] **compiler.LlvmTests** — 483/493, **10 failing** → §1a
-- [ ] **compiler.FeatureTests** — 212/213, **1 failing** (cheapest win)
-
-Already 100% green (no task): selfhost.Ir, selfhost.Binding, selfhost.Parsing, selfhost.Lexing, selfhost.Typing, stdlib.Text, stdlib.Toml, stdlib.Testing, stdlib.IO.Path, stdlib.FileSystem, stdlib.Collections.Arena, stdlib.Collections.Slice, stdlib.Json.
-
-### 1a. compiler.LlvmTests residue — 22 failing, fully triaged
-- [~] **package-image (#4)** — mechanism built + proven (`CompileLlvmWithPackage`). **5 of 9 ported green** (1 `PackageImageBackedImportedReadonly` full asserts + 4 `ManifestBacked*` build+compile, typed-only codegen noted unreproducible — needs a `--package-typed-only` CLI flag). Remaining: 4 `PackageImageBacked*` callable-value tests (full-lib, helper works) + ConfiguredTargetInfo (datalayout).
-- [x] **6 flag/datalayout — DONE.** `ImmutableGlobalsWithoutAddressTaken`, `InternalizedImmutableGlobals`, `RootFunctionSymbolIsQualified`, `LibraryBuildQualifies`, `ExecutableInternalization` (qualify/internalize via `;qualify`/`;internalize` artifact-name flags) + `ConfiguredTargetInfoIsEmittedInHeader` (datalayout via the `targetDataLayout` writer threading + `CompileLlvmForTargetWithDataLayout`, June 2026 — PAINPOINTS #10 closed). All verified green.
-- [ ] **7 genuine per-test** — `FunctionPointerCallSiteEffectAttributesFollowPointerKind`, `OptimizedDynamicStorageReserveNoop`, `DynamicStorageMoveAtEmitsDirectLengthUpdate` (GetLlvmRaw codegen, need body-slicing/inspection); `DirectoryEnumerationDoesNotExposeLargeDirectoryPayloadAsSsaValue` (real host-gap); `MemoryCopyFillHotLoopUsesInfallibleHelpers`, `TextFormattingBenchmarksSpecializeConstantIntegerFormatting`, `WhitespaceOnlyLinesShorterThanTheClosingIndentation` (oracle name not in the LLVM test file — locate the true oracle or reclassify).
-
-### 1b. Per-failure enumeration (next granularity)
-- [x] Baseline sweep of all 19 suites (done 2026-06-19) — see the table above.
-- [x] Captured FAILED names + triaged families for the failing suites (done 2026-06-19) → §1c.
-
-### 1c. Failure families — the 347 cluster around 4 harness levers, not 347 independent fixes
-
-Re-ran each failing suite and grouped the FAILED names (2026-06-19). `compiler.FeatureTests`' lone failure did **not** reproduce on re-run (count jitter, PAINPOINTS #5) — effectively green, leaving **5** suites.
-
-**Cross-cutting levers (fix once → unblock many):**
-- [ ] **Package-image input — PAINPOINTS #4** → **~39 tests**: `compiler.Tests` `ManifestBacked`/`PackageImage` (≈30) + `compiler.LlvmTests` PackageImage/Manifest (9). One protocol feature unblocks all.
-- [~] **SSA/MIR text alignment — PAINPOINTS #11 (REFRAMED)** → **~145 tests left**: `compiler.SsaTests` (109) + `compiler.MirTests` (36). **No structured subsystem needed** — the `optimized-ssa`/`mir` artifact text already carries operands, block labels, and typed terminators. The failures are wrong-artifact-selection + wrong-fragment-spelling (the SSA analogue of the LLVM raw-vs-normalized gap). ArithmeticFold (24) proved the method: request the artifact the assertion actually reads (added `CompileSsaAfterOptimized`), and spell fragments as they render. Apply per-family.
-- [ ] **Target-triple pinning** (already built for LlvmTests as `CompileLlvmForTarget`) → **~16 tests**: `stdlib.Port` `StdLibSourceLinux*`/`*Windows*` assert non-macOS syscall/codegen paths; give the stdlib.Port harness the target entry point (or platform-gate — see open question).
-- [ ] **Option toggles — PAINPOINTS #10** → **6** LlvmTests (bridge half landed this session).
-
-**Per-suite detail:**
-- **compiler.SsaTests (74 left)** — #11-class text alignment + source-port fixes. **✓DONE (52 fixed, verified): ArithmeticFold 24, ValueFacts 43-green/17-fixed, AliasAware 13, ScopedNoAlias 5.** Fix classes seen: (i) artifact-selection — optimization-pass result lands in `optimized-ssa` not terse `ssa`; switch `CompileSsaAfter`→`CompileSsaAfterOptimized` + `SsaContains`/`!SsaContains`→`OptimizedSsaContains`/`OptimizedSsaLacks` (ArithmeticFold, AliasAware-Forwards); (ii) source-port — invalid-Stark in reduced-to-`Succeeds` reconstructions: `T~`→`dynamic`=`List<T>`, `*T`/`*mut T`→`rawptr<T>`/`rawmutptr<T>`, `#[ElementCount(n)] *T`→`rawptr<T>[n]` bounded params, `as Type`→`(Type)(expr)`, raw-pointer fns need `unsafe` (STK3024), readonly-`rawptr` write→`rawmutptr` (STK3007), minimal-width non-negative ranges (STK3014: `i32[0 10]`→`u8[0 10]`), unicode literal `(unicode)"λ"`, drop redundant `where disjoint` (STK3029). Remaining: InlineSsa 11, Cleanup* 10, ScalarReplacement 5, FunctionAddress 3, ConstantText 3, TextView 2, … Method (proven): (1) read the test's compile call + assertion helper; (2) probe the bridge — request both `ssa`+`optimized-ssa` and check which holds the fragment (and probe the embedded source's diagnostic if reduced-to-`Succeeds`); (3a) text-class: switch compile + spell fragment as rendered; (3b) source-port class: rewrite to valid Stark exercising the same feature; (4) verify `stark test --filter <Family>` (clean `rm -rf build`).
-  - **Cleanup ✓PARTIAL (3 of 12 green, verified):** `CleanupForwardsAggregateFieldThroughPhi/Select` (artifact-selection → `CompileSsaAfterOptimized`+`OptimizedSsaContains`), `CleanupRemovesModuloAndDivisionWhenStaticRange` (range `i32[0 7]`→`u8[0 7]`). 9 remain (murky/source-port).
-  - **Remaining 61 failing — FULLY CLASSIFIED (probe sweep):** **(a) 17 `src-ok` (text-class, fixable — next priority):** OptimizeSsaKeepsMixedFunctionPointerPhi, ConstantPropagationFoldsTextLiteralLength, ConstStdlibHelperSpecialization, AsciiToUnicodeLiteralSpecialization×2, ConstantTextFormatSpecialization×3, ScalarReplacementRemovesDeadStackField, AddressableAggregate×2, ExplicitPointerOperators, CleanupRemovesIntegerAlgebraic/RedundantSameType, ScalarReplacementKeepsAggregateCopies×3 — each compiles; probe `ssa` vs `optimized-ssa` for the asserted fragment and switch artifact/spelling (NOTE: `CleanupRemovesIntegerAlgebraic`/`RedundantSameType` render the param as `value:i32` not `arg_value`, and binaries may still survive at `cleanup-ssa` — verify it's not a real host under-optimization before re-spelling). **(b) ~28 `STK1000` parse-error `*…FailsBeforeLlvmEmission` tests** (UnsupportedSsaConversion, FunctionAbiSret, IndirectCall*, FunctionAddress*, GlobalAddress*, DynamicStorageOptimizer*, etc.) — these are SSA-**validator** unit tests whose C# originals hand-build INVALID SSA modules to assert the validator rejects them; the invalid shapes are **not source-expressible**, so most are likely **unportable** via the source bridge (same category as the hand-built inline-clone units) — triage individually, don't force. **(c) ~16 type/range source-ports** (STK3014×4 range, STK3002×6 pointer/dynamic-shape, STK3011×2 TextView extraction, STK3019/STK3024) — fixable like the ValueFacts/AliasAware source-ports where the shape is source-expressible.
-  - **InlineSsa ✓DONE (10 of 12 green, verified)** — added the SSA `fn`-body slicer `System.Testing.SsaFunctionBody(ascii ssaText, ascii fnName)` (next to `LlvmDefinitionBody`, reuses `LineEndFrom`/`IsActualUnit`; slices a column-zero `fn <name>(` header to the next column-zero `fn `) + harness `OptimizedSsaFunctionLacks/Contains(compiled, fnName, fragment)`; switched each to `CompileSsaAfterOptimized(..., "inline-ssa")` + `!SsaContains("X")` → `OptimizedSsaFunctionLacks(c, "Run", "X")`. One needed a source tweak (the 2nd `AddOne` in a struct-init-after-move didn't inline → hoist `AddOne` into locals); the phi-structure one → `OptimizedSsaContains×3("_or","continue","return 0")`. **2 remain cross-module** (`InlineSsaOptimizesThroughSourceBuiltDependencyBoundary` uses `Math.AddOne`; `InlinedLawReturnValueSurvives...` in SsaCrossBlockLoadForwardingRegressionTests.stark) → need a `CompileSsaWithModule`/staging harness path (like the LlvmTests `CompileLlvmWithModule` temp-dir search-dir staging), handle as a small batch.
-- **compiler.Tests (112)** — ~30 package-image (#4); remainder: AsmDeclarations 5 (likely target), LawBodies 3, CheckMode 3, BuildUses 3, EmitLlvm/EmitExecutable 4 (CLI/integration), TextDiagnostics/SystemText/RuntimeText/LawFunctions ≈8, long tail of 1–2.
-- **stdlib.Port (50)** — 41 `StdLibSource*` lowering/intrinsic/syscall-path assertions (~16 Linux/Windows platform-specific → target-pin or platform-gate), + WindowsDispatch 2, SourceStd 2, misc.
-- **compiler.MirTests (36)** — MIR text/structural (#11): MultiLabel 2, EnumSwitch 2, SwitchSections, RawPointer, NestedLvalue/Generic, LargeAggregate, TextLiteral, … mostly 1–2 each.
-- **compiler.LlvmTests (22)** — fully triaged in §1a.
-
-**Open scope question (needs an owner decision):** the goal says "all tests *runnable on macOS* pass." The `StdLibSourceLinux*`/`*Windows*` and other non-macOS-codegen tests assert foreign-target output — decide whether they are (a) runnable on macOS via cross-target LLVM emission (like the LlvmTests target tests) and must be fixed, or (b) inherently platform-gated and excluded from the macOS pass bar.
+- Preserve backend facts all the way through lowering to IR.
+- Treat correctness and completeness as required scope, not expansion.
+- Keep Stark's speed-focused design visible in implementation choices.
+- Prefer full tasks over partial slices.
+- Do not add package-manager release work; downloadable relocatable archives
+  are the release path.
 
 ---
 
-## 2. Roadmap epics — [ROADMAP.md](docs/Self-host-Prep/ROADMAP.md) (40 open; summarized here, not duplicated)
+## 1. Compiler Port To Stark
 
-### Compiler Port to Stark (the central epic; foundations underway in `selfhost/Compiler/`)
-- [ ] Diagnostics, compiler artifacts, pipeline orchestration, artifact rendering.
-- [ ] HIR/MIR lowering, drop lowering, switch lowering, imported-template handling.
-- [ ] SSA lowering, SSA validation, optimization passes.
-- [ ] ABI lowering, LLVM IR emission, native output.
-- [ ] Package-image models, builders, loaders, bridge codecs (binary load + JSON/text inspect).
-- [ ] CLI, project driver, manifest handling, native-toolchain driver, build entry points.
-- [ ] Small fact + assembly-metadata leaf helpers.
-- (In progress: self-hosted lexer/parser/binder/MIR thread — `selfhost/Compiler/{Parsing,Binding,Mir}.stark`; source→native-object thread exists for a language subset.)
+- [~] Implement the front-end parser, syntax model, binding, and type resolver.
+  - [x] Implement the handwritten lexer with exact spans and grammar-faithful tokenization.
+  - [~] Implement the handwritten parser against `Stark.g4`.
+    - [x] Parse headers, declarations, functions, fields, enum variants, statements, expressions, scopes, loops, and switch sections.
+    - [ ] Capture full type spans for parameters, returns, fields, locals, and enum payloads.
+    - [ ] Parse struct and enum `where` clauses.
+    - [ ] Resolve switch-case pattern value references for constants, enum cases, aggregates, and lists.
+    - [ ] Implement the parser facade and Stark-native syntax tree or parse-event model.
+    - [ ] Port text literal decoding with current raw-string parity semantics.
+  - [~] Implement name binding and type-reference resolution.
+    - [x] Build declaration tables, function scopes, lexical local visibility, and structured bind diagnostics.
+    - [x] Resolve value references, signature types, field types, enum payload types, local types, and function `where` constraints.
+    - [ ] Resolve nested generic argument types and complete type compatibility facts.
+    - [ ] Implement module resolution and imported-package/source lookup.
+    - [ ] Implement overload resolution and generic use-site instantiation planning.
+  - [~] Implement type checking and semantic validation.
+    - [x] Diagnose non-boolean conditions, logical operands, void-return mismatches, duplicate enum variants, and invalid break/continue use.
+    - [ ] Type identifiers, calls, member chains, assignments, returns, conversions, and coercions against resolved symbols.
+    - [ ] Port semantic validation, ownership validation, borrow liveness, range facts, enum facts, and CTFE.
 
-### Bootstrap & Cutover
-- [ ] Build Stage1 (C# host → first Stark compiler); build Stage2 (Stage1 → next).
-- [ ] Compare stage outputs/package-images/diagnostics/native artifacts for determinism.
-- [ ] Run the ported Stark suite against the **self-hosted** compiler (not just the C# host).
-- [ ] Keep C# host as Stage0 until self-build works; document the bootstrap flow.
-- [ ] Cutover: move C# host `/src` → `/old_src`, Stark compiler owns `/src`, keep recovery path.
+- [ ] Implement diagnostics, compiler artifacts, pipeline orchestration, and artifact rendering.
+  - [ ] Port compiler diagnostic data structures and source-caret rendering integration.
+  - [ ] Port compiler artifact storage and deterministic artifact text rendering.
+  - [ ] Port the compiler pipeline and default pass orchestration.
+  - [ ] Add targeted artifact output for tests and debugging.
 
-### Tooling
-- [ ] libLLVM-primary backend integration ([23-libllvm-integration.md](docs/Self-host-Prep/23-libllvm-integration.md)).
-- [ ] Binary package-image generation/loading + `stark inspect-pkg` ([20-package-image-format.md](docs/Self-host-Prep/20-package-image-format.md)).
-- [ ] Native/libLLVM toolchain discovery, bundled toolchain, target + C data-model/aggregate-layout facts.
-- [ ] Targeted diagnostic/artifact output for tests/debugging.
-- [ ] Editor syntax/completions sync; release packaging, `stark doctor`, clean-machine verification.
+- [~] Implement the IR memory model, MIR foundations, and fact-transfer substrate.
+  - [x] Implement typed handle wrappers and the dense `IrTable<T>` model in `selfhost/Compiler/Ir.stark`.
+  - [x] Implement initial `ValueFacts`, `AbiKind`, and present-fact inheritance helpers.
+  - [x] Implement MIR instruction, block, function, global, control-flow, call, phi, and basic textual LLVM subset helpers.
+  - [x] Implement MIR byte codecs, MIR1/MIR2 package-image sections, validation, inspection summaries, and file save/load helpers.
+  - [ ] Define every concrete fact category with attach point, phase owner, durability, producer, consumer, and validation rule.
+  - [ ] Add low-friction fact-transfer helpers for every lowering builder that creates new handles.
+  - [ ] Add phase-boundary validation for stale handles, dropped `forbid-drop` facts, ABI facts, alias facts, layout facts, and durable package facts.
 
-### Standard library
-- [ ] Migrate stdlib + compiler-port APIs to `Option<T>` / `Result<T, E>` (replaces nullable / `Try*`-out / recoverable failures) — large.
+- [ ] Implement HIR/MIR lowering, drop lowering, switch lowering, and imported-template handling.
+  - [ ] Port the MIR lowering pass shell and function MIR builder.
+  - [ ] Port place lowering, runtime drop lowering, compile-time evaluator lowering, and switch-pattern lowering.
+  - [ ] Preserve range, alias, ABI, layout, ownership, and assembly facts through MIR lowering.
+  - [ ] Port imported-template lowering using package-image template facts.
 
-### Docs / book (defer each until its API/spelling lands)
-- [ ] Generic collections + interning; package-image + `inspect-pkg`; build-artifact layout; `System.Toml`; `Transferable`/`Shareable`; threading API; libLLVM backend. (8 items.)
+- [ ] Implement SSA lowering, SSA validation, and optimization passes.
+  - [ ] Port MIR-to-SSA lowering and SSA artifact construction.
+  - [ ] Port SSA validator coverage including a structured invalid-IR fixture path.
+  - [ ] Port value fact analysis, alias-aware optimization, cleanup, folding, scalar replacement, inlining, dynamic storage optimization, and ownership traffic optimization.
+  - [ ] Preserve backend facts through every SSA rewrite and validate facts after optimization passes.
 
-### Post-self-host (deferred until after bootstrap)
-- [ ] Rebuild broad `comptime` / `System.Compiler` in the Stark compiler + conformance tests.
+- [ ] Implement ABI lowering, libLLVM emission, and native output.
+  - [ ] Port ABI lowering and C data-model/layout facts.
+  - [ ] Add the LLVM C API binding layer with typed opaque handles, C strings, out pointers, messages, and deterministic dispose wrappers.
+  - [ ] Build LLVM modules directly through libLLVM and emit object files in-process.
+  - [ ] Keep textual LLVM as deterministic inspection/debug output from the in-memory LLVM module.
+  - [ ] Preserve ABI, alignment, alias, noalias, range, volatile, and calling-convention facts through LLVM lowering.
 
-### Open decisions
-- [ ] Close the remaining "Open Decisions To Close" entries in ROADMAP.md (review + resolve).
+- [~] Implement package-image models, builders, loaders, bridge codecs, binary load, and deterministic inspection.
+  - [x] Decide binary-first package-image policy with JSON/text inspection views.
+  - [x] Implement the selfhost MIR package-image leaf codec, validation statuses, deterministic text/JSON summaries, and on-disk round trips.
+  - [ ] Finalize the public `.starkpkg` contract and `stark inspect-pkg --format json|text` behavior.
+  - [ ] Design the durable sectioned binary format with magic, exact version, section IDs, offsets, lengths, string tables, typed indexes, and target/profile facts.
+  - [ ] Port logical package models, builders, loaders, source bridge, shared codecs, and deterministic inspection rendering.
+  - [ ] Add diagnostics for malformed headers, unknown required sections, bad offsets, version mismatches, target/profile mismatches, and legacy JSON bridge failures.
+  - [ ] Route binary package images into the accepted build layout and keep inspection views explicit.
+
+- [ ] Implement CLI, project driver, manifest handling, native-toolchain driver, and build entry points.
+  - [ ] Port `Program`, `CompilerCli`, project driver, build entry points, and project command routing.
+  - [ ] Replace host-style manifest parsing with `System.Toml` plus typed manifest decoding.
+  - [ ] Port native toolchain discovery, target detection, linker/archiver invocation, and SDK checks.
+  - [ ] Preserve project build layout, incremental stamps, stdlib discovery, and package-image generation.
+
+- [~] Implement small fact and assembly-metadata leaf helpers.
+  - [x] Add initial assembly architecture facts and MIR assembly metadata serialization.
+  - [ ] Port register facts, target facts, native metadata facts, and any remaining small helper modules.
 
 ---
 
-## 3. Known compiler bugs — block self-host ([ROADMAP.md](docs/Self-host-Prep/ROADMAP.md) "Compiler Bugs")
-- [ ] `lower-mir` STK9999 crash on a `switch` with empty `Err`/`Ok` case bodies (current workaround: `{ default: }`).
-- [ ] `lower-mir` cannot resolve the generic drop of a cross-package `List<T>` field (fails to resolve `Clear`).
+## 2. Bootstrap And Cutover
+
+- [ ] Build Stage1 with the C# Stage0 host compiler.
+  - [ ] Compile the Stark compiler sources into the first runnable Stark compiler.
+  - [ ] Package the Stage1 standard library artifacts for the active target and stage.
+
+- [ ] Build Stage2 with the Stage1 Stark compiler.
+  - [ ] Compile the compiler with itself through the Stage1 binary.
+  - [ ] Emit Stage2 package images, diagnostics, and native artifacts.
+
+- [ ] Compare Stage1 and Stage2 outputs for determinism.
+  - [ ] Compare deterministic package-image inspection output and clean-build compiler outputs.
+  - [ ] Compare diagnostics, artifact text, native object metadata, and executable behavior where applicable.
+  - [ ] Reserve raw binary comparison for codecs that explicitly guarantee byte determinism.
+
+- [ ] Run the ported Stark suite against the self-hosted compiler.
+  - [ ] Route tests through the self-hosted compiler path rather than only the C# host protocol.
+  - [ ] Keep platform gates aligned with the macOS pass-bar policy.
+
+- [ ] Document and perform cutover.
+  - [ ] Keep the C# compiler as Stage0 until Stage2 builds and tests pass.
+  - [ ] Document the bootstrap flow and recovery path.
+  - [ ] Move the C# host `/src` to `/old_src` and make the Stark compiler own `/src`.
 
 ---
 
-## 4. Harness / tooling / diagnostic gaps — [PAINPOINTS.md](PAINPOINTS.md) (13 tasks, 2 done)
-Highest-leverage for §1: **#4** (package input → unblocks the 9 unportable LlvmTests) and **#10** (flag encoding → unblocks the 6 flag/datalayout LlvmTests). #7 is **denied as a language change** — resolve capability-additions via **function overloading**, not param threading.
+## 3. Tooling And Packaging
+
+- [~] Complete libLLVM-primary backend integration through the LLVM C API.
+  - [~] Finish `System.C` C string and owned foreign-message helper coverage needed by LLVM.
+  - [ ] Implement LLVM C API bindings, version checks, required-symbol checks, and typed wrapper drops.
+  - [ ] Add direct object emission, verifier diagnostics, optional module printing, and backend smoke tests.
+
+- [~] Complete binary package-image generation/loading and `stark inspect-pkg`.
+  - [x] Implement the selfhost MIR package-image leaf codec and deterministic summary inspection.
+  - [ ] Implement the full compiler package-image logical section model and binary loader.
+  - [ ] Add `stark inspect-pkg` as a top-level compiler command.
+  - [ ] Update package-image docs and tests after public spelling lands.
+
+- [~] Complete native/libLLVM toolchain discovery, bundled toolchain support, target facts, C data-model facts, and aggregate-layout facts.
+  - [x] Resolve release policies for LLVM version, official archive acquisition, Linux no-libc policy, Windows linker-driver policy, macOS SDK policy, and `--toolchain-dir` scope.
+  - [ ] Add a toolchain resolver for libLLVM, `clang`, linkers, archivers, SDKs, and helper tools.
+  - [ ] Add override precedence for CLI flags, environment variables, user config, bundled tools, and `PATH`.
+  - [ ] Validate target triple, data layout, C aliases, aggregate layout, and package compatibility before backend use.
+
+- [ ] Complete release packaging, `stark doctor`, and clean-machine archive verification.
+  - [ ] Define the release archive layout for compiler, stdlib, vendor, toolchain, licenses, install docs, and release metadata.
+  - [ ] Add runtime-specific publish or native compiler archive assembly for Linux, Windows, and macOS.
+  - [ ] Bundle pinned LLVM 22.1.8 artifacts and record source archives, checksums, and license files.
+  - [ ] Build and include standard library and vendor library source plus required package/native artifacts.
+  - [ ] Add a manually triggered release workflow that creates downloadable relocatable archives.
+  - [ ] Add `stark doctor` with compiler version, runtime ID, toolchain paths, versions, target facts, stdlib path, and SDK status.
+  - [ ] Add clean-machine smoke tests for archive help, check, MIR, SSA, LLVM, object, library, executable, native dependency, and runtime basics.
+
+- [ ] Sync editor syntax and completions with the self-hosting language surface.
+  - [ ] Update grammar-derived syntax highlighting, completions, snippets, and stdlib symbol data.
+  - [ ] Verify coverage against the canonical language surface after parser/selfhost syntax changes land.
 
 ---
 
-## 5. Test-scope hygiene — [TestPortTasklist.md](docs/Self-host-Prep/TestPortTasklist.md)
-- [ ] 1 un-ported qualifying C# test — port it or record an explicit exclusion reason.
-- [ ] 122 excluded tests — confirm each exclusion (CPU/target-specific or host-internal) still holds after the self-hosted backend lands.
+## 4. Standard Library And Porting APIs
+
+- [~] Migrate stdlib and compiler-port APIs to `Option<T>` / `Result<T, E>` conventions.
+  - [x] Implement role-based `[Ok]`/`[Err]` propagation, `try`, and `from` funnels.
+  - [ ] Replace nullable-shaped APIs, ad hoc `Try*` out patterns, and exception-shaped recoverable failures in compiler-port code.
+  - [ ] Keep invariant violations explicit as diagnostics, validation failures, or traps according to the relevant policy.
+
+- [~] Finish standard library surfaces required by the compiler port.
+  - [~] Finish compiler-grade text builders, formatting, escaping, golden/snapshot support, and diagnostic rendering.
+  - [~] Finish generic collections, typed interning, deterministic output ordering, and compiler symbol-table migration.
+  - [~] Finish file, filesystem, path, recursive walk, temp, and cross-platform metadata parity.
+  - [~] Finish `System.Toml` by replacing project-driver manifest parsing with typed manifest decoding.
+  - [~] Finish JSON/package inspection support needed by `stark inspect-pkg` and golden tests.
+  - [~] Finish `System.C` C-string helpers and LLVM-specific owner wrappers.
+
+- [~] Keep platform boundaries explicit.
+  - [x] Use Linux syscall-backed/no-libc stdlib and runtime code for Stark-owned Linux behavior.
+  - [x] Use the current Windows executable-generation path for the compiler release.
+  - [x] Require local macOS SDK or Command Line Tools and diagnose missing pieces through `stark doctor`.
+  - [ ] Add platform-specific diagnostics for SDK, CRT, pkg-config, and native/vendor dependency requirements.
+
+- [ ] Preserve the official vendor library as a first-class release component.
+  - [ ] Add vendor source and generated artifacts to release archive layout.
+  - [ ] Add vendor package/native metadata discovery and diagnostics after the vendor branch merges.
+
+---
+
+## 5. Ported Test Pass
+
+Do this after the compiler infrastructure above is online enough for the tests
+to exercise the real self-hosted compiler path. Use
+[TestPassLedger.md](TestPassLedger.md) for counts, failure-family notes, and
+historical triage.
+
+- [~] Fix the package-image input/protocol gap that blocks package-backed compiler and LLVM tests.
+  - [x] Prove package-backed LLVM compilation through the existing host-test harness.
+  - [ ] Add the remaining package-backed callable-value and manifest-backed compiler test coverage.
+  - [ ] Add any missing typed-only package-codegen flag or equivalent protocol path.
+
+- [~] Align SSA/MIR artifact selection and rendered-fragment expectations for ported text tests.
+  - [x] Fix verified SSA families including ArithmeticFold, ValueFacts, AliasAware, ScopedNoAlias, and InlineSsa.
+  - [ ] Fix remaining source-ok SSA text-class tests by selecting the actual artifact and spelling fragments as rendered.
+  - [ ] Fix remaining source-expressible SSA type/range source ports.
+  - [ ] Fix remaining MIR text and structural artifact expectations.
+
+- [ ] Add the structured invalid-IR fixture path needed for source-inexpressible validator coverage.
+  - [ ] Define a test-only fixture API for invalid MIR, SSA, and package-artifact validator inputs.
+  - [ ] Port invalid-SSA validator tests to the fixture path or record explicit host-internal exclusions.
+
+- [ ] Add target-triple pinning or platform gating for non-macOS artifact and native-runtime tests.
+  - [ ] Cross-target compile artifact-only Linux and Windows tests on macOS where no foreign SDK/runtime is required.
+  - [ ] Platform-gate tests that require foreign SDKs, linkers, syscalls, or runtime behavior.
+  - [ ] Add comments explaining each platform-only pass condition.
+
+- [ ] Finish option-toggle plumbing used by remaining LLVM lowering tests.
+  - [ ] Add the missing host-test protocol switches for qualifier, internalization, target, package, and inspection variants.
+  - [ ] Verify the remaining LLVM per-test residues after option plumbing lands.
+
+- [ ] Resolve remaining suite failures after infrastructure lands.
+  - [ ] Resolve `compiler.Tests` package-image, diagnostics, type-checking, ownership, pipeline, runtime, CLI, and example failures.
+  - [ ] Resolve `compiler.SsaTests` cleanup, scalar replacement, function-address, constant-text, text-view, dynamic-storage, and cross-module failures.
+  - [ ] Resolve `compiler.LlvmTests` package-image and genuine per-test residues.
+  - [ ] Resolve `compiler.MirTests` MIR text and structural failures.
+  - [ ] Resolve `stdlib.Port` platform-specific, source-stdlib, dispatch, and miscellaneous failures.
+  - [ ] Recheck the lone `compiler.FeatureTests` failure and close it if still reproducible.
+
+- [ ] Close test-scope hygiene.
+  - [ ] Port the final unported qualifying C# test or record an explicit exclusion reason.
+  - [ ] Audit excluded tests after the self-hosted backend lands and keep only CPU, target, or host-internal exclusions.
+  - [ ] Rebaseline [TestPassLedger.md](TestPassLedger.md) only after a clean full-suite sweep.
+
+---
+
+## 6. Known Compiler Bugs Blocking Self-Host
+
+No known host-compiler blockers currently tracked.
+
+---
+
+## 7. Docs And Book Work
+
+Defer each item until its API/spelling lands.
+
+- [ ] Document generic collections and interning.
+  - [ ] Document collection contracts, exact text key semantics, and compiler interning as an architecture pattern.
+- [ ] Document package images and `inspect-pkg`.
+  - [ ] Document binary codec tests separately from JSON/text inspection golden tests.
+- [ ] Document build-artifact layout.
+  - [ ] Document stage/profile/target output layout after project driver behavior lands.
+- [ ] Document `System.Toml`.
+  - [ ] Document the supported TOML version and any temporary bootstrap subset.
+- [ ] Document `Transferable` / `Shareable`.
+  - [ ] Document call-site and thread-boundary enforcement after final consumer surfaces land.
+- [ ] Document threading APIs.
+  - [ ] Document threads, atomics, synchronized storage, channels, and platform behavior.
+- [ ] Document the libLLVM backend.
+  - [ ] Document bundled libLLVM, override paths, direct object emission, and textual inspection artifacts.
+
+---
+
+## 8. Post-Self-Host
+
+- [ ] Rebuild broad `comptime` / `System.Compiler` in the Stark compiler and add conformance tests.
+  - [ ] Add post-bootstrap CTFE value kinds only when compiler, stdlib, or vendor code needs them.
+  - [ ] Keep new CTFE value kinds deterministic, cheap to compare/hash, and package-image-representable.
+
+- [ ] Migrate bundled LLVM from 22.1.x to the latest stable LLVM 23.1.x release.
+  - [ ] Update LLVM C API bindings, IR spelling, bundled toolchain acquisition, package checksums, and backend regression tests.
+
+---
+
+## 9. Open Decisions
+
+No open decisions currently tracked.

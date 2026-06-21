@@ -6974,13 +6974,15 @@ internal sealed class TypeChecker
     {
         Dictionary<string, StarkTypeSymbol>? expectedCaptures = null;
         ParserRuleContext? expectedContext = null;
+        var requiresSharedCaptures = RequiresSharedSwitchSectionCaptures(section);
 
         foreach (var label in section.switchLabel())
         {
             if (label.DEFAULT() is not null)
             {
                 var captures = new Dictionary<string, StarkTypeSymbol>(StringComparer.Ordinal);
-                if (!ValidateSameSwitchSectionCaptures(
+                if (requiresSharedCaptures
+                    && !ValidateSameSwitchSectionCaptures(
                         expectedCaptures,
                         ref expectedContext,
                         captures,
@@ -7005,7 +7007,8 @@ internal sealed class TypeChecker
                     continue;
                 }
 
-                if (!ValidateSameSwitchSectionCaptures(
+                if (requiresSharedCaptures
+                    && !ValidateSameSwitchSectionCaptures(
                         expectedCaptures,
                         ref expectedContext,
                         captures,
@@ -7016,6 +7019,12 @@ internal sealed class TypeChecker
                 }
             }
         }
+    }
+
+    private static bool RequiresSharedSwitchSectionCaptures(StarkParser.SwitchSectionContext section)
+    {
+        return section.statement().Length != 0
+            || section.switchLabel().Any(static label => label.whenClause() is not null);
     }
 
     private bool ValidateNoDuplicateSwitchPatternCaptures(StarkParser.PatternContext pattern)
