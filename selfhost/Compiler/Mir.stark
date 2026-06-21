@@ -1,6 +1,7 @@
 import Compiler.Ir
 import Compiler.Lexing
 import Compiler.Parsing
+import Compiler.Binding
 import System.Memory
 import System.Text
 import System.Runtime.Buffer
@@ -1134,6 +1135,145 @@ internal fn MemoryStatus EmitLlvmTypeName(MirType t, mut borrow OwnedAscii sink)
             try sink.AppendConstAscii("i64");
         case MirType.Ptr:
             try sink.AppendConstAscii("ptr");
+    }
+
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EmitLlvmAbiCarrierKind(AbiCarrierKind kind, mut borrow OwnedAscii sink)
+{
+    switch (kind)
+    {
+        case AbiCarrierKind.I8:
+            try sink.AppendConstAscii("i8");
+        case AbiCarrierKind.I16:
+            try sink.AppendConstAscii("i16");
+        case AbiCarrierKind.I32:
+            try sink.AppendConstAscii("i32");
+        case AbiCarrierKind.I64:
+            try sink.AppendConstAscii("i64");
+        case AbiCarrierKind.F32:
+            try sink.AppendConstAscii("float");
+        case AbiCarrierKind.F64:
+            try sink.AppendConstAscii("double");
+        case AbiCarrierKind.Vector2F32:
+            try sink.AppendConstAscii("<2 x float>");
+        default:
+            try sink.AppendConstAscii("unknown");
+    }
+
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EmitCAbiAggregateCarrierShape(CAbiAggregateCarrierFacts facts, bool isReturn, mut borrow OwnedAscii sink)
+{
+    if (facts.IsDirect())
+    {
+        try sink.AppendConstAscii("direct ");
+        if (isReturn && facts.ReturnCarrierIsLlvmStruct())
+        {
+            try sink.AppendConstAscii("{ ");
+        }
+
+        stack u32[0 max] count = facts.LlvmParameterCarrierCount();
+        stack mut u32[0 max] index = 0;
+        while willexit (index < count)
+        {
+            if (index > 0)
+            {
+                try sink.AppendConstAscii(", ");
+            }
+
+            try EmitLlvmAbiCarrierKind(facts.CarrierKindAt(index), sink);
+            index = (u32[0 max])(index + 1);
+        }
+
+        if (isReturn && facts.ReturnCarrierIsLlvmStruct())
+        {
+            try sink.AppendConstAscii(" }");
+        }
+
+        return MemoryStatus.Ok;
+    }
+
+    if (facts.IsIndirect())
+    {
+        try sink.AppendConstAscii("indirect");
+        return MemoryStatus.Ok;
+    }
+
+    try sink.AppendConstAscii("unsupported");
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EmitTokenText(ascii source, borrow TokenStream stream, u32[0 max] token, mut borrow OwnedAscii sink)
+{
+    return sink.AppendAscii(Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])token));
+}
+
+public fn MemoryStatus EmitCAbiAggregateBoundaryFacts(ascii source, mut borrow OwnedAscii sink)
+{
+    stack mut TokenStream stream = new();
+    switch (LexText(source))
+    {
+        case LexResult<TokenStream>.Err(var lexError):
+            return MemoryStatus.Err(MemoryError.InvalidLayout);
+        case LexResult<TokenStream>.Ok(var lexed):
+            stream = lexed;
+    }
+
+    stack mut u32[0 max] declStart = 0;
+    switch (Compiler.Parsing.ParseHeader(stream))
+    {
+        case ParseResult<CompilationUnitHeader>.Err(var headerError):
+            return MemoryStatus.Err(MemoryError.InvalidLayout);
+        case ParseResult<CompilationUnitHeader>.Ok(var header):
+            declStart = header.NextToken;
+    }
+
+    stack mut DeclarationList decls = new();
+    switch (Compiler.Parsing.ParseDeclarations(stream, declStart))
+    {
+        case ParseResult<DeclarationList>.Err(var declError):
+            return MemoryStatus.Err(MemoryError.InvalidLayout);
+        case ParseResult<DeclarationList>.Ok(var parsedDecls):
+            decls = parsedDecls;
+    }
+
+    stack mut CAbiAggregateBoundaryTable boundaries = new();
+    switch (Compiler.Binding.BuildCAbiAggregateBoundaryTable(source, stream, decls))
+    {
+        case BindResult<CAbiAggregateBoundaryTable>.Err(var bindError):
+            return MemoryStatus.Err(MemoryError.OutOfMemory);
+        case BindResult<CAbiAggregateBoundaryTable>.Ok(var built):
+            boundaries = built;
+    }
+
+    stack u64[0 2 ** 63 - 1] count = boundaries.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack bool isReturn = boundaries.KindAt(index) == Compiler.Binding.CAbiAggregateBoundaryKind.Return;
+        if (isReturn)
+        {
+            try sink.AppendConstAscii("return ");
+        }
+        else
+        {
+            try sink.AppendConstAscii("param ");
+        }
+
+        try EmitTokenText(source, stream, boundaries.FunctionNameTokenAt(index), sink);
+        if (!isReturn)
+        {
+            try sink.AppendConstAscii("#");
+            try sink.AppendU64((u64[0 max])boundaries.ParamIndexAt(index));
+        }
+
+        try sink.AppendConstAscii(" ");
+        try EmitTokenText(source, stream, boundaries.TypeNameTokenAt(index), sink);
+        try sink.AppendConstAscii(" ");
+        try EmitCAbiAggregateCarrierShape(boundaries.FactsAt(index), isReturn, sink);
+        try sink.AppendConstAscii("\n");
     }
 
     return MemoryStatus.Ok;
@@ -7415,21 +7555,21 @@ public fn ExprType TypeOfNode(borrow IrTable<ExprNode> nodes, u32[0 max] id)
 // mul := primary ((* / %) primary)* ; primary := int | name | name(args) | ( compare ).
 // Left-associative folding makes a chained comparison a nested Compare node, which the
 // structural typer then flags.
-public struct ParseResult
+public struct ExprParseResult
 {
     u32[0 max] NodeId;
     u64[0 2 ** 63 - 1] Next;
 
-    ParseResult()
+    ExprParseResult()
     {
         self.NodeId = 0;
         self.Next = 0;
     }
 }
 
-internal fn ParseResult MakeParseResult(u32[0 max] nodeId, u64[0 2 ** 63 - 1] next)
+internal fn ExprParseResult MakeParseResult(u32[0 max] nodeId, u64[0 2 ** 63 - 1] next)
 {
-    stack mut ParseResult result = new();
+    stack mut ExprParseResult result = new();
     result.NodeId = nodeId;
     result.Next = next;
     return result;
@@ -7453,7 +7593,7 @@ internal fn u32[0 max] ResolveParam(mut borrow IrTable<ParamName> params, borrow
     return added - 1;
 }
 
-internal fn ParseResult ParsePrimaryIn(borrow TokenStream stream, borrow i8[min max][] source, mut borrow IrTable<ExprNode> nodes, mut borrow IrTable<ParamName> params, borrow IrTable<ParamName> funcNames, u64[0 2 ** 63 - 1] cursor)
+internal fn ExprParseResult ParsePrimaryIn(borrow TokenStream stream, borrow i8[min max][] source, mut borrow IrTable<ExprNode> nodes, mut borrow IrTable<ParamName> params, borrow IrTable<ParamName> funcNames, u64[0 2 ** 63 - 1] cursor)
 {
     stack TokenKind k = stream.KindAt(cursor);
     if (k == TokenKind.IntegerLiteral)
@@ -7468,7 +7608,7 @@ internal fn ParseResult ParsePrimaryIn(borrow TokenStream stream, borrow i8[min 
         // (tighter than the binary operators), so `-x * y` parses as `(-x) * y` and `2 - -3`
         // as `2 - (-3)`. A leading `-` is unambiguously unary here (a binary `-` is consumed
         // between terms by ParseAdd, never at the start of a primary).
-        stack ParseResult operand = ParsePrimaryIn(stream, source, nodes, params, funcNames, cursor + 1);
+        stack ExprParseResult operand = ParsePrimaryIn(stream, source, nodes, params, funcNames, cursor + 1);
         stack u32[0 max] zero = MakeIntLit(nodes, 0);
         stack u32[0 max] negated = MakeBinary(nodes, TokenKind.Minus, zero, operand.NodeId);
         return MakeParseResult(negated, operand.Next);
@@ -7477,7 +7617,7 @@ internal fn ParseResult ParsePrimaryIn(borrow TokenStream stream, borrow i8[min 
     if (k == TokenKind.LParen)
     {
         // Parenthesized sub-expression: parse it, then skip the matching `)`.
-        stack ParseResult inner = ParseExprIn(stream, source, nodes, params, funcNames, cursor + 1);
+        stack ExprParseResult inner = ParseExprIn(stream, source, nodes, params, funcNames, cursor + 1);
         return MakeParseResult(inner.NodeId, inner.Next + 1);
     }
 
@@ -7503,7 +7643,7 @@ internal fn ParseResult ParsePrimaryIn(borrow TokenStream stream, borrow i8[min 
         // CAPTURING up to four and COUNTING the total — the count is checked against the
         // callee's arity at validation (the AST model lowers up to four arguments, so a wider
         // call is rejected by the count, not silently truncated).
-        stack ParseResult firstArg = ParseExprIn(stream, source, nodes, params, funcNames, cursor + 2);
+        stack ExprParseResult firstArg = ParseExprIn(stream, source, nodes, params, funcNames, cursor + 2);
         stack mut u64[0 2 ** 63 - 1] argCursor = firstArg.Next;
         stack mut u32[0 max] argCount = 1;
         stack mut u32[0 max] secondArg = 0;
@@ -7511,7 +7651,7 @@ internal fn ParseResult ParsePrimaryIn(borrow TokenStream stream, borrow i8[min 
         stack mut u32[0 max] fourthArg = 0;
         while willexit (stream.KindAt(argCursor) == TokenKind.Comma)
         {
-            stack ParseResult more = ParseExprIn(stream, source, nodes, params, funcNames, argCursor + 1);
+            stack ExprParseResult more = ParseExprIn(stream, source, nodes, params, funcNames, argCursor + 1);
             if (argCount == 1)
             {
                 secondArg = more.NodeId;
@@ -7537,13 +7677,13 @@ internal fn ParseResult ParsePrimaryIn(borrow TokenStream stream, borrow i8[min 
     return MakeParseResult(MakeName(nodes, paramIndex), cursor + 1);
 }
 
-internal fn ParseResult ParseMulIn(borrow TokenStream stream, borrow i8[min max][] source, mut borrow IrTable<ExprNode> nodes, mut borrow IrTable<ParamName> params, borrow IrTable<ParamName> funcNames, u64[0 2 ** 63 - 1] cursor)
+internal fn ExprParseResult ParseMulIn(borrow TokenStream stream, borrow i8[min max][] source, mut borrow IrTable<ExprNode> nodes, mut borrow IrTable<ParamName> params, borrow IrTable<ParamName> funcNames, u64[0 2 ** 63 - 1] cursor)
 {
-    stack mut ParseResult left = ParsePrimaryIn(stream, source, nodes, params, funcNames, cursor);
+    stack mut ExprParseResult left = ParsePrimaryIn(stream, source, nodes, params, funcNames, cursor);
     while willexit (IsProductOpToken(stream.KindAt(left.Next)))
     {
         stack TokenKind op = stream.KindAt(left.Next);
-        stack ParseResult right = ParsePrimaryIn(stream, source, nodes, params, funcNames, left.Next + 1);
+        stack ExprParseResult right = ParsePrimaryIn(stream, source, nodes, params, funcNames, left.Next + 1);
         left.NodeId = MakeBinary(nodes, op, left.NodeId, right.NodeId);
         left.Next = right.Next;
     }
@@ -7551,13 +7691,13 @@ internal fn ParseResult ParseMulIn(borrow TokenStream stream, borrow i8[min max]
     return left;
 }
 
-internal fn ParseResult ParseAddIn(borrow TokenStream stream, borrow i8[min max][] source, mut borrow IrTable<ExprNode> nodes, mut borrow IrTable<ParamName> params, borrow IrTable<ParamName> funcNames, u64[0 2 ** 63 - 1] cursor)
+internal fn ExprParseResult ParseAddIn(borrow TokenStream stream, borrow i8[min max][] source, mut borrow IrTable<ExprNode> nodes, mut borrow IrTable<ParamName> params, borrow IrTable<ParamName> funcNames, u64[0 2 ** 63 - 1] cursor)
 {
-    stack mut ParseResult left = ParseMulIn(stream, source, nodes, params, funcNames, cursor);
+    stack mut ExprParseResult left = ParseMulIn(stream, source, nodes, params, funcNames, cursor);
     while willexit (IsAddSubToken(stream.KindAt(left.Next)))
     {
         stack TokenKind op = stream.KindAt(left.Next);
-        stack ParseResult right = ParseMulIn(stream, source, nodes, params, funcNames, left.Next + 1);
+        stack ExprParseResult right = ParseMulIn(stream, source, nodes, params, funcNames, left.Next + 1);
         left.NodeId = MakeBinary(nodes, op, left.NodeId, right.NodeId);
         left.Next = right.Next;
     }
@@ -7569,13 +7709,13 @@ internal fn ParseResult ParseAddIn(borrow TokenStream stream, borrow i8[min max]
 // resolves to its function id. `ParseExpr` below is the thin wrapper used by the
 // single-function/expression paths (which pass an empty table — their calls, if any,
 // resolve to the 0 sentinel); the multi-function module compiler calls this directly.
-internal fn ParseResult ParseExprIn(borrow TokenStream stream, borrow i8[min max][] source, mut borrow IrTable<ExprNode> nodes, mut borrow IrTable<ParamName> params, borrow IrTable<ParamName> funcNames, u64[0 2 ** 63 - 1] cursor)
+internal fn ExprParseResult ParseExprIn(borrow TokenStream stream, borrow i8[min max][] source, mut borrow IrTable<ExprNode> nodes, mut borrow IrTable<ParamName> params, borrow IrTable<ParamName> funcNames, u64[0 2 ** 63 - 1] cursor)
 {
-    stack mut ParseResult left = ParseAddIn(stream, source, nodes, params, funcNames, cursor);
+    stack mut ExprParseResult left = ParseAddIn(stream, source, nodes, params, funcNames, cursor);
     while willexit (IsComparisonOperator(stream.KindAt(left.Next)))
     {
         stack TokenKind op = stream.KindAt(left.Next);
-        stack ParseResult right = ParseAddIn(stream, source, nodes, params, funcNames, left.Next + 1);
+        stack ExprParseResult right = ParseAddIn(stream, source, nodes, params, funcNames, left.Next + 1);
         left.NodeId = MakeCompare(nodes, op, left.NodeId, right.NodeId);
         left.Next = right.Next;
     }
@@ -7585,7 +7725,7 @@ internal fn ParseResult ParseExprIn(borrow TokenStream stream, borrow i8[min max
 
 // Single-function/expression entry: no cross-function call resolution (an empty
 // function-name table), so an unqualified `name(args)` keeps the 0 callee sentinel.
-internal fn ParseResult ParseExpr(borrow TokenStream stream, borrow i8[min max][] source, mut borrow IrTable<ExprNode> nodes, mut borrow IrTable<ParamName> params, u64[0 2 ** 63 - 1] cursor)
+internal fn ExprParseResult ParseExpr(borrow TokenStream stream, borrow i8[min max][] source, mut borrow IrTable<ExprNode> nodes, mut borrow IrTable<ParamName> params, u64[0 2 ** 63 - 1] cursor)
 {
     stack mut IrTable<ParamName> noFuncs = new();
     return ParseExprIn(stream, source, nodes, params, noFuncs, cursor);
@@ -7604,7 +7744,7 @@ public fn ExprType InferSourceExpressionType(ascii source)
         case LexResult<TokenStream>.Ok(var stream):
             stack mut IrTable<ExprNode> nodes = new();
             stack mut IrTable<ParamName> params = new();
-            stack ParseResult root = ParseExpr(stream, sourceBytes, nodes, params, 0);
+            stack ExprParseResult root = ParseExpr(stream, sourceBytes, nodes, params, 0);
             return TypeOfNode(nodes, root.NodeId);
         case LexResult<TokenStream>.Err(var lexError):
             return ExprType.ErrorType;
@@ -7754,7 +7894,7 @@ public fn bool CompileExpressionToLlvm(ascii source, mut borrow OwnedAscii sink)
         case LexResult<TokenStream>.Ok(var stream):
             stack mut IrTable<ExprNode> nodes = new();
             stack mut IrTable<ParamName> params = new();
-            stack ParseResult root = ParseExpr(stream, sourceBytes, nodes, params, 0);
+            stack ExprParseResult root = ParseExpr(stream, sourceBytes, nodes, params, 0);
             // Type-gate codegen: an ill-typed expression (a chained comparison, a boolean
             // fed to arithmetic) produces no output.
             stack ExprType rootType = TypeOfNode(nodes, root.NodeId);
@@ -7827,9 +7967,9 @@ internal fn bool ParseFunctionSignatureAt(borrow TokenStream stream, u32[0 max] 
     signature = new();
     switch (Compiler.Parsing.ParseFunctionSignature(stream, fnIndex))
     {
-        case Compiler.Parsing.ParseResult<Compiler.Parsing.FunctionSignature>.Err(var sigError):
+        case ParseResult<FunctionSignature>.Err(var sigError):
             return false;
-        case Compiler.Parsing.ParseResult<Compiler.Parsing.FunctionSignature>.Ok(var parsed):
+        case ParseResult<FunctionSignature>.Ok(var parsed):
             signature = parsed;
             return signature.Name() != 0;
     }
@@ -8579,7 +8719,7 @@ public fn bool CompileFunctionToLlvm(ascii source, mut borrow OwnedAscii sink)
             // that is an unbound reference — reject rather than emit a phantom parameter.
             stack u64[0 2 ** 63 - 1] signatureParamCount = params.Count();
             stack mut IrTable<ExprNode> nodes = new();
-            stack ParseResult root = ParseExpr(stream, sourceBytes, nodes, params, (u64[0 2 ** 63 - 1])returnIndex + 1);
+            stack ExprParseResult root = ParseExpr(stream, sourceBytes, nodes, params, (u64[0 2 ** 63 - 1])returnIndex + 1);
             if (params.Count() != signatureParamCount)
             {
                 return false;
@@ -9593,7 +9733,7 @@ internal fn LoweredBody LowerFunctionWithLocals(borrow TokenStream stream, borro
             // The initializer may reference only ALREADY-declared names — reject if parsing it
             // grew the table (an undeclared/forward/self reference inserts a phantom index).
             stack u64[0 2 ** 63 - 1] beforeInit = params.Count();
-            stack ParseResult varExpr = ParseExprIn(stream, source, nodes, params, funcNames, assignToken + 1);
+            stack ExprParseResult varExpr = ParseExprIn(stream, source, nodes, params, funcNames, assignToken + 1);
             if (params.Count() != beforeInit)
             {
                 return result;
@@ -9730,7 +9870,7 @@ internal fn LoweredBody LowerFunctionWithLocals(borrow TokenStream stream, borro
         cursor = statementEnd + 1;
     }
 
-    stack ParseResult returnRoot = ParseExprIn(stream, source, nodes, params, funcNames, (u64[0 2 ** 63 - 1])terminalIndex + 1);
+    stack ExprParseResult returnRoot = ParseExprIn(stream, source, nodes, params, funcNames, (u64[0 2 ** 63 - 1])terminalIndex + 1);
 
     // Every body name must be a parameter or a declared local — no phantom names.
     if (params.Count() != signatureParamCount + localRoots.Count())
@@ -9878,7 +10018,7 @@ internal fn bool EmitModuleIfReturnFunction(
     // `if <cond> (return|become) <then> else (return|become) <else>`.
     stack mut IrTable<ExprNode> nodes = new();
     stack u64[0 2 ** 63 - 1] ifIndex = (u64[0 2 ** 63 - 1])braceIndex + 1;
-    stack ParseResult condResult = ParseExprIn(stream, source, nodes, params, funcNames, ifIndex + 1);
+    stack ExprParseResult condResult = ParseExprIn(stream, source, nodes, params, funcNames, ifIndex + 1);
     stack TokenKind thenTerminal = stream.KindAt(condResult.Next);
     if (thenTerminal != TokenKind.Return && thenTerminal != TokenKind.Become)
     {
@@ -9886,7 +10026,7 @@ internal fn bool EmitModuleIfReturnFunction(
     }
 
     stack bool thenBecome = thenTerminal == TokenKind.Become;
-    stack ParseResult thenResult = ParseExprIn(stream, source, nodes, params, funcNames, condResult.Next + 1);
+    stack ExprParseResult thenResult = ParseExprIn(stream, source, nodes, params, funcNames, condResult.Next + 1);
     if (stream.KindAt(thenResult.Next) != TokenKind.Else)
     {
         return false;
@@ -9899,7 +10039,7 @@ internal fn bool EmitModuleIfReturnFunction(
     }
 
     stack bool elseBecome = elseTerminal == TokenKind.Become;
-    stack ParseResult elseResult = ParseExprIn(stream, source, nodes, params, funcNames, thenResult.Next + 2);
+    stack ExprParseResult elseResult = ParseExprIn(stream, source, nodes, params, funcNames, thenResult.Next + 2);
 
     if ((thenBecome || elseBecome) && !isTailCallable)
     {
@@ -10469,7 +10609,7 @@ public fn bool CompileIfExpressionToLlvm(ascii source, mut borrow OwnedAscii sin
             stack mut IrTable<ParamName> params = new();
             // Condition (ends at the first non-operator token), then the two arms split by
             // `else`.
-            stack ParseResult condResult = ParseExpr(stream, sourceBytes, nodes, params, (u64[0 2 ** 63 - 1])ifIndex + 1);
+            stack ExprParseResult condResult = ParseExpr(stream, sourceBytes, nodes, params, (u64[0 2 ** 63 - 1])ifIndex + 1);
             if (TypeOfNode(nodes, condResult.NodeId) == ExprType.BoolType)
             {
                 // A boolean condition; continue.
@@ -10479,13 +10619,13 @@ public fn bool CompileIfExpressionToLlvm(ascii source, mut borrow OwnedAscii sin
                 return false;
             }
 
-            stack ParseResult thenResult = ParseExpr(stream, sourceBytes, nodes, params, condResult.Next);
+            stack ExprParseResult thenResult = ParseExpr(stream, sourceBytes, nodes, params, condResult.Next);
             if (stream.KindAt(thenResult.Next) != TokenKind.Else)
             {
                 return false;
             }
 
-            stack ParseResult elseResult = ParseExpr(stream, sourceBytes, nodes, params, thenResult.Next + 1);
+            stack ExprParseResult elseResult = ParseExpr(stream, sourceBytes, nodes, params, thenResult.Next + 1);
 
             // Both arms must have the SAME type — both integer (i64) or both boolean (i1) —
             // since the phi merges them: mismatched arms (one i64, one i1) would emit invalid
@@ -10587,9 +10727,9 @@ public fn bool CompileWhileLoopToLlvm(ascii source, mut borrow OwnedAscii sink)
             // first name resolved, so it takes index 0.
             stack mut IrTable<ExprNode> nodes = new();
             stack mut IrTable<ParamName> params = new();
-            stack ParseResult initResult = ParseExpr(stream, sourceBytes, nodes, params, (u64[0 2 ** 63 - 1])varIndex + 3);
+            stack ExprParseResult initResult = ParseExpr(stream, sourceBytes, nodes, params, (u64[0 2 ** 63 - 1])varIndex + 3);
             stack u32[0 max] loopVarIndex = ResolveParam(params, sourceBytes, stream.StartAt((u64[0 2 ** 63 - 1])varIndex + 1), stream.LengthAt((u64[0 2 ** 63 - 1])varIndex + 1));
-            stack ParseResult condResult = ParseExpr(stream, sourceBytes, nodes, params, (u64[0 2 ** 63 - 1])whileIndex + 1);
+            stack ExprParseResult condResult = ParseExpr(stream, sourceBytes, nodes, params, (u64[0 2 ** 63 - 1])whileIndex + 1);
             if (TypeOfNode(nodes, condResult.NodeId) == ExprType.BoolType)
             {
                 // A boolean loop condition; continue.
@@ -10599,8 +10739,8 @@ public fn bool CompileWhileLoopToLlvm(ascii source, mut borrow OwnedAscii sink)
                 return false;
             }
 
-            stack ParseResult updateResult = ParseExpr(stream, sourceBytes, nodes, params, (u64[0 2 ** 63 - 1])bodyAssign + 1);
-            stack ParseResult retResult = ParseExpr(stream, sourceBytes, nodes, params, (u64[0 2 ** 63 - 1])returnIndex + 1);
+            stack ExprParseResult updateResult = ParseExpr(stream, sourceBytes, nodes, params, (u64[0 2 ** 63 - 1])bodyAssign + 1);
+            stack ExprParseResult retResult = ParseExpr(stream, sourceBytes, nodes, params, (u64[0 2 ** 63 - 1])returnIndex + 1);
 
             // The supported shape is a SELF-CONTAINED counting loop: the only name anywhere
             // (init, condition, update, return) is the loop variable. That guarantees the

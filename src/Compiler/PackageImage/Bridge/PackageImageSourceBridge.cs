@@ -835,6 +835,7 @@ internal static partial class PackageImageLoader
 
     private static void EmitFunction(StringBuilder builder, StarkPackageFunctionManifest function, string? bodyText = null)
     {
+        EmitLinkNameAttribute(builder, string.Empty, function);
         EmitBackendAttribute(builder, string.Empty, function.BackendOptimizationMode);
         builder.Append(function.Visibility);
         builder.Append(' ');
@@ -995,6 +996,7 @@ internal static partial class PackageImageLoader
         bool isUnsafe = false,
         bool isTailCallable = false,
         string? ffiAbi = null,
+        string? externalLinkName = null,
         ModuleBackendOptimizationMode backendOptimizationMode = ModuleBackendOptimizationMode.Default,
         IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? disjointParameterGroups = null,
         IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? overlapParameterGroups = null,
@@ -1042,7 +1044,8 @@ internal static partial class PackageImageLoader
                 ? NormalizePointeeDeadOnReturnParameterNames(pointeeDeadOnReturnParameterNames)
                 : null,
             ThreadSafetyLawPredicates: BuildThreadSafetyLawPredicateModels(threadSafetyLawPredicates),
-            ValueParameterContracts: BuildParameterValueContracts(valueContracts));
+            ValueParameterContracts: BuildParameterValueContracts(valueContracts),
+            ExternalLinkName: externalLinkName);
     }
 
     private static IReadOnlyList<string>? NormalizePointeeDeadOnReturnParameterNames(IReadOnlyList<string> names)
@@ -1184,6 +1187,40 @@ internal static partial class PackageImageLoader
             builder.Append(indent);
             builder.AppendLine("[Backend(Opaque)]");
         }
+    }
+
+    private static void EmitLinkNameAttribute(
+        StringBuilder builder,
+        string indent,
+        StarkPackageFunctionManifest function)
+    {
+        var linkName = ResolveFunctionLinkName(function);
+        if (linkName is null)
+        {
+            return;
+        }
+
+        builder.Append(indent);
+        builder.Append("[LinkName(\"");
+        builder.Append(EscapeStarkStringLiteral(linkName));
+        builder.AppendLine("\")]");
+    }
+
+    private static string? ResolveFunctionLinkName(StarkPackageFunctionManifest function)
+    {
+        if (!function.IsFfi || function.Asm is not null)
+        {
+            return null;
+        }
+
+        if (!string.IsNullOrWhiteSpace(function.LinkName))
+        {
+            return function.LinkName;
+        }
+
+        return string.Equals(function.SymbolName, function.Name, StringComparison.Ordinal)
+            ? null
+            : function.SymbolName;
     }
 
     private static InlinePreference ParseInlinePreferenceOrDefault(string inlinePreference)
@@ -2975,7 +3012,8 @@ internal static partial class PackageImageLoader
             ComptimeGenericParameters: function.ComptimeGenericParameters,
             TypeParameterConstraints: ConvertTypeParameterConstraints(function.TypeParameterConstraints),
             ThreadSafetyLawPredicates: ConvertThreadSafetyLawPredicates(function.ThreadSafetyLawPredicates),
-            ValueContracts: function.ValueContracts);
+            ValueContracts: function.ValueContracts,
+            LinkName: function.LinkName);
     }
 
     private static StarkPackageTypeManifest ConvertTypeManifest(StarkPackageTypedTypeManifest type)

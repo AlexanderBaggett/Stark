@@ -38,6 +38,7 @@ internal sealed class AbiLowerer
     public AbiModel Lower()
     {
         var functions = new Dictionary<string, AbiFunctionSignature>(StringComparer.Ordinal);
+        var ffiLinkageSignatures = new Dictionary<FfiLinkageKey, FfiLinkageSignature>(FfiLinkageKey.Comparer);
         var ffiSymbolNames = CollectFfiSymbolNames();
 
         foreach (var function in _typeModel.Functions.Values.OrderBy(static function => function.Name, StringComparer.Ordinal))
@@ -47,7 +48,9 @@ internal sealed class AbiLowerer
                 continue;
             }
 
-            functions[function.Name] = LowerFunction(function, effects, ffiSymbolNames);
+            var abiFunction = LowerFunction(function, effects, ffiSymbolNames);
+            functions[function.Name] = abiFunction;
+            ValidateFfiLinkageSignature(ffiLinkageSignatures, abiFunction, function.DeclarationLocation);
         }
 
         foreach (var function in _hir.Functions.OrderBy(static function => function.Name, StringComparer.Ordinal))
@@ -57,7 +60,9 @@ internal sealed class AbiLowerer
                 continue;
             }
 
-            functions[function.Name] = LowerFunction(function.Signature, function.Effects, ffiSymbolNames);
+            var abiFunction = LowerFunction(function.Signature, function.Effects, ffiSymbolNames);
+            functions[function.Name] = abiFunction;
+            ValidateFfiLinkageSignature(ffiLinkageSignatures, abiFunction, function.Signature.DeclarationLocation);
         }
 
         foreach (var module in _loadedModules.ImportedModules)
@@ -70,6 +75,7 @@ internal sealed class AbiLowerer
             foreach (var (qualifiedName, abiSignature) in packageImageFacts.AbiFunctions)
             {
                 functions[qualifiedName] = abiSignature;
+                ValidateFfiLinkageSignature(ffiLinkageSignatures, abiSignature, location: null);
             }
         }
 
@@ -105,6 +111,7 @@ internal sealed class AbiLowerer
             visibility,
             isFfi,
             isOverloaded,
+            function.ExternalLinkName,
             ffiSymbolNames);
 
         if (returnsIndirect)
@@ -149,7 +156,11 @@ internal sealed class AbiLowerer
                     ? llvmType
                     : StarkTypeSymbols.RawPointer(parameter.Type, isMutable: false),
                 Kind: kind,
-                RawPointerElementCountExpression: parameter.RawPointerElementCountExpression));
+                RawPointerElementCountExpression: parameter.RawPointerElementCountExpression,
+                LlvmParameterTypes: kind == AbiParameterKind.Direct && hasFfiParameterClassification
+                    && ffiParameterClassification!.EffectiveLlvmParameterTypes.Count > 1
+                    ? ffiParameterClassification.EffectiveLlvmParameterTypes
+                    : null));
         }
 
         if (effects.IsTailCallable)
@@ -220,6 +231,13 @@ internal sealed class AbiLowerer
             }
 
             var (_, sourceName, _) = ResolveFunctionIdentity(functionName);
+            if (_typeModel.Functions.TryGetValue(functionName, out var function)
+                && !string.IsNullOrWhiteSpace(function.ExternalLinkName))
+            {
+                symbols.Add(function.ExternalLinkName);
+                continue;
+            }
+
             symbols.Add(sourceName);
         }
 
@@ -231,7 +249,7 @@ internal sealed class AbiLowerer
             }
 
             var (_, sourceName, _) = ResolveFunctionIdentity(function.Name);
-            symbols.Add(sourceName);
+            symbols.Add(function.Signature.ExternalLinkName ?? sourceName);
         }
 
         foreach (var module in _loadedModules.ImportedModules)
@@ -340,6 +358,25 @@ internal sealed class AbiLowerer
         string SourceName,
         StarkVisibility Visibility);
 
+    private readonly record struct FfiLinkageKey(StarkFfiAbi Abi, string SymbolName)
+    {
+        public static IEqualityComparer<FfiLinkageKey> Comparer { get; } = new FfiLinkageKeyComparer();
+
+        private sealed class FfiLinkageKeyComparer : IEqualityComparer<FfiLinkageKey>
+        {
+            public bool Equals(FfiLinkageKey x, FfiLinkageKey y) =>
+                x.Abi == y.Abi
+                && string.Equals(x.SymbolName, y.SymbolName, StringComparison.Ordinal);
+
+            public int GetHashCode(FfiLinkageKey obj) =>
+                HashCode.Combine(obj.Abi, StringComparer.Ordinal.GetHashCode(obj.SymbolName));
+        }
+    }
+
+    private readonly record struct FfiLinkageSignature(
+        AbiFunctionSignature Signature,
+        SourceLocation? Location);
+
     private string ComputeSymbolName(
         string qualifiedName,
         string moduleName,
@@ -347,13 +384,14 @@ internal sealed class AbiLowerer
         StarkVisibility visibility,
         bool isFfi,
         bool isOverloaded,
+        string? externalLinkName,
         IReadOnlySet<string> ffiSymbolNames)
     {
         // FFI declarations must keep the external import name even when Stark
         // also declares local overloads with the same source name.
         if (isFfi)
         {
-            return sourceName;
+            return externalLinkName ?? sourceName;
         }
 
         if (qualifiedName.StartsWith("__stark_", StringComparison.Ordinal))
@@ -397,5 +435,110 @@ internal sealed class AbiLowerer
         }
 
         return sourceName;
+    }
+
+    private void ValidateFfiLinkageSignature(
+        Dictionary<FfiLinkageKey, FfiLinkageSignature> seen,
+        AbiFunctionSignature current,
+        SourceLocation? location)
+    {
+        if (!current.IsFfi)
+        {
+            return;
+        }
+
+        var key = new FfiLinkageKey(current.FfiAbi ?? StarkFfiAbi.C, current.SymbolName);
+        if (!seen.TryGetValue(key, out var previous))
+        {
+            seen.Add(key, new FfiLinkageSignature(current, location));
+            return;
+        }
+
+        if (AreFfiLinkageSignaturesCompatible(previous.Signature, current))
+        {
+            return;
+        }
+
+        _diagnostics.Error(
+            "STK4122",
+            $"FFI declarations '{previous.Signature.DisplaySourceName}' and '{current.DisplaySourceName}' both link to {StarkFfiAbiFacts.DisplayName(key.Abi)} symbol '{key.SymbolName}' but lower to incompatible LLVM ABI signatures. Use distinct [LinkName(\"...\")] values or make the declarations' return type, parameters, varargs marker, and FFI ABI exactly match.",
+            "lower-abi",
+            location ?? previous.Location ?? SourceLocation.Synthetic());
+    }
+
+    private static bool AreFfiLinkageSignaturesCompatible(
+        AbiFunctionSignature left,
+        AbiFunctionSignature right)
+    {
+        if ((left.FfiAbi ?? StarkFfiAbi.C) != (right.FfiAbi ?? StarkFfiAbi.C)
+            || left.IsVarargs != right.IsVarargs
+            || left.ReturnsIndirect != right.ReturnsIndirect
+            || !AbiTypesEqual(left.LlvmReturnType, right.LlvmReturnType)
+            || left.Parameters.Count != right.Parameters.Count)
+        {
+            return false;
+        }
+
+        for (var index = 0; index < left.Parameters.Count; index++)
+        {
+            var leftParameter = left.Parameters[index];
+            var rightParameter = right.Parameters[index];
+            if (leftParameter.Kind != rightParameter.Kind
+                || !AbiTypesEqual(leftParameter.LlvmType, rightParameter.LlvmType)
+                || !AbiTypeListsEqual(leftParameter.EffectiveLlvmParameterTypes, rightParameter.EffectiveLlvmParameterTypes))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool AbiTypeListsEqual(IReadOnlyList<StarkTypeSymbol> left, IReadOnlyList<StarkTypeSymbol> right)
+    {
+        if (left.Count != right.Count)
+        {
+            return false;
+        }
+
+        for (var index = 0; index < left.Count; index++)
+        {
+            if (!AbiTypesEqual(left[index], right[index]))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool AbiTypesEqual(StarkTypeSymbol left, StarkTypeSymbol right)
+    {
+        var normalizedLeft = NormalizeType(left);
+        var normalizedRight = NormalizeType(right);
+        if (normalizedLeft.Kind != normalizedRight.Kind)
+        {
+            return false;
+        }
+
+        return normalizedLeft.Kind switch
+        {
+            StarkTypeKind.LlvmVector => normalizedLeft.FixedLength == normalizedRight.FixedLength
+                && normalizedLeft.ElementType is not null
+                && normalizedRight.ElementType is not null
+                && AbiTypesEqual(normalizedLeft.ElementType, normalizedRight.ElementType),
+            StarkTypeKind.LlvmStruct => AbiTypeListsEqual(normalizedLeft.TypeArguments ?? [], normalizedRight.TypeArguments ?? []),
+            _ => normalizedLeft == normalizedRight
+        };
+    }
+
+    private static StarkTypeSymbol NormalizeType(StarkTypeSymbol type)
+    {
+        return StarkTypeSymbols.WithQualifiers(
+            type,
+            borrowKind: StarkBorrowKind.None,
+            accessKind: StarkAccessKind.None,
+            initializationKind: StarkInitializationKind.None,
+            isMutableView: false);
     }
 }

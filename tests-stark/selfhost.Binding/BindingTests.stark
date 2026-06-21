@@ -1,6 +1,7 @@
 import Compiler.Binding
 import Compiler.Parsing
 import Compiler.Lexing
+import Compiler.Ir
 import System.Testing
 import System.Text
 [Collection("binding")]
@@ -141,6 +142,195 @@ fn bool StaticDeclarationsUseDeclaredVariableName()
     return table.Count() == 1
         && LookupDeclaration(table, source, stream, "Global") != 0
         && LookupDeclaration(table, source, stream, "Widget") == 0;
+}
+
+[Fact]
+fn bool ValidLinkNameOnImportedFfiHasNoDiagnostic()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("[LinkName(\"native_value\")]\nunsafe ffi fn i32[min max] StarkValue();\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.InvalidLinkName) == 0
+        && diags.CountOf(BindDiagnosticCode.DuplicateLinkName) == 0;
+}
+
+[Fact]
+fn bool LinkNameOnOrdinaryFunctionIsInvalid()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("[LinkName(\"native_value\")]\nfn void StarkValue() { }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.InvalidLinkName) == 1;
+}
+
+[Fact]
+fn bool LinkNameRequiresNonEmptyStringArgument()
+{
+    stack mut BindDiagnosticList emptyDiags = new();
+    if (!BindSource("[LinkName(\"\")]\nunsafe ffi fn void EmptyAlias();\n", emptyDiags))
+    {
+        return false;
+    }
+
+    stack mut BindDiagnosticList nonStringDiags = new();
+    if (!BindSource("[LinkName(123)]\nunsafe ffi fn void NumericAlias();\n", nonStringDiags))
+    {
+        return false;
+    }
+
+    return emptyDiags.CountOf(BindDiagnosticCode.InvalidLinkName) == 1
+        && nonStringDiags.CountOf(BindDiagnosticCode.InvalidLinkName) == 1;
+}
+
+[Fact]
+fn bool DuplicateLinkNameAttributesAreRejected()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("[LinkName(\"native_one\")]\n[LinkName(\"native_two\")]\nunsafe ffi fn void Alias();\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.DuplicateLinkName) == 1
+        && diags.CountOf(BindDiagnosticCode.InvalidLinkName) == 0;
+}
+
+fn bool BuildCAbiBoundaries(ascii source, out CAbiAggregateBoundaryTable boundaries)
+{
+    boundaries = new();
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    stack mut DeclarationList decls = new();
+    switch (ParseDeclarations(stream, 0))
+    {
+        case ParseResult<DeclarationList>.Err(var declError):
+            return false;
+        case ParseResult<DeclarationList>.Ok(var parsedDecls):
+            decls = parsedDecls;
+    }
+
+    switch (BuildCAbiAggregateBoundaryTable(source, stream, decls))
+    {
+        case BindResult<CAbiAggregateBoundaryTable>.Err(var bindError):
+            return false;
+        case BindResult<CAbiAggregateBoundaryTable>.Ok(var built):
+            boundaries = built;
+            return true;
+    }
+}
+
+[Fact]
+fn bool CAbiAggregateBoundaryFactsClassifyRaylibShapes()
+{
+    stack ascii source = raw"""
+    [StructLayout(C)]
+    struct Vector2 { f32 X; f32 Y; }
+    [StructLayout(C)]
+    struct Vector3 { f32 X; f32 Y; f32 Z; }
+    [StructLayout(C)]
+    struct Vector4 { f32 X; f32 Y; f32 Z; f32 W; }
+    [StructLayout(C)]
+    struct Rectangle { f32 X; f32 Y; f32 Width; f32 Height; }
+    [StructLayout(C)]
+    struct Color { u8[0 max] R; u8[0 max] G; u8[0 max] B; u8[0 max] A; }
+
+    unsafe ffi(c) fn Vector2 NativeGetVector2();
+    unsafe ffi(c) fn Vector3 NativeGetVector3();
+    unsafe ffi(c) fn void NativeDraw(Rectangle rec, Vector2 origin, Color tint);
+    unsafe ffi(c) fn void NativeTakeVector4(Vector4 value);
+    """;
+
+    stack mut CAbiAggregateBoundaryTable boundaries = new();
+    if (!BuildCAbiBoundaries(source, boundaries))
+    {
+        return false;
+    }
+
+    if (boundaries.Count() != 6)
+    {
+        return false;
+    }
+
+    stack CAbiAggregateCarrierFacts vector2Return = boundaries.FactsAt(0);
+    stack CAbiAggregateCarrierFacts vector3Return = boundaries.FactsAt(1);
+    stack CAbiAggregateCarrierFacts rectangleParam = boundaries.FactsAt(2);
+    stack CAbiAggregateCarrierFacts vector2Param = boundaries.FactsAt(3);
+    stack CAbiAggregateCarrierFacts colorParam = boundaries.FactsAt(4);
+    stack CAbiAggregateCarrierFacts vector4Param = boundaries.FactsAt(5);
+
+    return boundaries.KindAt(0) == CAbiAggregateBoundaryKind.Return
+        && vector2Return.IsDirect()
+        && vector2Return.LlvmParameterCarrierCount() == 1
+        && vector2Return.CarrierKindAt(0) == AbiCarrierKind.Vector2F32
+        && !vector2Return.ReturnCarrierIsLlvmStruct()
+        && boundaries.KindAt(1) == CAbiAggregateBoundaryKind.Return
+        && vector3Return.IsDirect()
+        && vector3Return.LlvmParameterCarrierCount() == 2
+        && vector3Return.ReturnCarrierIsLlvmStruct()
+        && vector3Return.CarrierKindAt(0) == AbiCarrierKind.Vector2F32
+        && vector3Return.CarrierKindAt(1) == AbiCarrierKind.F32
+        && boundaries.KindAt(2) == CAbiAggregateBoundaryKind.Parameter
+        && boundaries.ParamIndexAt(2) == 0
+        && rectangleParam.IsDirect()
+        && rectangleParam.LlvmParameterCarrierCount() == 2
+        && rectangleParam.CarrierKindAt(0) == AbiCarrierKind.Vector2F32
+        && rectangleParam.CarrierKindAt(1) == AbiCarrierKind.Vector2F32
+        && vector2Param.IsDirect()
+        && vector2Param.LlvmParameterCarrierCount() == 1
+        && vector2Param.CarrierKindAt(0) == AbiCarrierKind.Vector2F32
+        && colorParam.IsDirect()
+        && colorParam.LlvmParameterCarrierCount() == 1
+        && colorParam.CarrierKindAt(0) == AbiCarrierKind.I32
+        && vector4Param.IsDirect()
+        && vector4Param.LlvmParameterCarrierCount() == 2
+        && vector4Param.CarrierKindAt(0) == AbiCarrierKind.Vector2F32
+        && vector4Param.CarrierKindAt(1) == AbiCarrierKind.Vector2F32;
+}
+
+[Fact]
+fn bool CAbiAggregateBoundaryFactsMarkLargeAggregatesIndirect()
+{
+    stack ascii source = raw"""
+    [StructLayout(C)]
+    struct Matrix
+    {
+        f32 M0; f32 M1; f32 M2; f32 M3;
+        f32 M4; f32 M5; f32 M6; f32 M7;
+        f32 M8; f32 M9; f32 M10; f32 M11;
+        f32 M12; f32 M13; f32 M14; f32 M15;
+    }
+
+    unsafe ffi(c) fn Matrix NativeMakeMatrix();
+    unsafe ffi(c) fn void NativeTakeMatrix(Matrix matrix);
+    """;
+
+    stack mut CAbiAggregateBoundaryTable boundaries = new();
+    if (!BuildCAbiBoundaries(source, boundaries))
+    {
+        return false;
+    }
+
+    if (boundaries.Count() != 2)
+    {
+        return false;
+    }
+
+    stack CAbiAggregateCarrierFacts returnFacts = boundaries.FactsAt(0);
+    stack CAbiAggregateCarrierFacts paramFacts = boundaries.FactsAt(1);
+    return returnFacts.IsIndirect()
+        && returnFacts.ByteSize() == 64
+        && paramFacts.IsIndirect()
+        && paramFacts.ByteSize() == 64;
 }
 
 // Finds the keyword token of the sole function declaration in an already-lexed

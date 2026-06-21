@@ -13655,6 +13655,13 @@ fn bool BackendOpaqueCallableAttributesRejectDuplicates()
 
 [Fact]
 [Collection("diagnostics", "compiler-pipeline-syntax-model")]
+fn bool InvalidLinkNameAttributesReportTargetedDiagnostics()
+{
+    return InvalidLinkNameAttributesReportTargetedDiagnosticsImpl();
+}
+
+[Fact]
+[Collection("diagnostics", "compiler-pipeline-syntax-model")]
 fn bool BackendOpaqueTypeAndContractAttributesReportDiagnostics()
 {
     return BackendOpaqueTypeAndContractAttributesReportDiagnosticsImpl();

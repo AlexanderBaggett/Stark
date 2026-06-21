@@ -286,6 +286,108 @@ public sealed class PackageImageCliToolingTests
     }
 
     [Fact]
+    public async Task EmitExecutableLinksImportedPackageNativeSourceThroughFfiLinkName()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
+        {
+            return;
+        }
+
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-cli-pkg-native-link-name-");
+        var packageSourcePath = Path.Combine(tempDirectory.FullName, "NativeAlias.stark");
+        var nativeSourcePath = Path.Combine(tempDirectory.FullName, "NativeAlias.c");
+        var libraryPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "NativeAlias.lib" : "libNativeAlias.a");
+        var appPath = Path.Combine(tempDirectory.FullName, "App.stark");
+        var executablePath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "app.exe" : "app");
+
+        await File.WriteAllTextAsync(
+            packageSourcePath,
+            """
+            module NativeAlias
+
+            [LinkName("native_real_value")]
+            internal unsafe ffi(c) fn i32[min max] StarkNativeValue();
+
+            public fn i32[min max] GetValue()
+            {
+                unsafe
+                {
+                    return StarkNativeValue();
+                }
+            }
+            """);
+        await File.WriteAllTextAsync(
+            nativeSourcePath,
+            """
+            int native_real_value(void) {
+                return 43;
+            }
+            """);
+        await File.WriteAllTextAsync(
+            appPath,
+            """
+            import NativeAlias
+            module App
+
+            export fn i32[min max] main()
+            {
+                return GetValue();
+            }
+            """);
+
+        try
+        {
+            var emitStdout = new StringWriter();
+            var emitStderr = new StringWriter();
+            var emitExitCode = await CompilerCli.RunAsync(
+                [packageSourcePath, "--emit-lib", "-o", libraryPath, "--native-source", nativeSourcePath],
+                new StringReader(string.Empty),
+                emitStdout,
+                emitStderr);
+
+            Assert.True(emitExitCode == 0, emitStderr.ToString());
+            Assert.Contains("Emitted static library:", emitStdout.ToString(), StringComparison.Ordinal);
+            File.Delete(packageSourcePath);
+
+            var compileStdout = new StringWriter();
+            var compileStderr = new StringWriter();
+            var compileExitCode = await CompilerCli.RunAsync(
+                [appPath, "--emit-exe", "-I", tempDirectory.FullName, "-o", executablePath],
+                new StringReader(string.Empty),
+                compileStdout,
+                compileStderr);
+
+            Assert.True(compileExitCode == 0, compileStderr.ToString());
+            Assert.Contains("Emitted executable:", compileStdout.ToString(), StringComparison.Ordinal);
+
+            using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = executablePath,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            });
+
+            Assert.NotNull(process);
+            await process!.WaitForExitAsync();
+
+            Assert.Equal(43, process.ExitCode);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
     public async Task EmitExecutableCopiesWindowsPackageRuntimeDllsBesideOutput()
     {
         if (!OperatingSystem.IsWindows() || !NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))

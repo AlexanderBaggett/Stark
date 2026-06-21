@@ -1,0 +1,18 @@
+[project]
+name = "selfhost-c-abi-aggregate-tests"
+version = "0.1.0"
+kind = "test"
+
+[test]
+root = "CAbiAggregateTests.stark"
+output = "selfhost-c-abi-aggregate-tests"
+
+[dependencies]
+stark-compiler = { path = "../../selfhost" }
+stdlib = { path = "../../stdlib" }
+
+[profiles.dev]
+opt = 0
+
+[profiles.release]
+opt = 3

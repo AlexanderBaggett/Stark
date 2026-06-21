@@ -126,6 +126,20 @@
     "documentation": "Declares an assembly-backed Stark function."
   },
   {
+    "label": "LinkName",
+    "insertText": "[LinkName(\"${1:foreign_symbol}\")]\nunsafe ffi(c) fn ${2:i32[min max]} ${3:LocalName}(${4});",
+    "kind": "snippet",
+    "detail": "FFI external symbol attribute",
+    "documentation": "Declares an imported FFI function whose Stark source name differs from the foreign linker symbol."
+  },
+  {
+    "label": "StructLayout C FFI",
+    "insertText": "[StructLayout(C)]\npublic struct ${1:NativeStruct}\n{\n\tpublic ${2:f32} ${3:X};\n\tpublic ${4:f32} ${5:Y};\n}\n\n[LinkName(\"${6:NativeSymbol}\")]\nunsafe ffi(c) fn ${1:NativeStruct} ${7:LocalName}(${8});",
+    "kind": "snippet",
+    "detail": "C aggregate FFI declaration",
+    "documentation": "Declares a C-layout aggregate and a direct by-value FFI declaration that lowers through the target C ABI carrier."
+  },
+  {
     "label": "stack",
     "insertText": "stack ${1:mut }${2:i32[0 max]} ${3:name} = ${4:0};",
     "kind": "keyword",

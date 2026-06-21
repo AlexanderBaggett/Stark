@@ -90,27 +90,27 @@ internal finite law bool IsBooleanOperator(TokenKind kind)
 public fn ExprType ClassifyExprType(borrow TokenStream stream, borrow StatementList body, u32[0 max] node)
 {
     stack ExprKind kind = body.ExprKindAt(node);
-    if (kind == ExprKind.IntLiteral)
+    if (kind == Compiler.Parsing.ExprKind.IntLiteral)
     {
         return ExprType.Int;
     }
 
-    if (kind == ExprKind.FloatLiteral)
+    if (kind == Compiler.Parsing.ExprKind.FloatLiteral)
     {
         return ExprType.Float;
     }
 
-    if (kind == ExprKind.BoolLiteral)
+    if (kind == Compiler.Parsing.ExprKind.BoolLiteral)
     {
         return ExprType.Bool;
     }
 
-    if (kind == ExprKind.NullLiteral)
+    if (kind == Compiler.Parsing.ExprKind.NullLiteral)
     {
         return ExprType.Null;
     }
 
-    if (kind == ExprKind.Binary)
+    if (kind == Compiler.Parsing.ExprKind.Binary)
     {
         stack u32[0 max] opToken = body.ExprTokenAt(node);
         stack TokenKind op = stream.KindAt((u64[0 2 ** 63 - 1])opToken);
@@ -145,7 +145,7 @@ public fn ExprType ClassifyExprType(borrow TokenStream stream, borrow StatementL
         return ExprType.Int;
     }
 
-    if (kind == ExprKind.Unary)
+    if (kind == Compiler.Parsing.ExprKind.Unary)
     {
         stack TokenKind op = stream.KindAt((u64[0 2 ** 63 - 1])body.ExprTokenAt(node));
         if (op == TokenKind.Bang)
@@ -156,7 +156,7 @@ public fn ExprType ClassifyExprType(borrow TokenStream stream, borrow StatementL
         return ClassifyExprType(stream, body, body.ExprLeftAt(node));
     }
 
-    if (kind == ExprKind.Conditional)
+    if (kind == Compiler.Parsing.ExprKind.Conditional)
     {
         // `cond ? then : else` — the value type is the then-branch's type.
         return ClassifyExprType(stream, body, body.ExprRightAt(node));

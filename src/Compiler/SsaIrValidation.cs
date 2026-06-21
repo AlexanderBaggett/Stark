@@ -1185,12 +1185,15 @@ internal sealed class SsaIrValidator
             switch (abiParameter.Kind)
             {
                 case AbiParameterKind.Direct:
-                    ValidateValueShape(
-                        function,
-                        abiParameter.SourceType,
-                        abiParameter.LlvmType,
-                        $"function '{function.Name}' ABI parameter {index + 1} direct LLVM type",
-                        location);
+                    if (!CAbiAggregateClassifier.IsCarrierType(abiParameter.SourceType, abiParameter.LlvmType))
+                    {
+                        ValidateValueShape(
+                            function,
+                            abiParameter.SourceType,
+                            abiParameter.LlvmType,
+                            $"function '{function.Name}' ABI parameter {index + 1} direct LLVM type",
+                            location);
+                    }
                     break;
                 case AbiParameterKind.IndirectIn:
                     ValidateRawPointerType(function, abiParameter.LlvmType, $"function '{function.Name}' ABI parameter {index + 1} indirect LLVM type", location);
@@ -1210,6 +1213,11 @@ internal sealed class SsaIrValidator
         SourceLocation? location)
     {
         if (IsReturnCompatible(function.ReturnType, llvmReturnType))
+        {
+            return;
+        }
+
+        if (CAbiAggregateClassifier.IsCarrierType(function.ReturnType, llvmReturnType))
         {
             return;
         }
@@ -4306,6 +4314,8 @@ internal sealed class SsaIrValidator
             StarkTypeKind.Float when type.BitWidth == 80 => "x86_fp80",
             StarkTypeKind.Float when type.BitWidth == 128 => "fp128",
             StarkTypeKind.RawPointer or StarkTypeKind.FunctionPointer or StarkTypeKind.Null => "ptr",
+            StarkTypeKind.LlvmVector when type.ElementType is not null && type.FixedLength is int vectorLength => $"<{vectorLength} x {MapValidationLlvmType(type.ElementType)}>",
+            StarkTypeKind.LlvmStruct when type.TypeArguments is { Count: > 0 } fields => $"{{ {string.Join(", ", fields.Select(MapValidationLlvmType))} }}",
             StarkTypeKind.Closure => type.ClosureStorageKind == StarkClosureStorageKind.Heap
                 ? "{ ptr, ptr, ptr }"
                 : "{ ptr, ptr }",

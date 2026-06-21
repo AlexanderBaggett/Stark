@@ -8,4 +8,4 @@ root = "BreakoutRaylib.stark"
 output = "breakout-raylib"
 
 [dependencies]
-raylib = { path = "../raylib" }
+vendor = { path = "../../vendor" }
