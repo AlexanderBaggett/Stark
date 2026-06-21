@@ -73,6 +73,7 @@ import ParserEdgeCaseTests
 import ParserSmokeTests
 import ProjectCliTests
 import RawMultilineStringParityTests
+import RecursiveInlineLayoutValidationTests
 import SemanticValidationTests
 import StandardLibrarySourceTests
 import StructLayoutInteropRuntimeTests
@@ -13832,6 +13833,41 @@ fn bool ReadingScalarFieldBeforeAssignmentIsAllowed()
 fn bool FieldAssignedOnAnyEarlierPathIsNotFlagged()
 {
     return FieldAssignedOnAnyEarlierPathIsNotFlaggedImpl();
+}
+
+[Fact]
+[Collection("diagnostics", "recursive-inline-layout")]
+fn bool DirectRecursiveStructFieldIsRejected()
+{
+    return DirectRecursiveStructFieldIsRejectedImpl();
+}
+
+[Fact]
+[Collection("diagnostics", "recursive-inline-layout")]
+fn bool MutuallyRecursiveStructFieldsAreRejected()
+{
+    return MutuallyRecursiveStructFieldsAreRejectedImpl();
+}
+
+[Fact]
+[Collection("diagnostics", "recursive-inline-layout")]
+fn bool RecursiveEnumPayloadIsRejected()
+{
+    return RecursiveEnumPayloadIsRejectedImpl();
+}
+
+[Fact]
+[Collection("diagnostics", "recursive-inline-layout")]
+fn bool GenericInlineRecursionAtUseSiteIsRejected()
+{
+    return GenericInlineRecursionAtUseSiteIsRejectedImpl();
+}
+
+[Fact]
+[Collection("diagnostics", "recursive-inline-layout")]
+fn bool PointerAndDynamicSelfReferencesAreAllowed()
+{
+    return PointerAndDynamicSelfReferencesAreAllowedImpl();
 }
 
 [Fact]

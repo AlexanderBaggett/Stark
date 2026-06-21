@@ -74,6 +74,97 @@ public sealed class FunctionSemanticsTests
     }
 
     [Fact]
+    public void DirectRecursiveFnWithoutTailBecomeSucceedsWithWarning()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[min max] Recur(i32[min max] value)
+            {
+                return Recur(value);
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "semantic-validate"));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var warning = Assert.Single(result.Diagnostics, static diagnostic => diagnostic.Code == "STK4122");
+        Assert.Equal(DiagnosticSeverity.Warning, warning.Severity);
+        Assert.Equal("semantic-validate", warning.Stage);
+        Assert.Contains("ordinary call semantics", warning.Message, StringComparison.Ordinal);
+        Assert.Contains("tail", warning.Message, StringComparison.Ordinal);
+        Assert.Contains("become", warning.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void MutualOrdinaryRecursionWarnsOnBothEdges()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[min max] Left(i32[min max] value)
+            {
+                return Right(value);
+            }
+
+            fn i32[min max] Right(i32[min max] value)
+            {
+                return Left(value);
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "semantic-validate"));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.Equal(2, result.Diagnostics.Count(static diagnostic => diagnostic.Code == "STK4122"));
+        Assert.Contains(result.Diagnostics, static diagnostic => diagnostic.Code == "STK4122" && diagnostic.Message.Contains("'Left' to 'Right'", StringComparison.Ordinal));
+        Assert.Contains(result.Diagnostics, static diagnostic => diagnostic.Code == "STK4122" && diagnostic.Message.Contains("'Right' to 'Left'", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void TailBecomeRecursionDoesNotWarn()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            tail fn i32[min max] Left(i32[min max] value)
+            {
+                become Right(value);
+            }
+
+            tail fn i32[min max] Right(i32[min max] value)
+            {
+                become Left(value);
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "semantic-validate"));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.DoesNotContain(result.Diagnostics, static diagnostic => diagnostic.Code == "STK4122");
+    }
+
+    [Fact]
+    public void FiniteRecursiveCallCycleStillErrors()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            finite void Recur()
+            {
+                Recur();
+                return;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "semantic-validate"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(result.Diagnostics, static diagnostic => diagnostic.Code == "STK4108" && diagnostic.Severity == DiagnosticSeverity.Error);
+        Assert.DoesNotContain(result.Diagnostics, static diagnostic => diagnostic.Code == "STK4122");
+    }
+
+    [Fact]
     public void LawFunctionsRejectPlainFunctionPointerCalls()
     {
         var result = Compile(

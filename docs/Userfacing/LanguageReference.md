@@ -1277,6 +1277,45 @@ For the full borrowing model and design rationale, see [BorrowerSystem.md](./Bor
 
 `record` declarations do not support inheritance.
 
+### 8.2.1 Recursive Inline Layout
+
+A `struct`, `record`, or `enum` payload may not contain itself through only
+by-value inline storage. The compiler rejects direct and mutual inline layout
+cycles because such a type would have infinite size.
+
+```stark
+struct Bad
+{
+    Bad Next; // error: recursive inline layout
+}
+
+struct AlsoBad
+{
+    Wrapper<AlsoBad> Value; // error if Wrapper<T> stores T inline
+}
+
+enum List
+{
+    Empty,
+    Cons(List), // error: recursive inline enum payload
+}
+```
+
+Use an explicit indirection or out-of-line owner for recursive data:
+
+```stark
+struct Node
+{
+    rawmutptr<Node> Next;      // explicit raw-pointer indirection
+    dynamic Node Children;     // owned out-of-line element storage
+}
+```
+
+`dynamic T`, slices, borrows, raw pointers, function pointers, closures, and
+trait-object handles have fixed-size stored representations and therefore break
+the inline layout chain. The element or pointee type is still type checked; it
+is simply not stored inline inside the containing aggregate.
+
 ### 8.3 Destructors
 
 `struct` and `record` declarations may declare one destructor block.

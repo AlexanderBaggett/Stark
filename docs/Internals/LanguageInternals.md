@@ -337,6 +337,40 @@ Const parameters produce these backend facts:
 
 Const does not imply local disjointness. Multiple local const views may alias the same immutable object graph. Memory-backed function parameters remain non-overlapping by default unless the callee declares `where overlap(...)` or `where same(...)`; the compiler emits `noalias` only when the resulting parameter contract and call-site proof make the fact sound.
 
+### 2.8 Concrete Inline Layout Validation
+
+Named aggregate lowering requires a finite concrete layout before MIR, ABI, or
+LLVM IR emission can safely materialize storage, zero constants, field offsets,
+drop order, or aggregate LLVM types. The type checker therefore rejects
+recursive inline-layout cycles with `STK3056`.
+
+The layout-cycle walk follows source-resolved storage edges:
+
+- `struct` and `record` fields are inline edges
+- enum tuple payloads, named payload fields, and `from` payloads are inline
+  edges from the enum to the payload type
+- fixed arrays are inline edges to their element type
+- generic aggregate fields are checked after substituting the concrete type
+  arguments at the use site, so `Node -> Box<Node> -> Node` is rejected when
+  `Box<T>` stores `T` inline
+
+Pointer-like or out-of-line representations stop the inline walk:
+
+- `rawptr<T>` and `rawmutptr<T>`
+- safe borrows and initialization destinations
+- slices, text views, function pointers, closures, and dyn-trait handles
+- `dynamic T`, whose stored owner/header is fixed-size while its elements live
+  in backing storage
+
+After this validation succeeds, aggregate layout code can assume every accepted
+named struct, record, enum payload graph, and generic instantiation has finite
+inline size. `ConcreteTypeLayoutHelper` still treats unresolved or cyclic layout
+queries as non-computable for defensive package/layout facts, but user-reachable
+recursive by-value layout is a front-end diagnostic rather than a lowering
+failure. LLVM type emission should only see finite aggregate bodies; recursive
+source data structures must cross an explicit indirection boundary before they
+reach LLVM representation selection.
+
 ## 3. Internal ABI and FFI Boundaries
 
 At the source level, `ffi` marks a foreign-facing function boundary.
