@@ -2287,6 +2287,161 @@ fn bool AcceptsWellFormedBecome()
 }
 
 [Fact]
+fn bool DirectRuntimeRecursionBindsWithoutErrors()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("fn i32 recur(i32 x) { return recur(x); }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.ErrorCount() == 0;
+}
+
+[Fact]
+fn bool DirectRecursiveReturnCallReferencesFunctionDeclaration()
+{
+    stack ascii source = "fn i32 recur(i32 x) { return recur(x); }\n";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    stack mut DeclarationList decls = new();
+    switch (ParseDeclarations(stream, 0))
+    {
+        case ParseResult<DeclarationList>.Err(var declError):
+            return false;
+        case ParseResult<DeclarationList>.Ok(var value):
+            decls = value;
+    }
+
+    stack mut DeclarationTable table = new();
+    switch (BuildDeclarationTable(source, stream, decls))
+    {
+        case BindResult<DeclarationTable>.Err(var tableError):
+            return false;
+        case BindResult<DeclarationTable>.Ok(var built):
+            table = built;
+    }
+
+    stack mut u32[0 max] fnKeyword = 0;
+    if (!FunctionKeywordIn(stream, fnKeyword))
+    {
+        return false;
+    }
+
+    switch (ParseFunctionSignature(stream, fnKeyword))
+    {
+        case ParseResult<FunctionSignature>.Err(var sigError):
+            return false;
+        case ParseResult<FunctionSignature>.Ok(var signature):
+            switch (ParseFunctionBody(stream, fnKeyword))
+            {
+                case ParseResult<StatementList>.Err(var bodyError):
+                    return false;
+                case ParseResult<StatementList>.Ok(var body):
+                    switch (BuildFunctionScope(signature, body))
+                    {
+                        case BindResult<FunctionScope>.Err(var scopeError):
+                            return false;
+                        case BindResult<FunctionScope>.Ok(var scope):
+                            switch (ResolveReferences(scope, table, source, stream, body))
+                            {
+                                case BindResult<ReferenceTable>.Err(var refError):
+                                    return false;
+                                case BindResult<ReferenceTable>.Ok(var refs):
+                                    stack u32[0 max] root = body.ExprRootAt(0);
+                                    stack u32[0 max] callee = body.ExprLeftAt(root);
+                                    stack mut bool declarationTargetMatches = false;
+                                    stack u64[0 2 ** 63 - 1] refCount = refs.Count();
+                                    for willexit (stack mut u64[0 2 ** 63 - 1] refIndex = 0; refIndex < refCount; refIndex += 1)
+                                    {
+                                        if (!declarationTargetMatches)
+                                        {
+                                            stack ascii name = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])refs.NameTokenAt(refIndex));
+                                            if (System.Text.Equals(name, "recur")
+                                                && refs.KindAt(refIndex) == ReferenceKind.Declaration
+                                                && refs.TargetAt(refIndex) == 1)
+                                            {
+                                                declarationTargetMatches = true;
+                                            }
+                                        }
+                                    }
+
+                                    return body.Count() == 1
+                                        && body.ExprNodeCount() == 3
+                                        && table.Count() == 1
+                                        && table.KindAt(0) == DeclarationKind.Function
+                                        && !signature.FiniteKind()
+                                        && root != 0
+                                        && body.ExprKindAt(root) == ExprKind.Call
+                                        && body.ExprCallArgCountAt(root) == 1
+                                        && callee != 0
+                                        && body.ExprKindAt(callee) == ExprKind.Identifier
+                                        && declarationTargetMatches;
+                            }
+                    }
+            }
+    }
+}
+
+[Fact]
+fn bool DirectRuntimeRecursionCollectsWarningCode()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("fn i32 recur(i32 x) { return recur(x); }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.RuntimeRecursionWithoutTailBecome) == 1;
+}
+
+[Fact]
+fn bool DirectRuntimeRecursionIsWarning()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("fn i32 recur(i32 x) { return recur(x); }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.RuntimeRecursionWithoutTailBecome) == 1
+        && diags.WarningCount() == 1
+        && diags.ErrorCount() == 0
+        && diags.SeverityAt(0) == BindDiagnosticSeverity.Warning;
+}
+
+[Fact]
+fn bool MutualRuntimeRecursionIsWarning()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("fn i32 left(i32 x) { return right(x); }\nfn i32 right(i32 x) { return left(x); }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.RuntimeRecursionWithoutTailBecome) == 2
+        && diags.WarningCount() == 2
+        && diags.ErrorCount() == 0;
+}
+
+[Fact]
+fn bool TailBecomeRuntimeRecursionDoesNotWarn()
+{
+    stack mut BindDiagnosticList diags = new();
+    if (!BindSource("tail fn i32 loop(i32 x) { become loop(x); }\n", diags))
+    {
+        return false;
+    }
+
+    return diags.CountOf(BindDiagnosticCode.RuntimeRecursionWithoutTailBecome) == 0
+        && diags.Count() == 0;
+}
+
+[Fact]
 fn bool FlagsBecomeOutsideTailFunction()
 {
     stack ascii source = "tail fn i32 done(i32 x) { return x; }\nfn i32 bad(i32 x) { become done(x); }\n";

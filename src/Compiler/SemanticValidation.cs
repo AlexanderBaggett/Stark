@@ -24,6 +24,7 @@ internal sealed class SemanticValidator
     private readonly IReadOnlyDictionary<ObjectCreationKey, ObjectCreationTypingRecord> _objectCreations;
     private readonly Dictionary<string, FunctionValidationBuilder> _summaries = new(StringComparer.Ordinal);
     private readonly Dictionary<string, FunctionValidationBuilder> _destructorSummaries = new(StringComparer.Ordinal);
+    private readonly HashSet<int> _tailTransferCallArgumentTokenIndexes = new();
     private ISet<string>? _currentFunctionGenericParameters;
     private IReadOnlyDictionary<string, ComptimeGenericParameterSymbol>? _currentFunctionComptimeGenericParameters;
     private string? _currentFunctionName;
@@ -1554,15 +1555,32 @@ internal sealed class SemanticValidator
 
         if (statement.becomeStatement() is { } becomeStatement)
         {
-            var returnedValue = EvaluateExpression(
-                becomeStatement.expression(),
-                scope,
-                function,
-                effects,
-                summary,
-                allowFunctionReference: false,
-                ExpressionObservation.Read);
-            RecordReturnCapture(returnedValue, function, summary);
+            var rootCallArgumentTokenIndex = TryGetRootCallArgumentToken(becomeStatement.expression())?.TokenIndex;
+            if (rootCallArgumentTokenIndex is { } tailCallArgumentTokenIndex)
+            {
+                _tailTransferCallArgumentTokenIndexes.Add(tailCallArgumentTokenIndex);
+            }
+
+            try
+            {
+                var returnedValue = EvaluateExpression(
+                    becomeStatement.expression(),
+                    scope,
+                    function,
+                    effects,
+                    summary,
+                    allowFunctionReference: false,
+                    ExpressionObservation.Read);
+                RecordReturnCapture(returnedValue, function, summary);
+            }
+            finally
+            {
+                if (rootCallArgumentTokenIndex is { } tailCallArgumentTokenIndexToRemove)
+                {
+                    _tailTransferCallArgumentTokenIndexes.Remove(tailCallArgumentTokenIndexToRemove);
+                }
+            }
+
             return;
         }
 
@@ -1977,7 +1995,7 @@ internal sealed class SemanticValidator
             summary.CalledFunctions.Add(signature.Name);
         }
 
-        summary.PendingCalls.Add(new PendingCall(signature.Name, [], context.Start));
+        summary.PendingCalls.Add(new PendingCall(signature.Name, [], context.Start, IsTailTransfer: false));
         return true;
     }
 
@@ -2143,6 +2161,26 @@ internal sealed class SemanticValidator
     {
         return TryGetSimpleUnaryExpression(expression) is { } unary
             ? TryGetSimplePostfixExpression(unary)
+            : null;
+    }
+
+    private static IToken? TryGetRootCallArgumentToken(StarkParser.ExpressionContext expression)
+    {
+        return TryGetSimplePostfixExpression(expression) is { } postfix
+            ? TryGetRootCallArgumentToken(postfix)
+            : null;
+    }
+
+    private static IToken? TryGetRootCallArgumentToken(StarkParser.PostfixExpressionContext expression)
+    {
+        var parts = expression.postfixPart();
+        if (parts.Length > 0)
+        {
+            return parts[^1].argumentList()?.Start;
+        }
+
+        return expression.primaryExpression().expression() is { } parenthesized
+            ? TryGetRootCallArgumentToken(parenthesized)
             : null;
     }
 
@@ -2454,7 +2492,7 @@ internal sealed class SemanticValidator
                 summary.CalledFunctions.Add(concatSignature.Name);
             }
 
-            summary.PendingCalls.Add(new PendingCall(concatSignature.Name, [], context.Start));
+            summary.PendingCalls.Add(new PendingCall(concatSignature.Name, [], context.Start, IsTailTransfer: false));
             result = new ValidationValue(viewType, NamedType: ResolveNamedTypeSymbol(viewType));
             return true;
         }
@@ -2489,7 +2527,7 @@ internal sealed class SemanticValidator
             summary.CalledFunctions.Add(signature.Name);
         }
 
-        summary.PendingCalls.Add(new PendingCall(signature.Name, [], context.Start));
+        summary.PendingCalls.Add(new PendingCall(signature.Name, [], context.Start, IsTailTransfer: false));
         result = new ValidationValue(signature.ReturnType, NamedType: ResolveNamedTypeSymbol(signature.ReturnType));
         return true;
     }
@@ -3925,7 +3963,8 @@ internal sealed class SemanticValidator
                 summary.PendingCalls.Add(new PendingCall(
                     target.Function.Name,
                     BuildPendingCallArguments(target, argumentValues, receiverOffset, explicitParameterCount),
-                    arguments.Start));
+                    arguments.Start,
+                    IsTailTransferCall(arguments)));
                 return new ValidationValue(target.Function.ReturnType, NamedType: ResolveNamedTypeSymbol(target.Function.ReturnType));
             }
 
@@ -3961,9 +4000,15 @@ internal sealed class SemanticValidator
         summary.PendingCalls.Add(new PendingCall(
             target.Function.Name,
             BuildPendingCallArguments(target, argumentValues, receiverOffset, explicitParameterCount),
-            arguments.Start));
+            arguments.Start,
+            IsTailTransferCall(arguments)));
 
         return BuildCallReturnValue(target, argumentValues, receiverOffset, explicitParameterCount);
+    }
+
+    private bool IsTailTransferCall(StarkParser.ArgumentListContext arguments)
+    {
+        return _tailTransferCallArgumentTokenIndexes.Contains(arguments.Start.TokenIndex);
     }
 
     /// <summary>
@@ -5563,6 +5608,62 @@ internal sealed class SemanticValidator
                 EffectError(summary, "STK4108", $"Finite function '{function}' participates in a recursive call cycle and cannot be proven finite.", declaration.NameToken);
             }
         }
+
+        WarnRuntimeRecursionWithoutGuaranteedTailTransfer();
+    }
+
+    private void WarnRuntimeRecursionWithoutGuaranteedTailTransfer()
+    {
+        foreach (var summary in _summaries.Values.Where(static summary => summary.HasBody))
+        {
+            if (FunctionKindFacts.IsFinite(summary.DeclaredKind))
+            {
+                continue;
+            }
+
+            foreach (var pendingCall in summary.PendingCalls)
+            {
+                if (pendingCall.IsTailTransfer
+                    || !_summaries.ContainsKey(pendingCall.CalleeName)
+                    || !HasOrdinaryRecursivePath(pendingCall.CalleeName, summary.Name, new HashSet<string>(StringComparer.Ordinal)))
+                {
+                    continue;
+                }
+
+                _context.Diagnostics.Warning(
+                    "STK4122",
+                    $"Recursive call from '{summary.Name}' to '{pendingCall.CalleeName}' uses ordinary call semantics and may grow the runtime stack. Use 'tail' plus 'become' for guaranteed stack-constant recursion.",
+                    "semantic-validate",
+                    Location(pendingCall.Location));
+            }
+        }
+    }
+
+    private bool HasOrdinaryRecursivePath(string startFunction, string targetFunction, HashSet<string> visited)
+    {
+        if (string.Equals(startFunction, targetFunction, StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        if (!visited.Add(startFunction)
+            || !_summaries.TryGetValue(startFunction, out var summary)
+            || !summary.HasBody)
+        {
+            return false;
+        }
+
+        foreach (var pendingCall in summary.PendingCalls)
+        {
+            if (!pendingCall.IsTailTransfer
+                && _summaries.ContainsKey(pendingCall.CalleeName)
+                && HasOrdinaryRecursivePath(pendingCall.CalleeName, targetFunction, visited))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private bool IsEffectiveLaw(string functionName, IReadOnlyDictionary<string, bool> effectiveLaw)
@@ -7636,7 +7737,8 @@ internal sealed class SemanticValidator
     private sealed record PendingCall(
         string CalleeName,
         IReadOnlyList<PendingCallArgument> Arguments,
-        IToken Location);
+        IToken Location,
+        bool IsTailTransfer);
 
     private sealed record PotentialDropType(
         StarkTypeSymbol Type,

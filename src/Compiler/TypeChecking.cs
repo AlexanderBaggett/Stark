@@ -210,6 +210,7 @@ internal sealed class TypeChecker
         CollectTypeAliasSources();
         CheckTypeAliasDeclarations();
         PopulateNamedTypeFields();
+        ValidateNamedTypeInlineLayoutCycles();
         BuildConstructorShapes();
         BuildFunctionSignatures();
         _canValidateDictionaryKeyConstraints = true;
@@ -796,6 +797,600 @@ internal sealed class TypeChecker
                 }
             }
         }
+    }
+
+    private sealed record InlineLayoutTypeFrame(string TypeKey, string DisplayName);
+
+    private sealed record InlineLayoutMemberFrame(string DisplayName, ParserRuleContext? Context);
+
+    private sealed record InlineLayoutMember(string DisplayName, StarkTypeSymbol Type, ParserRuleContext? Context);
+
+    private sealed record InlineLayoutCycle(
+        IReadOnlyList<string> TypePath,
+        IReadOnlyList<string> MemberPath,
+        ParserRuleContext? Context);
+
+    private void ValidateNamedTypeInlineLayoutCycles()
+    {
+        var memberContexts = BuildInlineLayoutMemberContextMap();
+        var knownFiniteTypes = new HashSet<string>(StringComparer.Ordinal);
+        var reportedCycles = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var (typeKey, namedType) in _namedTypes.OrderBy(static pair => pair.Key, StringComparer.Ordinal))
+        {
+            if (!IsInlineLayoutAggregateKind(namedType.Kind))
+            {
+                continue;
+            }
+
+            var activeTypes = new List<InlineLayoutTypeFrame>();
+            var activeTypeIndices = new Dictionary<string, int>(StringComparer.Ordinal);
+            var memberPath = new List<InlineLayoutMemberFrame>();
+
+            if (!TryFindInlineLayoutCycleInNamedType(
+                    typeKey,
+                    namedType,
+                    typeSubstitution: null,
+                    valueSubstitution: null,
+                    memberContexts,
+                    activeTypes,
+                    activeTypeIndices,
+                    memberPath,
+                    knownFiniteTypes,
+                    out var cycle))
+            {
+                continue;
+            }
+
+            var cycleKey = BuildInlineLayoutCycleKey(cycle);
+            if (!reportedCycles.Add(cycleKey))
+            {
+                continue;
+            }
+
+            var typePath = string.Join(" -> ", cycle.TypePath);
+            var memberPathText = cycle.MemberPath.Count == 0
+                ? "<unknown>"
+                : string.Join(" -> ", cycle.MemberPath);
+            var message = $"Recursive inline layout is not allowed: {typePath}. "
+                + $"The by-value storage chain is {memberPathText}. "
+                + "Struct, record, and enum payload storage must have a finite size; "
+                + "use an explicit indirection such as rawptr<T>, rawmutptr<T>, dynamic T, or another pointer-backed owner.";
+
+            if (cycle.Context is { } context)
+            {
+                ReportError("STK3056", message, context);
+            }
+            else
+            {
+                ReportError("STK3056", message, SourceLocation.Synthetic());
+            }
+        }
+    }
+
+    private Dictionary<string, ParserRuleContext> BuildInlineLayoutMemberContextMap()
+    {
+        var contexts = new Dictionary<string, ParserRuleContext>(StringComparer.Ordinal);
+        foreach (var module in _loadedModules.Modules.Values)
+        {
+            if (!module.Reference.IsRoot
+                && module.PackageImageFacts is { NamedTypes.Count: > 0 })
+            {
+                continue;
+            }
+
+            foreach (var declaration in module.ParseResult.Root.topLevelDeclaration())
+            {
+                if (declaration.structDeclaration() is { } structDeclaration)
+                {
+                    var ownerName = QualifyName(module, structDeclaration.Identifier().GetText());
+                    foreach (var member in structDeclaration.structBody().structMember())
+                    {
+                        if (member.fieldDeclaration() is { } field)
+                        {
+                            AddFieldInlineLayoutContexts(contexts, ownerName, field);
+                        }
+                    }
+
+                    continue;
+                }
+
+                if (declaration.recordDeclaration() is { } recordDeclaration)
+                {
+                    var ownerName = QualifyName(module, recordDeclaration.Identifier().GetText());
+                    if (recordDeclaration.primaryConstructorParameters() is { } primaryConstructor)
+                    {
+                        foreach (var parameter in primaryConstructor.parameterList().parameter())
+                        {
+                            contexts[InlineLayoutFieldContextKey(ownerName, parameter.Identifier().GetText())] = parameter.type_();
+                        }
+                    }
+
+                    foreach (var member in recordDeclaration.recordBody().recordMember())
+                    {
+                        if (member.fieldDeclaration() is { } field)
+                        {
+                            AddFieldInlineLayoutContexts(contexts, ownerName, field);
+                        }
+                    }
+
+                    continue;
+                }
+
+                if (declaration.enumDeclaration() is { } enumDeclaration)
+                {
+                    var ownerName = QualifyName(module, enumDeclaration.Identifier().GetText());
+                    foreach (var variant in enumDeclaration.enumBody().enumVariantDeclaration())
+                    {
+                        var payload = variant.enumVariantPayload();
+                        if (payload is null)
+                        {
+                            continue;
+                        }
+
+                        var variantName = variant.Identifier().GetText();
+                        if (payload.FROM() is not null)
+                        {
+                            contexts[InlineLayoutEnumFieldContextKey(ownerName, variantName, "0")] = payload.type_(0);
+                            continue;
+                        }
+
+                        if (payload.enumVariantFieldDeclaration().Length != 0)
+                        {
+                            foreach (var field in payload.enumVariantFieldDeclaration())
+                            {
+                                contexts[InlineLayoutEnumFieldContextKey(ownerName, variantName, field.Identifier().GetText())] = field.type_();
+                            }
+
+                            continue;
+                        }
+
+                        foreach (var (fieldType, index) in payload.type_().Select((fieldType, index) => (fieldType, index)))
+                        {
+                            contexts[InlineLayoutEnumFieldContextKey(ownerName, variantName, index.ToString(CultureInfo.InvariantCulture))] = fieldType;
+                        }
+                    }
+                }
+            }
+        }
+
+        return contexts;
+    }
+
+    private static void AddFieldInlineLayoutContexts(
+        Dictionary<string, ParserRuleContext> contexts,
+        string ownerName,
+        StarkParser.FieldDeclarationContext field)
+    {
+        foreach (var declarator in field.variableDeclarators().variableDeclarator())
+        {
+            contexts[InlineLayoutFieldContextKey(ownerName, declarator.Identifier().GetText())] = field.type_();
+        }
+    }
+
+    private bool TryFindInlineLayoutCycleInNamedType(
+        string typeKey,
+        NamedTypeSymbol namedType,
+        IReadOnlyDictionary<string, StarkTypeSymbol>? typeSubstitution,
+        IReadOnlyDictionary<string, BigInteger>? valueSubstitution,
+        IReadOnlyDictionary<string, ParserRuleContext> memberContexts,
+        List<InlineLayoutTypeFrame> activeTypes,
+        Dictionary<string, int> activeTypeIndices,
+        List<InlineLayoutMemberFrame> memberPath,
+        HashSet<string> knownFiniteTypes,
+        out InlineLayoutCycle cycle)
+    {
+        cycle = null!;
+        if (knownFiniteTypes.Contains(typeKey))
+        {
+            return false;
+        }
+
+        if (activeTypeIndices.TryGetValue(typeKey, out var cycleStart))
+        {
+            cycle = BuildInlineLayoutCycle(typeKey, cycleStart, activeTypes, memberPath);
+            return true;
+        }
+
+        if (!IsInlineLayoutAggregateKind(namedType.Kind))
+        {
+            knownFiniteTypes.Add(typeKey);
+            return false;
+        }
+
+        activeTypeIndices[typeKey] = activeTypes.Count;
+        activeTypes.Add(new InlineLayoutTypeFrame(typeKey, typeKey));
+
+        foreach (var member in EnumerateInlineLayoutMembers(typeKey, namedType, typeSubstitution, valueSubstitution, memberContexts))
+        {
+            memberPath.Add(new InlineLayoutMemberFrame(member.DisplayName, member.Context));
+            if (TryFindInlineLayoutCycleInType(
+                    member.Type,
+                    memberContexts,
+                    activeTypes,
+                    activeTypeIndices,
+                    memberPath,
+                    knownFiniteTypes,
+                    out cycle))
+            {
+                activeTypes.RemoveAt(activeTypes.Count - 1);
+                activeTypeIndices.Remove(typeKey);
+                return true;
+            }
+
+            memberPath.RemoveAt(memberPath.Count - 1);
+        }
+
+        activeTypes.RemoveAt(activeTypes.Count - 1);
+        activeTypeIndices.Remove(typeKey);
+        knownFiniteTypes.Add(typeKey);
+        return false;
+    }
+
+    private bool TryFindInlineLayoutCycleInType(
+        StarkTypeSymbol type,
+        IReadOnlyDictionary<string, ParserRuleContext> memberContexts,
+        List<InlineLayoutTypeFrame> activeTypes,
+        Dictionary<string, int> activeTypeIndices,
+        List<InlineLayoutMemberFrame> memberPath,
+        HashSet<string> knownFiniteTypes,
+        out InlineLayoutCycle cycle)
+    {
+        cycle = null!;
+        if (type.Kind == StarkTypeKind.Error
+            || type.BorrowKind != StarkBorrowKind.None
+            || type.InitializationKind != StarkInitializationKind.None)
+        {
+            return false;
+        }
+
+        var coreType = StarkTypeSymbols.WithQualifiers(
+            type,
+            borrowKind: StarkBorrowKind.None,
+            accessKind: StarkAccessKind.None,
+            initializationKind: StarkInitializationKind.None,
+            isMutableView: false);
+
+        if (coreType.Kind == StarkTypeKind.FixedArray && coreType.ElementType is { } elementType)
+        {
+            return TryFindInlineLayoutCycleInType(
+                elementType,
+                memberContexts,
+                activeTypes,
+                activeTypeIndices,
+                memberPath,
+                knownFiniteTypes,
+                out cycle);
+        }
+
+        if (coreType.Kind != StarkTypeKind.Named
+            || coreType.NamedType is not { } namedTypeName
+            || !TryResolveInlineLayoutNamedType(
+                coreType,
+                namedTypeName,
+                out var typeKey,
+                out var namedType,
+                out var typeSubstitution,
+                out var valueSubstitution))
+        {
+            return false;
+        }
+
+        return TryFindInlineLayoutCycleInNamedType(
+            typeKey,
+            namedType,
+            typeSubstitution,
+            valueSubstitution,
+            memberContexts,
+            activeTypes,
+            activeTypeIndices,
+            memberPath,
+            knownFiniteTypes,
+            out cycle);
+    }
+
+    private bool TryResolveInlineLayoutNamedType(
+        StarkTypeSymbol coreType,
+        string namedTypeName,
+        out string typeKey,
+        out NamedTypeSymbol namedType,
+        out IReadOnlyDictionary<string, StarkTypeSymbol>? typeSubstitution,
+        out IReadOnlyDictionary<string, BigInteger>? valueSubstitution)
+    {
+        typeKey = namedTypeName;
+        typeSubstitution = null;
+        valueSubstitution = null;
+
+        if (_namedTypes.TryGetValue(typeKey, out namedType!))
+        {
+            return true;
+        }
+
+        if (!StarkTypeSymbols.IsGenericInstantiation(coreType))
+        {
+            namedType = null!;
+            return false;
+        }
+
+        var baseName = StarkTypeSymbols.GetGenericBaseName(namedTypeName);
+        if (!_namedTypes.TryGetValue(baseName, out namedType!))
+        {
+            return false;
+        }
+
+        typeSubstitution = BuildInlineLayoutTypeSubstitution(namedType, coreType);
+        valueSubstitution = BuildInlineLayoutValueSubstitution(namedType, coreType);
+        return true;
+    }
+
+    private static IReadOnlyDictionary<string, StarkTypeSymbol>? BuildInlineLayoutTypeSubstitution(
+        NamedTypeSymbol template,
+        StarkTypeSymbol genericInstance)
+    {
+        if (template.GenericParams.Count == 0)
+        {
+            return null;
+        }
+
+        var typeArguments = genericInstance.TypeArguments ?? [];
+        if (template.GenericParams.Count != typeArguments.Count)
+        {
+            return null;
+        }
+
+        var substitution = new Dictionary<string, StarkTypeSymbol>(StringComparer.Ordinal);
+        for (var index = 0; index < template.GenericParams.Count; index++)
+        {
+            substitution[template.GenericParams[index]] = typeArguments[index];
+        }
+
+        return substitution;
+    }
+
+    private static IReadOnlyDictionary<string, BigInteger>? BuildInlineLayoutValueSubstitution(
+        NamedTypeSymbol template,
+        StarkTypeSymbol genericInstance)
+    {
+        if (template.ComptimeGenericParams.Count == 0)
+        {
+            return null;
+        }
+
+        var valueArguments = genericInstance.ComptimeValueArguments ?? [];
+        if (template.ComptimeGenericParams.Count != valueArguments.Count)
+        {
+            return null;
+        }
+
+        var substitution = new Dictionary<string, BigInteger>(StringComparer.Ordinal);
+        for (var index = 0; index < template.ComptimeGenericParams.Count; index++)
+        {
+            var argument = valueArguments[index];
+            if (!argument.IsSymbolic)
+            {
+                substitution[template.ComptimeGenericParams[index].Name] = argument.IntegerValue;
+            }
+        }
+
+        return substitution.Count == 0 ? null : substitution;
+    }
+
+    private IEnumerable<InlineLayoutMember> EnumerateInlineLayoutMembers(
+        string typeKey,
+        NamedTypeSymbol namedType,
+        IReadOnlyDictionary<string, StarkTypeSymbol>? typeSubstitution,
+        IReadOnlyDictionary<string, BigInteger>? valueSubstitution,
+        IReadOnlyDictionary<string, ParserRuleContext> memberContexts)
+    {
+        if (namedType.Kind is DeclarationKind.Struct or DeclarationKind.Record)
+        {
+            foreach (var field in namedType.OrderedFields)
+            {
+                yield return new InlineLayoutMember(
+                    $"{typeKey}.{field.Name}",
+                    SubstituteInlineLayoutType(field.Type, typeSubstitution, valueSubstitution),
+                    ResolveInlineLayoutFieldContext(memberContexts, namedType.Name, field.Name));
+            }
+
+            yield break;
+        }
+
+        if (namedType.Kind != DeclarationKind.Enum)
+        {
+            yield break;
+        }
+
+        foreach (var variant in namedType.Variants)
+        {
+            foreach (var field in variant.Fields)
+            {
+                var fieldKey = variant.UsesNamedFields && field.Name is { } fieldName
+                    ? fieldName
+                    : field.Position.ToString(CultureInfo.InvariantCulture);
+                var displayName = variant.UsesNamedFields && field.Name is not null
+                    ? $"{typeKey}.{variant.Name}.{field.Name}"
+                    : $"{typeKey}.{variant.Name}#{field.Position.ToString(CultureInfo.InvariantCulture)}";
+                yield return new InlineLayoutMember(
+                    displayName,
+                    SubstituteInlineLayoutType(field.Type, typeSubstitution, valueSubstitution),
+                    ResolveInlineLayoutEnumFieldContext(memberContexts, namedType.Name, variant.Name, fieldKey));
+            }
+        }
+    }
+
+    private StarkTypeSymbol SubstituteInlineLayoutType(
+        StarkTypeSymbol type,
+        IReadOnlyDictionary<string, StarkTypeSymbol>? typeSubstitution,
+        IReadOnlyDictionary<string, BigInteger>? valueSubstitution)
+    {
+        if ((typeSubstitution is null || typeSubstitution.Count == 0)
+            && (valueSubstitution is null || valueSubstitution.Count == 0))
+        {
+            return type;
+        }
+
+        var coreType = StarkTypeSymbols.WithQualifiers(
+            type,
+            borrowKind: StarkBorrowKind.None,
+            accessKind: StarkAccessKind.None,
+            initializationKind: StarkInitializationKind.None,
+            isMutableView: false);
+
+        StarkTypeSymbol substitutedCore;
+        if (coreType.Kind == StarkTypeKind.Named && coreType.NamedType is { } namedType)
+        {
+            if (typeSubstitution is not null && typeSubstitution.TryGetValue(namedType, out var substitutedType))
+            {
+                substitutedCore = StarkTypeSymbols.WithQualifiers(
+                    substitutedType,
+                    borrowKind: StarkBorrowKind.None,
+                    accessKind: StarkAccessKind.None,
+                    initializationKind: StarkInitializationKind.None,
+                    isMutableView: false);
+            }
+            else if (StarkTypeSymbols.IsGenericInstantiation(coreType))
+            {
+                var substitutedArguments = (coreType.TypeArguments ?? [])
+                    .Select(argument => SubstituteInlineLayoutType(argument, typeSubstitution, valueSubstitution))
+                    .ToArray();
+                substitutedCore = StarkTypeSymbols.GenericInstantiation(
+                    StarkTypeSymbols.GetGenericBaseName(namedType),
+                    substitutedArguments,
+                    coreType.ComptimeValueArguments);
+            }
+            else
+            {
+                substitutedCore = coreType;
+            }
+        }
+        else if (coreType.ElementType is { } elementType)
+        {
+            var substitutedElement = SubstituteInlineLayoutType(elementType, typeSubstitution, valueSubstitution);
+            var fixedLength = coreType.FixedLength;
+            var fixedLengthParameterName = coreType.FixedLengthParameterName;
+            if (fixedLengthParameterName is not null
+                && valueSubstitution is not null
+                && valueSubstitution.TryGetValue(fixedLengthParameterName, out var concreteLength)
+                && concreteLength >= BigInteger.Zero
+                && concreteLength <= int.MaxValue)
+            {
+                fixedLength = (int)concreteLength;
+                fixedLengthParameterName = null;
+            }
+
+            substitutedCore = coreType.Kind switch
+            {
+                StarkTypeKind.FixedArray => StarkTypeSymbols.FixedArray(substitutedElement, fixedLength, fixedLengthParameterName),
+                StarkTypeKind.Slice => StarkTypeSymbols.Slice(substitutedElement),
+                StarkTypeKind.RawPointer => StarkTypeSymbols.RawPointer(substitutedElement, coreType.IsMutablePointer),
+                StarkTypeKind.Dynamic => StarkTypeSymbols.Dynamic(substitutedElement),
+                _ => coreType
+            };
+        }
+        else
+        {
+            substitutedCore = coreType;
+        }
+
+        return StarkTypeSymbols.WithQualifiers(
+            substitutedCore,
+            borrowKind: type.BorrowKind,
+            accessKind: type.AccessKind,
+            initializationKind: type.InitializationKind,
+            isMutableView: type.IsMutableView);
+    }
+
+    private static InlineLayoutCycle BuildInlineLayoutCycle(
+        string closingTypeKey,
+        int cycleStart,
+        IReadOnlyList<InlineLayoutTypeFrame> activeTypes,
+        IReadOnlyList<InlineLayoutMemberFrame> memberPath)
+    {
+        var typePath = activeTypes
+            .Skip(cycleStart)
+            .Select(static frame => frame.DisplayName)
+            .Concat([closingTypeKey])
+            .ToArray();
+        var cycleMembers = memberPath
+            .Skip(cycleStart)
+            .Select(static frame => frame.DisplayName)
+            .ToArray();
+        return new InlineLayoutCycle(
+            typePath,
+            cycleMembers,
+            memberPath.Count == 0 ? null : memberPath[^1].Context);
+    }
+
+    private static string BuildInlineLayoutCycleKey(InlineLayoutCycle cycle)
+    {
+        return string.Join(
+            "|",
+            cycle.TypePath
+                .Distinct(StringComparer.Ordinal)
+                .Order(StringComparer.Ordinal));
+    }
+
+    private static bool IsInlineLayoutAggregateKind(DeclarationKind kind)
+    {
+        return kind is DeclarationKind.Struct or DeclarationKind.Record or DeclarationKind.Enum;
+    }
+
+    private static ParserRuleContext? ResolveInlineLayoutFieldContext(
+        IReadOnlyDictionary<string, ParserRuleContext> memberContexts,
+        string ownerName,
+        string fieldName)
+    {
+        return TryGetInlineLayoutContext(memberContexts, InlineLayoutFieldContextKey(ownerName, fieldName), out var context)
+            ? context
+            : null;
+    }
+
+    private static ParserRuleContext? ResolveInlineLayoutEnumFieldContext(
+        IReadOnlyDictionary<string, ParserRuleContext> memberContexts,
+        string ownerName,
+        string variantName,
+        string fieldKey)
+    {
+        return TryGetInlineLayoutContext(memberContexts, InlineLayoutEnumFieldContextKey(ownerName, variantName, fieldKey), out var context)
+            ? context
+            : null;
+    }
+
+    private static bool TryGetInlineLayoutContext(
+        IReadOnlyDictionary<string, ParserRuleContext> memberContexts,
+        string key,
+        out ParserRuleContext context)
+    {
+        if (memberContexts.TryGetValue(key, out context!))
+        {
+            return true;
+        }
+
+        var separator = key.IndexOf('|', StringComparison.Ordinal);
+        if (separator <= 0)
+        {
+            return false;
+        }
+
+        var ownerName = key[..separator];
+        var baseOwnerName = StarkTypeSymbols.GetGenericBaseName(ownerName);
+        if (string.Equals(ownerName, baseOwnerName, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var baseKey = baseOwnerName + key[separator..];
+        return memberContexts.TryGetValue(baseKey, out context!);
+    }
+
+    private static string InlineLayoutFieldContextKey(string ownerName, string fieldName)
+    {
+        return $"{ownerName}|field|{fieldName}";
+    }
+
+    private static string InlineLayoutEnumFieldContextKey(string ownerName, string variantName, string fieldKey)
+    {
+        return $"{ownerName}|enum|{variantName}|{fieldKey}";
     }
 
     private NamedTypeSymbol BuildStructLikeNamedType(

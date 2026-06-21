@@ -1036,6 +1036,13 @@ public enum BindDiagnosticCode
     ArenaAllocationInLaw,
     ArenaValueEscapes,
     ArenaValueRetainedByCallee,
+    RuntimeRecursionWithoutTailBecome,
+}
+
+public enum BindDiagnosticSeverity
+{
+    Error,
+    Warning,
 }
 
 // The diagnostics produced by binding a compilation unit, in discovery order:
@@ -1043,11 +1050,13 @@ public enum BindDiagnosticCode
 public struct BindDiagnosticList
 {
     internal dynamic BindDiagnosticCode Codes;
+    internal dynamic BindDiagnosticSeverity Severities;
     internal dynamic u32[0 max] Tokens;
 
     BindDiagnosticList()
     {
         self.Codes = new();
+        self.Severities = new();
         self.Tokens = new();
     }
 
@@ -1065,6 +1074,17 @@ public struct BindDiagnosticList
         }
 
         return code;
+    }
+
+    public law BindDiagnosticSeverity SeverityAt(borrow BindDiagnosticList self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut BindDiagnosticSeverity severity = BindDiagnosticSeverity.Error;
+        if (index < self.Severities.Length)
+        {
+            severity = self.Severities[index];
+        }
+
+        return severity;
     }
 
     public law u32[0 max] TokenAt(borrow BindDiagnosticList self, u64[0 2 ** 63 - 1] index)
@@ -1094,15 +1114,57 @@ public struct BindDiagnosticList
         return total;
     }
 
+    public law u32[0 max] ErrorCount(borrow BindDiagnosticList self)
+    {
+        stack mut u32[0 max] total = 0;
+        stack u64[0 2 ** 63 - 1] count = self.Codes.Length;
+        for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+        {
+            if (self.SeverityAt(index) == BindDiagnosticSeverity.Error)
+            {
+                total = (u32[0 max])(total + 1);
+            }
+        }
+
+        return total;
+    }
+
+    public law u32[0 max] WarningCount(borrow BindDiagnosticList self)
+    {
+        stack mut u32[0 max] total = 0;
+        stack u64[0 2 ** 63 - 1] count = self.Codes.Length;
+        for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+        {
+            if (self.SeverityAt(index) == BindDiagnosticSeverity.Warning)
+            {
+                total = (u32[0 max])(total + 1);
+            }
+        }
+
+        return total;
+    }
+
     internal fn System.Memory.MemoryStatus Append(mut borrow BindDiagnosticList self, BindDiagnosticCode code, u32[0 max] token)
     {
+        return self.AppendWithSeverity(code, BindDiagnosticSeverity.Error, token);
+    }
+
+    internal fn System.Memory.MemoryStatus AppendWarning(mut borrow BindDiagnosticList self, BindDiagnosticCode code, u32[0 max] token)
+    {
+        return self.AppendWithSeverity(code, BindDiagnosticSeverity.Warning, token);
+    }
+
+    internal fn System.Memory.MemoryStatus AppendWithSeverity(mut borrow BindDiagnosticList self, BindDiagnosticCode code, BindDiagnosticSeverity severity, u32[0 max] token)
+    {
         if (!self.Codes.TryReserve(1)
+            || !self.Severities.TryReserve(1)
             || !self.Tokens.TryReserve(1))
         {
             return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
         }
 
         init self.Codes[self.Codes.Length] = code;
+        init self.Severities[self.Severities.Length] = severity;
         init self.Tokens[self.Tokens.Length] = token;
         return System.Memory.MemoryStatus.Ok;
     }
@@ -3151,6 +3213,363 @@ internal fn bool TryParseFunctionSignatureFromTable(borrow DeclarationTable tabl
     }
 }
 
+internal fn bool U32ListContains(borrow dynamic u32[0 max] values, u32[0 max] value)
+{
+    stack mut bool found = false;
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < values.Length; index += 1)
+    {
+        if (!found && values[index] == value)
+        {
+            found = true;
+        }
+    }
+
+    return found;
+}
+
+internal fn System.Memory.MemoryStatus AppendU32(mut borrow dynamic u32[0 max] values, u32[0 max] value)
+{
+    if (!values.TryReserve(1))
+    {
+        return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+    }
+
+    init values[values.Length] = value;
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus AppendNodeIfPresent(mut borrow dynamic u32[0 max] nodes, u32[0 max] node)
+{
+    if (node == 0)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    return AppendU32(nodes, node);
+}
+
+internal fn System.Memory.MemoryStatus AppendRuntimeCallEdgeForNamedCall(
+    u32[0 max] callerPlusOne,
+    borrow DeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    borrow ReferenceTable refs,
+    borrow StatementList body,
+    u32[0 max] callNode,
+    mut borrow RuntimeCallEdgeTable edges)
+{
+    if (callNode == 0 || body.ExprKindAt(callNode) != ExprKind.Call)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack u32[0 max] calleeNode = body.ExprLeftAt(callNode);
+    if (calleeNode == 0 || body.ExprKindAt(calleeNode) != ExprKind.Identifier)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack u32[0 max] refIndexPlusOne = ReferenceIndexForNode(refs, calleeNode);
+    if (refIndexPlusOne != 0)
+    {
+        stack u64[0 2 ** 63 - 1] refIndex = (u64[0 2 ** 63 - 1])(refIndexPlusOne - 1);
+        if (refs.KindAt(refIndex) != ReferenceKind.Declaration)
+        {
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        stack u32[0 max] targetPlusOne = refs.TargetAt(refIndex);
+        if (targetPlusOne == 0)
+        {
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        stack mut FunctionSignature callee = new();
+        if (TryParseFunctionSignatureFromTable(table, stream, targetPlusOne, callee))
+        {
+            return edges.Append(callerPlusOne, targetPlusOne, refs.NameTokenAt(refIndex));
+        }
+
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack u32[0 max] nameToken = body.ExprTokenAt(calleeNode);
+    stack u64[0 2 ** 63 - 1] tableCount = table.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] tableIndex = 0; tableIndex < tableCount; tableIndex += 1)
+    {
+        if (TokenTextEqualsToken(source, stream, table.NameTokenAt(tableIndex), nameToken))
+        {
+            stack u32[0 max] targetPlusOne = (u32[0 max])(tableIndex + 1);
+            stack mut FunctionSignature callee = new();
+            if (TryParseFunctionSignatureFromTable(table, stream, targetPlusOne, callee))
+            {
+                return edges.Append(callerPlusOne, targetPlusOne, nameToken);
+            }
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal struct RuntimeCallEdgeTable
+{
+    internal dynamic u32[0 max] Callers;
+    internal dynamic u32[0 max] Callees;
+    internal dynamic u32[0 max] Tokens;
+
+    RuntimeCallEdgeTable()
+    {
+        self.Callers = new();
+        self.Callees = new();
+        self.Tokens = new();
+    }
+
+    inline finite law u64[0 2 ** 63 - 1] Count(borrow RuntimeCallEdgeTable self)
+    {
+        return self.Callers.Length;
+    }
+
+    law u32[0 max] CallerAt(borrow RuntimeCallEdgeTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] caller = 0;
+        if (index < self.Callers.Length)
+        {
+            caller = self.Callers[index];
+        }
+
+        return caller;
+    }
+
+    law u32[0 max] CalleeAt(borrow RuntimeCallEdgeTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] callee = 0;
+        if (index < self.Callees.Length)
+        {
+            callee = self.Callees[index];
+        }
+
+        return callee;
+    }
+
+    law u32[0 max] TokenAt(borrow RuntimeCallEdgeTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.Tokens.Length)
+        {
+            token = self.Tokens[index];
+        }
+
+        return token;
+    }
+
+    internal fn System.Memory.MemoryStatus Append(mut borrow RuntimeCallEdgeTable self, u32[0 max] caller, u32[0 max] callee, u32[0 max] token)
+    {
+        if (!self.Callers.TryReserve(1)
+            || !self.Callees.TryReserve(1)
+            || !self.Tokens.TryReserve(1))
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        }
+
+        init self.Callers[self.Callers.Length] = caller;
+        init self.Callees[self.Callees.Length] = callee;
+        init self.Tokens[self.Tokens.Length] = token;
+        return System.Memory.MemoryStatus.Ok;
+    }
+}
+
+internal fn System.Memory.MemoryStatus CollectRuntimeCallEdgesForFunction(
+    u32[0 max] callerPlusOne,
+    borrow DeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    mut borrow RuntimeCallEdgeTable edges)
+{
+    stack mut FunctionSignature signature = new();
+    if (!TryParseFunctionSignatureFromTable(table, stream, callerPlusOne, signature))
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    switch (ParseFunctionBody(stream, table.KeywordTokenAt((u64[0 2 ** 63 - 1])(callerPlusOne - 1))))
+    {
+        case ParseResult<StatementList>.Err(var bodyError):
+            return System.Memory.MemoryStatus.Ok;
+        case ParseResult<StatementList>.Ok(var body):
+            switch (BuildFunctionScope(signature, body))
+            {
+                case BindResult<FunctionScope>.Err(var scopeError):
+                    return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+                case BindResult<FunctionScope>.Ok(var scope):
+                    stack mut ReferenceTable refs = new();
+                    switch (ResolveReferences(scope, table, source, stream, body))
+                    {
+                        case BindResult<ReferenceTable>.Err(var refError):
+                            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+                        case BindResult<ReferenceTable>.Ok(var built):
+                            refs = built;
+                    }
+
+                    stack mut dynamic u32[0 max] skipCallNodes = new();
+                    stack u64[0 2 ** 63 - 1] count = body.Count();
+                    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+                    {
+                        if (body.ItemAt(index).Kind == StatementKind.Become)
+                        {
+                            switch (AppendNodeIfPresent(skipCallNodes, body.ExprRootAt(index)))
+                            {
+                                case System.Memory.MemoryStatus.Err(var skipError):
+                                    return System.Memory.MemoryStatus.Err(skipError);
+                                case System.Memory.MemoryStatus.Ok:
+                            }
+                        }
+                    }
+
+                    stack u64[0 2 ** 63 - 1] nodeCount = body.ExprNodeCount();
+                    for willexit (stack mut u64[0 2 ** 63 - 1] nodeIndex = 1; nodeIndex <= nodeCount; nodeIndex += 1)
+                    {
+                        stack u32[0 max] node = (u32[0 max])nodeIndex;
+                        if (body.ExprKindAt(node) == ExprKind.Call && !U32ListContains(skipCallNodes, node))
+                        {
+                            switch (AppendRuntimeCallEdgeForNamedCall(callerPlusOne, table, source, stream, refs, body, node, edges))
+                            {
+                                case System.Memory.MemoryStatus.Err(var edgeError):
+                                    return System.Memory.MemoryStatus.Err(edgeError);
+                                case System.Memory.MemoryStatus.Ok:
+                            }
+                        }
+                    }
+            }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus RuntimeCallPathExists(borrow RuntimeCallEdgeTable edges, u32[0 max] start, u32[0 max] target, out bool exists)
+{
+    exists = start == target;
+    if (exists)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack mut dynamic u32[0 max] reachable = new();
+    switch (AppendU32(reachable, start))
+    {
+        case System.Memory.MemoryStatus.Err(var startError):
+            return System.Memory.MemoryStatus.Err(startError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    stack u64[0 2 ** 63 - 1] edgeCount = edges.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] round = 0; round < edgeCount; round += 1)
+    {
+        if (exists)
+        {
+            break;
+        }
+
+        stack u64[0 2 ** 63 - 1] reachableCount = reachable.Length;
+        stack mut bool changed = false;
+        for willexit (stack mut u64[0 2 ** 63 - 1] reachableIndex = 0; reachableIndex < reachableCount; reachableIndex += 1)
+        {
+            if (reachableIndex >= reachable.Length)
+            {
+                continue;
+            }
+
+            stack u32[0 max] current = reachable[reachableIndex];
+            for willexit (stack mut u64[0 2 ** 63 - 1] edge = 0; edge < edgeCount; edge += 1)
+            {
+                if (edges.CallerAt(edge) == current)
+                {
+                    stack u32[0 max] next = edges.CalleeAt(edge);
+                    if (next == target)
+                    {
+                        exists = true;
+                    }
+                    else if (!U32ListContains(reachable, next))
+                    {
+                        switch (AppendU32(reachable, next))
+                        {
+                            case System.Memory.MemoryStatus.Err(var nextError):
+                                return System.Memory.MemoryStatus.Err(nextError);
+                            case System.Memory.MemoryStatus.Ok:
+                                changed = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        if (!changed)
+        {
+            break;
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus CollectRuntimeRecursionWarnings(borrow DeclarationTable table, ascii source, borrow TokenStream stream, mut borrow BindDiagnosticList diags)
+{
+    stack mut RuntimeCallEdgeTable edges = new();
+    stack u64[0 2 ** 63 - 1] functionCount = table.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < functionCount; index += 1)
+    {
+        if (table.KindAt(index) == DeclarationKind.Function)
+        {
+            switch (CollectRuntimeCallEdgesForFunction((u32[0 max])(index + 1), table, source, stream, edges))
+            {
+                case System.Memory.MemoryStatus.Err(var edgeError):
+                    return System.Memory.MemoryStatus.Err(edgeError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    stack u64[0 2 ** 63 - 1] edgeCount = edges.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] edge = 0; edge < edgeCount; edge += 1)
+    {
+        stack u32[0 max] callerPlusOne = edges.CallerAt(edge);
+        stack mut FunctionSignature caller = new();
+        if (TryParseFunctionSignatureFromTable(table, stream, callerPlusOne, caller) && !caller.FiniteKind())
+        {
+            stack u32[0 max] calleePlusOne = edges.CalleeAt(edge);
+            stack mut bool isRecursive = calleePlusOne == callerPlusOne;
+            for willexit (stack mut u64[0 2 ** 63 - 1] other = 0; other < edgeCount; other += 1)
+            {
+                if (!isRecursive && edges.CallerAt(other) == calleePlusOne && edges.CalleeAt(other) == callerPlusOne)
+                {
+                    isRecursive = true;
+                }
+            }
+
+            if (!isRecursive)
+            {
+                switch (RuntimeCallPathExists(edges, calleePlusOne, callerPlusOne, isRecursive))
+                {
+                    case System.Memory.MemoryStatus.Err(var pathError):
+                        return System.Memory.MemoryStatus.Err(pathError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+
+            if (isRecursive)
+            {
+                switch (diags.AppendWarning(BindDiagnosticCode.RuntimeRecursionWithoutTailBecome, edges.TokenAt(edge)))
+                {
+                    case System.Memory.MemoryStatus.Err(var warningError):
+                        return System.Memory.MemoryStatus.Err(warningError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
 // Exact source-level primary type token compatibility for the current
 // self-hosted ABI model. A missing token is compatible only with another missing
 // token; otherwise both token kind and spelling must match (`i32` != `i64`).
@@ -3772,6 +4191,13 @@ public fn BindResult<BindDiagnosticList> BindCompilationUnit(ascii source, borro
                 case System.Memory.MemoryStatus.Ok:
             }
         }
+    }
+
+    switch (CollectRuntimeRecursionWarnings(table, source, stream, diags))
+    {
+        case System.Memory.MemoryStatus.Err(var recursionError):
+            return BindResult<BindDiagnosticList>.Err(BindError.OutOfMemory);
+        case System.Memory.MemoryStatus.Ok:
     }
 
     return BindResult<BindDiagnosticList>.Ok(diags);
