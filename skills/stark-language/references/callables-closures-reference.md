@@ -50,10 +50,35 @@ fnptr<fn i32[min max](i32[min max])>
 fnptr<finite i32[min max](i32[min max])>
 fnptr<law bool(borrow Item)>
 fnptr<finite law i32[min max](i32[min max])>
+fnptr<tail fn i32[min max](i32[min max])>
+fnptr<tail finite law i32[min max](i32[min max])>
 ```
 
 A stronger function can flow into a weaker callable slot, but a weaker
 function cannot satisfy a stronger callable type.
+
+## Guaranteed Tail Calls
+
+Use `tail` on a callable type and `become` in a `tail` function when the
+stack-constant jump is part of the contract rather than an optimizer hope.
+
+```stark
+tail fn i32[min max] Done(i32[min max] value)
+{
+    return value;
+}
+
+tail fn i32[min max] Bounce(
+    fnptr<tail fn i32[min max](i32[min max])> next,
+    i32[min max] value)
+{
+    become next(value);
+}
+```
+
+`become` must be a single call in true tail position. The caller must be `tail`,
+the target must be tail-callable, ordinary `law` and `finite` rules still apply,
+and accepted edges are guaranteed not to grow the stack.
 
 ## Function Pointer Memory Contracts
 

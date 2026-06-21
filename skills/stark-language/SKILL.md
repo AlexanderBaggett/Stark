@@ -77,6 +77,7 @@ Common modifiers:
 - `strictfp` disables Stark's ordinary fast floating-point assumptions for that function.
 - `ffi` marks a foreign boundary.
 - `static` is only for member functions inside `struct` or `record`.
+- `tail` marks a callable as tail-callable and enables guaranteed tail transfer with `become`.
 
 Use semicolon declarations for FFI and forward declarations:
 
@@ -94,6 +95,23 @@ export fn i32[min max] main()
 ```
 
 Use `unsafe` on `main` only if the body or signature crosses an unsafe/raw/foreign boundary.
+
+Use `tail` plus `become` when stack growth is part of the contract. `become`
+is a terminating statement: the expression must be a single call in true tail
+position, the caller and target must both be tail-callable, ordinary `law` /
+`finite` rules still apply, and any accepted edge is guaranteed stack-constant.
+
+```stark
+tail finite i64[min max] SumTo(i64[0 max] remaining, i64[min max] total)
+{
+    if (remaining == 0)
+    {
+        return total;
+    }
+
+    become SumTo(remaining - 1, total + remaining);
+}
+```
 
 ## Callable Values
 
@@ -117,6 +135,7 @@ fnptr<fn void()>
 fnptr<finite i32[min max](i32[min max])>
 fnptr<law bool(borrow Item)>
 fnptr<finite law i32[min max](i32[min max])>
+fnptr<tail fn i32[min max](i32[min max])>
 ```
 
 `fnptr` values must come from a compatible named function or non-capturing lambda:
@@ -750,7 +769,9 @@ Traits name behavior contracts. A `struct`/`record` implements a trait with a ba
 
 ## Storage Classes And Globals
 
-Every local names its storage class: `stack` (the default choice), `heap` (global-allocator-backed owned storage; never manually freed), or `register` (scalar locals with no source-visible address — `&local`, slices, and address-requiring APIs are rejected; use `stack` when an address matters). `arena` is reserved and not yet a valid executable local storage class; function-local `static` is invalid (use a top-level global). `dynamic T` is a value type, not a storage class — the owner local still says `stack`/`heap`.
+Every local names its storage class: `stack` (the default choice), `heap` (global-allocator-backed owned storage; never manually freed), `arena` (compiler-managed lexical arena storage, bulk-reclaimed at the arena lifetime boundary), or `register` (scalar locals with no source-visible address — `&local`, slices, and address-requiring APIs are rejected; use `stack` when an address matters). Function-local `static` is invalid (use a top-level global). `dynamic T` is a value type, not a storage class — the owner local still says `stack`/`heap`/`arena`.
+
+Arena allocation is a language feature, not a `System.Memory.Arena` object. Use `arena T value = new T();` for arena locals, or `new(arena, capacity[, alignment])` when a stack/heap owner needs arena-backed `dynamic T` storage. Arena-backed values and borrows must not escape through returns, heap/static/global stores, retained borrows, escaping closures, or longer-lived aggregate fields. Arena allocation is rejected in `law` functions; `finite` remains allowed when the ordinary termination rules are satisfied.
 
 Globals come in three forms: `const Name = ...;` (deeply frozen reachable object graph — strongest), `static T Name = ...;` (immutable binding; the value may still have interior mutability), and `static mut T Name = ...;` (rebindable). Scalar integer consts omit the type so the compiler derives the smallest width (`const PageSize = 2 ** 12;`); an explicit type must be the canonical bare width (`const u8 Count = 80;` is accepted, `const i32 Count = 80;` is rejected). A fixed-array constant puts the dimension on the **type**, not the name (the grammar is `type variableDeclarators`): `const f64[4] Weights = { 1.0, 0.5, 0.25, 0.125 };` — not the C-style `const f64 Weights[4]`.
 
@@ -864,6 +885,18 @@ Do not write whole-parameter `disjoint` on ordinary Stark functions; default par
 
 Use `if disjoint(...)` for a runtime branch that grants non-overlap only in the true branch. Use `unsafe assume disjoint(...) { ... }` only for scoped, externally proven facts the compiler cannot prove.
 
+Use `where dead_on_return(name)` only for destructive memory-backed parameters whose pointee storage is unavailable to the caller after return. Ordinary `out` and `init` outputs do not imply this, because callers normally read the initialized output.
+
+```stark
+fn bool Destroy(out u32[0 max] value) where dead_on_return(value)
+{
+    value = 0;
+    return true;
+}
+```
+
+Function pointer and closure callable types use synthetic argument names: `fnptr<fn bool(out u32[0 max]) where dead_on_return(arg0)>`.
+
 ## Initialization And Dynamic Storage
 
 `out T` and `init T` are write-before-read contracts:
@@ -880,7 +913,7 @@ fn bool TryWrite(out i32[0 max] value)
 }
 ```
 
-`dynamic T` is owned capacity-backed storage, not a storage class. Use `Length`, `Capacity`, `Reserve`, `TryReserve`, `MoveLast`, and `MoveAt` rather than exposing raw pointers.
+`dynamic T` is owned capacity-backed storage, not a storage class. Use `Length`, `Capacity`, `Reserve`, `TryReserve`, `TryReserveCapacity`, `MoveLast`, and `MoveAt` rather than exposing raw pointers. For arena-backed dynamic storage, use `new(arena, capacity[, alignment])`; growth uses allocate-copy semantics and leaves old backing storage for arena cleanup rather than per-object free.
 
 ```stark
 struct IntList

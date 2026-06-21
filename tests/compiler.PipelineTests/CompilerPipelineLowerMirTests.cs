@@ -1847,6 +1847,141 @@ public sealed class CompilerPipelineLowerMirTests
         }
     }
 
+    [Fact]
+    public void ManifestBackedTypedTemplateBodiesPreferStructuredBodyOverLegacySourceSurfaceBody()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-prefer-typed-generic-method-body-");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+        var facadePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+        var libraryPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public struct Rows<T>
+                {
+                    u64[0 2 ** 63 - 1] Length;
+
+                    Rows()
+                    {
+                        self.Length = 0;
+                    }
+
+                    public inline finite law u64[0 2 ** 63 - 1] Count(borrow Rows<T> self)
+                    {
+                        return self.Length;
+                    }
+                }
+
+                public struct Table<T>
+                {
+                    Rows<T> Rows;
+
+                    Table()
+                    {
+                        self.Rows = new();
+                    }
+
+                    public inline finite law u64[0 2 ** 63 - 1] Count(borrow Table<T> self)
+                    {
+                        return self.Rows.Count();
+                    }
+                }
+
+                public inline finite law u64[0 2 ** 63 - 1] RelayCount<T>(borrow Table<T> table)
+                {
+                    return table.Count();
+                }
+                """,
+                facadePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static d => d.ToString())));
+
+            var manifest = PackageImageBuilder.Create(libraryResult, libraryPath);
+            var facadeModule = WithEffectiveLegacyCompilerSectionCopies(Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade"));
+            var countTemplate = Assert.Single(
+                facadeModule.EffectiveGenericTemplates!.Functions,
+                static template => template.QualifiedResolvedName == "Facade.Table.Count");
+            Assert.NotNull(countTemplate.TypedBody);
+            var countTemplateWithLegacyBody = countTemplate with
+            {
+                BodyText = "{ return self.Rows.Count(); }"
+            };
+            var genericTemplates = new StarkPackageGenericTemplateSection(
+                facadeModule.EffectiveGenericTemplates.Functions
+                    .Select(template => template.QualifiedResolvedName == countTemplateWithLegacyBody.QualifiedResolvedName
+                        ? countTemplateWithLegacyBody
+                        : template)
+                    .ToArray());
+            var manifestWithLegacyBody = manifest with
+            {
+                Modules = manifest.Modules
+                    .Select(module => module.ModuleName == "Facade"
+                        ? module with
+                        {
+                            GenericTemplates = genericTemplates,
+                            CompilerSections = new StarkPackageCompilerSectionsManifest(
+                                TypedInterface: facadeModule.TypedInterface,
+                                CompilerFacts: facadeModule.CompilerFacts,
+                                GenericTemplates: genericTemplates)
+                        }
+                        : module)
+                    .ToArray()
+            };
+            var facadeModuleWithLegacyBody = Assert.Single(
+                manifestWithLegacyBody.Modules,
+                static module => module.ModuleName == "Facade");
+            Assert.True(
+                PackageImageLoader.TryBuildModuleSource(
+                    new ResolvedPackageModule(manifestPath, libraryPath, manifestWithLegacyBody, facadeModuleWithLegacyBody),
+                    out var sourceText));
+            Assert.Contains("Rows.Count", sourceText, StringComparison.Ordinal);
+
+            File.WriteAllText(manifestPath, manifestWithLegacyBody.ToJson());
+            File.Delete(facadePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    fn u64[0 2 ** 63 - 1] Run()
+                    {
+                        stack Facade.Table<i32[min max]> table = new Facade.Table<i32[min max]>();
+                        return Facade.RelayCount(table);
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName),
+                    StopAfterPassId: "lower-mir"));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static d => d.ToString())));
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.MidLevelIr, out MidLevelIrModule? mir));
+            Assert.NotNull(mir);
+
+            var count = Assert.Single(mir.Functions, static function => function.Name.Contains("Facade_Table_Count", StringComparison.Ordinal));
+            Assert.True(count.HasBody);
+            Assert.True(count.SupportsDirectCodeGeneration);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
 
     [Fact]
     public void ManifestBackedTypedComparisonChainTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecialization()

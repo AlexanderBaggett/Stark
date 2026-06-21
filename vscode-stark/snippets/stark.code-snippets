@@ -42,6 +42,16 @@
     ],
     "description": "Declare a pure terminating function"
   },
+  "Tail Function": {
+    "prefix": "tail fn",
+    "body": [
+      "tail fn ${1:i64[min max]} ${2:Name}(${3:i64[min max] value})",
+      "{",
+      "\tbecome ${4:Next}(${5:value});",
+      "}"
+    ],
+    "description": "Declare a tail-callable function"
+  },
   "Main Void": {
     "prefix": "main",
     "body": [
@@ -171,6 +181,20 @@
     ],
     "description": "Add a disjoint memory contract"
   },
+  "Where Dead On Return": {
+    "prefix": "where dead_on_return",
+    "body": [
+      "where dead_on_return(${1:value})"
+    ],
+    "description": "Add a pointee-dead-after-return contract"
+  },
+  "Become": {
+    "prefix": "become",
+    "body": [
+      "become ${1:Next}(${2:value});"
+    ],
+    "description": "Transfer to a tail-callable callee"
+  },
   "If Disjoint": {
     "prefix": "if disjoint",
     "body": [
@@ -216,6 +240,20 @@
       "stack ${1:mut }${2:i32[0 max]} ${3:name} = ${4:0};"
     ],
     "description": "Declare a stack local"
+  },
+  "Arena Local": {
+    "prefix": "arena",
+    "body": [
+      "arena ${1:mut }${2:Node} ${3:name} = new ${2:Node}();"
+    ],
+    "description": "Declare an arena-backed local"
+  },
+  "Arena Dynamic Storage": {
+    "prefix": "new arena",
+    "body": [
+      "stack mut dynamic ${1:u8[0 max]} ${2:items} = new(arena, ${3:capacity});"
+    ],
+    "description": "Declare dynamic storage with arena-backed capacity"
   },
   "Constant": {
     "prefix": "const",

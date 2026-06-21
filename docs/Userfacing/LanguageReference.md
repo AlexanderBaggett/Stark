@@ -176,6 +176,7 @@ The modifiers:
 * `ffi`
 * `strictfp`
 * `static`
+* `tail`
 
 Rules:
 
@@ -184,6 +185,7 @@ Rules:
 * `ffi` marks a foreign facing function boundary, and may carry an explicit calling convention as `ffi(abi)` (see 13)
 * `strictfp` selects strict IEEE style floating point semantics for the function
 * `static` is only valid on member functions inside `struct` or `record` declarations
+* `tail` marks a callable as tail-callable and permits guaranteed tail-transfer edges with `become`
 
 Static member functions belong to the type rather than to a value. They are called through the type name and do not receive a `self` argument:
 
@@ -232,6 +234,54 @@ runtime failure. A path counts as returning when it ends in a `return`, an
 `if`/`else` whose branches both return, an exhaustive `switch` (10.4) whose sections
 all return, or an `infinite` loop that contains no `break`. `void` functions may fall
 off the end (an implicit return).
+
+### 5.3.1 Guaranteed Tail Calls
+
+`tail` is a callable contract modifier. It composes with the ordinary function
+kinds, so `tail fn`, `tail finite`, `tail law`, and `tail finite law` are all
+valid when the function otherwise satisfies that kind's rules.
+
+```stark
+tail finite i64[min max] SumTo(i64[0 max] remaining, i64[min max] total)
+{
+    if (remaining == 0)
+    {
+        return total;
+    }
+
+    become SumTo(remaining - 1, total + remaining);
+}
+```
+
+`become call(args);` is a terminating statement. It replaces the current stack
+frame with the target call and guarantees that the accepted edge does not grow
+the stack. This is a checked language contract, not an optimizer hint.
+
+The rules:
+
+* the enclosing function must be declared `tail`
+* the expression after `become` must be a single direct, member, function-pointer,
+  closure, trait, or dynamic-dispatch call
+* the target must be tail-callable
+* the `become` statement must be in true tail position, with no computation,
+  conversion, drop, defer, cleanup, or ownership finalization left to run after
+  the call
+* the target result must match the enclosing function result exactly; `void`
+  functions may only become calls that return `void`
+* ordinary effect rules still apply, so a `tail law` function may only become a
+  call that a `law` function may call
+* ABI shapes that cannot support a guaranteed tail transfer are rejected
+
+Function pointer and closure callable types carry the same contract:
+
+```stark
+fnptr<tail fn i32[min max](i32[min max])>
+closure<tail law i32[min max](i32[min max])>
+```
+
+Self-recursive and mutually recursive `become` cycles are allowed. `finite`
+remains a separate termination proof: it proves that the function returns, while
+`tail` and `become` prove that the tail-transfer edge is stack-constant.
 
 ### 5.4 Parameter Memory Contracts
 
@@ -303,6 +353,32 @@ fn void ProcessPairs(
 These relations are not transitive. `where same(a, b), same(b, c)` does not prove `same(a, c)` unless that relation is also stated or separately proven, and `where overlap(a, b)` does not permit overlap between `a` and any unlisted parameter.
 
 A memory contract is about memory ranges, not only root values. Two slices that point into the same allocation satisfy a non-overlap obligation when their element ranges do not overlap. Contract operands must be memory-backed parameters or raw pointer region expressions; scalar value parameters cannot carry a memory-region contract.
+
+`where dead_on_return(name)` marks a memory-backed parameter's pointee storage as
+unavailable to the caller after the call returns. Use it for destructive
+destinations where the callee consumes, overwrites, or otherwise ends the old
+pointee lifetime. Ordinary `out` and `init` parameters do not imply
+`dead_on_return`: callers normally read initialized outputs after those calls.
+
+```stark
+fn bool Destroy(out u32[0 max] value) where dead_on_return(value)
+{
+    value = 0;
+    return true;
+}
+```
+
+The contract is part of callable type compatibility. In function pointer and
+closure callable types, use synthetic argument names:
+
+```stark
+fnptr<fn bool(out u32[0 max]) where dead_on_return(arg0)>
+```
+
+A function that forwards a parameter to a `dead_on_return` callee must either
+own that storage locally or declare the same `dead_on_return` contract on its
+own parameter. This keeps the caller-visible lifetime end explicit across
+wrapper and callback boundaries.
 
 Raw pointer parameters may expose their bounded element region directly. The forms `rawptr<T>[count]` and `rawmutptr<T>[count]` are raw pointer parameters whose valid source region contains `count` contiguous elements of `T`:
 
@@ -755,6 +831,12 @@ fn void Push(mut borrow IntList self, i32[0 max] value)
 `Length` is the initialized element count. `Capacity` is the number of element slots currently available in the backing allocation. `Reserve(additional)` ensures that at least `additional` spare slots exist after the initialized prefix. It preserves initialized elements, may grow the backing allocation, and traps on capacity overflow or allocation failure rather than returning a nullable raw pointer.
 
 `TryReserve(additional)` has the same growth contract, but returns `bool` instead of trapping for capacity overflow, target-size overflow, or allocation failure. It returns `true` when the existing capacity is already sufficient or the grow succeeds, and `false` when the dynamic value is left unchanged. Library APIs that report allocation status use `TryReserve` to keep failure explicit without exposing raw pointers.
+
+`TryReserveCapacity(targetCapacity)` is the exact-capacity fallible form. It
+ensures that `Capacity >= targetCapacity`, returns `true` if the current capacity
+is already enough or growth succeeds, and returns `false` without changing the
+dynamic value on capacity overflow, allocation-size overflow, or allocation
+failure.
 
 An `init` assignment into dynamic storage extends the dense initialized prefix. Direct element initialization targets the current tail, normally with `items.Length`; compile-time constant slots are accepted when the preceding slots are visibly already initialized. Initialization views backed by dynamic storage are initialized in ascending slot order.
 
@@ -1565,12 +1647,60 @@ The storage classes:
 
 Function local `static` storage is not a valid local storage class. Use a top level `static` global for global lifetime storage.
 
-`dynamic T` is not a storage class. It is an owned dynamic storage type. A declaration such as `stack mut dynamic i32[0 max] values = new();` places the dynamic owner/header in the stack local, while the dynamic value manages its own capacity-bearing backing storage.
+`dynamic T` is not a storage class. It is an owned dynamic storage type. A declaration such as `stack mut dynamic i32[0 max] values = new();` places the dynamic owner/header in the stack local, while the dynamic value manages its own capacity-bearing backing storage. The backing storage may still be selected by an allocation form such as `new(arena, capacity)`.
 
 The standardized allocation backed storage classes:
 
 * `heap`: uses the default global general purpose allocator. Safe Stark code does not manually free `heap` values; ownership and scope still govern destruction.
-* `arena`: reserved for future allocator-backed region storage. It is not a valid executable local storage class; use `stack` or `heap`.
+* `arena`: uses a compiler-managed lexical arena frame. Arena-backed values are owned Stark values while alive, and their backing storage is reclaimed in bulk at the end of the arena lifetime.
+
+`arena` is a language storage class like `stack`, `heap`, and `register`; it is
+not a `System.Memory.Arena` object and user code does not pass an arena handle
+to allocate from the current arena frame.
+
+```stark
+fn void Build()
+{
+    arena Node root = new Node();
+    arena mut dynamic Token[0 max] tokens = new(1024);
+}
+```
+
+The compiler creates a hidden arena frame for scopes that contain arena
+allocations. At the end of the arena lifetime, Stark drops live arena-backed
+values that require destruction and then releases or resets the arena backing
+storage in bulk. Safe code does not manually free individual arena-backed
+objects.
+
+A non-arena owner may request arena-backed dynamic storage with the `arena`
+storage selector:
+
+```stark
+fn void Tokenize()
+{
+    stack mut dynamic Token[0 max] tokens = new(arena, 1024);
+}
+```
+
+`new(arena, capacity)` creates a `dynamic T` value whose owner/header is stored
+where the declaration places it, but whose backing element storage belongs to
+the current arena lifetime. An optional third argument may specify a stronger
+positive power-of-two backing alignment.
+
+Arena-backed storage must not escape the arena lifetime through returns,
+heap/static/global stores, retained borrows, escaping closures, or longer-lived
+aggregate fields. Safe borrows into arena storage may be passed to callees only
+when the callee's contract does not retain the borrow beyond the call.
+
+Arena allocation is not allowed in `law` functions because it mutates hidden
+allocation state and can fail or trap according to the allocation policy.
+`finite` functions may use arena allocation when their ordinary progress and
+return rules are satisfied.
+
+Arena-backed dynamic growth uses allocate-copy semantics. `Reserve`,
+`TryReserve`, and `TryReserveCapacity` allocate a new arena backing buffer when
+growth is needed, copy the initialized prefix, and leave the old backing storage
+for arena-frame cleanup. They do not lower to per-object `free`.
 
 Mutability remains opt in:
 

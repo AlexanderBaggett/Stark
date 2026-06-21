@@ -19,6 +19,25 @@ fn bool LexOk(LexResult<TokenStream> result, out TokenStream stream)
     }
 }
 
+fn bool BindSource(ascii source, out BindDiagnosticList diags)
+{
+    diags = new();
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var value):
+            diags = value;
+            return true;
+    }
+}
+
 [Fact]
 fn bool BuildsAndLooksUpDeclarations()
 {
@@ -89,6 +108,39 @@ fn bool DetectsDuplicateDeclaration()
     return table.Count() == 3
         && HasDuplicateDeclaration(table, source, stream)
         && LookupDeclaration(table, source, stream, "Foo") != 0;
+}
+
+[Fact]
+fn bool StaticDeclarationsUseDeclaredVariableName()
+{
+    stack ascii source = "static Widget Global;\n";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    stack mut DeclarationList decls = new();
+    switch (ParseDeclarations(stream, 0))
+    {
+        case ParseResult<DeclarationList>.Err(var declError):
+            return false;
+        case ParseResult<DeclarationList>.Ok(var value):
+            decls = value;
+    }
+
+    stack mut DeclarationTable table = new();
+    switch (BuildDeclarationTable(source, stream, decls))
+    {
+        case BindResult<DeclarationTable>.Err(var bindError):
+            return false;
+        case BindResult<DeclarationTable>.Ok(var built):
+            table = built;
+    }
+
+    return table.Count() == 1
+        && LookupDeclaration(table, source, stream, "Global") != 0
+        && LookupDeclaration(table, source, stream, "Widget") == 0;
 }
 
 // Finds the keyword token of the sole function declaration in an already-lexed
@@ -2213,6 +2265,440 @@ fn bool AcceptsWellFormedReturns()
         case BindResult<BindDiagnosticList>.Ok(var diags):
             return diags.Count() == 0;
     }
+}
+
+[Fact]
+fn bool AcceptsWellFormedBecome()
+{
+    stack ascii source = "tail finite law fn i32 id(i32 x) { return x; }\ntail finite law fn i32 bounce(i32 x) { become id(x); }\n";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.Count() == 0;
+    }
+}
+
+[Fact]
+fn bool FlagsBecomeOutsideTailFunction()
+{
+    stack ascii source = "tail fn i32 done(i32 x) { return x; }\nfn i32 bad(i32 x) { become done(x); }\n";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.CountOf(BindDiagnosticCode.BecomeOutsideTailFunction) == 1
+                && diags.Count() == 1;
+    }
+}
+
+[Fact]
+fn bool FlagsBecomeRequiresDirectCall()
+{
+    stack ascii source = "tail fn i32 bad(i32 x) { become x + 1; }\n";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.CountOf(BindDiagnosticCode.BecomeRequiresDirectCall) == 1
+                && diags.Count() == 1;
+    }
+}
+
+[Fact]
+fn bool FlagsBecomeTargetNotTailCallable()
+{
+    stack ascii source = "fn i32 plain(i32 x) { return x; }\ntail fn i32 bad(i32 x) { become plain(x); }\n";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.CountOf(BindDiagnosticCode.BecomeTargetNotTailCallable) == 1
+                && diags.Count() == 1;
+    }
+}
+
+[Fact]
+fn bool FlagsBecomeEffectMismatch()
+{
+    stack ascii source = "tail fn i32 plain(i32 x) { return x; }\ntail law fn i32 bad(i32 x) { become plain(x); }\n";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.CountOf(BindDiagnosticCode.BecomeEffectMismatch) == 1
+                && diags.Count() == 1;
+    }
+}
+
+[Fact]
+fn bool FlagsBecomeAbiArityMismatch()
+{
+    stack ascii source = "tail fn i32 one(i32 x) { return x; }\ntail fn i32 two(i32 x, i32 y) { become one(x); }\n";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.CountOf(BindDiagnosticCode.BecomeAbiMismatch) == 1
+                && diags.Count() == 1;
+    }
+}
+
+[Fact]
+fn bool FlagsBecomeAbiTypeMismatch()
+{
+    stack ascii source = "tail fn i32 one(i32 x) { return x; }\ntail fn bool bad(bool x) { become one(x); }\n";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.CountOf(BindDiagnosticCode.BecomeAbiMismatch) == 1
+                && diags.Count() == 1;
+    }
+}
+
+[Fact]
+fn bool AcceptsDeadOnReturnMemoryBackedFunctionParameter()
+{
+    stack ascii source = "fn bool destroy(out u32[0 max] value) where dead_on_return(value) { return true; }\n";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.Count() == 0;
+    }
+}
+
+[Fact]
+fn bool FlagsDeadOnReturnUnknownFunctionParameter()
+{
+    stack ascii source = "fn bool destroy(out u32[0 max] value) where dead_on_return(missing) { return true; }\n";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.CountOf(BindDiagnosticCode.DeadOnReturnUnknownParameter) == 1
+                && diags.Count() == 1;
+    }
+}
+
+[Fact]
+fn bool FlagsDeadOnReturnNonMemoryBackedFunctionParameter()
+{
+    stack ascii source = "fn bool destroy(u32[0 max] value) where dead_on_return(value) { return true; }\n";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.CountOf(BindDiagnosticCode.DeadOnReturnNonMemoryBackedParameter) == 1
+                && diags.Count() == 1;
+    }
+}
+
+[Fact]
+fn bool FlagsDeadOnReturnDuplicateFunctionParameter()
+{
+    stack ascii source = "fn bool destroy(out u32[0 max] value) where dead_on_return(value, value) { return true; }\n";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.CountOf(BindDiagnosticCode.DeadOnReturnDuplicateParameter) == 1
+                && diags.Count() == 1;
+    }
+}
+
+[Fact]
+fn bool FlagsFunctionPointerDeadOnReturnUnknownSyntheticArg()
+{
+    stack ascii source = "fn void apply(fnptr<fn void(out u32[0 max]) where dead_on_return(arg1)> op) { return; }\n";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.CountOf(BindDiagnosticCode.DeadOnReturnUnknownParameter) == 1
+                && diags.Count() == 1;
+    }
+}
+
+[Fact]
+fn bool FlagsFunctionPointerDeadOnReturnNonMemoryBackedSyntheticArg()
+{
+    stack ascii source = "fn void apply(fnptr<fn void(u32[0 max]) where dead_on_return(arg0)> op) { return; }\n";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.CountOf(BindDiagnosticCode.DeadOnReturnNonMemoryBackedParameter) == 1
+                && diags.Count() == 1;
+    }
+}
+
+[Fact]
+fn bool FlagsFunctionPointerDeadOnReturnDuplicateSyntheticArg()
+{
+    stack ascii source = "fn void apply(fnptr<fn void(out u32[0 max]) where dead_on_return(arg0, arg0)> op) { return; }\n";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.CountOf(BindDiagnosticCode.DeadOnReturnDuplicateParameter) == 1
+                && diags.Count() == 1;
+    }
+}
+
+[Fact]
+fn bool FlagsDirectDeadOnReturnCallForwardingMismatch()
+{
+    stack ascii source = "fn bool destroy(out u32[0 max] value) where dead_on_return(value) { return true; }\nfn bool wrapper(out u32[0 max] value) { return destroy(value); }\n";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.CountOf(BindDiagnosticCode.DeadOnReturnForwardingMismatch) == 1
+                && diags.Count() == 1;
+    }
+}
+
+[Fact]
+fn bool AcceptsDirectDeadOnReturnCallWhenCallerPropagatesContract()
+{
+    stack ascii source = "fn bool destroy(out u32[0 max] value) where dead_on_return(value) { return true; }\nfn bool wrapper(out u32[0 max] value) where dead_on_return(value) { return destroy(value); }\n";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.Count() == 0;
+    }
+}
+
+[Fact]
+fn bool FlagsCallbackDeadOnReturnCallForwardingMismatch()
+{
+    stack ascii source = "fn bool wrapper(fnptr<fn bool(out u32[0 max]) where dead_on_return(arg0)> op, out u32[0 max] value) { return op(value); }\n";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.CountOf(BindDiagnosticCode.DeadOnReturnForwardingMismatch) == 1
+                && diags.Count() == 1;
+    }
+}
+
+[Fact]
+fn bool AcceptsCallbackDeadOnReturnCallWhenCallerPropagatesContract()
+{
+    stack ascii source = "fn bool wrapper(fnptr<fn bool(out u32[0 max]) where dead_on_return(arg0)> op, out u32[0 max] value) where dead_on_return(value) { return op(value); }\n";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.Count() == 0;
+    }
+}
+
+[Fact]
+fn bool AcceptsArenaLocalAndNonRetainingBorrowInFiniteFunction()
+{
+    stack ascii source = "struct Box { }\nfn void Read(borrow Box box) { return; }\nfinite fn void caller() { arena Box box = new Box(); Read(box); return; }\n";
+    stack mut BindDiagnosticList diags = new();
+    return BindSource(source, diags)
+        && diags.Count() == 0;
+}
+
+[Fact]
+fn bool FlagsArenaAllocationInLawFunctions()
+{
+    stack ascii source = "struct Box { }\nlaw fn void localArena() { arena Box box = new Box(); return; }\nlaw fn void selectorArena() { stack Box box = new(arena, 4); return; }\n";
+    stack mut BindDiagnosticList diags = new();
+    return BindSource(source, diags)
+        && diags.CountOf(BindDiagnosticCode.ArenaAllocationInLaw) == 2
+        && diags.Count() == 2;
+}
+
+[Fact]
+fn bool FlagsReturningArenaBackedValues()
+{
+    stack ascii source = "struct Box { }\nfn Box direct() { arena Box box = new Box(); return box; }\nfn Box selected() { stack Box box = new(arena, 4); return box; }\n";
+    stack mut BindDiagnosticList diags = new();
+    return BindSource(source, diags)
+        && diags.CountOf(BindDiagnosticCode.ArenaValueEscapes) == 2
+        && diags.Count() == 2;
+}
+
+[Fact]
+fn bool PropagatesArenaFactsThroughMovesAndProjections()
+{
+    stack ascii source = "struct Box { }\nstruct Holder { Box value; }\nfn Box bad() { arena Holder holder = new Holder(); stack Box projected = holder.value; return projected; }\n";
+    stack mut BindDiagnosticList diags = new();
+    return BindSource(source, diags)
+        && diags.CountOf(BindDiagnosticCode.ArenaValueEscapes) == 1
+        && diags.Count() == 1;
+}
+
+[Fact]
+fn bool FlagsArenaBackedValuesPassedToRetainingParameters()
+{
+    stack ascii source = "struct Box { }\nfn void Hold(storeborrow Box box) { return; }\nfn void Read(borrow Box box) { return; }\nfn void caller() { arena Box box = new Box(); Hold(box); Read(box); return; }\n";
+    stack mut BindDiagnosticList diags = new();
+    return BindSource(source, diags)
+        && diags.CountOf(BindDiagnosticCode.ArenaValueRetainedByCallee) == 1
+        && diags.Count() == 1;
+}
+
+[Fact]
+fn bool FlagsArenaReturnedThroughRetborrowCallResult()
+{
+    stack ascii source = "struct Box { }\nfn retborrow Box BorrowIt(borrow Box box) { return box; }\nfn retborrow Box bad() { arena Box box = new Box(); return BorrowIt(box); }\n";
+    stack mut BindDiagnosticList diags = new();
+    return BindSource(source, diags)
+        && diags.CountOf(BindDiagnosticCode.ArenaValueEscapes) == 1
+        && diags.Count() == 1;
+}
+
+[Fact]
+fn bool AcceptsArenaPassedToRetborrowWhenResultDoesNotEscape()
+{
+    stack ascii source = "struct Box { }\nfn retborrow Box BorrowIt(borrow Box box) { return box; }\nfn void caller() { arena Box box = new Box(); BorrowIt(box); return; }\n";
+    stack mut BindDiagnosticList diags = new();
+    return BindSource(source, diags)
+        && diags.Count() == 0;
+}
+
+[Fact]
+fn bool FlagsArenaBackedValuesStoredIntoLongerLivedStorage()
+{
+    stack ascii source = "struct Box { }\nstatic Box Global;\nfn void bad() { arena Box box = new Box(); heap Box heapBox = box; static Box saved = box; Global = box; return; }\n";
+    stack mut BindDiagnosticList diags = new();
+    return BindSource(source, diags)
+        && diags.CountOf(BindDiagnosticCode.ArenaValueEscapes) == 3
+        && diags.Count() == 3;
 }
 
 [Fact]

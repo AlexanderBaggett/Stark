@@ -61,6 +61,28 @@ public enum MirOp
     // Stores operand A into module global `@gN` (N = the global id in the immediate).
     // A side-effecting instruction with no meaningful result register.
     StoreGlobal,
+    // Opens the hidden arena frame for function-scope arena storage. Side-effecting;
+    // emits the frame alloca and arena-enter helper call.
+    ArenaFrameEnter,
+    // Allocates positive constant-sized storage from the current function arena. The
+    // allocation byte size rides in `Imm`; the requested alignment rides in A.
+    ArenaAlloc,
+    // Creates an arena-backed dynamic-storage owner. The result is a pointer to a
+    // stack slot holding `{ data, length, capacity }`; `Imm` is the constant element
+    // capacity, A is the element byte size, and B is the requested element alignment.
+    ArenaDynamicStorageInit,
+    // Grows an arena-backed dynamic-storage owner with allocate-copy semantics. The
+    // owner slot is operand A; `Imm` is the additional element count, B is the element
+    // byte size, and C is the requested element alignment.
+    ArenaDynamicStorageReserve,
+    // Fallible arena-backed dynamic growth; same operands as Reserve, result is i1.
+    ArenaDynamicStorageTryReserve,
+    // Fallible exact-capacity arena-backed dynamic growth; same operand layout, but
+    // `Imm` is the target capacity instead of an additional element count.
+    ArenaDynamicStorageTryReserveCapacity,
+    // Leaves the hidden arena frame after live values have been ended/dropped by the
+    // front end. Side-effecting; emits the arena-leave helper call.
+    ArenaFrameLeave,
     // A 2-incoming SSA phi: result = operand A from one predecessor block, operand B
     // from another. The two predecessor block ids are packed into the immediate as
     // `block0 + block1 * 2**32` (decoded by div/mod 2**32), since the flat instruction
@@ -83,6 +105,7 @@ public enum MirType
     I1,
     I32,
     I64,
+    Ptr,
 }
 
 // One MIR instruction: an opcode, up to two operand value indices (0 = absent), an
@@ -239,6 +262,80 @@ public fn MirValueId MirSub(mut borrow IrTable<MirInstruction> instrs, MirValueI
 public fn MirValueId MirMul(mut borrow IrTable<MirInstruction> instrs, MirValueId a, MirValueId b)
 {
     return MirEmit(instrs, MirOp.Mul, a.Index(), b.Index(), 0);
+}
+
+// Opens a function-scope arena frame. This is a real MIR instruction so arena setup
+// participates in ordering, effect analysis, serialization, and LLVM emission.
+public fn MirValueId MirArenaFrameEnter(mut borrow IrTable<MirInstruction> instrs)
+{
+    return MirEmit(instrs, MirOp.ArenaFrameEnter, 0, 0, 0);
+}
+
+// Allocates from the active function arena. `sizeBytes` must be positive and known at
+// compile time in the self-hosted lowering subset; `alignBytes` is carried directly to
+// LLVM as both the allocation argument and the result alignment fact.
+public fn MirValueId MirArenaAlloc(mut borrow IrTable<MirInstruction> instrs, u32[0 max] sizeBytes, u32[0 max] alignBytes)
+{
+    stack mut MirInstruction instr = new();
+    instr.Op = MirOp.ArenaAlloc;
+    instr.AIndex = alignBytes;
+    instr.Imm = (i64[min max])sizeBytes;
+    instr.ResType = MirType.Ptr;
+    return MirValueIdOf(instrs.Add(instr));
+}
+
+// Creates a dynamic-storage owner backed by the active arena frame. Capacity is a
+// positive constant in this self-hosted subset; growth is handled by the reserve ops.
+public fn MirValueId MirArenaDynamicStorageInit(mut borrow IrTable<MirInstruction> instrs, u32[0 max] capacity, u32[0 max] elementSizeBytes, u32[0 max] alignBytes)
+{
+    stack mut MirInstruction instr = new();
+    instr.Op = MirOp.ArenaDynamicStorageInit;
+    instr.AIndex = elementSizeBytes;
+    instr.BIndex = alignBytes;
+    instr.Imm = (i64[min max])capacity;
+    instr.ResType = MirType.Ptr;
+    return MirValueIdOf(instrs.Add(instr));
+}
+
+public fn MirValueId MirArenaDynamicStorageReserve(mut borrow IrTable<MirInstruction> instrs, MirValueId storage, u32[0 max] additional, u32[0 max] elementSizeBytes, u32[0 max] alignBytes)
+{
+    stack mut MirInstruction instr = new();
+    instr.Op = MirOp.ArenaDynamicStorageReserve;
+    instr.AIndex = storage.Index();
+    instr.BIndex = elementSizeBytes;
+    instr.CIndex = alignBytes;
+    instr.Imm = (i64[min max])additional;
+    return MirValueIdOf(instrs.Add(instr));
+}
+
+public fn MirValueId MirArenaDynamicStorageTryReserve(mut borrow IrTable<MirInstruction> instrs, MirValueId storage, u32[0 max] additional, u32[0 max] elementSizeBytes, u32[0 max] alignBytes)
+{
+    stack mut MirInstruction instr = new();
+    instr.Op = MirOp.ArenaDynamicStorageTryReserve;
+    instr.AIndex = storage.Index();
+    instr.BIndex = elementSizeBytes;
+    instr.CIndex = alignBytes;
+    instr.Imm = (i64[min max])additional;
+    instr.ResType = MirType.I1;
+    return MirValueIdOf(instrs.Add(instr));
+}
+
+public fn MirValueId MirArenaDynamicStorageTryReserveCapacity(mut borrow IrTable<MirInstruction> instrs, MirValueId storage, u32[0 max] targetCapacity, u32[0 max] elementSizeBytes, u32[0 max] alignBytes)
+{
+    stack mut MirInstruction instr = new();
+    instr.Op = MirOp.ArenaDynamicStorageTryReserveCapacity;
+    instr.AIndex = storage.Index();
+    instr.BIndex = elementSizeBytes;
+    instr.CIndex = alignBytes;
+    instr.Imm = (i64[min max])targetCapacity;
+    instr.ResType = MirType.I1;
+    return MirValueIdOf(instrs.Add(instr));
+}
+
+// Closes the active function arena frame before a return.
+public fn MirValueId MirArenaFrameLeave(mut borrow IrTable<MirInstruction> instrs)
+{
+    return MirEmit(instrs, MirOp.ArenaFrameLeave, 0, 0, 0);
 }
 
 // The rest of the integer ALU: signed/unsigned divide and remainder, bitwise
@@ -939,7 +1036,30 @@ internal fn bool MirFunctionWellFormed(borrow IrTable<MirInstruction> instrs, bo
     while willexit (viRemaining > 0)
     {
         stack MirInstruction instr = instrs.Get(vi);
-        if (instr.OperandAIndex() > instrTotal || instr.OperandBIndex() > instrTotal || instr.OperandCIndex() > instrTotal || instr.OperandDIndex() > instrTotal)
+        if (instr.Opcode() == MirOp.ArenaAlloc)
+        {
+            if (instr.OperandBIndex() > instrTotal || instr.OperandCIndex() > instrTotal || instr.OperandDIndex() > instrTotal)
+            {
+                return false;
+            }
+        }
+        else if (instr.Opcode() == MirOp.ArenaDynamicStorageInit)
+        {
+            if (instr.OperandCIndex() > instrTotal || instr.OperandDIndex() > instrTotal)
+            {
+                return false;
+            }
+        }
+        else if (instr.Opcode() == MirOp.ArenaDynamicStorageReserve
+            || instr.Opcode() == MirOp.ArenaDynamicStorageTryReserve
+            || instr.Opcode() == MirOp.ArenaDynamicStorageTryReserveCapacity)
+        {
+            if (instr.OperandAIndex() == 0 || instr.OperandAIndex() > instrTotal || instr.OperandDIndex() > instrTotal)
+            {
+                return false;
+            }
+        }
+        else if (instr.OperandAIndex() > instrTotal || instr.OperandBIndex() > instrTotal || instr.OperandCIndex() > instrTotal || instr.OperandDIndex() > instrTotal)
         {
             return false;
         }
@@ -1012,6 +1132,8 @@ internal fn MemoryStatus EmitLlvmTypeName(MirType t, mut borrow OwnedAscii sink)
             try sink.AppendConstAscii("i32");
         case MirType.I64:
             try sink.AppendConstAscii("i64");
+        case MirType.Ptr:
+            try sink.AppendConstAscii("ptr");
     }
 
     return MemoryStatus.Ok;
@@ -1042,6 +1164,457 @@ internal fn MemoryStatus EmitLlvmOperand(borrow IrTable<MirInstruction> instrs, 
     }
 
     return EmitLlvmRegister(sink, valueIndex);
+}
+
+internal fn bool MirInstructionIsArenaRuntime(MirInstruction instr)
+{
+    switch (instr.Opcode())
+    {
+        case MirOp.ArenaFrameEnter:
+            return true;
+        case MirOp.ArenaAlloc:
+            return true;
+        case MirOp.ArenaDynamicStorageInit:
+            return true;
+        case MirOp.ArenaDynamicStorageReserve:
+            return true;
+        case MirOp.ArenaDynamicStorageTryReserve:
+            return true;
+        case MirOp.ArenaDynamicStorageTryReserveCapacity:
+            return true;
+        case MirOp.ArenaFrameLeave:
+            return true;
+        default:
+            return false;
+    }
+}
+
+internal fn bool MirInstructionIsArenaDynamicRuntime(MirInstruction instr)
+{
+    switch (instr.Opcode())
+    {
+        case MirOp.ArenaDynamicStorageInit:
+            return true;
+        case MirOp.ArenaDynamicStorageReserve:
+            return true;
+        case MirOp.ArenaDynamicStorageTryReserve:
+            return true;
+        case MirOp.ArenaDynamicStorageTryReserveCapacity:
+            return true;
+        default:
+            return false;
+    }
+}
+
+internal fn bool MirInstructionRangeUsesArenaRuntime(borrow IrTable<MirInstruction> instrs, u32[0 max] firstInstr, u32[0 max] instrCount)
+{
+    stack mut u32[0 max] index = firstInstr;
+    stack mut u32[0 max] remaining = instrCount;
+    while willexit (remaining > 0)
+    {
+        if (instrs.Contains(index))
+        {
+            stack MirInstruction instr = instrs.Get(index);
+            if (MirInstructionIsArenaRuntime(instr))
+            {
+                return true;
+            }
+        }
+
+        index = index + 1;
+        remaining = remaining - 1;
+    }
+
+    return false;
+}
+
+internal fn bool MirInstructionRangeUsesArenaDynamicRuntime(borrow IrTable<MirInstruction> instrs, u32[0 max] firstInstr, u32[0 max] instrCount)
+{
+    stack mut u32[0 max] index = firstInstr;
+    stack mut u32[0 max] remaining = instrCount;
+    while willexit (remaining > 0)
+    {
+        if (instrs.Contains(index))
+        {
+            stack MirInstruction instr = instrs.Get(index);
+            if (MirInstructionIsArenaDynamicRuntime(instr))
+            {
+                return true;
+            }
+        }
+
+        index = index + 1;
+        remaining = remaining - 1;
+    }
+
+    return false;
+}
+
+internal fn bool TokenStreamMentionsArenaRuntime(borrow TokenStream stream)
+{
+    stack u64[0 2 ** 63 - 1] count = stream.Count();
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < count)
+    {
+        if (stream.KindAt(i) == TokenKind.Arena)
+        {
+            return true;
+        }
+
+        i = i + 1;
+    }
+
+    return false;
+}
+
+internal fn bool TokenTextIsReserveName(borrow TokenStream stream, borrow i8[min max][] source, u32[0 max] token)
+{
+    stack u64[0 2 ** 63 - 1] length = stream.LengthAt((u64[0 2 ** 63 - 1])token);
+    if (length != 7)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] start = stream.StartAt((u64[0 2 ** 63 - 1])token);
+    return source[start] == 82
+        && source[start + 1] == 101
+        && source[start + 2] == 115
+        && source[start + 3] == 101
+        && source[start + 4] == 114
+        && source[start + 5] == 118
+        && source[start + 6] == 101;
+}
+
+internal fn bool TokenTextIsTryReserveName(borrow TokenStream stream, borrow i8[min max][] source, u32[0 max] token)
+{
+    stack u64[0 2 ** 63 - 1] length = stream.LengthAt((u64[0 2 ** 63 - 1])token);
+    if (length != 10)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] start = stream.StartAt((u64[0 2 ** 63 - 1])token);
+    return source[start] == 84
+        && source[start + 1] == 114
+        && source[start + 2] == 121
+        && source[start + 3] == 82
+        && source[start + 4] == 101
+        && source[start + 5] == 115
+        && source[start + 6] == 101
+        && source[start + 7] == 114
+        && source[start + 8] == 118
+        && source[start + 9] == 101;
+}
+
+internal fn bool TokenTextIsTryReserveCapacityName(borrow TokenStream stream, borrow i8[min max][] source, u32[0 max] token)
+{
+    stack u64[0 2 ** 63 - 1] length = stream.LengthAt((u64[0 2 ** 63 - 1])token);
+    if (length != 18)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] start = stream.StartAt((u64[0 2 ** 63 - 1])token);
+    return source[start] == 84
+        && source[start + 1] == 114
+        && source[start + 2] == 121
+        && source[start + 3] == 82
+        && source[start + 4] == 101
+        && source[start + 5] == 115
+        && source[start + 6] == 101
+        && source[start + 7] == 114
+        && source[start + 8] == 118
+        && source[start + 9] == 101
+        && source[start + 10] == 67
+        && source[start + 11] == 97
+        && source[start + 12] == 112
+        && source[start + 13] == 97
+        && source[start + 14] == 99
+        && source[start + 15] == 105
+        && source[start + 16] == 116
+        && source[start + 17] == 121;
+}
+
+internal fn bool TokenTextIsArenaDynamicReserveMethod(borrow TokenStream stream, borrow i8[min max][] source, u32[0 max] token)
+{
+    return TokenTextIsReserveName(stream, source, token)
+        || TokenTextIsTryReserveName(stream, source, token)
+        || TokenTextIsTryReserveCapacityName(stream, source, token);
+}
+
+internal fn bool TokenStreamMentionsArenaDynamicRuntime(borrow TokenStream stream, borrow i8[min max][] source)
+{
+    stack u64[0 2 ** 63 - 1] count = stream.Count();
+    stack mut bool sawArena = false;
+    stack mut bool sawDynamicReserve = false;
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < count)
+    {
+        stack TokenKind kind = stream.KindAt(i);
+        if (kind == TokenKind.Arena)
+        {
+            sawArena = true;
+        }
+        else if (kind == TokenKind.Identifier && TokenTextIsArenaDynamicReserveMethod(stream, source, (u32[0 max])i))
+        {
+            sawDynamicReserve = true;
+        }
+
+        i = i + 1;
+    }
+
+    return sawArena && sawDynamicReserve;
+}
+
+internal fn MemoryStatus EmitLlvmArenaRuntimeDeclarations(mut borrow OwnedAscii sink)
+{
+    try sink.AppendConstAscii("declare void @__stark_arena_enter(ptr captures(none) %frame) nounwind\n");
+    try sink.AppendConstAscii("declare noalias nonnull noundef ptr @__stark_arena_alloc(ptr captures(none) %frame, i64 noundef %size, i64 noundef allocalign %alignment) allocsize(1) allockind(\"alloc,uninitialized,aligned\") \"alloc-family\"=\"__stark_arena_alloc\" nounwind\n");
+    try sink.AppendConstAscii("declare void @__stark_arena_leave(ptr captures(none) %frame) nounwind\n");
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EmitLlvmArenaDynamicStorageGrowCopyHelperTail(mut borrow OwnedAscii sink, const ascii newCapacity, bool fallible, const ascii successLabel)
+{
+    try sink.AppendConstAscii("  %new_bytes = mul i64 ");
+    try sink.AppendConstAscii(newCapacity);
+    try sink.AppendConstAscii(", %element_size\n");
+    if (fallible)
+    {
+        try sink.AppendConstAscii("  %new_ptr = call noalias noundef ptr @__stark_arena_try_alloc(ptr %frame, i64 noundef %new_bytes, i64 noundef %alignment)\n");
+        try sink.AppendConstAscii("  %new_ptr_is_null = icmp eq ptr %new_ptr, null\n");
+        try sink.AppendConstAscii("  br i1 %new_ptr_is_null, label %failed, label %copy_check\n\n");
+        try sink.AppendConstAscii("copy_check:\n");
+    }
+    else
+    {
+        try sink.AppendConstAscii("  %new_ptr = call noalias nonnull noundef ptr @__stark_arena_alloc(ptr %frame, i64 noundef %new_bytes, i64 noundef %alignment)\n");
+    }
+
+    try sink.AppendConstAscii("  %has_live = icmp ne i64 %length, 0\n");
+    try sink.AppendConstAscii("  br i1 %has_live, label %copy, label %update\n\n");
+    try sink.AppendConstAscii("copy:\n");
+    try sink.AppendConstAscii("  %live_bytes = mul i64 %length, %element_size\n");
+    try sink.AppendConstAscii("  call void @llvm.memcpy.p0.p0.i64(ptr %new_ptr, ptr %ptr, i64 %live_bytes, i1 false)\n");
+    try sink.AppendConstAscii("  br label %update\n\n");
+    try sink.AppendConstAscii("update:\n");
+    try sink.AppendConstAscii("  %with_ptr = insertvalue { ptr, i64, i64 } %current, ptr %new_ptr, 0\n");
+    try sink.AppendConstAscii("  %updated = insertvalue { ptr, i64, i64 } %with_ptr, i64 ");
+    try sink.AppendConstAscii(newCapacity);
+    try sink.AppendConstAscii(", 2\n");
+    try sink.AppendConstAscii("  store { ptr, i64, i64 } %updated, ptr %storage\n");
+    try sink.AppendConstAscii("  br label %");
+    try sink.AppendConstAscii(successLabel);
+    try sink.AppendConstAscii("\n");
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EmitLlvmArenaDynamicRuntimeDeclarations(mut borrow OwnedAscii sink)
+{
+    try EmitLlvmArenaRuntimeDeclarations(sink);
+    try sink.AppendConstAscii("declare noalias noundef ptr @__stark_arena_try_alloc(ptr captures(none) %frame, i64 noundef %size, i64 noundef allocalign %alignment) allocsize(1) allockind(\"alloc,uninitialized,aligned\") \"alloc-family\"=\"__stark_arena_alloc\" nounwind\n");
+    try sink.AppendConstAscii("declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1)\n");
+    try sink.AppendConstAscii("declare void @llvm.trap() nounwind\n\n");
+
+    try sink.AppendConstAscii("define internal void @__stark_arena_dynamic_reserve(ptr captures(none) %frame, ptr captures(none) %storage, i64 noundef %additional, i64 noundef %element_size, i64 noundef allocalign %alignment, i64 noundef %max_count) nounwind {\n");
+    try sink.AppendConstAscii("entry:\n");
+    try sink.AppendConstAscii("  %current = load { ptr, i64, i64 }, ptr %storage\n");
+    try sink.AppendConstAscii("  %ptr = extractvalue { ptr, i64, i64 } %current, 0\n");
+    try sink.AppendConstAscii("  %length = extractvalue { ptr, i64, i64 } %current, 1\n");
+    try sink.AppendConstAscii("  %capacity = extractvalue { ptr, i64, i64 } %current, 2\n");
+    try sink.AppendConstAscii("  %needed = add i64 %length, %additional\n");
+    try sink.AppendConstAscii("  %needed_overflow = icmp ult i64 %needed, %length\n");
+    try sink.AppendConstAscii("  br i1 %needed_overflow, label %overflow, label %check\n\n");
+    try sink.AppendConstAscii("overflow:\n");
+    try sink.AppendConstAscii("  call void @llvm.trap()\n");
+    try sink.AppendConstAscii("  unreachable\n\n");
+    try sink.AppendConstAscii("check:\n");
+    try sink.AppendConstAscii("  %enough = icmp ule i64 %needed, %capacity\n");
+    try sink.AppendConstAscii("  br i1 %enough, label %done, label %grow\n\n");
+    try sink.AppendConstAscii("grow:\n");
+    try sink.AppendConstAscii("  %doubled = shl i64 %capacity, 1\n");
+    try sink.AppendConstAscii("  %can_double = icmp ule i64 %capacity, 9223372036854775807\n");
+    try sink.AppendConstAscii("  %doubled_or_max = select i1 %can_double, i64 %doubled, i64 -1\n");
+    try sink.AppendConstAscii("  %capacity_small = icmp ult i64 %capacity, 2\n");
+    try sink.AppendConstAscii("  %minimum = select i1 %capacity_small, i64 4, i64 %doubled_or_max\n");
+    try sink.AppendConstAscii("  %needed_larger = icmp ugt i64 %needed, %minimum\n");
+    try sink.AppendConstAscii("  %new_capacity = select i1 %needed_larger, i64 %needed, i64 %minimum\n");
+    try sink.AppendConstAscii("  %too_large = icmp ugt i64 %new_capacity, %max_count\n");
+    try sink.AppendConstAscii("  br i1 %too_large, label %overflow, label %allocate\n\n");
+    try sink.AppendConstAscii("allocate:\n");
+    try EmitLlvmArenaDynamicStorageGrowCopyHelperTail(sink, "%new_capacity", false, "done");
+    try sink.AppendConstAscii("\n");
+    try sink.AppendConstAscii("done:\n");
+    try sink.AppendConstAscii("  ret void\n");
+    try sink.AppendConstAscii("}\n\n");
+
+    try sink.AppendConstAscii("define internal i1 @__stark_arena_dynamic_try_reserve(ptr captures(none) %frame, ptr captures(none) %storage, i64 noundef %additional, i64 noundef %element_size, i64 noundef allocalign %alignment, i64 noundef %max_count) nounwind {\n");
+    try sink.AppendConstAscii("entry:\n");
+    try sink.AppendConstAscii("  %current = load { ptr, i64, i64 }, ptr %storage\n");
+    try sink.AppendConstAscii("  %ptr = extractvalue { ptr, i64, i64 } %current, 0\n");
+    try sink.AppendConstAscii("  %length = extractvalue { ptr, i64, i64 } %current, 1\n");
+    try sink.AppendConstAscii("  %capacity = extractvalue { ptr, i64, i64 } %current, 2\n");
+    try sink.AppendConstAscii("  %needed = add i64 %length, %additional\n");
+    try sink.AppendConstAscii("  %needed_overflow = icmp ult i64 %needed, %length\n");
+    try sink.AppendConstAscii("  br i1 %needed_overflow, label %failed, label %check\n\n");
+    try sink.AppendConstAscii("check:\n");
+    try sink.AppendConstAscii("  %enough = icmp ule i64 %needed, %capacity\n");
+    try sink.AppendConstAscii("  br i1 %enough, label %succeeded, label %grow\n\n");
+    try sink.AppendConstAscii("grow:\n");
+    try sink.AppendConstAscii("  %doubled = shl i64 %capacity, 1\n");
+    try sink.AppendConstAscii("  %can_double = icmp ule i64 %capacity, 9223372036854775807\n");
+    try sink.AppendConstAscii("  %doubled_or_max = select i1 %can_double, i64 %doubled, i64 -1\n");
+    try sink.AppendConstAscii("  %capacity_small = icmp ult i64 %capacity, 2\n");
+    try sink.AppendConstAscii("  %minimum = select i1 %capacity_small, i64 4, i64 %doubled_or_max\n");
+    try sink.AppendConstAscii("  %needed_larger = icmp ugt i64 %needed, %minimum\n");
+    try sink.AppendConstAscii("  %new_capacity = select i1 %needed_larger, i64 %needed, i64 %minimum\n");
+    try sink.AppendConstAscii("  %too_large = icmp ugt i64 %new_capacity, %max_count\n");
+    try sink.AppendConstAscii("  br i1 %too_large, label %failed, label %allocate\n\n");
+    try sink.AppendConstAscii("allocate:\n");
+    try EmitLlvmArenaDynamicStorageGrowCopyHelperTail(sink, "%new_capacity", true, "succeeded");
+    try sink.AppendConstAscii("\n");
+    try sink.AppendConstAscii("succeeded:\n");
+    try sink.AppendConstAscii("  ret i1 true\n\n");
+    try sink.AppendConstAscii("failed:\n");
+    try sink.AppendConstAscii("  ret i1 false\n");
+    try sink.AppendConstAscii("}\n\n");
+
+    try sink.AppendConstAscii("define internal i1 @__stark_arena_dynamic_try_reserve_capacity(ptr captures(none) %frame, ptr captures(none) %storage, i64 noundef %target_capacity, i64 noundef %element_size, i64 noundef allocalign %alignment, i64 noundef %max_count) nounwind {\n");
+    try sink.AppendConstAscii("entry:\n");
+    try sink.AppendConstAscii("  %current = load { ptr, i64, i64 }, ptr %storage\n");
+    try sink.AppendConstAscii("  %ptr = extractvalue { ptr, i64, i64 } %current, 0\n");
+    try sink.AppendConstAscii("  %length = extractvalue { ptr, i64, i64 } %current, 1\n");
+    try sink.AppendConstAscii("  %capacity = extractvalue { ptr, i64, i64 } %current, 2\n");
+    try sink.AppendConstAscii("  %enough = icmp ule i64 %target_capacity, %capacity\n");
+    try sink.AppendConstAscii("  br i1 %enough, label %succeeded, label %check\n\n");
+    try sink.AppendConstAscii("check:\n");
+    try sink.AppendConstAscii("  %too_large = icmp ugt i64 %target_capacity, %max_count\n");
+    try sink.AppendConstAscii("  br i1 %too_large, label %failed, label %allocate\n\n");
+    try sink.AppendConstAscii("allocate:\n");
+    try EmitLlvmArenaDynamicStorageGrowCopyHelperTail(sink, "%target_capacity", true, "succeeded");
+    try sink.AppendConstAscii("\n");
+    try sink.AppendConstAscii("succeeded:\n");
+    try sink.AppendConstAscii("  ret i1 true\n\n");
+    try sink.AppendConstAscii("failed:\n");
+    try sink.AppendConstAscii("  ret i1 false\n");
+    try sink.AppendConstAscii("}\n");
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EmitLlvmArenaRuntimePreambleForRange(borrow IrTable<MirInstruction> instrs, u32[0 max] firstInstr, u32[0 max] instrCount, mut borrow OwnedAscii sink)
+{
+    if (MirInstructionRangeUsesArenaDynamicRuntime(instrs, firstInstr, instrCount))
+    {
+        try EmitLlvmArenaDynamicRuntimeDeclarations(sink);
+    }
+    else if (MirInstructionRangeUsesArenaRuntime(instrs, firstInstr, instrCount))
+    {
+        try EmitLlvmArenaRuntimeDeclarations(sink);
+    }
+
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EmitLlvmArenaInstruction(mut borrow OwnedAscii sink, u32[0 max] index, MirInstruction instr)
+{
+    switch (instr.Opcode())
+    {
+        case MirOp.ArenaFrameEnter:
+            try sink.AppendConstAscii("  %__stark_arena_frame = alloca { ptr, ptr, ptr }, align 8\n");
+            try sink.AppendConstAscii("  call void @__stark_arena_enter(ptr nonnull %__stark_arena_frame)\n");
+        case MirOp.ArenaAlloc:
+            try sink.AppendConstAscii("  ");
+            try EmitLlvmRegister(sink, index);
+            try sink.AppendConstAscii(" = call noalias nonnull noundef align ");
+            try sink.AppendU64((u64[0 max])instr.OperandAIndex());
+            try sink.AppendConstAscii(" dereferenceable(");
+            try sink.AppendI64(instr.Immediate());
+            try sink.AppendConstAscii(") ptr @__stark_arena_alloc(ptr nonnull %__stark_arena_frame, i64 noundef ");
+            try sink.AppendI64(instr.Immediate());
+            try sink.AppendConstAscii(", i64 noundef ");
+            try sink.AppendU64((u64[0 max])instr.OperandAIndex());
+            try sink.AppendConstAscii(")\n");
+        case MirOp.ArenaDynamicStorageInit:
+            stack u64[0 max] capacity = (u64[0 max])instr.Immediate();
+            stack u64[0 max] elementSize = (u64[0 max])instr.OperandAIndex();
+            stack u64[0 max] byteLength = capacity * elementSize;
+            try sink.AppendConstAscii("  ");
+            try EmitLlvmRegister(sink, index);
+            try sink.AppendConstAscii(" = alloca { ptr, i64, i64 }, align 8\n");
+            try sink.AppendConstAscii("  ");
+            try EmitLlvmRegister(sink, index);
+            try sink.AppendConstAscii(".data = call noalias nonnull noundef align ");
+            try sink.AppendU64((u64[0 max])instr.OperandBIndex());
+            try sink.AppendConstAscii(" dereferenceable(");
+            try sink.AppendU64(byteLength);
+            try sink.AppendConstAscii(") ptr @__stark_arena_alloc(ptr nonnull %__stark_arena_frame, i64 noundef ");
+            try sink.AppendU64(byteLength);
+            try sink.AppendConstAscii(", i64 noundef ");
+            try sink.AppendU64((u64[0 max])instr.OperandBIndex());
+            try sink.AppendConstAscii(")\n");
+            try sink.AppendConstAscii("  ");
+            try EmitLlvmRegister(sink, index);
+            try sink.AppendConstAscii(".with_ptr = insertvalue { ptr, i64, i64 } zeroinitializer, ptr ");
+            try EmitLlvmRegister(sink, index);
+            try sink.AppendConstAscii(".data, 0\n");
+            try sink.AppendConstAscii("  ");
+            try EmitLlvmRegister(sink, index);
+            try sink.AppendConstAscii(".with_length = insertvalue { ptr, i64, i64 } ");
+            try EmitLlvmRegister(sink, index);
+            try sink.AppendConstAscii(".with_ptr, i64 0, 1\n");
+            try sink.AppendConstAscii("  ");
+            try EmitLlvmRegister(sink, index);
+            try sink.AppendConstAscii(".value = insertvalue { ptr, i64, i64 } ");
+            try EmitLlvmRegister(sink, index);
+            try sink.AppendConstAscii(".with_length, i64 ");
+            try sink.AppendI64(instr.Immediate());
+            try sink.AppendConstAscii(", 2\n");
+            try sink.AppendConstAscii("  store { ptr, i64, i64 } ");
+            try EmitLlvmRegister(sink, index);
+            try sink.AppendConstAscii(".value, ptr ");
+            try EmitLlvmRegister(sink, index);
+            try sink.AppendConstAscii(", align 8\n");
+        case MirOp.ArenaDynamicStorageReserve:
+            try sink.AppendConstAscii("  call void @__stark_arena_dynamic_reserve(ptr nonnull %__stark_arena_frame, ptr nonnull ");
+            try EmitLlvmRegister(sink, instr.OperandAIndex());
+            try sink.AppendConstAscii(", i64 noundef ");
+            try sink.AppendI64(instr.Immediate());
+            try sink.AppendConstAscii(", i64 noundef ");
+            try sink.AppendU64((u64[0 max])instr.OperandBIndex());
+            try sink.AppendConstAscii(", i64 noundef ");
+            try sink.AppendU64((u64[0 max])instr.OperandCIndex());
+            try sink.AppendConstAscii(", i64 noundef 9223372036854775807)\n");
+        case MirOp.ArenaDynamicStorageTryReserve:
+            try sink.AppendConstAscii("  ");
+            try EmitLlvmRegister(sink, index);
+            try sink.AppendConstAscii(" = call i1 @__stark_arena_dynamic_try_reserve(ptr nonnull %__stark_arena_frame, ptr nonnull ");
+            try EmitLlvmRegister(sink, instr.OperandAIndex());
+            try sink.AppendConstAscii(", i64 noundef ");
+            try sink.AppendI64(instr.Immediate());
+            try sink.AppendConstAscii(", i64 noundef ");
+            try sink.AppendU64((u64[0 max])instr.OperandBIndex());
+            try sink.AppendConstAscii(", i64 noundef ");
+            try sink.AppendU64((u64[0 max])instr.OperandCIndex());
+            try sink.AppendConstAscii(", i64 noundef 9223372036854775807)\n");
+        case MirOp.ArenaDynamicStorageTryReserveCapacity:
+            try sink.AppendConstAscii("  ");
+            try EmitLlvmRegister(sink, index);
+            try sink.AppendConstAscii(" = call i1 @__stark_arena_dynamic_try_reserve_capacity(ptr nonnull %__stark_arena_frame, ptr nonnull ");
+            try EmitLlvmRegister(sink, instr.OperandAIndex());
+            try sink.AppendConstAscii(", i64 noundef ");
+            try sink.AppendI64(instr.Immediate());
+            try sink.AppendConstAscii(", i64 noundef ");
+            try sink.AppendU64((u64[0 max])instr.OperandBIndex());
+            try sink.AppendConstAscii(", i64 noundef ");
+            try sink.AppendU64((u64[0 max])instr.OperandCIndex());
+            try sink.AppendConstAscii(", i64 noundef 9223372036854775807)\n");
+        case MirOp.ArenaFrameLeave:
+            try sink.AppendConstAscii("  call void @__stark_arena_leave(ptr nonnull %__stark_arena_frame)\n");
+        default:
+            try sink.AppendConstAscii("");
+    }
+
+    return MemoryStatus.Ok;
 }
 
 internal fn ValueFacts FactAt(borrow IrTable<ValueFacts> facts, u32[0 max] index)
@@ -1102,6 +1675,224 @@ internal fn MemoryStatus EmitLlvmRangeAttribute(MirType type, ValueFacts facts, 
     try sink.AppendI64(facts.IntegerRangeUpperExclusive());
     try sink.AppendConstAscii(")");
     return MemoryStatus.Ok;
+}
+
+internal struct FunctionEffectFacts
+{
+    bool IsLaw;
+    bool LawMayReadMemory;
+    bool IsFinite;
+    bool IsNoRecurse;
+
+    FunctionEffectFacts()
+    {
+        self.IsLaw = false;
+        self.LawMayReadMemory = false;
+        self.IsFinite = false;
+        self.IsNoRecurse = false;
+    }
+}
+
+internal fn FunctionEffectFacts NoFunctionEffectFacts()
+{
+    stack mut FunctionEffectFacts facts = new();
+    return facts;
+}
+
+internal fn MemoryStatus EmitLlvmFunctionEffectAttributes(FunctionEffectFacts facts, mut borrow OwnedAscii sink)
+{
+    if (facts.IsLaw)
+    {
+        if (facts.LawMayReadMemory)
+        {
+            try sink.AppendConstAscii(" memory(read)");
+        }
+        else
+        {
+            try sink.AppendConstAscii(" memory(none)");
+        }
+
+        try sink.AppendConstAscii(" nosync nofree");
+    }
+
+    if (facts.IsFinite)
+    {
+        try sink.AppendConstAscii(" willreturn mustprogress");
+    }
+
+    if (facts.IsNoRecurse)
+    {
+        try sink.AppendConstAscii(" norecurse");
+    }
+
+    return MemoryStatus.Ok;
+}
+
+internal struct ParamAbiFacts
+{
+    bool IsPointer;
+    // 0 = none, 1 = captures(none), 2 = ret read-provenance,
+    // 3 = ret provenance, 4 = address read-provenance, 5 = address provenance.
+    u32[0 max] CaptureKind;
+    bool ReadOnly;
+    bool WriteOnly;
+    bool Writable;
+    bool DeadOnReturn;
+    u32[0 max] InitializesBytes;
+
+    ParamAbiFacts()
+    {
+        self.IsPointer = false;
+        self.CaptureKind = 0;
+        self.ReadOnly = false;
+        self.WriteOnly = false;
+        self.Writable = false;
+        self.DeadOnReturn = false;
+        self.InitializesBytes = 0;
+    }
+}
+
+internal fn ParamAbiFacts AbiFactAt(borrow IrTable<ParamAbiFacts> facts, u32[0 max] index)
+{
+    stack mut ParamAbiFacts empty = new();
+    if (facts.Contains(index))
+    {
+        return facts.Get(index);
+    }
+
+    return empty;
+}
+
+internal fn MemoryStatus EmitLlvmCaptureAttribute(ParamAbiFacts facts, mut borrow OwnedAscii sink)
+{
+    switch (facts.CaptureKind)
+    {
+        case 1:
+            try sink.AppendConstAscii(" captures(none)");
+        case 2:
+            try sink.AppendConstAscii(" captures(ret: address, read_provenance)");
+        case 3:
+            try sink.AppendConstAscii(" captures(ret: address, provenance)");
+        case 4:
+            try sink.AppendConstAscii(" captures(address, read_provenance)");
+        case 5:
+            try sink.AppendConstAscii(" captures(address, provenance)");
+        default:
+            try sink.AppendConstAscii("");
+    }
+
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EmitLlvmParamAbiAttributes(ParamAbiFacts facts, mut borrow OwnedAscii sink)
+{
+    try EmitLlvmCaptureAttribute(facts, sink);
+    if (facts.ReadOnly)
+    {
+        try sink.AppendConstAscii(" readonly");
+    }
+
+    if (facts.WriteOnly)
+    {
+        try sink.AppendConstAscii(" writeonly");
+    }
+
+    if (facts.Writable)
+    {
+        try sink.AppendConstAscii(" writable");
+    }
+
+    if (facts.InitializesBytes > 0)
+    {
+        try sink.AppendConstAscii(" initializes((0, ");
+        try sink.AppendU64((u64[0 max])facts.InitializesBytes);
+        try sink.AppendConstAscii("))");
+    }
+
+    if (facts.DeadOnReturn)
+    {
+        try sink.AppendConstAscii(" dead_on_return");
+    }
+
+    return MemoryStatus.Ok;
+}
+
+internal struct DistinctStoragePair
+{
+    u32[0 max] LeftParam;
+    u32[0 max] RightParam;
+
+    DistinctStoragePair()
+    {
+        self.LeftParam = 0;
+        self.RightParam = 0;
+    }
+}
+
+internal fn DistinctStoragePair MakeDistinctStoragePair(u32[0 max] leftParam, u32[0 max] rightParam)
+{
+    stack mut DistinctStoragePair pair = new();
+    if (leftParam <= rightParam)
+    {
+        pair.LeftParam = leftParam;
+        pair.RightParam = rightParam;
+    }
+    else
+    {
+        pair.LeftParam = rightParam;
+        pair.RightParam = leftParam;
+    }
+
+    return pair;
+}
+
+internal fn bool DistinctStoragePairExists(borrow IrTable<DistinctStoragePair> facts, u32[0 max] leftParam, u32[0 max] rightParam)
+{
+    stack DistinctStoragePair canonical = MakeDistinctStoragePair(leftParam, rightParam);
+    stack u64[0 2 ** 63 - 1] total = facts.Count();
+    stack mut u32[0 max] i = 1;
+    while willexit ((u64[0 2 ** 63 - 1])i <= total)
+    {
+        stack DistinctStoragePair pair = facts.Get(i);
+        if (pair.LeftParam == canonical.LeftParam && pair.RightParam == canonical.RightParam)
+        {
+            return true;
+        }
+
+        i = i + 1;
+    }
+
+    return false;
+}
+
+internal fn bool AddDistinctStoragePairIfAbsent(mut borrow IrTable<DistinctStoragePair> facts, u32[0 max] leftParam, u32[0 max] rightParam)
+{
+    if (leftParam == rightParam)
+    {
+        return true;
+    }
+
+    if (DistinctStoragePairExists(facts, leftParam, rightParam))
+    {
+        return true;
+    }
+
+    return facts.Add(MakeDistinctStoragePair(leftParam, rightParam)) != 0;
+}
+
+internal fn bool AddDistinctStoragePairIfPointerParams(
+    borrow IrTable<ParamAbiFacts> paramAbiFacts,
+    mut borrow IrTable<DistinctStoragePair> facts,
+    u32[0 max] leftParam,
+    u32[0 max] rightParam)
+{
+    if (!AbiFactAt(paramAbiFacts, leftParam + 1).IsPointer
+        || !AbiFactAt(paramAbiFacts, rightParam + 1).IsPointer)
+    {
+        return true;
+    }
+
+    return AddDistinctStoragePairIfAbsent(facts, leftParam, rightParam);
 }
 
 internal struct LlvmRangeMetadata
@@ -1419,6 +2210,20 @@ internal fn MemoryStatus EmitLlvmInstructionWithTailCallees(borrow IrTable<MirIn
             try sink.AppendConstAscii(", ptr @g");
             try sink.AppendI64(instr.Immediate());
             try sink.AppendConstAscii("\n");
+        case MirOp.ArenaFrameEnter:
+            try EmitLlvmArenaInstruction(sink, index, instr);
+        case MirOp.ArenaAlloc:
+            try EmitLlvmArenaInstruction(sink, index, instr);
+        case MirOp.ArenaDynamicStorageInit:
+            try EmitLlvmArenaInstruction(sink, index, instr);
+        case MirOp.ArenaDynamicStorageReserve:
+            try EmitLlvmArenaInstruction(sink, index, instr);
+        case MirOp.ArenaDynamicStorageTryReserve:
+            try EmitLlvmArenaInstruction(sink, index, instr);
+        case MirOp.ArenaDynamicStorageTryReserveCapacity:
+            try EmitLlvmArenaInstruction(sink, index, instr);
+        case MirOp.ArenaFrameLeave:
+            try EmitLlvmArenaInstruction(sink, index, instr);
         case MirOp.Phi:
             try EmitLlvmPhi(instrs, sink, index, instr.OperandAIndex(), instr.OperandBIndex(), instr.Immediate());
         case MirOp.Call:
@@ -1527,6 +2332,20 @@ internal fn MemoryStatus EmitLlvmInstructionWithRangeFacts(
             try sink.AppendConstAscii(", ptr @g");
             try sink.AppendI64(instr.Immediate());
             try sink.AppendConstAscii("\n");
+        case MirOp.ArenaFrameEnter:
+            try EmitLlvmArenaInstruction(sink, index, instr);
+        case MirOp.ArenaAlloc:
+            try EmitLlvmArenaInstruction(sink, index, instr);
+        case MirOp.ArenaDynamicStorageInit:
+            try EmitLlvmArenaInstruction(sink, index, instr);
+        case MirOp.ArenaDynamicStorageReserve:
+            try EmitLlvmArenaInstruction(sink, index, instr);
+        case MirOp.ArenaDynamicStorageTryReserve:
+            try EmitLlvmArenaInstruction(sink, index, instr);
+        case MirOp.ArenaDynamicStorageTryReserveCapacity:
+            try EmitLlvmArenaInstruction(sink, index, instr);
+        case MirOp.ArenaFrameLeave:
+            try EmitLlvmArenaInstruction(sink, index, instr);
         case MirOp.Phi:
             try EmitLlvmPhi(instrs, sink, index, instr.OperandAIndex(), instr.OperandBIndex(), instr.Immediate());
         case MirOp.Call:
@@ -1574,6 +2393,8 @@ internal fn MemoryStatus EmitLlvmInstruction(borrow IrTable<MirInstruction> inst
 // [firstInstr, firstInstr+instrCount), in table order, into `sink`.
 public fn MemoryStatus EmitLlvmFunction(borrow IrTable<MirInstruction> instrs, const ascii name, u32[0 max] firstInstr, u32[0 max] instrCount, mut borrow OwnedAscii sink)
 {
+    try EmitLlvmArenaRuntimePreambleForRange(instrs, firstInstr, instrCount, sink);
+
     try sink.AppendConstAscii("define i64 @");
     try sink.AppendConstAscii(name);
     try sink.AppendConstAscii("() {\nentry:\n");
@@ -1647,6 +2468,12 @@ public fn MemoryStatus EmitLlvmTerminatorWithTailCallees(borrow IrTable<MirInstr
                 return MemoryStatus.Ok;
             }
 
+            if (!FunctionIdIsTailCallable(funcTailFlags, (u32[0 max])tailCall.Immediate()))
+            {
+                try sink.AppendConstAscii("  unreachable\n");
+                return MemoryStatus.Ok;
+            }
+
             try sink.AppendConstAscii("  ");
             try EmitLlvmRegister(sink, blk.Slot0Index());
             try sink.AppendConstAscii(" = musttail call tailcc i64 @f");
@@ -1713,6 +2540,12 @@ internal fn MemoryStatus EmitLlvmTerminatorWithRangeFacts(
                 return MemoryStatus.Ok;
             }
 
+            if (!FunctionIdIsTailCallable(funcTailFlags, (u32[0 max])tailCall.Immediate()))
+            {
+                try sink.AppendConstAscii("  unreachable\n");
+                return MemoryStatus.Ok;
+            }
+
             try sink.AppendConstAscii("  ");
             try EmitLlvmRegister(sink, blk.Slot0Index());
             try sink.AppendConstAscii(" = musttail call tailcc i64 @f");
@@ -1743,6 +2576,30 @@ public fn MemoryStatus EmitLlvmTerminator(borrow IrTable<MirInstruction> instrs,
 {
     stack mut IrTable<u32[0 max]> noTailCallees = new();
     return EmitLlvmTerminatorWithTailCallees(instrs, noTailCallees, blocks, b, sink);
+}
+
+internal fn MemoryStatus EmitLlvmSeparateStorageAssume(borrow DistinctStoragePair pair, mut borrow OwnedAscii sink)
+{
+    try sink.AppendConstAscii("  call void @llvm.assume(i1 true) [\"separate_storage\"(ptr %p");
+    try sink.AppendU64((u64[0 max])pair.LeftParam);
+    try sink.AppendConstAscii(", ptr %p");
+    try sink.AppendU64((u64[0 max])pair.RightParam);
+    try sink.AppendConstAscii(")]\n");
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus EmitLlvmSeparateStorageAssumes(borrow IrTable<DistinctStoragePair> facts, mut borrow OwnedAscii sink)
+{
+    stack u64[0 2 ** 63 - 1] total = facts.Count();
+    stack mut u32[0 max] i = 1;
+    while willexit ((u64[0 2 ** 63 - 1])i <= total)
+    {
+        stack DistinctStoragePair pair = facts.Get(i);
+        try EmitLlvmSeparateStorageAssume(pair, sink);
+        i = i + 1;
+    }
+
+    return MemoryStatus.Ok;
 }
 
 // === Whole-function LLVM emission ===
@@ -1785,9 +2642,48 @@ internal fn MemoryStatus EmitLlvmLabeledBlockWithRangeFacts(
     u32[0 max] instrCount,
     mut borrow OwnedAscii sink)
 {
+    stack mut IrTable<DistinctStoragePair> noSeparateStorageFacts = new();
+    return EmitLlvmLabeledBlockWithRangeFactsAndSeparateStorage(
+        instrs,
+        funcTailFlags,
+        paramFacts,
+        valueFacts,
+        globalFacts,
+        functionReturnFacts,
+        rangeMetadata,
+        noSeparateStorageFacts,
+        false,
+        blocks,
+        blockIndex,
+        firstInstr,
+        instrCount,
+        sink);
+}
+
+internal fn MemoryStatus EmitLlvmLabeledBlockWithRangeFactsAndSeparateStorage(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<u32[0 max]> funcTailFlags,
+    borrow IrTable<ValueFacts> paramFacts,
+    borrow IrTable<ValueFacts> valueFacts,
+    borrow IrTable<ValueFacts> globalFacts,
+    borrow IrTable<ValueFacts> functionReturnFacts,
+    mut borrow IrTable<LlvmRangeMetadata> rangeMetadata,
+    borrow IrTable<DistinctStoragePair> separateStorageFacts,
+    bool emitSeparateStorageFacts,
+    borrow IrTable<MirBlock> blocks,
+    u32[0 max] blockIndex,
+    u32[0 max] firstInstr,
+    u32[0 max] instrCount,
+    mut borrow OwnedAscii sink)
+{
     try sink.AppendConstAscii("b");
     try sink.AppendU64((u64[0 max])blockIndex);
     try sink.AppendConstAscii(":\n");
+    if (emitSeparateStorageFacts)
+    {
+        try EmitLlvmSeparateStorageAssumes(separateStorageFacts, sink);
+    }
+
     stack mut u32[0 max] index = firstInstr;
     stack mut u32[0 max] remaining = instrCount;
     while willexit (remaining > 0)
@@ -1830,6 +2726,8 @@ public fn MemoryStatus EmitLlvmLabeledBlock(borrow IrTable<MirInstruction> instr
 // body is the entry block (its instruction range + its terminator).
 public fn MemoryStatus EmitLlvmDefinition(borrow IrTable<MirInstruction> instrs, borrow IrTable<MirBlock> blocks, const ascii name, u32[0 max] entryBlockIndex, u32[0 max] firstInstr, u32[0 max] instrCount, mut borrow OwnedAscii sink)
 {
+    try EmitLlvmArenaRuntimePreambleForRange(instrs, firstInstr, instrCount, sink);
+
     try sink.AppendConstAscii("define i64 @");
     try sink.AppendConstAscii(name);
     try sink.AppendConstAscii("() {\n");
@@ -1882,6 +2780,38 @@ internal fn MemoryStatus EmitLlvmParamListWithRangeFacts(u32[0 max] paramCount, 
     return MemoryStatus.Ok;
 }
 
+internal fn MemoryStatus EmitLlvmParamListWithRangeAndAbiFacts(u32[0 max] paramCount, borrow IrTable<ValueFacts> paramFacts, borrow IrTable<ParamAbiFacts> paramAbiFacts, mut borrow OwnedAscii sink)
+{
+    try sink.AppendConstAscii("(");
+    stack mut u32[0 max] i = 0;
+    while willexit (i < paramCount)
+    {
+        if (i > 0)
+        {
+            try sink.AppendConstAscii(", ");
+        }
+
+        stack ParamAbiFacts abi = AbiFactAt(paramAbiFacts, i + 1);
+        if (abi.IsPointer)
+        {
+            try sink.AppendConstAscii("ptr");
+            try EmitLlvmParamAbiAttributes(abi, sink);
+        }
+        else
+        {
+            try sink.AppendConstAscii("i64");
+            try EmitLlvmRangeAttribute(MirType.I64, FactAt(paramFacts, i + 1), sink);
+        }
+
+        try sink.AppendConstAscii(" %p");
+        try sink.AppendU64((u64[0 max])i);
+        i = i + 1;
+    }
+
+    try sink.AppendConstAscii(")");
+    return MemoryStatus.Ok;
+}
+
 // Emits a single-block LLVM function with a parameter list: `define i64
 // @name(i64 %p0, …) { <entry block> }`. Body uses of `MirParam` values lower to
 // `%pK`, including a parameter returned directly by the block terminator (which
@@ -1892,6 +2822,8 @@ internal fn MemoryStatus EmitLlvmParamListWithRangeFacts(u32[0 max] paramCount, 
 // an undeclared `%p5`.
 public fn MemoryStatus EmitLlvmDefinitionWithParams(borrow IrTable<MirInstruction> instrs, borrow IrTable<MirBlock> blocks, const ascii name, u32[0 max] paramCount, u32[0 max] entryBlockIndex, u32[0 max] firstInstr, u32[0 max] instrCount, mut borrow OwnedAscii sink)
 {
+    try EmitLlvmArenaRuntimePreambleForRange(instrs, firstInstr, instrCount, sink);
+
     try sink.AppendConstAscii("define i64 @");
     try sink.AppendConstAscii(name);
     try EmitLlvmParamList(paramCount, sink);
@@ -1903,6 +2835,8 @@ public fn MemoryStatus EmitLlvmDefinitionWithParams(borrow IrTable<MirInstructio
 
 public fn MemoryStatus EmitLlvmDefinitionWithParamsTail(borrow IrTable<MirInstruction> instrs, borrow IrTable<u32[0 max]> funcTailFlags, borrow IrTable<MirBlock> blocks, const ascii name, u32[0 max] paramCount, u32[0 max] entryBlockIndex, u32[0 max] firstInstr, u32[0 max] instrCount, mut borrow OwnedAscii sink)
 {
+    try EmitLlvmArenaRuntimePreambleForRange(instrs, firstInstr, instrCount, sink);
+
     try sink.AppendConstAscii("define tailcc i64 @");
     try sink.AppendConstAscii(name);
     try EmitLlvmParamList(paramCount, sink);
@@ -1920,16 +2854,22 @@ internal fn MemoryStatus EmitLlvmDefinitionWithRangeFactsCore(
     bool isTailCallable,
     ValueFacts returnFacts,
     borrow IrTable<ValueFacts> paramFacts,
+    borrow IrTable<ParamAbiFacts> paramAbiFacts,
+    borrow IrTable<DistinctStoragePair> separateStorageFacts,
     borrow IrTable<ValueFacts> valueFacts,
     borrow IrTable<ValueFacts> globalFacts,
     borrow IrTable<ValueFacts> functionReturnFacts,
     mut borrow IrTable<LlvmRangeMetadata> rangeMetadata,
+    FunctionEffectFacts functionEffects,
     u32[0 max] paramCount,
     u32[0 max] entryBlockIndex,
     u32[0 max] firstInstr,
     u32[0 max] instrCount,
     mut borrow OwnedAscii sink)
+    where overlap(funcTailFlags, paramAbiFacts), overlap(paramAbiFacts, functionReturnFacts)
 {
+    try EmitLlvmArenaRuntimePreambleForRange(instrs, firstInstr, instrCount, sink);
+
     if (isTailCallable)
     {
         try sink.AppendConstAscii("define tailcc");
@@ -1942,9 +2882,10 @@ internal fn MemoryStatus EmitLlvmDefinitionWithRangeFactsCore(
     try EmitLlvmRangeAttribute(MirType.I64, returnFacts, sink);
     try sink.AppendConstAscii(" i64 @");
     try sink.AppendConstAscii(name);
-    try EmitLlvmParamListWithRangeFacts(paramCount, paramFacts, sink);
+    try EmitLlvmParamListWithRangeAndAbiFacts(paramCount, paramFacts, paramAbiFacts, sink);
+    try EmitLlvmFunctionEffectAttributes(functionEffects, sink);
     try sink.AppendConstAscii(" {\n");
-    try EmitLlvmLabeledBlockWithRangeFacts(
+    try EmitLlvmLabeledBlockWithRangeFactsAndSeparateStorage(
         instrs,
         funcTailFlags,
         paramFacts,
@@ -1952,6 +2893,8 @@ internal fn MemoryStatus EmitLlvmDefinitionWithRangeFactsCore(
         globalFacts,
         functionReturnFacts,
         rangeMetadata,
+        separateStorageFacts,
+        true,
         blocks,
         entryBlockIndex,
         firstInstr,
@@ -1978,6 +2921,8 @@ public fn MemoryStatus EmitLlvmDefinitionWithRangeFacts(
 {
     stack mut IrTable<u32[0 max]> noTailCallees = new();
     stack mut IrTable<LlvmRangeMetadata> rangeMetadata = new();
+    stack mut IrTable<ParamAbiFacts> noParamAbiFacts = new();
+    stack mut IrTable<DistinctStoragePair> noSeparateStorageFacts = new();
     try EmitLlvmDefinitionWithRangeFactsCore(
         instrs,
         noTailCallees,
@@ -1986,10 +2931,13 @@ public fn MemoryStatus EmitLlvmDefinitionWithRangeFacts(
         false,
         returnFacts,
         paramFacts,
+        noParamAbiFacts,
+        noSeparateStorageFacts,
         valueFacts,
         globalFacts,
         functionReturnFacts,
         rangeMetadata,
+        NoFunctionEffectFacts(),
         paramCount,
         entryBlockIndex,
         firstInstr,
@@ -2033,6 +2981,364 @@ internal fn BlockEmit MakeBlockEmit(u32[0 max] blockIndex, u32[0 max] first, u32
     return be;
 }
 
+internal fn bool MirInstructionRangesUseArenaRuntime(borrow IrTable<MirInstruction> instrs, borrow IrTable<BlockEmit> ranges)
+{
+    stack u64[0 2 ** 63 - 1] total = ranges.Count();
+    stack mut u32[0 max] i = 1;
+    while willexit ((u64[0 2 ** 63 - 1])i <= total)
+    {
+        if (MirInstructionRangeUsesArenaRuntime(instrs, ranges.Get(i).First, ranges.Get(i).Count))
+        {
+            return true;
+        }
+
+        i = i + 1;
+    }
+
+    return false;
+}
+
+internal fn bool MirInstructionRangesUseArenaDynamicRuntime(borrow IrTable<MirInstruction> instrs, borrow IrTable<BlockEmit> ranges)
+{
+    stack u64[0 2 ** 63 - 1] total = ranges.Count();
+    stack mut u32[0 max] i = 1;
+    while willexit ((u64[0 2 ** 63 - 1])i <= total)
+    {
+        if (MirInstructionRangeUsesArenaDynamicRuntime(instrs, ranges.Get(i).First, ranges.Get(i).Count))
+        {
+            return true;
+        }
+
+        i = i + 1;
+    }
+
+    return false;
+}
+
+internal fn MemoryStatus EmitLlvmArenaRuntimePreambleForRanges(borrow IrTable<MirInstruction> instrs, borrow IrTable<BlockEmit> ranges, mut borrow OwnedAscii sink)
+{
+    if (MirInstructionRangesUseArenaDynamicRuntime(instrs, ranges))
+    {
+        try EmitLlvmArenaDynamicRuntimeDeclarations(sink);
+    }
+    else if (MirInstructionRangesUseArenaRuntime(instrs, ranges))
+    {
+        try EmitLlvmArenaRuntimeDeclarations(sink);
+    }
+
+    return MemoryStatus.Ok;
+}
+
+internal fn bool MirInstructionRangeHasCall(borrow IrTable<MirInstruction> instrs, u32[0 max] firstInstr, u32[0 max] instrCount)
+{
+    stack mut u32[0 max] index = firstInstr;
+    stack mut u32[0 max] remaining = instrCount;
+    while willexit (remaining > 0)
+    {
+        if (instrs.Contains(index))
+        {
+            stack MirInstruction instr = instrs.Get(index);
+            if (instr.Opcode() == MirOp.Call || instr.Opcode() == MirOp.TailCall)
+            {
+                return true;
+            }
+        }
+
+        index = index + 1;
+        remaining = remaining - 1;
+    }
+
+    return false;
+}
+
+internal fn bool MirInstructionRangeReadsMemory(borrow IrTable<MirInstruction> instrs, u32[0 max] firstInstr, u32[0 max] instrCount)
+{
+    stack mut u32[0 max] index = firstInstr;
+    stack mut u32[0 max] remaining = instrCount;
+    while willexit (remaining > 0)
+    {
+        if (instrs.Contains(index))
+        {
+            stack MirInstruction instr = instrs.Get(index);
+            if (instr.Opcode() == MirOp.LoadGlobal || instr.Opcode() == MirOp.Call || instr.Opcode() == MirOp.TailCall || MirInstructionIsArenaRuntime(instr))
+            {
+                return true;
+            }
+        }
+
+        index = index + 1;
+        remaining = remaining - 1;
+    }
+
+    return false;
+}
+
+internal fn bool MirInstructionRangeWritesMemory(borrow IrTable<MirInstruction> instrs, u32[0 max] firstInstr, u32[0 max] instrCount)
+{
+    stack mut u32[0 max] index = firstInstr;
+    stack mut u32[0 max] remaining = instrCount;
+    while willexit (remaining > 0)
+    {
+        if (instrs.Contains(index))
+        {
+            stack MirInstruction instr = instrs.Get(index);
+            if (instr.Opcode() == MirOp.StoreGlobal || MirInstructionIsArenaRuntime(instr))
+            {
+                return true;
+            }
+        }
+
+        index = index + 1;
+        remaining = remaining - 1;
+    }
+
+    return false;
+}
+
+internal fn bool MirInstructionRangesHaveCall(borrow IrTable<MirInstruction> instrs, borrow IrTable<BlockEmit> ranges)
+{
+    stack u64[0 2 ** 63 - 1] total = ranges.Count();
+    stack mut u32[0 max] i = 1;
+    while willexit ((u64[0 2 ** 63 - 1])i <= total)
+    {
+        if (MirInstructionRangeHasCall(instrs, ranges.Get(i).First, ranges.Get(i).Count))
+        {
+            return true;
+        }
+
+        i = i + 1;
+    }
+
+    return false;
+}
+
+internal fn bool MirInstructionRangesReadMemory(borrow IrTable<MirInstruction> instrs, borrow IrTable<BlockEmit> ranges)
+{
+    stack u64[0 2 ** 63 - 1] total = ranges.Count();
+    stack mut u32[0 max] i = 1;
+    while willexit ((u64[0 2 ** 63 - 1])i <= total)
+    {
+        if (MirInstructionRangeReadsMemory(instrs, ranges.Get(i).First, ranges.Get(i).Count))
+        {
+            return true;
+        }
+
+        i = i + 1;
+    }
+
+    return false;
+}
+
+internal fn bool MirInstructionRangesWriteMemory(borrow IrTable<MirInstruction> instrs, borrow IrTable<BlockEmit> ranges)
+{
+    stack u64[0 2 ** 63 - 1] total = ranges.Count();
+    stack mut u32[0 max] i = 1;
+    while willexit ((u64[0 2 ** 63 - 1])i <= total)
+    {
+        if (MirInstructionRangeWritesMemory(instrs, ranges.Get(i).First, ranges.Get(i).Count))
+        {
+            return true;
+        }
+
+        i = i + 1;
+    }
+
+    return false;
+}
+
+internal fn bool FunctionIdFlagIsSet(borrow IrTable<u32[0 max]> flags, u32[0 max] functionId)
+{
+    if (functionId == 0 || !flags.Contains(functionId))
+    {
+        return false;
+    }
+
+    return flags.Get(functionId) != 0;
+}
+
+internal fn bool MirInstructionRangeCallsOnlyFlaggedFunctions(borrow IrTable<MirInstruction> instrs, u32[0 max] firstInstr, u32[0 max] instrCount, borrow IrTable<u32[0 max]> flags)
+{
+    stack mut u32[0 max] index = firstInstr;
+    stack mut u32[0 max] remaining = instrCount;
+    while willexit (remaining > 0)
+    {
+        if (instrs.Contains(index))
+        {
+            stack MirInstruction instr = instrs.Get(index);
+            if (instr.Opcode() == MirOp.Call || instr.Opcode() == MirOp.TailCall)
+            {
+                if (!FunctionIdFlagIsSet(flags, (u32[0 max])instr.Immediate()))
+                {
+                    return false;
+                }
+            }
+        }
+
+        index = index + 1;
+        remaining = remaining - 1;
+    }
+
+    return true;
+}
+
+internal fn bool MirInstructionRangesCallOnlyFlaggedFunctions(borrow IrTable<MirInstruction> instrs, borrow IrTable<BlockEmit> ranges, borrow IrTable<u32[0 max]> flags)
+{
+    stack u64[0 2 ** 63 - 1] total = ranges.Count();
+    stack mut u32[0 max] i = 1;
+    while willexit ((u64[0 2 ** 63 - 1])i <= total)
+    {
+        if (!MirInstructionRangeCallsOnlyFlaggedFunctions(instrs, ranges.Get(i).First, ranges.Get(i).Count, flags))
+        {
+            return false;
+        }
+
+        i = i + 1;
+    }
+
+    return true;
+}
+
+internal fn FunctionEffectFacts FunctionEffectsFromSignatureAndBody(
+    borrow Compiler.Parsing.FunctionSignature signature,
+    bool hasCall,
+    bool readsMemory,
+    bool writesMemory,
+    bool callsOnlyLaw,
+    bool callsOnlyFinite,
+    bool callsOnlyNoRecurse)
+{
+    stack mut FunctionEffectFacts facts = new();
+    if (signature.LawKind() && !writesMemory && (!hasCall || callsOnlyLaw))
+    {
+        facts.IsLaw = true;
+        facts.LawMayReadMemory = readsMemory || hasCall;
+    }
+
+    if (signature.FiniteKind() && (!hasCall || callsOnlyFinite))
+    {
+        facts.IsFinite = true;
+    }
+
+    if ((signature.FiniteKind() || signature.LawKind()) && (!hasCall || callsOnlyNoRecurse))
+    {
+        facts.IsNoRecurse = true;
+    }
+
+    return facts;
+}
+
+internal fn FunctionEffectFacts FunctionEffectsFromSignatureAndInstructionRange(
+    borrow Compiler.Parsing.FunctionSignature signature,
+    borrow IrTable<MirInstruction> instrs,
+    u32[0 max] firstInstr,
+    u32[0 max] instrCount)
+{
+    stack mut IrTable<u32[0 max]> noProofFlags = new();
+    return FunctionEffectsFromSignatureAndBody(
+        signature,
+        MirInstructionRangeHasCall(instrs, firstInstr, instrCount),
+        MirInstructionRangeReadsMemory(instrs, firstInstr, instrCount),
+        MirInstructionRangeWritesMemory(instrs, firstInstr, instrCount),
+        MirInstructionRangeCallsOnlyFlaggedFunctions(instrs, firstInstr, instrCount, noProofFlags),
+        MirInstructionRangeCallsOnlyFlaggedFunctions(instrs, firstInstr, instrCount, noProofFlags),
+        MirInstructionRangeCallsOnlyFlaggedFunctions(instrs, firstInstr, instrCount, noProofFlags));
+}
+
+internal fn FunctionEffectFacts FunctionEffectsFromSignatureAndInstructionRangeWithProofs(
+    borrow Compiler.Parsing.FunctionSignature signature,
+    borrow IrTable<MirInstruction> instrs,
+    u32[0 max] firstInstr,
+    u32[0 max] instrCount,
+    borrow IrTable<u32[0 max]> lawProofFlags,
+    borrow IrTable<u32[0 max]> finiteProofFlags,
+    borrow IrTable<u32[0 max]> noRecurseProofFlags)
+{
+    return FunctionEffectsFromSignatureAndBody(
+        signature,
+        MirInstructionRangeHasCall(instrs, firstInstr, instrCount),
+        MirInstructionRangeReadsMemory(instrs, firstInstr, instrCount),
+        MirInstructionRangeWritesMemory(instrs, firstInstr, instrCount),
+        MirInstructionRangeCallsOnlyFlaggedFunctions(instrs, firstInstr, instrCount, lawProofFlags),
+        MirInstructionRangeCallsOnlyFlaggedFunctions(instrs, firstInstr, instrCount, finiteProofFlags),
+        MirInstructionRangeCallsOnlyFlaggedFunctions(instrs, firstInstr, instrCount, noRecurseProofFlags));
+}
+
+internal fn FunctionEffectFacts FunctionEffectsFromSignatureAndBlockRanges(
+    borrow Compiler.Parsing.FunctionSignature signature,
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<BlockEmit> ranges)
+{
+    stack mut IrTable<u32[0 max]> noProofFlags = new();
+    return FunctionEffectsFromSignatureAndBody(
+        signature,
+        MirInstructionRangesHaveCall(instrs, ranges),
+        MirInstructionRangesReadMemory(instrs, ranges),
+        MirInstructionRangesWriteMemory(instrs, ranges),
+        MirInstructionRangesCallOnlyFlaggedFunctions(instrs, ranges, noProofFlags),
+        MirInstructionRangesCallOnlyFlaggedFunctions(instrs, ranges, noProofFlags),
+        MirInstructionRangesCallOnlyFlaggedFunctions(instrs, ranges, noProofFlags));
+}
+
+internal fn FunctionEffectFacts FunctionEffectsFromSignatureAndBlockRangesWithProofs(
+    borrow Compiler.Parsing.FunctionSignature signature,
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<BlockEmit> ranges,
+    borrow IrTable<u32[0 max]> lawProofFlags,
+    borrow IrTable<u32[0 max]> finiteProofFlags,
+    borrow IrTable<u32[0 max]> noRecurseProofFlags)
+{
+    return FunctionEffectsFromSignatureAndBody(
+        signature,
+        MirInstructionRangesHaveCall(instrs, ranges),
+        MirInstructionRangesReadMemory(instrs, ranges),
+        MirInstructionRangesWriteMemory(instrs, ranges),
+        MirInstructionRangesCallOnlyFlaggedFunctions(instrs, ranges, lawProofFlags),
+        MirInstructionRangesCallOnlyFlaggedFunctions(instrs, ranges, finiteProofFlags),
+        MirInstructionRangesCallOnlyFlaggedFunctions(instrs, ranges, noRecurseProofFlags));
+}
+
+internal fn bool AppendFunctionEffectProofFlags(
+    FunctionEffectFacts effects,
+    mut borrow IrTable<u32[0 max]> lawProofFlags,
+    mut borrow IrTable<u32[0 max]> finiteProofFlags,
+    mut borrow IrTable<u32[0 max]> noRecurseProofFlags)
+{
+    stack mut u32[0 max] lawFlag = 0;
+    if (effects.IsLaw)
+    {
+        lawFlag = 1;
+    }
+
+    stack mut u32[0 max] finiteFlag = 0;
+    if (effects.IsFinite)
+    {
+        finiteFlag = 1;
+    }
+
+    stack mut u32[0 max] noRecurseFlag = 0;
+    if (effects.IsNoRecurse)
+    {
+        noRecurseFlag = 1;
+    }
+
+    if (lawProofFlags.Add(lawFlag) == 0)
+    {
+        return false;
+    }
+
+    if (finiteProofFlags.Add(finiteFlag) == 0)
+    {
+        return false;
+    }
+
+    if (noRecurseProofFlags.Add(noRecurseFlag) == 0)
+    {
+        return false;
+    }
+
+    return true;
+}
+
 // Emits `define i64 @name(<params>) { <block>* }` over an arbitrary ordered list of
 // blocks — the general form behind `EmitLlvmDiamond` (4 blocks) and the loop/nested-if
 // shapes (any number). Each descriptor's terminator comes from the block table, so any
@@ -2046,6 +3352,8 @@ public fn MemoryStatus EmitLlvmBlocks(borrow IrTable<MirInstruction> instrs, bor
 
 public fn MemoryStatus EmitLlvmBlocksWithTailCallees(borrow IrTable<MirInstruction> instrs, borrow IrTable<u32[0 max]> funcTailFlags, borrow IrTable<MirBlock> blocks, const ascii name, bool isTailCallable, u32[0 max] paramCount, borrow IrTable<BlockEmit> ranges, mut borrow OwnedAscii sink)
 {
+    try EmitLlvmArenaRuntimePreambleForRanges(instrs, ranges, sink);
+
     if (isTailCallable)
     {
         try sink.AppendConstAscii("define tailcc i64 @");
@@ -2078,14 +3386,20 @@ internal fn MemoryStatus EmitLlvmBlocksWithRangeFactsCore(
     bool isTailCallable,
     ValueFacts returnFacts,
     borrow IrTable<ValueFacts> paramFacts,
+    borrow IrTable<ParamAbiFacts> paramAbiFacts,
+    borrow IrTable<DistinctStoragePair> separateStorageFacts,
     borrow IrTable<ValueFacts> valueFacts,
     borrow IrTable<ValueFacts> globalFacts,
     borrow IrTable<ValueFacts> functionReturnFacts,
     mut borrow IrTable<LlvmRangeMetadata> rangeMetadata,
+    FunctionEffectFacts functionEffects,
     u32[0 max] paramCount,
     borrow IrTable<BlockEmit> ranges,
     mut borrow OwnedAscii sink)
+    where overlap(funcTailFlags, paramAbiFacts), overlap(paramAbiFacts, functionReturnFacts)
 {
+    try EmitLlvmArenaRuntimePreambleForRanges(instrs, ranges, sink);
+
     if (isTailCallable)
     {
         try sink.AppendConstAscii("define tailcc");
@@ -2098,13 +3412,14 @@ internal fn MemoryStatus EmitLlvmBlocksWithRangeFactsCore(
     try EmitLlvmRangeAttribute(MirType.I64, returnFacts, sink);
     try sink.AppendConstAscii(" i64 @");
     try sink.AppendConstAscii(name);
-    try EmitLlvmParamListWithRangeFacts(paramCount, paramFacts, sink);
+    try EmitLlvmParamListWithRangeAndAbiFacts(paramCount, paramFacts, paramAbiFacts, sink);
+    try EmitLlvmFunctionEffectAttributes(functionEffects, sink);
     try sink.AppendConstAscii(" {\n");
     stack u64[0 2 ** 63 - 1] total = ranges.Count();
     stack mut u32[0 max] i = 1;
     while willexit ((u64[0 2 ** 63 - 1])i <= total)
     {
-        try EmitLlvmLabeledBlockWithRangeFacts(
+        try EmitLlvmLabeledBlockWithRangeFactsAndSeparateStorage(
             instrs,
             funcTailFlags,
             paramFacts,
@@ -2112,6 +3427,8 @@ internal fn MemoryStatus EmitLlvmBlocksWithRangeFactsCore(
             globalFacts,
             functionReturnFacts,
             rangeMetadata,
+            separateStorageFacts,
+            i == 1,
             blocks,
             ranges.Get(i).BlockIndex,
             ranges.Get(i).First,
@@ -2139,6 +3456,8 @@ public fn MemoryStatus EmitLlvmBlocksWithRangeFacts(
 {
     stack mut IrTable<u32[0 max]> noTailCallees = new();
     stack mut IrTable<LlvmRangeMetadata> rangeMetadata = new();
+    stack mut IrTable<ParamAbiFacts> noParamAbiFacts = new();
+    stack mut IrTable<DistinctStoragePair> noSeparateStorageFacts = new();
     try EmitLlvmBlocksWithRangeFactsCore(
         instrs,
         noTailCallees,
@@ -2147,10 +3466,13 @@ public fn MemoryStatus EmitLlvmBlocksWithRangeFacts(
         false,
         returnFacts,
         paramFacts,
+        noParamAbiFacts,
+        noSeparateStorageFacts,
         valueFacts,
         globalFacts,
         functionReturnFacts,
         rangeMetadata,
+        NoFunctionEffectFacts(),
         paramCount,
         ranges,
         sink);
@@ -2204,13 +3526,17 @@ internal fn MemoryStatus EmitLlvmBlocksNumberedWithRangeFactsCore(
     bool isTailCallable,
     ValueFacts returnFacts,
     borrow IrTable<ValueFacts> paramFacts,
+    borrow IrTable<ParamAbiFacts> paramAbiFacts,
+    borrow IrTable<DistinctStoragePair> separateStorageFacts,
     borrow IrTable<ValueFacts> valueFacts,
     borrow IrTable<ValueFacts> globalFacts,
     borrow IrTable<ValueFacts> functionReturnFacts,
     mut borrow IrTable<LlvmRangeMetadata> rangeMetadata,
+    FunctionEffectFacts functionEffects,
     u32[0 max] paramCount,
     borrow IrTable<BlockEmit> ranges,
     mut borrow OwnedAscii sink)
+    where overlap(funcTailFlags, paramAbiFacts), overlap(paramAbiFacts, functionReturnFacts)
 {
     if (isTailCallable)
     {
@@ -2225,13 +3551,14 @@ internal fn MemoryStatus EmitLlvmBlocksNumberedWithRangeFactsCore(
     try sink.AppendConstAscii(" i64 @");
     try sink.AppendConstAscii(prefix);
     try sink.AppendU64((u64[0 max])number);
-    try EmitLlvmParamListWithRangeFacts(paramCount, paramFacts, sink);
+    try EmitLlvmParamListWithRangeAndAbiFacts(paramCount, paramFacts, paramAbiFacts, sink);
+    try EmitLlvmFunctionEffectAttributes(functionEffects, sink);
     try sink.AppendConstAscii(" {\n");
     stack u64[0 2 ** 63 - 1] total = ranges.Count();
     stack mut u32[0 max] i = 1;
     while willexit ((u64[0 2 ** 63 - 1])i <= total)
     {
-        try EmitLlvmLabeledBlockWithRangeFacts(
+        try EmitLlvmLabeledBlockWithRangeFactsAndSeparateStorage(
             instrs,
             funcTailFlags,
             paramFacts,
@@ -2239,6 +3566,8 @@ internal fn MemoryStatus EmitLlvmBlocksNumberedWithRangeFactsCore(
             globalFacts,
             functionReturnFacts,
             rangeMetadata,
+            separateStorageFacts,
+            i == 1,
             blocks,
             ranges.Get(i).BlockIndex,
             ranges.Get(i).First,
@@ -2607,6 +3936,58 @@ internal fn MemoryStatus EmitMirInstruction(borrow IrTable<MirInstruction> instr
             try sink.AppendConstAscii(", ");
             try EmitMirValue(sink, instr.OperandAIndex());
             try sink.AppendConstAscii("\n");
+        case MirOp.ArenaFrameEnter:
+            try sink.AppendConstAscii("arena-frame.enter\n");
+        case MirOp.ArenaAlloc:
+            try EmitMirValue(sink, index);
+            try sink.AppendConstAscii(" = arena.alloc ");
+            try sink.AppendI64(instr.Immediate());
+            try sink.AppendConstAscii(", align ");
+            try sink.AppendU64((u64[0 max])instr.OperandAIndex());
+            try sink.AppendConstAscii("\n");
+        case MirOp.ArenaDynamicStorageInit:
+            try EmitMirValue(sink, index);
+            try sink.AppendConstAscii(" = arena.dynamic.init capacity ");
+            try sink.AppendI64(instr.Immediate());
+            try sink.AppendConstAscii(", element ");
+            try sink.AppendU64((u64[0 max])instr.OperandAIndex());
+            try sink.AppendConstAscii(", align ");
+            try sink.AppendU64((u64[0 max])instr.OperandBIndex());
+            try sink.AppendConstAscii("\n");
+        case MirOp.ArenaDynamicStorageReserve:
+            try sink.AppendConstAscii("arena.dynamic.reserve ");
+            try EmitMirValue(sink, instr.OperandAIndex());
+            try sink.AppendConstAscii(", additional ");
+            try sink.AppendI64(instr.Immediate());
+            try sink.AppendConstAscii(", element ");
+            try sink.AppendU64((u64[0 max])instr.OperandBIndex());
+            try sink.AppendConstAscii(", align ");
+            try sink.AppendU64((u64[0 max])instr.OperandCIndex());
+            try sink.AppendConstAscii("\n");
+        case MirOp.ArenaDynamicStorageTryReserve:
+            try EmitMirValue(sink, index);
+            try sink.AppendConstAscii(" = arena.dynamic.try-reserve ");
+            try EmitMirValue(sink, instr.OperandAIndex());
+            try sink.AppendConstAscii(", additional ");
+            try sink.AppendI64(instr.Immediate());
+            try sink.AppendConstAscii(", element ");
+            try sink.AppendU64((u64[0 max])instr.OperandBIndex());
+            try sink.AppendConstAscii(", align ");
+            try sink.AppendU64((u64[0 max])instr.OperandCIndex());
+            try sink.AppendConstAscii("\n");
+        case MirOp.ArenaDynamicStorageTryReserveCapacity:
+            try EmitMirValue(sink, index);
+            try sink.AppendConstAscii(" = arena.dynamic.try-reserve-capacity ");
+            try EmitMirValue(sink, instr.OperandAIndex());
+            try sink.AppendConstAscii(", capacity ");
+            try sink.AppendI64(instr.Immediate());
+            try sink.AppendConstAscii(", element ");
+            try sink.AppendU64((u64[0 max])instr.OperandBIndex());
+            try sink.AppendConstAscii(", align ");
+            try sink.AppendU64((u64[0 max])instr.OperandCIndex());
+            try sink.AppendConstAscii("\n");
+        case MirOp.ArenaFrameLeave:
+            try sink.AppendConstAscii("arena-frame.leave\n");
         case MirOp.Phi:
             try EmitMirValue(sink, index);
             try sink.AppendConstAscii(" = phi ");
@@ -2780,6 +4161,13 @@ internal fn u8[0 max] MirOpToByte(MirOp op)
         case MirOp.Return: return 23;
         case MirOp.ZExt: return 24;
         case MirOp.TailCall: return 25;
+        case MirOp.ArenaFrameEnter: return 26;
+        case MirOp.ArenaAlloc: return 27;
+        case MirOp.ArenaFrameLeave: return 28;
+        case MirOp.ArenaDynamicStorageInit: return 29;
+        case MirOp.ArenaDynamicStorageReserve: return 30;
+        case MirOp.ArenaDynamicStorageTryReserve: return 31;
+        case MirOp.ArenaDynamicStorageTryReserveCapacity: return 32;
     }
 }
 
@@ -2812,6 +4200,13 @@ internal fn MirOp MirOpFromByte(u8[0 max] b)
         case 23: return MirOp.Return;
         case 24: return MirOp.ZExt;
         case 25: return MirOp.TailCall;
+        case 26: return MirOp.ArenaFrameEnter;
+        case 27: return MirOp.ArenaAlloc;
+        case 28: return MirOp.ArenaFrameLeave;
+        case 29: return MirOp.ArenaDynamicStorageInit;
+        case 30: return MirOp.ArenaDynamicStorageReserve;
+        case 31: return MirOp.ArenaDynamicStorageTryReserve;
+        case 32: return MirOp.ArenaDynamicStorageTryReserveCapacity;
         default: return MirOp.ConstInt;
     }
 }
@@ -2823,6 +4218,7 @@ internal fn u8[0 max] MirTypeToByte(MirType t)
         case MirType.I1: return 0;
         case MirType.I32: return 1;
         case MirType.I64: return 2;
+        case MirType.Ptr: return 3;
     }
 }
 
@@ -2832,6 +4228,7 @@ internal fn MirType MirTypeFromByte(u8[0 max] b)
     {
         case 0: return MirType.I1;
         case 1: return MirType.I32;
+        case 3: return MirType.Ptr;
         default: return MirType.I64;
     }
 }
@@ -4089,15 +5486,19 @@ internal fn MemoryStatus EmitLlvmNumberedFunctionWithRangeFactsCore(
     bool isTailCallable,
     ValueFacts returnFacts,
     borrow IrTable<ValueFacts> paramFacts,
+    borrow IrTable<ParamAbiFacts> paramAbiFacts,
+    borrow IrTable<DistinctStoragePair> separateStorageFacts,
     borrow IrTable<ValueFacts> valueFacts,
     borrow IrTable<ValueFacts> globalFacts,
     borrow IrTable<ValueFacts> functionReturnFacts,
     mut borrow IrTable<LlvmRangeMetadata> rangeMetadata,
+    FunctionEffectFacts functionEffects,
     u32[0 max] paramCount,
     u32[0 max] entryBlock,
     u32[0 max] firstInstr,
     u32[0 max] instrCount,
     mut borrow OwnedAscii sink)
+    where overlap(funcTailFlags, paramAbiFacts), overlap(paramAbiFacts, functionReturnFacts)
 {
     if (isTailCallable)
     {
@@ -4112,9 +5513,10 @@ internal fn MemoryStatus EmitLlvmNumberedFunctionWithRangeFactsCore(
     try sink.AppendConstAscii(" i64 @");
     try sink.AppendConstAscii(prefix);
     try sink.AppendU64((u64[0 max])number);
-    try EmitLlvmParamListWithRangeFacts(paramCount, paramFacts, sink);
+    try EmitLlvmParamListWithRangeAndAbiFacts(paramCount, paramFacts, paramAbiFacts, sink);
+    try EmitLlvmFunctionEffectAttributes(functionEffects, sink);
     try sink.AppendConstAscii(" {\n");
-    try EmitLlvmLabeledBlockWithRangeFacts(
+    try EmitLlvmLabeledBlockWithRangeFactsAndSeparateStorage(
         instrs,
         funcTailFlags,
         paramFacts,
@@ -4122,6 +5524,8 @@ internal fn MemoryStatus EmitLlvmNumberedFunctionWithRangeFactsCore(
         globalFacts,
         functionReturnFacts,
         rangeMetadata,
+        separateStorageFacts,
+        true,
         blocks,
         entryBlock,
         firstInstr,
@@ -5965,6 +7369,11 @@ public fn ExprType TypeOfNodeWithLocals(borrow IrTable<ExprNode> nodes, u32[0 ma
         case ExprKind.IntLitExpr:
             return ExprType.IntType;
         case ExprKind.NameExpr:
+            if (localTypes.Contains(node.Left + 1) && localTypes.Get(node.Left + 1) == 2)
+            {
+                return ExprType.ErrorType;
+            }
+
             if (localTypes.Contains(node.Left + 1) && localTypes.Get(node.Left + 1) == 1)
             {
                 return ExprType.BoolType;
@@ -6455,6 +7864,686 @@ internal fn bool BuildParamRangeFacts(borrow TokenStream stream, borrow i8[min m
     return true;
 }
 
+internal fn bool TokenTextEqualsToken(borrow TokenStream stream, borrow i8[min max][] source, u32[0 max] left, u32[0 max] right)
+{
+    return SpanEquals(
+        source,
+        stream.StartAt((u64[0 2 ** 63 - 1])left),
+        stream.LengthAt((u64[0 2 ** 63 - 1])left),
+        stream.StartAt((u64[0 2 ** 63 - 1])right),
+        stream.LengthAt((u64[0 2 ** 63 - 1])right));
+}
+
+internal fn bool TopLevelParamSpanContainsKind(borrow TokenStream stream, u32[0 max] start, u32[0 max] endExclusive, TokenKind target)
+{
+    stack mut u32[0 max] depth = 0;
+    stack mut u32[0 max] scan = start;
+    while willexit (scan < endExclusive)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (kind == TokenKind.Lt || kind == TokenKind.LBrack || kind == TokenKind.LParen)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == TokenKind.Gt || kind == TokenKind.RBrack || kind == TokenKind.RParen)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+        else if (depth == 0 && kind == target)
+        {
+            return true;
+        }
+
+        scan = scan + 1;
+    }
+
+    return false;
+}
+
+internal fn u32[0 max] TypeKnownByteExtent(borrow TokenStream stream, borrow i8[min max][] source, u32[0 max] typeToken)
+{
+    stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])typeToken);
+    if (kind == TokenKind.Bool)
+    {
+        return 1;
+    }
+
+    if (kind == TokenKind.IntegerType)
+    {
+        stack u32[0 max] bits = IntegerTypeBitWidth(stream, source, typeToken);
+        return (u32[0 max])((bits + 7) / 8);
+    }
+
+    return 0;
+}
+
+internal fn bool SignatureParamHasDeadOnReturnContract(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow Compiler.Parsing.FunctionSignature signature,
+    u64[0 2 ** 63 - 1] paramIndex)
+{
+    stack u32[0 max] paramName = signature.ParamNameAt(paramIndex);
+    stack u64[0 2 ** 63 - 1] count = signature.DeadOnReturnParamCount();
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < count)
+    {
+        if (TokenTextEqualsToken(stream, source, paramName, signature.DeadOnReturnParamNameAt(i)))
+        {
+            return true;
+        }
+
+        i = i + 1;
+    }
+
+    return false;
+}
+
+internal fn ParamAbiFacts ClassifySignatureParamAbi(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow Compiler.Parsing.FunctionSignature signature,
+    u64[0 2 ** 63 - 1] paramIndex)
+{
+    stack mut ParamAbiFacts facts = new();
+    stack u32[0 max] start = signature.ParamStartTokenAt(paramIndex);
+    stack u32[0 max] nameToken = signature.ParamNameAt(paramIndex);
+    if (nameToken == 0 || start >= nameToken)
+    {
+        return facts;
+    }
+
+    stack bool hasRetborrow = TopLevelParamSpanContainsKind(stream, start, nameToken, TokenKind.Retborrow);
+    stack bool hasStoreborrow = TopLevelParamSpanContainsKind(stream, start, nameToken, TokenKind.Storeborrow);
+    stack bool hasBorrow = TopLevelParamSpanContainsKind(stream, start, nameToken, TokenKind.Borrow);
+    stack bool hasOut = TopLevelParamSpanContainsKind(stream, start, nameToken, TokenKind.Out);
+    stack bool hasInit = TopLevelParamSpanContainsKind(stream, start, nameToken, TokenKind.Init);
+    stack bool hasRawPtr = TopLevelParamSpanContainsKind(stream, start, nameToken, TokenKind.Rawptr)
+        || TopLevelParamSpanContainsKind(stream, start, nameToken, TokenKind.Rawmutptr);
+    stack bool hasMut = TopLevelParamSpanContainsKind(stream, start, nameToken, TokenKind.Mut);
+
+    if (hasRetborrow)
+    {
+        facts.IsPointer = true;
+        if (hasMut)
+        {
+            facts.CaptureKind = 3;
+        }
+        else
+        {
+            facts.CaptureKind = 2;
+            facts.ReadOnly = true;
+        }
+    }
+    else if (hasStoreborrow)
+    {
+        facts.IsPointer = true;
+        if (hasMut)
+        {
+            facts.CaptureKind = 5;
+        }
+        else
+        {
+            facts.CaptureKind = 4;
+            facts.ReadOnly = true;
+        }
+    }
+    else if (hasOut || hasInit)
+    {
+        facts.IsPointer = true;
+        facts.CaptureKind = 1;
+        facts.WriteOnly = true;
+        facts.Writable = true;
+        facts.InitializesBytes = TypeKnownByteExtent(stream, source, signature.ParamTypeTokenAt(paramIndex));
+    }
+    else if (hasBorrow)
+    {
+        facts.IsPointer = true;
+        facts.CaptureKind = 1;
+        if (!hasMut)
+        {
+            facts.ReadOnly = true;
+        }
+    }
+    else if (hasRawPtr)
+    {
+        facts.IsPointer = true;
+    }
+
+    if (SignatureParamHasDeadOnReturnContract(stream, source, signature, paramIndex))
+    {
+        facts.DeadOnReturn = true;
+    }
+
+    return facts;
+}
+
+internal fn bool DeadOnReturnContractsNamePointerParams(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow Compiler.Parsing.FunctionSignature signature,
+    borrow IrTable<ParamAbiFacts> paramAbiFacts)
+{
+    stack u64[0 2 ** 63 - 1] contractCount = signature.DeadOnReturnParamCount();
+    stack mut u64[0 2 ** 63 - 1] c = 0;
+    while willexit (c < contractCount)
+    {
+        stack u32[0 max] contractName = signature.DeadOnReturnParamNameAt(c);
+        stack mut bool found = false;
+        stack u64[0 2 ** 63 - 1] paramCount = signature.ParamCount();
+        stack mut u64[0 2 ** 63 - 1] p = 0;
+        while willexit (p < paramCount)
+        {
+            if (TokenTextEqualsToken(stream, source, signature.ParamNameAt(p), contractName))
+            {
+                found = true;
+                if (!AbiFactAt(paramAbiFacts, (u32[0 max])(p + 1)).IsPointer)
+                {
+                    return false;
+                }
+            }
+
+            p = p + 1;
+        }
+
+        if (!found)
+        {
+            return false;
+        }
+
+        c = c + 1;
+    }
+
+    return true;
+}
+
+internal fn bool BuildParamAbiFacts(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow Compiler.Parsing.FunctionSignature signature,
+    mut borrow IrTable<ParamAbiFacts> paramAbiFacts)
+{
+    stack u64[0 2 ** 63 - 1] count = signature.ParamCount();
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < count)
+    {
+        stack ParamAbiFacts facts = ClassifySignatureParamAbi(stream, source, signature, i);
+        if (facts.DeadOnReturn && !facts.IsPointer)
+        {
+            return false;
+        }
+
+        if (paramAbiFacts.Add(facts) == 0)
+        {
+            return false;
+        }
+
+        i = i + 1;
+    }
+
+    return DeadOnReturnContractsNamePointerParams(stream, source, signature, paramAbiFacts);
+}
+
+internal fn bool IsFunctionStorageModifierKind(TokenKind kind)
+{
+    switch (kind)
+    {
+        case TokenKind.Internal:
+            return true;
+        case TokenKind.Public:
+            return true;
+        case TokenKind.Export:
+            return true;
+        case TokenKind.Finite:
+            return true;
+        case TokenKind.Law:
+            return true;
+        case TokenKind.Inline:
+            return true;
+        case TokenKind.Noinline:
+            return true;
+        case TokenKind.Inlinehint:
+            return true;
+        case TokenKind.Hot:
+            return true;
+        case TokenKind.Cold:
+            return true;
+        case TokenKind.Ffi:
+            return true;
+        case TokenKind.Varargs:
+            return true;
+        case TokenKind.Unsafe:
+            return true;
+        case TokenKind.Strictfp:
+            return true;
+        case TokenKind.Asm:
+            return true;
+        default:
+            return false;
+    }
+}
+
+internal fn bool FunctionTokenHasStorageModifier(borrow TokenStream stream, u32[0 max] fnKeyword, TokenKind modifier)
+{
+    if (fnKeyword == 0)
+    {
+        return false;
+    }
+
+    stack mut i64[min max] scan = (i64[min max])fnKeyword - 1;
+    while willexit (scan >= 0)
+    {
+        stack u64[0 2 ** 63 - 1] token = (u64[0 2 ** 63 - 1])scan;
+        stack TokenKind kind = stream.KindAt(token);
+        if (kind == modifier)
+        {
+            return true;
+        }
+
+        if (IsTailContextualToken(stream, token))
+        {
+            scan = scan - 1;
+        }
+        else if (IsFunctionStorageModifierKind(kind))
+        {
+            scan = scan - 1;
+        }
+        else
+        {
+            return false;
+        }
+    }
+
+    return false;
+}
+
+internal fn u32[0 max] FindFunctionParameterListClose(borrow TokenStream stream, u32[0 max] fnKeyword)
+{
+    stack mut u32[0 max] scan = fnKeyword;
+    stack mut u64[0 2 ** 63 - 1] guard = stream.Count();
+    while willexit (guard > 0)
+    {
+        guard = (u64[0 2 ** 63 - 1])(guard - 1);
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (kind == TokenKind.LParen)
+        {
+            stack mut u32[0 max] depth = 1;
+            scan = scan + 1;
+            stack mut u64[0 2 ** 63 - 1] closeGuard = stream.Count();
+            while willexit (closeGuard > 0)
+            {
+                closeGuard = (u64[0 2 ** 63 - 1])(closeGuard - 1);
+                stack TokenKind closeKind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+                if (closeKind == TokenKind.EndOfFile)
+                {
+                    return 0;
+                }
+
+                if (closeKind == TokenKind.LParen)
+                {
+                    depth = depth + 1;
+                }
+                else if (closeKind == TokenKind.RParen)
+                {
+                    depth = depth - 1;
+                    if (depth == 0)
+                    {
+                        return scan;
+                    }
+                }
+
+                scan = scan + 1;
+            }
+
+            return 0;
+        }
+
+        if (kind == TokenKind.LBrace || kind == TokenKind.Semi || kind == TokenKind.EndOfFile)
+        {
+            return 0;
+        }
+
+        scan = scan + 1;
+    }
+
+    return 0;
+}
+
+internal fn u32[0 max] FindClosingParenAfter(borrow TokenStream stream, u32[0 max] lparen)
+{
+    stack mut u32[0 max] scan = lparen + 1;
+    stack mut u32[0 max] depth = 1;
+    stack mut u64[0 2 ** 63 - 1] guard = stream.Count();
+    while willexit (guard > 0)
+    {
+        guard = (u64[0 2 ** 63 - 1])(guard - 1);
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (kind == TokenKind.EndOfFile)
+        {
+            return 0;
+        }
+
+        if (kind == TokenKind.LParen)
+        {
+            depth = depth + 1;
+        }
+        else if (kind == TokenKind.RParen)
+        {
+            depth = depth - 1;
+            if (depth == 0)
+            {
+                return scan;
+            }
+        }
+
+        scan = scan + 1;
+    }
+
+    return 0;
+}
+
+internal fn bool ContractArgIsWholeParamName(borrow TokenStream stream, u32[0 max] start, u32[0 max] endExclusive, out u32[0 max] nameToken)
+{
+    nameToken = 0;
+    if (start >= endExclusive)
+    {
+        return false;
+    }
+
+    if (start + 1 != endExclusive)
+    {
+        return false;
+    }
+
+    if (stream.KindAt((u64[0 2 ** 63 - 1])start) != TokenKind.Identifier)
+    {
+        return false;
+    }
+
+    nameToken = start;
+    return true;
+}
+
+internal fn bool TryReadTwoWholeParamContractArgs(borrow TokenStream stream, u32[0 max] lparen, out u32[0 max] leftName, out u32[0 max] rightName)
+{
+    leftName = 0;
+    rightName = 0;
+    stack u32[0 max] closeParen = FindClosingParenAfter(stream, lparen);
+    if (closeParen == 0)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] argStart = lparen + 1;
+    stack mut u32[0 max] scan = argStart;
+    stack mut u32[0 max] depth = 0;
+    stack mut bool foundComma = false;
+    while willexit (scan < closeParen)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (depth == 0 && kind == TokenKind.Comma)
+        {
+            if (foundComma)
+            {
+                return false;
+            }
+
+            if (!ContractArgIsWholeParamName(stream, argStart, scan, leftName))
+            {
+                return false;
+            }
+
+            foundComma = true;
+            argStart = scan + 1;
+        }
+        else if (kind == TokenKind.LParen || kind == TokenKind.LBrack || kind == TokenKind.LBrace || kind == TokenKind.Lt)
+        {
+            depth = depth + 1;
+        }
+        else if (kind == TokenKind.RParen || kind == TokenKind.RBrack || kind == TokenKind.RBrace || kind == TokenKind.Gt)
+        {
+            if (depth > 0)
+            {
+                depth = depth - 1;
+            }
+        }
+
+        scan = scan + 1;
+    }
+
+    if (!foundComma)
+    {
+        return false;
+    }
+
+    return ContractArgIsWholeParamName(stream, argStart, closeParen, rightName);
+}
+
+internal fn bool TrySignatureParamIndexByNameToken(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow Compiler.Parsing.FunctionSignature signature,
+    u32[0 max] nameToken,
+    out u32[0 max] paramIndex)
+{
+    paramIndex = 0;
+    stack u64[0 2 ** 63 - 1] count = signature.ParamCount();
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < count)
+    {
+        if (TokenTextEqualsToken(stream, source, signature.ParamNameAt(i), nameToken))
+        {
+            paramIndex = (u32[0 max])i;
+            return true;
+        }
+
+        i = i + 1;
+    }
+
+    return false;
+}
+
+internal fn bool TryReadWholeParamContractPair(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow Compiler.Parsing.FunctionSignature signature,
+    u32[0 max] lparen,
+    out u32[0 max] leftParam,
+    out u32[0 max] rightParam)
+{
+    leftParam = 0;
+    rightParam = 0;
+    stack mut u32[0 max] leftName = 0;
+    stack mut u32[0 max] rightName = 0;
+    if (!TryReadTwoWholeParamContractArgs(stream, lparen, leftName, rightName))
+    {
+        return false;
+    }
+
+    return TrySignatureParamIndexByNameToken(stream, source, signature, leftName, leftParam)
+        && TrySignatureParamIndexByNameToken(stream, source, signature, rightName, rightParam);
+}
+
+internal fn bool CollectSignatureStorageContracts(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow Compiler.Parsing.FunctionSignature signature,
+    u32[0 max] fnKeyword,
+    mut borrow IrTable<DistinctStoragePair> explicitDisjointPairs,
+    mut borrow IrTable<DistinctStoragePair> suppressedWholePairs)
+{
+    stack u32[0 max] closeParams = FindFunctionParameterListClose(stream, fnKeyword);
+    if (closeParams == 0)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] scan = closeParams + 1;
+    stack mut u32[0 max] depth = 0;
+    stack mut u64[0 2 ** 63 - 1] guard = stream.Count();
+    while willexit (guard > 0)
+    {
+        guard = (u64[0 2 ** 63 - 1])(guard - 1);
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (depth == 0 && (kind == TokenKind.LBrace || kind == TokenKind.Semi || kind == TokenKind.EndOfFile))
+        {
+            return true;
+        }
+
+        if (depth == 0
+            && (kind == TokenKind.Disjoint || kind == TokenKind.Overlap || kind == TokenKind.Same)
+            && stream.KindAt((u64[0 2 ** 63 - 1])(scan + 1)) == TokenKind.LParen)
+        {
+            stack mut u32[0 max] leftParam = 0;
+            stack mut u32[0 max] rightParam = 0;
+            if (TryReadWholeParamContractPair(stream, source, signature, (u32[0 max])(scan + 1), leftParam, rightParam))
+            {
+                if (kind == TokenKind.Disjoint)
+                {
+                    if (!AddDistinctStoragePairIfAbsent(explicitDisjointPairs, leftParam, rightParam))
+                    {
+                        return false;
+                    }
+                }
+                else if (!AddDistinctStoragePairIfAbsent(suppressedWholePairs, leftParam, rightParam))
+                {
+                    return false;
+                }
+            }
+
+            stack u32[0 max] closeContract = FindClosingParenAfter(stream, (u32[0 max])(scan + 1));
+            if (closeContract == 0)
+            {
+                return false;
+            }
+
+            scan = closeContract + 1;
+        }
+        else
+        {
+            if (kind == TokenKind.LParen || kind == TokenKind.LBrack || kind == TokenKind.LBrace || kind == TokenKind.Lt)
+            {
+                depth = depth + 1;
+            }
+            else if (kind == TokenKind.RParen || kind == TokenKind.RBrack || kind == TokenKind.RBrace || kind == TokenKind.Gt)
+            {
+                if (depth > 0)
+                {
+                    depth = depth - 1;
+                }
+            }
+
+            scan = scan + 1;
+        }
+    }
+
+    return true;
+}
+
+internal fn bool BuildDistinctStorageFacts(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow Compiler.Parsing.FunctionSignature signature,
+    u32[0 max] fnKeyword,
+    borrow IrTable<ParamAbiFacts> paramAbiFacts,
+    mut borrow IrTable<DistinctStoragePair> distinctStorageFacts)
+{
+    stack mut IrTable<DistinctStoragePair> explicitDisjointPairs = new();
+    stack mut IrTable<DistinctStoragePair> suppressedWholePairs = new();
+    if (!CollectSignatureStorageContracts(stream, source, signature, fnKeyword, explicitDisjointPairs, suppressedWholePairs))
+    {
+        return false;
+    }
+
+    stack bool defaultNoOverlap = !FunctionTokenHasStorageModifier(stream, fnKeyword, TokenKind.Ffi)
+        && !FunctionTokenHasStorageModifier(stream, fnKeyword, TokenKind.Asm);
+    stack u64[0 2 ** 63 - 1] paramCount = signature.ParamCount();
+    if (defaultNoOverlap)
+    {
+        stack mut u32[0 max] left = 0;
+        while willexit ((u64[0 2 ** 63 - 1])left < paramCount)
+        {
+            stack mut u32[0 max] right = left + 1;
+            while willexit ((u64[0 2 ** 63 - 1])right < paramCount)
+            {
+                if (!DistinctStoragePairExists(suppressedWholePairs, left, right)
+                    && !AddDistinctStoragePairIfPointerParams(paramAbiFacts, distinctStorageFacts, left, right))
+                {
+                    return false;
+                }
+
+                right = right + 1;
+            }
+
+            left = left + 1;
+        }
+    }
+
+    stack u64[0 2 ** 63 - 1] explicitCount = explicitDisjointPairs.Count();
+    stack mut u32[0 max] i = 1;
+    while willexit ((u64[0 2 ** 63 - 1])i <= explicitCount)
+    {
+        stack DistinctStoragePair pair = explicitDisjointPairs.Get(i);
+        if (!DistinctStoragePairExists(suppressedWholePairs, pair.LeftParam, pair.RightParam)
+            && !AddDistinctStoragePairIfPointerParams(paramAbiFacts, distinctStorageFacts, pair.LeftParam, pair.RightParam))
+        {
+            return false;
+        }
+
+        i = i + 1;
+    }
+
+    return true;
+}
+
+internal fn bool ExprNodeUsesPointerParam(borrow IrTable<ExprNode> nodes, borrow IrTable<ParamAbiFacts> paramAbiFacts, u32[0 max] id)
+{
+    if (!nodes.Contains(id))
+    {
+        return false;
+    }
+
+    stack ExprNode node = nodes.Get(id);
+    switch (node.Kind)
+    {
+        case ExprKind.NameExpr:
+            return AbiFactAt(paramAbiFacts, node.Left + 1).IsPointer;
+        case ExprKind.BinaryExpr:
+            return ExprNodeUsesPointerParam(nodes, paramAbiFacts, node.Left)
+                || ExprNodeUsesPointerParam(nodes, paramAbiFacts, node.Right);
+        case ExprKind.CompareExpr:
+            return ExprNodeUsesPointerParam(nodes, paramAbiFacts, node.Left)
+                || ExprNodeUsesPointerParam(nodes, paramAbiFacts, node.Right);
+        case ExprKind.CallExpr:
+            return ExprNodeUsesPointerParam(nodes, paramAbiFacts, node.Right)
+                || ExprNodeUsesPointerParam(nodes, paramAbiFacts, node.Arg2)
+                || ExprNodeUsesPointerParam(nodes, paramAbiFacts, node.Arg3)
+                || ExprNodeUsesPointerParam(nodes, paramAbiFacts, node.Arg4);
+        default:
+            return false;
+    }
+}
+
+internal fn bool ExpressionTableUsesPointerParams(borrow IrTable<ExprNode> nodes, borrow IrTable<ParamAbiFacts> paramAbiFacts)
+{
+    stack u64[0 2 ** 63 - 1] count = nodes.Count();
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < count)
+    {
+        if (ExprNodeUsesPointerParam(nodes, paramAbiFacts, (u32[0 max])(i + 1)))
+        {
+            return true;
+        }
+
+        i = i + 1;
+    }
+
+    return false;
+}
+
 // The unified front-to-back path for a single FUNCTION declaration `fn <name>(<params>)
 // { return <expr> }`: lex -> seed the symbol table from the SIGNATURE (so parameter order
 // is authoritative) -> parse the return expression (names resolve to signature params) ->
@@ -6503,6 +8592,23 @@ public fn bool CompileFunctionToLlvm(ascii source, mut borrow OwnedAscii sink)
                 return false;
             }
 
+            stack mut IrTable<ParamAbiFacts> paramAbiFacts = new();
+            if (!BuildParamAbiFacts(stream, sourceBytes, signature, paramAbiFacts))
+            {
+                return false;
+            }
+
+            stack mut IrTable<DistinctStoragePair> distinctStorageFacts = new();
+            if (!BuildDistinctStorageFacts(stream, sourceBytes, signature, (u32[0 max])fnIndex, paramAbiFacts, distinctStorageFacts))
+            {
+                return false;
+            }
+
+            if (ExpressionTableUsesPointerParams(nodes, paramAbiFacts))
+            {
+                return false;
+            }
+
             stack mut IrTable<MirInstruction> instrs = new();
             stack mut IrTable<MirBlock> blocks = new();
             stack MirValueId value = LowerExprNode(nodes, root.NodeId, instrs);
@@ -6526,10 +8632,38 @@ public fn bool CompileFunctionToLlvm(ascii source, mut borrow OwnedAscii sink)
             stack mut IrTable<ValueFacts> valueFacts = new();
             stack mut IrTable<ValueFacts> globalFacts = new();
             stack mut IrTable<ValueFacts> functionReturnFacts = new();
-            switch (EmitLlvmDefinitionWithRangeFacts(instrs, blocks, "main", returnFacts, paramFacts, valueFacts, globalFacts, functionReturnFacts, paramCount, entry.Index(), 1, instrCount, sink))
+            stack mut IrTable<u32[0 max]> noTailCallees = new();
+            stack mut IrTable<LlvmRangeMetadata> rangeMetadata = new();
+            stack FunctionEffectFacts functionEffects = FunctionEffectsFromSignatureAndInstructionRange(signature, instrs, 1, instrCount);
+            switch (EmitLlvmDefinitionWithRangeFactsCore(
+                instrs,
+                noTailCallees,
+                blocks,
+                "main",
+                false,
+                returnFacts,
+                paramFacts,
+                paramAbiFacts,
+                distinctStorageFacts,
+                valueFacts,
+                globalFacts,
+                functionReturnFacts,
+                rangeMetadata,
+                functionEffects,
+                paramCount,
+                entry.Index(),
+                1,
+                instrCount,
+                sink))
             {
                 case MemoryStatus.Ok:
-                    return true;
+                    switch (EmitLlvmRangeMetadataDefinitions(rangeMetadata, sink))
+                    {
+                        case MemoryStatus.Ok:
+                            return true;
+                        case MemoryStatus.Err(var metadataError):
+                            return false;
+                    }
                 case MemoryStatus.Err(var error):
                     return false;
             }
@@ -6642,16 +8776,706 @@ public struct LoweredBody
     }
 }
 
-// Lowers ONE function body — `fn <name>(<params>) { (var <n> = <expr>;)* return <expr> }` —
-// through the AST path into caller-owned `instrs`/`blocks`, returning the entry block + the
-// declared parameter count (or `Ok = false` on any malformed/ill-typed/invalid-call body).
-// Parameters and `var` locals share one index space: the signature seeds the parameters;
-// each `var` appends its name (so later statements resolve it) and at lower time its index is
-// REDIRECTED — via `localOverrides` — to the SSA value its initializer produced (computed
-// once, reused). The body is parsed against `funcNames` so a call resolves to its callee id,
-// and `ValidateModuleCalls` enforces the call model against `funcParamCounts`. SHARED by the
-// single-function path (`CompileFunctionWithLocalsToLlvm`) and the multi-function module path
-// (`EmitModuleFunctionAst`), so a module function gets `var` locals just like a top-level one.
+internal fn bool TokenStartsSelfHostedLocal(TokenKind kind)
+{
+    switch (kind)
+    {
+        case TokenKind.Var:
+            return true;
+        case TokenKind.Stack:
+            return true;
+        case TokenKind.Register:
+            return true;
+        case TokenKind.Heap:
+            return true;
+        case TokenKind.Arena:
+            return true;
+        case TokenKind.Static:
+            return true;
+        default:
+            return false;
+    }
+}
+
+internal fn bool TokenCanStartSelfHostedType(TokenKind kind)
+{
+    switch (kind)
+    {
+        case TokenKind.IntegerType:
+            return true;
+        case TokenKind.Bool:
+            return true;
+        case TokenKind.Identifier:
+            return true;
+        case TokenKind.Dynamic:
+            return true;
+        case TokenKind.Dyn:
+            return true;
+        case TokenKind.Rawptr:
+            return true;
+        case TokenKind.Rawmutptr:
+            return true;
+        case TokenKind.Fnptr:
+            return true;
+        case TokenKind.AsciiView:
+            return true;
+        case TokenKind.UnicodeView:
+            return true;
+        case TokenKind.AsciiOwned:
+            return true;
+        case TokenKind.UnicodeOwned:
+            return true;
+        default:
+            return false;
+    }
+}
+
+internal fn u32[0 max] NaturalAlignmentForByteExtent(u32[0 max] sizeBytes)
+{
+    if (sizeBytes >= 8)
+    {
+        return 8;
+    }
+
+    if (sizeBytes >= 4)
+    {
+        return 4;
+    }
+
+    if (sizeBytes >= 2)
+    {
+        return 2;
+    }
+
+    return 1;
+}
+
+internal fn u32[0 max] AlignUpU32(u32[0 max] value, u32[0 max] alignment)
+{
+    if (alignment <= 1)
+    {
+        return value;
+    }
+
+    stack u32[0 max] remainder = value % alignment;
+    if (remainder == 0)
+    {
+        return value;
+    }
+
+    return value + alignment - remainder;
+}
+
+internal fn bool IsPowerOfTwoU32(u32[0 max] value)
+{
+    if (value == 0)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] remaining = value;
+    while willexit (remaining > 1)
+    {
+        if (remaining % 2 != 0)
+        {
+            return false;
+        }
+
+        remaining = remaining / 2;
+    }
+
+    return true;
+}
+
+internal fn bool FindSelfHostedStatementEnd(borrow TokenStream stream, u64[0 2 ** 63 - 1] start, u64[0 2 ** 63 - 1] limit, out u64[0 2 ** 63 - 1] end)
+{
+    end = start;
+    stack mut u64[0 2 ** 63 - 1] scan = start;
+    stack mut u32[0 max] parenDepth = 0;
+    stack mut u32[0 max] bracketDepth = 0;
+    stack mut u32[0 max] angleDepth = 0;
+    while willexit (scan < limit && stream.KindAt(scan) != TokenKind.EndOfFile)
+    {
+        stack TokenKind kind = stream.KindAt(scan);
+        if (kind == TokenKind.LParen)
+        {
+            parenDepth = parenDepth + 1;
+        }
+        else if (kind == TokenKind.RParen)
+        {
+            if (parenDepth > 0)
+            {
+                parenDepth = parenDepth - 1;
+            }
+        }
+        else if (kind == TokenKind.LBrack)
+        {
+            bracketDepth = bracketDepth + 1;
+        }
+        else if (kind == TokenKind.RBrack)
+        {
+            if (bracketDepth > 0)
+            {
+                bracketDepth = bracketDepth - 1;
+            }
+        }
+        else if (kind == TokenKind.Lt)
+        {
+            angleDepth = angleDepth + 1;
+        }
+        else if (kind == TokenKind.Gt)
+        {
+            if (angleDepth > 0)
+            {
+                angleDepth = angleDepth - 1;
+            }
+        }
+        else if (kind == TokenKind.Semi && parenDepth == 0 && bracketDepth == 0 && angleDepth == 0)
+        {
+            end = scan;
+            return true;
+        }
+
+        scan = scan + 1;
+    }
+
+    return false;
+}
+
+internal fn bool FindSelfHostedStatementAssign(borrow TokenStream stream, u64[0 2 ** 63 - 1] start, u64[0 2 ** 63 - 1] end, out u64[0 2 ** 63 - 1] assign)
+{
+    assign = end;
+    stack mut u64[0 2 ** 63 - 1] scan = start;
+    stack mut u32[0 max] depth = 0;
+    while willexit (scan < end)
+    {
+        stack TokenKind kind = stream.KindAt(scan);
+        if (kind == TokenKind.LParen || kind == TokenKind.LBrack || kind == TokenKind.Lt)
+        {
+            depth = depth + 1;
+        }
+        else if (kind == TokenKind.RParen || kind == TokenKind.RBrack || kind == TokenKind.Gt)
+        {
+            if (depth > 0)
+            {
+                depth = depth - 1;
+            }
+        }
+        else if (kind == TokenKind.Assign && depth == 0)
+        {
+            assign = scan;
+            return true;
+        }
+
+        scan = scan + 1;
+    }
+
+    return false;
+}
+
+internal fn u32[0 max] FindSelfHostedLocalNameToken(borrow TokenStream stream, u64[0 2 ** 63 - 1] start, u64[0 2 ** 63 - 1] end)
+{
+    stack mut u32[0 max] nameToken = 0;
+    stack mut u64[0 2 ** 63 - 1] scan = start + 1;
+    stack mut u32[0 max] depth = 0;
+    while willexit (scan < end)
+    {
+        stack TokenKind kind = stream.KindAt(scan);
+        if (depth == 0 && kind == TokenKind.Assign)
+        {
+            break;
+        }
+
+        if (kind == TokenKind.LParen || kind == TokenKind.LBrack || kind == TokenKind.Lt)
+        {
+            depth = depth + 1;
+        }
+        else if (kind == TokenKind.RParen || kind == TokenKind.RBrack || kind == TokenKind.Gt)
+        {
+            if (depth > 0)
+            {
+                depth = depth - 1;
+            }
+        }
+        else if (kind == TokenKind.Identifier && depth == 0)
+        {
+            nameToken = (u32[0 max])scan;
+        }
+
+        scan = scan + 1;
+    }
+
+    return nameToken;
+}
+
+internal fn u32[0 max] FindSelfHostedLocalTypeToken(borrow TokenStream stream, u64[0 2 ** 63 - 1] start, u64[0 2 ** 63 - 1] end)
+{
+    stack u32[0 max] nameToken = FindSelfHostedLocalNameToken(stream, start, end);
+    stack mut u64[0 2 ** 63 - 1] scan = start + 1;
+    stack mut u32[0 max] depth = 0;
+    while willexit (scan < end)
+    {
+        if (nameToken != 0 && scan >= (u64[0 2 ** 63 - 1])nameToken)
+        {
+            break;
+        }
+
+        stack TokenKind kind = stream.KindAt(scan);
+        if (depth == 0 && kind == TokenKind.Assign)
+        {
+            break;
+        }
+
+        if (kind == TokenKind.LParen || kind == TokenKind.LBrack || kind == TokenKind.Lt)
+        {
+            depth = depth + 1;
+        }
+        else if (kind == TokenKind.RParen || kind == TokenKind.RBrack || kind == TokenKind.Gt)
+        {
+            if (depth > 0)
+            {
+                depth = depth - 1;
+            }
+        }
+        else if (depth == 0 && kind != TokenKind.Mut && TokenCanStartSelfHostedType(kind))
+        {
+            return (u32[0 max])scan;
+        }
+
+        scan = scan + 1;
+    }
+
+    return 0;
+}
+
+internal fn bool TokenTextEqualsAsciiSpan(borrow TokenStream stream, borrow i8[min max][] source, u32[0 max] left, u32[0 max] right)
+{
+    return SpanEquals(
+        source,
+        stream.StartAt((u64[0 2 ** 63 - 1])left),
+        stream.LengthAt((u64[0 2 ** 63 - 1])left),
+        stream.StartAt((u64[0 2 ** 63 - 1])right),
+        stream.LengthAt((u64[0 2 ** 63 - 1])right));
+}
+
+internal fn u32[0 max] BuiltinTypeKnownByteAlignment(borrow TokenStream stream, borrow i8[min max][] source, u32[0 max] typeToken)
+{
+    stack u32[0 max] builtinSize = TypeKnownByteExtent(stream, source, typeToken);
+    if (builtinSize != 0)
+    {
+        return NaturalAlignmentForByteExtent(builtinSize);
+    }
+
+    return 0;
+}
+
+internal fn u32[0 max] StructKnownByteAlignment(borrow TokenStream stream, borrow i8[min max][] source, u32[0 max] typeToken)
+{
+    stack u64[0 2 ** 63 - 1] count = stream.Count();
+    stack mut u64[0 2 ** 63 - 1] scan = 0;
+    while willexit (scan < count)
+    {
+        if (stream.KindAt(scan) == TokenKind.Struct
+            && stream.KindAt(scan + 1) == TokenKind.Identifier
+            && TokenTextEqualsAsciiSpan(stream, source, (u32[0 max])(scan + 1), typeToken))
+        {
+            stack i64[min max] lbrace = FirstTokenOfKindAfter(stream, TokenKind.LBrace, scan + 1);
+            if (lbrace < 0)
+            {
+                return 0;
+            }
+
+            stack mut u64[0 2 ** 63 - 1] field = (u64[0 2 ** 63 - 1])lbrace + 1;
+            stack mut u32[0 max] maxAlign = 1;
+            while willexit (field < count && stream.KindAt(field) != TokenKind.RBrace)
+            {
+                if (TokenCanStartSelfHostedType(stream.KindAt(field)))
+                {
+                    stack u32[0 max] align = BuiltinTypeKnownByteAlignment(stream, source, (u32[0 max])field);
+                    if (align == 0)
+                    {
+                        return 0;
+                    }
+
+                    if (align > maxAlign)
+                    {
+                        maxAlign = align;
+                    }
+
+                    while willexit (field < count && stream.KindAt(field) != TokenKind.Semi && stream.KindAt(field) != TokenKind.RBrace)
+                    {
+                        field = field + 1;
+                    }
+                }
+
+                field = field + 1;
+            }
+
+            return maxAlign;
+        }
+
+        scan = scan + 1;
+    }
+
+    return 0;
+}
+
+internal fn u32[0 max] StructKnownByteExtent(borrow TokenStream stream, borrow i8[min max][] source, u32[0 max] typeToken)
+{
+    stack u64[0 2 ** 63 - 1] count = stream.Count();
+    stack mut u64[0 2 ** 63 - 1] scan = 0;
+    while willexit (scan < count)
+    {
+        if (stream.KindAt(scan) == TokenKind.Struct
+            && stream.KindAt(scan + 1) == TokenKind.Identifier
+            && TokenTextEqualsAsciiSpan(stream, source, (u32[0 max])(scan + 1), typeToken))
+        {
+            stack i64[min max] lbrace = FirstTokenOfKindAfter(stream, TokenKind.LBrace, scan + 1);
+            if (lbrace < 0)
+            {
+                return 0;
+            }
+
+            stack mut u64[0 2 ** 63 - 1] field = (u64[0 2 ** 63 - 1])lbrace + 1;
+            stack mut u32[0 max] offset = 0;
+            stack mut u32[0 max] maxAlign = 1;
+            while willexit (field < count && stream.KindAt(field) != TokenKind.RBrace)
+            {
+                if (TokenCanStartSelfHostedType(stream.KindAt(field)))
+                {
+                    stack u32[0 max] fieldSize = TypeKnownByteExtent(stream, source, (u32[0 max])field);
+                    stack u32[0 max] fieldAlign = BuiltinTypeKnownByteAlignment(stream, source, (u32[0 max])field);
+                    if (fieldSize == 0 || fieldAlign == 0)
+                    {
+                        return 0;
+                    }
+
+                    offset = AlignUpU32(offset, fieldAlign);
+                    offset = offset + fieldSize;
+                    if (fieldAlign > maxAlign)
+                    {
+                        maxAlign = fieldAlign;
+                    }
+
+                    while willexit (field < count && stream.KindAt(field) != TokenKind.Semi && stream.KindAt(field) != TokenKind.RBrace)
+                    {
+                        field = field + 1;
+                    }
+                }
+
+                field = field + 1;
+            }
+
+            return AlignUpU32(offset, maxAlign);
+        }
+
+        scan = scan + 1;
+    }
+
+    return 0;
+}
+
+internal fn u32[0 max] TypeKnownByteAlignment(borrow TokenStream stream, borrow i8[min max][] source, u32[0 max] typeToken)
+{
+    stack u32[0 max] builtinSize = TypeKnownByteExtent(stream, source, typeToken);
+    if (builtinSize != 0)
+    {
+        return NaturalAlignmentForByteExtent(builtinSize);
+    }
+
+    if (stream.KindAt((u64[0 2 ** 63 - 1])typeToken) == TokenKind.Identifier)
+    {
+        return StructKnownByteAlignment(stream, source, typeToken);
+    }
+
+    return 0;
+}
+
+internal fn u32[0 max] TypeKnownByteExtentForLocal(borrow TokenStream stream, borrow i8[min max][] source, u32[0 max] typeToken)
+{
+    stack u32[0 max] builtinSize = TypeKnownByteExtent(stream, source, typeToken);
+    if (builtinSize != 0)
+    {
+        return builtinSize;
+    }
+
+    if (stream.KindAt((u64[0 2 ** 63 - 1])typeToken) == TokenKind.Identifier)
+    {
+        return StructKnownByteExtent(stream, source, typeToken);
+    }
+
+    return 0;
+}
+
+internal fn bool TryReadPositiveIntegerToken(borrow TokenStream stream, borrow i8[min max][] source, u64[0 2 ** 63 - 1] token, out u32[0 max] value)
+{
+    value = 0;
+    if (stream.KindAt(token) != TokenKind.IntegerLiteral)
+    {
+        return false;
+    }
+
+    stack i64[min max] parsed = ParseDigitSpan(source, stream.StartAt(token), stream.LengthAt(token));
+    if (parsed <= 0 || parsed > 4294967295)
+    {
+        return false;
+    }
+
+    value = (u32[0 max])parsed;
+    return true;
+}
+
+internal fn bool TryReadNonNegativeIntegerToken(borrow TokenStream stream, borrow i8[min max][] source, u64[0 2 ** 63 - 1] token, out u32[0 max] value)
+{
+    value = 0;
+    if (stream.KindAt(token) != TokenKind.IntegerLiteral)
+    {
+        return false;
+    }
+
+    stack i64[min max] parsed = ParseDigitSpan(source, stream.StartAt(token), stream.LengthAt(token));
+    if (parsed < 0 || parsed > 4294967295)
+    {
+        return false;
+    }
+
+    value = (u32[0 max])parsed;
+    return true;
+}
+
+internal fn bool TryParseArenaSelectorAllocation(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    u64[0 2 ** 63 - 1] start,
+    u64[0 2 ** 63 - 1] end,
+    out u32[0 max] sizeBytes,
+    out u32[0 max] alignBytes)
+{
+    sizeBytes = 0;
+    alignBytes = 0;
+    stack mut u64[0 2 ** 63 - 1] scan = start;
+    while willexit (scan + 5 < end)
+    {
+        if (stream.KindAt(scan) == TokenKind.New
+            && stream.KindAt(scan + 1) == TokenKind.LParen
+            && stream.KindAt(scan + 2) == TokenKind.Arena
+            && stream.KindAt(scan + 3) == TokenKind.Comma)
+        {
+            stack mut u32[0 max] size = 0;
+            if (!TryReadPositiveIntegerToken(stream, source, scan + 4, size))
+            {
+                return false;
+            }
+
+            stack mut u64[0 2 ** 63 - 1] cursor = scan + 5;
+            stack mut u32[0 max] alignment = NaturalAlignmentForByteExtent(size);
+            if (stream.KindAt(cursor) == TokenKind.Comma)
+            {
+                if (!TryReadPositiveIntegerToken(stream, source, cursor + 1, alignment))
+                {
+                    return false;
+                }
+
+                cursor = cursor + 2;
+            }
+
+            if (stream.KindAt(cursor) != TokenKind.RParen)
+            {
+                return false;
+            }
+
+            if (!IsPowerOfTwoU32(alignment))
+            {
+                return false;
+            }
+
+            sizeBytes = size;
+            alignBytes = alignment;
+            return true;
+        }
+
+        scan = scan + 1;
+    }
+
+    return false;
+}
+
+internal fn bool TryParseArenaSelectorCapacity(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    u64[0 2 ** 63 - 1] start,
+    u64[0 2 ** 63 - 1] end,
+    out u32[0 max] capacity,
+    out u32[0 max] alignBytes)
+{
+    capacity = 0;
+    alignBytes = 0;
+    stack mut u64[0 2 ** 63 - 1] scan = start;
+    while willexit (scan + 5 < end)
+    {
+        if (stream.KindAt(scan) == TokenKind.New
+            && stream.KindAt(scan + 1) == TokenKind.LParen
+            && stream.KindAt(scan + 2) == TokenKind.Arena
+            && stream.KindAt(scan + 3) == TokenKind.Comma)
+        {
+            stack mut u32[0 max] parsedCapacity = 0;
+            if (!TryReadPositiveIntegerToken(stream, source, scan + 4, parsedCapacity))
+            {
+                return false;
+            }
+
+            stack mut u64[0 2 ** 63 - 1] cursor = scan + 5;
+            stack mut u32[0 max] parsedAlignment = 0;
+            if (stream.KindAt(cursor) == TokenKind.Comma)
+            {
+                if (!TryReadPositiveIntegerToken(stream, source, cursor + 1, parsedAlignment))
+                {
+                    return false;
+                }
+
+                cursor = cursor + 2;
+            }
+
+            if (stream.KindAt(cursor) != TokenKind.RParen)
+            {
+                return false;
+            }
+
+            if (parsedAlignment != 0 && !IsPowerOfTwoU32(parsedAlignment))
+            {
+                return false;
+            }
+
+            capacity = parsedCapacity;
+            alignBytes = parsedAlignment;
+            return true;
+        }
+
+        scan = scan + 1;
+    }
+
+    return false;
+}
+
+internal fn u32[0 max] FindSelfHostedDynamicElementTypeToken(borrow TokenStream stream, u64[0 2 ** 63 - 1] start, u64[0 2 ** 63 - 1] end)
+{
+    stack u32[0 max] typeToken = FindSelfHostedLocalTypeToken(stream, start, end);
+    if (typeToken == 0)
+    {
+        return 0;
+    }
+
+    stack TokenKind typeKind = stream.KindAt((u64[0 2 ** 63 - 1])typeToken);
+    if (typeKind != TokenKind.Dynamic && typeKind != TokenKind.Dyn)
+    {
+        return 0;
+    }
+
+    stack u64[0 2 ** 63 - 1] elementToken = (u64[0 2 ** 63 - 1])typeToken + 1;
+    if (elementToken >= end || !TokenCanStartSelfHostedType(stream.KindAt(elementToken)))
+    {
+        return 0;
+    }
+
+    return (u32[0 max])elementToken;
+}
+
+internal struct ArenaDynamicLocal
+{
+    u64[0 2 ** 63 - 1] Start;
+    u64[0 2 ** 63 - 1] Length;
+    u32[0 max] StorageValue;
+    u32[0 max] ElementSize;
+    u32[0 max] Alignment;
+
+    ArenaDynamicLocal()
+    {
+        self.Start = 0;
+        self.Length = 0;
+        self.StorageValue = 0;
+        self.ElementSize = 0;
+        self.Alignment = 0;
+    }
+}
+
+internal fn bool TryFindArenaDynamicLocal(borrow IrTable<ArenaDynamicLocal> locals, borrow i8[min max][] source, u64[0 2 ** 63 - 1] start, u64[0 2 ** 63 - 1] length, out ArenaDynamicLocal found)
+{
+    found = new();
+    stack u64[0 2 ** 63 - 1] count = locals.Count();
+    stack mut u32[0 max] i = 1;
+    while willexit ((u64[0 2 ** 63 - 1])i <= count)
+    {
+        stack ArenaDynamicLocal local = locals.Get(i);
+        if (SpanEquals(source, local.Start, local.Length, start, length))
+        {
+            found = local;
+            return true;
+        }
+
+        i = i + 1;
+    }
+
+    return false;
+}
+
+internal fn bool TryLowerArenaDynamicReserveStatement(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow IrTable<ArenaDynamicLocal> arenaDynamicLocals,
+    u64[0 2 ** 63 - 1] start,
+    u64[0 2 ** 63 - 1] end,
+    mut borrow IrTable<MirInstruction> instrs)
+{
+    if (start + 6 != end
+        || stream.KindAt(start) != TokenKind.Identifier
+        || stream.KindAt(start + 1) != TokenKind.Dot
+        || stream.KindAt(start + 2) != TokenKind.Identifier
+        || stream.KindAt(start + 3) != TokenKind.LParen
+        || stream.KindAt(start + 5) != TokenKind.RParen)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] amount = 0;
+    if (!TryReadNonNegativeIntegerToken(stream, source, start + 4, amount))
+    {
+        return false;
+    }
+
+    stack mut ArenaDynamicLocal local = new();
+    if (!TryFindArenaDynamicLocal(arenaDynamicLocals, source, stream.StartAt(start), stream.LengthAt(start), local))
+    {
+        return false;
+    }
+
+    stack u32[0 max] methodToken = (u32[0 max])(start + 2);
+    stack MirValueId storage = MirValueIdOf(local.StorageValue);
+    if (TokenTextIsReserveName(stream, source, methodToken))
+    {
+        stack MirValueId reserve = MirArenaDynamicStorageReserve(instrs, storage, amount, local.ElementSize, local.Alignment);
+        return true;
+    }
+
+    if (TokenTextIsTryReserveName(stream, source, methodToken))
+    {
+        stack MirValueId reserve = MirArenaDynamicStorageTryReserve(instrs, storage, amount, local.ElementSize, local.Alignment);
+        return true;
+    }
+
+    if (TokenTextIsTryReserveCapacityName(stream, source, methodToken))
+    {
+        stack MirValueId reserve = MirArenaDynamicStorageTryReserveCapacity(instrs, storage, amount, local.ElementSize, local.Alignment);
+        return true;
+    }
+
+    return false;
+}
+
+// Lowers ONE function body through the AST path into caller-owned `instrs`/`blocks`,
+// returning the entry block + declared parameter count. Scalar `var` locals lower to SSA
+// overrides; storage-class locals that this MIR subset cannot read as integers occupy the
+// same name space but type as non-scalar, so accidental scalar use is rejected. Arena locals
+// additionally emit frame/allocator MIR side effects before the return path.
 internal fn LoweredBody LowerFunctionWithLocals(borrow TokenStream stream, borrow i8[min max][] source, borrow IrTable<ParamName> funcNames, borrow IrTable<u32[0 max]> funcParamCounts, borrow IrTable<u32[0 max]> funcTailFlags, bool isTailCallable, u64[0 2 ** 63 - 1] fnIndex, mut borrow IrTable<MirInstruction> instrs, mut borrow IrTable<MirBlock> blocks)
 {
     stack mut LoweredBody result = new();
@@ -6708,14 +9532,22 @@ internal fn LoweredBody LowerFunctionWithLocals(borrow TokenStream stream, borro
         return result;
     }
 
+    stack mut IrTable<ParamAbiFacts> paramAbiFacts = new();
+    if (!BuildParamAbiFacts(stream, source, signature, paramAbiFacts))
+    {
+        return result;
+    }
+
     stack mut IrTable<ParamName> params = new();
     SeedSignatureParamsFromParsed(stream, source, signature, params);
     stack u64[0 2 ** 63 - 1] signatureParamCount = params.Count();
 
     // Per-index types (1 = boolean, 0 = integer/parameter); signature parameters are integer.
     stack mut IrTable<ExprNode> nodes = new();
-    stack mut IrTable<u32[0 max]> varRoots = new();
+    stack mut IrTable<u32[0 max]> localRoots = new();
     stack mut IrTable<u32[0 max]> localTypes = new();
+    stack mut IrTable<ArenaDynamicLocal> arenaDynamicLocals = new();
+    stack mut bool usesArenaFrame = false;
     stack mut u64[0 2 ** 63 - 1] seedT = 0;
     while willexit (seedT < signatureParamCount)
     {
@@ -6724,10 +9556,22 @@ internal fn LoweredBody LowerFunctionWithLocals(borrow TokenStream stream, borro
     }
 
     stack mut u64[0 2 ** 63 - 1] cursor = (u64[0 2 ** 63 - 1])braceIndex + 1;
-    while willexit (stream.KindAt(cursor) == TokenKind.Var)
+    while willexit (cursor < (u64[0 2 ** 63 - 1])terminalIndex && TokenStartsSelfHostedLocal(stream.KindAt(cursor)))
     {
-        stack u64[0 2 ** 63 - 1] nameStart = stream.StartAt(cursor + 1);
-        stack u64[0 2 ** 63 - 1] nameLength = stream.LengthAt(cursor + 1);
+        stack mut u64[0 2 ** 63 - 1] statementEnd = cursor;
+        if (!FindSelfHostedStatementEnd(stream, cursor, (u64[0 2 ** 63 - 1])terminalIndex, statementEnd))
+        {
+            return result;
+        }
+
+        stack u32[0 max] localNameToken = FindSelfHostedLocalNameToken(stream, cursor, statementEnd);
+        if (localNameToken == 0)
+        {
+            return result;
+        }
+
+        stack u64[0 2 ** 63 - 1] nameStart = stream.StartAt((u64[0 2 ** 63 - 1])localNameToken);
+        stack u64[0 2 ** 63 - 1] nameLength = stream.LengthAt((u64[0 2 ** 63 - 1])localNameToken);
 
         // A local must not redeclare a parameter or earlier local (the override scheme needs
         // each local a fresh, distinct index).
@@ -6736,39 +9580,165 @@ internal fn LoweredBody LowerFunctionWithLocals(borrow TokenStream stream, borro
             return result;
         }
 
-        // The initializer may reference only ALREADY-declared names — reject if parsing it
-        // grew the table (an undeclared/forward/self reference inserts a phantom index).
-        stack u64[0 2 ** 63 - 1] beforeInit = params.Count();
-        stack ParseResult varExpr = ParseExprIn(stream, source, nodes, params, funcNames, cursor + 3);
-        if (params.Count() != beforeInit)
+        stack TokenKind localStorage = stream.KindAt(cursor);
+        stack mut u64[0 2 ** 63 - 1] assignToken = statementEnd;
+        stack bool hasAssign = FindSelfHostedStatementAssign(stream, cursor, statementEnd, assignToken);
+        if (localStorage == TokenKind.Var)
         {
-            return result;
-        }
+            if (!hasAssign)
+            {
+                return result;
+            }
 
-        stack ExprType varType = TypeOfNodeWithLocals(nodes, varExpr.NodeId, localTypes);
-        if (varType == ExprType.ErrorType)
-        {
-            return result;
-        }
+            // The initializer may reference only ALREADY-declared names — reject if parsing it
+            // grew the table (an undeclared/forward/self reference inserts a phantom index).
+            stack u64[0 2 ** 63 - 1] beforeInit = params.Count();
+            stack ParseResult varExpr = ParseExprIn(stream, source, nodes, params, funcNames, assignToken + 1);
+            if (params.Count() != beforeInit)
+            {
+                return result;
+            }
 
-        stack u32[0 max] addedRoot = varRoots.Add(varExpr.NodeId);
-        stack u32[0 max] localIndex = ResolveParam(params, source, nameStart, nameLength);
-        if (varType == ExprType.BoolType)
-        {
-            stack u32[0 max] boolSlot = localTypes.Add(1);
+            stack ExprType varType = TypeOfNodeWithLocals(nodes, varExpr.NodeId, localTypes);
+            if (varType == ExprType.ErrorType)
+            {
+                return result;
+            }
+
+            stack u32[0 max] localIndex = ResolveParam(params, source, nameStart, nameLength);
+            stack u32[0 max] addedRoot = localRoots.Add(varExpr.NodeId);
+            if (varType == ExprType.BoolType)
+            {
+                stack u32[0 max] boolSlot = localTypes.Add(1);
+            }
+            else
+            {
+                stack u32[0 max] intSlot = localTypes.Add(0);
+            }
         }
         else
         {
-            stack u32[0 max] intSlot = localTypes.Add(0);
+            stack mut u32[0 max] dynamicCapacity = 0;
+            stack mut u32[0 max] dynamicAlignment = 0;
+            stack u32[0 max] dynamicElementTypeToken = FindSelfHostedDynamicElementTypeToken(stream, cursor, statementEnd);
+            if (dynamicElementTypeToken != 0 && TryParseArenaSelectorCapacity(stream, source, cursor, statementEnd, dynamicCapacity, dynamicAlignment))
+            {
+                if (signature.LawKind() || localStorage == TokenKind.Heap || localStorage == TokenKind.Static || localStorage == TokenKind.Register || localStorage == TokenKind.Arena)
+                {
+                    return result;
+                }
+
+                stack u32[0 max] elementSize = TypeKnownByteExtentForLocal(stream, source, dynamicElementTypeToken);
+                stack u32[0 max] elementAlign = TypeKnownByteAlignment(stream, source, dynamicElementTypeToken);
+                if (elementSize == 0 || elementAlign == 0)
+                {
+                    return result;
+                }
+
+                if (dynamicAlignment == 0)
+                {
+                    dynamicAlignment = elementAlign;
+                }
+
+                if (dynamicAlignment < elementAlign || !IsPowerOfTwoU32(dynamicAlignment))
+                {
+                    return result;
+                }
+
+                if (!usesArenaFrame)
+                {
+                    stack MirValueId frame = MirArenaFrameEnter(instrs);
+                    usesArenaFrame = true;
+                }
+
+                stack MirValueId storage = MirArenaDynamicStorageInit(instrs, dynamicCapacity, elementSize, dynamicAlignment);
+                stack u32[0 max] localIndex = ResolveParam(params, source, nameStart, nameLength);
+                stack u32[0 max] nonValueRoot = localRoots.Add(0);
+                stack u32[0 max] nonValueType = localTypes.Add(2);
+
+                stack mut ArenaDynamicLocal dynamicLocal = new();
+                dynamicLocal.Start = nameStart;
+                dynamicLocal.Length = nameLength;
+                dynamicLocal.StorageValue = storage.Index();
+                dynamicLocal.ElementSize = elementSize;
+                dynamicLocal.Alignment = dynamicAlignment;
+                stack u32[0 max] addedDynamicLocal = arenaDynamicLocals.Add(dynamicLocal);
+
+                cursor = statementEnd + 1;
+                continue;
+            }
+
+            stack mut u32[0 max] allocationSize = 0;
+            stack mut u32[0 max] allocationAlign = 0;
+            if (localStorage == TokenKind.Arena)
+            {
+                stack u32[0 max] typeToken = FindSelfHostedLocalTypeToken(stream, cursor, statementEnd);
+                if (typeToken == 0)
+                {
+                    return result;
+                }
+
+                allocationSize = TypeKnownByteExtentForLocal(stream, source, typeToken);
+                allocationAlign = TypeKnownByteAlignment(stream, source, typeToken);
+                if (allocationSize == 0 || allocationAlign == 0)
+                {
+                    return result;
+                }
+            }
+            else if (!TryParseArenaSelectorAllocation(stream, source, cursor, statementEnd, allocationSize, allocationAlign))
+            {
+                stack u32[0 max] nonArenaLocalIndex = ResolveParam(params, source, nameStart, nameLength);
+                stack u32[0 max] nonArenaRoot = localRoots.Add(0);
+                stack u32[0 max] nonArenaType = localTypes.Add(2);
+                cursor = statementEnd + 1;
+                continue;
+            }
+
+            if (signature.LawKind() || localStorage == TokenKind.Heap || localStorage == TokenKind.Static)
+            {
+                return result;
+            }
+
+            if (!usesArenaFrame)
+            {
+                stack MirValueId frame = MirArenaFrameEnter(instrs);
+                usesArenaFrame = true;
+            }
+
+            stack MirValueId allocation = MirArenaAlloc(instrs, allocationSize, allocationAlign);
+            stack u32[0 max] localIndex = ResolveParam(params, source, nameStart, nameLength);
+            stack u32[0 max] nonValueRoot = localRoots.Add(0);
+            stack u32[0 max] nonValueType = localTypes.Add(2);
         }
 
-        cursor = varExpr.Next + 1;
+        cursor = statementEnd + 1;
+    }
+
+    while willexit (cursor < (u64[0 2 ** 63 - 1])terminalIndex)
+    {
+        stack mut u64[0 2 ** 63 - 1] statementEnd = cursor;
+        if (!FindSelfHostedStatementEnd(stream, cursor, (u64[0 2 ** 63 - 1])terminalIndex, statementEnd))
+        {
+            return result;
+        }
+
+        if (!TryLowerArenaDynamicReserveStatement(stream, source, arenaDynamicLocals, cursor, statementEnd, instrs))
+        {
+            return result;
+        }
+
+        cursor = statementEnd + 1;
     }
 
     stack ParseResult returnRoot = ParseExprIn(stream, source, nodes, params, funcNames, (u64[0 2 ** 63 - 1])terminalIndex + 1);
 
     // Every body name must be a parameter or a declared local — no phantom names.
-    if (params.Count() != signatureParamCount + varRoots.Count())
+    if (params.Count() != signatureParamCount + localRoots.Count())
+    {
+        return result;
+    }
+
+    if (ExpressionTableUsesPointerParams(nodes, paramAbiFacts))
     {
         return result;
     }
@@ -6807,18 +9777,31 @@ internal fn LoweredBody LowerFunctionWithLocals(borrow TokenStream stream, borro
         p = p + 1;
     }
 
-    stack u64[0 2 ** 63 - 1] varCount = varRoots.Count();
+    stack u64[0 2 ** 63 - 1] localCount = localRoots.Count();
     stack mut u64[0 2 ** 63 - 1] v = 0;
-    while willexit (v < varCount)
+    while willexit (v < localCount)
     {
-        stack u32[0 max] varRoot = varRoots.Get((u32[0 max])(v + 1));
-        stack MirValueId varValue = LowerExprNodeWithLocals(nodes, varRoot, instrs, localOverrides);
-        stack u32[0 max] addedOverride = localOverrides.Add(varValue.Index());
+        stack u32[0 max] localRoot = localRoots.Get((u32[0 max])(v + 1));
+        if (localRoot == 0)
+        {
+            stack u32[0 max] nonValueOverride = localOverrides.Add(0);
+        }
+        else
+        {
+            stack MirValueId varValue = LowerExprNodeWithLocals(nodes, localRoot, instrs, localOverrides);
+            stack u32[0 max] addedOverride = localOverrides.Add(varValue.Index());
+        }
+
         v = v + 1;
     }
 
     if (usesBecome)
     {
+        if (usesArenaFrame)
+        {
+            return result;
+        }
+
         stack MirValueId tailValue = LowerTailCallExprNodeWithLocals(nodes, returnRoot.NodeId, instrs, localOverrides);
         stack MirBlockId entry = MirTailCallBlock(blocks, tailValue);
         result.Ok = true;
@@ -6832,6 +9815,11 @@ internal fn LoweredBody LowerFunctionWithLocals(borrow TokenStream stream, borro
     if (rootType == ExprType.BoolType)
     {
         returnValue = MirZExt(instrs, value);
+    }
+
+    if (usesArenaFrame)
+    {
+        stack MirValueId leave = MirArenaFrameLeave(instrs);
     }
 
     stack MirBlockId entry = MirReturnBlock(blocks, returnValue);
@@ -6857,6 +9845,9 @@ internal fn bool EmitModuleIfReturnFunction(
     borrow IrTable<u32[0 max]> funcTailFlags,
     borrow IrTable<ValueFacts> functionReturnFacts,
     mut borrow IrTable<LlvmRangeMetadata> rangeMetadata,
+    mut borrow IrTable<u32[0 max]> lawProofFlags,
+    mut borrow IrTable<u32[0 max]> finiteProofFlags,
+    mut borrow IrTable<u32[0 max]> noRecurseProofFlags,
     bool isTailCallable,
     u64[0 2 ** 63 - 1] fnIndex,
     u32[0 max] functionNumber,
@@ -6870,6 +9861,12 @@ internal fn bool EmitModuleIfReturnFunction(
 
     stack mut Compiler.Parsing.FunctionSignature signature = new();
     if (!ParseFunctionSignatureAt(stream, (u32[0 max])fnIndex, signature))
+    {
+        return false;
+    }
+
+    stack mut IrTable<ParamAbiFacts> paramAbiFacts = new();
+    if (!BuildParamAbiFacts(stream, source, signature, paramAbiFacts))
     {
         return false;
     }
@@ -6911,6 +9908,11 @@ internal fn bool EmitModuleIfReturnFunction(
 
     // Only the signature parameters may be referenced (no undeclared name appended).
     if (params.Count() != signatureParamCount)
+    {
+        return false;
+    }
+
+    if (ExpressionTableUsesPointerParams(nodes, paramAbiFacts))
     {
         return false;
     }
@@ -7012,9 +10014,27 @@ internal fn bool EmitModuleIfReturnFunction(
         return false;
     }
 
+    stack mut IrTable<ParamAbiFacts> paramAbiFacts = new();
+    if (!BuildParamAbiFacts(stream, source, signature, paramAbiFacts))
+    {
+        return false;
+    }
+
+    stack mut IrTable<DistinctStoragePair> distinctStorageFacts = new();
+    if (!BuildDistinctStorageFacts(stream, source, signature, (u32[0 max])fnIndex, paramAbiFacts, distinctStorageFacts))
+    {
+        return false;
+    }
+
     stack ValueFacts returnFacts = FunctionReturnRangeFact(stream, source, signature);
     stack mut IrTable<ValueFacts> valueFacts = new();
     stack mut IrTable<ValueFacts> globalFacts = new();
+    stack FunctionEffectFacts functionEffects = FunctionEffectsFromSignatureAndBlockRangesWithProofs(signature, instrs, ranges, lawProofFlags, finiteProofFlags, noRecurseProofFlags);
+    if (!AppendFunctionEffectProofFlags(functionEffects, lawProofFlags, finiteProofFlags, noRecurseProofFlags))
+    {
+        return false;
+    }
+
     switch (EmitLlvmBlocksNumberedWithRangeFactsCore(
         instrs,
         funcTailFlags,
@@ -7024,10 +10044,13 @@ internal fn bool EmitModuleIfReturnFunction(
         isTailCallable,
         returnFacts,
         paramFacts,
+        paramAbiFacts,
+        distinctStorageFacts,
         valueFacts,
         globalFacts,
         functionReturnFacts,
         rangeMetadata,
+        functionEffects,
         paramCount,
         ranges,
         sink))
@@ -7052,6 +10075,9 @@ internal fn bool EmitModuleFunctionAst(
     borrow IrTable<u32[0 max]> funcTailFlags,
     borrow IrTable<ValueFacts> functionReturnFacts,
     mut borrow IrTable<LlvmRangeMetadata> rangeMetadata,
+    mut borrow IrTable<u32[0 max]> lawProofFlags,
+    mut borrow IrTable<u32[0 max]> finiteProofFlags,
+    mut borrow IrTable<u32[0 max]> noRecurseProofFlags,
     u64[0 2 ** 63 - 1] fnIndex,
     u32[0 max] functionNumber,
     mut borrow OwnedAscii sink)
@@ -7068,6 +10094,9 @@ internal fn bool EmitModuleFunctionAst(
             funcTailFlags,
             functionReturnFacts,
             rangeMetadata,
+            lawProofFlags,
+            finiteProofFlags,
+            noRecurseProofFlags,
             isTailCallable,
             fnIndex,
             functionNumber,
@@ -7095,9 +10124,27 @@ internal fn bool EmitModuleFunctionAst(
         return false;
     }
 
+    stack mut IrTable<ParamAbiFacts> paramAbiFacts = new();
+    if (!BuildParamAbiFacts(stream, source, signature, paramAbiFacts))
+    {
+        return false;
+    }
+
+    stack mut IrTable<DistinctStoragePair> distinctStorageFacts = new();
+    if (!BuildDistinctStorageFacts(stream, source, signature, (u32[0 max])fnIndex, paramAbiFacts, distinctStorageFacts))
+    {
+        return false;
+    }
+
     stack ValueFacts returnFacts = FunctionReturnRangeFact(stream, source, signature);
     stack mut IrTable<ValueFacts> valueFacts = new();
     stack mut IrTable<ValueFacts> globalFacts = new();
+    stack FunctionEffectFacts functionEffects = FunctionEffectsFromSignatureAndInstructionRangeWithProofs(signature, instrs, 1, instrCount, lawProofFlags, finiteProofFlags, noRecurseProofFlags);
+    if (!AppendFunctionEffectProofFlags(functionEffects, lawProofFlags, finiteProofFlags, noRecurseProofFlags))
+    {
+        return false;
+    }
+
     switch (EmitLlvmNumberedFunctionWithRangeFactsCore(
         instrs,
         funcTailFlags,
@@ -7107,10 +10154,13 @@ internal fn bool EmitModuleFunctionAst(
         isTailCallable,
         returnFacts,
         paramFacts,
+        paramAbiFacts,
+        distinctStorageFacts,
         valueFacts,
         globalFacts,
         functionReturnFacts,
         rangeMetadata,
+        functionEffects,
         body.ParamCount,
         body.EntryBlock,
         1,
@@ -7181,8 +10231,32 @@ internal fn bool CompileModuleFromAstStream(borrow TokenStream stream, borrow i8
         return false;
     }
 
+    if (TokenStreamMentionsArenaDynamicRuntime(stream, source))
+    {
+        switch (EmitLlvmArenaDynamicRuntimeDeclarations(sink))
+        {
+            case MemoryStatus.Ok:
+                stack bool arenaDynamicDeclarationsOk = true;
+            case MemoryStatus.Err(var arenaDynamicDeclError):
+                return false;
+        }
+    }
+    else if (TokenStreamMentionsArenaRuntime(stream))
+    {
+        switch (EmitLlvmArenaRuntimeDeclarations(sink))
+        {
+            case MemoryStatus.Ok:
+                stack bool arenaDeclarationsOk = true;
+            case MemoryStatus.Err(var arenaDeclError):
+                return false;
+        }
+    }
+
     // Lower + emit each function in definition order.
     stack mut IrTable<LlvmRangeMetadata> rangeMetadata = new();
+    stack mut IrTable<u32[0 max]> lawProofFlags = new();
+    stack mut IrTable<u32[0 max]> finiteProofFlags = new();
+    stack mut IrTable<u32[0 max]> noRecurseProofFlags = new();
     stack mut u32[0 max] functionNumber = 0;
     stack mut u64[0 2 ** 63 - 1] f = 0;
     while willexit (f < tokenCount)
@@ -7190,7 +10264,20 @@ internal fn bool CompileModuleFromAstStream(borrow TokenStream stream, borrow i8
         if (stream.KindAt(f) == TokenKind.Fn)
         {
             functionNumber = functionNumber + 1;
-            if (!EmitModuleFunctionAst(stream, source, funcNames, funcParamCounts, funcTailFlags, functionReturnFacts, rangeMetadata, f, functionNumber, sink))
+            if (!EmitModuleFunctionAst(
+                stream,
+                source,
+                funcNames,
+                funcParamCounts,
+                funcTailFlags,
+                functionReturnFacts,
+                rangeMetadata,
+                lawProofFlags,
+                finiteProofFlags,
+                noRecurseProofFlags,
+                f,
+                functionNumber,
+                sink))
             {
                 return false;
             }
@@ -7302,14 +10389,53 @@ public fn bool CompileFunctionWithLocalsToLlvm(ascii source, mut borrow OwnedAsc
                 return false;
             }
 
+            stack mut IrTable<ParamAbiFacts> paramAbiFacts = new();
+            if (!BuildParamAbiFacts(stream, sourceBytes, signature, paramAbiFacts))
+            {
+                return false;
+            }
+
+            stack mut IrTable<DistinctStoragePair> distinctStorageFacts = new();
+            if (!BuildDistinctStorageFacts(stream, sourceBytes, signature, (u32[0 max])fnIndex, paramAbiFacts, distinctStorageFacts))
+            {
+                return false;
+            }
+
             stack ValueFacts returnFacts = FunctionReturnRangeFact(stream, sourceBytes, signature);
             stack mut IrTable<ValueFacts> valueFacts = new();
             stack mut IrTable<ValueFacts> globalFacts = new();
             stack mut IrTable<ValueFacts> functionReturnFacts = new();
-            switch (EmitLlvmDefinitionWithRangeFacts(instrs, blocks, "main", returnFacts, paramFacts, valueFacts, globalFacts, functionReturnFacts, body.ParamCount, body.EntryBlock, 1, instrCount, sink))
+            stack mut IrTable<LlvmRangeMetadata> rangeMetadata = new();
+            stack FunctionEffectFacts functionEffects = FunctionEffectsFromSignatureAndInstructionRange(signature, instrs, 1, instrCount);
+            switch (EmitLlvmDefinitionWithRangeFactsCore(
+                instrs,
+                noTailFlags,
+                blocks,
+                "main",
+                false,
+                returnFacts,
+                paramFacts,
+                paramAbiFacts,
+                distinctStorageFacts,
+                valueFacts,
+                globalFacts,
+                functionReturnFacts,
+                rangeMetadata,
+                functionEffects,
+                body.ParamCount,
+                body.EntryBlock,
+                1,
+                instrCount,
+                sink))
             {
                 case MemoryStatus.Ok:
-                    return true;
+                    switch (EmitLlvmRangeMetadataDefinitions(rangeMetadata, sink))
+                    {
+                        case MemoryStatus.Ok:
+                            return true;
+                        case MemoryStatus.Err(var metadataError):
+                            return false;
+                    }
                 case MemoryStatus.Err(var error):
                     return false;
             }
