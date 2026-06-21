@@ -1,6 +1,7 @@
 import Compiler.Lexing
 import Compiler.Parsing
 import Compiler.Typing
+import Compiler.AsmFacts
 import System.Text
 import System.Memory
 module Compiler.Binding
@@ -1037,6 +1038,10 @@ public enum BindDiagnosticCode
     ArenaValueEscapes,
     ArenaValueRetainedByCallee,
     RuntimeRecursionWithoutTailBecome,
+    AsmUnknownArchitecture,
+    AsmInvalidRegister,
+    AsmInvalidOperandBinding,
+    AsmInvalidClobber,
 }
 
 public enum BindDiagnosticSeverity
@@ -2564,6 +2569,393 @@ internal fn bool TypeSpanCanReturnBorrowedArena(borrow TokenStream stream, u32[0
     return TypeSpanHasTopLevelToken(stream, start, endExclusive, TokenKind.Retborrow);
 }
 
+internal fn bool TypeSpanIsOutputOnlyParameter(borrow TokenStream stream, u32[0 max] start, u32[0 max] endExclusive)
+{
+    return TypeSpanHasTopLevelToken(stream, start, endExclusive, TokenKind.Out)
+        || TypeSpanHasTopLevelToken(stream, start, endExclusive, TokenKind.Init);
+}
+
+internal finite law u32[0 max] TokenOrFallback(u32[0 max] token, u32[0 max] fallback)
+{
+    if (token != 0)
+    {
+        return token;
+    }
+
+    return fallback;
+}
+
+internal fn bool TryDecodeAsmRegisterToken(ascii source, borrow TokenStream stream, u32[0 max] token, out System.Text.OwnedAscii decoded)
+{
+    decoded = new();
+    if (token == 0)
+    {
+        return false;
+    }
+
+    stack ascii literal = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])token);
+    switch (System.Text.DecodeStringLiteralToUtf8(literal))
+    {
+        case System.Text.TextBuildResult<System.Text.OwnedAscii>.Err(var error):
+            return false;
+        case System.Text.TextBuildResult<System.Text.OwnedAscii>.Ok(var value):
+            decoded = value;
+            return true;
+    }
+}
+
+internal fn bool AsmRegisterTokenTextEquals(ascii source, borrow TokenStream stream, u32[0 max] left, u32[0 max] right)
+{
+    stack mut System.Text.OwnedAscii leftText = new();
+    stack mut System.Text.OwnedAscii rightText = new();
+    if (!TryDecodeAsmRegisterToken(source, stream, left, leftText)
+        || !TryDecodeAsmRegisterToken(source, stream, right, rightText))
+    {
+        return false;
+    }
+
+    return Compiler.AsmFacts.RegisterNamesEqual(leftText.View(), rightText.View());
+}
+
+internal fn System.Memory.MemoryStatus ValidateAsmRegisterToken(
+    ascii source,
+    borrow TokenStream stream,
+    Compiler.AsmFacts.StarkAsmArchitecture architecture,
+    u32[0 max] registerToken,
+    mut borrow BindDiagnosticList diags)
+{
+    stack mut System.Text.OwnedAscii registerText = new();
+    if (!TryDecodeAsmRegisterToken(source, stream, registerToken, registerText)
+        || !Compiler.AsmFacts.IsValidRegister(architecture, registerText.View()))
+    {
+        return diags.Append(BindDiagnosticCode.AsmInvalidRegister, registerToken);
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn bool FunctionSignatureHasEarlierInputValue(ascii source, borrow TokenStream stream, borrow FunctionSignature signature, u64[0 2 ** 63 - 1] currentIndex)
+{
+    stack u32[0 max] current = signature.AsmInputValueAt(currentIndex);
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < currentIndex; index += 1)
+    {
+        if (TokenTextEqualsToken(source, stream, current, signature.AsmInputValueAt(index)))
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+internal fn bool FunctionSignatureHasEarlierOutputValue(ascii source, borrow TokenStream stream, borrow FunctionSignature signature, u64[0 2 ** 63 - 1] currentIndex)
+{
+    stack u32[0 max] current = signature.AsmOutputValueAt(currentIndex);
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < currentIndex; index += 1)
+    {
+        if (!signature.AsmOutputBindsReturnAt(index)
+            && TokenTextEqualsToken(source, stream, current, signature.AsmOutputValueAt(index)))
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+internal fn bool FunctionSignatureInputOutputValueOverlap(ascii source, borrow TokenStream stream, borrow FunctionSignature signature, u32[0 max] outputValue)
+{
+    stack u64[0 2 ** 63 - 1] inputCount = (u64[0 2 ** 63 - 1])signature.AsmInputCount();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < inputCount; index += 1)
+    {
+        if (TokenTextEqualsToken(source, stream, outputValue, signature.AsmInputValueAt(index)))
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+internal fn bool FunctionSignatureHasEarlierInputRegister(ascii source, borrow TokenStream stream, borrow FunctionSignature signature, u64[0 2 ** 63 - 1] currentIndex)
+{
+    stack u32[0 max] current = signature.AsmInputRegisterAt(currentIndex);
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < currentIndex; index += 1)
+    {
+        if (AsmRegisterTokenTextEquals(source, stream, current, signature.AsmInputRegisterAt(index)))
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+internal fn bool FunctionSignatureHasEarlierOutputRegister(ascii source, borrow TokenStream stream, borrow FunctionSignature signature, u64[0 2 ** 63 - 1] currentIndex)
+{
+    stack u32[0 max] current = signature.AsmOutputRegisterAt(currentIndex);
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < currentIndex; index += 1)
+    {
+        if (AsmRegisterTokenTextEquals(source, stream, current, signature.AsmOutputRegisterAt(index)))
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+internal fn bool FunctionSignatureOutputRegisterOverlapsInput(ascii source, borrow TokenStream stream, borrow FunctionSignature signature, u32[0 max] outputRegister)
+{
+    stack u64[0 2 ** 63 - 1] inputCount = (u64[0 2 ** 63 - 1])signature.AsmInputCount();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < inputCount; index += 1)
+    {
+        if (AsmRegisterTokenTextEquals(source, stream, outputRegister, signature.AsmInputRegisterAt(index)))
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+internal fn bool FunctionSignatureHasEarlierClobberRegister(ascii source, borrow TokenStream stream, borrow FunctionSignature signature, u64[0 2 ** 63 - 1] currentIndex)
+{
+    stack u32[0 max] current = signature.AsmClobberRegisterAt(currentIndex);
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < currentIndex; index += 1)
+    {
+        if (AsmRegisterTokenTextEquals(source, stream, current, signature.AsmClobberRegisterAt(index)))
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+internal fn bool FunctionSignatureClobberOverlapsOperand(ascii source, borrow TokenStream stream, borrow FunctionSignature signature, u32[0 max] clobberRegister)
+{
+    stack u64[0 2 ** 63 - 1] inputCount = (u64[0 2 ** 63 - 1])signature.AsmInputCount();
+    for willexit (stack mut u64[0 2 ** 63 - 1] input = 0; input < inputCount; input += 1)
+    {
+        if (AsmRegisterTokenTextEquals(source, stream, clobberRegister, signature.AsmInputRegisterAt(input)))
+        {
+            return true;
+        }
+    }
+
+    stack u64[0 2 ** 63 - 1] outputCount = (u64[0 2 ** 63 - 1])signature.AsmOutputCount();
+    for willexit (stack mut u64[0 2 ** 63 - 1] output = 0; output < outputCount; output += 1)
+    {
+        if (AsmRegisterTokenTextEquals(source, stream, clobberRegister, signature.AsmOutputRegisterAt(output)))
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+internal fn System.Memory.MemoryStatus CollectAsmSignatureDiagnostics(
+    borrow FunctionSignature signature,
+    ascii source,
+    borrow TokenStream stream,
+    mut borrow BindDiagnosticList diags)
+{
+    if (!signature.HasAsm())
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack u32[0 max] architectureToken = signature.AsmArchitectureToken();
+    stack mut Compiler.AsmFacts.StarkAsmArchitecture architecture = Compiler.AsmFacts.StarkAsmArchitecture.Unknown;
+    if (architectureToken == 0)
+    {
+        switch (diags.Append(BindDiagnosticCode.AsmUnknownArchitecture, signature.AsmToken()))
+        {
+            case System.Memory.MemoryStatus.Err(var archTokenError):
+                return System.Memory.MemoryStatus.Err(archTokenError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+    else
+    {
+        stack ascii architectureText = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])architectureToken);
+        architecture = Compiler.AsmFacts.ParseArchitectureName(architectureText);
+        if (architecture == Compiler.AsmFacts.StarkAsmArchitecture.Unknown)
+        {
+            switch (diags.Append(BindDiagnosticCode.AsmUnknownArchitecture, architectureToken))
+            {
+                case System.Memory.MemoryStatus.Err(var archError):
+                    return System.Memory.MemoryStatus.Err(archError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    stack bool validateRegisters = architecture != Compiler.AsmFacts.StarkAsmArchitecture.Unknown;
+    stack u64[0 2 ** 63 - 1] inputCount = (u64[0 2 ** 63 - 1])signature.AsmInputCount();
+    for willexit (stack mut u64[0 2 ** 63 - 1] input = 0; input < inputCount; input += 1)
+    {
+        stack u32[0 max] registerToken = signature.AsmInputRegisterAt(input);
+        stack u32[0 max] valueToken = signature.AsmInputValueAt(input);
+        if (validateRegisters)
+        {
+            switch (ValidateAsmRegisterToken(source, stream, architecture, registerToken, diags))
+            {
+                case System.Memory.MemoryStatus.Err(var registerError):
+                    return System.Memory.MemoryStatus.Err(registerError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+
+        if (FunctionSignatureHasEarlierInputRegister(source, stream, signature, input))
+        {
+            switch (diags.Append(BindDiagnosticCode.AsmInvalidOperandBinding, registerToken))
+            {
+                case System.Memory.MemoryStatus.Err(var inputRegisterError):
+                    return System.Memory.MemoryStatus.Err(inputRegisterError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+
+        stack u64[0 2 ** 63 - 1] paramIndexPlusOne = FunctionSignatureParamIndexPlusOneByName(source, stream, signature, valueToken);
+        if (paramIndexPlusOne == 0)
+        {
+            switch (diags.Append(BindDiagnosticCode.AsmInvalidOperandBinding, TokenOrFallback(valueToken, registerToken)))
+            {
+                case System.Memory.MemoryStatus.Err(var inputNameError):
+                    return System.Memory.MemoryStatus.Err(inputNameError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+        else
+        {
+            stack u64[0 2 ** 63 - 1] paramIndex = (u64[0 2 ** 63 - 1])(paramIndexPlusOne - 1);
+            if (TypeSpanIsOutputOnlyParameter(stream, signature.ParamStartTokenAt(paramIndex), signature.ParamNameAt(paramIndex))
+                || FunctionSignatureHasEarlierInputValue(source, stream, signature, input))
+            {
+                switch (diags.Append(BindDiagnosticCode.AsmInvalidOperandBinding, valueToken))
+                {
+                    case System.Memory.MemoryStatus.Err(var inputValueError):
+                        return System.Memory.MemoryStatus.Err(inputValueError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+        }
+    }
+
+    stack bool returnsVoid = stream.KindAt((u64[0 2 ** 63 - 1])signature.ReturnTypeTokenAt()) == TokenKind.Void;
+    stack mut u32[0 max] returnBindingCount = 0;
+    stack u64[0 2 ** 63 - 1] outputCount = (u64[0 2 ** 63 - 1])signature.AsmOutputCount();
+    for willexit (stack mut u64[0 2 ** 63 - 1] output = 0; output < outputCount; output += 1)
+    {
+        stack u32[0 max] registerToken = signature.AsmOutputRegisterAt(output);
+        stack u32[0 max] valueToken = signature.AsmOutputValueAt(output);
+        if (validateRegisters)
+        {
+            switch (ValidateAsmRegisterToken(source, stream, architecture, registerToken, diags))
+            {
+                case System.Memory.MemoryStatus.Err(var registerError):
+                    return System.Memory.MemoryStatus.Err(registerError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+
+        if (FunctionSignatureHasEarlierOutputRegister(source, stream, signature, output)
+            || (!signature.AsmOutputBindsReturnAt(output)
+                && FunctionSignatureOutputRegisterOverlapsInput(source, stream, signature, registerToken)))
+        {
+            switch (diags.Append(BindDiagnosticCode.AsmInvalidOperandBinding, registerToken))
+            {
+                case System.Memory.MemoryStatus.Err(var outputRegisterError):
+                    return System.Memory.MemoryStatus.Err(outputRegisterError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+
+        if (signature.AsmOutputBindsReturnAt(output))
+        {
+            returnBindingCount = (u32[0 max])(returnBindingCount + 1);
+            if (returnsVoid || returnBindingCount > 1)
+            {
+                switch (diags.Append(BindDiagnosticCode.AsmInvalidOperandBinding, TokenOrFallback(valueToken, registerToken)))
+                {
+                    case System.Memory.MemoryStatus.Err(var returnBindingError):
+                        return System.Memory.MemoryStatus.Err(returnBindingError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+        }
+        else
+        {
+            stack u64[0 2 ** 63 - 1] paramIndexPlusOne = FunctionSignatureParamIndexPlusOneByName(source, stream, signature, valueToken);
+            if (paramIndexPlusOne == 0)
+            {
+                switch (diags.Append(BindDiagnosticCode.AsmInvalidOperandBinding, TokenOrFallback(valueToken, registerToken)))
+                {
+                    case System.Memory.MemoryStatus.Err(var outputNameError):
+                        return System.Memory.MemoryStatus.Err(outputNameError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+            else
+            {
+                stack u64[0 2 ** 63 - 1] paramIndex = (u64[0 2 ** 63 - 1])(paramIndexPlusOne - 1);
+                if (!TypeSpanIsOutputOnlyParameter(stream, signature.ParamStartTokenAt(paramIndex), signature.ParamNameAt(paramIndex))
+                    || FunctionSignatureHasEarlierOutputValue(source, stream, signature, output)
+                    || FunctionSignatureInputOutputValueOverlap(source, stream, signature, valueToken))
+                {
+                    switch (diags.Append(BindDiagnosticCode.AsmInvalidOperandBinding, valueToken))
+                    {
+                        case System.Memory.MemoryStatus.Err(var outputValueError):
+                            return System.Memory.MemoryStatus.Err(outputValueError);
+                        case System.Memory.MemoryStatus.Ok:
+                    }
+                }
+            }
+        }
+    }
+
+    if (!returnsVoid && returnBindingCount != 1)
+    {
+        switch (diags.Append(BindDiagnosticCode.AsmInvalidOperandBinding, signature.Name()))
+        {
+            case System.Memory.MemoryStatus.Err(var missingReturnError):
+                return System.Memory.MemoryStatus.Err(missingReturnError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
+    stack u64[0 2 ** 63 - 1] clobberCount = (u64[0 2 ** 63 - 1])signature.AsmClobberCount();
+    for willexit (stack mut u64[0 2 ** 63 - 1] clobberIndex = 0; clobberIndex < clobberCount; clobberIndex += 1)
+    {
+        stack u32[0 max] registerToken = signature.AsmClobberRegisterAt(clobberIndex);
+        if (validateRegisters)
+        {
+            switch (ValidateAsmRegisterToken(source, stream, architecture, registerToken, diags))
+            {
+                case System.Memory.MemoryStatus.Err(var clobberRegisterError):
+                    return System.Memory.MemoryStatus.Err(clobberRegisterError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+
+        if (FunctionSignatureHasEarlierClobberRegister(source, stream, signature, clobberIndex)
+            || FunctionSignatureClobberOverlapsOperand(source, stream, signature, registerToken))
+        {
+            switch (diags.Append(BindDiagnosticCode.AsmInvalidClobber, registerToken))
+            {
+                case System.Memory.MemoryStatus.Err(var clobberError):
+                    return System.Memory.MemoryStatus.Err(clobberError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
 internal fn TokenKind LocalStorageKindForSymbol(borrow FunctionScope scope, borrow StatementList body, borrow TokenStream stream, u32[0 max] symbolIndexPlusOne)
 {
     if (symbolIndexPlusOne == 0)
@@ -3911,6 +4303,18 @@ internal fn System.Memory.MemoryStatus BindFunction(u32[0 max] fnKeyword, borrow
         case ParseResult<FunctionSignature>.Err(var sigError):
             return System.Memory.MemoryStatus.Ok;
         case ParseResult<FunctionSignature>.Ok(var signature):
+            switch (CollectAsmSignatureDiagnostics(signature, source, stream, diags))
+            {
+                case System.Memory.MemoryStatus.Err(var asmError):
+                    return System.Memory.MemoryStatus.Err(asmError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            if (signature.HasAsm())
+            {
+                return System.Memory.MemoryStatus.Ok;
+            }
+
             switch (ParseFunctionBody(stream, fnKeyword))
             {
                 case ParseResult<StatementList>.Err(var bodyError):

@@ -93,5 +93,5 @@ closure return and parameter types:
 |---|---|---|
 | No garbage collector | Stark intentionally uses ownership, move, drop, and borrow checking | Compiler IR graphs use the resolved OQ-16 model: arena/table storage with typed handles, first-class fact tables, and fact-transfer validation. Direct C# object graph translation is rejected. |
 | No exceptions | Stark intentionally uses values for recoverable errors | Requires broad error-value conventions and possible `trap` policy for invariants |
-| Explicit storage classes | Stark locals require `stack`, `heap`, `register`, `static`, or future `arena` | Mechanical rewrite burden for every C# local |
+| Explicit storage classes | Stark declarations use explicit storage classes such as `stack`, `heap`, `register`, `static`, and `arena` where valid | Mechanical rewrite burden for every C# local |
 | No trait objects | Stark traits/doctrines are compile-time contracts | Compiler abstractions should prefer closed-world generic functions/modules over runtime dispatch |

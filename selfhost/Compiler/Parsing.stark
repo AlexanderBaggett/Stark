@@ -582,6 +582,73 @@ finite law bool IsDeclarationModifierAt(borrow TokenStream stream, u32[0 max] to
     return IsDeclarationModifierKind(stream.KindAt((u64[0 2 ** 63 - 1])token));
 }
 
+finite law u32[0 max] MatchingCloseParenAfter(borrow TokenStream stream, u32[0 max] openParen)
+{
+    if (stream.KindAt((u64[0 2 ** 63 - 1])openParen) != TokenKind.LParen)
+    {
+        return openParen;
+    }
+
+    stack mut u32[0 max] cursor = openParen;
+    stack mut u32[0 max] depth = 0;
+    stack mut u64[0 2 ** 63 - 1] guard = stream.Count();
+    while willexit (guard > 0)
+    {
+        guard = (u64[0 2 ** 63 - 1])(guard - 1);
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])cursor);
+        if (kind == TokenKind.LParen)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == TokenKind.RParen)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+
+            if (depth == 0)
+            {
+                return cursor;
+            }
+        }
+        else if (kind == TokenKind.EndOfFile)
+        {
+            return openParen;
+        }
+
+        cursor = (u32[0 max])(cursor + 1);
+    }
+
+    return openParen;
+}
+
+finite law u32[0 max] SkipDeclarationModifierAt(borrow TokenStream stream, u32[0 max] token)
+{
+    if (IsContextualTailToken(stream, token))
+    {
+        return token + 1;
+    }
+
+    stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])token);
+    if ((kind == TokenKind.Ffi || kind == TokenKind.Asm)
+        && stream.KindAt((u64[0 2 ** 63 - 1])(token + 1)) == TokenKind.LParen)
+    {
+        stack u32[0 max] close = MatchingCloseParenAfter(stream, (u32[0 max])(token + 1));
+        if (close > token + 1)
+        {
+            return close + 1;
+        }
+    }
+
+    if (IsDeclarationModifierKind(kind))
+    {
+        return token + 1;
+    }
+
+    return token;
+}
+
 finite law bool ModifierSpanHasTail(borrow TokenStream stream, u32[0 max] start, u32[0 max] endExclusive)
 {
     stack mut u32[0 max] scan = start;
@@ -687,9 +754,15 @@ public fn ParseResult<DeclarationList> ParseDeclarations(borrow TokenStream stre
     while willexit (stream.KindAt((u64[0 2 ** 63 - 1])index) != TokenKind.EndOfFile)
     {
         stack mut u32[0 max] cursor = index;
-        while willexit (IsDeclarationModifierAt(stream, cursor))
+        while willexit (true)
         {
-            cursor = (u32[0 max])(cursor + 1);
+            stack u32[0 max] next = SkipDeclarationModifierAt(stream, cursor);
+            if (next == cursor)
+            {
+                break;
+            }
+
+            cursor = next;
         }
 
         stack DeclarationKind kind = ClassifyDeclarationKind(stream.KindAt((u64[0 2 ** 63 - 1])cursor));
@@ -1512,6 +1585,16 @@ public struct FunctionSignature
     u32[0 max] ReturnTypeDeadOnReturnArgumentCount;
     internal dynamic u32[0 max] ParamTypeDeadOnReturnArgumentCounts;
     internal dynamic u32[0 max] DeadOnReturnParamNameTokens;
+    bool IsAsmDeclaration;
+    u32[0 max] AsmSpecifierToken;
+    u32[0 max] AsmArchitectureNameToken;
+    internal dynamic u32[0 max] AsmInputRegisterTokens;
+    internal dynamic u32[0 max] AsmInputValueTokens;
+    internal dynamic u32[0 max] AsmOutputRegisterTokens;
+    internal dynamic u32[0 max] AsmOutputValueTokens;
+    internal dynamic u32[0 max] AsmOutputReturnFlags;
+    internal dynamic u32[0 max] AsmClobberRegisterTokens;
+    u32[0 max] AsmTemplateStringToken;
 
     FunctionSignature()
     {
@@ -1531,6 +1614,16 @@ public struct FunctionSignature
         self.ReturnTypeDeadOnReturnArgumentCount = 0;
         self.ParamTypeDeadOnReturnArgumentCounts = new();
         self.DeadOnReturnParamNameTokens = new();
+        self.IsAsmDeclaration = false;
+        self.AsmSpecifierToken = 0;
+        self.AsmArchitectureNameToken = 0;
+        self.AsmInputRegisterTokens = new();
+        self.AsmInputValueTokens = new();
+        self.AsmOutputRegisterTokens = new();
+        self.AsmOutputValueTokens = new();
+        self.AsmOutputReturnFlags = new();
+        self.AsmClobberRegisterTokens = new();
+        self.AsmTemplateStringToken = 0;
     }
 
     public inline finite law u32[0 max] Name(borrow FunctionSignature self)
@@ -1677,6 +1770,107 @@ public struct FunctionSignature
         return token;
     }
 
+    public inline finite law bool HasAsm(borrow FunctionSignature self)
+    {
+        return self.IsAsmDeclaration;
+    }
+
+    public inline finite law u32[0 max] AsmToken(borrow FunctionSignature self)
+    {
+        return self.AsmSpecifierToken;
+    }
+
+    public inline finite law u32[0 max] AsmArchitectureToken(borrow FunctionSignature self)
+    {
+        return self.AsmArchitectureNameToken;
+    }
+
+    public inline finite law u32[0 max] AsmInputCount(borrow FunctionSignature self)
+    {
+        return (u32[0 max])self.AsmInputRegisterTokens.Length;
+    }
+
+    public inline finite law u32[0 max] AsmOutputCount(borrow FunctionSignature self)
+    {
+        return (u32[0 max])self.AsmOutputRegisterTokens.Length;
+    }
+
+    public inline finite law u32[0 max] AsmClobberCount(borrow FunctionSignature self)
+    {
+        return (u32[0 max])self.AsmClobberRegisterTokens.Length;
+    }
+
+    public inline finite law u32[0 max] AsmTemplateToken(borrow FunctionSignature self)
+    {
+        return self.AsmTemplateStringToken;
+    }
+
+    public law u32[0 max] AsmInputRegisterAt(borrow FunctionSignature self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.AsmInputRegisterTokens.Length)
+        {
+            token = self.AsmInputRegisterTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] AsmInputValueAt(borrow FunctionSignature self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.AsmInputValueTokens.Length)
+        {
+            token = self.AsmInputValueTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] AsmOutputRegisterAt(borrow FunctionSignature self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.AsmOutputRegisterTokens.Length)
+        {
+            token = self.AsmOutputRegisterTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] AsmOutputValueAt(borrow FunctionSignature self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.AsmOutputValueTokens.Length)
+        {
+            token = self.AsmOutputValueTokens[index];
+        }
+
+        return token;
+    }
+
+    public law bool AsmOutputBindsReturnAt(borrow FunctionSignature self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut bool bindsReturn = false;
+        if (index < self.AsmOutputReturnFlags.Length)
+        {
+            bindsReturn = self.AsmOutputReturnFlags[index] != 0;
+        }
+
+        return bindsReturn;
+    }
+
+    public law u32[0 max] AsmClobberRegisterAt(borrow FunctionSignature self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.AsmClobberRegisterTokens.Length)
+        {
+            token = self.AsmClobberRegisterTokens[index];
+        }
+
+        return token;
+    }
+
     internal fn System.Memory.MemoryStatus AppendDeadOnReturnParamName(mut borrow FunctionSignature self, u32[0 max] token)
     {
         if (!self.DeadOnReturnParamNameTokens.TryReserve(1))
@@ -1685,6 +1879,51 @@ public struct FunctionSignature
         }
 
         init self.DeadOnReturnParamNameTokens[self.DeadOnReturnParamNameTokens.Length] = token;
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    internal fn System.Memory.MemoryStatus AppendAsmInputOperand(mut borrow FunctionSignature self, u32[0 max] registerToken, u32[0 max] valueToken)
+    {
+        if (!self.AsmInputRegisterTokens.TryReserve(1)
+            || !self.AsmInputValueTokens.TryReserve(1))
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        }
+
+        init self.AsmInputRegisterTokens[self.AsmInputRegisterTokens.Length] = registerToken;
+        init self.AsmInputValueTokens[self.AsmInputValueTokens.Length] = valueToken;
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    internal fn System.Memory.MemoryStatus AppendAsmOutputOperand(mut borrow FunctionSignature self, u32[0 max] registerToken, u32[0 max] valueToken, bool bindsReturn)
+    {
+        stack mut u32[0 max] returnFlag = 0;
+        if (bindsReturn)
+        {
+            returnFlag = 1;
+        }
+
+        if (!self.AsmOutputRegisterTokens.TryReserve(1)
+            || !self.AsmOutputValueTokens.TryReserve(1)
+            || !self.AsmOutputReturnFlags.TryReserve(1))
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        }
+
+        init self.AsmOutputRegisterTokens[self.AsmOutputRegisterTokens.Length] = registerToken;
+        init self.AsmOutputValueTokens[self.AsmOutputValueTokens.Length] = valueToken;
+        init self.AsmOutputReturnFlags[self.AsmOutputReturnFlags.Length] = returnFlag;
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    internal fn System.Memory.MemoryStatus AppendAsmClobberRegister(mut borrow FunctionSignature self, u32[0 max] registerToken)
+    {
+        if (!self.AsmClobberRegisterTokens.TryReserve(1))
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        }
+
+        init self.AsmClobberRegisterTokens[self.AsmClobberRegisterTokens.Length] = registerToken;
         return System.Memory.MemoryStatus.Ok;
     }
 
@@ -2013,7 +2252,9 @@ finite law bool FunctionHasTailModifierBefore(borrow TokenStream stream, u32[0 m
         if (previousKind == TokenKind.RParen)
         {
             stack u32[0 max] open = MatchingOpenParenBefore(stream, previous);
-            if (open > 0 && stream.KindAt((u64[0 2 ** 63 - 1])(open - 1)) == TokenKind.Ffi)
+            if (open > 0
+                && (stream.KindAt((u64[0 2 ** 63 - 1])(open - 1)) == TokenKind.Ffi
+                    || stream.KindAt((u64[0 2 ** 63 - 1])(open - 1)) == TokenKind.Asm))
             {
                 cursor = (u32[0 max])(open - 1);
                 continue;
@@ -2057,7 +2298,9 @@ finite law bool FunctionHasKeywordModifierBefore(borrow TokenStream stream, u32[
         if (previousKind == TokenKind.RParen)
         {
             stack u32[0 max] open = MatchingOpenParenBefore(stream, previous);
-            if (open > 0 && stream.KindAt((u64[0 2 ** 63 - 1])(open - 1)) == TokenKind.Ffi)
+            if (open > 0
+                && (stream.KindAt((u64[0 2 ** 63 - 1])(open - 1)) == TokenKind.Ffi
+                    || stream.KindAt((u64[0 2 ** 63 - 1])(open - 1)) == TokenKind.Asm))
             {
                 cursor = (u32[0 max])(open - 1);
                 continue;
@@ -2078,6 +2321,260 @@ finite law bool FunctionHasKeywordModifierBefore(borrow TokenStream stream, u32[
     return false;
 }
 
+internal fn void CollectAsmSpecifierBeforeFunction(mut borrow FunctionSignature signature, borrow TokenStream stream, u32[0 max] fnKeyword)
+{
+    if (fnKeyword == 0)
+    {
+        return;
+    }
+
+    stack mut u32[0 max] cursor = fnKeyword;
+    stack mut u64[0 2 ** 63 - 1] guard = stream.Count();
+    while willexit (cursor > 0 && guard > 0)
+    {
+        guard = (u64[0 2 ** 63 - 1])(guard - 1);
+        stack u32[0 max] previous = (u32[0 max])(cursor - 1);
+        stack TokenKind previousKind = stream.KindAt((u64[0 2 ** 63 - 1])previous);
+
+        if (previousKind == TokenKind.RParen)
+        {
+            stack u32[0 max] open = MatchingOpenParenBefore(stream, previous);
+            if (open > 0 && stream.KindAt((u64[0 2 ** 63 - 1])(open - 1)) == TokenKind.Asm)
+            {
+                signature.IsAsmDeclaration = true;
+                signature.AsmSpecifierToken = (u32[0 max])(open - 1);
+                if (stream.KindAt((u64[0 2 ** 63 - 1])(open + 1)) == TokenKind.Identifier)
+                {
+                    signature.AsmArchitectureNameToken = (u32[0 max])(open + 1);
+                }
+
+                return;
+            }
+
+            if (open > 0 && stream.KindAt((u64[0 2 ** 63 - 1])(open - 1)) == TokenKind.Ffi)
+            {
+                cursor = (u32[0 max])(open - 1);
+                continue;
+            }
+
+            return;
+        }
+
+        if (IsContextualTailToken(stream, previous) || IsDeclarationModifierKind(previousKind))
+        {
+            cursor = previous;
+            continue;
+        }
+
+        return;
+    }
+}
+
+internal fn u32[0 max] FirstStringLiteralInParenList(borrow TokenStream stream, u32[0 max] lparen)
+{
+    stack mut u32[0 max] scan = (u32[0 max])(lparen + 1);
+    stack mut u32[0 max] depth = 0;
+    stack mut u64[0 2 ** 63 - 1] guard = stream.Count();
+    while willexit (guard > 0)
+    {
+        guard = (u64[0 2 ** 63 - 1])(guard - 1);
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (kind == TokenKind.EndOfFile)
+        {
+            return 0;
+        }
+
+        if (kind == TokenKind.RParen && depth == 0)
+        {
+            return 0;
+        }
+
+        if (kind == TokenKind.LParen || kind == TokenKind.LBrack
+            || kind == TokenKind.LBrace || kind == TokenKind.Lt)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == TokenKind.RParen || kind == TokenKind.RBrack
+            || kind == TokenKind.RBrace || kind == TokenKind.Gt)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+        else if (kind == TokenKind.StringLiteral && depth == 0)
+        {
+            return scan;
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return 0;
+}
+
+internal fn u32[0 max] AsmOperandValueTokenAfterParen(borrow TokenStream stream, u32[0 max] closeParen)
+{
+    stack u32[0 max] token = (u32[0 max])(closeParen + 1);
+    stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])token);
+    if (kind == TokenKind.Identifier || kind == TokenKind.Return)
+    {
+        return token;
+    }
+
+    return 0;
+}
+
+internal fn System.Memory.MemoryStatus AppendAsmClobberRegistersFromParenList(
+    mut borrow FunctionSignature signature,
+    borrow TokenStream stream,
+    u32[0 max] lparen)
+{
+    stack mut u32[0 max] scan = (u32[0 max])(lparen + 1);
+    stack mut u32[0 max] depth = 0;
+    stack mut u64[0 2 ** 63 - 1] guard = stream.Count();
+    while willexit (guard > 0)
+    {
+        guard = (u64[0 2 ** 63 - 1])(guard - 1);
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (kind == TokenKind.EndOfFile)
+        {
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        if (kind == TokenKind.RParen && depth == 0)
+        {
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        if (kind == TokenKind.LParen || kind == TokenKind.LBrack
+            || kind == TokenKind.LBrace || kind == TokenKind.Lt)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == TokenKind.RParen || kind == TokenKind.RBrack
+            || kind == TokenKind.RBrace || kind == TokenKind.Gt)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+        else if (kind == TokenKind.StringLiteral && depth == 0)
+        {
+            switch (signature.AppendAsmClobberRegister(scan))
+            {
+                case System.Memory.MemoryStatus.Err(var appendError):
+                    return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus CollectAsmMetadataAfterParameters(mut borrow FunctionSignature signature, borrow TokenStream stream, u32[0 max] afterParams)
+{
+    if (!signature.IsAsmDeclaration)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack mut u32[0 max] scan = afterParams;
+    stack mut u32[0 max] depth = 0;
+    stack mut u64[0 2 ** 63 - 1] guard = stream.Count();
+    while willexit (guard > 0)
+    {
+        guard = (u64[0 2 ** 63 - 1])(guard - 1);
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (kind == TokenKind.EndOfFile || kind == TokenKind.Semi)
+        {
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        if (depth == 0 && kind == TokenKind.LBrace)
+        {
+            if (stream.KindAt((u64[0 2 ** 63 - 1])(scan + 1)) == TokenKind.StringLiteral)
+            {
+                signature.AsmTemplateStringToken = (u32[0 max])(scan + 1);
+            }
+
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        if (depth == 0
+            && kind == TokenKind.In
+            && stream.KindAt((u64[0 2 ** 63 - 1])(scan + 1)) == TokenKind.LParen)
+        {
+            stack u32[0 max] lparen = (u32[0 max])(scan + 1);
+            stack u32[0 max] close = MatchingCloseParenAfter(stream, lparen);
+            switch (signature.AppendAsmInputOperand(
+                FirstStringLiteralInParenList(stream, lparen),
+                AsmOperandValueTokenAfterParen(stream, close)))
+            {
+                case System.Memory.MemoryStatus.Err(var appendError):
+                    return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            scan = close;
+        }
+        else if (depth == 0
+            && kind == TokenKind.Out
+            && stream.KindAt((u64[0 2 ** 63 - 1])(scan + 1)) == TokenKind.LParen)
+        {
+            stack u32[0 max] lparen = (u32[0 max])(scan + 1);
+            stack u32[0 max] close = MatchingCloseParenAfter(stream, lparen);
+            stack u32[0 max] valueToken = AsmOperandValueTokenAfterParen(stream, close);
+            switch (signature.AppendAsmOutputOperand(
+                FirstStringLiteralInParenList(stream, lparen),
+                valueToken,
+                stream.KindAt((u64[0 2 ** 63 - 1])valueToken) == TokenKind.Return))
+            {
+                case System.Memory.MemoryStatus.Err(var appendError):
+                    return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            scan = close;
+        }
+        else if (depth == 0
+            && kind == TokenKind.Clobber
+            && stream.KindAt((u64[0 2 ** 63 - 1])(scan + 1)) == TokenKind.LParen)
+        {
+            stack u32[0 max] lparen = (u32[0 max])(scan + 1);
+            switch (AppendAsmClobberRegistersFromParenList(signature, stream, lparen))
+            {
+                case System.Memory.MemoryStatus.Err(var appendError):
+                    return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            scan = MatchingCloseParenAfter(stream, lparen);
+        }
+        else if (kind == TokenKind.LParen || kind == TokenKind.LBrack
+            || kind == TokenKind.LBrace || kind == TokenKind.Lt)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == TokenKind.RParen || kind == TokenKind.RBrack
+            || kind == TokenKind.RBrace || kind == TokenKind.Gt)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
 // Parses the signature of the function whose `fn` keyword is at `fnKeyword`: the
 // name (the identifier immediately before the parameter list's `(`) and the
 // parameter names (last identifier of each `,`-separated parameter at
@@ -2089,6 +2586,7 @@ public fn ParseResult<FunctionSignature> ParseFunctionSignature(borrow TokenStre
     signature.IsTailCallable = FunctionHasTailModifierBefore(stream, fnKeyword);
     signature.IsFiniteKind = FunctionHasKeywordModifierBefore(stream, fnKeyword, TokenKind.Finite);
     signature.IsLawKind = FunctionHasKeywordModifierBefore(stream, fnKeyword, TokenKind.Law);
+    CollectAsmSpecifierBeforeFunction(signature, stream, fnKeyword);
     stack mut u32[0 max] index = (u32[0 max])(fnKeyword + 1);
     stack mut u32[0 max] lastIdentifier = 0;
     stack mut u32[0 max] prevIdentifier = 0;
@@ -2197,6 +2695,13 @@ public fn ParseResult<FunctionSignature> ParseFunctionSignature(borrow TokenStre
 
     if (stream.KindAt((u64[0 2 ** 63 - 1])index) == TokenKind.RParen)
     {
+        switch (CollectAsmMetadataAfterParameters(signature, stream, (u32[0 max])(index + 1)))
+        {
+            case System.Memory.MemoryStatus.Err(var asmError):
+                return ParseResult<FunctionSignature>.Err(ParseError.OutOfMemory);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
         switch (CollectDeadOnReturnContracts(signature, stream, (u32[0 max])(index + 1)))
         {
             case System.Memory.MemoryStatus.Err(var collectError):

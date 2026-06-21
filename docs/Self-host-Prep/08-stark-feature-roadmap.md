@@ -980,7 +980,10 @@ Open questions for this pattern:
 
 - [x] Should the context pointer always be raw, or should Stark offer a typed
       erased-handle wrapper? V1 uses explicit raw context pointers.
-- [ ] Should ops tables be `const` by convention?
+- [x] Ops tables should be `const` by convention when the operation set is fixed
+      and the table has no runtime/platform initialization needs. Use `static`
+      only for runtime/platform initialization, stack/local tables only for tests
+      or scoped customization, and mutable ops tables only with a concrete reason.
 - [x] Should ops functions carry explicit memory contracts such as
       `where disjoint(...)` when they touch caller buffers? Yes: use the
       existing memory-contract syntax on the `fnptr` type when the callback
@@ -1258,8 +1261,9 @@ Rules landed in the host compiler:
 - [ ] Preserve durable compiler facts through package images; keep transient
       pass-local facts in compiler IR tables unless a package section explicitly
       needs a stable summary.
-- [ ] Keep `arena` explicit if it becomes an executable storage class. The
-      compiler IR decision does not require source-level `arena` before
-      self-hosting if library/compiler-owned tables satisfy the model.
+- [x] Keep `arena` explicit as an executable storage class. Compiler IR
+      arena/table storage may use source-level `arena` directly or
+      compiler-owned table helpers; it is not dependent on a stdlib arena
+      abstraction.
 - [ ] Keep unsafe shared ownership visible in source. `Rc`/`Arc` is not the
       default compiler IR model for self-hosting.

@@ -1,3 +1,4 @@
+import Compiler.AsmFacts
 import Compiler.Ir
 import Compiler.Lexing
 import Compiler.Parsing
@@ -4123,6 +4124,107 @@ public fn i64[min max] ReadI64(borrow IrTable<u8[0 max]> buf, u32[0 max] at)
     return (i64[min max])acc;
 }
 
+// True when the 1-based byte range `[start, start + byteCount)` is present.
+// This is the guard all package-image readers use before touching raw bytes.
+internal inline finite law bool CanReadImageBytes(borrow IrTable<u8[0 max]> buf, u32[0 max] start, u64[0 max] byteCount)
+{
+    if (start == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] total = buf.Count();
+    stack u64[0 max] first = (u64[0 max])start;
+    if (byteCount == 0)
+    {
+        return first <= (u64[0 max])total + 1;
+    }
+
+    if (first > (u64[0 max])total)
+    {
+        return false;
+    }
+
+    stack u64[0 max] available = (u64[0 max])total - first + 1;
+    return byteCount <= available;
+}
+
+internal inline finite law bool SectionLastByteFitsU32(u32[0 max] start, u64[0 max] byteCount)
+{
+    if (byteCount == 0)
+    {
+        return true;
+    }
+
+    return (u64[0 max])start + byteCount - 1 <= (u64[0 max])(2 ** 32 - 1);
+}
+
+internal fn bool TryReadU32FromImage(borrow IrTable<u8[0 max]> buf, u32[0 max] at, out u32[0 max] value)
+{
+    value = 0;
+    if (!CanReadImageBytes(buf, at, 4))
+    {
+        return false;
+    }
+
+    value = ReadU32(buf, at);
+    return true;
+}
+
+internal fn bool TryAdvanceImageCursor(borrow IrTable<u8[0 max]> buf, u32[0 max] cursor, u64[0 max] byteCount, out u32[0 max] nextCursor)
+{
+    nextCursor = cursor;
+    if (!CanReadImageBytes(buf, cursor, byteCount))
+    {
+        return false;
+    }
+
+    if (!SectionLastByteFitsU32(cursor, byteCount))
+    {
+        return false;
+    }
+
+    stack u64[0 max] next = (u64[0 max])cursor + byteCount;
+    if (next > (u64[0 max])(2 ** 32 - 1))
+    {
+        return false;
+    }
+
+    nextCursor = (u32[0 max])next;
+    return true;
+}
+
+internal fn bool TryReadFixedRecordSectionSize(
+    borrow IrTable<u8[0 max]> buf,
+    u32[0 max] offset,
+    u32[0 max] recordSize,
+    out u32[0 max] rowCount,
+    out u64[0 max] byteCount)
+{
+    rowCount = 0;
+    byteCount = 0;
+    stack mut u32[0 max] localRowCount = 0;
+    if (!TryReadU32FromImage(buf, offset, localRowCount))
+    {
+        return false;
+    }
+
+    stack u64[0 max] localByteCount = 4 + (u64[0 max])localRowCount * (u64[0 max])recordSize;
+    if (!SectionLastByteFitsU32(offset, localByteCount))
+    {
+        return false;
+    }
+
+    if (!CanReadImageBytes(buf, offset, localByteCount))
+    {
+        return false;
+    }
+
+    rowCount = localRowCount;
+    byteCount = localByteCount;
+    return true;
+}
+
 // === MIR instruction serialization (toward binary package images, #32) ===
 // A serialized instruction is a fixed 26-byte record: opcode (1) + result type (1) +
 // operands A/B/C/D (4 LE each) + immediate (8 LE). An instruction stream is a u32 count
@@ -4446,6 +4548,368 @@ public fn void DeserializeGlobalsAt(borrow IrTable<u8[0 max]> buf, u32[0 max] st
     }
 }
 
+// Assembly metadata: a text byte pool followed by fixed-width input/output/clobber
+// rows and function rows. This preserves source assembly declarations for imported
+// package consumers without keeping parser tokens or source text alive.
+
+internal fn u32[0 max] AsmArchitectureToU32(Compiler.AsmFacts.StarkAsmArchitecture architecture)
+{
+    switch (architecture)
+    {
+        case Compiler.AsmFacts.StarkAsmArchitecture.X86_64: return 1;
+        case Compiler.AsmFacts.StarkAsmArchitecture.AArch64: return 2;
+        case Compiler.AsmFacts.StarkAsmArchitecture.RiscV64: return 3;
+        case Compiler.AsmFacts.StarkAsmArchitecture.X86: return 4;
+        case Compiler.AsmFacts.StarkAsmArchitecture.Arm32: return 5;
+        default: return 0;
+    }
+}
+
+internal fn Compiler.AsmFacts.StarkAsmArchitecture AsmArchitectureFromU32(u32[0 max] value)
+{
+    switch (value)
+    {
+        case 1: return Compiler.AsmFacts.StarkAsmArchitecture.X86_64;
+        case 2: return Compiler.AsmFacts.StarkAsmArchitecture.AArch64;
+        case 3: return Compiler.AsmFacts.StarkAsmArchitecture.RiscV64;
+        case 4: return Compiler.AsmFacts.StarkAsmArchitecture.X86;
+        case 5: return Compiler.AsmFacts.StarkAsmArchitecture.Arm32;
+        default: return Compiler.AsmFacts.StarkAsmArchitecture.Unknown;
+    }
+}
+
+internal fn void WriteAsmTextRange(mut borrow IrTable<u8[0 max]> buf, AsmTextRange range)
+{
+    WriteU32(buf, range.Start());
+    WriteU32(buf, range.Length());
+}
+
+internal fn AsmTextRange ReadAsmTextRange(borrow IrTable<u8[0 max]> buf, u32[0 max] at)
+{
+    return AsmTextRangeOf(ReadU32(buf, at), ReadU32(buf, at + 4));
+}
+
+public fn void SerializeAsmMetadata(borrow AsmMetadataTable table, mut borrow IrTable<u8[0 max]> buf)
+{
+    stack u64[0 2 ** 63 - 1] textCount = table.TextByteCount();
+    WriteU32(buf, (u32[0 max])textCount);
+    stack mut u64[0 2 ** 63 - 1] textIndex = 0;
+    while willexit (textIndex < textCount)
+    {
+        stack u32[0 max] written = buf.Add((u8[0 max])table.TextByteAt(textIndex));
+        textIndex = textIndex + 1;
+    }
+
+    stack u64[0 2 ** 63 - 1] inputCount = table.InputCount();
+    WriteU32(buf, (u32[0 max])inputCount);
+    stack mut u32[0 max] inputIndex = 1;
+    while willexit ((u64[0 2 ** 63 - 1])inputIndex <= inputCount)
+    {
+        stack AsmInputOperand input = table.InputAt(inputIndex);
+        WriteAsmTextRange(buf, input.Register());
+        WriteAsmTextRange(buf, input.Value());
+        inputIndex = inputIndex + 1;
+    }
+
+    stack u64[0 2 ** 63 - 1] outputCount = table.OutputCount();
+    WriteU32(buf, (u32[0 max])outputCount);
+    stack mut u32[0 max] outputIndex = 1;
+    while willexit ((u64[0 2 ** 63 - 1])outputIndex <= outputCount)
+    {
+        stack AsmOutputOperand output = table.OutputAt(outputIndex);
+        WriteAsmTextRange(buf, output.Register());
+        WriteAsmTextRange(buf, output.Value());
+        if (output.BindsReturn())
+        {
+            WriteU32(buf, 1);
+        }
+        else
+        {
+            WriteU32(buf, 0);
+        }
+
+        outputIndex = outputIndex + 1;
+    }
+
+    stack u64[0 2 ** 63 - 1] clobberCount = table.ClobberCount();
+    WriteU32(buf, (u32[0 max])clobberCount);
+    stack mut u32[0 max] clobberIndex = 1;
+    while willexit ((u64[0 2 ** 63 - 1])clobberIndex <= clobberCount)
+    {
+        WriteAsmTextRange(buf, table.ClobberAt(clobberIndex));
+        clobberIndex = clobberIndex + 1;
+    }
+
+    stack u64[0 2 ** 63 - 1] functionCount = table.FunctionCount();
+    WriteU32(buf, (u32[0 max])functionCount);
+    stack mut u32[0 max] functionIndex = 1;
+    while willexit ((u64[0 2 ** 63 - 1])functionIndex <= functionCount)
+    {
+        stack AsmFunctionMetadata function = table.FunctionAt(AsmFunctionIdOf(functionIndex));
+        stack MirFuncId mirFunction = function.Function();
+        WriteU32(buf, mirFunction.Index());
+        WriteU32(buf, AsmArchitectureToU32(function.Architecture()));
+        WriteAsmTextRange(buf, function.Template());
+        WriteU32(buf, function.FirstInput());
+        WriteU32(buf, function.InputCount());
+        WriteU32(buf, function.FirstOutput());
+        WriteU32(buf, function.OutputCount());
+        WriteU32(buf, function.FirstClobber());
+        WriteU32(buf, function.ClobberCount());
+        functionIndex = functionIndex + 1;
+    }
+}
+
+public fn bool DeserializeAsmMetadata(borrow IrTable<u8[0 max]> buf, mut borrow AsmMetadataTable outTable)
+{
+    return DeserializeAsmMetadataAt(buf, 1, outTable);
+}
+
+public fn bool DeserializeAsmMetadataAt(borrow IrTable<u8[0 max]> buf, u32[0 max] startOffset, mut borrow AsmMetadataTable outTable)
+{
+    stack mut u64[0 max] byteCount = 0;
+    stack mut u32[0 max] functionCount = 0;
+    if (!TryReadAsmMetadataSectionSizeAndFunctionCount(buf, startOffset, byteCount, functionCount))
+    {
+        return false;
+    }
+
+    return DeserializeAsmMetadataAtUnchecked(buf, startOffset, outTable);
+}
+
+internal fn bool TryReadAsmMetadataSectionSizeAndFunctionCount(
+    borrow IrTable<u8[0 max]> buf,
+    u32[0 max] startOffset,
+    out u64[0 max] byteCount,
+    out u32[0 max] functionCount)
+{
+    byteCount = 0;
+    functionCount = 0;
+    stack mut u64[0 max] localByteCount = 0;
+    stack mut u32[0 max] localFunctionCount = 0;
+    stack mut u32[0 max] cursor = startOffset;
+    stack mut u32[0 max] nextCursor = 0;
+    stack mut u32[0 max] count = 0;
+
+    if (!TryReadU32FromImage(buf, cursor, count))
+    {
+        return false;
+    }
+
+    if (!TryAdvanceImageCursor(buf, cursor, 4, nextCursor))
+    {
+        return false;
+    }
+
+    cursor = nextCursor;
+    localByteCount = localByteCount + 4;
+    if (!TryAdvanceImageCursor(buf, cursor, (u64[0 max])count, nextCursor))
+    {
+        return false;
+    }
+
+    cursor = nextCursor;
+    localByteCount = localByteCount + (u64[0 max])count;
+
+    if (!TryReadU32FromImage(buf, cursor, count))
+    {
+        return false;
+    }
+
+    if (!TryAdvanceImageCursor(buf, cursor, 4, nextCursor))
+    {
+        return false;
+    }
+
+    cursor = nextCursor;
+    localByteCount = localByteCount + 4;
+    stack u64[0 max] inputBytes = (u64[0 max])count * 16;
+    if (!TryAdvanceImageCursor(buf, cursor, inputBytes, nextCursor))
+    {
+        return false;
+    }
+
+    cursor = nextCursor;
+    localByteCount = localByteCount + inputBytes;
+
+    if (!TryReadU32FromImage(buf, cursor, count))
+    {
+        return false;
+    }
+
+    if (!TryAdvanceImageCursor(buf, cursor, 4, nextCursor))
+    {
+        return false;
+    }
+
+    cursor = nextCursor;
+    localByteCount = localByteCount + 4;
+    stack u64[0 max] outputBytes = (u64[0 max])count * 20;
+    if (!TryAdvanceImageCursor(buf, cursor, outputBytes, nextCursor))
+    {
+        return false;
+    }
+
+    cursor = nextCursor;
+    localByteCount = localByteCount + outputBytes;
+
+    if (!TryReadU32FromImage(buf, cursor, count))
+    {
+        return false;
+    }
+
+    if (!TryAdvanceImageCursor(buf, cursor, 4, nextCursor))
+    {
+        return false;
+    }
+
+    cursor = nextCursor;
+    localByteCount = localByteCount + 4;
+    stack u64[0 max] clobberBytes = (u64[0 max])count * 8;
+    if (!TryAdvanceImageCursor(buf, cursor, clobberBytes, nextCursor))
+    {
+        return false;
+    }
+
+    cursor = nextCursor;
+    localByteCount = localByteCount + clobberBytes;
+
+    if (!TryReadU32FromImage(buf, cursor, localFunctionCount))
+    {
+        return false;
+    }
+
+    if (!TryAdvanceImageCursor(buf, cursor, 4, nextCursor))
+    {
+        return false;
+    }
+
+    cursor = nextCursor;
+    localByteCount = localByteCount + 4;
+    stack u64[0 max] functionBytes = (u64[0 max])localFunctionCount * 40;
+    if (!TryAdvanceImageCursor(buf, cursor, functionBytes, nextCursor))
+    {
+        return false;
+    }
+
+    localByteCount = localByteCount + functionBytes;
+    byteCount = localByteCount;
+    functionCount = localFunctionCount;
+    return true;
+}
+
+internal fn bool DeserializeAsmMetadataAtUnchecked(borrow IrTable<u8[0 max]> buf, u32[0 max] startOffset, mut borrow AsmMetadataTable outTable)
+{
+    stack mut u32[0 max] cursor = startOffset;
+    stack u32[0 max] textCount = ReadU32(buf, cursor);
+    cursor = cursor + 4;
+    stack mut u32[0 max] textIndex = 0;
+    while willexit (textIndex < textCount)
+    {
+        switch (outTable.AppendTextByte((i8[min max])buf.Get(cursor)))
+        {
+            case MemoryStatus.Err(var textError):
+                return false;
+            case MemoryStatus.Ok:
+        }
+
+        cursor = cursor + 1;
+        textIndex = textIndex + 1;
+    }
+
+    stack u32[0 max] inputCount = ReadU32(buf, cursor);
+    cursor = cursor + 4;
+    stack mut u32[0 max] inputIndex = 0;
+    while willexit (inputIndex < inputCount)
+    {
+        stack AsmTextRange registerRange = ReadAsmTextRange(buf, cursor);
+        stack AsmTextRange valueRange = ReadAsmTextRange(buf, cursor + 8);
+        switch (outTable.AppendInputOperand(registerRange, valueRange))
+        {
+            case MemoryStatus.Err(var inputError):
+                return false;
+            case MemoryStatus.Ok:
+        }
+
+        cursor = cursor + 16;
+        inputIndex = inputIndex + 1;
+    }
+
+    stack u32[0 max] outputCount = ReadU32(buf, cursor);
+    cursor = cursor + 4;
+    stack mut u32[0 max] outputIndex = 0;
+    while willexit (outputIndex < outputCount)
+    {
+        stack AsmTextRange registerRange = ReadAsmTextRange(buf, cursor);
+        stack AsmTextRange valueRange = ReadAsmTextRange(buf, cursor + 8);
+        stack bool bindsReturn = ReadU32(buf, cursor + 16) != 0;
+        switch (outTable.AppendOutputOperand(registerRange, valueRange, bindsReturn))
+        {
+            case MemoryStatus.Err(var outputError):
+                return false;
+            case MemoryStatus.Ok:
+        }
+
+        cursor = cursor + 20;
+        outputIndex = outputIndex + 1;
+    }
+
+    stack u32[0 max] clobberCount = ReadU32(buf, cursor);
+    cursor = cursor + 4;
+    stack mut u32[0 max] clobberIndex = 0;
+    while willexit (clobberIndex < clobberCount)
+    {
+        stack AsmTextRange clobberRange = ReadAsmTextRange(buf, cursor);
+        switch (outTable.AppendClobber(clobberRange))
+        {
+            case MemoryStatus.Err(var clobberError):
+                return false;
+            case MemoryStatus.Ok:
+        }
+
+        cursor = cursor + 8;
+        clobberIndex = clobberIndex + 1;
+    }
+
+    stack u32[0 max] functionCount = ReadU32(buf, cursor);
+    cursor = cursor + 4;
+    stack mut u32[0 max] functionIndex = 0;
+    while willexit (functionIndex < functionCount)
+    {
+        stack MirFuncId functionId = MirFuncIdOf(ReadU32(buf, cursor));
+        stack Compiler.AsmFacts.StarkAsmArchitecture architecture = AsmArchitectureFromU32(ReadU32(buf, cursor + 4));
+        stack AsmTextRange templateRange = ReadAsmTextRange(buf, cursor + 8);
+        stack u32[0 max] firstInput = ReadU32(buf, cursor + 16);
+        stack u32[0 max] functionInputCount = ReadU32(buf, cursor + 20);
+        stack u32[0 max] firstOutput = ReadU32(buf, cursor + 24);
+        stack u32[0 max] functionOutputCount = ReadU32(buf, cursor + 28);
+        stack u32[0 max] firstClobber = ReadU32(buf, cursor + 32);
+        stack u32[0 max] functionClobberCount = ReadU32(buf, cursor + 36);
+        stack mut AsmFunctionId asmFunction = new();
+        switch (outTable.AppendFunction(
+            functionId,
+            architecture,
+            templateRange,
+            firstInput,
+            functionInputCount,
+            firstOutput,
+            functionOutputCount,
+            firstClobber,
+            functionClobberCount,
+            asmFunction))
+        {
+            case MemoryStatus.Err(var functionError):
+                return false;
+            case MemoryStatus.Ok:
+        }
+
+        cursor = cursor + 40;
+        functionIndex = functionIndex + 1;
+    }
+
+    return true;
+}
+
 // === Combined package image (#32) ===
 // A package image concatenates the four section streams behind a fixed 20-byte
 // header: a magic u32 then the 1-based byte offset of each section
@@ -4459,6 +4923,82 @@ internal fn u32[0 max] MirImageMagic()
     return 826757197;
 }
 
+// The magic identifying a MIR package image with assembly metadata ("MIR2").
+internal fn u32[0 max] MirImageWithAsmMagic()
+{
+    return 844253517;
+}
+
+public enum PackageImageInspectionFormat
+{
+    Text,
+    Json,
+}
+
+public enum PackageImageValidationStatus
+{
+    Ok,
+    TruncatedHeader,
+    UnsupportedFormat,
+    MalformedSectionDirectory,
+    TruncatedSection,
+}
+
+public finite law ascii PackageImageValidationStatusName(PackageImageValidationStatus status)
+{
+    switch (status)
+    {
+        case PackageImageValidationStatus.Ok:
+            return "ok";
+        case PackageImageValidationStatus.TruncatedHeader:
+            return "truncated-header";
+        case PackageImageValidationStatus.UnsupportedFormat:
+            return "unsupported-format";
+        case PackageImageValidationStatus.MalformedSectionDirectory:
+            return "malformed-section-directory";
+        case PackageImageValidationStatus.TruncatedSection:
+            return "truncated-section";
+    }
+}
+
+internal struct PackageImageSummary
+{
+    bool HasAsm;
+    u32[0 max] InstructionCount;
+    u32[0 max] BlockCount;
+    u32[0 max] FunctionCount;
+    u32[0 max] GlobalCount;
+    u32[0 max] AsmFunctionCount;
+
+    PackageImageSummary()
+    {
+        self.HasAsm = false;
+        self.InstructionCount = 0;
+        self.BlockCount = 0;
+        self.FunctionCount = 0;
+        self.GlobalCount = 0;
+        self.AsmFunctionCount = 0;
+    }
+}
+
+internal fn PackageImageSummary PackageImageSummaryOf(
+    bool hasAsm,
+    u32[0 max] instructionCount,
+    u32[0 max] blockCount,
+    u32[0 max] functionCount,
+    u32[0 max] globalCount,
+    u32[0 max] asmFunctionCount)
+{
+    stack mut PackageImageSummary summary = new();
+    summary.HasAsm = hasAsm;
+    summary.InstructionCount = instructionCount;
+    summary.BlockCount = blockCount;
+    summary.FunctionCount = functionCount;
+    summary.GlobalCount = globalCount;
+    summary.AsmFunctionCount = asmFunctionCount;
+    return summary;
+}
+
 // Appends every byte of `src` to `dst`.
 internal fn void AppendBytes(mut borrow IrTable<u8[0 max]> dst, borrow IrTable<u8[0 max]> src)
 {
@@ -4469,6 +5009,507 @@ internal fn void AppendBytes(mut borrow IrTable<u8[0 max]> dst, borrow IrTable<u
         stack u8[0 max] b = src.Get(i);
         stack u32[0 max] w = dst.Add(b);
         i = i + 1;
+    }
+}
+
+internal inline finite law bool SectionEndsAtOffset(u32[0 max] offset, u64[0 max] byteCount, u32[0 max] nextOffset)
+{
+    return (u64[0 max])offset + byteCount == (u64[0 max])nextOffset;
+}
+
+internal inline finite law bool SectionEndsAtImageEnd(borrow IrTable<u8[0 max]> buf, u32[0 max] offset, u64[0 max] byteCount)
+{
+    return (u64[0 max])offset + byteCount == (u64[0 max])buf.Count() + 1;
+}
+
+internal fn PackageImageValidationStatus ValidateFixedRecordSectionEndsAtOffset(
+    borrow IrTable<u8[0 max]> buf,
+    u32[0 max] offset,
+    u32[0 max] recordSize,
+    u32[0 max] nextOffset)
+{
+    if (offset == 0)
+    {
+        return PackageImageValidationStatus.MalformedSectionDirectory;
+    }
+
+    if (!CanReadImageBytes(buf, offset, 4))
+    {
+        return PackageImageValidationStatus.TruncatedSection;
+    }
+
+    stack u32[0 max] rowCount = ReadU32(buf, offset);
+    stack u64[0 max] byteCount = 4 + (u64[0 max])rowCount * (u64[0 max])recordSize;
+    if (!SectionLastByteFitsU32(offset, byteCount))
+    {
+        return PackageImageValidationStatus.MalformedSectionDirectory;
+    }
+
+    if (!CanReadImageBytes(buf, offset, byteCount))
+    {
+        return PackageImageValidationStatus.TruncatedSection;
+    }
+
+    if (!SectionEndsAtOffset(offset, byteCount, nextOffset))
+    {
+        return PackageImageValidationStatus.MalformedSectionDirectory;
+    }
+
+    return PackageImageValidationStatus.Ok;
+}
+
+internal fn PackageImageValidationStatus ValidateFixedRecordSectionEndsAtImageEnd(
+    borrow IrTable<u8[0 max]> buf,
+    u32[0 max] offset,
+    u32[0 max] recordSize)
+{
+    if (offset == 0)
+    {
+        return PackageImageValidationStatus.MalformedSectionDirectory;
+    }
+
+    if (!CanReadImageBytes(buf, offset, 4))
+    {
+        return PackageImageValidationStatus.TruncatedSection;
+    }
+
+    stack u32[0 max] rowCount = ReadU32(buf, offset);
+    stack u64[0 max] byteCount = 4 + (u64[0 max])rowCount * (u64[0 max])recordSize;
+    if (!SectionLastByteFitsU32(offset, byteCount))
+    {
+        return PackageImageValidationStatus.MalformedSectionDirectory;
+    }
+
+    if (!CanReadImageBytes(buf, offset, byteCount))
+    {
+        return PackageImageValidationStatus.TruncatedSection;
+    }
+
+    if (!SectionEndsAtImageEnd(buf, offset, byteCount))
+    {
+        return PackageImageValidationStatus.MalformedSectionDirectory;
+    }
+
+    return PackageImageValidationStatus.Ok;
+}
+
+internal fn PackageImageValidationStatus ValidateAsmMetadataSectionEndsAtImageEnd(
+    borrow IrTable<u8[0 max]> buf,
+    u32[0 max] offset)
+{
+    if (offset == 0)
+    {
+        return PackageImageValidationStatus.MalformedSectionDirectory;
+    }
+
+    if (!CanReadImageBytes(buf, offset, 4))
+    {
+        return PackageImageValidationStatus.TruncatedSection;
+    }
+
+    stack mut u64[0 max] byteCount = 0;
+    stack mut u32[0 max] functionCount = 0;
+    if (!TryReadAsmMetadataSectionSizeAndFunctionCount(buf, offset, byteCount, functionCount))
+    {
+        return PackageImageValidationStatus.TruncatedSection;
+    }
+
+    if (!SectionEndsAtImageEnd(buf, offset, byteCount))
+    {
+        return PackageImageValidationStatus.MalformedSectionDirectory;
+    }
+
+    return PackageImageValidationStatus.Ok;
+}
+
+internal fn PackageImageValidationStatus ValidateMirPackageImage(borrow IrTable<u8[0 max]> buf)
+{
+    if (!CanReadImageBytes(buf, 1, 20))
+    {
+        return PackageImageValidationStatus.TruncatedHeader;
+    }
+
+    stack u32[0 max] instrOffset = ReadU32(buf, 5);
+    stack u32[0 max] blockOffset = ReadU32(buf, 9);
+    stack u32[0 max] funcOffset = ReadU32(buf, 13);
+    stack u32[0 max] globalOffset = ReadU32(buf, 17);
+    if (instrOffset != 21)
+    {
+        return PackageImageValidationStatus.MalformedSectionDirectory;
+    }
+
+    stack PackageImageValidationStatus instrStatus =
+        ValidateFixedRecordSectionEndsAtOffset(buf, instrOffset, 26, blockOffset);
+    if (instrStatus != PackageImageValidationStatus.Ok)
+    {
+        return instrStatus;
+    }
+
+    stack PackageImageValidationStatus blockStatus =
+        ValidateFixedRecordSectionEndsAtOffset(buf, blockOffset, 13, funcOffset);
+    if (blockStatus != PackageImageValidationStatus.Ok)
+    {
+        return blockStatus;
+    }
+
+    stack PackageImageValidationStatus funcStatus =
+        ValidateFixedRecordSectionEndsAtOffset(buf, funcOffset, 20, globalOffset);
+    if (funcStatus != PackageImageValidationStatus.Ok)
+    {
+        return funcStatus;
+    }
+
+    return ValidateFixedRecordSectionEndsAtImageEnd(buf, globalOffset, 8);
+}
+
+internal fn PackageImageValidationStatus ValidateMirPackageImageWithAsm(borrow IrTable<u8[0 max]> buf)
+{
+    if (!CanReadImageBytes(buf, 1, 24))
+    {
+        return PackageImageValidationStatus.TruncatedHeader;
+    }
+
+    stack u32[0 max] instrOffset = ReadU32(buf, 5);
+    stack u32[0 max] blockOffset = ReadU32(buf, 9);
+    stack u32[0 max] funcOffset = ReadU32(buf, 13);
+    stack u32[0 max] globalOffset = ReadU32(buf, 17);
+    stack u32[0 max] asmOffset = ReadU32(buf, 21);
+    if (instrOffset != 25)
+    {
+        return PackageImageValidationStatus.MalformedSectionDirectory;
+    }
+
+    stack PackageImageValidationStatus instrStatus =
+        ValidateFixedRecordSectionEndsAtOffset(buf, instrOffset, 26, blockOffset);
+    if (instrStatus != PackageImageValidationStatus.Ok)
+    {
+        return instrStatus;
+    }
+
+    stack PackageImageValidationStatus blockStatus =
+        ValidateFixedRecordSectionEndsAtOffset(buf, blockOffset, 13, funcOffset);
+    if (blockStatus != PackageImageValidationStatus.Ok)
+    {
+        return blockStatus;
+    }
+
+    stack PackageImageValidationStatus funcStatus =
+        ValidateFixedRecordSectionEndsAtOffset(buf, funcOffset, 20, globalOffset);
+    if (funcStatus != PackageImageValidationStatus.Ok)
+    {
+        return funcStatus;
+    }
+
+    stack PackageImageValidationStatus globalStatus =
+        ValidateFixedRecordSectionEndsAtOffset(buf, globalOffset, 8, asmOffset);
+    if (globalStatus != PackageImageValidationStatus.Ok)
+    {
+        return globalStatus;
+    }
+
+    return ValidateAsmMetadataSectionEndsAtImageEnd(buf, asmOffset);
+}
+
+public fn PackageImageValidationStatus ValidatePackageImage(borrow IrTable<u8[0 max]> buf)
+{
+    if (!CanReadImageBytes(buf, 1, 4))
+    {
+        return PackageImageValidationStatus.TruncatedHeader;
+    }
+
+    stack u32[0 max] magic = ReadU32(buf, 1);
+    if (magic == MirImageMagic())
+    {
+        return ValidateMirPackageImage(buf);
+    }
+
+    if (magic == MirImageWithAsmMagic())
+    {
+        return ValidateMirPackageImageWithAsm(buf);
+    }
+
+    return PackageImageValidationStatus.UnsupportedFormat;
+}
+
+internal fn bool TryReadMirImageHeader(
+    borrow IrTable<u8[0 max]> buf,
+    out u32[0 max] instrOffset,
+    out u32[0 max] blockOffset,
+    out u32[0 max] funcOffset,
+    out u32[0 max] globalOffset)
+{
+    instrOffset = 0;
+    blockOffset = 0;
+    funcOffset = 0;
+    globalOffset = 0;
+
+    stack mut u32[0 max] magic = 0;
+    stack mut u32[0 max] localInstrOffset = 0;
+    stack mut u32[0 max] localBlockOffset = 0;
+    stack mut u32[0 max] localFuncOffset = 0;
+    stack mut u32[0 max] localGlobalOffset = 0;
+    if (!TryReadU32FromImage(buf, 1, magic) || magic != MirImageMagic())
+    {
+        return false;
+    }
+
+    if (!TryReadU32FromImage(buf, 5, localInstrOffset)
+        || !TryReadU32FromImage(buf, 9, localBlockOffset)
+        || !TryReadU32FromImage(buf, 13, localFuncOffset)
+        || !TryReadU32FromImage(buf, 17, localGlobalOffset))
+    {
+        return false;
+    }
+
+    if (localInstrOffset != 21)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] rowCount = 0;
+    stack mut u64[0 max] byteCount = 0;
+    if (!TryReadFixedRecordSectionSize(buf, localInstrOffset, 26, rowCount, byteCount)
+        || !SectionEndsAtOffset(localInstrOffset, byteCount, localBlockOffset))
+    {
+        return false;
+    }
+
+    if (!TryReadFixedRecordSectionSize(buf, localBlockOffset, 13, rowCount, byteCount)
+        || !SectionEndsAtOffset(localBlockOffset, byteCount, localFuncOffset))
+    {
+        return false;
+    }
+
+    if (!TryReadFixedRecordSectionSize(buf, localFuncOffset, 20, rowCount, byteCount)
+        || !SectionEndsAtOffset(localFuncOffset, byteCount, localGlobalOffset))
+    {
+        return false;
+    }
+
+    if (!TryReadFixedRecordSectionSize(buf, localGlobalOffset, 8, rowCount, byteCount)
+        || !SectionEndsAtImageEnd(buf, localGlobalOffset, byteCount))
+    {
+        return false;
+    }
+
+    instrOffset = localInstrOffset;
+    blockOffset = localBlockOffset;
+    funcOffset = localFuncOffset;
+    globalOffset = localGlobalOffset;
+    return true;
+}
+
+internal fn bool TryReadMirImageWithAsmHeader(
+    borrow IrTable<u8[0 max]> buf,
+    out u32[0 max] instrOffset,
+    out u32[0 max] blockOffset,
+    out u32[0 max] funcOffset,
+    out u32[0 max] globalOffset,
+    out u32[0 max] asmOffset,
+    out u32[0 max] asmFunctionCount)
+{
+    instrOffset = 0;
+    blockOffset = 0;
+    funcOffset = 0;
+    globalOffset = 0;
+    asmOffset = 0;
+    asmFunctionCount = 0;
+
+    stack mut u32[0 max] magic = 0;
+    stack mut u32[0 max] localInstrOffset = 0;
+    stack mut u32[0 max] localBlockOffset = 0;
+    stack mut u32[0 max] localFuncOffset = 0;
+    stack mut u32[0 max] localGlobalOffset = 0;
+    stack mut u32[0 max] localAsmOffset = 0;
+    stack mut u32[0 max] localAsmFunctionCount = 0;
+    if (!TryReadU32FromImage(buf, 1, magic) || magic != MirImageWithAsmMagic())
+    {
+        return false;
+    }
+
+    if (!TryReadU32FromImage(buf, 5, localInstrOffset)
+        || !TryReadU32FromImage(buf, 9, localBlockOffset)
+        || !TryReadU32FromImage(buf, 13, localFuncOffset)
+        || !TryReadU32FromImage(buf, 17, localGlobalOffset)
+        || !TryReadU32FromImage(buf, 21, localAsmOffset))
+    {
+        return false;
+    }
+
+    if (localInstrOffset != 25)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] rowCount = 0;
+    stack mut u64[0 max] byteCount = 0;
+    if (!TryReadFixedRecordSectionSize(buf, localInstrOffset, 26, rowCount, byteCount)
+        || !SectionEndsAtOffset(localInstrOffset, byteCount, localBlockOffset))
+    {
+        return false;
+    }
+
+    if (!TryReadFixedRecordSectionSize(buf, localBlockOffset, 13, rowCount, byteCount)
+        || !SectionEndsAtOffset(localBlockOffset, byteCount, localFuncOffset))
+    {
+        return false;
+    }
+
+    if (!TryReadFixedRecordSectionSize(buf, localFuncOffset, 20, rowCount, byteCount)
+        || !SectionEndsAtOffset(localFuncOffset, byteCount, localGlobalOffset))
+    {
+        return false;
+    }
+
+    if (!TryReadFixedRecordSectionSize(buf, localGlobalOffset, 8, rowCount, byteCount)
+        || !SectionEndsAtOffset(localGlobalOffset, byteCount, localAsmOffset))
+    {
+        return false;
+    }
+
+    if (!TryReadAsmMetadataSectionSizeAndFunctionCount(buf, localAsmOffset, byteCount, localAsmFunctionCount)
+        || !SectionEndsAtImageEnd(buf, localAsmOffset, byteCount))
+    {
+        return false;
+    }
+
+    instrOffset = localInstrOffset;
+    blockOffset = localBlockOffset;
+    funcOffset = localFuncOffset;
+    globalOffset = localGlobalOffset;
+    asmOffset = localAsmOffset;
+    asmFunctionCount = localAsmFunctionCount;
+    return true;
+}
+
+internal fn bool TryReadPackageImageSummary(borrow IrTable<u8[0 max]> buf, out PackageImageSummary summary)
+{
+    summary = new();
+    stack mut u32[0 max] magic = 0;
+    if (!TryReadU32FromImage(buf, 1, magic))
+    {
+        return false;
+    }
+
+    if (magic == MirImageMagic())
+    {
+        stack mut u32[0 max] instrOffset = 0;
+        stack mut u32[0 max] blockOffset = 0;
+        stack mut u32[0 max] funcOffset = 0;
+        stack mut u32[0 max] globalOffset = 0;
+        if (!TryReadMirImageHeader(buf, instrOffset, blockOffset, funcOffset, globalOffset))
+        {
+            return false;
+        }
+
+        summary = PackageImageSummaryOf(
+            false,
+            ReadU32(buf, instrOffset),
+            ReadU32(buf, blockOffset),
+            ReadU32(buf, funcOffset),
+            ReadU32(buf, globalOffset),
+            0);
+        return true;
+    }
+
+    if (magic != MirImageWithAsmMagic())
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] instrOffset = 0;
+    stack mut u32[0 max] blockOffset = 0;
+    stack mut u32[0 max] funcOffset = 0;
+    stack mut u32[0 max] globalOffset = 0;
+    stack mut u32[0 max] asmOffset = 0;
+    stack mut u32[0 max] asmFunctionCount = 0;
+    if (!TryReadMirImageWithAsmHeader(buf, instrOffset, blockOffset, funcOffset, globalOffset, asmOffset, asmFunctionCount))
+    {
+        return false;
+    }
+
+    summary = PackageImageSummaryOf(
+        true,
+        ReadU32(buf, instrOffset),
+        ReadU32(buf, blockOffset),
+        ReadU32(buf, funcOffset),
+        ReadU32(buf, globalOffset),
+        asmFunctionCount);
+    return true;
+}
+
+internal fn MemoryStatus AppendPackageImageSummaryText(PackageImageSummary summary, mut borrow OwnedAscii sink)
+{
+    try sink.AppendConstAscii("package: ");
+    try sink.AppendU64((u64[0 max])summary.InstructionCount);
+    try sink.AppendConstAscii(" instructions, ");
+    try sink.AppendU64((u64[0 max])summary.BlockCount);
+    try sink.AppendConstAscii(" blocks, ");
+    try sink.AppendU64((u64[0 max])summary.FunctionCount);
+    try sink.AppendConstAscii(" functions, ");
+    try sink.AppendU64((u64[0 max])summary.GlobalCount);
+    if (summary.HasAsm)
+    {
+        try sink.AppendConstAscii(" globals, ");
+        try sink.AppendU64((u64[0 max])summary.AsmFunctionCount);
+        try sink.AppendConstAscii(" asm functions\n");
+        return MemoryStatus.Ok;
+    }
+
+    try sink.AppendConstAscii(" globals\n");
+    return MemoryStatus.Ok;
+}
+
+internal fn MemoryStatus AppendPackageImageSummaryJson(PackageImageSummary summary, mut borrow OwnedAscii sink)
+{
+    if (summary.HasAsm)
+    {
+        try sink.AppendConstAscii("{\"format\":\"MIR2\",\"instructions\":");
+    }
+    else
+    {
+        try sink.AppendConstAscii("{\"format\":\"MIR1\",\"instructions\":");
+    }
+
+    try sink.AppendU64((u64[0 max])summary.InstructionCount);
+    try sink.AppendConstAscii(",\"blocks\":");
+    try sink.AppendU64((u64[0 max])summary.BlockCount);
+    try sink.AppendConstAscii(",\"functions\":");
+    try sink.AppendU64((u64[0 max])summary.FunctionCount);
+    try sink.AppendConstAscii(",\"globals\":");
+    try sink.AppendU64((u64[0 max])summary.GlobalCount);
+    if (summary.HasAsm)
+    {
+        try sink.AppendConstAscii(",\"asmFunctions\":");
+        try sink.AppendU64((u64[0 max])summary.AsmFunctionCount);
+    }
+
+    try sink.AppendConstAscii("}\n");
+    return MemoryStatus.Ok;
+}
+
+public fn bool PackageImageIsValid(borrow IrTable<u8[0 max]> buf)
+{
+    return ValidatePackageImage(buf) == PackageImageValidationStatus.Ok;
+}
+
+public fn bool RenderPackageImageInspection(
+    borrow IrTable<u8[0 max]> buf,
+    PackageImageInspectionFormat format,
+    mut borrow OwnedAscii sink)
+{
+    stack mut PackageImageSummary summary = new();
+    if (!TryReadPackageImageSummary(buf, summary))
+    {
+        return false;
+    }
+
+    switch (format)
+    {
+        case PackageImageInspectionFormat.Text:
+            return AppendPackageImageSummaryText(summary, sink) == MemoryStatus.Ok;
+        case PackageImageInspectionFormat.Json:
+            return AppendPackageImageSummaryJson(summary, sink) == MemoryStatus.Ok;
     }
 }
 
@@ -4502,41 +5543,118 @@ public fn void SerializePackageImage(borrow IrTable<MirInstruction> instrs, borr
     AppendBytes(buf, globalBuf);
 }
 
+// Serializes a whole MIR module plus assembly metadata into a five-section image.
+// This is the package-image shape imported packages need for source assembly
+// declarations: consumers can reconstruct the declaration without original source.
+public fn void SerializePackageImageWithAsm(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<MirBlock> blocks,
+    borrow IrTable<MirFunction> funcs,
+    borrow IrTable<MirGlobal> globals,
+    borrow AsmMetadataTable asmMetadata,
+    mut borrow IrTable<u8[0 max]> buf)
+{
+    stack mut IrTable<u8[0 max]> instrBuf = new();
+    SerializeInstructions(instrs, 1, (u32[0 max])instrs.Count(), instrBuf);
+    stack mut IrTable<u8[0 max]> blockBuf = new();
+    SerializeBlocks(blocks, blockBuf);
+    stack mut IrTable<u8[0 max]> funcBuf = new();
+    SerializeFunctions(funcs, funcBuf);
+    stack mut IrTable<u8[0 max]> globalBuf = new();
+    SerializeGlobals(globals, globalBuf);
+    stack mut IrTable<u8[0 max]> asmBuf = new();
+    SerializeAsmMetadata(asmMetadata, asmBuf);
+
+    // Header is 24 bytes (magic + 5 offsets), so the first section starts at byte 25.
+    stack u32[0 max] instrOffset = 25;
+    stack u32[0 max] blockOffset = instrOffset + (u32[0 max])instrBuf.Count();
+    stack u32[0 max] funcOffset = blockOffset + (u32[0 max])blockBuf.Count();
+    stack u32[0 max] globalOffset = funcOffset + (u32[0 max])funcBuf.Count();
+    stack u32[0 max] asmOffset = globalOffset + (u32[0 max])globalBuf.Count();
+
+    WriteU32(buf, MirImageWithAsmMagic());
+    WriteU32(buf, instrOffset);
+    WriteU32(buf, blockOffset);
+    WriteU32(buf, funcOffset);
+    WriteU32(buf, globalOffset);
+    WriteU32(buf, asmOffset);
+    AppendBytes(buf, instrBuf);
+    AppendBytes(buf, blockBuf);
+    AppendBytes(buf, funcBuf);
+    AppendBytes(buf, globalBuf);
+    AppendBytes(buf, asmBuf);
+}
+
 // Reads a package image into the four out-tables. Returns false (touching nothing)
-// when the magic does not match.
+// when the magic or section directory is malformed.
 public fn bool DeserializePackageImage(borrow IrTable<u8[0 max]> buf, mut borrow IrTable<MirInstruction> outInstrs, mut borrow IrTable<MirBlock> outBlocks, mut borrow IrTable<MirFunction> outFuncs, mut borrow IrTable<MirGlobal> outGlobals)
 {
-    if (ReadU32(buf, 1) != MirImageMagic())
+    stack mut u32[0 max] instrOffset = 0;
+    stack mut u32[0 max] blockOffset = 0;
+    stack mut u32[0 max] funcOffset = 0;
+    stack mut u32[0 max] globalOffset = 0;
+    if (!TryReadMirImageHeader(buf, instrOffset, blockOffset, funcOffset, globalOffset))
     {
         return false;
     }
 
-    DeserializeInstructionsAt(buf, ReadU32(buf, 5), outInstrs);
-    DeserializeBlocksAt(buf, ReadU32(buf, 9), outBlocks);
-    DeserializeFunctionsAt(buf, ReadU32(buf, 13), outFuncs);
-    DeserializeGlobalsAt(buf, ReadU32(buf, 17), outGlobals);
+    DeserializeInstructionsAt(buf, instrOffset, outInstrs);
+    DeserializeBlocksAt(buf, blockOffset, outBlocks);
+    DeserializeFunctionsAt(buf, funcOffset, outFuncs);
+    DeserializeGlobalsAt(buf, globalOffset, outGlobals);
     return true;
+}
+
+public fn bool DeserializePackageImageWithAsm(
+    borrow IrTable<u8[0 max]> buf,
+    mut borrow IrTable<MirInstruction> outInstrs,
+    mut borrow IrTable<MirBlock> outBlocks,
+    mut borrow IrTable<MirFunction> outFuncs,
+    mut borrow IrTable<MirGlobal> outGlobals,
+    mut borrow AsmMetadataTable outAsmMetadata)
+{
+    stack mut u32[0 max] instrOffset = 0;
+    stack mut u32[0 max] blockOffset = 0;
+    stack mut u32[0 max] funcOffset = 0;
+    stack mut u32[0 max] globalOffset = 0;
+    stack mut u32[0 max] asmOffset = 0;
+    stack mut u32[0 max] asmFunctionCount = 0;
+    if (!TryReadMirImageWithAsmHeader(buf, instrOffset, blockOffset, funcOffset, globalOffset, asmOffset, asmFunctionCount))
+    {
+        return false;
+    }
+
+    DeserializeInstructionsAt(buf, instrOffset, outInstrs);
+    DeserializeBlocksAt(buf, blockOffset, outBlocks);
+    DeserializeFunctionsAt(buf, funcOffset, outFuncs);
+    DeserializeGlobalsAt(buf, globalOffset, outGlobals);
+    return DeserializeAsmMetadataAtUnchecked(buf, asmOffset, outAsmMetadata);
 }
 
 // Emits an `inspect-pkg` one-line summary of a package image, reading only the header
 // and each section's count (no IR materialized). Empty when the magic is wrong.
 public fn MemoryStatus InspectPackageImage(borrow IrTable<u8[0 max]> buf, mut borrow OwnedAscii sink)
 {
-    if (ReadU32(buf, 1) != MirImageMagic())
+    stack mut PackageImageSummary summary = new();
+    if (!TryReadPackageImageSummary(buf, summary))
     {
         return MemoryStatus.Ok;
     }
 
-    try sink.AppendConstAscii("package: ");
-    try sink.AppendU64((u64[0 max])ReadU32(buf, ReadU32(buf, 5)));
-    try sink.AppendConstAscii(" instructions, ");
-    try sink.AppendU64((u64[0 max])ReadU32(buf, ReadU32(buf, 9)));
-    try sink.AppendConstAscii(" blocks, ");
-    try sink.AppendU64((u64[0 max])ReadU32(buf, ReadU32(buf, 13)));
-    try sink.AppendConstAscii(" functions, ");
-    try sink.AppendU64((u64[0 max])ReadU32(buf, ReadU32(buf, 17)));
-    try sink.AppendConstAscii(" globals\n");
-    return MemoryStatus.Ok;
+    return AppendPackageImageSummaryText(summary, sink);
+}
+
+// Emits a deterministic JSON summary view of the same validated binary image counts
+// used by the text inspector. Empty when the image is not recognized or malformed.
+public fn MemoryStatus InspectPackageImageJson(borrow IrTable<u8[0 max]> buf, mut borrow OwnedAscii sink)
+{
+    stack mut PackageImageSummary summary = new();
+    if (!TryReadPackageImageSummary(buf, summary))
+    {
+        return MemoryStatus.Ok;
+    }
+
+    return AppendPackageImageSummaryJson(summary, sink);
 }
 
 // === Bridge to the stdlib byte buffer (toward on-disk package images, #32) ===
@@ -4613,10 +5731,189 @@ internal fn bool MakeTempPath(mut borrow OwnedAscii outPath, const ascii filenam
             stack mut OwnedAscii dirPath = dir;
             stack System.Memory.MemoryStatus appendDir = outPath.AppendAscii(dirPath.View());
             stack System.Memory.MemoryStatus appendName = outPath.AppendConstAscii(filename);
-            return true;
+            return appendDir == System.Memory.MemoryStatus.Ok
+                && appendName == System.Memory.MemoryStatus.Ok;
         case System.IO.IOResult<OwnedAscii>.Err(var dirError):
             return false;
     }
+}
+
+public fn bool WritePackageImageBufferFile(ascii path, borrow IrTable<u8[0 max]> image)
+{
+    stack mut DynamicByteBuffer dbuf = new();
+    ImageToByteBuffer(image, dbuf);
+    return WriteImageFile(path, dbuf);
+}
+
+public fn bool ReadPackageImageBufferFile(ascii path, mut borrow IrTable<u8[0 max]> outImage)
+{
+    return ReadImageFile(path, outImage);
+}
+
+public fn bool WritePackageImageFile(
+    ascii path,
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<MirBlock> blocks,
+    borrow IrTable<MirFunction> funcs,
+    borrow IrTable<MirGlobal> globals)
+{
+    stack mut IrTable<u8[0 max]> image = new();
+    SerializePackageImage(instrs, blocks, funcs, globals, image);
+    return WritePackageImageBufferFile(path, image);
+}
+
+public fn bool WritePackageImageWithAsmFile(
+    ascii path,
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<MirBlock> blocks,
+    borrow IrTable<MirFunction> funcs,
+    borrow IrTable<MirGlobal> globals,
+    borrow AsmMetadataTable asmMetadata)
+{
+    stack mut IrTable<u8[0 max]> image = new();
+    SerializePackageImageWithAsm(instrs, blocks, funcs, globals, asmMetadata, image);
+    return WritePackageImageBufferFile(path, image);
+}
+
+public fn bool LoadPackageImageFile(
+    ascii path,
+    mut borrow IrTable<MirInstruction> outInstrs,
+    mut borrow IrTable<MirBlock> outBlocks,
+    mut borrow IrTable<MirFunction> outFuncs,
+    mut borrow IrTable<MirGlobal> outGlobals)
+{
+    stack mut IrTable<u8[0 max]> image = new();
+    if (!ReadPackageImageBufferFile(path, image))
+    {
+        return false;
+    }
+
+    return DeserializePackageImage(image, outInstrs, outBlocks, outFuncs, outGlobals);
+}
+
+public fn bool LoadPackageImageWithAsmFile(
+    ascii path,
+    mut borrow IrTable<MirInstruction> outInstrs,
+    mut borrow IrTable<MirBlock> outBlocks,
+    mut borrow IrTable<MirFunction> outFuncs,
+    mut borrow IrTable<MirGlobal> outGlobals,
+    mut borrow AsmMetadataTable outAsmMetadata)
+{
+    stack mut IrTable<u8[0 max]> image = new();
+    if (!ReadPackageImageBufferFile(path, image))
+    {
+        return false;
+    }
+
+    return DeserializePackageImageWithAsm(image, outInstrs, outBlocks, outFuncs, outGlobals, outAsmMetadata);
+}
+
+internal inline finite law bool AsmTextRangeEquals(AsmTextRange left, AsmTextRange right)
+{
+    return left.Start() == right.Start()
+        && left.Length() == right.Length();
+}
+
+internal fn bool AsmMetadataTablesEqual(borrow AsmMetadataTable left, borrow AsmMetadataTable right)
+{
+    if (left.TextByteCount() != right.TextByteCount()
+        || left.InputCount() != right.InputCount()
+        || left.OutputCount() != right.OutputCount()
+        || left.ClobberCount() != right.ClobberCount()
+        || left.FunctionCount() != right.FunctionCount())
+    {
+        return false;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] textIndex = 0;
+    while willexit (textIndex < left.TextByteCount())
+    {
+        if (left.TextByteAt(textIndex) != right.TextByteAt(textIndex))
+        {
+            return false;
+        }
+
+        textIndex = textIndex + 1;
+    }
+
+    stack mut u32[0 max] inputIndex = 1;
+    while willexit ((u64[0 2 ** 63 - 1])inputIndex <= left.InputCount())
+    {
+        stack AsmInputOperand leftInput = left.InputAt(inputIndex);
+        stack AsmInputOperand rightInput = right.InputAt(inputIndex);
+        if (!AsmTextRangeEquals(leftInput.Register(), rightInput.Register())
+            || !AsmTextRangeEquals(leftInput.Value(), rightInput.Value()))
+        {
+            return false;
+        }
+
+        inputIndex = inputIndex + 1;
+    }
+
+    stack mut u32[0 max] outputIndex = 1;
+    while willexit ((u64[0 2 ** 63 - 1])outputIndex <= left.OutputCount())
+    {
+        stack AsmOutputOperand leftOutput = left.OutputAt(outputIndex);
+        stack AsmOutputOperand rightOutput = right.OutputAt(outputIndex);
+        if (!AsmTextRangeEquals(leftOutput.Register(), rightOutput.Register())
+            || !AsmTextRangeEquals(leftOutput.Value(), rightOutput.Value())
+            || leftOutput.BindsReturn() != rightOutput.BindsReturn())
+        {
+            return false;
+        }
+
+        outputIndex = outputIndex + 1;
+    }
+
+    stack mut u32[0 max] clobberIndex = 1;
+    while willexit ((u64[0 2 ** 63 - 1])clobberIndex <= left.ClobberCount())
+    {
+        if (!AsmTextRangeEquals(left.ClobberAt(clobberIndex), right.ClobberAt(clobberIndex)))
+        {
+            return false;
+        }
+
+        clobberIndex = clobberIndex + 1;
+    }
+
+    stack mut u32[0 max] functionIndex = 1;
+    while willexit ((u64[0 2 ** 63 - 1])functionIndex <= left.FunctionCount())
+    {
+        stack AsmFunctionMetadata leftFunction = left.FunctionAt(AsmFunctionIdOf(functionIndex));
+        stack AsmFunctionMetadata rightFunction = right.FunctionAt(AsmFunctionIdOf(functionIndex));
+        stack MirFuncId leftMirFunction = leftFunction.Function();
+        stack MirFuncId rightMirFunction = rightFunction.Function();
+        if (!leftMirFunction.Equals(rightMirFunction))
+        {
+            return false;
+        }
+
+        if (leftFunction.Architecture() != rightFunction.Architecture())
+        {
+            return false;
+        }
+
+        stack AsmTextRange leftTemplate = leftFunction.Template();
+        stack AsmTextRange rightTemplate = rightFunction.Template();
+        if (!AsmTextRangeEquals(leftTemplate, rightTemplate))
+        {
+            return false;
+        }
+
+        if (leftFunction.FirstInput() != rightFunction.FirstInput()
+            || leftFunction.InputCount() != rightFunction.InputCount()
+            || leftFunction.FirstOutput() != rightFunction.FirstOutput()
+            || leftFunction.OutputCount() != rightFunction.OutputCount()
+            || leftFunction.FirstClobber() != rightFunction.FirstClobber()
+            || leftFunction.ClobberCount() != rightFunction.ClobberCount())
+        {
+            return false;
+        }
+
+        functionIndex = functionIndex + 1;
+    }
+
+    return true;
 }
 
 // Writes a serialized module to a temp file, reads it back, and reports whether the
@@ -4624,23 +5921,12 @@ internal fn bool MakeTempPath(mut borrow OwnedAscii outPath, const ascii filenam
 public fn bool PackageImageFileRoundTrips(borrow IrTable<MirInstruction> instrs, borrow IrTable<MirBlock> blocks, borrow IrTable<MirFunction> funcs, borrow IrTable<MirGlobal> globals)
 {
     stack mut OwnedAscii path = new();
-    if (!MakeTempPath(path, "/image.mirpkg"))
+    if (!MakeTempPath(path, "/image.starkpkg"))
     {
         return false;
     }
 
-    stack mut IrTable<u8[0 max]> buf = new();
-    SerializePackageImage(instrs, blocks, funcs, globals, buf);
-    stack mut DynamicByteBuffer dbuf = new();
-    ImageToByteBuffer(buf, dbuf);
-
-    if (!WriteImageFile(path.View(), dbuf))
-    {
-        return false;
-    }
-
-    stack mut IrTable<u8[0 max]> readBuf = new();
-    if (!ReadImageFile(path.View(), readBuf))
+    if (!WritePackageImageFile(path.View(), instrs, blocks, funcs, globals))
     {
         return false;
     }
@@ -4649,12 +5935,122 @@ public fn bool PackageImageFileRoundTrips(borrow IrTable<MirInstruction> instrs,
     stack mut IrTable<MirBlock> bb = new();
     stack mut IrTable<MirFunction> bf = new();
     stack mut IrTable<MirGlobal> bg = new();
-    stack bool ok = DeserializePackageImage(readBuf, bi, bb, bf, bg);
+    stack bool ok = LoadPackageImageFile(path.View(), bi, bb, bf, bg);
     return ok
         && bi.Count() == instrs.Count()
         && bb.Count() == blocks.Count()
         && bf.Count() == funcs.Count()
         && bg.Count() == globals.Count();
+}
+
+public fn bool PackageImageWithAsmFileRoundTrips(
+    borrow IrTable<MirInstruction> instrs,
+    borrow IrTable<MirBlock> blocks,
+    borrow IrTable<MirFunction> funcs,
+    borrow IrTable<MirGlobal> globals,
+    borrow AsmMetadataTable asmMetadata)
+{
+    stack mut OwnedAscii path = new();
+    if (!MakeTempPath(path, "/image-with-asm.starkpkg"))
+    {
+        return false;
+    }
+
+    if (!WritePackageImageWithAsmFile(path.View(), instrs, blocks, funcs, globals, asmMetadata))
+    {
+        return false;
+    }
+
+    stack mut IrTable<MirInstruction> bi = new();
+    stack mut IrTable<MirBlock> bb = new();
+    stack mut IrTable<MirFunction> bf = new();
+    stack mut IrTable<MirGlobal> bg = new();
+    stack mut AsmMetadataTable restoredAsm = new();
+    stack bool ok = LoadPackageImageWithAsmFile(path.View(), bi, bb, bf, bg, restoredAsm);
+    return ok
+        && bi.Count() == instrs.Count()
+        && bb.Count() == blocks.Count()
+        && bf.Count() == funcs.Count()
+        && bg.Count() == globals.Count()
+        && AsmMetadataTablesEqual(asmMetadata, restoredAsm);
+}
+
+public fn bool InspectPackageImageFile(ascii path, mut borrow OwnedAscii sink)
+{
+    return RenderPackageImageInspectionFile(path, PackageImageInspectionFormat.Text, sink);
+}
+
+public fn bool InspectPackageImageFileJson(ascii path, mut borrow OwnedAscii sink)
+{
+    return RenderPackageImageInspectionFile(path, PackageImageInspectionFormat.Json, sink);
+}
+
+public fn bool RenderPackageImageInspectionFile(ascii path, PackageImageInspectionFormat format, mut borrow OwnedAscii sink)
+{
+    stack mut IrTable<u8[0 max]> image = new();
+    if (!ReadImageFile(path, image))
+    {
+        return false;
+    }
+
+    return RenderPackageImageInspection(image, format, sink);
+}
+
+public fn bool PackageImageBufferInspectsThroughFile(
+    borrow IrTable<u8[0 max]> image,
+    borrow OwnedAscii expectedText,
+    borrow OwnedAscii expectedJson)
+{
+    stack mut OwnedAscii path = new();
+    if (!MakeTempPath(path, "/inspect.mirpkg"))
+    {
+        return false;
+    }
+
+    if (!WritePackageImageBufferFile(path.View(), image))
+    {
+        return false;
+    }
+
+    stack mut OwnedAscii text = new();
+    if (!RenderPackageImageInspectionFile(path.View(), PackageImageInspectionFormat.Text, text))
+    {
+        return false;
+    }
+
+    stack mut OwnedAscii json = new();
+    if (!RenderPackageImageInspectionFile(path.View(), PackageImageInspectionFormat.Json, json))
+    {
+        return false;
+    }
+
+    return System.Text.OwnedAscii.Equals(expectedText, text)
+        && System.Text.OwnedAscii.Equals(expectedJson, json);
+}
+
+public fn bool PackageImageBufferInspectionFailsThroughFile(
+    borrow IrTable<u8[0 max]> image,
+    PackageImageInspectionFormat format)
+{
+    stack mut OwnedAscii path = new();
+    if (!MakeTempPath(path, "/invalid.mirpkg"))
+    {
+        return false;
+    }
+
+    if (!WritePackageImageBufferFile(path.View(), image))
+    {
+        return false;
+    }
+
+    stack mut OwnedAscii sink = new();
+    if (RenderPackageImageInspectionFile(path.View(), format, sink))
+    {
+        return false;
+    }
+
+    stack mut OwnedAscii empty = new();
+    return System.Text.OwnedAscii.Equals(sink, empty);
 }
 
 // === LLVM IR text to disk (toward object output via clang/llc, #31) ===
@@ -7837,6 +9233,226 @@ internal fn bool ParseFunctionSignatureAt(borrow TokenStream stream, u32[0 max] 
     return false;
 }
 
+internal fn bool AppendAsmRawTokenText(
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] token,
+    mut borrow AsmMetadataTable table,
+    out AsmTextRange range)
+{
+    range = new();
+    if (token == 0)
+    {
+        return false;
+    }
+
+    stack ascii text = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])token);
+    switch (table.AppendText(text, range))
+    {
+        case MemoryStatus.Err(var error):
+            return false;
+        case MemoryStatus.Ok:
+            return true;
+    }
+
+    return false;
+}
+
+internal fn bool AppendDecodedAsmStringToken(
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] token,
+    mut borrow AsmMetadataTable table,
+    out AsmTextRange range)
+{
+    range = new();
+    if (token == 0)
+    {
+        return false;
+    }
+
+    stack ascii literal = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])token);
+    stack mut OwnedAscii decoded = new();
+    switch (System.Text.DecodeStringLiteralToUtf8(literal))
+    {
+        case System.Text.TextBuildResult<OwnedAscii>.Err(var decodeError):
+            return false;
+        case System.Text.TextBuildResult<OwnedAscii>.Ok(var value):
+            decoded = value;
+    }
+
+    switch (table.AppendText(decoded.View(), range))
+    {
+        case MemoryStatus.Err(var appendError):
+            return false;
+        case MemoryStatus.Ok:
+            return true;
+    }
+
+    return false;
+}
+
+// Copies a parsed assembly function signature into source-independent IR metadata:
+// architecture is normalized to an enum, quoted strings are decoded, and every text
+// payload is stored in the table's compact byte pool.
+public fn bool CollectAsmMetadataFromSignature(
+    ascii source,
+    borrow TokenStream stream,
+    borrow Compiler.Parsing.FunctionSignature signature,
+    MirFuncId functionId,
+    mut borrow AsmMetadataTable table,
+    out AsmFunctionId asmFunctionId)
+{
+    asmFunctionId = new();
+    if (!signature.HasAsm())
+    {
+        return false;
+    }
+
+    stack ascii architectureText = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])signature.AsmArchitectureToken());
+    stack Compiler.AsmFacts.StarkAsmArchitecture architecture = Compiler.AsmFacts.ParseArchitectureName(architectureText);
+    if (architecture == Compiler.AsmFacts.StarkAsmArchitecture.Unknown)
+    {
+        return false;
+    }
+
+    stack u32[0 max] inputCount = signature.AsmInputCount();
+    stack mut u32[0 max] firstInput = 0;
+    if (inputCount != 0)
+    {
+        firstInput = (u32[0 max])(table.InputCount() + 1);
+    }
+
+    stack mut u32[0 max] inputIndex = 0;
+    while willexit (inputIndex < inputCount)
+    {
+        stack mut AsmTextRange registerRange = new();
+        stack mut AsmTextRange valueRange = new();
+        if (!AppendDecodedAsmStringToken(source, stream, signature.AsmInputRegisterAt((u64[0 2 ** 63 - 1])inputIndex), table, registerRange)
+            || !AppendAsmRawTokenText(source, stream, signature.AsmInputValueAt((u64[0 2 ** 63 - 1])inputIndex), table, valueRange))
+        {
+            return false;
+        }
+
+        switch (table.AppendInputOperand(registerRange, valueRange))
+        {
+            case MemoryStatus.Err(var inputError):
+                return false;
+            case MemoryStatus.Ok:
+        }
+
+        inputIndex = inputIndex + 1;
+    }
+
+    stack u32[0 max] outputCount = signature.AsmOutputCount();
+    stack mut u32[0 max] firstOutput = 0;
+    if (outputCount != 0)
+    {
+        firstOutput = (u32[0 max])(table.OutputCount() + 1);
+    }
+
+    stack mut u32[0 max] outputIndex = 0;
+    while willexit (outputIndex < outputCount)
+    {
+        stack mut AsmTextRange registerRange = new();
+        stack mut AsmTextRange valueRange = new();
+        if (!AppendDecodedAsmStringToken(source, stream, signature.AsmOutputRegisterAt((u64[0 2 ** 63 - 1])outputIndex), table, registerRange)
+            || !AppendAsmRawTokenText(source, stream, signature.AsmOutputValueAt((u64[0 2 ** 63 - 1])outputIndex), table, valueRange))
+        {
+            return false;
+        }
+
+        switch (table.AppendOutputOperand(registerRange, valueRange, signature.AsmOutputBindsReturnAt((u64[0 2 ** 63 - 1])outputIndex)))
+        {
+            case MemoryStatus.Err(var outputError):
+                return false;
+            case MemoryStatus.Ok:
+        }
+
+        outputIndex = outputIndex + 1;
+    }
+
+    stack u32[0 max] clobberCount = signature.AsmClobberCount();
+    stack mut u32[0 max] firstClobber = 0;
+    if (clobberCount != 0)
+    {
+        firstClobber = (u32[0 max])(table.ClobberCount() + 1);
+    }
+
+    stack mut u32[0 max] clobberIndex = 0;
+    while willexit (clobberIndex < clobberCount)
+    {
+        stack mut AsmTextRange clobberRange = new();
+        if (!AppendDecodedAsmStringToken(source, stream, signature.AsmClobberRegisterAt((u64[0 2 ** 63 - 1])clobberIndex), table, clobberRange))
+        {
+            return false;
+        }
+
+        switch (table.AppendClobber(clobberRange))
+        {
+            case MemoryStatus.Err(var clobberError):
+                return false;
+            case MemoryStatus.Ok:
+        }
+
+        clobberIndex = clobberIndex + 1;
+    }
+
+    stack mut AsmTextRange templateRange = new();
+    if (!AppendDecodedAsmStringToken(source, stream, signature.AsmTemplateToken(), table, templateRange))
+    {
+        return false;
+    }
+
+    switch (table.AppendFunction(
+        functionId,
+        architecture,
+        templateRange,
+        firstInput,
+        inputCount,
+        firstOutput,
+        outputCount,
+        firstClobber,
+        clobberCount,
+        asmFunctionId))
+    {
+        case MemoryStatus.Err(var functionError):
+            return false;
+        case MemoryStatus.Ok:
+            return true;
+    }
+
+    return false;
+}
+
+// Test/leaf bridge for the first assembly function in a source buffer. Full module
+// lowering can call `CollectAsmMetadataFromSignature` once it owns real function ids.
+public fn bool CollectFirstAsmFunctionMetadata(ascii source, MirFuncId functionId, mut borrow AsmMetadataTable table, out AsmFunctionId asmFunctionId)
+{
+    asmFunctionId = new();
+    switch (LexText(source))
+    {
+        case LexResult<TokenStream>.Err(var lexError):
+            return false;
+        case LexResult<TokenStream>.Ok(var stream):
+            stack i64[min max] fnIndex = FirstTokenOfKind(stream, TokenKind.Fn);
+            if (fnIndex < 0)
+            {
+                return false;
+            }
+
+            stack mut Compiler.Parsing.FunctionSignature signature = new();
+            if (!ParseFunctionSignatureAt(stream, (u32[0 max])fnIndex, signature))
+            {
+                return false;
+            }
+
+            return CollectAsmMetadataFromSignature(source, stream, signature, functionId, table, asmFunctionId);
+    }
+
+    return false;
+}
+
 internal fn ValueFacts FunctionReturnRangeFact(borrow TokenStream stream, borrow i8[min max][] source, borrow Compiler.Parsing.FunctionSignature signature)
 {
     stack mut ValueFacts facts = new();
@@ -8126,6 +9742,35 @@ internal fn bool IsFunctionStorageModifierKind(TokenKind kind)
     }
 }
 
+internal fn u32[0 max] FindOpeningParenBefore(borrow TokenStream stream, u32[0 max] rparen)
+{
+    stack mut u32[0 max] scan = rparen;
+    stack mut u32[0 max] depth = 0;
+    while willexit (scan > 0)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])scan);
+        if (kind == TokenKind.RParen)
+        {
+            depth = depth + 1;
+        }
+        else if (kind == TokenKind.LParen)
+        {
+            if (depth > 0)
+            {
+                depth = depth - 1;
+                if (depth == 0)
+                {
+                    return scan;
+                }
+            }
+        }
+
+        scan = scan - 1;
+    }
+
+    return 0;
+}
+
 internal fn bool FunctionTokenHasStorageModifier(borrow TokenStream stream, u32[0 max] fnKeyword, TokenKind modifier)
 {
     if (fnKeyword == 0)
@@ -8141,6 +9786,27 @@ internal fn bool FunctionTokenHasStorageModifier(borrow TokenStream stream, u32[
         if (kind == modifier)
         {
             return true;
+        }
+
+        if (kind == TokenKind.RParen)
+        {
+            stack u32[0 max] open = FindOpeningParenBefore(stream, (u32[0 max])scan);
+            if (open > 0)
+            {
+                stack TokenKind groupedKind = stream.KindAt((u64[0 2 ** 63 - 1])(open - 1));
+                if (groupedKind == modifier)
+                {
+                    return true;
+                }
+
+                if (groupedKind == TokenKind.Ffi || groupedKind == TokenKind.Asm)
+                {
+                    scan = (i64[min max])open - 2;
+                    continue;
+                }
+            }
+
+            return false;
         }
 
         if (IsTailContextualToken(stream, token))
@@ -10062,6 +11728,160 @@ internal fn bool EmitModuleIfReturnFunction(
     }
 }
 
+internal fn bool LowerModuleIfReturnFunctionToTables(
+    borrow TokenStream stream,
+    borrow i8[min max][] source,
+    borrow IrTable<ParamName> funcNames,
+    borrow IrTable<u32[0 max]> funcParamCounts,
+    borrow IrTable<u32[0 max]> funcTailFlags,
+    bool isTailCallable,
+    u64[0 2 ** 63 - 1] fnIndex,
+    mut borrow IrTable<MirInstruction> instrs,
+    mut borrow IrTable<MirBlock> blocks,
+    out LoweredBody body)
+{
+    body = new();
+    stack i64[min max] braceIndex = FirstTokenOfKindAfter(stream, TokenKind.LBrace, fnIndex);
+    if (braceIndex < 0 || stream.KindAt((u64[0 2 ** 63 - 1])braceIndex + 1) != TokenKind.If)
+    {
+        return false;
+    }
+
+    stack mut Compiler.Parsing.FunctionSignature signature = new();
+    if (!ParseFunctionSignatureAt(stream, (u32[0 max])fnIndex, signature))
+    {
+        return false;
+    }
+
+    stack mut IrTable<ParamAbiFacts> paramAbiFacts = new();
+    if (!BuildParamAbiFacts(stream, source, signature, paramAbiFacts))
+    {
+        return false;
+    }
+
+    stack mut IrTable<ParamName> params = new();
+    SeedSignatureParamsFromParsed(stream, source, signature, params);
+    stack u64[0 2 ** 63 - 1] signatureParamCount = params.Count();
+
+    stack mut IrTable<ExprNode> nodes = new();
+    stack u64[0 2 ** 63 - 1] ifIndex = (u64[0 2 ** 63 - 1])braceIndex + 1;
+    stack ParseResult condResult = ParseExprIn(stream, source, nodes, params, funcNames, ifIndex + 1);
+    stack TokenKind thenTerminal = stream.KindAt(condResult.Next);
+    if (thenTerminal != TokenKind.Return && thenTerminal != TokenKind.Become)
+    {
+        return false;
+    }
+
+    stack bool thenBecome = thenTerminal == TokenKind.Become;
+    stack ParseResult thenResult = ParseExprIn(stream, source, nodes, params, funcNames, condResult.Next + 1);
+    if (stream.KindAt(thenResult.Next) != TokenKind.Else)
+    {
+        return false;
+    }
+
+    stack TokenKind elseTerminal = stream.KindAt(thenResult.Next + 1);
+    if (elseTerminal != TokenKind.Return && elseTerminal != TokenKind.Become)
+    {
+        return false;
+    }
+
+    stack bool elseBecome = elseTerminal == TokenKind.Become;
+    stack ParseResult elseResult = ParseExprIn(stream, source, nodes, params, funcNames, thenResult.Next + 2);
+
+    if ((thenBecome || elseBecome) && !isTailCallable)
+    {
+        return false;
+    }
+
+    if (params.Count() != signatureParamCount)
+    {
+        return false;
+    }
+
+    if (ExpressionTableUsesPointerParams(nodes, paramAbiFacts))
+    {
+        return false;
+    }
+
+    stack mut IrTable<u32[0 max]> noLocalTypes = new();
+    if (!ValidateModuleCalls(nodes, funcParamCounts, noLocalTypes))
+    {
+        return false;
+    }
+
+    if (TypeOfNode(nodes, condResult.NodeId) != ExprType.BoolType)
+    {
+        return false;
+    }
+
+    if (TypeOfNode(nodes, thenResult.NodeId) != ExprType.IntType || TypeOfNode(nodes, elseResult.NodeId) != ExprType.IntType)
+    {
+        return false;
+    }
+
+    if (thenBecome && !TailCallTargetIsTailCallable(nodes, thenResult.NodeId, funcTailFlags, funcParamCounts, (u32[0 max])signatureParamCount))
+    {
+        return false;
+    }
+
+    if (elseBecome && !TailCallTargetIsTailCallable(nodes, elseResult.NodeId, funcTailFlags, funcParamCounts, (u32[0 max])signatureParamCount))
+    {
+        return false;
+    }
+
+    stack u32[0 max] firstBlock = (u32[0 max])blocks.Count() + 1;
+    stack MirValueId condValue = LowerExprNode(nodes, condResult.NodeId, instrs);
+    stack u32[0 max] thenFirst = (u32[0 max])instrs.Count() + 1;
+    stack mut MirValueId thenValue = MirValueIdOf(0);
+    if (thenBecome)
+    {
+        stack mut IrTable<u32[0 max]> noOverridesThen = new();
+        thenValue = LowerTailCallExprNodeWithLocals(nodes, thenResult.NodeId, instrs, noOverridesThen);
+    }
+    else
+    {
+        thenValue = LowerExprNode(nodes, thenResult.NodeId, instrs);
+    }
+
+    stack u32[0 max] elseFirst = (u32[0 max])instrs.Count() + 1;
+    stack mut MirValueId elseValue = MirValueIdOf(0);
+    if (elseBecome)
+    {
+        stack mut IrTable<u32[0 max]> noOverridesElse = new();
+        elseValue = LowerTailCallExprNodeWithLocals(nodes, elseResult.NodeId, instrs, noOverridesElse);
+    }
+    else
+    {
+        elseValue = LowerExprNode(nodes, elseResult.NodeId, instrs);
+    }
+
+    stack MirBlockId entry = MirCondBlock(blocks, condValue, MirBlockIdOf(firstBlock + 1), MirBlockIdOf(firstBlock + 2));
+    stack mut MirBlockId thenBlock = MirBlockIdOf(0);
+    if (thenBecome)
+    {
+        thenBlock = MirTailCallBlock(blocks, thenValue);
+    }
+    else
+    {
+        thenBlock = MirReturnBlock(blocks, thenValue);
+    }
+
+    stack mut MirBlockId elseBlock = MirBlockIdOf(0);
+    if (elseBecome)
+    {
+        elseBlock = MirTailCallBlock(blocks, elseValue);
+    }
+    else
+    {
+        elseBlock = MirReturnBlock(blocks, elseValue);
+    }
+
+    body.Ok = true;
+    body.EntryBlock = entry.Index();
+    body.ParamCount = (u32[0 max])signatureParamCount;
+    return true;
+}
+
 // Parses + lowers ONE function of a module through the AST path and emits
 // `define i64 @f<functionNumber>(…) { … }` with per-function value numbering. A function
 // whose body begins with `if` is a BRANCH-bodied function (`if … return … else return …`,
@@ -10310,6 +12130,184 @@ public fn bool CompileModuleFromAst(ascii source, mut borrow OwnedAscii sink)
         case LexResult<TokenStream>.Err(var lexError):
             return false;
     }
+}
+
+internal fn bool BuildModulePackageTablesWithAsmStream(
+    borrow TokenStream stream,
+    ascii sourceText,
+    borrow i8[min max][] source,
+    mut borrow IrTable<MirInstruction> instrs,
+    mut borrow IrTable<MirBlock> blocks,
+    mut borrow IrTable<MirFunction> funcs,
+    mut borrow AsmMetadataTable asmMetadata)
+{
+    stack u64[0 2 ** 63 - 1] tokenCount = stream.Count();
+    stack mut IrTable<ParamName> funcNames = new();
+    stack mut IrTable<u32[0 max]> funcParamCounts = new();
+    stack mut IrTable<u32[0 max]> funcTailFlags = new();
+
+    stack mut u64[0 2 ** 63 - 1] i = 0;
+    while willexit (i < tokenCount)
+    {
+        if (stream.KindAt(i) == TokenKind.Fn)
+        {
+            stack mut Compiler.Parsing.FunctionSignature signature = new();
+            if (!ParseFunctionSignatureAt(stream, (u32[0 max])i, signature))
+            {
+                return false;
+            }
+
+            stack mut ParamName name = new();
+            name.Start = stream.StartAt((u64[0 2 ** 63 - 1])signature.Name());
+            name.Length = stream.LengthAt((u64[0 2 ** 63 - 1])signature.Name());
+            if (funcNames.Add(name) == 0)
+            {
+                return false;
+            }
+
+            if (funcParamCounts.Add((u32[0 max])signature.ParamCount()) == 0)
+            {
+                return false;
+            }
+
+            stack mut u32[0 max] tailFlag = 0;
+            if (FunctionTokenHasTailModifier(stream, i))
+            {
+                tailFlag = 1;
+            }
+
+            if (funcTailFlags.Add(tailFlag) == 0)
+            {
+                return false;
+            }
+        }
+
+        i = i + 1;
+    }
+
+    if (funcNames.Count() == 0)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] functionNumber = 0;
+    stack mut u64[0 2 ** 63 - 1] f = 0;
+    while willexit (f < tokenCount)
+    {
+        if (stream.KindAt(f) == TokenKind.Fn)
+        {
+            functionNumber = functionNumber + 1;
+
+            stack mut Compiler.Parsing.FunctionSignature signature = new();
+            if (!ParseFunctionSignatureAt(stream, (u32[0 max])f, signature))
+            {
+                return false;
+            }
+
+            if (signature.HasAsm())
+            {
+                stack MirFuncId asmFunction = MirDefineFunction(funcs, MirBlockIdOf(0), MirBlockIdOf(0), 0, MirValueIdOf(0), 0);
+                if (asmFunction.Index() != functionNumber)
+                {
+                    return false;
+                }
+
+                stack mut AsmFunctionId asmFunctionId = new();
+                if (!CollectAsmMetadataFromSignature(sourceText, stream, signature, asmFunction, asmMetadata, asmFunctionId))
+                {
+                    return false;
+                }
+            }
+            else
+            {
+                stack u32[0 max] firstInstr = (u32[0 max])instrs.Count() + 1;
+                stack u32[0 max] firstBlock = (u32[0 max])blocks.Count() + 1;
+                stack bool isTailCallable = FunctionIdIsTailCallable(funcTailFlags, functionNumber);
+                stack i64[min max] bodyBrace = FirstTokenOfKindAfter(stream, TokenKind.LBrace, f);
+                stack mut LoweredBody body = new();
+                if (bodyBrace >= 0 && stream.KindAt((u64[0 2 ** 63 - 1])bodyBrace + 1) == TokenKind.If)
+                {
+                    if (!LowerModuleIfReturnFunctionToTables(
+                        stream,
+                        source,
+                        funcNames,
+                        funcParamCounts,
+                        funcTailFlags,
+                        isTailCallable,
+                        f,
+                        instrs,
+                        blocks,
+                        body))
+                    {
+                        return false;
+                    }
+                }
+                else
+                {
+                    body = LowerFunctionWithLocals(stream, source, funcNames, funcParamCounts, funcTailFlags, isTailCallable, f, instrs, blocks);
+                    if (!body.Ok)
+                    {
+                        return false;
+                    }
+                }
+
+                stack u32[0 max] instrCount = (u32[0 max])instrs.Count() - (firstInstr - 1);
+                stack u32[0 max] blockCount = (u32[0 max])blocks.Count() - (firstBlock - 1);
+                stack MirFuncId functionId = MirDefineFunction(funcs, MirBlockIdOf(body.EntryBlock), MirBlockIdOf(firstBlock), blockCount, MirValueIdOf(firstInstr), instrCount);
+                if (functionId.Index() != functionNumber)
+                {
+                    return false;
+                }
+            }
+        }
+
+        f = f + 1;
+    }
+
+    return true;
+}
+
+public fn bool BuildModulePackageTablesWithAsm(
+    ascii source,
+    mut borrow IrTable<MirInstruction> instrs,
+    mut borrow IrTable<MirBlock> blocks,
+    mut borrow IrTable<MirFunction> funcs,
+    mut borrow AsmMetadataTable asmMetadata)
+{
+    stack mut OwnedAscii sourceText = new();
+    switch (sourceText.AppendAscii(source))
+    {
+        case MemoryStatus.Err(var copyError):
+            return false;
+        case MemoryStatus.Ok:
+    }
+
+    stack i8[min max][] sourceBytes = sourceText.AsSlice();
+    switch (Lex(sourceBytes))
+    {
+        case LexResult<TokenStream>.Err(var lexError):
+            return false;
+        case LexResult<TokenStream>.Ok(var stream):
+            return BuildModulePackageTablesWithAsmStream(stream, source, sourceBytes, instrs, blocks, funcs, asmMetadata);
+    }
+
+    return false;
+}
+
+public fn bool BuildModulePackageImageWithAsm(ascii source, mut borrow IrTable<u8[0 max]> buf)
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack mut IrTable<MirGlobal> globals = new();
+    stack mut AsmMetadataTable asmMetadata = new();
+    if (!BuildModulePackageTablesWithAsm(source, instrs, blocks, funcs, asmMetadata))
+    {
+        return false;
+    }
+
+    SerializePackageImageWithAsm(instrs, blocks, funcs, globals, asmMetadata, buf);
+    return true;
 }
 
 // The CHECKED AST module path: the full front-end semantic gate (`SemanticallyValidStream`

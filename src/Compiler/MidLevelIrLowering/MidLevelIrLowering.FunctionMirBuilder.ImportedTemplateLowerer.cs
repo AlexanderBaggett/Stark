@@ -1158,6 +1158,11 @@ internal sealed partial class MidLevelIrLowerer
                 return false;
             }
 
+            if (IsGuardlessEmptyImportedTypedTemplateSwitch(statement))
+            {
+                return true;
+            }
+
             var sections = new (ImportedTemplateTypedSwitchCaseSummary Case, IReadOnlyList<LowerableSwitchLabel> Labels, BasicBlockBuilder EntryBlock, BasicBlockBuilder BodyBlock)[statement.SwitchCases.Count];
             for (var index = 0; index < statement.SwitchCases.Count; index++)
             {
@@ -1254,6 +1259,19 @@ internal sealed partial class MidLevelIrLowerer
             }
 
             CurrentBlock = exitBlock;
+            return true;
+        }
+
+        private static bool IsGuardlessEmptyImportedTypedTemplateSwitch(ImportedTemplateTypedBodyStatementSummary statement)
+        {
+            foreach (var switchCase in statement.SwitchCases)
+            {
+                if (switchCase.GuardExpression is not null || switchCase.Statements.Count != 0)
+                {
+                    return false;
+                }
+            }
+
             return true;
         }
 

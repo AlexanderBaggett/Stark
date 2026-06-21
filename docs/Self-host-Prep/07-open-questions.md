@@ -33,7 +33,7 @@ Each item is phrased as a concrete decision with options and trade-offs.
 
 | Item | Why It Matters |
 |---|---|
-| Package compatibility details | OQ-09/doc `20` require explicit binary package-image compatibility checks for package loading and stage comparisons. This is independent of OQ-13, which rejects a separate snapshot compiler artifact. |
+| Package compatibility details | **Resolved:** package images are compiler-version-local build artifacts during self-host prep. The binary header carries magic + exact format version, mismatches fail with a rebuild-packages diagnostic, bootstrap stages rebuild their own images, and stage comparison uses deterministic inspection/clean-build outputs rather than cross-version package-image compatibility. See [20-package-image-format.md](20-package-image-format.md). |
 
 ## Consistency Notes
 
