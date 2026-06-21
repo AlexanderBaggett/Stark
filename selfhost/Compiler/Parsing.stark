@@ -468,7 +468,7 @@ finite law u32[0 max] FindVariableName(borrow TokenStream stream, u32[0 max] sta
 finite law u32[0 max] FindDeclarationName(borrow TokenStream stream, DeclarationKind kind, u32[0 max] keyword)
 {
     stack mut u32[0 max] nameToken = 0;
-    if (kind == DeclarationKind.GlobalVariable)
+    if (kind == DeclarationKind.GlobalVariable || kind == DeclarationKind.Static)
     {
         nameToken = FindVariableName(stream, (u32[0 max])(keyword + 1));
     }
@@ -1484,6 +1484,8 @@ public struct FunctionSignature
 {
     u32[0 max] NameToken;
     bool IsTailCallable;
+    bool IsFiniteKind;
+    bool IsLawKind;
     // The head identifier token of the return type when it names a user type
     // (e.g. `Foo` in `fn Foo g()` / `List` in `fn List<u32> g()`); 0 when the
     // return type is a built-in (`fn void f()` / `fn i32 n()`).
@@ -1501,6 +1503,11 @@ public struct FunctionSignature
     // type token like `i32`/`bool`, or a user-type identifier), used to classify
     // the parameter's value type. In lockstep with `ParamNameTokens`.
     internal dynamic u32[0 max] ParamTypeTokens;
+    // Per-parameter source token span `[start, end)`, kept so lowering and
+    // semantic checks can classify borrow/out/init mode without reparsing the
+    // enclosing declaration.
+    internal dynamic u32[0 max] ParamStartTokens;
+    internal dynamic u32[0 max] ParamEndTokens;
     internal dynamic u32[0 max] ParamTypeTailCallableFlags;
     u32[0 max] ReturnTypeDeadOnReturnArgumentCount;
     internal dynamic u32[0 max] ParamTypeDeadOnReturnArgumentCounts;
@@ -1510,12 +1517,16 @@ public struct FunctionSignature
     {
         self.NameToken = 0;
         self.IsTailCallable = false;
+        self.IsFiniteKind = false;
+        self.IsLawKind = false;
         self.ReturnTypeHead = 0;
         self.ReturnTypeToken = 0;
         self.ReturnTypeIsTailCallable = false;
         self.ParamNameTokens = new();
         self.ParamTypeHeads = new();
         self.ParamTypeTokens = new();
+        self.ParamStartTokens = new();
+        self.ParamEndTokens = new();
         self.ParamTypeTailCallableFlags = new();
         self.ReturnTypeDeadOnReturnArgumentCount = 0;
         self.ParamTypeDeadOnReturnArgumentCounts = new();
@@ -1530,6 +1541,16 @@ public struct FunctionSignature
     public inline finite law bool TailCallable(borrow FunctionSignature self)
     {
         return self.IsTailCallable;
+    }
+
+    public inline finite law bool FiniteKind(borrow FunctionSignature self)
+    {
+        return self.IsFiniteKind;
+    }
+
+    public inline finite law bool LawKind(borrow FunctionSignature self)
+    {
+        return self.IsLawKind;
     }
 
     // The return type's head identifier token (0 for a built-in return type).
@@ -1605,6 +1626,28 @@ public struct FunctionSignature
         }
 
         return isTail;
+    }
+
+    public law u32[0 max] ParamStartTokenAt(borrow FunctionSignature self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.ParamStartTokens.Length)
+        {
+            token = self.ParamStartTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] ParamEndTokenAt(borrow FunctionSignature self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.ParamEndTokens.Length)
+        {
+            token = self.ParamEndTokens[index];
+        }
+
+        return token;
     }
 
     public law u32[0 max] ParamTypeDeadOnReturnParamCount(borrow FunctionSignature self, u64[0 2 ** 63 - 1] index)
@@ -1710,6 +1753,8 @@ public struct FunctionSignature
         if (!self.ParamNameTokens.TryReserve(1)
             || !self.ParamTypeHeads.TryReserve(1)
             || !self.ParamTypeTokens.TryReserve(1)
+            || !self.ParamStartTokens.TryReserve(1)
+            || !self.ParamEndTokens.TryReserve(1)
             || !self.ParamTypeTailCallableFlags.TryReserve(1)
             || !self.ParamTypeDeadOnReturnArgumentCounts.TryReserve(1))
         {
@@ -1719,6 +1764,8 @@ public struct FunctionSignature
         init self.ParamNameTokens[self.ParamNameTokens.Length] = nameToken;
         init self.ParamTypeHeads[self.ParamTypeHeads.Length] = prevIdentifier;
         init self.ParamTypeTokens[self.ParamTypeTokens.Length] = typeToken;
+        init self.ParamStartTokens[self.ParamStartTokens.Length] = start;
+        init self.ParamEndTokens[self.ParamEndTokens.Length] = end;
         init self.ParamTypeTailCallableFlags[self.ParamTypeTailCallableFlags.Length] = tailFlag;
         init self.ParamTypeDeadOnReturnArgumentCounts[self.ParamTypeDeadOnReturnArgumentCounts.Length] = deadOnReturnArgumentCount;
         return System.Memory.MemoryStatus.Ok;
@@ -1987,6 +2034,50 @@ finite law bool FunctionHasTailModifierBefore(borrow TokenStream stream, u32[0 m
     return false;
 }
 
+finite law bool FunctionHasKeywordModifierBefore(borrow TokenStream stream, u32[0 max] fnKeyword, TokenKind modifierKind)
+{
+    if (fnKeyword == 0)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] cursor = fnKeyword;
+    stack mut u64[0 2 ** 63 - 1] guard = stream.Count();
+    while willexit (cursor > 0 && guard > 0)
+    {
+        guard = (u64[0 2 ** 63 - 1])(guard - 1);
+        stack u32[0 max] previous = (u32[0 max])(cursor - 1);
+        stack TokenKind previousKind = stream.KindAt((u64[0 2 ** 63 - 1])previous);
+
+        if (previousKind == modifierKind)
+        {
+            return true;
+        }
+
+        if (previousKind == TokenKind.RParen)
+        {
+            stack u32[0 max] open = MatchingOpenParenBefore(stream, previous);
+            if (open > 0 && stream.KindAt((u64[0 2 ** 63 - 1])(open - 1)) == TokenKind.Ffi)
+            {
+                cursor = (u32[0 max])(open - 1);
+                continue;
+            }
+
+            return false;
+        }
+
+        if (IsContextualTailToken(stream, previous) || IsDeclarationModifierKind(previousKind))
+        {
+            cursor = previous;
+            continue;
+        }
+
+        return false;
+    }
+
+    return false;
+}
+
 // Parses the signature of the function whose `fn` keyword is at `fnKeyword`: the
 // name (the identifier immediately before the parameter list's `(`) and the
 // parameter names (last identifier of each `,`-separated parameter at
@@ -1996,6 +2087,8 @@ public fn ParseResult<FunctionSignature> ParseFunctionSignature(borrow TokenStre
 {
     stack mut FunctionSignature signature = new();
     signature.IsTailCallable = FunctionHasTailModifierBefore(stream, fnKeyword);
+    signature.IsFiniteKind = FunctionHasKeywordModifierBefore(stream, fnKeyword, TokenKind.Finite);
+    signature.IsLawKind = FunctionHasKeywordModifierBefore(stream, fnKeyword, TokenKind.Law);
     stack mut u32[0 max] index = (u32[0 max])(fnKeyword + 1);
     stack mut u32[0 max] lastIdentifier = 0;
     stack mut u32[0 max] prevIdentifier = 0;
@@ -2363,6 +2456,26 @@ public struct StatementList
     public law u32[0 max] ExprRightAt(borrow StatementList self, u32[0 max] node)
     {
         return self.Expressions.RightAt(node);
+    }
+
+    // The auxiliary child of expression node `node` (currently the else-branch
+    // of a conditional expression), or 0 when none.
+    public law u32[0 max] ExprAuxAt(borrow StatementList self, u32[0 max] node)
+    {
+        return self.Expressions.AuxAt(node);
+    }
+
+    // The argument count carried by a `Call` expression node, or 0 for non-calls.
+    public law u32[0 max] ExprCallArgCountAt(borrow StatementList self, u32[0 max] node)
+    {
+        return self.Expressions.CallArgCount(node);
+    }
+
+    // The 1-based expression node of a `Call`/`New` argument, or 0 when the
+    // expression is not a call/new node or `arg` is out of range.
+    public law u32[0 max] ExprCallArgAt(borrow StatementList self, u32[0 max] node, u32[0 max] arg)
+    {
+        return self.Expressions.CallArgAt(node, arg);
     }
 
     // The block nesting depth of statement `index` (0 at the function-body top

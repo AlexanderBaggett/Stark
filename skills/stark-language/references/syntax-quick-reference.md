@@ -38,7 +38,7 @@ import module internal public export
 Functions and modifiers:
 
 ```text
-fn finite law inline noinline inlinehint hot cold ffi varargs unsafe strictfp asm static
+fn finite law tail inline noinline inlinehint hot cold ffi varargs unsafe strictfp asm static
 ```
 
 Data declarations:
@@ -50,13 +50,13 @@ struct record enum trait doctrine alias drop const from
 Storage and access:
 
 ```text
-stack heap register arena borrow retborrow storeborrow frozen shared out init mut rawptr rawmutptr fnptr sizeof alignof
+stack heap register arena borrow retborrow storeborrow frozen shared out init mut rawptr rawmutptr fnptr sizeof alignof dead_on_return
 ```
 
 Control flow and patterns:
 
 ```text
-if else switch case default when while for infinite non-deterministic willexit return break continue where var try is comptime
+if else switch case default when while for infinite non-deterministic willexit return become break continue where var try is comptime
 ```
 
 Builtins and literals:
@@ -76,6 +76,22 @@ f16 f32 f64 f80 f128
 | `finite` | Guaranteed progress and return, but not pure |
 | `law` | Pure/read-only, no visible side effects |
 | `finite law` | Pure/read-only and guaranteed to return |
+
+`tail` is a callable modifier that composes with any function kind. Use
+`become` for a guaranteed tail-transfer edge; the statement must be a single
+tail-position call to a tail-callable target.
+
+```stark
+tail finite i64[min max] CountDown(i64[0 max] value)
+{
+    if (value == 0)
+    {
+        return 0;
+    }
+
+    become CountDown(value - 1);
+}
+```
 
 The keyword order is fixed:
 
@@ -251,6 +267,7 @@ System.Console.Write   // qualified name
 values[index]          // index
 values[start, length]  // slice/window
 new Box()              // constructor/object creation
+new(arena, count)      // arena-backed dynamic storage allocation
 sizeof(T)              // size query
 alignof(T)             // alignment query
 ```

@@ -257,6 +257,8 @@ internal sealed partial class MidLevelIrLowerer
         var body = loweringContext.ParsedBody;
         var lambdaExpression = loweringContext.LambdaExpression;
         var functionLocation = loweringContext.Location;
+        var hasImportedTypedTemplateBody = lambdaExpression is null
+            && importedTemplateSummary?.TypedBody is { };
 
         using var builder = new FunctionMirBuilder(
             function,
@@ -284,7 +286,7 @@ internal sealed partial class MidLevelIrLowerer
             _materializedSpecializationSymbols,
             function.GenericTypeSubstitution,
             function.GenericValueSubstitution,
-            useImportedTemplateLocalDeclarationFacts: body is null,
+            useImportedTemplateLocalDeclarationFacts: hasImportedTypedTemplateBody,
             _maximumCompileTimeLoopIterations);
 
         _logs.Info(
@@ -302,9 +304,6 @@ internal sealed partial class MidLevelIrLowerer
             outcome: CompilerLogOutcome.Continued,
             verbosity: CompilerLogVerbosity.Verbose);
 
-        var hasImportedTypedTemplateBody = body is null
-            && lambdaExpression is null
-            && importedTemplateSummary?.TypedBody is { };
         var loweredTypedTemplateBody = hasImportedTypedTemplateBody
             && builder.TryLowerImportedTypedTemplateBody(importedTemplateSummary!.TypedBody!);
         if (hasImportedTypedTemplateBody && !loweredTypedTemplateBody)

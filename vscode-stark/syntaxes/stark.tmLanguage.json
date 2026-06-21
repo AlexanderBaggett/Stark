@@ -167,13 +167,13 @@
         },
         {
           "name": "meta.function.declaration.stark",
-          "match": "(?x)\\b((?:(?:inline|noinline|inlinehint|hot|cold|ffi|varargs|unsafe|strictfp|static)\\s+)*)((?:finite\\s+law)|finite|law|fn)\\s+((?:[A-Za-z][A-Za-z0-9_]*(?:\\.[A-Za-z][A-Za-z0-9_]*)*(?:<[^>\\n]+>)?(?:\\[[^\\]\\n]*\\])*|retborrow\\s+(?:mut\\s+)?(?:frozen\\s+)?[A-Za-z][A-Za-z0-9_]*(?:<[^>\\n]+>)?(?:\\[[^\\]\\n]*\\])*|void|bool|ascii|unicode|Ascii|Unicode|[iu](?:8|16|24|32|48|64|96|128|192|256|384|512|768|1024)(?:\\[[^\\]\\n]*\\])?|f(?:16|32|64|80|128)))\\s+([A-Za-z][A-Za-z0-9_]*)",
+          "match": "(?x)\\b((?:(?:inline|noinline|inlinehint|hot|cold|ffi|varargs|unsafe|strictfp|static|tail)\\s+)*)((?:finite\\s+law)|finite|law|fn)\\s+((?:[A-Za-z][A-Za-z0-9_]*(?:\\.[A-Za-z][A-Za-z0-9_]*)*(?:<[^>\\n]+>)?(?:\\[[^\\]\\n]*\\])*|retborrow\\s+(?:mut\\s+)?(?:frozen\\s+)?[A-Za-z][A-Za-z0-9_]*(?:<[^>\\n]+>)?(?:\\[[^\\]\\n]*\\])*|void|bool|ascii|unicode|Ascii|Unicode|[iu](?:8|16|24|32|48|64|96|128|192|256|384|512|768|1024)(?:\\[[^\\]\\n]*\\])?|f(?:16|32|64|80|128)))\\s+([A-Za-z][A-Za-z0-9_]*)",
           "captures": {
             "1": {
               "patterns": [
                 {
                   "name": "keyword.modifier.stark",
-                  "match": "\\b(inline|noinline|inlinehint|hot|cold|ffi|varargs|unsafe|strictfp|static)\\b"
+                  "match": "\\b(inline|noinline|inlinehint|hot|cold|ffi|varargs|unsafe|strictfp|static|tail)\\b"
                 }
               ]
             },
@@ -196,7 +196,7 @@
         },
         {
           "name": "entity.name.function.call.stark",
-          "match": "\\b(?!(?:if|while|for|switch|return|sizeof|alignof|disjoint|overlap|same|asm|clobber|in|out|init|new|case|when)\\b)([A-Za-z][A-Za-z0-9_]*)\\s*(?=\\()",
+          "match": "\\b(?!(?:if|while|for|switch|return|become|sizeof|alignof|disjoint|overlap|same|dead_on_return|asm|clobber|in|out|init|new|case|when)\\b)([A-Za-z][A-Za-z0-9_]*)\\s*(?=\\()",
           "captures": {
             "1": {
               "name": "entity.name.function.call.stark"
@@ -213,7 +213,7 @@
       "patterns": [
         {
           "name": "keyword.control.stark",
-          "match": "\\b(if|else|switch|case|default|when|while|for|return|break|continue|try|is)\\b"
+          "match": "\\b(if|else|switch|case|default|when|while|for|return|become|break|continue|try|is)\\b"
         },
         {
           "name": "keyword.declaration.stark",
@@ -221,7 +221,7 @@
         },
         {
           "name": "keyword.modifier.stark",
-          "match": "\\b(inline|noinline|inlinehint|hot|cold|ffi|varargs|unsafe|strictfp|static|asm|clobber|in|once|assume)\\b"
+          "match": "\\b(inline|noinline|inlinehint|hot|cold|ffi|varargs|unsafe|strictfp|static|tail|asm|clobber|in|once|assume)\\b"
         },
         {
           "name": "keyword.storage.stark",
@@ -229,7 +229,7 @@
         },
         {
           "name": "storage.modifier.ownership.stark",
-          "match": "\\b(borrow|retborrow|storeborrow|frozen|shared|out|init|mut|disjoint|overlap|same)\\b"
+          "match": "\\b(borrow|retborrow|storeborrow|frozen|shared|out|init|mut|disjoint|overlap|same|dead_on_return)\\b"
         },
         {
           "name": "keyword.control.loop-contract.stark",

@@ -767,6 +767,185 @@ fn bool CompileFunctionRangeSignatureLowersToLlvmRangeAttributes()
 }
 
 [Fact]
+fn bool CompileFunctionFiniteLawLowersToStructuredEffectAttributes()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionToLlvm("finite law fn i64[0 10] id(i64[1 5] x) { return x }", sink);
+    return ok
+        && LlvmTextEquals(sink, "define range(i64 0, 11) i64 @main(i64 range(i64 1, 6) %p0) memory(none) nosync nofree willreturn mustprogress norecurse {\nb1:\n  ret i64 %p0\n}\n");
+}
+
+[Fact]
+fn bool CompileFunctionLawAndFiniteKindsLowerSeparately()
+{
+    stack mut OwnedAscii lawSink = new();
+    stack bool lawOk = CompileFunctionToLlvm("law fn i64 read(i64 x) { return x }", lawSink);
+    stack mut OwnedAscii finiteSink = new();
+    stack bool finiteOk = CompileFunctionToLlvm("finite fn i64 one() { return 1 }", finiteSink);
+    return lawOk
+        && finiteOk
+        && LlvmTextEquals(lawSink, "define i64 @main(i64 %p0) memory(none) nosync nofree norecurse {\nb1:\n  ret i64 %p0\n}\n")
+        && LlvmTextEquals(finiteSink, "define i64 @main() willreturn mustprogress norecurse {\nb1:\n  %v1 = add i64 0, 1\n  ret i64 %v1\n}\n");
+}
+
+[Fact]
+fn bool CompileFunctionPointerBorrowsLowerGranularCaptureAttributes()
+{
+    stack mut OwnedAscii borrowed = new();
+    stack bool borrowOk = CompileFunctionToLlvm("fn i64 read(borrow i32 value) { return 1 }", borrowed);
+    stack mut OwnedAscii returned = new();
+    stack bool retOk = CompileFunctionToLlvm("fn i64 echo(retborrow i32 value) { return 1 }", returned);
+    stack mut OwnedAscii stored = new();
+    stack bool storeOk = CompileFunctionToLlvm("fn i64 hold(storeborrow i32 value) { return 1 }", stored);
+    return borrowOk
+        && retOk
+        && storeOk
+        && LlvmTextEquals(borrowed, "define i64 @main(ptr captures(none) readonly %p0) {\nb1:\n  %v1 = add i64 0, 1\n  ret i64 %v1\n}\n")
+        && LlvmTextEquals(returned, "define i64 @main(ptr captures(ret: address, read_provenance) readonly %p0) {\nb1:\n  %v1 = add i64 0, 1\n  ret i64 %v1\n}\n")
+        && LlvmTextEquals(stored, "define i64 @main(ptr captures(address, read_provenance) readonly %p0) {\nb1:\n  %v1 = add i64 0, 1\n  ret i64 %v1\n}\n");
+}
+
+[Fact]
+fn bool CompileFunctionMutableBorrowsLowerProvenanceCaptureAttributes()
+{
+    stack mut OwnedAscii returned = new();
+    stack bool retOk = CompileFunctionToLlvm("fn i64 echo(retborrow mut i32 value) { return 1 }", returned);
+    stack mut OwnedAscii stored = new();
+    stack bool storeOk = CompileFunctionToLlvm("fn i64 hold(storeborrow mut i32 value) { return 1 }", stored);
+    return retOk
+        && storeOk
+        && LlvmTextEquals(returned, "define i64 @main(ptr captures(ret: address, provenance) %p0) {\nb1:\n  %v1 = add i64 0, 1\n  ret i64 %v1\n}\n")
+        && LlvmTextEquals(stored, "define i64 @main(ptr captures(address, provenance) %p0) {\nb1:\n  %v1 = add i64 0, 1\n  ret i64 %v1\n}\n");
+}
+
+[Fact]
+fn bool CompileFunctionOutAndInitLowerInitializationAttributes()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionToLlvm("fn i64 write(out i32 value, init i64 next) { return 1 }", sink);
+    return ok
+        && LlvmTextEquals(sink, "define i64 @main(ptr captures(none) writeonly writable initializes((0, 4)) %p0, ptr captures(none) writeonly writable initializes((0, 8)) %p1) {\nb1:\n  call void @llvm.assume(i1 true) [\"separate_storage\"(ptr %p0, ptr %p1)]\n  %v1 = add i64 0, 1\n  ret i64 %v1\n}\n");
+}
+
+[Fact]
+fn bool CompileFunctionDeadOnReturnRequiresExplicitPointerContract()
+{
+    stack mut OwnedAscii destroy = new();
+    stack bool destroyOk = CompileFunctionToLlvm("fn i64 destroy(out i32 value) where dead_on_return(value) { return 1 }", destroy);
+    stack mut OwnedAscii normalOut = new();
+    stack bool normalOk = CompileFunctionToLlvm("fn i64 write(out i32 value) { return 1 }", normalOut);
+    stack mut OwnedAscii scalar = new();
+    stack mut OwnedAscii missing = new();
+    return destroyOk
+        && normalOk
+        && LlvmTextEquals(destroy, "define i64 @main(ptr captures(none) writeonly writable initializes((0, 4)) dead_on_return %p0) {\nb1:\n  %v1 = add i64 0, 1\n  ret i64 %v1\n}\n")
+        && !System.Text.Contains(normalOut.View(), "dead_on_return")
+        && !CompileFunctionToLlvm("fn i64 bad(i64 value) where dead_on_return(value) { return 1 }", scalar)
+        && !CompileFunctionToLlvm("fn i64 bad(out i32 value) where dead_on_return(missing) { return 1 }", missing);
+}
+
+[Fact]
+fn bool CompileFunctionWholePointerParamsEmitSeparateStorageAssume()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionToLlvm("fn i64 read2(borrow i32 left, borrow i32 right) { return 1 }", sink);
+    return ok
+        && LlvmTextEquals(sink, "define i64 @main(ptr captures(none) readonly %p0, ptr captures(none) readonly %p1) {\nb1:\n  call void @llvm.assume(i1 true) [\"separate_storage\"(ptr %p0, ptr %p1)]\n  %v1 = add i64 0, 1\n  ret i64 %v1\n}\n")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionWholeOverlapSuppressesSeparateStorageAssume()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionToLlvm("fn i64 read2(borrow i32 left, borrow i32 right) where overlap(left, right) { return 1 }", sink);
+    return ok
+        && LlvmTextEquals(sink, "define i64 @main(ptr captures(none) readonly %p0, ptr captures(none) readonly %p1) {\nb1:\n  %v1 = add i64 0, 1\n  ret i64 %v1\n}\n");
+}
+
+[Fact]
+fn bool CompileFunctionSubrangeDisjointDoesNotBecomeSeparateStorageAssume()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionToLlvm("fn i64 read2(borrow i32 left, borrow i32 right, i64 count) where overlap(left, right), disjoint(left[0, count], right[0, count]) { return 1 }", sink);
+    return ok
+        && !System.Text.Contains(sink.View(), "separate_storage");
+}
+
+[Fact]
+fn bool CompileFunctionPointerAttributesCoexistWithScalarRangeFacts()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionToLlvm("fn i64[0 10] mixed(i64[1 5] x, borrow i32 ptr) { return x }", sink);
+    return ok
+        && LlvmTextEquals(sink, "define range(i64 0, 11) i64 @main(i64 range(i64 1, 6) %p0, ptr captures(none) readonly %p1) {\nb1:\n  ret i64 %p0\n}\n");
+}
+
+[Fact]
+fn bool CompileFunctionRejectsPointerParamsAsIntegerValues()
+{
+    stack mut OwnedAscii borrowValue = new();
+    stack mut OwnedAscii outValue = new();
+    return !CompileFunctionToLlvm("fn i64 bad(borrow i32 value) { return value }", borrowValue)
+        && !CompileFunctionToLlvm("fn i64 bad(out i32 value) { return value }", outValue);
+}
+
+[Fact]
+fn bool CompileModulePointerParametersLowerGranularAttributes()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAst("fn i64 read(borrow i32 value) { return 1 } fn i64 main() { return 0 }", sink);
+    return ok
+        && LlvmTextEquals(sink, "define i64 @f1(ptr captures(none) readonly %p0) {\nb1:\n  %v1 = add i64 0, 1\n  ret i64 %v1\n}\ndefine i64 @f2() {\nb1:\n  %v1 = add i64 0, 0\n  ret i64 %v1\n}\n");
+}
+
+[Fact]
+fn bool CompileModuleWholePointerParamsEmitSeparateStorageAssume()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAst("fn i64 read2(borrow i32 left, borrow i32 right) { return 1 } fn i64 main() { return 0 }", sink);
+    return ok
+        && LlvmTextEquals(sink, "define i64 @f1(ptr captures(none) readonly %p0, ptr captures(none) readonly %p1) {\nb1:\n  call void @llvm.assume(i1 true) [\"separate_storage\"(ptr %p0, ptr %p1)]\n  %v1 = add i64 0, 1\n  ret i64 %v1\n}\ndefine i64 @f2() {\nb1:\n  %v1 = add i64 0, 0\n  ret i64 %v1\n}\n")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileModuleFiniteLawLowersNumberedFunctionEffectAttributes()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAst("finite law fn id(x) { return x } fn main() { return id(7) }", sink);
+    return ok
+        && LlvmTextEquals(sink, "define i64 @f1(i64 %p0) memory(none) nosync nofree willreturn mustprogress norecurse {\nb1:\n  ret i64 %p0\n}\ndefine i64 @f2() {\nb1:\n  %v1 = add i64 0, 7\n  %v2 = call i64 @f1(i64 %v1)\n  ret i64 %v2\n}\n");
+}
+
+[Fact]
+fn bool CompileModuleFiniteLawBranchLowersBlockEffectAttributes()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAst("finite law fn pick(x, y) { if x < y return x else return y }", sink);
+    return ok
+        && LlvmTextEquals(sink, "define i64 @f1(i64 %p0, i64 %p1) memory(none) nosync nofree willreturn mustprogress norecurse {\nb1:\n  %v3 = icmp slt i64 %p0, %p1\n  br i1 %v3, label %b2, label %b3\nb2:\n  ret i64 %p0\nb3:\n  ret i64 %p1\n}\n");
+}
+
+[Fact]
+fn bool CompileModuleFiniteEffectsPropagateThroughProvenDirectCalls()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAst("finite fn one() { return 1 } finite fn two() { return one() }", sink);
+    return ok
+        && LlvmTextEquals(sink, "define i64 @f1() willreturn mustprogress norecurse {\nb1:\n  %v1 = add i64 0, 1\n  ret i64 %v1\n}\ndefine i64 @f2() willreturn mustprogress norecurse {\nb1:\n  %v1 = call i64 @f1()\n  ret i64 %v1\n}\n");
+}
+
+[Fact]
+fn bool CompileModuleLawEffectsPropagateThroughProvenDirectCalls()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAst("law fn id(x) { return x } law fn wrap(x) { return id(x) }", sink);
+    return ok
+        && LlvmTextEquals(sink, "define i64 @f1(i64 %p0) memory(none) nosync nofree norecurse {\nb1:\n  ret i64 %p0\n}\ndefine i64 @f2(i64 %p0) memory(read) nosync nofree norecurse {\nb1:\n  %v2 = call i64 @f1(i64 %p0)\n  ret i64 %v2\n}\n");
+}
+
+[Fact]
 fn bool EmitsLlvmTailCallTerminator()
 {
     stack mut IrTable<MirInstruction> instrs = new();
@@ -781,6 +960,24 @@ fn bool EmitsLlvmTailCallTerminator()
     {
         case MemoryStatus.Ok:
             return LlvmTextEquals(sink, "define tailcc i64 @fwd(i64 %p0) {\nb1:\n  %v2 = musttail call tailcc i64 @f1(i64 %p0)\n  ret i64 %v2\n}\n");
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+[Fact]
+fn bool TailCallTerminatorRequiresTailCallableCallee()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack MirValueId tail = MirTailCall(instrs, MirFuncIdOf(1));
+    stack mut IrTable<MirBlock> blocks = new();
+    stack MirBlockId entry = MirTailCallBlock(blocks, tail);
+    stack mut IrTable<u32[0 max]> noTailFlags = new();
+    stack mut OwnedAscii sink = new();
+    switch (EmitLlvmDefinitionWithParamsTail(instrs, noTailFlags, blocks, "bad", 0, entry.Index(), 1, 1, sink))
+    {
+        case MemoryStatus.Ok:
+            return LlvmTextEquals(sink, "define tailcc i64 @bad() {\nb1:\n  unreachable\n}\n");
         case MemoryStatus.Err(var error):
             return false;
     }
@@ -1975,12 +2172,203 @@ fn bool CompilesTailBecomeFromAst()
 }
 
 [Fact]
+fn bool CompilesZeroArgumentTailBecomeFromAst()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAstChecked("tail fn done() { return 7 } tail fn bounce() { become done() } fn main() { return bounce() }", sink);
+    return ok
+        && LlvmTextEquals(sink, "define tailcc i64 @f1() {\nb1:\n  %v1 = add i64 0, 7\n  ret i64 %v1\n}\ndefine tailcc i64 @f2() {\nb1:\n  %v1 = musttail call tailcc i64 @f1()\n  ret i64 %v1\n}\ndefine i64 @f3() {\nb1:\n  %v1 = call tailcc i64 @f2()\n  ret i64 %v1\n}\n")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompilesThreeAndFourArgumentTailBecomeFromAst()
+{
+    stack mut OwnedAscii three = new();
+    stack bool threeOk = CompileModuleFromAstChecked("tail fn add3(a, b, c) { return a + b + c } tail fn bounce3(a, b, c) { become add3(a, b, c) } fn main() { return bounce3(1, 2, 3) }", three);
+    stack mut OwnedAscii four = new();
+    stack bool fourOk = CompileModuleFromAstChecked("tail fn add4(a, b, c, d) { return a + b + c + d } tail fn bounce4(a, b, c, d) { become add4(a, b, c, d) } fn main() { return bounce4(1, 2, 3, 4) }", four);
+    return threeOk
+        && System.Text.Contains(three.View(), "musttail call tailcc i64 @f1(i64 %p0, i64 %p1, i64 %p2)\n  ret i64")
+        && System.Text.Contains(three.View(), "call tailcc i64 @f2(i64 %v1, i64 %v2, i64 %v3)")
+        && ClangVerifiesLlvmText(three)
+        && fourOk
+        && System.Text.Contains(four.View(), "musttail call tailcc i64 @f1(i64 %p0, i64 %p1, i64 %p2, i64 %p3)\n  ret i64")
+        && System.Text.Contains(four.View(), "call tailcc i64 @f2(i64 %v1, i64 %v2, i64 %v3, i64 %v4)")
+        && ClangVerifiesLlvmText(four);
+}
+
+[Fact]
+fn bool RejectsBecomeToUnsupportedBooleanRoot()
+{
+    stack mut OwnedAscii sink = new();
+    return !CompileModuleFromAst("tail fn bad(a, b) { become a < b }", sink);
+}
+
+[Fact]
 fn bool CompilesTailRecursiveBranchFromAst()
 {
     stack mut OwnedAscii sink = new();
     stack bool ok = CompileModuleFromAstChecked("tail fn count(n, acc) { if n == 0 return acc else become count(n - 1, acc + 1) } fn main() { return count(3, 0) }", sink);
     return ok
         && LlvmTextEquals(sink, "define tailcc i64 @f1(i64 %p0, i64 %p1) {\nb1:\n  %v2 = add i64 0, 0\n  %v3 = icmp eq i64 %p0, %v2\n  br i1 %v3, label %b2, label %b3\nb2:\n  ret i64 %p1\nb3:\n  %v6 = add i64 0, 1\n  %v7 = sub i64 %p0, %v6\n  %v9 = add i64 0, 1\n  %v10 = add i64 %p1, %v9\n  %v11 = musttail call tailcc i64 @f1(i64 %v7, i64 %v10)\n  ret i64 %v11\n}\ndefine i64 @f2() {\nb1:\n  %v1 = add i64 0, 3\n  %v2 = add i64 0, 0\n  %v3 = call tailcc i64 @f1(i64 %v1, i64 %v2)\n  ret i64 %v3\n}\n");
+}
+
+[Fact]
+fn bool CompileFunctionArenaLocalLowersFrameAndAllocatorFacts()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm("struct Box { i32 value; bool flag; } fn i64 main() { arena Box box = new Box(); return 7 }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "declare noalias nonnull noundef ptr @__stark_arena_alloc(ptr captures(none) %frame, i64 noundef %size, i64 noundef allocalign %alignment) allocsize(1) allockind(\"alloc,uninitialized,aligned\") \"alloc-family\"=\"__stark_arena_alloc\" nounwind")
+        && System.Text.Contains(sink.View(), "%__stark_arena_frame = alloca { ptr, ptr, ptr }, align 8")
+        && System.Text.Contains(sink.View(), "call noalias nonnull noundef align 4 dereferenceable(8) ptr @__stark_arena_alloc(ptr nonnull %__stark_arena_frame, i64 noundef 8, i64 noundef 4)")
+        && System.Text.Contains(sink.View(), "call void @__stark_arena_leave(ptr nonnull %__stark_arena_frame)\n  ret i64 %v3")
+        && !System.Text.Contains(sink.View(), "@__stark_runtime_alloc")
+        && !System.Text.Contains(sink.View(), "@__stark_runtime_realloc")
+        && !System.Text.Contains(sink.View(), "@__stark_heap_alloc")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionArenaSelectorNewLowersConstantCapacityAllocation()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm("finite fn i64 main() { stack dynamic i8 bytes = new(arena, 32, 16); return 5 }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "= alloca { ptr, i64, i64 }, align 8")
+        && System.Text.Contains(sink.View(), "call noalias nonnull noundef align 16 dereferenceable(32) ptr @__stark_arena_alloc(ptr nonnull %__stark_arena_frame, i64 noundef 32, i64 noundef 16)")
+        && System.Text.Contains(sink.View(), "store { ptr, i64, i64 }")
+        && System.Text.Contains(sink.View(), "allocsize(1)")
+        && System.Text.Contains(sink.View(), "allocalign %alignment")
+        && System.Text.Contains(sink.View(), "willreturn mustprogress norecurse")
+        && !System.Text.Contains(sink.View(), "@__stark_dynamic_alloc")
+        && !System.Text.Contains(sink.View(), "@__stark_runtime_realloc")
+        && !System.Text.Contains(sink.View(), "@__stark_runtime_free")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionArenaDynamicReserveEmitsGrowCopyHelper()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm("finite fn i64 main() { stack mut dynamic u64 values = new(arena, 1); values.Reserve(8); return 5 }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define internal void @__stark_arena_dynamic_reserve")
+        && System.Text.Contains(sink.View(), "call void @__stark_arena_dynamic_reserve(ptr nonnull %__stark_arena_frame")
+        && System.Text.Contains(sink.View(), "i64 noundef 8, i64 noundef 8, i64 noundef 8")
+        && System.Text.Contains(sink.View(), "call void @llvm.memcpy.p0.p0.i64")
+        && System.Text.Contains(sink.View(), "call noalias nonnull noundef ptr @__stark_arena_alloc")
+        && !System.Text.Contains(sink.View(), "@__stark_runtime_realloc")
+        && !System.Text.Contains(sink.View(), "@__stark_runtime_try_realloc")
+        && !System.Text.Contains(sink.View(), "@__stark_runtime_free")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionArenaDynamicTryReserveEmitsFallibleGrowCopyHelper()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm("finite fn i64 main() { stack mut dynamic u64 values = new(arena, 1); values.TryReserve(8); return 5 }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define internal i1 @__stark_arena_dynamic_try_reserve")
+        && System.Text.Contains(sink.View(), " = call i1 @__stark_arena_dynamic_try_reserve(ptr nonnull %__stark_arena_frame")
+        && System.Text.Contains(sink.View(), "call noalias noundef ptr @__stark_arena_try_alloc")
+        && System.Text.Contains(sink.View(), "call void @llvm.memcpy.p0.p0.i64")
+        && System.Text.Contains(sink.View(), "ret i1 false")
+        && !System.Text.Contains(sink.View(), "@__stark_runtime_realloc")
+        && !System.Text.Contains(sink.View(), "@__stark_runtime_try_realloc")
+        && !System.Text.Contains(sink.View(), "@__stark_runtime_free")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileFunctionArenaDynamicTryReserveCapacityEmitsExactGrowCopyHelper()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileFunctionWithLocalsToLlvm("finite fn i64 main() { stack mut dynamic u64 values = new(arena, 1); values.TryReserveCapacity(16); return 5 }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "define internal i1 @__stark_arena_dynamic_try_reserve_capacity")
+        && System.Text.Contains(sink.View(), " = call i1 @__stark_arena_dynamic_try_reserve_capacity(ptr nonnull %__stark_arena_frame")
+        && System.Text.Contains(sink.View(), "i64 noundef 16, i64 noundef 8, i64 noundef 8")
+        && System.Text.Contains(sink.View(), "call noalias noundef ptr @__stark_arena_try_alloc")
+        && System.Text.Contains(sink.View(), "call void @llvm.memcpy.p0.p0.i64")
+        && !System.Text.Contains(sink.View(), "@__stark_runtime_realloc")
+        && !System.Text.Contains(sink.View(), "@__stark_runtime_try_realloc")
+        && !System.Text.Contains(sink.View(), "@__stark_runtime_free")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool CompileModuleWithMultipleArenaFunctionsEmitsValidSinglePreamble()
+{
+    stack mut OwnedAscii sink = new();
+    stack bool ok = CompileModuleFromAst("struct Box { i64 value; } fn first() { arena Box box = new Box(); return 1 } fn second() { arena Box other = new Box(); return 2 }", sink);
+    return ok
+        && System.Text.Contains(sink.View(), "declare noalias nonnull noundef ptr @__stark_arena_alloc")
+        && System.Text.Contains(sink.View(), "define i64 @f1()")
+        && System.Text.Contains(sink.View(), "define i64 @f2()")
+        && ClangVerifiesLlvmText(sink);
+}
+
+[Fact]
+fn bool RejectsArenaAllocationInSelfHostedLawLowering()
+{
+    stack mut OwnedAscii sink = new();
+    return !CompileFunctionWithLocalsToLlvm("law fn i64 main() { arena i64 slot = new(); return 1 }", sink);
+}
+
+[Fact]
+fn bool BinaryRoundTripsArenaAllocInstruction()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack MirValueId enter = MirArenaFrameEnter(instrs);
+    stack MirValueId alloc = MirArenaAlloc(instrs, 64, 8);
+    stack MirValueId leave = MirArenaFrameLeave(instrs);
+    stack mut IrTable<u8[0 max]> buf = new();
+    SerializeInstructions(instrs, 1, 3, buf);
+    stack mut IrTable<MirInstruction> back = new();
+    DeserializeInstructions(buf, back);
+    stack MirInstruction allocBack = back.Get(2);
+    return back.Count() == 3
+        && MirOpcodeOf(back, MirValueIdOf(1)) == MirOp.ArenaFrameEnter
+        && MirOpcodeOf(back, MirValueIdOf(2)) == MirOp.ArenaAlloc
+        && MirValueType(back, 2) == MirType.Ptr
+        && allocBack.Immediate() == 64
+        && allocBack.OperandAIndex() == 8
+        && MirOpcodeOf(back, MirValueIdOf(3)) == MirOp.ArenaFrameLeave;
+}
+
+[Fact]
+fn bool BinaryRoundTripsArenaDynamicInstructions()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack MirValueId owner = MirArenaDynamicStorageInit(instrs, 4, 8, 16);
+    stack MirValueId reserve = MirArenaDynamicStorageReserve(instrs, owner, 3, 8, 16);
+    stack MirValueId tryReserve = MirArenaDynamicStorageTryReserve(instrs, owner, 5, 8, 16);
+    stack MirValueId tryReserveCapacity = MirArenaDynamicStorageTryReserveCapacity(instrs, owner, 9, 8, 16);
+    stack mut IrTable<u8[0 max]> buf = new();
+    SerializeInstructions(instrs, 1, 4, buf);
+    stack mut IrTable<MirInstruction> back = new();
+    DeserializeInstructions(buf, back);
+    stack MirInstruction initBack = back.Get(1);
+    stack MirInstruction reserveBack = back.Get(2);
+    stack MirInstruction tryReserveBack = back.Get(3);
+    stack MirInstruction tryReserveCapacityBack = back.Get(4);
+    return back.Count() == 4
+        && initBack.Opcode() == MirOp.ArenaDynamicStorageInit
+        && initBack.Immediate() == 4
+        && initBack.OperandAIndex() == 8
+        && initBack.OperandBIndex() == 16
+        && initBack.ResultType() == MirType.Ptr
+        && reserveBack.Opcode() == MirOp.ArenaDynamicStorageReserve
+        && reserveBack.OperandAIndex() == owner.Index()
+        && reserveBack.Immediate() == 3
+        && tryReserveBack.Opcode() == MirOp.ArenaDynamicStorageTryReserve
+        && tryReserveBack.ResultType() == MirType.I1
+        && tryReserveCapacityBack.Opcode() == MirOp.ArenaDynamicStorageTryReserveCapacity
+        && tryReserveCapacityBack.Immediate() == 9
+        && tryReserveCapacityBack.ResultType() == MirType.I1;
 }
 
 [Fact]
