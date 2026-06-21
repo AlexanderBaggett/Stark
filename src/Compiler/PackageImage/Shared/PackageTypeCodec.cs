@@ -20,6 +20,7 @@ internal static partial class PackageImageBuilder
         var callableFunctionKind = GetPackageCallableFunctionKind(type);
         var callableReturnType = GetCallableReturnType(type);
         var callableParameterTypes = GetCallableParameterTypes(type);
+        var callableIsTailCallable = IsPackageCallableTailCallable(type);
         return new StarkPackageTypeReference(
             type.Kind.ToString().ToLowerInvariant(),
             Name: normalizedNamedType,
@@ -46,6 +47,7 @@ internal static partial class PackageImageBuilder
                 ? StarkFfiAbiFacts.DisplayName(functionPointerAbi)
                 : null,
             FunctionIsUnsafe: type.Kind == StarkTypeKind.FunctionPointer && type.FunctionPointerIsUnsafe ? true : null,
+            FunctionIsTailCallable: callableIsTailCallable ? true : null,
             ClosureStorageKind: type.Kind == StarkTypeKind.Closure ? RenderPackageClosureStorageKind(type.ClosureStorageKind) : null,
             ClosureCallCapability: type.Kind == StarkTypeKind.Closure ? RenderPackageClosureCallCapability(type.ClosureCallCapability) : null,
             DynTraitStorageKind: type.Kind == StarkTypeKind.DynTrait ? RenderPackageDynTraitStorageKind(type.DynTraitStorageKind) : null,
@@ -58,6 +60,7 @@ internal static partial class PackageImageBuilder
             ParameterRawPointerElementCountExpressions: GetCallableRawPointerElementCountExpressions(type),
             OverlapParameterGroups: BuildParameterOverlapGroupManifests(GetCallableOverlapParameterGroups(type)),
             SameParameterGroups: BuildParameterSameGroupManifests(GetCallableSameParameterGroups(type)),
+            PointeeDeadOnReturnParameterNames: GetCallablePointeeDeadOnReturnParameterNames(type),
             AssociatedOwnerType: type.AssociatedTypeOwner is null
                 ? null
                 : BuildPublishedAbiTypeReference(type.AssociatedTypeOwner, moduleName, localNamedTypes),
@@ -149,6 +152,7 @@ internal static partial class PackageImageBuilder
         var callableFunctionKind = GetPackageCallableFunctionKind(type);
         var callableReturnType = GetCallableReturnType(type);
         var callableParameterTypes = GetCallableParameterTypes(type);
+        var callableIsTailCallable = IsPackageCallableTailCallable(type);
         return new StarkPackageTypeReference(
             type.Kind.ToString().ToLowerInvariant(),
             Name: normalizedNamedType,
@@ -175,6 +179,7 @@ internal static partial class PackageImageBuilder
                 ? StarkFfiAbiFacts.DisplayName(functionPointerAbi)
                 : null,
             FunctionIsUnsafe: type.Kind == StarkTypeKind.FunctionPointer && type.FunctionPointerIsUnsafe ? true : null,
+            FunctionIsTailCallable: callableIsTailCallable ? true : null,
             ClosureStorageKind: type.Kind == StarkTypeKind.Closure ? RenderPackageClosureStorageKind(type.ClosureStorageKind) : null,
             ClosureCallCapability: type.Kind == StarkTypeKind.Closure ? RenderPackageClosureCallCapability(type.ClosureCallCapability) : null,
             DynTraitStorageKind: type.Kind == StarkTypeKind.DynTrait ? RenderPackageDynTraitStorageKind(type.DynTraitStorageKind) : null,
@@ -187,6 +192,7 @@ internal static partial class PackageImageBuilder
             ParameterRawPointerElementCountExpressions: GetCallableRawPointerElementCountExpressions(type),
             OverlapParameterGroups: BuildParameterOverlapGroupManifests(GetCallableOverlapParameterGroups(type)),
             SameParameterGroups: BuildParameterSameGroupManifests(GetCallableSameParameterGroups(type)),
+            PointeeDeadOnReturnParameterNames: GetCallablePointeeDeadOnReturnParameterNames(type),
             AssociatedOwnerType: type.AssociatedTypeOwner is null
                 ? null
                 : BuildTypeReference(type.AssociatedTypeOwner, moduleName, stripCurrentModulePrefix),
@@ -247,6 +253,16 @@ internal static partial class PackageImageBuilder
         };
     }
 
+    private static bool IsPackageCallableTailCallable(StarkTypeSymbol type)
+    {
+        return type.Kind switch
+        {
+            StarkTypeKind.FunctionPointer => type.FunctionPointerIsTailCallable,
+            StarkTypeKind.Closure => type.ClosureIsTailCallable,
+            _ => false
+        };
+    }
+
     private static StarkTypeSymbol? GetCallableReturnType(StarkTypeSymbol type)
     {
         return type.Kind switch
@@ -295,6 +311,17 @@ internal static partial class PackageImageBuilder
             StarkTypeKind.Closure => type.ClosureSameParameterGroups ?? [],
             _ => []
         };
+    }
+
+    private static IReadOnlyList<string>? GetCallablePointeeDeadOnReturnParameterNames(StarkTypeSymbol type)
+    {
+        var names = type.Kind switch
+        {
+            StarkTypeKind.FunctionPointer => type.FunctionPointerPointeeDeadOnReturnParameterNames ?? [],
+            StarkTypeKind.Closure => type.ClosurePointeeDeadOnReturnParameterNames ?? [],
+            _ => []
+        };
+        return names.Count == 0 ? null : names.ToArray();
     }
 
     private static string RenderPackageFunctionKind(StarkFunctionKind kind)
@@ -605,7 +632,9 @@ internal static partial class PackageImageLoader
                 BuildParameterSameGroups(type.SameParameterGroups),
                 type.ParameterRawPointerElementCountExpressions,
                 ParsePackageFfiAbi(type.FunctionAbi),
-                type.FunctionIsUnsafe == true),
+                type.FunctionIsUnsafe == true,
+                type.FunctionIsTailCallable == true,
+                type.PointeeDeadOnReturnParameterNames),
             "closure" when type.ReturnType is not null => StarkTypeSymbols.Closure(
                 ParsePackageClosureStorageKind(type.ClosureStorageKind),
                 ParsePackageClosureCallCapability(type.ClosureCallCapability),
@@ -615,7 +644,9 @@ internal static partial class PackageImageLoader
                 BuildTypeReferenceParameterDisjointGroups(type.DisjointParameterGroups),
                 BuildParameterOverlapGroups(type.OverlapParameterGroups),
                 BuildParameterSameGroups(type.SameParameterGroups),
-                type.ParameterRawPointerElementCountExpressions),
+                type.ParameterRawPointerElementCountExpressions,
+                type.FunctionIsTailCallable == true,
+                type.PointeeDeadOnReturnParameterNames),
             "dyntrait" => StarkTypeSymbols.DynTrait(
                 normalizedNamedType ?? "<unnamed>",
                 ParsePackageDynTraitStorageKind(type.DynTraitStorageKind),
@@ -820,8 +851,8 @@ internal static partial class PackageImageLoader
             "fixedarray" => $"{RenderTypeReference(type.ElementType!)}[{(type.FixedLength is { } fixedLength ? fixedLength.ToString() : type.FixedLengthParameterName ?? "?")}]",
             "slice" => $"{RenderTypeReference(type.ElementType!)}[]",
             "dynamic" => $"dynamic {RenderTypeReference(type.ElementType!)}",
-            "functionpointer" => $"fnptr<{RenderTypeReferenceFunctionSafetyPrefix(type.FunctionIsUnsafe)}{RenderTypeReferenceFunctionAbi(type.FunctionAbi)}{RenderTypeReferenceFunctionKind(type.FunctionKind)} {RenderTypeReference(type.ReturnType!)}({string.Join(", ", (type.ParameterTypes ?? []).Select((parameter, index) => RenderFunctionPointerParameterTypeReference(parameter, type.ParameterRawPointerElementCountExpressions, index)))}){RenderFunctionPointerMemoryContracts(type)}>",
-            "closure" => $"{RenderClosureStoragePrefix(type.ClosureStorageKind)}closure<{RenderClosureCallCapabilityPrefix(type.ClosureCallCapability)}{RenderTypeReferenceFunctionKind(type.FunctionKind)} {RenderTypeReference(type.ReturnType!)}({string.Join(", ", (type.ParameterTypes ?? []).Select((parameter, index) => RenderFunctionPointerParameterTypeReference(parameter, type.ParameterRawPointerElementCountExpressions, index)))}){RenderFunctionPointerMemoryContracts(type)}>",
+            "functionpointer" => $"fnptr<{RenderTypeReferenceFunctionSafetyPrefix(type.FunctionIsUnsafe)}{RenderTypeReferenceFunctionAbi(type.FunctionAbi)}{RenderTypeReferenceFunctionTailPrefix(type.FunctionIsTailCallable)}{RenderTypeReferenceFunctionKind(type.FunctionKind)} {RenderTypeReference(type.ReturnType!)}({string.Join(", ", (type.ParameterTypes ?? []).Select((parameter, index) => RenderFunctionPointerParameterTypeReference(parameter, type.ParameterRawPointerElementCountExpressions, index)))}){RenderFunctionPointerMemoryContracts(type)}>",
+            "closure" => $"{RenderClosureStoragePrefix(type.ClosureStorageKind)}closure<{RenderClosureCallCapabilityPrefix(type.ClosureCallCapability)}{RenderTypeReferenceFunctionTailPrefix(type.FunctionIsTailCallable)}{RenderTypeReferenceFunctionKind(type.FunctionKind)} {RenderTypeReference(type.ReturnType!)}({string.Join(", ", (type.ParameterTypes ?? []).Select((parameter, index) => RenderFunctionPointerParameterTypeReference(parameter, type.ParameterRawPointerElementCountExpressions, index)))}){RenderFunctionPointerMemoryContracts(type)}>",
             "dyntrait" when type.TypeArguments is { Count: > 0 } || type.ComptimeValueArguments is { Count: > 0 }
                 => $"{RenderDynTraitStoragePrefix(type.DynTraitStorageKind)}dyn {type.Name}<{RenderTypeReferenceGenericArguments(type)}>",
             "dyntrait" => $"{RenderDynTraitStoragePrefix(type.DynTraitStorageKind)}dyn {type.Name ?? "<unnamed>"}",
@@ -859,6 +890,11 @@ internal static partial class PackageImageLoader
             "finite law" or "finitelaw" => "finite law",
             _ => "fn"
         };
+    }
+
+    private static string RenderTypeReferenceFunctionTailPrefix(bool? isTailCallable)
+    {
+        return isTailCallable == true ? "tail " : string.Empty;
     }
 
     private static string RenderTypeReferenceFunctionAbi(string? functionAbi)
@@ -919,6 +955,10 @@ internal static partial class PackageImageLoader
         var clauses = new List<string>();
         AppendFunctionPointerMemoryContractClauses(clauses, "overlap", type.OverlapParameterGroups);
         AppendFunctionPointerMemoryContractClauses(clauses, "same", type.SameParameterGroups);
+        clauses.AddRange((type.PointeeDeadOnReturnParameterNames ?? [])
+            .Where(static name => !string.IsNullOrWhiteSpace(name))
+            .Distinct(StringComparer.Ordinal)
+            .Select(static name => $"dead_on_return({name})"));
         return clauses.Count == 0
             ? string.Empty
             : $" where {string.Join(", ", clauses)}";

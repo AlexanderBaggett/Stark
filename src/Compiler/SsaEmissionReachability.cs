@@ -79,6 +79,9 @@ internal static class SsaFunctionReferenceWalker
             case SsaStoreGlobalInstruction storeGlobal:
                 CollectReferencedFunctions(storeGlobal.Value, referencedFunctions);
                 break;
+            case SsaArenaFrameEnterInstruction:
+            case SsaArenaFrameLeaveInstruction:
+                break;
         }
     }
 

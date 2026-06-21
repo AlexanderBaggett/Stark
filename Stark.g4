@@ -1,5 +1,13 @@
 grammar Stark;
 
+@parser::members
+{
+    private bool IsContextualKeyword(string text)
+    {
+        return string.Equals(CurrentToken.Text, text, StringComparison.Ordinal);
+    }
+}
+
 compilationUnit
     : importDeclaration* moduleDeclaration topLevelDeclaration* EOF
     ;
@@ -67,6 +75,7 @@ functionModifier
     : INLINE
     | NOINLINE
     | INLINEHINT
+    | tailKeyword
     | HOT
     | COLD
     | ffiModifier
@@ -124,6 +133,7 @@ parameterMemoryContract
     : disjointContract
     | overlapContract
     | sameContract
+    | deadOnReturnContract
     | lawPredicateContract
     | valueContract
     ;
@@ -149,6 +159,10 @@ overlapContract
 
 sameContract
     : SAME LPAREN expressionList RPAREN
+    ;
+
+deadOnReturnContract
+    : {IsContextualKeyword("dead_on_return")}? Identifier LPAREN expressionList RPAREN
     ;
 
 lawPredicateContract
@@ -428,7 +442,7 @@ functionPointerType
     ;
 
 functionPointerSignature
-    : UNSAFE? functionPointerAbiModifier? functionKind returnType functionPointerParameterList parameterMemoryContractClause*
+    : UNSAFE? functionPointerAbiModifier? tailKeyword? functionKind returnType functionPointerParameterList parameterMemoryContractClause*
     ;
 
 functionPointerAbiModifier
@@ -445,7 +459,11 @@ closureStoragePrefix
     ;
 
 closureSignature
-    : closureCallCapability? functionKind returnType functionPointerParameterList parameterMemoryContractClause*
+    : closureCallCapability? tailKeyword? functionKind returnType functionPointerParameterList parameterMemoryContractClause*
+    ;
+
+tailKeyword
+    : {IsContextualKeyword("tail")}? Identifier
     ;
 
 closureCallCapability
@@ -522,6 +540,7 @@ statement
     | whileStatement
     | forStatement
     | returnStatement
+    | becomeStatement
     | breakStatement
     | continueStatement
     | expressionStatement
@@ -629,6 +648,10 @@ weightSpecifier
 
 returnStatement
     : RETURN expression? SEMI
+    ;
+
+becomeStatement
+    : BECOME expression SEMI
     ;
 
 breakStatement
@@ -860,7 +883,12 @@ enumConstructorExpression
 
 objectCreationExpression
     : NEW type_ argumentList? objectInitializer?
+    | NEW arenaObjectCreationArgumentList objectInitializer?
     | NEW argumentList objectInitializer?
+    ;
+
+arenaObjectCreationArgumentList
+    : LPAREN ARENA (COMMA argument)* COMMA? RPAREN
     ;
 
 enumConstructorInitializer
@@ -997,6 +1025,7 @@ WHEN        : 'when';
 WHILE       : 'while';
 FOR         : 'for';
 RETURN      : 'return';
+BECOME      : 'become';
 BREAK       : 'break';
 CONTINUE    : 'continue';
 TRY         : 'try';

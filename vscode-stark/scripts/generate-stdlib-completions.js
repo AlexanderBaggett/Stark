@@ -5,7 +5,7 @@ const fs = require("fs");
 const path = require("path");
 
 const repoRoot = path.resolve(__dirname, "..", "..");
-const stdlibRoot = path.join(repoRoot, "stdlib", "src", "System");
+const stdlibRoot = path.join(repoRoot, "stdlib", "src");
 const outputPath = path.join(__dirname, "..", "data", "stdlib-completions.json");
 
 const declarationModifiers = new Set([

@@ -9,6 +9,7 @@ internal sealed class AbiLowerer
     private readonly FunctionEffectModel _effectModel;
     private readonly HighLevelIrModule _hir;
     private readonly CompilerOptions _options;
+    private readonly DiagnosticBag _diagnostics;
     private readonly IReadOnlyDictionary<string, FunctionIdentity> _functionIdentities;
     private readonly IReadOnlyDictionary<string, ConcreteTypeLayout> _publishedConcreteLayouts;
 
@@ -19,7 +20,8 @@ internal sealed class AbiLowerer
         EnumLayoutModel enumLayoutModel,
         FunctionEffectModel effectModel,
         HighLevelIrModule hir,
-        CompilerOptions options)
+        CompilerOptions options,
+        DiagnosticBag diagnostics)
     {
         _syntaxModel = syntaxModel;
         _loadedModules = loadedModules;
@@ -28,6 +30,7 @@ internal sealed class AbiLowerer
         _effectModel = effectModel;
         _hir = hir;
         _options = options;
+        _diagnostics = diagnostics;
         _functionIdentities = BuildFunctionIdentityIndex(loadedModules);
         _publishedConcreteLayouts = BuildPublishedConcreteLayouts(loadedModules);
     }
@@ -149,6 +152,35 @@ internal sealed class AbiLowerer
                 RawPointerElementCountExpression: parameter.RawPointerElementCountExpression));
         }
 
+        if (effects.IsTailCallable)
+        {
+            if (isFfi || effects.IsVarargs || effects.FfiAbi is not null)
+            {
+                ReportTailAbiError(
+                    function,
+                    "Tail-callable functions cannot use FFI, explicit FFI ABI, or varargs lowering because LLVM 'musttail' requires a Stark-owned tailcc ABI.");
+            }
+
+            if (returnsIndirect)
+            {
+                ReportTailAbiError(
+                    function,
+                    $"Tail-callable function '{function.DisplaySourceName}' cannot return '{function.ReturnType.DisplayName}' by indirect ABI; choose a direct ABI return type or pass an explicit output destination.");
+            }
+
+            var unsupportedIndirectParameters = parameters
+                .Where(static parameter => parameter.Kind != AbiParameterKind.Direct
+                    && (parameter.Kind != AbiParameterKind.IndirectIn
+                        || AbiLoweringHeuristics.IsByValueIndirectParameter(parameter)))
+                .ToArray();
+            foreach (var parameter in unsupportedIndirectParameters)
+            {
+                ReportTailAbiError(
+                    function,
+                    $"Tail-callable function '{function.DisplaySourceName}' cannot pass parameter '{parameter.SourceName}' of type '{parameter.SourceType.DisplayName}' by indirect ABI; LLVM 'musttail' requires ABI-compatible direct parameters.");
+            }
+        }
+
         return new AbiFunctionSignature(
             function.Name,
             symbolName,
@@ -163,7 +195,17 @@ internal sealed class AbiLowerer
             SourceName: function.SourceName,
             UsesFastCallingConvention: effects.UseFastCallingConvention,
             IsVarargs: effects.IsVarargs,
-            FfiAbi: effects.FfiAbi);
+            FfiAbi: effects.FfiAbi,
+            UsesTailCallingConvention: effects.IsTailCallable);
+    }
+
+    private void ReportTailAbiError(TypedFunctionSignature function, string message)
+    {
+        _diagnostics.Error(
+            "STK4121",
+            message,
+            "lower-abi",
+            function.DeclarationLocation ?? SourceLocation.Synthetic());
     }
 
     private HashSet<string> CollectFfiSymbolNames()

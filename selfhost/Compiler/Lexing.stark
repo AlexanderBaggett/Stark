@@ -124,6 +124,7 @@ public enum TokenKind
     True,
     False,
     Null,
+    Become,
 
     WrapAddAssign,
     WrapSubAssign,
@@ -179,6 +180,13 @@ public enum TokenKind
     RBrace,
     LBrack,
     RBrack,
+}
+
+public enum ContextualKeywordKind
+{
+    None,
+    Tail,
+    DeadOnReturn,
 }
 
 public enum LexDiagnosticKind
@@ -237,11 +245,13 @@ public enum LexResult<T>
 public struct TokenStream
 {
     internal dynamic Token Tokens;
+    internal dynamic ContextualKeywordKind ContextualKeywords;
     internal dynamic LexDiagnostic Diagnostics;
 
     TokenStream()
     {
         self.Tokens = new();
+        self.ContextualKeywords = new();
         self.Diagnostics = new();
     }
 
@@ -265,6 +275,19 @@ public struct TokenStream
         }
 
         return self.Tokens[index].Kind;
+    }
+
+    // Contextual keywords keep their ordinary token kind. For example, `tail`
+    // remains `Identifier` everywhere, while modifier-aware parsers can query
+    // this side table when they are in a callable modifier position.
+    public finite law ContextualKeywordKind ContextualKindAt(borrow TokenStream self, u64[0 2 ** 63 - 1] index)
+    {
+        if (index >= self.ContextualKeywords.Length)
+        {
+            return ContextualKeywordKind.None;
+        }
+
+        return self.ContextualKeywords[index];
     }
 
     // Contract-checked core: callers prove the bound, the body skips it.
@@ -475,7 +498,20 @@ internal fn bool AppendToken(
     u32[0 max] line,
     u32[0 max] column)
 {
-    if (!stream.Tokens.TryReserve(1))
+    return AppendTokenWithContext(stream, kind, ContextualKeywordKind.None, start, length, line, column);
+}
+
+internal fn bool AppendTokenWithContext(
+    mut borrow TokenStream stream,
+    TokenKind kind,
+    ContextualKeywordKind contextualKind,
+    u64[0 2 ** 63 - 1] start,
+    u64[0 2 ** 63 - 1] length,
+    u32[0 max] line,
+    u32[0 max] column)
+{
+    if (!stream.Tokens.TryReserve(1)
+        || !stream.ContextualKeywords.TryReserve(1))
     {
         return false;
     }
@@ -487,6 +523,7 @@ internal fn bool AppendToken(
     token.Line = line;
     token.Column = column;
     init stream.Tokens[stream.Tokens.Length] = token;
+    init stream.ContextualKeywords[stream.ContextualKeywords.Length] = contextualKind;
     return true;
 }
 
@@ -697,6 +734,24 @@ internal finite bool WidthDigitsAreValidFloat(
         || SpanEquals(source, start, length, "128");
 }
 
+internal finite ContextualKeywordKind ClassifyContextualWord(
+    borrow i8[min max][] source,
+    u64[0 2 ** 63 - 1] start,
+    u64[0 2 ** 63 - 1] length)
+{
+    if (SpanEquals(source, start, length, "tail"))
+    {
+        return ContextualKeywordKind.Tail;
+    }
+
+    if (SpanEquals(source, start, length, "dead_on_return"))
+    {
+        return ContextualKeywordKind.DeadOnReturn;
+    }
+
+    return ContextualKeywordKind.None;
+}
+
 // Classifies an identifier-shaped word span: keyword, weight literal, width
 // type, invalid width type, discard, or plain identifier.
 internal finite TokenKind ClassifyWord(
@@ -789,6 +844,11 @@ internal finite TokenKind ClassifyWord(
 
     if (first == 98)
     {
+        if (SpanEquals(source, start, length, "become"))
+        {
+            return TokenKind.Become;
+        }
+
         if (SpanEquals(source, start, length, "bool"))
         {
             return TokenKind.Bool;
@@ -1329,7 +1389,9 @@ internal fn bool LexNextToken(
                 column);
         }
 
-        return AppendToken(stream, ClassifyWord(source, start, wordLength), start, wordLength, line, column);
+        stack TokenKind wordKind = ClassifyWord(source, start, wordLength);
+        stack ContextualKeywordKind contextualKind = ClassifyContextualWord(source, start, wordLength);
+        return AppendTokenWithContext(stream, wordKind, contextualKind, start, wordLength, line, column);
     }
 
     if (IsDigitByte(first))

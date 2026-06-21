@@ -16,7 +16,13 @@
       "include": "#attributes"
     },
     {
+      "include": "#case-labels"
+    },
+    {
       "include": "#declarations"
+    },
+    {
+      "include": "#qualified-names"
     },
     {
       "include": "#keywords"
@@ -61,6 +67,48 @@
             {
               "name": "entity.name.function.attribute.stark",
               "match": "\\b[A-Za-z][A-Za-z0-9_]*(?:\\.[A-Za-z][A-Za-z0-9_]*)*\\b"
+            },
+            {
+              "include": "#punctuation"
+            }
+          ]
+        }
+      ]
+    },
+    "case-labels": {
+      "patterns": [
+        {
+          "name": "meta.case.label.stark",
+          "begin": "\\b(case)\\b",
+          "beginCaptures": {
+            "1": {
+              "name": "keyword.control.stark"
+            }
+          },
+          "end": ":",
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.separator.key-value.stark"
+            }
+          },
+          "patterns": [
+            {
+              "include": "#qualified-enum-cases"
+            },
+            {
+              "include": "#qualified-names"
+            },
+            {
+              "include": "#keywords"
+            },
+            {
+              "include": "#types"
+            },
+            {
+              "include": "#numbers"
+            },
+            {
+              "include": "#operators"
             },
             {
               "include": "#punctuation"
@@ -119,13 +167,13 @@
         },
         {
           "name": "meta.function.declaration.stark",
-          "match": "(?x)\\b((?:(?:inline|noinline|inlinehint|hot|cold|ffi|varargs|unsafe|strictfp|static)\\s+)*)((?:finite\\s+law)|finite|law|fn)\\s+((?:[A-Za-z][A-Za-z0-9_]*(?:\\.[A-Za-z][A-Za-z0-9_]*)*(?:<[^>\\n]+>)?(?:\\[[^\\]\\n]*\\])*|retborrow\\s+(?:mut\\s+)?(?:frozen\\s+)?[A-Za-z][A-Za-z0-9_]*(?:<[^>\\n]+>)?(?:\\[[^\\]\\n]*\\])*|void|bool|ascii|unicode|Ascii|Unicode|[iu](?:8|16|24|32|48|64|96|128|192|256|384|512|768|1024)(?:\\[[^\\]\\n]*\\])?|f(?:16|32|64|80|128)))\\s+([A-Za-z][A-Za-z0-9_]*)",
+          "match": "(?x)\\b((?:(?:inline|noinline|inlinehint|hot|cold|ffi|varargs|unsafe|strictfp|static|tail)\\s+)*)((?:finite\\s+law)|finite|law|fn)\\s+((?:[A-Za-z][A-Za-z0-9_]*(?:\\.[A-Za-z][A-Za-z0-9_]*)*(?:<[^>\\n]+>)?(?:\\[[^\\]\\n]*\\])*|retborrow\\s+(?:mut\\s+)?(?:frozen\\s+)?[A-Za-z][A-Za-z0-9_]*(?:<[^>\\n]+>)?(?:\\[[^\\]\\n]*\\])*|void|bool|ascii|unicode|Ascii|Unicode|[iu](?:8|16|24|32|48|64|96|128|192|256|384|512|768|1024)(?:\\[[^\\]\\n]*\\])?|f(?:16|32|64|80|128)))\\s+([A-Za-z][A-Za-z0-9_]*)",
           "captures": {
             "1": {
               "patterns": [
                 {
                   "name": "keyword.modifier.stark",
-                  "match": "\\b(inline|noinline|inlinehint|hot|cold|ffi|varargs|unsafe|strictfp|static)\\b"
+                  "match": "\\b(inline|noinline|inlinehint|hot|cold|ffi|varargs|unsafe|strictfp|static|tail)\\b"
                 }
               ]
             },
@@ -134,6 +182,7 @@
             },
             "3": {
               "patterns": [
+                { "include": "#qualified-names" },
                 { "include": "#types" },
                 { "include": "#keywords" },
                 { "include": "#numbers" },
@@ -147,12 +196,16 @@
         },
         {
           "name": "entity.name.function.call.stark",
-          "match": "\\b(?!(?:if|while|for|switch|return|sizeof|alignof|disjoint|overlap|same|asm|clobber|in|out|init|new|case|when)\\b)([A-Za-z][A-Za-z0-9_]*)\\s*(?=\\()",
+          "match": "\\b(?!(?:if|while|for|switch|return|become|sizeof|alignof|disjoint|overlap|same|dead_on_return|asm|clobber|in|out|init|new|case|when)\\b)([A-Za-z][A-Za-z0-9_]*)\\s*(?=\\()",
           "captures": {
             "1": {
               "name": "entity.name.function.call.stark"
             }
           }
+        },
+        {
+          "name": "variable.other.member.self.stark",
+          "match": "\\bself\\b"
         }
       ]
     },
@@ -160,7 +213,7 @@
       "patterns": [
         {
           "name": "keyword.control.stark",
-          "match": "\\b(if|else|switch|case|default|when|while|for|return|break|continue|try|is)\\b"
+          "match": "\\b(if|else|switch|case|default|when|while|for|return|become|break|continue|try|is)\\b"
         },
         {
           "name": "keyword.declaration.stark",
@@ -168,15 +221,15 @@
         },
         {
           "name": "keyword.modifier.stark",
-          "match": "\\b(inline|noinline|inlinehint|hot|cold|ffi|varargs|unsafe|strictfp|static|asm|clobber|in|once|assume)\\b"
+          "match": "\\b(inline|noinline|inlinehint|hot|cold|ffi|varargs|unsafe|strictfp|static|tail|asm|clobber|in|once|assume)\\b"
         },
         {
           "name": "keyword.storage.stark",
           "match": "\\b(stack|heap|register|arena|dynamic|dyn|rawptr|rawmutptr|fnptr|closure)\\b"
         },
         {
-          "name": "keyword.operator.ownership.stark",
-          "match": "\\b(borrow|retborrow|storeborrow|frozen|shared|out|init|mut|disjoint|overlap|same)\\b"
+          "name": "storage.modifier.ownership.stark",
+          "match": "\\b(borrow|retborrow|storeborrow|frozen|shared|out|init|mut|disjoint|overlap|same|dead_on_return)\\b"
         },
         {
           "name": "keyword.control.loop-contract.stark",
@@ -273,6 +326,63 @@
         {
           "name": "constant.language.discard.stark",
           "match": "\\b_\\b"
+        }
+      ]
+    },
+    "qualified-enum-cases": {
+      "patterns": [
+        {
+          "name": "meta.enum.case.qualified.stark",
+          "match": "\\b((?:[A-Z][A-Za-z0-9_]*\\.)+)([A-Z][A-Za-z0-9_]*)(<[^>\\n]+>)?\\.([A-Za-z][A-Za-z0-9_]*)\\b",
+          "captures": {
+            "1": {
+              "name": "entity.name.namespace.stark"
+            },
+            "2": {
+              "name": "entity.name.type.stark"
+            },
+            "3": {
+              "patterns": [
+                { "include": "#qualified-names" },
+                { "include": "#types" },
+                { "include": "#keywords" },
+                { "include": "#numbers" },
+                { "include": "#operators" },
+                { "include": "#punctuation" }
+              ]
+            },
+            "4": {
+              "name": "constant.other.enummember.stark"
+            }
+          }
+        }
+      ]
+    },
+    "qualified-names": {
+      "patterns": [
+        {
+          "name": "meta.qualified.function-call.stark",
+          "match": "\\b((?:[A-Z][A-Za-z0-9_]*\\.)+)([A-Za-z][A-Za-z0-9_]*)\\b\\s*(?=\\()",
+          "captures": {
+            "1": {
+              "name": "entity.name.namespace.stark"
+            },
+            "2": {
+              "name": "entity.name.function.call.stark"
+            }
+          }
+        },
+        {
+          "name": "meta.qualified.type.stark",
+          "match": "\\b((?:[A-Z][A-Za-z0-9_]*\\.)+)([A-Z][A-Za-z0-9_]*)\\b",
+          "captures": {
+            "1": {
+              "name": "entity.name.namespace.stark"
+            },
+            "2": {
+              "name": "entity.name.type.stark"
+            }
+          }
         }
       ]
     },

@@ -7,6 +7,26 @@ namespace compiler.PipelineTests;
 public sealed class CompilerPipelineSemanticValidateTests
 {
     [Fact]
+    public void SemanticValidationEmitsRuntimeRecursionWarningWithoutFailingPipeline()
+    {
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(
+                """
+                module Demo
+
+                fn i32[min max] Recur(i32[min max] value)
+                {
+                    return Recur(value);
+                }
+                """),
+            new CompilerOptions(StopAfterPassId: "semantic-validate"));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var warning = Assert.Single(result.Diagnostics, static diagnostic => diagnostic.Code == "STK4122");
+        Assert.Equal(DiagnosticSeverity.Warning, warning.Severity);
+    }
+
+    [Fact]
     public void ManifestBackedSemanticValidationUsesPublishedBorrowFactsFromCompilerFactSections()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-semantic-validation-pipeline-");

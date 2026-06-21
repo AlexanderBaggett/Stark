@@ -108,11 +108,13 @@ internal sealed record StarkPackageFunctionManifest(
     bool HasExplicitInlinePreference = false,
     bool IsUnsafe = false,
     bool IsVarargs = false,
+    bool IsTailCallable = false,
     string? FfiAbi = null,
     string? BackendOptimizationMode = null,
     IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? DisjointParameterGroups = null,
     IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? OverlapParameterGroups = null,
     IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? SameParameterGroups = null,
+    IReadOnlyList<string>? PointeeDeadOnReturnParameterNames = null,
     IReadOnlyList<StarkPackageComptimeGenericParameterManifest>? ComptimeGenericParameters = null,
     IReadOnlyList<StarkPackageTypeParameterConstraintManifest>? TypeParameterConstraints = null,
     IReadOnlyList<StarkPackageThreadSafetyLawPredicateManifest>? ThreadSafetyLawPredicates = null,
@@ -169,11 +171,13 @@ internal sealed record StarkPackageMethodManifest(
     string? Visibility = null,
     bool IsUnsafe = false,
     bool IsVarargs = false,
+    bool IsTailCallable = false,
     string? FfiAbi = null,
     string? BackendOptimizationMode = null,
     IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? DisjointParameterGroups = null,
     IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? OverlapParameterGroups = null,
     IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? SameParameterGroups = null,
+    IReadOnlyList<string>? PointeeDeadOnReturnParameterNames = null,
     IReadOnlyList<StarkPackageComptimeGenericParameterManifest>? ComptimeGenericParameters = null,
     IReadOnlyList<StarkPackageTypeParameterConstraintManifest>? TypeParameterConstraints = null,
     IReadOnlyList<StarkPackageThreadSafetyLawPredicateManifest>? ThreadSafetyLawPredicates = null,
@@ -289,6 +293,7 @@ internal sealed record StarkPackageTypeReference(
     string? FunctionKind = null,
     string? FunctionAbi = null,
     bool? FunctionIsUnsafe = null,
+    bool? FunctionIsTailCallable = null,
     string? ClosureStorageKind = null,
     string? ClosureCallCapability = null,
     string? DynTraitStorageKind = null,
@@ -298,6 +303,7 @@ internal sealed record StarkPackageTypeReference(
     IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? DisjointParameterGroups = null,
     IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? OverlapParameterGroups = null,
     IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? SameParameterGroups = null,
+    IReadOnlyList<string>? PointeeDeadOnReturnParameterNames = null,
     StarkPackageTypeReference? AssociatedOwnerType = null,
     string? AssociatedTypeName = null,
     string? SourceAliasName = null);
@@ -365,11 +371,13 @@ internal sealed record StarkPackageTypedFunctionManifest(
     bool HasExplicitInlinePreference = false,
     bool IsUnsafe = false,
     bool IsVarargs = false,
+    bool IsTailCallable = false,
     string? FfiAbi = null,
     string? BackendOptimizationMode = null,
     IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? DisjointParameterGroups = null,
     IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? OverlapParameterGroups = null,
     IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? SameParameterGroups = null,
+    IReadOnlyList<string>? PointeeDeadOnReturnParameterNames = null,
     bool HasBody = true,
     IReadOnlyList<StarkPackageComptimeGenericParameterManifest>? ComptimeGenericParameters = null,
     IReadOnlyList<StarkPackageTypedTypeParameterConstraintManifest>? TypeParameterConstraints = null,
@@ -398,11 +406,13 @@ internal sealed record StarkPackageTypedMethodManifest(
     string? Visibility = null,
     bool IsUnsafe = false,
     bool IsVarargs = false,
+    bool IsTailCallable = false,
     string? FfiAbi = null,
     string? BackendOptimizationMode = null,
     IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? DisjointParameterGroups = null,
     IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? OverlapParameterGroups = null,
     IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? SameParameterGroups = null,
+    IReadOnlyList<string>? PointeeDeadOnReturnParameterNames = null,
     bool HasBody = true,
     IReadOnlyList<StarkPackageComptimeGenericParameterManifest>? ComptimeGenericParameters = null,
     IReadOnlyList<StarkPackageTypedTypeParameterConstraintManifest>? TypeParameterConstraints = null,
@@ -494,7 +504,9 @@ internal sealed record StarkPackageTemplateObjectInitializerMemberManifest(
 internal sealed record StarkPackageTemplateObjectCreationManifest(
     StarkPackageTypeReference CreatedType,
     StarkPackagePublishedConstructorShapeManifest? Constructor,
-    IReadOnlyList<StarkPackageTemplateObjectInitializerMemberManifest>? InitializerMembers = null);
+    ObjectCreationStorageSelector StorageSelector = ObjectCreationStorageSelector.Default,
+    IReadOnlyList<StarkPackageTemplateObjectInitializerMemberManifest>? InitializerMembers = null,
+    string? ExpressionText = null);
 
 internal sealed record StarkPackageTemplateEnumConstructorMemberManifest(
     string FieldName,
@@ -617,6 +629,7 @@ internal sealed record StarkPackageTemplateDirectCallManifest(
     IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? DisjointParameterGroups = null,
     IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? OverlapParameterGroups = null,
     IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? SameParameterGroups = null,
+    IReadOnlyList<string>? PointeeDeadOnReturnParameterNames = null,
     IReadOnlyList<StarkPackageComptimeValueArgumentManifest>? ComptimeValueArguments = null);
 
 internal sealed record StarkPackageTemplateFieldAccessManifest(
@@ -636,6 +649,7 @@ internal sealed record StarkPackageTemplateMemberCallManifest(
     IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? DisjointParameterGroups = null,
     IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? OverlapParameterGroups = null,
     IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? SameParameterGroups = null,
+    IReadOnlyList<string>? PointeeDeadOnReturnParameterNames = null,
     IReadOnlyList<StarkPackageComptimeValueArgumentManifest>? ComptimeValueArguments = null);
 
 internal sealed record StarkPackageTemplateFunctionAddressManifest(
@@ -650,6 +664,7 @@ internal sealed record StarkPackageTemplateFunctionAddressManifest(
     IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? DisjointParameterGroups = null,
     IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? OverlapParameterGroups = null,
     IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? SameParameterGroups = null,
+    IReadOnlyList<string>? PointeeDeadOnReturnParameterNames = null,
     IReadOnlyList<StarkPackageComptimeValueArgumentManifest>? ComptimeValueArguments = null);
 
 internal sealed record StarkPackageTemplateCallArgumentManifest(
@@ -682,6 +697,7 @@ internal sealed record StarkPackageTemplateBoundOperationManifest(
     IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? DisjointParameterGroups = null,
     IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? OverlapParameterGroups = null,
     IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? SameParameterGroups = null,
+    IReadOnlyList<string>? PointeeDeadOnReturnParameterNames = null,
     IReadOnlyList<StarkPackageTemplateCallArgumentManifest>? CallArguments = null,
     StarkPackageTypeReference? ReceiverType = null,
     bool? ReceiverIsAddressable = null,
@@ -697,6 +713,7 @@ internal sealed record StarkPackageTemplateBoundOperationManifest(
     string? ExpressionText = null,
     StarkPackageTypeReference? CreatedType = null,
     StarkPackagePublishedConstructorShapeManifest? Constructor = null,
+    ObjectCreationStorageSelector StorageSelector = ObjectCreationStorageSelector.Default,
     IReadOnlyList<StarkPackageTemplateObjectInitializerMemberManifest>? InitializerMembers = null,
     StarkPackageTypeReference? EnumType = null,
     string? VariantName = null,
@@ -797,8 +814,10 @@ internal sealed record StarkPackageFunctionEffectManifest(
     string InlinePreference,
     bool IsStrictFp,
     bool IsVarargs = false,
+    bool IsTailCallable = false,
     string? FfiAbi = null,
-    string? BackendOptimizationMode = null);
+    string? BackendOptimizationMode = null,
+    bool NoRecurse = false);
 
 internal sealed record StarkPackageAbiParameterManifest(
     string SourceName,
@@ -818,14 +837,21 @@ internal sealed record StarkPackageAbiFunctionManifest(
     string? SourceName = null,
     bool UsesFastCallingConvention = false,
     bool IsVarargs = false,
-    string? FfiAbi = null);
+    string? FfiAbi = null,
+    bool UsesTailCallingConvention = false);
 
 internal sealed record StarkPackageFunctionMemoryEffectsManifest(
     bool ReadsArgumentMemory,
     bool WritesArgumentMemory,
     bool CapturesArgumentMemory,
     bool ReadsOtherMemory,
-    bool WritesOtherMemory);
+    bool WritesOtherMemory,
+    bool InitializesArgumentMemory = false,
+    bool HasPointeeDeadOnReturnArgument = false);
+
+internal sealed record StarkPackageParameterInitializationRangeManifest(
+    long StartByte,
+    long EndByte);
 
 internal sealed record StarkPackageParameterMemoryEffectsManifest(
     string Name,
@@ -839,7 +865,9 @@ internal sealed record StarkPackageParameterMemoryEffectsManifest(
     int? AlignmentBytes,
     bool Reads,
     bool Writes,
-    string CaptureKind);
+    string CaptureKind,
+    IReadOnlyList<StarkPackageParameterInitializationRangeManifest>? InitializationRanges = null,
+    bool PointeeDeadOnReturn = false);
 
 internal sealed record StarkPackageCallArgumentMemoryEffectsManifest(
     int ArgumentIndex,
@@ -863,7 +891,8 @@ internal sealed record StarkPackageFunctionSemanticManifest(
     IReadOnlyList<StarkPackageParameterMemoryEffectsManifest>? Parameters = null,
     IReadOnlyList<StarkPackageFunctionCallManifest>? Calls = null,
     StarkPackageFunctionOptimizationManifest? Optimization = null,
-    StarkPackageFunctionOwnershipManifest? Ownership = null);
+    StarkPackageFunctionOwnershipManifest? Ownership = null,
+    bool? HasOpaqueCall = null);
 
 internal sealed record StarkPackageFunctionOwnershipManifest(
     bool OwnershipValid,

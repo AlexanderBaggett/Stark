@@ -24,6 +24,7 @@ internal sealed class SemanticValidator
     private readonly IReadOnlyDictionary<ObjectCreationKey, ObjectCreationTypingRecord> _objectCreations;
     private readonly Dictionary<string, FunctionValidationBuilder> _summaries = new(StringComparer.Ordinal);
     private readonly Dictionary<string, FunctionValidationBuilder> _destructorSummaries = new(StringComparer.Ordinal);
+    private readonly HashSet<int> _tailTransferCallArgumentTokenIndexes = new();
     private ISet<string>? _currentFunctionGenericParameters;
     private IReadOnlyDictionary<string, ComptimeGenericParameterSymbol>? _currentFunctionComptimeGenericParameters;
     private string? _currentFunctionName;
@@ -144,13 +145,6 @@ internal sealed class SemanticValidator
     {
         switch (storageClass)
         {
-            case LocalStorageClass.Arena:
-                _context.Diagnostics.Error(
-                    "STK4017",
-                    "Local 'arena' storage is reserved for allocator-backed region storage and is not a valid executable local storage class. Use 'stack' or 'heap' storage.",
-                    "semantic-validate",
-                    Location(context));
-                break;
             case LocalStorageClass.Static:
                 _context.Diagnostics.Error(
                     "STK4017",
@@ -240,7 +234,7 @@ internal sealed class SemanticValidator
         var selfType = StarkTypeSymbols.Named(qualifiedTypeName);
         var selfParameter = new TypedParameterSymbol("self", selfType, IsConst: !destructor.IsMutable);
         summary.Configure(StarkTypeSymbols.Void, hasBody: true, StarkFunctionKind.Fn);
-        summary.SetParameters([selfParameter], [], _typeModel.NamedTypes, _enumLayoutModel.Layouts);
+        summary.SetParameters([selfParameter], [], [], _typeModel.NamedTypes, _enumLayoutModel.Layouts);
 
         var declaration = new FunctionDeclarationModel(
             summary.Name,
@@ -575,7 +569,12 @@ internal sealed class SemanticValidator
 
         var summary = GetOrCreateSummary(name);
         summary.Configure(signature.ReturnType, syntaxDeclaration.Function.HasBody, syntaxDeclaration.Function.Kind);
-        summary.SetParameters(signature.Parameters, signature.DisjointGroups, _typeModel.NamedTypes, _enumLayoutModel.Layouts);
+        summary.SetParameters(
+            signature.Parameters,
+            signature.DisjointGroups,
+            signature.PointeeDeadOnReturnParameters,
+            _typeModel.NamedTypes,
+            _enumLayoutModel.Layouts);
         ApplyBuiltinDeclarationMemoryEffects(syntaxDeclaration.Function, summary);
         ValidateFunctionSignature(functionDeclaration, syntaxDeclaration.Function, signature, effects, summary);
 
@@ -878,6 +877,17 @@ internal sealed class SemanticValidator
                                     "semantic-validate",
                                     Location(entry));
                             }
+                            else if (implSignature.IsTailCallable != requiredMethod.IsTailCallable)
+                            {
+                                var requiredTailText = requiredMethod.IsTailCallable
+                                    ? "must be declared 'tail'"
+                                    : "must not be declared 'tail'";
+                                _context.Diagnostics.Error(
+                                    "STK3033",
+                                    $"'{ownerName}.{requiredMethodName}' {requiredTailText} to satisfy trait method '{requiredMethod.DisplaySourceName}'.",
+                                    "semantic-validate",
+                                    Location(entry));
+                            }
                             else if (!TraitMethodSignatureConforms(requiredMethod, implSignature, named, resolved))
                             {
                                 _context.Diagnostics.Error(
@@ -1054,9 +1064,11 @@ internal sealed class SemanticValidator
             || left.FunctionPointerKind != right.FunctionPointerKind
             || left.FunctionPointerAbi != right.FunctionPointerAbi
             || left.FunctionPointerIsUnsafe != right.FunctionPointerIsUnsafe
+            || left.FunctionPointerIsTailCallable != right.FunctionPointerIsTailCallable
             || left.ClosureFunctionKind != right.ClosureFunctionKind
             || left.ClosureStorageKind != right.ClosureStorageKind
             || left.ClosureCallCapability != right.ClosureCallCapability
+            || left.ClosureIsTailCallable != right.ClosureIsTailCallable
             || !string.Equals(left.AssociatedTypeName, right.AssociatedTypeName, StringComparison.Ordinal))
         {
             return false;
@@ -1541,6 +1553,37 @@ internal sealed class SemanticValidator
             return;
         }
 
+        if (statement.becomeStatement() is { } becomeStatement)
+        {
+            var rootCallArgumentTokenIndex = TryGetRootCallArgumentToken(becomeStatement.expression())?.TokenIndex;
+            if (rootCallArgumentTokenIndex is { } tailCallArgumentTokenIndex)
+            {
+                _tailTransferCallArgumentTokenIndexes.Add(tailCallArgumentTokenIndex);
+            }
+
+            try
+            {
+                var returnedValue = EvaluateExpression(
+                    becomeStatement.expression(),
+                    scope,
+                    function,
+                    effects,
+                    summary,
+                    allowFunctionReference: false,
+                    ExpressionObservation.Read);
+                RecordReturnCapture(returnedValue, function, summary);
+            }
+            finally
+            {
+                if (rootCallArgumentTokenIndex is { } tailCallArgumentTokenIndexToRemove)
+                {
+                    _tailTransferCallArgumentTokenIndexes.Remove(tailCallArgumentTokenIndexToRemove);
+                }
+            }
+
+            return;
+        }
+
         if (statement.breakStatement() is { } breakStatement)
         {
             var labelName = breakStatement.Identifier()?.GetText();
@@ -1952,7 +1995,7 @@ internal sealed class SemanticValidator
             summary.CalledFunctions.Add(signature.Name);
         }
 
-        summary.PendingCalls.Add(new PendingCall(signature.Name, [], context.Start));
+        summary.PendingCalls.Add(new PendingCall(signature.Name, [], context.Start, IsTailTransfer: false));
         return true;
     }
 
@@ -2118,6 +2161,26 @@ internal sealed class SemanticValidator
     {
         return TryGetSimpleUnaryExpression(expression) is { } unary
             ? TryGetSimplePostfixExpression(unary)
+            : null;
+    }
+
+    private static IToken? TryGetRootCallArgumentToken(StarkParser.ExpressionContext expression)
+    {
+        return TryGetSimplePostfixExpression(expression) is { } postfix
+            ? TryGetRootCallArgumentToken(postfix)
+            : null;
+    }
+
+    private static IToken? TryGetRootCallArgumentToken(StarkParser.PostfixExpressionContext expression)
+    {
+        var parts = expression.postfixPart();
+        if (parts.Length > 0)
+        {
+            return parts[^1].argumentList()?.Start;
+        }
+
+        return expression.primaryExpression().expression() is { } parenthesized
+            ? TryGetRootCallArgumentToken(parenthesized)
             : null;
     }
 
@@ -2429,7 +2492,7 @@ internal sealed class SemanticValidator
                 summary.CalledFunctions.Add(concatSignature.Name);
             }
 
-            summary.PendingCalls.Add(new PendingCall(concatSignature.Name, [], context.Start));
+            summary.PendingCalls.Add(new PendingCall(concatSignature.Name, [], context.Start, IsTailTransfer: false));
             result = new ValidationValue(viewType, NamedType: ResolveNamedTypeSymbol(viewType));
             return true;
         }
@@ -2464,7 +2527,7 @@ internal sealed class SemanticValidator
             summary.CalledFunctions.Add(signature.Name);
         }
 
-        summary.PendingCalls.Add(new PendingCall(signature.Name, [], context.Start));
+        summary.PendingCalls.Add(new PendingCall(signature.Name, [], context.Start, IsTailTransfer: false));
         result = new ValidationValue(signature.ReturnType, NamedType: ResolveNamedTypeSymbol(signature.ReturnType));
         return true;
     }
@@ -2962,7 +3025,12 @@ internal sealed class SemanticValidator
 
             var summary = GetOrCreateSummary(lambda.FunctionName);
             summary.Configure(signature.ReturnType, hasBody: true, signature.Kind);
-            summary.SetParameters(signature.Parameters, signature.DisjointGroups, _typeModel.NamedTypes, _enumLayoutModel.Layouts);
+            summary.SetParameters(
+                signature.Parameters,
+                signature.DisjointGroups,
+                signature.PointeeDeadOnReturnParameters,
+                _typeModel.NamedTypes,
+                _enumLayoutModel.Layouts);
 
             var scope = ValidationScope.CreateRoot();
             foreach (var parameter in signature.Parameters)
@@ -3030,7 +3098,12 @@ internal sealed class SemanticValidator
 
             var summary = GetOrCreateSummary(lambda.FunctionName);
             summary.Configure(signature.ReturnType, hasBody: true, signature.Kind);
-            summary.SetParameters(signature.Parameters, signature.DisjointGroups, _typeModel.NamedTypes, _enumLayoutModel.Layouts);
+            summary.SetParameters(
+                signature.Parameters,
+                signature.DisjointGroups,
+                signature.PointeeDeadOnReturnParameters,
+                _typeModel.NamedTypes,
+                _enumLayoutModel.Layouts);
 
             var scope = ValidationScope.CreateRoot();
             DeclareLambdaCaptures(scope, summary, lambda.Location, lambda.EnclosingFunctionName, expression.Start);
@@ -3154,12 +3227,9 @@ internal sealed class SemanticValidator
             ValidateTypeUsage(explicitObjectType, createdType, TypeUsage.Conversion);
         }
 
-        if (expression.argumentList() is { } argumentList)
+        foreach (var argument in GetObjectCreationArguments(expression))
         {
-            foreach (var argument in argumentList.argument())
-            {
-                EvaluateExpression(argument.expression(), scope, function, effects, summary, allowFunctionReference: false, ExpressionObservation.Read);
-            }
+            EvaluateExpression(argument.expression(), scope, function, effects, summary, allowFunctionReference: false, ExpressionObservation.Read);
         }
 
         if (expression.objectInitializer() is { } objectInitializer)
@@ -3170,12 +3240,23 @@ internal sealed class SemanticValidator
             }
         }
 
-        if (createdType.Kind == StarkTypeKind.Dynamic)
+        if (expression.arenaObjectCreationArgumentList() is not null)
+        {
+            RecordArenaAllocationRuntimeEffects(function, effects, summary, expression.arenaObjectCreationArgumentList());
+        }
+        else if (createdType.Kind == StarkTypeKind.Dynamic)
         {
             RecordDynamicStorageRuntimeEffects(function, effects, summary, expression);
         }
 
         return new ValidationValue(createdType, NamedType: ResolveNamedTypeSymbol(createdType));
+    }
+
+    private static StarkParser.ArgumentContext[] GetObjectCreationArguments(StarkParser.ObjectCreationExpressionContext expression)
+    {
+        return expression.arenaObjectCreationArgumentList() is { } arenaArguments
+            ? arenaArguments.argument()
+            : expression.argumentList()?.argument() ?? [];
     }
 
     private ValidationValue ResolveGenericMemberReference(
@@ -3218,6 +3299,22 @@ internal sealed class SemanticValidator
             allowFunctionReference,
             observation,
             genericMemberReference.Start);
+    }
+
+    private void RecordArenaAllocationRuntimeEffects(
+        FunctionDeclarationModel function,
+        FunctionEffectProfile effects,
+        FunctionValidationBuilder summary,
+        ParserRuleContext context)
+    {
+        summary.DisqualifyLaw();
+        summary.MarkOtherMemoryRead();
+        summary.MarkOtherMemoryWrite();
+
+        if (effects.IsPure)
+        {
+            EffectError(summary, "STK4102", $"Law '{function.Name}' cannot allocate arena storage with `new(arena, ...)`.", context);
+        }
     }
 
     private void RecordDynamicStorageRuntimeEffects(
@@ -3810,6 +3907,7 @@ internal sealed class SemanticValidator
         {
             if (target.Type.Kind == StarkTypeKind.FunctionPointer)
             {
+                summary.MarkOpaqueCall();
                 ValidateIndirectCallKind(target.Type, currentFunction, summary, arguments);
                 return new ValidationValue(
                     target.Type.FunctionPointerReturnType ?? StarkTypeSymbols.Error,
@@ -3818,6 +3916,7 @@ internal sealed class SemanticValidator
 
             if (target.Type.Kind == StarkTypeKind.Closure)
             {
+                summary.MarkOpaqueCall();
                 ValidateClosureCallKind(target.Type, currentFunction, summary, arguments);
                 return new ValidationValue(
                     target.Type.ClosureReturnType ?? StarkTypeSymbols.Error,
@@ -3843,6 +3942,8 @@ internal sealed class SemanticValidator
 
             if (calleeEffects.IsFfi)
             {
+                summary.MarkOpaqueCall();
+
                 if (target.Receiver is not null
                     && target.Function.Parameters.Count != 0
                     && target.Receiver.Type.BorrowKind != StarkBorrowKind.None)
@@ -3862,8 +3963,14 @@ internal sealed class SemanticValidator
                 summary.PendingCalls.Add(new PendingCall(
                     target.Function.Name,
                     BuildPendingCallArguments(target, argumentValues, receiverOffset, explicitParameterCount),
-                    arguments.Start));
+                    arguments.Start,
+                    IsTailTransferCall(arguments)));
                 return new ValidationValue(target.Function.ReturnType, NamedType: ResolveNamedTypeSymbol(target.Function.ReturnType));
+            }
+
+            if (!target.Function.HasBody && !_importedFunctionSemantics.ContainsKey(target.Function.Name))
+            {
+                summary.MarkOpaqueCall();
             }
         }
 
@@ -3871,6 +3978,8 @@ internal sealed class SemanticValidator
 
         if (target.Receiver?.Type.Kind == StarkTypeKind.DynTrait)
         {
+            summary.MarkOpaqueCall();
+
             // A dynamic dispatch invokes an unknown concrete implementation that
             // accesses the object behind the trait object's data pointer -- memory
             // that is NOT this function's argument memory. Recording the abstract
@@ -3891,9 +4000,15 @@ internal sealed class SemanticValidator
         summary.PendingCalls.Add(new PendingCall(
             target.Function.Name,
             BuildPendingCallArguments(target, argumentValues, receiverOffset, explicitParameterCount),
-            arguments.Start));
+            arguments.Start,
+            IsTailTransferCall(arguments)));
 
         return BuildCallReturnValue(target, argumentValues, receiverOffset, explicitParameterCount);
+    }
+
+    private bool IsTailTransferCall(StarkParser.ArgumentListContext arguments)
+    {
+        return _tailTransferCallArgumentTokenIndexes.Contains(arguments.Start.TokenIndex);
     }
 
     /// <summary>
@@ -3906,6 +4021,7 @@ internal sealed class SemanticValidator
     /// </summary>
     private static ValidationValue UnresolvedCallValue(FunctionValidationBuilder summary)
     {
+        summary.MarkOpaqueCall();
         summary.ApplyFunctionMemoryEffects(new FunctionMemoryEffectSummary(
             ReadsArgumentMemory: true,
             WritesArgumentMemory: true,
@@ -5408,7 +5524,9 @@ internal sealed class SemanticValidator
             left.WritesArgumentMemory || right.WritesArgumentMemory,
             left.CapturesArgumentMemory || right.CapturesArgumentMemory,
             left.ReadsOtherMemory || right.ReadsOtherMemory,
-            left.WritesOtherMemory || right.WritesOtherMemory);
+            left.WritesOtherMemory || right.WritesOtherMemory,
+            left.InitializesArgumentMemory || right.InitializesArgumentMemory,
+            left.HasPointeeDeadOnReturnArgument || right.HasPointeeDeadOnReturnArgument);
     }
 
     private void InferEffectiveFunctionKindsAndValidateDeclaredContracts()
@@ -5490,6 +5608,62 @@ internal sealed class SemanticValidator
                 EffectError(summary, "STK4108", $"Finite function '{function}' participates in a recursive call cycle and cannot be proven finite.", declaration.NameToken);
             }
         }
+
+        WarnRuntimeRecursionWithoutGuaranteedTailTransfer();
+    }
+
+    private void WarnRuntimeRecursionWithoutGuaranteedTailTransfer()
+    {
+        foreach (var summary in _summaries.Values.Where(static summary => summary.HasBody))
+        {
+            if (FunctionKindFacts.IsFinite(summary.DeclaredKind))
+            {
+                continue;
+            }
+
+            foreach (var pendingCall in summary.PendingCalls)
+            {
+                if (pendingCall.IsTailTransfer
+                    || !_summaries.ContainsKey(pendingCall.CalleeName)
+                    || !HasOrdinaryRecursivePath(pendingCall.CalleeName, summary.Name, new HashSet<string>(StringComparer.Ordinal)))
+                {
+                    continue;
+                }
+
+                _context.Diagnostics.Warning(
+                    "STK4122",
+                    $"Recursive call from '{summary.Name}' to '{pendingCall.CalleeName}' uses ordinary call semantics and may grow the runtime stack. Use 'tail' plus 'become' for guaranteed stack-constant recursion.",
+                    "semantic-validate",
+                    Location(pendingCall.Location));
+            }
+        }
+    }
+
+    private bool HasOrdinaryRecursivePath(string startFunction, string targetFunction, HashSet<string> visited)
+    {
+        if (string.Equals(startFunction, targetFunction, StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        if (!visited.Add(startFunction)
+            || !_summaries.TryGetValue(startFunction, out var summary)
+            || !summary.HasBody)
+        {
+            return false;
+        }
+
+        foreach (var pendingCall in summary.PendingCalls)
+        {
+            if (!pendingCall.IsTailTransfer
+                && _summaries.ContainsKey(pendingCall.CalleeName)
+                && HasOrdinaryRecursivePath(pendingCall.CalleeName, targetFunction, visited))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private bool IsEffectiveLaw(string functionName, IReadOnlyDictionary<string, bool> effectiveLaw)
@@ -7144,7 +7318,8 @@ internal sealed class SemanticValidator
         int nestedLoopDepth = 0,
         int nestedSwitchDepth = 0)
     {
-        if (statement.returnStatement() is not null)
+        if (statement.returnStatement() is not null
+            || statement.becomeStatement() is not null)
         {
             return true;
         }
@@ -7221,7 +7396,8 @@ internal sealed class SemanticValidator
         int nestedLoopDepth = 0,
         int nestedSwitchDepth = 0)
     {
-        if (statement.returnStatement() is not null)
+        if (statement.returnStatement() is not null
+            || statement.becomeStatement() is not null)
         {
             return true;
         }
@@ -7561,7 +7737,8 @@ internal sealed class SemanticValidator
     private sealed record PendingCall(
         string CalleeName,
         IReadOnlyList<PendingCallArgument> Arguments,
-        IToken Location);
+        IToken Location,
+        bool IsTailTransfer);
 
     private sealed record PotentialDropType(
         StarkTypeSymbol Type,
@@ -7573,6 +7750,7 @@ internal sealed class SemanticValidator
             TypedParameterSymbol parameter,
             IReadOnlyList<TypedParameterSymbol> parameters,
             IReadOnlyList<ParameterDisjointGroup> disjointGroups,
+            IReadOnlySet<string> pointeeDeadOnReturnParameters,
             IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
             IReadOnlyDictionary<string, EnumLayoutSymbol> enumLayouts)
         {
@@ -7587,6 +7765,10 @@ internal sealed class SemanticValidator
             var concreteLayout = ConcreteTypeLayoutHelper.TryGetConcreteTypeLayout(layoutType, namedTypes, enumLayouts);
             DereferenceableBytes = GuaranteedNonNull && concreteLayout is not null ? concreteLayout.SizeBytes : null;
             AlignmentBytes = GuaranteedNonNull && concreteLayout is not null ? concreteLayout.AlignmentBytes : null;
+            InitializationRanges = TryBuildDestinationInitializationRanges(parameter.Type, concreteLayout, out var initializationRanges)
+                ? initializationRanges
+                : [];
+            PointeeDeadOnReturn = pointeeDeadOnReturnParameters.Contains(parameter.Name);
         }
 
         public string Name { get; }
@@ -7606,6 +7788,10 @@ internal sealed class SemanticValidator
         public int? DereferenceableBytes { get; }
 
         public int? AlignmentBytes { get; }
+
+        public IReadOnlyList<ParameterInitializationRangeSummary> InitializationRanges { get; }
+
+        public bool PointeeDeadOnReturn { get; }
 
         public bool Reads { get; set; }
 
@@ -7652,7 +7838,9 @@ internal sealed class SemanticValidator
                 AlignmentBytes,
                 effects.Reads,
                 effects.Writes,
-                effects.CaptureKind);
+                effects.CaptureKind,
+                InitializationRanges,
+                PointeeDeadOnReturn);
         }
 
         public bool Apply(ArgumentEffects effects)
@@ -7681,9 +7869,41 @@ internal sealed class SemanticValidator
 
         private static StarkTypeSymbol GetParameterDereferenceableLayoutType(StarkTypeSymbol type)
         {
-            return StarkTypeSymbols.IsPointerBackedBorrowType(type)
+            var storageType = StarkTypeSymbols.IsPointerBackedBorrowType(type)
                 ? StarkTypeSymbols.BorrowReturnValueType(type)
                 : type;
+            return storageType.BorrowKind != StarkBorrowKind.None
+                   || storageType.InitializationKind != StarkInitializationKind.None
+                ? StarkTypeSymbols.WithQualifiers(
+                    storageType,
+                    borrowKind: StarkBorrowKind.None,
+                    accessKind: StarkAccessKind.None,
+                    initializationKind: StarkInitializationKind.None,
+                    isMutableView: false)
+                : storageType;
+        }
+
+        private static bool TryBuildDestinationInitializationRanges(
+            StarkTypeSymbol type,
+            ConcreteTypeLayout? concreteLayout,
+            out IReadOnlyList<ParameterInitializationRangeSummary> ranges)
+        {
+            ranges = [];
+            if (type.InitializationKind == StarkInitializationKind.None
+                || concreteLayout is not { SizeBytes: > 0 })
+            {
+                return false;
+            }
+
+            var storageType = GetParameterDereferenceableLayoutType(type);
+            if (type.InitializationKind == StarkInitializationKind.Init
+                && storageType.Kind == StarkTypeKind.Slice)
+            {
+                return false;
+            }
+
+            ranges = [new ParameterInitializationRangeSummary(0, concreteLayout.SizeBytes)];
+            return true;
         }
     }
 
@@ -7728,6 +7948,8 @@ internal sealed class SemanticValidator
 
         public bool WritesOtherMemory { get; private set; }
 
+        public bool HasOpaqueCall { get; private set; }
+
         public FunctionOptimizationSummary? OptimizationSummary { get; private set; }
 
         public void Configure(StarkTypeSymbol returnType, bool hasBody, StarkFunctionKind declaredKind)
@@ -7743,12 +7965,20 @@ internal sealed class SemanticValidator
         public void SetParameters(
             IReadOnlyList<TypedParameterSymbol> parameters,
             IReadOnlyList<ParameterDisjointGroup> disjointGroups,
+            IReadOnlyList<string> pointeeDeadOnReturnParameters,
             IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
             IReadOnlyDictionary<string, EnumLayoutSymbol> enumLayouts)
         {
+            var pointeeDeadOnReturnSet = pointeeDeadOnReturnParameters.ToHashSet(StringComparer.Ordinal);
             foreach (var parameter in parameters)
             {
-                Parameters[parameter.Name] = new ParameterSummaryBuilder(parameter, parameters, disjointGroups, namedTypes, enumLayouts);
+                Parameters[parameter.Name] = new ParameterSummaryBuilder(
+                    parameter,
+                    parameters,
+                    disjointGroups,
+                    pointeeDeadOnReturnSet,
+                    namedTypes,
+                    enumLayouts);
             }
         }
 
@@ -7799,6 +8029,11 @@ internal sealed class SemanticValidator
         public void MarkOtherMemoryWrite()
         {
             WritesOtherMemory = true;
+        }
+
+        public void MarkOpaqueCall()
+        {
+            HasOpaqueCall = true;
         }
 
         public bool ApplyArgumentEffects(string parameterName, ArgumentEffects effects)
@@ -7881,7 +8116,9 @@ internal sealed class SemanticValidator
                 parameterEffects.Any(static parameter => parameter.Writes),
                 parameterEffects.Any(static parameter => parameter.CaptureKind != ParameterCaptureKind.None),
                 ReadsOtherMemory,
-                WritesOtherMemory);
+                WritesOtherMemory,
+                Parameters.Values.Any(static parameter => parameter.InitializationRanges.Count > 0),
+                Parameters.Values.Any(static parameter => parameter.PointeeDeadOnReturn));
         }
 
         public FunctionValidationSummary Build()
@@ -7895,7 +8132,9 @@ internal sealed class SemanticValidator
                 parameterSummaries.Any(static parameter => parameter.Writes),
                 parameterSummaries.Any(static parameter => parameter.CaptureKind != ParameterCaptureKind.None),
                 ReadsOtherMemory,
-                WritesOtherMemory);
+                WritesOtherMemory,
+                parameterSummaries.Any(static parameter => parameter.InitializationRanges is { Count: > 0 }),
+                parameterSummaries.Any(static parameter => parameter.PointeeDeadOnReturn));
 
             return new FunctionValidationSummary(
                 Name,
@@ -7907,7 +8146,9 @@ internal sealed class SemanticValidator
                 memoryEffects,
                 parameterSummaries,
                 ResolvedCalls.ToArray(),
-                OptimizationSummary);
+                OptimizationSummary,
+                HasBody,
+                HasOpaqueCall);
         }
     }
 }

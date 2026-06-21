@@ -74,6 +74,97 @@ public sealed class FunctionSemanticsTests
     }
 
     [Fact]
+    public void DirectRecursiveFnWithoutTailBecomeSucceedsWithWarning()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[min max] Recur(i32[min max] value)
+            {
+                return Recur(value);
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "semantic-validate"));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var warning = Assert.Single(result.Diagnostics, static diagnostic => diagnostic.Code == "STK4122");
+        Assert.Equal(DiagnosticSeverity.Warning, warning.Severity);
+        Assert.Equal("semantic-validate", warning.Stage);
+        Assert.Contains("ordinary call semantics", warning.Message, StringComparison.Ordinal);
+        Assert.Contains("tail", warning.Message, StringComparison.Ordinal);
+        Assert.Contains("become", warning.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void MutualOrdinaryRecursionWarnsOnBothEdges()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[min max] Left(i32[min max] value)
+            {
+                return Right(value);
+            }
+
+            fn i32[min max] Right(i32[min max] value)
+            {
+                return Left(value);
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "semantic-validate"));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.Equal(2, result.Diagnostics.Count(static diagnostic => diagnostic.Code == "STK4122"));
+        Assert.Contains(result.Diagnostics, static diagnostic => diagnostic.Code == "STK4122" && diagnostic.Message.Contains("'Left' to 'Right'", StringComparison.Ordinal));
+        Assert.Contains(result.Diagnostics, static diagnostic => diagnostic.Code == "STK4122" && diagnostic.Message.Contains("'Right' to 'Left'", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void TailBecomeRecursionDoesNotWarn()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            tail fn i32[min max] Left(i32[min max] value)
+            {
+                become Right(value);
+            }
+
+            tail fn i32[min max] Right(i32[min max] value)
+            {
+                become Left(value);
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "semantic-validate"));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.DoesNotContain(result.Diagnostics, static diagnostic => diagnostic.Code == "STK4122");
+    }
+
+    [Fact]
+    public void FiniteRecursiveCallCycleStillErrors()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            finite void Recur()
+            {
+                Recur();
+                return;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "semantic-validate"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(result.Diagnostics, static diagnostic => diagnostic.Code == "STK4108" && diagnostic.Severity == DiagnosticSeverity.Error);
+        Assert.DoesNotContain(result.Diagnostics, static diagnostic => diagnostic.Code == "STK4122");
+    }
+
+    [Fact]
     public void LawFunctionsRejectPlainFunctionPointerCalls()
     {
         var result = Compile(
@@ -299,6 +390,64 @@ public sealed class FunctionSemanticsTests
         Assert.True(parameter.GuaranteedNonNull);
         Assert.Equal(8, parameter.DereferenceableBytes);
         Assert.Equal(4, parameter.AlignmentBytes);
+    }
+
+    [Fact]
+    public void SemanticValidationSummariesCarryFullObjectDestinationInitializationRanges()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn bool Write(out u32[0 max] value)
+            {
+                value = 7;
+                return true;
+            }
+
+            unsafe fn void Fill(init u32[0 max][] values)
+            {
+                init values[0] = 7;
+                return;
+            }
+
+            unsafe fn bool WriteAndConsume(out u32[0 max] value) where dead_on_return(value)
+            {
+                value = 7;
+                return true;
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.SemanticValidation, out SemanticValidationModel? validation));
+        Assert.NotNull(validation);
+
+        var outParameter = Assert.Single(validation.Functions["Write"].Parameters!);
+        Assert.True(outParameter.GuaranteedWriteOnly);
+        var range = Assert.Single(outParameter.InitializationRanges!);
+        Assert.Equal(0, range.StartByte);
+        Assert.Equal(4, range.EndByte);
+        Assert.False(outParameter.PointeeDeadOnReturn);
+        Assert.NotNull(validation.Functions["Write"].MemoryEffects);
+        Assert.True(validation.Functions["Write"].MemoryEffects!.InitializesArgumentMemory);
+        Assert.False(validation.Functions["Write"].MemoryEffects!.HasPointeeDeadOnReturnArgument);
+
+        var initSliceParameter = Assert.Single(validation.Functions["Fill"].Parameters!);
+        Assert.Empty(initSliceParameter.InitializationRanges!);
+        Assert.False(initSliceParameter.PointeeDeadOnReturn);
+        Assert.NotNull(validation.Functions["Fill"].MemoryEffects);
+        Assert.False(validation.Functions["Fill"].MemoryEffects!.InitializesArgumentMemory);
+        Assert.False(validation.Functions["Fill"].MemoryEffects!.HasPointeeDeadOnReturnArgument);
+
+        var deadOnReturnParameter = Assert.Single(validation.Functions["WriteAndConsume"].Parameters!);
+        Assert.True(deadOnReturnParameter.GuaranteedWriteOnly);
+        var deadOnReturnRange = Assert.Single(deadOnReturnParameter.InitializationRanges!);
+        Assert.Equal(0, deadOnReturnRange.StartByte);
+        Assert.Equal(4, deadOnReturnRange.EndByte);
+        Assert.True(deadOnReturnParameter.PointeeDeadOnReturn);
+        Assert.NotNull(validation.Functions["WriteAndConsume"].MemoryEffects);
+        Assert.True(validation.Functions["WriteAndConsume"].MemoryEffects!.InitializesArgumentMemory);
+        Assert.True(validation.Functions["WriteAndConsume"].MemoryEffects!.HasPointeeDeadOnReturnArgument);
     }
 
     [Fact]
@@ -841,6 +990,28 @@ public sealed class FunctionSemanticsTests
         Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Code == "STK4105" && diagnostic.Message.Contains("ReadGlobal", StringComparison.Ordinal));
         Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Code == "STK4102" && diagnostic.Message.Contains("Allocate", StringComparison.Ordinal));
         Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Code == "STK4104" && diagnostic.Message.Contains("WriteGlobal", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void LawBodiesRejectArenaStorageSelectorAllocation()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe law u64[0 max] Bad()
+            {
+                stack mut dynamic i32[min max] values = new(arena, 4);
+                return values.Length;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "semantic-validate"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK4102"
+                && diagnostic.Message.Contains("new(arena", StringComparison.Ordinal));
     }
 
     [Fact]

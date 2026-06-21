@@ -947,6 +947,54 @@ public sealed class ProjectCliTests
     }
 
     [Fact]
+    public async Task ConcurrentFilteredGeneratedTestRunsSerializeSharedBuildOutput()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
+        {
+            return;
+        }
+
+        var originalDirectory = Environment.CurrentDirectory;
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-project-cli-generated-test-filter-race-");
+
+        try
+        {
+            var testDirectory = await CreateGeneratedRunnerFixtureAsync(tempDirectory.FullName);
+            Environment.CurrentDirectory = testDirectory;
+
+            var passingStdout = new StringWriter();
+            var passingStderr = new StringWriter();
+            var failingStdout = new StringWriter();
+            var failingStderr = new StringWriter();
+
+            var passingRun = CompilerCli.RunAsync(
+                ["test", "--filter=AddsNumbers"],
+                new StringReader(string.Empty),
+                passingStdout,
+                passingStderr);
+            var failingRun = CompilerCli.RunAsync(
+                ["test", "--filter=FailsByDesign"],
+                new StringReader(string.Empty),
+                failingStdout,
+                failingStderr);
+
+            var exitCodes = await Task.WhenAll(passingRun, failingRun);
+
+            Assert.Equal(0, exitCodes[0]);
+            Assert.Equal(1, exitCodes[1]);
+            Assert.Contains("Passed test project 'generated-tests'.", passingStdout.ToString(), StringComparison.Ordinal);
+            Assert.Equal(string.Empty, passingStderr.ToString());
+            Assert.Contains("Running test project 'generated-tests'...", failingStdout.ToString(), StringComparison.Ordinal);
+            Assert.Contains("Failed test project 'generated-tests' with exit code 1.", failingStderr.ToString(), StringComparison.Ordinal);
+        }
+        finally
+        {
+            Environment.CurrentDirectory = originalDirectory;
+            Cleanup(tempDirectory);
+        }
+    }
+
+    [Fact]
     public async Task TestGeneratedFactRunnerAppliesPlatformGatesFromTargetTriple()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo)

@@ -843,6 +843,39 @@ internal sealed class SsaAliasAwareMemoryOptimizer
                 AddValueUse(block.Terminator.Value, block.Id, uses);
             }
 
+            if (block.Terminator.TailDirectCall is not null)
+            {
+                foreach (var argument in block.Terminator.TailDirectCall.Arguments)
+                {
+                    AddValueUse(argument, block.Id, uses);
+                }
+
+                foreach (var address in block.Terminator.TailDirectCall.IndirectArgumentAddresses ?? [])
+                {
+                    if (address is not null)
+                    {
+                        AddValueUse(address, block.Id, uses);
+                    }
+                }
+            }
+
+            if (block.Terminator.TailIndirectCall is not null)
+            {
+                AddValueUse(block.Terminator.TailIndirectCall.Target, block.Id, uses);
+                foreach (var argument in block.Terminator.TailIndirectCall.Arguments)
+                {
+                    AddValueUse(argument, block.Id, uses);
+                }
+
+                foreach (var address in block.Terminator.TailIndirectCall.IndirectArgumentAddresses ?? [])
+                {
+                    if (address is not null)
+                    {
+                        AddValueUse(address, block.Id, uses);
+                    }
+                }
+            }
+
             if (block.Terminator.SwitchCases is not null)
             {
                 foreach (var switchCase in block.Terminator.SwitchCases)

@@ -767,6 +767,7 @@ internal sealed class LoweringContractValidator
 
         if (!Equals(operation.CreatedType, record.CreatedType)
             || !Equals(operation.Constructor, record.Constructor)
+            || operation.StorageSelector != record.StorageSelector
             || operation.Members.Count != record.Members.Count)
         {
             ReportInvalid(
@@ -1720,7 +1721,7 @@ internal sealed class LoweringContractValidator
                 $"Typed object-creation fact must carry a runtime created type, but found '{record.CreatedType.DisplayName}'.");
         }
 
-        var actualArgumentCount = expression.argumentList()?.argument().Length ?? 0;
+        var actualArgumentCount = GetObjectCreationArguments(expression).Length;
         if (record.Constructor is { } constructor
             && constructor.Parameters.Count != actualArgumentCount)
         {
@@ -2158,7 +2159,15 @@ internal sealed class LoweringContractValidator
     {
         return expression.type_() is null
             || expression.objectInitializer() is not null
+            || expression.arenaObjectCreationArgumentList() is not null
             || expression.argumentList() is { } argumentList && argumentList.argument().Length > 0;
+    }
+
+    private static StarkParser.ArgumentContext[] GetObjectCreationArguments(StarkParser.ObjectCreationExpressionContext expression)
+    {
+        return expression.arenaObjectCreationArgumentList() is { } arenaArguments
+            ? arenaArguments.argument()
+            : expression.argumentList()?.argument() ?? [];
     }
 
     private static bool IsUnsafeRawSliceConstructionPrefix(StarkParser.PostfixExpressionContext expression, int postfixPartIndex)

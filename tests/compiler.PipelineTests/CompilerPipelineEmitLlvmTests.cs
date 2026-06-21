@@ -753,7 +753,7 @@ public sealed class CompilerPipelineEmitLlvmTests
                 $@"define internal[^\r\n]*@{System.Text.RegularExpressions.Regex.Escape(function.SymbolName)}\([^\r\n]*\)[^\r\n]*",
                 System.Text.RegularExpressions.RegexOptions.CultureInvariant);
             Assert.True(definition.Success, $"Expected an internal LLVM body for imported specialization '{function.SymbolName}'.");
-            Assert.Contains("ptr noundef nonnull noalias readonly nocapture", definition.Value, StringComparison.Ordinal);
+            Assert.Contains("ptr noundef nonnull noalias readonly captures(none)", definition.Value, StringComparison.Ordinal);
             Assert.Contains("dereferenceable(4)", definition.Value, StringComparison.Ordinal);
             Assert.Contains("align 4", definition.Value, StringComparison.Ordinal);
             Assert.Contains("memory(argmem: read)", definition.Value, StringComparison.Ordinal);
@@ -883,8 +883,8 @@ public sealed class CompilerPipelineEmitLlvmTests
                 $@"define internal[^\r\n]*@{System.Text.RegularExpressions.Regex.Escape(function.SymbolName)}\([^\r\n]*\)[\s\S]*?^}}",
                 System.Text.RegularExpressions.RegexOptions.Multiline | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
             Assert.True(definition.Success, $"Expected an internal LLVM body for imported specialization '{function.SymbolName}'.");
-            Assert.Contains("ptr noundef noalias nocapture %arg_left", definition.Value, StringComparison.Ordinal);
-            Assert.Contains("ptr noundef noalias nocapture %arg_right", definition.Value, StringComparison.Ordinal);
+            Assert.Contains("ptr noundef noalias captures(none) %arg_left", definition.Value, StringComparison.Ordinal);
+            Assert.Contains("ptr noundef noalias captures(none) %arg_right", definition.Value, StringComparison.Ordinal);
             Assert.Contains($"stark.noalias.{function.SymbolName}.param.left", llvmModule.Text, StringComparison.Ordinal);
             Assert.Contains($"stark.noalias.{function.SymbolName}.param.right", llvmModule.Text, StringComparison.Ordinal);
             Assert.Matches(@"store i32 .* !alias\.scope !\d+, !noalias !\d+", definition.Value);

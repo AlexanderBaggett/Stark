@@ -87,6 +87,8 @@ internal sealed partial class LlvmFunctionBodyEmitter
             SsaLifetimeStartInstruction lifetimeStart => lifetimeStart.Location,
             SsaLifetimeEndInstruction lifetimeEnd => lifetimeEnd.Location,
             SsaDeallocateLocalInstruction deallocateLocal => deallocateLocal.Location,
+            SsaArenaFrameEnterInstruction arenaFrameEnter => arenaFrameEnter.Location,
+            SsaArenaFrameLeaveInstruction arenaFrameLeave => arenaFrameLeave.Location,
             SsaStoreLocalInstruction storeLocal => storeLocal.Location,
             SsaCopyMemoryInstruction copyMemory => copyMemory.Location,
             SsaStoreIndirectInstruction storeIndirect => storeIndirect.Location,
@@ -124,13 +126,15 @@ internal sealed partial class LlvmFunctionBodyEmitter
     private enum LlvmAssumeOperandBundleKind
     {
         NonNull,
-        Align
+        Align,
+        SeparateStorage
     }
 
     private sealed record LlvmAssumeOperandBundle(
         LlvmAssumeOperandBundleKind Kind,
         SsaValue Pointer,
-        int? AlignmentBytes = null);
+        int? AlignmentBytes = null,
+        SsaValue? OtherPointer = null);
 
     private sealed record LlvmAssumeFact(
         SsaValue? Condition,

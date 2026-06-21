@@ -49,6 +49,13 @@
     "documentation": "Declares a function that is both pure and guaranteed to return."
   },
   {
+    "label": "tail fn",
+    "insertText": "tail fn ${1:i64[min max]} ${2:Name}(${3:i64[min max] value})\n{\n\tbecome ${4:Next}(${5:value});\n}",
+    "kind": "snippet",
+    "detail": "Tail-callable function declaration",
+    "documentation": "Declares a tail-callable function. Each become edge must target a tail-callable callee in true tail position."
+  },
+  {
     "label": "struct",
     "insertText": "struct ${1:Name}\n{\n\t${2:i32[0 max]} ${3:Value};\n\t$0\n}",
     "kind": "snippet",
@@ -137,7 +144,7 @@
     "insertText": "arena ${1:mut }${2:i32[0 max]} ${3:name} = ${4:0};",
     "kind": "keyword",
     "detail": "Arena storage declaration",
-    "documentation": "Declares arena storage."
+    "documentation": "Declares compiler-managed lexical arena storage. Arena-backed values are bulk-reclaimed at the arena lifetime boundary."
   },
   {
     "label": "register",
@@ -228,6 +235,13 @@
     "kind": "keyword",
     "detail": "Memory contract",
     "documentation": "States that expressions refer to the same storage."
+  },
+  {
+    "label": "dead_on_return",
+    "insertText": "dead_on_return(${1:value})",
+    "kind": "keyword",
+    "detail": "Pointee lifetime contract",
+    "documentation": "Marks a memory-backed parameter's pointee storage as unavailable to the caller after return."
   },
   {
     "label": "rawptr",
@@ -356,6 +370,13 @@
     "documentation": "Applies the static modifier to a function or member where valid."
   },
   {
+    "label": "tail",
+    "insertText": "tail",
+    "kind": "keyword",
+    "detail": "tail-callable function modifier",
+    "documentation": "Marks a function or callable type as tail-callable for guaranteed become edges."
+  },
+  {
     "label": "if",
     "insertText": "if",
     "kind": "keyword",
@@ -412,6 +433,13 @@
     "documentation": "Stark control flow keyword: return."
   },
   {
+    "label": "become",
+    "insertText": "become ${1:Next}(${2:value});",
+    "kind": "snippet",
+    "detail": "Guaranteed tail-transfer statement",
+    "documentation": "Terminates the current tail function by transferring to a tail-callable callee without growing the stack."
+  },
+  {
     "label": "break",
     "insertText": "break",
     "kind": "keyword",
@@ -459,6 +487,13 @@
     "kind": "keyword",
     "detail": "new keyword",
     "documentation": "Stark keyword: new."
+  },
+  {
+    "label": "new(arena, ...)",
+    "insertText": "new(arena, ${1:capacity})",
+    "kind": "snippet",
+    "detail": "Arena-backed dynamic storage allocation",
+    "documentation": "Allocates dynamic backing storage from the current compiler-managed arena lifetime."
   },
   {
     "label": "drop",

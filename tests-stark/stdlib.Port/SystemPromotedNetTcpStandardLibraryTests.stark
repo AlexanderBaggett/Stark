@@ -246,7 +246,7 @@ fn i32[min max] RunBulkReads()
     stack ascii fixed8192Read = LlvmDefinitionBody(llvm, "@TcpClient_Read__mutborrowTcpClient_mutborrowSystem_Runtime_Buffer_FixedByteBuffer8192_(");
     stack ascii dynamicRead = LlvmDefinitionBody(llvm, "@TcpClient_Read__mutborrowTcpClient_mutborrowSystem_Runtime_Buffer_DynamicByteBuffer_");
 
-    if (!Contains(fixed512Read, "ptr noundef nonnull noalias nocapture dereferenceable(528) align 8 %arg_destination"))
+    if (!Contains(fixed512Read, "ptr noundef nonnull noalias captures(none) dereferenceable(528) align 8 %arg_destination"))
     {
         return false;
     }

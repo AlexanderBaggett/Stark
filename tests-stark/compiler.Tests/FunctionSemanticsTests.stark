@@ -254,6 +254,22 @@ unsafe law void WriteGlobal()
         && AnyDiagnosticMessageContains(compiled, "WriteGlobal");
 }
 
+internal fn bool LawBodiesRejectArenaStorageSelectorAllocationImpl()
+{
+    stack mut LlvmCompile compiled = CompileFull(
+        "diagp1-law-bodies-reject-arena-selector-allocation",
+        raw"""
+module Demo
+
+unsafe law u64[0 max] Bad()
+{
+    stack mut dynamic i32[min max] values = new(arena, 4);
+    return values.Length;
+}
+""");
+    return FailsWithDiagnosticMessage(compiled, "STK4102", "new(arena");
+}
+
 // Ported from FunctionSemanticsTests.LawBodiesRejectExternallyVisibleImplicitDropEffects.
 internal fn bool LawBodiesRejectExternallyVisibleImplicitDropEffectsImpl()
 {

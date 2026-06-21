@@ -9,6 +9,7 @@ import CompilerPipelineLowerMirTests
 import GenericUseSiteInstantiationRegressionTests
 import LoweringContractFactKeyRegressionTests
 import MidLevelIrDynamicFixedArrayIndexingTests
+import MidLevelIrLoweringTests_ArenaFrame
 import MidLevelIrLoweringTests_CompileTimeEvaluator
 import MidLevelIrLoweringTests_Core
 import MidLevelIrLoweringTests_LoweringInvariant
@@ -32,6 +33,13 @@ module CompilerMirTests
 // ported; see the agent report for the skip list.
 
 // --- control flow ----------------------------------------------------------
+
+[Fact]
+[Collection("mid-level-ir-arena-frame")]
+fn bool ArenaDynamicStorageEmitsExplicitMirFrameScopeOnEveryReturn()
+{
+    return ArenaDynamicStorageEmitsExplicitMirFrameScopeOnEveryReturnImpl();
+}
 
 [Fact]
 fn bool IfStatementsLowerToBranchingBlocks()
@@ -1029,4 +1037,3 @@ fn bool RawSingleLineLiteralsLowerAsComparisonOperands()
 {
     return RawSingleLineLiteralsLowerAsComparisonOperandsImpl();
 }
-

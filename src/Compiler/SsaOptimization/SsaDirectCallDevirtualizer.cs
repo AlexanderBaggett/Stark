@@ -178,7 +178,28 @@ internal sealed class SsaDirectCallDevirtualizer
             parameterTypes.Add(signature.Parameters[index].Type);
         }
 
-        return StarkTypeSymbols.FunctionPointer(signature.Kind, signature.ReturnType, parameterTypes);
+        return StarkTypeSymbols.FunctionPointer(
+            signature.Kind,
+            signature.ReturnType,
+            parameterTypes,
+            isTailCallable: signature.IsTailCallable,
+            pointeeDeadOnReturnParameterNames: MapPointeeDeadOnReturnParameters(signature));
+    }
+
+    private static IReadOnlyList<string>? MapPointeeDeadOnReturnParameters(TypedFunctionSignature signature)
+    {
+        if (signature.PointeeDeadOnReturnParameters.Count == 0)
+        {
+            return null;
+        }
+
+        var deadParameters = signature.PointeeDeadOnReturnParameters.ToHashSet(StringComparer.Ordinal);
+        var mapped = signature.Parameters
+            .Select((parameter, index) => deadParameters.Contains(parameter.Name) ? $"arg{index}" : null)
+            .Where(static name => name is not null)
+            .Select(static name => name!)
+            .ToArray();
+        return mapped.Length == 0 ? null : mapped;
     }
 
     private static IReadOnlyDictionary<DynVTableSlotKey, SsaFunctionAddressValue> EmptyDynVTableSlotTargets { get; } =

@@ -34,8 +34,10 @@ internal static partial class PackageImageBuilder
             InlinePreference: RenderInlinePreference(effects.InlinePreference),
             IsStrictFp: effects.IsStrictFp,
             IsVarargs: effects.IsVarargs,
+            IsTailCallable: effects.IsTailCallable,
             FfiAbi: effects.FfiAbi is { } ffiAbi ? StarkFfiAbiFacts.DisplayName(ffiAbi) : null,
-            BackendOptimizationMode: RenderBackendOptimizationMode(effects.BackendOptimizationMode));
+            BackendOptimizationMode: RenderBackendOptimizationMode(effects.BackendOptimizationMode),
+            NoRecurse: effects.NoRecurse);
         return true;
     }
 
@@ -76,7 +78,8 @@ internal static partial class PackageImageBuilder
             SourceName: abiFunction.SourceName,
             UsesFastCallingConvention: abiFunction.UsesFastCallingConvention,
             IsVarargs: abiFunction.IsVarargs,
-            FfiAbi: abiFunction.FfiAbi is { } ffiAbi ? StarkFfiAbiFacts.DisplayName(ffiAbi) : null);
+            FfiAbi: abiFunction.FfiAbi is { } ffiAbi ? StarkFfiAbiFacts.DisplayName(ffiAbi) : null,
+            UsesTailCallingConvention: abiFunction.UsesTailCallingConvention);
         return true;
     }
 
@@ -164,7 +167,9 @@ internal static partial class PackageImageBuilder
                     validation.MemoryEffects.WritesArgumentMemory,
                     validation.MemoryEffects.CapturesArgumentMemory,
                     validation.MemoryEffects.ReadsOtherMemory,
-                    validation.MemoryEffects.WritesOtherMemory),
+                    validation.MemoryEffects.WritesOtherMemory,
+                    validation.MemoryEffects.InitializesArgumentMemory,
+                    validation.MemoryEffects.HasPointeeDeadOnReturnArgument),
             Parameters: validation.Parameters?
                 .Select(parameter => new StarkPackageParameterMemoryEffectsManifest(
                     parameter.Name,
@@ -178,7 +183,13 @@ internal static partial class PackageImageBuilder
                     parameter.AlignmentBytes,
                     parameter.Reads,
                     parameter.Writes,
-                    parameter.CaptureKind.ToString().ToLowerInvariant()))
+                    parameter.CaptureKind.ToString().ToLowerInvariant(),
+                    parameter.InitializationRanges?
+                        .Select(static range => new StarkPackageParameterInitializationRangeManifest(
+                            range.StartByte,
+                            range.EndByte))
+                        .ToArray(),
+                    parameter.PointeeDeadOnReturn))
                 .ToArray(),
             Calls: validation.Calls is { Count: > 0 }
                 ? validation.Calls
@@ -189,7 +200,9 @@ internal static partial class PackageImageBuilder
                             call.MemoryEffects.WritesArgumentMemory,
                             call.MemoryEffects.CapturesArgumentMemory,
                             call.MemoryEffects.ReadsOtherMemory,
-                            call.MemoryEffects.WritesOtherMemory),
+                            call.MemoryEffects.WritesOtherMemory,
+                            call.MemoryEffects.InitializesArgumentMemory,
+                            call.MemoryEffects.HasPointeeDeadOnReturnArgument),
                         call.Arguments
                             .OrderBy(static argument => argument.ArgumentIndex)
                             .Select(argument => new StarkPackageCallArgumentMemoryEffectsManifest(
@@ -231,7 +244,8 @@ internal static partial class PackageImageBuilder
                 ownershipModel,
                 out var ownershipManifest)
                 ? ownershipManifest
-                : null);
+                : null,
+            HasOpaqueCall: validation.HasOpaqueCall);
         return true;
     }
 

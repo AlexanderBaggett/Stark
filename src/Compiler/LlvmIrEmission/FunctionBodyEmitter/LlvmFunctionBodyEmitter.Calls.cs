@@ -17,6 +17,216 @@ internal sealed partial class LlvmFunctionBodyEmitter
             instruction.LoopAccessGroups);
     }
 
+    private void EmitTailCallTerminator(SsaTerminator terminator)
+    {
+        if (_abiFunction.ReturnsIndirect)
+        {
+            throw new UnsupportedBodyEmissionException(
+                $"Tail-callable function '{_function.Name}' cannot use an indirect return ABI shape.");
+        }
+
+        if (!_abiFunction.UsesTailCallingConvention)
+        {
+            throw new UnsupportedBodyEmissionException(
+                $"Tail-call terminator in '{_function.Name}' requires the caller to lower with tailcc.");
+        }
+
+        if (terminator.TailDirectCall is { } directCall)
+        {
+            var abiCallee = _resolveCallAbi(_function.Name, directCall.FunctionName)
+                ?? throw new UnsupportedBodyEmissionException($"Missing ABI lowering for tail-call target '{directCall.FunctionName}'.");
+            EmitTailCall(
+                abiCallee,
+                RenderCallTarget(abiCallee),
+                directCall,
+                ResolveCallParameterEffects(directCall.FunctionName),
+                ResolveCallMemoryEffects(directCall.FunctionName),
+                callSiteAttributeSuffix: string.Empty,
+                calleesMetadataSuffix: string.Empty);
+            return;
+        }
+
+        if (terminator.TailIndirectCall is { } indirectCall)
+        {
+            var abiCallee = BuildIndirectCallAbi(indirectCall);
+            var callSiteAttributes = _attributeBuilder.BuildFunctionPointerCallSiteAttributes(
+                abiCallee,
+                indirectCall.Target.Type.FunctionPointerKind ?? StarkFunctionKind.Fn);
+            var callSiteAttributeSuffix = string.IsNullOrWhiteSpace(callSiteAttributes)
+                ? string.Empty
+                : $" {callSiteAttributes}";
+            var parameterEffects = BuildIndirectCallParameterEffects(abiCallee, indirectCall.Target.Type);
+            EmitTailCall(
+                abiCallee,
+                FormatValue(indirectCall.Target),
+                indirectCall,
+                parameterEffects,
+                BuildIndirectCallMemoryEffects(parameterEffects, indirectCall.Target.Type),
+                callSiteAttributeSuffix,
+                GetKnownCalleesMetadataSuffix(indirectCall.Target));
+            return;
+        }
+
+        throw new UnsupportedBodyEmissionException("SSA tail-call terminator is missing its call operation.");
+    }
+
+    private void EmitTailCall(
+        AbiFunctionSignature abiCallee,
+        string callTarget,
+        ISsaDirectCallOperation call,
+        IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? parameterEffects,
+        FunctionMemoryEffectSummary? memoryEffects,
+        string callSiteAttributeSuffix,
+        string calleesMetadataSuffix)
+    {
+        ValidateMustTailAbi(abiCallee, call.Text);
+        var renderedArguments = RenderMustTailArguments(abiCallee, call.Arguments, parameterEffects);
+        var callMetadataSuffix = GetCallInstructionMetadataSuffix(
+            abiCallee,
+            call.Arguments,
+            call.IndirectArgumentAddresses,
+            call.IndirectArgumentLocalNames,
+            parameterEffects,
+            memoryEffects,
+            scopedNoAliasGroups: null,
+            loopAccessGroups: null);
+        EmitMustTailCallAndReturn(
+            abiCallee,
+            callTarget,
+            renderedArguments,
+            callSiteAttributeSuffix,
+            calleesMetadataSuffix,
+            callMetadataSuffix);
+    }
+
+    private void EmitTailCall(
+        AbiFunctionSignature abiCallee,
+        string callTarget,
+        ISsaIndirectCallOperation call,
+        IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? parameterEffects,
+        FunctionMemoryEffectSummary? memoryEffects,
+        string callSiteAttributeSuffix,
+        string calleesMetadataSuffix)
+    {
+        ValidateMustTailAbi(abiCallee, call.Text);
+        var renderedArguments = RenderMustTailArguments(abiCallee, call.Arguments, parameterEffects);
+        var callMetadataSuffix = GetCallInstructionMetadataSuffix(
+            abiCallee,
+            call.Arguments,
+            call.IndirectArgumentAddresses,
+            call.IndirectArgumentLocalNames,
+            parameterEffects,
+            memoryEffects,
+            scopedNoAliasGroups: null,
+            loopAccessGroups: null);
+        EmitMustTailCallAndReturn(
+            abiCallee,
+            callTarget,
+            renderedArguments,
+            callSiteAttributeSuffix,
+            calleesMetadataSuffix,
+            callMetadataSuffix);
+    }
+
+    private void ValidateMustTailAbi(AbiFunctionSignature abiCallee, string callText)
+    {
+        if (!abiCallee.UsesTailCallingConvention)
+        {
+            throw new UnsupportedBodyEmissionException(
+                $"Tail call '{callText}' targets a function that did not lower with tailcc.");
+        }
+
+        if (abiCallee.IsFfi || abiCallee.IsVarargs || abiCallee.FfiAbi is not null)
+        {
+            throw new UnsupportedBodyEmissionException(
+                $"Tail call '{callText}' targets an FFI or varargs ABI, which cannot satisfy Stark's guaranteed tail-call contract.");
+        }
+
+        if (abiCallee.ReturnsIndirect)
+        {
+            throw new UnsupportedBodyEmissionException(
+                $"Tail call '{callText}' targets an indirect-return ABI shape.");
+        }
+
+        if (abiCallee.UserParameters.Any(IsUnsupportedMustTailParameter))
+        {
+            throw new UnsupportedBodyEmissionException(
+                $"Tail call '{callText}' targets an ABI shape with indirect parameters.");
+        }
+
+        if (MapType(abiCallee.LlvmReturnType) != MapType(_abiFunction.LlvmReturnType))
+        {
+            throw new UnsupportedBodyEmissionException(
+                $"Tail call '{callText}' return ABI '{abiCallee.LlvmReturnType.DisplayName}' does not match caller return ABI '{_abiFunction.LlvmReturnType.DisplayName}'.");
+        }
+
+        var callerParameters = _abiFunction.UserParameters;
+        var calleeParameters = abiCallee.UserParameters;
+        if (callerParameters.Count != calleeParameters.Count)
+        {
+            throw new UnsupportedBodyEmissionException(
+                $"Tail call '{callText}' has {calleeParameters.Count} ABI parameter(s), but caller '{_function.Name}' has {callerParameters.Count}.");
+        }
+
+        for (var index = 0; index < callerParameters.Count; index++)
+        {
+            if (MapType(callerParameters[index].LlvmType) != MapType(calleeParameters[index].LlvmType))
+            {
+                throw new UnsupportedBodyEmissionException(
+                    $"Tail call '{callText}' ABI parameter {index + 1} type '{calleeParameters[index].LlvmType.DisplayName}' does not match caller parameter type '{callerParameters[index].LlvmType.DisplayName}'.");
+            }
+        }
+    }
+
+    private static bool IsUnsupportedMustTailParameter(AbiParameterSymbol parameter)
+    {
+        return parameter.Kind != AbiParameterKind.Direct
+            && (parameter.Kind != AbiParameterKind.IndirectIn
+                || AbiLoweringHeuristics.IsByValueIndirectParameter(parameter));
+    }
+
+    private string RenderMustTailArguments(
+        AbiFunctionSignature abiCallee,
+        IReadOnlyList<SsaValue> arguments,
+        IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? parameterEffects)
+    {
+        var userParameters = abiCallee.UserParameters;
+        if (userParameters.Count != arguments.Count)
+        {
+            throw new UnsupportedBodyEmissionException(
+                $"ABI parameter count mismatch for tail call '{abiCallee.DisplaySourceName}': expected {userParameters.Count}, got {arguments.Count}.");
+        }
+
+        var rendered = new List<string>(arguments.Count);
+        for (var index = 0; index < arguments.Count; index++)
+        {
+            rendered.Add(RenderDirectArgument(abiCallee, userParameters[index], arguments[index], parameterEffects, includeContractAttributes: true));
+        }
+
+        return string.Join(", ", rendered);
+    }
+
+    private void EmitMustTailCallAndReturn(
+        AbiFunctionSignature abiCallee,
+        string callTarget,
+        string renderedArguments,
+        string callSiteAttributeSuffix,
+        string calleesMetadataSuffix,
+        string callMetadataSuffix)
+    {
+        var strictFpCallSuffix = GetStrictFpCallSuffix();
+        if (_function.ReturnType.Kind == StarkTypeKind.Void)
+        {
+            AppendLine($"  musttail call tailcc void {callTarget}({renderedArguments}){callSiteAttributeSuffix}{strictFpCallSuffix}{calleesMetadataSuffix}{callMetadataSuffix}");
+            AppendLine("  ret void");
+            return;
+        }
+
+        var result = $"%{EscapeIdentifier(CreateAbiTempName("musttail"))}";
+        AppendLine($"  {result} = musttail call tailcc {RenderCallResultType(abiCallee)} {callTarget}({renderedArguments}){callSiteAttributeSuffix}{strictFpCallSuffix}{calleesMetadataSuffix}{callMetadataSuffix}");
+        AppendLine($"  ret {MapType(_abiFunction.LlvmReturnType)} {result}");
+    }
+
     private void EmitCall(
         string? resultName,
         string? result,
@@ -190,7 +400,11 @@ internal sealed partial class LlvmFunctionBodyEmitter
             callPrefixSegments.Add("fast");
         }
 
-        if (abiCallee.UsesFastCallingConvention)
+        if (abiCallee.UsesTailCallingConvention)
+        {
+            callPrefixSegments.Add("tailcc");
+        }
+        else if (abiCallee.UsesFastCallingConvention)
         {
             callPrefixSegments.Add("fastcc");
         }
@@ -1226,7 +1440,11 @@ internal sealed partial class LlvmFunctionBodyEmitter
             callPrefixSegments.Add("fast");
         }
 
-        if (abiCallee.UsesFastCallingConvention)
+        if (abiCallee.UsesTailCallingConvention)
+        {
+            callPrefixSegments.Add("tailcc");
+        }
+        else if (abiCallee.UsesFastCallingConvention)
         {
             callPrefixSegments.Add("fastcc");
         }
@@ -1521,7 +1739,9 @@ internal sealed partial class LlvmFunctionBodyEmitter
         return new FunctionMemoryEffectSummary(
             ReadsArgumentMemory: parameters.Any(static parameter => parameter.Reads),
             WritesArgumentMemory: parameters.Any(static parameter => parameter.Writes),
-            CapturesArgumentMemory: parameters.Any(static parameter => parameter.CaptureKind != ParameterCaptureKind.None));
+            CapturesArgumentMemory: parameters.Any(static parameter => parameter.CaptureKind != ParameterCaptureKind.None),
+            InitializesArgumentMemory: parameters.Any(static parameter => parameter.InitializationRanges is { Count: > 0 }),
+            HasPointeeDeadOnReturnArgument: parameters.Any(static parameter => parameter.PointeeDeadOnReturn));
     }
 
     private string GetCallInstructionMetadataSuffix(
@@ -2016,10 +2236,12 @@ internal sealed partial class LlvmFunctionBodyEmitter
                         index)))
                 .ToArray(),
             Kind: call.Target.Type.FunctionPointerKind ?? StarkFunctionKind.Fn,
+            IsTailCallable: call.Target.Type.FunctionPointerIsTailCallable,
             FfiAbi: call.Target.Type.FunctionPointerAbi,
             DisjointParameterGroups: call.Target.Type.FunctionPointerDisjointParameterGroups ?? [],
             OverlapParameterGroups: call.Target.Type.FunctionPointerOverlapParameterGroups ?? [],
-            SameParameterGroups: call.Target.Type.FunctionPointerSameParameterGroups ?? []);
+            SameParameterGroups: call.Target.Type.FunctionPointerSameParameterGroups ?? [],
+            PointeeDeadOnReturnParameterNames: call.Target.Type.FunctionPointerPointeeDeadOnReturnParameterNames ?? []);
         var isFfi = call.Target.Type.FunctionPointerAbi is not null;
         return LlvmSpecializationEmissionPlanner.BuildSyntheticAbiSignature(
             signature,
@@ -2032,7 +2254,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
             publishedConcreteLayouts: _publishedConcreteLayouts);
     }
 
-    private static IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? BuildIndirectCallParameterEffects(
+    private IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? BuildIndirectCallParameterEffects(
         AbiFunctionSignature abiCallee,
         StarkTypeSymbol functionPointerType)
     {
@@ -2052,10 +2274,12 @@ internal sealed partial class LlvmFunctionBodyEmitter
                 static parameter => parameter.SourceName,
                 parameter =>
                 {
+                    var pointeeDeadOnReturn = functionPointerType.FunctionPointerPointeeDeadOnReturnParameterNames?.Contains(parameter.SourceName, StringComparer.Ordinal) == true;
                     var guaranteedReadOnly = DeriveIndirectCallParameterReadOnly(parameter.SourceType);
                     var guaranteedWriteOnly = parameter.SourceType.InitializationKind != StarkInitializationKind.None;
                     var reads = !guaranteedWriteOnly;
                     var writes = guaranteedWriteOnly || !guaranteedReadOnly;
+                    var initializationRanges = TryGetFunctionPointerParameterInitializationRanges(parameter.SourceType);
                     return new ParameterMemoryEffectSummary(
                         parameter.SourceName,
                         parameter.SourceType.DisplayName,
@@ -2072,9 +2296,44 @@ internal sealed partial class LlvmFunctionBodyEmitter
                         AlignmentBytes: null,
                         Reads: reads,
                         Writes: writes,
-                        CaptureKind: ParameterCaptureKind.Escape);
+                        CaptureKind: ParameterCaptureKind.Escape,
+                        InitializationRanges: initializationRanges,
+                        PointeeDeadOnReturn: pointeeDeadOnReturn);
                 },
                 StringComparer.Ordinal);
+    }
+
+    private IReadOnlyList<ParameterInitializationRangeSummary>? TryGetFunctionPointerParameterInitializationRanges(
+        StarkTypeSymbol type)
+    {
+        if (type.InitializationKind == StarkInitializationKind.None)
+        {
+            return null;
+        }
+
+        var storageType = StarkTypeSymbols.IsPointerBackedBorrowType(type)
+            ? StarkTypeSymbols.BorrowReturnValueType(type)
+            : type;
+        if (type.InitializationKind == StarkInitializationKind.Init
+            && storageType.Kind == StarkTypeKind.Slice)
+        {
+            return null;
+        }
+
+        if (storageType.BorrowKind != StarkBorrowKind.None
+            || storageType.InitializationKind != StarkInitializationKind.None)
+        {
+            storageType = StarkTypeSymbols.WithQualifiers(
+                storageType,
+                borrowKind: StarkBorrowKind.None,
+                accessKind: StarkAccessKind.None,
+                initializationKind: StarkInitializationKind.None,
+                isMutableView: false);
+        }
+
+        return TryGetConcreteTypeLayout(storageType) is { SizeBytes: > 0 } layout
+            ? [new ParameterInitializationRangeSummary(0, layout.SizeBytes)]
+            : null;
     }
 
     private static bool IsFunctionPointerParameterNoAliasAgainstAll(

@@ -9,6 +9,7 @@ internal static class ProjectCliDriver
     private const string ProjectManifestFileName = "Stark.toml";
     private const string SolutionManifestFileName = "Stark.solution.toml";
     private const string LocalUserConfigFileName = "Stark.user.toml";
+    private const string BuildLockFileName = ".stark-build.lock";
 
     public static bool IsProjectCommand(string argument)
     {
@@ -83,8 +84,15 @@ internal static class ProjectCliDriver
             }
 
             var project = LoadProjectManifest(discovery.Project);
-            var buildResult = await BuildProjectAsync(project, projectSession);
-            return buildResult.Success ? 0 : 1;
+            try
+            {
+                var buildResult = await BuildProjectAsync(project, projectSession);
+                return buildResult.Success ? 0 : 1;
+            }
+            finally
+            {
+                ReleaseBuildLocks(projectSession);
+            }
         }
 
         var solution = LoadSolutionManifest(discovery.Solution!);
@@ -106,16 +114,23 @@ internal static class ProjectCliDriver
             return 1;
         }
 
-        foreach (var target in targets)
+        try
         {
-            var buildResult = await BuildProjectAsync(target, session);
-            if (!buildResult.Success)
+            foreach (var target in targets)
             {
-                return 1;
+                var buildResult = await BuildProjectAsync(target, session);
+                if (!buildResult.Success)
+                {
+                    return 1;
+                }
             }
-        }
 
-        return 0;
+            return 0;
+        }
+        finally
+        {
+            ReleaseBuildLocks(session);
+        }
     }
 
     private static async Task<int> ExecuteRunAsync(
@@ -163,28 +178,35 @@ internal static class ProjectCliDriver
             return 1;
         }
 
-        var buildResult = await BuildProjectAsync(project, session);
-        if (!buildResult.Success)
+        try
         {
-            return 1;
+            var buildResult = await BuildProjectAsync(project, session);
+            if (!buildResult.Success)
+            {
+                return 1;
+            }
+
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = buildResult.OutputPath,
+                WorkingDirectory = Path.GetDirectoryName(buildResult.OutputPath) ?? Environment.CurrentDirectory,
+                UseShellExecute = false
+            };
+
+            using var process = Process.Start(startInfo);
+            if (process is null)
+            {
+                await stderr.WriteLineAsync($"Could not start '{buildResult.OutputPath}'.");
+                return 1;
+            }
+
+            await process.WaitForExitAsync();
+            return process.ExitCode;
         }
-
-        var startInfo = new ProcessStartInfo
+        finally
         {
-            FileName = buildResult.OutputPath,
-            WorkingDirectory = Path.GetDirectoryName(buildResult.OutputPath) ?? Environment.CurrentDirectory,
-            UseShellExecute = false
-        };
-
-        using var process = Process.Start(startInfo);
-        if (process is null)
-        {
-            await stderr.WriteLineAsync($"Could not start '{buildResult.OutputPath}'.");
-            return 1;
+            ReleaseBuildLocks(session);
         }
-
-        await process.WaitForExitAsync();
-        return process.ExitCode;
     }
 
     private static async Task<int> ExecuteTestAsync(
@@ -232,30 +254,37 @@ internal static class ProjectCliDriver
             return 1;
         }
 
-        var failed = false;
-        foreach (var project in projects)
+        try
         {
-            if (project.Kind != ProjectKind.Test)
+            var failed = false;
+            foreach (var project in projects)
             {
-                await stderr.WriteLineAsync($"Project '{project.Name}' is not a test project.");
-                failed = true;
-                continue;
+                if (project.Kind != ProjectKind.Test)
+                {
+                    await stderr.WriteLineAsync($"Project '{project.Name}' is not a test project.");
+                    failed = true;
+                    continue;
+                }
+
+                var buildResult = await BuildProjectAsync(project, session);
+                if (!buildResult.Success)
+                {
+                    return 1;
+                }
+
+                var exitCode = await RunTestExecutableAsync(buildResult, session.TestCollections, session.ListTestCollections, stdout, stderr);
+                if (exitCode != 0)
+                {
+                    failed = true;
+                }
             }
 
-            var buildResult = await BuildProjectAsync(project, session);
-            if (!buildResult.Success)
-            {
-                return 1;
-            }
-
-            var exitCode = await RunTestExecutableAsync(buildResult, session.TestCollections, session.ListTestCollections, stdout, stderr);
-            if (exitCode != 0)
-            {
-                failed = true;
-            }
+            return failed ? 1 : 0;
         }
-
-        return failed ? 1 : 0;
+        finally
+        {
+            ReleaseBuildLocks(session);
+        }
     }
 
     private static async Task<int> ExecuteCleanAsync(
@@ -427,7 +456,7 @@ internal static class ProjectCliDriver
         }
 
         var outputDirectory = GetOutputDirectory(project, session);
-        Directory.CreateDirectory(outputDirectory);
+        session.BuildLocks.Add(await AcquireBuildDirectoryLockAsync(outputDirectory));
 
         // PAINPOINTS #5: derive a deterministic stamp over every input that can change
         // this project's output (its own sources, the manifest, the stdlib search-path
@@ -583,6 +612,42 @@ internal static class ProjectCliDriver
             inputStamp);
         session.BuildResults[project.ManifestPath] = success;
         return success;
+    }
+
+    private static async Task<FileStream> AcquireBuildDirectoryLockAsync(string outputDirectory)
+    {
+        Directory.CreateDirectory(outputDirectory);
+        var lockPath = Path.Combine(outputDirectory, BuildLockFileName);
+
+        while (true)
+        {
+            try
+            {
+                return new FileStream(
+                    lockPath,
+                    FileMode.OpenOrCreate,
+                    FileAccess.ReadWrite,
+                    FileShare.None);
+            }
+            catch (IOException)
+            {
+                await Task.Delay(50);
+            }
+            catch (UnauthorizedAccessException)
+            {
+                await Task.Delay(50);
+            }
+        }
+    }
+
+    private static void ReleaseBuildLocks(BuildSession session)
+    {
+        foreach (var buildLock in session.BuildLocks)
+        {
+            buildLock.Dispose();
+        }
+
+        session.BuildLocks.Clear();
     }
 
     private static async Task<TestRunnerBuildResult> GenerateTestRunnerIfNeededAsync(
@@ -2053,6 +2118,7 @@ internal static class ProjectCliDriver
     {
         public ManifestCache ManifestCache { get; } = new();
         public Dictionary<string, BuildResult> BuildResults { get; } = new(StringComparer.Ordinal);
+        public List<FileStream> BuildLocks { get; } = [];
     }
 
     private sealed record CleanSession(

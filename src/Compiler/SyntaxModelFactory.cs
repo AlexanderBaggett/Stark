@@ -1824,7 +1824,8 @@ internal static class SyntaxModelFactory
                 modifiers.Contains("varargs"),
                 modifiers.Contains("strictfp"),
                 modifiers.Contains("unsafe"),
-                FfiAbi: ffiAbi),
+                FfiAbi: ffiAbi,
+                IsTailCallable: modifiers.Contains("tail")),
             HasBody: functionBody.block() is not null,
             Asm: CreateAsmModel(asmSpecifier, asmClauseList, functionBody),
             GenericParameterNames: genericParameters,
@@ -1834,6 +1835,7 @@ internal static class SyntaxModelFactory
             DisjointParameterGroups: CreateDisjointParameterGroups(parameterList, memoryContractClauses),
             OverlapParameterGroups: CreateOverlapParameterGroups(memoryContractClauses),
             SameParameterGroups: CreateSameParameterGroups(memoryContractClauses),
+            PointeeDeadOnReturnParameterNames: CreatePointeeDeadOnReturnParameterNames(memoryContractClauses),
             ValueParameterContracts: CreateValueParameterContracts(memoryContractClauses),
             ThreadSafetyLawPredicates: CreateThreadSafetyLawPredicates(
                 memoryContractClauses,
@@ -1950,6 +1952,19 @@ internal static class SyntaxModelFactory
                 memoryContractClauses,
                 static contract => contract.sameContract()?.expressionList())
             .Select(static group => new ParameterSameGroup(group))
+            .ToArray();
+    }
+
+    private static IReadOnlyList<string> CreatePointeeDeadOnReturnParameterNames(
+        IReadOnlyList<StarkParser.ParameterMemoryContractClauseContext> memoryContractClauses)
+    {
+        return memoryContractClauses
+            .SelectMany(static clause => clause.parameterMemoryContract())
+            .Select(static contract => contract.deadOnReturnContract()?.expressionList())
+            .Where(static expressionList => expressionList is not null)
+            .SelectMany(static expressionList => expressionList!.expression())
+            .Select(static expression => expression.GetText())
+            .Distinct(StringComparer.Ordinal)
             .ToArray();
     }
 

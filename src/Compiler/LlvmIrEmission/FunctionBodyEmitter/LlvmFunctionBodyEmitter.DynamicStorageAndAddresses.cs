@@ -53,8 +53,24 @@ internal sealed partial class LlvmFunctionBodyEmitter
         var resultType = MapType(allocation.Type);
         var capacityI64 = EmitUnsignedIntegerAsI64(allocation.Capacity, "dynamic_capacity");
         var maxCount = GetMaximumDynamicStorageElementCount(elementLayout.SizeBytes);
+        var isArenaAllocation = allocation.AllocationKind == DynamicStorageAllocationKind.Arena;
+        if (TryGetIntegerValueRange(allocation.Capacity, out var capacityRange)
+            && capacityRange.Min > BigInteger.Zero
+            && capacityRange.Max <= new BigInteger(maxCount))
+        {
+            EmitDynamicStorageAllocationValue(result, resultType, capacityI64, elementLayout, isArenaAllocation);
+            return;
+        }
+
         if (!CanSplitCurrentBlockForCallSiteControlFlow())
         {
+            if (isArenaAllocation)
+            {
+                AppendLine(
+                    $"  {result} = call {resultType} @{ArenaDynamicStorageAllocateHelperName}(ptr nonnull {ArenaFrameSlotName}, i64 noundef {capacityI64}, {AllocatorSizeType} noundef {elementLayout.SizeBytes.ToString(CultureInfo.InvariantCulture)}, {AllocatorSizeType} noundef {Math.Max(1, elementLayout.AlignmentBytes).ToString(CultureInfo.InvariantCulture)}, i64 noundef {FormatUnsignedI64Constant(maxCount)})");
+                return;
+            }
+
             AppendLine(
                 $"  {result} = call {resultType} @{DynamicStorageAllocateHelperName}(i64 noundef {capacityI64}, {AllocatorSizeType} noundef {elementLayout.SizeBytes.ToString(CultureInfo.InvariantCulture)}, {AllocatorSizeType} noundef {Math.Max(1, elementLayout.AlignmentBytes).ToString(CultureInfo.InvariantCulture)}, i64 noundef {FormatUnsignedI64Constant(maxCount)})");
             return;
@@ -67,9 +83,6 @@ internal sealed partial class LlvmFunctionBodyEmitter
         var doneLabel = EscapeIdentifier(CreateAbiTempName("dynamic_alloc_done"));
         var capacityIsZero = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_alloc_is_zero"))}";
         var allocatedValue = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_alloc_value"))}";
-        var withPointer = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_alloc_with_ptr"))}";
-        var withLength = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_alloc_with_length"))}";
-        var allocatedPointer = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_alloc_ptr"))}";
         var overflowProfile = _context.GetMetadataTupleRef([
             "!\"branch_weights\"",
             $"i32 {TrapEdgeUnlikelyWeight}",
@@ -103,6 +116,33 @@ internal sealed partial class LlvmFunctionBodyEmitter
             AppendLine($"{allocateLabel}:");
         }
 
+        EmitDynamicStorageAllocationValue(allocatedValue, resultType, capacityI64, elementLayout, isArenaAllocation);
+        AppendLine($"  br label %{doneLabel}");
+        AppendLine(string.Empty);
+        AppendLine($"{doneLabel}:");
+        AppendLine($"  {result} = phi {resultType} [ zeroinitializer, %{zeroLabel} ], [ {allocatedValue}, %{allocateLabel} ]");
+        RecordCurrentBlockExitLabel(doneLabel);
+    }
+
+    private void EmitDynamicStorageRuntimeAllocationValue(
+        string result,
+        string resultType,
+        string capacityI64,
+        ConcreteTypeLayout elementLayout)
+    {
+        EmitDynamicStorageAllocationValue(result, resultType, capacityI64, elementLayout, useArena: false);
+    }
+
+    private void EmitDynamicStorageAllocationValue(
+        string result,
+        string resultType,
+        string capacityI64,
+        ConcreteTypeLayout elementLayout,
+        bool useArena)
+    {
+        var allocatedPointer = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_alloc_ptr"))}";
+        var withPointer = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_alloc_with_ptr"))}";
+        var withLength = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_alloc_with_length"))}";
         var allocatorCount = EmitI64AsAllocatorSize(capacityI64, "dynamic_alloc_count");
         var byteLength = allocatorCount;
         if (elementLayout.SizeBytes != 1)
@@ -111,16 +151,100 @@ internal sealed partial class LlvmFunctionBodyEmitter
             AppendLine($"  {byteLength} = mul {AllocatorSizeType} {allocatorCount}, {elementLayout.SizeBytes}");
         }
 
+        var alignmentBytes = Math.Max(1, elementLayout.AlignmentBytes);
+        var allocationAttributes = alignmentBytes > 1
+            ? $"noalias nonnull noundef align {alignmentBytes}"
+            : "noalias nonnull noundef";
+        var allocationArguments = useArena
+            ? $"ptr nonnull {ArenaFrameSlotName}, {AllocatorSizeType} noundef {byteLength}, {AllocatorSizeType} noundef {alignmentBytes}"
+            : $"{AllocatorSizeType} noundef {byteLength}, {AllocatorSizeType} noundef {alignmentBytes}";
+        var allocatorName = useArena ? ArenaAllocateHelperName : RuntimeAllocateHelperName;
         AppendLine(
-            $"  {allocatedPointer} = call noalias nonnull noundef ptr @{RuntimeAllocateHelperName}({AllocatorSizeType} noundef {byteLength}, {AllocatorSizeType} noundef {Math.Max(1, elementLayout.AlignmentBytes)})");
+            $"  {allocatedPointer} = call {allocationAttributes} ptr @{allocatorName}({allocationArguments})");
         AppendLine($"  {withPointer} = insertvalue {resultType} zeroinitializer, ptr {allocatedPointer}, 0");
         AppendLine($"  {withLength} = insertvalue {resultType} {withPointer}, i64 0, 1");
-        AppendLine($"  {allocatedValue} = insertvalue {resultType} {withLength}, i64 {capacityI64}, 2");
-        AppendLine($"  br label %{doneLabel}");
+        AppendLine($"  {result} = insertvalue {resultType} {withLength}, i64 {capacityI64}, 2");
+    }
+
+    private void EmitArenaDynamicStorageGrowCopy(
+        string storageType,
+        string storageAddress,
+        string current,
+        string pointer,
+        string length,
+        string newCapacity,
+        ConcreteTypeLayout elementLayout,
+        string tempPrefix,
+        string updateLabel,
+        string doneLabel,
+        string? failLabel,
+        string? failureProfile = null)
+    {
+        var alignmentBytes = Math.Max(1, elementLayout.AlignmentBytes);
+        var newAllocatorCount = EmitI64AsAllocatorSize(newCapacity, $"{tempPrefix}_new_count");
+        var newByteLength = newAllocatorCount;
+        if (elementLayout.SizeBytes != 1)
+        {
+            newByteLength = $"%{EscapeIdentifier(CreateAbiTempName($"{tempPrefix}_new_bytes"))}";
+            AppendLine($"  {newByteLength} = mul {AllocatorSizeType} {newAllocatorCount}, {elementLayout.SizeBytes}");
+        }
+
+        var newPointer = $"%{EscapeIdentifier(CreateAbiTempName($"{tempPrefix}_new_ptr"))}";
+        var allocationAttributes = failLabel is null
+            ? alignmentBytes > 1
+                ? $"noalias nonnull noundef align {alignmentBytes}"
+                : "noalias nonnull noundef"
+            : "noalias noundef";
+        var allocatorName = failLabel is null ? ArenaAllocateHelperName : ArenaTryAllocateHelperName;
+        AppendLine(
+            $"  {newPointer} = call {allocationAttributes} ptr @{allocatorName}(ptr nonnull {ArenaFrameSlotName}, {AllocatorSizeType} noundef {newByteLength}, {AllocatorSizeType} noundef {alignmentBytes})");
+
+        var copyCheckLabel = EscapeIdentifier(CreateAbiTempName($"{tempPrefix}_copy_check"));
+        if (failLabel is not null)
+        {
+            var nullPointer = $"%{EscapeIdentifier(CreateAbiTempName($"{tempPrefix}_null"))}";
+            var profileSuffix = string.IsNullOrEmpty(failureProfile)
+                ? string.Empty
+                : $", !prof {failureProfile}";
+            AppendLine($"  {nullPointer} = icmp eq ptr {newPointer}, null");
+            AppendLine($"  br i1 {nullPointer}, label %{failLabel}, label %{copyCheckLabel}{profileSuffix}");
+            AppendLine(string.Empty);
+            AppendLine($"{copyCheckLabel}:");
+        }
+
+        var hasLiveElements = $"%{EscapeIdentifier(CreateAbiTempName($"{tempPrefix}_has_live"))}";
+        var copyLabel = EscapeIdentifier(CreateAbiTempName($"{tempPrefix}_copy"));
+        AppendLine($"  {hasLiveElements} = icmp ne i64 {length}, 0");
+        AppendLine($"  br i1 {hasLiveElements}, label %{copyLabel}, label %{updateLabel}");
         AppendLine(string.Empty);
-        AppendLine($"{doneLabel}:");
-        AppendLine($"  {result} = phi {resultType} [ zeroinitializer, %{zeroLabel} ], [ {allocatedValue}, %{allocateLabel} ]");
-        RecordCurrentBlockExitLabel(doneLabel);
+        AppendLine($"{copyLabel}:");
+
+        var liveAllocatorCount = EmitI64AsAllocatorSize(length, $"{tempPrefix}_live_count");
+        var liveByteLength = liveAllocatorCount;
+        if (elementLayout.SizeBytes != 1)
+        {
+            liveByteLength = $"%{EscapeIdentifier(CreateAbiTempName($"{tempPrefix}_live_bytes"))}";
+            AppendLine($"  {liveByteLength} = mul {AllocatorSizeType} {liveAllocatorCount}, {elementLayout.SizeBytes}");
+        }
+
+        var liveByteLengthI64 = liveByteLength;
+        if (AllocatorSizeType != "i64")
+        {
+            liveByteLengthI64 = $"%{EscapeIdentifier(CreateAbiTempName($"{tempPrefix}_live_bytes_i64"))}";
+            AppendLine($"  {liveByteLengthI64} = zext {AllocatorSizeType} {liveByteLength} to i64");
+        }
+
+        AppendLine($"  call void @llvm.memcpy.p0.p0.i64(ptr align {alignmentBytes} {newPointer}, ptr align {alignmentBytes} {pointer}, i64 {liveByteLengthI64}, i1 false)");
+        AppendLine($"  br label %{updateLabel}");
+        AppendLine(string.Empty);
+        AppendLine($"{updateLabel}:");
+
+        var withPointer = $"%{EscapeIdentifier(CreateAbiTempName($"{tempPrefix}_with_ptr"))}";
+        var updated = $"%{EscapeIdentifier(CreateAbiTempName($"{tempPrefix}_updated"))}";
+        AppendLine($"  {withPointer} = insertvalue {storageType} {current}, ptr {newPointer}, 0");
+        AppendLine($"  {updated} = insertvalue {storageType} {withPointer}, i64 {newCapacity}, 2");
+        AppendLine($"  store {storageType} {updated}, ptr {storageAddress}");
+        AppendLine($"  br label %{doneLabel}");
     }
 
     private void EmitDynamicStorageFree(SsaDynamicStorageFreeRValue free)
@@ -167,10 +291,17 @@ internal sealed partial class LlvmFunctionBodyEmitter
         var storageAddress = FormatValue(reserve.StorageAddress);
         var additionalI64 = EmitUnsignedIntegerAsI64(reserve.AdditionalCapacity, "dynamic_reserve_additional");
         var maxCount = GetMaximumDynamicStorageElementCount(elementLayout.SizeBytes);
+        var isArenaAllocation = reserve.AllocationKind == DynamicStorageAllocationKind.Arena;
         if (!CanSplitCurrentBlockForCallSiteControlFlow())
         {
+            var helperName = isArenaAllocation
+                ? ArenaDynamicStorageReserveHelperName
+                : DynamicStorageReserveHelperName;
+            var helperArguments = isArenaAllocation
+                ? $"ptr nonnull {ArenaFrameSlotName}, ptr {storageAddress}"
+                : $"ptr {storageAddress}";
             AppendLine(
-                $"  call void @{DynamicStorageReserveHelperName}(ptr {storageAddress}, i64 noundef {additionalI64}, {AllocatorSizeType} noundef {elementLayout.SizeBytes.ToString(CultureInfo.InvariantCulture)}, {AllocatorSizeType} noundef {Math.Max(1, elementLayout.AlignmentBytes).ToString(CultureInfo.InvariantCulture)}, i64 noundef {FormatUnsignedI64Constant(maxCount)})");
+                $"  call void @{helperName}({helperArguments}, i64 noundef {additionalI64}, {AllocatorSizeType} noundef {elementLayout.SizeBytes.ToString(CultureInfo.InvariantCulture)}, {AllocatorSizeType} noundef {Math.Max(1, elementLayout.AlignmentBytes).ToString(CultureInfo.InvariantCulture)}, i64 noundef {FormatUnsignedI64Constant(maxCount)})");
             return;
         }
 
@@ -192,6 +323,9 @@ internal sealed partial class LlvmFunctionBodyEmitter
         var trapLabel = EscapeIdentifier(CreateAbiTempName("dynamic_reserve_overflow"));
         var growLabel = EscapeIdentifier(CreateAbiTempName("dynamic_reserve_grow"));
         var reallocLabel = EscapeIdentifier(CreateAbiTempName("dynamic_reserve_realloc"));
+        var updateLabel = isArenaAllocation
+            ? EscapeIdentifier(CreateAbiTempName("dynamic_reserve_update"))
+            : string.Empty;
         var doneLabel = EscapeIdentifier(CreateAbiTempName("dynamic_reserve_done"));
         var overflowProfile = _context.GetMetadataTupleRef([
             "!\"branch_weights\"",
@@ -231,6 +365,26 @@ internal sealed partial class LlvmFunctionBodyEmitter
             AppendLine($"  br i1 {tooLarge}, label %{trapLabel}, label %{reallocLabel}, !prof {overflowProfile}");
             AppendLine(string.Empty);
             AppendLine($"{reallocLabel}:");
+        }
+
+        if (isArenaAllocation)
+        {
+            EmitArenaDynamicStorageGrowCopy(
+                storageType,
+                storageAddress,
+                current,
+                pointer,
+                length,
+                newCapacity,
+                elementLayout,
+                "dynamic_reserve_arena",
+                updateLabel,
+                doneLabel,
+                failLabel: null);
+            AppendLine(string.Empty);
+            AppendLine($"{doneLabel}:");
+            RecordCurrentBlockExitLabel(doneLabel);
+            return;
         }
 
         var oldAllocatorCount = EmitI64AsAllocatorSize(capacity, "dynamic_reserve_old_count");
@@ -279,8 +433,16 @@ internal sealed partial class LlvmFunctionBodyEmitter
         var storageAddress = FormatValue(reserve.StorageAddress);
         var additionalI64 = EmitUnsignedIntegerAsI64(reserve.AdditionalCapacity, "dynamic_try_reserve_additional");
         var maxCount = GetMaximumDynamicStorageElementCount(elementLayout.SizeBytes);
+        var isArenaAllocation = reserve.AllocationKind == DynamicStorageAllocationKind.Arena;
         if (!CanSplitCurrentBlockForCallSiteControlFlow())
         {
+            if (isArenaAllocation)
+            {
+                AppendLine(
+                    $"  {result} = call i1 @{ArenaDynamicStorageTryReserveHelperName}(ptr nonnull {ArenaFrameSlotName}, ptr {storageAddress}, i64 noundef {additionalI64}, {AllocatorSizeType} noundef {elementLayout.SizeBytes.ToString(CultureInfo.InvariantCulture)}, {AllocatorSizeType} noundef {Math.Max(1, elementLayout.AlignmentBytes).ToString(CultureInfo.InvariantCulture)}, i64 noundef {FormatUnsignedI64Constant(maxCount)})");
+                return;
+            }
+
             AppendLine(
                 $"  {result} = call i1 @{DynamicStorageTryReserveHelperName}(ptr {storageAddress}, i64 noundef {additionalI64}, {AllocatorSizeType} noundef {elementLayout.SizeBytes.ToString(CultureInfo.InvariantCulture)}, {AllocatorSizeType} noundef {Math.Max(1, elementLayout.AlignmentBytes).ToString(CultureInfo.InvariantCulture)}, i64 noundef {FormatUnsignedI64Constant(maxCount)})");
             return;
@@ -343,6 +505,31 @@ internal sealed partial class LlvmFunctionBodyEmitter
             AppendLine($"{reallocLabel}:");
         }
 
+        if (isArenaAllocation)
+        {
+            EmitArenaDynamicStorageGrowCopy(
+                storageType,
+                storageAddress,
+                current,
+                pointer,
+                length,
+                newCapacity,
+                elementLayout,
+                "dynamic_try_reserve_arena",
+                updateLabel,
+                doneLabel,
+                failLabel,
+                failureProfile);
+            AppendLine(string.Empty);
+            AppendLine($"{failLabel}:");
+            AppendLine($"  br label %{doneLabel}");
+            AppendLine(string.Empty);
+            AppendLine($"{doneLabel}:");
+            AppendLine($"  {result} = phi i1 [ true, %{checkLabel} ], [ true, %{updateLabel} ], [ false, %{failLabel} ]");
+            RecordCurrentBlockExitLabel(doneLabel);
+            return;
+        }
+
         var oldAllocatorCount = EmitI64AsAllocatorSize(capacity, "dynamic_try_reserve_old_count");
         var newAllocatorCount = EmitI64AsAllocatorSize(newCapacity, "dynamic_try_reserve_new_count");
         var oldByteLength = oldAllocatorCount;
@@ -397,8 +584,16 @@ internal sealed partial class LlvmFunctionBodyEmitter
         var storageAddress = FormatValue(reserve.StorageAddress);
         var targetCapacityI64 = EmitUnsignedIntegerAsI64(reserve.TargetCapacity, "dynamic_try_reserve_capacity_target");
         var maxCount = GetMaximumDynamicStorageElementCount(elementLayout.SizeBytes);
+        var isArenaAllocation = reserve.AllocationKind == DynamicStorageAllocationKind.Arena;
         if (!CanSplitCurrentBlockForCallSiteControlFlow())
         {
+            if (isArenaAllocation)
+            {
+                AppendLine(
+                    $"  {result} = call i1 @{ArenaDynamicStorageTryReserveCapacityHelperName}(ptr nonnull {ArenaFrameSlotName}, ptr {storageAddress}, i64 noundef {targetCapacityI64}, {AllocatorSizeType} noundef {elementLayout.SizeBytes.ToString(CultureInfo.InvariantCulture)}, {AllocatorSizeType} noundef {Math.Max(1, elementLayout.AlignmentBytes).ToString(CultureInfo.InvariantCulture)}, i64 noundef {FormatUnsignedI64Constant(maxCount)})");
+                return;
+            }
+
             AppendLine(
                 $"  {result} = call i1 @{DynamicStorageTryReserveCapacityHelperName}(ptr {storageAddress}, i64 noundef {targetCapacityI64}, {AllocatorSizeType} noundef {elementLayout.SizeBytes.ToString(CultureInfo.InvariantCulture)}, {AllocatorSizeType} noundef {Math.Max(1, elementLayout.AlignmentBytes).ToString(CultureInfo.InvariantCulture)}, i64 noundef {FormatUnsignedI64Constant(maxCount)})");
             return;
@@ -406,6 +601,9 @@ internal sealed partial class LlvmFunctionBodyEmitter
 
         var current = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_try_reserve_capacity_current"))}";
         var pointer = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_try_reserve_capacity_ptr"))}";
+        var length = isArenaAllocation
+            ? $"%{EscapeIdentifier(CreateAbiTempName("dynamic_try_reserve_capacity_length"))}"
+            : string.Empty;
         var capacity = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_try_reserve_capacity_capacity"))}";
         var enoughCapacity = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_try_reserve_capacity_enough"))}";
         var nullPointer = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_try_reserve_capacity_null"))}";
@@ -422,6 +620,11 @@ internal sealed partial class LlvmFunctionBodyEmitter
 
         AppendLine($"  {current} = load {storageType}, ptr {storageAddress}");
         AppendLine($"  {pointer} = extractvalue {storageType} {current}, 0");
+        if (isArenaAllocation)
+        {
+            AppendLine($"  {length} = extractvalue {storageType} {current}, 1");
+        }
+
         AppendLine($"  {capacity} = extractvalue {storageType} {current}, 2");
         AppendLine($"  br label %{checkLabel}");
         AppendLine(string.Empty);
@@ -439,6 +642,31 @@ internal sealed partial class LlvmFunctionBodyEmitter
             AppendLine($"  br i1 {tooLarge}, label %{failLabel}, label %{growLabel}, !prof {failureProfile}");
             AppendLine(string.Empty);
             AppendLine($"{growLabel}:");
+        }
+
+        if (isArenaAllocation)
+        {
+            EmitArenaDynamicStorageGrowCopy(
+                storageType,
+                storageAddress,
+                current,
+                pointer,
+                length,
+                targetCapacityI64,
+                elementLayout,
+                "dynamic_try_reserve_capacity_arena",
+                updateLabel,
+                doneLabel,
+                failLabel,
+                failureProfile);
+            AppendLine(string.Empty);
+            AppendLine($"{failLabel}:");
+            AppendLine($"  br label %{doneLabel}");
+            AppendLine(string.Empty);
+            AppendLine($"{doneLabel}:");
+            AppendLine($"  {result} = phi i1 [ true, %{checkLabel} ], [ true, %{updateLabel} ], [ false, %{failLabel} ]");
+            RecordCurrentBlockExitLabel(doneLabel);
+            return;
         }
 
         var oldAllocatorCount = EmitI64AsAllocatorSize(capacity, "dynamic_try_reserve_capacity_old_count");

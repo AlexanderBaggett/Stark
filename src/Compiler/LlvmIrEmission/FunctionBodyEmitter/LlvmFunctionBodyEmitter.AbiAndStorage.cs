@@ -39,7 +39,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
         }
 
         var segments = new List<string> { MapType(parameter.LlvmType) };
-        if (LlvmValueRangeFacts.TryBuildRangeAttribute(parameter.SourceType, out var rangeAttribute))
+        if (TryBuildDirectArgumentRangeAttribute(parameter, argument, out var rangeAttribute))
         {
             segments.Add(rangeAttribute);
         }
@@ -53,6 +53,24 @@ internal sealed partial class LlvmFunctionBodyEmitter
 
         segments.Add(FormatDirectAbiArgumentValue(parameter, argument));
         return string.Join(" ", segments);
+    }
+
+    private bool TryBuildDirectArgumentRangeAttribute(
+        AbiParameterSymbol parameter,
+        SsaValue argument,
+        out string rangeAttribute)
+    {
+        if (MapType(argument.Type) == MapType(parameter.LlvmType)
+            && TryGetIntegerValueRange(argument, new HashSet<string>(StringComparer.Ordinal), out var min, out var max)
+            && LlvmValueRangeFacts.TryBuildRangeAttribute(
+                parameter.SourceType,
+                new SsaIntegerRangeFact(min, max),
+                out rangeAttribute))
+        {
+            return true;
+        }
+
+        return LlvmValueRangeFacts.TryBuildRangeAttribute(parameter.SourceType, out rangeAttribute);
     }
 
     private string FormatDirectAbiArgumentValue(AbiParameterSymbol parameter, SsaValue argument)
@@ -405,6 +423,9 @@ internal sealed partial class LlvmFunctionBodyEmitter
             case "heap":
                 EmitHeapAllocateLocalSlot(slotName, localType);
                 break;
+            case "arena":
+                EmitArenaAllocateLocalSlot(slotName, localType);
+                break;
             default:
                 throw new UnsupportedBodyEmissionException(
                     $"Local storage class '{GetLocalStorageClass(localName)}' is invalid for LLVM body emission.");
@@ -478,6 +499,43 @@ internal sealed partial class LlvmFunctionBodyEmitter
         AppendLine($"  {sizeValue} = ptrtoint ptr {sizePointer} to {AllocatorSizeType}");
         AppendLine(
             $"  %{slotName} = call {BuildFreshAllocationResultAttributes(localType)} ptr @{HeapAllocateHelperName}({AllocatorSizeType} noundef {sizeValue}, {AllocatorSizeType} noundef {alignmentBytes})");
+    }
+
+    private void EmitArenaAllocateLocalSlot(string slotName, StarkTypeSymbol localType)
+    {
+        var sizePointer = $"%{EscapeIdentifier(CreateAbiTempName("arena_size_ptr"))}";
+        var sizeValue = $"%{EscapeIdentifier(CreateAbiTempName("arena_size"))}";
+        var heapObjectAlignmentBytes = GetHeapObjectAlignmentBytes(localType);
+        var naturalAlignmentBytes = GetTypeAlignmentBytes(localType) ?? 1;
+        var alignmentBytes = Math.Max(1, heapObjectAlignmentBytes ?? naturalAlignmentBytes);
+        AppendLine($"  {sizePointer} = getelementptr {MapType(localType)}, ptr null, i32 1");
+        AppendLine($"  {sizeValue} = ptrtoint ptr {sizePointer} to {AllocatorSizeType}");
+        AppendLine(
+            $"  %{slotName} = call {BuildFreshAllocationResultAttributes(localType)} ptr @{ArenaAllocateHelperName}(ptr nonnull {ArenaFrameSlotName}, {AllocatorSizeType} noundef {sizeValue}, {AllocatorSizeType} noundef {alignmentBytes})");
+    }
+
+    private void EmitArenaFrameEnter()
+    {
+        if (!_usesArenaAllocator)
+        {
+            return;
+        }
+
+        if (!_arenaFrameSlotQueued)
+        {
+            _entryStaticAllocas.Add($"  {ArenaFrameSlotName} = alloca {ArenaFrameLlvmType}, align 8");
+            _arenaFrameSlotQueued = true;
+        }
+
+        AppendLine($"  call void @{ArenaEnterHelperName}(ptr nonnull {ArenaFrameSlotName})");
+    }
+
+    private void EmitArenaFrameLeave()
+    {
+        if (_usesArenaAllocator)
+        {
+            AppendLine($"  call void @{ArenaLeaveHelperName}(ptr nonnull {ArenaFrameSlotName})");
+        }
     }
 
     private string BuildFreshAllocationResultAttributes(StarkTypeSymbol allocatedType)
@@ -646,5 +704,28 @@ internal sealed partial class LlvmFunctionBodyEmitter
         }
 
         _builder.Insert(insertionIndex, string.Join(Environment.NewLine, _entryStaticAllocas) + Environment.NewLine);
+    }
+
+    private static bool UsesArenaAllocator(SsaFunction function)
+    {
+        foreach (var block in function.Blocks)
+        {
+            foreach (var instruction in block.Instructions)
+            {
+                switch (instruction)
+                {
+                    case SsaArenaFrameEnterInstruction:
+                    case SsaArenaFrameLeaveInstruction:
+                    case SsaAllocateLocalInstruction { StorageClass: "arena" }:
+                    case SsaValueInstruction { Value: SsaDynamicStorageAllocationRValue { AllocationKind: DynamicStorageAllocationKind.Arena } }:
+                    case SsaValueInstruction { Value: SsaDynamicStorageReserveRValue { AllocationKind: DynamicStorageAllocationKind.Arena } }:
+                    case SsaValueInstruction { Value: SsaDynamicStorageTryReserveRValue { AllocationKind: DynamicStorageAllocationKind.Arena } }:
+                    case SsaValueInstruction { Value: SsaDynamicStorageTryReserveCapacityRValue { AllocationKind: DynamicStorageAllocationKind.Arena } }:
+                        return true;
+                }
+            }
+        }
+
+        return false;
     }
 }

@@ -29,6 +29,7 @@ public sealed class PackageImageCallableValueTests
                 public fn void RegisterPlatform(fnptr<unsafe ffi(platform(windows.x64: win64, linux.x64: sysv, default: c)) fn void()> callback);
                 public fn void RegisterOverlap(fnptr<fn void(borrow mut Token, borrow mut Token) where overlap(arg0, arg1)> callback);
                 public fn void RegisterSame(fnptr<fn void(borrow mut Token, borrow mut Token) where same(arg0, arg1)> callback);
+                public fn void RegisterDeadOnReturn(fnptr<fn bool(out Token) where dead_on_return(arg0)> callback);
                 public fn void RegisterFinite(fnptr<finite u32[0 2 ** 31 - 1]()> callback);
                 public fn void RegisterLaw(fnptr<law bool()> callback);
                 public fn void RegisterFiniteLaw(fnptr<finite law u32[0 2 ** 31 - 1]()> callback);
@@ -65,6 +66,8 @@ public sealed class PackageImageCallableValueTests
             var sameCallbackType = Assert.Single(module.EffectiveTypedInterface!.Functions, static function => function.Name == "RegisterSame").Parameters.Single().Type;
             var sameGroup = Assert.Single(sameCallbackType.SameParameterGroups ?? []);
             Assert.Equal(["arg0", "arg1"], sameGroup.ParameterNames);
+            var deadOnReturnCallbackType = Assert.Single(module.EffectiveTypedInterface!.Functions, static function => function.Name == "RegisterDeadOnReturn").Parameters.Single().Type;
+            Assert.Equal(["arg0"], deadOnReturnCallbackType.PointeeDeadOnReturnParameterNames);
             AssertFunctionPointerKind(module, "RegisterFinite", "finite");
             AssertFunctionPointerKind(module, "RegisterLaw", "law");
             AssertFunctionPointerKind(module, "RegisterFiniteLaw", "finite law");
@@ -92,8 +95,76 @@ public sealed class PackageImageCallableValueTests
             Assert.Contains("where overlap(arg0, arg1)", sourceText, StringComparison.Ordinal);
             Assert.Contains("RegisterSame", sourceText, StringComparison.Ordinal);
             Assert.Contains("where same(arg0, arg1)", sourceText, StringComparison.Ordinal);
+            Assert.Contains("RegisterDeadOnReturn", sourceText, StringComparison.Ordinal);
+            Assert.Contains("where dead_on_return(arg0)", sourceText, StringComparison.Ordinal);
             Assert.Contains("RegisterBounded", sourceText, StringComparison.Ordinal);
             Assert.Contains("[arg1]", sourceText, StringComparison.Ordinal);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public void PackageImagePreservesTailCallableFunctionAndCallableTypeFacts()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-tail-callable-values-");
+        var sourcePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "Facade.starkpkg.json");
+        var libraryPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a");
+
+        try
+        {
+            var result = DefaultCompilerPipeline.Create().Run(new CompilationInput(
+                """
+                module Facade
+
+                public tail fn i32[min max] Done(i32[min max] value);
+
+                public fn i32[min max] Use(
+                    fnptr<tail fn i32[min max](i32[min max])> callback,
+                    i32[min max] value);
+
+                public trait Stepper
+                {
+                    tail fn i32[min max] Step(borrow Self self, i32[min max] value);
+                }
+                """,
+                sourcePath));
+
+            Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(result, libraryPath);
+            var module = Assert.Single(manifest.Modules, static item => item.ModuleName == "Facade");
+            var done = Assert.Single(module.EffectiveTypedInterface!.Functions, static function => function.Name == "Done");
+            var use = Assert.Single(module.EffectiveTypedInterface!.Functions, static function => function.Name == "Use");
+            var callbackType = use.Parameters[0].Type;
+            var stepper = Assert.Single(module.EffectiveTypedInterface!.Types, static type => type.Name == "Stepper");
+            var step = Assert.Single(stepper.Methods!, static method => method.Name == "Step");
+
+            Assert.True(done.IsTailCallable);
+            Assert.Equal("functionpointer", callbackType.Kind);
+            Assert.True(callbackType.FunctionIsTailCallable);
+            Assert.True(step.IsTailCallable);
+
+            Assert.True(PackageImageLoader.TryBuildModuleSource(
+                new ResolvedPackageModule(
+                    manifestPath,
+                    libraryPath,
+                    manifest,
+                    module),
+                out var sourceText));
+            Assert.Contains("public tail fn i32[min max] Done(i32[min max] value);", sourceText, StringComparison.Ordinal);
+            Assert.Contains("fnptr<tail fn i32[min max](i32[min max])> callback", sourceText, StringComparison.Ordinal);
+            Assert.Contains("tail fn i32[min max] Step(borrow Self self, i32[min max] value);", sourceText, StringComparison.Ordinal);
         }
         finally
         {

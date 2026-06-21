@@ -166,7 +166,7 @@ unsafe fn void Inspect(borrow Pair pair)
     }
 
     stack ascii llvm = Llvm(c);
-    return Contains(llvm, "define fastcc void @Inspect(ptr noundef nonnull noalias readonly nocapture dereferenceable(8) align 4 %arg_pair)")
+    return Contains(llvm, "define fastcc void @Inspect(ptr noundef nonnull noalias readonly captures(none) dereferenceable(8) align 4 %arg_pair)")
         && DoesNotContain(llvm, "define fastcc void @Inspect(%Pair %arg_pair)");
 }
 
@@ -228,7 +228,7 @@ unsafe fn Big Step(Big value)
 
     stack ascii llvm = Llvm(c);
     return Contains(llvm, "%Big = type { i64, i64, i64 }")
-        && Contains(llvm, "define fastcc void @Step(ptr noundef noalias sret(%Big) nonnull dereferenceable(24) align 8 %ret, ptr noundef nonnull byval(%Big) noalias readonly nocapture dereferenceable(24) align 8 %arg_value)")
+        && Contains(llvm, "define fastcc void @Step(ptr noundef noalias sret(%Big) nonnull dereferenceable(24) align 8 %ret, ptr noundef nonnull byval(%Big) noalias readonly captures(none) dereferenceable(24) align 8 %arg_value)")
         && DoesNotContain(llvm, "define fastcc %Big @Step(%Big %arg_value)");
 }
 
@@ -259,6 +259,6 @@ unsafe fn i32[min max] Read5(i32[min max][5] values)
     return Contains(llvm, "define fastcc noundef i32 @Read4([4 x i32] noundef %arg_values)")
         && DoesNotContain(llvm, "byval([4 x i32])")
         && Contains(llvm, "define fastcc noundef i32 @Read5(")
-        && Contains(llvm, "ptr noundef nonnull byval([5 x i32]) noalias readonly nocapture dereferenceable(20) align 4 %arg_values")
+        && Contains(llvm, "ptr noundef nonnull byval([5 x i32]) noalias readonly captures(none) dereferenceable(20) align 4 %arg_values")
         && DoesNotContain(llvm, "define fastcc i32 @Read5([5 x i32] %arg_values)");
 }
