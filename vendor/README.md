@@ -7,7 +7,7 @@ package manager.
 
 ## Raylib
 
-Use the bundled Raylib 5.5 binding with:
+Use the bundled Raylib 6.0 binding with:
 
 ```stark
 import Vendor.Raylib
@@ -37,4 +37,32 @@ The script uses `pkg-config raylib` when available. If raylib is not visible to
 
 ```bash
 RAYLIB_SRC_DIR=/path/to/raylib/src bash vendor/build-raylib-package.sh
+```
+
+## SQLite
+
+Use the bundled SQLite binding with:
+
+```stark
+import Vendor.SQLite
+```
+
+The binding exposes safe Stark handles for `Database` and `Statement`, status
+and result enums, `Open*` helpers, `Execute`, prepared-statement
+`Prepare`/`Step`/`Finalize`, integer/double/null/text binding, and result-column
+readers. Raw SQLite handles stay internal. Text entering SQLite is copied with
+SQLite's transient lifetime contract; text leaving SQLite is copied into
+`System.Text.OwnedAscii`.
+
+Build the package image with:
+
+```bash
+bash vendor/build-sqlite-package.sh
+```
+
+The script uses `pkg-config sqlite3` when available. If sqlite3 is not visible
+to `pkg-config`, set `SQLITE_INCLUDE_DIR` and `SQLITE_LIBRARY_DIR`:
+
+```bash
+SQLITE_INCLUDE_DIR=/usr/include SQLITE_LIBRARY_DIR=/usr/lib bash vendor/build-sqlite-package.sh
 ```

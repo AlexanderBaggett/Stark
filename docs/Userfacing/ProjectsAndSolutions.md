@@ -379,7 +379,7 @@ User config supplies the machine path:
 
 ```toml
 [native.paths]
-raylib-src = "/tmp/stark-raylib-research/raylib-5.5/src"
+raylib-src = "/tmp/stark-raylib-research/raylib-6.0/src"
 ```
 
 The everyday command stays short:

@@ -1,0 +1,1 @@
+@keyframes om-chips-fade{0%{opacity:0}to{opacity:1}}.om-chips-dropdown{animation:om-chips-fade .1s ease}.om-chips-scroll{scrollbar-width:thin}.om-chips-scroll::-webkit-scrollbar{width:6px}.om-chips-scroll::-webkit-scrollbar-thumb{background:var(--cds-border);border-radius:3px}

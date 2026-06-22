@@ -153,6 +153,14 @@ public fn Vector2 MeasureTextEx(Font font, ascii text, f32 fontSize, f32 spacing
     }
 }
 
+[LinkName("MeasureTextCodepoints")]
+internal unsafe ffi fn Vector2 stark_raylib_MeasureTextCodepoints(Font font, rawptr<i32[min max]> codepoints, i32[min max] length, f32 fontSize, f32 spacing);
+public unsafe fn Vector2 MeasureTextCodepoints(Font font, rawptr<i32[min max]> codepoints, i32[min max] length, f32 fontSize, f32 spacing) {
+    unsafe {
+        return stark_raylib_MeasureTextCodepoints(font, codepoints, length, fontSize, spacing);
+    }
+}
+
 [LinkName("GetGlyphIndex")]
 internal unsafe ffi fn i32[min max] stark_raylib_GetGlyphIndex(Font font, i32[min max] codepoint);
 public fn i32[min max] GetGlyphIndex(Font font, i32[min max] codepoint) {
@@ -181,6 +189,8 @@ public unsafe ffi fn rawmutptr<i8[min max]> LoadUTF8(rawptr<i32[min max]> codepo
 public unsafe ffi fn void UnloadUTF8(rawmutptr<i8[min max]> text);
 public unsafe ffi fn rawmutptr<i32[min max]> LoadCodepoints(ascii text, rawmutptr<i32[min max]> count);
 public unsafe ffi fn void UnloadCodepoints(rawmutptr<i32[min max]> codepoints);
+public unsafe ffi fn rawmutptr<rawmutptr<i8[min max]>> LoadTextLines(ascii text, rawmutptr<i32[min max]> count);
+public unsafe ffi fn void UnloadTextLines(rawmutptr<rawmutptr<i8[min max]>> text, i32[min max] lineCount);
 [LinkName("GetCodepointCount")]
 internal unsafe ffi fn i32[min max] stark_raylib_GetCodepointCount(ascii text);
 public fn i32[min max] GetCodepointCount(ascii text) {
@@ -221,6 +231,9 @@ public fn i32[min max] TextFindIndex(ascii text, ascii find) {
         return stark_raylib_TextFindIndex(text, find);
     }
 }
+public unsafe ffi fn rawptr<i8[min max]> TextRemoveSpaces(ascii text);
+public unsafe ffi fn rawmutptr<i8[min max]> GetTextBetween(ascii text, ascii begin, ascii end);
+public unsafe ffi fn rawmutptr<i8[min max]> TextReplaceBetween(ascii text, ascii begin, ascii end, ascii replacement);
 public unsafe ffi fn rawptr<i8[min max]> TextToUpper(ascii text);
 public unsafe ffi fn rawptr<i8[min max]> TextToLower(ascii text);
 public unsafe ffi fn rawptr<i8[min max]> TextToPascal(ascii text);

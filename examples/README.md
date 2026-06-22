@@ -253,9 +253,18 @@ bash examples/breakout/run-raylib.sh
 
 ## `../vendor/`
 
-Raylib 5.5 binding surface for future graphical examples. The bindings are split into `Vendor.Raylib.Core`, `Vendor.Raylib.Shapes`, `Vendor.Raylib.Textures`, `Vendor.Raylib.Text`, `Vendor.Raylib.Models`, `Vendor.Raylib.Audio`, and `Vendor.Raylib.Types`. Direct Raylib calls bind with `[LinkName("...")]`; C-layout aggregates such as `Vector2`, `Rectangle`, and `Color` pass through Stark's C ABI carrier lowering without a Raylib-specific C shim.
+Raylib 6.0 binding surface for future graphical examples. The bindings are split into `Vendor.Raylib.Core`, `Vendor.Raylib.Shapes`, `Vendor.Raylib.Textures`, `Vendor.Raylib.Text`, `Vendor.Raylib.Models`, `Vendor.Raylib.Audio`, and `Vendor.Raylib.Types`. Direct Raylib calls bind with `[LinkName("...")]`; C-layout aggregates such as `Vector2`, `Rectangle`, and `Color` pass through Stark's C ABI carrier lowering without a Raylib-specific C shim.
 
 See `vendor/build-raylib-package.sh` for the local Raylib package build command.
+
+## `sqlite/`
+
+Headless SQLite examples for the bundled `Vendor.SQLite` binding. The default
+`sqlite` project runs a small task-report program that exercises an in-memory
+database, prepared statements, integer/text binding, row stepping, aggregate
+queries, text reads, and explicit close/finalize behavior. Build `vendor/dist`
+with `vendor/build-sqlite-package.sh`, then run it through the examples
+solution with `sqlite` or compile it directly with `-I vendor/dist`.
 
 ## `arithmetic/Arithmetic.stark`
 
