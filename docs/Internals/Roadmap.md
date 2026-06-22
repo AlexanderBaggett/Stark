@@ -1503,9 +1503,9 @@ Everything before this point is frozen
   - [x] Add fixed-buffer peer handshake construction and validation example
 - [ ] Build a Breakout Clone with Stark and Raylib
   - [x] Add deterministic fixed-grid Breakout game-state update example before Raylib binding
-  - [x] Research Raylib 5.5 local build and Linux link requirements
-  - [x] Add split Raylib 5.5 Stark bindings for core, shapes, textures, text, models, audio, and shared types
-  - [x] Add C ABI shim coverage for Raylib calls that pass or return structs by value
+  - [x] Research Raylib 6.0 local build and Linux link requirements
+  - [x] Add split Raylib 6.0 Stark bindings for core, shapes, textures, text, models, audio, and shared types
+  - [x] Add direct C ABI aggregate-carrier coverage for Raylib calls that pass or return structs by value
   - [x] Add headless Raylib smoke example that checks and links against the binding surface
   - [x] Discuss and design the initial Raylib-backed playable clone scope before implementation
   - [x] Add first playable Raylib Breakout shell with paddle input, ball bounce, fixed bricks, and score text

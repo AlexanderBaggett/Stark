@@ -1,4 +1,4 @@
-// Generated Raylib 5.5 type surface. Keep this file split from function categories so agents can read only the area they need.
+// Generated Raylib 6.0 type surface. Keep this file split from function categories so agents can read only the area they need.
 
 module Vendor.Raylib.Types
 
@@ -151,12 +151,11 @@ public struct Mesh {
     rawmutptr<f32> Tangents;
     rawmutptr<u8[0 max]> Colors;
     rawmutptr<u16[0 max]> Indices;
+    i32[min max] BoneCount;
+    rawmutptr<u8[0 max]> BoneIndices;
+    rawmutptr<f32> BoneWeights;
     rawmutptr<f32> AnimVertices;
     rawmutptr<f32> AnimNormals;
-    rawmutptr<u8[0 max]> BoneIds;
-    rawmutptr<f32> BoneWeights;
-    rawmutptr<Matrix> BoneMatrices;
-    i32[min max] BoneCount;
     u32[0 max] VaoId;
     rawmutptr<u32[0 max]> VboId;
 }
@@ -195,6 +194,13 @@ public struct BoneInfo {
 }
 
 [StructLayout(C)]
+public struct ModelSkeleton {
+    i32[min max] BoneCount;
+    rawmutptr<BoneInfo> Bones;
+    ModelAnimPose BindPose;
+}
+
+[StructLayout(C)]
 public struct Model {
     Matrix Transform;
     i32[min max] MeshCount;
@@ -202,18 +208,17 @@ public struct Model {
     rawmutptr<Mesh> Meshes;
     rawmutptr<Material> Materials;
     rawmutptr<i32[min max]> MeshMaterial;
-    i32[min max] BoneCount;
-    rawmutptr<BoneInfo> Bones;
-    rawmutptr<Transform> BindPose;
+    ModelSkeleton Skeleton;
+    ModelAnimPose CurrentPose;
+    rawmutptr<Matrix> BoneMatrices;
 }
 
 [Platform, StructLayout(C)]
 public struct ModelAnimation {
-    i32[min max] BoneCount;
-    i32[min max] FrameCount;
-    rawmutptr<BoneInfo> Bones;
-    rawmutptr<rawptr<Transform>> FramePoses;
     i8[min max][32] Name;
+    i32[min max] BoneCount;
+    i32[min max] KeyframeCount;
+    rawmutptr<ModelAnimPose> KeyframePoses;
 }
 
 [StructLayout(C)]
@@ -331,6 +336,7 @@ public alias Texture2D = Texture;
 public alias TextureCubemap = Texture;
 public alias RenderTexture2D = RenderTexture;
 public alias Camera = Camera3D;
+public alias ModelAnimPose = rawmutptr<Transform>;
 
 public alias TraceLogCallback = rawptr<i8[min max]>;
 public alias LoadFileDataCallback = rawptr<i8[min max]>;
@@ -339,10 +345,10 @@ public alias LoadFileTextCallback = rawptr<i8[min max]>;
 public alias SaveFileTextCallback = rawptr<i8[min max]>;
 public alias AudioCallback = rawptr<i8[min max]>;
 
-public const RAYLIB_VERSION_MAJOR = 5;
-public const RAYLIB_VERSION_MINOR = 5;
+public const RAYLIB_VERSION_MAJOR = 6;
+public const RAYLIB_VERSION_MINOR = 0;
 public const RAYLIB_VERSION_PATCH = 0;
-public const ascii RAYLIB_VERSION = "5.5";
+public const ascii RAYLIB_VERSION = "6.0";
 public const PI = 3.141592653589793;
 public const DEG2RAD = 0.017453292519943295;
 public const RAD2DEG = 57.29577951308232;
@@ -579,7 +585,8 @@ public const SHADER_LOC_MAP_PREFILTER = 24;
 public const SHADER_LOC_MAP_BRDF = 25;
 public const SHADER_LOC_VERTEX_BONEIDS = 26;
 public const SHADER_LOC_VERTEX_BONEWEIGHTS = 27;
-public const SHADER_LOC_BONE_MATRICES = 28;
+public const SHADER_LOC_MATRIX_BONETRANSFORMS = 28;
+public const SHADER_LOC_VERTEX_INSTANCETRANSFORM = 29;
 
 // ShaderUniformDataType
 public const SHADER_UNIFORM_FLOAT = 0;
@@ -590,7 +597,11 @@ public const SHADER_UNIFORM_INT = 4;
 public const SHADER_UNIFORM_IVEC2 = 5;
 public const SHADER_UNIFORM_IVEC3 = 6;
 public const SHADER_UNIFORM_IVEC4 = 7;
-public const SHADER_UNIFORM_SAMPLER2D = 8;
+public const SHADER_UNIFORM_UINT = 8;
+public const SHADER_UNIFORM_UIVEC2 = 9;
+public const SHADER_UNIFORM_UIVEC3 = 10;
+public const SHADER_UNIFORM_UIVEC4 = 11;
+public const SHADER_UNIFORM_SAMPLER2D = 12;
 
 // ShaderAttributeDataType
 public const SHADER_ATTRIB_FLOAT = 0;
@@ -949,12 +960,11 @@ public finite law Mesh DefaultMesh() {
         Tangents = null,
         Colors = null,
         Indices = null,
+        BoneCount = 0,
+        BoneIndices = null,
+        BoneWeights = null,
         AnimVertices = null,
         AnimNormals = null,
-        BoneIds = null,
-        BoneWeights = null,
-        BoneMatrices = null,
-        BoneCount = 0,
         VaoId = (u32[0 max])0,
         VboId = null
     };
@@ -998,6 +1008,14 @@ public finite law BoneInfo DefaultBoneInfo() {
     };
 }
 
+public finite law ModelSkeleton DefaultModelSkeleton() {
+    return new ModelSkeleton() {
+        BoneCount = 0,
+        Bones = null,
+        BindPose = null
+    };
+}
+
 public finite law Model DefaultModel() {
     return new Model() {
         Transform = DefaultMatrix(),
@@ -1006,19 +1024,18 @@ public finite law Model DefaultModel() {
         Meshes = null,
         Materials = null,
         MeshMaterial = null,
-        BoneCount = 0,
-        Bones = null,
-        BindPose = null
+        Skeleton = DefaultModelSkeleton(),
+        CurrentPose = null,
+        BoneMatrices = null
     };
 }
 
 public finite law ModelAnimation DefaultModelAnimation() {
     return new ModelAnimation() {
+        Name = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
         BoneCount = 0,
-        FrameCount = 0,
-        Bones = null,
-        FramePoses = null,
-        Name = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }
+        KeyframeCount = 0,
+        KeyframePoses = null
     };
 }
 

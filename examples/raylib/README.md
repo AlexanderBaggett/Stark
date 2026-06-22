@@ -1,6 +1,6 @@
 # Raylib Bindings
 
-This directory contains standalone Stark bindings for Raylib 5.5, split by
+This directory contains standalone Stark bindings for Raylib 6.0, split by
 Raylib area for readability. New code can also use the bundled `Vendor.Raylib`
 package under `/vendor`; both bindings use Stark's direct C ABI aggregate
 carrier lowering for C-layout Raylib structs.
@@ -22,13 +22,13 @@ Raylib's `TraceLog` and `TextFormat` are declared with `ffi varargs`; pass extra
 
 ## Build Smoke
 
-Build Raylib 5.5 locally:
+Build Raylib 6.0 locally:
 
 ```bash
-curl -L -o /tmp/raylib-5.5.tar.gz https://github.com/raysan5/raylib/archive/refs/tags/5.5.tar.gz
+curl -L -o /tmp/raylib-6.0.tar.gz https://github.com/raysan5/raylib/archive/refs/tags/6.0.tar.gz
 mkdir -p /tmp/stark-raylib
-tar -xzf /tmp/raylib-5.5.tar.gz -C /tmp/stark-raylib
-make -C /tmp/stark-raylib/raylib-5.5/src PLATFORM=PLATFORM_DESKTOP RAYLIB_LIBTYPE=STATIC
+tar -xzf /tmp/raylib-6.0.tar.gz -C /tmp/stark-raylib
+make -C /tmp/stark-raylib/raylib-6.0/src PLATFORM=PLATFORM_DESKTOP RAYLIB_LIBTYPE=STATIC
 ```
 
 Build the Stark Raylib package once, then compile the headless smoke test from
@@ -47,7 +47,7 @@ If Raylib is visible through `pkg-config`, the helper script uses
 install `raylib.pc`, point the script at the Raylib `src` directory:
 
 ```bash
-RAYLIB_SRC_DIR=/tmp/stark-raylib/raylib-5.5/src bash examples/raylib/build-package.sh
+RAYLIB_SRC_DIR=/tmp/stark-raylib/raylib-6.0/src bash examples/raylib/build-package.sh
 ```
 
 If neither `pkg-config` nor `RAYLIB_SRC_DIR` can provide Raylib, the helper
