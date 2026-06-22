@@ -72,16 +72,15 @@ linker flags.
 
 ```toml
 [project]
-name = "raylib"
+name = "vendor"
 version = "0.1.0"
 kind = "library"
 
 [library]
-root = "Raylib.stark"
-output = "RaylibStark"
+root = "src/Vendor/Raylib.stark"
+output = "VendorRaylib"
 
 [native]
-sources = ["RaylibNative.c"]
 pkg-config = ["raylib"]
 
 [native.fallback.linux]
@@ -239,18 +238,20 @@ build/<profile>/<target-triple>/stage0/obj/<project>
 build/<profile>/<target-triple>/stage0/pkg/<project>
 build/<profile>/<target-triple>/stage0/tests/<project>
 build/<profile>/<target-triple>/stage0/stdlib
+build/<profile>/<target-triple>/stage0/vendor
 .stark/cache
 .stark/packages
 ```
 
-Project builds search the active stage's `stdlib` directory first, then the
-nearest repo `stdlib/dist` package images, then the nearest repo `stdlib/src`
-source tree for source-tree development, then bundled stdlib artifacts next to
-the active compiler distribution. Project builds ignore `STARK_PATH`; declare
-package dependencies in manifests or use direct compiler `-I` for low-level
-compiler invocations.
-Failed `System.*` imports report every searched stdlib path plus the active
-profile, target, and stage.
+Project builds search bundled library roots by import family: `System.*` uses
+`stdlib`, and `Vendor.*` uses `vendor`. For each root, discovery checks the
+active stage directory first, then nearest repo `dist` package images, then
+nearest repo `src` source tree for source-tree development, then bundled
+artifacts next to the active compiler distribution. Project builds ignore
+`STARK_PATH`; declare package dependencies in manifests or use direct compiler
+`-I` for low-level compiler invocations.
+Failed `System.*` and `Vendor.*` imports report every searched bundled-library
+path plus the active profile, target, and stage.
 
 When a normal source/package search root is indexed, nested `.stark` build
 artifact manifests are ignored so stale package images under a project's build

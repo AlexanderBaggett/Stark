@@ -282,7 +282,6 @@ source, discovery hook, or fallback library:
 
 ```toml
 [native]
-sources = ["RaylibNative.c"]
 pkg-config = ["raylib"]
 ```
 
@@ -300,14 +299,16 @@ module App
 ```
 
 For missing native functions, check the Stark declaration and the native symbol
-name together:
+name together. If the declaration has `[LinkName("...")]`, the link name is
+the symbol the linker must find:
 
 ```stark
-unsafe ffi fn i32[min max] stark_native_value();
+[LinkName("native_value")]
+unsafe ffi fn i32[min max] StarkNativeValue();
 ```
 
 ```c
-int stark_native_value(void) {
+int native_value(void) {
     return 42;
 }
 ```

@@ -68,6 +68,17 @@ u8 u16 u24 u32 u48 u64 u96 u128 u192 u256 u384 u512 u768 u1024
 f16 f32 f64 f80 f128
 ```
 
+## Common Attributes
+
+```stark
+[LinkName("foreign_symbol")]
+unsafe ffi(c) fn i32[min max] LocalName();
+```
+
+- `[LinkName("...")]` is valid on imported FFI declarations and changes only
+  the external linker symbol.
+- Use it for symbol aliases, not ABI adaptation.
+
 ## Function Kinds
 
 | Kind | Use |

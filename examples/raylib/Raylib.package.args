@@ -1,4 +1,2 @@
---native-source
-examples/raylib/RaylibNative.c
 --native-pkg-config
 raylib

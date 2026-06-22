@@ -18,7 +18,7 @@ Programming language repository: [github.com/AlexanderBaggett/Stark](https://git
   - integer range types and floating point types
   - wrapping and saturating arithmetic operators
   - switch patterns, loop behavior keywords, and layout queries
-  - unsafe, FFI, and assembly function syntax
+  - unsafe, FFI, `[LinkName("...")]`, C aggregate interop, and assembly function syntax
 - Comment toggling, bracket matching, indentation, and auto-closing pairs
 - Snippets for common Stark declarations and statements
 - Standard library autocomplete

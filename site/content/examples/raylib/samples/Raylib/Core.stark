@@ -2,343 +2,823 @@ import Raylib.Types
 export import Raylib.Types
 module Raylib.Core
 
-public unsafe ffi fn void InitWindow(i32[min max] width, i32[min max] height, ascii title);
-public unsafe ffi fn void CloseWindow();
-public unsafe ffi fn bool WindowShouldClose();
-public unsafe ffi fn bool IsWindowReady();
-public unsafe ffi fn bool IsWindowFullscreen();
-public unsafe ffi fn bool IsWindowHidden();
-public unsafe ffi fn bool IsWindowMinimized();
-public unsafe ffi fn bool IsWindowMaximized();
-public unsafe ffi fn bool IsWindowFocused();
-public unsafe ffi fn bool IsWindowResized();
-public unsafe ffi fn bool IsWindowState(u32[0 max] flag);
-public unsafe ffi fn void SetWindowState(u32[0 max] flags);
-public unsafe ffi fn void ClearWindowState(u32[0 max] flags);
-public unsafe ffi fn void ToggleFullscreen();
-public unsafe ffi fn void ToggleBorderlessWindowed();
-public unsafe ffi fn void MaximizeWindow();
-public unsafe ffi fn void MinimizeWindow();
-public unsafe ffi fn void RestoreWindow();
-internal unsafe ffi fn void stark_raylib_SetWindowIcon(rawptr<Image> image);
+[LinkName("InitWindow")]
+internal unsafe ffi fn void stark_raylib_InitWindow(i32[min max] width, i32[min max] height, ascii title);
+public fn void InitWindow(i32[min max] width, i32[min max] height, ascii title) {
+    unsafe {
+        stark_raylib_InitWindow(width, height, title);
+    }
+    return;
+}
+[LinkName("CloseWindow")]
+internal unsafe ffi fn void stark_raylib_CloseWindow();
+public fn void CloseWindow() {
+    unsafe {
+        stark_raylib_CloseWindow();
+    }
+    return;
+}
+[LinkName("WindowShouldClose")]
+internal unsafe ffi fn bool stark_raylib_WindowShouldClose();
+public fn bool WindowShouldClose() {
+    unsafe {
+        return stark_raylib_WindowShouldClose();
+    }
+}
+[LinkName("IsWindowReady")]
+internal unsafe ffi fn bool stark_raylib_IsWindowReady();
+public fn bool IsWindowReady() {
+    unsafe {
+        return stark_raylib_IsWindowReady();
+    }
+}
+[LinkName("IsWindowFullscreen")]
+internal unsafe ffi fn bool stark_raylib_IsWindowFullscreen();
+public fn bool IsWindowFullscreen() {
+    unsafe {
+        return stark_raylib_IsWindowFullscreen();
+    }
+}
+[LinkName("IsWindowHidden")]
+internal unsafe ffi fn bool stark_raylib_IsWindowHidden();
+public fn bool IsWindowHidden() {
+    unsafe {
+        return stark_raylib_IsWindowHidden();
+    }
+}
+[LinkName("IsWindowMinimized")]
+internal unsafe ffi fn bool stark_raylib_IsWindowMinimized();
+public fn bool IsWindowMinimized() {
+    unsafe {
+        return stark_raylib_IsWindowMinimized();
+    }
+}
+[LinkName("IsWindowMaximized")]
+internal unsafe ffi fn bool stark_raylib_IsWindowMaximized();
+public fn bool IsWindowMaximized() {
+    unsafe {
+        return stark_raylib_IsWindowMaximized();
+    }
+}
+[LinkName("IsWindowFocused")]
+internal unsafe ffi fn bool stark_raylib_IsWindowFocused();
+public fn bool IsWindowFocused() {
+    unsafe {
+        return stark_raylib_IsWindowFocused();
+    }
+}
+[LinkName("IsWindowResized")]
+internal unsafe ffi fn bool stark_raylib_IsWindowResized();
+public fn bool IsWindowResized() {
+    unsafe {
+        return stark_raylib_IsWindowResized();
+    }
+}
+[LinkName("IsWindowState")]
+internal unsafe ffi fn bool stark_raylib_IsWindowState(u32[0 max] flag);
+public fn bool IsWindowState(u32[0 max] flag) {
+    unsafe {
+        return stark_raylib_IsWindowState(flag);
+    }
+}
+[LinkName("SetWindowState")]
+internal unsafe ffi fn void stark_raylib_SetWindowState(u32[0 max] flags);
+public fn void SetWindowState(u32[0 max] flags) {
+    unsafe {
+        stark_raylib_SetWindowState(flags);
+    }
+    return;
+}
+[LinkName("ClearWindowState")]
+internal unsafe ffi fn void stark_raylib_ClearWindowState(u32[0 max] flags);
+public fn void ClearWindowState(u32[0 max] flags) {
+    unsafe {
+        stark_raylib_ClearWindowState(flags);
+    }
+    return;
+}
+[LinkName("ToggleFullscreen")]
+internal unsafe ffi fn void stark_raylib_ToggleFullscreen();
+public fn void ToggleFullscreen() {
+    unsafe {
+        stark_raylib_ToggleFullscreen();
+    }
+    return;
+}
+[LinkName("ToggleBorderlessWindowed")]
+internal unsafe ffi fn void stark_raylib_ToggleBorderlessWindowed();
+public fn void ToggleBorderlessWindowed() {
+    unsafe {
+        stark_raylib_ToggleBorderlessWindowed();
+    }
+    return;
+}
+[LinkName("MaximizeWindow")]
+internal unsafe ffi fn void stark_raylib_MaximizeWindow();
+public fn void MaximizeWindow() {
+    unsafe {
+        stark_raylib_MaximizeWindow();
+    }
+    return;
+}
+[LinkName("MinimizeWindow")]
+internal unsafe ffi fn void stark_raylib_MinimizeWindow();
+public fn void MinimizeWindow() {
+    unsafe {
+        stark_raylib_MinimizeWindow();
+    }
+    return;
+}
+[LinkName("RestoreWindow")]
+internal unsafe ffi fn void stark_raylib_RestoreWindow();
+public fn void RestoreWindow() {
+    unsafe {
+        stark_raylib_RestoreWindow();
+    }
+    return;
+}
+[LinkName("SetWindowIcon")]
+internal unsafe ffi fn void stark_raylib_SetWindowIcon(Image image);
 public fn void SetWindowIcon(Image image) {
     unsafe {
-        stark_raylib_SetWindowIcon(&image);
+        stark_raylib_SetWindowIcon(image);
     }
     return;
 }
 
-public unsafe ffi fn void SetWindowIcons(rawmutptr<Image> images, i32[min max] count);
-public unsafe ffi fn void SetWindowTitle(ascii title);
-public unsafe ffi fn void SetWindowPosition(i32[min max] x, i32[min max] y);
-public unsafe ffi fn void SetWindowMonitor(i32[min max] monitor);
-public unsafe ffi fn void SetWindowMinSize(i32[min max] width, i32[min max] height);
-public unsafe ffi fn void SetWindowMaxSize(i32[min max] width, i32[min max] height);
-public unsafe ffi fn void SetWindowSize(i32[min max] width, i32[min max] height);
-public unsafe ffi fn void SetWindowOpacity(f32 opacity);
-public unsafe ffi fn void SetWindowFocused();
+[LinkName("SetWindowIcons")]
+internal unsafe ffi fn void stark_raylib_SetWindowIcons(rawptr<Image> images, i32[min max] count);
+public fn RaylibStatus SetWindowIcons(borrow Image[] images) {
+    if (images.Length > (u64[0 2 ** 63 - 1])(2 ** 31 - 1)) {
+        return RaylibStatus.TooManyItems;
+    }
+
+    if (images.Length == 0) {
+        return RaylibStatus.Ok;
+    }
+
+    unsafe {
+        stark_raylib_SetWindowIcons(&images[0], (i32[min max])images.Length);
+    }
+    return RaylibStatus.Ok;
+}
+[LinkName("SetWindowTitle")]
+internal unsafe ffi fn void stark_raylib_SetWindowTitle(ascii title);
+public fn void SetWindowTitle(ascii title) {
+    unsafe {
+        stark_raylib_SetWindowTitle(title);
+    }
+    return;
+}
+[LinkName("SetWindowPosition")]
+internal unsafe ffi fn void stark_raylib_SetWindowPosition(i32[min max] x, i32[min max] y);
+public fn void SetWindowPosition(i32[min max] x, i32[min max] y) {
+    unsafe {
+        stark_raylib_SetWindowPosition(x, y);
+    }
+    return;
+}
+[LinkName("SetWindowMonitor")]
+internal unsafe ffi fn void stark_raylib_SetWindowMonitor(i32[min max] monitor);
+public fn void SetWindowMonitor(i32[min max] monitor) {
+    unsafe {
+        stark_raylib_SetWindowMonitor(monitor);
+    }
+    return;
+}
+[LinkName("SetWindowMinSize")]
+internal unsafe ffi fn void stark_raylib_SetWindowMinSize(i32[min max] width, i32[min max] height);
+public fn void SetWindowMinSize(i32[min max] width, i32[min max] height) {
+    unsafe {
+        stark_raylib_SetWindowMinSize(width, height);
+    }
+    return;
+}
+[LinkName("SetWindowMaxSize")]
+internal unsafe ffi fn void stark_raylib_SetWindowMaxSize(i32[min max] width, i32[min max] height);
+public fn void SetWindowMaxSize(i32[min max] width, i32[min max] height) {
+    unsafe {
+        stark_raylib_SetWindowMaxSize(width, height);
+    }
+    return;
+}
+[LinkName("SetWindowSize")]
+internal unsafe ffi fn void stark_raylib_SetWindowSize(i32[min max] width, i32[min max] height);
+public fn void SetWindowSize(i32[min max] width, i32[min max] height) {
+    unsafe {
+        stark_raylib_SetWindowSize(width, height);
+    }
+    return;
+}
+[LinkName("SetWindowOpacity")]
+internal unsafe ffi fn void stark_raylib_SetWindowOpacity(f32 opacity);
+public fn void SetWindowOpacity(f32 opacity) {
+    unsafe {
+        stark_raylib_SetWindowOpacity(opacity);
+    }
+    return;
+}
+[LinkName("SetWindowFocused")]
+internal unsafe ffi fn void stark_raylib_SetWindowFocused();
+public fn void SetWindowFocused() {
+    unsafe {
+        stark_raylib_SetWindowFocused();
+    }
+    return;
+}
 public unsafe ffi fn rawmutptr<i8[min max]> GetWindowHandle();
-public unsafe ffi fn i32[min max] GetScreenWidth();
-public unsafe ffi fn i32[min max] GetScreenHeight();
-public unsafe ffi fn i32[min max] GetRenderWidth();
-public unsafe ffi fn i32[min max] GetRenderHeight();
-public unsafe ffi fn i32[min max] GetMonitorCount();
-public unsafe ffi fn i32[min max] GetCurrentMonitor();
-internal unsafe ffi fn void stark_raylib_GetMonitorPosition(rawmutptr<Vector2> result, i32[min max] monitor);
+[LinkName("GetScreenWidth")]
+internal unsafe ffi fn i32[min max] stark_raylib_GetScreenWidth();
+public fn i32[min max] GetScreenWidth() {
+    unsafe {
+        return stark_raylib_GetScreenWidth();
+    }
+}
+[LinkName("GetScreenHeight")]
+internal unsafe ffi fn i32[min max] stark_raylib_GetScreenHeight();
+public fn i32[min max] GetScreenHeight() {
+    unsafe {
+        return stark_raylib_GetScreenHeight();
+    }
+}
+[LinkName("GetRenderWidth")]
+internal unsafe ffi fn i32[min max] stark_raylib_GetRenderWidth();
+public fn i32[min max] GetRenderWidth() {
+    unsafe {
+        return stark_raylib_GetRenderWidth();
+    }
+}
+[LinkName("GetRenderHeight")]
+internal unsafe ffi fn i32[min max] stark_raylib_GetRenderHeight();
+public fn i32[min max] GetRenderHeight() {
+    unsafe {
+        return stark_raylib_GetRenderHeight();
+    }
+}
+[LinkName("GetMonitorCount")]
+internal unsafe ffi fn i32[min max] stark_raylib_GetMonitorCount();
+public fn i32[min max] GetMonitorCount() {
+    unsafe {
+        return stark_raylib_GetMonitorCount();
+    }
+}
+[LinkName("GetCurrentMonitor")]
+internal unsafe ffi fn i32[min max] stark_raylib_GetCurrentMonitor();
+public fn i32[min max] GetCurrentMonitor() {
+    unsafe {
+        return stark_raylib_GetCurrentMonitor();
+    }
+}
+[LinkName("GetMonitorPosition")]
+internal unsafe ffi fn Vector2 stark_raylib_GetMonitorPosition(i32[min max] monitor);
 public fn Vector2 GetMonitorPosition(i32[min max] monitor) {
-    stack mut Vector2 result = DefaultVector2();
     unsafe {
-        stark_raylib_GetMonitorPosition(&result, monitor);
+        return stark_raylib_GetMonitorPosition(monitor);
     }
-    return result;
 }
 
-public unsafe ffi fn i32[min max] GetMonitorWidth(i32[min max] monitor);
-public unsafe ffi fn i32[min max] GetMonitorHeight(i32[min max] monitor);
-public unsafe ffi fn i32[min max] GetMonitorPhysicalWidth(i32[min max] monitor);
-public unsafe ffi fn i32[min max] GetMonitorPhysicalHeight(i32[min max] monitor);
-public unsafe ffi fn i32[min max] GetMonitorRefreshRate(i32[min max] monitor);
-internal unsafe ffi fn void stark_raylib_GetWindowPosition(rawmutptr<Vector2> result);
+[LinkName("GetMonitorWidth")]
+internal unsafe ffi fn i32[min max] stark_raylib_GetMonitorWidth(i32[min max] monitor);
+public fn i32[min max] GetMonitorWidth(i32[min max] monitor) {
+    unsafe {
+        return stark_raylib_GetMonitorWidth(monitor);
+    }
+}
+[LinkName("GetMonitorHeight")]
+internal unsafe ffi fn i32[min max] stark_raylib_GetMonitorHeight(i32[min max] monitor);
+public fn i32[min max] GetMonitorHeight(i32[min max] monitor) {
+    unsafe {
+        return stark_raylib_GetMonitorHeight(monitor);
+    }
+}
+[LinkName("GetMonitorPhysicalWidth")]
+internal unsafe ffi fn i32[min max] stark_raylib_GetMonitorPhysicalWidth(i32[min max] monitor);
+public fn i32[min max] GetMonitorPhysicalWidth(i32[min max] monitor) {
+    unsafe {
+        return stark_raylib_GetMonitorPhysicalWidth(monitor);
+    }
+}
+[LinkName("GetMonitorPhysicalHeight")]
+internal unsafe ffi fn i32[min max] stark_raylib_GetMonitorPhysicalHeight(i32[min max] monitor);
+public fn i32[min max] GetMonitorPhysicalHeight(i32[min max] monitor) {
+    unsafe {
+        return stark_raylib_GetMonitorPhysicalHeight(monitor);
+    }
+}
+[LinkName("GetMonitorRefreshRate")]
+internal unsafe ffi fn i32[min max] stark_raylib_GetMonitorRefreshRate(i32[min max] monitor);
+public fn i32[min max] GetMonitorRefreshRate(i32[min max] monitor) {
+    unsafe {
+        return stark_raylib_GetMonitorRefreshRate(monitor);
+    }
+}
+[LinkName("GetWindowPosition")]
+internal unsafe ffi fn Vector2 stark_raylib_GetWindowPosition();
 public fn Vector2 GetWindowPosition() {
-    stack mut Vector2 result = DefaultVector2();
     unsafe {
-        stark_raylib_GetWindowPosition(&result);
+        return stark_raylib_GetWindowPosition();
     }
-    return result;
 }
 
-internal unsafe ffi fn void stark_raylib_GetWindowScaleDPI(rawmutptr<Vector2> result);
+[LinkName("GetWindowScaleDPI")]
+internal unsafe ffi fn Vector2 stark_raylib_GetWindowScaleDPI();
 public fn Vector2 GetWindowScaleDPI() {
-    stack mut Vector2 result = DefaultVector2();
     unsafe {
-        stark_raylib_GetWindowScaleDPI(&result);
+        return stark_raylib_GetWindowScaleDPI();
     }
-    return result;
 }
 
 public unsafe ffi fn rawptr<i8[min max]> GetMonitorName(i32[min max] monitor);
-public unsafe ffi fn void SetClipboardText(ascii text);
-public unsafe ffi fn rawptr<i8[min max]> GetClipboardText();
-internal unsafe ffi fn void stark_raylib_GetClipboardImage(rawmutptr<Image> result);
-public fn Image GetClipboardImage() {
-    stack mut Image result = DefaultImage();
+[LinkName("SetClipboardText")]
+internal unsafe ffi fn void stark_raylib_SetClipboardText(ascii text);
+public fn void SetClipboardText(ascii text) {
     unsafe {
-        stark_raylib_GetClipboardImage(&result);
+        stark_raylib_SetClipboardText(text);
     }
-    return result;
+    return;
+}
+public unsafe ffi fn rawptr<i8[min max]> GetClipboardText();
+[LinkName("GetClipboardImage")]
+internal unsafe ffi fn Image stark_raylib_GetClipboardImage();
+public fn Image GetClipboardImage() {
+    unsafe {
+        return stark_raylib_GetClipboardImage();
+    }
 }
 
-public unsafe ffi fn void EnableEventWaiting();
-public unsafe ffi fn void DisableEventWaiting();
-public unsafe ffi fn void ShowCursor();
-public unsafe ffi fn void HideCursor();
-public unsafe ffi fn bool IsCursorHidden();
-public unsafe ffi fn void EnableCursor();
-public unsafe ffi fn void DisableCursor();
-public unsafe ffi fn bool IsCursorOnScreen();
-internal unsafe ffi fn void stark_raylib_ClearBackground(rawptr<Color> color);
+[LinkName("EnableEventWaiting")]
+internal unsafe ffi fn void stark_raylib_EnableEventWaiting();
+public fn void EnableEventWaiting() {
+    unsafe {
+        stark_raylib_EnableEventWaiting();
+    }
+    return;
+}
+[LinkName("DisableEventWaiting")]
+internal unsafe ffi fn void stark_raylib_DisableEventWaiting();
+public fn void DisableEventWaiting() {
+    unsafe {
+        stark_raylib_DisableEventWaiting();
+    }
+    return;
+}
+[LinkName("ShowCursor")]
+internal unsafe ffi fn void stark_raylib_ShowCursor();
+public fn void ShowCursor() {
+    unsafe {
+        stark_raylib_ShowCursor();
+    }
+    return;
+}
+[LinkName("HideCursor")]
+internal unsafe ffi fn void stark_raylib_HideCursor();
+public fn void HideCursor() {
+    unsafe {
+        stark_raylib_HideCursor();
+    }
+    return;
+}
+[LinkName("IsCursorHidden")]
+internal unsafe ffi fn bool stark_raylib_IsCursorHidden();
+public fn bool IsCursorHidden() {
+    unsafe {
+        return stark_raylib_IsCursorHidden();
+    }
+}
+[LinkName("EnableCursor")]
+internal unsafe ffi fn void stark_raylib_EnableCursor();
+public fn void EnableCursor() {
+    unsafe {
+        stark_raylib_EnableCursor();
+    }
+    return;
+}
+[LinkName("DisableCursor")]
+internal unsafe ffi fn void stark_raylib_DisableCursor();
+public fn void DisableCursor() {
+    unsafe {
+        stark_raylib_DisableCursor();
+    }
+    return;
+}
+[LinkName("IsCursorOnScreen")]
+internal unsafe ffi fn bool stark_raylib_IsCursorOnScreen();
+public fn bool IsCursorOnScreen() {
+    unsafe {
+        return stark_raylib_IsCursorOnScreen();
+    }
+}
+[LinkName("ClearBackground")]
+internal unsafe ffi fn void stark_raylib_ClearBackground(Color color);
 public fn void ClearBackground(Color color) {
     unsafe {
-        stark_raylib_ClearBackground(&color);
+        stark_raylib_ClearBackground(color);
     }
     return;
 }
 
-public unsafe ffi fn void BeginDrawing();
-public unsafe ffi fn void EndDrawing();
-internal unsafe ffi fn void stark_raylib_BeginMode2D(rawptr<Camera2D> camera);
+[LinkName("BeginDrawing")]
+internal unsafe ffi fn void stark_raylib_BeginDrawing();
+public fn void BeginDrawing() {
+    unsafe {
+        stark_raylib_BeginDrawing();
+    }
+    return;
+}
+[LinkName("EndDrawing")]
+internal unsafe ffi fn void stark_raylib_EndDrawing();
+public fn void EndDrawing() {
+    unsafe {
+        stark_raylib_EndDrawing();
+    }
+    return;
+}
+[LinkName("BeginMode2D")]
+internal unsafe ffi fn void stark_raylib_BeginMode2D(Camera2D camera);
 public fn void BeginMode2D(Camera2D camera) {
     unsafe {
-        stark_raylib_BeginMode2D(&camera);
+        stark_raylib_BeginMode2D(camera);
     }
     return;
 }
 
-public unsafe ffi fn void EndMode2D();
-internal unsafe ffi fn void stark_raylib_BeginMode3D(rawptr<Camera3D> camera);
+[LinkName("EndMode2D")]
+internal unsafe ffi fn void stark_raylib_EndMode2D();
+public fn void EndMode2D() {
+    unsafe {
+        stark_raylib_EndMode2D();
+    }
+    return;
+}
+[LinkName("BeginMode3D")]
+internal unsafe ffi fn void stark_raylib_BeginMode3D(Camera3D camera);
 public fn void BeginMode3D(Camera3D camera) {
     unsafe {
-        stark_raylib_BeginMode3D(&camera);
+        stark_raylib_BeginMode3D(camera);
     }
     return;
 }
 
-public unsafe ffi fn void EndMode3D();
-internal unsafe ffi fn void stark_raylib_BeginTextureMode(rawptr<RenderTexture2D> target);
+[LinkName("EndMode3D")]
+internal unsafe ffi fn void stark_raylib_EndMode3D();
+public fn void EndMode3D() {
+    unsafe {
+        stark_raylib_EndMode3D();
+    }
+    return;
+}
+[LinkName("BeginTextureMode")]
+internal unsafe ffi fn void stark_raylib_BeginTextureMode(RenderTexture2D target);
 public fn void BeginTextureMode(RenderTexture2D target) {
     unsafe {
-        stark_raylib_BeginTextureMode(&target);
+        stark_raylib_BeginTextureMode(target);
     }
     return;
 }
 
-public unsafe ffi fn void EndTextureMode();
-internal unsafe ffi fn void stark_raylib_BeginShaderMode(rawptr<Shader> shader);
+[LinkName("EndTextureMode")]
+internal unsafe ffi fn void stark_raylib_EndTextureMode();
+public fn void EndTextureMode() {
+    unsafe {
+        stark_raylib_EndTextureMode();
+    }
+    return;
+}
+[LinkName("BeginShaderMode")]
+internal unsafe ffi fn void stark_raylib_BeginShaderMode(Shader shader);
 public fn void BeginShaderMode(Shader shader) {
     unsafe {
-        stark_raylib_BeginShaderMode(&shader);
+        stark_raylib_BeginShaderMode(shader);
     }
     return;
 }
 
-public unsafe ffi fn void EndShaderMode();
-public unsafe ffi fn void BeginBlendMode(i32[min max] mode);
-public unsafe ffi fn void EndBlendMode();
-public unsafe ffi fn void BeginScissorMode(i32[min max] x, i32[min max] y, i32[min max] width, i32[min max] height);
-public unsafe ffi fn void EndScissorMode();
-internal unsafe ffi fn void stark_raylib_BeginVrStereoMode(rawptr<VrStereoConfig> config);
+[LinkName("EndShaderMode")]
+internal unsafe ffi fn void stark_raylib_EndShaderMode();
+public fn void EndShaderMode() {
+    unsafe {
+        stark_raylib_EndShaderMode();
+    }
+    return;
+}
+[LinkName("BeginBlendMode")]
+internal unsafe ffi fn void stark_raylib_BeginBlendMode(i32[min max] mode);
+public fn void BeginBlendMode(i32[min max] mode) {
+    unsafe {
+        stark_raylib_BeginBlendMode(mode);
+    }
+    return;
+}
+[LinkName("EndBlendMode")]
+internal unsafe ffi fn void stark_raylib_EndBlendMode();
+public fn void EndBlendMode() {
+    unsafe {
+        stark_raylib_EndBlendMode();
+    }
+    return;
+}
+[LinkName("BeginScissorMode")]
+internal unsafe ffi fn void stark_raylib_BeginScissorMode(i32[min max] x, i32[min max] y, i32[min max] width, i32[min max] height);
+public fn void BeginScissorMode(i32[min max] x, i32[min max] y, i32[min max] width, i32[min max] height) {
+    unsafe {
+        stark_raylib_BeginScissorMode(x, y, width, height);
+    }
+    return;
+}
+[LinkName("EndScissorMode")]
+internal unsafe ffi fn void stark_raylib_EndScissorMode();
+public fn void EndScissorMode() {
+    unsafe {
+        stark_raylib_EndScissorMode();
+    }
+    return;
+}
+[LinkName("BeginVrStereoMode")]
+internal unsafe ffi fn void stark_raylib_BeginVrStereoMode(VrStereoConfig config);
 public fn void BeginVrStereoMode(VrStereoConfig config) {
     unsafe {
-        stark_raylib_BeginVrStereoMode(&config);
+        stark_raylib_BeginVrStereoMode(config);
     }
     return;
 }
 
-public unsafe ffi fn void EndVrStereoMode();
-internal unsafe ffi fn void stark_raylib_LoadVrStereoConfig(rawmutptr<VrStereoConfig> result, rawptr<VrDeviceInfo> device);
-public fn VrStereoConfig LoadVrStereoConfig(VrDeviceInfo device) {
-    stack mut VrStereoConfig result = DefaultVrStereoConfig();
+[LinkName("EndVrStereoMode")]
+internal unsafe ffi fn void stark_raylib_EndVrStereoMode();
+public fn void EndVrStereoMode() {
     unsafe {
-        stark_raylib_LoadVrStereoConfig(&result, &device);
+        stark_raylib_EndVrStereoMode();
     }
-    return result;
+    return;
+}
+[LinkName("LoadVrStereoConfig")]
+internal unsafe ffi fn VrStereoConfig stark_raylib_LoadVrStereoConfig(VrDeviceInfo device);
+public fn VrStereoConfig LoadVrStereoConfig(VrDeviceInfo device) {
+    unsafe {
+        return stark_raylib_LoadVrStereoConfig(device);
+    }
 }
 
-internal unsafe ffi fn void stark_raylib_UnloadVrStereoConfig(rawptr<VrStereoConfig> config);
+[LinkName("UnloadVrStereoConfig")]
+internal unsafe ffi fn void stark_raylib_UnloadVrStereoConfig(VrStereoConfig config);
 public fn void UnloadVrStereoConfig(VrStereoConfig config) {
     unsafe {
-        stark_raylib_UnloadVrStereoConfig(&config);
+        stark_raylib_UnloadVrStereoConfig(config);
     }
     return;
 }
 
-internal unsafe ffi fn void stark_raylib_LoadShader(rawmutptr<Shader> result, ascii vsFileName, ascii fsFileName);
+[LinkName("LoadShader")]
+internal unsafe ffi fn Shader stark_raylib_LoadShader(ascii vsFileName, ascii fsFileName);
 public fn Shader LoadShader(ascii vsFileName, ascii fsFileName) {
-    stack mut Shader result = DefaultShader();
     unsafe {
-        stark_raylib_LoadShader(&result, vsFileName, fsFileName);
+        return stark_raylib_LoadShader(vsFileName, fsFileName);
     }
-    return result;
 }
 
-internal unsafe ffi fn void stark_raylib_LoadShaderFromMemory(rawmutptr<Shader> result, ascii vsCode, ascii fsCode);
+[LinkName("LoadShaderFromMemory")]
+internal unsafe ffi fn Shader stark_raylib_LoadShaderFromMemory(ascii vsCode, ascii fsCode);
 public fn Shader LoadShaderFromMemory(ascii vsCode, ascii fsCode) {
-    stack mut Shader result = DefaultShader();
     unsafe {
-        stark_raylib_LoadShaderFromMemory(&result, vsCode, fsCode);
+        return stark_raylib_LoadShaderFromMemory(vsCode, fsCode);
     }
-    return result;
 }
 
-internal unsafe ffi fn bool stark_raylib_IsShaderValid(rawptr<Shader> shader);
+[LinkName("IsShaderValid")]
+internal unsafe ffi fn bool stark_raylib_IsShaderValid(Shader shader);
 public fn bool IsShaderValid(Shader shader) {
     unsafe {
-        return stark_raylib_IsShaderValid(&shader);
+        return stark_raylib_IsShaderValid(shader);
     }
 }
 
-internal unsafe ffi fn i32[min max] stark_raylib_GetShaderLocation(rawptr<Shader> shader, ascii uniformName);
+[LinkName("GetShaderLocation")]
+internal unsafe ffi fn i32[min max] stark_raylib_GetShaderLocation(Shader shader, ascii uniformName);
 public fn i32[min max] GetShaderLocation(Shader shader, ascii uniformName) {
     unsafe {
-        return stark_raylib_GetShaderLocation(&shader, uniformName);
+        return stark_raylib_GetShaderLocation(shader, uniformName);
     }
 }
 
-internal unsafe ffi fn i32[min max] stark_raylib_GetShaderLocationAttrib(rawptr<Shader> shader, ascii attribName);
+[LinkName("GetShaderLocationAttrib")]
+internal unsafe ffi fn i32[min max] stark_raylib_GetShaderLocationAttrib(Shader shader, ascii attribName);
 public fn i32[min max] GetShaderLocationAttrib(Shader shader, ascii attribName) {
     unsafe {
-        return stark_raylib_GetShaderLocationAttrib(&shader, attribName);
+        return stark_raylib_GetShaderLocationAttrib(shader, attribName);
     }
 }
 
-internal unsafe ffi fn void stark_raylib_SetShaderValue(rawptr<Shader> shader, i32[min max] locIndex, rawptr<i8[min max]> value, i32[min max] uniformType);
+[LinkName("SetShaderValue")]
+internal unsafe ffi fn void stark_raylib_SetShaderValue(Shader shader, i32[min max] locIndex, rawptr<i8[min max]> value, i32[min max] uniformType);
 public unsafe fn void SetShaderValue(Shader shader, i32[min max] locIndex, rawptr<i8[min max]> value, i32[min max] uniformType) {
     unsafe {
-        stark_raylib_SetShaderValue(&shader, locIndex, value, uniformType);
+        stark_raylib_SetShaderValue(shader, locIndex, value, uniformType);
     }
     return;
 }
 
-internal unsafe ffi fn void stark_raylib_SetShaderValueV(rawptr<Shader> shader, i32[min max] locIndex, rawptr<i8[min max]> value, i32[min max] uniformType, i32[min max] count);
+[LinkName("SetShaderValueV")]
+internal unsafe ffi fn void stark_raylib_SetShaderValueV(Shader shader, i32[min max] locIndex, rawptr<i8[min max]> value, i32[min max] uniformType, i32[min max] count);
 public unsafe fn void SetShaderValueV(Shader shader, i32[min max] locIndex, rawptr<i8[min max]> value, i32[min max] uniformType, i32[min max] count) {
     unsafe {
-        stark_raylib_SetShaderValueV(&shader, locIndex, value, uniformType, count);
+        stark_raylib_SetShaderValueV(shader, locIndex, value, uniformType, count);
     }
     return;
 }
 
-internal unsafe ffi fn void stark_raylib_SetShaderValueMatrix(rawptr<Shader> shader, i32[min max] locIndex, rawptr<Matrix> mat);
+[LinkName("SetShaderValueMatrix")]
+internal unsafe ffi fn void stark_raylib_SetShaderValueMatrix(Shader shader, i32[min max] locIndex, Matrix mat);
 public fn void SetShaderValueMatrix(Shader shader, i32[min max] locIndex, Matrix mat) {
     unsafe {
-        stark_raylib_SetShaderValueMatrix(&shader, locIndex, &mat);
+        stark_raylib_SetShaderValueMatrix(shader, locIndex, mat);
     }
     return;
 }
 
-internal unsafe ffi fn void stark_raylib_SetShaderValueTexture(rawptr<Shader> shader, i32[min max] locIndex, rawptr<Texture2D> texture);
+[LinkName("SetShaderValueTexture")]
+internal unsafe ffi fn void stark_raylib_SetShaderValueTexture(Shader shader, i32[min max] locIndex, Texture2D texture);
 public fn void SetShaderValueTexture(Shader shader, i32[min max] locIndex, Texture2D texture) {
     unsafe {
-        stark_raylib_SetShaderValueTexture(&shader, locIndex, &texture);
+        stark_raylib_SetShaderValueTexture(shader, locIndex, texture);
     }
     return;
 }
 
-internal unsafe ffi fn void stark_raylib_UnloadShader(rawptr<Shader> shader);
+[LinkName("UnloadShader")]
+internal unsafe ffi fn void stark_raylib_UnloadShader(Shader shader);
 public fn void UnloadShader(Shader shader) {
     unsafe {
-        stark_raylib_UnloadShader(&shader);
+        stark_raylib_UnloadShader(shader);
     }
     return;
 }
 
-internal unsafe ffi fn void stark_raylib_GetScreenToWorldRay(rawmutptr<Ray> result, rawptr<Vector2> position, rawptr<Camera> camera);
+[LinkName("GetScreenToWorldRay")]
+internal unsafe ffi fn Ray stark_raylib_GetScreenToWorldRay(Vector2 position, Camera camera);
 public fn Ray GetScreenToWorldRay(Vector2 position, Camera camera) {
-    stack mut Ray result = DefaultRay();
     unsafe {
-        stark_raylib_GetScreenToWorldRay(&result, &position, &camera);
+        return stark_raylib_GetScreenToWorldRay(position, camera);
     }
-    return result;
 }
 
-internal unsafe ffi fn void stark_raylib_GetScreenToWorldRayEx(rawmutptr<Ray> result, rawptr<Vector2> position, rawptr<Camera> camera, i32[min max] width, i32[min max] height);
+[LinkName("GetScreenToWorldRayEx")]
+internal unsafe ffi fn Ray stark_raylib_GetScreenToWorldRayEx(Vector2 position, Camera camera, i32[min max] width, i32[min max] height);
 public fn Ray GetScreenToWorldRayEx(Vector2 position, Camera camera, i32[min max] width, i32[min max] height) {
-    stack mut Ray result = DefaultRay();
     unsafe {
-        stark_raylib_GetScreenToWorldRayEx(&result, &position, &camera, width, height);
+        return stark_raylib_GetScreenToWorldRayEx(position, camera, width, height);
     }
-    return result;
 }
 
-internal unsafe ffi fn void stark_raylib_GetWorldToScreen(rawmutptr<Vector2> result, rawptr<Vector3> position, rawptr<Camera> camera);
+[LinkName("GetWorldToScreen")]
+internal unsafe ffi fn Vector2 stark_raylib_GetWorldToScreen(Vector3 position, Camera camera);
 public fn Vector2 GetWorldToScreen(Vector3 position, Camera camera) {
-    stack mut Vector2 result = DefaultVector2();
     unsafe {
-        stark_raylib_GetWorldToScreen(&result, &position, &camera);
+        return stark_raylib_GetWorldToScreen(position, camera);
     }
-    return result;
 }
 
-internal unsafe ffi fn void stark_raylib_GetWorldToScreenEx(rawmutptr<Vector2> result, rawptr<Vector3> position, rawptr<Camera> camera, i32[min max] width, i32[min max] height);
+[LinkName("GetWorldToScreenEx")]
+internal unsafe ffi fn Vector2 stark_raylib_GetWorldToScreenEx(Vector3 position, Camera camera, i32[min max] width, i32[min max] height);
 public fn Vector2 GetWorldToScreenEx(Vector3 position, Camera camera, i32[min max] width, i32[min max] height) {
-    stack mut Vector2 result = DefaultVector2();
     unsafe {
-        stark_raylib_GetWorldToScreenEx(&result, &position, &camera, width, height);
+        return stark_raylib_GetWorldToScreenEx(position, camera, width, height);
     }
-    return result;
 }
 
-internal unsafe ffi fn void stark_raylib_GetWorldToScreen2D(rawmutptr<Vector2> result, rawptr<Vector2> position, rawptr<Camera2D> camera);
+[LinkName("GetWorldToScreen2D")]
+internal unsafe ffi fn Vector2 stark_raylib_GetWorldToScreen2D(Vector2 position, Camera2D camera);
 public fn Vector2 GetWorldToScreen2D(Vector2 position, Camera2D camera) {
-    stack mut Vector2 result = DefaultVector2();
     unsafe {
-        stark_raylib_GetWorldToScreen2D(&result, &position, &camera);
+        return stark_raylib_GetWorldToScreen2D(position, camera);
     }
-    return result;
 }
 
-internal unsafe ffi fn void stark_raylib_GetScreenToWorld2D(rawmutptr<Vector2> result, rawptr<Vector2> position, rawptr<Camera2D> camera);
+[LinkName("GetScreenToWorld2D")]
+internal unsafe ffi fn Vector2 stark_raylib_GetScreenToWorld2D(Vector2 position, Camera2D camera);
 public fn Vector2 GetScreenToWorld2D(Vector2 position, Camera2D camera) {
-    stack mut Vector2 result = DefaultVector2();
     unsafe {
-        stark_raylib_GetScreenToWorld2D(&result, &position, &camera);
+        return stark_raylib_GetScreenToWorld2D(position, camera);
     }
-    return result;
 }
 
-internal unsafe ffi fn void stark_raylib_GetCameraMatrix(rawmutptr<Matrix> result, rawptr<Camera> camera);
+[LinkName("GetCameraMatrix")]
+internal unsafe ffi fn Matrix stark_raylib_GetCameraMatrix(Camera camera);
 public fn Matrix GetCameraMatrix(Camera camera) {
-    stack mut Matrix result = DefaultMatrix();
     unsafe {
-        stark_raylib_GetCameraMatrix(&result, &camera);
+        return stark_raylib_GetCameraMatrix(camera);
     }
-    return result;
 }
 
-internal unsafe ffi fn void stark_raylib_GetCameraMatrix2D(rawmutptr<Matrix> result, rawptr<Camera2D> camera);
+[LinkName("GetCameraMatrix2D")]
+internal unsafe ffi fn Matrix stark_raylib_GetCameraMatrix2D(Camera2D camera);
 public fn Matrix GetCameraMatrix2D(Camera2D camera) {
-    stack mut Matrix result = DefaultMatrix();
     unsafe {
-        stark_raylib_GetCameraMatrix2D(&result, &camera);
+        return stark_raylib_GetCameraMatrix2D(camera);
     }
-    return result;
 }
 
-public unsafe ffi fn void SetTargetFPS(i32[min max] fps);
-public unsafe ffi fn f32 GetFrameTime();
-public unsafe ffi fn f64 GetTime();
-public unsafe ffi fn i32[min max] GetFPS();
-public unsafe ffi fn void SwapScreenBuffer();
-public unsafe ffi fn void PollInputEvents();
-public unsafe ffi fn void WaitTime(f64 seconds);
-public unsafe ffi fn void SetRandomSeed(u32[0 max] seed);
-public unsafe ffi fn i32[min max] GetRandomValue(i32[min max] minValue, i32[min max] maxValue);
+[LinkName("SetTargetFPS")]
+internal unsafe ffi fn void stark_raylib_SetTargetFPS(i32[min max] fps);
+public fn void SetTargetFPS(i32[min max] fps) {
+    unsafe {
+        stark_raylib_SetTargetFPS(fps);
+    }
+    return;
+}
+[LinkName("GetFrameTime")]
+internal unsafe ffi fn f32 stark_raylib_GetFrameTime();
+public fn f32 GetFrameTime() {
+    unsafe {
+        return stark_raylib_GetFrameTime();
+    }
+}
+[LinkName("GetTime")]
+internal unsafe ffi fn f64 stark_raylib_GetTime();
+public fn f64 GetTime() {
+    unsafe {
+        return stark_raylib_GetTime();
+    }
+}
+[LinkName("GetFPS")]
+internal unsafe ffi fn i32[min max] stark_raylib_GetFPS();
+public fn i32[min max] GetFPS() {
+    unsafe {
+        return stark_raylib_GetFPS();
+    }
+}
+[LinkName("SwapScreenBuffer")]
+internal unsafe ffi fn void stark_raylib_SwapScreenBuffer();
+public fn void SwapScreenBuffer() {
+    unsafe {
+        stark_raylib_SwapScreenBuffer();
+    }
+    return;
+}
+[LinkName("PollInputEvents")]
+internal unsafe ffi fn void stark_raylib_PollInputEvents();
+public fn void PollInputEvents() {
+    unsafe {
+        stark_raylib_PollInputEvents();
+    }
+    return;
+}
+[LinkName("WaitTime")]
+internal unsafe ffi fn void stark_raylib_WaitTime(f64 seconds);
+public fn void WaitTime(f64 seconds) {
+    unsafe {
+        stark_raylib_WaitTime(seconds);
+    }
+    return;
+}
+[LinkName("SetRandomSeed")]
+internal unsafe ffi fn void stark_raylib_SetRandomSeed(u32[0 max] seed);
+public fn void SetRandomSeed(u32[0 max] seed) {
+    unsafe {
+        stark_raylib_SetRandomSeed(seed);
+    }
+    return;
+}
+[LinkName("GetRandomValue")]
+internal unsafe ffi fn i32[min max] stark_raylib_GetRandomValue(i32[min max] minValue, i32[min max] maxValue);
+public fn i32[min max] GetRandomValue(i32[min max] minValue, i32[min max] maxValue) {
+    unsafe {
+        return stark_raylib_GetRandomValue(minValue, maxValue);
+    }
+}
 public unsafe ffi fn rawmutptr<i32[min max]> LoadRandomSequence(u32[0 max] count, i32[min max] minValue, i32[min max] maxValue);
 public unsafe ffi fn void UnloadRandomSequence(rawmutptr<i32[min max]> sequence);
-public unsafe ffi fn void TakeScreenshot(ascii fileName);
-public unsafe ffi fn void SetConfigFlags(u32[0 max] flags);
-public unsafe ffi fn void OpenURL(ascii url);
+[LinkName("TakeScreenshot")]
+internal unsafe ffi fn void stark_raylib_TakeScreenshot(ascii fileName);
+public fn void TakeScreenshot(ascii fileName) {
+    unsafe {
+        stark_raylib_TakeScreenshot(fileName);
+    }
+    return;
+}
+[LinkName("SetConfigFlags")]
+internal unsafe ffi fn void stark_raylib_SetConfigFlags(u32[0 max] flags);
+public fn void SetConfigFlags(u32[0 max] flags) {
+    unsafe {
+        stark_raylib_SetConfigFlags(flags);
+    }
+    return;
+}
+[LinkName("OpenURL")]
+internal unsafe ffi fn void stark_raylib_OpenURL(ascii url);
+public fn void OpenURL(ascii url) {
+    unsafe {
+        stark_raylib_OpenURL(url);
+    }
+    return;
+}
 public unsafe ffi varargs fn void TraceLog(i32[min max] logLevel, ascii text);
-public unsafe ffi fn void SetTraceLogLevel(i32[min max] logLevel);
+[LinkName("SetTraceLogLevel")]
+internal unsafe ffi fn void stark_raylib_SetTraceLogLevel(i32[min max] logLevel);
+public fn void SetTraceLogLevel(i32[min max] logLevel) {
+    unsafe {
+        stark_raylib_SetTraceLogLevel(logLevel);
+    }
+    return;
+}
 public unsafe ffi fn rawmutptr<i8[min max]> MemAlloc(u32[0 max] size);
 public unsafe ffi fn rawmutptr<i8[min max]> MemRealloc(rawmutptr<i8[min max]> ptr, u32[0 max] size);
 public unsafe ffi fn void MemFree(rawmutptr<i8[min max]> ptr);
@@ -354,10 +834,34 @@ public unsafe ffi fn bool ExportDataAsCode(rawptr<u8[0 max]> data, i32[min max] 
 public unsafe ffi fn rawmutptr<i8[min max]> LoadFileText(ascii fileName);
 public unsafe ffi fn void UnloadFileText(rawmutptr<i8[min max]> text);
 public unsafe ffi fn bool SaveFileText(ascii fileName, rawmutptr<i8[min max]> text);
-public unsafe ffi fn bool FileExists(ascii fileName);
-public unsafe ffi fn bool DirectoryExists(ascii dirPath);
-public unsafe ffi fn bool IsFileExtension(ascii fileName, ascii ext);
-public unsafe ffi fn i32[min max] GetFileLength(ascii fileName);
+[LinkName("FileExists")]
+internal unsafe ffi fn bool stark_raylib_FileExists(ascii fileName);
+public fn bool FileExists(ascii fileName) {
+    unsafe {
+        return stark_raylib_FileExists(fileName);
+    }
+}
+[LinkName("DirectoryExists")]
+internal unsafe ffi fn bool stark_raylib_DirectoryExists(ascii dirPath);
+public fn bool DirectoryExists(ascii dirPath) {
+    unsafe {
+        return stark_raylib_DirectoryExists(dirPath);
+    }
+}
+[LinkName("IsFileExtension")]
+internal unsafe ffi fn bool stark_raylib_IsFileExtension(ascii fileName, ascii ext);
+public fn bool IsFileExtension(ascii fileName, ascii ext) {
+    unsafe {
+        return stark_raylib_IsFileExtension(fileName, ext);
+    }
+}
+[LinkName("GetFileLength")]
+internal unsafe ffi fn i32[min max] stark_raylib_GetFileLength(ascii fileName);
+public fn i32[min max] GetFileLength(ascii fileName) {
+    unsafe {
+        return stark_raylib_GetFileLength(fileName);
+    }
+}
 public unsafe ffi fn rawptr<i8[min max]> GetFileExtension(ascii fileName);
 public unsafe ffi fn rawptr<i8[min max]> GetFileName(ascii filePath);
 public unsafe ffi fn rawptr<i8[min max]> GetFileNameWithoutExt(ascii filePath);
@@ -365,58 +869,91 @@ public unsafe ffi fn rawptr<i8[min max]> GetDirectoryPath(ascii filePath);
 public unsafe ffi fn rawptr<i8[min max]> GetPrevDirectoryPath(ascii dirPath);
 public unsafe ffi fn rawptr<i8[min max]> GetWorkingDirectory();
 public unsafe ffi fn rawptr<i8[min max]> GetApplicationDirectory();
-public unsafe ffi fn i32[min max] MakeDirectory(ascii dirPath);
-public unsafe ffi fn bool ChangeDirectory(ascii dir);
-public unsafe ffi fn bool IsPathFile(ascii path);
-public unsafe ffi fn bool IsFileNameValid(ascii fileName);
-internal unsafe ffi fn void stark_raylib_LoadDirectoryFiles(rawmutptr<FilePathList> result, ascii dirPath);
+[LinkName("MakeDirectory")]
+internal unsafe ffi fn i32[min max] stark_raylib_MakeDirectory(ascii dirPath);
+public fn i32[min max] MakeDirectory(ascii dirPath) {
+    unsafe {
+        return stark_raylib_MakeDirectory(dirPath);
+    }
+}
+[LinkName("ChangeDirectory")]
+internal unsafe ffi fn bool stark_raylib_ChangeDirectory(ascii dir);
+public fn bool ChangeDirectory(ascii dir) {
+    unsafe {
+        return stark_raylib_ChangeDirectory(dir);
+    }
+}
+[LinkName("IsPathFile")]
+internal unsafe ffi fn bool stark_raylib_IsPathFile(ascii path);
+public fn bool IsPathFile(ascii path) {
+    unsafe {
+        return stark_raylib_IsPathFile(path);
+    }
+}
+[LinkName("IsFileNameValid")]
+internal unsafe ffi fn bool stark_raylib_IsFileNameValid(ascii fileName);
+public fn bool IsFileNameValid(ascii fileName) {
+    unsafe {
+        return stark_raylib_IsFileNameValid(fileName);
+    }
+}
+[LinkName("LoadDirectoryFiles")]
+internal unsafe ffi fn FilePathList stark_raylib_LoadDirectoryFiles(ascii dirPath);
 public fn FilePathList LoadDirectoryFiles(ascii dirPath) {
-    stack mut FilePathList result = DefaultFilePathList();
     unsafe {
-        stark_raylib_LoadDirectoryFiles(&result, dirPath);
+        return stark_raylib_LoadDirectoryFiles(dirPath);
     }
-    return result;
 }
 
-internal unsafe ffi fn void stark_raylib_LoadDirectoryFilesEx(rawmutptr<FilePathList> result, ascii basePath, ascii filter, bool scanSubdirs);
+[LinkName("LoadDirectoryFilesEx")]
+internal unsafe ffi fn FilePathList stark_raylib_LoadDirectoryFilesEx(ascii basePath, ascii filter, bool scanSubdirs);
 public fn FilePathList LoadDirectoryFilesEx(ascii basePath, ascii filter, bool scanSubdirs) {
-    stack mut FilePathList result = DefaultFilePathList();
     unsafe {
-        stark_raylib_LoadDirectoryFilesEx(&result, basePath, filter, scanSubdirs);
+        return stark_raylib_LoadDirectoryFilesEx(basePath, filter, scanSubdirs);
     }
-    return result;
 }
 
-internal unsafe ffi fn void stark_raylib_UnloadDirectoryFiles(rawptr<FilePathList> files);
+[LinkName("UnloadDirectoryFiles")]
+internal unsafe ffi fn void stark_raylib_UnloadDirectoryFiles(FilePathList files);
 public fn void UnloadDirectoryFiles(FilePathList files) {
     unsafe {
-        stark_raylib_UnloadDirectoryFiles(&files);
+        stark_raylib_UnloadDirectoryFiles(files);
     }
     return;
 }
 
-public unsafe ffi fn bool IsFileDropped();
-internal unsafe ffi fn void stark_raylib_LoadDroppedFiles(rawmutptr<FilePathList> result);
-public fn FilePathList LoadDroppedFiles() {
-    stack mut FilePathList result = DefaultFilePathList();
+[LinkName("IsFileDropped")]
+internal unsafe ffi fn bool stark_raylib_IsFileDropped();
+public fn bool IsFileDropped() {
     unsafe {
-        stark_raylib_LoadDroppedFiles(&result);
+        return stark_raylib_IsFileDropped();
     }
-    return result;
+}
+[LinkName("LoadDroppedFiles")]
+internal unsafe ffi fn FilePathList stark_raylib_LoadDroppedFiles();
+public fn FilePathList LoadDroppedFiles() {
+    unsafe {
+        return stark_raylib_LoadDroppedFiles();
+    }
 }
 
-internal unsafe ffi fn void stark_raylib_UnloadDroppedFiles(rawptr<FilePathList> files);
+[LinkName("UnloadDroppedFiles")]
+internal unsafe ffi fn void stark_raylib_UnloadDroppedFiles(FilePathList files);
 public fn void UnloadDroppedFiles(FilePathList files) {
     unsafe {
-        stark_raylib_UnloadDroppedFiles(&files);
+        stark_raylib_UnloadDroppedFiles(files);
     }
     return;
 }
 
-internal unsafe ffi fn i64[min max] stark_raylib_GetFileModTime(ascii fileName);
+// Raylib returns C long here. Keep the FFI declaration header-shaped and widen
+// at the safe Stark wrapper boundary so this stays correct on LP64 and LLP64.
+[LinkName("GetFileModTime")]
+internal unsafe ffi(c) fn System.C.c_long stark_raylib_GetFileModTime(ascii fileName);
 public fn i64[min max] GetFileModTime(ascii fileName) {
     unsafe {
-        return stark_raylib_GetFileModTime(fileName);
+        stack System.C.c_long nativeTime = stark_raylib_GetFileModTime(fileName);
+        return (i64[min max])nativeTime;
     }
 }
 public unsafe ffi fn rawmutptr<u8[0 max]> CompressData(rawptr<u8[0 max]> data, i32[min max] dataSize, rawmutptr<i32[min max]> compDataSize);
@@ -426,143 +963,412 @@ public unsafe ffi fn rawmutptr<u8[0 max]> DecodeDataBase64(rawptr<u8[0 max]> dat
 public unsafe ffi fn u32[0 max] ComputeCRC32(rawmutptr<u8[0 max]> data, i32[min max] dataSize);
 public unsafe ffi fn rawmutptr<u32[0 max]> ComputeMD5(rawmutptr<u8[0 max]> data, i32[min max] dataSize);
 public unsafe ffi fn rawmutptr<u32[0 max]> ComputeSHA1(rawmutptr<u8[0 max]> data, i32[min max] dataSize);
-internal unsafe ffi fn void stark_raylib_LoadAutomationEventList(rawmutptr<AutomationEventList> result, ascii fileName);
+[LinkName("LoadAutomationEventList")]
+internal unsafe ffi fn AutomationEventList stark_raylib_LoadAutomationEventList(ascii fileName);
 public fn AutomationEventList LoadAutomationEventList(ascii fileName) {
-    stack mut AutomationEventList result = DefaultAutomationEventList();
     unsafe {
-        stark_raylib_LoadAutomationEventList(&result, fileName);
+        return stark_raylib_LoadAutomationEventList(fileName);
     }
-    return result;
 }
 
-internal unsafe ffi fn void stark_raylib_UnloadAutomationEventList(rawptr<AutomationEventList> list);
+[LinkName("UnloadAutomationEventList")]
+internal unsafe ffi fn void stark_raylib_UnloadAutomationEventList(AutomationEventList list);
 public fn void UnloadAutomationEventList(AutomationEventList list) {
     unsafe {
-        stark_raylib_UnloadAutomationEventList(&list);
+        stark_raylib_UnloadAutomationEventList(list);
     }
     return;
 }
 
-internal unsafe ffi fn bool stark_raylib_ExportAutomationEventList(rawptr<AutomationEventList> list, ascii fileName);
+[LinkName("ExportAutomationEventList")]
+internal unsafe ffi fn bool stark_raylib_ExportAutomationEventList(AutomationEventList list, ascii fileName);
 public fn bool ExportAutomationEventList(AutomationEventList list, ascii fileName) {
     unsafe {
-        return stark_raylib_ExportAutomationEventList(&list, fileName);
+        return stark_raylib_ExportAutomationEventList(list, fileName);
     }
 }
 
 public unsafe ffi fn void SetAutomationEventList(rawmutptr<AutomationEventList> list);
-public unsafe ffi fn void SetAutomationEventBaseFrame(i32[min max] frame);
-public unsafe ffi fn void StartAutomationEventRecording();
-public unsafe ffi fn void StopAutomationEventRecording();
-internal unsafe ffi fn void stark_raylib_PlayAutomationEvent(rawptr<AutomationEvent> event);
+[LinkName("SetAutomationEventBaseFrame")]
+internal unsafe ffi fn void stark_raylib_SetAutomationEventBaseFrame(i32[min max] frame);
+public fn void SetAutomationEventBaseFrame(i32[min max] frame) {
+    unsafe {
+        stark_raylib_SetAutomationEventBaseFrame(frame);
+    }
+    return;
+}
+[LinkName("StartAutomationEventRecording")]
+internal unsafe ffi fn void stark_raylib_StartAutomationEventRecording();
+public fn void StartAutomationEventRecording() {
+    unsafe {
+        stark_raylib_StartAutomationEventRecording();
+    }
+    return;
+}
+[LinkName("StopAutomationEventRecording")]
+internal unsafe ffi fn void stark_raylib_StopAutomationEventRecording();
+public fn void StopAutomationEventRecording() {
+    unsafe {
+        stark_raylib_StopAutomationEventRecording();
+    }
+    return;
+}
+[LinkName("PlayAutomationEvent")]
+internal unsafe ffi fn void stark_raylib_PlayAutomationEvent(AutomationEvent event);
 public fn void PlayAutomationEvent(AutomationEvent event) {
     unsafe {
-        stark_raylib_PlayAutomationEvent(&event);
+        stark_raylib_PlayAutomationEvent(event);
     }
     return;
 }
 
-public unsafe ffi fn bool IsKeyPressed(i32[min max] key);
-public unsafe ffi fn bool IsKeyPressedRepeat(i32[min max] key);
-public unsafe ffi fn bool IsKeyDown(i32[min max] key);
-public unsafe ffi fn bool IsKeyReleased(i32[min max] key);
-public unsafe ffi fn bool IsKeyUp(i32[min max] key);
-public unsafe ffi fn i32[min max] GetKeyPressed();
-public unsafe ffi fn i32[min max] GetCharPressed();
-public unsafe ffi fn void SetExitKey(i32[min max] key);
-public unsafe ffi fn bool IsGamepadAvailable(i32[min max] gamepad);
+[LinkName("IsKeyPressed")]
+internal unsafe ffi fn bool stark_raylib_IsKeyPressed(i32[min max] key);
+public fn bool IsKeyPressed(i32[min max] key) {
+    unsafe {
+        return stark_raylib_IsKeyPressed(key);
+    }
+}
+[LinkName("IsKeyPressedRepeat")]
+internal unsafe ffi fn bool stark_raylib_IsKeyPressedRepeat(i32[min max] key);
+public fn bool IsKeyPressedRepeat(i32[min max] key) {
+    unsafe {
+        return stark_raylib_IsKeyPressedRepeat(key);
+    }
+}
+[LinkName("IsKeyDown")]
+internal unsafe ffi fn bool stark_raylib_IsKeyDown(i32[min max] key);
+public fn bool IsKeyDown(i32[min max] key) {
+    unsafe {
+        return stark_raylib_IsKeyDown(key);
+    }
+}
+[LinkName("IsKeyReleased")]
+internal unsafe ffi fn bool stark_raylib_IsKeyReleased(i32[min max] key);
+public fn bool IsKeyReleased(i32[min max] key) {
+    unsafe {
+        return stark_raylib_IsKeyReleased(key);
+    }
+}
+[LinkName("IsKeyUp")]
+internal unsafe ffi fn bool stark_raylib_IsKeyUp(i32[min max] key);
+public fn bool IsKeyUp(i32[min max] key) {
+    unsafe {
+        return stark_raylib_IsKeyUp(key);
+    }
+}
+[LinkName("GetKeyPressed")]
+internal unsafe ffi fn i32[min max] stark_raylib_GetKeyPressed();
+public fn i32[min max] GetKeyPressed() {
+    unsafe {
+        return stark_raylib_GetKeyPressed();
+    }
+}
+[LinkName("GetCharPressed")]
+internal unsafe ffi fn i32[min max] stark_raylib_GetCharPressed();
+public fn i32[min max] GetCharPressed() {
+    unsafe {
+        return stark_raylib_GetCharPressed();
+    }
+}
+[LinkName("SetExitKey")]
+internal unsafe ffi fn void stark_raylib_SetExitKey(i32[min max] key);
+public fn void SetExitKey(i32[min max] key) {
+    unsafe {
+        stark_raylib_SetExitKey(key);
+    }
+    return;
+}
+[LinkName("IsGamepadAvailable")]
+internal unsafe ffi fn bool stark_raylib_IsGamepadAvailable(i32[min max] gamepad);
+public fn bool IsGamepadAvailable(i32[min max] gamepad) {
+    unsafe {
+        return stark_raylib_IsGamepadAvailable(gamepad);
+    }
+}
 public unsafe ffi fn rawptr<i8[min max]> GetGamepadName(i32[min max] gamepad);
-public unsafe ffi fn bool IsGamepadButtonPressed(i32[min max] gamepad, i32[min max] button);
-public unsafe ffi fn bool IsGamepadButtonDown(i32[min max] gamepad, i32[min max] button);
-public unsafe ffi fn bool IsGamepadButtonReleased(i32[min max] gamepad, i32[min max] button);
-public unsafe ffi fn bool IsGamepadButtonUp(i32[min max] gamepad, i32[min max] button);
-public unsafe ffi fn i32[min max] GetGamepadButtonPressed();
-public unsafe ffi fn i32[min max] GetGamepadAxisCount(i32[min max] gamepad);
-public unsafe ffi fn f32 GetGamepadAxisMovement(i32[min max] gamepad, i32[min max] axis);
-public unsafe ffi fn i32[min max] SetGamepadMappings(ascii mappings);
-public unsafe ffi fn void SetGamepadVibration(i32[min max] gamepad, f32 leftMotor, f32 rightMotor, f32 duration);
-public unsafe ffi fn bool IsMouseButtonPressed(i32[min max] button);
-public unsafe ffi fn bool IsMouseButtonDown(i32[min max] button);
-public unsafe ffi fn bool IsMouseButtonReleased(i32[min max] button);
-public unsafe ffi fn bool IsMouseButtonUp(i32[min max] button);
-public unsafe ffi fn i32[min max] GetMouseX();
-public unsafe ffi fn i32[min max] GetMouseY();
-internal unsafe ffi fn void stark_raylib_GetMousePosition(rawmutptr<Vector2> result);
-public fn Vector2 GetMousePosition() {
-    stack mut Vector2 result = DefaultVector2();
+[LinkName("IsGamepadButtonPressed")]
+internal unsafe ffi fn bool stark_raylib_IsGamepadButtonPressed(i32[min max] gamepad, i32[min max] button);
+public fn bool IsGamepadButtonPressed(i32[min max] gamepad, i32[min max] button) {
     unsafe {
-        stark_raylib_GetMousePosition(&result);
+        return stark_raylib_IsGamepadButtonPressed(gamepad, button);
     }
-    return result;
 }
-
-internal unsafe ffi fn void stark_raylib_GetMouseDelta(rawmutptr<Vector2> result);
-public fn Vector2 GetMouseDelta() {
-    stack mut Vector2 result = DefaultVector2();
+[LinkName("IsGamepadButtonDown")]
+internal unsafe ffi fn bool stark_raylib_IsGamepadButtonDown(i32[min max] gamepad, i32[min max] button);
+public fn bool IsGamepadButtonDown(i32[min max] gamepad, i32[min max] button) {
     unsafe {
-        stark_raylib_GetMouseDelta(&result);
+        return stark_raylib_IsGamepadButtonDown(gamepad, button);
     }
-    return result;
 }
-
-public unsafe ffi fn void SetMousePosition(i32[min max] x, i32[min max] y);
-public unsafe ffi fn void SetMouseOffset(i32[min max] offsetX, i32[min max] offsetY);
-public unsafe ffi fn void SetMouseScale(f32 scaleX, f32 scaleY);
-public unsafe ffi fn f32 GetMouseWheelMove();
-internal unsafe ffi fn void stark_raylib_GetMouseWheelMoveV(rawmutptr<Vector2> result);
-public fn Vector2 GetMouseWheelMoveV() {
-    stack mut Vector2 result = DefaultVector2();
+[LinkName("IsGamepadButtonReleased")]
+internal unsafe ffi fn bool stark_raylib_IsGamepadButtonReleased(i32[min max] gamepad, i32[min max] button);
+public fn bool IsGamepadButtonReleased(i32[min max] gamepad, i32[min max] button) {
     unsafe {
-        stark_raylib_GetMouseWheelMoveV(&result);
+        return stark_raylib_IsGamepadButtonReleased(gamepad, button);
     }
-    return result;
 }
-
-public unsafe ffi fn void SetMouseCursor(i32[min max] cursor);
-public unsafe ffi fn i32[min max] GetTouchX();
-public unsafe ffi fn i32[min max] GetTouchY();
-internal unsafe ffi fn void stark_raylib_GetTouchPosition(rawmutptr<Vector2> result, i32[min max] index);
-public fn Vector2 GetTouchPosition(i32[min max] index) {
-    stack mut Vector2 result = DefaultVector2();
+[LinkName("IsGamepadButtonUp")]
+internal unsafe ffi fn bool stark_raylib_IsGamepadButtonUp(i32[min max] gamepad, i32[min max] button);
+public fn bool IsGamepadButtonUp(i32[min max] gamepad, i32[min max] button) {
     unsafe {
-        stark_raylib_GetTouchPosition(&result, index);
+        return stark_raylib_IsGamepadButtonUp(gamepad, button);
     }
-    return result;
 }
-
-public unsafe ffi fn i32[min max] GetTouchPointId(i32[min max] index);
-public unsafe ffi fn i32[min max] GetTouchPointCount();
-public unsafe ffi fn void SetGesturesEnabled(u32[0 max] flags);
-public unsafe ffi fn bool IsGestureDetected(u32[0 max] gesture);
-public unsafe ffi fn i32[min max] GetGestureDetected();
-public unsafe ffi fn f32 GetGestureHoldDuration();
-internal unsafe ffi fn void stark_raylib_GetGestureDragVector(rawmutptr<Vector2> result);
-public fn Vector2 GetGestureDragVector() {
-    stack mut Vector2 result = DefaultVector2();
+[LinkName("GetGamepadButtonPressed")]
+internal unsafe ffi fn i32[min max] stark_raylib_GetGamepadButtonPressed();
+public fn i32[min max] GetGamepadButtonPressed() {
     unsafe {
-        stark_raylib_GetGestureDragVector(&result);
+        return stark_raylib_GetGamepadButtonPressed();
     }
-    return result;
 }
-
-public unsafe ffi fn f32 GetGestureDragAngle();
-internal unsafe ffi fn void stark_raylib_GetGesturePinchVector(rawmutptr<Vector2> result);
-public fn Vector2 GetGesturePinchVector() {
-    stack mut Vector2 result = DefaultVector2();
+[LinkName("GetGamepadAxisCount")]
+internal unsafe ffi fn i32[min max] stark_raylib_GetGamepadAxisCount(i32[min max] gamepad);
+public fn i32[min max] GetGamepadAxisCount(i32[min max] gamepad) {
     unsafe {
-        stark_raylib_GetGesturePinchVector(&result);
+        return stark_raylib_GetGamepadAxisCount(gamepad);
     }
-    return result;
 }
-
-public unsafe ffi fn f32 GetGesturePinchAngle();
-public unsafe ffi fn void UpdateCamera(rawmutptr<Camera> camera, i32[min max] mode);
-internal unsafe ffi fn void stark_raylib_UpdateCameraPro(rawmutptr<Camera> camera, rawptr<Vector3> movement, rawptr<Vector3> rotation, f32 zoom);
-public unsafe fn void UpdateCameraPro(rawmutptr<Camera> camera, Vector3 movement, Vector3 rotation, f32 zoom) {
+[LinkName("GetGamepadAxisMovement")]
+internal unsafe ffi fn f32 stark_raylib_GetGamepadAxisMovement(i32[min max] gamepad, i32[min max] axis);
+public fn f32 GetGamepadAxisMovement(i32[min max] gamepad, i32[min max] axis) {
     unsafe {
-        stark_raylib_UpdateCameraPro(camera, &movement, &rotation, zoom);
+        return stark_raylib_GetGamepadAxisMovement(gamepad, axis);
+    }
+}
+[LinkName("SetGamepadMappings")]
+internal unsafe ffi fn i32[min max] stark_raylib_SetGamepadMappings(ascii mappings);
+public fn i32[min max] SetGamepadMappings(ascii mappings) {
+    unsafe {
+        return stark_raylib_SetGamepadMappings(mappings);
+    }
+}
+[LinkName("SetGamepadVibration")]
+internal unsafe ffi fn void stark_raylib_SetGamepadVibration(i32[min max] gamepad, f32 leftMotor, f32 rightMotor, f32 duration);
+public fn void SetGamepadVibration(i32[min max] gamepad, f32 leftMotor, f32 rightMotor, f32 duration) {
+    unsafe {
+        stark_raylib_SetGamepadVibration(gamepad, leftMotor, rightMotor, duration);
     }
     return;
+}
+[LinkName("IsMouseButtonPressed")]
+internal unsafe ffi fn bool stark_raylib_IsMouseButtonPressed(i32[min max] button);
+public fn bool IsMouseButtonPressed(i32[min max] button) {
+    unsafe {
+        return stark_raylib_IsMouseButtonPressed(button);
+    }
+}
+[LinkName("IsMouseButtonDown")]
+internal unsafe ffi fn bool stark_raylib_IsMouseButtonDown(i32[min max] button);
+public fn bool IsMouseButtonDown(i32[min max] button) {
+    unsafe {
+        return stark_raylib_IsMouseButtonDown(button);
+    }
+}
+[LinkName("IsMouseButtonReleased")]
+internal unsafe ffi fn bool stark_raylib_IsMouseButtonReleased(i32[min max] button);
+public fn bool IsMouseButtonReleased(i32[min max] button) {
+    unsafe {
+        return stark_raylib_IsMouseButtonReleased(button);
+    }
+}
+[LinkName("IsMouseButtonUp")]
+internal unsafe ffi fn bool stark_raylib_IsMouseButtonUp(i32[min max] button);
+public fn bool IsMouseButtonUp(i32[min max] button) {
+    unsafe {
+        return stark_raylib_IsMouseButtonUp(button);
+    }
+}
+[LinkName("GetMouseX")]
+internal unsafe ffi fn i32[min max] stark_raylib_GetMouseX();
+public fn i32[min max] GetMouseX() {
+    unsafe {
+        return stark_raylib_GetMouseX();
+    }
+}
+[LinkName("GetMouseY")]
+internal unsafe ffi fn i32[min max] stark_raylib_GetMouseY();
+public fn i32[min max] GetMouseY() {
+    unsafe {
+        return stark_raylib_GetMouseY();
+    }
+}
+[LinkName("GetMousePosition")]
+internal unsafe ffi fn Vector2 stark_raylib_GetMousePosition();
+public fn Vector2 GetMousePosition() {
+    unsafe {
+        return stark_raylib_GetMousePosition();
+    }
+}
+
+[LinkName("GetMouseDelta")]
+internal unsafe ffi fn Vector2 stark_raylib_GetMouseDelta();
+public fn Vector2 GetMouseDelta() {
+    unsafe {
+        return stark_raylib_GetMouseDelta();
+    }
+}
+
+[LinkName("SetMousePosition")]
+internal unsafe ffi fn void stark_raylib_SetMousePosition(i32[min max] x, i32[min max] y);
+public fn void SetMousePosition(i32[min max] x, i32[min max] y) {
+    unsafe {
+        stark_raylib_SetMousePosition(x, y);
+    }
+    return;
+}
+[LinkName("SetMouseOffset")]
+internal unsafe ffi fn void stark_raylib_SetMouseOffset(i32[min max] offsetX, i32[min max] offsetY);
+public fn void SetMouseOffset(i32[min max] offsetX, i32[min max] offsetY) {
+    unsafe {
+        stark_raylib_SetMouseOffset(offsetX, offsetY);
+    }
+    return;
+}
+[LinkName("SetMouseScale")]
+internal unsafe ffi fn void stark_raylib_SetMouseScale(f32 scaleX, f32 scaleY);
+public fn void SetMouseScale(f32 scaleX, f32 scaleY) {
+    unsafe {
+        stark_raylib_SetMouseScale(scaleX, scaleY);
+    }
+    return;
+}
+[LinkName("GetMouseWheelMove")]
+internal unsafe ffi fn f32 stark_raylib_GetMouseWheelMove();
+public fn f32 GetMouseWheelMove() {
+    unsafe {
+        return stark_raylib_GetMouseWheelMove();
+    }
+}
+[LinkName("GetMouseWheelMoveV")]
+internal unsafe ffi fn Vector2 stark_raylib_GetMouseWheelMoveV();
+public fn Vector2 GetMouseWheelMoveV() {
+    unsafe {
+        return stark_raylib_GetMouseWheelMoveV();
+    }
+}
+
+[LinkName("SetMouseCursor")]
+internal unsafe ffi fn void stark_raylib_SetMouseCursor(i32[min max] cursor);
+public fn void SetMouseCursor(i32[min max] cursor) {
+    unsafe {
+        stark_raylib_SetMouseCursor(cursor);
+    }
+    return;
+}
+[LinkName("GetTouchX")]
+internal unsafe ffi fn i32[min max] stark_raylib_GetTouchX();
+public fn i32[min max] GetTouchX() {
+    unsafe {
+        return stark_raylib_GetTouchX();
+    }
+}
+[LinkName("GetTouchY")]
+internal unsafe ffi fn i32[min max] stark_raylib_GetTouchY();
+public fn i32[min max] GetTouchY() {
+    unsafe {
+        return stark_raylib_GetTouchY();
+    }
+}
+[LinkName("GetTouchPosition")]
+internal unsafe ffi fn Vector2 stark_raylib_GetTouchPosition(i32[min max] index);
+public fn Vector2 GetTouchPosition(i32[min max] index) {
+    unsafe {
+        return stark_raylib_GetTouchPosition(index);
+    }
+}
+
+[LinkName("GetTouchPointId")]
+internal unsafe ffi fn i32[min max] stark_raylib_GetTouchPointId(i32[min max] index);
+public fn i32[min max] GetTouchPointId(i32[min max] index) {
+    unsafe {
+        return stark_raylib_GetTouchPointId(index);
+    }
+}
+[LinkName("GetTouchPointCount")]
+internal unsafe ffi fn i32[min max] stark_raylib_GetTouchPointCount();
+public fn i32[min max] GetTouchPointCount() {
+    unsafe {
+        return stark_raylib_GetTouchPointCount();
+    }
+}
+[LinkName("SetGesturesEnabled")]
+internal unsafe ffi fn void stark_raylib_SetGesturesEnabled(u32[0 max] flags);
+public fn void SetGesturesEnabled(u32[0 max] flags) {
+    unsafe {
+        stark_raylib_SetGesturesEnabled(flags);
+    }
+    return;
+}
+[LinkName("IsGestureDetected")]
+internal unsafe ffi fn bool stark_raylib_IsGestureDetected(u32[0 max] gesture);
+public fn bool IsGestureDetected(u32[0 max] gesture) {
+    unsafe {
+        return stark_raylib_IsGestureDetected(gesture);
+    }
+}
+[LinkName("GetGestureDetected")]
+internal unsafe ffi fn i32[min max] stark_raylib_GetGestureDetected();
+public fn i32[min max] GetGestureDetected() {
+    unsafe {
+        return stark_raylib_GetGestureDetected();
+    }
+}
+[LinkName("GetGestureHoldDuration")]
+internal unsafe ffi fn f32 stark_raylib_GetGestureHoldDuration();
+public fn f32 GetGestureHoldDuration() {
+    unsafe {
+        return stark_raylib_GetGestureHoldDuration();
+    }
+}
+[LinkName("GetGestureDragVector")]
+internal unsafe ffi fn Vector2 stark_raylib_GetGestureDragVector();
+public fn Vector2 GetGestureDragVector() {
+    unsafe {
+        return stark_raylib_GetGestureDragVector();
+    }
+}
+
+[LinkName("GetGestureDragAngle")]
+internal unsafe ffi fn f32 stark_raylib_GetGestureDragAngle();
+public fn f32 GetGestureDragAngle() {
+    unsafe {
+        return stark_raylib_GetGestureDragAngle();
+    }
+}
+[LinkName("GetGesturePinchVector")]
+internal unsafe ffi fn Vector2 stark_raylib_GetGesturePinchVector();
+public fn Vector2 GetGesturePinchVector() {
+    unsafe {
+        return stark_raylib_GetGesturePinchVector();
+    }
+}
+
+[LinkName("GetGesturePinchAngle")]
+internal unsafe ffi fn f32 stark_raylib_GetGesturePinchAngle();
+public fn f32 GetGesturePinchAngle() {
+    unsafe {
+        return stark_raylib_GetGesturePinchAngle();
+    }
+}
+[LinkName("UpdateCamera")]
+internal unsafe ffi fn void stark_raylib_UpdateCamera(rawmutptr<Camera> camera, i32[min max] mode);
+public fn Camera UpdateCamera(Camera camera, i32[min max] mode) {
+    stack mut Camera result = camera;
+    unsafe {
+        stark_raylib_UpdateCamera(&result, mode);
+    }
+    return result;
+}
+
+[LinkName("UpdateCameraPro")]
+internal unsafe ffi fn void stark_raylib_UpdateCameraPro(rawmutptr<Camera> camera, Vector3 movement, Vector3 rotation, f32 zoom);
+public fn Camera UpdateCameraPro(Camera camera, Vector3 movement, Vector3 rotation, f32 zoom) {
+    stack mut Camera result = camera;
+    unsafe {
+        stark_raylib_UpdateCameraPro(&result, movement, rotation, zoom);
+    }
+    return result;
 }
 
 public fn Ray GetMouseRay(Vector2 mousePosition, Camera camera) {

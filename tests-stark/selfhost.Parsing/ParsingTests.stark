@@ -224,6 +224,101 @@ fn bool ParsesTopLevelDeclarations()
 }
 
 [Fact]
+fn bool ParsesAttributedFfiLinkNameDeclaration()
+{
+    stack mut DeclarationList decls = new();
+    if (!ParseDeclsOk("[LinkName(\"native_value\")]\nunsafe ffi fn i32[min max] StarkValue();\n", decls))
+    {
+        return false;
+    }
+
+    if (decls.Count() != 1)
+    {
+        return false;
+    }
+
+    stack DeclItem only = decls.ItemAt(0);
+    return only.Kind == DeclarationKind.Function
+        && only.StartToken == 0
+        && only.NameToken != 0
+        && !only.IsTailCallable;
+}
+
+[Fact]
+fn bool ParsesStructLayoutCFfiAggregateBoundaryDeclarations()
+{
+    stack ascii source = raw"""
+    [StructLayout(C)]
+    struct Vector2 { f32 X; f32 Y; }
+
+    [StructLayout(C)]
+    struct Rectangle { f32 X; f32 Y; f32 Width; f32 Height; }
+
+    [LinkName("GetMonitorPosition")]
+    unsafe ffi(c) fn Vector2 raylib_GetMonitorPosition(i32[min max] monitor);
+
+    [LinkName("DrawRectangleRec")]
+    unsafe ffi(c) fn void raylib_DrawRectangleRec(Rectangle rec, Vector2 origin);
+    """;
+
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    stack mut DeclarationList decls = new();
+    if (!ParseDeclsFromStream(stream, decls))
+    {
+        return false;
+    }
+
+    if (decls.Count() != 4)
+    {
+        return false;
+    }
+
+    stack DeclItem vector = decls.ItemAt(0);
+    stack DeclItem rectangle = decls.ItemAt(1);
+    stack DeclItem getPosition = decls.ItemAt(2);
+    stack DeclItem drawRec = decls.ItemAt(3);
+    if (vector.Kind != DeclarationKind.Struct
+        || rectangle.Kind != DeclarationKind.Struct
+        || getPosition.Kind != DeclarationKind.Function
+        || drawRec.Kind != DeclarationKind.Function)
+    {
+        return false;
+    }
+
+    switch (ParseFunctionSignature(stream, getPosition.KeywordToken))
+    {
+        case ParseResult<FunctionSignature>.Err(var getSigError):
+            return false;
+        case ParseResult<FunctionSignature>.Ok(var getSig):
+            stack ascii returnName = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])getSig.ReturnType());
+            stack ascii functionName = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])getSig.Name());
+            if (!System.Text.Equals(returnName, "Vector2")
+                || !System.Text.Equals(functionName, "raylib_GetMonitorPosition")
+                || getSig.ParamCount() != 1)
+            {
+                return false;
+            }
+    }
+
+    switch (ParseFunctionSignature(stream, drawRec.KeywordToken))
+    {
+        case ParseResult<FunctionSignature>.Err(var drawSigError):
+            return false;
+        case ParseResult<FunctionSignature>.Ok(var drawSig):
+            stack ascii firstParamType = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])drawSig.ParamTypeAt(0));
+            stack ascii secondParamType = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])drawSig.ParamTypeAt(1));
+            return drawSig.ParamCount() == 2
+                && System.Text.Equals(firstParamType, "Rectangle")
+                && System.Text.Equals(secondParamType, "Vector2");
+    }
+}
+
+[Fact]
 fn bool DeclarationSpanCoversModifiersAndBody()
 {
     stack mut DeclarationList decls = new();

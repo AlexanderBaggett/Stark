@@ -8,7 +8,6 @@ root = "Raylib.stark"
 output = "RaylibStark"
 
 [native]
-sources = ["RaylibNative.c"]
 pkg-config = ["raylib"]
 
 [native.fallback.linux]

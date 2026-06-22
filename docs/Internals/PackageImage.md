@@ -106,8 +106,8 @@ Users author Stark source; the compiler emits the package image.
 ## Native Dependency Metadata
 
 Package images carry package-owned native dependency metadata. This lets an
-interop package own its C shim and link requirements instead of making every
-downstream user repeat a long command line.
+interop package own its optional C shims and link requirements instead of making
+every downstream user repeat a long command line.
 
 The current package-author CLI surface is:
 
@@ -115,15 +115,14 @@ The current package-author CLI surface is:
 compiler Raylib.stark --emit-lib \
   -o dist/libRaylibStark.a \
   --package-image-output dist/pkg/libRaylibStark.starkpkg \
-  --native-source RaylibNative.c \
   --native-pkg-config raylib
 ```
 
 The package image records those facts under its top-level native dependency
 section. Downstream executable builds that import the package image gather those
-facts, compile package-owned native sources, add package-owned library search
-directories, and pass package-owned native libraries/link arguments to the final
-link.
+facts, compile package-owned native sources when present, add package-owned
+library search directories, and pass package-owned native libraries/link
+arguments to the final link.
 
 When a dependency is not available through `pkg-config`, package authors can
 spell the same information explicitly with `--native-include-dir`,
@@ -136,7 +135,6 @@ A future source-level Raylib package surface may look like this:
 ```stark
 package Raylib
 {
-    native source "RaylibNative.c";
     native library "raylib";
     native library "GL";
     native library "m";

@@ -65,7 +65,8 @@ internal static partial class PackageImageLoader
                     module.Module.ModuleName,
                     localNamedTypes),
                 Visibility: functionVisibility,
-                ValueParameterContracts: BuildParameterValueContracts(function.ValueContracts));
+                ValueParameterContracts: BuildParameterValueContracts(function.ValueContracts),
+                ExternalLinkName: ResolvePackageFunctionLinkName(function.LinkName, function.IsFfi, function.SymbolName, function.Name));
         }
 
         foreach (var type in module.Module.EffectiveTypedInterface?.Types ?? [])
@@ -121,12 +122,12 @@ internal static partial class PackageImageLoader
                         module.Module.ModuleName,
                         localNamedTypes),
                     HasBody: method.HasBody,
-                    ThreadSafetyLawPredicates: BuildThreadSafetyLawPredicates(
-                        method.ThreadSafetyLawPredicates,
-                        module.Module.ModuleName,
-                        localNamedTypes),
-                    Visibility: methodVisibility,
-                    ValueParameterContracts: BuildParameterValueContracts(method.ValueContracts));
+                ThreadSafetyLawPredicates: BuildThreadSafetyLawPredicates(
+                    method.ThreadSafetyLawPredicates,
+                    module.Module.ModuleName,
+                    localNamedTypes),
+                Visibility: methodVisibility,
+                ValueParameterContracts: BuildParameterValueContracts(method.ValueContracts));
             }
         }
 
@@ -1422,7 +1423,10 @@ internal static partial class PackageImageLoader
                 BuildTypeSymbol(parameter.SourceType),
                 BuildTypeSymbol(parameter.LlvmType),
                 kind,
-                parameter.RawPointerElementCountExpression));
+                parameter.RawPointerElementCountExpression,
+                parameter.LlvmParameterTypes is { Count: > 0 }
+                    ? parameter.LlvmParameterTypes.Select(BuildTypeSymbol).ToArray()
+                    : null));
         }
 
         signature = new AbiFunctionSignature(
@@ -1438,6 +1442,27 @@ internal static partial class PackageImageLoader
             FfiAbi: ParsePackageFunctionFfiAbi(abiFunction.FfiAbi),
             UsesTailCallingConvention: abiFunction.UsesTailCallingConvention);
         return true;
+    }
+
+    private static string? ResolvePackageFunctionLinkName(
+        string? linkName,
+        bool isFfi,
+        string symbolName,
+        string sourceName)
+    {
+        if (!isFfi)
+        {
+            return null;
+        }
+
+        if (!string.IsNullOrWhiteSpace(linkName))
+        {
+            return linkName;
+        }
+
+        return string.Equals(symbolName, sourceName, StringComparison.Ordinal)
+            ? null
+            : symbolName;
     }
 
     private static StarkFfiAbi? ParsePackageFunctionFfiAbi(string? abiText)

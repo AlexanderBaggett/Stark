@@ -2,6 +2,7 @@ import Compiler.Lexing
 import Compiler.Parsing
 import Compiler.Typing
 import Compiler.AsmFacts
+import Compiler.Ir
 import System.Text
 import System.Memory
 module Compiler.Binding
@@ -614,7 +615,7 @@ public fn BindResult<ReferenceTable> ResolveReferences(borrow FunctionScope scop
         for willexit (stack mut u64[0 2 ** 63 - 1] n = (u64[0 2 ** 63 - 1])(low + 1); n <= high; n += 1)
         {
             stack u32[0 max] node = (u32[0 max])n;
-            if (body.ExprKindAt(node) == ExprKind.Identifier)
+            if (body.ExprKindAt(node) == Compiler.Parsing.ExprKind.Identifier)
             {
                 stack u32[0 max] nameToken = body.ExprTokenAt(node);
                 stack ascii name = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])nameToken);
@@ -1042,6 +1043,8 @@ public enum BindDiagnosticCode
     AsmInvalidRegister,
     AsmInvalidOperandBinding,
     AsmInvalidClobber,
+    InvalidLinkName,
+    DuplicateLinkName,
 }
 
 public enum BindDiagnosticSeverity
@@ -1207,6 +1210,903 @@ internal fn System.Memory.MemoryStatus CollectDuplicateDeclarations(borrow Decla
     return System.Memory.MemoryStatus.Ok;
 }
 
+internal finite law bool TokenTextEquals(ascii source, borrow TokenStream stream, u32[0 max] token, ascii expected)
+{
+    return System.Text.Equals(Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])token), expected);
+}
+
+internal finite law u32[0 max] AttributeEndToken(borrow TokenStream stream, u32[0 max] start)
+{
+    stack mut u32[0 max] index = start;
+    stack mut u32[0 max] depth = 0;
+    stack mut u64[0 2 ** 63 - 1] guard = stream.Count();
+    while willexit (guard > 0)
+    {
+        guard = (u64[0 2 ** 63 - 1])(guard - 1);
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])index);
+        if (kind == TokenKind.EndOfFile)
+        {
+            return start;
+        }
+
+        if (kind == TokenKind.LBrack)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == TokenKind.RBrack)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+
+            if (depth == 0)
+            {
+                return index;
+            }
+        }
+
+        index = (u32[0 max])(index + 1);
+    }
+
+    return start;
+}
+
+internal finite law bool DeclarationPreludeHasToken(borrow TokenStream stream, DeclItem item, TokenKind tokenKind)
+{
+    stack mut u32[0 max] scan = item.StartToken;
+    while willexit (scan < item.KeywordToken)
+    {
+        if (stream.KindAt((u64[0 2 ** 63 - 1])scan) == tokenKind)
+        {
+            return true;
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return false;
+}
+
+internal finite law bool IsLinkNameDeclarationTarget(borrow TokenStream stream, DeclItem item)
+{
+    if (item.Kind != DeclarationKind.Function)
+    {
+        return false;
+    }
+
+    if (!DeclarationPreludeHasToken(stream, item, TokenKind.Ffi))
+    {
+        return false;
+    }
+
+    if (DeclarationPreludeHasToken(stream, item, TokenKind.Asm))
+    {
+        return false;
+    }
+
+    return stream.KindAt((u64[0 2 ** 63 - 1])item.EndToken) == TokenKind.Semi;
+}
+
+internal finite law bool IsLinkNameAttribute(ascii source, borrow TokenStream stream, u32[0 max] attrStart)
+{
+    return stream.KindAt((u64[0 2 ** 63 - 1])(attrStart + 1)) == TokenKind.Identifier
+        && TokenTextEquals(source, stream, (u32[0 max])(attrStart + 1), "LinkName");
+}
+
+internal finite law u32[0 max] LinkNameValueToken(borrow TokenStream stream, u32[0 max] attrStart, u32[0 max] attrEnd)
+{
+    if (attrEnd == (u32[0 max])(attrStart + 5)
+        && stream.KindAt((u64[0 2 ** 63 - 1])(attrStart + 2)) == TokenKind.LParen
+        && stream.KindAt((u64[0 2 ** 63 - 1])(attrStart + 3)) == TokenKind.StringLiteral
+        && stream.KindAt((u64[0 2 ** 63 - 1])(attrStart + 4)) == TokenKind.RParen)
+    {
+        return (u32[0 max])(attrStart + 3);
+    }
+
+    return 0;
+}
+
+internal finite law bool StringLiteralHasNonEmptyPayload(ascii source, borrow TokenStream stream, u32[0 max] token)
+{
+    stack ascii literal = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])token);
+    return System.Text.AsciiLength(literal) > 2;
+}
+
+internal finite law bool LinkNameAttributeIsWellFormed(ascii source, borrow TokenStream stream, u32[0 max] attrStart, u32[0 max] attrEnd)
+{
+    stack u32[0 max] valueToken = LinkNameValueToken(stream, attrStart, attrEnd);
+    return valueToken != 0 && StringLiteralHasNonEmptyPayload(source, stream, valueToken);
+}
+
+internal fn System.Memory.MemoryStatus CollectLinkNameDiagnostics(borrow DeclarationList decls, ascii source, borrow TokenStream stream, mut borrow BindDiagnosticList diags)
+{
+    stack u64[0 2 ** 63 - 1] count = decls.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] declIndex = 0; declIndex < count; declIndex += 1)
+    {
+        stack DeclItem item = decls.ItemAt(declIndex);
+        stack mut u32[0 max] scan = item.StartToken;
+        stack mut u32[0 max] linkNameCount = 0;
+        while willexit (scan < item.KeywordToken && stream.KindAt((u64[0 2 ** 63 - 1])scan) == TokenKind.LBrack)
+        {
+            stack u32[0 max] attrEnd = AttributeEndToken(stream, scan);
+            if (attrEnd <= scan)
+            {
+                return System.Memory.MemoryStatus.Ok;
+            }
+
+            if (IsLinkNameAttribute(source, stream, scan))
+            {
+                linkNameCount = (u32[0 max])(linkNameCount + 1);
+                if (linkNameCount > 1)
+                {
+                    switch (diags.Append(BindDiagnosticCode.DuplicateLinkName, (u32[0 max])(scan + 1)))
+                    {
+                        case System.Memory.MemoryStatus.Err(var duplicateError):
+                            return System.Memory.MemoryStatus.Err(duplicateError);
+                        case System.Memory.MemoryStatus.Ok:
+                    }
+                }
+
+                if (!IsLinkNameDeclarationTarget(stream, item)
+                    || !LinkNameAttributeIsWellFormed(source, stream, scan, attrEnd))
+                {
+                    switch (diags.Append(BindDiagnosticCode.InvalidLinkName, (u32[0 max])(scan + 1)))
+                    {
+                        case System.Memory.MemoryStatus.Err(var invalidError):
+                            return System.Memory.MemoryStatus.Err(invalidError);
+                        case System.Memory.MemoryStatus.Ok:
+                    }
+                }
+            }
+
+            scan = (u32[0 max])(attrEnd + 1);
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+public enum CAbiAggregateBoundaryKind
+{
+    Return,
+    Parameter,
+}
+
+public struct CLayoutAggregateTable
+{
+    internal dynamic u32[0 max] NameTokens;
+    internal dynamic u32[0 max] KeywordTokens;
+    internal dynamic CAbiAggregateCarrierFacts Facts;
+
+    CLayoutAggregateTable()
+    {
+        self.NameTokens = new();
+        self.KeywordTokens = new();
+        self.Facts = new();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] Count(borrow CLayoutAggregateTable self)
+    {
+        return self.NameTokens.Length;
+    }
+
+    public law u32[0 max] NameTokenAt(borrow CLayoutAggregateTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.NameTokens.Length)
+        {
+            token = self.NameTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] KeywordTokenAt(borrow CLayoutAggregateTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.KeywordTokens.Length)
+        {
+            token = self.KeywordTokens[index];
+        }
+
+        return token;
+    }
+
+    public law CAbiAggregateCarrierFacts FactsAt(borrow CLayoutAggregateTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut CAbiAggregateCarrierFacts facts = new();
+        if (index < self.Facts.Length)
+        {
+            facts = self.Facts[index];
+        }
+
+        return facts;
+    }
+
+    internal fn System.Memory.MemoryStatus Append(mut borrow CLayoutAggregateTable self, u32[0 max] nameToken, u32[0 max] keywordToken, CAbiAggregateCarrierFacts facts)
+    {
+        if (!self.NameTokens.TryReserve(1)
+            || !self.KeywordTokens.TryReserve(1)
+            || !self.Facts.TryReserve(1))
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        }
+
+        init self.NameTokens[self.NameTokens.Length] = nameToken;
+        init self.KeywordTokens[self.KeywordTokens.Length] = keywordToken;
+        init self.Facts[self.Facts.Length] = facts;
+        return System.Memory.MemoryStatus.Ok;
+    }
+}
+
+public struct CAbiAggregateBoundaryTable
+{
+    internal dynamic CAbiAggregateBoundaryKind Kinds;
+    internal dynamic u32[0 max] FunctionNameTokens;
+    internal dynamic u32[0 max] TypeNameTokens;
+    internal dynamic u32[0 max] ParamIndices;
+    internal dynamic CAbiAggregateCarrierFacts Facts;
+
+    CAbiAggregateBoundaryTable()
+    {
+        self.Kinds = new();
+        self.FunctionNameTokens = new();
+        self.TypeNameTokens = new();
+        self.ParamIndices = new();
+        self.Facts = new();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] Count(borrow CAbiAggregateBoundaryTable self)
+    {
+        return self.Kinds.Length;
+    }
+
+    public law CAbiAggregateBoundaryKind KindAt(borrow CAbiAggregateBoundaryTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut CAbiAggregateBoundaryKind kind = CAbiAggregateBoundaryKind.Return;
+        if (index < self.Kinds.Length)
+        {
+            kind = self.Kinds[index];
+        }
+
+        return kind;
+    }
+
+    public law u32[0 max] FunctionNameTokenAt(borrow CAbiAggregateBoundaryTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.FunctionNameTokens.Length)
+        {
+            token = self.FunctionNameTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] TypeNameTokenAt(borrow CAbiAggregateBoundaryTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.TypeNameTokens.Length)
+        {
+            token = self.TypeNameTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] ParamIndexAt(borrow CAbiAggregateBoundaryTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] paramIndex = 0;
+        if (index < self.ParamIndices.Length)
+        {
+            paramIndex = self.ParamIndices[index];
+        }
+
+        return paramIndex;
+    }
+
+    public law CAbiAggregateCarrierFacts FactsAt(borrow CAbiAggregateBoundaryTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut CAbiAggregateCarrierFacts facts = new();
+        if (index < self.Facts.Length)
+        {
+            facts = self.Facts[index];
+        }
+
+        return facts;
+    }
+
+    internal fn System.Memory.MemoryStatus Append(
+        mut borrow CAbiAggregateBoundaryTable self,
+        CAbiAggregateBoundaryKind kind,
+        u32[0 max] functionNameToken,
+        u32[0 max] typeNameToken,
+        u32[0 max] paramIndex,
+        CAbiAggregateCarrierFacts facts)
+    {
+        if (!self.Kinds.TryReserve(1)
+            || !self.FunctionNameTokens.TryReserve(1)
+            || !self.TypeNameTokens.TryReserve(1)
+            || !self.ParamIndices.TryReserve(1)
+            || !self.Facts.TryReserve(1))
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        }
+
+        init self.Kinds[self.Kinds.Length] = kind;
+        init self.FunctionNameTokens[self.FunctionNameTokens.Length] = functionNameToken;
+        init self.TypeNameTokens[self.TypeNameTokens.Length] = typeNameToken;
+        init self.ParamIndices[self.ParamIndices.Length] = paramIndex;
+        init self.Facts[self.Facts.Length] = facts;
+        return System.Memory.MemoryStatus.Ok;
+    }
+}
+
+internal enum CAbiStorageKind
+{
+    Unknown,
+    Integer,
+    Sse,
+}
+
+internal struct CAbiFieldInfo
+{
+    bool Known;
+    u32[0 max] SizeBytes;
+    u32[0 max] AlignBytes;
+    CAbiStorageKind Kind;
+
+    CAbiFieldInfo()
+    {
+        self.Known = false;
+        self.SizeBytes = 0;
+        self.AlignBytes = 0;
+        self.Kind = CAbiStorageKind.Unknown;
+    }
+}
+
+internal struct CAbiStorageUnitList
+{
+    internal dynamic u32[0 max] Offsets;
+    internal dynamic u32[0 max] Sizes;
+    internal dynamic CAbiStorageKind Kinds;
+
+    CAbiStorageUnitList()
+    {
+        self.Offsets = new();
+        self.Sizes = new();
+        self.Kinds = new();
+    }
+
+    internal inline finite law u64[0 2 ** 63 - 1] Count(borrow CAbiStorageUnitList self)
+    {
+        return self.Offsets.Length;
+    }
+
+    internal law u32[0 max] OffsetAt(borrow CAbiStorageUnitList self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] offset = 0;
+        if (index < self.Offsets.Length)
+        {
+            offset = self.Offsets[index];
+        }
+
+        return offset;
+    }
+
+    internal law u32[0 max] SizeAt(borrow CAbiStorageUnitList self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] size = 0;
+        if (index < self.Sizes.Length)
+        {
+            size = self.Sizes[index];
+        }
+
+        return size;
+    }
+
+    internal law CAbiStorageKind KindAt(borrow CAbiStorageUnitList self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut CAbiStorageKind kind = CAbiStorageKind.Unknown;
+        if (index < self.Kinds.Length)
+        {
+            kind = self.Kinds[index];
+        }
+
+        return kind;
+    }
+
+    internal fn System.Memory.MemoryStatus Append(mut borrow CAbiStorageUnitList self, u32[0 max] offset, u32[0 max] size, CAbiStorageKind kind)
+    {
+        if (!self.Offsets.TryReserve(1)
+            || !self.Sizes.TryReserve(1)
+            || !self.Kinds.TryReserve(1))
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        }
+
+        init self.Offsets[self.Offsets.Length] = offset;
+        init self.Sizes[self.Sizes.Length] = size;
+        init self.Kinds[self.Kinds.Length] = kind;
+        return System.Memory.MemoryStatus.Ok;
+    }
+}
+
+internal finite law bool AttributeListContainsStructLayoutC(ascii source, borrow TokenStream stream, u32[0 max] attrStart, u32[0 max] attrEnd)
+{
+    stack mut u32[0 max] scan = (u32[0 max])(attrStart + 1);
+    while willexit (scan < attrEnd)
+    {
+        if (stream.KindAt((u64[0 2 ** 63 - 1])scan) == TokenKind.Identifier
+            && TokenTextEquals(source, stream, scan, "StructLayout")
+            && stream.KindAt((u64[0 2 ** 63 - 1])(scan + 1)) == TokenKind.LParen
+            && stream.KindAt((u64[0 2 ** 63 - 1])(scan + 2)) == TokenKind.Identifier
+            && TokenTextEquals(source, stream, (u32[0 max])(scan + 2), "C")
+            && stream.KindAt((u64[0 2 ** 63 - 1])(scan + 3)) == TokenKind.RParen)
+        {
+            return true;
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return false;
+}
+
+internal finite law bool DeclarationHasStructLayoutCAttribute(ascii source, borrow TokenStream stream, DeclItem item)
+{
+    stack mut u32[0 max] scan = item.StartToken;
+    while willexit (scan < item.KeywordToken && stream.KindAt((u64[0 2 ** 63 - 1])scan) == TokenKind.LBrack)
+    {
+        stack u32[0 max] attrEnd = AttributeEndToken(stream, scan);
+        if (attrEnd <= scan)
+        {
+            return false;
+        }
+
+        if (AttributeListContainsStructLayoutC(source, stream, scan, attrEnd))
+        {
+            return true;
+        }
+
+        scan = (u32[0 max])(attrEnd + 1);
+    }
+
+    return false;
+}
+
+internal finite law bool FfiAbiNameIsCFamily(ascii source, borrow TokenStream stream, u32[0 max] token)
+{
+    return TokenTextEquals(source, stream, token, "c")
+        || TokenTextEquals(source, stream, token, "cdecl")
+        || TokenTextEquals(source, stream, token, "sysv")
+        || TokenTextEquals(source, stream, token, "win64");
+}
+
+internal finite law bool IsCAbiFfiFunction(ascii source, borrow TokenStream stream, DeclItem item)
+{
+    if (item.Kind != DeclarationKind.Function || DeclarationPreludeHasToken(stream, item, TokenKind.Asm))
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] scan = item.StartToken;
+    while willexit (scan < item.KeywordToken)
+    {
+        if (stream.KindAt((u64[0 2 ** 63 - 1])scan) == TokenKind.Ffi)
+        {
+            if (stream.KindAt((u64[0 2 ** 63 - 1])(scan + 1)) == TokenKind.LParen)
+            {
+                return stream.KindAt((u64[0 2 ** 63 - 1])(scan + 2)) == TokenKind.Identifier
+                    && FfiAbiNameIsCFamily(source, stream, (u32[0 max])(scan + 2));
+            }
+
+            return true;
+        }
+
+        scan = (u32[0 max])(scan + 1);
+    }
+
+    return false;
+}
+
+internal finite law u32[0 max] AlignUp(u32[0 max] value, u32[0 max] alignment)
+{
+    if (alignment <= 1)
+    {
+        return value;
+    }
+
+    stack u32[0 max] remainder = value % alignment;
+    if (remainder == 0)
+    {
+        return value;
+    }
+
+    return (u32[0 max])(value + alignment - remainder);
+}
+
+internal finite law CAbiFieldInfo KnownCAbiField(u32[0 max] sizeBytes, u32[0 max] alignBytes, CAbiStorageKind kind)
+{
+    stack mut CAbiFieldInfo info = new();
+    info.Known = true;
+    info.SizeBytes = sizeBytes;
+    info.AlignBytes = alignBytes;
+    info.Kind = kind;
+    return info;
+}
+
+internal finite law CAbiFieldInfo ClassifyCAbiScalarField(ascii source, borrow TokenStream stream, u32[0 max] typeToken)
+{
+    stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])typeToken);
+    if (kind == TokenKind.Bool)
+    {
+        return KnownCAbiField(1, 1, CAbiStorageKind.Integer);
+    }
+
+    if (kind == TokenKind.Rawptr || kind == TokenKind.Rawmutptr || kind == TokenKind.Fnptr)
+    {
+        return KnownCAbiField(8, 8, CAbiStorageKind.Integer);
+    }
+
+    if (kind == TokenKind.FloatType)
+    {
+        if (TokenTextEquals(source, stream, typeToken, "f32"))
+        {
+            return KnownCAbiField(4, 4, CAbiStorageKind.Sse);
+        }
+
+        if (TokenTextEquals(source, stream, typeToken, "f64"))
+        {
+            return KnownCAbiField(8, 8, CAbiStorageKind.Sse);
+        }
+    }
+
+    if (kind == TokenKind.IntegerType)
+    {
+        if (TokenTextEquals(source, stream, typeToken, "i8") || TokenTextEquals(source, stream, typeToken, "u8"))
+        {
+            return KnownCAbiField(1, 1, CAbiStorageKind.Integer);
+        }
+
+        if (TokenTextEquals(source, stream, typeToken, "i16") || TokenTextEquals(source, stream, typeToken, "u16"))
+        {
+            return KnownCAbiField(2, 2, CAbiStorageKind.Integer);
+        }
+
+        if (TokenTextEquals(source, stream, typeToken, "i32") || TokenTextEquals(source, stream, typeToken, "u32"))
+        {
+            return KnownCAbiField(4, 4, CAbiStorageKind.Integer);
+        }
+
+        if (TokenTextEquals(source, stream, typeToken, "i64") || TokenTextEquals(source, stream, typeToken, "u64"))
+        {
+            return KnownCAbiField(8, 8, CAbiStorageKind.Integer);
+        }
+    }
+
+    stack mut CAbiFieldInfo unknown = new();
+    return unknown;
+}
+
+internal finite law AbiCarrierKind IntegerCarrierForSize(u32[0 max] sizeBytes)
+{
+    if (sizeBytes <= 1)
+    {
+        return AbiCarrierKind.I8;
+    }
+
+    if (sizeBytes <= 2)
+    {
+        return AbiCarrierKind.I16;
+    }
+
+    if (sizeBytes <= 4)
+    {
+        return AbiCarrierKind.I32;
+    }
+
+    if (sizeBytes <= 8)
+    {
+        return AbiCarrierKind.I64;
+    }
+
+    return AbiCarrierKind.None;
+}
+
+internal finite law AbiCarrierKind SlotCarrierForUnits(borrow CAbiStorageUnitList units, u32[0 max] slotStart, u32[0 max] slotSize)
+{
+    stack mut bool any = false;
+    stack mut bool anyInteger = false;
+    stack mut u32[0 max] sseCount = 0;
+    stack mut u32[0 max] firstOffset = 0;
+    stack mut u32[0 max] firstSize = 0;
+    stack mut u32[0 max] secondOffset = 0;
+    stack mut u32[0 max] secondSize = 0;
+    stack u32[0 max] slotEnd = (u32[0 max])(slotStart + slotSize);
+    stack u64[0 2 ** 63 - 1] count = units.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack u32[0 max] unitOffset = units.OffsetAt(index);
+        stack u32[0 max] unitSize = units.SizeAt(index);
+        stack u32[0 max] unitEnd = (u32[0 max])(unitOffset + unitSize);
+        if (unitOffset < slotEnd && unitEnd > slotStart)
+        {
+            any = true;
+            if (unitOffset < slotStart || unitEnd > slotEnd)
+            {
+                return AbiCarrierKind.None;
+            }
+
+            if (units.KindAt(index) == CAbiStorageKind.Integer)
+            {
+                anyInteger = true;
+            }
+            else if (units.KindAt(index) == CAbiStorageKind.Sse)
+            {
+                if (sseCount == 0)
+                {
+                    firstOffset = unitOffset;
+                    firstSize = unitSize;
+                }
+                else if (sseCount == 1)
+                {
+                    secondOffset = unitOffset;
+                    secondSize = unitSize;
+                }
+
+                sseCount = (u32[0 max])(sseCount + 1);
+            }
+        }
+    }
+
+    if (!any || anyInteger)
+    {
+        return IntegerCarrierForSize(slotSize);
+    }
+
+    if (sseCount == 1)
+    {
+        if (firstOffset == slotStart && firstSize == 4)
+        {
+            return AbiCarrierKind.F32;
+        }
+
+        if (firstOffset == slotStart && firstSize == 8)
+        {
+            return AbiCarrierKind.F64;
+        }
+    }
+
+    if (sseCount == 2
+        && firstOffset == slotStart
+        && secondOffset == (u32[0 max])(slotStart + 4)
+        && firstSize == 4
+        && secondSize == 4)
+    {
+        return AbiCarrierKind.Vector2F32;
+    }
+
+    return AbiCarrierKind.None;
+}
+
+internal fn System.Memory.MemoryStatus ClassifyCLayoutAggregate(ascii source, borrow TokenStream stream, u32[0 max] structKeyword, mut borrow CAbiAggregateCarrierFacts facts)
+{
+    stack mut FieldList fields = new();
+    switch (ParseStructFields(stream, structKeyword))
+    {
+        case ParseResult<FieldList>.Err(var fieldsError):
+            facts.SetUnsupported();
+            return System.Memory.MemoryStatus.Ok;
+        case ParseResult<FieldList>.Ok(var parsed):
+            fields = parsed;
+    }
+
+    stack u64[0 2 ** 63 - 1] fieldCount = fields.Count();
+    if (fieldCount == 0)
+    {
+        facts.SetUnsupported();
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack mut CAbiStorageUnitList units = new();
+    stack mut u32[0 max] offset = 0;
+    stack mut u32[0 max] maxAlign = 1;
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < fieldCount; index += 1)
+    {
+        stack CAbiFieldInfo info = ClassifyCAbiScalarField(source, stream, fields.TypePrimaryAt(index));
+        if (!info.Known)
+        {
+            facts.SetUnsupported();
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        offset = AlignUp(offset, info.AlignBytes);
+        if (info.AlignBytes > maxAlign)
+        {
+            maxAlign = info.AlignBytes;
+        }
+
+        switch (units.Append(offset, info.SizeBytes, info.Kind))
+        {
+            case System.Memory.MemoryStatus.Err(var appendError):
+                return System.Memory.MemoryStatus.Err(appendError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        offset = (u32[0 max])(offset + info.SizeBytes);
+    }
+
+    stack u32[0 max] sizeBytes = AlignUp(offset, maxAlign);
+    if (sizeBytes == 0)
+    {
+        facts.SetUnsupported();
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    if (sizeBytes > 16)
+    {
+        facts.SetIndirect(sizeBytes, maxAlign);
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack mut u32[0 max] carrierCount = 0;
+    stack mut AbiCarrierKind carrier0 = AbiCarrierKind.None;
+    stack mut AbiCarrierKind carrier1 = AbiCarrierKind.None;
+    stack mut AbiCarrierKind carrier2 = AbiCarrierKind.None;
+    stack mut AbiCarrierKind carrier3 = AbiCarrierKind.None;
+    stack mut u32[0 max] slotStart = 0;
+    while willexit (slotStart < sizeBytes)
+    {
+        stack mut u32[0 max] slotSize = 8;
+        if ((u32[0 max])(sizeBytes - slotStart) < 8)
+        {
+            slotSize = (u32[0 max])(sizeBytes - slotStart);
+        }
+
+        stack AbiCarrierKind carrier = SlotCarrierForUnits(units, slotStart, slotSize);
+        if (carrier == AbiCarrierKind.None)
+        {
+            facts.SetUnsupported();
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        switch (carrierCount)
+        {
+            case 0:
+                carrier0 = carrier;
+            case 1:
+                carrier1 = carrier;
+            case 2:
+                carrier2 = carrier;
+            case 3:
+                carrier3 = carrier;
+            default:
+                facts.SetUnsupported();
+                return System.Memory.MemoryStatus.Ok;
+        }
+
+        carrierCount = (u32[0 max])(carrierCount + 1);
+        slotStart = (u32[0 max])(slotStart + 8);
+    }
+
+    facts.SetDirect(sizeBytes, maxAlign, carrierCount, carrier0, carrier1, carrier2, carrier3);
+    return System.Memory.MemoryStatus.Ok;
+}
+
+public fn BindResult<CLayoutAggregateTable> BuildCLayoutAggregateTable(ascii source, borrow TokenStream stream, borrow DeclarationList decls)
+{
+    stack mut CLayoutAggregateTable table = new();
+    stack u64[0 2 ** 63 - 1] count = decls.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack DeclItem item = decls.ItemAt(index);
+        if ((item.Kind == DeclarationKind.Struct || item.Kind == DeclarationKind.Record)
+            && item.NameToken != 0
+            && DeclarationHasStructLayoutCAttribute(source, stream, item))
+        {
+            stack mut CAbiAggregateCarrierFacts facts = new();
+            switch (ClassifyCLayoutAggregate(source, stream, item.KeywordToken, facts))
+            {
+                case System.Memory.MemoryStatus.Err(var classifyError):
+                    return BindResult<CLayoutAggregateTable>.Err(BindError.OutOfMemory);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            switch (table.Append(item.NameToken, item.KeywordToken, facts))
+            {
+                case System.Memory.MemoryStatus.Err(var appendError):
+                    return BindResult<CLayoutAggregateTable>.Err(BindError.OutOfMemory);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    return BindResult<CLayoutAggregateTable>.Ok(table);
+}
+
+internal fn u32[0 max] LookupCLayoutAggregateByTypeToken(borrow CLayoutAggregateTable table, ascii source, borrow TokenStream stream, u32[0 max] typeToken)
+{
+    stack u64[0 2 ** 63 - 1] count = table.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (TokenTextEqualsToken(source, stream, table.NameTokenAt(index), typeToken))
+        {
+            return (u32[0 max])(index + 1);
+        }
+    }
+
+    return 0;
+}
+
+public fn BindResult<CAbiAggregateBoundaryTable> BuildCAbiAggregateBoundaryTable(ascii source, borrow TokenStream stream, borrow DeclarationList decls)
+{
+    stack mut CAbiAggregateBoundaryTable boundaries = new();
+    stack mut CLayoutAggregateTable aggregates = new();
+    switch (BuildCLayoutAggregateTable(source, stream, decls))
+    {
+        case BindResult<CLayoutAggregateTable>.Err(var aggregateError):
+            return BindResult<CAbiAggregateBoundaryTable>.Err(BindError.OutOfMemory);
+        case BindResult<CLayoutAggregateTable>.Ok(var table):
+            aggregates = table;
+    }
+
+    stack u64[0 2 ** 63 - 1] count = decls.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack DeclItem item = decls.ItemAt(index);
+        if (IsCAbiFfiFunction(source, stream, item))
+        {
+            stack mut FunctionSignature signature = new();
+            stack mut bool parsedSignature = false;
+            switch (ParseFunctionSignature(stream, item.KeywordToken))
+            {
+                case ParseResult<FunctionSignature>.Err(var sigError):
+                    parsedSignature = false;
+                case ParseResult<FunctionSignature>.Ok(var parsed):
+                    signature = parsed;
+                    parsedSignature = true;
+            }
+
+            if (parsedSignature)
+            {
+                stack u32[0 max] returnHead = signature.ReturnType();
+                stack u32[0 max] returnAggregate = LookupCLayoutAggregateByTypeToken(aggregates, source, stream, returnHead);
+                if (returnAggregate != 0)
+                {
+                    stack CAbiAggregateCarrierFacts returnFacts = aggregates.FactsAt((u64[0 2 ** 63 - 1])(returnAggregate - 1));
+                    switch (boundaries.Append(CAbiAggregateBoundaryKind.Return, signature.Name(), returnHead, 0, returnFacts))
+                    {
+                        case System.Memory.MemoryStatus.Err(var returnAppendError):
+                            return BindResult<CAbiAggregateBoundaryTable>.Err(BindError.OutOfMemory);
+                        case System.Memory.MemoryStatus.Ok:
+                    }
+                }
+
+                stack u64[0 2 ** 63 - 1] paramCount = signature.ParamCount();
+                for willexit (stack mut u64[0 2 ** 63 - 1] p = 0; p < paramCount; p += 1)
+                {
+                    stack u32[0 max] paramHead = signature.ParamTypeAt(p);
+                    stack u32[0 max] paramAggregate = LookupCLayoutAggregateByTypeToken(aggregates, source, stream, paramHead);
+                    if (paramAggregate != 0)
+                    {
+                        stack CAbiAggregateCarrierFacts paramFacts = aggregates.FactsAt((u64[0 2 ** 63 - 1])(paramAggregate - 1));
+                        switch (boundaries.Append(CAbiAggregateBoundaryKind.Parameter, signature.Name(), paramHead, (u32[0 max])p, paramFacts))
+                        {
+                            case System.Memory.MemoryStatus.Err(var paramAppendError):
+                                return BindResult<CAbiAggregateBoundaryTable>.Err(BindError.OutOfMemory);
+                            case System.Memory.MemoryStatus.Ok:
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    return BindResult<CAbiAggregateBoundaryTable>.Ok(boundaries);
+}
+
 // Emits a `DuplicateEnumVariant` diagnostic (anchored at the later variant name)
 // for every enum variant whose name repeats an earlier one in the same enum —
 // matching the host's STK3006 "declares variant 'V' more than once".
@@ -1369,11 +2269,11 @@ internal fn u32[0 max] StructFieldTypeHead(borrow DeclarationTable table, ascii 
 internal fn u32[0 max] MemberStructNameToken(borrow DeclarationTable table, ascii source, borrow ReferenceTable refs, borrow FunctionScope scope, borrow TokenStream stream, borrow StatementList body, u32[0 max] node)
 {
     stack ExprKind kind = body.ExprKindAt(node);
-    if (kind == ExprKind.Identifier)
+    if (kind == Compiler.Parsing.ExprKind.Identifier)
     {
         return ReferenceTypeTokenForNode(refs, scope, node);
     }
-    else if (kind == ExprKind.Member)
+    else if (kind == Compiler.Parsing.ExprKind.Member)
     {
         stack u32[0 max] receiverStruct = MemberStructNameToken(table, source, refs, scope, stream, body, body.ExprLeftAt(node));
         return StructFieldTypeHead(table, source, stream, receiverStruct, body.ExprTokenAt(node));
@@ -1392,10 +2292,10 @@ internal fn u32[0 max] MemberStructNameToken(borrow DeclarationTable table, asci
 internal fn ExprType TypedNodeType(borrow DeclarationTable table, ascii source, borrow ReferenceTable refs, borrow FunctionScope scope, borrow TokenStream stream, borrow StatementList body, u32[0 max] node)
 {
     stack mut ExprType nodeType = ClassifyExprType(stream, body, node);
-    if (nodeType == ExprType.Unknown)
+    if (nodeType == Compiler.Typing.ExprType.Unknown)
     {
         stack ExprKind kind = body.ExprKindAt(node);
-        if (kind == ExprKind.Identifier)
+        if (kind == Compiler.Parsing.ExprKind.Identifier)
         {
             stack u32[0 max] typeToken = ReferenceTypeTokenForNode(refs, scope, node);
             if (typeToken != 0)
@@ -1403,7 +2303,7 @@ internal fn ExprType TypedNodeType(borrow DeclarationTable table, ascii source, 
                 nodeType = MapTypeToken(stream, typeToken);
             }
         }
-        else if (kind == ExprKind.Member)
+        else if (kind == Compiler.Parsing.ExprKind.Member)
         {
             // `receiver.field`: when the receiver resolves to a struct/record (an
             // identifier or a further member chain), type the access as the named
@@ -1465,7 +2365,7 @@ internal fn System.Memory.MemoryStatus CollectExpressionTypeErrors(borrow Declar
     {
         stack u32[0 max] node = (u32[0 max])(index + 1);
         stack ExprKind nodeKind = body.ExprKindAt(node);
-        if (nodeKind == ExprKind.Binary)
+        if (nodeKind == Compiler.Parsing.ExprKind.Binary)
         {
             stack TokenKind op = stream.KindAt((u64[0 2 ** 63 - 1])body.ExprTokenAt(node));
             if (op == TokenKind.AndAnd || op == TokenKind.OrOr)
@@ -1485,7 +2385,7 @@ internal fn System.Memory.MemoryStatus CollectExpressionTypeErrors(borrow Declar
                 }
             }
         }
-        else if (nodeKind == ExprKind.Unary)
+        else if (nodeKind == Compiler.Parsing.ExprKind.Unary)
         {
             stack TokenKind op = stream.KindAt((u64[0 2 ** 63 - 1])body.ExprTokenAt(node));
             if (op == TokenKind.Bang)
@@ -1498,7 +2398,7 @@ internal fn System.Memory.MemoryStatus CollectExpressionTypeErrors(borrow Declar
                 }
             }
         }
-        else if (nodeKind == ExprKind.Conditional)
+        else if (nodeKind == Compiler.Parsing.ExprKind.Conditional)
         {
             stack u32[0 max] conditionNode = body.ExprLeftAt(node);
             if (conditionNode != 0)
@@ -2164,7 +3064,7 @@ internal fn u32[0 max] ParameterRootIndexPlusOneForArgument(borrow ReferenceTabl
     }
 
     stack ExprKind kind = body.ExprKindAt(node);
-    if (kind == ExprKind.Identifier)
+    if (kind == Compiler.Parsing.ExprKind.Identifier)
     {
         stack u32[0 max] refIndexPlusOne = ReferenceIndexForNode(refs, node);
         if (refIndexPlusOne != 0)
@@ -2176,7 +3076,7 @@ internal fn u32[0 max] ParameterRootIndexPlusOneForArgument(borrow ReferenceTabl
             }
         }
     }
-    else if (kind == ExprKind.Member || kind == ExprKind.Index)
+    else if (kind == Compiler.Parsing.ExprKind.Member || kind == Compiler.Parsing.ExprKind.Index)
     {
         return ParameterRootIndexPlusOneForArgument(refs, body, body.ExprLeftAt(node));
     }
@@ -2220,7 +3120,7 @@ internal fn System.Memory.MemoryStatus CheckDeadOnReturnActualArgument(
             }
         }
     }
-    else if (body.ExprKindAt(argNode) == ExprKind.Identifier)
+    else if (body.ExprKindAt(argNode) == Compiler.Parsing.ExprKind.Identifier)
     {
         stack u32[0 max] argRefPlusOne = ReferenceIndexForNode(refs, argNode);
         if (argRefPlusOne != 0)
@@ -2390,10 +3290,10 @@ internal fn System.Memory.MemoryStatus CollectDeadOnReturnCallDiagnostics(
     for willexit (stack mut u64[0 2 ** 63 - 1] n = 0; n < nodeCount; n += 1)
     {
         stack u32[0 max] node = (u32[0 max])(n + 1);
-        if (body.ExprKindAt(node) == ExprKind.Call)
+        if (body.ExprKindAt(node) == Compiler.Parsing.ExprKind.Call)
         {
             stack u32[0 max] calleeNode = body.ExprLeftAt(node);
-            if (calleeNode != 0 && body.ExprKindAt(calleeNode) == ExprKind.Identifier)
+            if (calleeNode != 0 && body.ExprKindAt(calleeNode) == Compiler.Parsing.ExprKind.Identifier)
             {
                 stack u32[0 max] refIndexPlusOne = ReferenceIndexForNode(refs, calleeNode);
                 if (refIndexPlusOne != 0)
@@ -3003,7 +3903,7 @@ internal fn u32[0 max] LocalSymbolRootForExpression(borrow ReferenceTable refs, 
     }
 
     stack ExprKind kind = body.ExprKindAt(node);
-    if (kind == ExprKind.Identifier)
+    if (kind == Compiler.Parsing.ExprKind.Identifier)
     {
         stack u32[0 max] refIndexPlusOne = ReferenceIndexForNode(refs, node);
         if (refIndexPlusOne != 0)
@@ -3015,7 +3915,7 @@ internal fn u32[0 max] LocalSymbolRootForExpression(borrow ReferenceTable refs, 
             }
         }
     }
-    else if (kind == ExprKind.Member || kind == ExprKind.Index)
+    else if (kind == Compiler.Parsing.ExprKind.Member || kind == Compiler.Parsing.ExprKind.Index)
     {
         return LocalSymbolRootForExpression(refs, body, body.ExprLeftAt(node));
     }
@@ -3049,7 +3949,7 @@ internal fn bool ExpressionRootIsLongLivedStorage(borrow DeclarationTable table,
     }
 
     stack ExprKind kind = body.ExprKindAt(node);
-    if (kind == ExprKind.Identifier)
+    if (kind == Compiler.Parsing.ExprKind.Identifier)
     {
         stack u32[0 max] refIndexPlusOne = ReferenceIndexForNode(refs, node);
         if (refIndexPlusOne != 0)
@@ -3066,7 +3966,7 @@ internal fn bool ExpressionRootIsLongLivedStorage(borrow DeclarationTable table,
             }
         }
     }
-    else if (kind == ExprKind.Member || kind == ExprKind.Index)
+    else if (kind == Compiler.Parsing.ExprKind.Member || kind == Compiler.Parsing.ExprKind.Index)
     {
         return ExpressionRootIsLongLivedStorage(table, refs, scope, body, stream, body.ExprLeftAt(node));
     }
@@ -3076,14 +3976,14 @@ internal fn bool ExpressionRootIsLongLivedStorage(borrow DeclarationTable table,
 
 internal fn bool NewExpressionUsesArenaSelector(borrow StatementList body, borrow TokenStream stream, u32[0 max] node)
 {
-    if (node == 0 || body.ExprKindAt(node) != ExprKind.New || body.ExprCallArgCountAt(node) == 0)
+    if (node == 0 || body.ExprKindAt(node) != Compiler.Parsing.ExprKind.New || body.ExprCallArgCountAt(node) == 0)
     {
         return false;
     }
 
     stack u32[0 max] firstArg = body.ExprCallArgAt(node, 0);
     return firstArg != 0
-        && body.ExprKindAt(firstArg) == ExprKind.StorageSelector
+        && body.ExprKindAt(firstArg) == Compiler.Parsing.ExprKind.StorageSelector
         && stream.KindAt((u64[0 2 ** 63 - 1])body.ExprTokenAt(firstArg)) == TokenKind.Arena;
 }
 
@@ -3100,9 +4000,9 @@ internal fn bool ExpressionContainsArenaSelectorNew(borrow StatementList body, b
         return true;
     }
 
-    if (kind == ExprKind.Unary || kind == ExprKind.Member || kind == ExprKind.Index
-        || kind == ExprKind.Call || kind == ExprKind.New || kind == ExprKind.Assign
-        || kind == ExprKind.Binary || kind == ExprKind.Conditional)
+    if (kind == Compiler.Parsing.ExprKind.Unary || kind == Compiler.Parsing.ExprKind.Member || kind == Compiler.Parsing.ExprKind.Index
+        || kind == Compiler.Parsing.ExprKind.Call || kind == Compiler.Parsing.ExprKind.New || kind == Compiler.Parsing.ExprKind.Assign
+        || kind == Compiler.Parsing.ExprKind.Binary || kind == Compiler.Parsing.ExprKind.Conditional)
     {
         if (ExpressionContainsArenaSelectorNew(body, stream, body.ExprLeftAt(node))
             || ExpressionContainsArenaSelectorNew(body, stream, body.ExprRightAt(node))
@@ -3127,7 +4027,7 @@ internal fn bool ExpressionContainsArenaSelectorNew(borrow StatementList body, b
 internal fn bool CallCalleeNameEquals(ascii source, borrow StatementList body, borrow TokenStream stream, u32[0 max] callNode, ascii name)
 {
     stack u32[0 max] calleeNode = body.ExprLeftAt(callNode);
-    if (calleeNode == 0 || body.ExprKindAt(calleeNode) != ExprKind.Identifier)
+    if (calleeNode == 0 || body.ExprKindAt(calleeNode) != Compiler.Parsing.ExprKind.Identifier)
     {
         return false;
     }
@@ -3152,7 +4052,7 @@ internal fn bool ExpressionIsArenaDerived(
     }
 
     stack ExprKind kind = body.ExprKindAt(node);
-    if (kind == ExprKind.Identifier)
+    if (kind == Compiler.Parsing.ExprKind.Identifier)
     {
         stack u32[0 max] refIndexPlusOne = ReferenceIndexForNode(refs, node);
         if (refIndexPlusOne != 0)
@@ -3164,25 +4064,25 @@ internal fn bool ExpressionIsArenaDerived(
             }
         }
     }
-    else if (kind == ExprKind.Member || kind == ExprKind.Index || kind == ExprKind.Unary)
+    else if (kind == Compiler.Parsing.ExprKind.Member || kind == Compiler.Parsing.ExprKind.Index || kind == Compiler.Parsing.ExprKind.Unary)
     {
         return ExpressionIsArenaDerived(table, source, facts, refs, scope, body, stream, body.ExprLeftAt(node));
     }
-    else if (kind == ExprKind.Assign)
+    else if (kind == Compiler.Parsing.ExprKind.Assign)
     {
         return ExpressionIsArenaDerived(table, source, facts, refs, scope, body, stream, body.ExprRightAt(node));
     }
-    else if (kind == ExprKind.Binary)
+    else if (kind == Compiler.Parsing.ExprKind.Binary)
     {
         return ExpressionIsArenaDerived(table, source, facts, refs, scope, body, stream, body.ExprLeftAt(node))
             || ExpressionIsArenaDerived(table, source, facts, refs, scope, body, stream, body.ExprRightAt(node));
     }
-    else if (kind == ExprKind.Conditional)
+    else if (kind == Compiler.Parsing.ExprKind.Conditional)
     {
         return ExpressionIsArenaDerived(table, source, facts, refs, scope, body, stream, body.ExprRightAt(node))
             || ExpressionIsArenaDerived(table, source, facts, refs, scope, body, stream, body.ExprAuxAt(node));
     }
-    else if (kind == ExprKind.New)
+    else if (kind == Compiler.Parsing.ExprKind.New)
     {
         if (NewExpressionUsesArenaSelector(body, stream, node))
         {
@@ -3198,7 +4098,7 @@ internal fn bool ExpressionIsArenaDerived(
             }
         }
     }
-    else if (kind == ExprKind.Call)
+    else if (kind == Compiler.Parsing.ExprKind.Call)
     {
         if (CallCalleeNameEquals(source, body, stream, node, "slice")
             && body.ExprCallArgCountAt(node) > 0
@@ -3208,7 +4108,7 @@ internal fn bool ExpressionIsArenaDerived(
         }
 
         stack u32[0 max] calleeNode = body.ExprLeftAt(node);
-        if (calleeNode != 0 && body.ExprKindAt(calleeNode) == ExprKind.Identifier)
+        if (calleeNode != 0 && body.ExprKindAt(calleeNode) == Compiler.Parsing.ExprKind.Identifier)
         {
             stack u32[0 max] refIndexPlusOne = ReferenceIndexForNode(refs, calleeNode);
             if (refIndexPlusOne != 0)
@@ -3367,7 +4267,7 @@ internal fn System.Memory.MemoryStatus CollectArenaExpressionEffects(
     }
 
     stack ExprKind kind = body.ExprKindAt(node);
-    if (kind == ExprKind.Assign)
+    if (kind == Compiler.Parsing.ExprKind.Assign)
     {
         stack u32[0 max] target = body.ExprLeftAt(node);
         stack u32[0 max] value = body.ExprRightAt(node);
@@ -3397,10 +4297,10 @@ internal fn System.Memory.MemoryStatus CollectArenaExpressionEffects(
             }
         }
     }
-    else if (kind == ExprKind.Call)
+    else if (kind == Compiler.Parsing.ExprKind.Call)
     {
         stack u32[0 max] calleeNode = body.ExprLeftAt(node);
-        if (calleeNode != 0 && body.ExprKindAt(calleeNode) == ExprKind.Identifier)
+        if (calleeNode != 0 && body.ExprKindAt(calleeNode) == Compiler.Parsing.ExprKind.Identifier)
         {
             stack u32[0 max] refIndexPlusOne = ReferenceIndexForNode(refs, calleeNode);
             if (refIndexPlusOne != 0)
@@ -3650,13 +4550,13 @@ internal fn System.Memory.MemoryStatus AppendRuntimeCallEdgeForNamedCall(
     u32[0 max] callNode,
     mut borrow RuntimeCallEdgeTable edges)
 {
-    if (callNode == 0 || body.ExprKindAt(callNode) != ExprKind.Call)
+    if (callNode == 0 || body.ExprKindAt(callNode) != Compiler.Parsing.ExprKind.Call)
     {
         return System.Memory.MemoryStatus.Ok;
     }
 
     stack u32[0 max] calleeNode = body.ExprLeftAt(callNode);
-    if (calleeNode == 0 || body.ExprKindAt(calleeNode) != ExprKind.Identifier)
+    if (calleeNode == 0 || body.ExprKindAt(calleeNode) != Compiler.Parsing.ExprKind.Identifier)
     {
         return System.Memory.MemoryStatus.Ok;
     }
@@ -3821,7 +4721,7 @@ internal fn System.Memory.MemoryStatus CollectRuntimeCallEdgesForFunction(
                     for willexit (stack mut u64[0 2 ** 63 - 1] nodeIndex = 1; nodeIndex <= nodeCount; nodeIndex += 1)
                     {
                         stack u32[0 max] node = (u32[0 max])nodeIndex;
-                        if (body.ExprKindAt(node) == ExprKind.Call && !U32ListContains(skipCallNodes, node))
+                        if (body.ExprKindAt(node) == Compiler.Parsing.ExprKind.Call && !U32ListContains(skipCallNodes, node))
                         {
                             switch (AppendRuntimeCallEdgeForNamedCall(callerPlusOne, table, source, stream, refs, body, node, edges))
                             {
@@ -4055,7 +4955,7 @@ internal fn System.Memory.MemoryStatus CollectBecomeDiagnostics(borrow FunctionS
             }
 
             stack u32[0 max] root = body.ExprRootAt(index);
-            if (root == 0 || body.ExprKindAt(root) != ExprKind.Call)
+            if (root == 0 || body.ExprKindAt(root) != Compiler.Parsing.ExprKind.Call)
             {
                 switch (diags.Append(BindDiagnosticCode.BecomeRequiresDirectCall, item.StartToken))
                 {
@@ -4068,7 +4968,7 @@ internal fn System.Memory.MemoryStatus CollectBecomeDiagnostics(borrow FunctionS
             }
 
             stack u32[0 max] calleeNode = body.ExprLeftAt(root);
-            if (calleeNode == 0 || body.ExprKindAt(calleeNode) != ExprKind.Identifier)
+            if (calleeNode == 0 || body.ExprKindAt(calleeNode) != Compiler.Parsing.ExprKind.Identifier)
             {
                 switch (diags.Append(BindDiagnosticCode.BecomeRequiresDirectCall, item.StartToken))
                 {
@@ -4547,6 +5447,13 @@ public fn BindResult<BindDiagnosticList> BindCompilationUnit(ascii source, borro
     switch (CollectDuplicateDeclarations(table, source, stream, diags))
     {
         case System.Memory.MemoryStatus.Err(var dupError):
+            return BindResult<BindDiagnosticList>.Err(BindError.OutOfMemory);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    switch (CollectLinkNameDiagnostics(decls, source, stream, diags))
+    {
+        case System.Memory.MemoryStatus.Err(var linkNameError):
             return BindResult<BindDiagnosticList>.Err(BindError.OutOfMemory);
         case System.Memory.MemoryStatus.Ok:
     }

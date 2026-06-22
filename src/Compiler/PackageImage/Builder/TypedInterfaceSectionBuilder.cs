@@ -67,7 +67,8 @@ internal static partial class PackageImageBuilder
             ThreadSafetyLawPredicates: BuildThreadSafetyLawPredicateManifests(
                 function.ThreadSafetyLaws,
                 ModuleNameFromQualifiedName(qualifiedName)),
-            ValueContracts: BuildParameterValueContractManifests(function.ValueContracts));
+            ValueContracts: BuildParameterValueContractManifests(function.ValueContracts),
+            LinkName: function.ExternalLinkName);
         return true;
     }
 
@@ -123,7 +124,8 @@ internal static partial class PackageImageBuilder
             ComptimeGenericParameters: BuildComptimeGenericParameterManifests(function.ComptimeGenericParams, moduleName),
             TypeParameterConstraints: BuildTypedTypeParameterConstraintManifests(function.Constraints, moduleName),
             ThreadSafetyLawPredicates: BuildTypedThreadSafetyLawPredicateManifests(function.ThreadSafetyLaws, moduleName),
-            ValueContracts: BuildParameterValueContractManifests(function.ValueContracts));
+            ValueContracts: BuildParameterValueContractManifests(function.ValueContracts),
+            LinkName: manifest.LinkName);
     }
 
     private static StarkPackageTypeManifest BuildTypeManifest(

@@ -1,4 +1,5 @@
 using Stark.Compiler;
+using System.Text.RegularExpressions;
 
 namespace compiler.IntegrationTests;
 
@@ -541,16 +542,206 @@ public sealed class ExamplesCompileRunTests
     {
         var repositoryRoot = FindRepositoryRoot();
         var raylibImportDirectory = Path.Combine(repositoryRoot, "examples", "raylib");
+        var vendorImportDirectory = Path.Combine(repositoryRoot, "vendor", "src");
         var stdlibImportDirectory = Path.Combine(repositoryRoot, "stdlib", "src");
+
+        Assert.False(File.Exists(Path.Combine(raylibImportDirectory, "RaylibNative.c")));
+        Assert.DoesNotContain(
+            "RaylibNative.c",
+            await File.ReadAllTextAsync(Path.Combine(raylibImportDirectory, "Stark.toml")),
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "--native-source",
+            await File.ReadAllTextAsync(Path.Combine(raylibImportDirectory, "Raylib.package.args")),
+            StringComparison.Ordinal);
 
         await CheckSourceAsync(
             Path.Combine(raylibImportDirectory, "Raylib.stark"),
             raylibImportDirectory);
 
         await CheckSourceAsync(
+            Path.Combine(vendorImportDirectory, "Vendor", "Raylib.stark"),
+            vendorImportDirectory);
+
+        await CheckSourceAsync(
             Path.Combine(repositoryRoot, "examples", "breakout", "BreakoutRaylib.stark"),
-            raylibImportDirectory,
+            vendorImportDirectory,
             stdlibImportDirectory);
+    }
+
+    [Fact]
+    public async Task VendorRaylibSafeWrappersCheckWithoutNativeExecution()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var vendorImportDirectory = Path.Combine(repositoryRoot, "vendor", "src");
+        var tempDirectory = Directory.CreateDirectory(Path.Combine(repositoryRoot, "artifacts", "tmp", $"stark-vendor-raylib-safe-{Guid.NewGuid():N}"));
+        var sourcePath = Path.Combine(tempDirectory.FullName, "VendorRaylibSafeWrappers.stark");
+
+        try
+        {
+            await File.WriteAllTextAsync(
+                sourcePath,
+                """
+                import Vendor.Raylib
+                module VendorRaylibSafeWrappers
+
+                fn i32[min max] Probe()
+                {
+                    stack mut Image image = DefaultImage();
+                    image = ImageFormat(image, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
+                    image = ImageAlphaPremultiply(image);
+                    image = ImageDrawPixel(image, 1, 1, RED());
+
+                    stack f32[1] kernel =
+                    {
+                        1.0f
+                    };
+                    stack mut Image filtered = DefaultImage();
+                    if (ImageKernelConvolution(image, kernel, filtered) != RaylibStatus.Ok)
+                    {
+                        return 1;
+                    }
+
+                    image = filtered;
+
+                    stack Vector2[3] points =
+                    {
+                        Vec2(0.0f, 0.0f),
+                        Vec2(1.0f, 1.0f),
+                        Vec2(2.0f, 0.0f)
+                    };
+
+                    if (DrawLineStrip(points, BLACK()) != RaylibStatus.Ok)
+                    {
+                        return 2;
+                    }
+
+                    stack CollisionPointResult collision = CheckCollisionLines(
+                        Vec2(0.0f, 0.0f),
+                        Vec2(1.0f, 1.0f),
+                        Vec2(0.0f, 1.0f),
+                        Vec2(1.0f, 0.0f));
+                    if (collision.Hit)
+                    {
+                        image = ImageDrawPixelV(image, collision.Point, WHITE());
+                    }
+
+                    stack mut Image drawn = DefaultImage();
+                    if (ImageDrawTriangleFan(image, points, WHITE(), drawn) != RaylibStatus.Ok)
+                    {
+                        return 3;
+                    }
+
+                    stack mut Camera camera = DefaultCamera3D();
+                    camera = UpdateCamera(camera, CAMERA_FREE);
+                    camera = UpdateCameraPro(camera, Vec3(0.0f, 0.0f, 0.0f), Vec3(0.0f, 0.0f, 0.0f), 0.0f);
+
+                    stack mut Wave wave = DefaultWave();
+                    wave = WaveFormat(wave, 44100, 16, 2);
+
+                    stack mut Texture2D texture = DefaultTexture();
+                    texture = GenTextureMipmaps(texture);
+
+                    stack mut Mesh mesh = DefaultMesh();
+                    mesh = GenMeshTangents(mesh);
+
+                    stack mut Material material = DefaultMaterial();
+                    material = SetMaterialTexture(material, MATERIAL_MAP_DIFFUSE, texture);
+
+                    return 0;
+                }
+                """);
+
+            await CheckSourceAsync(sourcePath, vendorImportDirectory);
+        }
+        finally
+        {
+            Cleanup(tempDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task VendorRaylibInternalFfiDeclarationsUseLinkNameWithoutNativeShims()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var vendorRaylibDirectory = Path.Combine(repositoryRoot, "vendor", "src", "Vendor", "Raylib");
+        var nativeShimPath = Path.Combine(repositoryRoot, "vendor", "RaylibAbiShims.c");
+        Assert.False(File.Exists(nativeShimPath));
+
+        var starkShimDeclarations = new SortedSet<string>(StringComparer.Ordinal);
+        var linkNamedDeclarations = new SortedSet<string>(StringComparer.Ordinal);
+        foreach (var sourcePath in Directory.EnumerateFiles(vendorRaylibDirectory, "*.stark"))
+        {
+            var pendingLinkName = false;
+            foreach (var line in await File.ReadAllLinesAsync(sourcePath))
+            {
+                var trimmed = line.Trim();
+                if (trimmed.StartsWith("[LinkName(", StringComparison.Ordinal))
+                {
+                    pendingLinkName = true;
+                    continue;
+                }
+
+                var match = Regex.Match(
+                    line,
+                    @"\binternal\s+unsafe\s+ffi(?:\([^)]*\))?\s+(?:varargs\s+)?fn\s+[^;{]*?\b(stark_raylib_[A-Za-z_][A-Za-z0-9_]*)\s*\(",
+                    RegexOptions.CultureInvariant);
+                if (match.Success)
+                {
+                    if (pendingLinkName)
+                    {
+                        linkNamedDeclarations.Add(match.Groups[1].Value);
+                    }
+                    else
+                    {
+                        starkShimDeclarations.Add(match.Groups[1].Value);
+                    }
+
+                    pendingLinkName = false;
+                    continue;
+                }
+
+                if (trimmed.Length != 0 && !trimmed.StartsWith("[", StringComparison.Ordinal))
+                {
+                    pendingLinkName = false;
+                }
+            }
+        }
+
+        Assert.NotEmpty(linkNamedDeclarations);
+        Assert.Empty(starkShimDeclarations);
+
+        foreach (var directAggregateBinding in new[]
+                 {
+                     "stark_raylib_ClearBackground",
+                     "stark_raylib_DrawText",
+                     "stark_raylib_LoadImage",
+                     "stark_raylib_LoadImageFromTexture",
+                     "stark_raylib_UnloadImage",
+                     "stark_raylib_Fade",
+                     "stark_raylib_LoadShader",
+                     "stark_raylib_DrawLineV",
+                     "stark_raylib_DrawCircleV",
+                     "stark_raylib_DrawRectangleRec",
+                     "stark_raylib_DrawRectanglePro",
+                     "stark_raylib_CheckCollisionCircleRec",
+                     "stark_raylib_DrawTexturePro",
+                     "stark_raylib_DrawTextEx",
+                     "stark_raylib_MeasureTextEx",
+                     "stark_raylib_GetMonitorPosition",
+                     "stark_raylib_DrawTextureRec",
+                     "stark_raylib_GetSplinePointLinear",
+                     "stark_raylib_GetScreenToWorldRay",
+                     "stark_raylib_GetCollisionRec",
+                     "stark_raylib_ColorNormalize",
+                     "stark_raylib_DrawModelEx",
+                     "stark_raylib_GenMeshHeightmap",
+                     "stark_raylib_GetRayCollisionTriangle",
+                     "stark_raylib_GetFileModTime"
+                 })
+        {
+            Assert.Contains(directAggregateBinding, linkNamedDeclarations);
+        }
     }
 
     [Fact]
@@ -562,6 +753,7 @@ public sealed class ExamplesCompileRunTests
         }
 
         var repositoryRoot = FindRepositoryRoot();
+        var vendorImportDirectory = Path.Combine(repositoryRoot, "vendor", "src");
         var stdlibImportDirectory = Path.Combine(repositoryRoot, "stdlib", "src");
         var tempDirectory = Directory.CreateTempSubdirectory("stark-examples-breakout-raylib-pkg-");
         var packageDirectory = Path.Combine(tempDirectory.FullName, "packages");
@@ -574,7 +766,7 @@ public sealed class ExamplesCompileRunTests
         Directory.CreateDirectory(nativeLibraryDirectory);
 
         var fakeNativeSource = Path.Combine(packageDirectory, "RaylibNativeSmoke.c");
-        var raylibLibrary = Path.Combine(packageDirectory, "libRaylibStark.a");
+        var vendorRaylibLibrary = Path.Combine(packageDirectory, "libVendorRaylib.a");
         var breakoutOutput = Path.Combine(tempDirectory.FullName, "breakout-raylib");
         var linkerPath = await CreateUnixCaptureLinkerAsync(tempDirectory.FullName, linkerLogPath);
 
@@ -592,10 +784,10 @@ public sealed class ExamplesCompileRunTests
             var emitStderr = new StringWriter();
             var emitExitCode = await CompilerCli.RunAsync(
                 [
-                    Path.Combine(repositoryRoot, "examples", "raylib", "Raylib.stark"),
+                    Path.Combine(vendorImportDirectory, "Vendor", "Raylib.stark"),
                     "--emit-lib",
-                    "-I", Path.Combine(repositoryRoot, "examples", "raylib"),
-                    "-o", raylibLibrary,
+                    "-I", vendorImportDirectory,
+                    "-o", vendorRaylibLibrary,
                     "--native-source", fakeNativeSource,
                     "--native-include-dir", nativeIncludeDirectory,
                     "--native-library-dir", nativeLibraryDirectory,
@@ -616,7 +808,7 @@ public sealed class ExamplesCompileRunTests
                 emitStderr);
 
             Assert.True(emitExitCode == 0, emitStderr.ToString());
-            Assert.True(File.Exists(raylibLibrary));
+            Assert.True(File.Exists(vendorRaylibLibrary));
 
             var compileStdout = new StringWriter();
             var compileStderr = new StringWriter();
@@ -639,7 +831,7 @@ public sealed class ExamplesCompileRunTests
             Assert.True(File.Exists(breakoutOutput));
 
             var linkerLog = await File.ReadAllTextAsync(linkerLogPath);
-            Assert.Contains(Path.GetFullPath(raylibLibrary), linkerLog, StringComparison.Ordinal);
+            Assert.Contains(Path.GetFullPath(vendorRaylibLibrary), linkerLog, StringComparison.Ordinal);
             Assert.Contains(Path.GetFullPath(nativeLibraryDirectory), linkerLog, StringComparison.Ordinal);
             Assert.Contains("-lraylib", linkerLog, StringComparison.Ordinal);
             Assert.Contains("-lGL", linkerLog, StringComparison.Ordinal);

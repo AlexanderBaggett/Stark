@@ -203,23 +203,30 @@ Top level declarations:
 * `doctrine` declarations
 * type aliases
 
-Visibility also applies to member functions inside `struct` and `record` bodies. Member function rules:
+Visibility also applies to fields and member functions inside `struct` and `record` bodies. Type member rules:
 
-* without a keyword, a member inherits the enclosing type's visibility, except that an omitted keyword on a member of an `export` type resolves to `public`, not accidental binary exposure
-* an explicit member visibility overrides the inherited visibility
-* a member may narrow the inherited visibility
-* a member may not be more visible than its enclosing type
-* `export` is never inherited; an `export` member must be written explicitly and must still satisfy the enclosing type's visibility cap
+* without a keyword, a field or member function inherits the enclosing type's visibility, except that an omitted keyword inside an `export` type resolves to `public`, not accidental binary exposure
+* an explicit field or member-function visibility overrides the inherited visibility
+* a field or member function may narrow the inherited visibility
+* a field or member function may not be more visible than its enclosing type
+* `export` is never inherited; an `export` member function must be written explicitly and must still satisfy the enclosing type's visibility cap
+* field visibility controls source access through field projection and object initializer members; it does not create a binary symbol by itself
 
 ```stark
 public struct TcpClient
 {
+    internal i64 Handle;                  // internal, narrowed
+    public bool Connected;                // public, explicit
+
     fn bool IsOpen(self);                 // public, inherited
     internal fn i64 RuntimeHandle(self);  // internal, narrowed
 }
 
 internal struct PlatformSocket
 {
+    i64 NativeHandle;                     // internal, inherited
+    public bool Connected;                // error: more visible than the type
+
     fn bool IsOpen(self);                 // internal, inherited
     public fn i64 Handle(self);           // error: more visible than the type
 }
@@ -238,16 +245,14 @@ internal struct PlatformSocket
 
 `export import` is its own form, not a visibility modifier on an import.
 
-Field level visibility is not part of the initial model. It is a separate type opacity and representation stability topic.
-
-Visibility is defined at the top level declaration boundary. Member functions are the one exception: they may narrow what they inherit.
+Visibility is defined at the top level declaration boundary. Fields and member functions are the type-member exceptions: they may narrow what they inherit.
 
 ## The Simple Rule
 
 * top level declarations may carry `internal`, `public`, or `export`
-* member functions inherit the enclosing type's visibility unless explicitly narrowed
-* members may not be more visible than their type
-* fields and locals do not carry visibility
+* fields and member functions inherit the enclosing type's visibility unless explicitly narrowed
+* fields and member functions may not be more visible than their type
+* locals do not carry visibility
 * everything else is module private
 
 ## Practical Visibility Effects
@@ -373,8 +378,8 @@ surface clear for readers and downstream callers.
 * top level declarations are module private by default
 * `internal`, `public`, and `export` are the visibility keywords
 * `public` and `export` are separate concepts
-* visibility applies to top level declarations and member functions, not to locals or statements
-* members inherit type visibility unless explicitly narrowed
-* members may not be more visible than their type
-* fields and locals do not carry visibility in the initial model
+* visibility applies to top level declarations, fields, and member functions, not to locals or statements
+* fields and member functions inherit type visibility unless explicitly narrowed
+* fields and member functions may not be more visible than their type
+* locals do not carry visibility
 * executables and shared libraries default to the most restrictive practical visibility
