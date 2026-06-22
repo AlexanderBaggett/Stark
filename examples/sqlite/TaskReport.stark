@@ -1,0 +1,228 @@
+import System.Console
+import System.IO
+import System.Memory
+import System.Text
+import Vendor.SQLite
+module SQLiteTaskReport
+
+fn bool AppendText(mut borrow System.Text.OwnedAscii writer, ascii text)
+{
+    return writer.AppendAscii(text) == System.Memory.MemoryStatus.Ok;
+}
+
+fn bool AppendNumber(mut borrow System.Text.OwnedAscii writer, i64[min max] value)
+{
+    return writer.AppendI64(value) == System.Memory.MemoryStatus.Ok;
+}
+
+fn bool WriteSummary(i32[min max] total, i32[min max] done, i32[min max] priority)
+{
+    stack mut System.Text.OwnedAscii line = new();
+
+    if (!AppendText(line, "SQLite task report: "))
+    {
+        return false;
+    }
+
+    if (!AppendNumber(line, (i64[min max])total))
+    {
+        return false;
+    }
+
+    if (!AppendText(line, " tasks, "))
+    {
+        return false;
+    }
+
+    if (!AppendNumber(line, (i64[min max])done))
+    {
+        return false;
+    }
+
+    if (!AppendText(line, " complete, priority sum "))
+    {
+        return false;
+    }
+
+    if (!AppendNumber(line, (i64[min max])priority))
+    {
+        return false;
+    }
+
+    return System.Console.WriteLine(line) == System.IO.IOStatus.Ok;
+}
+
+fn SQLiteStatusResult InsertTask(
+    mut borrow Statement insert,
+    i32[min max] id,
+    ascii title,
+    i32[min max] priority,
+    i32[min max] done)
+{
+    if (BindInt(insert, 1, id) != SQLiteStatusResult.Ok)
+    {
+        return SQLiteStatusResult.Err(SQLiteError.SQLite(SQLiteStatus.Range));
+    }
+
+    if (BindText(insert, 2, title) != SQLiteStatusResult.Ok)
+    {
+        return SQLiteStatusResult.Err(SQLiteError.SQLite(SQLiteStatus.Range));
+    }
+
+    if (BindInt(insert, 3, priority) != SQLiteStatusResult.Ok)
+    {
+        return SQLiteStatusResult.Err(SQLiteError.SQLite(SQLiteStatus.Range));
+    }
+
+    if (BindInt(insert, 4, done) != SQLiteStatusResult.Ok)
+    {
+        return SQLiteStatusResult.Err(SQLiteError.SQLite(SQLiteStatus.Range));
+    }
+
+    switch (Step(insert))
+    {
+        case SQLiteStepResult.Done:
+            if (Reset(insert) != SQLiteStatusResult.Ok)
+            {
+                return SQLiteStatusResult.Err(SQLiteError.SQLite(SQLiteStatus.Misuse));
+            }
+
+            return ClearBindings(insert);
+        case SQLiteStepResult.Row:
+            return SQLiteStatusResult.Err(SQLiteError.SQLite(SQLiteStatus.Misuse));
+        case SQLiteStepResult.Err(var error):
+            return SQLiteStatusResult.Err(error);
+    }
+}
+
+export fn i32[min max] main()
+{
+    stack SQLiteDatabaseResult opened = OpenInMemory();
+    switch (opened)
+    {
+        case SQLiteDatabaseResult.Err(var error):
+            return 1;
+        case SQLiteDatabaseResult.Ok(var databaseValue):
+            stack mut Database database = databaseValue;
+
+            if (Execute(database, "CREATE TABLE tasks(id INTEGER PRIMARY KEY, title TEXT NOT NULL, priority INTEGER NOT NULL, done INTEGER NOT NULL);") != SQLiteStatusResult.Ok)
+            {
+                return 2;
+            }
+
+            stack SQLiteStatementResult insertPrepared = Prepare(database, "INSERT INTO tasks(id, title, priority, done) VALUES(?1, ?2, ?3, ?4);");
+            switch (insertPrepared)
+            {
+                case SQLiteStatementResult.Err(var error):
+                    return 3;
+                case SQLiteStatementResult.Ok(var insertValue):
+                    stack mut Statement insert = insertValue;
+
+                    if (InsertTask(insert, 1, "write-bindings", 3, 1) != SQLiteStatusResult.Ok)
+                    {
+                        return 4;
+                    }
+
+                    if (InsertTask(insert, 2, "run-example", 2, 1) != SQLiteStatusResult.Ok)
+                    {
+                        return 5;
+                    }
+
+                    if (InsertTask(insert, 3, "document-usage", 5, 0) != SQLiteStatusResult.Ok)
+                    {
+                        return 6;
+                    }
+
+                    if (Finalize(insert) != SQLiteStatusResult.Ok)
+                    {
+                        return 7;
+                    }
+            }
+
+            stack SQLiteStatementResult summaryPrepared = Prepare(database, "SELECT COUNT(*), COALESCE(SUM(done), 0), COALESCE(SUM(priority), 0) FROM tasks;");
+            switch (summaryPrepared)
+            {
+                case SQLiteStatementResult.Err(var error):
+                    return 8;
+                case SQLiteStatementResult.Ok(var summaryValue):
+                    stack mut Statement summary = summaryValue;
+                    switch (Step(summary))
+                    {
+                        case SQLiteStepResult.Row:
+                            stack i32[min max] total = ColumnInt(summary, 0);
+                            stack i32[min max] done = ColumnInt(summary, 1);
+                            stack i32[min max] priority = ColumnInt(summary, 2);
+
+                            if (total != 3 || done != 2 || priority != 10)
+                            {
+                                return 9;
+                            }
+
+                            if (!WriteSummary(total, done, priority))
+                            {
+                                return 10;
+                            }
+
+                            if (Finalize(summary) != SQLiteStatusResult.Ok)
+                            {
+                                return 11;
+                            }
+                        case SQLiteStepResult.Done:
+                            return 12;
+                        case SQLiteStepResult.Err(var error):
+                            return 13;
+                    }
+            }
+
+            stack SQLiteStatementResult topPrepared = Prepare(database, "SELECT title FROM tasks WHERE done = 0 ORDER BY priority DESC LIMIT 1;");
+            switch (topPrepared)
+            {
+                case SQLiteStatementResult.Err(var error):
+                    return 14;
+                case SQLiteStatementResult.Ok(var topValue):
+                    stack mut Statement top = topValue;
+                    switch (Step(top))
+                    {
+                        case SQLiteStepResult.Row:
+                            stack SQLiteTextResult titleResult = ColumnText(top, 0);
+                            switch (titleResult)
+                            {
+                                case SQLiteTextResult.Err(var error):
+                                    return 15;
+                                case SQLiteTextResult.Ok(var titleValue):
+                                    stack mut System.Text.OwnedAscii title = titleValue;
+                                    if (title.View() != "document-usage")
+                                    {
+                                        return 16;
+                                    }
+
+                                    if (System.Console.WriteLine("Top pending task:") != System.IO.IOStatus.Ok)
+                                    {
+                                        return 17;
+                                    }
+
+                                    if (System.Console.WriteLine(title) != System.IO.IOStatus.Ok)
+                                    {
+                                        return 18;
+                                    }
+                            }
+
+                            if (Finalize(top) != SQLiteStatusResult.Ok)
+                            {
+                                return 19;
+                            }
+                        case SQLiteStepResult.Done:
+                            return 20;
+                        case SQLiteStepResult.Err(var error):
+                            return 21;
+                    }
+            }
+
+            if (Close(database) != SQLiteStatusResult.Ok)
+            {
+                return 22;
+            }
+
+            return 0;
+    }
+}

@@ -545,28 +545,19 @@ public fn Model SetModelMeshMaterial(Model model, i32[min max] meshId, i32[min m
 
 public unsafe ffi fn rawmutptr<ModelAnimation> LoadModelAnimations(ascii fileName, rawmutptr<i32[min max]> animCount);
 [LinkName("UpdateModelAnimation")]
-internal unsafe ffi fn void stark_raylib_UpdateModelAnimation(Model model, ModelAnimation anim, i32[min max] frame);
-public fn void UpdateModelAnimation(Model model, ModelAnimation anim, i32[min max] frame) {
+internal unsafe ffi fn void stark_raylib_UpdateModelAnimation(Model model, ModelAnimation anim, f32 frame);
+public fn void UpdateModelAnimation(Model model, ModelAnimation anim, f32 frame) {
     unsafe {
         stark_raylib_UpdateModelAnimation(model, anim, frame);
     }
     return;
 }
 
-[LinkName("UpdateModelAnimationBones")]
-internal unsafe ffi fn void stark_raylib_UpdateModelAnimationBones(Model model, ModelAnimation anim, i32[min max] frame);
-public fn void UpdateModelAnimationBones(Model model, ModelAnimation anim, i32[min max] frame) {
+[LinkName("UpdateModelAnimationEx")]
+internal unsafe ffi fn void stark_raylib_UpdateModelAnimationEx(Model model, ModelAnimation animA, f32 frameA, ModelAnimation animB, f32 frameB, f32 blend);
+public fn void UpdateModelAnimationEx(Model model, ModelAnimation animA, f32 frameA, ModelAnimation animB, f32 frameB, f32 blend) {
     unsafe {
-        stark_raylib_UpdateModelAnimationBones(model, anim, frame);
-    }
-    return;
-}
-
-[LinkName("UnloadModelAnimation")]
-internal unsafe ffi fn void stark_raylib_UnloadModelAnimation(ModelAnimation anim);
-public fn void UnloadModelAnimation(ModelAnimation anim) {
-    unsafe {
-        stark_raylib_UnloadModelAnimation(anim);
+        stark_raylib_UpdateModelAnimationEx(model, animA, frameA, animB, frameB, blend);
     }
     return;
 }

@@ -1,0 +1,374 @@
+import System.C
+import System.Text
+module Vendor.SQLite.Types
+
+internal struct SQLite3Native
+{
+    i8[min max] Opaque;
+}
+
+internal struct SQLite3StatementNative
+{
+    i8[min max] Opaque;
+}
+
+internal unsafe ffi(c) fn System.C.c_int sqlite3_close_v2(rawmutptr<SQLite3Native> database);
+internal unsafe ffi(c) fn System.C.c_int sqlite3_finalize(rawmutptr<SQLite3StatementNative> statement);
+
+public struct Database
+{
+    internal rawmutptr<SQLite3Native> Handle;
+
+    Database()
+    {
+        self.Handle = null;
+    }
+
+    mut drop
+    {
+        unsafe
+        {
+            if (self.Handle != null)
+            {
+                sqlite3_close_v2(self.Handle);
+                self.Handle = null;
+            }
+        }
+    }
+}
+
+public struct Statement
+{
+    internal rawmutptr<SQLite3StatementNative> Handle;
+
+    Statement()
+    {
+        self.Handle = null;
+    }
+
+    mut drop
+    {
+        unsafe
+        {
+            if (self.Handle != null)
+            {
+                sqlite3_finalize(self.Handle);
+                self.Handle = null;
+            }
+        }
+    }
+}
+
+public enum SQLiteStatus
+{
+    Ok,
+    Error,
+    Internal,
+    Permission,
+    Abort,
+    Busy,
+    Locked,
+    NoMemory,
+    ReadOnly,
+    Interrupt,
+    IoError,
+    Corrupt,
+    NotFound,
+    Full,
+    CannotOpen,
+    Protocol,
+    Empty,
+    Schema,
+    TooBig,
+    Constraint,
+    Mismatch,
+    Misuse,
+    NoLargeFileSupport,
+    Authorization,
+    Format,
+    Range,
+    NotADatabase,
+    Notice,
+    Warning,
+    Row,
+    Done,
+    Unknown(i32[min max]),
+}
+
+public enum SQLiteColumnType
+{
+    Integer,
+    Float,
+    Text,
+    Blob,
+    Null,
+    Unknown(i32[min max]),
+}
+
+public enum SQLiteError
+{
+    SQLite(SQLiteStatus),
+    CString(System.C.CStringError),
+    NullHandle,
+    NullValue,
+    NoStatement,
+    TooLarge,
+}
+
+public enum SQLiteStatusResult
+{
+    [Ok] Ok,
+    [Err] Err(SQLiteError),
+}
+
+public enum SQLiteDatabaseResult
+{
+    [Ok] Ok(Database),
+    [Err] Err(SQLiteError),
+}
+
+public enum SQLiteStatementResult
+{
+    [Ok] Ok(Statement),
+    [Err] Err(SQLiteError),
+}
+
+public enum SQLiteTextResult
+{
+    [Ok] Ok(System.Text.OwnedAscii),
+    [Err] Err(SQLiteError),
+}
+
+public enum SQLiteStepResult
+{
+    Row,
+    Done,
+    Err(SQLiteError),
+}
+
+public const SQLITE_OK = 0;
+public const SQLITE_ERROR = 1;
+public const SQLITE_INTERNAL = 2;
+public const SQLITE_PERM = 3;
+public const SQLITE_ABORT = 4;
+public const SQLITE_BUSY = 5;
+public const SQLITE_LOCKED = 6;
+public const SQLITE_NOMEM = 7;
+public const SQLITE_READONLY = 8;
+public const SQLITE_INTERRUPT = 9;
+public const SQLITE_IOERR = 10;
+public const SQLITE_CORRUPT = 11;
+public const SQLITE_NOTFOUND = 12;
+public const SQLITE_FULL = 13;
+public const SQLITE_CANTOPEN = 14;
+public const SQLITE_PROTOCOL = 15;
+public const SQLITE_EMPTY = 16;
+public const SQLITE_SCHEMA = 17;
+public const SQLITE_TOOBIG = 18;
+public const SQLITE_CONSTRAINT = 19;
+public const SQLITE_MISMATCH = 20;
+public const SQLITE_MISUSE = 21;
+public const SQLITE_NOLFS = 22;
+public const SQLITE_AUTH = 23;
+public const SQLITE_FORMAT = 24;
+public const SQLITE_RANGE = 25;
+public const SQLITE_NOTADB = 26;
+public const SQLITE_NOTICE = 27;
+public const SQLITE_WARNING = 28;
+public const SQLITE_ROW = 100;
+public const SQLITE_DONE = 101;
+
+public const SQLITE_INTEGER = 1;
+public const SQLITE_FLOAT = 2;
+public const SQLITE_TEXT = 3;
+public const SQLITE_BLOB = 4;
+public const SQLITE_NULL = 5;
+
+public const SQLITE_OPEN_READONLY = 1;
+public const SQLITE_OPEN_READWRITE = 2;
+public const SQLITE_OPEN_CREATE = 4;
+public const SQLITE_OPEN_URI = 64;
+public const SQLITE_OPEN_MEMORY = 128;
+public const SQLITE_OPEN_NOMUTEX = 32768;
+public const SQLITE_OPEN_FULLMUTEX = 65536;
+public const SQLITE_OPEN_SHAREDCACHE = 131072;
+public const SQLITE_OPEN_PRIVATECACHE = 262144;
+public const SQLITE_OPEN_NOFOLLOW = 16777216;
+public const SQLITE_OPEN_EXRESCODE = 33554432;
+
+public finite law SQLiteStatus StatusFromCode(i32[min max] code)
+{
+    stack mut i32[min max] primary = code;
+    if (code > 255)
+    {
+        primary = code & 255;
+    }
+
+    switch (primary)
+    {
+        case 0:
+            return SQLiteStatus.Ok;
+        case 1:
+            return SQLiteStatus.Error;
+        case 2:
+            return SQLiteStatus.Internal;
+        case 3:
+            return SQLiteStatus.Permission;
+        case 4:
+            return SQLiteStatus.Abort;
+        case 5:
+            return SQLiteStatus.Busy;
+        case 6:
+            return SQLiteStatus.Locked;
+        case 7:
+            return SQLiteStatus.NoMemory;
+        case 8:
+            return SQLiteStatus.ReadOnly;
+        case 9:
+            return SQLiteStatus.Interrupt;
+        case 10:
+            return SQLiteStatus.IoError;
+        case 11:
+            return SQLiteStatus.Corrupt;
+        case 12:
+            return SQLiteStatus.NotFound;
+        case 13:
+            return SQLiteStatus.Full;
+        case 14:
+            return SQLiteStatus.CannotOpen;
+        case 15:
+            return SQLiteStatus.Protocol;
+        case 16:
+            return SQLiteStatus.Empty;
+        case 17:
+            return SQLiteStatus.Schema;
+        case 18:
+            return SQLiteStatus.TooBig;
+        case 19:
+            return SQLiteStatus.Constraint;
+        case 20:
+            return SQLiteStatus.Mismatch;
+        case 21:
+            return SQLiteStatus.Misuse;
+        case 22:
+            return SQLiteStatus.NoLargeFileSupport;
+        case 23:
+            return SQLiteStatus.Authorization;
+        case 24:
+            return SQLiteStatus.Format;
+        case 25:
+            return SQLiteStatus.Range;
+        case 26:
+            return SQLiteStatus.NotADatabase;
+        case 27:
+            return SQLiteStatus.Notice;
+        case 28:
+            return SQLiteStatus.Warning;
+        case 100:
+            return SQLiteStatus.Row;
+        case 101:
+            return SQLiteStatus.Done;
+        default:
+            return SQLiteStatus.Unknown(code);
+    }
+}
+
+public finite law i32[min max] Code(SQLiteStatus status)
+{
+    switch (status)
+    {
+        case SQLiteStatus.Ok:
+            return SQLITE_OK;
+        case SQLiteStatus.Error:
+            return SQLITE_ERROR;
+        case SQLiteStatus.Internal:
+            return SQLITE_INTERNAL;
+        case SQLiteStatus.Permission:
+            return SQLITE_PERM;
+        case SQLiteStatus.Abort:
+            return SQLITE_ABORT;
+        case SQLiteStatus.Busy:
+            return SQLITE_BUSY;
+        case SQLiteStatus.Locked:
+            return SQLITE_LOCKED;
+        case SQLiteStatus.NoMemory:
+            return SQLITE_NOMEM;
+        case SQLiteStatus.ReadOnly:
+            return SQLITE_READONLY;
+        case SQLiteStatus.Interrupt:
+            return SQLITE_INTERRUPT;
+        case SQLiteStatus.IoError:
+            return SQLITE_IOERR;
+        case SQLiteStatus.Corrupt:
+            return SQLITE_CORRUPT;
+        case SQLiteStatus.NotFound:
+            return SQLITE_NOTFOUND;
+        case SQLiteStatus.Full:
+            return SQLITE_FULL;
+        case SQLiteStatus.CannotOpen:
+            return SQLITE_CANTOPEN;
+        case SQLiteStatus.Protocol:
+            return SQLITE_PROTOCOL;
+        case SQLiteStatus.Empty:
+            return SQLITE_EMPTY;
+        case SQLiteStatus.Schema:
+            return SQLITE_SCHEMA;
+        case SQLiteStatus.TooBig:
+            return SQLITE_TOOBIG;
+        case SQLiteStatus.Constraint:
+            return SQLITE_CONSTRAINT;
+        case SQLiteStatus.Mismatch:
+            return SQLITE_MISMATCH;
+        case SQLiteStatus.Misuse:
+            return SQLITE_MISUSE;
+        case SQLiteStatus.NoLargeFileSupport:
+            return SQLITE_NOLFS;
+        case SQLiteStatus.Authorization:
+            return SQLITE_AUTH;
+        case SQLiteStatus.Format:
+            return SQLITE_FORMAT;
+        case SQLiteStatus.Range:
+            return SQLITE_RANGE;
+        case SQLiteStatus.NotADatabase:
+            return SQLITE_NOTADB;
+        case SQLiteStatus.Notice:
+            return SQLITE_NOTICE;
+        case SQLiteStatus.Warning:
+            return SQLITE_WARNING;
+        case SQLiteStatus.Row:
+            return SQLITE_ROW;
+        case SQLiteStatus.Done:
+            return SQLITE_DONE;
+        case SQLiteStatus.Unknown(var code):
+            return code;
+    }
+}
+
+public finite law SQLiteColumnType ColumnTypeFromCode(i32[min max] code)
+{
+    switch (code)
+    {
+        case 1:
+            return SQLiteColumnType.Integer;
+        case 2:
+            return SQLiteColumnType.Float;
+        case 3:
+            return SQLiteColumnType.Text;
+        case 4:
+            return SQLiteColumnType.Blob;
+        case 5:
+            return SQLiteColumnType.Null;
+        default:
+            return SQLiteColumnType.Unknown(code);
+    }
+}
+
+public finite law SQLiteStatusResult StatusResultFromCode(i32[min max] code)
+{
+    if (code == SQLITE_OK)
+    {
+        return SQLiteStatusResult.Ok;
+    }
+
+    return SQLiteStatusResult.Err(SQLiteError.SQLite(StatusFromCode(code)));
+}

@@ -555,6 +555,15 @@ public sealed class ExamplesCompileRunTests
             await File.ReadAllTextAsync(Path.Combine(raylibImportDirectory, "Raylib.package.args")),
             StringComparison.Ordinal);
 
+        var exampleTypesSource = await File.ReadAllTextAsync(Path.Combine(raylibImportDirectory, "Raylib", "Types.stark"));
+        Assert.Contains("public const RAYLIB_VERSION_MAJOR = 6;", exampleTypesSource, StringComparison.Ordinal);
+        Assert.Contains("""public const ascii RAYLIB_VERSION = "6.0";""", exampleTypesSource, StringComparison.Ordinal);
+
+        var vendorTypesSource = await File.ReadAllTextAsync(Path.Combine(vendorImportDirectory, "Vendor", "Raylib", "Types.stark"));
+        Assert.Contains("public struct ModelSkeleton", vendorTypesSource, StringComparison.Ordinal);
+        Assert.Contains("rawmutptr<ModelAnimPose> KeyframePoses;", vendorTypesSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("SHADER_LOC_BONE_MATRICES", vendorTypesSource, StringComparison.Ordinal);
+
         await CheckSourceAsync(
             Path.Combine(raylibImportDirectory, "Raylib.stark"),
             raylibImportDirectory);
@@ -737,11 +746,19 @@ public sealed class ExamplesCompileRunTests
                      "stark_raylib_DrawModelEx",
                      "stark_raylib_GenMeshHeightmap",
                      "stark_raylib_GetRayCollisionTriangle",
-                     "stark_raylib_GetFileModTime"
+                     "stark_raylib_GetFileModTime",
+                     "stark_raylib_DrawLineDashed",
+                     "stark_raylib_DrawEllipseV",
+                     "stark_raylib_UpdateModelAnimationEx",
+                     "stark_raylib_FileCopy",
+                     "stark_raylib_FileMove"
                  })
         {
             Assert.Contains(directAggregateBinding, linkNamedDeclarations);
         }
+
+        Assert.DoesNotContain("stark_raylib_UpdateModelAnimationBones", linkNamedDeclarations);
+        Assert.DoesNotContain("stark_raylib_UnloadModelAnimation", linkNamedDeclarations);
     }
 
     [Fact]
@@ -837,6 +854,170 @@ public sealed class ExamplesCompileRunTests
             Assert.Contains("-lGL", linkerLog, StringComparison.Ordinal);
             Assert.Contains("-lXinerama", linkerLog, StringComparison.Ordinal);
             Assert.Contains("native_0_RaylibNativeSmoke", linkerLog, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Cleanup(tempDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task VendorSQLiteModulesCheckWithoutNativeExecution()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var vendorImportDirectory = Path.Combine(repositoryRoot, "vendor", "src");
+        var stdlibImportDirectory = Path.Combine(repositoryRoot, "stdlib", "src");
+        var sqliteNativeSource = Path.Combine(repositoryRoot, "vendor", "SQLiteTextBinding.c");
+        var sqliteCoreSource = Path.Combine(vendorImportDirectory, "Vendor", "SQLite", "Core.stark");
+        var sqliteTypesSource = Path.Combine(vendorImportDirectory, "Vendor", "SQLite", "Types.stark");
+
+        Assert.True(File.Exists(sqliteNativeSource));
+        var nativeSourceText = await File.ReadAllTextAsync(sqliteNativeSource);
+        Assert.Contains("SQLITE_TRANSIENT", nativeSourceText, StringComparison.Ordinal);
+        Assert.Contains("stark_sqlite_bind_text_transient", nativeSourceText, StringComparison.Ordinal);
+
+        var coreSourceText = await File.ReadAllTextAsync(sqliteCoreSource);
+        Assert.Contains("internal unsafe ffi(c) fn System.C.c_int stark_sqlite_bind_text_transient", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("System.C.FromAscii", coreSourceText, StringComparison.Ordinal);
+        Assert.Contains("System.C.ToAscii", coreSourceText, StringComparison.Ordinal);
+
+        var typesSourceText = await File.ReadAllTextAsync(sqliteTypesSource);
+        Assert.Contains("public struct Database", typesSourceText, StringComparison.Ordinal);
+        Assert.Contains("public struct Statement", typesSourceText, StringComparison.Ordinal);
+        Assert.Contains("internal rawmutptr<SQLite3Native> Handle;", typesSourceText, StringComparison.Ordinal);
+        Assert.Contains("internal rawmutptr<SQLite3StatementNative> Handle;", typesSourceText, StringComparison.Ordinal);
+
+        await CheckSourceAsync(
+            Path.Combine(vendorImportDirectory, "Vendor", "SQLite.stark"),
+            vendorImportDirectory,
+            stdlibImportDirectory);
+
+        await CheckSourceAsync(
+            Path.Combine(repositoryRoot, "examples", "sqlite", "SQLiteSmoke.stark"),
+            vendorImportDirectory,
+            stdlibImportDirectory);
+
+        await CheckSourceAsync(
+            Path.Combine(repositoryRoot, "examples", "sqlite", "TaskReport.stark"),
+            vendorImportDirectory,
+            stdlibImportDirectory);
+    }
+
+    [Fact]
+    public async Task VendorSQLiteBuildsAndRunsThroughPackageOwnedNativeMetadata()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _)
+            || OperatingSystem.IsWindows()
+            || !await PkgConfigPackageExistsAsync("sqlite3"))
+        {
+            return;
+        }
+
+        var repositoryRoot = FindRepositoryRoot();
+        var vendorImportDirectory = Path.Combine(repositoryRoot, "vendor", "src");
+        var stdlibImportDirectory = Path.Combine(repositoryRoot, "stdlib", "src");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-vendor-sqlite-pkg-");
+        var packageDirectory = Path.Combine(tempDirectory.FullName, "packages");
+        Directory.CreateDirectory(packageDirectory);
+
+        var vendorSQLiteSource = Path.Combine(vendorImportDirectory, "Vendor", "SQLite.stark");
+        var sqliteNativeSource = Path.Combine(repositoryRoot, "vendor", "SQLiteTextBinding.c");
+        var vendorSQLiteLibrary = Path.Combine(packageDirectory, "libVendorSQLite.a");
+        var vendorSQLitePackage = Path.ChangeExtension(vendorSQLiteLibrary, ".starkpkg");
+        var sqliteSmokeOutput = Path.Combine(tempDirectory.FullName, "sqlite-smoke");
+
+        try
+        {
+            var emitStdout = new StringWriter();
+            var emitStderr = new StringWriter();
+            var emitExitCode = await CompilerCli.RunAsync(
+                [
+                    vendorSQLiteSource,
+                    "--emit-lib",
+                    "-I", vendorImportDirectory,
+                    "-I", stdlibImportDirectory,
+                    "-o", vendorSQLiteLibrary,
+                    "--native-source", sqliteNativeSource,
+                    "--native-pkg-config", "sqlite3",
+                ],
+                new StringReader(string.Empty),
+                emitStdout,
+                emitStderr);
+
+            Assert.True(emitExitCode == 0, emitStderr.ToString());
+            Assert.Contains("Emitted static library:", emitStdout.ToString(), StringComparison.Ordinal);
+            Assert.True(File.Exists(vendorSQLiteLibrary));
+            Assert.True(File.Exists(vendorSQLitePackage));
+
+            Assert.True(PackageImageLoader.TryLoadManifest(vendorSQLitePackage, out var manifest));
+            Assert.Equal("Vendor.SQLite", manifest.RootModule);
+            Assert.NotNull(manifest.NativeDependencies);
+            Assert.Equal("sqlite3", Assert.Single(manifest.NativeDependencies!.PkgConfigPackages!));
+            Assert.Equal("SQLiteTextBinding.c", Path.GetFileName(Assert.Single(manifest.NativeDependencies.Sources!)));
+
+            var inspectStdout = new StringWriter();
+            var inspectStderr = new StringWriter();
+            var inspectExitCode = await CompilerCli.RunAsync(
+                [vendorSQLitePackage, "--inspect-pkg"],
+                new StringReader(string.Empty),
+                inspectStdout,
+                inspectStderr);
+
+            Assert.True(inspectExitCode == 0, inspectStderr.ToString());
+            Assert.Matches(
+                "native dependencies: sources=1, .*pkg-config=1",
+                inspectStdout.ToString());
+
+            var compileStdout = new StringWriter();
+            var compileStderr = new StringWriter();
+            var compileExitCode = await CompilerCli.RunAsync(
+                [
+                    Path.Combine(repositoryRoot, "examples", "sqlite", "SQLiteSmoke.stark"),
+                    "--emit-exe",
+                    "-I", packageDirectory,
+                    "-I", stdlibImportDirectory,
+                    "-o", sqliteSmokeOutput,
+                ],
+                new StringReader(string.Empty),
+                compileStdout,
+                compileStderr);
+
+            Assert.True(compileExitCode == 0, compileStderr.ToString());
+            Assert.Contains("Emitted executable:", compileStdout.ToString(), StringComparison.Ordinal);
+            Assert.True(File.Exists(sqliteSmokeOutput));
+
+            var processResult = await RunNativeExecutableAsync(sqliteSmokeOutput);
+
+            Assert.Equal(0, processResult.ExitCode);
+            Assert.Equal(string.Empty, processResult.StandardOutput);
+            Assert.Equal(string.Empty, processResult.StandardError);
+
+            var reportOutput = Path.Combine(tempDirectory.FullName, "sqlite-task-report");
+            var reportCompileStdout = new StringWriter();
+            var reportCompileStderr = new StringWriter();
+            var reportCompileExitCode = await CompilerCli.RunAsync(
+                [
+                    Path.Combine(repositoryRoot, "examples", "sqlite", "TaskReport.stark"),
+                    "--emit-exe",
+                    "-I", packageDirectory,
+                    "-I", stdlibImportDirectory,
+                    "-o", reportOutput,
+                ],
+                new StringReader(string.Empty),
+                reportCompileStdout,
+                reportCompileStderr);
+
+            Assert.True(reportCompileExitCode == 0, reportCompileStderr.ToString());
+            Assert.Contains("Emitted executable:", reportCompileStdout.ToString(), StringComparison.Ordinal);
+            Assert.True(File.Exists(reportOutput));
+
+            var reportResult = await RunNativeExecutableAsync(reportOutput);
+
+            Assert.Equal(0, reportResult.ExitCode);
+            Assert.Equal(
+                "SQLite task report: 3 tasks, 2 complete, priority sum 10\nTop pending task:\ndocument-usage\n",
+                reportResult.StandardOutput);
+            Assert.Equal(string.Empty, reportResult.StandardError);
         }
         finally
         {
@@ -1093,6 +1274,36 @@ public sealed class ExamplesCompileRunTests
         await process.WaitForExitAsync();
 
         return (process.ExitCode, standardOutput, standardError);
+    }
+
+    private static async Task<bool> PkgConfigPackageExistsAsync(string packageName)
+    {
+        try
+        {
+            var startInfo = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "pkg-config",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+            startInfo.ArgumentList.Add("--exists");
+            startInfo.ArgumentList.Add(packageName);
+
+            using var process = System.Diagnostics.Process.Start(startInfo);
+            if (process is null)
+            {
+                return false;
+            }
+
+            await process.WaitForExitAsync();
+            return process.ExitCode == 0;
+        }
+        catch (System.ComponentModel.Win32Exception)
+        {
+            return false;
+        }
     }
 
     private static async Task<string> CreateUnixCaptureLinkerAsync(string directory, string logPath)
