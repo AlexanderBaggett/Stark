@@ -6,6 +6,7 @@ import System.Text
 import System.Runtime.Buffer
 import System.Testing
 import System.IO
+import System.Console
 [Collection("ir")]
 module IrTests
 
@@ -1544,9 +1545,17 @@ fn bool PackageImageBridgesToByteBuffer()
     stack mut IrTable<u8[0 max]> buf = new();
     SerializePackageImage(instrs, blocks, funcs, globals, buf);
     stack mut DynamicByteBuffer dbuf = new();
-    ImageToByteBuffer(buf, dbuf);
+    if (!ImageToByteBuffer(buf, dbuf))
+    {
+        return false;
+    }
+
     stack mut IrTable<u8[0 max]> buf2 = new();
-    ImageFromByteBuffer(dbuf, buf2);
+    if (!ImageFromByteBuffer(dbuf, buf2))
+    {
+        return false;
+    }
+
     stack mut IrTable<MirInstruction> bi = new();
     stack mut IrTable<MirBlock> bb = new();
     stack mut IrTable<MirFunction> bf = new();
@@ -2719,14 +2728,115 @@ fn bool CompilesThreeAndFourArgumentTailBecomeFromAst()
     stack bool threeOk = CompileModuleFromAstChecked("tail fn add3(a, b, c) { return a + b + c } tail fn bounce3(a, b, c) { become add3(a, b, c) } fn main() { return bounce3(1, 2, 3) }", three);
     stack mut OwnedAscii four = new();
     stack bool fourOk = CompileModuleFromAstChecked("tail fn add4(a, b, c, d) { return a + b + c + d } tail fn bounce4(a, b, c, d) { become add4(a, b, c, d) } fn main() { return bounce4(1, 2, 3, 4) }", four);
-    return threeOk
-        && System.Text.Contains(three.View(), "musttail call tailcc i64 @f1(i64 %p0, i64 %p1, i64 %p2)\n  ret i64")
-        && System.Text.Contains(three.View(), "call tailcc i64 @f2(i64 %v1, i64 %v2, i64 %v3)")
-        && ClangVerifiesLlvmText(three)
-        && fourOk
-        && System.Text.Contains(four.View(), "musttail call tailcc i64 @f1(i64 %p0, i64 %p1, i64 %p2, i64 %p3)\n  ret i64")
-        && System.Text.Contains(four.View(), "call tailcc i64 @f2(i64 %v1, i64 %v2, i64 %v3, i64 %v4)")
-        && ClangVerifiesLlvmText(four);
+    stack bool threeTail = System.Text.Contains(three.View(), "musttail call tailcc i64 @f1(i64 %p0, i64 %p1, i64 %p2)\n  ret i64");
+    stack bool threeCall = System.Text.Contains(three.View(), "call tailcc i64 @f2(i64 %v1, i64 %v2, i64 %v3)");
+    stack bool fourTail = System.Text.Contains(four.View(), "musttail call tailcc i64 @f1(i64 %p0, i64 %p1, i64 %p2, i64 %p3)\n  ret i64");
+    stack bool fourCall = System.Text.Contains(four.View(), "call tailcc i64 @f2(i64 %v1, i64 %v2, i64 %v3, i64 %v4)");
+    if (!threeOk)
+    {
+        WriteLine("threeOk false");
+        if (ProgramSemanticallyValid("tail fn add3(a, b, c) { return a + b + c } tail fn bounce3(a, b, c) { become add3(a, b, c) } fn main() { return bounce3(1, 2, 3) }"))
+        {
+            WriteLine("three semantic true");
+        }
+        else
+        {
+            WriteLine("three semantic false");
+        }
+
+        if (!ProgramNamesResolve("tail fn add3(a, b, c) { return a + b + c } tail fn bounce3(a, b, c) { become add3(a, b, c) } fn main() { return bounce3(1, 2, 3) }"))
+        {
+            WriteLine("names false");
+        }
+
+        if (!ProgramCallAritiesMatch("tail fn add3(a, b, c) { return a + b + c } tail fn bounce3(a, b, c) { become add3(a, b, c) } fn main() { return bounce3(1, 2, 3) }"))
+        {
+            WriteLine("arity false");
+        }
+
+        if (!ProgramDeclarationsUnique("tail fn add3(a, b, c) { return a + b + c } tail fn bounce3(a, b, c) { become add3(a, b, c) } fn main() { return bounce3(1, 2, 3) }"))
+        {
+            WriteLine("decl unique false");
+        }
+
+        if (!ProgramFunctionNamesUnique("tail fn add3(a, b, c) { return a + b + c } tail fn bounce3(a, b, c) { become add3(a, b, c) } fn main() { return bounce3(1, 2, 3) }"))
+        {
+            WriteLine("function names false");
+        }
+
+        if (!ProgramWhileConditionsAreBoolean("tail fn add3(a, b, c) { return a + b + c } tail fn bounce3(a, b, c) { become add3(a, b, c) } fn main() { return bounce3(1, 2, 3) }"))
+        {
+            WriteLine("while conditions false");
+        }
+
+        if (!ProgramIfConditionsAreBoolean("tail fn add3(a, b, c) { return a + b + c } tail fn bounce3(a, b, c) { become add3(a, b, c) } fn main() { return bounce3(1, 2, 3) }"))
+        {
+            WriteLine("if conditions false");
+        }
+
+        if (!ProgramNoBooleanOperand("tail fn add3(a, b, c) { return a + b + c } tail fn bounce3(a, b, c) { become add3(a, b, c) } fn main() { return bounce3(1, 2, 3) }"))
+        {
+            WriteLine("boolean operand false");
+        }
+
+        return false;
+    }
+
+    if (!threeTail)
+    {
+        WriteLine("threeTail false");
+        WriteLine(three);
+        return false;
+    }
+
+    if (!threeCall)
+    {
+        WriteLine("threeCall false");
+        WriteLine(three);
+        return false;
+    }
+
+    WriteLine("before three clang");
+    stack bool threeClang = ClangVerifiesLlvmText(three);
+    WriteLine("after three clang");
+    if (!threeClang)
+    {
+        WriteLine("threeClang false");
+        WriteLine(three);
+        return false;
+    }
+
+    if (!fourOk)
+    {
+        WriteLine("fourOk false");
+        return false;
+    }
+
+    if (!fourTail)
+    {
+        WriteLine("fourTail false");
+        WriteLine(four);
+        return false;
+    }
+
+    if (!fourCall)
+    {
+        WriteLine("fourCall false");
+        WriteLine(four);
+        return false;
+    }
+
+    WriteLine("before four clang");
+    stack bool fourClang = ClangVerifiesLlvmText(four);
+    WriteLine("after four clang");
+    if (!fourClang)
+    {
+        WriteLine("fourClang false");
+        WriteLine(four);
+        return false;
+    }
+
+    return true;
 }
 
 [Fact]
