@@ -730,7 +730,7 @@ public struct AsmOutputOperand
 public struct AsmFunctionMetadata
 {
     MirFuncId MirFunction;
-    Compiler.AsmFacts.StarkAsmArchitecture ArchitectureValue;
+    u32[0 max] ArchitectureCode;
     AsmTextRange TemplateText;
     u32[0 max] FirstInputRow;
     u32[0 max] InputRowCount;
@@ -742,7 +742,7 @@ public struct AsmFunctionMetadata
     AsmFunctionMetadata()
     {
         self.MirFunction = new();
-        self.ArchitectureValue = Compiler.AsmFacts.StarkAsmArchitecture.Unknown;
+        self.ArchitectureCode = 0;
         self.TemplateText = new();
         self.FirstInputRow = 0;
         self.InputRowCount = 0;
@@ -759,7 +759,7 @@ public struct AsmFunctionMetadata
 
     public inline finite law Compiler.AsmFacts.StarkAsmArchitecture Architecture(borrow AsmFunctionMetadata self)
     {
-        return self.ArchitectureValue;
+        return AsmArchitectureFromStorageCode(self.ArchitectureCode);
     }
 
     public inline finite law AsmTextRange Template(borrow AsmFunctionMetadata self)
@@ -798,16 +798,42 @@ public struct AsmFunctionMetadata
     }
 }
 
+internal inline finite law u32[0 max] AsmArchitectureStorageCode(Compiler.AsmFacts.StarkAsmArchitecture architecture)
+{
+    switch (architecture)
+    {
+        case Compiler.AsmFacts.StarkAsmArchitecture.X86_64: return 1;
+        case Compiler.AsmFacts.StarkAsmArchitecture.AArch64: return 2;
+        case Compiler.AsmFacts.StarkAsmArchitecture.RiscV64: return 3;
+        case Compiler.AsmFacts.StarkAsmArchitecture.X86: return 4;
+        case Compiler.AsmFacts.StarkAsmArchitecture.Arm32: return 5;
+        default: return 0;
+    }
+}
+
+internal inline finite law Compiler.AsmFacts.StarkAsmArchitecture AsmArchitectureFromStorageCode(u32[0 max] value)
+{
+    switch (value)
+    {
+        case 1: return Compiler.AsmFacts.StarkAsmArchitecture.X86_64;
+        case 2: return Compiler.AsmFacts.StarkAsmArchitecture.AArch64;
+        case 3: return Compiler.AsmFacts.StarkAsmArchitecture.RiscV64;
+        case 4: return Compiler.AsmFacts.StarkAsmArchitecture.X86;
+        case 5: return Compiler.AsmFacts.StarkAsmArchitecture.Arm32;
+        default: return Compiler.AsmFacts.StarkAsmArchitecture.Unknown;
+    }
+}
+
 // Dense append-only metadata for source assembly declarations. Textual facts live
 // in one byte pool and all cross-references are fixed-width row/range values, so
 // later package-image serialization is a straight linear write.
 public struct AsmMetadataTable
 {
     internal dynamic i8[min max] TextBytes;
-    internal dynamic AsmInputOperand InputRows;
-    internal dynamic AsmOutputOperand OutputRows;
-    internal dynamic AsmTextRange ClobberRows;
-    internal dynamic AsmFunctionMetadata FunctionRows;
+    internal dynamic u32[0 max] InputRows;
+    internal dynamic u32[0 max] OutputRows;
+    internal dynamic u32[0 max] ClobberRows;
+    internal dynamic u32[0 max] FunctionRows;
 
     AsmMetadataTable()
     {
@@ -825,22 +851,62 @@ public struct AsmMetadataTable
 
     public inline finite law u64[0 2 ** 63 - 1] InputCount(borrow AsmMetadataTable self)
     {
-        return self.InputRows.Length;
+        return self.InputRows.Length / 4;
     }
 
     public inline finite law u64[0 2 ** 63 - 1] OutputCount(borrow AsmMetadataTable self)
     {
-        return self.OutputRows.Length;
+        return self.OutputRows.Length / 5;
     }
 
     public inline finite law u64[0 2 ** 63 - 1] ClobberCount(borrow AsmMetadataTable self)
     {
-        return self.ClobberRows.Length;
+        return self.ClobberRows.Length / 2;
     }
 
     public inline finite law u64[0 2 ** 63 - 1] FunctionCount(borrow AsmMetadataTable self)
     {
-        return self.FunctionRows.Length;
+        return self.FunctionRows.Length / 10;
+    }
+
+    internal inline finite law u32[0 max] InputWordAt(borrow AsmMetadataTable self, u64[0 2 ** 63 - 1] index)
+    {
+        if (index < self.InputRows.Length)
+        {
+            return self.InputRows[index];
+        }
+
+        return 0;
+    }
+
+    internal inline finite law u32[0 max] OutputWordAt(borrow AsmMetadataTable self, u64[0 2 ** 63 - 1] index)
+    {
+        if (index < self.OutputRows.Length)
+        {
+            return self.OutputRows[index];
+        }
+
+        return 0;
+    }
+
+    internal inline finite law u32[0 max] ClobberWordAt(borrow AsmMetadataTable self, u64[0 2 ** 63 - 1] index)
+    {
+        if (index < self.ClobberRows.Length)
+        {
+            return self.ClobberRows[index];
+        }
+
+        return 0;
+    }
+
+    internal inline finite law u32[0 max] FunctionWordAt(borrow AsmMetadataTable self, u64[0 2 ** 63 - 1] index)
+    {
+        if (index < self.FunctionRows.Length)
+        {
+            return self.FunctionRows[index];
+        }
+
+        return 0;
     }
 
     public fn MemoryStatus AppendText(mut borrow AsmMetadataTable self, ascii text, out AsmTextRange range)
@@ -894,41 +960,50 @@ public struct AsmMetadataTable
 
     public fn MemoryStatus AppendInputOperand(mut borrow AsmMetadataTable self, AsmTextRange registerText, AsmTextRange valueText)
     {
-        if (!self.InputRows.TryReserve(1))
+        if (!self.InputRows.TryReserve(4))
         {
             return MemoryStatus.Err(MemoryError.OutOfMemory);
         }
 
-        stack mut AsmInputOperand row = new();
-        row.RegisterText = registerText;
-        row.ValueText = valueText;
-        init self.InputRows[self.InputRows.Length] = row;
+        init self.InputRows[self.InputRows.Length] = registerText.Start();
+        init self.InputRows[self.InputRows.Length] = registerText.Length();
+        init self.InputRows[self.InputRows.Length] = valueText.Start();
+        init self.InputRows[self.InputRows.Length] = valueText.Length();
         return MemoryStatus.Ok;
     }
 
     public fn MemoryStatus AppendOutputOperand(mut borrow AsmMetadataTable self, AsmTextRange registerText, AsmTextRange valueText, bool bindsReturn)
     {
-        if (!self.OutputRows.TryReserve(1))
+        if (!self.OutputRows.TryReserve(5))
         {
             return MemoryStatus.Err(MemoryError.OutOfMemory);
         }
 
-        stack mut AsmOutputOperand row = new();
-        row.RegisterText = registerText;
-        row.ValueText = valueText;
-        row.ReturnBinding = bindsReturn;
-        init self.OutputRows[self.OutputRows.Length] = row;
+        init self.OutputRows[self.OutputRows.Length] = registerText.Start();
+        init self.OutputRows[self.OutputRows.Length] = registerText.Length();
+        init self.OutputRows[self.OutputRows.Length] = valueText.Start();
+        init self.OutputRows[self.OutputRows.Length] = valueText.Length();
+        if (bindsReturn)
+        {
+            init self.OutputRows[self.OutputRows.Length] = 1;
+        }
+        else
+        {
+            init self.OutputRows[self.OutputRows.Length] = 0;
+        }
+
         return MemoryStatus.Ok;
     }
 
     public fn MemoryStatus AppendClobber(mut borrow AsmMetadataTable self, AsmTextRange registerText)
     {
-        if (!self.ClobberRows.TryReserve(1))
+        if (!self.ClobberRows.TryReserve(2))
         {
             return MemoryStatus.Err(MemoryError.OutOfMemory);
         }
 
-        init self.ClobberRows[self.ClobberRows.Length] = registerText;
+        init self.ClobberRows[self.ClobberRows.Length] = registerText.Start();
+        init self.ClobberRows[self.ClobberRows.Length] = registerText.Length();
         return MemoryStatus.Ok;
     }
 
@@ -946,23 +1021,24 @@ public struct AsmMetadataTable
         out AsmFunctionId asmFunctionId)
     {
         asmFunctionId = new();
-        if (!self.FunctionRows.TryReserve(1))
+        if (!self.FunctionRows.TryReserve(10))
         {
             return MemoryStatus.Err(MemoryError.OutOfMemory);
         }
 
-        stack mut AsmFunctionMetadata row = new();
-        row.MirFunction = functionId;
-        row.ArchitectureValue = architecture;
-        row.TemplateText = templateText;
-        row.FirstInputRow = firstInput;
-        row.InputRowCount = inputCount;
-        row.FirstOutputRow = firstOutput;
-        row.OutputRowCount = outputCount;
-        row.FirstClobberRow = firstClobber;
-        row.ClobberRowCount = clobberCount;
-        init self.FunctionRows[self.FunctionRows.Length] = row;
-        asmFunctionId = AsmFunctionIdOf((u32[0 max])self.FunctionRows.Length);
+        stack u32[0 max] nextIndex = (u32[0 max])self.FunctionCount() + 1;
+        stack u32[0 max] architectureCode = AsmArchitectureStorageCode(architecture);
+        init self.FunctionRows[self.FunctionRows.Length] = functionId.Index();
+        init self.FunctionRows[self.FunctionRows.Length] = architectureCode;
+        init self.FunctionRows[self.FunctionRows.Length] = templateText.Start();
+        init self.FunctionRows[self.FunctionRows.Length] = templateText.Length();
+        init self.FunctionRows[self.FunctionRows.Length] = firstInput;
+        init self.FunctionRows[self.FunctionRows.Length] = inputCount;
+        init self.FunctionRows[self.FunctionRows.Length] = firstOutput;
+        init self.FunctionRows[self.FunctionRows.Length] = outputCount;
+        init self.FunctionRows[self.FunctionRows.Length] = firstClobber;
+        init self.FunctionRows[self.FunctionRows.Length] = clobberCount;
+        asmFunctionId = AsmFunctionIdOf(nextIndex);
         return MemoryStatus.Ok;
     }
 
@@ -970,10 +1046,20 @@ public struct AsmMetadataTable
     {
         if (id.Index() != 0)
         {
-            stack u64[0 2 ** 63 - 1] index = (u64[0 2 ** 63 - 1])(id.Index() - 1);
-            if (index < self.FunctionRows.Length)
+            stack u64[0 2 ** 63 - 1] index = (u64[0 2 ** 63 - 1])(id.Index() - 1) * 10;
+            if (index + 9 < self.FunctionRows.Length)
             {
-                return self.FunctionRows[index];
+                stack mut AsmFunctionMetadata row = new();
+                row.MirFunction = MirFuncIdOf(self.FunctionWordAt(index));
+                row.ArchitectureCode = self.FunctionWordAt(index + 1);
+                row.TemplateText = AsmTextRangeOf(self.FunctionWordAt(index + 2), self.FunctionWordAt(index + 3));
+                row.FirstInputRow = self.FunctionWordAt(index + 4);
+                row.InputRowCount = self.FunctionWordAt(index + 5);
+                row.FirstOutputRow = self.FunctionWordAt(index + 6);
+                row.OutputRowCount = self.FunctionWordAt(index + 7);
+                row.FirstClobberRow = self.FunctionWordAt(index + 8);
+                row.ClobberRowCount = self.FunctionWordAt(index + 9);
+                return row;
             }
         }
 
@@ -984,10 +1070,13 @@ public struct AsmMetadataTable
     {
         if (rowIndex != 0)
         {
-            stack u64[0 2 ** 63 - 1] index = (u64[0 2 ** 63 - 1])(rowIndex - 1);
-            if (index < self.InputRows.Length)
+            stack u64[0 2 ** 63 - 1] index = (u64[0 2 ** 63 - 1])(rowIndex - 1) * 4;
+            if (index + 3 < self.InputRows.Length)
             {
-                return self.InputRows[index];
+                stack mut AsmInputOperand row = new();
+                row.RegisterText = AsmTextRangeOf(self.InputWordAt(index), self.InputWordAt(index + 1));
+                row.ValueText = AsmTextRangeOf(self.InputWordAt(index + 2), self.InputWordAt(index + 3));
+                return row;
             }
         }
 
@@ -998,10 +1087,14 @@ public struct AsmMetadataTable
     {
         if (rowIndex != 0)
         {
-            stack u64[0 2 ** 63 - 1] index = (u64[0 2 ** 63 - 1])(rowIndex - 1);
-            if (index < self.OutputRows.Length)
+            stack u64[0 2 ** 63 - 1] index = (u64[0 2 ** 63 - 1])(rowIndex - 1) * 5;
+            if (index + 4 < self.OutputRows.Length)
             {
-                return self.OutputRows[index];
+                stack mut AsmOutputOperand row = new();
+                row.RegisterText = AsmTextRangeOf(self.OutputWordAt(index), self.OutputWordAt(index + 1));
+                row.ValueText = AsmTextRangeOf(self.OutputWordAt(index + 2), self.OutputWordAt(index + 3));
+                row.ReturnBinding = self.OutputWordAt(index + 4) != 0;
+                return row;
             }
         }
 
@@ -1012,10 +1105,10 @@ public struct AsmMetadataTable
     {
         if (rowIndex != 0)
         {
-            stack u64[0 2 ** 63 - 1] index = (u64[0 2 ** 63 - 1])(rowIndex - 1);
-            if (index < self.ClobberRows.Length)
+            stack u64[0 2 ** 63 - 1] index = (u64[0 2 ** 63 - 1])(rowIndex - 1) * 2;
+            if (index + 1 < self.ClobberRows.Length)
             {
-                return self.ClobberRows[index];
+                return AsmTextRangeOf(self.ClobberWordAt(index), self.ClobberWordAt(index + 1));
             }
         }
 

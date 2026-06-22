@@ -5806,7 +5806,7 @@ public fn MemoryStatus InspectPackageImageJson(borrow IrTable<u8[0 max]> buf, mu
 // reverse for loading.
 
 // Copies every byte of the image `src` into the byte buffer `dst`.
-public fn void ImageToByteBuffer(borrow IrTable<u8[0 max]> src, mut borrow DynamicByteBuffer dst)
+public fn bool ImageToByteBuffer(borrow IrTable<u8[0 max]> src, mut borrow DynamicByteBuffer dst)
 {
     stack u64[0 2 ** 63 - 1] count = src.Count();
     stack mut u32[0 max] i = 1;
@@ -5814,12 +5814,19 @@ public fn void ImageToByteBuffer(borrow IrTable<u8[0 max]> src, mut borrow Dynam
     {
         stack u8[0 max] b = src.Get(i);
         stack System.Memory.MemoryStatus ws = dst.WriteByte((i8[min max])b);
+        if (ws != System.Memory.MemoryStatus.Ok)
+        {
+            return false;
+        }
+
         i = i + 1;
     }
+
+    return true;
 }
 
 // Copies the readable bytes of `src` into the image `dst`.
-public fn void ImageFromByteBuffer(borrow DynamicByteBuffer src, mut borrow IrTable<u8[0 max]> dst)
+public fn bool ImageFromByteBuffer(borrow DynamicByteBuffer src, mut borrow IrTable<u8[0 max]> dst)
 {
     stack i8[min max][] bytes = src.ReadSlice();
     stack u64[0 2 ** 63 - 1] len = src.Readable();
@@ -5828,8 +5835,15 @@ public fn void ImageFromByteBuffer(borrow DynamicByteBuffer src, mut borrow IrTa
     {
         stack i8[min max] sb = bytes[i];
         stack u32[0 max] w = dst.Add((u8[0 max])sb);
+        if (w == 0)
+        {
+            return false;
+        }
+
         i = i + 1;
     }
+
+    return true;
 }
 
 // === On-disk package image (#32, end-to-end file round-trip) ===
@@ -5855,8 +5869,7 @@ internal fn bool ReadImageFile(ascii path, mut borrow IrTable<u8[0 max]> outBuf)
     switch (System.IO.File.ReadAllBytes(path))
     {
         case System.IO.IOResult<DynamicByteBuffer>.Ok(var contents):
-            ImageFromByteBuffer(contents, outBuf);
-            return true;
+            return ImageFromByteBuffer(contents, outBuf);
         case System.IO.IOResult<DynamicByteBuffer>.Err(var readError):
             return false;
     }
@@ -5881,7 +5894,11 @@ internal fn bool MakeTempPath(mut borrow OwnedAscii outPath, const ascii filenam
 public fn bool WritePackageImageBufferFile(ascii path, borrow IrTable<u8[0 max]> image)
 {
     stack mut DynamicByteBuffer dbuf = new();
-    ImageToByteBuffer(image, dbuf);
+    if (!ImageToByteBuffer(image, dbuf))
+    {
+        return false;
+    }
+
     return WriteImageFile(path, dbuf);
 }
 
@@ -6270,7 +6287,7 @@ internal fn bool MakeTempDir(mut borrow OwnedAscii outDir)
         case System.IO.IOResult<OwnedAscii>.Ok(var dir):
             stack mut OwnedAscii dirPath = dir;
             stack System.Memory.MemoryStatus appendDir = outDir.AppendAscii(dirPath.View());
-            return true;
+            return appendDir == System.Memory.MemoryStatus.Ok;
         case System.IO.IOResult<OwnedAscii>.Err(var dirError):
             return false;
     }
@@ -6292,13 +6309,27 @@ internal fn bool RunClangCapture(mut borrow System.Process.ProcessCommand comman
 {
     unsafe
     {
+        stack mut bool clangRan = false;
+        stack mut bool clangUnavailable = false;
         switch (System.Process.RunCapture(command))
         {
             case System.Process.ProcessResult<System.Process.ProcessOutput>.Ok(var ranOutput):
-                return NonEmptyFileExists(objPath);
+                clangRan = true;
             case System.Process.ProcessResult<System.Process.ProcessOutput>.Err(var runError):
-                return true;
+                clangUnavailable = true;
         }
+
+        if (clangUnavailable)
+        {
+            return true;
+        }
+
+        if (clangRan)
+        {
+            return NonEmptyFileExists(objPath);
+        }
+
+        return true;
     }
 }
 
@@ -6312,6 +6343,14 @@ internal fn bool RunClang(ascii llPath, ascii objPath)
             stack System.Process.ProcessStatus s2 = command.AddArgument(llPath);
             stack System.Process.ProcessStatus s3 = command.AddArgument("-o");
             stack System.Process.ProcessStatus s4 = command.AddArgument(objPath);
+            if (s1 != System.Process.ProcessStatus.Ok
+                || s2 != System.Process.ProcessStatus.Ok
+                || s3 != System.Process.ProcessStatus.Ok
+                || s4 != System.Process.ProcessStatus.Ok)
+            {
+                return false;
+            }
+
             return RunClangCapture(command, objPath);
         case System.Process.ProcessResult<System.Process.ProcessCommand>.Err(var cmdError):
             return true;
@@ -6335,9 +6374,21 @@ public fn bool CompileEmittedLlvmProducesObject(borrow IrTable<MirInstruction> i
     stack mut OwnedAscii objPath = new();
     stack System.Memory.MemoryStatus oa = objPath.AppendAscii(dir.View());
     stack System.Memory.MemoryStatus ob = objPath.AppendConstAscii("/module.o");
+    if (la != System.Memory.MemoryStatus.Ok
+        || lb != System.Memory.MemoryStatus.Ok
+        || oa != System.Memory.MemoryStatus.Ok
+        || ob != System.Memory.MemoryStatus.Ok)
+    {
+        return false;
+    }
 
     stack mut OwnedAscii text = new();
     stack System.Memory.MemoryStatus emitStatus = EmitLlvmModule(instrs, blocks, funcs, text);
+    if (emitStatus != System.Memory.MemoryStatus.Ok)
+    {
+        return false;
+    }
+
     if (!WriteAsciiFile(llPath.View(), text))
     {
         return false;
@@ -6366,6 +6417,13 @@ public fn bool ClangVerifiesLlvmText(borrow OwnedAscii text)
     stack mut OwnedAscii objPath = new();
     stack System.Memory.MemoryStatus oa = objPath.AppendAscii(dir.View());
     stack System.Memory.MemoryStatus ob = objPath.AppendConstAscii("/unit.o");
+    if (la != System.Memory.MemoryStatus.Ok
+        || lb != System.Memory.MemoryStatus.Ok
+        || oa != System.Memory.MemoryStatus.Ok
+        || ob != System.Memory.MemoryStatus.Ok)
+    {
+        return false;
+    }
 
     if (!WriteAsciiFile(llPath.View(), text))
     {
@@ -12280,6 +12338,7 @@ internal fn bool BuildModulePackageTablesWithAsmStream(
     mut borrow IrTable<MirBlock> blocks,
     mut borrow IrTable<MirFunction> funcs,
     mut borrow AsmMetadataTable asmMetadata)
+    where overlap(sourceText, source)
 {
     stack u64[0 2 ** 63 - 1] tokenCount = stream.Count();
     stack mut IrTable<ParamName> funcNames = new();
@@ -12351,12 +12410,6 @@ internal fn bool BuildModulePackageTablesWithAsmStream(
                 {
                     return false;
                 }
-
-                stack mut AsmFunctionId asmFunctionId = new();
-                if (!CollectAsmMetadataFromSignature(sourceText, stream, signature, asmFunction, asmMetadata, asmFunctionId))
-                {
-                    return false;
-                }
             }
             else
             {
@@ -12404,6 +12457,33 @@ internal fn bool BuildModulePackageTablesWithAsmStream(
         f = f + 1;
     }
 
+    stack mut u32[0 max] asmFunctionNumber = 0;
+    stack mut u64[0 2 ** 63 - 1] asmScan = 0;
+    while willexit (asmScan < tokenCount)
+    {
+        if (stream.KindAt(asmScan) == TokenKind.Fn)
+        {
+            asmFunctionNumber = asmFunctionNumber + 1;
+
+            stack mut Compiler.Parsing.FunctionSignature signature = new();
+            if (!ParseFunctionSignatureAt(stream, (u32[0 max])asmScan, signature))
+            {
+                return false;
+            }
+
+            if (signature.HasAsm())
+            {
+                stack mut AsmFunctionId asmFunctionId = new();
+                if (!CollectAsmMetadataFromSignature(sourceText, stream, signature, MirFuncIdOf(asmFunctionNumber), asmMetadata, asmFunctionId))
+                {
+                    return false;
+                }
+            }
+        }
+
+        asmScan = asmScan + 1;
+    }
+
     return true;
 }
 
@@ -12428,7 +12508,7 @@ public fn bool BuildModulePackageTablesWithAsm(
         case LexResult<TokenStream>.Err(var lexError):
             return false;
         case LexResult<TokenStream>.Ok(var stream):
-            return BuildModulePackageTablesWithAsmStream(stream, source, sourceBytes, instrs, blocks, funcs, asmMetadata);
+            return BuildModulePackageTablesWithAsmStream(stream, sourceText.View(), sourceBytes, instrs, blocks, funcs, asmMetadata);
     }
 
     return false;
