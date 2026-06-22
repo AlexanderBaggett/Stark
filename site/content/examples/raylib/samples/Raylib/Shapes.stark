@@ -72,6 +72,15 @@ public fn void DrawLineEx(Vector2 startPos, Vector2 endPos, f32 thick, Color col
     return;
 }
 
+[LinkName("DrawLineDashed")]
+internal unsafe ffi fn void stark_raylib_DrawLineDashed(Vector2 startPos, Vector2 endPos, i32[min max] dashSize, i32[min max] spaceSize, Color color);
+public fn void DrawLineDashed(Vector2 startPos, Vector2 endPos, i32[min max] dashSize, i32[min max] spaceSize, Color color) {
+    unsafe {
+        stark_raylib_DrawLineDashed(startPos, endPos, dashSize, spaceSize, color);
+    }
+    return;
+}
+
 [LinkName("DrawLineStrip")]
 internal unsafe ffi fn void stark_raylib_DrawLineStrip(rawptr<Vector2> points, i32[min max] pointCount, Color color);
 public fn RaylibStatus DrawLineStrip(borrow Vector2[] points, Color color) {
@@ -170,11 +179,29 @@ public fn void DrawEllipse(i32[min max] centerX, i32[min max] centerY, f32 radiu
     return;
 }
 
+[LinkName("DrawEllipseV")]
+internal unsafe ffi fn void stark_raylib_DrawEllipseV(Vector2 center, f32 radiusH, f32 radiusV, Color color);
+public fn void DrawEllipseV(Vector2 center, f32 radiusH, f32 radiusV, Color color) {
+    unsafe {
+        stark_raylib_DrawEllipseV(center, radiusH, radiusV, color);
+    }
+    return;
+}
+
 [LinkName("DrawEllipseLines")]
 internal unsafe ffi fn void stark_raylib_DrawEllipseLines(i32[min max] centerX, i32[min max] centerY, f32 radiusH, f32 radiusV, Color color);
 public fn void DrawEllipseLines(i32[min max] centerX, i32[min max] centerY, f32 radiusH, f32 radiusV, Color color) {
     unsafe {
         stark_raylib_DrawEllipseLines(centerX, centerY, radiusH, radiusV, color);
+    }
+    return;
+}
+
+[LinkName("DrawEllipseLinesV")]
+internal unsafe ffi fn void stark_raylib_DrawEllipseLinesV(Vector2 center, f32 radiusH, f32 radiusV, Color color);
+public fn void DrawEllipseLinesV(Vector2 center, f32 radiusH, f32 radiusV, Color color) {
+    unsafe {
+        stark_raylib_DrawEllipseLinesV(center, radiusH, radiusV, color);
     }
     return;
 }

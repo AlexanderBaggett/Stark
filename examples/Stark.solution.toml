@@ -21,6 +21,7 @@ members = [
   "data-model",
   "static-library",
   "standard-library-tests",
+  "sqlite",
 ]
 
 [defaults]
@@ -69,6 +70,7 @@ data-model = "data-model"
 static-library = "static-library"
 standard-library-tests = "standard-library-tests"
 stdlib-tests = "standard-library-tests"
+sqlite = "sqlite"
 
 [profiles.dev]
 opt = 0

@@ -1,0 +1,617 @@
+import System.C
+import System.Text
+import Vendor.SQLite.Types
+export import Vendor.SQLite.Types
+module Vendor.SQLite.Core
+
+internal unsafe ffi(c) fn rawptr<System.C.c_char> sqlite3_libversion();
+internal unsafe ffi(c) fn System.C.c_int sqlite3_libversion_number();
+internal unsafe ffi(c) fn System.C.c_int sqlite3_threadsafe();
+internal unsafe ffi(c) fn rawptr<System.C.c_char> sqlite3_errstr(System.C.c_int code);
+internal unsafe ffi(c) fn rawptr<System.C.c_char> sqlite3_errmsg(rawmutptr<SQLite3Native> database);
+internal unsafe ffi(c) fn System.C.c_int sqlite3_open_v2(
+    rawptr<System.C.c_char> filename,
+    rawmutptr<rawmutptr<SQLite3Native>> database,
+    System.C.c_int flags,
+    rawptr<System.C.c_char> vfs);
+internal unsafe ffi(c) fn System.C.c_int sqlite3_exec(
+    rawmutptr<SQLite3Native> database,
+    rawptr<System.C.c_char> sql,
+    rawptr<System.C.c_void> callback,
+    rawptr<System.C.c_void> callbackContext,
+    rawmutptr<rawmutptr<System.C.c_char>> errorMessage);
+internal unsafe ffi(c) fn System.C.c_int sqlite3_prepare_v2(
+    rawmutptr<SQLite3Native> database,
+    rawptr<System.C.c_char> sql,
+    System.C.c_int byteCount,
+    rawmutptr<rawmutptr<SQLite3StatementNative>> statement,
+    rawmutptr<rawptr<System.C.c_char>> tail);
+internal unsafe ffi(c) fn System.C.c_int sqlite3_step(rawmutptr<SQLite3StatementNative> statement);
+internal unsafe ffi(c) fn System.C.c_int sqlite3_reset(rawmutptr<SQLite3StatementNative> statement);
+internal unsafe ffi(c) fn System.C.c_int sqlite3_clear_bindings(rawmutptr<SQLite3StatementNative> statement);
+internal unsafe ffi(c) fn System.C.c_int sqlite3_bind_null(rawmutptr<SQLite3StatementNative> statement, System.C.c_int index);
+internal unsafe ffi(c) fn System.C.c_int sqlite3_bind_int64(rawmutptr<SQLite3StatementNative> statement, System.C.c_int index, i64[min max] value);
+internal unsafe ffi(c) fn System.C.c_int sqlite3_bind_double(rawmutptr<SQLite3StatementNative> statement, System.C.c_int index, f64 value);
+internal unsafe ffi(c) fn System.C.c_int stark_sqlite_bind_text_transient(
+    rawmutptr<SQLite3StatementNative> statement,
+    System.C.c_int index,
+    rawptr<System.C.c_char> text,
+    System.C.c_int byteCount);
+internal unsafe ffi(c) fn System.C.c_int sqlite3_bind_parameter_index(rawmutptr<SQLite3StatementNative> statement, rawptr<System.C.c_char> name);
+internal unsafe ffi(c) fn System.C.c_int sqlite3_column_count(rawmutptr<SQLite3StatementNative> statement);
+internal unsafe ffi(c) fn i64[min max] sqlite3_column_int64(rawmutptr<SQLite3StatementNative> statement, System.C.c_int column);
+internal unsafe ffi(c) fn f64 sqlite3_column_double(rawmutptr<SQLite3StatementNative> statement, System.C.c_int column);
+internal unsafe ffi(c) fn rawptr<u8[0 max]> sqlite3_column_text(rawmutptr<SQLite3StatementNative> statement, System.C.c_int column);
+internal unsafe ffi(c) fn System.C.c_int sqlite3_column_bytes(rawmutptr<SQLite3StatementNative> statement, System.C.c_int column);
+internal unsafe ffi(c) fn System.C.c_int sqlite3_column_type(rawmutptr<SQLite3StatementNative> statement, System.C.c_int column);
+internal unsafe ffi(c) fn rawptr<System.C.c_char> sqlite3_column_name(rawmutptr<SQLite3StatementNative> statement, System.C.c_int column);
+internal unsafe ffi(c) fn i64[min max] sqlite3_last_insert_rowid(rawmutptr<SQLite3Native> database);
+internal unsafe ffi(c) fn i64[min max] sqlite3_changes64(rawmutptr<SQLite3Native> database);
+
+internal finite law SQLiteError FromCStringError(System.C.CStringError error)
+{
+    return SQLiteError.CString(error);
+}
+
+internal finite law SQLiteStatusResult OperationFromCode(System.C.c_int code)
+{
+    return StatusResultFromCode((i32[min max])code);
+}
+
+internal unsafe fn SQLiteTextResult CopyCText(rawptr<System.C.c_char> text, u64[0 2 ** 63 - 1] maxLength)
+{
+    unsafe
+    {
+        stack System.C.CStringResult<System.C.CStr> viewResult = System.C.TryFromRawBounded(text, maxLength);
+        switch (viewResult)
+        {
+            case System.C.CStringResult<System.C.CStr>.Err(var error):
+                return SQLiteTextResult.Err(FromCStringError(error));
+            case System.C.CStringResult<System.C.CStr>.Ok(var view):
+                stack System.C.CStringResult<System.Text.OwnedAscii> asciiResult = System.C.ToAscii(view);
+                switch (asciiResult)
+                {
+                    case System.C.CStringResult<System.Text.OwnedAscii>.Err(var asciiError):
+                        return SQLiteTextResult.Err(FromCStringError(asciiError));
+                    case System.C.CStringResult<System.Text.OwnedAscii>.Ok(var value):
+                        return SQLiteTextResult.Ok(value);
+                }
+        }
+    }
+}
+
+internal unsafe fn SQLiteTextResult CopyCTextWithLength(
+    rawptr<System.C.c_char> text,
+    u64[0 2 ** 63 - 1] length)
+{
+    unsafe
+    {
+        if (text == null)
+        {
+            return SQLiteTextResult.Err(SQLiteError.NullValue);
+        }
+
+        stack System.C.CStr view = System.C.FromRawUnchecked(text, length);
+        stack System.C.CStringResult<System.Text.OwnedAscii> asciiResult = System.C.ToAscii(view);
+        switch (asciiResult)
+        {
+            case System.C.CStringResult<System.Text.OwnedAscii>.Err(var error):
+                return SQLiteTextResult.Err(FromCStringError(error));
+            case System.C.CStringResult<System.Text.OwnedAscii>.Ok(var value):
+                return SQLiteTextResult.Ok(value);
+        }
+    }
+}
+
+internal fn SQLiteStatusResult RequireDatabaseHandle(borrow Database database)
+{
+    if (database.Handle == null)
+    {
+        return SQLiteStatusResult.Err(SQLiteError.NullHandle);
+    }
+
+    return SQLiteStatusResult.Ok;
+}
+
+internal fn SQLiteStatusResult RequireStatementHandle(borrow Statement statement)
+{
+    if (statement.Handle == null)
+    {
+        return SQLiteStatusResult.Err(SQLiteError.NullHandle);
+    }
+
+    return SQLiteStatusResult.Ok;
+}
+
+public fn SQLiteTextResult LibraryVersion(u16[1 4096] maxLength)
+{
+    unsafe
+    {
+        return CopyCText(sqlite3_libversion(), (u64[0 2 ** 63 - 1])maxLength);
+    }
+}
+
+public fn i32[min max] LibraryVersionNumber()
+{
+    unsafe
+    {
+        return (i32[min max])sqlite3_libversion_number();
+    }
+}
+
+public fn i32[min max] Threadsafe()
+{
+    unsafe
+    {
+        return (i32[min max])sqlite3_threadsafe();
+    }
+}
+
+public fn SQLiteTextResult StatusMessage(SQLiteStatus status, u16[1 4096] maxLength)
+{
+    unsafe
+    {
+        stack System.C.c_int code = Code(status);
+        return CopyCText(sqlite3_errstr(code), (u64[0 2 ** 63 - 1])maxLength);
+    }
+}
+
+public fn SQLiteDatabaseResult Open(ascii path, i32[min max] flags)
+{
+    stack System.C.CStringResult<System.C.OwnedCStr> pathResult = System.C.FromAscii(path);
+    switch (pathResult)
+    {
+        case System.C.CStringResult<System.C.OwnedCStr>.Err(var error):
+            return SQLiteDatabaseResult.Err(FromCStringError(error));
+        case System.C.CStringResult<System.C.OwnedCStr>.Ok(var cPath):
+            unsafe
+            {
+                stack mut rawmutptr<SQLite3Native> handle = null;
+                stack System.C.c_int nativeFlags = flags;
+                stack System.C.c_int status = sqlite3_open_v2(cPath.Data(), &handle, nativeFlags, null);
+                if (status != SQLITE_OK)
+                {
+                    if (handle != null)
+                    {
+                        sqlite3_close_v2(handle);
+                    }
+
+                    return SQLiteDatabaseResult.Err(SQLiteError.SQLite(StatusFromCode((i32[min max])status)));
+                }
+
+                if (handle == null)
+                {
+                    return SQLiteDatabaseResult.Err(SQLiteError.NullHandle);
+                }
+
+                return SQLiteDatabaseResult.Ok(new Database()
+                {
+                    Handle = handle
+                });
+            }
+    }
+}
+
+public fn SQLiteDatabaseResult OpenReadOnly(ascii path)
+{
+    return Open(path, SQLITE_OPEN_READONLY);
+}
+
+public fn SQLiteDatabaseResult OpenReadWrite(ascii path)
+{
+    return Open(path, SQLITE_OPEN_READWRITE);
+}
+
+public fn SQLiteDatabaseResult OpenReadWriteCreate(ascii path)
+{
+    return Open(path, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE);
+}
+
+public fn SQLiteDatabaseResult OpenInMemory()
+{
+    return Open(":memory:", SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_MEMORY);
+}
+
+public fn bool IsOpen(borrow Database database)
+{
+    return database.Handle != null;
+}
+
+public fn SQLiteStatusResult Close(mut borrow Database database)
+{
+    if (database.Handle == null)
+    {
+        return SQLiteStatusResult.Ok;
+    }
+
+    unsafe
+    {
+        stack System.C.c_int status = sqlite3_close_v2(database.Handle);
+        if (status == SQLITE_OK)
+        {
+            database.Handle = null;
+            return SQLiteStatusResult.Ok;
+        }
+
+        return SQLiteStatusResult.Err(SQLiteError.SQLite(StatusFromCode((i32[min max])status)));
+    }
+}
+
+public fn SQLiteTextResult ErrorMessage(borrow Database database, u16[1 4096] maxLength)
+{
+    if (database.Handle == null)
+    {
+        return SQLiteTextResult.Err(SQLiteError.NullHandle);
+    }
+
+    unsafe
+    {
+        return CopyCText(sqlite3_errmsg(database.Handle), (u64[0 2 ** 63 - 1])maxLength);
+    }
+}
+
+public fn SQLiteStatusResult Execute(mut borrow Database database, ascii sql)
+{
+    stack SQLiteStatusResult handleResult = RequireDatabaseHandle(database);
+    if (handleResult != SQLiteStatusResult.Ok)
+    {
+        return handleResult;
+    }
+
+    stack System.C.CStringResult<System.C.OwnedCStr> sqlResult = System.C.FromAscii(sql);
+    switch (sqlResult)
+    {
+        case System.C.CStringResult<System.C.OwnedCStr>.Err(var error):
+            return SQLiteStatusResult.Err(FromCStringError(error));
+        case System.C.CStringResult<System.C.OwnedCStr>.Ok(var cSql):
+            unsafe
+            {
+                stack System.C.c_int status = sqlite3_exec(database.Handle, cSql.Data(), null, null, null);
+                return OperationFromCode(status);
+            }
+    }
+}
+
+public fn SQLiteStatementResult Prepare(mut borrow Database database, ascii sql)
+{
+    stack SQLiteStatusResult handleResult = RequireDatabaseHandle(database);
+    if (handleResult != SQLiteStatusResult.Ok)
+    {
+        switch (handleResult)
+        {
+            case SQLiteStatusResult.Err(var error):
+                return SQLiteStatementResult.Err(error);
+            case SQLiteStatusResult.Ok:
+                return SQLiteStatementResult.Err(SQLiteError.NullHandle);
+        }
+    }
+
+    stack System.C.CStringResult<System.C.OwnedCStr> sqlResult = System.C.FromAscii(sql);
+    switch (sqlResult)
+    {
+        case System.C.CStringResult<System.C.OwnedCStr>.Err(var error):
+            return SQLiteStatementResult.Err(FromCStringError(error));
+        case System.C.CStringResult<System.C.OwnedCStr>.Ok(var cSql):
+            unsafe
+            {
+                stack mut rawmutptr<SQLite3StatementNative> statement = null;
+                stack System.C.c_int byteCount = -1;
+                stack System.C.c_int status = sqlite3_prepare_v2(database.Handle, cSql.Data(), byteCount, &statement, null);
+                if (status != SQLITE_OK)
+                {
+                    if (statement != null)
+                    {
+                        sqlite3_finalize(statement);
+                    }
+
+                    return SQLiteStatementResult.Err(SQLiteError.SQLite(StatusFromCode((i32[min max])status)));
+                }
+
+                if (statement == null)
+                {
+                    return SQLiteStatementResult.Err(SQLiteError.NoStatement);
+                }
+
+                return SQLiteStatementResult.Ok(new Statement()
+                {
+                    Handle = statement
+                });
+            }
+    }
+}
+
+public fn SQLiteStatusResult Finalize(mut borrow Statement statement)
+{
+    if (statement.Handle == null)
+    {
+        return SQLiteStatusResult.Ok;
+    }
+
+    unsafe
+    {
+        stack System.C.c_int status = sqlite3_finalize(statement.Handle);
+        statement.Handle = null;
+        return OperationFromCode(status);
+    }
+}
+
+public fn SQLiteStatusResult Reset(mut borrow Statement statement)
+{
+    stack SQLiteStatusResult handleResult = RequireStatementHandle(statement);
+    if (handleResult != SQLiteStatusResult.Ok)
+    {
+        return handleResult;
+    }
+
+    unsafe
+    {
+        return OperationFromCode(sqlite3_reset(statement.Handle));
+    }
+}
+
+public fn SQLiteStatusResult ClearBindings(mut borrow Statement statement)
+{
+    stack SQLiteStatusResult handleResult = RequireStatementHandle(statement);
+    if (handleResult != SQLiteStatusResult.Ok)
+    {
+        return handleResult;
+    }
+
+    unsafe
+    {
+        return OperationFromCode(sqlite3_clear_bindings(statement.Handle));
+    }
+}
+
+public fn SQLiteStepResult Step(mut borrow Statement statement)
+{
+    stack SQLiteStatusResult handleResult = RequireStatementHandle(statement);
+    if (handleResult != SQLiteStatusResult.Ok)
+    {
+        switch (handleResult)
+        {
+            case SQLiteStatusResult.Err(var error):
+                return SQLiteStepResult.Err(error);
+            case SQLiteStatusResult.Ok:
+                return SQLiteStepResult.Err(SQLiteError.NullHandle);
+        }
+    }
+
+    unsafe
+    {
+        stack System.C.c_int status = sqlite3_step(statement.Handle);
+        switch ((i32[min max])status)
+        {
+            case 100:
+                return SQLiteStepResult.Row;
+            case 101:
+                return SQLiteStepResult.Done;
+            default:
+                return SQLiteStepResult.Err(SQLiteError.SQLite(StatusFromCode((i32[min max])status)));
+        }
+    }
+}
+
+public fn SQLiteStatusResult BindNull(mut borrow Statement statement, u32[1 2147483647] index)
+{
+    stack SQLiteStatusResult handleResult = RequireStatementHandle(statement);
+    if (handleResult != SQLiteStatusResult.Ok)
+    {
+        return handleResult;
+    }
+
+    unsafe
+    {
+        stack System.C.c_int nativeIndex = (i32[min max])index;
+        return OperationFromCode(sqlite3_bind_null(statement.Handle, nativeIndex));
+    }
+}
+
+public fn SQLiteStatusResult BindInt64(mut borrow Statement statement, u32[1 2147483647] index, i64[min max] value)
+{
+    stack SQLiteStatusResult handleResult = RequireStatementHandle(statement);
+    if (handleResult != SQLiteStatusResult.Ok)
+    {
+        return handleResult;
+    }
+
+    unsafe
+    {
+        stack System.C.c_int nativeIndex = (i32[min max])index;
+        return OperationFromCode(sqlite3_bind_int64(statement.Handle, nativeIndex, value));
+    }
+}
+
+public fn SQLiteStatusResult BindInt(mut borrow Statement statement, u32[1 2147483647] index, i32[min max] value)
+{
+    return BindInt64(statement, index, (i64[min max])value);
+}
+
+public fn SQLiteStatusResult BindDouble(mut borrow Statement statement, u32[1 2147483647] index, f64 value)
+{
+    stack SQLiteStatusResult handleResult = RequireStatementHandle(statement);
+    if (handleResult != SQLiteStatusResult.Ok)
+    {
+        return handleResult;
+    }
+
+    unsafe
+    {
+        stack System.C.c_int nativeIndex = (i32[min max])index;
+        return OperationFromCode(sqlite3_bind_double(statement.Handle, nativeIndex, value));
+    }
+}
+
+public fn SQLiteStatusResult BindText(mut borrow Statement statement, u32[1 2147483647] index, ascii value)
+{
+    stack SQLiteStatusResult handleResult = RequireStatementHandle(statement);
+    if (handleResult != SQLiteStatusResult.Ok)
+    {
+        return handleResult;
+    }
+
+    stack System.C.CStringResult<System.C.OwnedCStr> valueResult = System.C.FromAscii(value);
+    switch (valueResult)
+    {
+        case System.C.CStringResult<System.C.OwnedCStr>.Err(var error):
+            return SQLiteStatusResult.Err(FromCStringError(error));
+        case System.C.CStringResult<System.C.OwnedCStr>.Ok(var cValue):
+            if (cValue.Length() > (u64[0 2 ** 63 - 1])(2 ** 31 - 1))
+            {
+                return SQLiteStatusResult.Err(SQLiteError.TooLarge);
+            }
+
+            unsafe
+            {
+                stack System.C.c_int nativeIndex = (i32[min max])index;
+                stack System.C.c_int byteCount = (i32[min max])cValue.Length();
+                return OperationFromCode(stark_sqlite_bind_text_transient(statement.Handle, nativeIndex, cValue.Data(), byteCount));
+            }
+    }
+}
+
+public fn i32[min max] BindParameterIndex(mut borrow Statement statement, ascii name)
+{
+    if (statement.Handle == null)
+    {
+        return 0;
+    }
+
+    stack System.C.CStringResult<System.C.OwnedCStr> nameResult = System.C.FromAscii(name);
+    switch (nameResult)
+    {
+        case System.C.CStringResult<System.C.OwnedCStr>.Err(var error):
+            return 0;
+        case System.C.CStringResult<System.C.OwnedCStr>.Ok(var cName):
+            unsafe
+            {
+                return (i32[min max])sqlite3_bind_parameter_index(statement.Handle, cName.Data());
+            }
+    }
+}
+
+public fn i32[min max] ColumnCount(borrow Statement statement)
+{
+    if (statement.Handle == null)
+    {
+        return 0;
+    }
+
+    unsafe
+    {
+        return (i32[min max])sqlite3_column_count(statement.Handle);
+    }
+}
+
+public fn SQLiteColumnType ColumnType(borrow Statement statement, u32[0 2147483647] column)
+{
+    if (statement.Handle == null)
+    {
+        return SQLiteColumnType.Unknown(SQLITE_MISUSE);
+    }
+
+    unsafe
+    {
+        stack System.C.c_int nativeColumn = (i32[min max])column;
+        return ColumnTypeFromCode((i32[min max])sqlite3_column_type(statement.Handle, nativeColumn));
+    }
+}
+
+public fn i64[min max] ColumnInt64(borrow Statement statement, u32[0 2147483647] column)
+{
+    if (statement.Handle == null)
+    {
+        return 0;
+    }
+
+    unsafe
+    {
+        stack System.C.c_int nativeColumn = (i32[min max])column;
+        return sqlite3_column_int64(statement.Handle, nativeColumn);
+    }
+}
+
+public fn i32[min max] ColumnInt(borrow Statement statement, u32[0 2147483647] column)
+{
+    return (i32[min max])ColumnInt64(statement, column);
+}
+
+public fn f64 ColumnDouble(borrow Statement statement, u32[0 2147483647] column)
+{
+    if (statement.Handle == null)
+    {
+        return 0.0;
+    }
+
+    unsafe
+    {
+        stack System.C.c_int nativeColumn = (i32[min max])column;
+        return sqlite3_column_double(statement.Handle, nativeColumn);
+    }
+}
+
+public fn SQLiteTextResult ColumnText(borrow Statement statement, u32[0 2147483647] column)
+{
+    if (statement.Handle == null)
+    {
+        return SQLiteTextResult.Err(SQLiteError.NullHandle);
+    }
+
+    if (ColumnType(statement, column) == SQLiteColumnType.Null)
+    {
+        return SQLiteTextResult.Err(SQLiteError.NullValue);
+    }
+
+    unsafe
+    {
+        stack System.C.c_int nativeColumn = (i32[min max])column;
+        stack rawptr<u8[0 max]> text = sqlite3_column_text(statement.Handle, nativeColumn);
+        stack System.C.c_int byteCount = sqlite3_column_bytes(statement.Handle, nativeColumn);
+        if (byteCount < 0)
+        {
+            return SQLiteTextResult.Err(SQLiteError.SQLite(SQLiteStatus.Range));
+        }
+
+        return CopyCTextWithLength((rawptr<System.C.c_char>)text, (u64[0 2 ** 63 - 1])byteCount);
+    }
+}
+
+public fn SQLiteTextResult ColumnName(borrow Statement statement, u32[0 2147483647] column, u16[1 4096] maxLength)
+{
+    if (statement.Handle == null)
+    {
+        return SQLiteTextResult.Err(SQLiteError.NullHandle);
+    }
+
+    unsafe
+    {
+        stack System.C.c_int nativeColumn = (i32[min max])column;
+        return CopyCText(sqlite3_column_name(statement.Handle, nativeColumn), (u64[0 2 ** 63 - 1])maxLength);
+    }
+}
+
+public fn i64[min max] LastInsertRowId(borrow Database database)
+{
+    if (database.Handle == null)
+    {
+        return 0;
+    }
+
+    unsafe
+    {
+        return sqlite3_last_insert_rowid(database.Handle);
+    }
+}
+
+public fn i64[min max] Changes(borrow Database database)
+{
+    if (database.Handle == null)
+    {
+        return 0;
+    }
+
+    unsafe
+    {
+        return sqlite3_changes64(database.Handle);
+    }
+}
