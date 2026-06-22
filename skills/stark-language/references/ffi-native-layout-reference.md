@@ -13,6 +13,18 @@ unsafe ffi fn i32[min max] native_value();
 unsafe ffi fn void native_draw(rawptr<NativeRectangle> rectangle);
 ```
 
+Use `[LinkName("foreign_symbol")]` when the Stark declaration name should
+differ from the linker symbol and the ABI shape already matches:
+
+```stark
+[LinkName("vendor_current_value")]
+unsafe ffi(c) fn i32[min max] CurrentValue();
+```
+
+`LinkName` is exact and zero-overhead. It does not change calling convention,
+parameter lowering, return lowering, ownership, unwinding, or safety. Use a C
+shim only when the native signature needs real ABI adaptation.
+
 Use C varargs only through an unsafe varargs declaration:
 
 ```stark
@@ -272,6 +284,33 @@ raw pointers (including `rawptr<System.C.c_void>`), fixed arrays of FFI-safe
 elements, and nested C/Explicit structs. Stark enums, dynamic storage, safe
 borrows, closures, trait objects, and owning heap values are rejected.
 
+For by-value C aggregate parameters and returns, `[StructLayout(C)]` plus
+`ffi(c)` is the contract. The source declaration keeps the named struct type,
+and the compiler lowers the FFI edge through the target C ABI carrier shape.
+Use `[LinkName("NativeSymbol")]` when the Stark declaration name differs from
+the C symbol; do not add a C shim merely to pass or return a C-layout aggregate
+by value.
+
+```stark
+[StructLayout(C)]
+public struct Vector2
+{
+    public f32 X;
+    public f32 Y;
+}
+
+[LinkName("GetMonitorPosition")]
+internal unsafe ffi(c) fn Vector2 raylib_GetMonitorPosition(i32[min max] monitor);
+
+[LinkName("DrawLineV")]
+internal unsafe ffi(c) fn void raylib_DrawLineV(Vector2 start, Vector2 end, Color tint);
+```
+
+On x86_64 System V this emits the same carrier forms Clang uses: `Vector2` as
+`<2 x float>`, `Vector3` as `<2 x float>, float`, `Vector4`/`Rectangle` as two
+`<2 x float>` carriers, and four-byte integer structs such as `Color` as one
+integer carrier. Larger aggregates use the target ABI's indirect form.
+
 Packed-field safety: a packed (misaligned) field reads/writes through unaligned
 loads and stores; taking a **safe borrow** of one is a compile-time error;
 taking a **raw pointer** to one is allowed in unsafe code and preserves the
@@ -357,6 +396,8 @@ Consumers should depend on the package, not repeat its linker settings.
 ## Boundary Checklist
 
 - Preserve foreign symbol spellings exactly.
+- Prefer `[LinkName("foreign_symbol")]` over a C rename shim when only the
+  external symbol name differs.
 - Declare underscore-leading C symbols directly, such as `__error`; bare `_`
   is still the discard token and pattern.
 - Keep unsafe blocks as small as the raw or foreign operation.

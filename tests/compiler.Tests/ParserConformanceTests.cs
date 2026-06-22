@@ -194,6 +194,46 @@ public sealed class ParserConformanceTests
             """
         },
         {
+            "ffi link name attribute parses on imported functions",
+            """
+            module Native
+
+            [LinkName("InitWindow")]
+            public unsafe ffi(c) fn void RaylibInitWindow(i32[min max] width, i32[min max] height, ascii title);
+
+            [LinkName("?Decorated@@YAHH@Z")]
+            internal unsafe ffi(c) fn i32[min max] Decorated(i32[min max] value);
+            """
+        },
+        {
+            "c layout aggregate ffi boundary declarations parse",
+            """
+            module Native
+
+            [StructLayout(C)]
+            public struct Vector2
+            {
+                public f32 X;
+                public f32 Y;
+            }
+
+            [StructLayout(C)]
+            public struct Rectangle
+            {
+                public f32 X;
+                public f32 Y;
+                public f32 Width;
+                public f32 Height;
+            }
+
+            [LinkName("GetMonitorPosition")]
+            internal unsafe ffi(c) fn Vector2 raylib_GetMonitorPosition(i32[min max] monitor);
+
+            [LinkName("DrawRectangleRec")]
+            internal unsafe ffi(c) fn void raylib_DrawRectangleRec(Rectangle rec, Vector2 origin);
+            """
+        },
+        {
             "underscore-leading ffi symbols parse while bare discard remains a pattern",
             """
             module Native

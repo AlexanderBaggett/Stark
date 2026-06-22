@@ -969,6 +969,48 @@ fn void Accept(
 }
 """);
 
+        // "ffi link name attribute parses on imported functions"
+        stack mut LlvmCompile c32 = CompileFull(
+            "valid-programs-parse-32-ffi-link-name-attribute",
+            raw"""
+module Native
+
+[LinkName("InitWindow")]
+public unsafe ffi(c) fn void RaylibInitWindow(i32[min max] width, i32[min max] height, ascii title);
+
+[LinkName("?Decorated@@YAHH@Z")]
+internal unsafe ffi(c) fn i32[min max] Decorated(i32[min max] value);
+""");
+
+        // "c layout aggregate ffi boundary declarations parse"
+        stack mut LlvmCompile c33 = CompileFull(
+            "valid-programs-parse-33-c-layout-aggregate-ffi-boundary-declarations",
+            raw"""
+module Native
+
+[StructLayout(C)]
+public struct Vector2
+{
+    public f32 X;
+    public f32 Y;
+}
+
+[StructLayout(C)]
+public struct Rectangle
+{
+    public f32 X;
+    public f32 Y;
+    public f32 Width;
+    public f32 Height;
+}
+
+[LinkName("GetMonitorPosition")]
+internal unsafe ffi(c) fn Vector2 raylib_GetMonitorPosition(i32[min max] monitor);
+
+[LinkName("DrawRectangleRec")]
+internal unsafe ffi(c) fn void raylib_DrawRectangleRec(Rectangle rec, Vector2 origin);
+""");
+
         return Succeeds(c01)
             && Succeeds(c02)
             && Succeeds(c03)
@@ -999,6 +1041,8 @@ fn void Accept(
             && Succeeds(c28)
             && Succeeds(c29)
             && Succeeds(c30)
-            && Succeeds(c31);
+            && Succeeds(c31)
+            && Succeeds(c32)
+            && Succeeds(c33);
     }
 }

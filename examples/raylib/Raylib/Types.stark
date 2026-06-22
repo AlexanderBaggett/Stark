@@ -2,25 +2,30 @@
 
 module Raylib.Types
 
+[StructLayout(C)]
 public struct RAudioBuffer {
     i8[min max] Opaque;
 }
 
+[StructLayout(C)]
 public struct RAudioProcessor {
     i8[min max] Opaque;
 }
 
+[StructLayout(C)]
 public struct Vector2 {
     f32 X;
     f32 Y;
 }
 
+[StructLayout(C)]
 public struct Vector3 {
     f32 X;
     f32 Y;
     f32 Z;
 }
 
+[StructLayout(C)]
 public struct Vector4 {
     f32 X;
     f32 Y;
@@ -28,6 +33,7 @@ public struct Vector4 {
     f32 W;
 }
 
+[StructLayout(C)]
 public struct Matrix {
     f32 M0;
     f32 M4;
@@ -47,6 +53,7 @@ public struct Matrix {
     f32 M15;
 }
 
+[StructLayout(C)]
 public struct Color {
     u8[0 max] R;
     u8[0 max] G;
@@ -54,6 +61,7 @@ public struct Color {
     u8[0 max] A;
 }
 
+[StructLayout(C)]
 public struct Rectangle {
     f32 X;
     f32 Y;
@@ -61,6 +69,7 @@ public struct Rectangle {
     f32 Height;
 }
 
+[StructLayout(C)]
 public struct Image {
     rawmutptr<i8[min max]> Data;
     i32[min max] Width;
@@ -69,6 +78,7 @@ public struct Image {
     i32[min max] Format;
 }
 
+[StructLayout(C)]
 public struct Texture {
     u32[0 max] Id;
     i32[min max] Width;
@@ -77,12 +87,14 @@ public struct Texture {
     i32[min max] Format;
 }
 
+[StructLayout(C)]
 public struct RenderTexture {
     u32[0 max] Id;
     Texture Texture;
     Texture Depth;
 }
 
+[StructLayout(C)]
 public struct NPatchInfo {
     Rectangle Source;
     i32[min max] Left;
@@ -92,6 +104,7 @@ public struct NPatchInfo {
     i32[min max] Layout;
 }
 
+[StructLayout(C)]
 public struct GlyphInfo {
     i32[min max] Value;
     i32[min max] OffsetX;
@@ -100,6 +113,7 @@ public struct GlyphInfo {
     Image Image;
 }
 
+[StructLayout(C)]
 public struct Font {
     i32[min max] BaseSize;
     i32[min max] GlyphCount;
@@ -109,6 +123,7 @@ public struct Font {
     rawmutptr<GlyphInfo> Glyphs;
 }
 
+[StructLayout(C)]
 public struct Camera3D {
     Vector3 Position;
     Vector3 Target;
@@ -117,6 +132,7 @@ public struct Camera3D {
     i32[min max] Projection;
 }
 
+[StructLayout(C)]
 public struct Camera2D {
     Vector2 Offset;
     Vector2 Target;
@@ -124,6 +140,7 @@ public struct Camera2D {
     f32 Zoom;
 }
 
+[StructLayout(C)]
 public struct Mesh {
     i32[min max] VertexCount;
     i32[min max] TriangleCount;
@@ -144,34 +161,40 @@ public struct Mesh {
     rawmutptr<u32[0 max]> VboId;
 }
 
+[StructLayout(C)]
 public struct Shader {
     u32[0 max] Id;
     rawmutptr<i32[min max]> Locs;
 }
 
+[StructLayout(C)]
 public struct MaterialMap {
     Texture2D Texture;
     Color Color;
     f32 Value;
 }
 
+[StructLayout(C)]
 public struct Material {
     Shader Shader;
     rawmutptr<MaterialMap> Maps;
     f32[4] Params;
 }
 
+[StructLayout(C)]
 public struct Transform {
     Vector3 Translation;
     Quaternion Rotation;
     Vector3 Scale;
 }
 
+[StructLayout(C)]
 public struct BoneInfo {
     i8[min max][32] Name;
     i32[min max] Parent;
 }
 
+[StructLayout(C)]
 public struct Model {
     Matrix Transform;
     i32[min max] MeshCount;
@@ -184,7 +207,7 @@ public struct Model {
     rawmutptr<Transform> BindPose;
 }
 
-[Platform]
+[Platform, StructLayout(C)]
 public struct ModelAnimation {
     i32[min max] BoneCount;
     i32[min max] FrameCount;
@@ -193,11 +216,13 @@ public struct ModelAnimation {
     i8[min max][32] Name;
 }
 
+[StructLayout(C)]
 public struct Ray {
     Vector3 Position;
     Vector3 Direction;
 }
 
+[StructLayout(C)]
 public struct RayCollision {
     bool Hit;
     f32 Distance;
@@ -205,11 +230,13 @@ public struct RayCollision {
     Vector3 Normal;
 }
 
+[StructLayout(C)]
 public struct BoundingBox {
     Vector3 Min;
     Vector3 Max;
 }
 
+[StructLayout(C)]
 public struct Wave {
     u32[0 max] FrameCount;
     u32[0 max] SampleRate;
@@ -218,6 +245,7 @@ public struct Wave {
     rawmutptr<i8[min max]> Data;
 }
 
+[StructLayout(C)]
 public struct AudioStream {
     rawmutptr<RAudioBuffer> Buffer;
     rawmutptr<RAudioProcessor> Processor;
@@ -226,11 +254,13 @@ public struct AudioStream {
     u32[0 max] Channels;
 }
 
+[StructLayout(C)]
 public struct Sound {
     AudioStream Stream;
     u32[0 max] FrameCount;
 }
 
+[StructLayout(C)]
 public struct Music {
     AudioStream Stream;
     u32[0 max] FrameCount;
@@ -239,6 +269,7 @@ public struct Music {
     rawmutptr<i8[min max]> CtxData;
 }
 
+[StructLayout(C)]
 public struct VrDeviceInfo {
     i32[min max] HResolution;
     i32[min max] VResolution;
@@ -251,6 +282,7 @@ public struct VrDeviceInfo {
     f32[4] ChromaAbCorrection;
 }
 
+[StructLayout(C)]
 public struct VrStereoConfig {
     Matrix[2] Projection;
     Matrix[2] ViewOffset;
@@ -262,23 +294,36 @@ public struct VrStereoConfig {
     f32[2] ScaleIn;
 }
 
-[Platform]
+[Platform, StructLayout(C)]
 public struct FilePathList {
     u32[0 max] Capacity;
     u32[0 max] Count;
     rawmutptr<rawptr<i8[min max]>> Paths;
 }
 
+[StructLayout(C)]
 public struct AutomationEvent {
     u32[0 max] Frame;
     u32[0 max] Type;
     i32[min max][4] Params;
 }
 
+[StructLayout(C)]
 public struct AutomationEventList {
     u32[0 max] Capacity;
     u32[0 max] Count;
     rawmutptr<AutomationEvent> Events;
+}
+
+public enum RaylibStatus {
+    Ok,
+    TooManyItems,
+    InvalidArgument,
+}
+
+public struct CollisionPointResult {
+    bool Hit;
+    Vector2 Point;
 }
 
 public alias Quaternion = Vector4;

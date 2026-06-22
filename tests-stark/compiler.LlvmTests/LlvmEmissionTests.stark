@@ -1188,6 +1188,68 @@ export unsafe fn i32[min max] main()
     }
 }
 
+// Ported from LlvmIrEmissionTests.FfiLinkNameControlsLlvmDeclarationAndCallTarget.
+[Fact]
+[Collection("ffi")]
+fn bool FfiLinkNameControlsLlvmDeclarationAndCallTarget()
+{
+    {
+        stack mut LlvmCompile compiled = CompileLlvm(
+            "llvm-ffi-link-name-declaration-call-target",
+            raw"""
+module Demo
+
+[LinkName("native_add_i32")]
+unsafe ffi(c) fn i32[min max] AddAlias(i32[min max] left, i32[min max] right);
+
+export unsafe fn i32[min max] main(i32[min max] value)
+{
+    return AddAlias(value, 1);
+}
+""");
+        if (!Succeeds(compiled))
+        {
+            return false;
+        }
+
+        stack ascii llvm = Llvm(compiled);
+        return Contains(llvm, "declare i32 @native_add_i32(i32, i32) nounwind")
+            && Contains(llvm, "call i32 @native_add_i32(i32 %arg_value")
+            && DoesNotContain(llvm, "@AddAlias");
+    }
+}
+
+// Ported from LlvmIrEmissionTests.FfiLinkNameControlsFunctionAddressSymbol.
+[Fact]
+[Collection("ffi")]
+fn bool FfiLinkNameControlsFunctionAddressSymbol()
+{
+    {
+        stack mut LlvmCompile compiled = CompileLlvm(
+            "llvm-ffi-link-name-function-address-symbol",
+            raw"""
+module Demo
+
+[LinkName("native_scale_i32")]
+unsafe ffi(c) fn i32[min max] ScaleAlias(i32[min max] value);
+
+export unsafe fn i32[min max] main(i32[min max] value)
+{
+    stack fnptr<unsafe ffi(c) fn i32[min max](i32[min max])> op = ScaleAlias;
+    return op(value);
+}
+""");
+        if (!Succeeds(compiled))
+        {
+            return false;
+        }
+
+        stack ascii llvm = Llvm(compiled);
+        return Contains(llvm, "@native_scale_i32")
+            && DoesNotContain(llvm, "@ScaleAlias");
+    }
+}
+
 // ---------------------------------------------------------------------------
 // LlvmTextOrderedComparisonEmissionTests
 // ---------------------------------------------------------------------------

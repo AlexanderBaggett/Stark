@@ -129,6 +129,34 @@ fn void Run()
     return FailsWithDiagnostic(compiled, "STK2111");
 }
 
+// Ported from TypeCheckingTests.InvalidLinkNameAttributesReportTargetedDiagnostic.
+internal fn bool InvalidLinkNameAttributesReportTargetedDiagnosticsImpl()
+{
+    stack mut LlvmCompile nonFfi = CompileTypeCheck(
+        "diagp1-link-name-non-ffi-function",
+        raw"""
+module Demo
+
+[LinkName("native_run")]
+fn void Run()
+{
+    return;
+}
+""");
+
+    stack mut LlvmCompile nonString = CompileTypeCheck(
+        "diagp1-link-name-non-string-argument",
+        raw"""
+module Demo
+
+[LinkName(native_run)]
+unsafe ffi(c) fn void Run();
+""");
+
+    return FailsWithDiagnosticMessage(nonFfi, "STK2114", "only valid on imported FFI function declarations")
+        && FailsWithDiagnosticMessage(nonString, "STK2114", "requires exactly one compile-time string literal argument");
+}
+
 // Ported from CompilerPipelineSyntaxModelTests.BackendOpaqueTypeAndContractAttributesReportDiagnostics.
 internal fn bool BackendOpaqueTypeAndContractAttributesReportDiagnosticsImpl()
 {

@@ -5,6 +5,56 @@ namespace compiler.Tests;
 
 public sealed class TypeCheckingTests
 {
+    public static TheoryData<string, string, string> InvalidLinkNamePrograms => new()
+    {
+        {
+            "non-FFI function",
+            """
+            module Demo
+
+            [LinkName("native_run")]
+            fn void Run()
+            {
+                return;
+            }
+            """,
+            "only valid on imported FFI function declarations"
+        },
+        {
+            "non-string argument",
+            """
+            module Demo
+
+            [LinkName(native_run)]
+            unsafe ffi(c) fn void Run();
+            """,
+            "requires exactly one compile-time string literal argument"
+        },
+        {
+            "empty string",
+            """
+            module Demo
+
+            [LinkName("")]
+            unsafe ffi(c) fn void Run();
+            """,
+            "cannot use an empty foreign symbol name"
+        },
+        {
+            "ffi asm declaration",
+            """
+            module Demo
+
+            [LinkName("native_run")]
+            unsafe ffi asm(x86_64) fn void Run()
+            {
+                ""
+            }
+            """,
+            "cannot be used with 'ffi asm(...)'"
+        }
+    };
+
     [Fact]
     public void IntegerExponentiationTypeChecks()
     {
@@ -19,6 +69,19 @@ public sealed class TypeCheckingTests
             """);
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+
+    [Theory]
+    [MemberData(nameof(InvalidLinkNamePrograms))]
+    public void InvalidLinkNameAttributesReportTargetedDiagnostic(string scenario, string source, string messageFragment)
+    {
+        var result = Compile(source, new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded, $"{scenario} should fail.");
+        Assert.Contains(
+            result.Diagnostics,
+            diagnostic => diagnostic.Code == "STK2114"
+                && diagnostic.Message.Contains(messageFragment, StringComparison.Ordinal));
     }
 
     [Fact]

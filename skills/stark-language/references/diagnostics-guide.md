@@ -375,7 +375,6 @@ For native package errors, fix the package that owns the FFI boundary.
 
 ```toml
 [native]
-sources = ["RaylibNative.c"]
 pkg-config = ["raylib"]
 ```
 

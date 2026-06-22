@@ -122,6 +122,10 @@ internal static class LlvmAggregateEmissionSupport
             StarkTypeKind.Float when normalizedType.BitWidth is int bitWidth
                 => TryGetTargetAwareScalarLayout(bitWidth, isFloat: true, targetInfo),
             StarkTypeKind.RawPointer or StarkTypeKind.FunctionPointer or StarkTypeKind.Null => TryGetTargetAwarePointerLayout(targetInfo),
+            StarkTypeKind.LlvmVector when normalizedType.ElementType is not null && normalizedType.FixedLength is int vectorLength
+                => TryGetTargetAwareLlvmVectorLayout(normalizedType.ElementType, vectorLength, targetInfo, namedTypes, enumLayouts, activeNamedTypes),
+            StarkTypeKind.LlvmStruct when normalizedType.TypeArguments is { Count: > 0 } fields
+                => TryGetTargetAwareLlvmStructLayout(fields, targetInfo, namedTypes, enumLayouts, activeNamedTypes),
             StarkTypeKind.Closure => TryGetTargetAwareClosureLayout(normalizedType, targetInfo),
             StarkTypeKind.Ascii or StarkTypeKind.Unicode or StarkTypeKind.Slice
                 => TryGetTargetAwareViewLayout(targetInfo),
@@ -187,6 +191,83 @@ internal static class LlvmAggregateEmissionSupport
         }
 
         return new ConcreteTypeLayout(pointerSizeBytes.Value, pointerAlignmentBytes.Value);
+    }
+
+    private static ConcreteTypeLayout? TryGetTargetAwareLlvmVectorLayout(
+        StarkTypeSymbol elementType,
+        int elementCount,
+        LlvmTargetInfo? targetInfo,
+        IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
+        IReadOnlyDictionary<string, EnumLayoutSymbol> enumLayouts,
+        ISet<string> activeNamedTypes)
+    {
+        if (elementCount <= 0)
+        {
+            return null;
+        }
+
+        var elementLayout = TryGetTargetAwareTypeLayout(elementType, targetInfo, namedTypes, enumLayouts, activeNamedTypes)
+            ?? ConcreteTypeLayoutHelper.TryGetConcreteTypeLayout(elementType, namedTypes, enumLayouts);
+        if (elementLayout is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            var sizeBytes = checked(elementLayout.SizeBytes * elementCount);
+            var alignmentBytes = TryGetVectorAlignmentBytesFromDataLayout(sizeBytes * 8, targetInfo)
+                ?? (sizeBytes <= 8 ? sizeBytes : 16);
+            return new ConcreteTypeLayout(sizeBytes, Math.Max(1, alignmentBytes));
+        }
+        catch (OverflowException)
+        {
+            return null;
+        }
+    }
+
+    private static ConcreteTypeLayout? TryGetTargetAwareLlvmStructLayout(
+        IReadOnlyList<StarkTypeSymbol> fields,
+        LlvmTargetInfo? targetInfo,
+        IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
+        IReadOnlyDictionary<string, EnumLayoutSymbol> enumLayouts,
+        ISet<string> activeNamedTypes)
+    {
+        try
+        {
+            var sizeBytes = 0;
+            var alignmentBytes = 1;
+            var fieldLayouts = new List<ConcreteFieldLayout>(fields.Count);
+
+            for (var index = 0; index < fields.Count; index++)
+            {
+                var field = fields[index];
+                var fieldLayout = TryGetTargetAwareTypeLayout(field, targetInfo, namedTypes, enumLayouts, activeNamedTypes)
+                    ?? ConcreteTypeLayoutHelper.TryGetConcreteTypeLayout(field, namedTypes, enumLayouts);
+                if (fieldLayout is null)
+                {
+                    return null;
+                }
+
+                var fieldOffsetBytes = AlignTo(sizeBytes, fieldLayout.AlignmentBytes);
+                fieldLayouts.Add(new ConcreteFieldLayout(
+                    $"field{index}",
+                    fieldOffsetBytes,
+                    fieldLayout.SizeBytes,
+                    fieldLayout.AlignmentBytes,
+                    fieldLayout.AlignmentBytes,
+                    IsMisaligned: false));
+                sizeBytes = checked(fieldOffsetBytes + fieldLayout.SizeBytes);
+                alignmentBytes = Math.Max(alignmentBytes, fieldLayout.AlignmentBytes);
+            }
+
+            sizeBytes = AlignTo(sizeBytes, alignmentBytes);
+            return new ConcreteTypeLayout(sizeBytes, alignmentBytes, fieldLayouts);
+        }
+        catch (OverflowException)
+        {
+            return null;
+        }
     }
 
     private static ConcreteTypeLayout? TryGetTargetAwareViewLayout(LlvmTargetInfo? targetInfo)
@@ -543,6 +624,34 @@ internal static class LlvmAggregateEmissionSupport
         }
 
         var prefix = $"{(isFloat ? 'f' : 'i')}{bitWidth}:";
+        foreach (var token in dataLayout.Split('-', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (!token.StartsWith(prefix, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var parts = token.Split(':', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (parts.Length < 2 || !int.TryParse(parts[1], out var alignBits))
+            {
+                continue;
+            }
+
+            return BitsToBytes(alignBits);
+        }
+
+        return null;
+    }
+
+    private static int? TryGetVectorAlignmentBytesFromDataLayout(int bitWidth, LlvmTargetInfo? targetInfo)
+    {
+        var dataLayout = targetInfo?.DataLayout;
+        if (string.IsNullOrWhiteSpace(dataLayout))
+        {
+            return null;
+        }
+
+        var prefix = $"v{bitWidth}:";
         foreach (var token in dataLayout.Split('-', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
             if (!token.StartsWith(prefix, StringComparison.Ordinal))

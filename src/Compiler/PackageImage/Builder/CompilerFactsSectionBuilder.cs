@@ -58,11 +58,7 @@ internal static partial class PackageImageBuilder
 
         manifest = new StarkPackageAbiFunctionManifest(
             QualifiedResolvedName: $"{module.SyntaxModel.ModuleName}.{resolvedLocalName}",
-            SymbolName: ComputePublishedPackageAbiSymbolName(
-                module.SyntaxModel.ModuleName,
-                declaration,
-                resolvedLocalName,
-                abiFunction.IsFfi),
+            SymbolName: abiFunction.SymbolName,
             SourceReturnType: BuildPublishedAbiTypeReference(abiFunction.SourceReturnType, module),
             LlvmReturnType: BuildPublishedAbiTypeReference(abiFunction.LlvmReturnType, module),
             Parameters: abiFunction.Parameters
@@ -72,14 +68,18 @@ internal static partial class PackageImageBuilder
                     BuildPublishedAbiTypeReference(parameter.SourceType, module),
                     BuildPublishedAbiTypeReference(parameter.LlvmType, module),
                     parameter.Kind.ToString().ToLowerInvariant(),
-                    parameter.RawPointerElementCountExpression))
+                    parameter.RawPointerElementCountExpression,
+                    parameter.LlvmParameterTypes is { Count: > 0 }
+                        ? parameter.LlvmParameterTypes.Select(type => BuildPublishedAbiTypeReference(type, module)).ToArray()
+                        : null))
                 .ToArray(),
             IsFfi: abiFunction.IsFfi,
             SourceName: abiFunction.SourceName,
             UsesFastCallingConvention: abiFunction.UsesFastCallingConvention,
             IsVarargs: abiFunction.IsVarargs,
             FfiAbi: abiFunction.FfiAbi is { } ffiAbi ? StarkFfiAbiFacts.DisplayName(ffiAbi) : null,
-            UsesTailCallingConvention: abiFunction.UsesTailCallingConvention);
+            UsesTailCallingConvention: abiFunction.UsesTailCallingConvention,
+            LinkName: abiFunction.IsFfi ? abiFunction.SymbolName : null);
         return true;
     }
 

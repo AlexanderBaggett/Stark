@@ -561,6 +561,8 @@ finite law bool IsDeclarationModifierKind(TokenKind kind)
             return true;
         case TokenKind.Ffi:
             return true;
+        case TokenKind.Asm:
+            return true;
         case TokenKind.Varargs:
             return true;
         case TokenKind.Unsafe:
@@ -582,20 +584,25 @@ finite law bool IsDeclarationModifierAt(borrow TokenStream stream, u32[0 max] to
     return IsDeclarationModifierKind(stream.KindAt((u64[0 2 ** 63 - 1])token));
 }
 
-finite law u32[0 max] MatchingCloseParenAfter(borrow TokenStream stream, u32[0 max] openParen)
+finite law u32[0 max] SkipBalancedParenSpan(borrow TokenStream stream, u32[0 max] openParen)
 {
     if (stream.KindAt((u64[0 2 ** 63 - 1])openParen) != TokenKind.LParen)
     {
         return openParen;
     }
 
-    stack mut u32[0 max] cursor = openParen;
     stack mut u32[0 max] depth = 0;
+    stack mut u32[0 max] index = openParen;
     stack mut u64[0 2 ** 63 - 1] guard = stream.Count();
     while willexit (guard > 0)
     {
         guard = (u64[0 2 ** 63 - 1])(guard - 1);
-        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])cursor);
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])index);
+        if (kind == TokenKind.EndOfFile)
+        {
+            return index;
+        }
+
         if (kind == TokenKind.LParen)
         {
             depth = (u32[0 max])(depth + 1);
@@ -609,15 +616,23 @@ finite law u32[0 max] MatchingCloseParenAfter(borrow TokenStream stream, u32[0 m
 
             if (depth == 0)
             {
-                return cursor;
+                return (u32[0 max])(index + 1);
             }
         }
-        else if (kind == TokenKind.EndOfFile)
-        {
-            return openParen;
-        }
 
-        cursor = (u32[0 max])(cursor + 1);
+        index = (u32[0 max])(index + 1);
+    }
+
+    return index;
+}
+
+finite law u32[0 max] MatchingCloseParenAfter(borrow TokenStream stream, u32[0 max] openParen)
+{
+    stack u32[0 max] after = SkipBalancedParenSpan(stream, openParen);
+    if (after > openParen
+        && stream.KindAt((u64[0 2 ** 63 - 1])(after - 1)) == TokenKind.RParen)
+    {
+        return (u32[0 max])(after - 1);
     }
 
     return openParen;
@@ -625,28 +640,78 @@ finite law u32[0 max] MatchingCloseParenAfter(borrow TokenStream stream, u32[0 m
 
 finite law u32[0 max] SkipDeclarationModifierAt(borrow TokenStream stream, u32[0 max] token)
 {
-    if (IsContextualTailToken(stream, token))
+    if (!IsDeclarationModifierAt(stream, token))
     {
-        return token + 1;
+        return token;
     }
 
     stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])token);
     if ((kind == TokenKind.Ffi || kind == TokenKind.Asm)
         && stream.KindAt((u64[0 2 ** 63 - 1])(token + 1)) == TokenKind.LParen)
     {
-        stack u32[0 max] close = MatchingCloseParenAfter(stream, (u32[0 max])(token + 1));
-        if (close > token + 1)
-        {
-            return close + 1;
-        }
+        return SkipBalancedParenSpan(stream, (u32[0 max])(token + 1));
     }
 
-    if (IsDeclarationModifierKind(kind))
+    return (u32[0 max])(token + 1);
+}
+
+finite law u32[0 max] SkipAttribute(borrow TokenStream stream, u32[0 max] start)
+{
+    if (stream.KindAt((u64[0 2 ** 63 - 1])start) != TokenKind.LBrack)
     {
-        return token + 1;
+        return start;
     }
 
-    return token;
+    stack mut u32[0 max] index = start;
+    stack mut u32[0 max] depth = 0;
+    stack mut u64[0 2 ** 63 - 1] guard = stream.Count();
+    while willexit (guard > 0)
+    {
+        guard = (u64[0 2 ** 63 - 1])(guard - 1);
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])index);
+        if (kind == TokenKind.EndOfFile)
+        {
+            return index;
+        }
+
+        if (kind == TokenKind.LBrack)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == TokenKind.RBrack)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+
+            if (depth == 0)
+            {
+                return (u32[0 max])(index + 1);
+            }
+        }
+
+        index = (u32[0 max])(index + 1);
+    }
+
+    return index;
+}
+
+finite law u32[0 max] SkipDeclarationAttributes(borrow TokenStream stream, u32[0 max] start)
+{
+    stack mut u32[0 max] cursor = start;
+    while willexit (stream.KindAt((u64[0 2 ** 63 - 1])cursor) == TokenKind.LBrack)
+    {
+        stack u32[0 max] next = SkipAttribute(stream, cursor);
+        if (next <= cursor)
+        {
+            return cursor;
+        }
+
+        cursor = next;
+    }
+
+    return cursor;
 }
 
 finite law bool ModifierSpanHasTail(borrow TokenStream stream, u32[0 max] start, u32[0 max] endExclusive)
@@ -753,16 +818,16 @@ public fn ParseResult<DeclarationList> ParseDeclarations(borrow TokenStream stre
 
     while willexit (stream.KindAt((u64[0 2 ** 63 - 1])index) != TokenKind.EndOfFile)
     {
-        stack mut u32[0 max] cursor = index;
-        while willexit (true)
+        stack mut u32[0 max] cursor = SkipDeclarationAttributes(stream, index);
+        while willexit (IsDeclarationModifierAt(stream, cursor))
         {
-            stack u32[0 max] next = SkipDeclarationModifierAt(stream, cursor);
-            if (next == cursor)
+            stack u32[0 max] nextModifier = SkipDeclarationModifierAt(stream, cursor);
+            if (nextModifier <= cursor)
             {
                 break;
             }
 
-            cursor = next;
+            cursor = nextModifier;
         }
 
         stack DeclarationKind kind = ClassifyDeclarationKind(stream.KindAt((u64[0 2 ** 63 - 1])cursor));
@@ -1484,7 +1549,13 @@ public fn ParseResult<FieldList> ParseStructFields(borrow TokenStream stream, u3
         stack mut u32[0 max] cursor = memberStart;
         while willexit (IsDeclarationModifierAt(stream, cursor))
         {
-            cursor = (u32[0 max])(cursor + 1);
+            stack u32[0 max] nextModifier = SkipDeclarationModifierAt(stream, cursor);
+            if (nextModifier <= cursor)
+            {
+                break;
+            }
+
+            cursor = nextModifier;
         }
 
         stack DeclarationKind kind = ClassifyDeclarationKind(stream.KindAt((u64[0 2 ** 63 - 1])cursor));

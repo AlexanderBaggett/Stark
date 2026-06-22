@@ -171,17 +171,18 @@ build/<profile>/<target-triple>/<stage>/
 The current host driver writes Stage0 executable/library outputs under `bin`,
 saved native intermediates under `obj`, and test executables plus generated
 `[Fact]` runners under `tests`. Library package images go under `pkg` and can
-refer back to the static library with a relative path. Project builds search the
-active stage's `stdlib` directory for stage-local `System` artifacts, then the
-nearest repo `stdlib/dist` package images, then the nearest repo `stdlib/src`
-source tree for source-tree development, then bundled stdlib artifacts next to
-the active compiler distribution. Project builds do not use `STARK_PATH`; use
-manifest dependencies for ordinary packages, future explicit stdlib overrides,
+refer back to the static library with a relative path. Project builds search
+bundled library roots by import family: `System.*` uses `stdlib`, and `Vendor.*`
+uses `vendor`. For each root, discovery checks the active stage directory first,
+then the nearest repo `dist` package images, then the nearest repo `src` source
+tree for source-tree development, then bundled artifacts next to the active
+compiler distribution. Project builds do not use `STARK_PATH`; use manifest
+dependencies for ordinary packages, future explicit bundled-library overrides,
 or direct low-level compiler `-I` inputs instead. Stdlib artifact
 generation/routing, diagnostic, and artifact-export routing are still part of
 self-hosting prep.
-When a `System.*` import cannot be resolved, project builds report the searched
-stdlib paths and the active profile, target, and stage.
+When a `System.*` or `Vendor.*` import cannot be resolved, project builds report
+the searched bundled-library paths and the active profile, target, and stage.
 
 ## `Stark.toml`
 
@@ -209,13 +210,13 @@ Library form:
 
 ```toml
 [project]
-name = "raylib"
+name = "vendor"
 version = "0.1.0"
 kind = "library"
 
 [library]
-root = "Raylib.stark"
-output = "RaylibStark"
+root = "src/Vendor/Raylib.stark"
+output = "VendorRaylib"
 ```
 
 Test form:
@@ -300,7 +301,7 @@ finite law bool AddsMemberExamples(i32[min max] left, i32[min max] right, i32[mi
 name = "StarkRepo"
 members = [
   "stdlib",
-  "examples/raylib",
+  "vendor",
   "examples/breakout"
 ]
 
@@ -311,7 +312,7 @@ test = ["examples/standard-library-tests"]
 
 [aliases]
 breakout = "examples/breakout"
-raylib = "examples/raylib"
+vendor = "vendor"
 stdlib = "stdlib"
 
 [profiles.dev]
@@ -335,13 +336,15 @@ Path dependencies cover v1:
 
 ```toml
 [dependencies]
-raylib = { path = "../raylib" }
+vendor = { path = "../../vendor" }
 ```
 
 That handles multi project repos and native backed packages inside the same
-solution. `System.*` modules come from the standard library discovery path, so
-projects do not list `stdlib` as an ordinary dependency. Versioned and registry
-dependencies come later.
+solution. `System.*` modules come from the standard library discovery path, and
+`Vendor.*` modules come from bundled vendor discovery, so projects do not list
+`stdlib` as an ordinary dependency. A project may still depend on `vendor` when
+it wants to build the repo-local vendor package and consume its native metadata
+as an explicit path dependency. Versioned and registry dependencies come later.
 
 ## Native Packages
 
@@ -349,22 +352,21 @@ Native dependency metadata belongs to the package that needs it.
 
 A package manifest declares its own:
 
-* native shim sources
+* native shim sources when a real C adapter is required
 * discovery names such as `pkg-config`
 * fallback metadata for systems where discovery fails
 
 ```toml
 [project]
-name = "raylib"
+name = "vendor"
 version = "0.1.0"
 kind = "library"
 
 [library]
-root = "Raylib.stark"
-output = "RaylibStark"
+root = "src/Vendor/Raylib.stark"
+output = "VendorRaylib"
 
 [native]
-sources = ["RaylibNative.c"]
 pkg-config = ["raylib"]
 
 [native.fallback.linux]
@@ -413,22 +415,21 @@ Build artifacts live under a tool owned directory:
 
 Stable output locations, no stray binaries in source folders, room for package images and cached metadata.
 
-## Example: Breakout and Raylib
+## Example: Breakout and Vendor.Raylib
 
-### `examples/raylib/Stark.toml`
+### `vendor/Stark.toml`
 
 ```toml
 [project]
-name = "raylib"
+name = "vendor"
 version = "0.1.0"
 kind = "library"
 
 [library]
-root = "Raylib.stark"
-output = "RaylibStark"
+root = "src/Vendor/Raylib.stark"
+output = "VendorRaylib"
 
 [native]
-sources = ["RaylibNative.c"]
 pkg-config = ["raylib"]
 
 [native.fallback.linux]
@@ -450,7 +451,7 @@ root = "BreakoutRaylib.stark"
 output = "breakout-raylib"
 
 [dependencies]
-raylib = { path = "../raylib" }
+vendor = { path = "../../vendor" }
 ```
 
 ### `Stark.solution.toml`
@@ -459,7 +460,7 @@ raylib = { path = "../raylib" }
 [solution]
 name = "Examples"
 members = [
-  "examples/raylib",
+  "vendor",
   "examples/breakout",
   "examples/standard-library-tests"
 ]
@@ -471,7 +472,7 @@ test = ["examples/standard-library-tests"]
 
 [aliases]
 breakout = "examples/breakout"
-raylib = "examples/raylib"
+vendor = "vendor"
 standard-library-tests = "examples/standard-library-tests"
 ```
 

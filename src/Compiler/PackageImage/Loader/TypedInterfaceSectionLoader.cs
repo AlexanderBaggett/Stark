@@ -207,6 +207,7 @@ internal static partial class PackageImageLoader
                     isUnsafe: function.IsUnsafe,
                     isTailCallable: function.IsTailCallable,
                     ffiAbi: function.FfiAbi,
+                    externalLinkName: ResolvePackageFunctionLinkName(function.LinkName, function.IsFfi, function.SymbolName, function.Name),
                     backendOptimizationMode: functionBackendOptimizationMode,
                     disjointParameterGroups: function.DisjointParameterGroups,
                     overlapParameterGroups: function.OverlapParameterGroups,

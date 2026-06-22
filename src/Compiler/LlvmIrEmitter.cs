@@ -1989,7 +1989,8 @@ internal sealed class LlvmIrEmitter
         return _ssa.Functions
             .SelectMany(static function => function.Blocks)
             .SelectMany(static block => block.Instructions)
-            .Any(UsesLargeZeroInitializedAggregateStore);
+            .Any(UsesLargeZeroInitializedAggregateStore)
+            || _allAbiFunctions.Values.Any(static function => function.UserParameters.Any(static parameter => parameter.IsExpandedDirectParameter));
     }
 
     private bool UsesHeapAllocator()
@@ -2714,6 +2715,8 @@ internal sealed class LlvmIrEmitter
             StarkTypeKind.Float when type.BitWidth == 128 => "fp128",
             StarkTypeKind.RawPointer => "ptr",
             StarkTypeKind.FunctionPointer => "ptr",
+            StarkTypeKind.LlvmVector when type.ElementType is not null && type.FixedLength is int vectorLength => $"<{vectorLength} x {MapType(type.ElementType)}>",
+            StarkTypeKind.LlvmStruct when type.TypeArguments is { Count: > 0 } fields => $"{{ {string.Join(", ", fields.Select(MapType))} }}",
             StarkTypeKind.Closure => type.ClosureStorageKind == StarkClosureStorageKind.Heap
                 ? "{ ptr, ptr, ptr }"
                 : "{ ptr, ptr }",

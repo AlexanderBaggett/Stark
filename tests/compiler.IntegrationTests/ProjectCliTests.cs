@@ -314,6 +314,94 @@ public sealed class ProjectCliTests
     }
 
     [Fact]
+    public async Task BuildUsesRepoVendorSourceTreeDiscovery()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
+        {
+            return;
+        }
+
+        var originalDirectory = Environment.CurrentDirectory;
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-project-cli-repo-vendor-src-");
+
+        try
+        {
+            await File.WriteAllTextAsync(
+                Path.Combine(tempDirectory.FullName, "Stark.toml"),
+                """
+                [project]
+                name = "repo-vendor-source-app"
+                version = "0.1.0"
+                kind = "executable"
+
+                [executable]
+                root = "App.stark"
+                output = "repo-vendor-source-app"
+
+                [profiles.dev]
+                opt = 0
+                """);
+
+            await File.WriteAllTextAsync(
+                Path.Combine(tempDirectory.FullName, "App.stark"),
+                """
+                import Vendor.RepoSourceProbe
+                module App
+
+                export fn i32[min max] main()
+                {
+                    return Vendor.RepoSourceProbe.Value();
+                }
+                """);
+
+            var vendorSourceDirectory = Path.Combine(tempDirectory.FullName, "vendor", "src", "Vendor");
+            Directory.CreateDirectory(vendorSourceDirectory);
+            await File.WriteAllTextAsync(
+                Path.Combine(tempDirectory.FullName, "vendor", "Stark.toml"),
+                """
+                [project]
+                name = "vendor"
+                version = "0.1.0"
+                kind = "library"
+
+                [library]
+                root = "src/Vendor/RepoSourceProbe.stark"
+                output = "Vendor"
+                """);
+            await File.WriteAllTextAsync(
+                Path.Combine(vendorSourceDirectory, "RepoSourceProbe.stark"),
+                """
+                module Vendor.RepoSourceProbe
+
+                public finite law i32[min max] Value()
+                {
+                    return 0;
+                }
+                """);
+
+            Environment.CurrentDirectory = tempDirectory.FullName;
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(
+                ["build", "--target", targetInfo.Triple],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.Equal(0, exitCode);
+            Assert.Contains("Emitted executable:", stdout.ToString(), StringComparison.Ordinal);
+            Assert.Equal(string.Empty, stderr.ToString());
+            Assert.True(File.Exists(BuildArtifactPath(tempDirectory.FullName, targetInfo.Triple, "bin", "repo-vendor-source-app", ExecutableFileName("repo-vendor-source-app"))));
+        }
+        finally
+        {
+            Environment.CurrentDirectory = originalDirectory;
+            Cleanup(tempDirectory);
+        }
+    }
+
+    [Fact]
     public async Task RunPrefersRepoStdlibDistPackageBeforeRepoSource()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
@@ -512,6 +600,66 @@ public sealed class ProjectCliTests
             Assert.Contains(BuildStagePath(tempDirectory.FullName, targetTriple), stderrText, StringComparison.Ordinal);
             Assert.Contains(Path.Combine(tempDirectory.FullName, "stdlib"), stderrText, StringComparison.Ordinal);
             Assert.Contains(Path.Combine(AppContext.BaseDirectory, "stdlib"), stderrText, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Environment.CurrentDirectory = originalDirectory;
+            Cleanup(tempDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task BuildReportsVendorDiscoveryPathsForMissingVendorImport()
+    {
+        var originalDirectory = Environment.CurrentDirectory;
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-project-cli-vendor-diagnostics-");
+        const string targetTriple = "test-triple";
+
+        try
+        {
+            await File.WriteAllTextAsync(
+                Path.Combine(tempDirectory.FullName, "Stark.toml"),
+                """
+                [project]
+                name = "missing-vendor-app"
+                version = "0.1.0"
+                kind = "executable"
+
+                [executable]
+                root = "App.stark"
+                output = "missing-vendor-app"
+                """);
+
+            await File.WriteAllTextAsync(
+                Path.Combine(tempDirectory.FullName, "App.stark"),
+                """
+                import Vendor.DoesNotExist
+                module App
+
+                export fn i32[min max] main()
+                {
+                    return 0;
+                }
+                """);
+
+            Environment.CurrentDirectory = tempDirectory.FullName;
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(
+                ["build", "--target", targetTriple],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            var stderrText = stderr.ToString();
+            Assert.Equal(1, exitCode);
+            Assert.Equal(string.Empty, stdout.ToString());
+            Assert.Contains("Unable to resolve imported module 'Vendor.DoesNotExist'.", stderrText, StringComparison.Ordinal);
+            Assert.Contains("Stark vendor library discovery failed while resolving a Vendor.* import.", stderrText, StringComparison.Ordinal);
+            Assert.Contains("Active vendor library context: profile=dev, target=test-triple, stage=stage0", stderrText, StringComparison.Ordinal);
+            Assert.Contains(Path.Combine(tempDirectory.FullName, "vendor"), stderrText, StringComparison.Ordinal);
+            Assert.Contains(Path.Combine(AppContext.BaseDirectory, "vendor"), stderrText, StringComparison.Ordinal);
         }
         finally
         {

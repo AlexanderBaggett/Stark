@@ -118,7 +118,8 @@ internal sealed record StarkPackageFunctionManifest(
     IReadOnlyList<StarkPackageComptimeGenericParameterManifest>? ComptimeGenericParameters = null,
     IReadOnlyList<StarkPackageTypeParameterConstraintManifest>? TypeParameterConstraints = null,
     IReadOnlyList<StarkPackageThreadSafetyLawPredicateManifest>? ThreadSafetyLawPredicates = null,
-    IReadOnlyList<StarkPackageValueContractManifest>? ValueContracts = null);
+    IReadOnlyList<StarkPackageValueContractManifest>? ValueContracts = null,
+    string? LinkName = null);
 
 internal sealed record StarkPackageParameterManifest(
     string Name,
@@ -382,7 +383,8 @@ internal sealed record StarkPackageTypedFunctionManifest(
     IReadOnlyList<StarkPackageComptimeGenericParameterManifest>? ComptimeGenericParameters = null,
     IReadOnlyList<StarkPackageTypedTypeParameterConstraintManifest>? TypeParameterConstraints = null,
     IReadOnlyList<StarkPackageTypedThreadSafetyLawPredicateManifest>? ThreadSafetyLawPredicates = null,
-    IReadOnlyList<StarkPackageValueContractManifest>? ValueContracts = null);
+    IReadOnlyList<StarkPackageValueContractManifest>? ValueContracts = null,
+    string? LinkName = null);
 
 internal sealed record StarkPackageTypedMethodManifest(
     string Name,
@@ -825,7 +827,8 @@ internal sealed record StarkPackageAbiParameterManifest(
     StarkPackageTypeReference SourceType,
     StarkPackageTypeReference LlvmType,
     string Kind,
-    string? RawPointerElementCountExpression = null);
+    string? RawPointerElementCountExpression = null,
+    IReadOnlyList<StarkPackageTypeReference>? LlvmParameterTypes = null);
 
 internal sealed record StarkPackageAbiFunctionManifest(
     string QualifiedResolvedName,
@@ -838,7 +841,8 @@ internal sealed record StarkPackageAbiFunctionManifest(
     bool UsesFastCallingConvention = false,
     bool IsVarargs = false,
     string? FfiAbi = null,
-    bool UsesTailCallingConvention = false);
+    bool UsesTailCallingConvention = false,
+    string? LinkName = null);
 
 internal sealed record StarkPackageFunctionMemoryEffectsManifest(
     bool ReadsArgumentMemory,

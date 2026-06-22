@@ -200,7 +200,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
         var rendered = new List<string>(arguments.Count);
         for (var index = 0; index < arguments.Count; index++)
         {
-            rendered.Add(RenderDirectArgument(abiCallee, userParameters[index], arguments[index], parameterEffects, includeContractAttributes: true));
+            rendered.AddRange(RenderDirectArguments(abiCallee, userParameters[index], arguments[index], parameterEffects, includeContractAttributes: true));
         }
 
         return string.Join(", ", rendered);
@@ -298,7 +298,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
 
             if (parameter.Kind == AbiParameterKind.Direct)
             {
-                arguments.Add(RenderDirectArgument(abiCallee, parameter, argument, calleeParameterEffects, includeContractAttributes: true));
+                arguments.AddRange(RenderDirectArguments(abiCallee, parameter, argument, calleeParameterEffects, includeContractAttributes: true));
                 continue;
             }
 
@@ -1279,7 +1279,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
             return escapedName;
         }
 
-        var parameterTypes = abiCallee.Parameters
+        var parameterTypes = abiCallee.LlvmParameters
             .Select(parameter => MapType(parameter.LlvmType))
             .Append("...");
         return $"({string.Join(", ", parameterTypes)}) {escapedName}";
@@ -1354,7 +1354,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
 
             if (parameter.Kind == AbiParameterKind.Direct)
             {
-                arguments.Add(RenderDirectArgument(abiCallee, parameter, argument, parameterEffects, includeContractAttributes: true));
+                arguments.AddRange(RenderDirectArguments(abiCallee, parameter, argument, parameterEffects, includeContractAttributes: true));
                 continue;
             }
 

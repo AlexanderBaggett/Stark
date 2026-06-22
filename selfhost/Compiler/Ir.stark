@@ -309,6 +309,161 @@ public enum AbiKind
     PlatformAbi,
 }
 
+public enum CAbiAggregatePassKind
+{
+    None,
+    Direct,
+    Indirect,
+    Unsupported,
+}
+
+public enum AbiCarrierKind
+{
+    None,
+    I8,
+    I16,
+    I32,
+    I64,
+    F32,
+    F64,
+    Vector2F32,
+}
+
+public struct CAbiAggregateCarrierFacts
+{
+    bool HasFact;
+    CAbiAggregatePassKind PassKind;
+    u32[0 max] SizeBytes;
+    u32[0 max] AlignBytes;
+    u32[0 max] CarrierCount;
+    bool ReturnUsesLlvmStruct;
+    AbiCarrierKind Carrier0;
+    AbiCarrierKind Carrier1;
+    AbiCarrierKind Carrier2;
+    AbiCarrierKind Carrier3;
+
+    CAbiAggregateCarrierFacts()
+    {
+        self.HasFact = false;
+        self.PassKind = CAbiAggregatePassKind.None;
+        self.SizeBytes = 0;
+        self.AlignBytes = 0;
+        self.CarrierCount = 0;
+        self.ReturnUsesLlvmStruct = false;
+        self.Carrier0 = AbiCarrierKind.None;
+        self.Carrier1 = AbiCarrierKind.None;
+        self.Carrier2 = AbiCarrierKind.None;
+        self.Carrier3 = AbiCarrierKind.None;
+    }
+
+    public inline finite law bool Present(borrow CAbiAggregateCarrierFacts self)
+    {
+        return self.HasFact;
+    }
+
+    public inline finite law CAbiAggregatePassKind Kind(borrow CAbiAggregateCarrierFacts self)
+    {
+        return self.PassKind;
+    }
+
+    public inline finite law bool IsDirect(borrow CAbiAggregateCarrierFacts self)
+    {
+        return self.HasFact && self.PassKind == CAbiAggregatePassKind.Direct;
+    }
+
+    public inline finite law bool IsIndirect(borrow CAbiAggregateCarrierFacts self)
+    {
+        return self.HasFact && self.PassKind == CAbiAggregatePassKind.Indirect;
+    }
+
+    public inline finite law u32[0 max] ByteSize(borrow CAbiAggregateCarrierFacts self)
+    {
+        return self.SizeBytes;
+    }
+
+    public inline finite law u32[0 max] ByteAlignment(borrow CAbiAggregateCarrierFacts self)
+    {
+        return self.AlignBytes;
+    }
+
+    public inline finite law u32[0 max] LlvmParameterCarrierCount(borrow CAbiAggregateCarrierFacts self)
+    {
+        return self.CarrierCount;
+    }
+
+    public inline finite law bool ReturnCarrierIsLlvmStruct(borrow CAbiAggregateCarrierFacts self)
+    {
+        return self.ReturnUsesLlvmStruct;
+    }
+
+    public finite law AbiCarrierKind CarrierKindAt(borrow CAbiAggregateCarrierFacts self, u32[0 max] index)
+    {
+        switch (index)
+        {
+            case 0:
+                return self.Carrier0;
+            case 1:
+                return self.Carrier1;
+            case 2:
+                return self.Carrier2;
+            case 3:
+                return self.Carrier3;
+            default:
+                return AbiCarrierKind.None;
+        }
+    }
+
+    public fn void SetDirect(
+        mut borrow CAbiAggregateCarrierFacts self,
+        u32[0 max] sizeBytes,
+        u32[0 max] alignBytes,
+        u32[0 max] carrierCount,
+        AbiCarrierKind carrier0,
+        AbiCarrierKind carrier1,
+        AbiCarrierKind carrier2,
+        AbiCarrierKind carrier3)
+    {
+        self.HasFact = true;
+        self.PassKind = CAbiAggregatePassKind.Direct;
+        self.SizeBytes = sizeBytes;
+        self.AlignBytes = alignBytes;
+        self.CarrierCount = carrierCount;
+        self.ReturnUsesLlvmStruct = carrierCount > 1;
+        self.Carrier0 = carrier0;
+        self.Carrier1 = carrier1;
+        self.Carrier2 = carrier2;
+        self.Carrier3 = carrier3;
+    }
+
+    public fn void SetIndirect(mut borrow CAbiAggregateCarrierFacts self, u32[0 max] sizeBytes, u32[0 max] alignBytes)
+    {
+        self.HasFact = true;
+        self.PassKind = CAbiAggregatePassKind.Indirect;
+        self.SizeBytes = sizeBytes;
+        self.AlignBytes = alignBytes;
+        self.CarrierCount = 0;
+        self.ReturnUsesLlvmStruct = false;
+        self.Carrier0 = AbiCarrierKind.None;
+        self.Carrier1 = AbiCarrierKind.None;
+        self.Carrier2 = AbiCarrierKind.None;
+        self.Carrier3 = AbiCarrierKind.None;
+    }
+
+    public fn void SetUnsupported(mut borrow CAbiAggregateCarrierFacts self)
+    {
+        self.HasFact = true;
+        self.PassKind = CAbiAggregatePassKind.Unsupported;
+        self.SizeBytes = 0;
+        self.AlignBytes = 0;
+        self.CarrierCount = 0;
+        self.ReturnUsesLlvmStruct = false;
+        self.Carrier0 = AbiCarrierKind.None;
+        self.Carrier1 = AbiCarrierKind.None;
+        self.Carrier2 = AbiCarrierKind.None;
+        self.Carrier3 = AbiCarrierKind.None;
+    }
+}
+
 // The optimization/backend facts attached to one MIR/SSA value (doc 24 §4). A fact
 // is present when its `Has*` flag is set; absent facts read as 0/false/`StarkAbi`.
 // `InheritFrom` is the lowering fact-transfer primitive (doc 24 §5): a lowered value

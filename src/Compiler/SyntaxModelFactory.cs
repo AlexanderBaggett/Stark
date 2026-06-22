@@ -844,6 +844,11 @@ internal static class SyntaxModelFactory
             || string.Equals(attributeName, "Deny", StringComparison.Ordinal);
     }
 
+    private static bool IsLinkNameAttribute(string attributeName)
+    {
+        return string.Equals(attributeName, "LinkName", StringComparison.Ordinal);
+    }
+
     private static bool IsThreadSafetyLawName(string lawName)
     {
         return string.Equals(lawName, "Transferable", StringComparison.Ordinal)
@@ -870,7 +875,8 @@ internal static class SyntaxModelFactory
         bool allowTestingPlatformAttributes = false,
         bool allowStructLayoutAttributes = false,
         bool allowThreadSafetyLawAttributes = false,
-        bool allowCopyableAssertion = false)
+        bool allowCopyableAssertion = false,
+        bool allowLinkNameAttribute = false)
     {
         var backendOptimizationMode = ModuleBackendOptimizationMode.Default;
         var backendAttributeCount = 0;
@@ -1080,6 +1086,21 @@ internal static class SyntaxModelFactory
                 continue;
             }
 
+            if (IsLinkNameAttribute(attribute.Name))
+            {
+                if (allowLinkNameAttribute)
+                {
+                    continue;
+                }
+
+                diagnostics.Add(new SyntaxModelDiagnostic(
+                    "STK2110",
+                    $"Unsupported attribute '[LinkName]' on {targetDescription}. LinkName is supported only on imported FFI function declarations.",
+                    attributeContext.Start.Line,
+                    attributeContext.Start.Column + 1));
+                continue;
+            }
+
             if (string.Equals(attribute.Name, ThreadSafetyLawNames.Copyable, StringComparison.Ordinal))
             {
                 if (!allowCopyableAssertion)
@@ -1238,7 +1259,8 @@ internal static class SyntaxModelFactory
                 declarationAttributeContexts,
                 $"function '{function.Identifier().GetText()}'",
                 diagnostics,
-                allowTestingAttributes: true);
+                allowTestingAttributes: true,
+                allowLinkNameAttribute: true);
             declarations.Add(new TopLevelDeclarationModel(
                 function.Identifier().GetText(),
                 DeclarationKind.Function,
@@ -1255,6 +1277,7 @@ internal static class SyntaxModelFactory
                     function.functionModifier(),
                     function.functionBody(),
                     declarationAttributes,
+                    declarationAttributeContexts,
                     backendOptimizationMode,
                     $"function '{function.Identifier().GetText()}'",
                     diagnostics,
@@ -1311,7 +1334,8 @@ internal static class SyntaxModelFactory
                     memberAttributeContexts,
                     $"method '{structDeclaration.Identifier().GetText()}.{method.Identifier().GetText()}'",
                     diagnostics,
-                    allowTestingAttributes: true);
+                    allowTestingAttributes: true,
+                    allowLinkNameAttribute: true);
                 if (methodBackendOptimizationMode == ModuleBackendOptimizationMode.Default)
                 {
                     methodBackendOptimizationMode = backendOptimizationMode;
@@ -1334,6 +1358,7 @@ internal static class SyntaxModelFactory
                         method.functionModifier(),
                         method.functionBody(),
                         memberAttributes,
+                        memberAttributeContexts,
                         methodBackendOptimizationMode,
                         $"method '{structDeclaration.Identifier().GetText()}.{method.Identifier().GetText()}'",
                         diagnostics,
@@ -1391,7 +1416,8 @@ internal static class SyntaxModelFactory
                     memberAttributeContexts,
                     $"method '{recordDeclaration.Identifier().GetText()}.{method.Identifier().GetText()}'",
                     diagnostics,
-                    allowTestingAttributes: true);
+                    allowTestingAttributes: true,
+                    allowLinkNameAttribute: true);
                 if (methodBackendOptimizationMode == ModuleBackendOptimizationMode.Default)
                 {
                     methodBackendOptimizationMode = backendOptimizationMode;
@@ -1414,6 +1440,7 @@ internal static class SyntaxModelFactory
                         method.functionModifier(),
                         method.functionBody(),
                         memberAttributes,
+                        memberAttributeContexts,
                         methodBackendOptimizationMode,
                         $"method '{recordDeclaration.Identifier().GetText()}.{method.Identifier().GetText()}'",
                         diagnostics,
@@ -1482,7 +1509,8 @@ internal static class SyntaxModelFactory
                     memberAttributes,
                     memberAttributeContexts,
                     $"trait method '{traitDeclaration.Identifier().GetText()}.{method.Identifier().GetText()}'",
-                    diagnostics);
+                    diagnostics,
+                    allowLinkNameAttribute: true);
                 declarations.Add(new TopLevelDeclarationModel(
                     $"{traitDeclaration.Identifier().GetText()}.{method.Identifier().GetText()}",
                     DeclarationKind.Function,
@@ -1499,6 +1527,7 @@ internal static class SyntaxModelFactory
                         method.functionModifier(),
                         method.functionBody(),
                         memberAttributes,
+                        memberAttributeContexts,
                         methodBackendOptimizationMode,
                         $"trait method '{traitDeclaration.Identifier().GetText()}.{method.Identifier().GetText()}'",
                         diagnostics,
@@ -1546,7 +1575,8 @@ internal static class SyntaxModelFactory
                     memberAttributes,
                     memberAttributeContexts,
                     $"doctrine method '{doctrineDeclaration.Identifier().GetText()}.{method.Identifier().GetText()}'",
-                    diagnostics);
+                    diagnostics,
+                    allowLinkNameAttribute: true);
                 if (methodBackendOptimizationMode == ModuleBackendOptimizationMode.Default)
                 {
                     methodBackendOptimizationMode = backendOptimizationMode;
@@ -1568,6 +1598,7 @@ internal static class SyntaxModelFactory
                         method.functionModifier(),
                         method.functionBody(),
                         memberAttributes,
+                        memberAttributeContexts,
                         methodBackendOptimizationMode,
                         $"doctrine method '{doctrineDeclaration.Identifier().GetText()}.{method.Identifier().GetText()}'",
                         diagnostics,
@@ -1735,6 +1766,144 @@ internal static class SyntaxModelFactory
             genericParameters);
     }
 
+    private static string? ResolveLinkNameAttribute(
+        string functionName,
+        IReadOnlyList<ModuleAttributeModel> attributes,
+        IReadOnlyList<StarkParser.AttributeContext> attributeContexts,
+        bool isFfi,
+        bool isAsm,
+        bool hasBody,
+        string targetDescription,
+        List<SyntaxModelDiagnostic>? diagnostics)
+    {
+        string? linkName = null;
+        StarkParser.AttributeContext? firstLinkName = null;
+
+        for (var index = 0; index < attributes.Count; index++)
+        {
+            var attribute = attributes[index];
+            if (!IsLinkNameAttribute(attribute.Name))
+            {
+                continue;
+            }
+
+            var attributeContext = index < attributeContexts.Count ? attributeContexts[index] : null;
+            if (attributeContext is null)
+            {
+                continue;
+            }
+
+            if (firstLinkName is not null)
+            {
+                AddLinkNameDiagnostic(
+                    diagnostics,
+                    attributeContext,
+                    $"Function '{functionName}' declares [LinkName(...)] more than once.");
+                continue;
+            }
+
+            firstLinkName = attributeContext;
+
+            if (!isFfi)
+            {
+                AddLinkNameDiagnostic(
+                    diagnostics,
+                    attributeContext,
+                    $"Attribute '[LinkName(...)]' on {targetDescription} is only valid on imported FFI function declarations. Use 'unsafe ffi fn' for a foreign import; Stark function definitions and exports keep their Stark symbol name.");
+            }
+
+            if (isAsm)
+            {
+                AddLinkNameDiagnostic(
+                    diagnostics,
+                    attributeContext,
+                    $"Attribute '[LinkName(...)]' on {targetDescription} cannot be used with 'ffi asm(...)' because asm declarations provide inline assembly instead of linking to a foreign function symbol.");
+            }
+
+            if (hasBody)
+            {
+                AddLinkNameDiagnostic(
+                    diagnostics,
+                    attributeContext,
+                    $"Attribute '[LinkName(...)]' on {targetDescription} requires an imported FFI declaration ending in ';', not a function body.");
+            }
+
+            if (attributeContext.attributeCondition() is not null)
+            {
+                AddLinkNameDiagnostic(
+                    diagnostics,
+                    attributeContext,
+                    $"Attribute '[LinkName(...)]' on {targetDescription} cannot use an attribute condition.");
+            }
+
+            var arguments = attributeContext.attributeArgument();
+            if (arguments is not [var argument] || argument.StringLiteral() is null)
+            {
+                AddLinkNameDiagnostic(
+                    diagnostics,
+                    attributeContext,
+                    $"Attribute '[LinkName(...)]' on {targetDescription} requires exactly one compile-time string literal argument, for example [LinkName(\"puts\")].");
+                continue;
+            }
+
+            if (!TextLiteralDecoder.TryDecode(argument.StringLiteral().GetText(), TextLiteralKind.String, out var decoded, out _))
+            {
+                AddLinkNameDiagnostic(
+                    diagnostics,
+                    attributeContext,
+                    $"Attribute '[LinkName(...)]' on {targetDescription} contains an invalid string literal.");
+                continue;
+            }
+
+            if (decoded.Value.Length == 0)
+            {
+                AddLinkNameDiagnostic(
+                    diagnostics,
+                    attributeContext,
+                    $"Attribute '[LinkName(...)]' on {targetDescription} cannot use an empty foreign symbol name.");
+                continue;
+            }
+
+            if (!IsValidLinkNameSymbol(decoded.Value))
+            {
+                AddLinkNameDiagnostic(
+                    diagnostics,
+                    attributeContext,
+                    $"Attribute '[LinkName(...)]' on {targetDescription} must name a printable ASCII linker symbol with no whitespace or control characters.");
+                continue;
+            }
+
+            linkName = decoded.Value;
+        }
+
+        return linkName;
+    }
+
+    private static bool IsValidLinkNameSymbol(string symbol)
+    {
+        foreach (var ch in symbol)
+        {
+            if (ch < 0x21 || ch > 0x7E)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static void AddLinkNameDiagnostic(
+        List<SyntaxModelDiagnostic>? diagnostics,
+        StarkParser.AttributeContext attribute,
+        string message)
+    {
+        diagnostics?.Add(new SyntaxModelDiagnostic(
+            "STK2114",
+            message,
+            attribute.Start.Line,
+            attribute.Start.Column + 1));
+    }
+
     private static FunctionDeclarationModel CreateFunctionModel(
         string name,
         StarkFunctionKind functionKind,
@@ -1747,6 +1916,7 @@ internal static class SyntaxModelFactory
         IReadOnlyList<StarkParser.FunctionModifierContext> modifiersList,
         StarkParser.FunctionBodyContext functionBody,
         IReadOnlyList<ModuleAttributeModel>? attributes = null,
+        IReadOnlyList<StarkParser.AttributeContext>? attributeContexts = null,
         ModuleBackendOptimizationMode backendOptimizationMode = ModuleBackendOptimizationMode.Default,
         string? targetDescription = null,
         List<SyntaxModelDiagnostic>? diagnostics = null,
@@ -1807,6 +1977,15 @@ internal static class SyntaxModelFactory
                 .Where(static parameter => parameter.COMPTIME() is null)
                 .Select(static parameter => parameter.Identifier().GetText())
                 .ToArray();
+        var linkName = ResolveLinkNameAttribute(
+            name,
+            attributes ?? [],
+            attributeContexts ?? [],
+            isFfi,
+            isAsm,
+            functionBody.block() is not null,
+            targetDescription ?? $"function '{name}'",
+            diagnostics);
 
         return new FunctionDeclarationModel(
             Name: name,
@@ -1840,7 +2019,8 @@ internal static class SyntaxModelFactory
             ThreadSafetyLawPredicates: CreateThreadSafetyLawPredicates(
                 memoryContractClauses,
                 targetDescription ?? $"function '{name}'",
-                diagnostics));
+                diagnostics),
+            ExternalLinkName: linkName);
     }
 
     private static ParameterModel CreateParameterModel(StarkParser.ParameterContext parameter)

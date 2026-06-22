@@ -2,6 +2,7 @@
 name = "StarkRepo"
 members = [
   "stdlib",
+  "vendor",
   "examples/raylib",
   "examples/breakout",
 ]
@@ -12,6 +13,7 @@ run = "examples/breakout"
 
 [aliases]
 stdlib = "stdlib"
+vendor = "vendor"
 raylib = "examples/raylib"
 breakout = "examples/breakout"
 

@@ -3,9 +3,10 @@ title = "Raylib"
 weight = 180
 +++
 
-The Raylib example is a native-backed library package. The binding is split
-into modules such as `Raylib.Core`, `Raylib.Shapes`, `Raylib.Textures`,
-`Raylib.Text`, `Raylib.Models`, `Raylib.Audio`, and `Raylib.Types`.
+The Raylib example is a native-backed library package. It uses direct C ABI
+aggregate carriers for small by-value Raylib structs and is split into modules
+such as `Raylib.Core`, `Raylib.Shapes`, `Raylib.Textures`, `Raylib.Text`,
+`Raylib.Models`, `Raylib.Audio`, and `Raylib.Types`.
 
 ## Build And Run
 
@@ -32,7 +33,6 @@ Status: checked by `ExamplesCompileRunTests.RaylibStarkModulesCheckWithoutNative
 - [Raylib/Text.stark](samples/Raylib/Text.stark)
 - [Raylib/Models.stark](samples/Raylib/Models.stark)
 - [Raylib/Audio.stark](samples/Raylib/Audio.stark)
-- [RaylibNative.c](samples/RaylibNative.c)
 - [Raylib.package.args](samples/Raylib.package.args)
 - [Stark.toml](samples/Stark.toml)
 
@@ -75,10 +75,6 @@ Status: checked by `ExamplesCompileRunTests.RaylibStarkModulesCheckWithoutNative
 ### Raylib/Audio.stark
 
 {{< file-sample "samples/Raylib/Audio.stark" "stark" >}}
-
-### RaylibNative.c
-
-{{< file-sample "samples/RaylibNative.c" "c" >}}
 
 ### Raylib.package.args
 

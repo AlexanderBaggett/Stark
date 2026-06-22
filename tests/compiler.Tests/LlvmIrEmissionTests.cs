@@ -7158,6 +7158,407 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
+    public void FfiLinkNameControlsLlvmDeclarationAndCallTarget()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            [LinkName("native_add_i32")]
+            unsafe ffi(c) fn i32[min max] AddAlias(i32[min max] left, i32[min max] right);
+
+            export unsafe fn i32[min max] main(i32[min max] value)
+            {
+                return AddAlias(value, 1);
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("declare i32 @native_add_i32(i32, i32) nounwind", llvm);
+        Assert.Contains("call i32 @native_add_i32(i32 %arg_value", llvm);
+        Assert.DoesNotContain("@AddAlias", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void FfiLinkNameControlsFunctionAddressSymbol()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            [LinkName("native_scale_i32")]
+            unsafe ffi(c) fn i32[min max] ScaleAlias(i32[min max] value);
+
+            export unsafe fn i32[min max] main(i32[min max] value)
+            {
+                stack fnptr<unsafe ffi(c) fn i32[min max](i32[min max])> op = ScaleAlias;
+                return op(value);
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+
+        Assert.Contains("@native_scale_i32", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("@ScaleAlias", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void FfiCLayoutAggregatesUseNativeCAbiCarriersWithLinkName()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            [StructLayout(C)]
+            struct Color
+            {
+                u8[0 max] R;
+                u8[0 max] G;
+                u8[0 max] B;
+                u8[0 max] A;
+            }
+
+            [StructLayout(C)]
+            struct Image
+            {
+                rawmutptr<i8[min max]> Data;
+                i32[min max] Width;
+                i32[min max] Height;
+                i32[min max] Mipmaps;
+                i32[min max] Format;
+            }
+
+            [LinkName("ClearBackground")]
+            unsafe ffi(c) fn void NativeClear(Color color);
+
+            [LinkName("LoadImage")]
+            unsafe ffi(c) fn Image NativeLoad(ascii fileName);
+
+            export unsafe fn i32[min max] main()
+            {
+                stack Color color = new Color()
+                {
+                    R = 1,
+                    G = 2,
+                    B = 3,
+                    A = 4
+                };
+
+                NativeClear(color);
+
+                stack Image image = NativeLoad("asset.png");
+                return image.Width;
+            }
+            """,
+            options: new CompilerOptions(TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null)));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("declare void @ClearBackground(i32) nounwind", llvm);
+        Assert.Contains("declare void @LoadImage(ptr noalias sret(%Image)", llvm);
+        Assert.Contains("call void @ClearBackground(i32", llvm);
+        Assert.Contains("call void @LoadImage(ptr noalias sret(%Image)", llvm);
+        Assert.DoesNotContain("@NativeClear", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("@NativeLoad", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void FfiCLayoutVector2UsesSysVVectorCarrierForReturnAndParameters()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            [StructLayout(C)]
+            struct Vector2
+            {
+                f32 X;
+                f32 Y;
+            }
+
+            [LinkName("GetMonitorPosition")]
+            unsafe ffi(c) fn Vector2 NativeGet(i32[min max] monitor);
+
+            [LinkName("DrawLineV")]
+            unsafe ffi(c) fn void NativeDraw(Vector2 start, Vector2 end);
+
+            export unsafe fn i32[min max] main()
+            {
+                stack Vector2 position = NativeGet(0);
+                NativeDraw(position, position);
+                return 0;
+            }
+            """,
+            options: new CompilerOptions(TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null)));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("declare <2 x float> @GetMonitorPosition(i32) nounwind", llvm);
+        Assert.Contains("declare void @DrawLineV(<2 x float>, <2 x float>) nounwind", llvm);
+        Assert.Contains("call <2 x float> @GetMonitorPosition(i32", llvm);
+        Assert.Contains("call void @DrawLineV(<2 x float>", llvm);
+        Assert.DoesNotContain("@NativeGet", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("@NativeDraw", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void FfiCLayoutVector2UsesWin64IntegerCarrierWhenTargetIsWin64()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            [StructLayout(C)]
+            struct Vector2
+            {
+                f32 X;
+                f32 Y;
+            }
+
+            [LinkName("GetMonitorPosition")]
+            unsafe ffi(c) fn Vector2 NativeGet(i32[min max] monitor);
+
+            [LinkName("DrawLineV")]
+            unsafe ffi(c) fn void NativeDraw(Vector2 start, Vector2 end);
+
+            export unsafe fn i32[min max] main()
+            {
+                stack Vector2 position = NativeGet(0);
+                NativeDraw(position, position);
+                return 0;
+            }
+            """,
+            options: new CompilerOptions(TargetInfo: new LlvmTargetInfo("x86_64-pc-windows-msvc", null)));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("target triple = \"x86_64-pc-windows-msvc\"", llvm);
+        Assert.Contains("declare i64 @GetMonitorPosition(i32) nounwind", llvm);
+        Assert.Contains("declare void @DrawLineV(i64, i64) nounwind", llvm);
+        Assert.Contains("call i64 @GetMonitorPosition(i32", llvm);
+        Assert.Contains("call void @DrawLineV(i64", llvm);
+        Assert.DoesNotContain("declare <2 x float> @GetMonitorPosition", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("@NativeGet", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("@NativeDraw", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void FfiCLayoutRectangleParameterExpandsToTwoSysVVectorCarriers()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            [StructLayout(C)]
+            struct Rectangle
+            {
+                f32 X;
+                f32 Y;
+                f32 Width;
+                f32 Height;
+            }
+
+            [StructLayout(C)]
+            struct Color
+            {
+                u8[0 max] R;
+                u8[0 max] G;
+                u8[0 max] B;
+                u8[0 max] A;
+            }
+
+            [LinkName("DrawRectangleRec")]
+            unsafe ffi(c) fn void NativeDraw(Rectangle rec, Color tint);
+
+            export unsafe fn i32[min max] main()
+            {
+                stack Rectangle rec = new Rectangle()
+                {
+                    X = 1.0,
+                    Y = 2.0,
+                    Width = 3.0,
+                    Height = 4.0
+                };
+                stack Color color = new Color()
+                {
+                    R = 255,
+                    G = 64,
+                    B = 32,
+                    A = 255
+                };
+                NativeDraw(rec, color);
+                return 0;
+            }
+            """,
+            options: new CompilerOptions(TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null)));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("declare void @DrawRectangleRec(<2 x float>, <2 x float>, i32) nounwind", llvm);
+        Assert.Contains("call void @DrawRectangleRec(<2 x float>", llvm);
+        Assert.DoesNotContain("@NativeDraw", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void FfiCLayoutVector3ReturnUsesSysVCarrierStruct()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            [StructLayout(C)]
+            struct Vector3
+            {
+                f32 X;
+                f32 Y;
+                f32 Z;
+            }
+
+            [LinkName("GetCameraPosition")]
+            unsafe ffi(c) fn Vector3 NativeGet();
+
+            export unsafe fn i32[min max] main()
+            {
+                stack Vector3 position = NativeGet();
+                return 0;
+            }
+            """,
+            options: new CompilerOptions(TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null)));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("declare { <2 x float>, float } @GetCameraPosition() nounwind", llvm);
+        Assert.Contains("call { <2 x float>, float } @GetCameraPosition()", llvm);
+        Assert.DoesNotContain("@NativeGet", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void FfiCLayoutLargeAggregateUsesIndirectSysVCarriers()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            [StructLayout(C)]
+            struct Matrix
+            {
+                f32 M0;
+                f32 M1;
+                f32 M2;
+                f32 M3;
+                f32 M4;
+                f32 M5;
+                f32 M6;
+                f32 M7;
+                f32 M8;
+                f32 M9;
+                f32 M10;
+                f32 M11;
+                f32 M12;
+                f32 M13;
+                f32 M14;
+                f32 M15;
+            }
+
+            [LinkName("MakeMatrix")]
+            unsafe ffi(c) fn Matrix NativeMake();
+
+            [LinkName("TakeMatrix")]
+            unsafe ffi(c) fn void NativeTake(Matrix matrix);
+
+            export unsafe fn i32[min max] main()
+            {
+                stack Matrix matrix = NativeMake();
+                NativeTake(matrix);
+                return 0;
+            }
+            """,
+            options: new CompilerOptions(TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null)));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("declare void @MakeMatrix(ptr noalias sret(%Matrix)", llvm);
+        Assert.Contains("declare void @TakeMatrix(ptr nonnull byval(%Matrix)", llvm);
+        Assert.Contains("call void @MakeMatrix(ptr noalias sret(%Matrix)", llvm);
+        Assert.Contains("call void @TakeMatrix(ptr nonnull byval(%Matrix)", llvm);
+        Assert.DoesNotContain("@NativeMake", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("@NativeTake", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void FfiCLayoutSixteenByteIntegerAggregateUsesSplitSysVIntegerCarriers()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            [StructLayout(C)]
+            struct Pair
+            {
+                u64[0 max] Left;
+                u64[0 max] Right;
+            }
+
+            [LinkName("GetPair")]
+            unsafe ffi(c) fn Pair NativeGet();
+
+            [LinkName("TakePair")]
+            unsafe ffi(c) fn void NativeTake(Pair pair);
+
+            export unsafe fn i32[min max] main()
+            {
+                stack Pair pair = NativeGet();
+                NativeTake(pair);
+                return 0;
+            }
+            """,
+            options: new CompilerOptions(TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null)));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("declare { i64, i64 } @GetPair() nounwind", llvm);
+        Assert.Contains("declare void @TakePair(i64, i64) nounwind", llvm);
+        Assert.Contains("call { i64, i64 } @GetPair()", llvm);
+        Assert.Contains("call void @TakePair(i64", llvm);
+        Assert.DoesNotContain("[2 x i64] @GetPair", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("@NativeGet", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("@NativeTake", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void IncompatibleFfiDeclarationsForSameLinkNameAreRejectedBeforeLlvmEmission()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            [LinkName("native_read")]
+            unsafe ffi(c) fn i32[min max] ReadI32(i32[min max] value);
+
+            [LinkName("native_read")]
+            unsafe ffi(c) fn i64[min max] ReadI64(i64[min max] value);
+            """,
+            new CompilerOptions(StopAfterPassId: "lower-abi"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK4122"
+                && diagnostic.Message.Contains("native_read", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("incompatible LLVM ABI signatures", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void ExplicitFfiAbiModifiersEmitLlvmCallingConventions()
     {
         var result = Compile(
@@ -10138,14 +10539,13 @@ public sealed class LlvmIrEmissionTests
         var llvm = GetLlvmRaw(result);
         var mainBody = ExtractDefinitionBody(llvm, "main");
 
-        Assert.Contains("declare i32 @stark_check_layout([2 x i64], ptr", llvm, StringComparison.Ordinal);
+        Assert.Contains("declare i32 @stark_check_layout(i64, i32, ptr", llvm, StringComparison.Ordinal);
         Assert.Contains("byval(%PackedRecord)", llvm, StringComparison.Ordinal);
         Assert.Contains(", i32)", llvm, StringComparison.Ordinal);
-        Assert.Matches(@"alloca \[2 x i64\], align (8|16)", mainBody);
-        Assert.Contains("call void @llvm.memset.inline.p0.i64(ptr align", mainBody, StringComparison.Ordinal);
-        Assert.Contains("call void @llvm.memcpy.inline.p0.p0.i64(ptr align", mainBody, StringComparison.Ordinal);
-        Assert.Contains("i64 12", mainBody, StringComparison.Ordinal);
-        Assert.Contains("call i32 @stark_check_layout([2 x i64]", mainBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("[2 x i64]", llvm, StringComparison.Ordinal);
+        Assert.Contains("load i64, ptr", mainBody, StringComparison.Ordinal);
+        Assert.Contains("load i32, ptr", mainBody, StringComparison.Ordinal);
+        Assert.Contains("call i32 @stark_check_layout(i64", mainBody, StringComparison.Ordinal);
     }
 
     [Fact]

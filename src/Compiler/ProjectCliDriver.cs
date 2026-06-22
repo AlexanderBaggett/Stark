@@ -459,13 +459,13 @@ internal static class ProjectCliDriver
         session.BuildLocks.Add(await AcquireBuildDirectoryLockAsync(outputDirectory));
 
         // PAINPOINTS #5: derive a deterministic stamp over every input that can change
-        // this project's output (its own sources, the manifest, the stdlib search-path
-        // sources, each dependency's stamp, the build configuration, and the compiler
-        // binary itself). If the stamp matches the one recorded beside a present output,
-        // the build is up to date and we skip recompilation; otherwise we DELETE the
-        // stale outputs before rebuilding so a leftover `.starkpkg`/executable can never
-        // shadow fresh source — removing the need for a manual `rm -rf build` to get
-        // trustworthy pass/fail counts.
+        // this project's output (its own sources, the manifest, bundled-library
+        // search-path inputs, each dependency's stamp, the build configuration, and
+        // the compiler binary itself). If the stamp matches the one recorded beside a
+        // present output, the build is up to date and we skip recompilation; otherwise
+        // we DELETE the stale outputs before rebuilding so a leftover
+        // `.starkpkg`/executable can never shadow fresh source — removing the need for
+        // a manual `rm -rf build` to get trustworthy pass/fail counts.
         var inputStamp = ComputeProjectInputStamp(project, session, dependencyResults);
         var stampPath = Path.Combine(outputDirectory, BuildStampFileName);
         var earlyOutputPath = GetOutputPath(project, outputDirectory);
@@ -523,14 +523,14 @@ internal static class ProjectCliDriver
         compileArgs.Add("--save-temps");
         compileArgs.Add(intermediateDirectory);
 
-        var stdlibSearchPaths = GetStdlibSearchPaths(session);
-        foreach (var stdlibSearchDirectory in stdlibSearchPaths
+        var bundledLibrarySearchPaths = GetBundledLibrarySearchPaths(session);
+        foreach (var bundledSearchDirectory in bundledLibrarySearchPaths
                      .Where(static path => path.IncludeInCompilerSearch)
                      .Select(static path => path.Path)
                      .Distinct(StringComparer.Ordinal))
         {
             compileArgs.Add("-I");
-            compileArgs.Add(stdlibSearchDirectory);
+            compileArgs.Add(bundledSearchDirectory);
         }
 
         string? packageSearchDirectory = null;
@@ -580,9 +580,12 @@ internal static class ProjectCliDriver
 
         if (exitCode != 0)
         {
-            if (ShouldWriteStdlibDiscoveryFailure(compilerStderrText))
+            if (TryGetBundledLibraryDiscoveryFailureRoot(compilerStderrText, out var failedBundledRoot))
             {
-                await WriteStdlibDiscoveryFailureAsync(session, stdlibSearchPaths);
+                await WriteBundledLibraryDiscoveryFailureAsync(
+                    session,
+                    failedBundledRoot,
+                    bundledLibrarySearchPaths.Where(path => path.Root == failedBundledRoot).ToArray());
             }
 
             return RememberFailure(project, session);
@@ -988,7 +991,7 @@ internal static class ProjectCliDriver
     }
 
     // PAINPOINTS #5: a stable hash over every input that can change this project's
-    // output — its sources and manifest, the stdlib search-path sources, each
+    // output — its sources and manifest, bundled-library search-path inputs, each
     // dependency's own stamp (so transitive source changes propagate), the build
     // configuration and test filters, and the compiler binary itself (so a rebuilt
     // host compiler invalidates everything). File identity uses (path, mtime, size),
@@ -1030,12 +1033,14 @@ internal static class ProjectCliDriver
 
         AppendDirectoryStarkFileStamps(builder, "src", project.DirectoryPath);
 
-        foreach (var stdlibDirectory in GetStdlibSearchPaths(session)
-                     .Where(static path => path.IncludeInCompilerSearch)
-                     .Select(static path => path.Path)
-                     .Distinct(StringComparer.Ordinal))
+        var stampedBundledLibraryPaths = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var bundledDirectory in GetBundledLibrarySearchPaths(session)
+                     .Where(static path => path.IncludeInCompilerSearch))
         {
-            AppendDirectoryStarkFileStamps(builder, "stdlib", stdlibDirectory);
+            if (stampedBundledLibraryPaths.Add(bundledDirectory.Path))
+            {
+                AppendDirectoryBundledLibraryFileStamps(builder, bundledDirectory.Root.DirectoryName, bundledDirectory.Path);
+            }
         }
 
         using var sha = System.Security.Cryptography.SHA256.Create();
@@ -1044,6 +1049,16 @@ internal static class ProjectCliDriver
     }
 
     private static void AppendDirectoryStarkFileStamps(StringBuilder builder, string label, string directory)
+    {
+        AppendDirectoryFileStamps(builder, label, directory, "*.stark");
+    }
+
+    private static void AppendDirectoryBundledLibraryFileStamps(StringBuilder builder, string label, string directory)
+    {
+        AppendDirectoryFileStamps(builder, label, directory, "*.stark", "*.starkpkg", "*.starkpkg.json");
+    }
+
+    private static void AppendDirectoryFileStamps(StringBuilder builder, string label, string directory, params string[] patterns)
     {
         string root;
         IEnumerable<string> files;
@@ -1055,7 +1070,7 @@ internal static class ProjectCliDriver
                 return;
             }
 
-            files = Directory.EnumerateFiles(root, "*.stark", SearchOption.AllDirectories);
+            files = patterns.SelectMany(pattern => Directory.EnumerateFiles(root, pattern, SearchOption.AllDirectories));
         }
         catch
         {
@@ -1505,64 +1520,83 @@ internal static class ProjectCliDriver
         return $"lib{project.OutputName}{PackageImageBinaryFormat.FileExtension}";
     }
 
-    private static string GetStageStdlibDirectory(BuildSession session)
+    private static string GetStageBundledLibraryDirectory(BuildSession session, BundledLibraryRoot root)
     {
-        return Path.Combine(GetStageRootDirectory(session), "stdlib");
+        return Path.Combine(GetStageRootDirectory(session), root.DirectoryName);
     }
 
-    private static IReadOnlyList<StdlibSearchPath> GetStdlibSearchPaths(BuildSession session)
+    private static IReadOnlyList<BundledLibrarySearchPath> GetBundledLibrarySearchPaths(BuildSession session)
     {
-        var paths = new List<StdlibSearchPath>();
-        var stageStdlibDirectory = GetStageStdlibDirectory(session);
-        paths.Add(new StdlibSearchPath(
-            "stage/build-local",
-            Path.GetFullPath(stageStdlibDirectory),
-            IncludeInCompilerSearch: true,
-            Directory.Exists(stageStdlibDirectory) ? "present" : "missing"));
-        AddDevelopmentStdlibSearchPaths(session.BuildRootDirectory, paths);
-        AddInstalledStdlibSearchPaths(AppContext.BaseDirectory, paths);
+        var paths = new List<BundledLibrarySearchPath>();
+        foreach (var root in BundledLibraryRoots)
+        {
+            AddBundledLibrarySearchPaths(session, root, paths);
+        }
+
         return paths;
     }
 
-    private static void AddDevelopmentStdlibSearchPaths(string buildRootDirectory, List<StdlibSearchPath> paths)
+    private static void AddBundledLibrarySearchPaths(
+        BuildSession session,
+        BundledLibraryRoot root,
+        List<BundledLibrarySearchPath> paths)
     {
-        foreach (var stdlibDirectory in GetDevelopmentStdlibRootCandidates(buildRootDirectory))
+        var stageDirectory = GetStageBundledLibraryDirectory(session, root);
+        paths.Add(new BundledLibrarySearchPath(
+            root,
+            "stage/build-local",
+            Path.GetFullPath(stageDirectory),
+            IncludeInCompilerSearch: true,
+            Directory.Exists(stageDirectory) ? "present" : "missing"));
+        AddDevelopmentBundledLibrarySearchPaths(session.BuildRootDirectory, root, paths);
+        AddInstalledBundledLibrarySearchPaths(AppContext.BaseDirectory, root, paths);
+    }
+
+    private static void AddDevelopmentBundledLibrarySearchPaths(
+        string buildRootDirectory,
+        BundledLibraryRoot root,
+        List<BundledLibrarySearchPath> paths)
+    {
+        foreach (var rootDirectory in GetDevelopmentBundledLibraryRootCandidates(buildRootDirectory, root))
         {
-            if (IsDevelopmentStdlibDirectory(stdlibDirectory))
+            if (IsDevelopmentBundledLibraryDirectory(rootDirectory))
             {
-                AddStdlibSearchDirectories(stdlibDirectory, "repo development", paths);
+                AddBundledLibrarySearchDirectories(rootDirectory, root, "repo development", paths);
                 return;
             }
 
-            paths.Add(new StdlibSearchPath(
+            paths.Add(new BundledLibrarySearchPath(
+                root,
                 "repo development",
-                Path.GetFullPath(stdlibDirectory),
+                Path.GetFullPath(rootDirectory),
                 IncludeInCompilerSearch: false,
-                Directory.Exists(stdlibDirectory) ? "not a stdlib project" : "missing"));
+                Directory.Exists(rootDirectory) ? $"not a {root.DirectoryName} project" : "missing"));
         }
     }
 
-    private static bool IsDevelopmentStdlibDirectory(string path)
+    private static bool IsDevelopmentBundledLibraryDirectory(string path)
     {
         return File.Exists(Path.Combine(path, ProjectManifestFileName))
             && (Directory.Exists(Path.Combine(path, "dist"))
                 || Directory.Exists(Path.Combine(path, "src")));
     }
 
-    private static IEnumerable<string> GetDevelopmentStdlibRootCandidates(string buildRootDirectory)
+    private static IEnumerable<string> GetDevelopmentBundledLibraryRootCandidates(
+        string buildRootDirectory,
+        BundledLibraryRoot root)
     {
         var yielded = new HashSet<string>(StringComparer.Ordinal);
         var directory = new DirectoryInfo(Path.GetFullPath(buildRootDirectory));
         while (directory is not null)
         {
-            if (string.Equals(directory.Name, "stdlib", StringComparison.OrdinalIgnoreCase)
+            if (string.Equals(directory.Name, root.DirectoryName, StringComparison.OrdinalIgnoreCase)
                 && TryYieldDirectory(directory.FullName, yielded, out var self))
             {
                 yield return self;
             }
 
-            var childStdlibDirectory = Path.Combine(directory.FullName, "stdlib");
-            if (TryYieldDirectory(childStdlibDirectory, yielded, out var child))
+            var childRootDirectory = Path.Combine(directory.FullName, root.DirectoryName);
+            if (TryYieldDirectory(childRootDirectory, yielded, out var child))
             {
                 yield return child;
             }
@@ -1571,72 +1605,84 @@ internal static class ProjectCliDriver
         }
     }
 
-    private static void AddInstalledStdlibSearchPaths(string compilerBaseDirectory, List<StdlibSearchPath> paths)
+    private static void AddInstalledBundledLibrarySearchPaths(
+        string compilerBaseDirectory,
+        BundledLibraryRoot root,
+        List<BundledLibrarySearchPath> paths)
     {
-        foreach (var stdlibDirectory in GetInstalledStdlibRootCandidates(compilerBaseDirectory))
+        foreach (var rootDirectory in GetInstalledBundledLibraryRootCandidates(compilerBaseDirectory, root))
         {
-            AddStdlibSearchDirectories(stdlibDirectory, "installed bundle", paths);
+            AddBundledLibrarySearchDirectories(rootDirectory, root, "installed bundle", paths);
         }
     }
 
-    private static IEnumerable<string> GetInstalledStdlibRootCandidates(string compilerBaseDirectory)
+    private static IEnumerable<string> GetInstalledBundledLibraryRootCandidates(
+        string compilerBaseDirectory,
+        BundledLibraryRoot root)
     {
         var baseDirectory = Path.GetFullPath(compilerBaseDirectory);
-        yield return Path.Combine(baseDirectory, "stdlib");
+        yield return Path.Combine(baseDirectory, root.DirectoryName);
 
         var parentDirectory = Directory.GetParent(baseDirectory);
         if (parentDirectory is not null)
         {
-            yield return Path.Combine(parentDirectory.FullName, "stdlib");
+            yield return Path.Combine(parentDirectory.FullName, root.DirectoryName);
         }
     }
 
-    private static void AddStdlibSearchDirectories(string stdlibDirectory, string tier, List<StdlibSearchPath> paths)
+    private static void AddBundledLibrarySearchDirectories(
+        string rootDirectory,
+        BundledLibraryRoot root,
+        string tier,
+        List<BundledLibrarySearchPath> paths)
     {
-        if (!Directory.Exists(stdlibDirectory))
+        if (!Directory.Exists(rootDirectory))
         {
-            paths.Add(new StdlibSearchPath(
+            paths.Add(new BundledLibrarySearchPath(
+                root,
                 tier,
-                Path.GetFullPath(stdlibDirectory),
+                Path.GetFullPath(rootDirectory),
                 IncludeInCompilerSearch: false,
                 "missing"));
             return;
         }
 
         var includedAny = false;
-        var distDirectory = Path.Combine(stdlibDirectory, "dist");
+        var distDirectory = Path.Combine(rootDirectory, "dist");
         if (ContainsPackageImages(distDirectory))
         {
-            AddDistinctSearchPath(paths, tier, distDirectory, "package images");
+            AddDistinctSearchPath(paths, root, tier, distDirectory, "package images");
             includedAny = true;
         }
         else if (Directory.Exists(distDirectory))
         {
-            paths.Add(new StdlibSearchPath(
+            paths.Add(new BundledLibrarySearchPath(
+                root,
                 tier,
                 Path.GetFullPath(distDirectory),
                 IncludeInCompilerSearch: false,
                 "no package images"));
         }
 
-        if (ContainsPackageImages(stdlibDirectory, SearchOption.TopDirectoryOnly))
+        if (ContainsPackageImages(rootDirectory, SearchOption.TopDirectoryOnly))
         {
-            AddDistinctSearchPath(paths, tier, stdlibDirectory, "package images");
+            AddDistinctSearchPath(paths, root, tier, rootDirectory, "package images");
             includedAny = true;
         }
 
-        var sourceDirectory = Path.Combine(stdlibDirectory, "src");
+        var sourceDirectory = Path.Combine(rootDirectory, "src");
         if (Directory.Exists(sourceDirectory))
         {
-            AddDistinctSearchPath(paths, tier, sourceDirectory, "source tree");
+            AddDistinctSearchPath(paths, root, tier, sourceDirectory, "source tree");
             includedAny = true;
         }
 
         if (!includedAny && !Directory.Exists(distDirectory) && !Directory.Exists(sourceDirectory))
         {
-            paths.Add(new StdlibSearchPath(
+            paths.Add(new BundledLibrarySearchPath(
+                root,
                 tier,
-                Path.GetFullPath(stdlibDirectory),
+                Path.GetFullPath(rootDirectory),
                 IncludeInCompilerSearch: false,
                 "no dist package images or src tree"));
         }
@@ -1649,13 +1695,18 @@ internal static class ProjectCliDriver
                 || Directory.EnumerateFiles(directory, "*.starkpkg.json", searchOption).Any());
     }
 
-    private static void AddDistinctSearchPath(List<StdlibSearchPath> paths, string tier, string directory, string state)
+    private static void AddDistinctSearchPath(
+        List<BundledLibrarySearchPath> paths,
+        BundledLibraryRoot root,
+        string tier,
+        string directory,
+        string state)
     {
         var fullPath = Path.GetFullPath(directory);
         if (!paths.Any(path => string.Equals(path.Path, fullPath, StringComparison.Ordinal)
                                && path.IncludeInCompilerSearch))
         {
-            paths.Add(new StdlibSearchPath(tier, fullPath, IncludeInCompilerSearch: true, state));
+            paths.Add(new BundledLibrarySearchPath(root, tier, fullPath, IncludeInCompilerSearch: true, state));
         }
     }
 
@@ -1665,18 +1716,33 @@ internal static class ProjectCliDriver
         return yielded.Add(fullPath);
     }
 
-    private static bool ShouldWriteStdlibDiscoveryFailure(string compilerStderr)
+    private static bool TryGetBundledLibraryDiscoveryFailureRoot(
+        string compilerStderr,
+        out BundledLibraryRoot root)
     {
-        return compilerStderr.Contains("Unable to resolve imported module 'System.", StringComparison.Ordinal)
-            || compilerStderr.Contains("Unable to resolve imported module \"System.", StringComparison.Ordinal);
+        foreach (var candidate in BundledLibraryRoots)
+        {
+            if (compilerStderr.Contains($"Unable to resolve imported module '{candidate.ImportRoot}.", StringComparison.Ordinal)
+                || compilerStderr.Contains($"Unable to resolve imported module \"{candidate.ImportRoot}.", StringComparison.Ordinal))
+            {
+                root = candidate;
+                return true;
+            }
+        }
+
+        root = default!;
+        return false;
     }
 
-    private static async Task WriteStdlibDiscoveryFailureAsync(BuildSession session, IReadOnlyList<StdlibSearchPath> paths)
+    private static async Task WriteBundledLibraryDiscoveryFailureAsync(
+        BuildSession session,
+        BundledLibraryRoot root,
+        IReadOnlyList<BundledLibrarySearchPath> paths)
     {
-        await session.Stderr.WriteLineAsync("Stark stdlib discovery failed while resolving a System.* import.");
+        await session.Stderr.WriteLineAsync($"Stark {root.DiagnosticName} discovery failed while resolving a {root.ImportRoot}.* import.");
         await session.Stderr.WriteLineAsync(
-            $"Active stdlib context: profile={(session.Profile == BuildProfile.Release ? "release" : "dev")}, target={session.TargetTriple}, stage={session.StageName}");
-        await session.Stderr.WriteLineAsync("Searched stdlib paths:");
+            $"Active {root.DiagnosticName} context: profile={(session.Profile == BuildProfile.Release ? "release" : "dev")}, target={session.TargetTriple}, stage={session.StageName}");
+        await session.Stderr.WriteLineAsync($"Searched {root.DiagnosticName} paths:");
 
         foreach (var path in paths)
         {
@@ -2098,6 +2164,12 @@ internal static class ProjectCliDriver
     private static readonly IReadOnlyDictionary<BuildProfile, ProfileManifest> EmptyProfiles =
         new Dictionary<BuildProfile, ProfileManifest>();
 
+    private static readonly BundledLibraryRoot[] BundledLibraryRoots =
+    [
+        new("System", "stdlib", "stdlib"),
+        new("Vendor", "vendor", "vendor library")
+    ];
+
     private sealed class ManifestCache
     {
         public Dictionary<string, ProjectManifest> Projects { get; } = new(StringComparer.Ordinal);
@@ -2137,7 +2209,13 @@ internal static class ProjectCliDriver
         string? PackageSearchDirectory,
         string InputStamp = "");
 
-    private sealed record StdlibSearchPath(
+    private sealed record BundledLibraryRoot(
+        string ImportRoot,
+        string DirectoryName,
+        string DiagnosticName);
+
+    private sealed record BundledLibrarySearchPath(
+        BundledLibraryRoot Root,
         string Tier,
         string Path,
         bool IncludeInCompilerSearch,
