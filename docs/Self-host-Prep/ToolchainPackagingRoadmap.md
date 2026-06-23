@@ -26,14 +26,14 @@ bootstrap investigation.
 
 ## Goals
 
-- [ ] Ship runtime-specific Stark compiler archives that do not require a separate .NET runtime install.
-- [ ] Bundle a pinned libLLVM plus Clang/LLD/LLVM toolchain for each supported release platform.
+- [x] Ship runtime-specific Stark compiler archives that do not require a separate .NET runtime install.
+- [x] Bundle a pinned libLLVM plus Clang/LLD/LLVM toolchain for each supported release platform.
 - [ ] Make the compiler prefer its bundled toolchain while still allowing explicit overrides.
-- [ ] Bundle or generate the standard library package artifacts needed by ordinary executable and library builds.
-- [ ] Bundle the vendor library needed by ordinary Stark development.
-- [ ] Provide a manual release workflow that creates macOS, Windows, and Linux archives.
+- [x] Bundle or generate the standard library package artifacts needed by ordinary executable and library builds.
+- [x] Bundle the vendor library needed by ordinary Stark development.
+- [x] Provide a manual release workflow that creates macOS, Windows, and Linux archives.
 - [ ] Provide diagnostics that clearly explain missing platform SDK pieces when a fully bundled path is impossible.
-- [ ] Add a small release smoke check that proves a clean machine/container can compile and run basic Stark programs from the archive alone.
+- [x] Add a small release smoke check that proves a clean machine/container can compile and run basic Stark programs from the archive alone.
 
 ## Non-Goals For This Roadmap
 
@@ -46,48 +46,25 @@ bootstrap investigation.
 
 ## Phase 1: Distribution Shape
 
-- [ ] Define the release archive layout.
-  - [ ] Choose platform-specific archive names such as `stark-<version>-linux-x64.tar.gz`, `stark-<version>-win-x64.zip`, and `stark-<version>-osx-arm64.tar.gz`.
-  - [ ] Define a stable directory layout:
-
-    ```text
-    stark-<version>-<rid>/
-      bin/
-        stark
-      stdlib/
-        src/
-        libSystem.a
-        System.starkpkg
-      vendor/
-        src/
-        dist/
-          ...
-      toolchain/
-        bin/
-          clang
-          clang++
-          ld.lld
-          lld-link
-          llvm-ar
-          llvm-lib
-          llvm-ranlib
-        lib/
-          libLLVM.*
-          clang/
-      licenses/
-      INSTALL.md
-      RELEASE.txt
-    ```
-
-  - [ ] Decide whether `stark` lives at archive root or under `bin/`; provide a root launcher only if it improves ergonomics.
+- [x] Define the release archive layout.
+      Decision: use the accepted v1 contract in
+      [28-release-archive-layout.md](28-release-archive-layout.md).
+  - [x] Use platform-specific archive names such as
+        `stark-<version>-linux-x64.tar.gz`,
+        `stark-<version>-windows-x64.zip`, and
+        `stark-<version>-macos-arm64.tar.gz`.
+  - [x] Put `stark[.exe]` at the archive root, with `stdlib/`, `vendor/`,
+        `toolchain/`, `licenses/`, `INSTALL.md`, `RELEASE.txt`, and
+        `release.json` as root siblings.
   - [x] Include standard library source files by default for debugging,
         reference, and package rebuild scenarios.
-  - [ ] Define vendor library layout and required package/image artifacts.
-        The release must include the official vendor library source plus any
-        generated artifacts needed for normal builds.
-  - [ ] Document which files are required at runtime versus developer/reference extras.
-  - [ ] Include OS-specific install instructions covering `PATH` and any Stark
-        environment variables.
+  - [x] Define vendor library layout and required package/image artifacts.
+        The release includes the official vendor library source plus generated
+        artifacts needed for normal builds.
+  - [x] Document which files are required at runtime versus
+        developer/reference extras.
+  - [x] Include OS-specific install instructions covering `PATH`, `stark
+        doctor`, and optional Stark environment variables.
 
 - [ ] Define supported release IDs for v1.
   - [ ] Linux x64.
@@ -128,10 +105,10 @@ bootstrap investigation.
 
 ## Phase 2: Self-Contained Compiler Publish
 
-- [ ] Add release scripts for runtime-specific .NET publish outputs.
-  - [ ] `linux-x64`.
-  - [ ] `win-x64`.
-  - [ ] `osx-arm64`.
+- [x] Add release scripts for runtime-specific .NET publish outputs.
+  - [x] `linux-x64`.
+  - [x] `win-x64`.
+  - [x] `osx-arm64`.
   - [ ] Optional `osx-x64`.
   - [ ] Optional `linux-arm64`.
 
@@ -148,13 +125,13 @@ bootstrap investigation.
 - [ ] Ensure generated parser/runtime assets are included.
   - [ ] Verify ANTLR runtime dependency is present in published output.
   - [ ] Verify `Stark.g4` linked file does not create a publish-time dependency.
-  - [ ] Verify root launcher generation is not relied on by release archives.
+  - [x] Verify root launcher generation is not relied on by release archives.
 
-- [ ] Add smoke tests for published compiler binaries.
-  - [ ] `stark --help`.
-  - [ ] `stark sample.stark --check`.
-  - [ ] `stark sample.stark --emit-llvm`.
-  - [ ] `stark sample.stark --emit-obj`.
+- [x] Add smoke tests for published compiler binaries.
+  - [x] `stark --help`.
+  - [x] `stark sample.stark --check`.
+  - [x] `stark sample.stark --emit-llvm`.
+  - [x] `stark sample.stark --emit-obj`.
 
 ## Phase 3: Bundled libLLVM And LLVM Toolchain Acquisition
 
@@ -168,10 +145,46 @@ bootstrap investigation.
     the bundled toolchain to the latest stable LLVM 23.1.x release so Stark can
     pick up new backend features promptly without destabilizing bootstrap.
   - [x] Record exact LLVM version: 22.1.8.
-  - [ ] Record required LLVM C API symbols for the supported backend slice.
-  - [ ] Record source for each platform artifact.
-  - [ ] Record checksums.
-  - [ ] Record license files to include.
+  - [x] Record required LLVM C API symbols for the supported backend slice:
+        `LLVMGetVersion`, `LLVMDisposeMessage`, `LLVMContextCreate`,
+        `LLVMContextDispose`, `LLVMModuleCreateWithNameInContext`,
+        `LLVMDisposeModule`, `LLVMCreateBuilderInContext`,
+        `LLVMDisposeBuilder`, `LLVMVerifyModule`, `LLVMPrintModuleToString`,
+        `LLVMInitializeNativeTarget`, `LLVMInitializeNativeAsmPrinter`,
+        `LLVMInitializeNativeAsmParser`, `LLVMGetDefaultTargetTriple`,
+        `LLVMGetTargetFromTriple`, `LLVMCreateTargetMachine`,
+        `LLVMDisposeTargetMachine`, `LLVMTargetMachineEmitToMemoryBuffer`,
+        `LLVMDisposeMemoryBuffer`, `LLVMGetBufferStart`, `LLVMGetBufferSize`,
+        `LLVMSetTarget`, `LLVMSetDataLayout`, `LLVMInt1TypeInContext`,
+        `LLVMInt8TypeInContext`, `LLVMInt32TypeInContext`,
+        `LLVMInt64TypeInContext`, `LLVMVoidTypeInContext`, `LLVMPointerType`,
+        `LLVMFunctionType`, `LLVMAddFunction`,
+        `LLVMAppendBasicBlockInContext`, `LLVMPositionBuilderAtEnd`,
+        `LLVMConstInt`, `LLVMBuildRet`, `LLVMBuildRetVoid`, `LLVMAddGlobal`,
+        `LLVMAddGlobalInAddressSpace`, `LLVMSetInitializer`,
+        `LLVMSetGlobalConstant`, `LLVMSetLinkage`, `LLVMSetVisibility`,
+        `LLVMSetDLLStorageClass`, `LLVMSetUnnamedAddress`, `LLVMSetAlignment`,
+        `LLVMSetSection`, `LLVMBuildLoad2`, `LLVMBuildStore`, `LLVMBuildGEP2`,
+        `LLVMBuildInBoundsGEP2`, `LLVMBuildCall2`, `LLVMSetVolatile`,
+        `LLVMSetOrdering`, `LLVMSetInstructionCallConv`, `LLVMSetTailCall`,
+        `LLVMGetEnumAttributeKindForName`, `LLVMCreateEnumAttribute`,
+        `LLVMAddAttributeAtIndex`, `LLVMAddCallSiteAttribute`,
+        `LLVMGetMDKindIDInContext`, `LLVMMDStringInContext2`,
+        `LLVMMDNodeInContext2`, `LLVMMetadataAsValue`, `LLVMValueAsMetadata`,
+        `LLVMSetMetadata`, `LLVMCountParams`, `LLVMGetParam`,
+        `LLVMSetFunctionCallConv`, `LLVMBuildBr`, `LLVMBuildCondBr`,
+        `LLVMBuildUnreachable`, `LLVMBuildPhi`, `LLVMAddIncoming`,
+        `LLVMBuildAdd`, `LLVMBuildNSWAdd`, `LLVMBuildNUWAdd`,
+        `LLVMBuildSub`, `LLVMBuildNSWSub`, `LLVMBuildNUWSub`,
+        `LLVMBuildMul`, `LLVMBuildNSWMul`, `LLVMBuildNUWMul`,
+        `LLVMBuildUDiv`, `LLVMBuildExactUDiv`, `LLVMBuildSDiv`,
+        `LLVMBuildExactSDiv`, `LLVMBuildURem`, `LLVMBuildSRem`,
+        `LLVMBuildAnd`, `LLVMBuildOr`, `LLVMBuildXor`, `LLVMBuildShl`,
+        `LLVMBuildLShr`, `LLVMBuildAShr`, `LLVMBuildICmp`, and
+        `LLVMBuildSelect`.
+  - [x] Record source for each platform artifact.
+  - [x] Record checksums.
+  - [x] Record license files to include.
 
 - [x] Decide acquisition model.
   - Decision: use official LLVM release archives for the first bundled release.
@@ -183,18 +196,18 @@ bootstrap investigation.
     archive-size problem.
   - [x] Use official LLVM release archives where suitable.
   - [ ] Build custom trimmed LLVM toolchains where official archives are too large or inconsistent.
-  - [ ] Prefer reproducible scripted acquisition over manual downloads.
+  - [x] Prefer reproducible scripted acquisition over manual downloads.
 
-- [ ] Define the minimum bundled binary set.
-  - [ ] `libLLVM` shared library for primary in-process object emission.
-  - [ ] `clang` for native C/shim compilation.
-  - [ ] `clang++` only if needed for native dependencies.
-  - [ ] `ld.lld` for ELF linking and ThinLTO.
-  - [ ] `lld-link` for Windows ThinLTO, explicit linker overrides, and any
+- [x] Define the minimum bundled binary set.
+  - [x] `libLLVM` shared library for primary in-process object emission.
+  - [x] `clang` for native C/shim compilation.
+  - [x] `clang++` only if needed for native dependencies.
+  - [x] `ld.lld` for ELF linking and ThinLTO.
+  - [x] `lld-link` for Windows ThinLTO, explicit linker overrides, and any
         Clang-driver link path that needs the bundled Windows LLD backend.
-  - [ ] `llvm-ar` for static library creation on Unix-like platforms.
-  - [ ] `llvm-lib` for static library creation on Windows.
-  - [ ] `llvm-ranlib` only if needed by archive workflows.
+  - [x] `llvm-ar` for static library creation on Unix-like platforms.
+  - [x] `llvm-lib` for static library creation on Windows.
+  - [x] `llvm-ranlib` only if needed by archive workflows.
 
 - [ ] Define required resource directories.
   - [ ] libLLVM shared-library location and runtime search-path strategy.
@@ -211,41 +224,41 @@ bootstrap investigation.
 
 ## Phase 4: Toolchain Resolution In Compiler
 
-- [ ] Introduce a toolchain resolver abstraction.
-  - [ ] Resolve concrete paths for libLLVM, `clang`, linker, archiver, and related tools once.
-  - [ ] Avoid hard-coded raw `"clang"`, `"ld.lld"`, `"llvm-ar"`, `"llvm-lib"`, and libLLVM lookups in lowering/linking paths.
-  - [ ] Keep command-line overrides as highest priority when explicitly supplied.
+- [x] Introduce a toolchain resolver abstraction.
+  - [x] Resolve concrete paths for libLLVM, `clang`, linker, archiver, and related tools once.
+  - [x] Avoid hard-coded raw `"clang"`, `"ld.lld"`, `"llvm-ar"`, `"llvm-lib"`, and libLLVM lookups in lowering/linking paths.
+  - [x] Keep command-line overrides as highest priority when explicitly supplied.
 
-- [ ] Define resolution priority.
-  - [ ] Explicit CLI overrides: `--linker`, `--archiver`, and any future tool override flags.
-  - [ ] Explicit libLLVM override when provided.
-  - [ ] `--toolchain-dir <dir>`.
+- [x] Define resolution priority.
+  - [x] Explicit CLI overrides: `--linker`, `--archiver`, and any future tool override flags.
+  - [x] Explicit libLLVM override when provided.
+  - [x] `--toolchain-dir <dir>`.
         Decision: `--toolchain-dir` names a Stark toolchain root, not only an
         LLVM directory. It applies to bundled/override LLVM tools, libLLVM, and
         Stark-shipped helper tools resolved from that root. It does not replace
         external platform SDKs, CRTs, or Command Line Tools; those remain
         platform requirements diagnosed separately by `stark doctor`.
-  - [ ] `STARK_TOOLCHAIN_DIR`.
-  - [ ] Bundled toolchain beside the compiler executable.
-  - [ ] `PATH` fallback.
+  - [x] `STARK_TOOLCHAIN_DIR`.
+  - [x] Bundled toolchain beside the compiler executable.
+  - [x] `PATH` fallback.
 
-- [ ] Add new CLI/config surface.
-  - [ ] `--toolchain-dir <dir>`.
-  - [ ] Optional `--llvm-lib <path>` if useful for developer/debug builds.
-  - [ ] Optional `STARK_CLANG`, `STARK_LINKER`, and `STARK_ARCHIVER` environment variables if useful.
-  - [ ] Optional `STARK_LLVM_LIB` environment variable if useful.
-  - [ ] Optional user config support for project builds.
+- [x] Add new CLI/config surface.
+  - [x] `--toolchain-dir <dir>`.
+  - [x] Optional `--llvm-lib <path>` if useful for developer/debug builds.
+  - [x] Optional `STARK_CLANG`, `STARK_LINKER`, and `STARK_ARCHIVER` environment variables if useful.
+  - [x] Optional `STARK_LLVM_LIB` environment variable if useful.
+  - [x] Optional user config support for project builds.
 
 - [ ] Teach current native tool operations to use resolved paths.
-  - [ ] Default target detection.
+  - [x] Default target detection.
   - [ ] libLLVM load/version validation.
   - [ ] LLVM module verification and object emission through libLLVM.
   - [ ] Optional textual LLVM inspection artifact emitted from the in-memory
         module.
-  - [ ] Native C source to object.
-  - [ ] Executable linking.
-  - [ ] Static library creation.
-  - [ ] ThinLTO support checks.
+  - [x] Native C source to object.
+  - [x] Executable linking.
+  - [x] Static library creation.
+  - [x] ThinLTO support checks.
   - [ ] macOS SDK discovery should remain platform-aware.
 
 - [ ] Improve failure diagnostics.
@@ -305,25 +318,25 @@ bootstrap investigation.
 
 ## Phase 6: Minimal Release Assembly
 
-- [ ] Add one release assembly script/workflow.
-  - [ ] Add a manually triggered GitHub Actions workflow (or equivalent) that
+- [~] Add one release assembly script/workflow.
+  - [x] Add a manually triggered GitHub Actions workflow (or equivalent) that
         creates release archives for macOS, Windows, and Linux.
-  - [ ] Publish the compiler for each runtime ID.
-  - [ ] Acquire or locate the pinned LLVM toolchain.
-  - [ ] Copy selected toolchain files.
-  - [ ] Build standard library package artifacts.
-  - [ ] Build or copy vendor library artifacts.
-  - [ ] Copy licenses.
-  - [ ] Copy `INSTALL.md` with per-OS setup instructions.
-  - [ ] Create compressed release archives.
-  - [ ] Emit a simple `RELEASE.txt` with compiler version, commit SHA, runtime
+  - [x] Publish the compiler for each runtime ID.
+  - [x] Acquire or locate the pinned LLVM toolchain.
+  - [x] Copy selected toolchain files.
+  - [x] Build standard library package artifacts.
+  - [x] Build or copy vendor library artifacts.
+  - [x] Copy licenses.
+  - [x] Copy `INSTALL.md` with per-OS setup instructions.
+  - [x] Create compressed release archives.
+  - [x] Emit a simple `RELEASE.txt` with compiler version, commit SHA, runtime
         ID, LLVM version, and included stdlib/vendor/toolchain paths.
-  - [ ] Emit archive checksums if the archive is published outside the repo.
+  - [x] Emit archive checksums if the archive is published outside the repo.
 
 - [ ] Keep script modes minimal.
   - [ ] Local developer dry run.
   - [ ] Build archive.
-  - [ ] Smoke-test archive.
+  - [x] Smoke-test archive.
 
 ## Phase 7: Doctor And Diagnostics
 
@@ -352,41 +365,41 @@ concrete.
 
 ## Phase 8: Minimum Release Smoke Tests
 
-- [ ] Clean-machine archive smoke tests.
+- [~] Clean-machine archive smoke tests.
   - [ ] Linux container with no system LLVM installed.
-  - [ ] Windows and macOS archive checks before release when those archives are
+  - [x] Windows and macOS archive checks before release when those archives are
         being published.
 
-- [ ] Compiler mode tests from archive.
-  - [ ] `--check`.
-  - [ ] `--emit-mir`.
-  - [ ] `--emit-ssa`.
-  - [ ] `--emit-llvm`.
-  - [ ] `--emit-obj`.
-  - [ ] `--emit-lib`.
-  - [ ] `--emit-exe`.
+- [x] Compiler mode tests from archive.
+  - [x] `--check`.
+  - [x] `--emit-mir`.
+  - [x] `--emit-ssa`.
+  - [x] `--emit-llvm`.
+  - [x] `--emit-obj`.
+  - [x] `--emit-lib`.
+  - [x] `--emit-exe`.
 
-- [ ] Toolchain feature tests.
+- [~] Toolchain feature tests.
   - [ ] ThinLTO executable build when bundled LLD supports it.
   - [ ] Non-LTO fallback when ThinLTO is unavailable or disabled.
-  - [ ] Native C shim compilation.
-  - [ ] Package-owned native dependency metadata.
+  - [x] Native C shim compilation.
+  - [x] Package-owned native dependency metadata.
   - [ ] Explicit external linker override.
   - [ ] Explicit external archiver override.
   - [ ] `PATH` fallback with no bundled toolchain.
 
-- [ ] Runtime smoke tests.
-  - [ ] Console write.
-  - [ ] Math functions.
-  - [ ] File IO.
-  - [ ] Small standard library subset that is reasonable to run locally before
+- [x] Runtime smoke tests.
+  - [x] Console write.
+  - [x] Math functions.
+  - [x] File IO.
+  - [x] Small standard library subset that is reasonable to run locally before
         release.
 
 ## Phase 9: Documentation And Publishing
 
 - [ ] Update user installation docs.
   - [ ] Download archive.
-  - [ ] Add `bin` to `PATH`.
+  - [ ] Add the archive root to `PATH`.
   - [ ] Document any supported Stark environment variables.
   - [ ] Run `stark doctor`.
   - [ ] Compile hello world.

@@ -464,6 +464,17 @@ public struct CAbiAggregateCarrierFacts
     }
 }
 
+public fn CAbiAggregateCarrierFacts CAbiAggregateCarrierFactsAtIndex(borrow IrTable<CAbiAggregateCarrierFacts> facts, u32[0 max] index)
+{
+    stack mut CAbiAggregateCarrierFacts empty = new();
+    if (facts.Contains(index))
+    {
+        return facts.Get(index);
+    }
+
+    return empty;
+}
+
 // The optimization/backend facts attached to one MIR/SSA value (doc 24 §4). A fact
 // is present when its `Has*` flag is set; absent facts read as 0/false/`StarkAbi`.
 // `InheritFrom` is the lowering fact-transfer primitive (doc 24 §5): a lowered value
@@ -603,6 +614,863 @@ public struct ValueFacts
             self.RangeUpperExclusive = src.RangeUpperExclusive;
         }
     }
+}
+
+// Reads the fact row attached to a 1-based value index. Missing/invalid rows read as
+// empty facts so callers can stay branch-light in hot lowering/emission paths.
+public fn ValueFacts ValueFactsAtIndex(borrow IrTable<ValueFacts> facts, u32[0 max] index)
+{
+    stack mut ValueFacts empty = new();
+    if (facts.Contains(index))
+    {
+        return facts.Get(index);
+    }
+
+    return empty;
+}
+
+// Reads the fact row attached to a MIR value handle. Invalid handles read as empty.
+public fn ValueFacts ValueFactsForMirValue(borrow IrTable<ValueFacts> facts, MirValueId value)
+{
+    return ValueFactsAtIndex(facts, value.Index());
+}
+
+// Appends `row` as the fact record for `value`, filling any skipped earlier value
+// rows with empty facts. Existing rows are never overwritten; a stale/duplicate
+// handle returns false so phase validation can report the compiler bug.
+public fn bool RecordValueFactsForMirValue(mut borrow IrTable<ValueFacts> facts, MirValueId value, ValueFacts row)
+{
+    stack u32[0 max] targetIndex = value.Index();
+    if (targetIndex == 0)
+    {
+        return false;
+    }
+
+    stack u64[0 2 ** 63 - 1] targetBefore = (u64[0 2 ** 63 - 1])(targetIndex - 1);
+    while willexit (facts.Count() < targetBefore)
+    {
+        stack mut ValueFacts empty = new();
+        if (facts.Add(empty) == 0)
+        {
+            return false;
+        }
+    }
+
+    if (facts.Count() != targetBefore)
+    {
+        return false;
+    }
+
+    return facts.Add(row) == targetIndex;
+}
+
+// Records an empty fact row for builders whose result has no inherited facts or
+// whose facts must be recomputed by a later analysis pass.
+public fn bool RecordEmptyValueFactsForMirValue(mut borrow IrTable<ValueFacts> facts, MirValueId value)
+{
+    stack mut ValueFacts empty = new();
+    return RecordValueFactsForMirValue(facts, value, empty);
+}
+
+// Records facts generated directly by the builder, such as constants, loads, or
+// allocations with known alignment/range/alias facts.
+public fn bool RecordGeneratedValueFactsForMirValue(mut borrow IrTable<ValueFacts> facts, MirValueId value, ValueFacts generated)
+{
+    return RecordValueFactsForMirValue(facts, value, generated);
+}
+
+// Preserves facts from a source value onto an equivalent lowered value. Use this
+// only for value-preserving builders such as casts/projections/moves; arithmetic
+// builders should recompute or provide translated facts instead.
+public fn bool PreserveValueFactsForMirValue(mut borrow IrTable<ValueFacts> facts, MirValueId value, MirValueId source)
+{
+    return RecordValueFactsForMirValue(facts, value, ValueFactsForMirValue(facts, source));
+}
+
+// Records facts that were intentionally translated to the new value/phase shape.
+public fn bool TranslateValueFactsForMirValue(mut borrow IrTable<ValueFacts> facts, MirValueId value, ValueFacts translated)
+{
+    return RecordValueFactsForMirValue(facts, value, translated);
+}
+
+// Records the recompute policy: old facts are intentionally invalidated and a
+// later analysis must derive any new range/alias/layout facts.
+public fn bool RecomputeValueFactsForMirValue(mut borrow IrTable<ValueFacts> facts, MirValueId value)
+{
+    return RecordEmptyValueFactsForMirValue(facts, value);
+}
+
+// Records the consume policy: the fact was used by the builder and does not
+// survive as a value fact after this handle.
+public fn bool ConsumeValueFactsForMirValue(mut borrow IrTable<ValueFacts> facts, MirValueId value)
+{
+    return RecordEmptyValueFactsForMirValue(facts, value);
+}
+
+// Records the debug-only policy: debug/inspection facts may disappear from this
+// value without changing optimized backend behavior.
+public fn bool DropDebugOnlyValueFactsForMirValue(mut borrow IrTable<ValueFacts> facts, MirValueId value)
+{
+    return RecordEmptyValueFactsForMirValue(facts, value);
+}
+
+// Imports a fact row from a non-value side table into the MIR value-fact table.
+public fn bool ImportValueFactsForMirValue(
+    mut borrow IrTable<ValueFacts> facts,
+    MirValueId value,
+    borrow IrTable<ValueFacts> sourceFacts,
+    u32[0 max] sourceIndex)
+{
+    return RecordValueFactsForMirValue(facts, value, ValueFactsAtIndex(sourceFacts, sourceIndex));
+}
+
+// Parameters are keyed by their 0-based source parameter index but stored in
+// 1-based fact rows.
+public fn bool ImportParameterValueFactsForMirValue(
+    mut borrow IrTable<ValueFacts> facts,
+    MirValueId value,
+    borrow IrTable<ValueFacts> parameterFacts,
+    u32[0 max] parameterIndex)
+{
+    return ImportValueFactsForMirValue(facts, value, parameterFacts, parameterIndex + 1);
+}
+
+// Globals and function returns are already keyed by their 1-based MIR handles.
+public fn bool ImportGlobalValueFactsForMirValue(
+    mut borrow IrTable<ValueFacts> facts,
+    MirValueId value,
+    borrow IrTable<ValueFacts> globalFacts,
+    u32[0 max] globalId)
+{
+    return ImportValueFactsForMirValue(facts, value, globalFacts, globalId);
+}
+
+public fn bool ImportFunctionReturnValueFactsForMirValue(
+    mut borrow IrTable<ValueFacts> facts,
+    MirValueId value,
+    borrow IrTable<ValueFacts> functionReturnFacts,
+    MirFuncId callee)
+{
+    return ImportValueFactsForMirValue(facts, value, functionReturnFacts, callee.Index());
+}
+
+public enum IrFactCategory
+{
+    Unknown,
+    ValueAlignment,
+    ValueAliasClass,
+    ValueNoAlias,
+    ValueVolatile,
+    ValueIntegerRange,
+    CallableAbi,
+    CAbiAggregateCarrier,
+    TypeLayout,
+    StructLayout,
+    EnumLayout,
+    FieldLayout,
+    OwnershipDrop,
+    AliasProofCarrier,
+    FunctionEffect,
+    PackageCompatibility,
+    DiagnosticSourceLocation,
+}
+
+public enum IrFactAttachPoint
+{
+    Unknown,
+    Value,
+    Block,
+    Function,
+    Type,
+    Symbol,
+    Package,
+    Diagnostic,
+    AliasProof,
+}
+
+public enum IrFactPhaseOwner
+{
+    Unknown,
+    Syntax,
+    Hir,
+    Mir,
+    Ssa,
+    Backend,
+    Package,
+    Tooling,
+}
+
+public enum IrFactDurability
+{
+    Unknown,
+    Transient,
+    Recomputable,
+    Durable,
+}
+
+public enum IrFactProducer
+{
+    Unknown,
+    Parser,
+    Binder,
+    TypeResolver,
+    TypeChecker,
+    SemanticValidator,
+    BorrowValidator,
+    HirLowering,
+    MirLowering,
+    SsaLowering,
+    SsaOptimizer,
+    AbiLowering,
+    BackendLowering,
+    PackageLoader,
+    Tooling,
+}
+
+public enum IrFactConsumer
+{
+    Unknown,
+    Binder,
+    TypeChecker,
+    BorrowValidator,
+    MirLowering,
+    DropLowering,
+    SsaLowering,
+    SsaOptimizer,
+    AbiLowering,
+    LlvmEmission,
+    PackageWriter,
+    PackageLoader,
+    Diagnostics,
+    Tooling,
+}
+
+public enum IrFactValidationRule
+{
+    Unknown,
+    HandleLive,
+    Preserve,
+    Translate,
+    Consume,
+    Recompute,
+    ForbidDrop,
+    PackageRoundTrip,
+    DiagnosticLocation,
+    AliasProofRoot,
+    LayoutRequired,
+}
+
+public enum IrFactLoweringPolicy
+{
+    Unknown,
+    Preserve,
+    Translate,
+    Consume,
+    Recompute,
+    ForbidDrop,
+    DebugOnly,
+}
+
+public struct IrFactCategoryDescriptor
+{
+    IrFactCategory CategoryValue;
+    IrFactAttachPoint AttachPointValue;
+    IrFactPhaseOwner PhaseOwnerValue;
+    IrFactDurability DurabilityValue;
+    IrFactProducer ProducerValue;
+    IrFactConsumer ConsumerValue;
+    IrFactValidationRule ValidationRuleValue;
+    IrFactLoweringPolicy LoweringPolicyValue;
+
+    IrFactCategoryDescriptor()
+    {
+        self.CategoryValue = IrFactCategory.Unknown;
+        self.AttachPointValue = IrFactAttachPoint.Unknown;
+        self.PhaseOwnerValue = IrFactPhaseOwner.Unknown;
+        self.DurabilityValue = IrFactDurability.Unknown;
+        self.ProducerValue = IrFactProducer.Unknown;
+        self.ConsumerValue = IrFactConsumer.Unknown;
+        self.ValidationRuleValue = IrFactValidationRule.Unknown;
+        self.LoweringPolicyValue = IrFactLoweringPolicy.Unknown;
+    }
+
+    public inline finite law IrFactCategory Category(borrow IrFactCategoryDescriptor self)
+    {
+        return self.CategoryValue;
+    }
+
+    public inline finite law IrFactAttachPoint AttachPoint(borrow IrFactCategoryDescriptor self)
+    {
+        return self.AttachPointValue;
+    }
+
+    public inline finite law IrFactPhaseOwner PhaseOwner(borrow IrFactCategoryDescriptor self)
+    {
+        return self.PhaseOwnerValue;
+    }
+
+    public inline finite law IrFactDurability Durability(borrow IrFactCategoryDescriptor self)
+    {
+        return self.DurabilityValue;
+    }
+
+    public inline finite law IrFactProducer Producer(borrow IrFactCategoryDescriptor self)
+    {
+        return self.ProducerValue;
+    }
+
+    public inline finite law IrFactConsumer Consumer(borrow IrFactCategoryDescriptor self)
+    {
+        return self.ConsumerValue;
+    }
+
+    public inline finite law IrFactValidationRule ValidationRule(borrow IrFactCategoryDescriptor self)
+    {
+        return self.ValidationRuleValue;
+    }
+
+    public inline finite law IrFactLoweringPolicy LoweringPolicy(borrow IrFactCategoryDescriptor self)
+    {
+        return self.LoweringPolicyValue;
+    }
+}
+
+internal finite law IrFactCategoryDescriptor MakeIrFactDescriptor(
+    IrFactCategory category,
+    IrFactAttachPoint attachPoint,
+    IrFactPhaseOwner phaseOwner,
+    IrFactDurability durability,
+    IrFactProducer producer,
+    IrFactConsumer consumer,
+    IrFactValidationRule validationRule,
+    IrFactLoweringPolicy loweringPolicy)
+{
+    stack mut IrFactCategoryDescriptor descriptor = new();
+    descriptor.CategoryValue = category;
+    descriptor.AttachPointValue = attachPoint;
+    descriptor.PhaseOwnerValue = phaseOwner;
+    descriptor.DurabilityValue = durability;
+    descriptor.ProducerValue = producer;
+    descriptor.ConsumerValue = consumer;
+    descriptor.ValidationRuleValue = validationRule;
+    descriptor.LoweringPolicyValue = loweringPolicy;
+    return descriptor;
+}
+
+public inline finite law u32[0 max] IrConcreteFactCategoryCount()
+{
+    return 16;
+}
+
+public finite law IrFactCategory IrFactCategoryAt(u32[0 max] index)
+{
+    switch (index)
+    {
+        case 0: return IrFactCategory.ValueAlignment;
+        case 1: return IrFactCategory.ValueAliasClass;
+        case 2: return IrFactCategory.ValueNoAlias;
+        case 3: return IrFactCategory.ValueVolatile;
+        case 4: return IrFactCategory.ValueIntegerRange;
+        case 5: return IrFactCategory.CallableAbi;
+        case 6: return IrFactCategory.CAbiAggregateCarrier;
+        case 7: return IrFactCategory.TypeLayout;
+        case 8: return IrFactCategory.StructLayout;
+        case 9: return IrFactCategory.EnumLayout;
+        case 10: return IrFactCategory.FieldLayout;
+        case 11: return IrFactCategory.OwnershipDrop;
+        case 12: return IrFactCategory.AliasProofCarrier;
+        case 13: return IrFactCategory.FunctionEffect;
+        case 14: return IrFactCategory.PackageCompatibility;
+        case 15: return IrFactCategory.DiagnosticSourceLocation;
+        default: return IrFactCategory.Unknown;
+    }
+}
+
+public inline finite law bool IrFactCategoryIsConcrete(IrFactCategory category)
+{
+    return category != IrFactCategory.Unknown;
+}
+
+public inline finite law bool IrFactDurabilityRequiresPackageSerialization(IrFactDurability durability)
+{
+    return durability == IrFactDurability.Durable;
+}
+
+public finite law bool IrFactCategoryRequiresPackageSerialization(IrFactCategory category)
+{
+    stack IrFactCategoryDescriptor descriptor = DescribeIrFactCategory(category);
+    return IrFactDurabilityRequiresPackageSerialization(descriptor.Durability());
+}
+
+public finite law IrFactCategoryDescriptor DescribeIrFactCategory(IrFactCategory category)
+{
+    switch (category)
+    {
+        case IrFactCategory.ValueAlignment:
+            return MakeIrFactDescriptor(
+                category,
+                IrFactAttachPoint.Value,
+                IrFactPhaseOwner.Mir,
+                IrFactDurability.Recomputable,
+                IrFactProducer.TypeChecker,
+                IrFactConsumer.LlvmEmission,
+                IrFactValidationRule.LayoutRequired,
+                IrFactLoweringPolicy.Preserve);
+        case IrFactCategory.ValueAliasClass:
+            return MakeIrFactDescriptor(
+                category,
+                IrFactAttachPoint.Value,
+                IrFactPhaseOwner.Ssa,
+                IrFactDurability.Transient,
+                IrFactProducer.SsaLowering,
+                IrFactConsumer.SsaOptimizer,
+                IrFactValidationRule.AliasProofRoot,
+                IrFactLoweringPolicy.ForbidDrop);
+        case IrFactCategory.ValueNoAlias:
+            return MakeIrFactDescriptor(
+                category,
+                IrFactAttachPoint.Value,
+                IrFactPhaseOwner.Ssa,
+                IrFactDurability.Transient,
+                IrFactProducer.BorrowValidator,
+                IrFactConsumer.LlvmEmission,
+                IrFactValidationRule.AliasProofRoot,
+                IrFactLoweringPolicy.ForbidDrop);
+        case IrFactCategory.ValueVolatile:
+            return MakeIrFactDescriptor(
+                category,
+                IrFactAttachPoint.Value,
+                IrFactPhaseOwner.Backend,
+                IrFactDurability.Transient,
+                IrFactProducer.TypeChecker,
+                IrFactConsumer.LlvmEmission,
+                IrFactValidationRule.ForbidDrop,
+                IrFactLoweringPolicy.ForbidDrop);
+        case IrFactCategory.ValueIntegerRange:
+            return MakeIrFactDescriptor(
+                category,
+                IrFactAttachPoint.Value,
+                IrFactPhaseOwner.Mir,
+                IrFactDurability.Recomputable,
+                IrFactProducer.TypeChecker,
+                IrFactConsumer.LlvmEmission,
+                IrFactValidationRule.Recompute,
+                IrFactLoweringPolicy.Preserve);
+        case IrFactCategory.CallableAbi:
+            return MakeIrFactDescriptor(
+                category,
+                IrFactAttachPoint.Function,
+                IrFactPhaseOwner.Backend,
+                IrFactDurability.Durable,
+                IrFactProducer.TypeChecker,
+                IrFactConsumer.LlvmEmission,
+                IrFactValidationRule.PackageRoundTrip,
+                IrFactLoweringPolicy.ForbidDrop);
+        case IrFactCategory.CAbiAggregateCarrier:
+            return MakeIrFactDescriptor(
+                category,
+                IrFactAttachPoint.Type,
+                IrFactPhaseOwner.Backend,
+                IrFactDurability.Durable,
+                IrFactProducer.AbiLowering,
+                IrFactConsumer.LlvmEmission,
+                IrFactValidationRule.LayoutRequired,
+                IrFactLoweringPolicy.Translate);
+        case IrFactCategory.TypeLayout:
+            return MakeIrFactDescriptor(
+                category,
+                IrFactAttachPoint.Type,
+                IrFactPhaseOwner.Backend,
+                IrFactDurability.Durable,
+                IrFactProducer.TypeChecker,
+                IrFactConsumer.AbiLowering,
+                IrFactValidationRule.LayoutRequired,
+                IrFactLoweringPolicy.ForbidDrop);
+        case IrFactCategory.StructLayout:
+            return MakeIrFactDescriptor(
+                category,
+                IrFactAttachPoint.Type,
+                IrFactPhaseOwner.Backend,
+                IrFactDurability.Durable,
+                IrFactProducer.TypeChecker,
+                IrFactConsumer.PackageWriter,
+                IrFactValidationRule.PackageRoundTrip,
+                IrFactLoweringPolicy.ForbidDrop);
+        case IrFactCategory.EnumLayout:
+            return MakeIrFactDescriptor(
+                category,
+                IrFactAttachPoint.Type,
+                IrFactPhaseOwner.Backend,
+                IrFactDurability.Durable,
+                IrFactProducer.TypeChecker,
+                IrFactConsumer.PackageWriter,
+                IrFactValidationRule.PackageRoundTrip,
+                IrFactLoweringPolicy.ForbidDrop);
+        case IrFactCategory.FieldLayout:
+            return MakeIrFactDescriptor(
+                category,
+                IrFactAttachPoint.Symbol,
+                IrFactPhaseOwner.Backend,
+                IrFactDurability.Durable,
+                IrFactProducer.TypeChecker,
+                IrFactConsumer.LlvmEmission,
+                IrFactValidationRule.LayoutRequired,
+                IrFactLoweringPolicy.ForbidDrop);
+        case IrFactCategory.OwnershipDrop:
+            return MakeIrFactDescriptor(
+                category,
+                IrFactAttachPoint.Value,
+                IrFactPhaseOwner.Mir,
+                IrFactDurability.Transient,
+                IrFactProducer.BorrowValidator,
+                IrFactConsumer.DropLowering,
+                IrFactValidationRule.ForbidDrop,
+                IrFactLoweringPolicy.ForbidDrop);
+        case IrFactCategory.AliasProofCarrier:
+            return MakeIrFactDescriptor(
+                category,
+                IrFactAttachPoint.AliasProof,
+                IrFactPhaseOwner.Ssa,
+                IrFactDurability.Transient,
+                IrFactProducer.SsaLowering,
+                IrFactConsumer.SsaOptimizer,
+                IrFactValidationRule.AliasProofRoot,
+                IrFactLoweringPolicy.Consume);
+        case IrFactCategory.FunctionEffect:
+            return MakeIrFactDescriptor(
+                category,
+                IrFactAttachPoint.Function,
+                IrFactPhaseOwner.Mir,
+                IrFactDurability.Durable,
+                IrFactProducer.TypeChecker,
+                IrFactConsumer.LlvmEmission,
+                IrFactValidationRule.PackageRoundTrip,
+                IrFactLoweringPolicy.Preserve);
+        case IrFactCategory.PackageCompatibility:
+            return MakeIrFactDescriptor(
+                category,
+                IrFactAttachPoint.Package,
+                IrFactPhaseOwner.Package,
+                IrFactDurability.Durable,
+                IrFactProducer.PackageLoader,
+                IrFactConsumer.PackageLoader,
+                IrFactValidationRule.PackageRoundTrip,
+                IrFactLoweringPolicy.ForbidDrop);
+        case IrFactCategory.DiagnosticSourceLocation:
+            return MakeIrFactDescriptor(
+                category,
+                IrFactAttachPoint.Diagnostic,
+                IrFactPhaseOwner.Tooling,
+                IrFactDurability.Transient,
+                IrFactProducer.Parser,
+                IrFactConsumer.Diagnostics,
+                IrFactValidationRule.DiagnosticLocation,
+                IrFactLoweringPolicy.DebugOnly);
+        default:
+            return new IrFactCategoryDescriptor();
+    }
+}
+
+public enum IrFactValidationStatus
+{
+    Ok,
+    UnknownCategory,
+    StaleHandle,
+    DroppedForbidDropFact,
+    MissingAbiFact,
+    MissingAliasFact,
+    MissingLayoutFact,
+    MissingDurablePackageFact,
+    MissingRequiredFact,
+}
+
+public finite law ascii IrFactValidationStatusName(IrFactValidationStatus status)
+{
+    switch (status)
+    {
+        case IrFactValidationStatus.Ok:
+            return "ok";
+        case IrFactValidationStatus.UnknownCategory:
+            return "unknown-category";
+        case IrFactValidationStatus.StaleHandle:
+            return "stale-handle";
+        case IrFactValidationStatus.DroppedForbidDropFact:
+            return "dropped-forbid-drop-fact";
+        case IrFactValidationStatus.MissingAbiFact:
+            return "missing-abi-fact";
+        case IrFactValidationStatus.MissingAliasFact:
+            return "missing-alias-fact";
+        case IrFactValidationStatus.MissingLayoutFact:
+            return "missing-layout-fact";
+        case IrFactValidationStatus.MissingDurablePackageFact:
+            return "missing-durable-package-fact";
+        case IrFactValidationStatus.MissingRequiredFact:
+            return "missing-required-fact";
+    }
+}
+
+public inline finite law IrFactValidationStatus ValidateTypeHandle<T>(borrow IrTable<T> table, TypeId id)
+{
+    if (table.Contains(id.Index()))
+    {
+        return IrFactValidationStatus.Ok;
+    }
+
+    return IrFactValidationStatus.StaleHandle;
+}
+
+public inline finite law IrFactValidationStatus ValidateSymbolHandle<T>(borrow IrTable<T> table, SymbolId id)
+{
+    if (table.Contains(id.Index()))
+    {
+        return IrFactValidationStatus.Ok;
+    }
+
+    return IrFactValidationStatus.StaleHandle;
+}
+
+public inline finite law IrFactValidationStatus ValidateMirValueHandle<T>(borrow IrTable<T> table, MirValueId id)
+{
+    if (table.Contains(id.Index()))
+    {
+        return IrFactValidationStatus.Ok;
+    }
+
+    return IrFactValidationStatus.StaleHandle;
+}
+
+public inline finite law IrFactValidationStatus ValidateMirBlockHandle<T>(borrow IrTable<T> table, MirBlockId id)
+{
+    if (table.Contains(id.Index()))
+    {
+        return IrFactValidationStatus.Ok;
+    }
+
+    return IrFactValidationStatus.StaleHandle;
+}
+
+public inline finite law IrFactValidationStatus ValidateMirFunctionHandle<T>(borrow IrTable<T> table, MirFuncId id)
+{
+    if (table.Contains(id.Index()))
+    {
+        return IrFactValidationStatus.Ok;
+    }
+
+    return IrFactValidationStatus.StaleHandle;
+}
+
+public inline finite law IrFactValidationStatus ValidateSsaValueHandle<T>(borrow IrTable<T> table, SsaValueId id)
+{
+    if (table.Contains(id.Index()))
+    {
+        return IrFactValidationStatus.Ok;
+    }
+
+    return IrFactValidationStatus.StaleHandle;
+}
+
+public inline finite law IrFactValidationStatus ValidatePackageHandle<T>(borrow IrTable<T> table, PackageId id)
+{
+    if (table.Contains(id.Index()))
+    {
+        return IrFactValidationStatus.Ok;
+    }
+
+    return IrFactValidationStatus.StaleHandle;
+}
+
+public finite law bool IrFactCategoryIsAbiFact(IrFactCategory category)
+{
+    return category == IrFactCategory.CallableAbi
+        || category == IrFactCategory.CAbiAggregateCarrier;
+}
+
+public finite law bool IrFactCategoryIsAliasFact(IrFactCategory category)
+{
+    return category == IrFactCategory.ValueAliasClass
+        || category == IrFactCategory.ValueNoAlias
+        || category == IrFactCategory.AliasProofCarrier;
+}
+
+public finite law bool IrFactCategoryIsLayoutFact(IrFactCategory category)
+{
+    return category == IrFactCategory.ValueAlignment
+        || category == IrFactCategory.TypeLayout
+        || category == IrFactCategory.StructLayout
+        || category == IrFactCategory.EnumLayout
+        || category == IrFactCategory.FieldLayout;
+}
+
+public finite law IrFactValidationStatus MissingFactStatusForCategory(IrFactCategory category)
+{
+    if (!IrFactCategoryIsConcrete(category))
+    {
+        return IrFactValidationStatus.UnknownCategory;
+    }
+
+    if (IrFactCategoryIsAbiFact(category))
+    {
+        return IrFactValidationStatus.MissingAbiFact;
+    }
+
+    if (IrFactCategoryIsAliasFact(category))
+    {
+        return IrFactValidationStatus.MissingAliasFact;
+    }
+
+    if (IrFactCategoryIsLayoutFact(category))
+    {
+        return IrFactValidationStatus.MissingLayoutFact;
+    }
+
+    stack IrFactCategoryDescriptor descriptor = DescribeIrFactCategory(category);
+    if (descriptor.Durability() == IrFactDurability.Durable)
+    {
+        return IrFactValidationStatus.MissingDurablePackageFact;
+    }
+
+    if (descriptor.LoweringPolicy() == IrFactLoweringPolicy.ForbidDrop
+        || descriptor.ValidationRule() == IrFactValidationRule.ForbidDrop)
+    {
+        return IrFactValidationStatus.DroppedForbidDropFact;
+    }
+
+    return IrFactValidationStatus.MissingRequiredFact;
+}
+
+public finite law IrFactValidationStatus ValidateRequiredFactCategory(IrFactCategory category, bool present)
+{
+    if (present)
+    {
+        return IrFactValidationStatus.Ok;
+    }
+
+    return MissingFactStatusForCategory(category);
+}
+
+public finite law bool ValueFactsContainCategory(borrow ValueFacts facts, IrFactCategory category)
+{
+    switch (category)
+    {
+        case IrFactCategory.ValueAlignment:
+            return facts.HasAlignment();
+        case IrFactCategory.ValueNoAlias:
+            return facts.HasNoAlias();
+        case IrFactCategory.ValueVolatile:
+            return facts.Volatile();
+        case IrFactCategory.ValueIntegerRange:
+            return facts.HasIntegerRange();
+        case IrFactCategory.CallableAbi:
+            return facts.HasCallingAbi();
+        default:
+            return false;
+    }
+}
+
+public fn IrFactValidationStatus ValidateMirValueFactAtBoundary<T>(
+    borrow IrTable<T> valueDefinitions,
+    borrow IrTable<ValueFacts> valueFacts,
+    MirValueId value,
+    IrFactCategory category)
+{
+    stack IrFactValidationStatus handleStatus = ValidateMirValueHandle<T>(valueDefinitions, value);
+    if (handleStatus != IrFactValidationStatus.Ok)
+    {
+        return handleStatus;
+    }
+
+    if (!valueFacts.Contains(value.Index()))
+    {
+        return MissingFactStatusForCategory(category);
+    }
+
+    stack ValueFacts row = ValueFactsAtIndex(valueFacts, value.Index());
+    return ValidateRequiredFactCategory(category, ValueFactsContainCategory(row, category));
+}
+
+public fn IrFactValidationStatus ValidateCallableAbiFactAtBoundary<T>(
+    borrow IrTable<T> functionDefinitions,
+    borrow IrTable<ValueFacts> callableFacts,
+    MirFuncId function)
+{
+    stack IrFactValidationStatus handleStatus = ValidateMirFunctionHandle<T>(functionDefinitions, function);
+    if (handleStatus != IrFactValidationStatus.Ok)
+    {
+        return handleStatus;
+    }
+
+    if (!callableFacts.Contains(function.Index()))
+    {
+        return IrFactValidationStatus.MissingAbiFact;
+    }
+
+    stack ValueFacts row = ValueFactsAtIndex(callableFacts, function.Index());
+    return ValidateRequiredFactCategory(IrFactCategory.CallableAbi, row.HasCallingAbi());
+}
+
+public fn IrFactValidationStatus ValidateCAbiAggregateCarrierFactAtBoundary<T>(
+    borrow IrTable<T> typeDefinitions,
+    borrow IrTable<CAbiAggregateCarrierFacts> carrierFacts,
+    TypeId type)
+{
+    stack IrFactValidationStatus handleStatus = ValidateTypeHandle<T>(typeDefinitions, type);
+    if (handleStatus != IrFactValidationStatus.Ok)
+    {
+        return handleStatus;
+    }
+
+    if (!carrierFacts.Contains(type.Index()))
+    {
+        return IrFactValidationStatus.MissingAbiFact;
+    }
+
+    stack CAbiAggregateCarrierFacts row = CAbiAggregateCarrierFactsAtIndex(carrierFacts, type.Index());
+    if (!row.Present())
+    {
+        return IrFactValidationStatus.MissingAbiFact;
+    }
+
+    return IrFactValidationStatus.Ok;
+}
+
+public finite law IrFactValidationStatus ValidateLayoutFactAtBoundary<TDefinition, TLayout>(
+    borrow IrTable<TDefinition> definitions,
+    borrow IrTable<TLayout> layoutFacts,
+    TypeId type,
+    IrFactCategory category)
+{
+    stack IrFactValidationStatus handleStatus = ValidateTypeHandle<TDefinition>(definitions, type);
+    if (handleStatus != IrFactValidationStatus.Ok)
+    {
+        return handleStatus;
+    }
+
+    if (!IrFactCategoryIsLayoutFact(category))
+    {
+        return MissingFactStatusForCategory(category);
+    }
+
+    if (!layoutFacts.Contains(type.Index()))
+    {
+        return IrFactValidationStatus.MissingLayoutFact;
+    }
+
+    return IrFactValidationStatus.Ok;
+}
+
+public finite law IrFactValidationStatus ValidateDurablePackageFactAtBoundary(IrFactCategory category, bool serialized)
+{
+    if (!IrFactCategoryRequiresPackageSerialization(category))
+    {
+        return IrFactValidationStatus.Ok;
+    }
+
+    if (serialized)
+    {
+        return IrFactValidationStatus.Ok;
+    }
+
+    return IrFactValidationStatus.MissingDurablePackageFact;
 }
 
 // An inline-assembly metadata row id. These rows describe source `unsafe ffi asm`

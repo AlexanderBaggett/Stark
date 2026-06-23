@@ -248,6 +248,43 @@ public struct ForeignOwnedCStr
     }
 }
 
+[Platform]
+public struct ForeignOwnedCStrOut
+{
+    internal rawmutptr<System.C.c_char> Pointer;
+
+    ForeignOwnedCStrOut()
+    {
+        self.Pointer = null;
+    }
+
+    inline finite law bool HasValue(borrow ForeignOwnedCStrOut self)
+    {
+        return self.Pointer != null;
+    }
+
+    unsafe inline finite law rawmutptr<ForeignOwnedCStrOut> OutPointer(mut borrow ForeignOwnedCStrOut self)
+    {
+        return (rawmutptr<ForeignOwnedCStrOut>)(&self);
+    }
+
+    unsafe fn void SetRawUnchecked(mut borrow ForeignOwnedCStrOut self, rawmutptr<System.C.c_char> data)
+    {
+        self.Pointer = data;
+        return;
+    }
+
+    unsafe fn ForeignOwnedCStr Take(mut borrow ForeignOwnedCStrOut self)
+    {
+        stack rawmutptr<System.C.c_char> data = self.Pointer;
+        self.Pointer = null;
+        return new ForeignOwnedCStr()
+        {
+            Pointer = data
+        };
+    }
+}
+
 public unsafe fn CStringResult<CStr> TryFromRawBounded(
     rawptr<System.C.c_char> data,
     u64[0 2 ** 63 - 1] maxLength)
@@ -309,6 +346,15 @@ public unsafe fn void DisposeForeignOwned(
     stack rawmutptr<System.C.c_char> data = text.Pointer;
     text.Pointer = null;
     dispose(data);
+    return;
+}
+
+public unsafe fn void DisposeForeignOwnedOut(
+    mut borrow ForeignOwnedCStrOut text,
+    CStringDisposer dispose)
+{
+    stack mut ForeignOwnedCStr owned = text.Take();
+    DisposeForeignOwned(owned, dispose);
     return;
 }
 
@@ -450,6 +496,24 @@ public unsafe fn CStringResult<System.Text.OwnedUnicode> CopyForeignOwnedUnicode
             DisposeForeignOwned(text, dispose);
             return copyResult;
     }
+}
+
+public unsafe fn CStringResult<System.Text.OwnedAscii> CopyForeignOwnedOutAsciiAndDispose(
+    mut borrow ForeignOwnedCStrOut text,
+    CStringDisposer dispose,
+    u64[0 2 ** 63 - 1] maxLength)
+{
+    stack mut ForeignOwnedCStr owned = text.Take();
+    return CopyForeignOwnedAsciiAndDispose(owned, dispose, maxLength);
+}
+
+public unsafe fn CStringResult<System.Text.OwnedUnicode> CopyForeignOwnedOutUnicodeUtf8AndDispose(
+    mut borrow ForeignOwnedCStrOut text,
+    CStringDisposer dispose,
+    u64[0 2 ** 63 - 1] maxLength)
+{
+    stack mut ForeignOwnedCStr owned = text.Take();
+    return CopyForeignOwnedUnicodeUtf8AndDispose(owned, dispose, maxLength);
 }
 
 public fn CStringResult<CCharBuffer> NewCCharBuffer(u64[1 2 ** 63 - 1] capacity)

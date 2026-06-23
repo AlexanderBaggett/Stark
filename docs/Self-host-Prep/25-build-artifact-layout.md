@@ -122,6 +122,13 @@ build/<profile>/<target-triple>/<stage>/pkg/
 
 `stark inspect-pkg` output is an inspection view and should normally be written
 under `artifacts/` or a caller-requested output path, not beside the source.
+Project builds keep normal dependency loading binary-only; when
+`stark build --package-image-json` is requested for library package images, the
+derived JSON inspection view is written under:
+
+```text
+build/<profile>/<target-triple>/<stage>/artifacts/pkg/<project>/
+```
 
 ## 6. Tests And Stage Comparison
 
@@ -149,9 +156,11 @@ source folders or rely on ad hoc temp paths.
       outputs route to `bin/<project>/`, test executables and generated runners
       route to `tests/<project>/`, saved native intermediates route to
       `obj/<project>/`, and project library package images route to
-      `pkg/<project>/` under `build/<profile>/<target-triple>/stage0/`.
-      Stdlib artifact generation/routing, diagnostics, requested compiler
-      artifacts, and actual Stage1/Stage2 execution remain open.
+      `pkg/<project>/` under `build/<profile>/<target-triple>/stage0/`, with
+      explicit package-image JSON inspection views routed to
+      `artifacts/pkg/<project>/`. Stdlib artifact generation/routing,
+      diagnostics, other requested compiler artifacts, and actual Stage1/Stage2
+      execution remain open.
 - [x] Implement clean/discovery behavior for the formal layout, including
       profile/target/stage/artifact cleanup and stdlib discovery from the
       stage-local `stdlib/` path.

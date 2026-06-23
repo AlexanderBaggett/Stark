@@ -1,5 +1,6 @@
 import Compiler.Lexing
 import System.Memory
+import System.Text
 module Compiler.Parsing
 
 // Stage 1 self-hosted parser. This first slice recognizes the compilation-unit
@@ -64,6 +65,262 @@ public enum ParseResult<T>
 {
     [Ok] Ok(T),
     [Err] Err(ParseError),
+}
+
+public enum SyntaxDiagnosticKind
+{
+    UnexpectedToken,
+    ExpectedName,
+    ExpectedExpression,
+    InvalidTextLiteral,
+    UnexpectedTextAfterExpression,
+    LexUnexpectedCharacter,
+    LexUnterminatedString,
+    LexUnterminatedCharacter,
+    LexUnterminatedBlockComment,
+}
+
+public struct SyntaxDiagnosticList
+{
+    internal dynamic SyntaxDiagnosticKind Kinds;
+    internal dynamic u32[0 max] Tokens;
+    internal dynamic u32[0 max] Lines;
+    internal dynamic u32[0 max] Columns;
+
+    SyntaxDiagnosticList()
+    {
+        self.Kinds = new();
+        self.Tokens = new();
+        self.Lines = new();
+        self.Columns = new();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] Count(borrow SyntaxDiagnosticList self)
+    {
+        return self.Kinds.Length;
+    }
+
+    public law SyntaxDiagnosticKind KindAt(borrow SyntaxDiagnosticList self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut SyntaxDiagnosticKind kind = SyntaxDiagnosticKind.UnexpectedToken;
+        if (index < self.Kinds.Length)
+        {
+            kind = self.Kinds[index];
+        }
+
+        return kind;
+    }
+
+    public law u32[0 max] TokenAt(borrow SyntaxDiagnosticList self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.Tokens.Length)
+        {
+            token = self.Tokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] LineAt(borrow SyntaxDiagnosticList self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] line = 0;
+        if (index < self.Lines.Length)
+        {
+            line = self.Lines[index];
+        }
+
+        return line;
+    }
+
+    public law u32[0 max] ColumnAt(borrow SyntaxDiagnosticList self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] column = 0;
+        if (index < self.Columns.Length)
+        {
+            column = self.Columns[index];
+        }
+
+        return column;
+    }
+
+    public law u32[0 max] CountOf(borrow SyntaxDiagnosticList self, SyntaxDiagnosticKind kind)
+    {
+        stack mut u32[0 max] total = 0;
+        stack u64[0 2 ** 63 - 1] count = self.Kinds.Length;
+        for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+        {
+            if (self.KindAt(index) == kind)
+            {
+                total = (u32[0 max])(total + 1);
+            }
+        }
+
+        return total;
+    }
+
+    public inline finite law u32[0 max] ErrorCount(borrow SyntaxDiagnosticList self)
+    {
+        return (u32[0 max])self.Kinds.Length;
+    }
+
+    internal fn System.Memory.MemoryStatus Append(
+        mut borrow SyntaxDiagnosticList self,
+        SyntaxDiagnosticKind kind,
+        u32[0 max] token,
+        u32[0 max] line,
+        u32[0 max] column)
+    {
+        if (!self.Kinds.TryReserve(1)
+            || !self.Tokens.TryReserve(1)
+            || !self.Lines.TryReserve(1)
+            || !self.Columns.TryReserve(1))
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        }
+
+        init self.Kinds[self.Kinds.Length] = kind;
+        init self.Tokens[self.Tokens.Length] = token;
+        init self.Lines[self.Lines.Length] = line;
+        init self.Columns[self.Columns.Length] = column;
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    internal fn System.Memory.MemoryStatus AppendAtToken(
+        mut borrow SyntaxDiagnosticList self,
+        SyntaxDiagnosticKind kind,
+        borrow TokenStream stream,
+        u32[0 max] token)
+    {
+        return self.Append(
+            kind,
+            token,
+            stream.LineAt((u64[0 2 ** 63 - 1])token),
+            stream.ColumnAt((u64[0 2 ** 63 - 1])token));
+    }
+}
+
+internal finite law SyntaxDiagnosticKind DiagnosticKindFromLex(LexDiagnosticKind kind)
+{
+    switch (kind)
+    {
+        case LexDiagnosticKind.UnterminatedString:
+            return SyntaxDiagnosticKind.LexUnterminatedString;
+        case LexDiagnosticKind.UnterminatedCharacter:
+            return SyntaxDiagnosticKind.LexUnterminatedCharacter;
+        case LexDiagnosticKind.UnterminatedBlockComment:
+            return SyntaxDiagnosticKind.LexUnterminatedBlockComment;
+        case LexDiagnosticKind.UnexpectedCharacter:
+            return SyntaxDiagnosticKind.LexUnexpectedCharacter;
+        case LexDiagnosticKind.None:
+            return SyntaxDiagnosticKind.LexUnexpectedCharacter;
+    }
+}
+
+internal fn System.Memory.MemoryStatus CollectLexSyntaxDiagnostics(
+    borrow TokenStream stream,
+    mut borrow SyntaxDiagnosticList diagnostics)
+{
+    stack u64[0 2 ** 63 - 1] count = stream.DiagnosticCount();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        switch (diagnostics.Append(
+            DiagnosticKindFromLex(stream.DiagnosticKindAt(index)),
+            0,
+            stream.DiagnosticLineAt(index),
+            stream.DiagnosticColumnAt(index)))
+        {
+            case System.Memory.MemoryStatus.Err(var error):
+                return System.Memory.MemoryStatus.Err(error);
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus AppendInvalidTextLiteralDiagnostic(
+    mut borrow SyntaxDiagnosticList diagnostics,
+    borrow TokenStream stream,
+    u32[0 max] token)
+{
+    return diagnostics.AppendAtToken(SyntaxDiagnosticKind.InvalidTextLiteral, stream, token);
+}
+
+internal fn System.Memory.MemoryStatus ValidateStringLiteralToken(
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] token,
+    mut borrow SyntaxDiagnosticList diagnostics)
+{
+    stack ascii literal = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])token);
+    switch (System.Text.DecodeStringLiteralToUnicode(literal))
+    {
+        case System.Text.TextBuildResult<System.Text.OwnedUnicode>.Ok(var decoded):
+            return System.Memory.MemoryStatus.Ok;
+        case System.Text.TextBuildResult<System.Text.OwnedUnicode>.Err(var error):
+            switch (error)
+            {
+                case System.Text.TextBuildError.Text(var textError):
+                    return AppendInvalidTextLiteralDiagnostic(diagnostics, stream, token);
+                case System.Text.TextBuildError.Memory(var memoryError):
+                    return System.Memory.MemoryStatus.Err(memoryError);
+            }
+    }
+}
+
+internal fn System.Memory.MemoryStatus ValidateCharacterLiteralToken(
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] token,
+    mut borrow SyntaxDiagnosticList diagnostics)
+{
+    stack ascii literal = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])token);
+    switch (System.Text.DecodeCharacterLiteralCodePoint(literal))
+    {
+        case System.Text.TextBuildResult<i32[min max]>.Ok(var decoded):
+            return System.Memory.MemoryStatus.Ok;
+        case System.Text.TextBuildResult<i32[min max]>.Err(var error):
+            switch (error)
+            {
+                case System.Text.TextBuildError.Text(var textError):
+                    return AppendInvalidTextLiteralDiagnostic(diagnostics, stream, token);
+                case System.Text.TextBuildError.Memory(var memoryError):
+                    return System.Memory.MemoryStatus.Err(memoryError);
+            }
+    }
+}
+
+internal fn System.Memory.MemoryStatus CollectTextLiteralSyntaxDiagnostics(
+    ascii source,
+    borrow TokenStream stream,
+    mut borrow SyntaxDiagnosticList diagnostics)
+{
+    stack u64[0 2 ** 63 - 1] count = stream.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack TokenKind kind = stream.KindAt(index);
+        if (kind == TokenKind.StringLiteral)
+        {
+            switch (ValidateStringLiteralToken(source, stream, (u32[0 max])index, diagnostics))
+            {
+                case System.Memory.MemoryStatus.Err(var error):
+                    return System.Memory.MemoryStatus.Err(error);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+        else if (kind == TokenKind.CharacterLiteral)
+        {
+            switch (ValidateCharacterLiteralToken(source, stream, (u32[0 max])index, diagnostics))
+            {
+                case System.Memory.MemoryStatus.Err(var error):
+                    return System.Memory.MemoryStatus.Err(error);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
 }
 
 // The parsed header plus the token index where the declaration list begins.
@@ -364,6 +621,92 @@ public struct DeclarationList
         init self.EndTokens[self.EndTokens.Length] = item.EndToken;
         init self.TailCallableFlags[self.TailCallableFlags.Length] = tailFlag;
         return System.Memory.MemoryStatus.Ok;
+    }
+}
+
+public struct CompilationUnitSyntax
+{
+    internal TokenStream Stream;
+    internal CompilationUnitHeader Header;
+    internal DeclarationList Declarations;
+    internal SyntaxDiagnosticList Diagnostics;
+
+    CompilationUnitSyntax()
+    {
+        self.Stream = new();
+        self.Header = new();
+        self.Declarations = new();
+        self.Diagnostics = new();
+    }
+
+    public inline finite law bool Succeeded(borrow CompilationUnitSyntax self)
+    {
+        return self.Diagnostics.Count() == 0;
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] TokenCount(borrow CompilationUnitSyntax self)
+    {
+        return self.Stream.Count();
+    }
+
+    public inline finite law TokenKind TokenKindAt(borrow CompilationUnitSyntax self, u64[0 2 ** 63 - 1] index)
+    {
+        return self.Stream.KindAt(index);
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] HeaderCount(borrow CompilationUnitSyntax self)
+    {
+        return self.Header.Count();
+    }
+
+    public law HeaderItem HeaderItemAt(borrow CompilationUnitSyntax self, u64[0 2 ** 63 - 1] index)
+    {
+        return self.Header.ItemAt(index);
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] DeclarationCount(borrow CompilationUnitSyntax self)
+    {
+        return self.Declarations.Count();
+    }
+
+    public law DeclItem DeclarationAt(borrow CompilationUnitSyntax self, u64[0 2 ** 63 - 1] index)
+    {
+        return self.Declarations.ItemAt(index);
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] DiagnosticCount(borrow CompilationUnitSyntax self)
+    {
+        return self.Diagnostics.Count();
+    }
+
+    public law SyntaxDiagnosticKind DiagnosticKindAt(borrow CompilationUnitSyntax self, u64[0 2 ** 63 - 1] index)
+    {
+        return self.Diagnostics.KindAt(index);
+    }
+
+    public law u32[0 max] DiagnosticTokenAt(borrow CompilationUnitSyntax self, u64[0 2 ** 63 - 1] index)
+    {
+        return self.Diagnostics.TokenAt(index);
+    }
+
+    public law u32[0 max] DiagnosticLineAt(borrow CompilationUnitSyntax self, u64[0 2 ** 63 - 1] index)
+    {
+        return self.Diagnostics.LineAt(index);
+    }
+
+    public law u32[0 max] DiagnosticColumnAt(borrow CompilationUnitSyntax self, u64[0 2 ** 63 - 1] index)
+    {
+        return self.Diagnostics.ColumnAt(index);
+    }
+
+    public law u32[0 max] DiagnosticCountOf(borrow CompilationUnitSyntax self, SyntaxDiagnosticKind kind)
+    {
+        return self.Diagnostics.CountOf(kind);
+    }
+
+    public finite law ascii TokenTextAt(borrow CompilationUnitSyntax self, ascii source, u64[0 2 ** 63 - 1] index)
+    {
+        return Compiler.Lexing.TokenTextOf(source, self.Stream, index);
     }
 }
 
@@ -857,6 +1200,100 @@ public fn ParseResult<DeclarationList> ParseDeclarations(borrow TokenStream stre
     return ParseResult<DeclarationList>.Ok(list);
 }
 
+internal fn System.Memory.MemoryStatus CollectSharedSyntaxDiagnostics(
+    ascii source,
+    borrow TokenStream stream,
+    mut borrow SyntaxDiagnosticList diagnostics)
+{
+    switch (CollectLexSyntaxDiagnostics(stream, diagnostics))
+    {
+        case System.Memory.MemoryStatus.Err(var lexError):
+            return System.Memory.MemoryStatus.Err(lexError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    return CollectTextLiteralSyntaxDiagnostics(source, stream, diagnostics);
+}
+
+// Pass-level parser facade for a whole source file. It owns the token stream and
+// the first syntax tables needed by binding/pipeline code, and keeps syntax
+// problems as diagnostics. Allocation failure is the only hard parse error.
+public fn ParseResult<CompilationUnitSyntax> ParseCompilationUnit(ascii source)
+{
+    stack mut CompilationUnitSyntax syntax = new();
+    switch (Compiler.Lexing.LexText(source))
+    {
+        case LexResult<TokenStream>.Err(var lexError):
+            return ParseResult<CompilationUnitSyntax>.Err(ParseError.OutOfMemory);
+        case LexResult<TokenStream>.Ok(var stream):
+            syntax.Stream = stream;
+    }
+
+    switch (CollectSharedSyntaxDiagnostics(source, syntax.Stream, syntax.Diagnostics))
+    {
+        case System.Memory.MemoryStatus.Err(var diagError):
+            return ParseResult<CompilationUnitSyntax>.Err(ParseError.OutOfMemory);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    stack mut bool headerOk = false;
+    stack mut u32[0 max] declStart = 0;
+    switch (ParseHeader(syntax.Stream))
+    {
+        case ParseResult<CompilationUnitHeader>.Err(var headerError):
+            switch (headerError)
+            {
+                case ParseError.OutOfMemory:
+                    return ParseResult<CompilationUnitSyntax>.Err(ParseError.OutOfMemory);
+                case ParseError.ExpectedName
+                {
+                    Token: var expectedNameToken
+                }:
+                    switch (syntax.Diagnostics.AppendAtToken(SyntaxDiagnosticKind.ExpectedName, syntax.Stream, expectedNameToken))
+                    {
+                        case System.Memory.MemoryStatus.Err(var expectedNameError):
+                            return ParseResult<CompilationUnitSyntax>.Err(ParseError.OutOfMemory);
+                        case System.Memory.MemoryStatus.Ok:
+                }
+            }
+        case ParseResult<CompilationUnitHeader>.Ok(var header):
+            declStart = header.NextToken;
+            syntax.Header = header;
+            headerOk = true;
+    }
+
+    if (headerOk)
+    {
+        switch (ParseDeclarations(syntax.Stream, declStart))
+        {
+            case ParseResult<DeclarationList>.Err(var declError):
+                return ParseResult<CompilationUnitSyntax>.Err(ParseError.OutOfMemory);
+            case ParseResult<DeclarationList>.Ok(var declarations):
+                syntax.Declarations = declarations;
+        }
+
+        stack mut u32[0 max] afterDeclarations = declStart;
+        stack u64[0 2 ** 63 - 1] declarationCount = syntax.Declarations.Count();
+        if (declarationCount > 0)
+        {
+            stack DeclItem last = syntax.Declarations.ItemAt((u64[0 2 ** 63 - 1])(declarationCount - 1));
+            afterDeclarations = (u32[0 max])(last.EndToken + 1);
+        }
+
+        if (syntax.Stream.KindAt((u64[0 2 ** 63 - 1])afterDeclarations) != TokenKind.EndOfFile)
+        {
+            switch (syntax.Diagnostics.AppendAtToken(SyntaxDiagnosticKind.UnexpectedToken, syntax.Stream, afterDeclarations))
+            {
+                case System.Memory.MemoryStatus.Err(var unexpectedError):
+                    return ParseResult<CompilationUnitSyntax>.Err(ParseError.OutOfMemory);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+    }
+
+    return ParseResult<CompilationUnitSyntax>.Ok(syntax);
+}
+
 // The variant name tokens of an enum body, in source order.
 public struct VariantList
 {
@@ -1002,6 +1439,90 @@ public struct TypeHeadList
     }
 }
 
+// A flat list of source type spans. Each entry is a half-open token range
+// `[start, end)` plus the cheap type facts already used by binding.
+public struct TypeSpanList
+{
+    internal dynamic u32[0 max] StartTokens;
+    internal dynamic u32[0 max] EndTokens;
+    internal dynamic u32[0 max] HeadTokens;
+    internal dynamic u32[0 max] PrimaryTokens;
+
+    TypeSpanList()
+    {
+        self.StartTokens = new();
+        self.EndTokens = new();
+        self.HeadTokens = new();
+        self.PrimaryTokens = new();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] Count(borrow TypeSpanList self)
+    {
+        return self.StartTokens.Length;
+    }
+
+    public law u32[0 max] StartTokenAt(borrow TypeSpanList self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.StartTokens.Length)
+        {
+            token = self.StartTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] EndTokenAt(borrow TypeSpanList self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.EndTokens.Length)
+        {
+            token = self.EndTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] HeadAt(borrow TypeSpanList self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.HeadTokens.Length)
+        {
+            token = self.HeadTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] PrimaryAt(borrow TypeSpanList self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.PrimaryTokens.Length)
+        {
+            token = self.PrimaryTokens[index];
+        }
+
+        return token;
+    }
+
+    internal fn System.Memory.MemoryStatus Append(mut borrow TypeSpanList self, u32[0 max] start, u32[0 max] endExclusive, u32[0 max] head, u32[0 max] primary)
+    {
+        if (!self.StartTokens.TryReserve(1)
+            || !self.EndTokens.TryReserve(1)
+            || !self.HeadTokens.TryReserve(1)
+            || !self.PrimaryTokens.TryReserve(1))
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        }
+
+        init self.StartTokens[self.StartTokens.Length] = start;
+        init self.EndTokens[self.EndTokens.Length] = endExclusive;
+        init self.HeadTokens[self.HeadTokens.Length] = head;
+        init self.PrimaryTokens[self.PrimaryTokens.Length] = primary;
+        return System.Memory.MemoryStatus.Ok;
+    }
+}
+
 // The matching close-bracket index for the open bracket (`(`/`[`/`{`/`<`) at
 // `open`, tracking nested paren/bracket/brace/angle depth. Returns `open` when no
 // match is found before end-of-file.
@@ -1059,6 +1580,25 @@ internal fn System.Memory.MemoryStatus AppendUserHead(mut borrow TypeHeadList he
     return System.Memory.MemoryStatus.Ok;
 }
 
+internal fn System.Memory.MemoryStatus AppendTypeSpan(mut borrow TypeSpanList spans, borrow TokenStream stream, u32[0 max] start, u32[0 max] endExclusive)
+{
+    if (start >= endExclusive)
+    {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack u32[0 max] head = BoundedLastIdentifier(stream, start, endExclusive);
+    stack u32[0 max] primary = BoundedFirstTypeStart(stream, start, endExclusive);
+    switch (spans.Append(start, endExclusive, head, primary))
+    {
+        case System.Memory.MemoryStatus.Err(var appendError):
+            return System.Memory.MemoryStatus.Err(appendError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
 // Appends the head of each comma-separated type in `[start, endExclusive)` (a tuple
 // payload `(A, B)`'s inner types). Commas at angle/bracket/paren depth 0 separate.
 internal fn System.Memory.MemoryStatus CollectCommaSeparatedTypeHeads(mut borrow TypeHeadList heads, borrow TokenStream stream, u32[0 max] start, u32[0 max] endExclusive)
@@ -1099,6 +1639,53 @@ internal fn System.Memory.MemoryStatus CollectCommaSeparatedTypeHeads(mut borrow
     if (segStart < endExclusive)
     {
         switch (AppendUserHead(heads, stream, segStart, endExclusive))
+        {
+            case System.Memory.MemoryStatus.Err(var lastError):
+                return System.Memory.MemoryStatus.Err(lastError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus CollectCommaSeparatedTypeSpans(mut borrow TypeSpanList spans, borrow TokenStream stream, u32[0 max] start, u32[0 max] endExclusive)
+{
+    stack mut u32[0 max] segStart = start;
+    stack mut u32[0 max] depth = 0;
+    stack mut u32[0 max] index = start;
+    while willexit (index < endExclusive)
+    {
+        stack TokenKind k = stream.KindAt((u64[0 2 ** 63 - 1])index);
+        if (k == TokenKind.LParen || k == TokenKind.LBrack || k == TokenKind.LBrace || k == TokenKind.Lt)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (k == TokenKind.RParen || k == TokenKind.RBrack || k == TokenKind.RBrace || k == TokenKind.Gt)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+        }
+        else if (depth == 0 && k == TokenKind.Comma)
+        {
+            switch (AppendTypeSpan(spans, stream, segStart, index))
+            {
+                case System.Memory.MemoryStatus.Err(var segError):
+                    return System.Memory.MemoryStatus.Err(segError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            segStart = (u32[0 max])(index + 1);
+        }
+
+        index = (u32[0 max])(index + 1);
+    }
+
+    if (segStart < endExclusive)
+    {
+        switch (AppendTypeSpan(spans, stream, segStart, endExclusive))
         {
             case System.Memory.MemoryStatus.Err(var lastError):
                 return System.Memory.MemoryStatus.Err(lastError);
@@ -1197,6 +1784,90 @@ internal fn System.Memory.MemoryStatus CollectNamedFieldTypeHeads(mut borrow Typ
     return System.Memory.MemoryStatus.Ok;
 }
 
+internal fn System.Memory.MemoryStatus CollectNamedFieldTypeSpans(mut borrow TypeSpanList spans, borrow TokenStream stream, u32[0 max] start, u32[0 max] endExclusive)
+{
+    stack mut u32[0 max] segStart = start;
+    stack mut u32[0 max] depth = 0;
+    stack mut u32[0 max] index = start;
+    while willexit (index <= endExclusive)
+    {
+        stack mut bool boundary = false;
+        if (index >= endExclusive)
+        {
+            boundary = true;
+        }
+        else
+        {
+            stack TokenKind k = stream.KindAt((u64[0 2 ** 63 - 1])index);
+            if (k == TokenKind.LParen || k == TokenKind.LBrack || k == TokenKind.LBrace || k == TokenKind.Lt)
+            {
+                depth = (u32[0 max])(depth + 1);
+            }
+            else if (k == TokenKind.RParen || k == TokenKind.RBrack || k == TokenKind.RBrace || k == TokenKind.Gt)
+            {
+                if (depth > 0)
+                {
+                    depth = (u32[0 max])(depth - 1);
+                }
+            }
+            else if (depth == 0 && k == TokenKind.Comma)
+            {
+                boundary = true;
+            }
+        }
+
+        if (boundary)
+        {
+            stack mut u32[0 max] colon = segStart;
+            stack mut u32[0 max] cdepth = 0;
+            stack mut bool foundColon = false;
+            stack mut u32[0 max] cscan = segStart;
+            while willexit (cscan < index)
+            {
+                stack TokenKind ck = stream.KindAt((u64[0 2 ** 63 - 1])cscan);
+                if (ck == TokenKind.LParen || ck == TokenKind.LBrack || ck == TokenKind.LBrace || ck == TokenKind.Lt)
+                {
+                    cdepth = (u32[0 max])(cdepth + 1);
+                }
+                else if (ck == TokenKind.RParen || ck == TokenKind.RBrack || ck == TokenKind.RBrace || ck == TokenKind.Gt)
+                {
+                    if (cdepth > 0)
+                    {
+                        cdepth = (u32[0 max])(cdepth - 1);
+                    }
+                }
+                else if (cdepth == 0 && ck == TokenKind.Colon)
+                {
+                    colon = cscan;
+                    foundColon = true;
+                    cscan = index;
+                }
+
+                if (cscan < index)
+                {
+                    cscan = (u32[0 max])(cscan + 1);
+                }
+            }
+
+            if (foundColon && (u32[0 max])(colon + 1) < index)
+            {
+                switch (AppendTypeSpan(spans, stream, (u32[0 max])(colon + 1), index))
+                {
+                    case System.Memory.MemoryStatus.Err(var memberError):
+                        return System.Memory.MemoryStatus.Err(memberError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+
+            segStart = (u32[0 max])(index + 1);
+        }
+
+        index = (u32[0 max])(index + 1);
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
 // The token index of the next depth-0 `,`, `}`, or `)` at or after `start` (the end
 // of a `from type` payload), tracking nested brackets so a `,` inside `List<A, B>`
 // does not end it. Returns the first such token, or end-of-file's index.
@@ -1237,11 +1908,103 @@ finite law u32[0 max] FromPayloadEnd(borrow TokenStream stream, u32[0 max] start
     return index;
 }
 
+// Collects every enum-variant payload type span across the enum whose keyword is
+// at `enumKeyword` — tuple `(A, B)`, named-field `{ f: A }`, and `from A` payload
+// forms (`Stark.g4` `enumVariantPayload`). Built-in payload types are retained
+// with head 0 so later phases can preserve full backend-relevant type facts.
+public fn ParseResult<TypeSpanList> ParseEnumPayloadTypeSpans(borrow TokenStream stream, u32[0 max] enumKeyword)
+{
+    stack mut TypeSpanList spans = new();
+    stack mut u32[0 max] index = enumKeyword;
+    while willexit (stream.KindAt((u64[0 2 ** 63 - 1])index) != TokenKind.EndOfFile
+        && stream.KindAt((u64[0 2 ** 63 - 1])index) != TokenKind.LBrace)
+    {
+        index = (u32[0 max])(index + 1);
+    }
+
+    if (stream.KindAt((u64[0 2 ** 63 - 1])index) != TokenKind.LBrace)
+    {
+        return ParseResult<TypeSpanList>.Ok(spans);
+    }
+
+    index = (u32[0 max])(index + 1);
+    stack mut u32[0 max] depth = 0;
+    stack mut u64[0 2 ** 63 - 1] guard = stream.Count();
+    while willexit (guard > 0)
+    {
+        guard = (u64[0 2 ** 63 - 1])(guard - 1);
+        stack TokenKind k = stream.KindAt((u64[0 2 ** 63 - 1])index);
+        if (k == TokenKind.EndOfFile)
+        {
+            guard = 0;
+        }
+        else if (k == TokenKind.RBrace && depth == 0)
+        {
+            guard = 0;
+        }
+        else if (k == TokenKind.LBrack)
+        {
+            // An attribute list `[...]`: skip its contents via depth.
+            depth = (u32[0 max])(depth + 1);
+            index = (u32[0 max])(index + 1);
+        }
+        else if (k == TokenKind.RBrack)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+
+            index = (u32[0 max])(index + 1);
+        }
+        else if (depth == 0 && k == TokenKind.From)
+        {
+            stack u32[0 max] fromEnd = FromPayloadEnd(stream, (u32[0 max])(index + 1));
+            switch (AppendTypeSpan(spans, stream, (u32[0 max])(index + 1), fromEnd))
+            {
+                case System.Memory.MemoryStatus.Err(var fromError):
+                    return ParseResult<TypeSpanList>.Err(ParseError.OutOfMemory);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            index = fromEnd;
+        }
+        else if (depth == 0 && k == TokenKind.LParen)
+        {
+            stack u32[0 max] close = MatchingBracket(stream, index);
+            switch (CollectCommaSeparatedTypeSpans(spans, stream, (u32[0 max])(index + 1), close))
+            {
+                case System.Memory.MemoryStatus.Err(var tupleError):
+                    return ParseResult<TypeSpanList>.Err(ParseError.OutOfMemory);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            index = (u32[0 max])(close + 1);
+        }
+        else if (depth == 0 && k == TokenKind.LBrace)
+        {
+            stack u32[0 max] close = MatchingBracket(stream, index);
+            switch (CollectNamedFieldTypeSpans(spans, stream, (u32[0 max])(index + 1), close))
+            {
+                case System.Memory.MemoryStatus.Err(var namedError):
+                    return ParseResult<TypeSpanList>.Err(ParseError.OutOfMemory);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            index = (u32[0 max])(close + 1);
+        }
+        else
+        {
+            index = (u32[0 max])(index + 1);
+        }
+    }
+
+    return ParseResult<TypeSpanList>.Ok(spans);
+}
+
 // Collects the user-type head token of every enum-variant payload type across the
-// enum whose keyword is at `enumKeyword` — the tuple `(A, B)`, named-field
-// `{ f: A }`, and `from A` payload forms (`Stark.g4` `enumVariantPayload`). Built-in
-// payload types have head 0 and are omitted. Returns an empty list for a bodyless
-// enum. Attribute lists `[Attr]` before a variant are skipped by bracket depth.
+// enum whose keyword is at `enumKeyword`. Built-in payload types have head 0 and
+// are omitted. Returns an empty list for a bodyless enum.
 public fn ParseResult<TypeHeadList> ParseEnumPayloadHeads(borrow TokenStream stream, u32[0 max] enumKeyword)
 {
     stack mut TypeHeadList heads = new();
@@ -1274,7 +2037,6 @@ public fn ParseResult<TypeHeadList> ParseEnumPayloadHeads(borrow TokenStream str
         }
         else if (k == TokenKind.LBrack)
         {
-            // An attribute list `[...]`: skip its contents via depth.
             depth = (u32[0 max])(depth + 1);
             index = (u32[0 max])(index + 1);
         }
@@ -1437,6 +2199,108 @@ public fn ParseResult<TypeHeadList> CollectWhereConstraintHeads(borrow TokenStre
     return ParseResult<TypeHeadList>.Ok(heads);
 }
 
+// Collects the full source type spans for every constraint trait in a `where
+// Identifier : type_ (, type_)*` clause. This mirrors
+// `CollectWhereConstraintHeads` but preserves nested generic argument types so
+// binding and later lowering can keep all type facts attached to the original
+// tokens.
+public fn ParseResult<TypeSpanList> CollectWhereConstraintTypeSpans(borrow TokenStream stream, u32[0 max] declKeyword)
+{
+    stack mut TypeSpanList spans = new();
+    stack mut u32[0 max] index = declKeyword;
+    stack mut u32[0 max] depth = 0;
+    stack mut u32[0 max] whereToken = 0;
+    stack mut u64[0 2 ** 63 - 1] guard = stream.Count();
+    while willexit (guard > 0)
+    {
+        guard = (u64[0 2 ** 63 - 1])(guard - 1);
+        stack TokenKind k = stream.KindAt((u64[0 2 ** 63 - 1])index);
+        if (k == TokenKind.EndOfFile)
+        {
+            guard = 0;
+        }
+        else if (k == TokenKind.LParen || k == TokenKind.LBrack || k == TokenKind.Lt)
+        {
+            depth = (u32[0 max])(depth + 1);
+            index = (u32[0 max])(index + 1);
+        }
+        else if (k == TokenKind.RParen || k == TokenKind.RBrack || k == TokenKind.Gt)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+            }
+
+            index = (u32[0 max])(index + 1);
+        }
+        else if (depth == 0 && (k == TokenKind.LBrace || k == TokenKind.Semi))
+        {
+            guard = 0;
+        }
+        else if (depth == 0 && k == TokenKind.Where
+            && stream.KindAt((u64[0 2 ** 63 - 1])(index + 1)) == TokenKind.Identifier
+            && stream.KindAt((u64[0 2 ** 63 - 1])(index + 2)) == TokenKind.Colon)
+        {
+            whereToken = index;
+            guard = 0;
+        }
+        else
+        {
+            index = (u32[0 max])(index + 1);
+        }
+    }
+
+    if (whereToken == 0)
+    {
+        return ParseResult<TypeSpanList>.Ok(spans);
+    }
+
+    stack mut u32[0 max] constraintStart = (u32[0 max])(whereToken + 3);
+    stack mut u32[0 max] constraintEnd = constraintStart;
+    stack mut u32[0 max] endDepth = 0;
+    stack mut u64[0 2 ** 63 - 1] endGuard = stream.Count();
+    while willexit (endGuard > 0)
+    {
+        endGuard = (u64[0 2 ** 63 - 1])(endGuard - 1);
+        stack TokenKind ek = stream.KindAt((u64[0 2 ** 63 - 1])constraintEnd);
+        if (ek == TokenKind.EndOfFile)
+        {
+            endGuard = 0;
+        }
+        else if (ek == TokenKind.LParen || ek == TokenKind.LBrack || ek == TokenKind.Lt)
+        {
+            endDepth = (u32[0 max])(endDepth + 1);
+            constraintEnd = (u32[0 max])(constraintEnd + 1);
+        }
+        else if (ek == TokenKind.RParen || ek == TokenKind.RBrack || ek == TokenKind.Gt)
+        {
+            if (endDepth > 0)
+            {
+                endDepth = (u32[0 max])(endDepth - 1);
+            }
+
+            constraintEnd = (u32[0 max])(constraintEnd + 1);
+        }
+        else if (endDepth == 0 && (ek == TokenKind.LBrace || ek == TokenKind.Semi))
+        {
+            endGuard = 0;
+        }
+        else
+        {
+            constraintEnd = (u32[0 max])(constraintEnd + 1);
+        }
+    }
+
+    switch (CollectCommaSeparatedTypeSpans(spans, stream, constraintStart, constraintEnd))
+    {
+        case System.Memory.MemoryStatus.Err(var collectError):
+            return ParseResult<TypeSpanList>.Err(ParseError.OutOfMemory);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    return ParseResult<TypeSpanList>.Ok(spans);
+}
+
 // The field name tokens of a struct/record body, in source order.
 public struct FieldList
 {
@@ -1449,12 +2313,18 @@ public struct FieldList
     // type — a built-in like `i32`/`bool` or a user-type identifier), for value
     // typing via `MapTypeToken`. In lockstep with `NameTokens`.
     internal dynamic u32[0 max] TypePrimaryTokens;
+    // Per-field source type span `[start, end)`, ending before the field name.
+    // Multi-declarator fields share the first declarator's type span.
+    internal dynamic u32[0 max] TypeStartTokens;
+    internal dynamic u32[0 max] TypeEndTokens;
 
     FieldList()
     {
         self.NameTokens = new();
         self.TypeHeadTokens = new();
         self.TypePrimaryTokens = new();
+        self.TypeStartTokens = new();
+        self.TypeEndTokens = new();
     }
 
     public inline finite law u64[0 2 ** 63 - 1] Count(borrow FieldList self)
@@ -1498,10 +2368,34 @@ public struct FieldList
         return token;
     }
 
-    internal fn System.Memory.MemoryStatus Append(mut borrow FieldList self, u32[0 max] nameToken, u32[0 max] typeHeadToken, u32[0 max] typePrimaryToken)
+    public law u32[0 max] TypeStartAt(borrow FieldList self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.TypeStartTokens.Length)
+        {
+            token = self.TypeStartTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] TypeEndAt(borrow FieldList self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.TypeEndTokens.Length)
+        {
+            token = self.TypeEndTokens[index];
+        }
+
+        return token;
+    }
+
+    internal fn System.Memory.MemoryStatus Append(mut borrow FieldList self, u32[0 max] nameToken, u32[0 max] typeHeadToken, u32[0 max] typePrimaryToken, u32[0 max] typeStart, u32[0 max] typeEnd)
     {
         if (!self.NameTokens.TryReserve(1) || !self.TypeHeadTokens.TryReserve(1)
-            || !self.TypePrimaryTokens.TryReserve(1))
+            || !self.TypePrimaryTokens.TryReserve(1)
+            || !self.TypeStartTokens.TryReserve(1)
+            || !self.TypeEndTokens.TryReserve(1))
         {
             return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
         }
@@ -1509,6 +2403,8 @@ public struct FieldList
         init self.NameTokens[self.NameTokens.Length] = nameToken;
         init self.TypeHeadTokens[self.TypeHeadTokens.Length] = typeHeadToken;
         init self.TypePrimaryTokens[self.TypePrimaryTokens.Length] = typePrimaryToken;
+        init self.TypeStartTokens[self.TypeStartTokens.Length] = typeStart;
+        init self.TypeEndTokens[self.TypeEndTokens.Length] = typeEnd;
         return System.Memory.MemoryStatus.Ok;
     }
 }
@@ -1571,10 +2467,12 @@ public fn ParseResult<FieldList> ParseStructFields(borrow TokenStream stream, u3
             // are bracket-nested — is skipped). All declarators share the type head.
             stack mut u32[0 max] sharedTypeHead = 0;
             stack mut u32[0 max] sharedTypePrimary = 0;
+            stack mut u32[0 max] sharedTypeStart = 0;
+            stack mut u32[0 max] sharedTypeEnd = 0;
             stack mut bool haveType = false;
-            stack mut u32[0 max] segStart = memberStart;
+            stack mut u32[0 max] segStart = cursor;
             stack mut u32[0 max] segDepth = 0;
-            stack mut u32[0 max] dscan = memberStart;
+            stack mut u32[0 max] dscan = cursor;
             while willexit (dscan <= memberEnd)
             {
                 stack TokenKind dk = stream.KindAt((u64[0 2 ** 63 - 1])dscan);
@@ -1599,10 +2497,12 @@ public fn ParseResult<FieldList> ParseStructFields(borrow TokenStream stream, u3
                         {
                             sharedTypeHead = BoundedLastIdentifier(stream, segStart, nameToken);
                             sharedTypePrimary = BoundedFirstTypeStart(stream, segStart, nameToken);
+                            sharedTypeStart = segStart;
+                            sharedTypeEnd = nameToken;
                             haveType = true;
                         }
 
-                        switch (fields.Append(nameToken, sharedTypeHead, sharedTypePrimary))
+                        switch (fields.Append(nameToken, sharedTypeHead, sharedTypePrimary, sharedTypeStart, sharedTypeEnd))
                         {
                             case System.Memory.MemoryStatus.Err(var appendError):
                                 return ParseResult<FieldList>.Err(ParseError.OutOfMemory);
@@ -1638,6 +2538,9 @@ public struct FunctionSignature
     // return type (a built-in like `void`/`i32` or a user-type identifier), used
     // to classify the return type (e.g. to detect a `void` return).
     u32[0 max] ReturnTypeToken;
+    // The return type source span `[start, end)`, ending before the function name.
+    u32[0 max] ReturnTypeStartToken;
+    u32[0 max] ReturnTypeEndToken;
     bool ReturnTypeIsTailCallable;
     internal dynamic u32[0 max] ParamNameTokens;
     // Per-parameter type head identifier (0 for a built-in parameter type), kept
@@ -1647,6 +2550,10 @@ public struct FunctionSignature
     // type token like `i32`/`bool`, or a user-type identifier), used to classify
     // the parameter's value type. In lockstep with `ParamNameTokens`.
     internal dynamic u32[0 max] ParamTypeTokens;
+    // Per-parameter source type span `[start, end)`, ending before the parameter
+    // name. Kept separate from the whole parameter span below.
+    internal dynamic u32[0 max] ParamTypeStartTokens;
+    internal dynamic u32[0 max] ParamTypeEndTokens;
     // Per-parameter source token span `[start, end)`, kept so lowering and
     // semantic checks can classify borrow/out/init mode without reparsing the
     // enclosing declaration.
@@ -1675,10 +2582,14 @@ public struct FunctionSignature
         self.IsLawKind = false;
         self.ReturnTypeHead = 0;
         self.ReturnTypeToken = 0;
+        self.ReturnTypeStartToken = 0;
+        self.ReturnTypeEndToken = 0;
         self.ReturnTypeIsTailCallable = false;
         self.ParamNameTokens = new();
         self.ParamTypeHeads = new();
         self.ParamTypeTokens = new();
+        self.ParamTypeStartTokens = new();
+        self.ParamTypeEndTokens = new();
         self.ParamStartTokens = new();
         self.ParamEndTokens = new();
         self.ParamTypeTailCallableFlags = new();
@@ -1730,6 +2641,16 @@ public struct FunctionSignature
         return self.ReturnTypeToken;
     }
 
+    public inline finite law u32[0 max] ReturnTypeStartTokenAt(borrow FunctionSignature self)
+    {
+        return self.ReturnTypeStartToken;
+    }
+
+    public inline finite law u32[0 max] ReturnTypeEndTokenAt(borrow FunctionSignature self)
+    {
+        return self.ReturnTypeEndToken;
+    }
+
     public inline finite law bool ReturnTypeTailCallable(borrow FunctionSignature self)
     {
         return self.ReturnTypeIsTailCallable;
@@ -1776,6 +2697,28 @@ public struct FunctionSignature
         if (index < self.ParamTypeTokens.Length)
         {
             token = self.ParamTypeTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] ParamTypeStartTokenAt(borrow FunctionSignature self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.ParamTypeStartTokens.Length)
+        {
+            token = self.ParamTypeStartTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] ParamTypeEndTokenAt(borrow FunctionSignature self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.ParamTypeEndTokens.Length)
+        {
+            token = self.ParamTypeEndTokens[index];
         }
 
         return token;
@@ -2063,6 +3006,8 @@ public struct FunctionSignature
         if (!self.ParamNameTokens.TryReserve(1)
             || !self.ParamTypeHeads.TryReserve(1)
             || !self.ParamTypeTokens.TryReserve(1)
+            || !self.ParamTypeStartTokens.TryReserve(1)
+            || !self.ParamTypeEndTokens.TryReserve(1)
             || !self.ParamStartTokens.TryReserve(1)
             || !self.ParamEndTokens.TryReserve(1)
             || !self.ParamTypeTailCallableFlags.TryReserve(1)
@@ -2074,6 +3019,8 @@ public struct FunctionSignature
         init self.ParamNameTokens[self.ParamNameTokens.Length] = nameToken;
         init self.ParamTypeHeads[self.ParamTypeHeads.Length] = prevIdentifier;
         init self.ParamTypeTokens[self.ParamTypeTokens.Length] = typeToken;
+        init self.ParamTypeStartTokens[self.ParamTypeStartTokens.Length] = start;
+        init self.ParamTypeEndTokens[self.ParamTypeEndTokens.Length] = nameToken;
         init self.ParamStartTokens[self.ParamStartTokens.Length] = start;
         init self.ParamEndTokens[self.ParamEndTokens.Length] = end;
         init self.ParamTypeTailCallableFlags[self.ParamTypeTailCallableFlags.Length] = tailFlag;
@@ -2714,8 +3661,14 @@ public fn ParseResult<FunctionSignature> ParseFunctionSignature(borrow TokenStre
         signature.NameToken = lastIdentifier;
         signature.ReturnTypeHead = prevIdentifier;
         signature.ReturnTypeToken = returnTypeToken;
-        signature.ReturnTypeIsTailCallable = TypeSpanContainsTailCallableSignature(stream, (u32[0 max])(fnKeyword + 1), lastIdentifier);
-        signature.ReturnTypeDeadOnReturnArgumentCount = TypeSpanDeadOnReturnArgumentCount(stream, (u32[0 max])(fnKeyword + 1), lastIdentifier);
+        if ((u32[0 max])(fnKeyword + 1) < lastIdentifier)
+        {
+            signature.ReturnTypeStartToken = (u32[0 max])(fnKeyword + 1);
+            signature.ReturnTypeEndToken = lastIdentifier;
+        }
+
+        signature.ReturnTypeIsTailCallable = TypeSpanContainsTailCallableSignature(stream, signature.ReturnTypeStartToken, signature.ReturnTypeEndToken);
+        signature.ReturnTypeDeadOnReturnArgumentCount = TypeSpanDeadOnReturnArgumentCount(stream, signature.ReturnTypeStartToken, signature.ReturnTypeEndToken);
     }
 
     index = (u32[0 max])(index + 1);
@@ -2837,6 +3790,11 @@ public struct StatementItem
     // `List` for `List<u32> x`); 0 for a built-in type, a `var` pattern binding, or
     // any other statement kind. Used to resolve the local's named type.
     u32[0 max] TypeHead;
+    // For a `Local` declaration, its source type/declaration span `[start, end)`,
+    // ending before the local name. This preserves storage/borrow tokens for
+    // lowering without making consumers rescan the statement boundary.
+    u32[0 max] TypeStartToken;
+    u32[0 max] TypeEndToken;
 
     StatementItem()
     {
@@ -2846,6 +3804,8 @@ public struct StatementItem
         self.NameToken = 0;
         self.TypeToken = 0;
         self.TypeHead = 0;
+        self.TypeStartToken = 0;
+        self.TypeEndToken = 0;
     }
 }
 
@@ -2862,6 +3822,8 @@ public struct StatementList
     // type; 0 for a built-in / `var` pattern binding / other kinds). For resolving
     // the local's named type — distinct from `TypeTokens` for a qualified type.
     internal dynamic u32[0 max] TypeHeads;
+    internal dynamic u32[0 max] TypeStartTokens;
+    internal dynamic u32[0 max] TypeEndTokens;
     // Per-statement expression root (1-based into `Expressions`, 0 = none): the
     // returned value of a `return`, or the whole of an expression statement.
     internal dynamic u32[0 max] ExprRoots;
@@ -2898,6 +3860,8 @@ public struct StatementList
         self.NameTokens = new();
         self.TypeTokens = new();
         self.TypeHeads = new();
+        self.TypeStartTokens = new();
+        self.TypeEndTokens = new();
         self.ExprRoots = new();
         self.Depths = new();
         self.ExprStarts = new();
@@ -2987,6 +3951,16 @@ public struct StatementList
             {
                 item.TypeHead = self.TypeHeads[index];
             }
+
+            if (index < self.TypeStartTokens.Length)
+            {
+                item.TypeStartToken = self.TypeStartTokens[index];
+            }
+
+            if (index < self.TypeEndTokens.Length)
+            {
+                item.TypeEndToken = self.TypeEndTokens[index];
+            }
         }
 
         return item;
@@ -3002,6 +3976,28 @@ public struct StatementList
         }
 
         return root;
+    }
+
+    public law u32[0 max] TypeStartTokenAt(borrow StatementList self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.TypeStartTokens.Length)
+        {
+            token = self.TypeStartTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] TypeEndTokenAt(borrow StatementList self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.TypeEndTokens.Length)
+        {
+            token = self.TypeEndTokens[index];
+        }
+
+        return token;
     }
 
     // The kind of expression node `node` in the shared expression tree.
@@ -3089,6 +4085,8 @@ public struct StatementList
             || !self.NameTokens.TryReserve(1)
             || !self.TypeTokens.TryReserve(1)
             || !self.TypeHeads.TryReserve(1)
+            || !self.TypeStartTokens.TryReserve(1)
+            || !self.TypeEndTokens.TryReserve(1)
             || !self.ExprRoots.TryReserve(1)
             || !self.Depths.TryReserve(1)
             || !self.ExprStarts.TryReserve(1)
@@ -3103,6 +4101,8 @@ public struct StatementList
         init self.NameTokens[self.NameTokens.Length] = item.NameToken;
         init self.TypeTokens[self.TypeTokens.Length] = item.TypeToken;
         init self.TypeHeads[self.TypeHeads.Length] = item.TypeHead;
+        init self.TypeStartTokens[self.TypeStartTokens.Length] = item.TypeStartToken;
+        init self.TypeEndTokens[self.TypeEndTokens.Length] = item.TypeEndToken;
         init self.ExprRoots[self.ExprRoots.Length] = exprRoot;
         init self.Depths[self.Depths.Length] = depth;
         init self.ExprStarts[self.ExprStarts.Length] = exprStart;
@@ -3361,12 +4361,79 @@ finite law u32[0 max] FindSwitchLabelColon(borrow TokenStream stream, u32[0 max]
     return start;
 }
 
+finite law bool IsCasePatternReferenceCandidate(borrow TokenStream stream, u32[0 max] token, u32[0 max] patternStart, u32[0 max] patternEnd)
+{
+    if (stream.KindAt((u64[0 2 ** 63 - 1])token) != TokenKind.Identifier)
+    {
+        return false;
+    }
+
+    if (token > patternStart && stream.KindAt((u64[0 2 ** 63 - 1])((u32[0 max])(token - 1))) == TokenKind.Var)
+    {
+        return false;
+    }
+
+    if (token > patternStart && stream.KindAt((u64[0 2 ** 63 - 1])((u32[0 max])(token - 1))) == TokenKind.Dot)
+    {
+        return false;
+    }
+
+    if ((u32[0 max])(token + 1) < patternEnd && stream.KindAt((u64[0 2 ** 63 - 1])((u32[0 max])(token + 1))) == TokenKind.Colon)
+    {
+        return false;
+    }
+
+    return true;
+}
+
+internal fn System.Memory.MemoryStatus AppendCasePatternReference(mut borrow StatementList list, u32[0 max] token, u32[0 max] depth, u32[0 max] scope)
+{
+    stack u32[0 max] exprStart = (u32[0 max])list.Expressions.Count();
+    stack u32[0 max] node = list.Expressions.AddNode(ExprKind.Identifier, token, 0, 0);
+    if (node == 0)
+    {
+        return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+    }
+
+    stack mut StatementItem item = new();
+    item.Kind = StatementKind.Expression;
+    item.StartToken = token;
+    item.EndToken = token;
+    switch (list.Append(item, node, depth, exprStart, scope))
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryStatus.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+            return System.Memory.MemoryStatus.Ok;
+    }
+}
+
+internal fn System.Memory.MemoryStatus ParseCasePatternReferences(borrow TokenStream stream, mut borrow StatementList list, u32[0 max] patternStart, u32[0 max] patternEnd, u32[0 max] depth, u32[0 max] scope)
+{
+    stack mut u32[0 max] token = patternStart;
+    while willexit (token < patternEnd)
+    {
+        if (IsCasePatternReferenceCandidate(stream, token, patternStart, patternEnd))
+        {
+            switch (AppendCasePatternReference(list, token, depth, scope))
+            {
+                case System.Memory.MemoryStatus.Err(var error):
+                    return System.Memory.MemoryStatus.Err(error);
+                case System.Memory.MemoryStatus.Ok:
+            }
+        }
+
+        token = (u32[0 max])(token + 1);
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
 // Parses a `case` label's pattern region `[patternStart, colon)` for the references
 // and bindings it introduces, appending them into `list` at `depth`/`scope` (the
 // section scope). Mirrors the host `CheckSwitchStatement`: each `var Identifier`
 // pattern binding becomes a `Local`, and a `when <expression>` guard (if present)
-// becomes an `Expression` (parsed after the bindings, so it sees them). Constant /
-// enum-case / type pattern references are not resolved by this slice.
+// becomes an `Expression` (parsed after the bindings, so it sees them).
 internal fn System.Memory.MemoryStatus ParseCaseLabel(borrow TokenStream stream, mut borrow StatementList list, u32[0 max] patternStart, u32[0 max] colon, u32[0 max] depth, u32[0 max] scope)
 {
     // Locate a `when` guard at bracket/paren/brace/angle depth 0; the patterns are
@@ -3401,6 +4468,13 @@ internal fn System.Memory.MemoryStatus ParseCaseLabel(borrow TokenStream stream,
     if (whenToken != 0)
     {
         patternEnd = whenToken;
+    }
+
+    switch (ParseCasePatternReferences(stream, list, patternStart, patternEnd, depth, scope))
+    {
+        case System.Memory.MemoryStatus.Err(var referenceError):
+            return System.Memory.MemoryStatus.Err(referenceError);
+        case System.Memory.MemoryStatus.Ok:
     }
 
     // Each `var Identifier` (at any nesting, e.g. `Foo(var x)`) binds a `Local`.
@@ -3731,6 +4805,8 @@ internal fn System.Memory.MemoryStatus ParseForStatement(borrow TokenStream stre
                 // The index binding is `storageClass type Identifier`, so the type
                 // head is the rightmost identifier before the name (after the class).
                 idxItem.TypeHead = BoundedLastIdentifier(stream, (u32[0 max])(idxStart + 1), idxName);
+                idxItem.TypeStartToken = idxStart;
+                idxItem.TypeEndToken = idxName;
                 switch (list.Append(idxItem, 0, depth, idxExprStart, forScope))
                 {
                     case System.Memory.MemoryStatus.Err(var idxError):
@@ -3757,6 +4833,8 @@ internal fn System.Memory.MemoryStatus ParseForStatement(borrow TokenStream stre
                 // The element binding is `type Identifier` (no storage class), so the
                 // type head is the rightmost identifier before the name.
                 elemItem.TypeHead = BoundedLastIdentifier(stream, elementStart, elemName);
+                elemItem.TypeStartToken = elementStart;
+                elemItem.TypeEndToken = elemName;
                 switch (list.Append(elemItem, 0, depth, elemExprStart, forScope))
                 {
                     case System.Memory.MemoryStatus.Err(var elemError):
@@ -3836,6 +4914,8 @@ internal fn System.Memory.MemoryStatus ParseForStatement(borrow TokenStream stre
                 initItem.NameToken = initName;
                 initItem.TypeToken = FindVariableTypeToken(stream, (u32[0 max])(initStart + 1));
                 initItem.TypeHead = BoundedLastIdentifier(stream, (u32[0 max])(initStart + 1), initName);
+                initItem.TypeStartToken = initStart;
+                initItem.TypeEndToken = initName;
                 switch (list.Append(initItem, initRoot, depth, initExprStart, forScope))
                 {
                     case System.Memory.MemoryStatus.Err(var initError):
@@ -4002,6 +5082,8 @@ internal fn System.Memory.MemoryStatus ParseBlock(borrow TokenStream stream, mut
         stack mut u32[0 max] localName = 0;
         stack mut u32[0 max] localType = 0;
         stack mut u32[0 max] localHead = 0;
+        stack mut u32[0 max] localTypeStart = 0;
+        stack mut u32[0 max] localTypeEnd = 0;
         if ((kind == StatementKind.Return || kind == StatementKind.Become)
             && stream.KindAt((u64[0 2 ** 63 - 1])(statementStart + 1)) != TokenKind.Semi)
         {
@@ -4060,6 +5142,8 @@ internal fn System.Memory.MemoryStatus ParseBlock(borrow TokenStream stream, mut
             if (localName != 0)
             {
                 localHead = BoundedLastIdentifier(stream, (u32[0 max])(statementStart + 1), localName);
+                localTypeStart = statementStart;
+                localTypeEnd = localName;
             }
 
             stack mut u32[0 max] scan = statementStart;
@@ -4096,6 +5180,8 @@ internal fn System.Memory.MemoryStatus ParseBlock(borrow TokenStream stream, mut
         item.NameToken = localName;
         item.TypeToken = localType;
         item.TypeHead = localHead;
+        item.TypeStartToken = localTypeStart;
+        item.TypeEndToken = localTypeEnd;
         switch (list.Append(item, exprRoot, sectionDepth, exprStart, sectionScope))
         {
             case System.Memory.MemoryStatus.Err(var appendError):
@@ -4466,6 +5552,115 @@ public struct ExprTree
 
         init self.ArgNodes[self.ArgNodes.Length] = argNode;
         return (u32[0 max])(slot + 1);
+    }
+}
+
+public struct ExpressionSyntax
+{
+    internal TokenStream Stream;
+    internal ExprTree Tree;
+    internal SyntaxDiagnosticList Diagnostics;
+
+    ExpressionSyntax()
+    {
+        self.Stream = new();
+        self.Tree = new();
+        self.Diagnostics = new();
+    }
+
+    public inline finite law bool Succeeded(borrow ExpressionSyntax self)
+    {
+        return self.Diagnostics.Count() == 0;
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] TokenCount(borrow ExpressionSyntax self)
+    {
+        return self.Stream.Count();
+    }
+
+    public inline finite law TokenKind TokenKindAt(borrow ExpressionSyntax self, u64[0 2 ** 63 - 1] index)
+    {
+        return self.Stream.KindAt(index);
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] NodeCount(borrow ExpressionSyntax self)
+    {
+        return self.Tree.Count();
+    }
+
+    public inline finite law u32[0 max] RootNode(borrow ExpressionSyntax self)
+    {
+        return self.Tree.RootNode();
+    }
+
+    public law ExprKind NodeKindAt(borrow ExpressionSyntax self, u32[0 max] node)
+    {
+        return self.Tree.NodeKindAt(node);
+    }
+
+    public law u32[0 max] TokenAt(borrow ExpressionSyntax self, u32[0 max] node)
+    {
+        return self.Tree.TokenAt(node);
+    }
+
+    public law u32[0 max] LeftAt(borrow ExpressionSyntax self, u32[0 max] node)
+    {
+        return self.Tree.LeftAt(node);
+    }
+
+    public law u32[0 max] RightAt(borrow ExpressionSyntax self, u32[0 max] node)
+    {
+        return self.Tree.RightAt(node);
+    }
+
+    public law u32[0 max] AuxAt(borrow ExpressionSyntax self, u32[0 max] node)
+    {
+        return self.Tree.AuxAt(node);
+    }
+
+    public law u32[0 max] CallArgCount(borrow ExpressionSyntax self, u32[0 max] node)
+    {
+        return self.Tree.CallArgCount(node);
+    }
+
+    public law u32[0 max] CallArgAt(borrow ExpressionSyntax self, u32[0 max] node, u32[0 max] arg)
+    {
+        return self.Tree.CallArgAt(node, arg);
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] DiagnosticCount(borrow ExpressionSyntax self)
+    {
+        return self.Diagnostics.Count();
+    }
+
+    public law SyntaxDiagnosticKind DiagnosticKindAt(borrow ExpressionSyntax self, u64[0 2 ** 63 - 1] index)
+    {
+        return self.Diagnostics.KindAt(index);
+    }
+
+    public law u32[0 max] DiagnosticTokenAt(borrow ExpressionSyntax self, u64[0 2 ** 63 - 1] index)
+    {
+        return self.Diagnostics.TokenAt(index);
+    }
+
+    public law u32[0 max] DiagnosticLineAt(borrow ExpressionSyntax self, u64[0 2 ** 63 - 1] index)
+    {
+        return self.Diagnostics.LineAt(index);
+    }
+
+    public law u32[0 max] DiagnosticColumnAt(borrow ExpressionSyntax self, u64[0 2 ** 63 - 1] index)
+    {
+        return self.Diagnostics.ColumnAt(index);
+    }
+
+    public law u32[0 max] DiagnosticCountOf(borrow ExpressionSyntax self, SyntaxDiagnosticKind kind)
+    {
+        return self.Diagnostics.CountOf(kind);
+    }
+
+    public finite law ascii TokenTextAt(borrow ExpressionSyntax self, ascii source, u64[0 2 ** 63 - 1] index)
+    {
+        return Compiler.Lexing.TokenTextOf(source, self.Stream, index);
     }
 }
 
@@ -4986,4 +6181,51 @@ public fn ExprTree ParseExpression(borrow TokenStream stream, u32[0 max] start)
     stack ExprParse parsed = ParseAssignment(stream, tree, start);
     tree.Root = parsed.Node;
     return tree;
+}
+
+// Pass-level expression parser facade used by interpolation and syntax-model
+// consumers. It validates text literals, records a diagnostic for an empty or
+// unparseable expression, and reports any remaining non-EOF token as trailing
+// text.
+public fn ParseResult<ExpressionSyntax> ParseExpressionSyntax(ascii source)
+{
+    stack mut ExpressionSyntax syntax = new();
+    switch (Compiler.Lexing.LexText(source))
+    {
+        case LexResult<TokenStream>.Err(var lexError):
+            return ParseResult<ExpressionSyntax>.Err(ParseError.OutOfMemory);
+        case LexResult<TokenStream>.Ok(var stream):
+            syntax.Stream = stream;
+    }
+
+    switch (CollectSharedSyntaxDiagnostics(source, syntax.Stream, syntax.Diagnostics))
+    {
+        case System.Memory.MemoryStatus.Err(var diagError):
+            return ParseResult<ExpressionSyntax>.Err(ParseError.OutOfMemory);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    stack ExprParse parsed = ParseAssignment(syntax.Stream, syntax.Tree, 0);
+    syntax.Tree.Root = parsed.Node;
+    if (parsed.Node == 0)
+    {
+        switch (syntax.Diagnostics.AppendAtToken(SyntaxDiagnosticKind.ExpectedExpression, syntax.Stream, 0))
+        {
+            case System.Memory.MemoryStatus.Err(var expectedExpressionError):
+                return ParseResult<ExpressionSyntax>.Err(ParseError.OutOfMemory);
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
+    if (syntax.Stream.KindAt((u64[0 2 ** 63 - 1])parsed.Pos) != TokenKind.EndOfFile)
+    {
+        switch (syntax.Diagnostics.AppendAtToken(SyntaxDiagnosticKind.UnexpectedTextAfterExpression, syntax.Stream, parsed.Pos))
+        {
+            case System.Memory.MemoryStatus.Err(var trailingError):
+                return ParseResult<ExpressionSyntax>.Err(ParseError.OutOfMemory);
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
+    return ParseResult<ExpressionSyntax>.Ok(syntax);
 }

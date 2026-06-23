@@ -30,16 +30,16 @@ Execution constraints:
   - [x] Implement the handwritten lexer with exact spans and grammar-faithful tokenization.
   - [~] Implement the handwritten parser against `Stark.g4`.
     - [x] Parse headers, declarations, functions, fields, enum variants, statements, expressions, scopes, loops, and switch sections.
-    - [ ] Capture full type spans for parameters, returns, fields, locals, and enum payloads.
-    - [ ] Parse struct and enum `where` clauses.
-    - [ ] Resolve switch-case pattern value references for constants, enum cases, aggregates, and lists.
-    - [ ] Implement the parser facade and Stark-native syntax tree or parse-event model.
-    - [ ] Port text literal decoding with current raw-string parity semantics.
+    - [x] Capture full type spans for parameters, returns, fields, locals, and enum payloads.
+    - [x] Parse struct and enum `where` clauses.
+    - [x] Resolve switch-case pattern value references for constants, enum cases, aggregates, and lists.
+    - [x] Implement the parser facade and Stark-native syntax tree or parse-event model.
+    - [x] Port text literal decoding with current raw-string parity semantics.
   - [~] Implement name binding and type-reference resolution.
     - [x] Build declaration tables, function scopes, lexical local visibility, and structured bind diagnostics.
     - [x] Resolve value references, signature types, field types, enum payload types, local types, and function `where` constraints.
-    - [ ] Resolve nested generic argument types and complete type compatibility facts.
-    - [ ] Implement module resolution and imported-package/source lookup.
+    - [x] Resolve nested generic argument types and complete type compatibility facts.
+    - [x] Implement module resolution and imported-package/source lookup.
     - [ ] Implement overload resolution and generic use-site instantiation planning.
   - [~] Implement type checking and semantic validation.
     - [x] Diagnose non-boolean conditions, logical operands, void-return mismatches, duplicate enum variants, and invalid break/continue use.
@@ -52,14 +52,14 @@ Execution constraints:
   - [ ] Port the compiler pipeline and default pass orchestration.
   - [ ] Add targeted artifact output for tests and debugging.
 
-- [~] Implement the IR memory model, MIR foundations, and fact-transfer substrate.
+- [x] Implement the IR memory model, MIR foundations, and fact-transfer substrate.
   - [x] Implement typed handle wrappers and the dense `IrTable<T>` model in `selfhost/Compiler/Ir.stark`.
   - [x] Implement initial `ValueFacts`, `AbiKind`, and present-fact inheritance helpers.
   - [x] Implement MIR instruction, block, function, global, control-flow, call, phi, and basic textual LLVM subset helpers.
   - [x] Implement MIR byte codecs, MIR1/MIR2 package-image sections, validation, inspection summaries, and file save/load helpers.
-  - [ ] Define every concrete fact category with attach point, phase owner, durability, producer, consumer, and validation rule.
-  - [ ] Add low-friction fact-transfer helpers for every lowering builder that creates new handles.
-  - [ ] Add phase-boundary validation for stale handles, dropped `forbid-drop` facts, ABI facts, alias facts, layout facts, and durable package facts.
+  - [x] Define every concrete fact category with attach point, phase owner, durability, producer, consumer, and validation rule.
+  - [x] Add low-friction fact-transfer helpers for every lowering builder that creates new handles.
+  - [x] Add phase-boundary validation for stale handles, dropped `forbid-drop` facts, ABI facts, alias facts, layout facts, and durable package facts.
 
 - [ ] Implement HIR/MIR lowering, drop lowering, switch lowering, and imported-template handling.
   - [ ] Port the MIR lowering pass shell and function MIR builder.
@@ -83,11 +83,16 @@ Execution constraints:
 - [~] Implement package-image models, builders, loaders, bridge codecs, binary load, and deterministic inspection.
   - [x] Decide binary-first package-image policy with JSON/text inspection views.
   - [x] Implement the selfhost MIR package-image leaf codec, validation statuses, deterministic text/JSON summaries, and on-disk round trips.
-  - [ ] Finalize the public `.starkpkg` contract and `stark inspect-pkg --format json|text` behavior.
-  - [ ] Design the durable sectioned binary format with magic, exact version, section IDs, offsets, lengths, string tables, typed indexes, and target/profile facts.
+  - [x] Finalize the public `.starkpkg` contract and `stark inspect-pkg --format json|text` behavior.
+  - [x] Design the durable sectioned binary format with magic, exact version, section IDs, offsets, lengths, string tables, typed indexes, and target/profile facts.
   - [ ] Port logical package models, builders, loaders, source bridge, shared codecs, and deterministic inspection rendering.
-  - [ ] Add diagnostics for malformed headers, unknown required sections, bad offsets, version mismatches, target/profile mismatches, and legacy JSON bridge failures.
-  - [ ] Route binary package images into the accepted build layout and keep inspection views explicit.
+    - [x] Validate and inspect the host logical `STRS`/`PINF`/`MANF` section wrapper in the self-host package-image reader.
+    - [x] Preserve and inspect logical package identity/profile/target facts from `PINF`/`STRS`.
+    - [x] Preserve and inspect logical target backend facts from `PINF` without materializing `MANF`.
+    - [ ] Decode `MANF` and build the self-host logical package model from binary images.
+    - [ ] Port builders, source bridge, shared codecs, and deterministic inspection rendering for logical sections.
+  - [x] Add diagnostics for malformed headers, unknown required sections, bad offsets, version mismatches, target/profile mismatches, and legacy JSON bridge failures.
+  - [x] Route binary package images into the accepted build layout and keep inspection views explicit.
 
 - [ ] Implement CLI, project driver, manifest handling, native-toolchain driver, and build entry points.
   - [ ] Port `Program`, `CompilerCli`, project driver, build entry points, and project command routing.
@@ -95,9 +100,10 @@ Execution constraints:
   - [ ] Port native toolchain discovery, target detection, linker/archiver invocation, and SDK checks.
   - [ ] Preserve project build layout, incremental stamps, stdlib discovery, and package-image generation.
 
-- [~] Implement small fact and assembly-metadata leaf helpers.
+- [x] Implement small fact and assembly-metadata leaf helpers.
   - [x] Add initial assembly architecture facts and MIR assembly metadata serialization.
-  - [ ] Port register facts, target facts, native metadata facts, and any remaining small helper modules.
+  - [x] Port register, target-triple architecture, target platform, FFI ABI, and C data-model fact helpers.
+  - [x] Port native metadata manifest and implicit-library fact helpers.
 
 ---
 
@@ -130,30 +136,40 @@ Execution constraints:
 ## 3. Tooling And Packaging
 
 - [~] Complete libLLVM-primary backend integration through the LLVM C API.
-  - [~] Finish `System.C` C string and owned foreign-message helper coverage needed by LLVM.
-  - [ ] Implement LLVM C API bindings, version checks, required-symbol checks, and typed wrapper drops.
-  - [ ] Add direct object emission, verifier diagnostics, optional module printing, and backend smoke tests.
+  - [x] Finish `System.C` C string and owned foreign-message helper coverage needed by LLVM.
+  - [x] Implement LLVM C API bindings, version checks, required-symbol checks, and typed wrapper drops.
+  - [x] Add direct object emission, verifier diagnostics, optional module printing, and backend smoke tests.
+    - [x] Expose typed wrappers for module target/data-layout, target lookup, target-machine creation, function declarations, module printing/verification, and object memory buffers.
+    - [x] Expose typed wrappers for basic blocks, builder positioning, integer constants, and return terminators.
+    - [x] Expose typed wrappers for global declarations and global-object facts including linkage, visibility, alignment, section, and constant/initializer state.
+    - [x] Expose typed wrappers for load/store/GEP/call construction and ABI/performance fact attachments.
+    - [x] Expose typed wrappers for function parameters, control flow, scalar integer ops, compares, selects, and PHI incoming edges.
+    - [x] Add libLLVM-linked smoke coverage for direct module construction, verifier diagnostics, module printing, and object emission.
 
 - [~] Complete binary package-image generation/loading and `stark inspect-pkg`.
   - [x] Implement the selfhost MIR package-image leaf codec and deterministic summary inspection.
   - [ ] Implement the full compiler package-image logical section model and binary loader.
-  - [ ] Add `stark inspect-pkg` as a top-level compiler command.
-  - [ ] Update package-image docs and tests after public spelling lands.
+    - [x] Validate and inspect the host logical `STRS`/`PINF`/`MANF` section wrapper in self-host code.
+    - [x] Preserve and inspect logical package identity/profile/target facts from `PINF`/`STRS`.
+    - [x] Preserve and inspect logical target backend facts from `PINF` without materializing `MANF`.
+    - [ ] Decode `MANF` and materialize logical package-image facts without source reconstruction.
+  - [x] Add `stark inspect-pkg` as a top-level compiler command.
+  - [x] Update package-image docs and tests after public spelling lands.
 
 - [~] Complete native/libLLVM toolchain discovery, bundled toolchain support, target facts, C data-model facts, and aggregate-layout facts.
   - [x] Resolve release policies for LLVM version, official archive acquisition, Linux no-libc policy, Windows linker-driver policy, macOS SDK policy, and `--toolchain-dir` scope.
-  - [ ] Add a toolchain resolver for libLLVM, `clang`, linkers, archivers, SDKs, and helper tools.
-  - [ ] Add override precedence for CLI flags, environment variables, user config, bundled tools, and `PATH`.
-  - [ ] Validate target triple, data layout, C aliases, aggregate layout, and package compatibility before backend use.
+  - [x] Add a toolchain resolver for libLLVM, `clang`, linkers, archivers, SDKs, and helper tools.
+  - [x] Add override precedence for CLI flags, environment variables, user config, bundled tools, and `PATH`.
+  - [x] Validate target triple, data layout, C aliases, aggregate layout, and package compatibility before backend use.
 
-- [ ] Complete release packaging, `stark doctor`, and clean-machine archive verification.
-  - [ ] Define the release archive layout for compiler, stdlib, vendor, toolchain, licenses, install docs, and release metadata.
-  - [ ] Add runtime-specific publish or native compiler archive assembly for Linux, Windows, and macOS.
-  - [ ] Bundle pinned LLVM 22.1.8 artifacts and record source archives, checksums, and license files.
-  - [ ] Build and include standard library and vendor library source plus required package/native artifacts.
-  - [ ] Add a manually triggered release workflow that creates downloadable relocatable archives.
-  - [ ] Add `stark doctor` with compiler version, runtime ID, toolchain paths, versions, target facts, stdlib path, and SDK status.
-  - [ ] Add clean-machine smoke tests for archive help, check, MIR, SSA, LLVM, object, library, executable, native dependency, and runtime basics.
+- [x] Complete release packaging, `stark doctor`, and clean-machine archive verification.
+  - [x] Define the release archive layout for compiler, stdlib, vendor, toolchain, licenses, install docs, and release metadata.
+  - [x] Add runtime-specific publish or native compiler archive assembly for Linux, Windows, and macOS.
+  - [x] Bundle pinned LLVM 22.1.8 artifacts and record source archives, checksums, and license files.
+  - [x] Build and include standard library and vendor library source plus required package/native artifacts.
+  - [x] Add a manually triggered release workflow that creates downloadable relocatable archives.
+  - [x] Add `stark doctor` with compiler version, runtime ID, toolchain paths, versions, target facts, stdlib path, and SDK status.
+  - [x] Add clean-machine smoke tests for archive help, check, MIR, SSA, LLVM, object, library, executable, native dependency, and runtime basics.
 
 - [ ] Sync editor syntax and completions with the self-hosting language surface.
   - [ ] Update grammar-derived syntax highlighting, completions, snippets, and stdlib symbol data.
@@ -174,17 +190,17 @@ Execution constraints:
   - [~] Finish file, filesystem, path, recursive walk, temp, and cross-platform metadata parity.
   - [~] Finish `System.Toml` by replacing project-driver manifest parsing with typed manifest decoding.
   - [~] Finish JSON/package inspection support needed by `stark inspect-pkg` and golden tests.
-  - [~] Finish `System.C` C-string helpers and LLVM-specific owner wrappers.
+  - [x] Finish `System.C` C-string helpers and LLVM-specific owner wrappers.
 
 - [~] Keep platform boundaries explicit.
   - [x] Use Linux syscall-backed/no-libc stdlib and runtime code for Stark-owned Linux behavior.
   - [x] Use the current Windows executable-generation path for the compiler release.
   - [x] Require local macOS SDK or Command Line Tools and diagnose missing pieces through `stark doctor`.
-  - [ ] Add platform-specific diagnostics for SDK, CRT, pkg-config, and native/vendor dependency requirements.
+  - [x] Add platform-specific diagnostics for SDK, CRT, pkg-config, and native/vendor dependency requirements.
 
-- [ ] Preserve the official vendor library as a first-class release component.
-  - [ ] Add vendor source and generated artifacts to release archive layout.
-  - [ ] Add vendor package/native metadata discovery and diagnostics after the vendor branch merges.
+- [x] Preserve the official vendor library as a first-class release component.
+  - [x] Add vendor source and generated artifacts to release archive layout.
+  - [x] Add vendor package/native metadata discovery and diagnostics after the vendor branch merges.
 
 ---
 
@@ -195,10 +211,13 @@ to exercise the real self-hosted compiler path. Use
 [TestPassLedger.md](TestPassLedger.md) for counts, failure-family notes, and
 historical triage.
 
-- [~] Fix the package-image input/protocol gap that blocks package-backed compiler and LLVM tests.
+- [x] Fix the package-image input/protocol gap that blocks package-backed compiler and LLVM tests.
   - [x] Prove package-backed LLVM compilation through the existing host-test harness.
-  - [ ] Add the remaining package-backed callable-value and manifest-backed compiler test coverage.
-  - [ ] Add any missing typed-only package-codegen flag or equivalent protocol path.
+  - [x] Add the remaining package-backed LLVM callable-value coverage.
+  - [x] Add the remaining manifest-backed compiler test coverage.
+    - [x] Route typed-body package-image compiler ports through typed-only package images.
+    - [x] Restore CLI stdout/file-existence/manifest-byte/runtime assertions or explicit equivalents.
+  - [x] Add any missing typed-only package-codegen flag or equivalent protocol path.
 
 - [~] Align SSA/MIR artifact selection and rendered-fragment expectations for ported text tests.
   - [x] Fix verified SSA families including ArithmeticFold, ValueFacts, AliasAware, ScopedNoAlias, and InlineSsa.
@@ -210,14 +229,14 @@ historical triage.
   - [ ] Define a test-only fixture API for invalid MIR, SSA, and package-artifact validator inputs.
   - [ ] Port invalid-SSA validator tests to the fixture path or record explicit host-internal exclusions.
 
-- [ ] Add target-triple pinning or platform gating for non-macOS artifact and native-runtime tests.
-  - [ ] Cross-target compile artifact-only Linux and Windows tests on macOS where no foreign SDK/runtime is required.
-  - [ ] Platform-gate tests that require foreign SDKs, linkers, syscalls, or runtime behavior.
-  - [ ] Add comments explaining each platform-only pass condition.
+- [x] Add target-triple pinning or platform gating for non-macOS artifact and native-runtime tests.
+  - [x] Cross-target compile artifact-only Linux and Windows tests on macOS where no foreign SDK/runtime is required.
+  - [x] Platform-gate tests that require foreign SDKs, linkers, syscalls, or runtime behavior.
+  - [x] Add comments explaining each platform-only pass condition.
 
-- [ ] Finish option-toggle plumbing used by remaining LLVM lowering tests.
-  - [ ] Add the missing host-test protocol switches for qualifier, internalization, target, package, and inspection variants.
-  - [ ] Verify the remaining LLVM per-test residues after option plumbing lands.
+- [x] Finish option-toggle plumbing used by remaining LLVM lowering tests.
+  - [x] Add the missing host-test protocol switches for qualifier, internalization, target, package, and inspection variants.
+  - [x] Verify the remaining LLVM per-test residues after option plumbing lands.
 
 - [ ] Resolve remaining suite failures after infrastructure lands.
   - [ ] Resolve `compiler.Tests` package-image, diagnostics, type-checking, ownership, pipeline, runtime, CLI, and example failures.

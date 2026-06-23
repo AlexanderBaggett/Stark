@@ -1,0 +1,506 @@
+import Compiler.TargetFacts
+import System.Text
+module Compiler.NativeFacts
+
+public enum NativeDependencyListKind
+{
+    Unknown,
+    Sources,
+    IncludeDirectories,
+    LibraryDirectories,
+    Libraries,
+    LinkArguments,
+    PkgConfigPackages,
+}
+
+public enum NativeImplicitLibrary
+{
+    Unknown,
+    Math,
+    Winsock,
+    WindowsSynchronization,
+    NtDll,
+}
+
+internal inline finite law bool IsAsciiTrimUnit(i8[min max] unit)
+{
+    return unit == 9
+        || unit == 10
+        || unit == 11
+        || unit == 12
+        || unit == 13
+        || unit == 32;
+}
+
+internal inline finite law i8[min max] AsciiLowerUnit(i8[min max] unit)
+{
+    if (unit >= 65 && unit <= 90)
+    {
+        return unit + 32;
+    }
+
+    return unit;
+}
+
+internal finite law bool ContainsAsciiIgnoreCase(ascii source, ascii needle)
+    where overlap(source, needle)
+{
+    unsafe
+    {
+        stack i64[min max] sourceLength = System.Text.AsciiLength(source);
+        stack i64[min max] needleLength = System.Text.AsciiLength(needle);
+        if (sourceLength <= 0 || needleLength <= 0 || needleLength > sourceLength)
+        {
+            return false;
+        }
+
+        stack rawptr<i8[min max]> sourceData = System.Text.AsciiData(source);
+        stack rawptr<i8[min max]> needleData = System.Text.AsciiData(needle);
+        if (sourceData == null || needleData == null)
+        {
+            return false;
+        }
+
+        stack i64[min max] lastStart = sourceLength - needleLength;
+        for willexit (stack mut i64[min max] start = 0; start <= lastStart; start += 1)
+        {
+            stack mut bool matched = true;
+            for willexit (stack mut i64[min max] index = 0; index < needleLength; index += 1)
+            {
+                if (AsciiLowerUnit(*(&sourceData[start + index])) != AsciiLowerUnit(*(&needleData[index])))
+                {
+                    matched = false;
+                    break;
+                }
+            }
+
+            if (matched)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+}
+
+internal finite law bool EqualsTrimmedAsciiIgnoreCase(ascii value, ascii expected)
+    where overlap(value, expected)
+{
+    unsafe
+    {
+        stack i64[min max] valueLength = System.Text.AsciiLength(value);
+        stack i64[min max] expectedLength = System.Text.AsciiLength(expected);
+        if (valueLength < 0 || expectedLength < 0)
+        {
+            return false;
+        }
+
+        stack rawptr<i8[min max]> valueData = System.Text.AsciiData(value);
+        if (valueLength == 0)
+        {
+            return expectedLength == 0;
+        }
+
+        if (valueData == null)
+        {
+            return false;
+        }
+
+        stack mut i64[min max] start = 0;
+        while willexit (start < valueLength && IsAsciiTrimUnit(*(&valueData[start])))
+        {
+            start += 1;
+        }
+
+        stack mut i64[min max] end = valueLength;
+        while willexit (end > start && IsAsciiTrimUnit(*(&valueData[end - 1])))
+        {
+            end -= 1;
+        }
+
+        if (end - start != expectedLength)
+        {
+            return false;
+        }
+
+        if (expectedLength == 0)
+        {
+            return true;
+        }
+
+        stack rawptr<i8[min max]> expectedData = System.Text.AsciiData(expected);
+        if (expectedData == null)
+        {
+            return false;
+        }
+
+        for willexit (stack mut i64[min max] index = 0; index < expectedLength; index += 1)
+        {
+            if (AsciiLowerUnit(*(&valueData[start + index])) != AsciiLowerUnit(*(&expectedData[index])))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+}
+
+internal unsafe finite law bool AsciiSegmentEqualsIgnoreCase(
+    rawptr<i8[min max]> sourceData,
+    i64[min max] sourceStart,
+    i64[min max] sourceLength,
+    ascii expected)
+    where overlap(sourceData, expected)
+{
+    stack i64[min max] expectedLength = System.Text.AsciiLength(expected);
+    if (sourceLength != expectedLength || expectedLength < 0)
+    {
+        return false;
+    }
+
+    if (expectedLength == 0)
+    {
+        return true;
+    }
+
+    stack rawptr<i8[min max]> expectedData = System.Text.AsciiData(expected);
+    if (sourceData == null || expectedData == null)
+    {
+        return false;
+    }
+
+    for willexit (stack mut i64[min max] index = 0; index < expectedLength; index += 1)
+    {
+        if (AsciiLowerUnit(*(&sourceData[sourceStart + index])) != AsciiLowerUnit(*(&expectedData[index])))
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+public finite law ascii NativeDependencyListKindLabel(NativeDependencyListKind kind)
+{
+    switch (kind)
+    {
+        case NativeDependencyListKind.Unknown:
+            return "native dependency";
+        case NativeDependencyListKind.Sources:
+            return "native source";
+        case NativeDependencyListKind.IncludeDirectories:
+            return "native include directory";
+        case NativeDependencyListKind.LibraryDirectories:
+            return "native library directory";
+        case NativeDependencyListKind.Libraries:
+            return "native library";
+        case NativeDependencyListKind.LinkArguments:
+            return "native link argument";
+        case NativeDependencyListKind.PkgConfigPackages:
+            return "native pkg-config package";
+    }
+}
+
+public finite law ascii NativeDependencyListKindDiagnosticCode(NativeDependencyListKind kind)
+{
+    switch (kind)
+    {
+        case NativeDependencyListKind.Sources:
+            return "STK7110";
+        case NativeDependencyListKind.IncludeDirectories:
+            return "STK7111";
+        case NativeDependencyListKind.LibraryDirectories:
+            return "STK7112";
+        case NativeDependencyListKind.Libraries:
+            return "STK7113";
+        case NativeDependencyListKind.LinkArguments:
+            return "STK7114";
+        case NativeDependencyListKind.PkgConfigPackages:
+            return "STK7115";
+        case NativeDependencyListKind.Unknown:
+            return "";
+    }
+}
+
+public finite law ascii NativeDependencyListKindCliOption(NativeDependencyListKind kind)
+{
+    switch (kind)
+    {
+        case NativeDependencyListKind.Sources:
+            return "--native-source";
+        case NativeDependencyListKind.IncludeDirectories:
+            return "--native-include-dir";
+        case NativeDependencyListKind.LibraryDirectories:
+            return "--native-library-dir";
+        case NativeDependencyListKind.Libraries:
+            return "--native-library";
+        case NativeDependencyListKind.LinkArguments:
+            return "--native-link-arg";
+        case NativeDependencyListKind.PkgConfigPackages:
+            return "--native-pkg-config";
+        case NativeDependencyListKind.Unknown:
+            return "";
+    }
+}
+
+public finite law bool NativeDependencyListKindIsPathLike(NativeDependencyListKind kind)
+{
+    return kind == NativeDependencyListKind.Sources
+        || kind == NativeDependencyListKind.IncludeDirectories
+        || kind == NativeDependencyListKind.LibraryDirectories;
+}
+
+public finite law bool NativeDependencyEntryIsValid(ascii value)
+{
+    unsafe
+    {
+        stack i64[min max] length = System.Text.AsciiLength(value);
+        if (length <= 0)
+        {
+            return false;
+        }
+
+        stack rawptr<i8[min max]> data = System.Text.AsciiData(value);
+        if (data == null)
+        {
+            return false;
+        }
+
+        for willexit (stack mut i64[min max] index = 0; index < length; index += 1)
+        {
+            if (!IsAsciiTrimUnit(*(&data[index])))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+}
+
+public finite law bool NativeFallbackPlatformKeyMatchesTarget(ascii platformKey, StarkTargetPlatform target)
+{
+    stack StarkTargetOperatingSystem operatingSystem = ParseOperatingSystemName(platformKey);
+    return operatingSystem != StarkTargetOperatingSystem.Unknown
+        && operatingSystem == target.OperatingSystem();
+}
+
+public finite law bool TargetTripleRequiresExplicitMathLibrary(ascii targetTriple)
+{
+    return !ContainsAsciiIgnoreCase(targetTriple, "windows");
+}
+
+public finite law bool TargetTripleRequiresWinsockLibrary(ascii targetTriple)
+{
+    return ContainsAsciiIgnoreCase(targetTriple, "windows")
+        || ContainsAsciiIgnoreCase(targetTriple, "win32")
+        || ContainsAsciiIgnoreCase(targetTriple, "mingw");
+}
+
+public finite law bool TargetTripleRequiresWindowsSynchronizationLibrary(ascii targetTriple)
+{
+    return ContainsAsciiIgnoreCase(targetTriple, "windows")
+        || ContainsAsciiIgnoreCase(targetTriple, "win32");
+}
+
+public finite law bool TargetTripleRequiresNtDllLibrary(ascii targetTriple)
+{
+    return ContainsAsciiIgnoreCase(targetTriple, "windows")
+        || ContainsAsciiIgnoreCase(targetTriple, "win32");
+}
+
+public finite law bool LlvmTextRequiresMathLibrary(ascii llvmText)
+{
+    return System.Text.Contains(llvmText, "@llvm.acos.")
+        || System.Text.Contains(llvmText, "@llvm.asin.")
+        || System.Text.Contains(llvmText, "@llvm.atan.")
+        || System.Text.Contains(llvmText, "@llvm.atan2.")
+        || System.Text.Contains(llvmText, "@llvm.cos.")
+        || System.Text.Contains(llvmText, "@llvm.cosh.")
+        || System.Text.Contains(llvmText, "@llvm.exp.")
+        || System.Text.Contains(llvmText, "@llvm.exp2.")
+        || System.Text.Contains(llvmText, "@llvm.log.")
+        || System.Text.Contains(llvmText, "@llvm.log10.")
+        || System.Text.Contains(llvmText, "@llvm.log2.")
+        || System.Text.Contains(llvmText, "@llvm.pow.")
+        || System.Text.Contains(llvmText, "@llvm.sin.")
+        || System.Text.Contains(llvmText, "@llvm.sincos.")
+        || System.Text.Contains(llvmText, "@llvm.sinh.")
+        || System.Text.Contains(llvmText, "@llvm.tan.")
+        || System.Text.Contains(llvmText, "@llvm.tanh.");
+}
+
+public finite law bool LlvmTextRequiresWinsockLibrary(ascii llvmText)
+{
+    return System.Text.Contains(llvmText, "@WSAStartup(")
+        || System.Text.Contains(llvmText, "@WSAGetLastError(")
+        || System.Text.Contains(llvmText, "@WSASocketW(")
+        || System.Text.Contains(llvmText, "@closesocket(");
+}
+
+public finite law bool LlvmTextRequiresWindowsSynchronizationLibrary(ascii llvmText)
+{
+    return System.Text.Contains(llvmText, "@WaitOnAddress(")
+        || System.Text.Contains(llvmText, "@WakeByAddressSingle(")
+        || System.Text.Contains(llvmText, "@WakeByAddressAll(");
+}
+
+public finite law bool LlvmTextRequiresNtDllLibrary(ascii llvmText)
+{
+    return System.Text.Contains(llvmText, "@NtReadFile(")
+        || System.Text.Contains(llvmText, "@NtWriteFile(");
+}
+
+public finite law ascii NativeImplicitLibraryName(NativeImplicitLibrary library)
+{
+    switch (library)
+    {
+        case NativeImplicitLibrary.Unknown:
+            return "";
+        case NativeImplicitLibrary.Math:
+            return "m";
+        case NativeImplicitLibrary.Winsock:
+            return "ws2_32";
+        case NativeImplicitLibrary.WindowsSynchronization:
+            return "synchronization";
+        case NativeImplicitLibrary.NtDll:
+            return "ntdll";
+    }
+}
+
+public finite law ascii NativeImplicitLibraryDefaultLinkArgument(NativeImplicitLibrary library)
+{
+    switch (library)
+    {
+        case NativeImplicitLibrary.Unknown:
+            return "";
+        case NativeImplicitLibrary.Math:
+            return "-lm";
+        case NativeImplicitLibrary.Winsock:
+            return "-lws2_32";
+        case NativeImplicitLibrary.WindowsSynchronization:
+            return "-lsynchronization";
+        case NativeImplicitLibrary.NtDll:
+            return "-lntdll";
+    }
+}
+
+public finite law ascii NativeImplicitLibraryLinkArgumentForTarget(
+    NativeImplicitLibrary library,
+    ascii targetTriple)
+{
+    if (library == NativeImplicitLibrary.Winsock
+        && !ContainsAsciiIgnoreCase(targetTriple, "windows")
+        && !ContainsAsciiIgnoreCase(targetTriple, "win32")
+        && !ContainsAsciiIgnoreCase(targetTriple, "gnu")
+        && !ContainsAsciiIgnoreCase(targetTriple, "mingw"))
+    {
+        return "Ws2_32.lib";
+    }
+
+    return NativeImplicitLibraryDefaultLinkArgument(library);
+}
+
+public finite law bool NativeLibraryEntryNamesLibrary(ascii libraryEntry, ascii expectedName)
+    where overlap(libraryEntry, expectedName)
+{
+    unsafe
+    {
+        stack i64[min max] entryLength = System.Text.AsciiLength(libraryEntry);
+        if (entryLength <= 0)
+        {
+            return false;
+        }
+
+        stack rawptr<i8[min max]> entryData = System.Text.AsciiData(libraryEntry);
+        if (entryData == null)
+        {
+            return false;
+        }
+
+        stack mut i64[min max] start = 0;
+        while willexit (start < entryLength && IsAsciiTrimUnit(*(&entryData[start])))
+        {
+            start += 1;
+        }
+
+        stack mut i64[min max] end = entryLength;
+        while willexit (end > start && IsAsciiTrimUnit(*(&entryData[end - 1])))
+        {
+            end -= 1;
+        }
+
+        if (end <= start)
+        {
+            return false;
+        }
+
+        if (end - start > 2
+            && *(&entryData[start]) == 45
+            && *(&entryData[start + 1]) == 108)
+        {
+            start += 2;
+        }
+
+        if (end - start > 4
+            && *(&entryData[end - 4]) == 46
+            && AsciiLowerUnit(*(&entryData[end - 3])) == 108
+            && AsciiLowerUnit(*(&entryData[end - 2])) == 105
+            && AsciiLowerUnit(*(&entryData[end - 1])) == 98)
+        {
+            end -= 4;
+        }
+        else if (end - start > 2
+            && *(&entryData[end - 2]) == 46
+            && AsciiLowerUnit(*(&entryData[end - 1])) == 97)
+        {
+            end -= 2;
+        }
+
+        return AsciiSegmentEqualsIgnoreCase(entryData, start, end - start, expectedName);
+    }
+}
+
+public finite law bool NativeLibraryEntrySatisfiesImplicitLibrary(
+    ascii libraryEntry,
+    NativeImplicitLibrary library)
+{
+    switch (library)
+    {
+        case NativeImplicitLibrary.Math:
+            return NativeLibraryEntryNamesLibrary(libraryEntry, "m");
+        case NativeImplicitLibrary.Winsock:
+            return NativeLibraryEntryNamesLibrary(libraryEntry, "ws2_32");
+        case NativeImplicitLibrary.WindowsSynchronization:
+            return NativeLibraryEntryNamesLibrary(libraryEntry, "synchronization");
+        case NativeImplicitLibrary.NtDll:
+            return NativeLibraryEntryNamesLibrary(libraryEntry, "ntdll");
+        case NativeImplicitLibrary.Unknown:
+            return false;
+    }
+}
+
+public finite law bool NativeLinkArgumentSatisfiesImplicitLibrary(
+    ascii linkArgument,
+    NativeImplicitLibrary library)
+{
+    switch (library)
+    {
+        case NativeImplicitLibrary.Math:
+            return EqualsTrimmedAsciiIgnoreCase(linkArgument, "-lm");
+        case NativeImplicitLibrary.Winsock:
+            return EqualsTrimmedAsciiIgnoreCase(linkArgument, "Ws2_32.lib")
+                || EqualsTrimmedAsciiIgnoreCase(linkArgument, "ws2_32.lib")
+                || EqualsTrimmedAsciiIgnoreCase(linkArgument, "-lws2_32");
+        case NativeImplicitLibrary.WindowsSynchronization:
+            return EqualsTrimmedAsciiIgnoreCase(linkArgument, "synchronization.lib")
+                || EqualsTrimmedAsciiIgnoreCase(linkArgument, "-lsynchronization");
+        case NativeImplicitLibrary.NtDll:
+            return EqualsTrimmedAsciiIgnoreCase(linkArgument, "ntdll.lib")
+                || EqualsTrimmedAsciiIgnoreCase(linkArgument, "-lntdll");
+        case NativeImplicitLibrary.Unknown:
+            return false;
+    }
+}

@@ -54,7 +54,21 @@ Suites still needing work:
   subcategorization.
 - stdlib.Port: 177/227, 50 failing.
 - compiler.MirTests: 101/137, 36 failing; MIR text.
-- compiler.LlvmTests: 483/493, 10 failing.
+- compiler.LlvmTests: stale 2026-06-19 count was 483/493. Package-image
+  helper and callable-value residues were fixed by targeted runs; no full-suite
+  rebaseline was run because broad sweeps are intentionally avoided.
+- compiler.Tests package-image typed-body integration ports now use typed-only
+  package images and the shared helper restores CLI stdout, emitted-file,
+  package-JSON typed-body, source-deletion, executable, and runtime exit-code
+  assertions. Targeted direct probes for power, comparison-chain, and
+  terminal-if package consume paths succeeded with zero diagnostics; a manual
+  package-runtime power probe exited 81 after deleting the producer source; all
+  `PackageImageTyped*IntegrationTests` source files pass single-file checks.
+  A tiny direct executable probe that imports `CompilerTestSupport` and calls
+  the package runtime helper now compiles and exits 0 after the ABI duplicate
+  signature check was made structural for nested callback types. The generated
+  `compiler.Tests` project runner was not rebaselined because broad sweeps are
+  intentionally avoided.
 - compiler.FeatureTests: 212/213, 1 failing.
 
 Already green, no task: selfhost.Ir, selfhost.Binding, selfhost.Parsing,
@@ -64,19 +78,61 @@ stdlib.Collections.Slice, stdlib.Json.
 
 ---
 
+## 2026-06-22 Target Pinning And Platform Gates
+
+- Completed the `stdlib.Port` non-macOS target-pin/platform-gate pass. Artifact
+  probes now use explicit Linux/Windows triples plus `STARK_PATH` source-stdlib
+  resolution, and runtime/native behavior tests that require a real foreign
+  platform are `[Platform(...)]` gated with source comments.
+- Added a seeded target+`STARK_PATH` host-test wrapper for imported inline-clone
+  probes whose platform helper bodies must remain visible in LLVM text.
+- Narrow verification run:
+  - `--check tests-stark/stdlib.Port/StdlibPortTests.stark --target arm64-apple-macosx26.0.0 --no-stark-path -I tests-stark/stdlib.Port -I stdlib/src`: passed.
+  - `stark test --collection net-tcp --target arm64-apple-macosx26.0.0`: passed.
+  - `stark test --collection syscall --target arm64-apple-macosx26.0.0`: passed.
+  - `stark test --collection runtime-platform-linux --target arm64-apple-macosx26.0.0`: passed.
+  - Direct host-test inspect for the three fixed Windows runtime-platform probes
+    (`windows-path-behavior-wide-normalization`,
+    `windows-dispatch-process-exit-no-symbol-collision`,
+    `windows-dispatch-template-mirrors-linux-surface`): all compiled with zero
+    diagnostics and rendered LLVM.
+- Not a rebaseline: grouped `runtime-platform-windows` and grouped
+  `standard-library-generic,io-file-runtime,io-path,memory,threading` runner
+  checks were interrupted after proving too slow for targeted feedback; no
+  broad suite sweep was run.
+
+## 2026-06-22 SSA Cleanup Source-Port Fixes
+
+- Fixed five `compiler.SsaTests` cleanup/source-port facts without a broad
+  sweep: algebraic identities now inspect optimized SSA operator absence, the
+  non-zero divide/modulo source uses an unsigned non-negative range, and three
+  fixed-array fixtures use Stark's `T[N]` syntax.
+- Narrow verification run:
+  - `stark test --filter CleanupRemovesIntegerAlgebraicIdentities --target arm64-apple-macosx26.0.0`: passed.
+  - `stark test --filter CleanupRemovesSameOperandDivisionAndModuloWhenRangeExcludesZero --target arm64-apple-macosx26.0.0`: passed.
+  - `stark test --filter CleanupForwardsAggregateIndexThroughPhiWhenIncomingElementsMatch --target arm64-apple-macosx26.0.0`: passed.
+  - `stark test --filter CleanupForwardsAggregateIndexThroughSelectWhenSelectedElementsMatch --target arm64-apple-macosx26.0.0`: passed.
+  - `stark test --filter CleanupRemovesUnusedLocalStorageScaffolding --target arm64-apple-macosx26.0.0`: passed.
+
+---
+
 ## compiler.LlvmTests Residue
 
 - package-image (#4): mechanism built and proven with `CompileLlvmWithPackage`.
-  5 of 9 ported tests are green: 1 `PackageImageBackedImportedReadonly` full
-  assert plus 4 `ManifestBacked*` build+compile. Typed-only codegen was noted
-  unreproducible and needs a `--package-typed-only` CLI flag. Remaining: 4
-  `PackageImageBacked*` callable-value tests plus ConfiguredTargetInfo
-  datalayout.
-- 6 flag/datalayout tests are done: `ImmutableGlobalsWithoutAddressTaken`,
+  All 9 ported compiler.LlvmTests package-image facts are green, including the
+  4 `PackageImageBacked*` callable-value tests. The helper now builds package
+  images and consumers with explicit matching target/data-layout facts.
+  Typed-only package codegen is now available through `--package-typed-only`
+  and the Stark host-test package builder switch; the reduced manifest-backed
+  compiler assertions have source-level runtime/CLI equivalents restored.
+- Flag/datalayout/source-backed LLVM residues are done:
+  `ImmutableGlobalsWithoutAddressTaken`,
   `InternalizedImmutableGlobals`, `RootFunctionSymbolIsQualified`,
-  `LibraryBuildQualifies`, `ExecutableInternalization`, and
-  `ConfiguredTargetInfoIsEmittedInHeader`.
-- 7 genuine per-test residues: `FunctionPointerCallSiteEffectAttributesFollowPointerKind`,
+  `LibraryBuildQualifies`, `ExecutableInternalization`,
+  `ConfiguredTargetInfoIsEmittedInHeader`,
+  `LibraryBuildQualifiesPublicRootSymbols`,
+  `ModulePrivateFunctionsLowerWithInternalLinkage`,
+  `FunctionPointerCallSiteEffectAttributesFollowPointerKind`,
   `OptimizedDynamicStorageReserveNoop`, `DynamicStorageMoveAtEmitsDirectLengthUpdate`,
   `DirectoryEnumerationDoesNotExposeLargeDirectoryPayloadAsSsaValue`,
   `MemoryCopyFillHotLoopUsesInfallibleHelpers`,

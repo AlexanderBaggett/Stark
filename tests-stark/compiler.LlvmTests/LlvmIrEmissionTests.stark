@@ -705,10 +705,8 @@ internal fn bool FunctionPointerCallSiteEffectAttributesFollowPointerKindImpl()
 {
     // PORT-NOTE: the C# extracts each `%arg_f` indirect-call line per function by
     // regex (ExtractFirstIndirectCall) and asserts attribute presence/absence on
-    // it. The port scopes those substring checks to each function body. Because
-    // attributes may also legitimately appear on the body's `define` header /
-    // other lines, the negative checks for plain/law/finite are scoped to the
-    // body text, matching the dominant signal the C# captured on the call line.
+    // it. The port uses line-scoped checks so function-header attributes do not
+    // contaminate the call-site assertion.
     stack mut LlvmCompile c = CompileLlvm(
         "llvm-fnptr-effects-follow-kind",
         raw"""
@@ -738,21 +736,22 @@ law i32[min max] ApplyLaw(fnptr<law i32[min max](i32[min max])> f, i32[min max] 
     stack ascii plainBody = LlvmDefinitionBody(llvm, "ApplyPlain");
     stack ascii finiteBody = LlvmDefinitionBody(llvm, "ApplyFinite");
     stack ascii lawBody = LlvmDefinitionBody(llvm, "ApplyLaw");
-    return DoesNotContain(plainBody, "willreturn")
-        && DoesNotContain(plainBody, "mustprogress")
-        && DoesNotContain(plainBody, "nosync")
-        && DoesNotContain(plainBody, "nofree")
-        && DoesNotContain(plainBody, "memory(")
-        && Contains(finiteBody, "willreturn")
-        && Contains(finiteBody, "mustprogress")
-        && DoesNotContain(finiteBody, "nosync")
-        && DoesNotContain(finiteBody, "nofree")
-        && DoesNotContain(finiteBody, "memory(")
-        && DoesNotContain(lawBody, "willreturn")
-        && DoesNotContain(lawBody, "mustprogress")
-        && Contains(lawBody, "nosync")
-        && Contains(lawBody, "nofree")
-        && Contains(lawBody, "memory(none)");
+    stack ascii callNeedle = "call fastcc i32 %arg_f(";
+    return !AnyLineContainsBoth(plainBody, callNeedle, "willreturn")
+        && !AnyLineContainsBoth(plainBody, callNeedle, "mustprogress")
+        && !AnyLineContainsBoth(plainBody, callNeedle, "nosync")
+        && !AnyLineContainsBoth(plainBody, callNeedle, "nofree")
+        && !AnyLineContainsBoth(plainBody, callNeedle, "memory(")
+        && AnyLineContainsBoth(finiteBody, callNeedle, "willreturn")
+        && AnyLineContainsBoth(finiteBody, callNeedle, "mustprogress")
+        && !AnyLineContainsBoth(finiteBody, callNeedle, "nosync")
+        && !AnyLineContainsBoth(finiteBody, callNeedle, "nofree")
+        && !AnyLineContainsBoth(finiteBody, callNeedle, "memory(")
+        && !AnyLineContainsBoth(lawBody, callNeedle, "willreturn")
+        && !AnyLineContainsBoth(lawBody, callNeedle, "mustprogress")
+        && AnyLineContainsBoth(lawBody, callNeedle, "nosync")
+        && AnyLineContainsBoth(lawBody, callNeedle, "nofree")
+        && AnyLineContainsBoth(lawBody, callNeedle, "memory(none)");
 }
 
 // Ported from LlvmIrEmissionTests.UnusedPlainFunctionPointerCallsAreNotRemovedBySsaCleanup.
@@ -12785,10 +12784,7 @@ hot unsafe fn i32[min max] Add(i32[min max] left, i32[min max] right)
 // Ported from LlvmIrEmissionTests.LibraryBuildQualifiesPublicRootSymbols.
 internal fn bool LibraryBuildQualifiesPublicRootSymbolsImpl()
 {
-    // PORT-NOTE: the original drives CompilerOptions(EmitLlvmIr, QualifyModuleSymbols);
-    // CompileLlvm exposes no options surface, so the embedded program is compiled
-    // and reduced to Succeeds (the qualified `@Math_Add` symbol cannot be requested).
-    stack mut LlvmCompile c = CompileLlvm(
+    stack mut LlvmCompile c = CompileLlvmNormalizedQualified(
         "llvm-p9-library-build-qualifies-public-root-symbols",
         raw"""
 module Math
@@ -12798,16 +12794,19 @@ public unsafe finite law i32[min max] Add(i32[min max] left, i32[min max] right)
     return left + right;
 }
 """);
-    return Succeeds(c);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    return Contains(llvm, "define fastcc i32 @Math_Add(i32 %arg_left, i32 %arg_right)");
 }
 
 // Ported from LlvmIrEmissionTests.ModulePrivateFunctionsLowerWithInternalLinkage.
 internal fn bool ModulePrivateFunctionsLowerWithInternalLinkageImpl()
 {
-    // PORT-NOTE: the original drives CompilerOptions(EmitLlvmIr, QualifyModuleSymbols)
-    // and scopes via ExtractDefinitionHeader(llvm, "Demo_Helper"); CompileLlvm exposes
-    // no options surface, so the embedded program is compiled and reduced to Succeeds.
-    stack mut LlvmCompile c = CompileLlvm(
+    stack mut LlvmCompile c = CompileLlvmNormalizedQualified(
         "llvm-p9-private-functions-internal-linkage",
         raw"""
 module Demo
@@ -12817,7 +12816,15 @@ unsafe fn i32[min max] Helper()
     return 7;
 }
 """);
-    return Succeeds(c);
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii llvm = Llvm(c);
+    stack ascii helperHeader = LlvmDefinitionHeader(llvm, "Demo_Helper");
+    return Contains(helperHeader, "define internal dso_local fastcc i32 @Demo_Helper()")
+        && Contains(helperHeader, "unnamed_addr");
 }
 
 // Ported from LlvmIrEmissionTests.SourceBackedGenericCallsInlineSmallConcreteMonomorphizedSymbols.
@@ -13783,13 +13790,11 @@ unsafe finite law i32[min max] Run(borrow mut Box box)
 // Ported from LlvmIrEmissionTests.ConfiguredTargetInfoIsEmittedInHeader.
 internal fn bool ConfiguredTargetInfoIsEmittedInHeaderImpl()
 {
-    // PORT-NOTE: the original passed CompilerOptions(TargetInfo: LlvmTargetInfo(
-    // "test-triple", "e-test-layout")) and asserted the module header carried those
-    // exact configured values. CompileLlvmForTargetWithDataLayout now pins both the
-    // triple and the data layout through the host-test request (PAINPOINTS #10/#3 —
-    // the bridge reads `targetTriple`/`targetDataLayout`), so the specific configured
-    // values are restored and asserted verbatim instead of presence-only.
-    stack mut LlvmCompile c = CompileLlvmForTargetWithDataLayout(
+    // PORT-NOTE: the original asserted triple/data-layout header spelling. This
+    // port uses the full target-options request path so CPU/features/reloc/code
+    // model are not dropped at the harness boundary even though only triple and
+    // data-layout are visible in textual LLVM.
+    stack mut LlvmCompile c = CompileLlvmForTargetOptions(
         "p10-configured-target-info-header",
         raw"""
 module Demo
@@ -13800,7 +13805,14 @@ unsafe fn i32[min max] Run()
 }
 """,
         "test-triple",
-        "e-test-layout");
+        "e-test-layout",
+        "test-cpu",
+        "+sse2",
+        "+popcnt",
+        "",
+        "",
+        "pic",
+        "small");
     if (!Succeeds(c))
     {
         return false;

@@ -4964,6 +4964,289 @@ internal unsafe fn bool TryGetCharacterLiteralContentRange(
     return true;
 }
 
+internal inline finite law bool IsRawMultilineIndentationUnit(i32[min max] value)
+{
+    return value == 32 || value == 9;
+}
+
+internal unsafe fn bool LiteralRangeContainsLineFeed(
+    rawptr<i8[min max]>[length] data,
+    u64[0 2 ** 63 - 1] length,
+    i64[min max] start,
+    i64[min max] end)
+{
+    if (data == null || start < 0 || end < start || end > (i64[min max])length)
+    {
+        return false;
+    }
+
+    stack mut i64[min max] index = start;
+    while willexit (index < end)
+    {
+        if (UnsignedByte(*(&data[index])) == 10)
+        {
+            return true;
+        }
+
+        index += 1;
+    }
+
+    return false;
+}
+
+internal unsafe fn bool LiteralRangeIsRawIndentation(
+    rawptr<i8[min max]>[length] data,
+    u64[0 2 ** 63 - 1] length,
+    i64[min max] start,
+    i64[min max] end)
+{
+    if (data == null || start < 0 || end < start || end > (i64[min max])length)
+    {
+        return false;
+    }
+
+    stack mut i64[min max] index = start;
+    while willexit (index < end)
+    {
+        if (!IsRawMultilineIndentationUnit(UnsignedByte(*(&data[index]))))
+        {
+            return false;
+        }
+
+        index += 1;
+    }
+
+    return true;
+}
+
+internal unsafe fn bool LiteralRangeStartsWith(
+    rawptr<i8[min max]>[length] data,
+    u64[0 2 ** 63 - 1] length,
+    i64[min max] start,
+    i64[min max] end,
+    i64[min max] prefixStart,
+    i64[min max] prefixLength)
+{
+    if (data == null
+        || start < 0
+        || end < start
+        || prefixStart < 0
+        || prefixLength < 0
+        || end > (i64[min max])length
+        || prefixStart > (i64[min max])length)
+    {
+        return false;
+    }
+
+    if (prefixLength > (i64[min max])length - prefixStart)
+    {
+        return false;
+    }
+
+    if (end - start < prefixLength)
+    {
+        return false;
+    }
+
+    stack mut i64[min max] index = 0;
+    while willexit (index < prefixLength)
+    {
+        if (*(&data[start + index]) != *(&data[prefixStart + index]))
+        {
+            return false;
+        }
+
+        index += 1;
+    }
+
+    return true;
+}
+
+internal unsafe fn TextBuildResult<bool> AppendRawLiteralRangeToUnicode(
+    mut borrow OwnedUnicode destination,
+    rawptr<i8[min max]>[length] data,
+    u64[0 2 ** 63 - 1] length,
+    i64[min max] start,
+    i64[min max] end)
+{
+    if (data == null || start < 0 || end < start || end > (i64[min max])length)
+    {
+        return TextBuildResult<bool>.Err(FromTextBuildError(TextError.InvalidFormat));
+    }
+
+    stack mut i64[min max] readIndex = start;
+    while willexit (readIndex < end)
+    {
+        stack i64[min max] previousIndex = readIndex;
+        stack mut i32[min max] codePoint = 0;
+        if (!TryDecodeUtf8CodePoint(data, length, &readIndex, &codePoint) || readIndex > end)
+        {
+            return TextBuildResult<bool>.Err(FromTextBuildError(TextError.InvalidFormat));
+        }
+
+        if (readIndex <= previousIndex)
+        {
+            return TextBuildResult<bool>.Err(FromTextBuildError(TextError.InvalidFormat));
+        }
+
+        stack System.Memory.MemoryStatus status = destination.AppendCodePoint(codePoint);
+        switch (status)
+        {
+            case System.Memory.MemoryStatus.Err(var error):
+                return TextBuildResult<bool>.Err(FromMemoryBuildError(error));
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
+    return TextBuildResult<bool>.Ok(true);
+}
+
+internal unsafe fn TextBuildResult<OwnedUnicode> DecodeRawMultilineLiteralRangeToUnicode(
+    rawptr<i8[min max]>[length] data,
+    u64[0 2 ** 63 - 1] length,
+    i64[min max] start,
+    i64[min max] end)
+{
+    if (data == null || start < 0 || end < start || end > (i64[min max])length)
+    {
+        return TextBuildResult<OwnedUnicode>.Err(FromTextBuildError(TextError.InvalidFormat));
+    }
+
+    if (!LiteralRangeContainsLineFeed(data, length, start, end))
+    {
+        return DecodeLiteralRangeToUnicode(data, length, start, end, true);
+    }
+
+    stack mut i64[min max] openingBreak = -1;
+    stack mut i64[min max] index = start;
+    while willexit (index < end)
+    {
+        if (UnsignedByte(*(&data[index])) == 10)
+        {
+            openingBreak = index;
+            break;
+        }
+
+        index += 1;
+    }
+
+    if (openingBreak < 0)
+    {
+        return DecodeLiteralRangeToUnicode(data, length, start, end, true);
+    }
+
+    stack mut i64[min max] openingTextEnd = openingBreak;
+    if (openingTextEnd > start && UnsignedByte(*(&data[openingTextEnd - 1])) == 13)
+    {
+        openingTextEnd -= 1;
+    }
+
+    if (!LiteralRangeIsRawIndentation(data, length, start, openingTextEnd))
+    {
+        return TextBuildResult<OwnedUnicode>.Err(FromTextBuildError(TextError.InvalidFormat));
+    }
+
+    stack mut i64[min max] lastLineFeed = -1;
+    stack mut i64[min max] scan = end;
+    while willexit (scan > start)
+    {
+        scan -= 1;
+        if (UnsignedByte(*(&data[scan])) == 10)
+        {
+            lastLineFeed = scan;
+            break;
+        }
+    }
+
+    if (lastLineFeed < 0)
+    {
+        return TextBuildResult<OwnedUnicode>.Err(FromTextBuildError(TextError.InvalidFormat));
+    }
+
+    stack i64[min max] closingIndentationStart = lastLineFeed + 1;
+    stack i64[min max] closingIndentationLength = end - closingIndentationStart;
+    if (!LiteralRangeIsRawIndentation(data, length, closingIndentationStart, end))
+    {
+        return TextBuildResult<OwnedUnicode>.Err(FromTextBuildError(TextError.InvalidFormat));
+    }
+
+    stack mut OwnedUnicode destination = new OwnedUnicode();
+    stack mut bool hasPreviousContentLine = false;
+    stack mut i64[min max] previousBreakStart = 0;
+    stack mut i64[min max] previousBreakEnd = 0;
+    stack mut i64[min max] lineStart = openingBreak + 1;
+    while willexit (lineStart < closingIndentationStart)
+    {
+        stack mut i64[min max] lineBreak = lineStart;
+        while willexit (lineBreak < closingIndentationStart && UnsignedByte(*(&data[lineBreak])) != 10)
+        {
+            lineBreak += 1;
+        }
+
+        if (lineBreak >= closingIndentationStart)
+        {
+            return TextBuildResult<OwnedUnicode>.Err(FromTextBuildError(TextError.InvalidFormat));
+        }
+
+        stack mut i64[min max] lineTextEnd = lineBreak;
+        stack mut i64[min max] breakStart = lineBreak;
+        if (lineTextEnd > lineStart && UnsignedByte(*(&data[lineTextEnd - 1])) == 13)
+        {
+            lineTextEnd -= 1;
+            breakStart -= 1;
+        }
+
+        if (hasPreviousContentLine)
+        {
+            stack TextBuildResult<bool> breakAppend = AppendRawLiteralRangeToUnicode(
+                destination,
+                data,
+                length,
+                previousBreakStart,
+                previousBreakEnd);
+            switch (breakAppend)
+            {
+                case TextBuildResult<bool>.Err(var error):
+                    return TextBuildResult<OwnedUnicode>.Err(error);
+                case TextBuildResult<bool>.Ok(var appendedBreak):
+            }
+        }
+
+        if (LiteralRangeStartsWith(
+            data,
+            length,
+            lineStart,
+            lineTextEnd,
+            closingIndentationStart,
+            closingIndentationLength))
+        {
+            stack TextBuildResult<bool> textAppend = AppendRawLiteralRangeToUnicode(
+                destination,
+                data,
+                length,
+                lineStart + closingIndentationLength,
+                lineTextEnd);
+            switch (textAppend)
+            {
+                case TextBuildResult<bool>.Err(var error):
+                    return TextBuildResult<OwnedUnicode>.Err(error);
+                case TextBuildResult<bool>.Ok(var appendedText):
+            }
+        }
+        else if (!LiteralRangeIsRawIndentation(data, length, lineStart, lineTextEnd))
+        {
+            return TextBuildResult<OwnedUnicode>.Err(FromTextBuildError(TextError.InvalidFormat));
+        }
+
+        hasPreviousContentLine = true;
+        previousBreakStart = breakStart;
+        previousBreakEnd = lineBreak + 1;
+        lineStart = lineBreak + 1;
+    }
+
+    return TextBuildResult<OwnedUnicode>.Ok(destination);
+}
+
 internal fn System.Memory.MemoryStatus AppendEscapedStringCodePoint(mut borrow OwnedAscii destination, i32[min max] codePoint)
 {
     if (codePoint == 0)
@@ -5286,36 +5569,27 @@ public fn TextBuildResult<OwnedUnicode> DecodeStringLiteralToUnicode(ascii liter
             return TextBuildResult<OwnedUnicode>.Err(FromTextBuildError(TextError.InvalidFormat));
         }
 
+        if (raw && IsRawMultilineStringLiteralSource(data, length))
+        {
+            return DecodeRawMultilineLiteralRangeToUnicode(data, length, start, end);
+        }
+
         return DecodeLiteralRangeToUnicode(data, length, start, end, raw);
     }
 }
 
 public fn TextBuildResult<OwnedAscii> DecodeStringLiteralToUtf8(ascii literal)
 {
-    unsafe
+    stack TextBuildResult<OwnedUnicode> decoded = DecodeStringLiteralToUnicode(literal);
+    switch (decoded)
     {
-        stack i64[min max] signedLength = AsciiLength(literal);
-        if (signedLength < 0)
-        {
-            return TextBuildResult<OwnedAscii>.Err(FromMemoryBuildError(System.Memory.MemoryError.InvalidLayout));
-        }
-
-        stack u64[0 2 ** 63 - 1] length = (u64[0 2 ** 63 - 1])signedLength;
-        stack rawptr<i8[min max]> data = AsciiData(literal);
-        if (length != 0 && data == null)
-        {
-            return TextBuildResult<OwnedAscii>.Err(FromMemoryBuildError(System.Memory.MemoryError.InvalidLayout));
-        }
-
-        stack mut i64[min max] start = 0;
-        stack mut i64[min max] end = 0;
-        stack mut bool raw = false;
-        if (!TryGetStringLiteralContentRange(data, length, &start, &end, &raw))
-        {
-            return TextBuildResult<OwnedAscii>.Err(FromTextBuildError(TextError.InvalidFormat));
-        }
-
-        return DecodeLiteralRangeToUtf8(data, length, start, end, raw);
+        case TextBuildResult<OwnedUnicode>.Err(var error):
+            return TextBuildResult<OwnedAscii>.Err(error);
+        case TextBuildResult<OwnedUnicode>.Ok(var unicodeValue):
+            stack mut OwnedUnicode text = unicodeValue;
+            stack mut OwnedAscii destination = new OwnedAscii();
+            stack System.Memory.MemoryStatus status = destination.AppendUnicodeAsUtf8(text.View());
+            return FinishTextBuildAsciiResult(destination, status);
     }
 }
 

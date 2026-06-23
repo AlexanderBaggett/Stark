@@ -88,6 +88,81 @@ fn bool USegmentIsEmpty(borrow OwnedUnicode[] segments, u64[0 2 ** 63 - 1] index
     return segments[index].IsEmpty();
 }
 
+fn bool DecodeStringLiteralToUnicodeIsInvalid(ascii literal)
+{
+    stack System.Text.TextBuildResult<System.Text.OwnedUnicode> result =
+        System.Text.DecodeStringLiteralToUnicode(literal);
+    switch (result)
+    {
+        case System.Text.TextBuildResult<System.Text.OwnedUnicode>.Ok(var value):
+            return false;
+        case System.Text.TextBuildResult<System.Text.OwnedUnicode>.Err(var error):
+            switch (error)
+            {
+                case System.Text.TextBuildError.Text(var textError):
+                    switch (textError)
+                    {
+                        case System.Text.TextError.InvalidFormat:
+                            return true;
+                        case System.Text.TextError.Overflow:
+                            return false;
+                    }
+                case System.Text.TextBuildError.Memory(var memoryError):
+                    return false;
+            }
+    }
+}
+
+// ----- String literal decoding --------------------------------------------
+
+[Fact]
+fn bool RawMultilineStringLiteralDecodeStripsClosingIndentation()
+{
+    stack System.Text.TextBuildResult<System.Text.OwnedAscii> result =
+        System.Text.DecodeStringLiteralToUtf8("raw\"\"\"\n    alpha\n    beta\n    \"\"\"");
+    switch (result)
+    {
+        case System.Text.TextBuildResult<System.Text.OwnedAscii>.Err(var error):
+            return false;
+        case System.Text.TextBuildResult<System.Text.OwnedAscii>.Ok(var value):
+            stack mut System.Text.OwnedAscii text = value;
+            return System.Text.OwnedAsciiEqualsAscii(text, "alpha\nbeta");
+    }
+}
+
+[Fact]
+fn bool RawMultilineStringLiteralDecodePreservesCrLfBreaks()
+{
+    stack System.Text.TextBuildResult<System.Text.OwnedAscii> result =
+        System.Text.DecodeStringLiteralToUtf8("raw\"\"\"\r\n\tone\r\n\ttwo\r\n\t\"\"\"");
+    switch (result)
+    {
+        case System.Text.TextBuildResult<System.Text.OwnedAscii>.Err(var error):
+            return false;
+        case System.Text.TextBuildResult<System.Text.OwnedAscii>.Ok(var value):
+            stack mut System.Text.OwnedAscii text = value;
+            return System.Text.OwnedAsciiEqualsAscii(text, "one\r\ntwo");
+    }
+}
+
+[Fact]
+fn bool RawMultilineStringLiteralRejectsOpeningLineContent()
+{
+    return DecodeStringLiteralToUnicodeIsInvalid("raw\"\"\"oops\n\"\"\"");
+}
+
+[Fact]
+fn bool RawMultilineStringLiteralRejectsClosingLineContent()
+{
+    return DecodeStringLiteralToUnicodeIsInvalid("raw\"\"\"\n    ok\n    nope\"\"\"");
+}
+
+[Fact]
+fn bool RawMultilineStringLiteralRejectsUnderIndentedContent()
+{
+    return DecodeStringLiteralToUnicodeIsInvalid("raw\"\"\"\n    ok\n  bad\n    \"\"\"");
+}
+
 // ----- Append integer (AppendU64) -----------------------------------------
 
 [Fact]

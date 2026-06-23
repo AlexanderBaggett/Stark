@@ -391,14 +391,18 @@ fn bool PackagedStdLibUnicodeConsoleInputWorksWithoutSource()
     return PackagedStdLibUnicodeConsoleInputWorksWithoutSourceImpl();
 }
 
+// Linux-only: the full oracle links/runs the executable and checks metadata/temp/walk effects.
 [Fact]
+[Platform(linux)]
 [Collection("file-system")]
 fn bool SourceStdLibFileSystemMetadataTempWalkAndLineReadingWorkOnLinux()
 {
     return SourceStdLibFileSystemMetadataTempWalkAndLineReadingWorkOnLinuxImpl();
 }
 
+// Linux-only: the full oracle links/runs the executable and checks recursive glob effects.
 [Fact]
+[Platform(linux)]
 [Collection("file-system")]
 fn bool SourceStdLibFileSystemGlobStreamsRecursiveMatchesOnLinux()
 {
@@ -468,21 +472,27 @@ fn bool StdLibSourceLinuxFileSyncUsesFsyncSyscallPath()
     return StdLibSourceLinuxFileSyncUsesFsyncSyscallPathImpl();
 }
 
+// Linux-only: the full oracle links/runs the executable and checks seek file effects.
 [Fact]
+[Platform(linux)]
 [Collection("io-file-runtime")]
 fn bool SourceStdLibFileSeekRoundTripsOnLinux()
 {
     return SourceStdLibFileSeekRoundTripsOnLinuxImpl();
 }
 
+// Linux-only: the full oracle links/runs the executable and checks whole-file effects.
 [Fact]
+[Platform(linux)]
 [Collection("io-file-runtime")]
 fn bool SourceStdLibWholeFileHelpersRoundTripOnLinux()
 {
     return SourceStdLibWholeFileHelpersRoundTripOnLinuxImpl();
 }
 
+// Linux-only: the full oracle links/runs the executable and checks atomic replacement effects.
 [Fact]
+[Platform(linux)]
 [Collection("io-file-runtime")]
 fn bool SourceStdLibAtomicWholeFileHelpersReplaceOnLinux()
 {
@@ -552,7 +562,9 @@ fn bool PackagedStdLibPathHelpersWorkWithoutSource()
     return PackagedStdLibPathHelpersWorkWithoutSourceImpl();
 }
 
+// Windows-only: the full oracle links/runs the packaged executable and checks Unicode path file effects.
 [Fact]
+[Platform(windows)]
 [Collection("io-path")]
 fn bool PackagedStdLibWindowsUnicodePathsCurrentDirectoryAndOwnedUnicodeWritesWorkWithoutSource()
 {
@@ -734,7 +746,9 @@ fn bool StdLibSourceMemoryModuleUsesWindowsHeapAllocatorForWindowsTarget()
     return StdLibSourceMemoryModuleUsesWindowsHeapAllocatorForWindowsTargetImpl();
 }
 
+// Windows-only: the full oracle links/runs the executable and checks heap realloc contents.
 [Fact]
+[Platform(windows)]
 [Collection("memory")]
 fn bool SourceWindowsMemoryReallocateExecutablePreservesContentsAcrossHeapAndFallbackPaths()
 {
@@ -1091,7 +1105,9 @@ fn bool SourceStdLibBuildRoutesPlatformCallsThroughLinuxModuleForLinuxTargets()
     return SourceStdLibBuildRoutesPlatformCallsThroughLinuxModuleForLinuxTargetsImpl();
 }
 
+// Linux-only: the full oracle links/runs the executable with redirected fds.
 [Fact]
+[Platform(linux)]
 [Collection("runtime-platform-linux")]
 fn bool SourceRuntimePlatformTerminalDetectionSeesRedirectedStdoutAsNonTerminal()
 {
@@ -1112,7 +1128,9 @@ fn bool StdLibSourceLinuxEventWaitingUsesEpollSyscallPath()
     return StdLibSourceLinuxEventWaitingUsesEpollSyscallPathImpl();
 }
 
+// Linux-only: the full oracle links/runs the executable and observes epoll readiness.
 [Fact]
+[Platform(linux)]
 [Collection("runtime-platform-linux")]
 fn bool SourceRuntimePlatformWaitWritableUsesLinuxEpoll()
 {
@@ -1126,14 +1144,18 @@ fn bool StdLibSourceLinuxFutexSynchronizationUsesSyscallPath()
     return StdLibSourceLinuxFutexSynchronizationUsesSyscallPathImpl();
 }
 
+// Linux-only: the full oracle links/runs the executable and observes futex syscall results.
 [Fact]
+[Platform(linux)]
 [Collection("runtime-platform-linux")]
 fn bool SourceRuntimePlatformFutexWaitWakeUseLinuxSyscall()
 {
     return SourceRuntimePlatformFutexWaitWakeUseLinuxSyscallImpl();
 }
 
+// Linux-only: the full oracle links/runs the executable and observes exit_group.
 [Fact]
+[Platform(linux)]
 [Collection("runtime-platform-linux")]
 fn bool SourceRuntimePlatformProcessExitUsesLinuxExitGroup()
 {
@@ -1273,14 +1295,18 @@ fn bool PackagedStdLibWindowsTargetCanBeConsumedWithoutSource()
     return PackagedStdLibWindowsTargetCanBeConsumedWithoutSourceImpl();
 }
 
+// Windows-only: the full oracle links/runs the executable and checks redirected console IO.
 [Fact]
+[Platform(windows)]
 [Collection("runtime-platform-windows")]
 fn bool SourceWindowsConsoleExecutableWritesRedirectedOutputAndErrors()
 {
     return SourceWindowsConsoleExecutableWritesRedirectedOutputAndErrorsImpl();
 }
 
+// Windows-only: the full oracle links/runs the executable and drives cmd.exe capture.
 [Fact]
+[Platform(windows)]
 [Collection("runtime-platform-windows")]
 fn bool SourceWindowsProcessCaptureRunsCmdWithEnvironmentAndInput()
 {
@@ -1294,7 +1320,9 @@ fn bool SourceWindowsDirectoryEnumerationProbeCompilesAsciiUnicodeAndLongNameChe
     return SourceWindowsDirectoryEnumerationProbeCompilesAsciiUnicodeAndLongNameChecksImpl();
 }
 
+// Windows-only: the full oracle creates Windows fixtures, links/runs, and scans the directory.
 [Fact]
+[Platform(windows)]
 [Collection("runtime-platform-windows")]
 fn bool SourceWindowsPromotedDirectoryEnumerationExecutablePreservesCachedFirstEntry()
 {
@@ -1315,7 +1343,9 @@ fn bool SystemSyscallDirectEntryPointsAreInternal()
     return SystemSyscallDirectEntryPointsAreInternalImpl();
 }
 
+// Linux-only: the full oracle packages, links/runs the executable, and observes syscall behavior.
 [Fact]
+[Platform(linux)]
 [Collection("syscall")]
 fn bool PackagedStdLibLinuxPlatformSyscallsRemainUsableWithoutPublicSyscallSource()
 {
@@ -1643,4 +1673,3 @@ fn bool StdLibSourceWindowsThreadingUsesWin32LifecycleAndSchedulerCalls()
 {
     return StdLibSourceWindowsThreadingUsesWin32LifecycleAndSchedulerCallsImpl();
 }
-

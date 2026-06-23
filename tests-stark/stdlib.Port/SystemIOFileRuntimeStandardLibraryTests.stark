@@ -11,12 +11,10 @@ internal fn bool StdLibSourceLinuxFileSeekUsesLseekSyscallPathImpl()
     // PORT-NOTE: the C# test reads the on-disk stdlib source
     // stdlib/src/System/Runtime/Platform/Linux.stark and compiles it directly
     // against a Linux target, then inspects the emitted LLVM IR for the
-    // lseek-syscall lowering of SeekFile. The compile-only host bridge cannot
-    // reach that repository file, so this embeds a minimal driver that exercises
-    // the public file Seek path (which routes through
-    // System.Runtime.Platform.SeekFile) so the host compiler pulls in the Linux
-    // platform module, then keeps the original IR substring assertions verbatim.
-    stack mut ProgramCompile c = CompileProgram("stdlib-linux-file-seek-lseek", raw"""
+    // lseek-syscall lowering of SeekFile. The host bridge cannot reach that
+    // repository file, so this cross-targets a minimal driver that exercises the
+    // public file Seek path and keeps the original IR substring assertions.
+    stack mut ProgramCompile c = CompileProgramForTarget("stdlib-linux-file-seek-lseek", raw"""
         import System
         module App
 
@@ -47,7 +45,7 @@ internal fn bool StdLibSourceLinuxFileSeekUsesLseekSyscallPathImpl()
                     return 0;
             }
         }
-        """);
+        """, LinuxX64TargetTriple);
     if (!Succeeds(c))
     {
         return false;
@@ -83,12 +81,10 @@ internal fn bool StdLibSourceLinuxFileSyncUsesFsyncSyscallPathImpl()
     // PORT-NOTE: the C# test reads the on-disk stdlib source
     // stdlib/src/System/Runtime/Platform/Linux.stark and compiles it directly
     // against a Linux target, then inspects the emitted LLVM IR for the
-    // fsync-syscall lowering of FlushFile. The compile-only host bridge cannot
-    // reach that repository file, so this embeds a minimal driver that exercises
-    // the public file Flush/SyncAll path (which routes through
-    // System.Runtime.Platform.FlushFile) so the host compiler pulls in the Linux
-    // platform module, then keeps the original IR substring assertions verbatim.
-    stack mut ProgramCompile c = CompileProgram("stdlib-linux-file-sync-fsync", raw"""
+    // fsync-syscall lowering of FlushFile. The host bridge cannot reach that
+    // repository file, so this cross-targets a minimal driver that exercises the
+    // public file Flush/SyncAll path and keeps the original IR substring assertions.
+    stack mut ProgramCompile c = CompileProgramForTarget("stdlib-linux-file-sync-fsync", raw"""
         import System
         module App
 
@@ -119,7 +115,7 @@ internal fn bool StdLibSourceLinuxFileSyncUsesFsyncSyscallPathImpl()
                     return 0;
             }
         }
-        """);
+        """, LinuxX64TargetTriple);
     if (!Succeeds(c))
     {
         return false;

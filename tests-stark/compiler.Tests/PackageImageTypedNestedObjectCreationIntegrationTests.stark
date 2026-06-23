@@ -6,24 +6,8 @@ module PackageImageTypedNestedObjectCreationIntegrationTests
 internal fn bool ManifestBackedTypedNestedObjectCreationBodiesCompileAndRunWithoutSyntheticSourceImpl()
 {
     {
-        // PORT-NOTE: The original first builds the `Facade` library (carrying a
-        // generic typed nested-object-creation body for `Wrap`) with
-        // `--emit-lib -o`, asserting CLI exit 0, "Emitted static library:"
-        // stdout, empty stderr, and the on-disk static library plus
-        // `libFacade.starkpkg` manifest existing. It then loads the manifest,
-        // asserts the `Facade.Wrap` template carries a typed body with no source
-        // body text, strips the source-surface/legacy sections to a typed-only
-        // manifest, deletes the Facade source, and links a manifest-backed
-        // `Demo` executable with `--emit-exe -I <dir>`, asserting CLI exit 0,
-        // "Emitted executable:" stdout, empty stderr, the output existing, and
-        // that the linked program runs with empty stdout/stderr and exit code
-        // 49 (4 * 10 + 9). The compile helpers cannot express CLI process
-        // output, file-system effects, package-image manifest contents, typed
-        // template inspection, or runtime exit codes, so this is reduced to
-        // compiling the same two-module program (root `Demo` importing the
-        // dependency `Facade`) through the LLVM pipeline and asserting it
-        // succeeds.
-        stack mut LlvmCompile compiled = CompileLlvmWithModule(
+        // Covers manifest-backed nested object creation bodies from package image through runtime execution.
+        return CompileAndRunTypedOnlyPackage(
             "package-image-typed-nested-object-creation-manifest-backed",
             raw"""
 import Facade
@@ -36,8 +20,7 @@ export fn i32[min max] main()
     return wrapped.Item.Value * 10 + wrapped.Values[1];
 }
 """,
-            "",
-            "Facade.stark",
+            "Facade",
             raw"""
 module Facade
 
@@ -66,7 +49,9 @@ public fn Outer<T> Wrap<T>(T value, T tag)
         }
     };
 }
-""");
-        return Succeeds(compiled);
+""",
+            "Facade.Wrap",
+            "",
+            49);
     }
 }

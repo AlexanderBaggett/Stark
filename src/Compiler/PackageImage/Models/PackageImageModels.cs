@@ -7,7 +7,9 @@ internal sealed record StarkPackageManifest(
     string RootModule,
     string LibraryFileName,
     IReadOnlyList<StarkPackageModuleManifest> Modules,
-    StarkPackageNativeDependencyManifest? NativeDependencies = null)
+    StarkPackageNativeDependencyManifest? NativeDependencies = null,
+    StarkPackageTargetManifest? Target = null,
+    StarkPackageBuildProfileManifest? BuildProfile = null)
 {
     internal static readonly JsonSerializerOptions SerializerOptions = new()
     {
@@ -22,6 +24,31 @@ internal sealed record StarkPackageManifest(
         return JsonSerializer.Deserialize<StarkPackageManifest>(json, SerializerOptions);
     }
 }
+
+public sealed record StarkPackageTargetManifest(
+    string Triple,
+    string? DataLayout = null,
+    string? Cpu = null,
+    IReadOnlyList<string>? Features = null,
+    string RelocationModel = "default",
+    string? CodeModel = null,
+    StarkPackageCDataModelManifest? CDataModel = null,
+    StarkPackageAggregateLayoutManifest? AggregateLayout = null);
+
+public sealed record StarkPackageCDataModelManifest(
+    string Kind,
+    bool CharIsSigned,
+    int PointerBitWidth,
+    int LongBitWidth,
+    int SizeTBitWidth,
+    int PtrDiffTBitWidth);
+
+public sealed record StarkPackageAggregateLayoutManifest(
+    int PointerSizeBytes,
+    int PointerAlignmentBytes);
+
+public sealed record StarkPackageBuildProfileManifest(
+    string Name);
 
 internal sealed record StarkPackageNativeDependencyManifest(
     IReadOnlyList<string>? Sources = null,

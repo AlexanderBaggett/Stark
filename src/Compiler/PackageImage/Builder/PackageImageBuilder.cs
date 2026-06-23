@@ -7,7 +7,8 @@ internal static partial class PackageImageBuilder
     public static StarkPackageManifest Create(
         CompilationResult result,
         string libraryOutputPath,
-        StarkPackageNativeDependencyManifest? nativeDependencies = null)
+        StarkPackageNativeDependencyManifest? nativeDependencies = null,
+        string? buildProfile = null)
     {
         var loadedModules = result.Artifacts.GetRequired(CompilerArtifactKeys.LoadedModules);
         var moduleGraph = result.Artifacts.GetRequired(CompilerArtifactKeys.ModuleGraph);
@@ -271,7 +272,22 @@ internal static partial class PackageImageBuilder
             loadedModules.RootModuleName,
             Path.GetFileName(libraryOutputPath),
             modules,
-            NormalizeNativeDependencies(nativeDependencies));
+            NormalizeNativeDependencies(nativeDependencies),
+            TargetCompatibilityValidator.CreatePackageTargetManifest(
+                loadedModules.Modules.TryGetValue(loadedModules.RootModuleName, out var rootModule)
+                    ? rootModule.TargetInfo
+                    : null),
+            CreatePackageBuildProfileManifest(buildProfile));
+    }
+
+    private static StarkPackageBuildProfileManifest? CreatePackageBuildProfileManifest(string? buildProfile)
+    {
+        if (string.IsNullOrWhiteSpace(buildProfile))
+        {
+            return null;
+        }
+
+        return new StarkPackageBuildProfileManifest(buildProfile.Trim().ToLowerInvariant());
     }
 
     private static StarkPackageTypedConstantInitializerManifest? BuildConstantInitializerManifest(

@@ -338,18 +338,18 @@ export unsafe fn i32[min max] main()
 // archive and asserts the undefined-symbol list references no libc/pthread
 // symbols (fopen, fwrite, malloc, free, pthread_create, ...). The compile-only
 // host bridge cannot build the package archive or inspect its undefined symbols
-// with nm, so this port compiles a program that imports System against the host
-// stdlib and asserts the compile succeeds, the closest available signal.
+// with nm, so this port cross-targets a program that imports System against the
+// source stdlib and asserts the compile succeeds, the closest available signal.
 internal fn bool PackagedStdLibLinuxArchiveHasNoLibcSymbolReferencesImpl()
 {
-    stack mut ProgramCompile c = CompileProgram("packaged-stdlib-linux-no-libc-symbols", raw"""
+    stack mut ProgramCompile c = CompileProgramForTarget("packaged-stdlib-linux-no-libc-symbols", raw"""
 import System
 module Demo
 
 fn void Use()
 {
 }
-""");
+""", LinuxX64TargetTriple);
     if (!Succeeds(c))
     {
         return false;
@@ -365,18 +365,18 @@ fn void Use()
 // Win32 imports (CreateFileW, ReadFile, WriteFile, ...) but no CRT symbols
 // (fopen, fwrite, _wfopen, _getcwd, ...). The compile-only host bridge cannot
 // build the package archive or inspect its undefined symbols with nm, so this
-// port compiles a program that imports System against the host stdlib and asserts
-// the compile succeeds, the closest available signal.
+// port cross-targets a program that imports System against the source stdlib and
+// asserts the compile succeeds, the closest available signal.
 internal fn bool PackagedStdLibWindowsArchiveHasNoCrtSymbolReferencesImpl()
 {
-    stack mut ProgramCompile c = CompileProgram("packaged-stdlib-windows-no-crt-symbols", raw"""
+    stack mut ProgramCompile c = CompileProgramForTarget("packaged-stdlib-windows-no-crt-symbols", raw"""
 import System
 module Demo
 
 fn void Use()
 {
 }
-""");
+""", WindowsX64MsvcTargetTriple);
     if (!Succeeds(c))
     {
         return false;

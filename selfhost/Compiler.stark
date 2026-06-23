@@ -4,7 +4,10 @@ export import Compiler.Binding
 export import Compiler.Typing
 export import Compiler.Ir
 export import Compiler.Mir
+export import Compiler.Llvm
 export import Compiler.AsmFacts
+export import Compiler.TargetFacts
+export import Compiler.NativeFacts
 module Compiler
 
 // Stage 1 self-hosted Stark compiler (pre-/src-cutover staging package).

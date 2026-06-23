@@ -39,6 +39,38 @@ fn bool BindSource(ascii source, out BindDiagnosticList diags)
     }
 }
 
+fn bool MemoryOk(System.Memory.MemoryStatus status)
+{
+    switch (status)
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return false;
+        case System.Memory.MemoryStatus.Ok:
+            return true;
+    }
+}
+
+fn bool ParseHeaderForBinding(ascii source, out TokenStream stream, out CompilationUnitHeader header)
+{
+    stream = new();
+    header = new();
+    stack mut TokenStream parsedStream = new();
+    if (!LexOk(LexText(source), parsedStream))
+    {
+        return false;
+    }
+
+    switch (ParseHeader(parsedStream))
+    {
+        case ParseResult<CompilationUnitHeader>.Err(var error):
+            return false;
+        case ParseResult<CompilationUnitHeader>.Ok(var value):
+            stream = parsedStream;
+            header = value;
+            return true;
+    }
+}
+
 [Fact]
 fn bool BuildsAndLooksUpDeclarations()
 {
@@ -142,6 +174,257 @@ fn bool StaticDeclarationsUseDeclaredVariableName()
     return table.Count() == 1
         && LookupDeclaration(table, source, stream, "Global") != 0
         && LookupDeclaration(table, source, stream, "Widget") == 0;
+}
+
+[Fact]
+fn bool ModuleResolverAddsNamedSourceModule()
+{
+    stack ascii source = "module App.Main\n";
+    stack mut TokenStream stream = new();
+    stack mut CompilationUnitHeader header = new();
+    if (!ParseHeaderForBinding(source, stream, header))
+    {
+        return Fail("module resolver parse header");
+    }
+
+    if (header.Count() != 1)
+    {
+        return Fail("module resolver header count");
+    }
+
+    stack HeaderItem item = header.ItemAt(0);
+    if (item.Kind != SyntaxKind.ModuleDeclaration)
+    {
+        return Fail("module resolver header kind");
+    }
+
+    stack mut ModuleResolver resolver = new();
+    stack mut BindDiagnosticList diags = new();
+    if (!MemoryOk(AddSourceModule(resolver, source, stream, header, 42, diags)))
+    {
+        return Fail("module resolver add source memory");
+    }
+
+    if (diags.Count() != 0)
+    {
+        if (diags.CountOf(BindDiagnosticCode.MissingModuleDeclaration) != 0)
+        {
+            return Fail("module resolver add source missing module");
+        }
+
+        if (diags.CountOf(BindDiagnosticCode.DuplicateModule) != 0)
+        {
+            return Fail("module resolver add source duplicate module");
+        }
+
+        return Fail("module resolver add source diagnostics");
+    }
+
+    if (resolver.Count() != 1)
+    {
+        return Fail("module resolver add source count");
+    }
+
+    if (resolver.OriginAt(0) != ModuleOrigin.Source)
+    {
+        return Fail("module resolver add source origin");
+    }
+
+    if (resolver.OriginIndexAt(0) != 42)
+    {
+        return Fail("module resolver add source index");
+    }
+
+    if (!resolver.NameEqualsAt(0, "App.Main"))
+    {
+        return Fail("module resolver add source name");
+    }
+
+    return true;
+}
+
+[Fact]
+fn bool ModuleResolverResolvesSourceAndPackageImports()
+{
+    stack ascii mainSource = "import App.Core\nimport Vendor.Raylib\nmodule App.Main\nfn void main() { }\n";
+    stack ascii coreSource = "module App.Core\nstruct CoreType { }\n";
+    stack mut TokenStream mainStream = new();
+    stack mut CompilationUnitHeader mainHeader = new();
+    if (!ParseHeaderForBinding(mainSource, mainStream, mainHeader))
+    {
+        return false;
+    }
+
+    stack mut TokenStream coreStream = new();
+    stack mut CompilationUnitHeader coreHeader = new();
+    if (!ParseHeaderForBinding(coreSource, coreStream, coreHeader))
+    {
+        return false;
+    }
+
+    stack mut ModuleResolver resolver = new();
+    stack mut BindDiagnosticList diags = new();
+    if (!MemoryOk(AddSourceModule(resolver, mainSource, mainStream, mainHeader, 1, diags))
+        || !MemoryOk(AddSourceModule(resolver, coreSource, coreStream, coreHeader, 2, diags))
+        || !MemoryOk(AddPackageModule(resolver, "Vendor.Raylib", 8, diags)))
+    {
+        return false;
+    }
+
+    stack mut ImportResolutionTable imports = new();
+    if (!MemoryOk(ResolveImports(resolver, mainSource, mainStream, mainHeader, imports, diags)))
+    {
+        return false;
+    }
+
+    return diags.Count() == 0
+        && imports.Count() == 2
+        && imports.KindAt(0) == ImportResolutionKind.Source
+        && imports.TargetIndexAt(0) == 2
+        && imports.KindAt(1) == ImportResolutionKind.Package
+        && imports.TargetIndexAt(1) == 8;
+}
+
+[Fact]
+fn bool ModuleResolverPrefersSourceModuleOverPackageModule()
+{
+    stack ascii mainSource = "import App.Core\nmodule App.Main\n";
+    stack ascii coreSource = "module App.Core\n";
+    stack mut TokenStream mainStream = new();
+    stack mut CompilationUnitHeader mainHeader = new();
+    if (!ParseHeaderForBinding(mainSource, mainStream, mainHeader))
+    {
+        return false;
+    }
+
+    stack mut TokenStream coreStream = new();
+    stack mut CompilationUnitHeader coreHeader = new();
+    if (!ParseHeaderForBinding(coreSource, coreStream, coreHeader))
+    {
+        return false;
+    }
+
+    stack mut ModuleResolver resolver = new();
+    stack mut BindDiagnosticList diags = new();
+    if (!MemoryOk(AddPackageModule(resolver, "App.Core", 77, diags))
+        || !MemoryOk(AddSourceModule(resolver, coreSource, coreStream, coreHeader, 2, diags))
+        || !MemoryOk(AddSourceModule(resolver, mainSource, mainStream, mainHeader, 1, diags)))
+    {
+        return false;
+    }
+
+    stack mut ImportResolutionTable imports = new();
+    if (!MemoryOk(ResolveImports(resolver, mainSource, mainStream, mainHeader, imports, diags)))
+    {
+        return false;
+    }
+
+    return diags.Count() == 0
+        && imports.Count() == 1
+        && imports.KindAt(0) == ImportResolutionKind.Source
+        && imports.TargetIndexAt(0) == 2;
+}
+
+[Fact]
+fn bool ModuleResolverReportsMissingModuleDeclaration()
+{
+    stack ascii source = "import App.Core\nfn void f() { }\n";
+    stack mut TokenStream stream = new();
+    stack mut CompilationUnitHeader header = new();
+    if (!ParseHeaderForBinding(source, stream, header))
+    {
+        return false;
+    }
+
+    stack mut ModuleResolver resolver = new();
+    stack mut BindDiagnosticList diags = new();
+    if (!MemoryOk(AddSourceModule(resolver, source, stream, header, 1, diags)))
+    {
+        return false;
+    }
+
+    return resolver.Count() == 0
+        && diags.CountOf(BindDiagnosticCode.MissingModuleDeclaration) == 1
+        && diags.Count() == 1;
+}
+
+[Fact]
+fn bool ModuleResolverReportsMissingImport()
+{
+    stack ascii mainSource = "import Missing.Module\nmodule App.Main\n";
+    stack mut TokenStream mainStream = new();
+    stack mut CompilationUnitHeader mainHeader = new();
+    if (!ParseHeaderForBinding(mainSource, mainStream, mainHeader))
+    {
+        return false;
+    }
+
+    stack mut ModuleResolver resolver = new();
+    stack mut BindDiagnosticList diags = new();
+    if (!MemoryOk(AddSourceModule(resolver, mainSource, mainStream, mainHeader, 1, diags)))
+    {
+        return false;
+    }
+
+    stack mut ImportResolutionTable imports = new();
+    if (!MemoryOk(ResolveImports(resolver, mainSource, mainStream, mainHeader, imports, diags)))
+    {
+        return false;
+    }
+
+    return imports.Count() == 1
+        && imports.KindAt(0) == ImportResolutionKind.Missing
+        && diags.CountOf(BindDiagnosticCode.UnresolvedImport) == 1
+        && diags.Count() == 1;
+}
+
+[Fact]
+fn bool ModuleResolverReportsDuplicateSourceAndAmbiguousImport()
+{
+    stack ascii mainSource = "import App.Core\nmodule App.Main\n";
+    stack ascii coreSourceA = "module App.Core\nstruct A { }\n";
+    stack ascii coreSourceB = "module App.Core\nstruct B { }\n";
+    stack mut TokenStream mainStream = new();
+    stack mut CompilationUnitHeader mainHeader = new();
+    if (!ParseHeaderForBinding(mainSource, mainStream, mainHeader))
+    {
+        return false;
+    }
+
+    stack mut TokenStream coreStreamA = new();
+    stack mut CompilationUnitHeader coreHeaderA = new();
+    if (!ParseHeaderForBinding(coreSourceA, coreStreamA, coreHeaderA))
+    {
+        return false;
+    }
+
+    stack mut TokenStream coreStreamB = new();
+    stack mut CompilationUnitHeader coreHeaderB = new();
+    if (!ParseHeaderForBinding(coreSourceB, coreStreamB, coreHeaderB))
+    {
+        return false;
+    }
+
+    stack mut ModuleResolver resolver = new();
+    stack mut BindDiagnosticList diags = new();
+    if (!MemoryOk(AddSourceModule(resolver, mainSource, mainStream, mainHeader, 1, diags))
+        || !MemoryOk(AddSourceModule(resolver, coreSourceA, coreStreamA, coreHeaderA, 2, diags))
+        || !MemoryOk(AddSourceModule(resolver, coreSourceB, coreStreamB, coreHeaderB, 3, diags)))
+    {
+        return false;
+    }
+
+    stack mut ImportResolutionTable imports = new();
+    if (!MemoryOk(ResolveImports(resolver, mainSource, mainStream, mainHeader, imports, diags)))
+    {
+        return false;
+    }
+
+    return imports.Count() == 1
+        && imports.KindAt(0) == ImportResolutionKind.Ambiguous
+        && diags.CountOf(BindDiagnosticCode.DuplicateModule) == 1
+        && diags.CountOf(BindDiagnosticCode.AmbiguousImport) == 1
+        && diags.Count() == 2;
 }
 
 [Fact]
@@ -1208,10 +1491,69 @@ fn bool GenericFunctionTypeParameterIsNotUnresolved()
 }
 
 [Fact]
+fn bool FlagsUnresolvedNestedGenericArgumentTypes()
+{
+    stack ascii source = "struct List<T> { }\nstruct Box { List<MissingField> value; }\nfn void f(List<MissingParam> p) { stack List<MissingLocal> local; }\nenum E { Some(List<MissingPayload>), None }\n";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.CountOf(BindDiagnosticCode.UnresolvedType) == 4
+                && diags.Count() == 4;
+    }
+}
+
+[Fact]
+fn bool NestedGenericParameterArgumentsAreNotUnresolved()
+{
+    stack ascii source = "struct List<T> { }\nstruct Box<T> { List<T> value; }\nfn void f<T>(List<T> p) { stack List<T> local; }\nenum E<T> { Some(List<T>), None }\n";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.Count() == 0;
+    }
+}
+
+[Fact]
 fn bool FlagsUnresolvedWhereConstraint()
 {
     // A `where T: Missing` constraint names an undeclared trait — one UnresolvedType.
     stack ascii source = "fn void f<T>() where T: Missing { }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.CountOf(BindDiagnosticCode.UnresolvedType) == 1
+                && diags.Count() == 1;
+    }
+}
+
+[Fact]
+fn bool FlagsUnresolvedNestedWhereConstraintType()
+{
+    stack ascii source = "struct Trait<T> { }\nfn void f<T>() where T: Trait<MissingBound> { }\n";
     stack mut TokenStream stream = new();
     if (!LexOk(LexText(source), stream))
     {
@@ -1234,6 +1576,47 @@ fn bool ResolvedWhereConstraintBindsCleanly()
     // `Eq` is a declared trait, so the `where T: Eq` constraint resolves — and `T`
     // (the constrained parameter) is the function's own type parameter. No errors.
     stack ascii source = "trait Eq { }\nfn void f<T>() where T: Eq { }\n";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.Count() == 0;
+    }
+}
+
+[Fact]
+fn bool FlagsUnresolvedStructAndEnumWhereConstraints()
+{
+    // Type-declaration `where T: Missing` bounds must resolve just like function
+    // bounds; the constrained parameter `T` itself is generic and not an error.
+    stack ascii source = "struct Box<T> where T: Missing { T Value; }\nenum Maybe<T> where T: AlsoMissing { Some(T), None }\n";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.CountOf(BindDiagnosticCode.UnresolvedType) == 2
+                && diags.Count() == 2;
+    }
+}
+
+[Fact]
+fn bool ResolvedStructAndEnumWhereConstraintsBindCleanly()
+{
+    stack ascii source = "trait Eq { }\nstruct Box<T> where T: Eq { T Value; }\nenum Maybe<T> where T: Eq { Some(T), None }\n";
     stack mut TokenStream stream = new();
     if (!LexOk(LexText(source), stream))
     {
@@ -1937,7 +2320,7 @@ fn bool CaseVarBindingResolvesInSectionBody()
 {
     // A `var x` pattern binding is in scope for the section body, so `x;` resolves;
     // the subject `v` resolves to the parameter. No diagnostics.
-    stack ascii source = "fn void f(i32 v) { switch (v) { case Thing(var x): x; } }";
+    stack ascii source = "struct Thing { }\nfn void f(Thing v) { switch (v) { case Thing(var x): x; } }";
     stack mut TokenStream stream = new();
     if (!LexOk(LexText(source), stream))
     {
@@ -1958,7 +2341,7 @@ fn bool WhenGuardSeesPatternBindingAndFlagsUnbound()
 {
     // The `when` guard resolves in the section scope: the pattern binding `x` is
     // visible there, while an undefined name (`bad`) in the guard is flagged.
-    stack ascii source = "fn void f(i32 v) { switch (v) { case Thing(var x) when x > bad: x; } }";
+    stack ascii source = "struct Thing { }\nfn void f(Thing v) { switch (v) { case Thing(var x) when x > bad: x; } }";
     stack mut TokenStream stream = new();
     if (!LexOk(LexText(source), stream))
     {
@@ -1980,7 +2363,7 @@ fn bool CaseVarBindingIsNotVisibleInOtherSection()
 {
     // Each section has its own scope, so a `var x` bound in one section is not
     // visible in another — the sibling section's `x;` is an unresolved reference.
-    stack ascii source = "fn void f(i32 v) { switch (v) { case A(var x): x; case B: x; } }";
+    stack ascii source = "enum Choice { A(i32), B }\nfn void f(Choice v) { switch (v) { case Choice.A(var x): x; case Choice.B: x; } }";
     stack mut TokenStream stream = new();
     if (!LexOk(LexText(source), stream))
     {
@@ -2041,10 +2424,10 @@ fn bool WhenGuardWithTernaryResolves()
 [Fact]
 fn bool OrAlternativesSharingVarNameAreNotDuplicate()
 {
-    // A `var` bound across `or` alternatives is last-write-wins in the host, not a
-    // redefinition — so `case A(var x) or B(var x): x;` is not a DuplicateLocalInBlock
+    // A `var` bound across alternatives is last-write-wins in the host, not a
+    // redefinition — so `case Choice.A(var x) | Choice.B(var x): x;` is not a DuplicateLocalInBlock
     // and `x` resolves.
-    stack ascii source = "fn void f(i32 v) { switch (v) { case A(var x) or B(var x): x; } }";
+    stack ascii source = "enum Choice { A(i32), B(i32) }\nfn void f(Choice v) { switch (v) { case Choice.A(var x) | Choice.B(var x): x; } }";
     stack mut TokenStream stream = new();
     if (!LexOk(LexText(source), stream))
     {
@@ -2058,6 +2441,45 @@ fn bool OrAlternativesSharingVarNameAreNotDuplicate()
         case BindResult<BindDiagnosticList>.Ok(var diags):
             return diags.CountOf(BindDiagnosticCode.DuplicateLocalInBlock) == 0
                 && diags.Count() == 0;
+    }
+}
+
+[Fact]
+fn bool SwitchPatternValueReferencesResolve()
+{
+    stack ascii source = "const Missing = 1;\nstruct Box { i32 Value; }\nconst Other = 2;\nconst Third = 3;\nenum Choice { A, B }\nfn void f(i32 v) { switch (v) { case Missing | Box { Field: Other } | [Third] | Choice.A: return; } }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.Count() == 0;
+    }
+}
+
+[Fact]
+fn bool SwitchPatternValueReferencesFlagUnresolvedNames()
+{
+    stack ascii source = "fn void f(i32 v) { switch (v) { case Missing | Box { Field: Other } | [Third] | Choice.A: return; } }";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.CountOf(BindDiagnosticCode.UnresolvedReference) == 5
+                && diags.Count() == 5;
     }
 }
 
@@ -2784,6 +3206,45 @@ fn bool FlagsBecomeAbiArityMismatch()
 fn bool FlagsBecomeAbiTypeMismatch()
 {
     stack ascii source = "tail fn i32 one(i32 x) { return x; }\ntail fn bool bad(bool x) { become one(x); }\n";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.CountOf(BindDiagnosticCode.BecomeAbiMismatch) == 1
+                && diags.Count() == 1;
+    }
+}
+
+[Fact]
+fn bool AcceptsBecomeAbiMatchingGenericShape()
+{
+    stack ascii source = "struct Box<T> { }\ntail fn Box<i32> one(Box<i32> x) { return x; }\ntail fn Box<i32> bounce(Box<i32> x) { become one(x); }\n";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    switch (BindCompilationUnit(source, stream))
+    {
+        case BindResult<BindDiagnosticList>.Err(var error):
+            return false;
+        case BindResult<BindDiagnosticList>.Ok(var diags):
+            return diags.Count() == 0;
+    }
+}
+
+[Fact]
+fn bool FlagsBecomeAbiGenericArgumentMismatch()
+{
+    stack ascii source = "struct Box<T> { }\ntail fn Box<i32> one(Box<i32> x) { return x; }\ntail fn Box<i64> bad(Box<i64> x) { become one(x); }\n";
     stack mut TokenStream stream = new();
     if (!LexOk(LexText(source), stream))
     {

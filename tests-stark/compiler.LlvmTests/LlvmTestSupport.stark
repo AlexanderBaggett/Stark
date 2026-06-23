@@ -1,6 +1,7 @@
 import System.IO
 import System.Memory
 import System.Process
+import System.Console
 import System.Testing
 import System.Testing.HostCompiler
 import System.Text
@@ -14,6 +15,8 @@ module LlvmTestSupport
 // STARK_HOST_COMPILER to point at the host compiler executable.
 
 const HostTimeoutMilliseconds = 180000;
+const PackageHostTargetTriple = "x86_64-unknown-linux-gnu";
+const PackageHostTargetDataLayout = "e-p:64:64";
 
 // One host compile attempt. `Ok` means the transport, protocol, AND compile all
 // succeeded, so a successful LLVM render is available through `Llvm`.
@@ -67,12 +70,51 @@ public fn LlvmCompile CompileLlvm(ascii id, ascii source)
     return CompileLlvmCore(id, source, "", "llvm");
 }
 
+// As CompileLlvm, but asks the host protocol to include STARK_PATH in
+// module/package resolution so source-tree stdlib/vendor bodies can participate
+// in lowering.
+public fn LlvmCompile CompileLlvmUsingStarkPath(ascii id, ascii source)
+{
+    return CompileLlvmForTargetUsingStarkPath(id, source, "");
+}
+
 // As CompileLlvm, but pins an explicit target triple (e.g.
 // "x86_64-unknown-linux-gnu") — for ported tests whose C# oracle asserts
 // target-specific codegen (allocator lowering, ABI).
 public fn LlvmCompile CompileLlvmForTarget(ascii id, ascii source, ascii targetTriple)
 {
     return CompileLlvmCore(id, source, targetTriple, "llvm");
+}
+
+// As CompileLlvmForTarget, but asks the host protocol to include STARK_PATH in
+// module/package resolution so source-tree stdlib/vendor bodies can participate
+// in target-aware lowering.
+public fn LlvmCompile CompileLlvmForTargetUsingStarkPath(ascii id, ascii source, ascii targetTriple)
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = RunHostCompileForTargetOptionsUsingStarkPath(
+            id,
+            source,
+            "",
+            "llvm",
+            "",
+            targetTriple,
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "");
+        if (compiled.Ok && !compiled.Outcome.CompileSucceeded())
+        {
+            compiled.Ok = false;
+        }
+
+        return compiled;
+    }
 }
 
 // As CompileLlvmForTarget, but also pins a custom target data layout so a ported
@@ -83,6 +125,48 @@ public fn LlvmCompile CompileLlvmForTargetWithDataLayout(ascii id, ascii source,
     unsafe
     {
         stack mut LlvmCompile compiled = RunHostCompile(id, source, "", "llvm", targetTriple, "", targetDataLayout);
+        if (compiled.Ok && !compiled.Outcome.CompileSucceeded())
+        {
+            compiled.Ok = false;
+        }
+
+        return compiled;
+    }
+}
+
+// As CompileLlvmForTargetWithDataLayout, but carries the rest of the host
+// LlvmTargetInfo through the Stark host-test request. Feature slots are explicit
+// because the low-level protocol writer avoids dynamic list allocation.
+public fn LlvmCompile CompileLlvmForTargetOptions(
+    ascii id,
+    ascii source,
+    ascii targetTriple,
+    ascii targetDataLayout,
+    ascii targetCpu,
+    ascii targetFeature0,
+    ascii targetFeature1,
+    ascii targetFeature2,
+    ascii targetFeature3,
+    ascii relocationModel,
+    ascii codeModel)
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = RunHostCompileForTargetOptions(
+            id,
+            source,
+            "",
+            "llvm",
+            "",
+            targetTriple,
+            targetDataLayout,
+            targetCpu,
+            targetFeature0,
+            targetFeature1,
+            targetFeature2,
+            targetFeature3,
+            relocationModel,
+            codeModel);
         if (compiled.Ok && !compiled.Outcome.CompileSucceeded())
         {
             compiled.Ok = false;
@@ -301,7 +385,13 @@ public fn LlvmCompile CompileLlvmWithPackage(
     ascii libModuleName,
     ascii libModuleSource)
 {
-    return CompileLlvmWithPackageCore(id, source, libModuleName, libModuleSource, "", "llvm");
+    return CompileLlvmWithPackageForTargetDataLayout(
+        id,
+        source,
+        libModuleName,
+        libModuleSource,
+        PackageHostTargetTriple,
+        PackageHostTargetDataLayout);
 }
 
 // Normalized variant of CompileLlvmWithPackage (matches the C# `GetLlvm` oracle).
@@ -311,7 +401,47 @@ public fn LlvmCompile CompileLlvmWithPackageNormalized(
     ascii libModuleName,
     ascii libModuleSource)
 {
-    return CompileLlvmWithPackageCore(id, source, libModuleName, libModuleSource, "", "llvm-normalized");
+    return CompileLlvmWithPackageCore(
+        id,
+        source,
+        libModuleName,
+        libModuleSource,
+        PackageHostTargetTriple,
+        PackageHostTargetDataLayout,
+        "llvm-normalized");
+}
+
+public fn LlvmCompile CompileLlvmWithPackageForTargetDataLayout(
+    ascii id,
+    ascii source,
+    ascii libModuleName,
+    ascii libModuleSource,
+    ascii targetTriple,
+    ascii targetDataLayout)
+    where overlap(id, source),
+          overlap(id, libModuleName),
+          overlap(id, libModuleSource),
+          overlap(id, targetTriple),
+          overlap(id, targetDataLayout),
+          overlap(source, libModuleName),
+          overlap(source, libModuleSource),
+          overlap(source, targetTriple),
+          overlap(source, targetDataLayout),
+          overlap(libModuleName, libModuleSource),
+          overlap(libModuleName, targetTriple),
+          overlap(libModuleName, targetDataLayout),
+          overlap(libModuleSource, targetTriple),
+          overlap(libModuleSource, targetDataLayout),
+          overlap(targetTriple, targetDataLayout)
+{
+    return CompileLlvmWithPackageCore(
+        id,
+        source,
+        libModuleName,
+        libModuleSource,
+        targetTriple,
+        targetDataLayout,
+        "llvm");
 }
 
 internal fn LlvmCompile CompileLlvmWithPackageCore(
@@ -320,7 +450,29 @@ internal fn LlvmCompile CompileLlvmWithPackageCore(
     ascii libModuleName,
     ascii libModuleSource,
     ascii targetTriple,
+    ascii targetDataLayout,
     ascii artifactName)
+    where overlap(id, source),
+          overlap(id, libModuleName),
+          overlap(id, libModuleSource),
+          overlap(id, targetTriple),
+          overlap(id, targetDataLayout),
+          overlap(id, artifactName),
+          overlap(source, libModuleName),
+          overlap(source, libModuleSource),
+          overlap(source, targetTriple),
+          overlap(source, targetDataLayout),
+          overlap(source, artifactName),
+          overlap(libModuleName, libModuleSource),
+          overlap(libModuleName, targetTriple),
+          overlap(libModuleName, targetDataLayout),
+          overlap(libModuleName, artifactName),
+          overlap(libModuleSource, targetTriple),
+          overlap(libModuleSource, targetDataLayout),
+          overlap(libModuleSource, artifactName),
+          overlap(targetTriple, targetDataLayout),
+          overlap(targetTriple, artifactName),
+          overlap(targetDataLayout, artifactName)
 {
     unsafe
     {
@@ -411,6 +563,9 @@ internal fn LlvmCompile CompileLlvmWithPackageCore(
                     sourceName.View(),
                     libraryName.View(),
                     packageName.View(),
+                    targetTriple,
+                    targetDataLayout,
+                    false,
                     HostTimeoutMilliseconds))
                 {
                     case HostResult<bool>.Err(var buildError):
@@ -418,8 +573,15 @@ internal fn LlvmCompile CompileLlvmWithPackageCore(
                     case HostResult<bool>.Ok(var built):
                 }
 
+                switch (tempDir.DeleteFile(sourceName.View()))
+                {
+                    case IOStatus.Err(_):
+                        return failed;
+                    case IOStatus.Ok:
+                }
+
                 stack mut LlvmCompile compiled =
-                    RunHostCompile(id, source, "", artifactName, targetTriple, tempDir.View());
+                    RunHostCompileWithOverlappingInputs(id, source, "", artifactName, targetTriple, tempDir.View(), targetDataLayout);
                 if (compiled.Ok && !compiled.Outcome.CompileSucceeded())
                 {
                     compiled.Ok = false;
@@ -436,6 +598,44 @@ public fn bool Succeeds(mut borrow LlvmCompile compiled)
     unsafe
     {
         return compiled.Ok && compiled.Outcome.CompileSucceeded();
+    }
+}
+
+// As Succeeds, but writes host diagnostics to stderr on failure.
+public fn bool SucceedsReport(mut borrow LlvmCompile compiled)
+{
+    unsafe
+    {
+        if (Succeeds(compiled))
+        {
+            return true;
+        }
+
+        System.Console.WriteErrorLine("  [compile] host compile failed:");
+        if (compiled.Outcome.HadProtocolError())
+        {
+            System.Console.WriteErrorLine("    protocol error");
+            return false;
+        }
+
+        stack u64[0 2 ** 63 - 1] count = compiled.Outcome.DiagnosticCount();
+        if (count == 0)
+        {
+            System.Console.WriteErrorLine("    no diagnostics were reported");
+            return false;
+        }
+
+        stack mut u64[0 2 ** 63 - 1] index = 0;
+        while willexit (index < count && index < 5)
+        {
+            System.Console.WriteError("    ");
+            System.Console.WriteError(compiled.Outcome.DiagnosticCodeAt(index));
+            System.Console.WriteError(": ");
+            System.Console.WriteErrorLine(compiled.Outcome.DiagnosticMessageAt(index));
+            index += 1;
+        }
+
+        return false;
     }
 }
 
@@ -545,6 +745,265 @@ internal fn LlvmCompile RunHostCompile(ascii id, ascii source, ascii stopAfterPa
         // artifact back (the host echoes it as the response `requestedName`). Bind
         // the append status to a local first — an all-empty-case switch over the
         // call elided the side-effecting append, leaving the name blank.
+        stack mut OwnedAscii requested = new();
+        stack System.Memory.MemoryStatus appendStatus = requested.AppendAscii(artifactName);
+        switch (appendStatus)
+        {
+            case System.Memory.MemoryStatus.Err(var appendError):
+                compiled.Ok = false;
+            case System.Memory.MemoryStatus.Ok:
+                compiled.RequestedArtifact = requested;
+        }
+        return compiled;
+    }
+}
+
+internal fn LlvmCompile RunHostCompileWithOverlappingInputs(
+    ascii id,
+    ascii source,
+    ascii stopAfterPassId,
+    ascii artifactName,
+    ascii targetTriple,
+    ascii searchDirectory,
+    ascii targetDataLayout)
+    where overlap(id, source),
+          overlap(id, stopAfterPassId),
+          overlap(id, artifactName),
+          overlap(id, targetTriple),
+          overlap(id, searchDirectory),
+          overlap(id, targetDataLayout),
+          overlap(source, stopAfterPassId),
+          overlap(source, artifactName),
+          overlap(source, targetTriple),
+          overlap(source, searchDirectory),
+          overlap(source, targetDataLayout),
+          overlap(stopAfterPassId, artifactName),
+          overlap(stopAfterPassId, targetTriple),
+          overlap(stopAfterPassId, searchDirectory),
+          overlap(stopAfterPassId, targetDataLayout),
+          overlap(artifactName, targetTriple),
+          overlap(artifactName, searchDirectory),
+          overlap(artifactName, targetDataLayout),
+          overlap(targetTriple, searchDirectory),
+          overlap(targetTriple, targetDataLayout),
+          overlap(searchDirectory, targetDataLayout)
+{
+    unsafe
+    {
+        stack mut LlvmCompile failed = new();
+        stack mut OwnedAscii idCopy = new();
+        stack mut OwnedAscii sourceCopy = new();
+        stack mut OwnedAscii stopCopy = new();
+        stack mut OwnedAscii artifactCopy = new();
+        stack mut OwnedAscii targetCopy = new();
+        stack mut OwnedAscii searchCopy = new();
+        stack mut OwnedAscii layoutCopy = new();
+
+        if (!CopyAscii(idCopy, id)
+            || !CopyAscii(sourceCopy, source)
+            || !CopyAscii(stopCopy, stopAfterPassId)
+            || !CopyAscii(artifactCopy, artifactName)
+            || !CopyAscii(targetCopy, targetTriple)
+            || !CopyAscii(searchCopy, searchDirectory)
+            || !CopyAscii(layoutCopy, targetDataLayout))
+        {
+            return failed;
+        }
+
+        return RunHostCompile(
+            idCopy.View(),
+            sourceCopy.View(),
+            stopCopy.View(),
+            artifactCopy.View(),
+            targetCopy.View(),
+            searchCopy.View(),
+            layoutCopy.View());
+    }
+}
+
+internal fn bool CopyAscii(mut borrow OwnedAscii destination, ascii source)
+{
+    unsafe
+    {
+        switch (destination.AppendAscii(source))
+        {
+            case MemoryStatus.Err(_):
+                return false;
+            case MemoryStatus.Ok:
+                return true;
+        }
+    }
+}
+
+internal fn LlvmCompile RunHostCompileForTargetOptions(
+    ascii id,
+    ascii source,
+    ascii stopAfterPassId,
+    ascii artifactName,
+    ascii searchDirectory,
+    ascii targetTriple,
+    ascii targetDataLayout,
+    ascii targetCpu,
+    ascii targetFeature0,
+    ascii targetFeature1,
+    ascii targetFeature2,
+    ascii targetFeature3,
+    ascii relocationModel,
+    ascii codeModel)
+{
+    return RunHostCompileForTargetOptionsCore(
+        id,
+        source,
+        stopAfterPassId,
+        artifactName,
+        searchDirectory,
+        targetTriple,
+        targetDataLayout,
+        targetCpu,
+        targetFeature0,
+        targetFeature1,
+        targetFeature2,
+        targetFeature3,
+        relocationModel,
+        codeModel,
+        false);
+}
+
+internal fn LlvmCompile RunHostCompileForTargetOptionsUsingStarkPath(
+    ascii id,
+    ascii source,
+    ascii stopAfterPassId,
+    ascii artifactName,
+    ascii searchDirectory,
+    ascii targetTriple,
+    ascii targetDataLayout,
+    ascii targetCpu,
+    ascii targetFeature0,
+    ascii targetFeature1,
+    ascii targetFeature2,
+    ascii targetFeature3,
+    ascii relocationModel,
+    ascii codeModel)
+{
+    return RunHostCompileForTargetOptionsCore(
+        id,
+        source,
+        stopAfterPassId,
+        artifactName,
+        searchDirectory,
+        targetTriple,
+        targetDataLayout,
+        targetCpu,
+        targetFeature0,
+        targetFeature1,
+        targetFeature2,
+        targetFeature3,
+        relocationModel,
+        codeModel,
+        true);
+}
+
+internal fn LlvmCompile RunHostCompileForTargetOptionsCore(
+    ascii id,
+    ascii source,
+    ascii stopAfterPassId,
+    ascii artifactName,
+    ascii searchDirectory,
+    ascii targetTriple,
+    ascii targetDataLayout,
+    ascii targetCpu,
+    ascii targetFeature0,
+    ascii targetFeature1,
+    ascii targetFeature2,
+    ascii targetFeature3,
+    ascii relocationModel,
+    ascii codeModel,
+    bool useStarkPath)
+{
+    unsafe
+    {
+        stack mut OwnedAscii compilerPath = new();
+        stack mut bool havePath = false;
+        switch (CompilerPathFromEnvironment())
+        {
+            case HostResult<OwnedAscii>.Err(var pathError):
+                havePath = false;
+            case HostResult<OwnedAscii>.Ok(var path):
+                compilerPath = path;
+                havePath = true;
+        }
+
+        stack mut HostCompileOutcome outcome = new();
+        stack mut bool transportOk = false;
+        if (havePath)
+        {
+            if (useStarkPath)
+            {
+                switch (CompileOnceArtifactInUsingStarkPathForTargetOptions(
+                    compilerPath.View(),
+                    id,
+                    source,
+                    stopAfterPassId,
+                    artifactName,
+                    searchDirectory,
+                    0,
+                    HostTimeoutMilliseconds,
+                    targetTriple,
+                    targetDataLayout,
+                    targetCpu,
+                    targetFeature0,
+                    targetFeature1,
+                    targetFeature2,
+                    targetFeature3,
+                    relocationModel,
+                    codeModel))
+                {
+                    case HostResult<HostCompileOutcome>.Err(var error):
+                        transportOk = false;
+                    case HostResult<HostCompileOutcome>.Ok(var captured):
+                        outcome = captured;
+                        transportOk = true;
+                }
+            }
+            else
+            {
+                switch (CompileOnceArtifactInForTargetOptions(
+                    compilerPath.View(),
+                    id,
+                    source,
+                    stopAfterPassId,
+                    artifactName,
+                    searchDirectory,
+                    0,
+                    HostTimeoutMilliseconds,
+                    targetTriple,
+                    targetDataLayout,
+                    targetCpu,
+                    targetFeature0,
+                    targetFeature1,
+                    targetFeature2,
+                    targetFeature3,
+                    relocationModel,
+                    codeModel))
+                {
+                    case HostResult<HostCompileOutcome>.Err(var error):
+                        transportOk = false;
+                    case HostResult<HostCompileOutcome>.Ok(var captured):
+                        outcome = captured;
+                        transportOk = true;
+                }
+            }
+        }
+
+        stack mut bool ok = false;
+        if (transportOk)
+        {
+            ok = !outcome.HadProtocolError();
+        }
+
+        stack mut LlvmCompile compiled = new();
+        compiled.Ok = ok;
+        compiled.Outcome = outcome;
         stack mut OwnedAscii requested = new();
         stack System.Memory.MemoryStatus appendStatus = requested.AppendAscii(artifactName);
         switch (appendStatus)

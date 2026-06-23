@@ -523,13 +523,216 @@ internal sealed class AbiLowerer
 
         return normalizedLeft.Kind switch
         {
+            StarkTypeKind.Integer => normalizedLeft.BitWidth == normalizedRight.BitWidth
+                && normalizedLeft.RangeMin == normalizedRight.RangeMin
+                && normalizedLeft.RangeMax == normalizedRight.RangeMax
+                && normalizedLeft.IsUnsigned == normalizedRight.IsUnsigned,
+            StarkTypeKind.Float => normalizedLeft.BitWidth == normalizedRight.BitWidth,
+            StarkTypeKind.RawPointer => normalizedLeft.IsMutablePointer == normalizedRight.IsMutablePointer
+                && AbiNullableTypesEqual(normalizedLeft.ElementType, normalizedRight.ElementType),
             StarkTypeKind.LlvmVector => normalizedLeft.FixedLength == normalizedRight.FixedLength
                 && normalizedLeft.ElementType is not null
                 && normalizedRight.ElementType is not null
                 && AbiTypesEqual(normalizedLeft.ElementType, normalizedRight.ElementType),
             StarkTypeKind.LlvmStruct => AbiTypeListsEqual(normalizedLeft.TypeArguments ?? [], normalizedRight.TypeArguments ?? []),
+            StarkTypeKind.FixedArray => normalizedLeft.FixedLength == normalizedRight.FixedLength
+                && string.Equals(normalizedLeft.FixedLengthParameterName, normalizedRight.FixedLengthParameterName, StringComparison.Ordinal)
+                && AbiNullableTypesEqual(normalizedLeft.ElementType, normalizedRight.ElementType),
+            StarkTypeKind.Slice or StarkTypeKind.Dynamic => AbiNullableTypesEqual(normalizedLeft.ElementType, normalizedRight.ElementType),
+            StarkTypeKind.FunctionPointer => normalizedLeft.FunctionPointerKind == normalizedRight.FunctionPointerKind
+                && normalizedLeft.FunctionPointerIsTailCallable == normalizedRight.FunctionPointerIsTailCallable
+                && normalizedLeft.FunctionPointerAbi == normalizedRight.FunctionPointerAbi
+                && normalizedLeft.FunctionPointerIsUnsafe == normalizedRight.FunctionPointerIsUnsafe
+                && AbiNullableTypesEqual(normalizedLeft.FunctionPointerReturnType, normalizedRight.FunctionPointerReturnType)
+                && AbiTypeListsEqual(normalizedLeft.FunctionPointerParameterTypes ?? [], normalizedRight.FunctionPointerParameterTypes ?? [])
+                && StringListsEqual(
+                    normalizedLeft.FunctionPointerParameterRawPointerElementCountExpressions,
+                    normalizedRight.FunctionPointerParameterRawPointerElementCountExpressions)
+                && DisjointGroupListsEqual(normalizedLeft.FunctionPointerDisjointParameterGroups, normalizedRight.FunctionPointerDisjointParameterGroups)
+                && OverlapGroupListsEqual(normalizedLeft.FunctionPointerOverlapParameterGroups, normalizedRight.FunctionPointerOverlapParameterGroups)
+                && SameGroupListsEqual(normalizedLeft.FunctionPointerSameParameterGroups, normalizedRight.FunctionPointerSameParameterGroups)
+                && StringListsEqual(
+                    normalizedLeft.FunctionPointerPointeeDeadOnReturnParameterNames,
+                    normalizedRight.FunctionPointerPointeeDeadOnReturnParameterNames),
+            StarkTypeKind.Closure => normalizedLeft.ClosureStorageKind == normalizedRight.ClosureStorageKind
+                && normalizedLeft.ClosureCallCapability == normalizedRight.ClosureCallCapability
+                && normalizedLeft.ClosureFunctionKind == normalizedRight.ClosureFunctionKind
+                && normalizedLeft.ClosureIsTailCallable == normalizedRight.ClosureIsTailCallable
+                && AbiNullableTypesEqual(normalizedLeft.ClosureReturnType, normalizedRight.ClosureReturnType)
+                && AbiTypeListsEqual(normalizedLeft.ClosureParameterTypes ?? [], normalizedRight.ClosureParameterTypes ?? [])
+                && StringListsEqual(
+                    normalizedLeft.ClosureParameterRawPointerElementCountExpressions,
+                    normalizedRight.ClosureParameterRawPointerElementCountExpressions)
+                && DisjointGroupListsEqual(normalizedLeft.ClosureDisjointParameterGroups, normalizedRight.ClosureDisjointParameterGroups)
+                && OverlapGroupListsEqual(normalizedLeft.ClosureOverlapParameterGroups, normalizedRight.ClosureOverlapParameterGroups)
+                && SameGroupListsEqual(normalizedLeft.ClosureSameParameterGroups, normalizedRight.ClosureSameParameterGroups)
+                && StringListsEqual(
+                    normalizedLeft.ClosurePointeeDeadOnReturnParameterNames,
+                    normalizedRight.ClosurePointeeDeadOnReturnParameterNames),
+            StarkTypeKind.Named => string.Equals(normalizedLeft.NamedType, normalizedRight.NamedType, StringComparison.Ordinal)
+                && AbiTypeListsEqual(normalizedLeft.TypeArguments ?? [], normalizedRight.TypeArguments ?? [])
+                && ComptimeValueArgumentListsEqual(normalizedLeft.ComptimeValueArguments, normalizedRight.ComptimeValueArguments),
+            StarkTypeKind.DynTrait => string.Equals(normalizedLeft.DynTraitName, normalizedRight.DynTraitName, StringComparison.Ordinal)
+                && normalizedLeft.DynTraitStorageKind == normalizedRight.DynTraitStorageKind
+                && AbiTypeListsEqual(normalizedLeft.TypeArguments ?? [], normalizedRight.TypeArguments ?? [])
+                && ComptimeValueArgumentListsEqual(normalizedLeft.ComptimeValueArguments, normalizedRight.ComptimeValueArguments),
+            StarkTypeKind.AssociatedType => string.Equals(normalizedLeft.AssociatedTypeName, normalizedRight.AssociatedTypeName, StringComparison.Ordinal)
+                && AbiNullableTypesEqual(normalizedLeft.AssociatedTypeOwner, normalizedRight.AssociatedTypeOwner),
             _ => normalizedLeft == normalizedRight
         };
+    }
+
+    private static bool AbiNullableTypesEqual(StarkTypeSymbol? left, StarkTypeSymbol? right)
+    {
+        if (left is null || right is null)
+        {
+            return left is null && right is null;
+        }
+
+        return AbiTypesEqual(left, right);
+    }
+
+    private static bool ComptimeValueArgumentListsEqual(
+        IReadOnlyList<ComptimeValueArgumentSymbol>? left,
+        IReadOnlyList<ComptimeValueArgumentSymbol>? right)
+    {
+        var leftCount = left?.Count ?? 0;
+        var rightCount = right?.Count ?? 0;
+        if (leftCount != rightCount)
+        {
+            return false;
+        }
+
+        for (var index = 0; index < leftCount; index++)
+        {
+            var leftValue = left![index];
+            var rightValue = right![index];
+            if (!string.Equals(leftValue.ParameterName, rightValue.ParameterName, StringComparison.Ordinal)
+                || leftValue.IntegerValue != rightValue.IntegerValue
+                || leftValue.IsSymbolic != rightValue.IsSymbolic
+                || !string.Equals(leftValue.SymbolicSourceName, rightValue.SymbolicSourceName, StringComparison.Ordinal)
+                || !AbiTypesEqual(leftValue.Type, rightValue.Type))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool DisjointGroupListsEqual(
+        IReadOnlyList<ParameterDisjointGroup>? left,
+        IReadOnlyList<ParameterDisjointGroup>? right)
+    {
+        var leftCount = left?.Count ?? 0;
+        var rightCount = right?.Count ?? 0;
+        if (leftCount != rightCount)
+        {
+            return false;
+        }
+
+        for (var index = 0; index < leftCount; index++)
+        {
+            var leftGroup = left![index];
+            var rightGroup = right![index];
+            if (!StringListsEqual(leftGroup.ParameterNames, rightGroup.ParameterNames)
+                || !RegionListsEqual(leftGroup.MemoryRegions, rightGroup.MemoryRegions))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool OverlapGroupListsEqual(
+        IReadOnlyList<ParameterOverlapGroup>? left,
+        IReadOnlyList<ParameterOverlapGroup>? right)
+    {
+        var leftCount = left?.Count ?? 0;
+        var rightCount = right?.Count ?? 0;
+        if (leftCount != rightCount)
+        {
+            return false;
+        }
+
+        for (var index = 0; index < leftCount; index++)
+        {
+            if (!StringListsEqual(left![index].ParameterNames, right![index].ParameterNames))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool SameGroupListsEqual(
+        IReadOnlyList<ParameterSameGroup>? left,
+        IReadOnlyList<ParameterSameGroup>? right)
+    {
+        var leftCount = left?.Count ?? 0;
+        var rightCount = right?.Count ?? 0;
+        if (leftCount != rightCount)
+        {
+            return false;
+        }
+
+        for (var index = 0; index < leftCount; index++)
+        {
+            if (!StringListsEqual(left![index].ParameterNames, right![index].ParameterNames))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool RegionListsEqual(
+        IReadOnlyList<ParameterMemoryRegion>? left,
+        IReadOnlyList<ParameterMemoryRegion>? right)
+    {
+        var leftCount = left?.Count ?? 0;
+        var rightCount = right?.Count ?? 0;
+        if (leftCount != rightCount)
+        {
+            return false;
+        }
+
+        for (var index = 0; index < leftCount; index++)
+        {
+            var leftRegion = left![index];
+            var rightRegion = right![index];
+            if (!string.Equals(leftRegion.ParameterName, rightRegion.ParameterName, StringComparison.Ordinal)
+                || !string.Equals(leftRegion.StartExpression, rightRegion.StartExpression, StringComparison.Ordinal)
+                || !string.Equals(leftRegion.CountExpression, rightRegion.CountExpression, StringComparison.Ordinal))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool StringListsEqual(IReadOnlyList<string?>? left, IReadOnlyList<string?>? right)
+    {
+        var leftCount = left?.Count ?? 0;
+        var rightCount = right?.Count ?? 0;
+        if (leftCount != rightCount)
+        {
+            return false;
+        }
+
+        for (var index = 0; index < leftCount; index++)
+        {
+            if (!string.Equals(left![index], right![index], StringComparison.Ordinal))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static StarkTypeSymbol NormalizeType(StarkTypeSymbol type)

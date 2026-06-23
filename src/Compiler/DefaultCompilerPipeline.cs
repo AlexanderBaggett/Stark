@@ -553,6 +553,16 @@ public static class DefaultCompilerPipeline
                                 new SourceLocation(importedDocument.Reference.FilePath ?? module.FilePath, 1, 1));
                         }
 
+                        var targetDiagnostics = new List<CompilerDiagnostic>();
+                        TargetCompatibilityValidator.ValidateLoadedPackageTarget(
+                            importedDocument,
+                            context.Options.TargetInfo,
+                            targetDiagnostics);
+                        foreach (var diagnostic in targetDiagnostics)
+                        {
+                            context.Diagnostics.Add(diagnostic);
+                        }
+
                         modules[module.ModuleName] = importedDocument;
                         continue;
                     }

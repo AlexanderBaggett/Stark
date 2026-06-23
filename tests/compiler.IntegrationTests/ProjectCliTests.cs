@@ -21,6 +21,8 @@ public sealed class ProjectCliTests
 
             Assert.Equal(0, exitCode);
             Assert.Contains("Usage: stark build", stdout.ToString(), StringComparison.Ordinal);
+            Assert.Contains("--toolchain-dir <dir>", stdout.ToString(), StringComparison.Ordinal);
+            Assert.Contains("--package-image-json", stdout.ToString(), StringComparison.Ordinal);
             Assert.Equal(string.Empty, stderr.ToString());
         }
         finally
@@ -49,6 +51,7 @@ public sealed class ProjectCliTests
             Assert.Contains("Build and run Stark test projects.", stdout.ToString(), StringComparison.Ordinal);
             Assert.Contains("--target <triple>", stdout.ToString(), StringComparison.Ordinal);
             Assert.Contains("--stage stage0", stdout.ToString(), StringComparison.Ordinal);
+            Assert.Contains("--toolchain-dir <dir>", stdout.ToString(), StringComparison.Ordinal);
             Assert.Equal(string.Empty, stderr.ToString());
         }
         finally
@@ -74,6 +77,7 @@ public sealed class ProjectCliTests
 
             Assert.Equal(0, exitCode);
             Assert.Contains("Usage: stark clean", stdout.ToString(), StringComparison.Ordinal);
+            Assert.Contains("--toolchain-dir <dir>", stdout.ToString(), StringComparison.Ordinal);
             Assert.Contains("Default scope is `stage`.", stdout.ToString(), StringComparison.Ordinal);
             Assert.Equal(string.Empty, stderr.ToString());
         }
@@ -138,6 +142,65 @@ public sealed class ProjectCliTests
             Assert.Contains("Emitted executable:", stdout.ToString(), StringComparison.Ordinal);
             Assert.Equal(string.Empty, stderr.ToString());
             Assert.True(File.Exists(BuildArtifactPath(tempDirectory.FullName, targetInfo.Triple, "bin", "demo", ExecutableFileName("demo-app"))));
+        }
+        finally
+        {
+            Environment.CurrentDirectory = originalDirectory;
+            Cleanup(tempDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task BuildWritesExplicitPackageImageJsonInspectionViewUnderArtifacts()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
+        {
+            return;
+        }
+
+        var originalDirectory = Environment.CurrentDirectory;
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-project-cli-pkg-json-view-");
+
+        try
+        {
+            await CreateSolutionFixtureAsync(tempDirectory.FullName);
+            Environment.CurrentDirectory = tempDirectory.FullName;
+
+            var firstStdout = new StringWriter();
+            var firstStderr = new StringWriter();
+            var firstExitCode = await CompilerCli.RunAsync(
+                ["build", "math", "--target", targetInfo.Triple],
+                new StringReader(string.Empty),
+                firstStdout,
+                firstStderr);
+
+            Assert.Equal(0, firstExitCode);
+            Assert.Equal(string.Empty, firstStderr.ToString());
+            var packageImagePath = BuildPackageImagePath(tempDirectory.FullName, targetInfo.Triple, "math", "Math");
+            var packageJsonPath = BuildPackageImageJsonInspectionPath(tempDirectory.FullName, targetInfo.Triple, "math", "Math");
+            Assert.True(File.Exists(packageImagePath));
+            Assert.False(File.Exists(PackageImageBinaryFormat.JsonSidecarPath(packageImagePath)));
+            Assert.False(File.Exists(packageJsonPath));
+
+            var secondStdout = new StringWriter();
+            var secondStderr = new StringWriter();
+            var secondExitCode = await CompilerCli.RunAsync(
+                ["build", "math", "--target", targetInfo.Triple, "--package-image-json"],
+                new StringReader(string.Empty),
+                secondStdout,
+                secondStderr);
+
+            Assert.Equal(0, secondExitCode);
+            Assert.Equal(string.Empty, secondStderr.ToString());
+            Assert.Contains("Emitted package image JSON:", secondStdout.ToString(), StringComparison.Ordinal);
+            Assert.True(File.Exists(packageImagePath));
+            Assert.False(File.Exists(PackageImageBinaryFormat.JsonSidecarPath(packageImagePath)));
+            Assert.True(File.Exists(packageJsonPath));
+
+            var manifest = StarkPackageManifest.FromJson(await File.ReadAllTextAsync(packageJsonPath));
+            Assert.NotNull(manifest);
+            Assert.Equal("Math", manifest!.RootModule);
+            Assert.Single(manifest.Modules);
         }
         finally
         {
@@ -393,6 +456,207 @@ public sealed class ProjectCliTests
             Assert.Contains("Emitted executable:", stdout.ToString(), StringComparison.Ordinal);
             Assert.Equal(string.Empty, stderr.ToString());
             Assert.True(File.Exists(BuildArtifactPath(tempDirectory.FullName, targetInfo.Triple, "bin", "repo-vendor-source-app", ExecutableFileName("repo-vendor-source-app"))));
+        }
+        finally
+        {
+            Environment.CurrentDirectory = originalDirectory;
+            Cleanup(tempDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task BuildUsesRepoVendorSourceNativeMetadata()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
+        {
+            return;
+        }
+
+        var originalDirectory = Environment.CurrentDirectory;
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-project-cli-repo-vendor-native-");
+
+        try
+        {
+            await File.WriteAllTextAsync(
+                Path.Combine(tempDirectory.FullName, "Stark.toml"),
+                """
+                [project]
+                name = "repo-vendor-native-app"
+                version = "0.1.0"
+                kind = "executable"
+
+                [executable]
+                root = "App.stark"
+                output = "repo-vendor-native-app"
+
+                [profiles.dev]
+                opt = 0
+                """);
+
+            await File.WriteAllTextAsync(
+                Path.Combine(tempDirectory.FullName, "App.stark"),
+                """
+                import Vendor.NativeProbe
+                module App
+
+                export unsafe fn i32[min max] main()
+                {
+                    unsafe
+                    {
+                        return Vendor.NativeProbe.Value();
+                    }
+                }
+                """);
+
+            var vendorDirectory = Path.Combine(tempDirectory.FullName, "vendor");
+            var vendorSourceDirectory = Path.Combine(vendorDirectory, "src", "Vendor");
+            Directory.CreateDirectory(vendorSourceDirectory);
+            await File.WriteAllTextAsync(
+                Path.Combine(vendorDirectory, "Stark.toml"),
+                """
+                [project]
+                name = "vendor-native-probe"
+                version = "0.1.0"
+                kind = "library"
+
+                [library]
+                root = "src/Vendor/NativeProbe.stark"
+                output = "VendorNativeProbe"
+
+                [native]
+                sources = ["NativeProbe.c"]
+                """);
+            await File.WriteAllTextAsync(
+                Path.Combine(vendorSourceDirectory, "NativeProbe.stark"),
+                """
+                module Vendor.NativeProbe
+
+                [LinkName("stark_native_probe_value")]
+                unsafe ffi fn i32[min max] NativeProbeValue();
+
+                public unsafe fn i32[min max] Value()
+                {
+                    unsafe
+                    {
+                        return NativeProbeValue();
+                    }
+                }
+                """);
+            await File.WriteAllTextAsync(
+                Path.Combine(vendorDirectory, "NativeProbe.c"),
+                """
+                int stark_native_probe_value(void) {
+                    return 0;
+                }
+                """);
+
+            Environment.CurrentDirectory = tempDirectory.FullName;
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(
+                ["build", "--target", targetInfo.Triple],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.True(
+                exitCode == 0,
+                $"Expected repo vendor native metadata to build successfully. Exit: {exitCode}{Environment.NewLine}STDOUT:{Environment.NewLine}{stdout}{Environment.NewLine}STDERR:{Environment.NewLine}{stderr}");
+            Assert.Contains("Emitted executable:", stdout.ToString(), StringComparison.Ordinal);
+            Assert.Equal(string.Empty, stderr.ToString());
+            Assert.True(File.Exists(BuildArtifactPath(tempDirectory.FullName, targetInfo.Triple, "bin", "repo-vendor-native-app", ExecutableFileName("repo-vendor-native-app"))));
+        }
+        finally
+        {
+            Environment.CurrentDirectory = originalDirectory;
+            Cleanup(tempDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task BuildReportsRepoVendorSourceNativeMetadataDiagnostics()
+    {
+        var originalDirectory = Environment.CurrentDirectory;
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-project-cli-repo-vendor-native-diag-");
+
+        try
+        {
+            await File.WriteAllTextAsync(
+                Path.Combine(tempDirectory.FullName, "Stark.toml"),
+                """
+                [project]
+                name = "repo-vendor-native-diagnostic-app"
+                version = "0.1.0"
+                kind = "executable"
+
+                [executable]
+                root = "App.stark"
+                output = "repo-vendor-native-diagnostic-app"
+                """);
+
+            await File.WriteAllTextAsync(
+                Path.Combine(tempDirectory.FullName, "App.stark"),
+                """
+                import Vendor.NativeProbe
+                module App
+
+                export fn i32[min max] main()
+                {
+                    return Vendor.NativeProbe.Value();
+                }
+                """);
+
+            var vendorDirectory = Path.Combine(tempDirectory.FullName, "vendor");
+            var vendorSourceDirectory = Path.Combine(vendorDirectory, "src", "Vendor");
+            Directory.CreateDirectory(vendorSourceDirectory);
+            await File.WriteAllTextAsync(
+                Path.Combine(vendorDirectory, "Stark.toml"),
+                """
+                [project]
+                name = "vendor-native-probe"
+                version = "0.1.0"
+                kind = "library"
+
+                [library]
+                root = "src/Vendor/NativeProbe.stark"
+                output = "VendorNativeProbe"
+
+                [native.fallback.linux]
+                include-dirs = ["${native.paths.native-probe-include}"]
+
+                [native.fallback.macos]
+                include-dirs = ["${native.paths.native-probe-include}"]
+
+                [native.fallback.windows]
+                include-dirs = ["${native.paths.native-probe-include}"]
+                """);
+            await File.WriteAllTextAsync(
+                Path.Combine(vendorSourceDirectory, "NativeProbe.stark"),
+                """
+                module Vendor.NativeProbe
+
+                public finite law i32[min max] Value()
+                {
+                    return 0;
+                }
+                """);
+
+            Environment.CurrentDirectory = tempDirectory.FullName;
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(
+                ["build", "--target", "test-triple"],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            var stderrText = stderr.ToString();
+            Assert.Equal(1, exitCode);
+            Assert.Equal(string.Empty, stdout.ToString());
+            Assert.Contains("Project 'vendor-native-probe' needs native path 'native.paths.native-probe-include' to build on this machine.", stderrText, StringComparison.Ordinal);
+            Assert.Contains("Add it under [native.paths] in Stark.user.toml or ~/.config/stark/config.toml.", stderrText, StringComparison.Ordinal);
         }
         finally
         {
@@ -2179,6 +2443,16 @@ public sealed class ProjectCliTests
     private static string BuildPackageImagePath(string rootDirectory, string targetTriple, string projectKey, string outputName)
     {
         return BuildArtifactPath(rootDirectory, targetTriple, "pkg", projectKey, $"lib{outputName}.starkpkg");
+    }
+
+    private static string BuildPackageImageJsonInspectionPath(string rootDirectory, string targetTriple, string projectKey, string outputName)
+    {
+        return Path.Combine(
+            BuildStagePath(rootDirectory, targetTriple),
+            "artifacts",
+            "pkg",
+            projectKey,
+            $"lib{outputName}.starkpkg.json");
     }
 
     private static string GeneratedRunnerPath(string testDirectory, string targetTriple)

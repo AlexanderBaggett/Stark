@@ -45,12 +45,14 @@ public sealed class CompilerCliTests
         Assert.Contains("Inputs and Outputs:", text);
         Assert.Contains("Targeting and Native Toolchain:", text);
         Assert.Contains("Compiler Logs:", text);
+        Assert.Contains("doctor         Inspect compiler, runtime, target, toolchain, SDK, stdlib, and vendor setup", text);
         Assert.Contains("--target-cpu <cpu>", text);
         Assert.Contains("--target-feature <feature>", text);
         Assert.Contains("--relocation-model <default|static|pic|pie>", text);
         Assert.Contains("--code-model <tiny|small|kernel|medium|large>", text);
-        Assert.Contains("--optimize <0|g|1|2|3>", text);
         Assert.Contains("--strict-integer-ranges", text);
+        Assert.Contains("--toolchain-dir <dir>", text);
+        Assert.Contains("--llvm-lib <path>", text);
         Assert.Contains("--link-arg <arg>", text);
         Assert.Contains("--native-source <path>", text);
         Assert.Contains("--native-library <name>", text);
@@ -58,6 +60,7 @@ public sealed class CompilerCliTests
         Assert.Contains("--save-temps <dir>", text);
         Assert.Contains("--toolchain-metrics <path>", text);
         Assert.Contains("--package-image-output <path>", text);
+        Assert.Contains("--package-profile <dev|release>", text);
         Assert.Contains("--no-stark-path", text);
         Assert.Contains("--diagnostic-format <text|json>", text);
         Assert.Contains("--log-level <info|warning|error>     Set the minimum compiler log severity printed to stderr (default: warning)", text);
@@ -70,10 +73,259 @@ public sealed class CompilerCliTests
         Assert.Contains("Examples:", text);
         Assert.Contains("compiler app.stark", text);
         Assert.Contains("compiler app.stark --emit-llvm -o app.ll", text);
+        Assert.Contains("compiler doctor", text);
         Assert.Contains("compiler app.stark --diagnostic-format json", text);
         Assert.Contains("--compile-only", text);
         Assert.Contains("--link-only", text);
         Assert.Equal(string.Empty, stderr.ToString());
+    }
+
+    [Fact]
+    public async Task DoctorCommandReportsRuntimeTargetToolchainAndLibraries()
+    {
+        var stdout = new StringWriter();
+        var stderr = new StringWriter();
+
+        var exitCode = await CompilerCli.RunAsync(
+            [
+                "doctor",
+                "--target",
+                "x86_64-unknown-linux-gnu",
+                "--target-data-layout",
+                "e-m:e-p270:32:32-p271:32:32-p272:64:64-p:64:64-i64:64-f80:128-n8:16:32:64-S128"
+            ],
+            new StringReader(string.Empty),
+            stdout,
+            stderr);
+
+        Assert.Equal(0, exitCode);
+        Assert.Equal(string.Empty, stderr.ToString());
+
+        var text = stdout.ToString();
+        Assert.Contains("Stark doctor", text, StringComparison.Ordinal);
+        Assert.Contains("compiler:", text, StringComparison.Ordinal);
+        Assert.Contains("runtime:", text, StringComparison.Ordinal);
+        Assert.Contains("runtime id:", text, StringComparison.Ordinal);
+        Assert.Contains("target:", text, StringComparison.Ordinal);
+        Assert.Contains("triple: x86_64-unknown-linux-gnu", text, StringComparison.Ordinal);
+        Assert.Contains("c data model: LP64", text, StringComparison.Ordinal);
+        Assert.Contains("toolchain:", text, StringComparison.Ordinal);
+        Assert.Contains("libLLVM:", text, StringComparison.Ordinal);
+        Assert.Contains("clang:", text, StringComparison.Ordinal);
+        Assert.Contains("sdk:", text, StringComparison.Ordinal);
+        Assert.Contains("libraries:", text, StringComparison.Ordinal);
+        Assert.Contains("stdlib:", text, StringComparison.Ordinal);
+        Assert.Contains("vendor:", text, StringComparison.Ordinal);
+        Assert.Contains("diagnostics:", text, StringComparison.Ordinal);
+        Assert.Contains("linux libc:", text, StringComparison.Ordinal);
+        Assert.Contains("native/vendor dependencies:", text, StringComparison.Ordinal);
+        Assert.Contains("status:", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void NativeToolchainResolverPrefersCliToolchainDirectoryBeforeEnvironment()
+    {
+        var originalToolchainDirectory = Environment.GetEnvironmentVariable("STARK_TOOLCHAIN_DIR");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-toolchain-resolver-cli-");
+
+        try
+        {
+            var cliToolchain = CreateFakeToolchain(tempDirectory.FullName, "cli");
+            var environmentToolchain = CreateFakeToolchain(tempDirectory.FullName, "environment");
+            Environment.SetEnvironmentVariable("STARK_TOOLCHAIN_DIR", environmentToolchain);
+
+            var resolved = NativeToolchain.Resolve(new NativeToolchainResolutionOptions(
+                CliToolchainDirectory: cliToolchain));
+
+            Assert.Equal(NativeToolchainResolutionSource.CliOverride, resolved.Clang.Source);
+            Assert.Equal(Path.Combine(cliToolchain, "bin", ToolFileName("clang")), resolved.Clang.Path);
+            Assert.Equal(NativeToolchainResolutionSource.CliOverride, resolved.LlvmLibrary.Source);
+            Assert.Equal(Path.Combine(cliToolchain, "lib", LlvmLibraryFileName()), resolved.LlvmLibrary.Path);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("STARK_TOOLCHAIN_DIR", originalToolchainDirectory);
+            Cleanup(tempDirectory);
+        }
+    }
+
+    [Fact]
+    public void NativeToolchainResolverPrefersEnvironmentBeforeUserConfig()
+    {
+        var originalToolchainDirectory = Environment.GetEnvironmentVariable("STARK_TOOLCHAIN_DIR");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-toolchain-resolver-env-");
+
+        try
+        {
+            var userConfigToolchain = CreateFakeToolchain(tempDirectory.FullName, "user");
+            var environmentToolchain = CreateFakeToolchain(tempDirectory.FullName, "environment");
+            Environment.SetEnvironmentVariable("STARK_TOOLCHAIN_DIR", environmentToolchain);
+
+            var resolved = NativeToolchain.Resolve(new NativeToolchainResolutionOptions(
+                UserConfigToolchainDirectory: userConfigToolchain));
+
+            Assert.Equal(NativeToolchainResolutionSource.EnvironmentOverride, resolved.Clang.Source);
+            Assert.Equal(Path.Combine(environmentToolchain, "bin", ToolFileName("clang")), resolved.Clang.Path);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("STARK_TOOLCHAIN_DIR", originalToolchainDirectory);
+            Cleanup(tempDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task DoctorCommandReportsExplicitToolchainDirectory()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-doctor-toolchain-dir-");
+
+        try
+        {
+            var toolchainDirectory = CreateFakeToolchain(tempDirectory.FullName, "explicit");
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+
+            var exitCode = await CompilerCli.RunAsync(
+                [
+                    "doctor",
+                    "--toolchain-dir",
+                    toolchainDirectory,
+                    "--target",
+                    "x86_64-unknown-linux-gnu"
+                ],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.Equal(0, exitCode);
+            Assert.Equal(string.Empty, stderr.ToString());
+
+            var text = stdout.ToString();
+            Assert.Contains("search roots:", text, StringComparison.Ordinal);
+            Assert.Contains(toolchainDirectory, text, StringComparison.Ordinal);
+            Assert.Contains(Path.Combine(toolchainDirectory, "bin", ToolFileName("clang")), text, StringComparison.Ordinal);
+            Assert.Contains(Path.Combine(toolchainDirectory, "lib", LlvmLibraryFileName()), text, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Cleanup(tempDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task DoctorCommandReportsWindowsCrtAndNativeDependencyRequirements()
+    {
+        var stdout = new StringWriter();
+        var stderr = new StringWriter();
+
+        var exitCode = await CompilerCli.RunAsync(
+            [
+                "doctor",
+                "--target",
+                "x86_64-pc-windows-msvc",
+                "--native-pkg-config",
+                "sqlite3",
+                "--native-library",
+                "sqlite3"
+            ],
+            new StringReader(string.Empty),
+            stdout,
+            stderr);
+
+        Assert.Equal(0, exitCode);
+        Assert.Equal(string.Empty, stderr.ToString());
+
+        var text = stdout.ToString();
+        Assert.Contains("diagnostics:", text, StringComparison.Ordinal);
+        Assert.Contains("windows crt: Windows executable links use the current linker-driver path", text, StringComparison.Ordinal);
+        Assert.Contains("pkg-config packages: sqlite3", text, StringComparison.Ordinal);
+        Assert.Contains("native dependencies: this invocation declares native dependency metadata", text, StringComparison.Ordinal);
+        Assert.Contains("native/vendor dependencies:", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task DoctorCommandReportsMissingPkgConfigGuidance()
+    {
+        var originalPkgConfig = Environment.GetEnvironmentVariable("STARK_PKG_CONFIG");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-doctor-missing-pkg-config-");
+
+        try
+        {
+            Environment.SetEnvironmentVariable(
+                "STARK_PKG_CONFIG",
+                Path.Combine(tempDirectory.FullName, "missing-pkg-config"));
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+
+            var exitCode = await CompilerCli.RunAsync(
+                [
+                    "doctor",
+                    "--target",
+                    "x86_64-unknown-linux-gnu"
+                ],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.Equal(0, exitCode);
+            Assert.Equal(string.Empty, stderr.ToString());
+
+            var text = stdout.ToString();
+            Assert.Contains("warning: pkg-config: pkg-config is unavailable", text, StringComparison.Ordinal);
+            Assert.Contains("native/vendor packages that declare pkg-config metadata", text, StringComparison.Ordinal);
+            Assert.Contains("status: warnings", text, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("STARK_PKG_CONFIG", originalPkgConfig);
+            Cleanup(tempDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task DoctorCommandRejectsSourceInput()
+    {
+        var stdout = new StringWriter();
+        var stderr = new StringWriter();
+
+        var exitCode = await CompilerCli.RunAsync(["doctor", "App.stark"], new StringReader(string.Empty), stdout, stderr);
+
+        Assert.Equal(1, exitCode);
+        Assert.Equal(string.Empty, stdout.ToString());
+        Assert.Contains("doctor does not take a source input path.", stderr.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task EmitLlvmIrRejectsContradictoryTargetDataLayout()
+    {
+        var stdout = new StringWriter();
+        var stderr = new StringWriter();
+
+        var exitCode = await CompilerCli.RunAsync(
+            [
+                "--emit-llvm",
+                "--target",
+                "x86_64-unknown-linux-gnu",
+                "--target-data-layout",
+                "e-p:32:32"
+            ],
+            new StringReader(
+                """
+                module Demo
+
+                export fn i32[min max] main()
+                {
+                    return 0;
+                }
+                """),
+            stdout,
+            stderr);
+
+        Assert.Equal(1, exitCode);
+        Assert.Equal(string.Empty, stdout.ToString());
+        Assert.Contains("STK7307", stderr.ToString(), StringComparison.Ordinal);
+        Assert.Contains("requires 64-bit pointers", stderr.ToString(), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -3125,6 +3377,55 @@ public sealed class CompilerCliTests
         }
 
         throw new InvalidOperationException("Unable to locate the Stark repository root.");
+    }
+
+    private static string CreateFakeToolchain(string parentDirectory, string name)
+    {
+        var root = Path.Combine(parentDirectory, name);
+        var bin = Path.Combine(root, "bin");
+        var lib = Path.Combine(root, "lib");
+        Directory.CreateDirectory(bin);
+        Directory.CreateDirectory(lib);
+
+        foreach (var toolName in new[]
+                 {
+                     "clang",
+                     OperatingSystem.IsWindows() ? "lld-link" : "ld.lld",
+                     OperatingSystem.IsWindows() ? "llvm-lib" : "llvm-ar",
+                     "pkg-config",
+                     "xcrun"
+                 })
+        {
+            File.WriteAllText(Path.Combine(bin, ToolFileName(toolName)), string.Empty);
+        }
+
+        File.WriteAllText(Path.Combine(lib, LlvmLibraryFileName()), string.Empty);
+        return root;
+    }
+
+    private static string ToolFileName(string name)
+        => OperatingSystem.IsWindows() && !Path.HasExtension(name) ? $"{name}.exe" : name;
+
+    private static string LlvmLibraryFileName()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return "LLVM-C.lib";
+        }
+
+        return OperatingSystem.IsMacOS() ? "libLLVM.dylib" : "libLLVM.so";
+    }
+
+    private static void Cleanup(DirectoryInfo directory)
+    {
+        try
+        {
+            directory.Delete(recursive: true);
+        }
+        catch
+        {
+            // Best effort cleanup only.
+        }
     }
 
     private static async Task<bool> IsLlvmBitcodeFileAsync(string path)

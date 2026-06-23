@@ -41,11 +41,19 @@ jobs:
             asset_suffix: linux-x64
             archive_kind: targz
             stdlib_library: libSystem.a
+            target_triple: x86_64-unknown-linux-gnu
           - os: windows-latest
             rid: win-x64
             asset_suffix: windows-x64
             archive_kind: zip
             stdlib_library: System.lib
+            target_triple: x86_64-pc-windows-msvc
+          - os: macos-15
+            rid: osx-arm64
+            asset_suffix: macos-arm64
+            archive_kind: targz
+            stdlib_library: libSystem.a
+            target_triple: aarch64-apple-darwin
 
     steps:
       - name: Checkout
@@ -67,27 +75,13 @@ jobs:
       - name: Restore
         run: dotnet restore Stark.slnx
 
-      - name: Test compiler unit suite
-        run: dotnet test tests/compiler.Tests/compiler.Tests.csproj --no-restore --verbosity normal /p:UseSharedCompilation=false
-
-      - name: Test compiler pipeline suite
-        run: dotnet test tests/compiler.PipelineTests/compiler.PipelineTests.csproj --no-restore --verbosity normal /p:UseSharedCompilation=false
-
-      - name: Test standard library suite
-        run: dotnet test tests/compiler.StandardLibraryTests/compiler.StandardLibraryTests.csproj --no-restore --verbosity normal /p:UseSharedCompilation=false
-
-      - name: Test integration suite
-        run: dotnet test tests/compiler.IntegrationTests/compiler.IntegrationTests.csproj --no-restore --verbosity normal /p:UseSharedCompilation=false
-
-      - name: Test feature suite
-        run: dotnet test tests/compiler.FeatureTests/compiler.FeatureTests.csproj --no-restore --verbosity normal /p:UseSharedCompilation=false
-
       - name: Publish compiler
         run: >
           dotnet publish src/compiler.csproj
           -c Release
           -r ${{ matrix.rid }}
-          --self-contained false
+          --self-contained true
+          -p:PublishSingleFile=false
           -p:WriteCompilerLauncherToRepoRoot=false
           -o artifacts/publish/${{ matrix.asset_suffix }}
 
@@ -96,11 +90,15 @@ jobs:
           dotnet run --project src --
           stdlib/src/System.stark
           --emit-lib
+          --target ${{ matrix.target_triple }}
           -o artifacts/stdlib/${{ matrix.asset_suffix }}/${{ matrix.stdlib_library }}
 
-      - name: Run release smoke tests
-        working-directory: examples
-        run: dotnet run --project ../src -- test standard-library-tests --release
+      - name: Acquire LLVM toolchain
+        shell: pwsh
+        run: >
+          ./scripts/acquire-llvm-toolchain.ps1
+          -AssetSuffix ${{ matrix.asset_suffix }}
+          -OutputDir artifacts/toolchain/${{ matrix.asset_suffix }}
 
       - name: Package release archive
         id: package
@@ -113,8 +111,20 @@ jobs:
           -AssetSuffix ${{ matrix.asset_suffix }}
           -PublishDir artifacts/publish/${{ matrix.asset_suffix }}
           -StdlibPackageDir artifacts/stdlib/${{ matrix.asset_suffix }}
+          -VendorRoot vendor
+          -ToolchainDir artifacts/toolchain/${{ matrix.asset_suffix }}
+          -RuntimeIdentifier ${{ matrix.rid }}
+          -TargetTriple ${{ matrix.target_triple }}
+          -CommitSha $env:GITHUB_SHA
           -OutputDir artifacts/release
           -ArchiveKind ${{ matrix.archive_kind }}
+
+      - name: Smoke packaged release archive
+        shell: pwsh
+        run: >
+          ./scripts/smoke-release-archive.ps1
+          -ArchivePath "${{ steps.package.outputs.archive_path }}"
+          -TargetTriple "${{ matrix.target_triple }}"
 
       - name: Upload release archive artifact
         uses: actions/upload-artifact@v4
@@ -174,14 +184,23 @@ jobs:
           - os: ubuntu-latest
             asset_suffix: linux-x64
             archive_pattern: "*.tar.gz"
+            target_triple: x86_64-unknown-linux-gnu
           - os: windows-latest
             asset_suffix: windows-x64
             archive_pattern: "*.zip"
+            target_triple: x86_64-pc-windows-msvc
+          - os: macos-15
+            asset_suffix: macos-arm64
+            archive_pattern: "*.tar.gz"
+            target_triple: aarch64-apple-darwin
     env:
       GH_TOKEN: ${{ github.token }}
       RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Download release archive from GitHub
         shell: pwsh
         run: |
@@ -191,7 +210,7 @@ jobs:
             --pattern "stark-$env:RELEASE_VERSION-${{ matrix.asset_suffix }}${{ matrix.archive_pattern }}" `
             --dir smoke
 
-      - name: Unpack release archive
+      - name: Smoke downloaded release archive
         shell: pwsh
         run: |
           $archive = Get-ChildItem -LiteralPath smoke -File |
@@ -201,38 +220,6 @@ jobs:
             throw "Release archive was not downloaded."
           }
 
-          if ($archive.Name.EndsWith(".zip", [StringComparison]::OrdinalIgnoreCase)) {
-            Expand-Archive -LiteralPath $archive.FullName -DestinationPath smoke -Force
-          } else {
-            tar -xzf $archive.FullName -C smoke
-          }
-
-      - name: Compile smoke program from unpacked release
-        shell: pwsh
-        run: |
-          $packageRoot = Get-ChildItem -LiteralPath smoke -Directory |
-            Where-Object { $_.Name -like "stark-$env:RELEASE_VERSION-${{ matrix.asset_suffix }}" } |
-            Select-Object -First 1
-          if (-not $packageRoot) {
-            throw "Unpacked release root was not found."
-          }
-
-          $compiler = Join-Path $packageRoot.FullName "compiler/compiler"
-          if (Test-Path "$compiler.exe") {
-            $compiler = "$compiler.exe"
-          } elseif (-not $IsWindows) {
-            chmod +x $compiler
-          }
-
-          $sourcePath = Join-Path (Resolve-Path smoke).Path "Smoke.stark"
-          @"
-          import System.Console
-          module ReleaseSmoke
-
-          export unsafe ffi fn i32[min max] main() {
-              System.Console.WriteLine("release smoke");
-              return 0;
-          }
-          "@ | Set-Content -LiteralPath $sourcePath -Encoding utf8
-
-          & $compiler $sourcePath --check -I (Join-Path $packageRoot.FullName "stdlib/dist")
+          ./scripts/smoke-release-archive.ps1 `
+            -ArchivePath $archive.FullName `
+            -TargetTriple "${{ matrix.target_triple }}"

@@ -20,6 +20,8 @@ internal fn bool SystemCSourceSurfaceCompilesImpl()
             return;
         }
 
+        unsafe ffi(c) fn void FillForeignMessage(rawmutptr<System.C.ForeignOwnedCStrOut> message);
+
         fn bool OwnedRoundTripWorks()
         {
             stack System.C.CStringResult<System.C.OwnedCStr> created = System.C.FromAscii("hello");
@@ -180,6 +182,63 @@ internal fn bool SystemCSourceSurfaceCompilesImpl()
             }
         }
 
+        fn bool ForeignOwnedOutCopyAndDisposeWorks()
+        {
+            stack mut System.C.c_char[6] storage =
+            {
+                104, 101, 108, 108, 111, 0
+            };
+
+            unsafe
+            {
+                ForeignReleased = false;
+
+                stack mut System.C.ForeignOwnedCStrOut message = new();
+                if (message.HasValue())
+                {
+                    return false;
+                }
+
+                stack rawmutptr<System.C.ForeignOwnedCStrOut> outPointer = message.OutPointer();
+                if (outPointer == null)
+                {
+                    return false;
+                }
+
+                message.SetRawUnchecked(&storage[0]);
+                if (!message.HasValue())
+                {
+                    return false;
+                }
+
+                stack System.C.CStringResult<System.Text.OwnedAscii> copied =
+                    System.C.CopyForeignOwnedOutAsciiAndDispose(message, ReleaseForeign, 6);
+                if (message.HasValue() || !ForeignReleased)
+                {
+                    return false;
+                }
+
+                switch (copied)
+                {
+                    case System.C.CStringResult<System.Text.OwnedAscii>.Err(var copyError):
+                        return false;
+                    case System.C.CStringResult<System.Text.OwnedAscii>.Ok(var asciiValue):
+                        stack mut System.Text.OwnedAscii asciiText = asciiValue;
+                        stack i8[min max][] bytes = asciiText.AsSlice();
+                        if (asciiText.Length() != 5 || bytes[0] != 104 || bytes[4] != 111)
+                        {
+                            return false;
+                        }
+                }
+
+                ForeignReleased = false;
+                stack mut System.C.ForeignOwnedCStrOut disposeOnly = new();
+                disposeOnly.SetRawUnchecked(&storage[0]);
+                System.C.DisposeForeignOwnedOut(disposeOnly, ReleaseForeign);
+                return !disposeOnly.HasValue() && ForeignReleased;
+            }
+        }
+
         fn bool BoundedRawScanReportsMissingTerminator()
         {
             stack mut System.C.c_char[3] storage =
@@ -237,6 +296,11 @@ internal fn bool SystemCSourceSurfaceCompilesImpl()
             if (!ForeignOwnedCopyAndDisposeWorks())
             {
                 return 4;
+            }
+
+            if (!ForeignOwnedOutCopyAndDisposeWorks())
+            {
+                return 5;
             }
 
             return 0;
@@ -278,6 +342,8 @@ internal fn bool SystemCStringHelpersWorkAtRuntimeImpl()
             return;
         }
 
+        unsafe ffi(c) fn void FillForeignMessage(rawmutptr<System.C.ForeignOwnedCStrOut> message);
+
         fn bool OwnedRoundTripWorks()
         {
             stack System.C.CStringResult<System.C.OwnedCStr> created = System.C.FromAscii("hello");
@@ -438,6 +504,63 @@ internal fn bool SystemCStringHelpersWorkAtRuntimeImpl()
             }
         }
 
+        fn bool ForeignOwnedOutCopyAndDisposeWorks()
+        {
+            stack mut System.C.c_char[6] storage =
+            {
+                104, 101, 108, 108, 111, 0
+            };
+
+            unsafe
+            {
+                ForeignReleased = false;
+
+                stack mut System.C.ForeignOwnedCStrOut message = new();
+                if (message.HasValue())
+                {
+                    return false;
+                }
+
+                stack rawmutptr<System.C.ForeignOwnedCStrOut> outPointer = message.OutPointer();
+                if (outPointer == null)
+                {
+                    return false;
+                }
+
+                message.SetRawUnchecked(&storage[0]);
+                if (!message.HasValue())
+                {
+                    return false;
+                }
+
+                stack System.C.CStringResult<System.Text.OwnedAscii> copied =
+                    System.C.CopyForeignOwnedOutAsciiAndDispose(message, ReleaseForeign, 6);
+                if (message.HasValue() || !ForeignReleased)
+                {
+                    return false;
+                }
+
+                switch (copied)
+                {
+                    case System.C.CStringResult<System.Text.OwnedAscii>.Err(var copyError):
+                        return false;
+                    case System.C.CStringResult<System.Text.OwnedAscii>.Ok(var asciiValue):
+                        stack mut System.Text.OwnedAscii asciiText = asciiValue;
+                        stack i8[min max][] bytes = asciiText.AsSlice();
+                        if (asciiText.Length() != 5 || bytes[0] != 104 || bytes[4] != 111)
+                        {
+                            return false;
+                        }
+                }
+
+                ForeignReleased = false;
+                stack mut System.C.ForeignOwnedCStrOut disposeOnly = new();
+                disposeOnly.SetRawUnchecked(&storage[0]);
+                System.C.DisposeForeignOwnedOut(disposeOnly, ReleaseForeign);
+                return !disposeOnly.HasValue() && ForeignReleased;
+            }
+        }
+
         fn bool BoundedRawScanReportsMissingTerminator()
         {
             stack mut System.C.c_char[3] storage =
@@ -495,6 +618,11 @@ internal fn bool SystemCStringHelpersWorkAtRuntimeImpl()
             if (!ForeignOwnedCopyAndDisposeWorks())
             {
                 return 4;
+            }
+
+            if (!ForeignOwnedOutCopyAndDisposeWorks())
+            {
+                return 5;
             }
 
             return 0;

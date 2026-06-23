@@ -161,6 +161,420 @@ fn bool ValueFactsStoreInIrTableByHandle()
 }
 
 [Fact]
+fn bool ValueFactTransferRecordsGeneratedFactsAtMirHandle()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack MirValueId value = MirConstInt(instrs, 42);
+    stack mut IrTable<ValueFacts> facts = new();
+    stack mut ValueFacts generated = new();
+    generated.SetAlignment(8);
+    generated.SetIntegerRange(42, 43);
+
+    if (!RecordGeneratedValueFactsForMirValue(facts, value, generated))
+    {
+        return false;
+    }
+
+    stack ValueFacts read = ValueFactsForMirValue(facts, value);
+    return facts.Count() == 1
+        && read.HasAlignment()
+        && read.AlignmentBytes() == 8
+        && read.HasIntegerRange()
+        && read.IntegerRangeLower() == 42
+        && read.IntegerRangeUpperExclusive() == 43;
+}
+
+[Fact]
+fn bool ValueFactTransferFillsSkippedHandlesWithEmptyFacts()
+{
+    stack mut IrTable<ValueFacts> facts = new();
+    stack mut ValueFacts generated = new();
+    generated.MarkNoAlias();
+
+    if (!RecordGeneratedValueFactsForMirValue(facts, MirValueIdOf(3), generated))
+    {
+        return false;
+    }
+
+    stack ValueFacts first = ValueFactsForMirValue(facts, MirValueIdOf(1));
+    stack ValueFacts second = ValueFactsForMirValue(facts, MirValueIdOf(2));
+    stack ValueFacts third = ValueFactsForMirValue(facts, MirValueIdOf(3));
+    return facts.Count() == 3
+        && !first.HasNoAlias()
+        && !second.HasNoAlias()
+        && third.HasNoAlias();
+}
+
+[Fact]
+fn bool ValueFactTransferPreservesFactsForEquivalentValues()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack MirValueId source = MirConstInt(instrs, 1);
+    stack MirValueId zext = MirZExt(instrs, source);
+    stack mut IrTable<ValueFacts> facts = new();
+    stack mut ValueFacts sourceFacts = new();
+    sourceFacts.SetIntegerRange(0, 2);
+    sourceFacts.MarkVolatile();
+
+    if (!RecordGeneratedValueFactsForMirValue(facts, source, sourceFacts))
+    {
+        return false;
+    }
+
+    if (!PreserveValueFactsForMirValue(facts, zext, source))
+    {
+        return false;
+    }
+
+    stack ValueFacts read = ValueFactsForMirValue(facts, zext);
+    return facts.Count() == 2
+        && read.HasIntegerRange()
+        && read.IntegerRangeLower() == 0
+        && read.IntegerRangeUpperExclusive() == 2
+        && read.Volatile();
+}
+
+[Fact]
+fn bool ValueFactTransferImportsParameterGlobalAndReturnFacts()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack MirValueId param = MirParam(instrs, 0);
+    stack MirValueId call = MirCall(instrs, MirFuncIdOf(2));
+    stack MirValueId load = MirLoadGlobal(instrs, 1);
+
+    stack mut IrTable<ValueFacts> paramFacts = new();
+    stack mut ValueFacts p0Facts = new();
+    p0Facts.SetIntegerRange(1, 6);
+    stack u32[0 max] addedParam = paramFacts.Add(p0Facts);
+
+    stack mut IrTable<ValueFacts> functionReturnFacts = new();
+    stack mut ValueFacts emptyReturn = new();
+    stack u32[0 max] addedFirstReturn = functionReturnFacts.Add(emptyReturn);
+    stack mut ValueFacts f2Facts = new();
+    f2Facts.SetIntegerRange(10, 20);
+    stack u32[0 max] addedSecondReturn = functionReturnFacts.Add(f2Facts);
+
+    stack mut IrTable<ValueFacts> globalFacts = new();
+    stack mut ValueFacts g1Facts = new();
+    g1Facts.SetIntegerRange(-3, 4);
+    stack u32[0 max] addedGlobal = globalFacts.Add(g1Facts);
+
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    if (!ImportParameterValueFactsForMirValue(valueFacts, param, paramFacts, 0))
+    {
+        return false;
+    }
+
+    if (!ImportFunctionReturnValueFactsForMirValue(valueFacts, call, functionReturnFacts, MirFuncIdOf(2)))
+    {
+        return false;
+    }
+
+    if (!ImportGlobalValueFactsForMirValue(valueFacts, load, globalFacts, 1))
+    {
+        return false;
+    }
+
+    stack ValueFacts paramRead = ValueFactsForMirValue(valueFacts, param);
+    stack ValueFacts callRead = ValueFactsForMirValue(valueFacts, call);
+    stack ValueFacts loadRead = ValueFactsForMirValue(valueFacts, load);
+    return addedParam == 1
+        && addedFirstReturn == 1
+        && addedSecondReturn == 2
+        && addedGlobal == 1
+        && valueFacts.Count() == 3
+        && paramRead.IntegerRangeLower() == 1
+        && paramRead.IntegerRangeUpperExclusive() == 6
+        && callRead.IntegerRangeLower() == 10
+        && callRead.IntegerRangeUpperExclusive() == 20
+        && loadRead.IntegerRangeLower() == -3
+        && loadRead.IntegerRangeUpperExclusive() == 4;
+}
+
+[Fact]
+fn bool ValueFactTransferPolicyHelpersRecordEmptyRows()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack MirValueId a = MirConstInt(instrs, 1);
+    stack MirValueId b = MirConstInt(instrs, 2);
+    stack MirValueId sum = MirAdd(instrs, a, b);
+    stack MirValueId ret = MirReturn(instrs, sum);
+    stack mut IrTable<ValueFacts> facts = new();
+
+    if (!RecordEmptyValueFactsForMirValue(facts, a))
+    {
+        return false;
+    }
+
+    if (!RecomputeValueFactsForMirValue(facts, b))
+    {
+        return false;
+    }
+
+    if (!ConsumeValueFactsForMirValue(facts, sum))
+    {
+        return false;
+    }
+
+    if (!DropDebugOnlyValueFactsForMirValue(facts, ret))
+    {
+        return false;
+    }
+
+    return facts.Count() == 4
+        && !ValueFactsForMirValue(facts, a).HasIntegerRange()
+        && !ValueFactsForMirValue(facts, b).HasIntegerRange()
+        && !ValueFactsForMirValue(facts, sum).HasIntegerRange()
+        && !ValueFactsForMirValue(facts, ret).HasIntegerRange();
+}
+
+[Fact]
+fn bool ValueFactTransferRejectsInvalidAndDuplicateHandles()
+{
+    stack mut IrTable<ValueFacts> facts = new();
+    stack mut ValueFacts first = new();
+    first.SetAlignment(4);
+    stack mut ValueFacts second = new();
+    second.SetAlignment(8);
+
+    stack bool firstRecord = RecordGeneratedValueFactsForMirValue(facts, MirValueIdOf(1), first);
+    stack bool duplicateRecord = RecordGeneratedValueFactsForMirValue(facts, MirValueIdOf(1), second);
+    stack bool invalidRecord = RecordGeneratedValueFactsForMirValue(facts, MirValueIdOf(0), second);
+    stack ValueFacts read = ValueFactsForMirValue(facts, MirValueIdOf(1));
+    return firstRecord
+        && !duplicateRecord
+        && !invalidRecord
+        && facts.Count() == 1
+        && read.AlignmentBytes() == 4;
+}
+
+[Fact]
+fn bool ValueFactTransferTranslateUsesProvidedFacts()
+{
+    stack mut IrTable<ValueFacts> facts = new();
+    stack mut ValueFacts translated = new();
+    translated.SetCallingAbi(AbiKind.CAbi);
+    translated.MarkNoAlias();
+
+    if (!TranslateValueFactsForMirValue(facts, MirValueIdOf(1), translated))
+    {
+        return false;
+    }
+
+    stack ValueFacts read = ValueFactsForMirValue(facts, MirValueIdOf(1));
+    return read.HasCallingAbi()
+        && read.CallingAbi() == AbiKind.CAbi
+        && read.HasNoAlias();
+}
+
+[Fact]
+fn bool IrFactCategoryIndexCoversConcreteDescriptors()
+{
+    stack u32[0 max] count = IrConcreteFactCategoryCount();
+    if (count != 16 || IrFactCategoryAt(count) != IrFactCategory.Unknown)
+    {
+        return false;
+    }
+
+    for willexit (stack mut u32[0 max] index = 0; index < count; index += 1)
+    {
+        stack IrFactCategory category = IrFactCategoryAt(index);
+        stack IrFactCategoryDescriptor descriptor = DescribeIrFactCategory(category);
+        if (!IrFactCategoryIsConcrete(category)
+            || descriptor.Category() != category
+            || descriptor.AttachPoint() == IrFactAttachPoint.Unknown
+            || descriptor.PhaseOwner() == IrFactPhaseOwner.Unknown
+            || descriptor.Durability() == IrFactDurability.Unknown
+            || descriptor.Producer() == IrFactProducer.Unknown
+            || descriptor.Consumer() == IrFactConsumer.Unknown
+            || descriptor.ValidationRule() == IrFactValidationRule.Unknown
+            || descriptor.LoweringPolicy() == IrFactLoweringPolicy.Unknown)
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+[Fact]
+fn bool IrFactValueDescriptorsMatchCurrentValueFacts()
+{
+    stack IrFactCategoryDescriptor align = DescribeIrFactCategory(IrFactCategory.ValueAlignment);
+    stack IrFactCategoryDescriptor range = DescribeIrFactCategory(IrFactCategory.ValueIntegerRange);
+    stack IrFactCategoryDescriptor volatileFact = DescribeIrFactCategory(IrFactCategory.ValueVolatile);
+    return align.AttachPoint() == IrFactAttachPoint.Value
+        && align.PhaseOwner() == IrFactPhaseOwner.Mir
+        && align.LoweringPolicy() == IrFactLoweringPolicy.Preserve
+        && range.AttachPoint() == IrFactAttachPoint.Value
+        && range.Durability() == IrFactDurability.Recomputable
+        && range.ValidationRule() == IrFactValidationRule.Recompute
+        && volatileFact.Consumer() == IrFactConsumer.LlvmEmission
+        && volatileFact.LoweringPolicy() == IrFactLoweringPolicy.ForbidDrop;
+}
+
+[Fact]
+fn bool IrFactDurableDescriptorsRequirePackageSerialization()
+{
+    stack mut u32[0 max] durable = 0;
+    stack u32[0 max] count = IrConcreteFactCategoryCount();
+    for willexit (stack mut u32[0 max] index = 0; index < count; index += 1)
+    {
+        if (IrFactCategoryRequiresPackageSerialization(IrFactCategoryAt(index)))
+        {
+            durable = (u32[0 max])(durable + 1);
+        }
+    }
+
+    return durable == 8
+        && IrFactCategoryRequiresPackageSerialization(IrFactCategory.CallableAbi)
+        && IrFactCategoryRequiresPackageSerialization(IrFactCategory.PackageCompatibility)
+        && !IrFactCategoryRequiresPackageSerialization(IrFactCategory.ValueIntegerRange)
+        && !IrFactCategoryRequiresPackageSerialization(IrFactCategory.DiagnosticSourceLocation);
+}
+
+[Fact]
+fn bool IrFactAliasAndDropDescriptorsForbidSilentLoss()
+{
+    stack IrFactCategoryDescriptor noAlias = DescribeIrFactCategory(IrFactCategory.ValueNoAlias);
+    stack IrFactCategoryDescriptor proof = DescribeIrFactCategory(IrFactCategory.AliasProofCarrier);
+    stack IrFactCategoryDescriptor dropFact = DescribeIrFactCategory(IrFactCategory.OwnershipDrop);
+    return noAlias.ValidationRule() == IrFactValidationRule.AliasProofRoot
+        && noAlias.LoweringPolicy() == IrFactLoweringPolicy.ForbidDrop
+        && proof.AttachPoint() == IrFactAttachPoint.AliasProof
+        && proof.LoweringPolicy() == IrFactLoweringPolicy.Consume
+        && dropFact.Consumer() == IrFactConsumer.DropLowering
+        && dropFact.ValidationRule() == IrFactValidationRule.ForbidDrop
+        && dropFact.LoweringPolicy() == IrFactLoweringPolicy.ForbidDrop;
+}
+
+[Fact]
+fn bool IrFactValidationRejectsStaleTypedHandles()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack MirValueId value = MirConstInt(instrs, 7);
+    stack mut IrTable<MirBlock> blocks = new();
+    stack MirBlockId block = MirReturnBlock(blocks, value);
+    stack mut IrTable<TypeId> types = new();
+    stack u32[0 max] addedType = types.Add(TypeIdOf(1));
+
+    return ValidateMirValueHandle(instrs, value) == IrFactValidationStatus.Ok
+        && ValidateMirValueHandle(instrs, MirValueIdOf(0)) == IrFactValidationStatus.StaleHandle
+        && ValidateMirValueHandle(instrs, MirValueIdOf(2)) == IrFactValidationStatus.StaleHandle
+        && ValidateMirBlockHandle(blocks, block) == IrFactValidationStatus.Ok
+        && ValidateMirBlockHandle(blocks, MirBlockIdOf(2)) == IrFactValidationStatus.StaleHandle
+        && addedType == 1
+        && ValidateTypeHandle(types, TypeIdOf(1)) == IrFactValidationStatus.Ok
+        && ValidateTypeHandle(types, TypeIdOf(2)) == IrFactValidationStatus.StaleHandle;
+}
+
+[Fact]
+fn bool IrFactValidationClassifiesMissingFactFamilies()
+{
+    return MissingFactStatusForCategory(IrFactCategory.Unknown) == IrFactValidationStatus.UnknownCategory
+        && MissingFactStatusForCategory(IrFactCategory.ValueVolatile) == IrFactValidationStatus.DroppedForbidDropFact
+        && MissingFactStatusForCategory(IrFactCategory.OwnershipDrop) == IrFactValidationStatus.DroppedForbidDropFact
+        && MissingFactStatusForCategory(IrFactCategory.CallableAbi) == IrFactValidationStatus.MissingAbiFact
+        && MissingFactStatusForCategory(IrFactCategory.CAbiAggregateCarrier) == IrFactValidationStatus.MissingAbiFact
+        && MissingFactStatusForCategory(IrFactCategory.ValueNoAlias) == IrFactValidationStatus.MissingAliasFact
+        && MissingFactStatusForCategory(IrFactCategory.AliasProofCarrier) == IrFactValidationStatus.MissingAliasFact
+        && MissingFactStatusForCategory(IrFactCategory.TypeLayout) == IrFactValidationStatus.MissingLayoutFact
+        && MissingFactStatusForCategory(IrFactCategory.FieldLayout) == IrFactValidationStatus.MissingLayoutFact
+        && MissingFactStatusForCategory(IrFactCategory.PackageCompatibility) == IrFactValidationStatus.MissingDurablePackageFact;
+}
+
+[Fact]
+fn bool IrFactValidationChecksMirValueFactsAtBoundary()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack MirValueId source = MirConstInt(instrs, 1);
+    stack MirValueId missing = MirConstInt(instrs, 2);
+    stack mut IrTable<ValueFacts> valueFacts = new();
+    stack mut ValueFacts facts = new();
+    facts.SetAlignment(8);
+    facts.MarkNoAlias();
+    facts.MarkVolatile();
+    facts.SetIntegerRange(1, 2);
+
+    if (!RecordGeneratedValueFactsForMirValue(valueFacts, source, facts))
+    {
+        return false;
+    }
+
+    return ValidateMirValueFactAtBoundary(instrs, valueFacts, source, IrFactCategory.ValueAlignment) == IrFactValidationStatus.Ok
+        && ValidateMirValueFactAtBoundary(instrs, valueFacts, source, IrFactCategory.ValueNoAlias) == IrFactValidationStatus.Ok
+        && ValidateMirValueFactAtBoundary(instrs, valueFacts, source, IrFactCategory.ValueVolatile) == IrFactValidationStatus.Ok
+        && ValidateMirValueFactAtBoundary(instrs, valueFacts, source, IrFactCategory.ValueIntegerRange) == IrFactValidationStatus.Ok
+        && ValidateMirValueFactAtBoundary(instrs, valueFacts, missing, IrFactCategory.ValueNoAlias) == IrFactValidationStatus.MissingAliasFact
+        && ValidateMirValueFactAtBoundary(instrs, valueFacts, MirValueIdOf(3), IrFactCategory.ValueNoAlias) == IrFactValidationStatus.StaleHandle;
+}
+
+[Fact]
+fn bool IrFactValidationChecksCallableAbiFacts()
+{
+    stack mut IrTable<MirFunction> functions = new();
+    stack MirFuncId firstFunction = MirDefineFunction(functions, MirBlockIdOf(1), MirBlockIdOf(1), 1, MirValueIdOf(1), 1);
+    stack MirFuncId secondFunction = MirDefineFunction(functions, MirBlockIdOf(2), MirBlockIdOf(2), 1, MirValueIdOf(2), 1);
+
+    stack mut IrTable<ValueFacts> callableFacts = new();
+    stack mut ValueFacts empty = new();
+    stack u32[0 max] addedEmpty = callableFacts.Add(empty);
+    stack mut ValueFacts abi = new();
+    abi.SetCallingAbi(AbiKind.CAbi);
+    stack u32[0 max] addedAbi = callableFacts.Add(abi);
+
+    return firstFunction.Index() == 1
+        && secondFunction.Index() == 2
+        && addedEmpty == 1
+        && addedAbi == 2
+        && ValidateCallableAbiFactAtBoundary(functions, callableFacts, firstFunction) == IrFactValidationStatus.MissingAbiFact
+        && ValidateCallableAbiFactAtBoundary(functions, callableFacts, secondFunction) == IrFactValidationStatus.Ok
+        && ValidateCallableAbiFactAtBoundary(functions, callableFacts, MirFuncIdOf(3)) == IrFactValidationStatus.StaleHandle;
+}
+
+[Fact]
+fn bool IrFactValidationChecksCAbiCarrierAndLayoutFacts()
+{
+    stack mut IrTable<TypeId> types = new();
+    stack u32[0 max] addedType1 = types.Add(TypeIdOf(1));
+    stack u32[0 max] addedType2 = types.Add(TypeIdOf(2));
+
+    stack mut IrTable<CAbiAggregateCarrierFacts> carrierFacts = new();
+    stack mut CAbiAggregateCarrierFacts emptyCarrier = new();
+    stack u32[0 max] addedEmptyCarrier = carrierFacts.Add(emptyCarrier);
+    stack mut CAbiAggregateCarrierFacts directCarrier = new();
+    directCarrier.SetDirect(16, 8, 1, AbiCarrierKind.I64, AbiCarrierKind.None, AbiCarrierKind.None, AbiCarrierKind.None);
+    stack u32[0 max] addedDirectCarrier = carrierFacts.Add(directCarrier);
+
+    stack mut IrTable<u32[0 max]> layoutFacts = new();
+    stack u32[0 max] addedLayout1 = layoutFacts.Add(16);
+    stack u32[0 max] addedLayout2 = layoutFacts.Add(32);
+
+    return addedType1 == 1
+        && addedType2 == 2
+        && addedEmptyCarrier == 1
+        && addedDirectCarrier == 2
+        && addedLayout1 == 1
+        && addedLayout2 == 2
+        && ValidateCAbiAggregateCarrierFactAtBoundary(types, carrierFacts, TypeIdOf(1)) == IrFactValidationStatus.MissingAbiFact
+        && ValidateCAbiAggregateCarrierFactAtBoundary(types, carrierFacts, TypeIdOf(2)) == IrFactValidationStatus.Ok
+        && ValidateCAbiAggregateCarrierFactAtBoundary(types, carrierFacts, TypeIdOf(3)) == IrFactValidationStatus.StaleHandle
+        && ValidateLayoutFactAtBoundary(types, layoutFacts, TypeIdOf(1), IrFactCategory.TypeLayout) == IrFactValidationStatus.Ok
+        && ValidateLayoutFactAtBoundary(types, layoutFacts, TypeIdOf(2), IrFactCategory.StructLayout) == IrFactValidationStatus.Ok
+        && ValidateLayoutFactAtBoundary(types, layoutFacts, TypeIdOf(3), IrFactCategory.TypeLayout) == IrFactValidationStatus.StaleHandle;
+}
+
+[Fact]
+fn bool IrFactValidationChecksDurablePackageFacts()
+{
+    return ValidateDurablePackageFactAtBoundary(IrFactCategory.FunctionEffect, true) == IrFactValidationStatus.Ok
+        && ValidateDurablePackageFactAtBoundary(IrFactCategory.FunctionEffect, false) == IrFactValidationStatus.MissingDurablePackageFact
+        && ValidateDurablePackageFactAtBoundary(IrFactCategory.PackageCompatibility, false) == IrFactValidationStatus.MissingDurablePackageFact
+        && ValidateDurablePackageFactAtBoundary(IrFactCategory.ValueNoAlias, false) == IrFactValidationStatus.Ok
+        && IrFactValidationStatusName(IrFactValidationStatus.MissingDurablePackageFact) == "missing-durable-package-fact";
+}
+
+[Fact]
 fn bool MirEmitsSequentialValueIds()
 {
     // Each emitted instruction gets the next 1-based value id over the instruction
@@ -1088,6 +1502,19 @@ fn bool ByteBufferRoundTripsU32()
 }
 
 [Fact]
+fn bool ByteBufferRoundTripsU32Max()
+{
+    stack mut IrTable<u8[0 max]> buf = new();
+    WriteU32(buf, 4294967295);
+    return buf.Count() == 4
+        && buf.Get(1) == 255
+        && buf.Get(2) == 255
+        && buf.Get(3) == 255
+        && buf.Get(4) == 255
+        && ReadU32(buf, 1) == 4294967295;
+}
+
+[Fact]
 fn bool ByteBufferRoundTripsI64()
 {
     // An i64 round-trips through 8 little-endian bytes, including a negative value.
@@ -1604,6 +2031,415 @@ fn bool BinaryRoundTripsPackageImage()
 }
 
 [Fact]
+fn bool SectionedPackageImageRoundTripsAndInspects()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack mut IrTable<MirGlobal> globals = new();
+    stack MirValueId a = MirConstInt(instrs, 13);
+    stack MirValueId b = MirConstInt(instrs, 21);
+    stack MirValueId s = MirAdd(instrs, a, b);
+    stack MirBlockId blk = MirReturnBlock(blocks, s);
+    stack MirFuncId f = MirDefineFunction(funcs, blk, blk, 1, a, 3);
+    stack u32[0 max] g = MirDefineGlobal(globals, 34);
+
+    stack mut IrTable<u8[0 max]> image = new();
+    SerializeSectionedPackageImage(instrs, blocks, funcs, globals, image);
+
+    stack mut IrTable<MirInstruction> bi = new();
+    stack mut IrTable<MirBlock> bb = new();
+    stack mut IrTable<MirFunction> bf = new();
+    stack mut IrTable<MirGlobal> bg = new();
+    if (!DeserializePackageImage(image, bi, bb, bf, bg))
+    {
+        return false;
+    }
+
+    stack mut OwnedAscii text = new();
+    switch (InspectPackageImage(image, text))
+    {
+        case MemoryStatus.Err(var textError):
+            return false;
+        case MemoryStatus.Ok:
+    }
+
+    stack mut OwnedAscii json = new();
+    switch (InspectPackageImageJson(image, json))
+    {
+        case MemoryStatus.Err(var jsonError):
+            return false;
+        case MemoryStatus.Ok:
+    }
+
+    return PackageImageIsValid(image)
+        && ReadU32(image, 1) == 1380013139
+        && ReadU32(image, 5) == 1196118091
+        && ReadU32(image, 9) == 2
+        && ReadU32(image, 13) == 4
+        && bi.Count() == 3
+        && bb.Count() == 1
+        && bf.Count() == 1
+        && bg.Count() == 1
+        && MirOpcodeOf(bi, MirValueIdOf(3)) == MirOp.Add
+        && MirGlobalInitialValue(bg, 1) == 34
+        && LlvmTextEquals(text, "package: STARKPKG, 3 instructions, 1 blocks, 1 functions, 1 globals\n")
+        && LlvmTextEquals(json, "{\"format\":\"STARKPKG\",\"payload\":\"MIR1\",\"instructions\":3,\"blocks\":1,\"functions\":1,\"globals\":1}\n");
+}
+
+internal fn void AppendImageByte(mut borrow IrTable<u8[0 max]> image, u8[0 max] value)
+{
+    stack u32[0 max] written = image.Add(value);
+}
+
+internal fn void BuildMinimalLogicalPackageImage(mut borrow IrTable<u8[0 max]> image, u32[0 max] rootStringIndex)
+{
+    stack u64[0 max] stringOffset = 120;
+    stack u64[0 max] stringLength = 25;
+    stack u64[0 max] factsOffset = 145;
+    stack u64[0 max] factsLength = 44;
+    stack u64[0 max] manifestOffset = 189;
+
+    WriteStarkPackageImageMagic(image);
+    WriteU32(image, SectionedPackageImageVersion());
+    WriteU32(image, 3);
+    WriteU64(image, 96);
+    WritePackageSectionDirectoryEntry(image, PackageSectionStringTable(), SectionFlagsRequired(), stringOffset, stringLength, SectionEncodingRaw());
+    WritePackageSectionDirectoryEntry(image, PackageSectionPackageFacts(), SectionFlagsRequired(), factsOffset, factsLength, SectionEncodingRaw());
+    WritePackageSectionDirectoryEntry(image, PackageSectionManifest(), SectionFlagsRequired(), manifestOffset, 1, SectionEncodingBrotliUtf8Json());
+
+    WriteU32(image, 2);
+    WriteU32(image, 4);
+    AppendImageByte(image, 68);
+    AppendImageByte(image, 101);
+    AppendImageByte(image, 109);
+    AppendImageByte(image, 111);
+    WriteU32(image, 9);
+    AppendImageByte(image, 108);
+    AppendImageByte(image, 105);
+    AppendImageByte(image, 98);
+    AppendImageByte(image, 68);
+    AppendImageByte(image, 101);
+    AppendImageByte(image, 109);
+    AppendImageByte(image, 111);
+    AppendImageByte(image, 46);
+    AppendImageByte(image, 97);
+
+    WriteU32(image, rootStringIndex);
+    WriteU32(image, 1);
+    WriteU32(image, PackageImageNullStringIndex());
+    WriteU32(image, PackageImageNullStringIndex());
+    WriteU32(image, PackageImageNullStringIndex());
+    WriteU32(image, PackageImageNullStringIndex());
+    WriteU32(image, PackageImageNullStringIndex());
+    WriteU32(image, PackageImageNullStringIndex());
+    WriteU32(image, 0);
+    WriteU32(image, 0);
+    WriteU32(image, 0);
+    AppendImageByte(image, 11);
+}
+
+internal fn void BuildProfileTargetLogicalPackageImage(mut borrow IrTable<u8[0 max]> image)
+{
+    stack u64[0 max] stringOffset = 120;
+    stack u64[0 max] stringLength = 138;
+    stack u64[0 max] factsOffset = 258;
+    stack u64[0 max] factsLength = 84;
+    stack u64[0 max] manifestOffset = 342;
+
+    WriteStarkPackageImageMagic(image);
+    WriteU32(image, SectionedPackageImageVersion());
+    WriteU32(image, 3);
+    WriteU64(image, 96);
+    WritePackageSectionDirectoryEntry(image, PackageSectionStringTable(), SectionFlagsRequired(), stringOffset, stringLength, SectionEncodingRaw());
+    WritePackageSectionDirectoryEntry(image, PackageSectionPackageFacts(), SectionFlagsRequired(), factsOffset, factsLength, SectionEncodingRaw());
+    WritePackageSectionDirectoryEntry(image, PackageSectionManifest(), SectionFlagsRequired(), manifestOffset, 1, SectionEncodingBrotliUtf8Json());
+
+    WriteU32(image, 11);
+    WriteU32(image, 4);
+    AppendImageByte(image, 68);
+    AppendImageByte(image, 101);
+    AppendImageByte(image, 109);
+    AppendImageByte(image, 111);
+    WriteU32(image, 9);
+    AppendImageByte(image, 108);
+    AppendImageByte(image, 105);
+    AppendImageByte(image, 98);
+    AppendImageByte(image, 68);
+    AppendImageByte(image, 101);
+    AppendImageByte(image, 109);
+    AppendImageByte(image, 111);
+    AppendImageByte(image, 46);
+    AppendImageByte(image, 97);
+    WriteU32(image, 7);
+    AppendImageByte(image, 114);
+    AppendImageByte(image, 101);
+    AppendImageByte(image, 108);
+    AppendImageByte(image, 101);
+    AppendImageByte(image, 97);
+    AppendImageByte(image, 115);
+    AppendImageByte(image, 101);
+    WriteU32(image, 26);
+    AppendImageByte(image, 120);
+    AppendImageByte(image, 56);
+    AppendImageByte(image, 54);
+    AppendImageByte(image, 95);
+    AppendImageByte(image, 54);
+    AppendImageByte(image, 52);
+    AppendImageByte(image, 45);
+    AppendImageByte(image, 117);
+    AppendImageByte(image, 110);
+    AppendImageByte(image, 107);
+    AppendImageByte(image, 110);
+    AppendImageByte(image, 111);
+    AppendImageByte(image, 119);
+    AppendImageByte(image, 110);
+    AppendImageByte(image, 45);
+    AppendImageByte(image, 108);
+    AppendImageByte(image, 105);
+    AppendImageByte(image, 110);
+    AppendImageByte(image, 117);
+    AppendImageByte(image, 120);
+    AppendImageByte(image, 45);
+    AppendImageByte(image, 115);
+    AppendImageByte(image, 116);
+    AppendImageByte(image, 97);
+    AppendImageByte(image, 114);
+    AppendImageByte(image, 107);
+    WriteU32(image, 9);
+    AppendImageByte(image, 101);
+    AppendImageByte(image, 45);
+    AppendImageByte(image, 112);
+    AppendImageByte(image, 58);
+    AppendImageByte(image, 54);
+    AppendImageByte(image, 52);
+    AppendImageByte(image, 58);
+    AppendImageByte(image, 54);
+    AppendImageByte(image, 52);
+    WriteU32(image, 7);
+    AppendImageByte(image, 103);
+    AppendImageByte(image, 101);
+    AppendImageByte(image, 110);
+    AppendImageByte(image, 101);
+    AppendImageByte(image, 114);
+    AppendImageByte(image, 105);
+    AppendImageByte(image, 99);
+    WriteU32(image, 6);
+    AppendImageByte(image, 115);
+    AppendImageByte(image, 116);
+    AppendImageByte(image, 97);
+    AppendImageByte(image, 116);
+    AppendImageByte(image, 105);
+    AppendImageByte(image, 99);
+    WriteU32(image, 5);
+    AppendImageByte(image, 115);
+    AppendImageByte(image, 109);
+    AppendImageByte(image, 97);
+    AppendImageByte(image, 108);
+    AppendImageByte(image, 108);
+    WriteU32(image, 5);
+    AppendImageByte(image, 43);
+    AppendImageByte(image, 115);
+    AppendImageByte(image, 115);
+    AppendImageByte(image, 101);
+    AppendImageByte(image, 50);
+    WriteU32(image, 7);
+    AppendImageByte(image, 43);
+    AppendImageByte(image, 112);
+    AppendImageByte(image, 111);
+    AppendImageByte(image, 112);
+    AppendImageByte(image, 99);
+    AppendImageByte(image, 110);
+    AppendImageByte(image, 116);
+    WriteU32(image, 5);
+    AppendImageByte(image, 108);
+    AppendImageByte(image, 105);
+    AppendImageByte(image, 110);
+    AppendImageByte(image, 117);
+    AppendImageByte(image, 120);
+
+    WriteU32(image, 0);
+    WriteU32(image, 1);
+    WriteU32(image, 2);
+    WriteU32(image, 3);
+    WriteU32(image, 4);
+    WriteU32(image, 5);
+    WriteU32(image, 6);
+    WriteU32(image, 7);
+    WriteU32(image, 2);
+    WriteU32(image, 8);
+    WriteU32(image, 9);
+    WriteU32(image, 1);
+    WriteU32(image, 10);
+    WriteU32(image, 0);
+    WriteU32(image, 64);
+    WriteU32(image, 64);
+    WriteU32(image, 64);
+    WriteU32(image, 64);
+    WriteU32(image, 1);
+    WriteU32(image, 8);
+    WriteU32(image, 8);
+    AppendImageByte(image, 11);
+}
+
+internal fn void BuildInvalidUtf8LogicalPackageImage(mut borrow IrTable<u8[0 max]> image)
+{
+    stack u64[0 max] stringOffset = 120;
+    stack u64[0 max] stringLength = 14;
+    stack u64[0 max] factsOffset = 134;
+    stack u64[0 max] factsLength = 44;
+    stack u64[0 max] manifestOffset = 178;
+
+    WriteStarkPackageImageMagic(image);
+    WriteU32(image, SectionedPackageImageVersion());
+    WriteU32(image, 3);
+    WriteU64(image, 96);
+    WritePackageSectionDirectoryEntry(image, PackageSectionStringTable(), SectionFlagsRequired(), stringOffset, stringLength, SectionEncodingRaw());
+    WritePackageSectionDirectoryEntry(image, PackageSectionPackageFacts(), SectionFlagsRequired(), factsOffset, factsLength, SectionEncodingRaw());
+    WritePackageSectionDirectoryEntry(image, PackageSectionManifest(), SectionFlagsRequired(), manifestOffset, 1, SectionEncodingBrotliUtf8Json());
+
+    WriteU32(image, 2);
+    WriteU32(image, 1);
+    AppendImageByte(image, 192);
+    WriteU32(image, 1);
+    AppendImageByte(image, 97);
+
+    WriteU32(image, 0);
+    WriteU32(image, 1);
+    WriteU32(image, PackageImageNullStringIndex());
+    WriteU32(image, PackageImageNullStringIndex());
+    WriteU32(image, PackageImageNullStringIndex());
+    WriteU32(image, PackageImageNullStringIndex());
+    WriteU32(image, PackageImageNullStringIndex());
+    WriteU32(image, PackageImageNullStringIndex());
+    WriteU32(image, 0);
+    WriteU32(image, 0);
+    WriteU32(image, 0);
+    AppendImageByte(image, 11);
+}
+
+[Fact]
+fn bool LogicalPackageImageValidatesHeaderFacts()
+{
+    stack mut IrTable<u8[0 max]> image = new();
+    BuildMinimalLogicalPackageImage(image, 0);
+
+    return ValidatePackageImage(image) == PackageImageValidationStatus.Ok
+        && PackageImageIsValid(image);
+}
+
+[Fact]
+fn bool LogicalPackageImageInspectsTextHeaderFacts()
+{
+    stack mut IrTable<u8[0 max]> image = new();
+    BuildMinimalLogicalPackageImage(image, 0);
+
+    stack mut OwnedAscii text = new();
+    switch (InspectPackageImage(image, text))
+    {
+        case MemoryStatus.Err(var textError):
+            return false;
+        case MemoryStatus.Ok:
+    }
+
+    return LlvmTextEquals(text, "package: STARKPKG, logical image, root Demo, library libDemo.a, 3 sections, 2 strings, 0 target features\n");
+}
+
+[Fact]
+fn bool LogicalPackageImageInspectsJsonHeaderFacts()
+{
+    stack mut IrTable<u8[0 max]> image = new();
+    BuildMinimalLogicalPackageImage(image, 0);
+
+    stack mut OwnedAscii json = new();
+    switch (InspectPackageImageJson(image, json))
+    {
+        case MemoryStatus.Err(var jsonError):
+            return false;
+        case MemoryStatus.Ok:
+    }
+
+    return LlvmTextEquals(json, "{\"format\":\"STARKPKG\",\"payload\":\"logical\",\"rootModule\":\"Demo\",\"libraryFileName\":\"libDemo.a\",\"buildProfile\":null,\"targetTriple\":null,\"targetDataLayout\":null,\"targetCpu\":null,\"relocationModel\":null,\"codeModel\":null,\"targetFeatureNames\":[],\"cDataModel\":null,\"aggregateLayout\":null,\"sections\":3,\"strings\":2,\"targetFeatures\":0,\"hasBuildProfile\":false,\"hasTarget\":false,\"hasCDataModel\":false,\"hasAggregateLayout\":false}\n");
+}
+
+[Fact]
+fn bool LogicalPackageImageInspectsProfileAndTargetHeaderFacts()
+{
+    stack mut IrTable<u8[0 max]> image = new();
+    BuildProfileTargetLogicalPackageImage(image);
+
+    stack mut OwnedAscii text = new();
+    switch (InspectPackageImage(image, text))
+    {
+        case MemoryStatus.Err(var textError):
+            return false;
+        case MemoryStatus.Ok:
+    }
+
+    stack mut OwnedAscii json = new();
+    switch (InspectPackageImageJson(image, json))
+    {
+        case MemoryStatus.Err(var jsonError):
+            return false;
+        case MemoryStatus.Ok:
+    }
+
+    return ValidatePackageImage(image) == PackageImageValidationStatus.Ok
+        && LlvmTextEquals(text, "package: STARKPKG, logical image, root Demo, library libDemo.a, profile release, target x86_64-unknown-linux-stark, data-layout e-p:64:64, cpu generic, relocation static, code-model small, features [+sse2, +popcnt], c-data-model linux char-signed=false pointer=64 long=64 size_t=64 ptrdiff_t=64, aggregate-layout pointer-size=8 pointer-align=8, 3 sections, 11 strings, 2 target features\n")
+        && LlvmTextEquals(json, "{\"format\":\"STARKPKG\",\"payload\":\"logical\",\"rootModule\":\"Demo\",\"libraryFileName\":\"libDemo.a\",\"buildProfile\":\"release\",\"targetTriple\":\"x86_64-unknown-linux-stark\",\"targetDataLayout\":\"e-p:64:64\",\"targetCpu\":\"generic\",\"relocationModel\":\"static\",\"codeModel\":\"small\",\"targetFeatureNames\":[\"+sse2\",\"+popcnt\"],\"cDataModel\":{\"kind\":\"linux\",\"charIsSigned\":false,\"pointerBitWidth\":64,\"longBitWidth\":64,\"sizeTBitWidth\":64,\"ptrDiffTBitWidth\":64},\"aggregateLayout\":{\"pointerSizeBytes\":8,\"pointerAlignmentBytes\":8},\"sections\":3,\"strings\":11,\"targetFeatures\":2,\"hasBuildProfile\":true,\"hasTarget\":true,\"hasCDataModel\":true,\"hasAggregateLayout\":true}\n");
+}
+
+[Fact]
+fn bool LogicalPackageImageDoesNotDeserializeAsMir()
+{
+    stack mut IrTable<u8[0 max]> image = new();
+    BuildMinimalLogicalPackageImage(image, 0);
+
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack mut IrTable<MirGlobal> globals = new();
+    return !DeserializePackageImage(image, instrs, blocks, funcs, globals);
+}
+
+[Fact]
+fn bool LogicalPackageImageRejectsBadPackageFactStringIndex()
+{
+    stack mut IrTable<u8[0 max]> image = new();
+    BuildMinimalLogicalPackageImage(image, 2);
+    return ValidatePackageImage(image) == PackageImageValidationStatus.MalformedSectionDirectory
+        && !PackageImageIsValid(image);
+}
+
+[Fact]
+fn bool LogicalPackageImageRejectsInvalidUtf8StringTable()
+{
+    stack mut IrTable<u8[0 max]> image = new();
+    BuildInvalidUtf8LogicalPackageImage(image);
+    return ValidatePackageImage(image) == PackageImageValidationStatus.MalformedSectionDirectory
+        && !PackageImageIsValid(image);
+}
+
+[Fact]
+fn bool SectionedPackageImageRejectsUnknownRequiredSection()
+{
+    stack mut IrTable<u8[0 max]> image = new();
+    WriteU32(image, 1380013139);
+    WriteU32(image, 1196118091);
+    WriteU32(image, 2);
+    WriteU32(image, 1);
+    WriteU64(image, 32);
+    WriteU32(image, 1162891086);
+    WriteU32(image, 1);
+    WriteU64(image, 56);
+    WriteU64(image, 0);
+    WriteU32(image, 0);
+    WriteU32(image, 0);
+    return ValidatePackageImage(image) == PackageImageValidationStatus.UnsupportedFormat
+        && !PackageImageIsValid(image);
+}
+
+[Fact]
 fn bool PackageImageRejectsBadMagic()
 {
     // A buffer without the magic header is rejected (nothing deserialized).
@@ -1789,6 +2625,60 @@ fn bool AsmMetadataRejectsTruncatedTextPool()
         && asmMetadata.InputCount() == 0
         && asmMetadata.OutputCount() == 0
         && asmMetadata.ClobberCount() == 0;
+}
+
+[Fact]
+fn bool AsmMetadataRejectsInvalidInputRegisterBeforeAppendingRows()
+{
+    stack mut AsmMetadataTable table = new();
+    stack mut AsmFunctionId asmId = new();
+    return !CollectFirstAsmFunctionMetadata(
+            "module Test\ninternal unsafe ffi asm(x86_64) fn i64[min max] Bad(i64[min max] number) in(\"x0\") number, out(\"rax\") return { \"nop\" }",
+            MirFuncIdOf(1),
+            table,
+            asmId)
+        && !asmId.IsValid()
+        && table.TextByteCount() == 0
+        && table.FunctionCount() == 0
+        && table.InputCount() == 0
+        && table.OutputCount() == 0
+        && table.ClobberCount() == 0;
+}
+
+[Fact]
+fn bool AsmMetadataRejectsInvalidOutputRegisterBeforeAppendingRows()
+{
+    stack mut AsmMetadataTable table = new();
+    stack mut AsmFunctionId asmId = new();
+    return !CollectFirstAsmFunctionMetadata(
+            "module Test\ninternal unsafe ffi asm(riscv64) fn i64[min max] Bad(i64[min max] number) in(\"a7\") number, out(\"rax\") return { \"ecall\" }",
+            MirFuncIdOf(1),
+            table,
+            asmId)
+        && !asmId.IsValid()
+        && table.TextByteCount() == 0
+        && table.FunctionCount() == 0
+        && table.InputCount() == 0
+        && table.OutputCount() == 0
+        && table.ClobberCount() == 0;
+}
+
+[Fact]
+fn bool AsmMetadataRejectsInvalidClobberRegisterBeforeAppendingRows()
+{
+    stack mut AsmMetadataTable table = new();
+    stack mut AsmFunctionId asmId = new();
+    return !CollectFirstAsmFunctionMetadata(
+            "module Test\ninternal unsafe ffi asm(aarch64) fn i64[min max] Bad(i64[min max] number) in(\"x8\") number, out(\"x0\") return, clobber(\"rax\") { \"svc #0\" }",
+            MirFuncIdOf(1),
+            table,
+            asmId)
+        && !asmId.IsValid()
+        && table.TextByteCount() == 0
+        && table.FunctionCount() == 0
+        && table.InputCount() == 0
+        && table.OutputCount() == 0
+        && table.ClobberCount() == 0;
 }
 
 [Fact]
@@ -1991,6 +2881,79 @@ fn bool PackageImageWithAsmRoundTripsMetadata()
         && restoredAsm.TextRangeEquals(output.Register(), "a0")
         && LlvmTextEquals(inspect, "package: 1 instructions, 1 blocks, 1 functions, 0 globals, 1 asm functions\n")
         && LlvmTextEquals(inspectJson, "{\"format\":\"MIR2\",\"instructions\":1,\"blocks\":1,\"functions\":1,\"globals\":0,\"asmFunctions\":1}\n");
+}
+
+[Fact]
+fn bool SectionedPackageImageWithAsmRoundTripsMetadata()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack MirValueId value = MirConstInt(instrs, 0);
+    stack mut IrTable<MirBlock> blocks = new();
+    stack MirBlockId block = MirReturnBlock(blocks, value);
+    stack mut IrTable<MirFunction> funcs = new();
+    stack MirFuncId functionId = MirDefineFunction(funcs, block, block, 1, value, 1);
+    stack mut IrTable<MirGlobal> globals = new();
+    stack mut AsmMetadataTable asmMetadata = new();
+    stack mut AsmFunctionId asmId = new();
+    if (!CollectFirstAsmFunctionMetadata(
+        "module Test\ninternal unsafe ffi asm(x86_64) fn i64[min max] Syscall0() out(\"rax\") return, clobber(\"rcx\", \"r11\") { \"syscall\" }",
+        functionId,
+        asmMetadata,
+        asmId))
+    {
+        return false;
+    }
+
+    stack mut IrTable<u8[0 max]> image = new();
+    SerializeSectionedPackageImageWithAsm(instrs, blocks, funcs, globals, asmMetadata, image);
+
+    stack mut IrTable<MirInstruction> bi = new();
+    stack mut IrTable<MirBlock> bb = new();
+    stack mut IrTable<MirFunction> bf = new();
+    stack mut IrTable<MirGlobal> bg = new();
+    stack mut AsmMetadataTable restoredAsm = new();
+    if (!DeserializePackageImageWithAsm(image, bi, bb, bf, bg, restoredAsm))
+    {
+        return false;
+    }
+
+    stack mut OwnedAscii text = new();
+    switch (InspectPackageImage(image, text))
+    {
+        case MemoryStatus.Err(var textError):
+            return false;
+        case MemoryStatus.Ok:
+    }
+
+    stack mut OwnedAscii json = new();
+    switch (InspectPackageImageJson(image, json))
+    {
+        case MemoryStatus.Err(var jsonError):
+            return false;
+        case MemoryStatus.Ok:
+    }
+
+    stack AsmFunctionMetadata function = restoredAsm.FunctionAt(AsmFunctionIdOf(1));
+    stack MirFuncId restoredFunction = function.Function();
+    stack AsmOutputOperand output = restoredAsm.OutputAt(function.FirstOutput());
+    stack AsmTextRange clobber0 = restoredAsm.ClobberAt(function.FirstClobber());
+    stack AsmTextRange clobber1 = restoredAsm.ClobberAt(function.FirstClobber() + 1);
+    return PackageImageIsValid(image)
+        && ReadU32(image, 13) == 5
+        && bi.Count() == 1
+        && bb.Count() == 1
+        && bf.Count() == 1
+        && bg.Count() == 0
+        && restoredAsm.FunctionCount() == 1
+        && restoredFunction.Equals(functionId)
+        && function.Architecture() == StarkAsmArchitecture.X86_64
+        && restoredAsm.TextRangeEquals(function.Template(), "syscall")
+        && output.BindsReturn()
+        && restoredAsm.TextRangeEquals(output.Register(), "rax")
+        && restoredAsm.TextRangeEquals(clobber0, "rcx")
+        && restoredAsm.TextRangeEquals(clobber1, "r11")
+        && LlvmTextEquals(text, "package: STARKPKG, 1 instructions, 1 blocks, 1 functions, 0 globals, 1 asm functions\n")
+        && LlvmTextEquals(json, "{\"format\":\"STARKPKG\",\"payload\":\"MIR2\",\"instructions\":1,\"blocks\":1,\"functions\":1,\"globals\":0,\"asmFunctions\":1}\n");
 }
 
 [Fact]

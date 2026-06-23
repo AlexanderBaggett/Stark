@@ -1,0 +1,176 @@
+import Compiler.AsmFacts
+import Compiler.TargetFacts
+import System.Testing
+import System.Text
+[Collection("target-facts")]
+module TargetFactsTests
+
+[Fact]
+fn bool ParsesTargetTripleOperatingSystems()
+{
+    stack mut StarkTargetOperatingSystem os = StarkTargetOperatingSystem.Unknown;
+    stack bool windowsMsvc = TryParseTargetTripleOperatingSystem("x86_64-pc-windows-msvc", os)
+        && os == StarkTargetOperatingSystem.Windows;
+    stack bool windowsMingw = TryParseTargetTripleOperatingSystem("x86_64-w64-mingw32", os)
+        && os == StarkTargetOperatingSystem.Windows;
+    stack bool mac = TryParseTargetTripleOperatingSystem("aarch64-apple-darwin", os)
+        && os == StarkTargetOperatingSystem.MacOS;
+    stack bool linuxGnu = TryParseTargetTripleOperatingSystem("x86_64-unknown-linux-gnu", os)
+        && os == StarkTargetOperatingSystem.Linux;
+    stack bool linuxAndroid = TryParseTargetTripleOperatingSystem("aarch64-linux-android", os)
+        && os == StarkTargetOperatingSystem.Linux;
+    stack bool unknown = !TryParseTargetTripleOperatingSystem("wasm32-wasi", os)
+        && os == StarkTargetOperatingSystem.Unknown;
+    return windowsMsvc && windowsMingw && mac && linuxGnu && linuxAndroid && unknown;
+}
+
+[Fact]
+fn bool ResolvesTargetPlatformFromTriple()
+{
+    stack StarkTargetPlatform windows = ResolveTargetPlatformFromTriple("i686-pc-windows-msvc");
+    stack StarkTargetPlatform mac = ResolveTargetPlatformFromTriple("aarch64-apple-darwin");
+    return windows.IsKnown()
+        && windows.OperatingSystem() == StarkTargetOperatingSystem.Windows
+        && windows.Architecture() == StarkAsmArchitecture.X86
+        && System.Text.Equals(OperatingSystemName(windows.OperatingSystem()), "windows")
+        && System.Text.Equals(TargetArchitectureDisplayName(windows.Architecture()), "x86")
+        && mac.IsKnown()
+        && mac.OperatingSystem() == StarkTargetOperatingSystem.MacOS
+        && mac.Architecture() == StarkAsmArchitecture.AArch64
+        && System.Text.Equals(OperatingSystemName(mac.OperatingSystem()), "macos")
+        && System.Text.Equals(TargetArchitectureDisplayName(mac.Architecture()), "arm64");
+}
+
+[Fact]
+fn bool ParsesFfiAbiNamesAndLlvmCallingConventions()
+{
+    stack mut StarkFfiAbi abi = StarkFfiAbi.C;
+    stack bool win64 = TryParseFfiAbiName(" Win64 ", abi)
+        && abi == StarkFfiAbi.Win64
+        && System.Text.Equals(FfiAbiName(abi), "win64")
+        && System.Text.Equals(FfiAbiLlvmCallingConventionName(abi), "win64cc");
+    stack bool cdecl = TryParseFfiAbiName("cdecl", abi)
+        && abi == StarkFfiAbi.CDecl
+        && System.Text.Equals(FfiAbiLlvmCallingConventionName(abi), "");
+    stack bool bad = !TryParseFfiAbiName("pascal", abi)
+        && abi == StarkFfiAbi.C;
+    return win64 && cdecl && bad;
+}
+
+[Fact]
+fn bool FfiAbiSupportMatchesTargetPlatform()
+{
+    stack StarkTargetPlatform windowsX86 = ResolveTargetPlatformFromTriple("i686-pc-windows-msvc");
+    stack StarkTargetPlatform windowsX64 = ResolveTargetPlatformFromTriple("x86_64-pc-windows-msvc");
+    stack StarkTargetPlatform linuxX64 = ResolveTargetPlatformFromTriple("x86_64-unknown-linux-gnu");
+    stack StarkTargetPlatform macArm64 = ResolveTargetPlatformFromTriple("aarch64-apple-darwin");
+    return FfiAbiIsSupportedOnTarget(StarkFfiAbi.C, linuxX64)
+        && FfiAbiIsSupportedOnTarget(StarkFfiAbi.StdCall, windowsX86)
+        && !FfiAbiIsSupportedOnTarget(StarkFfiAbi.StdCall, windowsX64)
+        && FfiAbiIsSupportedOnTarget(StarkFfiAbi.VectorCall, windowsX64)
+        && !FfiAbiIsSupportedOnTarget(StarkFfiAbi.VectorCall, linuxX64)
+        && FfiAbiIsSupportedOnTarget(StarkFfiAbi.SysV, linuxX64)
+        && FfiAbiIsSupportedOnTarget(StarkFfiAbi.Win64, windowsX64)
+        && FfiAbiIsSupportedOnTarget(StarkFfiAbi.Aapcs64, macArm64)
+        && FfiAbiSupportsCVarargs(StarkFfiAbi.SysV)
+        && FfiAbiSupportsCVarargs(StarkFfiAbi.Win64)
+        && !FfiAbiSupportsCVarargs(StarkFfiAbi.StdCall);
+}
+
+[Fact]
+fn bool FfiPlatformKeySpecificityMatchesMostSpecificKeys()
+{
+    stack StarkTargetPlatform windowsX86 = ResolveTargetPlatformFromTriple("i686-pc-windows-msvc");
+    stack mut i32[min max] specificity = -1;
+    stack bool defaultKey = TryGetFfiPlatformKeySpecificity(" default ", windowsX86, specificity)
+        && specificity == 0;
+    stack bool osKey = TryGetFfiPlatformKeySpecificity("windows", windowsX86, specificity)
+        && specificity == 1;
+    stack bool archKey = TryGetFfiPlatformKeySpecificity("windows.x86", windowsX86, specificity)
+        && specificity == 2;
+    stack bool archAliasKey = TryGetFfiPlatformKeySpecificity("windows.i686", windowsX86, specificity)
+        && specificity == 2;
+    stack bool noMatchKey = TryGetFfiPlatformKeySpecificity("linux.x86", windowsX86, specificity)
+        && specificity == -1;
+    stack bool invalidOsKey = !TryGetFfiPlatformKeySpecificity("freebsd.x86", windowsX86, specificity);
+    stack bool invalidArchitectureKey = !TryGetFfiPlatformKeySpecificity("windows.ppc64", windowsX86, specificity);
+    stack bool invalidShapeKey = !TryGetFfiPlatformKeySpecificity("windows.x86.extra", windowsX86, specificity);
+    return defaultKey
+        && osKey
+        && archKey
+        && archAliasKey
+        && noMatchKey
+        && invalidOsKey
+        && invalidArchitectureKey
+        && invalidShapeKey;
+}
+
+[Fact]
+fn bool ResolvesCDataModelsFromTargetTriples()
+{
+    stack mut StarkCDataModel linuxX64 = new();
+    stack mut StarkCDataModel windowsX64 = new();
+    stack mut StarkCDataModel linuxX86 = new();
+    stack mut StarkCDataModel linuxArm64 = new();
+    stack mut StarkCDataModel macArm64 = new();
+    return TryResolveCDataModelFromTriple("x86_64-unknown-linux-gnu", linuxX64)
+        && linuxX64.Kind() == StarkCDataModelKind.LP64
+        && linuxX64.PointerBitWidth() == 64
+        && linuxX64.LongBitWidth() == 64
+        && linuxX64.SizeTBitWidth() == 64
+        && linuxX64.PtrDiffTBitWidth() == 64
+        && linuxX64.CharIsSigned()
+        && TryResolveCDataModelFromTriple("x86_64-pc-windows-msvc", windowsX64)
+        && windowsX64.Kind() == StarkCDataModelKind.LLP64
+        && windowsX64.PointerBitWidth() == 64
+        && windowsX64.LongBitWidth() == 32
+        && windowsX64.CharIsSigned()
+        && TryResolveCDataModelFromTriple("i686-unknown-linux-gnu", linuxX86)
+        && linuxX86.Kind() == StarkCDataModelKind.ILP32
+        && linuxX86.PointerBitWidth() == 32
+        && linuxX86.LongBitWidth() == 32
+        && TryResolveCDataModelFromTriple("aarch64-unknown-linux-gnu", linuxArm64)
+        && linuxArm64.Kind() == StarkCDataModelKind.LP64
+        && !linuxArm64.CharIsSigned()
+        && TryResolveCDataModelFromTriple("aarch64-apple-darwin", macArm64)
+        && macArm64.Kind() == StarkCDataModelKind.LP64
+        && macArm64.CharIsSigned();
+}
+
+[Fact]
+fn bool CPrimitiveAliasesExposeTargetShapedIntegerFacts()
+{
+    stack mut StarkCDataModel linuxX64 = new();
+    stack mut StarkCDataModel linuxArm64 = new();
+    if (!TryResolveCDataModelFromTriple("x86_64-unknown-linux-gnu", linuxX64)
+        || !TryResolveCDataModelFromTriple("aarch64-unknown-linux-gnu", linuxArm64))
+    {
+        return false;
+    }
+
+    stack mut StarkCPrimitiveAlias aliasKind = StarkCPrimitiveAlias.Unknown;
+    stack bool longAlias = TryParseCPrimitiveAliasName("System.C.c_long", aliasKind)
+        && aliasKind == StarkCPrimitiveAlias.CLong
+        && CPrimitiveAliasHasIntegerShape(aliasKind)
+        && CPrimitiveAliasBitWidth(aliasKind, linuxX64) == 64
+        && CPrimitiveAliasIsSigned(aliasKind, linuxX64)
+        && !CPrimitiveAliasIsUnsigned(aliasKind, linuxX64);
+    stack bool sizeAlias = TryParseCPrimitiveAliasName("c_size_t", aliasKind)
+        && aliasKind == StarkCPrimitiveAlias.CSizeT
+        && CPrimitiveAliasBitWidth(aliasKind, linuxX64) == 64
+        && CPrimitiveAliasIsUnsigned(aliasKind, linuxX64)
+        && !CPrimitiveAliasIsSigned(aliasKind, linuxX64);
+    stack bool charAlias = TryParseCPrimitiveAliasName("c_char", aliasKind)
+        && aliasKind == StarkCPrimitiveAlias.CChar
+        && CPrimitiveAliasBitWidth(aliasKind, linuxX64) == 8
+        && CPrimitiveAliasIsSigned(aliasKind, linuxX64)
+        && CPrimitiveAliasIsUnsigned(aliasKind, linuxArm64);
+    stack bool voidAlias = TryParseCPrimitiveAliasName("c_void", aliasKind)
+        && aliasKind == StarkCPrimitiveAlias.CVoid
+        && CPrimitiveAliasIsVoid(aliasKind)
+        && !CPrimitiveAliasHasIntegerShape(aliasKind)
+        && CPrimitiveAliasBitWidth(aliasKind, linuxX64) == 0;
+    stack bool badAlias = !TryParseCPrimitiveAliasName("intptr_t", aliasKind)
+        && aliasKind == StarkCPrimitiveAlias.Unknown;
+    return longAlias && sizeAlias && charAlias && voidAlias && badAlias;
+}

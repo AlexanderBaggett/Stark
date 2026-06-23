@@ -10,9 +10,12 @@ downstream compilation and inspection.
 Current host status:
 
 - the C# host emits and loads a binary `.starkpkg` container (STARKPKG magic,
-  format version, Brotli-compressed canonical JSON payload); legacy
-  `.starkpkg.json` files still load, and `--package-image-json` writes the
-  indented JSON inspection sidecar on demand
+  exact format version, section directory, required `STRS` string table,
+  required `PINF` package identity/target/profile facts, and required `MANF`
+  section with a Brotli-compressed canonical JSON package model); legacy
+  `.starkpkg.json` files and the earlier v1 non-sectioned binary wrapper still
+  load, and `--package-image-json` writes the indented JSON inspection sidecar
+  on demand
 - the JSON artifact is compiler-owned and not intended to be hand-authored
 - current tests and tooling often inspect or diff that JSON directly
 
@@ -80,6 +83,15 @@ The current primary module sections are:
 - `typed-interface`
 - `compiler-facts`
 - `generic-templates`
+
+The host package image also records top-level target facts when the producing
+compilation has an explicit or detected target. Those facts include the target
+triple, LLVM data layout when known, CPU/features, relocation/code model, C data
+model, and aggregate pointer layout. The binary `PINF` section duplicates the
+same package identity, target, and profile facts through typed string-table
+indexes and is checked against the `MANF` payload during load. Downstream
+loading rejects target-specific package images whose recorded facts do not match
+the active compilation target before ABI/layout facts enter backend lowering.
 
 ## Section Roles
 
@@ -267,13 +279,17 @@ The current user-facing commands are:
   emits a static library plus a package image; `--package-image-output <path>`
   can route the image away from the library, in which case the image records a
   relative library reference for downstream linking
+- `stark build --package-image-json`:
+  for project library builds, writes the explicit JSON inspection view under
+  `build/<profile>/<target>/<stage>/artifacts/pkg/<project>/` while keeping the
+  binary package image under `pkg/<project>/`
 - `--emit-pkg` or `--emit-package`:
-  currently emits the host JSON package image without linker or archiver steps;
-  self-hosting should let builds choose binary, JSON, text, or any requested
-  combination
-- `--inspect-pkg` or `--inspect-package`:
+  emits the binary package image without linker or archiver steps; JSON/text
+  sidecars are explicit inspection/export views rather than normal build outputs
+- `inspect-pkg` or `inspect-package`:
   validates a package image and renders deterministic text or JSON inspection
-  output
+  output selected with `--format text|json`; the older `--inspect-pkg` and
+  `--inspect-package` flag forms remain accepted during migration
 
 ## Compatibility Note
 

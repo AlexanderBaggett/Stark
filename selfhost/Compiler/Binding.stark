@@ -749,27 +749,356 @@ internal fn bool TypeHeadResolves(borrow DeclarationTable table, ascii source, b
     return resolved;
 }
 
-// Counts a function signature's user-type references (the return type and each
-// parameter type whose head names a user type — built-in types have head 0 and
-// are skipped) that resolve to no top-level declaration. A return of 0 means
+internal fn bool TypeReferenceResolvesInScope(
+    borrow DeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] genericList,
+    u32[0 max] declKeyword,
+    bool useDeclarationGenericScope,
+    u32[0 max] headToken)
+{
+    if (TypeHeadResolves(table, source, stream, headToken))
+    {
+        return true;
+    }
+
+    if (useDeclarationGenericScope)
+    {
+        return HeadIsGenericParameter(source, stream, declKeyword, headToken);
+    }
+
+    return GenericParamListMatches(source, stream, genericList, headToken);
+}
+
+internal finite law bool GenericArgumentSegmentIsValue(borrow TokenStream stream, u32[0 max] start, u32[0 max] endExclusive)
+{
+    if (start >= endExclusive)
+    {
+        return false;
+    }
+
+    stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])start);
+    return kind == TokenKind.IntegerLiteral
+        || kind == TokenKind.Plus
+        || kind == TokenKind.Minus
+        || kind == TokenKind.Comptime;
+}
+
+internal finite law u32[0 max] MatchingTypeCloseBefore(borrow TokenStream stream, u32[0 max] openToken, u32[0 max] endExclusive)
+{
+    stack mut u32[0 max] index = openToken;
+    stack mut u32[0 max] depth = 0;
+    while willexit (index < endExclusive)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])index);
+        if (kind == TokenKind.Lt || kind == TokenKind.LBrack || kind == TokenKind.LParen || kind == TokenKind.LBrace)
+        {
+            depth = (u32[0 max])(depth + 1);
+        }
+        else if (kind == TokenKind.Gt || kind == TokenKind.RBrack || kind == TokenKind.RParen || kind == TokenKind.RBrace)
+        {
+            if (depth > 0)
+            {
+                depth = (u32[0 max])(depth - 1);
+                if (depth == 0)
+                {
+                    return index;
+                }
+            }
+        }
+
+        index = (u32[0 max])(index + 1);
+    }
+
+    return endExclusive;
+}
+
+internal fn System.Memory.MemoryStatus CollectUnresolvedTypeReferencesInGenericArguments(
+    borrow DeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] start,
+    u32[0 max] endExclusive,
+    u32[0 max] genericList,
+    u32[0 max] declKeyword,
+    bool useDeclarationGenericScope,
+    mut borrow BindDiagnosticList diags)
+{
+    stack mut u32[0 max] segmentStart = start;
+    stack mut u32[0 max] depth = 0;
+    stack mut u32[0 max] index = start;
+    while willexit (index <= endExclusive)
+    {
+        stack mut bool boundary = false;
+        if (index >= endExclusive)
+        {
+            boundary = true;
+        }
+        else
+        {
+            stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])index);
+            if (kind == TokenKind.Lt || kind == TokenKind.LBrack || kind == TokenKind.LParen || kind == TokenKind.LBrace)
+            {
+                depth = (u32[0 max])(depth + 1);
+            }
+            else if (kind == TokenKind.Gt || kind == TokenKind.RBrack || kind == TokenKind.RParen || kind == TokenKind.RBrace)
+            {
+                if (depth > 0)
+                {
+                    depth = (u32[0 max])(depth - 1);
+                }
+            }
+            else if (depth == 0 && kind == TokenKind.Comma)
+            {
+                boundary = true;
+            }
+        }
+
+        if (boundary)
+        {
+            if (segmentStart < index && !GenericArgumentSegmentIsValue(stream, segmentStart, index))
+            {
+                switch (CollectUnresolvedTypeReferencesInSpan(table, source, stream, segmentStart, index, genericList, declKeyword, useDeclarationGenericScope, diags))
+                {
+                    case System.Memory.MemoryStatus.Err(var segmentError):
+                        return System.Memory.MemoryStatus.Err(segmentError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+
+            segmentStart = (u32[0 max])(index + 1);
+        }
+
+        index = (u32[0 max])(index + 1);
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn System.Memory.MemoryStatus CollectUnresolvedTypeReferencesInSpan(
+    borrow DeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] start,
+    u32[0 max] endExclusive,
+    u32[0 max] genericList,
+    u32[0 max] declKeyword,
+    bool useDeclarationGenericScope,
+    mut borrow BindDiagnosticList diags)
+{
+    stack mut u32[0 max] index = start;
+    while willexit (index < endExclusive)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])index);
+        if (kind == TokenKind.Where)
+        {
+            return System.Memory.MemoryStatus.Ok;
+        }
+        else if (kind == TokenKind.LBrack)
+        {
+            stack u32[0 max] close = MatchingTypeCloseBefore(stream, index, endExclusive);
+            if (close >= endExclusive)
+            {
+                index = endExclusive;
+            }
+            else
+            {
+                index = (u32[0 max])(close + 1);
+            }
+        }
+        else if (kind == TokenKind.Lt)
+        {
+            stack u32[0 max] close = MatchingTypeCloseBefore(stream, index, endExclusive);
+            if (close >= endExclusive)
+            {
+                index = endExclusive;
+            }
+            else
+            {
+                switch (CollectUnresolvedTypeReferencesInGenericArguments(table, source, stream, (u32[0 max])(index + 1), close, genericList, declKeyword, useDeclarationGenericScope, diags))
+                {
+                    case System.Memory.MemoryStatus.Err(var genericError):
+                        return System.Memory.MemoryStatus.Err(genericError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+
+                index = (u32[0 max])(close + 1);
+            }
+        }
+        else if (kind == TokenKind.Identifier)
+        {
+            stack TokenKind nextKind = stream.KindAt((u64[0 2 ** 63 - 1])(index + 1));
+            stack ascii name = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])index);
+            if (nextKind != TokenKind.Dot
+                && !System.Text.Equals(name, "tail")
+                && !TypeReferenceResolvesInScope(table, source, stream, genericList, declKeyword, useDeclarationGenericScope, index))
+            {
+                switch (diags.Append(BindDiagnosticCode.UnresolvedType, index))
+                {
+                    case System.Memory.MemoryStatus.Err(var appendError):
+                        return System.Memory.MemoryStatus.Err(appendError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+
+            index = (u32[0 max])(index + 1);
+        }
+        else
+        {
+            index = (u32[0 max])(index + 1);
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn u32[0 max] CountUnresolvedTypeReferencesInGenericArguments(
+    borrow DeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] start,
+    u32[0 max] endExclusive,
+    u32[0 max] genericList,
+    u32[0 max] declKeyword,
+    bool useDeclarationGenericScope)
+{
+    stack mut u32[0 max] unresolved = 0;
+    stack mut u32[0 max] segmentStart = start;
+    stack mut u32[0 max] depth = 0;
+    stack mut u32[0 max] index = start;
+    while willexit (index <= endExclusive)
+    {
+        stack mut bool boundary = false;
+        if (index >= endExclusive)
+        {
+            boundary = true;
+        }
+        else
+        {
+            stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])index);
+            if (kind == TokenKind.Lt || kind == TokenKind.LBrack || kind == TokenKind.LParen || kind == TokenKind.LBrace)
+            {
+                depth = (u32[0 max])(depth + 1);
+            }
+            else if (kind == TokenKind.Gt || kind == TokenKind.RBrack || kind == TokenKind.RParen || kind == TokenKind.RBrace)
+            {
+                if (depth > 0)
+                {
+                    depth = (u32[0 max])(depth - 1);
+                }
+            }
+            else if (depth == 0 && kind == TokenKind.Comma)
+            {
+                boundary = true;
+            }
+        }
+
+        if (boundary)
+        {
+            if (segmentStart < index && !GenericArgumentSegmentIsValue(stream, segmentStart, index))
+            {
+                unresolved = (u32[0 max])(unresolved + CountUnresolvedTypeReferencesInSpan(table, source, stream, segmentStart, index, genericList, declKeyword, useDeclarationGenericScope));
+            }
+
+            segmentStart = (u32[0 max])(index + 1);
+        }
+
+        index = (u32[0 max])(index + 1);
+    }
+
+    return unresolved;
+}
+
+internal fn u32[0 max] CountUnresolvedTypeReferencesInSpan(
+    borrow DeclarationTable table,
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] start,
+    u32[0 max] endExclusive,
+    u32[0 max] genericList,
+    u32[0 max] declKeyword,
+    bool useDeclarationGenericScope)
+{
+    stack mut u32[0 max] unresolved = 0;
+    stack mut u32[0 max] index = start;
+    while willexit (index < endExclusive)
+    {
+        stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])index);
+        if (kind == TokenKind.Where)
+        {
+            return unresolved;
+        }
+        else if (kind == TokenKind.LBrack)
+        {
+            stack u32[0 max] close = MatchingTypeCloseBefore(stream, index, endExclusive);
+            if (close >= endExclusive)
+            {
+                index = endExclusive;
+            }
+            else
+            {
+                index = (u32[0 max])(close + 1);
+            }
+        }
+        else if (kind == TokenKind.Lt)
+        {
+            stack u32[0 max] close = MatchingTypeCloseBefore(stream, index, endExclusive);
+            if (close >= endExclusive)
+            {
+                index = endExclusive;
+            }
+            else
+            {
+                unresolved = (u32[0 max])(unresolved + CountUnresolvedTypeReferencesInGenericArguments(table, source, stream, (u32[0 max])(index + 1), close, genericList, declKeyword, useDeclarationGenericScope));
+                index = (u32[0 max])(close + 1);
+            }
+        }
+        else if (kind == TokenKind.Identifier)
+        {
+            stack TokenKind nextKind = stream.KindAt((u64[0 2 ** 63 - 1])(index + 1));
+            stack ascii name = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])index);
+            if (nextKind != TokenKind.Dot
+                && !System.Text.Equals(name, "tail")
+                && !TypeReferenceResolvesInScope(table, source, stream, genericList, declKeyword, useDeclarationGenericScope, index))
+            {
+                unresolved = (u32[0 max])(unresolved + 1);
+            }
+
+            index = (u32[0 max])(index + 1);
+        }
+        else
+        {
+            index = (u32[0 max])(index + 1);
+        }
+    }
+
+    return unresolved;
+}
+
+// Counts a function signature's user-type references, including nested generic
+// argument types, that resolve to no top-level declaration. A return of 0 means
 // every named type in the signature is declared.
 public fn u32[0 max] CountUnresolvedSignatureTypes(borrow FunctionSignature signature, borrow DeclarationTable table, ascii source, borrow TokenStream stream)
 {
     stack mut u32[0 max] unresolved = 0;
+    stack u32[0 max] genericList = (u32[0 max])(signature.Name() + 1);
 
-    stack u32[0 max] returnHead = signature.ReturnType();
-    if (returnHead != 0 && !TypeHeadResolves(table, source, stream, returnHead))
+    stack u32[0 max] returnStart = signature.ReturnTypeStartTokenAt();
+    stack u32[0 max] returnEnd = signature.ReturnTypeEndTokenAt();
+    if (returnStart < returnEnd)
     {
-        unresolved = (u32[0 max])(unresolved + 1);
+        unresolved = (u32[0 max])(unresolved + CountUnresolvedTypeReferencesInSpan(table, source, stream, returnStart, returnEnd, genericList, 0, false));
     }
 
     stack u64[0 2 ** 63 - 1] paramCount = signature.ParamCount();
     for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < paramCount; index += 1)
     {
-        stack u32[0 max] paramHead = signature.ParamTypeAt(index);
-        if (paramHead != 0 && !TypeHeadResolves(table, source, stream, paramHead))
+        stack u32[0 max] paramStart = signature.ParamTypeStartTokenAt(index);
+        stack u32[0 max] paramEnd = signature.ParamTypeEndTokenAt(index);
+        if (paramStart < paramEnd)
         {
-            unresolved = (u32[0 max])(unresolved + 1);
+            unresolved = (u32[0 max])(unresolved + CountUnresolvedTypeReferencesInSpan(table, source, stream, paramStart, paramEnd, genericList, 0, false));
         }
     }
 
@@ -918,26 +1247,26 @@ internal fn System.Memory.MemoryStatus CollectUnresolvedFieldTypes(u32[0 max] st
         case ParseResult<FieldList>.Ok(var fields):
             stack u64[0 2 ** 63 - 1] count = fields.Count();
             // All declarators of one `type_ a, b;` field declaration share the exact
-            // head token; the host resolves that `field.type_()` once, so emit a
-            // single diagnostic per distinct head token (a consecutive run of equal
-            // heads is one declaration; a separate declaration reuses no token index).
-            stack mut u32[0 max] prevHead = 0;
+            // type span; the host resolves that `field.type_()` once, so emit
+            // diagnostics once per distinct source span.
+            stack mut u32[0 max] prevStart = 0;
+            stack mut u32[0 max] prevEnd = 0;
             for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
             {
-                stack u32[0 max] head = fields.TypeHeadAt(index);
-                if (head != 0 && head != prevHead
-                    && !TypeHeadResolves(table, source, stream, head)
-                    && !HeadIsGenericParameter(source, stream, structKeyword, head))
+                stack u32[0 max] start = fields.TypeStartAt(index);
+                stack u32[0 max] end = fields.TypeEndAt(index);
+                if (start < end && (start != prevStart || end != prevEnd))
                 {
-                    switch (diags.Append(BindDiagnosticCode.UnresolvedType, head))
+                    switch (CollectUnresolvedTypeReferencesInSpan(table, source, stream, start, end, 0, structKeyword, true, diags))
                     {
-                        case System.Memory.MemoryStatus.Err(var emitError):
-                            return System.Memory.MemoryStatus.Err(emitError);
+                        case System.Memory.MemoryStatus.Err(var fieldError):
+                            return System.Memory.MemoryStatus.Err(fieldError);
                         case System.Memory.MemoryStatus.Ok:
                     }
                 }
 
-                prevHead = head;
+                prevStart = start;
+                prevEnd = end;
             }
     }
 
@@ -950,22 +1279,53 @@ internal fn System.Memory.MemoryStatus CollectUnresolvedFieldTypes(u32[0 max] st
 // `type_` for the host, so occurrences are not deduped. Parse failures are skipped.
 internal fn System.Memory.MemoryStatus CollectUnresolvedVariantTypes(u32[0 max] enumKeyword, borrow DeclarationTable table, ascii source, borrow TokenStream stream, mut borrow BindDiagnosticList diags)
 {
-    switch (ParseEnumPayloadHeads(stream, enumKeyword))
+    switch (ParseEnumPayloadTypeSpans(stream, enumKeyword))
     {
-        case ParseResult<TypeHeadList>.Err(var headsError):
+        case ParseResult<TypeSpanList>.Err(var spansError):
             return System.Memory.MemoryStatus.Ok;
-        case ParseResult<TypeHeadList>.Ok(var heads):
-            stack u64[0 2 ** 63 - 1] count = heads.Count();
+        case ParseResult<TypeSpanList>.Ok(var spans):
+            stack u64[0 2 ** 63 - 1] count = spans.Count();
             for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
             {
-                stack u32[0 max] head = heads.HeadAt(index);
-                if (head != 0 && !TypeHeadResolves(table, source, stream, head)
-                    && !HeadIsGenericParameter(source, stream, enumKeyword, head))
+                stack u32[0 max] start = spans.StartTokenAt(index);
+                stack u32[0 max] end = spans.EndTokenAt(index);
+                if (start < end)
                 {
-                    switch (diags.Append(BindDiagnosticCode.UnresolvedType, head))
+                    switch (CollectUnresolvedTypeReferencesInSpan(table, source, stream, start, end, 0, enumKeyword, true, diags))
                     {
-                        case System.Memory.MemoryStatus.Err(var emitError):
-                            return System.Memory.MemoryStatus.Err(emitError);
+                        case System.Memory.MemoryStatus.Err(var variantError):
+                            return System.Memory.MemoryStatus.Err(variantError);
+                        case System.Memory.MemoryStatus.Ok:
+                    }
+                }
+            }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+// Emits an `UnresolvedType` for every `where T: Bound, ...` constraint bound on a
+// type declaration whose bound type names no declaration and is not one of the
+// declaration's own generic parameters. This mirrors function `where` constraint
+// resolution while using the type declaration's generic parameter list.
+internal fn System.Memory.MemoryStatus CollectUnresolvedTypeDeclarationWhereConstraints(u32[0 max] declKeyword, borrow DeclarationTable table, ascii source, borrow TokenStream stream, mut borrow BindDiagnosticList diags)
+{
+    switch (CollectWhereConstraintTypeSpans(stream, declKeyword))
+    {
+        case ParseResult<TypeSpanList>.Err(var whereError):
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        case ParseResult<TypeSpanList>.Ok(var spans):
+            stack u64[0 2 ** 63 - 1] count = spans.Count();
+            for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+            {
+                stack u32[0 max] start = spans.StartTokenAt(index);
+                stack u32[0 max] end = spans.EndTokenAt(index);
+                if (start < end)
+                {
+                    switch (CollectUnresolvedTypeReferencesInSpan(table, source, stream, start, end, 0, declKeyword, true, diags))
+                    {
+                        case System.Memory.MemoryStatus.Err(var constraintError):
+                            return System.Memory.MemoryStatus.Err(constraintError);
                         case System.Memory.MemoryStatus.Ok:
                     }
                 }
@@ -1017,6 +1377,10 @@ public enum BindDiagnosticCode
     DuplicateDeclaration,
     DuplicateParameter,
     DuplicateLocalInBlock,
+    MissingModuleDeclaration,
+    DuplicateModule,
+    UnresolvedImport,
+    AmbiguousImport,
     UnresolvedReference,
     UnresolvedType,
     NonBooleanCondition,
@@ -1176,6 +1540,377 @@ public struct BindDiagnosticList
         init self.Tokens[self.Tokens.Length] = token;
         return System.Memory.MemoryStatus.Ok;
     }
+}
+
+public enum ModuleOrigin
+{
+    Source,
+    Package,
+}
+
+public enum ImportResolutionKind
+{
+    Source,
+    Package,
+    Missing,
+    Ambiguous,
+}
+
+public struct ImportResolutionTable
+{
+    internal dynamic ImportResolutionKind Kinds;
+    internal dynamic u32[0 max] ImportTokens;
+    internal dynamic u32[0 max] TargetIndices;
+
+    ImportResolutionTable()
+    {
+        self.Kinds = new();
+        self.ImportTokens = new();
+        self.TargetIndices = new();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] Count(borrow ImportResolutionTable self)
+    {
+        return self.Kinds.Length;
+    }
+
+    public law ImportResolutionKind KindAt(borrow ImportResolutionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut ImportResolutionKind kind = ImportResolutionKind.Missing;
+        if (index < self.Kinds.Length)
+        {
+            kind = self.Kinds[index];
+        }
+
+        return kind;
+    }
+
+    public law u32[0 max] ImportTokenAt(borrow ImportResolutionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] token = 0;
+        if (index < self.ImportTokens.Length)
+        {
+            token = self.ImportTokens[index];
+        }
+
+        return token;
+    }
+
+    public law u32[0 max] TargetIndexAt(borrow ImportResolutionTable self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] target = 0;
+        if (index < self.TargetIndices.Length)
+        {
+            target = self.TargetIndices[index];
+        }
+
+        return target;
+    }
+
+    internal fn System.Memory.MemoryStatus Append(mut borrow ImportResolutionTable self, ImportResolutionKind kind, u32[0 max] importToken, u32[0 max] targetIndex)
+    {
+        if (!self.Kinds.TryReserve(1)
+            || !self.ImportTokens.TryReserve(1)
+            || !self.TargetIndices.TryReserve(1))
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        }
+
+        init self.Kinds[self.Kinds.Length] = kind;
+        init self.ImportTokens[self.ImportTokens.Length] = importToken;
+        init self.TargetIndices[self.TargetIndices.Length] = targetIndex;
+        return System.Memory.MemoryStatus.Ok;
+    }
+}
+
+public struct ModuleResolver
+{
+    internal dynamic OwnedAscii Names;
+    internal dynamic ModuleOrigin Origins;
+    internal dynamic u32[0 max] OriginIndices;
+
+    ModuleResolver()
+    {
+        self.Names = new();
+        self.Origins = new();
+        self.OriginIndices = new();
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] Count(borrow ModuleResolver self)
+    {
+        return self.Origins.Length;
+    }
+
+    public law ModuleOrigin OriginAt(borrow ModuleResolver self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut ModuleOrigin origin = ModuleOrigin.Source;
+        if (index < self.Origins.Length)
+        {
+            origin = self.Origins[index];
+        }
+
+        return origin;
+    }
+
+    public law u32[0 max] OriginIndexAt(borrow ModuleResolver self, u64[0 2 ** 63 - 1] index)
+    {
+        stack mut u32[0 max] originIndex = 0;
+        if (index < self.OriginIndices.Length)
+        {
+            originIndex = self.OriginIndices[index];
+        }
+
+        return originIndex;
+    }
+
+    public fn bool NameEqualsAt(mut borrow ModuleResolver self, u64[0 2 ** 63 - 1] index, ascii name)
+    {
+        if (index >= self.Names.Length)
+        {
+            return false;
+        }
+
+        return System.Text.OwnedAsciiEqualsAscii(self.Names[index], name);
+    }
+
+    internal fn System.Memory.MemoryStatus Append(mut borrow ModuleResolver self, OwnedAscii name, ModuleOrigin origin, u32[0 max] originIndex)
+    {
+        if (!self.Names.TryReserve(1)
+            || !self.Origins.TryReserve(1)
+            || !self.OriginIndices.TryReserve(1))
+        {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        }
+
+        init self.Names[self.Names.Length] = name;
+        init self.Origins[self.Origins.Length] = origin;
+        init self.OriginIndices[self.OriginIndices.Length] = originIndex;
+        return System.Memory.MemoryStatus.Ok;
+    }
+}
+
+internal fn System.Memory.MemoryStatus AppendHeaderDottedName(ascii source, borrow TokenStream stream, HeaderItem item, mut borrow OwnedAscii destination)
+{
+    stack u32[0 max] end = (u32[0 max])(item.NameStart + item.NameTokenCount);
+    for willexit (stack mut u32[0 max] token = item.NameStart; token < end; token += 1)
+    {
+        stack ascii piece = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])token);
+        switch (destination.AppendAscii(piece))
+        {
+            case System.Memory.MemoryStatus.Err(var appendError):
+                return System.Memory.MemoryStatus.Err(appendError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+internal fn u64[0 2 ** 63 - 1] FindModuleHeaderIndex(borrow CompilationUnitHeader header)
+{
+    stack u64[0 2 ** 63 - 1] count = header.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack HeaderItem item = header.ItemAt(index);
+        if (item.Kind == SyntaxKind.ModuleDeclaration)
+        {
+            return index;
+        }
+    }
+
+    return count;
+}
+
+internal fn bool ModuleExistsWithOrigin(mut borrow ModuleResolver resolver, ascii name, ModuleOrigin origin)
+{
+    stack u64[0 2 ** 63 - 1] count = resolver.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (resolver.OriginAt(index) == origin && resolver.NameEqualsAt(index, name))
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+public fn System.Memory.MemoryStatus AddSourceModule(
+    mut borrow ModuleResolver resolver,
+    ascii source,
+    borrow TokenStream stream,
+    borrow CompilationUnitHeader header,
+    u32[0 max] sourceIndex,
+    mut borrow BindDiagnosticList diags)
+{
+    stack u64[0 2 ** 63 - 1] moduleIndex = FindModuleHeaderIndex(header);
+    if (moduleIndex >= header.Count())
+    {
+        switch (diags.Append(BindDiagnosticCode.MissingModuleDeclaration, header.NextToken))
+        {
+            case System.Memory.MemoryStatus.Err(var diagError):
+                return System.Memory.MemoryStatus.Err(diagError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack HeaderItem moduleItem = header.ItemAt(moduleIndex);
+    stack mut OwnedAscii name = new();
+    switch (AppendHeaderDottedName(source, stream, moduleItem, name))
+    {
+        case System.Memory.MemoryStatus.Err(var nameError):
+            return System.Memory.MemoryStatus.Err(nameError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    stack ascii moduleName = name.View();
+    if (ModuleExistsWithOrigin(resolver, moduleName, ModuleOrigin.Source))
+    {
+        switch (diags.Append(BindDiagnosticCode.DuplicateModule, moduleItem.NameStart))
+        {
+            case System.Memory.MemoryStatus.Err(var duplicateError):
+                return System.Memory.MemoryStatus.Err(duplicateError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
+    return resolver.Append(name, ModuleOrigin.Source, sourceIndex);
+}
+
+public fn System.Memory.MemoryStatus AddPackageModule(
+    mut borrow ModuleResolver resolver,
+    ascii moduleName,
+    u32[0 max] packageIndex,
+    mut borrow BindDiagnosticList diags)
+{
+    stack mut OwnedAscii name = new();
+    switch (System.Text.FromAscii(name, moduleName))
+    {
+        case System.Memory.MemoryStatus.Err(var copyError):
+            return System.Memory.MemoryStatus.Err(copyError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    if (ModuleExistsWithOrigin(resolver, moduleName, ModuleOrigin.Package))
+    {
+        switch (diags.Append(BindDiagnosticCode.DuplicateModule, 0))
+        {
+            case System.Memory.MemoryStatus.Err(var duplicateError):
+                return System.Memory.MemoryStatus.Err(duplicateError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+    }
+
+    return resolver.Append(name, ModuleOrigin.Package, packageIndex);
+}
+
+internal fn ImportResolutionKind ResolveModuleName(mut borrow ModuleResolver resolver, ascii moduleName, out u32[0 max] targetIndex)
+{
+    targetIndex = 0;
+    stack mut u32[0 max] sourceMatches = 0;
+    stack mut u32[0 max] packageMatches = 0;
+    stack mut u32[0 max] sourceTarget = 0;
+    stack mut u32[0 max] packageTarget = 0;
+    stack u64[0 2 ** 63 - 1] count = resolver.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (resolver.NameEqualsAt(index, moduleName))
+        {
+            stack ModuleOrigin origin = resolver.OriginAt(index);
+            if (origin == ModuleOrigin.Source)
+            {
+                sourceMatches = (u32[0 max])(sourceMatches + 1);
+                sourceTarget = resolver.OriginIndexAt(index);
+            }
+            else
+            {
+                packageMatches = (u32[0 max])(packageMatches + 1);
+                packageTarget = resolver.OriginIndexAt(index);
+            }
+        }
+    }
+
+    if (sourceMatches == 1)
+    {
+        targetIndex = sourceTarget;
+        return ImportResolutionKind.Source;
+    }
+
+    if (sourceMatches > 1)
+    {
+        return ImportResolutionKind.Ambiguous;
+    }
+
+    if (packageMatches == 1)
+    {
+        targetIndex = packageTarget;
+        return ImportResolutionKind.Package;
+    }
+
+    if (packageMatches > 1)
+    {
+        return ImportResolutionKind.Ambiguous;
+    }
+
+    return ImportResolutionKind.Missing;
+}
+
+public fn System.Memory.MemoryStatus ResolveImports(
+    mut borrow ModuleResolver resolver,
+    ascii source,
+    borrow TokenStream stream,
+    borrow CompilationUnitHeader header,
+    mut borrow ImportResolutionTable resolutions,
+    mut borrow BindDiagnosticList diags)
+{
+    stack u64[0 2 ** 63 - 1] count = header.Count();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack HeaderItem item = header.ItemAt(index);
+        if (item.Kind == SyntaxKind.ImportDeclaration)
+        {
+            stack mut OwnedAscii name = new();
+            switch (AppendHeaderDottedName(source, stream, item, name))
+            {
+                case System.Memory.MemoryStatus.Err(var nameError):
+                    return System.Memory.MemoryStatus.Err(nameError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            stack mut u32[0 max] targetIndex = 0;
+            stack ascii importName = name.View();
+            stack ImportResolutionKind kind = ResolveModuleName(resolver, importName, targetIndex);
+            switch (resolutions.Append(kind, item.NameStart, targetIndex))
+            {
+                case System.Memory.MemoryStatus.Err(var appendError):
+                    return System.Memory.MemoryStatus.Err(appendError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            if (kind == ImportResolutionKind.Missing)
+            {
+                switch (diags.Append(BindDiagnosticCode.UnresolvedImport, item.NameStart))
+                {
+                    case System.Memory.MemoryStatus.Err(var missingError):
+                        return System.Memory.MemoryStatus.Err(missingError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+            else if (kind == ImportResolutionKind.Ambiguous)
+            {
+                switch (diags.Append(BindDiagnosticCode.AmbiguousImport, item.NameStart))
+                {
+                    case System.Memory.MemoryStatus.Err(var ambiguousError):
+                        return System.Memory.MemoryStatus.Err(ambiguousError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+        }
+    }
+
+    return System.Memory.MemoryStatus.Ok;
 }
 
 // Collects a `DuplicateDeclaration` diagnostic (anchored at the later name) for
@@ -4862,32 +5597,65 @@ internal fn System.Memory.MemoryStatus CollectRuntimeRecursionWarnings(borrow De
     return System.Memory.MemoryStatus.Ok;
 }
 
-// Exact source-level primary type token compatibility for the current
-// self-hosted ABI model. A missing token is compatible only with another missing
-// token; otherwise both token kind and spelling must match (`i32` != `i64`).
-internal fn bool TypePrimaryTokensCompatible(ascii source, borrow TokenStream stream, u32[0 max] left, u32[0 max] right)
+// Exact source-level type-span compatibility for the current self-hosted ABI
+// model. Every token kind and spelling in the type span must match, so generic
+// arguments, integer ranges, callable memory contracts, and pointer element
+// types remain part of tail-call ABI congruence.
+internal fn bool TypeSpansCompatible(
+    ascii source,
+    borrow TokenStream stream,
+    u32[0 max] leftStart,
+    u32[0 max] leftEnd,
+    u32[0 max] rightStart,
+    u32[0 max] rightEnd)
 {
-    if (left == 0 || right == 0)
+    if (leftStart >= leftEnd || rightStart >= rightEnd)
     {
-        return left == right;
+        return leftStart >= leftEnd && rightStart >= rightEnd;
     }
 
-    if (stream.KindAt((u64[0 2 ** 63 - 1])left) != stream.KindAt((u64[0 2 ** 63 - 1])right))
+    stack u32[0 max] leftLength = (u32[0 max])(leftEnd - leftStart);
+    stack u32[0 max] rightLength = (u32[0 max])(rightEnd - rightStart);
+    if (leftLength != rightLength)
     {
         return false;
     }
 
-    stack ascii leftText = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])left);
-    stack ascii rightText = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])right);
-    return System.Text.Equals(leftText, rightText);
+    stack mut u32[0 max] offset = 0;
+    while willexit (offset < leftLength)
+    {
+        stack u32[0 max] left = (u32[0 max])(leftStart + offset);
+        stack u32[0 max] right = (u32[0 max])(rightStart + offset);
+        if (stream.KindAt((u64[0 2 ** 63 - 1])left) != stream.KindAt((u64[0 2 ** 63 - 1])right))
+        {
+            return false;
+        }
+
+        stack ascii leftText = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])left);
+        stack ascii rightText = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])right);
+        if (!System.Text.Equals(leftText, rightText))
+        {
+            return false;
+        }
+
+        offset = (u32[0 max])(offset + 1);
+    }
+
+    return true;
 }
 
 // The subset of LLVM `musttail` ABI congruence the self-hosted front end can
-// currently represent: same result primary type, same parameter count, same
-// parameter primary types, and a call-site argument count matching the callee.
+// currently represent: same result type span, same parameter count, same
+// parameter type spans, and a call-site argument count matching the callee.
 internal fn bool BecomeAbiCompatible(borrow FunctionSignature caller, borrow FunctionSignature callee, ascii source, borrow TokenStream stream, u32[0 max] callArgCount)
 {
-    if (!TypePrimaryTokensCompatible(source, stream, caller.ReturnTypeTokenAt(), callee.ReturnTypeTokenAt()))
+    if (!TypeSpansCompatible(
+        source,
+        stream,
+        caller.ReturnTypeStartTokenAt(),
+        caller.ReturnTypeEndTokenAt(),
+        callee.ReturnTypeStartTokenAt(),
+        callee.ReturnTypeEndTokenAt()))
     {
         return false;
     }
@@ -4905,7 +5673,13 @@ internal fn bool BecomeAbiCompatible(borrow FunctionSignature caller, borrow Fun
 
     for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < paramCount; index += 1)
     {
-        if (!TypePrimaryTokensCompatible(source, stream, caller.ParamTypeTokenAt(index), callee.ParamTypeTokenAt(index)))
+        if (!TypeSpansCompatible(
+            source,
+            stream,
+            caller.ParamTypeStartTokenAt(index),
+            caller.ParamTypeEndTokenAt(index),
+            callee.ParamTypeStartTokenAt(index),
+            callee.ParamTypeEndTokenAt(index)))
         {
             return false;
         }
@@ -5249,11 +6023,11 @@ internal fn System.Memory.MemoryStatus BindFunction(u32[0 max] fnKeyword, borrow
                             // open at the `<` directly after the name token, so a
                             // return/parameter type naming a type parameter resolves.
                             stack u32[0 max] genericList = (u32[0 max])(signature.Name() + 1);
-                            stack u32[0 max] returnHead = signature.ReturnType();
-                            if (returnHead != 0 && !TypeHeadResolves(table, source, stream, returnHead)
-                                && !GenericParamListMatches(source, stream, genericList, returnHead))
+                            stack u32[0 max] returnStart = signature.ReturnTypeStartTokenAt();
+                            stack u32[0 max] returnEnd = signature.ReturnTypeEndTokenAt();
+                            if (returnStart < returnEnd)
                             {
-                                switch (diags.Append(BindDiagnosticCode.UnresolvedType, returnHead))
+                                switch (CollectUnresolvedTypeReferencesInSpan(table, source, stream, returnStart, returnEnd, genericList, 0, false, diags))
                                 {
                                     case System.Memory.MemoryStatus.Err(var e3):
                                         return System.Memory.MemoryStatus.Err(e3);
@@ -5264,11 +6038,11 @@ internal fn System.Memory.MemoryStatus BindFunction(u32[0 max] fnKeyword, borrow
                             stack u64[0 2 ** 63 - 1] paramCount = signature.ParamCount();
                             for willexit (stack mut u64[0 2 ** 63 - 1] p = 0; p < paramCount; p += 1)
                             {
-                                stack u32[0 max] paramHead = signature.ParamTypeAt(p);
-                                if (paramHead != 0 && !TypeHeadResolves(table, source, stream, paramHead)
-                                    && !GenericParamListMatches(source, stream, genericList, paramHead))
+                                stack u32[0 max] paramStart = signature.ParamTypeStartTokenAt(p);
+                                stack u32[0 max] paramEnd = signature.ParamTypeEndTokenAt(p);
+                                if (paramStart < paramEnd)
                                 {
-                                    switch (diags.Append(BindDiagnosticCode.UnresolvedType, paramHead))
+                                    switch (CollectUnresolvedTypeReferencesInSpan(table, source, stream, paramStart, paramEnd, genericList, 0, false, diags))
                                     {
                                         case System.Memory.MemoryStatus.Err(var e4):
                                             return System.Memory.MemoryStatus.Err(e4);
@@ -5283,11 +6057,11 @@ internal fn System.Memory.MemoryStatus BindFunction(u32[0 max] fnKeyword, borrow
                             stack u64[0 2 ** 63 - 1] localStmtCount = body.Count();
                             for willexit (stack mut u64[0 2 ** 63 - 1] s = 0; s < localStmtCount; s += 1)
                             {
-                                stack u32[0 max] localHead = body.ItemAt(s).TypeHead;
-                                if (localHead != 0 && !TypeHeadResolves(table, source, stream, localHead)
-                                    && !GenericParamListMatches(source, stream, genericList, localHead))
+                                stack u32[0 max] localStart = body.TypeStartTokenAt(s);
+                                stack u32[0 max] localEnd = body.TypeEndTokenAt(s);
+                                if (localStart < localEnd)
                                 {
-                                    switch (diags.Append(BindDiagnosticCode.UnresolvedType, localHead))
+                                    switch (CollectUnresolvedTypeReferencesInSpan(table, source, stream, localStart, localEnd, genericList, 0, false, diags))
                                     {
                                         case System.Memory.MemoryStatus.Err(var e4b):
                                             return System.Memory.MemoryStatus.Err(e4b);
@@ -5298,19 +6072,19 @@ internal fn System.Memory.MemoryStatus BindFunction(u32[0 max] fnKeyword, borrow
 
                             // Each `where T: Trait, ...` constraint trait must resolve
                             // to a declaration (or be a function type parameter).
-                            switch (CollectWhereConstraintHeads(stream, fnKeyword))
+                            switch (CollectWhereConstraintTypeSpans(stream, fnKeyword))
                             {
-                                case ParseResult<TypeHeadList>.Err(var whereError):
+                                case ParseResult<TypeSpanList>.Err(var whereError):
                                     return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
-                                case ParseResult<TypeHeadList>.Ok(var constraintHeads):
-                                    stack u64[0 2 ** 63 - 1] constraintCount = constraintHeads.Count();
+                                case ParseResult<TypeSpanList>.Ok(var constraintSpans):
+                                    stack u64[0 2 ** 63 - 1] constraintCount = constraintSpans.Count();
                                     for willexit (stack mut u64[0 2 ** 63 - 1] c = 0; c < constraintCount; c += 1)
                                     {
-                                        stack u32[0 max] constraintHead = constraintHeads.HeadAt(c);
-                                        if (constraintHead != 0 && !TypeHeadResolves(table, source, stream, constraintHead)
-                                            && !GenericParamListMatches(source, stream, genericList, constraintHead))
+                                        stack u32[0 max] constraintStart = constraintSpans.StartTokenAt(c);
+                                        stack u32[0 max] constraintEnd = constraintSpans.EndTokenAt(c);
+                                        if (constraintStart < constraintEnd)
                                         {
-                                            switch (diags.Append(BindDiagnosticCode.UnresolvedType, constraintHead))
+                                            switch (CollectUnresolvedTypeReferencesInSpan(table, source, stream, constraintStart, constraintEnd, genericList, 0, false, diags))
                                             {
                                                 case System.Memory.MemoryStatus.Err(var e4c):
                                                     return System.Memory.MemoryStatus.Err(e4c);
@@ -5479,6 +6253,13 @@ public fn BindResult<BindDiagnosticList> BindCompilationUnit(ascii source, borro
                     return BindResult<BindDiagnosticList>.Err(BindError.OutOfMemory);
                 case System.Memory.MemoryStatus.Ok:
             }
+
+            switch (CollectUnresolvedTypeDeclarationWhereConstraints(item.KeywordToken, table, source, stream, diags))
+            {
+                case System.Memory.MemoryStatus.Err(var whereTypeError):
+                    return BindResult<BindDiagnosticList>.Err(BindError.OutOfMemory);
+                case System.Memory.MemoryStatus.Ok:
+            }
         }
         else if (item.Kind == DeclarationKind.Enum)
         {
@@ -5498,6 +6279,13 @@ public fn BindResult<BindDiagnosticList> BindCompilationUnit(ascii source, borro
             switch (CollectUnresolvedVariantTypes(item.KeywordToken, table, source, stream, diags))
             {
                 case System.Memory.MemoryStatus.Err(var variantTypeError):
+                    return BindResult<BindDiagnosticList>.Err(BindError.OutOfMemory);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            switch (CollectUnresolvedTypeDeclarationWhereConstraints(item.KeywordToken, table, source, stream, diags))
+            {
+                case System.Memory.MemoryStatus.Err(var whereTypeError):
                     return BindResult<BindDiagnosticList>.Err(BindError.OutOfMemory);
                 case System.Memory.MemoryStatus.Ok:
             }

@@ -10,13 +10,11 @@ internal fn bool SystemSyscallModuleSelectsExpectedLinuxShimPerArchitectureImpl(
     // stdlib/src/System/Syscall.stark, compiles it once per target triple
     // (x86_64/aarch64/riscv64/i386/arm Linux) and asserts the emitted LLVM IR
     // contains the architecture-specific syscall inline-asm shim for that
-    // triple. The compile-only host bridge cannot reach that repository file and
-    // cannot retarget the host compiler per triple (it lowers for the host
-    // architecture only), so this embeds a minimal driver that pulls the syscall
-    // shim in through System.Process.CurrentId() and verifies the IR carries an
-    // inline syscall sideeffect lowering. The per-triple expected inline-asm
-    // strings are retained verbatim as data rows below so the intent stays
-    // documented even though only the host architecture can be exercised here.
+    // triple. The host bridge cannot reach that repository file directly, so this
+    // cross-targets a minimal x86_64 Linux driver that pulls the syscall shim in
+    // through System.Process.CurrentId() and verifies the IR carries an inline
+    // syscall sideeffect lowering. The other per-triple expected inline-asm
+    // strings are retained verbatim as data rows below.
     stack ascii x86_64Triple = "x86_64-unknown-linux-gnu";
     stack ascii x86_64InlineAsm = "call i64 asm sideeffect \"syscall\", \"={rax},0,{rdi},{rsi},{rdx},{r10},{r8},{r9},~{rcx},~{r11},~{memory},~{dirflag},~{fpsr},~{flags}\"";
     stack ascii aarch64Triple = "aarch64-unknown-linux-gnu";
@@ -28,7 +26,7 @@ internal fn bool SystemSyscallModuleSelectsExpectedLinuxShimPerArchitectureImpl(
     stack ascii armTriple = "arm-unknown-linux-gnueabihf";
     stack ascii armInlineAsm = "call i64 asm sideeffect \"svc #0\", \"={r0},{r7},0,{r1},{r2},{r3},{r4},{r5},~{memory}\"";
 
-    stack mut ProgramCompile c = CompileProgram("system-syscall-arch-shim", raw"""
+    stack mut ProgramCompile c = CompileProgramForTarget("system-syscall-arch-shim", raw"""
         import System.Process
         module App
 
@@ -41,7 +39,7 @@ internal fn bool SystemSyscallModuleSelectsExpectedLinuxShimPerArchitectureImpl(
 
             return 0;
         }
-        """);
+        """, LinuxX64TargetTriple);
     if (!Succeeds(c))
     {
         return false;
@@ -64,9 +62,9 @@ internal fn bool SystemSyscallDirectEntryPointsAreInternalImpl()
     // "public unsafe ffi asm" and DOES contain "internal unsafe ffi asm" (the
     // direct syscall entry points must stay internal). The compile-only host
     // bridge cannot read that repository file or assert over its raw source text,
-    // so this reduces to compiling a driver that pulls the syscall shim in
-    // through System.Process and asserting it succeeds.
-    stack mut ProgramCompile c = CompileProgram("system-syscall-entry-points-internal", raw"""
+    // so this cross-targets a driver that pulls the syscall shim in through
+    // System.Process and asserts it succeeds.
+    stack mut ProgramCompile c = CompileProgramForTarget("system-syscall-entry-points-internal", raw"""
         import System.Process
         module App
 
@@ -79,7 +77,7 @@ internal fn bool SystemSyscallDirectEntryPointsAreInternalImpl()
 
             return 0;
         }
-        """);
+        """, LinuxX64TargetTriple);
     if (!Succeeds(c))
     {
         return false;

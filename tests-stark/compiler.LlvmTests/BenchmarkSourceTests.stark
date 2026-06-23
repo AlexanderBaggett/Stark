@@ -18,12 +18,10 @@ module BenchmarkSourceTests
 // Windows) and a TargetAwareStdLibModuleResolver rooted at stdlib/src, then
 // narrows substring assertions to a single function body extracted with
 // ExtractDefinedFunctionText (e.g. `@main`, `@EnumerateOnce`, the inline
-// clones). The host LLVM bridge only exposes a single-source compile and the
-// full rendered `llvm` text with no target selection and no function-body
-// slicing, so target-specific (Windows-only) codegen, body-scoped Contains
-// checks, regex DoesNotMatch assertions, native-object emission, and
-// filesystem benchmark enumeration are reduced to whole-module substring checks
-// over the available embedded sources. Per-case notes call out what was lost.
+// clones). The host LLVM bridge exposes single-source compiles, explicit target
+// triples, STARK_PATH-backed source-library resolution, and function-body
+// slicing; regex-only assertions, native-object emission, and filesystem
+// benchmark enumeration are still reduced or noted per case.
 
 // Ported from BenchmarkSourceTests.BenchmarkSourcesCompile.
 internal fn bool BenchmarkSourcesCompileImpl()
@@ -160,11 +158,8 @@ internal fn bool MemoryCopyFillHotLoopUsesInfallibleHelpersImpl()
 {
     // PORT-NOTE: the C# oracle slices `@main`, the code-point copy clone, the
     // byte move clone, and the code-point move clone bodies out of the module
-    // and asserts within each. The host bridge exposes only whole-module text,
-    // so the body-scoped Contains/DoesNotContain checks (e.g. inline-clone calls
-    // appearing only inside @main, `mul i64 %arg_count, 4` only inside a
-    // particular clone) are applied over the full `llvm` text instead.
-    stack mut LlvmCompile c = CompileLlvm(
+    // and asserts within each. The port mirrors that with LlvmDefinitionBody.
+    stack mut LlvmCompile c = CompileLlvmForTargetUsingStarkPath(
         "benchmark-memory-copy-fill-infallible-helpers",
         raw"""
 import System.Memory
@@ -299,39 +294,47 @@ export unsafe ffi fn i32[min max] main() {
 
     return 0;
 }
-""");
+""",
+        "x86_64-unknown-linux-gnu");
     if (!Succeeds(c))
     {
         return false;
     }
 
     stack ascii llvm = Llvm(c);
-    stack ascii body = System.Testing.LlvmDefinitionBody(llvm, "main");
-    return System.Testing.Contains(body, "@__stark_inline_clone_System_Memory_CopyBytesDisjointInfallible(")
-        && System.Testing.Contains(body, "@__stark_inline_clone_System_Memory_FillInitializedBytesInfallible(")
-        && System.Testing.Contains(body, "@__stark_inline_clone_System_Memory_CopyCodePointsDisjointInfallible(")
-        && System.Testing.Contains(body, "@__stark_inline_clone_System_Memory_FillInitializedCodePointsInfallible(")
-        && System.Testing.Contains(body, "@__stark_inline_clone_System_Memory_MoveBytesInfallible(")
-        && System.Testing.Contains(body, "@__stark_inline_clone_System_Memory_MoveCodePointsInfallible(")
-        && System.Testing.DoesNotContain(body, "@System_Memory_CopyBytesDisjointInfallible(")
-        && System.Testing.DoesNotContain(body, "@System_Memory_FillInitializedBytesInfallible(")
-        && System.Testing.DoesNotContain(body, "@System_Memory_CopyCodePointsDisjointInfallible(")
-        && System.Testing.DoesNotContain(body, "@System_Memory_FillInitializedCodePointsInfallible(")
-        && System.Testing.DoesNotContain(body, "@System_Memory_ReserveBytes(")
-        && System.Testing.DoesNotContain(body, "@System_Memory_ReserveCodePoints(")
-        && System.Testing.DoesNotContain(body, "@System_Memory_MoveBytesInfallible(")
-        && System.Testing.DoesNotContain(body, "@System_Memory_MoveCodePointsInfallible(")
-        && System.Testing.DoesNotContain(body, "@System_Memory_CopyBytesDisjoint(")
-        && System.Testing.DoesNotContain(body, "@System_Memory_FillInitializedBytes(")
-        && System.Testing.DoesNotContain(body, "@System_Memory_CopyCodePointsDisjoint(")
-        && System.Testing.DoesNotContain(body, "@System_Memory_FillInitializedCodePoints(")
-        && System.Testing.DoesNotContain(body, "@System_Memory_MoveBytes(")
-        && System.Testing.DoesNotContain(body, "@System_Memory_MoveCodePoints(")
-        && System.Testing.Contains(body, "; closed-world imported inline body: System.Memory.CopyBytesDisjointInfallible")
-        && System.Testing.Contains(body, "; closed-world imported inline body: System.Memory.MoveBytesInfallible")
-        && System.Testing.Contains(body, "@llvm.memcpy.p0.p0.i64")
-        && System.Testing.Contains(body, "mul i64 %arg_count, 4")
-        && System.Testing.Contains(body, "@llvm.memmove.p0.p0.i64");
+    stack ascii mainBody = System.Testing.LlvmDefinitionBody(llvm, "main");
+    stack ascii copyCodePointsClone = System.Testing.LlvmDefinitionBody(llvm, "__stark_inline_clone_System_Memory_CopyCodePointsDisjointInfallible");
+    stack ascii moveBytesClone = System.Testing.LlvmDefinitionBody(llvm, "__stark_inline_clone_System_Memory_MoveBytesInfallible");
+    stack ascii moveCodePointsClone = System.Testing.LlvmDefinitionBody(llvm, "__stark_inline_clone_System_Memory_MoveCodePointsInfallible");
+    return System.Testing.Contains(mainBody, "@__stark_inline_clone_System_Memory_CopyBytesDisjointInfallible(")
+        && System.Testing.Contains(mainBody, "@__stark_inline_clone_System_Memory_FillInitializedBytesInfallible(")
+        && System.Testing.Contains(mainBody, "@__stark_inline_clone_System_Memory_CopyCodePointsDisjointInfallible(")
+        && System.Testing.Contains(mainBody, "@__stark_inline_clone_System_Memory_FillInitializedCodePointsInfallible(")
+        && System.Testing.Contains(mainBody, "@__stark_inline_clone_System_Memory_MoveBytesInfallible(")
+        && System.Testing.Contains(mainBody, "@__stark_inline_clone_System_Memory_MoveCodePointsInfallible(")
+        && System.Testing.DoesNotContain(mainBody, "@System_Memory_CopyBytesDisjointInfallible(")
+        && System.Testing.DoesNotContain(mainBody, "@System_Memory_FillInitializedBytesInfallible(")
+        && System.Testing.DoesNotContain(mainBody, "@System_Memory_CopyCodePointsDisjointInfallible(")
+        && System.Testing.DoesNotContain(mainBody, "@System_Memory_FillInitializedCodePointsInfallible(")
+        && System.Testing.DoesNotContain(mainBody, "@System_Memory_ReserveBytes(")
+        && System.Testing.DoesNotContain(mainBody, "@System_Memory_ReserveCodePoints(")
+        && System.Testing.DoesNotContain(mainBody, "@System_Memory_MoveBytesInfallible(")
+        && System.Testing.DoesNotContain(mainBody, "@System_Memory_MoveCodePointsInfallible(")
+        && System.Testing.DoesNotContain(mainBody, "@System_Memory_CopyBytesDisjoint(")
+        && System.Testing.DoesNotContain(mainBody, "@System_Memory_FillInitializedBytes(")
+        && System.Testing.DoesNotContain(mainBody, "@System_Memory_CopyCodePointsDisjoint(")
+        && System.Testing.DoesNotContain(mainBody, "@System_Memory_FillInitializedCodePoints(")
+        && System.Testing.DoesNotContain(mainBody, "@System_Memory_MoveBytes(")
+        && System.Testing.DoesNotContain(mainBody, "@System_Memory_MoveCodePoints(")
+        && System.Testing.Contains(llvm, "; closed-world imported inline body: System.Memory.CopyBytesDisjointInfallible")
+        && System.Testing.Contains(llvm, "; closed-world imported inline body: System.Memory.MoveBytesInfallible")
+        && System.Testing.Contains(copyCodePointsClone, "@llvm.memcpy.p0.p0.i64")
+        && System.Testing.Contains(copyCodePointsClone, "mul i64 %arg_count, 4")
+        && System.Testing.Contains(moveBytesClone, "@llvm.memmove.p0.p0.i64")
+        && System.Testing.DoesNotContain(moveBytesClone, "icmp ult ptr")
+        && System.Testing.Contains(moveCodePointsClone, "@llvm.memmove.p0.p0.i64")
+        && System.Testing.Contains(moveCodePointsClone, "mul i64 %arg_count, 4")
+        && System.Testing.DoesNotContain(moveCodePointsClone, "icmp ult ptr");
 }
 
 // Ported from BenchmarkSourceTests.WindowsDirectoryEnumerationUsesAllocationFreeInfoPath.
@@ -542,16 +545,10 @@ export unsafe ffi fn i32[min max] main() {
 internal fn bool DirectoryEnumerationDoesNotExposeLargeDirectoryPayloadAsSsaValueImpl()
 {
     // PORT-NOTE: the C# oracle slices `@EnumerateOnce` and asserts a mix of
-    // substring and regex (DoesNotMatch) conditions plus a `< 16` count bound on
-    // `fca.<field>` field extractions. The host bridge offers neither body
-    // slicing nor regex/count helpers, so the regex DoesNotMatch checks (e.g.
-    // `store %System_FileSystem_Directory %vN, ptr %slot_directory`,
-    // `llvm.memcpy ... %slot_directory`, the 8248-byte drop memcpy) and the fca
-    // count bound are reduced to the literal-substring subset and applied over
-    // the whole `llvm` module text. The `%slot_directory = alloca` /
-    // `load %System_FileSystem_Directory` absence checks survive as plain
-    // DoesNotContain.
-    stack mut LlvmCompile c = CompileLlvm(
+    // substring and regex conditions plus a `< 16` count bound on `fca.<field>`
+    // extractions. The port uses body and line-scoped checks for the stable
+    // source-expressible parts of those assertions.
+    stack mut LlvmCompile c = CompileLlvmUsingStarkPath(
         "benchmark-directory-enumeration-no-ssa-payload",
         raw"""
 import System.FileSystem
@@ -734,10 +731,13 @@ export unsafe ffi fn i32[min max] main() {
     // and the stdlib preamble elsewhere in the module.
     stack ascii llvm = Llvm(c);
     stack ascii body = System.Testing.LlvmDefinitionBody(llvm, "EnumerateOnce");
-    return System.Testing.DoesNotContain(body, "%slot_directory = alloca")
+    return !System.Testing.AnyLineContainsBoth(body, "store %System_FileSystem_Directory", "%slot_directory")
+        && !System.Testing.AnyLineContainsBoth(body, "llvm.memcpy", "%slot_directory")
+        && System.Testing.CountOccurrences(body, "fca.") < 16
+        && System.Testing.DoesNotContain(body, "%slot_directory = alloca")
         && System.Testing.DoesNotContain(body, "load %System_FileSystem_Directory")
         && System.Testing.Contains(body, "ReadRemainingNameLengthChecksumRaw")
-        && System.Testing.Contains(body, "ReadDirectoryNameLengthChecksum")
+        && System.Testing.Contains(llvm, "ReadDirectoryNameLengthChecksum")
         && System.Testing.DoesNotContain(body, "@System_FileSystem_Directory_ReadNextInfoRaw(")
         && System.Testing.DoesNotContain(body, "@System_FileSystem_Directory_ReadNextInfo(")
         && System.Testing.DoesNotContain(body, "@EntryLength(")
@@ -756,12 +756,10 @@ internal fn bool FileOpenDoesNotExposeLargeFilePayloadAsSsaValueImpl()
     // PORT-NOTE: the C# oracle slices `@OpenAndClose` and mixes literal-substring
     // DoesNotContain with regex DoesNotMatch checks (e.g.
     // `store %System_IO_File_File %vN, ptr %slot_file`, `llvm.memcpy ...
-    // %slot_file`). The host bridge has no body slicing or regex helper, so the
-    // regex DoesNotMatch checks are reduced to their literal-substring subset and
-    // applied over the whole `llvm` module text; the plain DoesNotContain checks
-    // (`%slot_file = alloca`, `load %System_IO_File_File`,
-    // `@llvm.memcpy.inline.p0.p0.i64`) survive directly. The embedded program is
-    // kept verbatim from the C# raw string literal.
+    // %slot_file`). The regex checks are reduced to their literal-substring
+    // subset, while the plain DoesNotContain checks are scoped to the function
+    // body below. The embedded program is kept verbatim from the C# raw string
+    // literal.
     stack mut LlvmCompile c = CompileLlvm(
         "benchmark-file-open-no-ssa-payload",
         raw"""
@@ -877,10 +875,8 @@ internal fn bool TextFormattingBenchmarksSpecializeConstantIntegerFormattingImpl
 {
     // PORT-NOTE: the C# oracle slices each benchmark's `@main` body before
     // asserting the constant-format specializations dropped the TryFormat*
-    // helper calls and that an `llvm.memcpy` survives. The host bridge has no
-    // body slicing, so the Contains/DoesNotContain checks are applied over each
-    // whole `llvm` module text instead of the `@main`-scoped body.
-    stack mut LlvmCompile integer = CompileLlvm(
+    // helper calls and that an `llvm.memcpy` survives.
+    stack mut LlvmCompile integer = CompileLlvmForTargetUsingStarkPath(
         "benchmark-text-constant-integer-formatting",
         raw"""
 import System.Text
@@ -931,23 +927,25 @@ export unsafe ffi fn i32[min max] main() {
 
     return 0;
 }
-""");
+""",
+        "x86_64-unknown-linux-gnu");
     if (!Succeeds(integer))
     {
         return false;
     }
 
     stack ascii integerLlvm = Llvm(integer);
-    if (!System.Testing.DoesNotContain(integerLlvm, "TryFormatI64Ascii")
-        || !System.Testing.DoesNotContain(integerLlvm, "TryFormatU64Ascii")
-        || !System.Testing.DoesNotContain(integerLlvm, "TryFormatI1024Ascii")
-        || !System.Testing.DoesNotContain(integerLlvm, "TryFormatU1024Ascii")
-        || !System.Testing.Contains(integerLlvm, "llvm.memcpy"))
+    stack ascii integerMain = System.Testing.LlvmDefinitionBody(integerLlvm, "main");
+    if (!System.Testing.DoesNotContain(integerMain, "TryFormatI64Ascii")
+        || !System.Testing.DoesNotContain(integerMain, "TryFormatU64Ascii")
+        || !System.Testing.DoesNotContain(integerMain, "TryFormatI1024Ascii")
+        || !System.Testing.DoesNotContain(integerMain, "TryFormatU1024Ascii")
+        || !System.Testing.Contains(integerMain, "llvm.memcpy"))
     {
         return false;
     }
 
-    stack mut LlvmCompile unicodeCompile = CompileLlvm(
+    stack mut LlvmCompile unicodeCompile = CompileLlvmForTargetUsingStarkPath(
         "benchmark-text-unicode-formatting",
         raw"""
 import System.Text
@@ -998,14 +996,16 @@ export unsafe ffi fn i32[min max] main() {
 
     return 0;
 }
-""");
+""",
+        "x86_64-unknown-linux-gnu");
     if (!Succeeds(unicodeCompile))
     {
         return false;
     }
 
     stack ascii unicodeLlvm = Llvm(unicodeCompile);
-    return System.Testing.DoesNotContain(unicodeLlvm, "TryFormatI1024Unicode")
-        && System.Testing.DoesNotContain(unicodeLlvm, "TryFormatU1024Unicode")
-        && System.Testing.Contains(unicodeLlvm, "llvm.memcpy");
+    stack ascii unicodeMain = System.Testing.LlvmDefinitionBody(unicodeLlvm, "main");
+    return System.Testing.DoesNotContain(unicodeMain, "TryFormatI1024Unicode")
+        && System.Testing.DoesNotContain(unicodeMain, "TryFormatU1024Unicode")
+        && System.Testing.Contains(unicodeMain, "llvm.memcpy");
 }

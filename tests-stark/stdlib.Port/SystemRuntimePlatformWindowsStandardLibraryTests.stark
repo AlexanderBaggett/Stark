@@ -17,12 +17,10 @@ internal fn bool StdLibSourceWindowsConsoleAndFileOperationsUseWin32ApisImpl()
     // Win32 console + file imports (GetStdHandle/CreateFileW/DeleteFileW/MoveFileExW/
     // GetFileAttributesW/GetCurrentDirectoryW/GetConsoleMode/WriteFile/ReadFile), defines
     // the wrappers (WriteStdoutAscii/OpenFileRead/DeleteFile/FileExists), and never
-    // references libc fopen/fclose/fread/fwrite or the Linux syscall path. The
-    // compile-only host bridge cannot read the platform source off disk and cannot select
-    // a Windows target, so this reduces to compiling a program that imports System.Console
-    // and System.IO.File (transitively pulling in the host stdlib platform backend) and
-    // asserting it succeeds.
-    stack mut ProgramCompile c = CompileProgram("windows-console-and-file-uses-win32", raw"""
+    // references libc fopen/fclose/fread/fwrite or the Linux syscall path. The host
+    // bridge cannot read the platform source off disk, so this cross-targets a Windows
+    // facade probe and asserts it succeeds.
+    stack mut ProgramCompile c = CompileProgramForTarget("windows-console-and-file-uses-win32", raw"""
 import System
 import System.Console
 import System.IO
@@ -48,7 +46,7 @@ export fn i32[min max] main()
 
     return 0;
 }
-""");
+""", WindowsX64MsvcTargetTriple);
     if (!Succeeds(c))
     {
         return false;
@@ -64,11 +62,9 @@ internal fn bool StdLibSourceWindowsWidePathCopiesUseInlineAsmHelperImpl()
     // off disk and compiles it with EmitLlvmIr against an x86_64-pc-windows-msvc target,
     // then extracts the @TryCopyWideRange definition body and asserts the wide-unit copy
     // goes through the inline-asm @CopyWideUnits helper (a `rep movsw` asm fn) rather than
-    // @llvm.memcpy. The compile-only host bridge cannot read the platform source off disk
-    // or select a Windows target, so this reduces to compiling a program that imports
-    // System.IO.File (transitively pulling in the host stdlib path normalization surface)
-    // and asserting it succeeds.
-    stack mut ProgramCompile c = CompileProgram("windows-wide-path-copies-inline-asm", raw"""
+    // @llvm.memcpy. The host bridge cannot read the platform source off disk, so this
+    // cross-targets a Windows path-normalization probe and asserts it succeeds.
+    stack mut ProgramCompile c = CompileProgramForTarget("windows-wide-path-copies-inline-asm", raw"""
 import System
 import System.IO
 module Demo
@@ -88,7 +84,7 @@ export fn i32[min max] main()
 {
     return 0;
 }
-""");
+""", WindowsX64MsvcTargetTriple);
     if (!Succeeds(c))
     {
         return false;
@@ -105,11 +101,10 @@ internal fn bool StagedWindowsStdLibBuildRoutesPlatformCallsThroughWindowsModule
     // x86_64-pc-windows-msvc target, and inspects the module graph: System.Runtime.Platform
     // and System.Runtime.Platform.Windows must be loaded while the Linux and MacOS backends
     // are not, and the emitted IR must reference @GetStdHandle/@CreateFileW but no
-    // LinuxSyscall. The compile-only host bridge cannot stage a source tree, select a
-    // Windows target, or inspect the module graph, so this reduces to compiling a program
-    // that imports System.Process (which routes through the platform dispatch module) and
-    // asserting it succeeds.
-    stack mut ProgramCompile c = CompileProgram("windows-staged-build-routes-through-windows-module", raw"""
+    // LinuxSyscall. The host bridge cannot stage a source tree or inspect the module
+    // graph, so this cross-targets a Windows platform-dispatch probe and asserts it
+    // succeeds.
+    stack mut ProgramCompile c = CompileProgramForTarget("windows-staged-build-routes-through-windows-module", raw"""
 import System
 import System.Process
 module Demo
@@ -129,7 +124,7 @@ export unsafe fn i32[min max] main()
 
     return 0;
 }
-""");
+""", WindowsX64MsvcTargetTriple);
     if (!Succeeds(c))
     {
         return false;
@@ -145,11 +140,10 @@ internal fn bool RootWindowsStdLibCompileKeepsWriteBufferToHandleOnDirectMirPath
     // compiles it with EmitLlvmIr + QualifyModuleSymbols against an x86_64-pc-windows-msvc
     // target, then inspects the MIR artifact: the single
     // System.Runtime.Platform.Windows.WriteBufferToHandle function must support direct code
-    // generation and must not emit an EmitAssignmentFromExpression gap log. The compile-only
-    // host bridge cannot read the root System.stark off disk, select a Windows target, or
-    // inspect the MIR / compiler logs, so this reduces to compiling a program that imports
-    // System and asserting it succeeds.
-    stack mut ProgramCompile c = CompileProgram("windows-root-keeps-writebuffertohandle-direct-mir", raw"""
+    // generation and must not emit an EmitAssignmentFromExpression gap log. The host
+    // bridge cannot read the root System.stark off disk or inspect the MIR / compiler
+    // logs, so this cross-targets a Windows System facade probe and asserts it succeeds.
+    stack mut ProgramCompile c = CompileProgramForTarget("windows-root-keeps-writebuffertohandle-direct-mir", raw"""
 import System
 import System.Console
 module Demo
@@ -174,7 +168,7 @@ export fn i32[min max] main()
 
     return 0;
 }
-""");
+""", WindowsX64MsvcTargetTriple);
     if (!Succeeds(c))
     {
         return false;
@@ -192,10 +186,9 @@ internal fn bool StdLibSourceWindowsConsoleInputOutputUsesKernel32ApisImpl()
     // declares and calls the Kernel32 console imports (GetStdHandle/WriteFile/ReadFile/
     // WriteConsoleW/GetConsoleMode), defines the cached-handle and Write/Read stdio
     // wrappers, and never references the Linux syscall path or libc fputs/fputws/fread/
-    // fwrite. The compile-only host bridge cannot read the platform source off disk or
-    // select a Windows target, so this reduces to compiling a program that imports
-    // System.Console and asserting it succeeds.
-    stack mut ProgramCompile c = CompileProgram("windows-console-io-uses-kernel32", raw"""
+    // fwrite. The host bridge cannot read the platform source off disk, so this
+    // cross-targets a Windows console probe and asserts it succeeds.
+    stack mut ProgramCompile c = CompileProgramForTarget("windows-console-io-uses-kernel32", raw"""
 import System
 import System.Console
 module Demo
@@ -225,7 +218,7 @@ export fn i32[min max] main()
 
     return 0;
 }
-""");
+""", WindowsX64MsvcTargetTriple);
     if (!Succeeds(c))
     {
         return false;
@@ -243,10 +236,10 @@ internal fn bool StdLibSourceWindowsFilePrimitivesUseKernel32ApisImpl()
     // declares and calls the Kernel32 file primitives (CreateFileW/CloseHandle/
     // FlushFileBuffers/ReadFile/WriteFile/NtReadFile/NtWriteFile/SetFilePointerEx),
     // defines the Open/Close/Flush/Read/Write/Seek wrappers, and never references the Linux
-    // syscall path or libc fopen/fclose/fflush/fread/fwrite. The compile-only host bridge
-    // cannot read the platform source off disk or select a Windows target, so this reduces
-    // to compiling a program that imports System.IO.File and asserting it succeeds.
-    stack mut ProgramCompile c = CompileProgram("windows-file-primitives-use-kernel32", raw"""
+    // syscall path or libc fopen/fclose/fflush/fread/fwrite. The host bridge cannot read
+    // the platform source off disk, so this cross-targets a Windows file probe and asserts
+    // it succeeds.
+    stack mut ProgramCompile c = CompileProgramForTarget("windows-file-primitives-use-kernel32", raw"""
 import System
 import System.IO
 module Demo
@@ -266,7 +259,7 @@ export fn i32[min max] main()
 {
     return 0;
 }
-""");
+""", WindowsX64MsvcTargetTriple);
     if (!Succeeds(c))
     {
         return false;
@@ -286,10 +279,9 @@ internal fn bool StdLibSourceWindowsDirectoryAndMetadataUseKernel32ApisImpl()
     // large-fetch constant/FindNextFileW/FindClose), defines the path-probe, directory,
     // and Windows-file-time helpers, prefers FindFirstFileExW over FindFirstFileW, and
     // never references the Linux syscall path or libc opendir/readdir/closedir/stat. The
-    // compile-only host bridge cannot read the platform source off disk or select a
-    // Windows target, so this reduces to compiling a program that imports
-    // System.FileSystem and asserting it succeeds.
-    stack mut ProgramCompile c = CompileProgram("windows-directory-and-metadata-use-kernel32", raw"""
+    // host bridge cannot read the platform source off disk, so this cross-targets a
+    // Windows filesystem probe and asserts it succeeds.
+    stack mut ProgramCompile c = CompileProgramForTarget("windows-directory-and-metadata-use-kernel32", raw"""
 import System
 import System.FileSystem
 module Demo
@@ -321,7 +313,7 @@ export unsafe fn i32[min max] main()
 
     return 0;
 }
-""");
+""", WindowsX64MsvcTargetTriple);
     if (!Succeeds(c))
     {
         return false;
@@ -341,20 +333,19 @@ internal fn bool StdLibSourceWindowsPathBehaviorUsesWideNormalizationRulesImpl()
     // (HasLongPathPrefix/IsDriveAbsoluteWidePath/IsUncWidePath/TryDecodeUtf8PathToWide/
     // TryCopyWideAscii/TryBuild*WindowsWidePath/separator accessors/TryCurrentDirectory/
     // TryTempDirectory), calls them, and never references the Linux syscall path or libc
-    // getcwd. The compile-only host bridge cannot read the platform source off disk or
-    // select a Windows target, so this reduces to compiling a program that imports
-    // System.IO.Path and asserting it succeeds.
-    stack mut ProgramCompile c = CompileProgram("windows-path-behavior-wide-normalization", raw"""
+    // getcwd. The host bridge cannot read the platform source off disk, so this
+    // cross-targets a Windows path probe and asserts it succeeds.
+    stack mut ProgramCompile c = CompileProgramForTarget("windows-path-behavior-wide-normalization", raw"""
 import System
 import System.IO
 module Demo
 
 export unsafe fn i32[min max] main()
 {
-    stack System.Text.ascii separator = System.IO.Path.DirectorySeparator();
+    stack ascii separator = System.IO.Path.DirectorySeparator();
     return 0;
 }
-""");
+""", WindowsX64MsvcTargetTriple);
     if (!Succeeds(c))
     {
         return false;
@@ -373,10 +364,9 @@ internal fn bool StdLibSourceWindowsProcessHelpersUseKernel32ApisImpl()
     // CreatePipe/CreateProcessW/TerminateProcess/GetExitCodeProcess/PeekNamedPipe/
     // GetTickCount64/Set+GetEnvironmentVariableW/SetCurrentDirectoryW), defines the
     // ProcessId/StartProcessCapture/raw-descriptor/ReadArgumentsBlock helpers, and never
-    // references the Linux syscall path. The compile-only host bridge cannot read the
-    // platform source off disk or select a Windows target, so this reduces to compiling a
-    // program that imports System.Process and asserting it succeeds.
-    stack mut ProgramCompile c = CompileProgram("windows-process-helpers-use-kernel32", raw"""
+    // references the Linux syscall path. The host bridge cannot read the platform source
+    // off disk, so this cross-targets a Windows process probe and asserts it succeeds.
+    stack mut ProgramCompile c = CompileProgramForTarget("windows-process-helpers-use-kernel32", raw"""
 import System
 import System.Process
 module Demo
@@ -396,7 +386,7 @@ export unsafe fn i32[min max] main()
 
     return 0;
 }
-""");
+""", WindowsX64MsvcTargetTriple);
     if (!Succeeds(c))
     {
         return false;
@@ -413,31 +403,24 @@ internal fn bool WindowsDispatchProcessExitCallsKernelImportWithoutSymbolCollisi
     // it with EmitLlvmIr against an x86_64-pc-windows-msvc target, then asserts the emitted
     // IR defines the dispatch wrapper @System_Runtime_Platform_ExitProcess, declares the
     // raw @ExitProcess Kernel32 import, calls @ExitProcess, and never re-defines @ExitProcess
-    // itself (no symbol collision). The compile-only host bridge cannot read the dispatch
-    // template off disk or select a Windows target, so this reduces to compiling a program
-    // that imports System.Process and exercises the process-exit dispatch surface and
-    // asserting it succeeds.
-    stack mut ProgramCompile c = CompileProgram("windows-dispatch-process-exit-no-symbol-collision", raw"""
+    // itself (no symbol collision). The host bridge cannot read the dispatch template off
+    // disk, so this cross-targets a Windows process-dispatch probe and asserts it succeeds.
+    stack mut ProgramCompile c = CompileProgramForTarget("windows-dispatch-process-exit-no-symbol-collision", raw"""
 import System
 import System.Process
 module Demo
 
 export unsafe fn i32[min max] main()
 {
-    switch (System.Process.ProcessId())
+    stack i32[min max] id = System.Process.CurrentId();
+    if (id == 0)
     {
-        case System.Process.ProcessResult<i32[min max]>.Err(var error):
-            return 1;
-        case System.Process.ProcessResult<i32[min max]>.Ok(var id):
-            if (id == 0)
-            {
-                return 2;
-            }
+        return 2;
     }
 
     return 0;
 }
-""");
+""", WindowsX64MsvcTargetTriple);
     if (!Succeeds(c))
     {
         return false;
@@ -457,9 +440,9 @@ internal fn bool PackagedStdLibWindowsTargetCanBeConsumedWithoutSourceImpl()
     // IR calls the packaged System_Memory_Allocator_Default/IsDefault,
     // System_Threading_Thread_Yield/SleepMilliseconds, and System_Console_WriteLine__ascii_
     // symbols. The compile-only host bridge cannot emit or consume a package image or
-    // select a Windows target, so this reduces to compiling the embedded App.stark (kept
-    // verbatim) against the host stdlib and asserting it succeeds.
-    stack mut ProgramCompile c = CompileProgram("windows-packaged-stdlib-consumed-without-source", raw"""
+    // produce or consume a package image, so this cross-targets the embedded App.stark
+    // against the source stdlib and asserts it succeeds.
+    stack mut ProgramCompile c = CompileProgramForTarget("windows-packaged-stdlib-consumed-without-source", raw"""
 import System
 module App
 
@@ -476,7 +459,7 @@ export fn i32[min max] main()
     System.Console.WriteLine("windows package");
     return 0;
 }
-""");
+""", WindowsX64MsvcTargetTriple);
     if (!Succeeds(c))
     {
         return false;
@@ -750,11 +733,10 @@ internal fn bool SourceWindowsDirectoryEnumerationProbeCompilesAsciiUnicodeAndLo
     // DirectoryDecodeProbe.stark with --emit-llvm against a Windows triple to an .ll file,
     // then asserts the emitted IR text contains System_FileSystem_Directory_ReadNext,
     // System_FileSystem_OpenDirectory, TryCopyWideAscii, and TryCopyWideUtf8. The
-    // compile-only host bridge cannot select a Windows target or read the on-disk .ll, so
-    // this reduces to compiling the embedded program (kept verbatim) and asserting it
-    // succeeds; the rendered llvm artifact is additionally checked with Contains for the
-    // directory-enumeration call symbols the bridge can observe.
-    stack mut ProgramCompile c = CompileProgram("source-windows-directory-enum-probe-ascii-unicode-long", raw"""
+    // host bridge cannot read the on-disk .ll, so this cross-targets the embedded program
+    // and asserts it succeeds; the rendered llvm artifact is additionally checked with
+    // Contains for the directory-enumeration call symbols the bridge can observe.
+    stack mut ProgramCompile c = CompileProgramForTarget("source-windows-directory-enum-probe-ascii-unicode-long", raw"""
 import System.FileSystem
 import System.Text
 import System.IO
@@ -863,7 +845,7 @@ export unsafe fn i32[min max] main()
             return 6;
     }
 }
-""");
+""", WindowsX64MsvcTargetTriple);
     if (!Succeeds(c))
     {
         return false;
@@ -1095,30 +1077,24 @@ internal fn bool WindowsDispatchTemplateMirrorsLinuxDispatchSurfaceImpl()
     // and System.Runtime.Platform.WindowsDispatch.stark off disk, extracts the sorted set of
     // `internal fn` names from each template, and asserts the two sets are equal (the Windows
     // dispatch surface mirrors the Linux one exactly). The compile-only host bridge cannot
-    // read the dispatch templates off disk or enumerate their declarations, so this reduces
-    // to compiling a program that imports System.Process (which routes through the shared
-    // platform dispatch surface both templates implement) and asserting it succeeds.
-    stack mut ProgramCompile c = CompileProgram("windows-dispatch-template-mirrors-linux-surface", raw"""
+    // read the dispatch templates off disk or enumerate their declarations, so this
+    // cross-targets a Windows program that imports System.Process and asserts it succeeds.
+    stack mut ProgramCompile c = CompileProgramForTarget("windows-dispatch-template-mirrors-linux-surface", raw"""
 import System
 import System.Process
 module Demo
 
 export unsafe fn i32[min max] main()
 {
-    switch (System.Process.ProcessId())
+    stack i32[min max] id = System.Process.CurrentId();
+    if (id == 0)
     {
-        case System.Process.ProcessResult<i32[min max]>.Err(var error):
-            return 1;
-        case System.Process.ProcessResult<i32[min max]>.Ok(var id):
-            if (id == 0)
-            {
-                return 2;
-            }
+        return 2;
     }
 
     return 0;
 }
-""");
+""", WindowsX64MsvcTargetTriple);
     if (!Succeeds(c))
     {
         return false;
