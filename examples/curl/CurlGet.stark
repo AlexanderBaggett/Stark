@@ -1,0 +1,110 @@
+import System.Console
+import System.IO
+import System.Process
+import System.Text
+import Vendor.Curl
+module CurlGet
+
+fn bool ExpectedBody(borrow i8[min max][] body, u64[0 2 ** 63 - 1] length)
+{
+    if (length != 14)
+    {
+        return false;
+    }
+
+    return body[0] == 115
+        && body[1] == 116
+        && body[2] == 97
+        && body[3] == 114
+        && body[4] == 107
+        && body[5] == 45
+        && body[6] == 99
+        && body[7] == 117
+        && body[8] == 114
+        && body[9] == 108
+        && body[10] == 45
+        && body[11] == 111
+        && body[12] == 107
+        && body[13] == 10;
+}
+
+fn i32[min max] RunCurlExample(ascii url)
+{
+    stack mut i8[min max][256] bodyStorage = { 0 };
+    stack mut i8[min max][1024] headerStorage = { 0 };
+    stack mut i8[min max][] bodyBuffer = bodyStorage;
+    stack mut i8[min max][] headerBuffer = headerStorage;
+
+    switch (GetInto(url, bodyBuffer, headerBuffer, CurlDefaultTimeoutMilliseconds, false))
+    {
+        case CurlTransferResult.Err(var error):
+            return 2;
+        case CurlTransferResult.Ok(var info):
+            if (info.StatusCode != 200)
+            {
+                return 3;
+            }
+
+            if (!ExpectedBody(bodyBuffer, info.BodyLength))
+            {
+                return 4;
+            }
+
+            if (info.HeaderLength == 0)
+            {
+                return 5;
+            }
+    }
+
+    switch (GetBytes(url, CurlDefaultTimeoutMilliseconds, false))
+    {
+        case CurlResponseResult.Err(var error):
+            return 6;
+        case CurlResponseResult.Ok(var response):
+            if (response.StatusCode() != 200)
+            {
+                return 7;
+            }
+
+            if (!ExpectedBody(response.Body(), response.BodyLength()))
+            {
+                return 8;
+            }
+
+            if (response.HeaderLength() == 0)
+            {
+                return 9;
+            }
+    }
+
+    if (System.Console.WriteLine("Curl GET ok") != System.IO.IOStatus.Ok)
+    {
+        return 10;
+    }
+
+    return 0;
+}
+
+export unsafe fn i32[min max] main()
+{
+    unsafe
+    {
+        stack System.Process.ProcessResult<System.Process.ProcessOption<System.Text.OwnedAscii>> urlResult =
+            System.Process.GetEnvironment("STARK_CURL_URL");
+        switch (urlResult)
+        {
+            case System.Process.ProcessResult<System.Process.ProcessOption<System.Text.OwnedAscii>>.Err(var error):
+                return 1;
+            case System.Process.ProcessResult<System.Process.ProcessOption<System.Text.OwnedAscii>>.Ok(var option):
+                switch (option)
+                {
+                    case System.Process.ProcessOption<System.Text.OwnedAscii>.None:
+                        WriteErrorLine("Set STARK_CURL_URL to a local HTTP endpoint that returns stark-curl-ok.");
+                        return 64;
+                    case System.Process.ProcessOption<System.Text.OwnedAscii>.Some(var urlText):
+                        stack mut System.Text.OwnedAscii url = urlText;
+                        return RunCurlExample(url.View());
+                }
+        }
+    }
+}

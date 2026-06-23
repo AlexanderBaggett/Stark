@@ -322,6 +322,8 @@ internal sealed partial class LlvmFunctionBodyEmitter
             (StarkTypeKind.Integer, StarkTypeKind.Integer) => source.BitWidth == target.BitWidth,
             (StarkTypeKind.Float, StarkTypeKind.Float) => source.BitWidth == target.BitWidth,
             (StarkTypeKind.RawPointer, StarkTypeKind.RawPointer) => true,
+            (StarkTypeKind.RawPointer, StarkTypeKind.FunctionPointer) => true,
+            (StarkTypeKind.FunctionPointer, StarkTypeKind.RawPointer) => true,
             (StarkTypeKind.FunctionPointer, StarkTypeKind.FunctionPointer) => true,
             _ => false
         };

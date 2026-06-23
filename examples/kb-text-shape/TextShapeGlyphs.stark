@@ -1,0 +1,153 @@
+import System.Console
+import System.IO
+import System.IO.File
+import System.Process
+import System.Runtime.Buffer
+import System.Text
+import Vendor.KbTextShape
+module TextShapeGlyphs
+
+const DefaultFontPathFromExamples = "../vendor/native/stb/testdata/Vera.ttf";
+const DefaultFontPathFromBuildOutput = "../../../../../../../vendor/native/stb/testdata/Vera.ttf";
+
+fn bool FileExists(ascii path)
+{
+    switch (System.IO.File.Exists(path))
+    {
+        case System.IO.IOResult<bool>.Err(var error):
+            return false;
+        case System.IO.IOResult<bool>.Ok(var exists):
+            return exists;
+    }
+}
+
+fn i32[min max] SegmentGraphemes()
+{
+    switch (CreateSegmenter(BreakKind.Grapheme))
+    {
+        case SegmenterResult.Err(var error):
+            return 1;
+        case SegmenterResult.Ok(var segmenter):
+            stack mut TextBoundary[8] boundaries = { new TextBoundary() };
+            stack mut TextBoundary[] boundaryBuffer = boundaries;
+            switch (SegmentUtf8Into(segmenter, "Aé", boundaryBuffer))
+            {
+                case OutputCountResult.Err(var segmentError):
+                    return 2;
+                case OutputCountResult.Ok(var counts):
+                    if (!counts.Complete()
+                        || counts.Written != 2
+                        || boundaries[0].Start != 0
+                        || boundaries[0].End != 1
+                        || boundaries[1].Start != 1
+                        || boundaries[1].End != 3)
+                    {
+                        return 3;
+                    }
+            }
+    }
+
+    return 0;
+}
+
+fn i32[min max] ShapeGlyphs(ascii fontPath)
+{
+    stack mut System.Runtime.Buffer.DynamicByteBuffer fontStorage = new();
+    switch (System.IO.File.ReadAllBytes(fontPath))
+    {
+        case System.IO.IOResult<System.Runtime.Buffer.DynamicByteBuffer>.Err(var error):
+            return 4;
+        case System.IO.IOResult<System.Runtime.Buffer.DynamicByteBuffer>.Ok(var bytes):
+            fontStorage = bytes;
+    }
+
+    switch (CreateFontFromMemory(fontStorage.ReadSlice(), 0))
+    {
+        case FontResult.Err(var error):
+            return 5;
+        case FontResult.Ok(var font):
+            if (UnitsPerEm(font) == 0)
+            {
+                return 6;
+            }
+
+            stack mut ShapedGlyph[16] glyphs = { new ShapedGlyph() };
+            stack mut ShapedGlyph[] glyphBuffer = glyphs;
+            switch (ShapeUtf8Into(font, "Stark", glyphBuffer))
+            {
+                case OutputCountResult.Err(var shapeError):
+                    return 7;
+                case OutputCountResult.Ok(var counts):
+                    if (!counts.Complete()
+                        || counts.Written == 0
+                        || counts.Required == 0
+                        || glyphs[0].GlyphId == 0
+                        || glyphs[0].XAdvance <= 0)
+                    {
+                        return 8;
+                    }
+            }
+    }
+
+    return 0;
+}
+
+fn i32[min max] RunTextShapeExample(ascii fontPath)
+{
+    stack i32[min max] segmentStatus = SegmentGraphemes();
+    if (segmentStatus != 0)
+    {
+        return segmentStatus;
+    }
+
+    stack i32[min max] shapeStatus = ShapeGlyphs(fontPath);
+    if (shapeStatus != 0)
+    {
+        return shapeStatus;
+    }
+
+    if (System.Console.WriteLine("KbTextShape ok") != System.IO.IOStatus.Ok)
+    {
+        return 9;
+    }
+
+    return 0;
+}
+
+fn i32[min max] RunDefaultTextShapeExample()
+{
+    if (FileExists(DefaultFontPathFromExamples))
+    {
+        return RunTextShapeExample(DefaultFontPathFromExamples);
+    }
+
+    if (FileExists(DefaultFontPathFromBuildOutput))
+    {
+        return RunTextShapeExample(DefaultFontPathFromBuildOutput);
+    }
+
+    return 10;
+}
+
+export unsafe fn i32[min max] main()
+{
+    unsafe
+    {
+        stack System.Process.ProcessResult<System.Process.ProcessOption<System.Text.OwnedAscii>> fontPathResult =
+            System.Process.GetEnvironment("STARK_KB_TEXT_SHAPE_FONT_PATH");
+        switch (fontPathResult)
+        {
+            case System.Process.ProcessResult<System.Process.ProcessOption<System.Text.OwnedAscii>>.Err(var error):
+                return 11;
+            case System.Process.ProcessResult<System.Process.ProcessOption<System.Text.OwnedAscii>>.Ok(var option):
+                switch (option)
+                {
+                    case System.Process.ProcessOption<System.Text.OwnedAscii>.None:
+                        return RunDefaultTextShapeExample();
+                    case System.Process.ProcessOption<System.Text.OwnedAscii>.Some(var pathText):
+                        stack mut System.Text.OwnedAscii path = pathText;
+                        return RunTextShapeExample(path.View());
+                }
+        }
+    }
+}

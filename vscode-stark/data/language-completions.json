@@ -7,6 +7,13 @@
     "documentation": "Imports a module. Imported declarations are available by final name."
   },
   {
+    "label": "import Vendor.Vulkan",
+    "insertText": "import Vendor.Vulkan",
+    "kind": "snippet",
+    "detail": "Import bundled Vulkan binding",
+    "documentation": "Imports Stark's generated Vendor.Vulkan loader/core binding."
+  },
+  {
     "label": "export import",
     "insertText": "export import ${1:Some.Module}",
     "kind": "keyword",

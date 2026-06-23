@@ -1,0 +1,173 @@
+import System.C
+module Vendor.LZ4
+
+public const LZ4MaxInputSize = 2113929216;
+public const LZ4MaxBlockSize = 2147483647;
+
+public enum LZ4Error
+{
+    SourceTooLarge,
+    DestinationTooSmall,
+    DecompressionFailed,
+}
+
+public enum LZ4BlockResult
+{
+    [Ok] Ok(u32[0 2147483647]),
+    [Err] Err(LZ4Error),
+}
+
+internal unsafe ffi(c) fn System.C.c_int LZ4_compressBound(System.C.c_int inputSize);
+internal unsafe ffi(c) fn System.C.c_int LZ4_compress_default(
+    rawptr<System.C.c_char> source,
+    rawmutptr<System.C.c_char> destination,
+    System.C.c_int sourceSize,
+    System.C.c_int destinationCapacity);
+internal unsafe ffi(c) fn System.C.c_int LZ4_decompress_safe(
+    rawptr<System.C.c_char> source,
+    rawmutptr<System.C.c_char> destination,
+    System.C.c_int compressedSize,
+    System.C.c_int destinationCapacity);
+internal unsafe ffi(c) fn System.C.c_int LZ4_versionNumber();
+
+internal finite law i32[min max] ClampNativeCapacity(u64[0 2 ** 63 - 1] length)
+{
+    if (length > LZ4MaxBlockSize)
+    {
+        return LZ4MaxBlockSize;
+    }
+
+    return (i32[min max])length;
+}
+
+internal finite law LZ4BlockResult CompressionResult(System.C.c_int written)
+{
+    if (written <= 0)
+    {
+        return LZ4BlockResult.Err(LZ4Error.DestinationTooSmall);
+    }
+
+    return LZ4BlockResult.Ok((u32[0 2147483647])written);
+}
+
+internal finite law LZ4BlockResult DecompressionResult(System.C.c_int written)
+{
+    if (written < 0)
+    {
+        return LZ4BlockResult.Err(LZ4Error.DecompressionFailed);
+    }
+
+    return LZ4BlockResult.Ok((u32[0 2147483647])written);
+}
+
+public fn i32[min max] VersionNumber()
+{
+    unsafe
+    {
+        return LZ4_versionNumber();
+    }
+}
+
+public fn LZ4BlockResult MaxCompressedSize(u64[0 2 ** 63 - 1] sourceLength)
+{
+    if (sourceLength > LZ4MaxInputSize)
+    {
+        return LZ4BlockResult.Err(LZ4Error.SourceTooLarge);
+    }
+
+    unsafe
+    {
+        stack System.C.c_int nativeSourceLength = (i32[min max])sourceLength;
+        stack System.C.c_int bound = LZ4_compressBound(nativeSourceLength);
+        if (bound <= 0)
+        {
+            return LZ4BlockResult.Err(LZ4Error.SourceTooLarge);
+        }
+
+        return LZ4BlockResult.Ok((u32[0 2147483647])bound);
+    }
+}
+
+public fn LZ4BlockResult CompressBlock(
+    borrow i8[min max][] source,
+    borrow mut i8[min max][] destination)
+{
+    if (source.Length > LZ4MaxInputSize)
+    {
+        return LZ4BlockResult.Err(LZ4Error.SourceTooLarge);
+    }
+
+    if (source.Length == 0)
+    {
+        return LZ4BlockResult.Ok(0);
+    }
+
+    if (destination.Length == 0)
+    {
+        return LZ4BlockResult.Err(LZ4Error.DestinationTooSmall);
+    }
+
+    unsafe
+    {
+        stack rawptr<System.C.c_char> sourceData = (rawptr<System.C.c_char>)(&source[0]);
+        stack rawmutptr<System.C.c_char> destinationData = (rawmutptr<System.C.c_char>)(&destination[0]);
+        stack System.C.c_int nativeSourceLength = (i32[min max])source.Length;
+        stack System.C.c_int nativeDestinationCapacity = ClampNativeCapacity(destination.Length);
+        stack System.C.c_int written = LZ4_compress_default(
+            sourceData,
+            destinationData,
+            nativeSourceLength,
+            nativeDestinationCapacity);
+        return CompressionResult(written);
+    }
+}
+
+public fn LZ4BlockResult DecompressBlock(
+    borrow i8[min max][] compressed,
+    borrow mut i8[min max][] destination)
+{
+    if (compressed.Length > LZ4MaxBlockSize)
+    {
+        return LZ4BlockResult.Err(LZ4Error.SourceTooLarge);
+    }
+
+    return DecompressBlockPrefix(
+        compressed,
+        (u32[0 2147483647])compressed.Length,
+        destination);
+}
+
+public fn LZ4BlockResult DecompressBlockPrefix(
+    borrow i8[min max][] compressed,
+    u32[0 2147483647] compressedLength,
+    borrow mut i8[min max][] destination)
+{
+    if ((u64[0 2 ** 63 - 1])compressedLength > compressed.Length)
+    {
+        return LZ4BlockResult.Err(LZ4Error.SourceTooLarge);
+    }
+
+    if (compressedLength == 0)
+    {
+        return LZ4BlockResult.Ok(0);
+    }
+
+    if (destination.Length == 0)
+    {
+        return LZ4BlockResult.Err(LZ4Error.DestinationTooSmall);
+    }
+
+    unsafe
+    {
+        stack rawptr<System.C.c_char> sourceData = (rawptr<System.C.c_char>)(&compressed[0]);
+        stack rawmutptr<System.C.c_char> destinationData = (rawmutptr<System.C.c_char>)(&destination[0]);
+        stack System.C.c_int nativeCompressedLength = (i32[min max])compressedLength;
+        stack System.C.c_int nativeDestinationCapacity = ClampNativeCapacity(destination.Length);
+        stack System.C.c_int written = LZ4_decompress_safe(
+            sourceData,
+            destinationData,
+            nativeCompressedLength,
+            nativeDestinationCapacity);
+        return DecompressionResult(written);
+    }
+}

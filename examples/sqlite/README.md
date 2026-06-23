@@ -33,9 +33,9 @@ You can also compile it directly:
 /tmp/stark-sqlite-task-report
 ```
 
-`SQLiteSmoke.stark` remains a smaller binding smoke test:
+`SQLiteInMemoryQueries.stark` is a smaller in-memory query example:
 
 ```bash
-./stark examples/sqlite/SQLiteSmoke.stark --emit-exe -I vendor/dist -o /tmp/stark-sqlite-smoke
-/tmp/stark-sqlite-smoke
+./stark examples/sqlite/SQLiteInMemoryQueries.stark --emit-exe -I vendor/dist -o /tmp/stark-sqlite-in-memory-queries
+/tmp/stark-sqlite-in-memory-queries
 ```

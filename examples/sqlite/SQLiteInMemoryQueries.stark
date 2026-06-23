@@ -1,6 +1,6 @@
 import System.Text
 import Vendor.SQLite
-module SQLiteSmoke
+module SQLiteInMemoryQueries
 
 export fn i32[min max] main()
 {

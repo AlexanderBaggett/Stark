@@ -156,6 +156,11 @@ public fn ExprType ClassifyExprType(borrow TokenStream stream, borrow StatementL
         return ClassifyExprType(stream, body, body.ExprLeftAt(node));
     }
 
+    if (kind == Compiler.Parsing.ExprKind.Convert)
+    {
+        return MapTypeToken(stream, body.ExprTokenAt(node));
+    }
+
     if (kind == Compiler.Parsing.ExprKind.Conditional)
     {
         // `cond ? then : else` — the value type is the then-branch's type.

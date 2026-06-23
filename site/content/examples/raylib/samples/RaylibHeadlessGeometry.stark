@@ -1,5 +1,5 @@
 import Raylib
-module RaylibSmoke
+module RaylibHeadlessGeometry
 
 export fn i32[min max] main() {
     stack Color color = RAYWHITE();

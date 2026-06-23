@@ -1,0 +1,55 @@
+import System.Testing
+import Vendor.Curl
+module CurlTests
+
+[Fact]
+fn bool GetIntoRejectsEmptyBodyBufferBeforeNativeTransfer()
+{
+    stack mut i8[min max][1] body = { 0 };
+    stack mut i8[min max][64] headers = { 0 };
+    stack mut i8[min max][] headerBuffer = headers;
+
+    unsafe
+    {
+        stack mut i8[min max][] emptyBody = slice(&body[0], 0);
+        switch (GetInto("http://127.0.0.1/", emptyBody, headerBuffer, 1000, false))
+        {
+            case CurlTransferResult.Ok(var info):
+                return false;
+            case CurlTransferResult.Err(var error):
+                return error == CurlError.BodyTooSmall;
+        }
+    }
+}
+
+[Fact]
+fn bool GetIntoRejectsEmptyHeaderBufferBeforeNativeTransfer()
+{
+    stack mut i8[min max][64] body = { 0 };
+    stack mut i8[min max][1] headers = { 0 };
+    stack mut i8[min max][] bodyBuffer = body;
+
+    unsafe
+    {
+        stack mut i8[min max][] emptyHeaders = slice(&headers[0], 0);
+        switch (GetInto("http://127.0.0.1/", bodyBuffer, emptyHeaders, 1000, false))
+        {
+            case CurlTransferResult.Ok(var info):
+                return false;
+            case CurlTransferResult.Err(var error):
+                return error == CurlError.HeadersTooSmall;
+        }
+    }
+}
+
+[Fact]
+fn bool GetBytesReportsMalformedUrl()
+{
+    switch (GetBytes("://", 1000, false))
+    {
+        case CurlResponseResult.Ok(var response):
+            return false;
+        case CurlResponseResult.Err(var error):
+            return error == CurlError.MalformedUrl || error == CurlError.UnsupportedProtocol;
+    }
+}

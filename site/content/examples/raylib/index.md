@@ -25,7 +25,7 @@ Status: checked by `ExamplesCompileRunTests.RaylibStarkModulesCheckWithoutNative
 
 - README.md (embedded below)
 - [Raylib.stark](samples/Raylib.stark)
-- [RaylibSmoke.stark](samples/RaylibSmoke.stark)
+- [RaylibHeadlessGeometry.stark](samples/RaylibHeadlessGeometry.stark)
 - [Raylib/Types.stark](samples/Raylib/Types.stark)
 - [Raylib/Core.stark](samples/Raylib/Core.stark)
 - [Raylib/Shapes.stark](samples/Raylib/Shapes.stark)
@@ -44,9 +44,9 @@ Status: checked by `ExamplesCompileRunTests.RaylibStarkModulesCheckWithoutNative
 
 {{< file-sample "samples/Raylib.stark" "stark" >}}
 
-### RaylibSmoke.stark
+### RaylibHeadlessGeometry.stark
 
-{{< file-sample "samples/RaylibSmoke.stark" "stark" >}}
+{{< file-sample "samples/RaylibHeadlessGeometry.stark" "stark" >}}
 
 ### Raylib/Types.stark
 

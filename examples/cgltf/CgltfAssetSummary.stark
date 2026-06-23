@@ -1,0 +1,213 @@
+import System.Console
+import System.IO
+import System.IO.File
+import System.Process
+import System.Text
+import Vendor.Cgltf
+module CgltfAssetSummary
+
+const AssetPathFromExamples = "cgltf/assets/tiny-triangle.gltf";
+const AssetPathFromBuildOutput = "../../../../../../cgltf/assets/tiny-triangle.gltf";
+
+fn bool FileExists(ascii path)
+{
+    switch (System.IO.File.Exists(path))
+    {
+        case System.IO.IOResult<bool>.Err(var error):
+            return false;
+        case System.IO.IOResult<bool>.Ok(var exists):
+            return exists;
+    }
+}
+
+fn bool NameIsTriangleMesh(borrow i8[min max][] bytes, u64[0 max] length)
+{
+    return length == 12
+        && bytes[0] == 84
+        && bytes[1] == 114
+        && bytes[2] == 105
+        && bytes[3] == 97
+        && bytes[4] == 110
+        && bytes[5] == 103
+        && bytes[6] == 108
+        && bytes[7] == 101
+        && bytes[8] == 77
+        && bytes[9] == 101
+        && bytes[10] == 115
+        && bytes[11] == 104;
+}
+
+fn bool CheckDocument(borrow Document document)
+{
+    switch (GetCounts(document))
+    {
+        case CountsResult.Err(var error):
+            return false;
+        case CountsResult.Ok(var counts):
+            if (counts.Meshes != 1
+                || counts.Materials != 1
+                || counts.Buffers != 1
+                || counts.BufferViews != 2
+                || counts.Accessors != 2
+                || counts.Nodes != 1
+                || counts.Scenes != 1
+                || counts.Animations != 0)
+            {
+                return false;
+            }
+    }
+
+    switch (GetMeshInfo(document, 0))
+    {
+        case MeshInfoResult.Err(var error):
+            return false;
+        case MeshInfoResult.Ok(var mesh):
+            if (mesh.NameByteLength != 12 || mesh.PrimitiveCount != 1)
+            {
+                return false;
+            }
+    }
+
+    stack mut i8[min max][16] meshName = { 0 };
+    stack mut i8[min max][] meshNameBytes = meshName;
+    switch (CopyMeshNameBytes(document, 0, meshNameBytes))
+    {
+        case NameCopyResult.Err(var error):
+            return false;
+        case NameCopyResult.Ok(var bytesCopied):
+            if (!NameIsTriangleMesh(meshNameBytes, bytesCopied))
+            {
+                return false;
+            }
+    }
+
+    switch (GetPrimitiveInfo(document, 0, 0))
+    {
+        case PrimitiveInfoResult.Err(var error):
+            return false;
+        case PrimitiveInfoResult.Ok(var primitive):
+            if (primitive.Mode != PrimitiveMode.Triangles
+                || primitive.AttributeCount != 1
+                || !primitive.HasIndices
+                || primitive.IndicesAccessorIndex != 1
+                || !primitive.HasMaterial
+                || primitive.MaterialIndex != 0)
+            {
+                return false;
+            }
+    }
+
+    switch (GetMaterialInfo(document, 0))
+    {
+        case MaterialInfoResult.Err(var error):
+            return false;
+        case MaterialInfoResult.Ok(var material):
+            if (material.NameByteLength != 7
+                || !material.HasPbrMetallicRoughness
+                || material.Alpha != AlphaMode.Opaque)
+            {
+                return false;
+            }
+    }
+
+    switch (GetNodeInfo(document, 0))
+    {
+        case NodeInfoResult.Err(var error):
+            return false;
+        case NodeInfoResult.Ok(var node):
+            if (node.NameByteLength != 12 || !node.HasMesh || node.MeshIndex != 0)
+            {
+                return false;
+            }
+    }
+
+    switch (GetBufferInfo(document, 0))
+    {
+        case BufferInfoResult.Err(var error):
+            return false;
+        case BufferInfoResult.Ok(var buffer):
+            if (buffer.NameByteLength != 8
+                || buffer.UriByteLength == 0
+                || buffer.SizeBytes != 42
+                || !buffer.IsLoaded)
+            {
+                return false;
+            }
+    }
+
+    switch (GetAccessorInfo(document, 0))
+    {
+        case AccessorInfoResult.Err(var error):
+            return false;
+        case AccessorInfoResult.Ok(var accessor):
+            if (accessor.Count != 3
+                || accessor.Component != ComponentType.F32
+                || accessor.Type != AccessorType.Vec3
+                || !accessor.HasBufferView
+                || accessor.BufferViewIndex != 0)
+            {
+                return false;
+            }
+    }
+
+    return true;
+}
+
+fn i32[min max] RunCgltfExample(ascii path)
+{
+    switch (ParseFromFile(path, BufferLoadPolicy.LoadExternalBuffers, true))
+    {
+        case DocumentResult.Err(var error):
+            return 1;
+        case DocumentResult.Ok(var document):
+            if (!CheckDocument(document))
+            {
+                return 2;
+            }
+    }
+
+    if (System.Console.WriteLine("cgltf ok") != System.IO.IOStatus.Ok)
+    {
+        return 3;
+    }
+
+    return 0;
+}
+
+fn i32[min max] RunDefaultCgltfExample()
+{
+    if (FileExists(AssetPathFromExamples))
+    {
+        return RunCgltfExample(AssetPathFromExamples);
+    }
+
+    if (FileExists(AssetPathFromBuildOutput))
+    {
+        return RunCgltfExample(AssetPathFromBuildOutput);
+    }
+
+    return 1;
+}
+
+export unsafe fn i32[min max] main()
+{
+    unsafe
+    {
+        stack System.Process.ProcessResult<System.Process.ProcessOption<System.Text.OwnedAscii>> assetPathResult =
+            System.Process.GetEnvironment("STARK_CGLTF_ASSET_PATH");
+        switch (assetPathResult)
+        {
+            case System.Process.ProcessResult<System.Process.ProcessOption<System.Text.OwnedAscii>>.Err(var error):
+                return 4;
+            case System.Process.ProcessResult<System.Process.ProcessOption<System.Text.OwnedAscii>>.Ok(var option):
+                switch (option)
+                {
+                    case System.Process.ProcessOption<System.Text.OwnedAscii>.None:
+                        return RunDefaultCgltfExample();
+                    case System.Process.ProcessOption<System.Text.OwnedAscii>.Some(var pathText):
+                        stack mut System.Text.OwnedAscii path = pathText;
+                        return RunCgltfExample(path.View());
+                }
+        }
+    }
+}

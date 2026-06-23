@@ -59,6 +59,7 @@ fi
 "${compiler_cmd[@]}" "${script_dir}/src/Vendor/Raylib.stark" \
   --emit-lib \
   -I "${script_dir}/src" \
+  -I "${repo_root}/stdlib/src" \
   -o "${vendor_dist}/libVendorRaylib.a" \
   "${native_args[@]}"
 

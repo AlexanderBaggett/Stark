@@ -15,6 +15,13 @@
     ],
     "description": "Import a Stark module"
   },
+  "Import Vendor Vulkan": {
+    "prefix": "import Vendor.Vulkan",
+    "body": [
+      "import Vendor.Vulkan"
+    ],
+    "description": "Import the bundled Vulkan vendor binding"
+  },
   "Export Import": {
     "prefix": "export import",
     "body": [

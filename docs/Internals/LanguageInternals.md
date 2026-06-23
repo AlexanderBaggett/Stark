@@ -305,6 +305,28 @@ discovery tiers used for `System`/`stdlib`. Native-backed vendor packages are
 expected to carry package-image native dependency metadata so final executable
 links get the required C sources, `pkg-config` packages, libraries, and user
 configured fallback paths without a package manager.
+Safe public vendor surfaces should keep raw handles and ABI-only carrier shapes
+inside the binding whenever possible. For example, `Vendor.SDL3` exposes safe
+Stark handles and result enums while its package-owned `Sdl3Binding.c` adapter
+normalizes SDL's C `bool` returns, flattens the `SDL_Event` union into a
+C-layout event record, and avoids exposing callback-shaped audio APIs to safe
+Stark callers. This is a legitimate native adapter use: it preserves
+allocation-free event/audio paths without making ordinary Stark code reason
+about C unions, nullable handles, or callback lifetimes.
+`Vendor.KbTextShape` follows the same rule for text engines: HarfBuzz font
+objects, ICU `UBreakIterator`/`UText`, and native allocation stay in
+`KbTextShapeBinding.c`; Stark owns safe `Segmenter`/`Font` handles and writes
+segmentation boundaries or shaped glyphs into caller-provided slices. ICU's
+UTF-8 `UText` path returns native UTF-8 byte offsets, so Stark does not build
+a UTF-16 offset map before slicing text.
+`Vendor.Vulkan` is the direct generated-binding model: the package pins the
+Khronos registry XML, regenerates Stark handle wrappers, C-layout ABI carriers,
+and internal `ffi(c)` loader declarations, then exposes safe API-version,
+global-entry-point, and instance count queries. Its package image carries
+`pkg-config vulkan` or explicit loader-library metadata. No C adapter is used
+for the loader/core slice because the Vulkan C ABI shapes are representable by
+Stark's existing raw-pointer, `[Platform, StructLayout(C)]`, and package-native
+metadata features.
 
 Promoted collection, text, runtime-buffer, IO, filesystem, console, and network
 modules keep the dynamic-storage contracts validated during the comparison
@@ -643,6 +665,15 @@ assignment and rejects aggregate initializer shapes that would zero-fill a
 function-pointer field or fixed-array element. LLVM ABI emission may therefore
 mark direct function-pointer parameters and direct function-pointer returns as
 `nonnull` without relying on a backend guess.
+Unsafe explicit conversions between raw pointers and function pointers are the
+escape hatch for native loader APIs such as Vulkan. Type checking accepts only
+an explicit cast in an unsafe context; callers are responsible for proving the
+raw pointer is non-null and names code with the exact ABI/signature carried by
+the `fnptr` type. MIR and SSA carry this as a normal conversion, but LLVM opaque
+pointer emission treats raw-pointer/function-pointer conversions as value-shape
+no-ops: no `ptrtoint`, `inttoptr`, or `bitcast` is emitted, and downstream uses
+format the original `ptr` value directly. This preserves pointer provenance and
+keeps dispatch-table construction free of wrapper calls.
 When a `fnptr` parameter is a bounded raw pointer such as
 `rawptr<T>[arg1]`, the synthetic `arg1` count is part of the callable ABI
 contract. Indirect-call lowering reconstructs a synthetic callee signature with

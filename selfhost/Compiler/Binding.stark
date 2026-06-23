@@ -2273,6 +2273,10 @@ internal fn u32[0 max] MemberStructNameToken(borrow DeclarationTable table, asci
         stack u32[0 max] receiverStruct = MemberStructNameToken(table, source, refs, scope, stream, body, body.ExprLeftAt(node));
         return StructFieldTypeHead(table, source, stream, receiverStruct, body.ExprTokenAt(node));
     }
+    else if (kind == Compiler.Parsing.ExprKind.Convert)
+    {
+        return body.ExprTokenAt(node);
+    }
 
     return 0;
 }
@@ -3071,7 +3075,7 @@ internal fn u32[0 max] ParameterRootIndexPlusOneForArgument(borrow ReferenceTabl
             }
         }
     }
-    else if (kind == Compiler.Parsing.ExprKind.Member || kind == Compiler.Parsing.ExprKind.Index)
+    else if (kind == Compiler.Parsing.ExprKind.Member || kind == Compiler.Parsing.ExprKind.Index || kind == Compiler.Parsing.ExprKind.Convert)
     {
         return ParameterRootIndexPlusOneForArgument(refs, body, body.ExprLeftAt(node));
     }
@@ -3523,7 +3527,7 @@ internal fn u32[0 max] LocalSymbolRootForExpression(borrow ReferenceTable refs, 
             }
         }
     }
-    else if (kind == Compiler.Parsing.ExprKind.Member || kind == Compiler.Parsing.ExprKind.Index)
+    else if (kind == Compiler.Parsing.ExprKind.Member || kind == Compiler.Parsing.ExprKind.Index || kind == Compiler.Parsing.ExprKind.Convert)
     {
         return LocalSymbolRootForExpression(refs, body, body.ExprLeftAt(node));
     }
@@ -3574,7 +3578,7 @@ internal fn bool ExpressionRootIsLongLivedStorage(borrow DeclarationTable table,
             }
         }
     }
-    else if (kind == Compiler.Parsing.ExprKind.Member || kind == Compiler.Parsing.ExprKind.Index)
+    else if (kind == Compiler.Parsing.ExprKind.Member || kind == Compiler.Parsing.ExprKind.Index || kind == Compiler.Parsing.ExprKind.Convert)
     {
         return ExpressionRootIsLongLivedStorage(table, refs, scope, body, stream, body.ExprLeftAt(node));
     }
@@ -3608,7 +3612,7 @@ internal fn bool ExpressionContainsArenaSelectorNew(borrow StatementList body, b
         return true;
     }
 
-    if (kind == Compiler.Parsing.ExprKind.Unary || kind == Compiler.Parsing.ExprKind.Member || kind == Compiler.Parsing.ExprKind.Index
+    if (kind == Compiler.Parsing.ExprKind.Unary || kind == Compiler.Parsing.ExprKind.Convert || kind == Compiler.Parsing.ExprKind.Member || kind == Compiler.Parsing.ExprKind.Index
         || kind == Compiler.Parsing.ExprKind.Call || kind == Compiler.Parsing.ExprKind.New || kind == Compiler.Parsing.ExprKind.Assign
         || kind == Compiler.Parsing.ExprKind.Binary || kind == Compiler.Parsing.ExprKind.Conditional)
     {
@@ -3672,7 +3676,7 @@ internal fn bool ExpressionIsArenaDerived(
             }
         }
     }
-    else if (kind == Compiler.Parsing.ExprKind.Member || kind == Compiler.Parsing.ExprKind.Index || kind == Compiler.Parsing.ExprKind.Unary)
+    else if (kind == Compiler.Parsing.ExprKind.Member || kind == Compiler.Parsing.ExprKind.Index || kind == Compiler.Parsing.ExprKind.Unary || kind == Compiler.Parsing.ExprKind.Convert)
     {
         return ExpressionIsArenaDerived(table, source, facts, refs, scope, body, stream, body.ExprLeftAt(node));
     }

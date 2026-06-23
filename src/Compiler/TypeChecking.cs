@@ -13424,7 +13424,13 @@ internal sealed class TypeChecker
                     conversionType,
                     _currentFunctionGenericParameters,
                     _currentFunctionModuleName);
-            if (IsRawPointerConversion(targetType, convertedOperand.Type))
+            if (IsRawPointerFunctionPointerConversion(targetType, convertedOperand.Type))
+            {
+                RequireUnsafeContext(
+                    $"Function pointer conversion from '{convertedOperand.Type.DisplayName}' to '{targetType.DisplayName}'",
+                    expression);
+            }
+            else if (IsRawPointerConversion(targetType, convertedOperand.Type))
             {
                 RequireUnsafeContext(
                     $"Raw pointer conversion from '{convertedOperand.Type.DisplayName}' to '{targetType.DisplayName}'",
@@ -23183,6 +23189,13 @@ internal sealed class TypeChecker
             || sourceType.Kind == StarkTypeKind.RawPointer;
     }
 
+    private static bool IsRawPointerFunctionPointerConversion(StarkTypeSymbol targetType, StarkTypeSymbol sourceType)
+    {
+        var targetIsPointerLike = targetType.Kind is StarkTypeKind.RawPointer or StarkTypeKind.FunctionPointer;
+        var sourceIsPointerLike = sourceType.Kind is StarkTypeKind.RawPointer or StarkTypeKind.FunctionPointer;
+        return targetIsPointerLike && sourceIsPointerLike && targetType.Kind != sourceType.Kind;
+    }
+
     private static bool ContainsRawPointer(StarkTypeSymbol type)
     {
         return type.Kind == StarkTypeKind.RawPointer
@@ -23605,6 +23618,12 @@ internal sealed class TypeChecker
                 return false;
             }
 
+            return true;
+        }
+
+        if ((target.Kind == StarkTypeKind.FunctionPointer && source.Type.Kind == StarkTypeKind.RawPointer)
+            || (target.Kind == StarkTypeKind.RawPointer && source.Type.Kind == StarkTypeKind.FunctionPointer))
+        {
             return true;
         }
 

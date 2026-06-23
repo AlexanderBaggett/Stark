@@ -862,6 +862,1500 @@ public sealed class ExamplesCompileRunTests
     }
 
     [Fact]
+    public async Task VendorLZ4ModulesCheckWithoutNativeExecution()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var vendorImportDirectory = Path.Combine(repositoryRoot, "vendor", "src");
+        var stdlibImportDirectory = Path.Combine(repositoryRoot, "stdlib", "src");
+        var lz4Source = Path.Combine(vendorImportDirectory, "Vendor", "LZ4.stark");
+
+        var sourceText = await File.ReadAllTextAsync(lz4Source);
+        Assert.Contains("internal unsafe ffi(c) fn System.C.c_int LZ4_compress_default", sourceText, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe ffi(c) fn System.C.c_int LZ4_decompress_safe", sourceText, StringComparison.Ordinal);
+        Assert.Contains("borrow i8[min max][] source", sourceText, StringComparison.Ordinal);
+        Assert.Contains("borrow mut i8[min max][] destination", sourceText, StringComparison.Ordinal);
+        Assert.DoesNotContain("public unsafe", sourceText, StringComparison.Ordinal);
+
+        await CheckSourceAsync(
+            lz4Source,
+            vendorImportDirectory,
+            stdlibImportDirectory);
+
+        await CheckSourceAsync(
+            Path.Combine(repositoryRoot, "examples", "lz4", "LZ4RoundTrip.stark"),
+            vendorImportDirectory,
+            stdlibImportDirectory);
+    }
+
+    [Fact]
+    public async Task VendorLZ4BuildsAndRunsThroughPackageOwnedNativeMetadata()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _)
+            || OperatingSystem.IsWindows()
+            || !await PkgConfigPackageExistsAsync("liblz4"))
+        {
+            return;
+        }
+
+        var repositoryRoot = FindRepositoryRoot();
+        var vendorImportDirectory = Path.Combine(repositoryRoot, "vendor", "src");
+        var stdlibImportDirectory = Path.Combine(repositoryRoot, "stdlib", "src");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-vendor-lz4-pkg-");
+        var packageDirectory = Path.Combine(tempDirectory.FullName, "packages");
+        Directory.CreateDirectory(packageDirectory);
+
+        var vendorLZ4Source = Path.Combine(vendorImportDirectory, "Vendor", "LZ4.stark");
+        var vendorLZ4Library = Path.Combine(packageDirectory, "libVendorLZ4.a");
+        var vendorLZ4Package = Path.ChangeExtension(vendorLZ4Library, ".starkpkg");
+        var roundTripOutput = Path.Combine(tempDirectory.FullName, "lz4-round-trip");
+
+        try
+        {
+            var emitStdout = new StringWriter();
+            var emitStderr = new StringWriter();
+            var emitExitCode = await CompilerCli.RunAsync(
+                [
+                    vendorLZ4Source,
+                    "--emit-lib",
+                    "-I", vendorImportDirectory,
+                    "-I", stdlibImportDirectory,
+                    "-o", vendorLZ4Library,
+                    "--native-pkg-config", "liblz4",
+                ],
+                new StringReader(string.Empty),
+                emitStdout,
+                emitStderr);
+
+            Assert.True(emitExitCode == 0, emitStderr.ToString());
+            Assert.Contains("Emitted static library:", emitStdout.ToString(), StringComparison.Ordinal);
+            Assert.True(File.Exists(vendorLZ4Library));
+            Assert.True(File.Exists(vendorLZ4Package));
+
+            Assert.True(PackageImageLoader.TryLoadManifest(vendorLZ4Package, out var manifest));
+            Assert.Equal("Vendor.LZ4", manifest.RootModule);
+            Assert.NotNull(manifest.NativeDependencies);
+            Assert.Equal("liblz4", Assert.Single(manifest.NativeDependencies!.PkgConfigPackages!));
+            Assert.True(manifest.NativeDependencies.Sources is null || manifest.NativeDependencies.Sources.Count == 0);
+
+            var inspectStdout = new StringWriter();
+            var inspectStderr = new StringWriter();
+            var inspectExitCode = await CompilerCli.RunAsync(
+                [vendorLZ4Package, "--inspect-pkg"],
+                new StringReader(string.Empty),
+                inspectStdout,
+                inspectStderr);
+
+            Assert.True(inspectExitCode == 0, inspectStderr.ToString());
+            Assert.Matches(
+                "native dependencies: sources=0, .*pkg-config=1",
+                inspectStdout.ToString());
+
+            var compileStdout = new StringWriter();
+            var compileStderr = new StringWriter();
+            var compileExitCode = await CompilerCli.RunAsync(
+                [
+                    Path.Combine(repositoryRoot, "examples", "lz4", "LZ4RoundTrip.stark"),
+                    "--emit-exe",
+                    "-I", packageDirectory,
+                    "-I", stdlibImportDirectory,
+                    "-o", roundTripOutput,
+                ],
+                new StringReader(string.Empty),
+                compileStdout,
+                compileStderr);
+
+            Assert.True(compileExitCode == 0, compileStderr.ToString());
+            Assert.Contains("Emitted executable:", compileStdout.ToString(), StringComparison.Ordinal);
+            Assert.True(File.Exists(roundTripOutput));
+
+            var processResult = await RunNativeExecutableAsync(roundTripOutput);
+
+            Assert.Equal(0, processResult.ExitCode);
+            Assert.Equal("LZ4 round trip ok\n", processResult.StandardOutput);
+            Assert.Equal(string.Empty, processResult.StandardError);
+        }
+        finally
+        {
+            Cleanup(tempDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task VendorZlibModulesCheckWithoutNativeExecution()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var vendorImportDirectory = Path.Combine(repositoryRoot, "vendor", "src");
+        var stdlibImportDirectory = Path.Combine(repositoryRoot, "stdlib", "src");
+        var zlibSource = Path.Combine(vendorImportDirectory, "Vendor", "Zlib.stark");
+        var zlibNativeSource = Path.Combine(repositoryRoot, "vendor", "ZlibStreamBinding.c");
+
+        Assert.True(File.Exists(zlibNativeSource));
+        var nativeSourceText = await File.ReadAllTextAsync(zlibNativeSource);
+        Assert.Contains("deflateInit", nativeSourceText, StringComparison.Ordinal);
+        Assert.Contains("inflateInit", nativeSourceText, StringComparison.Ordinal);
+        Assert.Contains("stark_zlib_deflate_update", nativeSourceText, StringComparison.Ordinal);
+
+        var sourceText = await File.ReadAllTextAsync(zlibSource);
+        Assert.Contains("internal unsafe ffi(c) fn System.C.c_int compress2", sourceText, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe ffi(c) fn System.C.c_int uncompress", sourceText, StringComparison.Ordinal);
+        Assert.Contains("public struct DeflateStream", sourceText, StringComparison.Ordinal);
+        Assert.Contains("public struct InflateStream", sourceText, StringComparison.Ordinal);
+        Assert.Contains("borrow i8[min max][] source", sourceText, StringComparison.Ordinal);
+        Assert.Contains("borrow mut i8[min max][] destination", sourceText, StringComparison.Ordinal);
+        Assert.DoesNotContain("public unsafe", sourceText, StringComparison.Ordinal);
+
+        await CheckSourceAsync(
+            zlibSource,
+            vendorImportDirectory,
+            stdlibImportDirectory);
+
+        await CheckSourceAsync(
+            Path.Combine(repositoryRoot, "examples", "zlib", "ZlibRoundTrip.stark"),
+            vendorImportDirectory,
+            stdlibImportDirectory);
+    }
+
+    [Fact]
+    public async Task VendorZlibBuildsAndRunsThroughPackageOwnedNativeMetadata()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _)
+            || OperatingSystem.IsWindows()
+            || !await PkgConfigPackageExistsAsync("zlib"))
+        {
+            return;
+        }
+
+        var repositoryRoot = FindRepositoryRoot();
+        var vendorImportDirectory = Path.Combine(repositoryRoot, "vendor", "src");
+        var stdlibImportDirectory = Path.Combine(repositoryRoot, "stdlib", "src");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-vendor-zlib-pkg-");
+        var packageDirectory = Path.Combine(tempDirectory.FullName, "packages");
+        Directory.CreateDirectory(packageDirectory);
+
+        var vendorZlibSource = Path.Combine(vendorImportDirectory, "Vendor", "Zlib.stark");
+        var zlibNativeSource = Path.Combine(repositoryRoot, "vendor", "ZlibStreamBinding.c");
+        var vendorZlibLibrary = Path.Combine(packageDirectory, "libVendorZlib.a");
+        var vendorZlibPackage = Path.ChangeExtension(vendorZlibLibrary, ".starkpkg");
+        var roundTripOutput = Path.Combine(tempDirectory.FullName, "zlib-round-trip");
+
+        try
+        {
+            var emitStdout = new StringWriter();
+            var emitStderr = new StringWriter();
+            var emitExitCode = await CompilerCli.RunAsync(
+                [
+                    vendorZlibSource,
+                    "--emit-lib",
+                    "-I", vendorImportDirectory,
+                    "-I", stdlibImportDirectory,
+                    "-o", vendorZlibLibrary,
+                    "--native-source", zlibNativeSource,
+                    "--native-pkg-config", "zlib",
+                ],
+                new StringReader(string.Empty),
+                emitStdout,
+                emitStderr);
+
+            Assert.True(emitExitCode == 0, emitStderr.ToString());
+            Assert.Contains("Emitted static library:", emitStdout.ToString(), StringComparison.Ordinal);
+            Assert.True(File.Exists(vendorZlibLibrary));
+            Assert.True(File.Exists(vendorZlibPackage));
+
+            Assert.True(PackageImageLoader.TryLoadManifest(vendorZlibPackage, out var manifest));
+            Assert.Equal("Vendor.Zlib", manifest.RootModule);
+            Assert.NotNull(manifest.NativeDependencies);
+            Assert.Equal("zlib", Assert.Single(manifest.NativeDependencies!.PkgConfigPackages!));
+            Assert.Equal("ZlibStreamBinding.c", Path.GetFileName(Assert.Single(manifest.NativeDependencies.Sources!)));
+
+            var inspectStdout = new StringWriter();
+            var inspectStderr = new StringWriter();
+            var inspectExitCode = await CompilerCli.RunAsync(
+                [vendorZlibPackage, "--inspect-pkg"],
+                new StringReader(string.Empty),
+                inspectStdout,
+                inspectStderr);
+
+            Assert.True(inspectExitCode == 0, inspectStderr.ToString());
+            Assert.Matches(
+                "native dependencies: sources=1, .*pkg-config=1",
+                inspectStdout.ToString());
+
+            var compileStdout = new StringWriter();
+            var compileStderr = new StringWriter();
+            var compileExitCode = await CompilerCli.RunAsync(
+                [
+                    Path.Combine(repositoryRoot, "examples", "zlib", "ZlibRoundTrip.stark"),
+                    "--emit-exe",
+                    "-I", packageDirectory,
+                    "-I", stdlibImportDirectory,
+                    "-o", roundTripOutput,
+                ],
+                new StringReader(string.Empty),
+                compileStdout,
+                compileStderr);
+
+            Assert.True(compileExitCode == 0, compileStderr.ToString());
+            Assert.Contains("Emitted executable:", compileStdout.ToString(), StringComparison.Ordinal);
+            Assert.True(File.Exists(roundTripOutput));
+
+            var processResult = await RunNativeExecutableAsync(roundTripOutput);
+
+            Assert.Equal(0, processResult.ExitCode);
+            Assert.Equal("Zlib round trip ok\n", processResult.StandardOutput);
+            Assert.Equal(string.Empty, processResult.StandardError);
+        }
+        finally
+        {
+            Cleanup(tempDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task VendorCurlModulesCheckWithoutNativeExecution()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var vendorImportDirectory = Path.Combine(repositoryRoot, "vendor", "src");
+        var stdlibImportDirectory = Path.Combine(repositoryRoot, "stdlib", "src");
+        var curlSource = Path.Combine(vendorImportDirectory, "Vendor", "Curl.stark");
+        var curlNativeSource = Path.Combine(repositoryRoot, "vendor", "CurlEasyBinding.c");
+
+        Assert.True(File.Exists(curlNativeSource));
+        var nativeSourceText = await File.ReadAllTextAsync(curlNativeSource);
+        Assert.Contains("curl_easy_setopt", nativeSourceText, StringComparison.Ordinal);
+        Assert.Contains("CURLOPT_WRITEFUNCTION", nativeSourceText, StringComparison.Ordinal);
+        Assert.Contains("CURLOPT_HEADERFUNCTION", nativeSourceText, StringComparison.Ordinal);
+        Assert.Contains("stark_curl_get_into", nativeSourceText, StringComparison.Ordinal);
+
+        var sourceText = await File.ReadAllTextAsync(curlSource);
+        Assert.Contains("internal unsafe ffi(c) fn System.C.c_int stark_curl_get_into", sourceText, StringComparison.Ordinal);
+        Assert.Contains("public struct CurlResponse", sourceText, StringComparison.Ordinal);
+        Assert.Contains("public fn CurlTransferResult GetInto", sourceText, StringComparison.Ordinal);
+        Assert.Contains("public fn CurlResponseResult GetBytes", sourceText, StringComparison.Ordinal);
+        Assert.Contains("borrow mut i8[min max][] bodyDestination", sourceText, StringComparison.Ordinal);
+        Assert.DoesNotContain("public unsafe", sourceText, StringComparison.Ordinal);
+
+        await CheckSourceAsync(
+            curlSource,
+            vendorImportDirectory,
+            stdlibImportDirectory);
+
+        await CheckSourceAsync(
+            Path.Combine(repositoryRoot, "examples", "curl", "CurlGet.stark"),
+            vendorImportDirectory,
+            stdlibImportDirectory);
+    }
+
+    [Fact]
+    public async Task VendorCurlBuildsAndRunsThroughPackageOwnedNativeMetadata()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _)
+            || OperatingSystem.IsWindows()
+            || !await PkgConfigPackageExistsAsync("libcurl"))
+        {
+            return;
+        }
+
+        var repositoryRoot = FindRepositoryRoot();
+        var vendorImportDirectory = Path.Combine(repositoryRoot, "vendor", "src");
+        var stdlibImportDirectory = Path.Combine(repositoryRoot, "stdlib", "src");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-vendor-curl-pkg-");
+        var packageDirectory = Path.Combine(tempDirectory.FullName, "packages");
+        Directory.CreateDirectory(packageDirectory);
+
+        var vendorCurlSource = Path.Combine(vendorImportDirectory, "Vendor", "Curl.stark");
+        var curlNativeSource = Path.Combine(repositoryRoot, "vendor", "CurlEasyBinding.c");
+        var vendorCurlLibrary = Path.Combine(packageDirectory, "libVendorCurl.a");
+        var vendorCurlPackage = Path.ChangeExtension(vendorCurlLibrary, ".starkpkg");
+        var curlOutput = Path.Combine(tempDirectory.FullName, "curl-get");
+
+        var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
+        var serverTask = ServeCurlExampleRequestsAsync(listener, requestCount: 2);
+
+        try
+        {
+            var emitStdout = new StringWriter();
+            var emitStderr = new StringWriter();
+            var emitExitCode = await CompilerCli.RunAsync(
+                [
+                    vendorCurlSource,
+                    "--emit-lib",
+                    "-I", vendorImportDirectory,
+                    "-I", stdlibImportDirectory,
+                    "-o", vendorCurlLibrary,
+                    "--native-source", curlNativeSource,
+                    "--native-pkg-config", "libcurl",
+                ],
+                new StringReader(string.Empty),
+                emitStdout,
+                emitStderr);
+
+            Assert.True(emitExitCode == 0, emitStderr.ToString());
+            Assert.Contains("Emitted static library:", emitStdout.ToString(), StringComparison.Ordinal);
+            Assert.True(File.Exists(vendorCurlLibrary));
+            Assert.True(File.Exists(vendorCurlPackage));
+
+            Assert.True(PackageImageLoader.TryLoadManifest(vendorCurlPackage, out var manifest));
+            Assert.Equal("Vendor.Curl", manifest.RootModule);
+            Assert.NotNull(manifest.NativeDependencies);
+            Assert.Equal("libcurl", Assert.Single(manifest.NativeDependencies!.PkgConfigPackages!));
+            Assert.Equal("CurlEasyBinding.c", Path.GetFileName(Assert.Single(manifest.NativeDependencies.Sources!)));
+
+            var inspectStdout = new StringWriter();
+            var inspectStderr = new StringWriter();
+            var inspectExitCode = await CompilerCli.RunAsync(
+                [vendorCurlPackage, "--inspect-pkg"],
+                new StringReader(string.Empty),
+                inspectStdout,
+                inspectStderr);
+
+            Assert.True(inspectExitCode == 0, inspectStderr.ToString());
+            Assert.Matches(
+                "native dependencies: sources=1, .*pkg-config=1",
+                inspectStdout.ToString());
+
+            var compileStdout = new StringWriter();
+            var compileStderr = new StringWriter();
+            var compileExitCode = await CompilerCli.RunAsync(
+                [
+                    Path.Combine(repositoryRoot, "examples", "curl", "CurlGet.stark"),
+                    "--emit-exe",
+                    "-I", packageDirectory,
+                    "-I", stdlibImportDirectory,
+                    "-o", curlOutput,
+                ],
+                new StringReader(string.Empty),
+                compileStdout,
+                compileStderr);
+
+            Assert.True(compileExitCode == 0, compileStderr.ToString());
+            Assert.Contains("Emitted executable:", compileStdout.ToString(), StringComparison.Ordinal);
+            Assert.True(File.Exists(curlOutput));
+
+            var processResult = await RunNativeExecutableAsync(
+                curlOutput,
+                environment:
+                    new Dictionary<string, string>
+                    {
+                        ["STARK_CURL_URL"] = $"http://127.0.0.1:{port}/stark-vendor-curl"
+                    });
+
+            Assert.Equal(0, processResult.ExitCode);
+            Assert.Equal("Curl GET ok\n", processResult.StandardOutput);
+            Assert.Equal(string.Empty, processResult.StandardError);
+
+            await serverTask.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        finally
+        {
+            listener.Stop();
+            Cleanup(tempDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task VendorSTBImageModulesCheckWithoutNativeExecution()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var vendorImportDirectory = Path.Combine(repositoryRoot, "vendor", "src");
+        var stdlibImportDirectory = Path.Combine(repositoryRoot, "stdlib", "src");
+        var stbImageSource = Path.Combine(vendorImportDirectory, "Vendor", "STB", "Image.stark");
+        var stbNativeSource = Path.Combine(repositoryRoot, "vendor", "StbImageImplementation.c");
+        var stbVersionFile = Path.Combine(repositoryRoot, "vendor", "native", "stb", "VERSION.md");
+
+        Assert.True(File.Exists(stbNativeSource));
+        Assert.True(File.Exists(Path.Combine(repositoryRoot, "vendor", "native", "stb", "stb_image.h")));
+        Assert.True(File.Exists(Path.Combine(repositoryRoot, "vendor", "native", "stb", "stb_image_write.h")));
+        Assert.True(File.Exists(Path.Combine(repositoryRoot, "vendor", "native", "stb", "stb_image_resize2.h")));
+        Assert.Contains(
+            "31c1ad37456438565541f4919958214b6e762fb4",
+            await File.ReadAllTextAsync(stbVersionFile),
+            StringComparison.Ordinal);
+
+        var nativeSourceText = await File.ReadAllTextAsync(stbNativeSource);
+        Assert.Contains("STB_IMAGE_IMPLEMENTATION", nativeSourceText, StringComparison.Ordinal);
+        Assert.Contains("STB_IMAGE_WRITE_IMPLEMENTATION", nativeSourceText, StringComparison.Ordinal);
+        Assert.Contains("STB_IMAGE_RESIZE_IMPLEMENTATION", nativeSourceText, StringComparison.Ordinal);
+
+        var sourceText = await File.ReadAllTextAsync(stbImageSource);
+        Assert.Contains("""[LinkName("stbi_load_from_memory")]""", sourceText, StringComparison.Ordinal);
+        Assert.Contains("""[LinkName("stbi_write_png")]""", sourceText, StringComparison.Ordinal);
+        Assert.Contains("""[LinkName("stbir_resize_uint8_linear")]""", sourceText, StringComparison.Ordinal);
+        Assert.Contains("public struct Image", sourceText, StringComparison.Ordinal);
+        Assert.Contains("dynamic u8[0 max] PixelBytes", sourceText, StringComparison.Ordinal);
+        Assert.Contains("public fn ImageResult LoadFromMemory", sourceText, StringComparison.Ordinal);
+        Assert.Contains("public fn StbImageStatus ResizeLinearInto", sourceText, StringComparison.Ordinal);
+        Assert.DoesNotContain("public unsafe", sourceText, StringComparison.Ordinal);
+
+        await CheckSourceAsync(
+            stbImageSource,
+            vendorImportDirectory,
+            stdlibImportDirectory);
+
+        await CheckSourceAsync(
+            Path.Combine(repositoryRoot, "examples", "stb-image", "StbImageResize.stark"),
+            vendorImportDirectory,
+            stdlibImportDirectory);
+    }
+
+    [Fact]
+    public async Task VendorSTBImageBuildsAndRunsThroughPackageOwnedNativeMetadata()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
+        {
+            return;
+        }
+
+        var repositoryRoot = FindRepositoryRoot();
+        var vendorImportDirectory = Path.Combine(repositoryRoot, "vendor", "src");
+        var stdlibImportDirectory = Path.Combine(repositoryRoot, "stdlib", "src");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-vendor-stb-image-pkg-");
+        var packageDirectory = Path.Combine(tempDirectory.FullName, "packages");
+        Directory.CreateDirectory(packageDirectory);
+
+        var vendorSTBImageSource = Path.Combine(vendorImportDirectory, "Vendor", "STB", "Image.stark");
+        var stbNativeSource = Path.Combine(repositoryRoot, "vendor", "StbImageImplementation.c");
+        var stbIncludeDirectory = Path.Combine(repositoryRoot, "vendor", "native", "stb");
+        var vendorSTBImageLibrary = Path.Combine(
+            packageDirectory,
+            OperatingSystem.IsWindows() ? "VendorSTBImage.lib" : "libVendorSTBImage.a");
+        var vendorSTBImagePackage = Path.ChangeExtension(vendorSTBImageLibrary, ".starkpkg");
+        var stbImageOutput = Path.Combine(
+            tempDirectory.FullName,
+            OperatingSystem.IsWindows() ? "stb-image-resize.exe" : "stb-image-resize");
+
+        try
+        {
+            var emitStdout = new StringWriter();
+            var emitStderr = new StringWriter();
+            var emitExitCode = await CompilerCli.RunAsync(
+                [
+                    vendorSTBImageSource,
+                    "--emit-lib",
+                    "-I", vendorImportDirectory,
+                    "-I", stdlibImportDirectory,
+                    "-o", vendorSTBImageLibrary,
+                    "--native-source", stbNativeSource,
+                    "--native-include-dir", stbIncludeDirectory,
+                ],
+                new StringReader(string.Empty),
+                emitStdout,
+                emitStderr);
+
+            Assert.True(emitExitCode == 0, emitStderr.ToString());
+            Assert.Contains("Emitted static library:", emitStdout.ToString(), StringComparison.Ordinal);
+            Assert.True(File.Exists(vendorSTBImageLibrary));
+            Assert.True(File.Exists(vendorSTBImagePackage));
+
+            Assert.True(PackageImageLoader.TryLoadManifest(vendorSTBImagePackage, out var manifest));
+            Assert.Equal("Vendor.STB.Image", manifest.RootModule);
+            Assert.NotNull(manifest.NativeDependencies);
+            Assert.Equal("StbImageImplementation.c", Path.GetFileName(Assert.Single(manifest.NativeDependencies!.Sources!)));
+            Assert.EndsWith(
+                Path.Combine("native", "stb"),
+                Assert.Single(manifest.NativeDependencies.IncludeDirectories!),
+                StringComparison.Ordinal);
+            Assert.True(manifest.NativeDependencies.PkgConfigPackages is null
+                || manifest.NativeDependencies.PkgConfigPackages.Count == 0);
+
+            var inspectStdout = new StringWriter();
+            var inspectStderr = new StringWriter();
+            var inspectExitCode = await CompilerCli.RunAsync(
+                [vendorSTBImagePackage, "--inspect-pkg"],
+                new StringReader(string.Empty),
+                inspectStdout,
+                inspectStderr);
+
+            Assert.True(inspectExitCode == 0, inspectStderr.ToString());
+            Assert.Matches(
+                "native dependencies: sources=1, includes=1, .*pkg-config=0",
+                inspectStdout.ToString());
+
+            var compileStdout = new StringWriter();
+            var compileStderr = new StringWriter();
+            var compileExitCode = await CompilerCli.RunAsync(
+                [
+                    Path.Combine(repositoryRoot, "examples", "stb-image", "StbImageResize.stark"),
+                    "--emit-exe",
+                    "-I", packageDirectory,
+                    "-I", stdlibImportDirectory,
+                    "-o", stbImageOutput,
+                ],
+                new StringReader(string.Empty),
+                compileStdout,
+                compileStderr);
+
+            Assert.True(compileExitCode == 0, compileStderr.ToString());
+            Assert.Contains("Emitted executable:", compileStdout.ToString(), StringComparison.Ordinal);
+            Assert.True(File.Exists(stbImageOutput));
+
+            var processResult = await RunNativeExecutableAsync(stbImageOutput);
+
+            Assert.Equal(0, processResult.ExitCode);
+            Assert.Equal("STB image ok\n", processResult.StandardOutput);
+            Assert.Equal(string.Empty, processResult.StandardError);
+        }
+        finally
+        {
+            Cleanup(tempDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task VendorSTBTruetypeModulesCheckWithoutNativeExecution()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var vendorImportDirectory = Path.Combine(repositoryRoot, "vendor", "src");
+        var stdlibImportDirectory = Path.Combine(repositoryRoot, "stdlib", "src");
+        var stbTruetypeSource = Path.Combine(vendorImportDirectory, "Vendor", "STB", "Truetype.stark");
+        var stbNativeSource = Path.Combine(repositoryRoot, "vendor", "StbTruetypeImplementation.c");
+        var stbVersionFile = Path.Combine(repositoryRoot, "vendor", "native", "stb", "VERSION.md");
+        var fontFixture = Path.Combine(repositoryRoot, "vendor", "native", "stb", "testdata", "Vera.ttf");
+        var fontLicense = Path.Combine(repositoryRoot, "vendor", "native", "stb", "testdata", "Vera.LICENSE");
+
+        Assert.True(File.Exists(stbNativeSource));
+        Assert.True(File.Exists(Path.Combine(repositoryRoot, "vendor", "native", "stb", "stb_truetype.h")));
+        Assert.True(File.Exists(fontFixture));
+        Assert.True(File.Exists(fontLicense));
+        Assert.Contains(
+            "31c1ad37456438565541f4919958214b6e762fb4",
+            await File.ReadAllTextAsync(stbVersionFile),
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "Vera.ttf",
+            await File.ReadAllTextAsync(stbVersionFile),
+            StringComparison.Ordinal);
+
+        var nativeSourceText = await File.ReadAllTextAsync(stbNativeSource);
+        Assert.Contains("STB_TRUETYPE_IMPLEMENTATION", nativeSourceText, StringComparison.Ordinal);
+        Assert.Contains("stark_stbtt_font_create", nativeSourceText, StringComparison.Ordinal);
+        Assert.Contains("stark_stbtt_make_glyph_bitmap", nativeSourceText, StringComparison.Ordinal);
+        Assert.Contains("stark_stbtt_pack_glyph_range", nativeSourceText, StringComparison.Ordinal);
+
+        var sourceText = await File.ReadAllTextAsync(stbTruetypeSource);
+        Assert.Contains("internal struct TrueTypeFontNative", sourceText, StringComparison.Ordinal);
+        Assert.Contains("public struct Font", sourceText, StringComparison.Ordinal);
+        Assert.Contains("mut drop", sourceText, StringComparison.Ordinal);
+        Assert.Contains("public fn FontResult LoadFontFromMemory", sourceText, StringComparison.Ordinal);
+        Assert.Contains("public fn TrueTypeStatus RenderGlyphBitmap", sourceText, StringComparison.Ordinal);
+        Assert.Contains("public fn TrueTypeStatus PackGlyphRange", sourceText, StringComparison.Ordinal);
+        Assert.DoesNotContain("public unsafe", sourceText, StringComparison.Ordinal);
+
+        await CheckSourceAsync(
+            stbTruetypeSource,
+            vendorImportDirectory,
+            stdlibImportDirectory);
+
+        await CheckSourceAsync(
+            Path.Combine(repositoryRoot, "examples", "stb-truetype", "StbTruetypeGlyphAtlas.stark"),
+            vendorImportDirectory,
+            stdlibImportDirectory);
+    }
+
+    [Fact]
+    public async Task VendorSTBTruetypeBuildsAndRunsThroughPackageOwnedNativeMetadata()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
+        {
+            return;
+        }
+
+        var repositoryRoot = FindRepositoryRoot();
+        var vendorImportDirectory = Path.Combine(repositoryRoot, "vendor", "src");
+        var stdlibImportDirectory = Path.Combine(repositoryRoot, "stdlib", "src");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-vendor-stb-truetype-pkg-");
+        var packageDirectory = Path.Combine(tempDirectory.FullName, "packages");
+        Directory.CreateDirectory(packageDirectory);
+
+        var vendorSTBTruetypeSource = Path.Combine(vendorImportDirectory, "Vendor", "STB", "Truetype.stark");
+        var stbNativeSource = Path.Combine(repositoryRoot, "vendor", "StbTruetypeImplementation.c");
+        var stbIncludeDirectory = Path.Combine(repositoryRoot, "vendor", "native", "stb");
+        var fontFixture = Path.Combine(repositoryRoot, "vendor", "native", "stb", "testdata", "Vera.ttf");
+        var vendorSTBTruetypeLibrary = Path.Combine(
+            packageDirectory,
+            OperatingSystem.IsWindows() ? "VendorSTBTruetype.lib" : "libVendorSTBTruetype.a");
+        var vendorSTBTruetypePackage = Path.ChangeExtension(vendorSTBTruetypeLibrary, ".starkpkg");
+        var stbTruetypeOutput = Path.Combine(
+            tempDirectory.FullName,
+            OperatingSystem.IsWindows() ? "stb-truetype-glyph-atlas.exe" : "stb-truetype-glyph-atlas");
+
+        try
+        {
+            var emitStdout = new StringWriter();
+            var emitStderr = new StringWriter();
+            var emitExitCode = await CompilerCli.RunAsync(
+                [
+                    vendorSTBTruetypeSource,
+                    "--emit-lib",
+                    "-I", vendorImportDirectory,
+                    "-I", stdlibImportDirectory,
+                    "-o", vendorSTBTruetypeLibrary,
+                    "--native-source", stbNativeSource,
+                    "--native-include-dir", stbIncludeDirectory,
+                ],
+                new StringReader(string.Empty),
+                emitStdout,
+                emitStderr);
+
+            Assert.True(emitExitCode == 0, emitStderr.ToString());
+            Assert.Contains("Emitted static library:", emitStdout.ToString(), StringComparison.Ordinal);
+            Assert.True(File.Exists(vendorSTBTruetypeLibrary));
+            Assert.True(File.Exists(vendorSTBTruetypePackage));
+
+            Assert.True(PackageImageLoader.TryLoadManifest(vendorSTBTruetypePackage, out var manifest));
+            Assert.Equal("Vendor.STB.Truetype", manifest.RootModule);
+            Assert.NotNull(manifest.NativeDependencies);
+            Assert.Equal(
+                "StbTruetypeImplementation.c",
+                Path.GetFileName(Assert.Single(manifest.NativeDependencies!.Sources!)));
+            Assert.EndsWith(
+                Path.Combine("native", "stb"),
+                Assert.Single(manifest.NativeDependencies.IncludeDirectories!),
+                StringComparison.Ordinal);
+            Assert.True(manifest.NativeDependencies.PkgConfigPackages is null
+                || manifest.NativeDependencies.PkgConfigPackages.Count == 0);
+
+            var inspectStdout = new StringWriter();
+            var inspectStderr = new StringWriter();
+            var inspectExitCode = await CompilerCli.RunAsync(
+                [vendorSTBTruetypePackage, "--inspect-pkg"],
+                new StringReader(string.Empty),
+                inspectStdout,
+                inspectStderr);
+
+            Assert.True(inspectExitCode == 0, inspectStderr.ToString());
+            Assert.Matches(
+                "native dependencies: sources=1, includes=1, .*pkg-config=0",
+                inspectStdout.ToString());
+
+            var compileStdout = new StringWriter();
+            var compileStderr = new StringWriter();
+            var compileExitCode = await CompilerCli.RunAsync(
+                [
+                    Path.Combine(repositoryRoot, "examples", "stb-truetype", "StbTruetypeGlyphAtlas.stark"),
+                    "--emit-exe",
+                    "-I", packageDirectory,
+                    "-I", stdlibImportDirectory,
+                    "-o", stbTruetypeOutput,
+                ],
+                new StringReader(string.Empty),
+                compileStdout,
+                compileStderr);
+
+            Assert.True(compileExitCode == 0, compileStderr.ToString());
+            Assert.Contains("Emitted executable:", compileStdout.ToString(), StringComparison.Ordinal);
+            Assert.True(File.Exists(stbTruetypeOutput));
+
+            var processResult = await RunNativeExecutableAsync(
+                stbTruetypeOutput,
+                environment: new Dictionary<string, string>
+                {
+                    ["STARK_STB_TRUETYPE_FONT_PATH"] = fontFixture
+                });
+
+            Assert.Equal(0, processResult.ExitCode);
+            Assert.Equal("STB truetype ok\n", processResult.StandardOutput);
+            Assert.Equal(string.Empty, processResult.StandardError);
+        }
+        finally
+        {
+            Cleanup(tempDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task VendorMiniaudioModulesCheckWithoutNativeExecution()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var vendorImportDirectory = Path.Combine(repositoryRoot, "vendor", "src");
+        var stdlibImportDirectory = Path.Combine(repositoryRoot, "stdlib", "src");
+        var miniaudioSource = Path.Combine(vendorImportDirectory, "Vendor", "Miniaudio.stark");
+        var miniaudioNativeSource = Path.Combine(repositoryRoot, "vendor", "MiniaudioImplementation.c");
+        var miniaudioVersionFile = Path.Combine(repositoryRoot, "vendor", "native", "miniaudio", "VERSION.md");
+        var miniaudioHeader = Path.Combine(repositoryRoot, "vendor", "native", "miniaudio", "miniaudio.h");
+
+        Assert.True(File.Exists(miniaudioNativeSource));
+        Assert.True(File.Exists(miniaudioHeader));
+        Assert.Contains(
+            "0.11.25",
+            await File.ReadAllTextAsync(miniaudioVersionFile),
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "9634bedb5b5a2ca38c1ee7108a9358a4e233f14d",
+            await File.ReadAllTextAsync(miniaudioVersionFile),
+            StringComparison.Ordinal);
+
+        var nativeSourceText = await File.ReadAllTextAsync(miniaudioNativeSource);
+        Assert.Contains("MINIAUDIO_IMPLEMENTATION", nativeSourceText, StringComparison.Ordinal);
+        Assert.Contains("MA_NO_ENGINE", nativeSourceText, StringComparison.Ordinal);
+        Assert.Contains("stark_ma_decoder_create_memory", nativeSourceText, StringComparison.Ordinal);
+        Assert.Contains("stark_ma_playback_create_f32", nativeSourceText, StringComparison.Ordinal);
+
+        var sourceText = await File.ReadAllTextAsync(miniaudioSource);
+        Assert.Contains("public struct Decoder", sourceText, StringComparison.Ordinal);
+        Assert.Contains("public struct PlaybackDevice", sourceText, StringComparison.Ordinal);
+        Assert.Contains("public fn DecoderResult OpenDecoderFromMemory", sourceText, StringComparison.Ordinal);
+        Assert.Contains("public fn ReadFramesResult ReadF32Frames", sourceText, StringComparison.Ordinal);
+        Assert.Contains("public fn PlaybackDeviceResult CreatePlaybackDeviceF32", sourceText, StringComparison.Ordinal);
+        Assert.DoesNotContain("public unsafe", sourceText, StringComparison.Ordinal);
+
+        await CheckSourceAsync(
+            miniaudioSource,
+            vendorImportDirectory,
+            stdlibImportDirectory);
+
+        await CheckSourceAsync(
+            Path.Combine(repositoryRoot, "examples", "miniaudio", "MiniaudioDecode.stark"),
+            vendorImportDirectory,
+            stdlibImportDirectory);
+    }
+
+    [Fact]
+    public async Task VendorMiniaudioBuildsAndRunsThroughPackageOwnedNativeMetadata()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
+        {
+            return;
+        }
+
+        var repositoryRoot = FindRepositoryRoot();
+        var vendorImportDirectory = Path.Combine(repositoryRoot, "vendor", "src");
+        var stdlibImportDirectory = Path.Combine(repositoryRoot, "stdlib", "src");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-vendor-miniaudio-pkg-");
+        var packageDirectory = Path.Combine(tempDirectory.FullName, "packages");
+        Directory.CreateDirectory(packageDirectory);
+
+        var vendorMiniaudioSource = Path.Combine(vendorImportDirectory, "Vendor", "Miniaudio.stark");
+        var miniaudioNativeSource = Path.Combine(repositoryRoot, "vendor", "MiniaudioImplementation.c");
+        var miniaudioIncludeDirectory = Path.Combine(repositoryRoot, "vendor", "native", "miniaudio");
+        var vendorMiniaudioLibrary = Path.Combine(
+            packageDirectory,
+            OperatingSystem.IsWindows() ? "VendorMiniaudio.lib" : "libVendorMiniaudio.a");
+        var vendorMiniaudioPackage = Path.ChangeExtension(vendorMiniaudioLibrary, ".starkpkg");
+        var miniaudioOutput = Path.Combine(
+            tempDirectory.FullName,
+            OperatingSystem.IsWindows() ? "miniaudio-decode.exe" : "miniaudio-decode");
+
+        try
+        {
+            var emitArgs = new List<string>
+            {
+                vendorMiniaudioSource,
+                "--emit-lib",
+                "-I", vendorImportDirectory,
+                "-I", stdlibImportDirectory,
+                "-o", vendorMiniaudioLibrary,
+                "--native-source", miniaudioNativeSource,
+                "--native-include-dir", miniaudioIncludeDirectory,
+            };
+
+            if (OperatingSystem.IsLinux())
+            {
+                emitArgs.AddRange(["--native-library", "pthread", "--native-library", "m", "--native-library", "dl"]);
+            }
+            else if (OperatingSystem.IsMacOS())
+            {
+                emitArgs.AddRange([
+                    "--native-link-arg", "-framework",
+                    "--native-link-arg", "CoreAudio",
+                    "--native-link-arg", "-framework",
+                    "--native-link-arg", "AudioToolbox",
+                    "--native-link-arg", "-framework",
+                    "--native-link-arg", "CoreFoundation",
+                ]);
+            }
+
+            var emitStdout = new StringWriter();
+            var emitStderr = new StringWriter();
+            var emitExitCode = await CompilerCli.RunAsync(
+                emitArgs.ToArray(),
+                new StringReader(string.Empty),
+                emitStdout,
+                emitStderr);
+
+            Assert.True(emitExitCode == 0, emitStderr.ToString());
+            Assert.Contains("Emitted static library:", emitStdout.ToString(), StringComparison.Ordinal);
+            Assert.True(File.Exists(vendorMiniaudioLibrary));
+            Assert.True(File.Exists(vendorMiniaudioPackage));
+
+            Assert.True(PackageImageLoader.TryLoadManifest(vendorMiniaudioPackage, out var manifest));
+            Assert.Equal("Vendor.Miniaudio", manifest.RootModule);
+            Assert.NotNull(manifest.NativeDependencies);
+            Assert.Equal(
+                "MiniaudioImplementation.c",
+                Path.GetFileName(Assert.Single(manifest.NativeDependencies!.Sources!)));
+            Assert.EndsWith(
+                Path.Combine("native", "miniaudio"),
+                Assert.Single(manifest.NativeDependencies.IncludeDirectories!),
+                StringComparison.Ordinal);
+            Assert.True(manifest.NativeDependencies.PkgConfigPackages is null
+                || manifest.NativeDependencies.PkgConfigPackages.Count == 0);
+            if (OperatingSystem.IsLinux())
+            {
+                Assert.Contains("pthread", manifest.NativeDependencies.Libraries!);
+                Assert.Contains("m", manifest.NativeDependencies.Libraries!);
+                Assert.Contains("dl", manifest.NativeDependencies.Libraries!);
+            }
+
+            var inspectStdout = new StringWriter();
+            var inspectStderr = new StringWriter();
+            var inspectExitCode = await CompilerCli.RunAsync(
+                [vendorMiniaudioPackage, "--inspect-pkg"],
+                new StringReader(string.Empty),
+                inspectStdout,
+                inspectStderr);
+
+            Assert.True(inspectExitCode == 0, inspectStderr.ToString());
+            Assert.Contains("native dependencies: sources=1, includes=1", inspectStdout.ToString(), StringComparison.Ordinal);
+            Assert.Contains("pkg-config=0", inspectStdout.ToString(), StringComparison.Ordinal);
+
+            var compileStdout = new StringWriter();
+            var compileStderr = new StringWriter();
+            var compileExitCode = await CompilerCli.RunAsync(
+                [
+                    Path.Combine(repositoryRoot, "examples", "miniaudio", "MiniaudioDecode.stark"),
+                    "--emit-exe",
+                    "-I", packageDirectory,
+                    "-I", stdlibImportDirectory,
+                    "-o", miniaudioOutput,
+                ],
+                new StringReader(string.Empty),
+                compileStdout,
+                compileStderr);
+
+            Assert.True(compileExitCode == 0, compileStderr.ToString());
+            Assert.Contains("Emitted executable:", compileStdout.ToString(), StringComparison.Ordinal);
+            Assert.True(File.Exists(miniaudioOutput));
+
+            var processResult = await RunNativeExecutableAsync(miniaudioOutput);
+
+            Assert.Equal(0, processResult.ExitCode);
+            Assert.Equal("Miniaudio decode ok\n", processResult.StandardOutput);
+            Assert.Equal(string.Empty, processResult.StandardError);
+        }
+        finally
+        {
+            Cleanup(tempDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task VendorCgltfModulesCheckWithoutNativeExecution()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var vendorImportDirectory = Path.Combine(repositoryRoot, "vendor", "src");
+        var stdlibImportDirectory = Path.Combine(repositoryRoot, "stdlib", "src");
+        var cgltfSource = Path.Combine(vendorImportDirectory, "Vendor", "Cgltf.stark");
+        var cgltfNativeSource = Path.Combine(repositoryRoot, "vendor", "CgltfImplementation.c");
+        var cgltfVersionFile = Path.Combine(repositoryRoot, "vendor", "native", "cgltf", "VERSION.md");
+        var cgltfHeader = Path.Combine(repositoryRoot, "vendor", "native", "cgltf", "cgltf.h");
+
+        Assert.True(File.Exists(cgltfNativeSource));
+        Assert.True(File.Exists(cgltfHeader));
+        Assert.Contains(
+            "v1.15",
+            await File.ReadAllTextAsync(cgltfVersionFile),
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "360db1a95480fe102ae9c69b27c5d101167ff5ba",
+            await File.ReadAllTextAsync(cgltfVersionFile),
+            StringComparison.Ordinal);
+
+        var nativeSourceText = await File.ReadAllTextAsync(cgltfNativeSource);
+        Assert.Contains("CGLTF_IMPLEMENTATION", nativeSourceText, StringComparison.Ordinal);
+        Assert.Contains("stark_cgltf_parse_memory", nativeSourceText, StringComparison.Ordinal);
+        Assert.Contains("stark_cgltf_parse_file", nativeSourceText, StringComparison.Ordinal);
+        Assert.Contains("stark_cgltf_copy_name", nativeSourceText, StringComparison.Ordinal);
+
+        var sourceText = await File.ReadAllTextAsync(cgltfSource);
+        Assert.Contains("public struct Document", sourceText, StringComparison.Ordinal);
+        Assert.Contains("mut drop", sourceText, StringComparison.Ordinal);
+        Assert.Contains("public fn DocumentResult ParseFromMemory", sourceText, StringComparison.Ordinal);
+        Assert.Contains("public fn DocumentResult ParseFromFile", sourceText, StringComparison.Ordinal);
+        Assert.Contains("public fn PrimitiveInfoResult GetPrimitiveInfo", sourceText, StringComparison.Ordinal);
+        Assert.Contains("public fn NameCopyResult CopyMeshNameBytes", sourceText, StringComparison.Ordinal);
+        Assert.DoesNotContain("public unsafe", sourceText, StringComparison.Ordinal);
+
+        await CheckSourceAsync(
+            cgltfSource,
+            vendorImportDirectory,
+            stdlibImportDirectory);
+
+        await CheckSourceAsync(
+            Path.Combine(repositoryRoot, "examples", "cgltf", "CgltfAssetSummary.stark"),
+            vendorImportDirectory,
+            stdlibImportDirectory);
+    }
+
+    [Fact]
+    public async Task VendorCgltfBuildsAndRunsThroughPackageOwnedNativeMetadata()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
+        {
+            return;
+        }
+
+        var repositoryRoot = FindRepositoryRoot();
+        var vendorImportDirectory = Path.Combine(repositoryRoot, "vendor", "src");
+        var stdlibImportDirectory = Path.Combine(repositoryRoot, "stdlib", "src");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-vendor-cgltf-pkg-");
+        var packageDirectory = Path.Combine(tempDirectory.FullName, "packages");
+        Directory.CreateDirectory(packageDirectory);
+
+        var vendorCgltfSource = Path.Combine(vendorImportDirectory, "Vendor", "Cgltf.stark");
+        var cgltfNativeSource = Path.Combine(repositoryRoot, "vendor", "CgltfImplementation.c");
+        var cgltfIncludeDirectory = Path.Combine(repositoryRoot, "vendor", "native", "cgltf");
+        var tinyGltfAsset = Path.Combine(repositoryRoot, "examples", "cgltf", "assets", "tiny-triangle.gltf");
+        var vendorCgltfLibrary = Path.Combine(
+            packageDirectory,
+            OperatingSystem.IsWindows() ? "VendorCgltf.lib" : "libVendorCgltf.a");
+        var vendorCgltfPackage = Path.ChangeExtension(vendorCgltfLibrary, ".starkpkg");
+        var cgltfOutput = Path.Combine(
+            tempDirectory.FullName,
+            OperatingSystem.IsWindows() ? "cgltf-asset-summary.exe" : "cgltf-asset-summary");
+
+        try
+        {
+            var emitStdout = new StringWriter();
+            var emitStderr = new StringWriter();
+            var emitExitCode = await CompilerCli.RunAsync(
+                [
+                    vendorCgltfSource,
+                    "--emit-lib",
+                    "-I", vendorImportDirectory,
+                    "-I", stdlibImportDirectory,
+                    "-o", vendorCgltfLibrary,
+                    "--native-source", cgltfNativeSource,
+                    "--native-include-dir", cgltfIncludeDirectory,
+                ],
+                new StringReader(string.Empty),
+                emitStdout,
+                emitStderr);
+
+            Assert.True(emitExitCode == 0, emitStderr.ToString());
+            Assert.Contains("Emitted static library:", emitStdout.ToString(), StringComparison.Ordinal);
+            Assert.True(File.Exists(vendorCgltfLibrary));
+            Assert.True(File.Exists(vendorCgltfPackage));
+
+            Assert.True(PackageImageLoader.TryLoadManifest(vendorCgltfPackage, out var manifest));
+            Assert.Equal("Vendor.Cgltf", manifest.RootModule);
+            Assert.NotNull(manifest.NativeDependencies);
+            Assert.Equal(
+                "CgltfImplementation.c",
+                Path.GetFileName(Assert.Single(manifest.NativeDependencies!.Sources!)));
+            Assert.EndsWith(
+                Path.Combine("native", "cgltf"),
+                Assert.Single(manifest.NativeDependencies.IncludeDirectories!),
+                StringComparison.Ordinal);
+            Assert.True(manifest.NativeDependencies.PkgConfigPackages is null
+                || manifest.NativeDependencies.PkgConfigPackages.Count == 0);
+
+            var inspectStdout = new StringWriter();
+            var inspectStderr = new StringWriter();
+            var inspectExitCode = await CompilerCli.RunAsync(
+                [vendorCgltfPackage, "--inspect-pkg"],
+                new StringReader(string.Empty),
+                inspectStdout,
+                inspectStderr);
+
+            Assert.True(inspectExitCode == 0, inspectStderr.ToString());
+            Assert.Matches(
+                "native dependencies: sources=1, includes=1, .*pkg-config=0",
+                inspectStdout.ToString());
+
+            var compileStdout = new StringWriter();
+            var compileStderr = new StringWriter();
+            var compileExitCode = await CompilerCli.RunAsync(
+                [
+                    Path.Combine(repositoryRoot, "examples", "cgltf", "CgltfAssetSummary.stark"),
+                    "--emit-exe",
+                    "-I", packageDirectory,
+                    "-I", stdlibImportDirectory,
+                    "-o", cgltfOutput,
+                ],
+                new StringReader(string.Empty),
+                compileStdout,
+                compileStderr);
+
+            Assert.True(compileExitCode == 0, compileStderr.ToString());
+            Assert.Contains("Emitted executable:", compileStdout.ToString(), StringComparison.Ordinal);
+            Assert.True(File.Exists(cgltfOutput));
+
+            var processResult = await RunNativeExecutableAsync(
+                cgltfOutput,
+                environment: new Dictionary<string, string>
+                {
+                    ["STARK_CGLTF_ASSET_PATH"] = tinyGltfAsset
+                });
+
+            Assert.Equal(0, processResult.ExitCode);
+            Assert.Equal("cgltf ok\n", processResult.StandardOutput);
+            Assert.Equal(string.Empty, processResult.StandardError);
+        }
+        finally
+        {
+            Cleanup(tempDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task VendorGLFWModulesCheckWithoutNativeExecution()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var vendorImportDirectory = Path.Combine(repositoryRoot, "vendor", "src");
+        var stdlibImportDirectory = Path.Combine(repositoryRoot, "stdlib", "src");
+        var glfwSource = Path.Combine(vendorImportDirectory, "Vendor", "GLFW.stark");
+        var glfwNativeSource = Path.Combine(repositoryRoot, "vendor", "GlfwEventBridge.c");
+
+        Assert.True(File.Exists(glfwNativeSource));
+        var nativeSourceText = await File.ReadAllTextAsync(glfwNativeSource);
+        Assert.Contains("#include <GLFW/glfw3.h>", nativeSourceText, StringComparison.Ordinal);
+        Assert.Contains("stark_glfw_install_event_bridge", nativeSourceText, StringComparison.Ordinal);
+        Assert.Contains("glfwSetKeyCallback", nativeSourceText, StringComparison.Ordinal);
+        Assert.Contains("stark_glfw_poll_event", nativeSourceText, StringComparison.Ordinal);
+        Assert.Contains("STARK_GLFW_EVENT_CAPACITY = 256", nativeSourceText, StringComparison.Ordinal);
+
+        var sourceText = await File.ReadAllTextAsync(glfwSource);
+        Assert.Contains("public struct Library", sourceText, StringComparison.Ordinal);
+        Assert.Contains("public struct Window", sourceText, StringComparison.Ordinal);
+        Assert.Contains("public fn LibraryResult Initialize", sourceText, StringComparison.Ordinal);
+        Assert.Contains("public fn WindowResult CreateWindow", sourceText, StringComparison.Ordinal);
+        Assert.Contains("public fn GlfwStatus EnableEventBridge", sourceText, StringComparison.Ordinal);
+        Assert.Contains("public fn EventPollResult PollEvent", sourceText, StringComparison.Ordinal);
+        Assert.Contains("public fn InputAction GetKey", sourceText, StringComparison.Ordinal);
+        Assert.DoesNotContain("public unsafe", sourceText, StringComparison.Ordinal);
+
+        await CheckSourceAsync(
+            glfwSource,
+            vendorImportDirectory,
+            stdlibImportDirectory);
+
+        await CheckSourceAsync(
+            Path.Combine(repositoryRoot, "examples", "glfw", "GlfwHiddenWindow.stark"),
+            vendorImportDirectory,
+            stdlibImportDirectory);
+
+        await CheckSourceAsync(
+            Path.Combine(repositoryRoot, "tests-stark", "vendor.GLFW", "GlfwTests.stark"),
+            vendorImportDirectory,
+            stdlibImportDirectory);
+    }
+
+    [Fact]
+    public async Task VendorGLFWBuildsAndRunsThroughPackageOwnedNativeMetadata()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _)
+            || !await PkgConfigPackageExistsAsync("glfw3"))
+        {
+            return;
+        }
+
+        var repositoryRoot = FindRepositoryRoot();
+        var vendorImportDirectory = Path.Combine(repositoryRoot, "vendor", "src");
+        var stdlibImportDirectory = Path.Combine(repositoryRoot, "stdlib", "src");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-vendor-glfw-pkg-");
+        var packageDirectory = Path.Combine(tempDirectory.FullName, "packages");
+        Directory.CreateDirectory(packageDirectory);
+
+        var vendorGLFWSource = Path.Combine(vendorImportDirectory, "Vendor", "GLFW.stark");
+        var glfwNativeSource = Path.Combine(repositoryRoot, "vendor", "GlfwEventBridge.c");
+        var vendorGLFWLibrary = Path.Combine(
+            packageDirectory,
+            OperatingSystem.IsWindows() ? "VendorGLFW.lib" : "libVendorGLFW.a");
+        var vendorGLFWPackage = Path.ChangeExtension(vendorGLFWLibrary, ".starkpkg");
+        var glfwOutput = Path.Combine(
+            tempDirectory.FullName,
+            OperatingSystem.IsWindows() ? "glfw-hidden-window.exe" : "glfw-hidden-window");
+
+        try
+        {
+            var emitStdout = new StringWriter();
+            var emitStderr = new StringWriter();
+            var emitExitCode = await CompilerCli.RunAsync(
+                [
+                    vendorGLFWSource,
+                    "--emit-lib",
+                    "-I", vendorImportDirectory,
+                    "-I", stdlibImportDirectory,
+                    "-o", vendorGLFWLibrary,
+                    "--native-source", glfwNativeSource,
+                    "--native-pkg-config", "glfw3",
+                ],
+                new StringReader(string.Empty),
+                emitStdout,
+                emitStderr);
+
+            Assert.True(emitExitCode == 0, emitStderr.ToString());
+            Assert.Contains("Emitted static library:", emitStdout.ToString(), StringComparison.Ordinal);
+            Assert.True(File.Exists(vendorGLFWLibrary));
+            Assert.True(File.Exists(vendorGLFWPackage));
+
+            Assert.True(PackageImageLoader.TryLoadManifest(vendorGLFWPackage, out var manifest));
+            Assert.Equal("Vendor.GLFW", manifest.RootModule);
+            Assert.NotNull(manifest.NativeDependencies);
+            Assert.Equal("glfw3", Assert.Single(manifest.NativeDependencies!.PkgConfigPackages!));
+            Assert.Equal(
+                "GlfwEventBridge.c",
+                Path.GetFileName(Assert.Single(manifest.NativeDependencies.Sources!)));
+
+            var inspectStdout = new StringWriter();
+            var inspectStderr = new StringWriter();
+            var inspectExitCode = await CompilerCli.RunAsync(
+                [vendorGLFWPackage, "--inspect-pkg"],
+                new StringReader(string.Empty),
+                inspectStdout,
+                inspectStderr);
+
+            Assert.True(inspectExitCode == 0, inspectStderr.ToString());
+            Assert.Matches(
+                "native dependencies: sources=1, .*pkg-config=1",
+                inspectStdout.ToString());
+
+            var compileStdout = new StringWriter();
+            var compileStderr = new StringWriter();
+            var compileExitCode = await CompilerCli.RunAsync(
+                [
+                    Path.Combine(repositoryRoot, "examples", "glfw", "GlfwHiddenWindow.stark"),
+                    "--emit-exe",
+                    "-I", packageDirectory,
+                    "-I", stdlibImportDirectory,
+                    "-o", glfwOutput,
+                ],
+                new StringReader(string.Empty),
+                compileStdout,
+                compileStderr);
+
+            Assert.True(compileExitCode == 0, compileStderr.ToString());
+            Assert.Contains("Emitted executable:", compileStdout.ToString(), StringComparison.Ordinal);
+            Assert.True(File.Exists(glfwOutput));
+
+            var processResult = await RunNativeExecutableAsync(glfwOutput);
+
+            Assert.Equal(0, processResult.ExitCode);
+            Assert.True(
+                processResult.StandardOutput == "GLFW hidden window ok\n"
+                    || processResult.StandardOutput == "GLFW unavailable\n",
+                processResult.StandardOutput);
+            Assert.Equal(string.Empty, processResult.StandardError);
+        }
+        finally
+        {
+            Cleanup(tempDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task VendorSDL3ModulesCheckWithoutNativeExecution()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var vendorImportDirectory = Path.Combine(repositoryRoot, "vendor", "src");
+        var stdlibImportDirectory = Path.Combine(repositoryRoot, "stdlib", "src");
+        var sdl3Source = Path.Combine(vendorImportDirectory, "Vendor", "SDL3.stark");
+        var sdl3NativeSource = Path.Combine(repositoryRoot, "vendor", "Sdl3Binding.c");
+
+        Assert.True(File.Exists(sdl3NativeSource));
+        var nativeSourceText = await File.ReadAllTextAsync(sdl3NativeSource);
+        Assert.Contains("#include <SDL3/SDL.h>", nativeSourceText, StringComparison.Ordinal);
+        Assert.Contains("stark_sdl3_translate_event", nativeSourceText, StringComparison.Ordinal);
+        Assert.Contains("SDL_PollEvent", nativeSourceText, StringComparison.Ordinal);
+        Assert.Contains("SDL_OpenAudioDeviceStream", nativeSourceText, StringComparison.Ordinal);
+        Assert.Contains("SDL_SetRenderDrawColor", nativeSourceText, StringComparison.Ordinal);
+
+        var sourceText = await File.ReadAllTextAsync(sdl3Source);
+        Assert.Contains("public struct Library", sourceText, StringComparison.Ordinal);
+        Assert.Contains("public struct Window", sourceText, StringComparison.Ordinal);
+        Assert.Contains("public struct Renderer", sourceText, StringComparison.Ordinal);
+        Assert.Contains("public struct AudioStream", sourceText, StringComparison.Ordinal);
+        Assert.Contains("public fn LibraryResult Initialize", sourceText, StringComparison.Ordinal);
+        Assert.Contains("public fn WindowResult CreateWindow", sourceText, StringComparison.Ordinal);
+        Assert.Contains("public fn RendererResult CreateDefaultRenderer", sourceText, StringComparison.Ordinal);
+        Assert.Contains("public fn EventPollResult PollEvent", sourceText, StringComparison.Ordinal);
+        Assert.Contains("public fn AudioStreamResult OpenDefaultPlaybackStream", sourceText, StringComparison.Ordinal);
+        Assert.DoesNotContain("public unsafe", sourceText, StringComparison.Ordinal);
+
+        await CheckSourceAsync(
+            sdl3Source,
+            vendorImportDirectory,
+            stdlibImportDirectory);
+
+        await CheckSourceAsync(
+            Path.Combine(repositoryRoot, "examples", "sdl3", "Sdl3WindowAudio.stark"),
+            vendorImportDirectory,
+            stdlibImportDirectory);
+
+        await CheckSourceAsync(
+            Path.Combine(repositoryRoot, "tests-stark", "vendor.SDL3", "Sdl3Tests.stark"),
+            vendorImportDirectory,
+            stdlibImportDirectory);
+    }
+
+    [Fact]
+    public async Task VendorSDL3BuildsAndRunsThroughPackageOwnedNativeMetadata()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _)
+            || !await PkgConfigPackageExistsAsync("sdl3"))
+        {
+            return;
+        }
+
+        var repositoryRoot = FindRepositoryRoot();
+        var vendorImportDirectory = Path.Combine(repositoryRoot, "vendor", "src");
+        var stdlibImportDirectory = Path.Combine(repositoryRoot, "stdlib", "src");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-vendor-sdl3-pkg-");
+        var packageDirectory = Path.Combine(tempDirectory.FullName, "packages");
+        Directory.CreateDirectory(packageDirectory);
+
+        var vendorSDL3Source = Path.Combine(vendorImportDirectory, "Vendor", "SDL3.stark");
+        var sdl3NativeSource = Path.Combine(repositoryRoot, "vendor", "Sdl3Binding.c");
+        var vendorSDL3Library = Path.Combine(
+            packageDirectory,
+            OperatingSystem.IsWindows() ? "VendorSDL3.lib" : "libVendorSDL3.a");
+        var vendorSDL3Package = Path.ChangeExtension(vendorSDL3Library, ".starkpkg");
+        var sdl3Output = Path.Combine(
+            tempDirectory.FullName,
+            OperatingSystem.IsWindows() ? "sdl3-window-audio.exe" : "sdl3-window-audio");
+
+        try
+        {
+            var emitStdout = new StringWriter();
+            var emitStderr = new StringWriter();
+            var emitExitCode = await CompilerCli.RunAsync(
+                [
+                    vendorSDL3Source,
+                    "--emit-lib",
+                    "-I", vendorImportDirectory,
+                    "-I", stdlibImportDirectory,
+                    "-o", vendorSDL3Library,
+                    "--native-source", sdl3NativeSource,
+                    "--native-pkg-config", "sdl3",
+                ],
+                new StringReader(string.Empty),
+                emitStdout,
+                emitStderr);
+
+            Assert.True(emitExitCode == 0, emitStderr.ToString());
+            Assert.Contains("Emitted static library:", emitStdout.ToString(), StringComparison.Ordinal);
+            Assert.True(File.Exists(vendorSDL3Library));
+            Assert.True(File.Exists(vendorSDL3Package));
+
+            Assert.True(PackageImageLoader.TryLoadManifest(vendorSDL3Package, out var manifest));
+            Assert.Equal("Vendor.SDL3", manifest.RootModule);
+            Assert.NotNull(manifest.NativeDependencies);
+            Assert.Equal("sdl3", Assert.Single(manifest.NativeDependencies!.PkgConfigPackages!));
+            Assert.Equal(
+                "Sdl3Binding.c",
+                Path.GetFileName(Assert.Single(manifest.NativeDependencies.Sources!)));
+
+            var inspectStdout = new StringWriter();
+            var inspectStderr = new StringWriter();
+            var inspectExitCode = await CompilerCli.RunAsync(
+                [vendorSDL3Package, "--inspect-pkg"],
+                new StringReader(string.Empty),
+                inspectStdout,
+                inspectStderr);
+
+            Assert.True(inspectExitCode == 0, inspectStderr.ToString());
+            Assert.Matches(
+                "native dependencies: sources=1, .*pkg-config=1",
+                inspectStdout.ToString());
+
+            var compileStdout = new StringWriter();
+            var compileStderr = new StringWriter();
+            var compileExitCode = await CompilerCli.RunAsync(
+                [
+                    Path.Combine(repositoryRoot, "examples", "sdl3", "Sdl3WindowAudio.stark"),
+                    "--emit-exe",
+                    "-I", packageDirectory,
+                    "-I", stdlibImportDirectory,
+                    "-o", sdl3Output,
+                ],
+                new StringReader(string.Empty),
+                compileStdout,
+                compileStderr);
+
+            Assert.True(compileExitCode == 0, compileStderr.ToString());
+            Assert.Contains("Emitted executable:", compileStdout.ToString(), StringComparison.Ordinal);
+            Assert.True(File.Exists(sdl3Output));
+
+            var processResult = await RunNativeExecutableAsync(
+                sdl3Output,
+                environment: new Dictionary<string, string>
+                {
+                    ["SDL_VIDEODRIVER"] = "dummy",
+                    ["SDL_AUDIODRIVER"] = "dummy",
+                    ["SDL_RENDER_DRIVER"] = "software"
+                });
+
+            Assert.Equal(0, processResult.ExitCode);
+            Assert.True(
+                processResult.StandardOutput == "SDL3 window/audio ok\n"
+                    || processResult.StandardOutput == "SDL3 unavailable\n",
+                processResult.StandardOutput);
+            Assert.Equal(string.Empty, processResult.StandardError);
+        }
+        finally
+        {
+            Cleanup(tempDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task VendorKbTextShapeModulesCheckWithoutNativeExecution()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var vendorImportDirectory = Path.Combine(repositoryRoot, "vendor", "src");
+        var stdlibImportDirectory = Path.Combine(repositoryRoot, "stdlib", "src");
+        var kbTextShapeSource = Path.Combine(vendorImportDirectory, "Vendor", "KbTextShape.stark");
+        var kbTextShapeNativeSource = Path.Combine(repositoryRoot, "vendor", "KbTextShapeBinding.c");
+
+        Assert.True(File.Exists(kbTextShapeNativeSource));
+        var nativeSourceText = await File.ReadAllTextAsync(kbTextShapeNativeSource);
+        Assert.Contains("#include <hb.h>", nativeSourceText, StringComparison.Ordinal);
+        Assert.Contains("#include <unicode/ubrk.h>", nativeSourceText, StringComparison.Ordinal);
+        Assert.Contains("utext_openUTF8", nativeSourceText, StringComparison.Ordinal);
+        Assert.Contains("hb_shape", nativeSourceText, StringComparison.Ordinal);
+        Assert.Contains("stark_kb_segment_utf8", nativeSourceText, StringComparison.Ordinal);
+        Assert.Contains("stark_kb_shape_utf8", nativeSourceText, StringComparison.Ordinal);
+
+        var sourceText = await File.ReadAllTextAsync(kbTextShapeSource);
+        Assert.Contains("public struct Segmenter", sourceText, StringComparison.Ordinal);
+        Assert.Contains("public struct Font", sourceText, StringComparison.Ordinal);
+        Assert.Contains("public fn SegmenterResult CreateSegmenter", sourceText, StringComparison.Ordinal);
+        Assert.Contains("public fn FontResult CreateFontFromMemory", sourceText, StringComparison.Ordinal);
+        Assert.Contains("public fn OutputCountResult SegmentUtf8Into", sourceText, StringComparison.Ordinal);
+        Assert.Contains("public fn OutputCountResult ShapeUtf8Into", sourceText, StringComparison.Ordinal);
+        Assert.DoesNotContain("public unsafe", sourceText, StringComparison.Ordinal);
+
+        await CheckSourceAsync(
+            kbTextShapeSource,
+            vendorImportDirectory,
+            stdlibImportDirectory);
+
+        await CheckSourceAsync(
+            Path.Combine(repositoryRoot, "examples", "kb-text-shape", "TextShapeGlyphs.stark"),
+            vendorImportDirectory,
+            stdlibImportDirectory);
+
+        await CheckSourceAsync(
+            Path.Combine(repositoryRoot, "tests-stark", "vendor.KbTextShape", "KbTextShapeTests.stark"),
+            vendorImportDirectory,
+            stdlibImportDirectory);
+    }
+
+    [Fact]
+    public async Task VendorKbTextShapeBuildsAndRunsThroughPackageOwnedNativeMetadata()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _)
+            || !await PkgConfigPackageExistsAsync("harfbuzz")
+            || !await PkgConfigPackageExistsAsync("icu-uc")
+            || !await PkgConfigPackageExistsAsync("icu-i18n"))
+        {
+            return;
+        }
+
+        var repositoryRoot = FindRepositoryRoot();
+        var vendorImportDirectory = Path.Combine(repositoryRoot, "vendor", "src");
+        var stdlibImportDirectory = Path.Combine(repositoryRoot, "stdlib", "src");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-vendor-kb-text-shape-pkg-");
+        var packageDirectory = Path.Combine(tempDirectory.FullName, "packages");
+        Directory.CreateDirectory(packageDirectory);
+
+        var vendorKbTextShapeSource = Path.Combine(vendorImportDirectory, "Vendor", "KbTextShape.stark");
+        var kbTextShapeNativeSource = Path.Combine(repositoryRoot, "vendor", "KbTextShapeBinding.c");
+        var fixtureFont = Path.Combine(repositoryRoot, "vendor", "native", "stb", "testdata", "Vera.ttf");
+        var vendorKbTextShapeLibrary = Path.Combine(
+            packageDirectory,
+            OperatingSystem.IsWindows() ? "VendorKbTextShape.lib" : "libVendorKbTextShape.a");
+        var vendorKbTextShapePackage = Path.ChangeExtension(vendorKbTextShapeLibrary, ".starkpkg");
+        var kbTextShapeOutput = Path.Combine(
+            tempDirectory.FullName,
+            OperatingSystem.IsWindows() ? "kb-text-shape-glyphs.exe" : "kb-text-shape-glyphs");
+
+        try
+        {
+            var emitStdout = new StringWriter();
+            var emitStderr = new StringWriter();
+            var emitExitCode = await CompilerCli.RunAsync(
+                [
+                    vendorKbTextShapeSource,
+                    "--emit-lib",
+                    "-I", vendorImportDirectory,
+                    "-I", stdlibImportDirectory,
+                    "-o", vendorKbTextShapeLibrary,
+                    "--native-source", kbTextShapeNativeSource,
+                    "--native-pkg-config", "harfbuzz",
+                    "--native-pkg-config", "icu-uc",
+                    "--native-pkg-config", "icu-i18n",
+                ],
+                new StringReader(string.Empty),
+                emitStdout,
+                emitStderr);
+
+            Assert.True(emitExitCode == 0, emitStderr.ToString());
+            Assert.Contains("Emitted static library:", emitStdout.ToString(), StringComparison.Ordinal);
+            Assert.True(File.Exists(vendorKbTextShapeLibrary));
+            Assert.True(File.Exists(vendorKbTextShapePackage));
+
+            Assert.True(PackageImageLoader.TryLoadManifest(vendorKbTextShapePackage, out var manifest));
+            Assert.Equal("Vendor.KbTextShape", manifest.RootModule);
+            Assert.NotNull(manifest.NativeDependencies);
+            Assert.Contains("harfbuzz", manifest.NativeDependencies!.PkgConfigPackages!);
+            Assert.Contains("icu-uc", manifest.NativeDependencies.PkgConfigPackages!);
+            Assert.Contains("icu-i18n", manifest.NativeDependencies.PkgConfigPackages!);
+            Assert.Equal(
+                "KbTextShapeBinding.c",
+                Path.GetFileName(Assert.Single(manifest.NativeDependencies.Sources!)));
+
+            var inspectStdout = new StringWriter();
+            var inspectStderr = new StringWriter();
+            var inspectExitCode = await CompilerCli.RunAsync(
+                [vendorKbTextShapePackage, "--inspect-pkg"],
+                new StringReader(string.Empty),
+                inspectStdout,
+                inspectStderr);
+
+            Assert.True(inspectExitCode == 0, inspectStderr.ToString());
+            Assert.Matches(
+                "native dependencies: sources=1, .*pkg-config=3",
+                inspectStdout.ToString());
+
+            var compileStdout = new StringWriter();
+            var compileStderr = new StringWriter();
+            var compileExitCode = await CompilerCli.RunAsync(
+                [
+                    Path.Combine(repositoryRoot, "examples", "kb-text-shape", "TextShapeGlyphs.stark"),
+                    "--emit-exe",
+                    "-I", packageDirectory,
+                    "-I", stdlibImportDirectory,
+                    "-o", kbTextShapeOutput,
+                ],
+                new StringReader(string.Empty),
+                compileStdout,
+                compileStderr);
+
+            Assert.True(compileExitCode == 0, compileStderr.ToString());
+            Assert.Contains("Emitted executable:", compileStdout.ToString(), StringComparison.Ordinal);
+            Assert.True(File.Exists(kbTextShapeOutput));
+
+            var processResult = await RunNativeExecutableAsync(
+                kbTextShapeOutput,
+                environment: new Dictionary<string, string>
+                {
+                    ["STARK_KB_TEXT_SHAPE_FONT_PATH"] = fixtureFont
+                });
+
+            Assert.Equal(0, processResult.ExitCode);
+            Assert.Equal("KbTextShape ok\n", processResult.StandardOutput);
+            Assert.Equal(string.Empty, processResult.StandardError);
+        }
+        finally
+        {
+            Cleanup(tempDirectory);
+        }
+    }
+
+    [Fact]
     public async Task VendorSQLiteModulesCheckWithoutNativeExecution()
     {
         var repositoryRoot = FindRepositoryRoot();
@@ -893,7 +2387,7 @@ public sealed class ExamplesCompileRunTests
             stdlibImportDirectory);
 
         await CheckSourceAsync(
-            Path.Combine(repositoryRoot, "examples", "sqlite", "SQLiteSmoke.stark"),
+            Path.Combine(repositoryRoot, "examples", "sqlite", "SQLiteInMemoryQueries.stark"),
             vendorImportDirectory,
             stdlibImportDirectory);
 
@@ -924,7 +2418,7 @@ public sealed class ExamplesCompileRunTests
         var sqliteNativeSource = Path.Combine(repositoryRoot, "vendor", "SQLiteTextBinding.c");
         var vendorSQLiteLibrary = Path.Combine(packageDirectory, "libVendorSQLite.a");
         var vendorSQLitePackage = Path.ChangeExtension(vendorSQLiteLibrary, ".starkpkg");
-        var sqliteSmokeOutput = Path.Combine(tempDirectory.FullName, "sqlite-smoke");
+        var sqliteQueriesOutput = Path.Combine(tempDirectory.FullName, "sqlite-in-memory-queries");
 
         try
         {
@@ -972,11 +2466,11 @@ public sealed class ExamplesCompileRunTests
             var compileStderr = new StringWriter();
             var compileExitCode = await CompilerCli.RunAsync(
                 [
-                    Path.Combine(repositoryRoot, "examples", "sqlite", "SQLiteSmoke.stark"),
+                    Path.Combine(repositoryRoot, "examples", "sqlite", "SQLiteInMemoryQueries.stark"),
                     "--emit-exe",
                     "-I", packageDirectory,
                     "-I", stdlibImportDirectory,
-                    "-o", sqliteSmokeOutput,
+                    "-o", sqliteQueriesOutput,
                 ],
                 new StringReader(string.Empty),
                 compileStdout,
@@ -984,9 +2478,9 @@ public sealed class ExamplesCompileRunTests
 
             Assert.True(compileExitCode == 0, compileStderr.ToString());
             Assert.Contains("Emitted executable:", compileStdout.ToString(), StringComparison.Ordinal);
-            Assert.True(File.Exists(sqliteSmokeOutput));
+            Assert.True(File.Exists(sqliteQueriesOutput));
 
-            var processResult = await RunNativeExecutableAsync(sqliteSmokeOutput);
+            var processResult = await RunNativeExecutableAsync(sqliteQueriesOutput);
 
             Assert.Equal(0, processResult.ExitCode);
             Assert.Equal(string.Empty, processResult.StandardOutput);
@@ -1256,9 +2750,10 @@ public sealed class ExamplesCompileRunTests
 
     private static async Task<(int ExitCode, string StandardOutput, string StandardError)> RunNativeExecutableAsync(
         string executablePath,
-        string? workingDirectory = null)
+        string? workingDirectory = null,
+        IReadOnlyDictionary<string, string>? environment = null)
     {
-        using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+        var startInfo = new System.Diagnostics.ProcessStartInfo
         {
             FileName = executablePath,
             WorkingDirectory = workingDirectory ?? string.Empty,
@@ -1266,7 +2761,17 @@ public sealed class ExamplesCompileRunTests
             RedirectStandardError = true,
             UseShellExecute = false,
             CreateNoWindow = true
-        });
+        };
+
+        if (environment is not null)
+        {
+            foreach (var (key, value) in environment)
+            {
+                startInfo.Environment[key] = value;
+            }
+        }
+
+        using var process = System.Diagnostics.Process.Start(startInfo);
 
         Assert.NotNull(process);
         var standardOutput = await process!.StandardOutput.ReadToEndAsync();
@@ -1274,6 +2779,44 @@ public sealed class ExamplesCompileRunTests
         await process.WaitForExitAsync();
 
         return (process.ExitCode, standardOutput, standardError);
+    }
+
+    private static async Task ServeCurlExampleRequestsAsync(
+        System.Net.Sockets.TcpListener listener,
+        int requestCount)
+    {
+        var body = System.Text.Encoding.ASCII.GetBytes("stark-curl-ok\n");
+        var header = System.Text.Encoding.ASCII.GetBytes(
+            "HTTP/1.1 200 OK\r\n" +
+            "Content-Type: text/plain\r\n" +
+            "Content-Length: 14\r\n" +
+            "Connection: close\r\n" +
+            "X-Stark-Curl: ok\r\n" +
+            "\r\n");
+
+        for (var requestIndex = 0; requestIndex < requestCount; requestIndex++)
+        {
+            using var client = await listener.AcceptTcpClientAsync();
+            await using var stream = client.GetStream();
+
+            var buffer = new byte[1024];
+            while (true)
+            {
+                var read = await stream.ReadAsync(buffer);
+                if (read == 0)
+                {
+                    break;
+                }
+
+                if (System.Text.Encoding.ASCII.GetString(buffer, 0, read).Contains("\r\n\r\n", StringComparison.Ordinal))
+                {
+                    break;
+                }
+            }
+
+            await stream.WriteAsync(header);
+            await stream.WriteAsync(body);
+        }
     }
 
     private static async Task<bool> PkgConfigPackageExistsAsync(string packageName)

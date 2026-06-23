@@ -1,0 +1,435 @@
+import System.C
+import System.Text
+module Vendor.KbTextShape
+
+public const KbTextShapeMaxNativeLength = 2147483647;
+
+internal const STARK_KB_OK = 0;
+internal const STARK_KB_INVALID_ARGUMENT = -1;
+internal const STARK_KB_OUT_OF_MEMORY = -2;
+internal const STARK_KB_ICU_ERROR = -3;
+internal const STARK_KB_DESTINATION_TOO_SMALL = -4;
+internal const STARK_KB_INVALID_FONT = -5;
+internal const STARK_KB_SHAPE_FAILED = -6;
+
+internal struct SegmenterNative
+{
+    i8[min max] Opaque;
+}
+
+internal struct FontNative
+{
+    i8[min max] Opaque;
+}
+
+public enum BreakKind
+{
+    Grapheme,
+    Word,
+    Line,
+}
+
+public enum TextShapeError
+{
+    InvalidArgument,
+    OutOfMemory,
+    IcuFailure,
+    DestinationTooSmall,
+    InvalidFont,
+    ShapeFailed,
+    TextTooLarge,
+    BufferTooLarge,
+    Native(i32[min max]),
+}
+
+public enum TextShapeStatus
+{
+    [Ok] Ok,
+    [Err] Err(TextShapeError),
+}
+
+public enum SegmenterResult
+{
+    [Ok] Ok(Segmenter),
+    [Err] Err(TextShapeError),
+}
+
+public enum FontResult
+{
+    [Ok] Ok(Font),
+    [Err] Err(TextShapeError),
+}
+
+public enum OutputCountResult
+{
+    [Ok] Ok(OutputCounts),
+    [Err] Err(TextShapeError),
+}
+
+public struct OutputCounts
+{
+    public u32[0 2147483647] Written;
+    public u32[0 2147483647] Required;
+
+    public inline finite law bool Complete(borrow OutputCounts self)
+    {
+        return self.Written == self.Required;
+    }
+}
+
+[StructLayout(C)]
+public struct TextBoundary
+{
+    public u32[0 max] Start;
+    public u32[0 max] End;
+    public i32[min max] RuleStatus;
+
+    public inline finite law u32[0 max] ByteLength(borrow TextBoundary self)
+    {
+        if (self.End <= self.Start)
+        {
+            return 0;
+        }
+
+        return self.End - self.Start;
+    }
+}
+
+[StructLayout(C)]
+public struct ShapedGlyph
+{
+    public u32[0 max] GlyphId;
+    public u32[0 max] Cluster;
+    public i32[min max] XAdvance;
+    public i32[min max] YAdvance;
+    public i32[min max] XOffset;
+    public i32[min max] YOffset;
+}
+
+public struct Segmenter
+{
+    internal rawmutptr<SegmenterNative> Handle;
+
+    Segmenter()
+    {
+        self.Handle = null;
+    }
+
+    public inline finite law bool IsEmpty(borrow Segmenter self)
+    {
+        return self.Handle == null;
+    }
+
+    mut drop
+    {
+        unsafe
+        {
+            if (self.Handle != null)
+            {
+                stark_kb_segmenter_destroy(self.Handle);
+                self.Handle = null;
+            }
+        }
+    }
+}
+
+public struct Font
+{
+    internal rawmutptr<FontNative> Handle;
+
+    Font()
+    {
+        self.Handle = null;
+    }
+
+    public inline finite law bool IsEmpty(borrow Font self)
+    {
+        return self.Handle == null;
+    }
+
+    mut drop
+    {
+        unsafe
+        {
+            if (self.Handle != null)
+            {
+                stark_kb_font_destroy(self.Handle);
+                self.Handle = null;
+            }
+        }
+    }
+}
+
+internal unsafe ffi(c) fn System.C.c_int stark_kb_segmenter_create(
+    System.C.c_int kind,
+    rawmutptr<rawmutptr<SegmenterNative>> segmenter);
+
+internal unsafe ffi(c) fn void stark_kb_segmenter_destroy(rawmutptr<SegmenterNative> segmenter);
+
+internal unsafe ffi(c) fn System.C.c_int stark_kb_segment_utf8(
+    rawmutptr<SegmenterNative> segmenter,
+    rawptr<System.C.c_char> text,
+    System.C.c_int textLength,
+    rawmutptr<TextBoundary> boundaries,
+    System.C.c_int boundaryCapacity,
+    rawmutptr<System.C.c_int> written,
+    rawmutptr<System.C.c_int> required);
+
+internal unsafe ffi(c) fn System.C.c_int stark_kb_font_create(
+    rawptr<i8[min max]> fontData,
+    System.C.c_int fontLength,
+    u32[0 max] faceIndex,
+    rawmutptr<rawmutptr<FontNative>> font);
+
+internal unsafe ffi(c) fn void stark_kb_font_destroy(rawmutptr<FontNative> font);
+internal unsafe ffi(c) fn u32[0 max] stark_kb_font_units_per_em(rawmutptr<FontNative> font);
+
+internal unsafe ffi(c) fn System.C.c_int stark_kb_shape_utf8(
+    rawmutptr<FontNative> font,
+    rawptr<System.C.c_char> text,
+    System.C.c_int textLength,
+    rawmutptr<ShapedGlyph> glyphs,
+    System.C.c_int glyphCapacity,
+    rawmutptr<System.C.c_int> written,
+    rawmutptr<System.C.c_int> required);
+
+internal finite law System.C.c_int BreakKindToNative(BreakKind kind)
+{
+    switch (kind)
+    {
+        case BreakKind.Grapheme:
+            return 0;
+        case BreakKind.Word:
+            return 1;
+        case BreakKind.Line:
+            return 2;
+    }
+}
+
+internal finite law TextShapeError ErrorFromNative(System.C.c_int status)
+{
+    switch (status)
+    {
+        case 0:
+            return TextShapeError.Native(0);
+        case -1:
+            return TextShapeError.InvalidArgument;
+        case -2:
+            return TextShapeError.OutOfMemory;
+        case -3:
+            return TextShapeError.IcuFailure;
+        case -4:
+            return TextShapeError.DestinationTooSmall;
+        case -5:
+            return TextShapeError.InvalidFont;
+        case -6:
+            return TextShapeError.ShapeFailed;
+        default:
+            return TextShapeError.Native((i32[min max])status);
+    }
+}
+
+internal finite law OutputCounts CountsFromNative(System.C.c_int written, System.C.c_int required)
+{
+    return new OutputCounts()
+    {
+        Written = (u32[0 2147483647])written,
+        Required = (u32[0 2147483647])required
+    };
+}
+
+internal finite law bool NativeLengthFits(u64[0 2 ** 63 - 1] length)
+{
+    return length <= KbTextShapeMaxNativeLength;
+}
+
+public fn SegmenterResult CreateSegmenter(BreakKind kind)
+{
+    unsafe
+    {
+        stack mut rawmutptr<SegmenterNative> handle = null;
+        stack System.C.c_int status = stark_kb_segmenter_create(BreakKindToNative(kind), &handle);
+        if (status != STARK_KB_OK || handle == null)
+        {
+            return SegmenterResult.Err(ErrorFromNative(status));
+        }
+
+        stack mut Segmenter segmenter = new();
+        segmenter.Handle = handle;
+        return SegmenterResult.Ok(segmenter);
+    }
+}
+
+public fn FontResult CreateFontFromMemory(borrow i8[min max][] fontBytes, u32[0 max] faceIndex)
+{
+    if (fontBytes.Length == 0)
+    {
+        return FontResult.Err(TextShapeError.InvalidArgument);
+    }
+
+    if (!NativeLengthFits(fontBytes.Length))
+    {
+        return FontResult.Err(TextShapeError.BufferTooLarge);
+    }
+
+    unsafe
+    {
+        stack rawptr<i8[min max]> fontData = (rawptr<i8[min max]>)(&fontBytes[0]);
+        stack System.C.c_int fontLength = (i32[min max])fontBytes.Length;
+        stack mut rawmutptr<FontNative> handle = null;
+        stack System.C.c_int status = stark_kb_font_create(fontData, fontLength, faceIndex, &handle);
+        if (status != STARK_KB_OK || handle == null)
+        {
+            return FontResult.Err(ErrorFromNative(status));
+        }
+
+        stack mut Font font = new();
+        font.Handle = handle;
+        return FontResult.Ok(font);
+    }
+}
+
+public fn u32[0 max] UnitsPerEm(borrow Font font)
+{
+    unsafe
+    {
+        if (font.Handle == null)
+        {
+            return 0;
+        }
+
+        return stark_kb_font_units_per_em(font.Handle);
+    }
+}
+
+public fn OutputCountResult SegmentUtf8Into(
+    borrow Segmenter segmenter,
+    ascii text,
+    borrow mut TextBoundary[] boundaries)
+{
+    if (segmenter.IsEmpty())
+    {
+        return OutputCountResult.Err(TextShapeError.InvalidArgument);
+    }
+
+    if (!NativeLengthFits(boundaries.Length))
+    {
+        return OutputCountResult.Err(TextShapeError.BufferTooLarge);
+    }
+
+    unsafe
+    {
+        stack i64[min max] signedTextLength = System.Text.AsciiLength(text);
+        if (signedTextLength < 0)
+        {
+            return OutputCountResult.Err(TextShapeError.TextTooLarge);
+        }
+
+        stack u64[0 2 ** 63 - 1] textLength = (u64[0 2 ** 63 - 1])signedTextLength;
+        if (textLength == 0)
+        {
+            return OutputCountResult.Ok(new OutputCounts());
+        }
+
+        if (!NativeLengthFits(textLength))
+        {
+            return OutputCountResult.Err(TextShapeError.TextTooLarge);
+        }
+
+        stack rawptr<i8[min max]> textData = System.Text.AsciiData(text);
+        if (textData == null)
+        {
+            return OutputCountResult.Err(TextShapeError.InvalidArgument);
+        }
+
+        stack mut rawmutptr<TextBoundary> boundaryData = null;
+        if (boundaries.Length != 0)
+        {
+            boundaryData = &boundaries[0];
+        }
+
+        stack mut System.C.c_int written = 0;
+        stack mut System.C.c_int required = 0;
+        stack System.C.c_int status = stark_kb_segment_utf8(
+            segmenter.Handle,
+            (rawptr<System.C.c_char>)textData,
+            (i32[min max])textLength,
+            boundaryData,
+            (i32[min max])boundaries.Length,
+            &written,
+            &required);
+        stack OutputCounts counts = CountsFromNative(written, required);
+        if (status == STARK_KB_OK || status == STARK_KB_DESTINATION_TOO_SMALL)
+        {
+            return OutputCountResult.Ok(counts);
+        }
+
+        return OutputCountResult.Err(ErrorFromNative(status));
+    }
+}
+
+public fn OutputCountResult ShapeUtf8Into(
+    borrow Font font,
+    ascii text,
+    borrow mut ShapedGlyph[] glyphs)
+{
+    if (font.IsEmpty())
+    {
+        return OutputCountResult.Err(TextShapeError.InvalidArgument);
+    }
+
+    if (!NativeLengthFits(glyphs.Length))
+    {
+        return OutputCountResult.Err(TextShapeError.BufferTooLarge);
+    }
+
+    unsafe
+    {
+        stack i64[min max] signedTextLength = System.Text.AsciiLength(text);
+        if (signedTextLength < 0)
+        {
+            return OutputCountResult.Err(TextShapeError.TextTooLarge);
+        }
+
+        stack u64[0 2 ** 63 - 1] textLength = (u64[0 2 ** 63 - 1])signedTextLength;
+        if (textLength == 0)
+        {
+            return OutputCountResult.Ok(new OutputCounts());
+        }
+
+        if (!NativeLengthFits(textLength))
+        {
+            return OutputCountResult.Err(TextShapeError.TextTooLarge);
+        }
+
+        stack rawptr<i8[min max]> textData = System.Text.AsciiData(text);
+        if (textData == null)
+        {
+            return OutputCountResult.Err(TextShapeError.InvalidArgument);
+        }
+
+        stack mut rawmutptr<ShapedGlyph> glyphData = null;
+        if (glyphs.Length != 0)
+        {
+            glyphData = &glyphs[0];
+        }
+
+        stack mut System.C.c_int written = 0;
+        stack mut System.C.c_int required = 0;
+        stack System.C.c_int status = stark_kb_shape_utf8(
+            font.Handle,
+            (rawptr<System.C.c_char>)textData,
+            (i32[min max])textLength,
+            glyphData,
+            (i32[min max])glyphs.Length,
+            &written,
+            &required);
+        stack OutputCounts counts = CountsFromNative(written, required);
+        if (status == STARK_KB_OK || status == STARK_KB_DESTINATION_TOO_SMALL)
+        {
+            return OutputCountResult.Ok(counts);
+        }
+
+        return OutputCountResult.Err(ErrorFromNative(status));
+    }
+}

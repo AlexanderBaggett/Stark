@@ -816,8 +816,10 @@ conversionType
 
 conversionNonArrayType
     : rawPointerType
+    | functionPointerType
     | integerType
     | builtinType
+    | simpleType
     ;
 
 powerExpression

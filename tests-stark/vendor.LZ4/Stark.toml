@@ -1,0 +1,20 @@
+[project]
+name = "vendor-lz4-tests"
+version = "0.1.0"
+kind = "test"
+
+[test]
+root = "LZ4Tests.stark"
+output = "vendor-lz4-tests"
+
+[dependencies]
+stdlib = { path = "../../stdlib" }
+
+[native]
+pkg-config = ["liblz4"]
+
+[profiles.dev]
+opt = 0
+
+[profiles.release]
+opt = 3

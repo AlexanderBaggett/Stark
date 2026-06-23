@@ -1,0 +1,8 @@
+[project]
+name = "vulkan"
+version = "0.1.0"
+kind = "executable"
+
+[executable]
+root = "VulkanInfo.stark"
+output = "vulkan-info"

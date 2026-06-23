@@ -1,0 +1,163 @@
+import System.Console
+import System.IO
+import Vendor.SDL3
+module Sdl3WindowAudio
+
+fn i32[min max] PrintUnavailable()
+{
+    if (System.Console.WriteLine("SDL3 unavailable") != System.IO.IOStatus.Ok)
+    {
+        return 1;
+    }
+
+    return 0;
+}
+
+fn bool PushAndPollQuitEvent()
+{
+    switch (PushQuitEvent())
+    {
+        case SdlStatus.Err(var error):
+            return false;
+        case SdlStatus.Ok:
+            switch (PollEvent())
+            {
+                case EventPollResult.None:
+                    return false;
+                case EventPollResult.Some(var event):
+                    return event.Kind == SdlEventKind.Quit && event.Type == EventQuit;
+            }
+    }
+}
+
+fn bool ClearHiddenRenderer(mut borrow Window window)
+{
+    switch (CreateDefaultRenderer(window))
+    {
+        case RendererResult.Err(var error):
+            return false;
+        case RendererResult.Ok(var renderer):
+            stack mut Renderer ownedRenderer = renderer;
+            stack Color color = new Color()
+            {
+                R = 16,
+                G = 32,
+                B = 48,
+                A = 255
+            };
+
+            switch (SetRenderDrawColor(ownedRenderer, color))
+            {
+                case SdlStatus.Err(var error):
+                    return false;
+                case SdlStatus.Ok:
+                    switch (RenderClear(ownedRenderer))
+                    {
+                        case SdlStatus.Err(var clearError):
+                            return false;
+                        case SdlStatus.Ok:
+                            switch (RenderPresent(ownedRenderer))
+                            {
+                                case SdlStatus.Err(var presentError):
+                                    return false;
+                                case SdlStatus.Ok:
+                                    return true;
+                            }
+                    }
+            }
+    }
+}
+
+fn bool QueueSilence()
+{
+    stack AudioSpec spec = MakeAudioSpec(AudioU8, 1, 8000);
+    switch (OpenDefaultPlaybackStream(spec))
+    {
+        case AudioStreamResult.Err(var error):
+            return true;
+        case AudioStreamResult.Ok(var stream):
+            stack mut AudioStream ownedStream = stream;
+            stack mut u8[0 max][8] silence = { 128, 128, 128, 128, 128, 128, 128, 128 };
+            stack u8[0 max][] silenceBytes = silence;
+            switch (PutAudioStreamBytes(ownedStream, silenceBytes))
+            {
+                case SdlStatus.Err(var putError):
+                    return false;
+                case SdlStatus.Ok:
+                    switch (FlushAudioStream(ownedStream))
+                    {
+                        case SdlStatus.Err(var flushError):
+                            return false;
+                        case SdlStatus.Ok:
+                            switch (ClearAudioStream(ownedStream))
+                            {
+                                case SdlStatus.Err(var clearError):
+                                    return false;
+                                case SdlStatus.Ok:
+                                    return true;
+                            }
+                    }
+            }
+    }
+}
+
+fn i32[min max] RunWithSdl3()
+{
+    stack Version version = GetVersion();
+    if (version.Major < 3)
+    {
+        return 2;
+    }
+
+    switch (Initialize(InitVideo | InitAudio | InitEvents))
+    {
+        case LibraryResult.Err(var error):
+            return PrintUnavailable();
+        case LibraryResult.Ok(var library):
+            switch (SetAppMetadata("Stark SDL3 window/audio", "0.1.0", "org.starklang.examples.sdl3"))
+            {
+                case SdlStatus.Err(var metadataError):
+                    return 3;
+                case SdlStatus.Ok:
+                    if (!PushAndPollQuitEvent())
+                    {
+                        return 4;
+                    }
+
+                    if (!QueueSilence())
+                    {
+                        return 5;
+                    }
+
+                    switch (CreateHiddenWindow(64, 64, "Stark SDL3 window/audio"))
+                    {
+                        case WindowResult.Err(var windowError):
+                            return PrintUnavailable();
+                        case WindowResult.Ok(var window):
+                            stack mut Window ownedWindow = window;
+                            stack Size size = GetWindowSize(ownedWindow);
+                            if (size.Width <= 0 || size.Height <= 0)
+                            {
+                                return 6;
+                            }
+
+                            if (!ClearHiddenRenderer(ownedWindow))
+                            {
+                                return PrintUnavailable();
+                            }
+                    }
+            }
+    }
+
+    if (System.Console.WriteLine("SDL3 window/audio ok") != System.IO.IOStatus.Ok)
+    {
+        return 7;
+    }
+
+    return 0;
+}
+
+export fn i32[min max] main()
+{
+    return RunWithSdl3();
+}

@@ -26,7 +26,7 @@ dotnet run --project ../src -- build http-get
 ```
 
 The `standard-library` manifest builds through the project driver and is the
-recommended smoke test for examples that use `System.*` modules.
+recommended quick check for examples that use `System.*` modules.
 
 `raylib` and `breakout` require Raylib to be available through `pkg-config` or
 through a local native path configured in `Stark.user.toml` or
