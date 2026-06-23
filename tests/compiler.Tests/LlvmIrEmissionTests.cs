@@ -7721,6 +7721,38 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
+    public void FfiFunctionBodiesPromoteToNativeCallbackPointers()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            alias AudioCallback = fnptr<unsafe ffi(c) fn void(rawmutptr<i8[min max]>, u32[0 max])>;
+
+            unsafe ffi(c) fn void FillAudio(rawmutptr<i8[min max]> bufferData, u32[0 max] frames)
+            {
+                return;
+            }
+
+            unsafe ffi(c) fn void Register(AudioCallback callback);
+
+            export unsafe fn void Install()
+            {
+                Register(FillAudio);
+                return;
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+
+        Assert.Matches(@"define void @FillAudio\(ptr(?: [^,\)]*)? %arg_bufferData, i32(?: [^,\)]*)? %arg_frames\)", llvm);
+        Assert.DoesNotContain("define fastcc void @FillAudio", llvm, StringComparison.Ordinal);
+        Assert.Matches(@"declare void @Register\(ptr(?: [^,\)]*)?\) nounwind", llvm);
+        Assert.Matches(@"call void @Register\(ptr(?: [^,\)]*)? @FillAudio\)", ExtractDefinitionBody(llvm, "Install"));
+    }
+
+    [Fact]
     public void InternalStringFunctionsUseConcreteStringAbi()
     {
         var result = Compile(
@@ -11635,6 +11667,43 @@ public sealed class LlvmIrEmissionTests
         Assert.DoesNotContain("load %Big, ptr %arg_value", llvm);
         Assert.DoesNotContain("%abi_arg_value_value", llvm);
         Assert.DoesNotContain("store %Big", llvm);
+    }
+
+    [Fact]
+    public void LargeAggregateIndirectParameterInsertedIntoAggregateFieldMaterializesValue()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Big
+            {
+                i64[min max] A;
+                i64[min max] B;
+                i64[min max] C;
+                i64[min max] D;
+            }
+
+            struct Box
+            {
+                Big Value;
+            }
+
+            unsafe fn Box Wrap(Big value)
+            {
+                stack mut Box box = new Box();
+                box.Value = value;
+                return box;
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvm(result);
+        var wrapBody = ExtractDefinitionBody(llvm, "Wrap");
+
+        Assert.Contains("define fastcc void @Wrap(ptr noalias sret(%Box) nonnull dereferenceable(32) align 8 %ret, ptr nonnull byval(%Big) noalias readonly captures(none) dereferenceable(32) align 8 %arg_value)", llvm);
+        Assert.Contains("load %Big, ptr %arg_value", wrapBody);
+        Assert.DoesNotMatch(@"insertvalue %Box [^\n]+, %Big %arg_value,", wrapBody);
     }
 
     [Fact]

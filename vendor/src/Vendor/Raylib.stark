@@ -7,4 +7,5 @@ export import Vendor.Raylib.Textures
 export import Vendor.Raylib.Text
 export import Vendor.Raylib.Models
 export import Vendor.Raylib.Audio
+export import Vendor.Raylib.Owners
 module Vendor.Raylib

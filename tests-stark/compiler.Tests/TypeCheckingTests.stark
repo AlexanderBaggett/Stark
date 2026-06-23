@@ -1087,6 +1087,53 @@ unsafe fn i32[min max] Run()
         && Succeeds(insideUnsafeCall);
 }
 
+// Ported from TypeCheckingTests.FfiFunctionBodiesPromoteToNativeCallbackFunctionPointers.
+internal fn bool FfiFunctionBodiesPromoteToNativeCallbackFunctionPointersImpl()
+{
+    stack mut LlvmCompile compiled = CompileTypeCheck(
+        "diagp1-ffi-body-promotes-native-callback",
+        raw"""
+module Demo
+
+alias AudioCallback = fnptr<unsafe ffi(c) fn void(rawmutptr<i8[min max]>, u32[0 max])>;
+
+unsafe ffi(c) fn void FillAudio(rawmutptr<i8[min max]> bufferData, u32[0 max] frames)
+{
+    return;
+}
+
+unsafe ffi(c) fn void Register(AudioCallback callback);
+
+fn void Store(AudioCallback callback)
+{
+    return;
+}
+
+unsafe fn void Run()
+{
+    Register(FillAudio);
+    Store(FillAudio);
+    return;
+}
+""");
+
+    stack mut LlvmCompile missingUnsafe = CompileTypeCheck(
+        "diagp1-ffi-body-native-callback-missing-unsafe-carrier",
+        raw"""
+module Demo
+
+alias BadCallback = fnptr<ffi(c) fn void(rawmutptr<i8[min max]>, u32[0 max])>;
+
+fn void Register(BadCallback callback)
+{
+    return;
+}
+""");
+
+    return Succeeds(compiled)
+        && FailsWithDiagnosticMessage(missingUnsafe, "STK3024", "uses raw pointer types and must be declared 'unsafe'");
+}
+
 // Ported slice of tests/compiler.Tests/TypeCheckingTests.cs.
 // Each Impl runs the embedded Stark program (kept verbatim from the C# raw
 // string) through the closest compile helper and returns true when the original
@@ -4880,6 +4927,34 @@ fn bool Run()
         && AcceptAscii((ascii)"alpha")
         && AcceptUnicode((unicode)"alpha");
 }
+""");
+        return Succeeds(compiled);
+    }
+}
+
+// Ported from TypeCheckingTests.ImportedSourceConstantAliasesResolveInDeclaringModuleScope.
+internal fn bool ImportedSourceConstantAliasesResolveInDeclaringModuleScopeImpl()
+{
+    {
+        stack mut LlvmCompile compiled = CompileTypeCheckWithModule(
+            "typechkp3-imported-source-const-aliases-module-scope",
+            raw"""
+import Lib.Native
+module Demo
+
+fn i32[min max] Run()
+{
+    return Alias + Next;
+}
+""",
+            "Lib",
+            "Native.stark",
+            raw"""
+module Lib.Native
+
+public const Base = 15;
+public const Alias = Base;
+public const Next = Alias + 1;
 """);
         return Succeeds(compiled);
     }

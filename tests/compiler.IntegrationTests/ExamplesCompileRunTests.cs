@@ -570,11 +570,22 @@ public sealed class ExamplesCompileRunTests
 
         await CheckSourceAsync(
             Path.Combine(vendorImportDirectory, "Vendor", "Raylib.stark"),
-            vendorImportDirectory);
+            vendorImportDirectory,
+            stdlibImportDirectory);
 
         await CheckSourceAsync(
             Path.Combine(repositoryRoot, "examples", "breakout", "BreakoutRaylib.stark"),
             vendorImportDirectory,
+            stdlibImportDirectory);
+
+        await CheckSourceAsync(
+            Path.Combine(raylibImportDirectory, "VendorRaylibSafeApis.stark"),
+            vendorImportDirectory,
+            stdlibImportDirectory);
+
+        await CheckSourceAsync(
+            Path.Combine(raylibImportDirectory, "VendorRaylibSafeApis.stark"),
+            Path.Combine(repositoryRoot, "vendor", "dist"),
             stdlibImportDirectory);
     }
 
@@ -583,6 +594,7 @@ public sealed class ExamplesCompileRunTests
     {
         var repositoryRoot = FindRepositoryRoot();
         var vendorImportDirectory = Path.Combine(repositoryRoot, "vendor", "src");
+        var stdlibImportDirectory = Path.Combine(repositoryRoot, "stdlib", "src");
         var tempDirectory = Directory.CreateDirectory(Path.Combine(repositoryRoot, "artifacts", "tmp", $"stark-vendor-raylib-safe-{Guid.NewGuid():N}"));
         var sourcePath = Path.Combine(tempDirectory.FullName, "VendorRaylibSafeWrappers.stark");
 
@@ -592,12 +604,15 @@ public sealed class ExamplesCompileRunTests
                 sourcePath,
                 """
                 import Vendor.Raylib
+                import Vendor.Raymath
+                import System.Memory
+                import System.Text
                 module VendorRaylibSafeWrappers
 
                 fn i32[min max] Probe()
                 {
                     stack mut Image image = DefaultImage();
-                    image = ImageFormat(image, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
+                    image = ImageFormat(image, PixelFormatUncompressedR8g8b8a8());
                     image = ImageAlphaPremultiply(image);
                     image = ImageDrawPixel(image, 1, 1, RED());
 
@@ -642,7 +657,7 @@ public sealed class ExamplesCompileRunTests
                     }
 
                     stack mut Camera camera = DefaultCamera3D();
-                    camera = UpdateCamera(camera, CAMERA_FREE);
+                    camera = UpdateCamera(camera, CameraModeFree());
                     camera = UpdateCameraPro(camera, Vec3(0.0f, 0.0f, 0.0f), Vec3(0.0f, 0.0f, 0.0f), 0.0f);
 
                     stack mut Wave wave = DefaultWave();
@@ -650,18 +665,102 @@ public sealed class ExamplesCompileRunTests
 
                     stack mut Texture2D texture = DefaultTexture();
                     texture = GenTextureMipmaps(texture);
+                    SetTextureFilter(texture, TextureFilterBilinear());
+                    SetTextureWrap(texture, TextureWrapRepeat());
 
                     stack mut Mesh mesh = DefaultMesh();
                     mesh = GenMeshTangents(mesh);
 
                     stack mut Material material = DefaultMaterial();
-                    material = SetMaterialTexture(material, MATERIAL_MAP_DIFFUSE, texture);
+                    material = SetMaterialTexture(material, MaterialMapAlbedo(), texture);
+
+                    stack u8[0 max][4] bytes =
+                    {
+                        1, 2, 3, 4
+                    };
+                    stack mut i8[min max][4] pixelBytes =
+                    {
+                        0, 0, 0, 0
+                    };
+                    stack i32[min max][2] codepoints =
+                    {
+                        65, 66
+                    };
+                    stack Matrix[1] transforms =
+                    {
+                        MatrixIdentity()
+                    };
+                    stack mut u32[0 max][8] sha256 =
+                    {
+                        0, 0, 0, 0, 0, 0, 0, 0
+                    };
+
+                    stack RaylibBytesResult loadedBytes = LoadFileData("missing.bin");
+                    stack bool savedBytes = SaveFileData("missing.bin", bytes);
+                    stack RaylibBytesResult compressed = CompressData(bytes);
+                    stack System.Memory.MemoryResult<System.Text.OwnedAscii> encoded = EncodeDataBase64(bytes);
+                    if (!ComputeSHA256(bytes, sha256))
+                    {
+                        return 7;
+                    }
+
+                    stack System.Memory.MemoryResult<System.Text.OwnedAscii> fileName = GetFileName("assets/player.png");
+                    stack System.Memory.MemoryResult<System.Text.OwnedAscii> upper = TextToUpper("raylib");
+                    stack RaylibTextResult utf8 = LoadUTF8(codepoints);
+                    stack RaylibCodepointsResult decoded = LoadCodepoints("AB");
+                    if (SetPixelColor(pixelBytes, RED(), PixelFormatUncompressedR8g8b8a8()) != RaylibStatus.Ok)
+                    {
+                        return 8;
+                    }
+
+                    stack Color pixel = GetPixelColor(pixelBytes, PixelFormatUncompressedR8g8b8a8());
+                    if (UpdateTexture(texture, pixelBytes) != RaylibStatus.Ok)
+                    {
+                        return 9;
+                    }
+
+                    if (UpdateSound(DefaultSound(), pixelBytes, -1) != RaylibStatus.InvalidArgument)
+                    {
+                        return 10;
+                    }
+
+                    if (DrawMeshInstanced(mesh, material, transforms) != RaylibStatus.Ok)
+                    {
+                        return 11;
+                    }
+
+                    stack mut OwnedImage ownedImage = OwnImage(DefaultImage());
+                    if (!ownedImage.IsEmpty())
+                    {
+                        return 4;
+                    }
+
+                    stack Image releasedImage = ownedImage.Release();
+                    if (releasedImage.Data != null)
+                    {
+                        return 5;
+                    }
+
+                    stack mut OwnedTexture2D ownedTexture = OwnTexture2D(DefaultTexture());
+                    SetTextureFilter(ownedTexture.Value(), TextureFilterBilinear());
+                    ownedTexture.Close();
+
+                    stack mut OwnedMaterial ownedMaterial = OwnMaterial(DefaultMaterial());
+                    ownedMaterial.Close();
+
+                    stack mut OwnedModelAnimations animations = LoadOwnedModelAnimations("missing.iqm");
+                    stack mut ModelAnimation animation = DefaultModelAnimation();
+                    if (animations.TryGet(0, animation))
+                    {
+                        return 6;
+                    }
+                    animations.Close();
 
                     return 0;
                 }
                 """);
 
-            await CheckSourceAsync(sourcePath, vendorImportDirectory);
+            await CheckSourceAsync(sourcePath, vendorImportDirectory, stdlibImportDirectory);
         }
         finally
         {
@@ -804,6 +903,7 @@ public sealed class ExamplesCompileRunTests
                     Path.Combine(vendorImportDirectory, "Vendor", "Raylib.stark"),
                     "--emit-lib",
                     "-I", vendorImportDirectory,
+                    "-I", stdlibImportDirectory,
                     "-o", vendorRaylibLibrary,
                     "--native-source", fakeNativeSource,
                     "--native-include-dir", nativeIncludeDirectory,

@@ -676,6 +676,24 @@ assignment and rejects aggregate initializer shapes that would zero-fill a
 function-pointer field or fixed-array element. LLVM ABI emission may therefore
 mark direct function-pointer parameters and direct function-pointer returns as
 `nonnull` without relying on a backend guess.
+
+Native callback registration is the direct composition of `ffi(abi)` function
+bodies and `fnptr<unsafe ffi(abi) fn ...>` promotion. When a Stark function body
+is declared with `unsafe ffi(c)` or another explicit ABI, the function-effect
+model marks it as FFI, ABI lowering uses the target C calling convention rather
+than `fastcc`, and promotion to a matching unsafe FFI function-pointer type
+records the function as address-taken. LLVM emission defines the callback body
+with the foreign ABI and passes the symbol address directly to the registering
+foreign function; no thunk, closure allocation, or trampoline is introduced.
+`export` only changes symbol visibility for name-based lookup and is not needed
+when the foreign side receives the callback pointer as an argument. Callback
+registration wrappers may remain safe when their surface accepts an already
+unsafe `fnptr<unsafe ffi(...) fn ...>`; declaration checking treats the unsafe
+function-pointer carrier as the proof boundary while direct raw pointer
+parameters and safe function pointers with raw pointer parameters still require
+an unsafe function. Callback signatures containing ABI-sensitive C helper types
+that Stark does not yet model exactly, such as `va_list`, must stay at a raw
+unsafe edge or use a native adapter until a target-aware carrier exists.
 Unsafe explicit conversions between raw pointers and function pointers are the
 escape hatch for native loader APIs such as Vulkan. Type checking accepts only
 an explicit cast in an unsafe context; callers are responsible for proving the
