@@ -8,15 +8,10 @@ module SystemIOPathStandardLibraryTests
 // Ported from SystemIOPathStandardLibraryTests.StdLibSourcePromotedPathLowersThroughDynamicStorage.
 internal fn bool StdLibSourcePromotedPathLowersThroughDynamicStorageImpl()
 {
-    // PORT-NOTE: the C# test compiles with an explicit Linux target
-    // (x86_64-unknown-linux-gnu) and StopAfterPassId "emit-llvm" so it can assert
-    // the libc-free dynamic-storage lowering (no @malloc/@realloc/@free, plus the
-    // syscall-backed @__stark_runtime_try_realloc and the { ptr, i64, i64 }
-    // extractvalue). The compile-only host bridge cannot select a non-host target
-    // triple, so the Linux-only allocation-shim and extractvalue assertions are
-    // reduced to whole-module LLVM presence/absence checks plus a successful
-    // compile.
-    stack mut ProgramCompile c = CompileProgram("stdlib-promoted-path-dynamic-storage", raw"""
+    // PORT-NOTE: the original C# test pins Linux and asserts the libc-free
+    // dynamic-storage path. Keep the same target so the absence of libc allocator
+    // calls and the owned-text { ptr, i64, i64 } storage facts remain meaningful.
+    stack mut ProgramCompile c = CompileProgramForTarget("stdlib-promoted-path-dynamic-storage", raw"""
         import System.IO.Path
         import System.Text
         import System.Memory
@@ -48,7 +43,7 @@ internal fn bool StdLibSourcePromotedPathLowersThroughDynamicStorageImpl()
                 + facts.BaseNameLength()
                 + facts.DirectoryNameLength());
         }
-        """);
+        """, LinuxX64TargetTriple);
     if (!Succeeds(c))
     {
         return false;
@@ -75,7 +70,10 @@ internal fn bool StdLibSourcePromotedPathLowersThroughDynamicStorageImpl()
         return false;
     }
 
-    return true;
+    return System.Testing.Contains(ir, "@__stark_runtime_try_realloc")
+        && System.Testing.Contains(ir, "@__stark_dynamic_alloc")
+        && System.Testing.Contains(ir, "insertvalue { ptr, i64, i64 }")
+        && System.Testing.Contains(ir, "extractvalue { ptr, i64, i64 }");
 }
 
 // Ported from SystemIOPathStandardLibraryTests.StdLibSourcePromotedPathTryJoinUsesTailRegionPointerCopies.

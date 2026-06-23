@@ -107,31 +107,6 @@ Execution constraints:
 
 ---
 
-## 2. Bootstrap And Cutover
-
-- [ ] Build Stage1 with the C# Stage0 host compiler.
-  - [ ] Compile the Stark compiler sources into the first runnable Stark compiler.
-  - [ ] Package the Stage1 standard library artifacts for the active target and stage.
-
-- [ ] Build Stage2 with the Stage1 Stark compiler.
-  - [ ] Compile the compiler with itself through the Stage1 binary.
-  - [ ] Emit Stage2 package images, diagnostics, and native artifacts.
-
-- [ ] Compare Stage1 and Stage2 outputs for determinism.
-  - [ ] Compare deterministic package-image inspection output and clean-build compiler outputs.
-  - [ ] Compare diagnostics, artifact text, native object metadata, and executable behavior where applicable.
-  - [ ] Reserve raw binary comparison for codecs that explicitly guarantee byte determinism.
-
-- [ ] Run the ported Stark suite against the self-hosted compiler.
-  - [ ] Route tests through the self-hosted compiler path rather than only the C# host protocol.
-  - [ ] Keep platform gates aligned with the macOS pass-bar policy.
-
-- [ ] Document and perform cutover.
-  - [ ] Keep the C# compiler as Stage0 until Stage2 builds and tests pass.
-  - [ ] Document the bootstrap flow and recovery path.
-  - [ ] Move the C# host `/src` to `/old_src` and make the Stark compiler own `/src`.
-
----
 
 ## 3. Tooling And Packaging
 
@@ -219,15 +194,17 @@ historical triage.
     - [x] Restore CLI stdout/file-existence/manifest-byte/runtime assertions or explicit equivalents.
   - [x] Add any missing typed-only package-codegen flag or equivalent protocol path.
 
-- [~] Align SSA/MIR artifact selection and rendered-fragment expectations for ported text tests.
-  - [x] Fix verified SSA families including ArithmeticFold, ValueFacts, AliasAware, ScopedNoAlias, and InlineSsa.
-  - [ ] Fix remaining source-ok SSA text-class tests by selecting the actual artifact and spelling fragments as rendered.
-  - [ ] Fix remaining source-expressible SSA type/range source ports.
-  - [ ] Fix remaining MIR text and structural artifact expectations.
+- [x] Align SSA/MIR artifact selection and rendered-fragment expectations for ported text tests.
+  - [x] Fix verified SSA families including ArithmeticFold, ValueFacts, AliasAware, ScopedNoAlias, Cleanup, ScalarReplacement, InlineSsa, FunctionAddress, ConstantText, TextView, and DynamicStorage.
+  - [x] Fix remaining source-ok SSA text-class tests by selecting the actual artifact and spelling fragments as rendered.
+  - [x] Fix remaining source-expressible SSA type/range source ports.
+  - [x] Fix remaining MIR text and structural artifact expectations.
+    - [x] Fix verified MIR switch-pattern, place-lowerer, generic, and lowering-contract artifact expectations.
+    - [x] Recheck remaining MIR failure families with narrow filters or an intentional rebaseline.
 
-- [ ] Add the structured invalid-IR fixture path needed for source-inexpressible validator coverage.
-  - [ ] Define a test-only fixture API for invalid MIR, SSA, and package-artifact validator inputs.
-  - [ ] Port invalid-SSA validator tests to the fixture path or record explicit host-internal exclusions.
+- [x] Add the structured invalid-IR fixture path needed for source-inexpressible validator coverage.
+  - [x] Define a test-only fixture API for invalid MIR, SSA, and package-artifact validator inputs.
+  - [x] Port invalid-SSA validator tests to the fixture path or record explicit host-internal exclusions.
 
 - [x] Add target-triple pinning or platform gating for non-macOS artifact and native-runtime tests.
   - [x] Cross-target compile artifact-only Linux and Windows tests on macOS where no foreign SDK/runtime is required.
@@ -240,11 +217,20 @@ historical triage.
 
 - [ ] Resolve remaining suite failures after infrastructure lands.
   - [ ] Resolve `compiler.Tests` package-image, diagnostics, type-checking, ownership, pipeline, runtime, CLI, and example failures.
-  - [ ] Resolve `compiler.SsaTests` cleanup, scalar replacement, function-address, constant-text, text-view, dynamic-storage, and cross-module failures.
-  - [ ] Resolve `compiler.LlvmTests` package-image and genuine per-test residues.
-  - [ ] Resolve `compiler.MirTests` MIR text and structural failures.
+  - [x] Resolve `compiler.SsaTests` dynamic-storage failures.
+  - [x] Resolve `compiler.LlvmTests` package-image and genuine per-test residues.
+  - [x] Resolve `compiler.MirTests` MIR text and structural failures.
   - [ ] Resolve `stdlib.Port` platform-specific, source-stdlib, dispatch, and miscellaneous failures.
-  - [ ] Recheck the lone `compiler.FeatureTests` failure and close it if still reproducible.
+    - [x] Resolve the `standard-library-generic` and `io-path` collection residues.
+    - [x] Resolve the `io-file` collection residues.
+    - [x] Resolve the `io-file-runtime` collection residues.
+    - [x] Resolve the `memory-helper` collection residues.
+    - [x] Resolve the `memory` collection residues.
+    - [x] Recheck the `threading` collection residue.
+    - [x] Recheck the `threading-atomics` collection residue.
+    - [x] Recheck the `runtime-platform-windows` collection residue.
+    - [x] Resolve the `collections-dictionary` collection residue.
+  - [x] Recheck the lone `compiler.FeatureTests` failure and close it if still reproducible.
 
 - [ ] Close test-scope hygiene.
   - [ ] Port the final unported qualifying C# test or record an explicit exclusion reason.
@@ -294,3 +280,11 @@ Defer each item until its API/spelling lands.
 ## 9. Open Decisions
 
 No open decisions currently tracked.
+
+
+## 10 Cut over -Deferred until ALL other things are complete
+- keep C# compiler in Src
+- Self-host compiler eventually is compiable by itself
+- Sus out any issues that show up by switching to compiling itself
+  - address them as subtasks here:
+- Add update benchmarks to run for each stage of the compiler. So we should have 3 stage0, stage1, and stage2

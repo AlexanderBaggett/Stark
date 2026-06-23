@@ -8,8 +8,8 @@ module CompilerPipelineLowerMirTests
 // MidLevelIrObjectConstructionOperand with ExplicitConstructor kind / non-empty
 // ConstructorBodyKey). The text helpers cannot reach the object graph, so we
 // assert over the rendered MIR text: the program lowers cleanly, the `Run`
-// function is direct-codegen, and both the "Value" field inserts and the
-// explicit-constructor object constructions appear.
+// function is direct-codegen, and both the Value field insert facts and the
+// explicit-constructor object-construction facts appear.
 internal fn bool ExplicitConstructorBodiesLowerIntoObjectCreationImpl()
 {
     stack mut MirCompile c = CompileMir(
@@ -45,8 +45,8 @@ fn i32[min max] Run(i32[min max] value)
     }
 
     return MirContains(c, "direct-codegen: true")
-        && MirOccurrences(c, "Value") >= 2
-        && MirOccurrences(c, "ExplicitConstructor") >= 2;
+        && MirOccurrences(c, "rvalue: insert-field Value") >= 2
+        && MirOccurrences(c, "object-construction ExplicitConstructor Box constructor-body:true") >= 2;
 }
 
 // Ported from CompilerPipelineLowerMirTests.LowerMirSubstitutesConcreteTypesInsideMaterializedGenericBodies.

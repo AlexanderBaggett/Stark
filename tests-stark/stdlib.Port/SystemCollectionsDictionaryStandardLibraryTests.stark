@@ -322,18 +322,36 @@ internal fn bool StdLibSourceDictionaryCustomKeysUseExplicitStaticHashAndEqualsC
         return false;
     }
 
-    // PORT-NOTE: the C# test additionally extracts the custom-key TryGet/FindIndex
-    // bodies and asserts they reference @Symbol_Equals but not DictionaryKey_Hash/
-    // DictionaryKey_Equals. The bridge cannot extract a per-function body, so those
-    // body-scoped checks are dropped; the module-wide static-contract Contains and the
-    // no-generic-DictionaryKey-dispatch DoesNotContain checks are kept.
     stack ascii llvm = Llvm(c);
-    if (!System.Testing.Contains(llvm, "@Symbol_Hash")
-        || !System.Testing.Contains(llvm, "@Symbol_Equals")
-        || !System.Testing.Contains(llvm, "call fastcc i64 @Symbol_Hash")
-        || !System.Testing.Contains(llvm, "call fastcc i1 @Symbol_Equals")
-        || !System.Testing.DoesNotContain(llvm, "call fastcc i64 @__stark_mono_fn_System_Collections__System_Collections_DictionaryKey_Hash__Symbol")
-        || !System.Testing.DoesNotContain(llvm, "call fastcc i1 @__stark_mono_fn_System_Collections__System_Collections_DictionaryKey_Equals__Symbol"))
+    stack ascii symbolHashBody = LlvmDefinitionBody(llvm, "Symbol_Hash");
+    stack ascii symbolEqualsBody = LlvmDefinitionBody(llvm, "Symbol_Equals");
+    stack ascii setBody = LlvmDefinitionBody(
+        llvm,
+        "__stark_inline_clone___stark_mono_fn_System_Collections__System_Collections_Dictionary_Set__Symbol__u32");
+    stack ascii tryGetBody = LlvmDefinitionBody(
+        llvm,
+        "__stark_inline_clone___stark_mono_fn_System_Collections__System_Collections_Dictionary_TryGet__Symbol__u32");
+    stack ascii findIndexBody = LlvmDefinitionBody(
+        llvm,
+        "__stark_inline_clone___stark_mono_fn_System_Collections__System_Collections_Dictionary_FindIndex__Symbol__u32");
+    stack ascii findInsertionIndexBody = LlvmDefinitionBody(
+        llvm,
+        "__stark_inline_clone___stark_mono_fn_System_Collections__System_Collections_Dictionary_FindInsertionIndex__Symbol__u32");
+    if (!System.Testing.Contains(symbolHashBody, "load i32")
+        || !System.Testing.Contains(symbolEqualsBody, "icmp eq i32")
+        || !System.Testing.Contains(setBody, "load i32")
+        || !System.Testing.Contains(setBody, "Dictionary_FindInsertionIndex__Symbol__u32")
+        || !System.Testing.Contains(tryGetBody, "Dictionary_FindIndex__Symbol__u32")
+        || !System.Testing.Contains(findIndexBody, "icmp eq i32")
+        || !System.Testing.Contains(findInsertionIndexBody, "icmp eq i32")
+        || !System.Testing.DoesNotContain(setBody, "DictionaryKey_Hash")
+        || !System.Testing.DoesNotContain(setBody, "DictionaryKey_Equals")
+        || !System.Testing.DoesNotContain(tryGetBody, "DictionaryKey_Hash")
+        || !System.Testing.DoesNotContain(tryGetBody, "DictionaryKey_Equals")
+        || !System.Testing.DoesNotContain(findIndexBody, "DictionaryKey_Hash")
+        || !System.Testing.DoesNotContain(findIndexBody, "DictionaryKey_Equals")
+        || !System.Testing.DoesNotContain(findInsertionIndexBody, "DictionaryKey_Hash")
+        || !System.Testing.DoesNotContain(findInsertionIndexBody, "DictionaryKey_Equals"))
     {
         return false;
     }

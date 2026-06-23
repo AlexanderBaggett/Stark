@@ -15,20 +15,23 @@ failure evidence, run logs, or status-update prose.
 
 Porting is effectively done (2637/2638). The remaining test work is making the
 ported facts pass on macOS. All 19 suites were baselined with clean
-`rm -rf build && stark test` runs on 2026-06-19.
+`rm -rf build && stark test` runs on 2026-06-19. `compiler.FeatureTests` and
+`compiler.LlvmTests` were rechecked by targeted full-project runs on 2026-06-23.
 
-Summary: ~2796 / 3143 run-facts passing (~89%). 13 of 19 suites are 100% green.
-347 failures live in 6 suites. Counts are runner `ok`/`FAILED`; `[Theory]`
-rows expand, so run-fact totals differ slightly from static `[Fact]` counts.
+Summary: at least 2818 / 3143 run-facts passing (~90%). 15 of 19 suites are
+known 100% green. At most 325 failures live in 4 suites. Counts are runner
+`ok`/`FAILED`; `[Theory]` rows expand, so run-fact totals differ slightly from
+static `[Fact]` counts. Non-feature/non-LLVM failing-suite counts remain the
+2026-06-19 baseline unless their notes say otherwise.
 
 | Suite | Passing | Failing | Notes |
 |---|---:|---:|---|
 | compiler.Tests | 1090 | **112** | largest suite: semantic/lowering diagnostics, type-checking, ownership, pipeline, runtime, package-image, CLI, examples |
-| compiler.SsaTests | 346 | **61** | SSA lowering / validation / optimization text. ArithmeticFold + ValueFacts + AliasAware + ScopedNoAlias + InlineSsa families are green; remaining failures are per-family text-format/source-port fixes plus a few cross-module cases needing `CompileSsaWithModule` |
-| compiler.LlvmTests | 484 | **9** | fully triaged; ConfiguredTargetInfo datalayout now green |
-| stdlib.Port | 177 | **50** | stdlib behavior ports |
-| compiler.MirTests | 101 | **36** | MIR lowering text |
-| compiler.FeatureTests | 212 | **1** | one stray failure |
+| compiler.SsaTests | 346 | **61** | SSA lowering / validation / optimization text. ArithmeticFold + ValueFacts + AliasAware + ScopedNoAlias + Cleanup + ScalarReplacement + InlineSsa + FunctionAddress + ConstantText + TextView + DynamicStorage families are green by targeted filters; count predates recent targeted fixes |
+| compiler.LlvmTests | 493 | 0 | green by 2026-06-23 targeted project rerun |
+| stdlib.Port | 189 | **38** | stdlib behavior ports; count includes 2026-06-23 targeted `io-path`, `io-file`, `io-file-runtime`, `memory-helper`, `memory`, and `collections-dictionary` fixes but no full-suite rebaseline |
+| compiler.MirTests | 101 | **36** | MIR lowering text; count predates recent switch-pattern, place-lowerer, generic, and lowering-contract targeted fixes |
+| compiler.FeatureTests | 213 | 0 | green by 2026-06-23 targeted project rerun |
 | selfhost.Ir | 122 | 0 | green |
 | selfhost.Binding | 82 | 0 | green |
 | stdlib.Text | 59 | 0 | green |
@@ -45,18 +48,17 @@ rows expand, so run-fact totals differ slightly from static `[Fact]` counts.
 
 Suites still needing work:
 
-- compiler.SsaTests: 346/407, 61 failing. ArithmeticFold + ValueFacts +
-  AliasAware + ScopedNoAlias + InlineSsa are done and verified; same
-  raw-vs-artifact-selection class as LlvmTests plus source-port fixes. Remaining
-  families: Cleanup*, ScalarReplacement, FunctionAddress, ConstantText,
-  TextView, DynamicStorage, and 2 cross-module InlineSsa.
+- compiler.SsaTests: 346/407, 61 failing before recent targeted fixes.
+  ArithmeticFold + ValueFacts + AliasAware + ScopedNoAlias + Cleanup +
+  ScalarReplacement + InlineSsa + FunctionAddress + ConstantText + TextView +
+  DynamicStorage are done and verified by targeted filters. No full-suite
+  rebaseline was run because broad sweeps are intentionally avoided.
 - compiler.Tests: 1090/1202, 112 failing; broad suite needing failure-family
   subcategorization.
-- stdlib.Port: 177/227, 50 failing.
-- compiler.MirTests: 101/137, 36 failing; MIR text.
-- compiler.LlvmTests: stale 2026-06-19 count was 483/493. Package-image
-  helper and callable-value residues were fixed by targeted runs; no full-suite
-  rebaseline was run because broad sweeps are intentionally avoided.
+- stdlib.Port: at least 189/227, at most 38 failing after the 2026-06-23
+  targeted `io-path`, `io-file`, `io-file-runtime`, `memory-helper`, and
+  `memory` fixes plus the targeted `collections-dictionary` fix.
+- compiler.MirTests: 101/137, 36 failing before recent targeted fixes.
 - compiler.Tests package-image typed-body integration ports now use typed-only
   package images and the shared helper restores CLI stdout, emitted-file,
   package-JSON typed-body, source-deletion, executable, and runtime exit-code
@@ -69,12 +71,98 @@ Suites still needing work:
   signature check was made structural for nested callback types. The generated
   `compiler.Tests` project runner was not rebaselined because broad sweeps are
   intentionally avoided.
-- compiler.FeatureTests: 212/213, 1 failing.
 
-Already green, no task: selfhost.Ir, selfhost.Binding, selfhost.Parsing,
-selfhost.Lexing, selfhost.Typing, stdlib.Text, stdlib.Toml, stdlib.Testing,
-stdlib.IO.Path, stdlib.FileSystem, stdlib.Collections.Arena,
-stdlib.Collections.Slice, stdlib.Json.
+Already green, no task: compiler.FeatureTests, compiler.LlvmTests,
+selfhost.Ir, selfhost.Binding, selfhost.Parsing, selfhost.Lexing,
+selfhost.Typing, stdlib.Text, stdlib.Toml, stdlib.Testing, stdlib.IO.Path,
+stdlib.FileSystem, stdlib.Collections.Arena, stdlib.Collections.Slice,
+stdlib.Json.
+
+---
+
+## 2026-06-23 Feature Tests Recheck
+
+- Reproduced and fixed the lone `compiler.FeatureTests` residue in
+  `ComptimeIndexedEnumVariantFactsFoldToConstants`.
+- The embedded source now returns `u64[0 max]`, matching
+  `System.Compiler.EnumVariantPayloadCount` while preserving the LLVM
+  `ret i64 31` expectation.
+- Narrow verification: the single fact passed with `--filter`, and the full
+  `compiler.FeatureTests` project passed on `arm64-apple-macosx26.0.0`.
+- No broad suite sweep was run.
+
+---
+
+## 2026-06-23 LLVM Tests Recheck
+
+- Rechecked `compiler.LlvmTests` after the known package-image and option-toggle
+  residues had landed; the full project now passes on `arm64-apple-macosx26.0.0`.
+- Fixed the host-test runner so an empty request target still carries the
+  detected target into `CompilerOptions`, not just stdlib resolution.
+- Kept Linux/x86 LLVM assertions strong by pinning artifact-only COMDAT/coldcc
+  tests to `x86_64-unknown-linux-gnu` and using source-stdlib resolution for
+  Linux benchmark probes.
+- Updated call-site expectations where lowering now preserves stronger backend
+  facts, including raw-pointer count ranges and imported asm argument facts.
+- Narrow verification: `dotnet build src/compiler.csproj --no-restore` passed,
+  then `../../stark test --target arm64-apple-macosx26.0.0` passed in
+  `tests-stark/compiler.LlvmTests`. No broad suite sweep was run.
+
+---
+
+## 2026-06-23 Stdlib Port Recheck
+
+- `standard-library-generic` passed as a targeted `stdlib.Port` collection.
+- Fixed `StdLibSourcePromotedPathLowersThroughDynamicStorage` by pinning the
+  artifact probe to `x86_64-unknown-linux-gnu`, preserving the original
+  libc-free dynamic-storage oracle.
+- The `io-path` collection now passes on `arm64-apple-macosx26.0.0`; no broad
+  `stdlib.Port` sweep was run.
+- Fixed the `io-file` collection by compiling `stdlib/src/System/IO/File.stark`
+  directly for the file flush/buffering LLVM probes. The buffered ASCII copy
+  probe is pinned to `x86_64-unknown-linux-gnu`, preserving the target-specific
+  `rep movsb` inline-asm oracle.
+- Narrow verification: `../../stark test --collection io-file --target
+  arm64-apple-macosx26.0.0` passed in `tests-stark/stdlib.Port`.
+- Added source-path compilation to the Stark host-test bridge so artifact probes
+  can compile `stdlib/src/System/Memory.stark` directly instead of relying on
+  wrapper imports.
+- Fixed the `memory-helper` collection by restoring body-scoped LLVM checks for
+  memory helper overlap guards, hot-tail memcpy/memset lowering, no scalar
+  fallback, and helper attributes. Infallible moves now assert the stronger
+  `llvm.memmove` lowering.
+- Narrow verification: `../../stark test --collection memory-helper --target
+  arm64-apple-macosx26.0.0` passed in `tests-stark/stdlib.Port`.
+- Fixed the `memory` collection by pinning the allocator-symbol artifact probes
+  to `x86_64-unknown-linux-gnu`, preserving the no-libc Linux allocator oracle
+  instead of rejecting the host macOS allocator lowering. The allocator audit
+  workload now mirrors the C# helper's heap-allocation loop.
+- Narrow verification: `../../stark test --collection memory --target
+  arm64-apple-macosx26.0.0` passed in `tests-stark/stdlib.Port`.
+- Added target-aware source-path host-test compilation and fixed the
+  `io-file-runtime` collection by compiling
+  `stdlib/src/System/Runtime/Platform/Linux.stark` directly for
+  `x86_64-unknown-linux-gnu`, preserving the lseek/fsync syscall oracles.
+- Narrow verification: `../../stark test --collection io-file-runtime --target
+  arm64-apple-macosx26.0.0` passed in `tests-stark/stdlib.Port`.
+- Rechecked the `threading` collection; all 17 facts passed on
+  `arm64-apple-macosx26.0.0`. Counts were left unchanged because the previous
+  ledger did not identify which, if any, of these facts were part of the failing
+  baseline bucket.
+- Rechecked the `threading-atomics` collection; all 12 facts passed on
+  `arm64-apple-macosx26.0.0`, including the tier-1/tier-2/tier-3 lowering
+  oracles for lock-free and spinlock-protected atomic operations. Counts were
+  left unchanged because the previous ledger did not identify which, if any, of
+  these facts were part of the failing baseline bucket.
+- Rechecked the `runtime-platform-windows` collection; 13 artifact/compile facts
+  passed and the 3 Windows-runtime facts skipped on macOS by platform gate.
+  Counts were left unchanged for the same conservative-accounting reason.
+- Fixed the `collections-dictionary` collection by restoring body-scoped custom-key
+  LLVM checks while allowing the faster inlined `Symbol.Hash`/`Symbol.Equals`
+  lowering. The probe now asserts the actual inline-clone dictionary path has no
+  `DictionaryKey_Hash` or `DictionaryKey_Equals` fallback dispatch.
+- Narrow verification: `../../stark test --collection collections-dictionary --target
+  arm64-apple-macosx26.0.0` passed in `tests-stark/stdlib.Port`.
 
 ---
 
@@ -118,6 +206,7 @@ stdlib.Collections.Slice, stdlib.Json.
 
 ## compiler.LlvmTests Residue
 
+- Closed by the 2026-06-23 targeted project rerun.
 - package-image (#4): mechanism built and proven with `CompileLlvmWithPackage`.
   All 9 ported compiler.LlvmTests package-image facts are green, including the
   4 `PackageImageBacked*` callable-value tests. The helper now builds package
@@ -144,14 +233,14 @@ stdlib.Collections.Slice, stdlib.Json.
 ## Failure Families
 
 The 2026-06-19 sweep grouped the failures around a few broad levers rather than
-hundreds of unrelated fixes. `compiler.FeatureTests`' lone failure did not
-reproduce on rerun, leaving 5 main suites.
+hundreds of unrelated fixes. `compiler.FeatureTests` and `compiler.LlvmTests`
+were fixed and verified by targeted project reruns, leaving 4 main suites.
 
 Cross-cutting levers:
 
-- Package-image input, PAINPOINTS #4: roughly 39 tests across
-  `compiler.Tests` ManifestBacked/PackageImage and `compiler.LlvmTests`
-  PackageImage/Manifest. One protocol feature unblocks the group.
+- Package-image input, PAINPOINTS #4: remaining package-image residue is in
+  `compiler.Tests` ManifestBacked/PackageImage paths; `compiler.LlvmTests`
+  package-image facts are green after the targeted 2026-06-23 rerun.
 - SSA/MIR text alignment, PAINPOINTS #11 reframed: roughly 145 tests left across
   `compiler.SsaTests` and `compiler.MirTests`. The `optimized-ssa`/`mir`
   artifacts already carry operands, block labels, and typed terminators. Most
@@ -164,12 +253,11 @@ Cross-cutting levers:
   emitted output. Tests that require a real foreign SDK, linker, syscall
   surface, execution, or native runtime behavior should be platform-gated with a
   source comment explaining the platform-only pass condition.
-- Option toggles, PAINPOINTS #10: 6 LlvmTests; bridge half landed.
-
 compiler.SsaTests detail:
 
 - Done and verified: ArithmeticFold 24, ValueFacts 43-green/17-fixed,
-  AliasAware 13, ScopedNoAlias 5.
+  AliasAware 13, ScopedNoAlias 5, FunctionAddress 3, ConstantText 5,
+  TextView 2, DynamicStorage 28.
 - Fix classes seen:
   - Artifact selection: optimization-pass result lands in `optimized-ssa`, not
     terse `ssa`; switch `CompileSsaAfter` to `CompileSsaAfterOptimized` and
@@ -180,36 +268,207 @@ compiler.SsaTests detail:
     `unsafe`, readonly-rawptr writes changed to rawmutptr, minimal-width
     non-negative ranges, `(unicode)"..."` literals, and removing redundant
     `where disjoint`.
-- Cleanup partial: 3 of 12 green. Remaining cases are murky/source-port.
-- Remaining 61 classified:
+- Cleanup done. The remaining source-port issues were ranged integer spelling,
+  source-valid switch shape, loop behavior spelling, and optimized-artifact
+  assertions for facts that only render after cleanup.
+- Pre-fix failure classification to revisit on the next rebaseline:
   - 17 source-ok text-class tests: probe `ssa` vs `optimized-ssa` for the
-    asserted fragment and switch artifact/spelling. Watch
-    `CleanupRemovesIntegerAlgebraic` and `CleanupRemovesRedundantSameType`;
-    verify whether surviving binaries at `cleanup-ssa` are a real
-    under-optimization before respelling.
-  - About 28 `STK1000` parse-error `*FailsBeforeLlvmEmission` tests are
-    SSA-validator unit tests whose C# originals hand-build invalid SSA modules.
-    Keep coverage by adding a structured test-only invalid-IR fixture path; use
-    explicit exclusions only for C# host-internal object-shape tests that do not
-    map to a self-hosted IR invariant.
+    asserted fragment and switch artifact/spelling. Verify whether surviving
+    binaries at a stopped pass are real under-optimizations before respelling.
+  - Closed 2026-06-23: the `*FailsBeforeLlvmEmission` SSA-validator unit tests
+    now use the structured `validatorFixture` host-test path instead of
+    source-valid placeholder ports.
   - About 16 type/range source ports are fixable like ValueFacts/AliasAware
     where the shape is source-expressible.
-- InlineSsa done: 10 of 12 green. Added
+- InlineSsa done. Added
   `System.Testing.SsaFunctionBody(ascii ssaText, ascii fnName)` and
-  `OptimizedSsaFunctionLacks/Contains`. Two cross-module failures remain and
-  need a `CompileSsaWithModule`/staging harness path.
+  `OptimizedSsaFunctionLacks/Contains`; the source-built dependency boundary now
+  stages `Math.stark` through `CompileSsaAfterOptimizedWithModule`.
+
+## 2026-06-22 SSA Source Dependency Staging
+
+- Added SSA host-test module staging with raw filesystem temp directories so
+  source-built dependency tests can pass search directories through the host
+  compile protocol.
+- Restored `InlineSsaOptimizesThroughSourceBuiltDependencyBoundary` to assert the
+  optimized `Run` body folds to `return 42` and has no surviving `AddOne` call.
+- Narrow verification:
+  - `../../stark test --filter InlineSsaOptimizesThroughSourceBuiltDependencyBoundary --target arm64-apple-macosx26.0.0`: passed.
+  - `../../stark test --filter InlineSsaInlinesSmallDirectCallsAndRerunsConstantPropagation --target arm64-apple-macosx26.0.0`: passed.
+  - `../../stark test --filter CleanupSsaRemovesSameOperandIntegerComparisons --target arm64-apple-macosx26.0.0`: passed.
+  - `../../stark test --filter InlineSsaInlinesSmallModulePrivateDirectCallsWithoutExplicitInline --target arm64-apple-macosx26.0.0`: passed.
+
+## 2026-06-22 SSA Cleanup Family
+
+- Completed the `compiler.SsaTests` cleanup family after source-port and
+  rendered-artifact fixes:
+  - `CleanupRemovesRedundantSameTypeConversions` now asserts the same-type
+    conversion does not survive as a rendered `convert`.
+  - `CleanupReusesIdenticalMaterializedConstantConversions` uses ranged `i8` and
+    asserts exactly one rendered `raw:i32` materialization.
+  - `CleanupDropsSwitchCasesThatAlreadyMatchDefaultTarget` uses a source-valid
+    three-value range switch with one explicit case sharing the default return.
+  - `CleanupRemovesLoopInvariantSelfReferentialPhiNodes` uses `while willexit`
+    and asserts optimized SSA returns `arg_limit` with the invariant phi removed.
+- Narrow verification:
+  - `../../stark test --filter CleanupRemovesRedundantSameTypeConversions --target arm64-apple-macosx26.0.0`: passed.
+  - `../../stark test --filter CleanupReusesIdenticalMaterializedConstantConversions --target arm64-apple-macosx26.0.0`: passed.
+  - `../../stark test --filter CleanupDropsSwitchCasesThatAlreadyMatchDefaultTarget --target arm64-apple-macosx26.0.0`: passed.
+  - `../../stark test --filter CleanupRemovesLoopInvariantSelfReferentialPhiNodes --target arm64-apple-macosx26.0.0`: passed.
+  - `../../stark test --filter Cleanup --target arm64-apple-macosx26.0.0`: passed.
+
+## 2026-06-22 SSA ScalarReplacement Family
+
+- Completed the `compiler.SsaTests` scalar-replacement family after source-port
+  and rendered-artifact fixes:
+  - `ScalarReplacementRemovesDeadStackFieldStoresFromSource` now reads
+    optimized SSA at the `sroa-ssa` stop point.
+  - `ScalarReplacementKeepsStackFieldStoresAfterAggregateAddressEscapes` marks
+    the raw-pointer helper `unsafe` and asserts retained escaped stack storage.
+  - Aggregate-copy ports now assert the rendered optimized facts the source path
+    exposes: scalar forwarding to `arg_value`, retained escaped destination
+    storage, and move-only aggregate consumption.
+- Narrow verification:
+  - `../../stark test --filter ScalarReplacementRemovesDeadStackFieldStoresFromSource --target arm64-apple-macosx26.0.0`: passed.
+  - `../../stark test --filter ScalarReplacementKeepsStackFieldStoresAfterAggregateAddressEscapes --target arm64-apple-macosx26.0.0`: passed.
+  - `../../stark test --filter ScalarReplacementKeepsAggregateCopiesObservedByLaterFieldLoad --target arm64-apple-macosx26.0.0`: passed.
+  - `../../stark test --filter ScalarReplacementKeepsAggregateCopiesAfterDestinationAddressEscapes --target arm64-apple-macosx26.0.0`: passed.
+  - `../../stark test --filter ScalarReplacementKeepsDeadAggregateMoveCopiesConservative --target arm64-apple-macosx26.0.0`: passed.
+  - `../../stark test --filter ScalarReplacement --target arm64-apple-macosx26.0.0`: passed.
+
+## 2026-06-22 SSA FunctionAddress Family
+
+- Completed the `compiler.SsaTests` function-address validator source ports by
+  replacing stale `func<...>` snippets with current `fnptr<unsafe fn ...>` source
+  and keeping the source-expressible positive equivalents.
+- Cleaned two adjacent indirect-call validation ports touched by the same stale
+  callable syntax, using current fixed-array source spelling and explicit array
+  initializers.
+- Narrow verification:
+  - `../../stark test --filter FunctionAddress --target arm64-apple-macosx26.0.0`: passed.
+  - `../../stark test --filter IndirectCall --target arm64-apple-macosx26.0.0`: passed.
+
+## 2026-06-22 SSA ConstantText Family
+
+- Completed the `compiler.SsaTests` constant-text formatting specialization
+  family by reading the post-pass `optimized-ssa` artifact and scoping
+  call-removal/call-retention checks to the `Run` function body.
+- Preserved the optimizer facts from the C# oracle in rendered-text form:
+  `format_const` blocks, fixed ASCII/Unicode copy widths, length stores, bool
+  phi, and normalized narrowed digit stores.
+- Narrow verification:
+  - `../../stark test --filter ConstantText --target arm64-apple-macosx26.0.0`: passed.
+
+## 2026-06-22 SSA TextView Family
+
+- Completed the `compiler.SsaTests` text-view validation source ports by
+  replacing non-source-visible text field reads with source-visible text indexing
+  and slicing operations.
+- Narrow verification:
+  - `../../stark test --filter TextView --target arm64-apple-macosx26.0.0`: passed.
+
+## 2026-06-22 SSA DynamicStorage Family
+
+- Completed the `compiler.SsaTests` dynamic-storage family after source-port
+  fixes for current dynamic-storage syntax, non-negative capacity proofs,
+  source-visible initialization, and raw pointer/slice escape shapes.
+- Replaced remaining `System.Collections.List<T>` reductions with direct
+  `dynamic T` sources so the rendered SSA keeps the dynamic-storage operations
+  (`new`, `TryReserve`, `Length`, `Capacity`, `MoveLast`, `Reserve`, data
+  pointer and slice escapes) visible to the text bridge.
+- Narrow verification:
+  - `../../stark test --filter DynamicStorage --target arm64-apple-macosx26.0.0`: passed.
+
+## 2026-06-23 MIR Artifact Alignment
+
+- Completed the named `compiler.MirTests` switch-pattern residue by replacing
+  broad switch-word checks with a MIR switch-terminator helper and respelling
+  enum/text/raw-pointer fragments to the current renderer.
+- Completed the place-lowerer address-chain residue by asserting rendered
+  pointer/address facts for large aggregates, large arrays, slice views, raw
+  pointer loads, globals, and frozen parameter addresses.
+- Added MIR module staging so imported lowering-contract regressions compile
+  with a real staged `Dep.stark` dependency instead of an impossible root-only
+  reduction.
+- Reworked the nested generic layout port to force the concrete nested generic
+  field layouts through MIR, because the monomorphization-plan artifact has no
+  text renderer in the host-test protocol.
+- Narrow verification:
+  - `../../stark test --collection mid-level-ir-lowering-tests-switch-pattern-lowerer --target arm64-apple-macosx26.0.0`: passed.
+  - `../../stark test --collection mid-level-ir-lowering-tests-place-lowerer --target arm64-apple-macosx26.0.0`: passed.
+  - `../../stark test --filter Generic --target arm64-apple-macosx26.0.0`: passed.
+  - `../../stark test --filter MemberCallsDoNotCollide --target arm64-apple-macosx26.0.0`: passed.
+- No full `compiler.MirTests` rebaseline was run because broad sweeps are
+  intentionally avoided.
+
+## 2026-06-23 MIR Named Collections Complete
+
+- Added compact MIR artifact suffixes for structural facts that the ported Stark
+  tests need to preserve from the C# object-model assertions: integer/float/bool
+  return operands, binary operator result types and constant operands, converts,
+  field/index insert/extract rvalues, and explicit object-construction facts.
+- Added host-test rendering for the `enum-layout` artifact, including compact
+  tag ranges, ordered fields, variant tags, payload storage fields, and concrete
+  size/alignment where the type model is available.
+- Fixed remaining named `compiler.MirTests` collections by asserting the
+  structural facts that now render directly, plus current source spelling for
+  arm64 asm bypasses, unsafe FFI calls, and frozen raw pointers.
+- Narrow verification:
+  - `../../stark test --collection mid-level-ir-lowering-tests-runtime-drop-lowerer --target arm64-apple-macosx26.0.0`: passed.
+  - `../../stark test --collection mid-level-ir-lowering-tests-core --target arm64-apple-macosx26.0.0`: passed.
+  - `../../stark test --collection mid-level-ir-lowering-tests-compile-time-evaluator --target arm64-apple-macosx26.0.0`: passed.
+  - `../../stark test --collection mid-level-ir-lowering-tests-lowering-invariant --target arm64-apple-macosx26.0.0`: passed.
+  - `../../stark test --collection mid-level-ir-dynamic-fixed-array-indexing --target arm64-apple-macosx26.0.0`: passed.
+  - `../../stark test --collection raw-single-line-literal --target arm64-apple-macosx26.0.0`: passed.
+  - `../../stark test --collection compiler-cli --target arm64-apple-macosx26.0.0`: passed.
+  - `../../stark test --collection mid-level-ir-arena-frame --target arm64-apple-macosx26.0.0`: passed.
+  - `../../stark test --collection compiler-pipeline-lower-hir --target arm64-apple-macosx26.0.0`: passed.
+  - `../../stark test --collection compiler-pipeline-lower-mir --target arm64-apple-macosx26.0.0`: passed.
+  - `../../stark test --collection compiler-pipeline-lower-abi --target arm64-apple-macosx26.0.0`: passed.
+  - `../../stark test --collection compiler-pipeline-enum-layout --target arm64-apple-macosx26.0.0`: passed.
+  - `../../stark test --collection compiler-pipeline-full --target arm64-apple-macosx26.0.0`: passed.
+  - `../../stark test --collection generic-use-site-instantiation --target arm64-apple-macosx26.0.0`: passed.
+  - `../../stark test --collection lowering-contract-fact-key --target arm64-apple-macosx26.0.0`: passed.
+  - `../../stark test --list-collections --target arm64-apple-macosx26.0.0`: passed and showed only the broad aggregate `compiler`/`mir` collections remain unrun by design.
+- No full aggregate `compiler` or `mir` collection run was performed because
+  those aliases are broad and the current policy is narrow targeted runs only.
+
+## 2026-06-23 SSA Invalid-IR Fixture Path
+
+- Added the host-test `validatorFixture` request object with generic
+  `kind`/`name` fields; `ssa` is backed by a fixture catalog and MIR/package
+  artifact validator kinds can use the same transport when their catalogs land.
+- Added an SSA validator fixture catalog generated from
+  `tests/compiler.Tests/SsaIrValidationTests.cs`, preserving the C# diagnostic
+  contracts for 95 validator inputs.
+- Ported all 98 Stark SSA validator test entries to the fixture path or an
+  explicit host-internal constructor-guard exclusion:
+  `ExtractIndexOutOfRangeIsUnrepresentable`,
+  `InsertIndexValueMismatchIsUnrepresentable`, and
+  `IndexOperationFamilyMismatchIsUnrepresentable`.
+- Added the three arena-frame SSA validator cases that were present in the C#
+  oracle but missing from the Stark port table.
+- Narrow verification:
+  - `dotnet build src/compiler.csproj --no-restore`: passed with the two
+    existing nullable warnings in `TypeChecking.cs`.
+  - Direct `--host-test-inspect` smoke for invalid, valid, and excluded SSA
+    validator fixtures: passed with expected protocol behavior.
+  - `../../stark test --list-collections --target arm64-apple-macosx26.0.0` in
+    `tests-stark/compiler.SsaTests`: passed.
+  - `../../stark test --collection ssa-ir --target arm64-apple-macosx26.0.0` in
+    `tests-stark/compiler.SsaTests`: passed.
+  - No broad aggregate collection was run.
 
 Other suite notes:
 
 - compiler.Tests: about 30 package-image failures; remainder includes
   AsmDeclarations, LawBodies, CheckMode, BuildUses, EmitLlvm/EmitExecutable,
   TextDiagnostics/SystemText/RuntimeText/LawFunctions, and a long tail.
-- stdlib.Port: 41 `StdLibSource*` lowering/intrinsic/syscall-path assertions,
+- stdlib.Port: at most 38 `StdLibSource*` lowering/intrinsic/syscall-path assertions,
   roughly 16 Linux/Windows platform-specific tests, WindowsDispatch 2,
   SourceStd 2, and miscellaneous cases.
-- compiler.MirTests: MIR text/structural failures around MultiLabel,
-  EnumSwitch, SwitchSections, RawPointer, NestedLvalue/Generic, LargeAggregate,
-  TextLiteral, and mostly 1-2 test families.
+- compiler.MirTests: all named non-aggregate collections are green by targeted
+  runs. The broad `compiler`/`mir` aggregate aliases were not run by design.
 
 ---
 

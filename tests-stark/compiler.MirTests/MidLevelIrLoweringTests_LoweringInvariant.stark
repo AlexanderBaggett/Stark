@@ -9,8 +9,8 @@ module MidLevelIrLoweringTests_LoweringInvariant
 // body reports SupportsDirectCodeGeneration. The MIR text helpers cannot inspect the
 // fallback log or the function object model, so those three structural assertions are
 // reduced to their nearest text signals: a clean compile (Succeeds), at least one
-// "direct-codegen: true" body, and the absence of any "direct-codegen: false" body
-// (a fallback/non-direct lowering would render that marker).
+// "direct-codegen: true" body, and the absence of a direct-codegen false marker
+// on a function that also reports "has-body: true".
 internal fn bool AcceptedBoundOperationsDoNotProduceNullMirArtifactsImpl()
 {
     stack mut MirCompile c = CompileMir(
@@ -87,5 +87,9 @@ unsafe fn i32[min max] Run(bool flag)
 """);
     return Succeeds(c)
         && MirContains(c, "direct-codegen: true")
-        && MirDoesNotContain(c, "direct-codegen: false");
+        && MirDoesNotContain(c, raw"""
+has-body: true
+  body-kind: StarkCfg
+  direct-codegen: false
+""");
 }

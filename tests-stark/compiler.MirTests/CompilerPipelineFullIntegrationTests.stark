@@ -84,15 +84,15 @@ internal fn bool PipelineCarriesSourceLocationsThroughMirAndSsaArtifactsImpl()
 
 // Ported from CompilerPipelineFullIntegrationTests.ImportedAsmDeclarationsFlowThroughHirMirAndSsaAsExplicitBypassFunctions.
 // PORT-NOTE: the C# test imports a separate "Syscall" module (supplied through
-// an InMemoryModuleResolver) declaring an `asm(x86_64)` bypass function and
+// an InMemoryModuleResolver) declaring an asm bypass function and
 // asserts that "Syscall.Syscall2" flows into HIR, MIR, and SSA as a body-less
 // AsmBypass function (HasBody == false, Blocks.Count == 0,
 // SupportsDirectCodeGeneration == false). The MIR-text helpers here only run a
 // single-source compile with no module resolution, so the imported module and
 // the HIR/SSA artifact inspection cannot be reproduced. This folds the asm
-// declaration into the compiled program and asserts the asm bypass function
-// lowers into the MIR text (the "Syscall2" function name and the "syscall"
-// asm template render), reducing the cross-artifact bypass-flow check to a
+// declaration for the active arm64 macOS target into the compiled program and
+// asserts the asm bypass function lowers into the MIR text as a body-less
+// AsmBypass function, reducing the cross-artifact bypass-flow check to a
 // single-module MIR lowering signal.
 internal fn bool ImportedAsmDeclarationsFlowThroughHirMirAndSsaAsExplicitBypassFunctionsImpl()
 {
@@ -101,13 +101,12 @@ internal fn bool ImportedAsmDeclarationsFlowThroughHirMirAndSsaAsExplicitBypassF
         raw"""
         module Syscall
 
-        public unsafe ffi asm(x86_64) fn i64[min max] Syscall2(i64[min max] number, rawptr<i8[min max]> path)
-            in("rax") number,
-            in("rdi") path,
-            out("rax") return,
-            clobber("rcx", "r11")
+        public unsafe ffi asm(aarch64) fn i64[min max] Syscall2(i64[min max] number, rawptr<i8[min max]> path)
+            in("x8") number,
+            in("x0") path,
+            out("x0") return
         {
-            "syscall"
+            "svc #0"
         }
         """);
 
@@ -116,7 +115,7 @@ internal fn bool ImportedAsmDeclarationsFlowThroughHirMirAndSsaAsExplicitBypassF
         return false;
     }
 
-    return MirContainsAll2(c, "Syscall2", "syscall");
+    return MirContainsAll3(c, "Syscall2", "body-kind: AsmBypass", "direct-codegen: false");
 }
 
 // Ported from CompilerPipelineFullIntegrationTests.ImportedModulePrivateLawHelpersFlowIntoHirMirAndSsa.
@@ -204,7 +203,7 @@ internal fn bool ImportedSourceModulesWithPrivateHelpersAndStringLiteralsLowerIn
         raw"""
         module Path
 
-        unsafe ffi fn i32[min max] fputs(ascii text, rawptr<i8[min max]> stream);
+        unsafe ffi fn i32[min max] fputs(ascii text, rawptr<frozen i8[min max]> stream);
         const rawptr<i8[min max]> stdout = null;
 
         public fn ascii DirectorySeparator()
@@ -212,7 +211,7 @@ internal fn bool ImportedSourceModulesWithPrivateHelpersAndStringLiteralsLowerIn
             return "/";
         }
 
-        public fn void Write(ascii text)
+        public unsafe fn void Write(ascii text)
         {
             fputs(text, stdout);
             return;

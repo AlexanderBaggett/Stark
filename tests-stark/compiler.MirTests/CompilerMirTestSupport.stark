@@ -1,3 +1,6 @@
+import System.FileSystem
+import System.IO
+import System.IO.File
 import System.Memory
 import System.Process
 import System.Testing
@@ -51,6 +54,79 @@ public fn MirCompile CompileMir(ascii id, ascii source)
     }
 }
 
+// As CompileMir, but stages one source dependency in a temporary search
+// directory so the root source can import it through the host resolver.
+public fn MirCompile CompileMirWithModule(
+    ascii id,
+    ascii source,
+    ascii moduleFileName,
+    ascii moduleSource)
+{
+    unsafe
+    {
+    stack mut OwnedAscii root = new();
+    stack mut bool ready = false;
+    switch (System.FileSystem.CreateTempDirectory("stark-mir-modules-"))
+    {
+        case IOResult<OwnedAscii>.Err(var rootError):
+            ready = false;
+        case IOResult<OwnedAscii>.Ok(var created):
+            root = created;
+            ready = true;
+    }
+
+    stack mut OwnedAscii filePath = new();
+    if (ready)
+    {
+        ready = MirMemoryOk(filePath.AppendAscii(root.View()));
+    }
+
+    if (ready)
+    {
+        ready = MirMemoryOk(filePath.AppendByte(47))
+            && MirMemoryOk(filePath.AppendAscii(moduleFileName));
+    }
+
+    if (ready)
+    {
+        ready = MirIOOk(WriteAllText(filePath.View(), moduleSource));
+    }
+
+    stack mut MirCompile compiled = new();
+    if (ready)
+    {
+        compiled = RunHostMirCompileIn(id, source, root.View());
+        if (compiled.Ok && !compiled.Outcome.CompileSucceeded())
+        {
+            compiled.Ok = false;
+        }
+    }
+
+    if (System.Text.AsciiLength(root.View()) > 0)
+    {
+        stack bool cleaned = MirIOOk(DeleteTreeIfExists(root.View()));
+    }
+
+    return compiled;
+    }
+}
+
+// Compiles the source stopping after the "enum-layout" pass with the rendered
+// enum-layout artifact requested.
+public fn MirCompile CompileEnumLayout(ascii id, ascii source)
+{
+    unsafe
+    {
+    stack mut MirCompile compiled = RunHostArtifactCompileIn(id, source, "", "enum-layout", "enum-layout");
+    if (compiled.Ok && !compiled.Outcome.CompileSucceeded())
+    {
+        compiled.Ok = false;
+    }
+
+    return compiled;
+    }
+}
+
 // True when the transport succeeded and the compile reported success.
 public fn bool Succeeds(mut borrow MirCompile compiled)
 {
@@ -67,6 +143,16 @@ public fn ascii Mir(mut borrow MirCompile compiled)
     unsafe
     {
     return compiled.Outcome.ArtifactText("mir");
+    }
+}
+
+// Returns the rendered enum-layout artifact text of a successful
+// CompileEnumLayout, or empty text.
+public fn ascii EnumLayout(mut borrow MirCompile compiled)
+{
+    unsafe
+    {
+    return compiled.Outcome.ArtifactText("enum-layout");
     }
 }
 
@@ -160,6 +246,53 @@ public fn bool MirDoesNotContain(mut borrow MirCompile compiled, ascii fragment)
 
     return !System.Testing.Contains(compiled.Outcome.ArtifactText("mir"), fragment);
     }
+}
+
+// True when the compile succeeded and the rendered enum-layout text contains
+// `fragment`.
+public fn bool EnumLayoutContains(mut borrow MirCompile compiled, ascii fragment)
+{
+    unsafe
+    {
+    if (!Succeeds(compiled))
+    {
+        return false;
+    }
+
+    return System.Testing.Contains(compiled.Outcome.ArtifactText("enum-layout"), fragment);
+    }
+}
+
+// True when the compile succeeded and the rendered enum-layout text contains
+// all four fragments (anywhere in the text).
+public fn bool EnumLayoutContainsAll4(
+    mut borrow MirCompile compiled,
+    ascii first,
+    ascii second,
+    ascii third,
+    ascii fourth)
+{
+    unsafe
+    {
+    if (!Succeeds(compiled))
+    {
+        return false;
+    }
+
+    stack ascii text = compiled.Outcome.ArtifactText("enum-layout");
+    return System.Testing.Contains(text, first)
+        && System.Testing.Contains(text, second)
+        && System.Testing.Contains(text, third)
+        && System.Testing.Contains(text, fourth);
+    }
+}
+
+// MIR switch terminators render as `switch <condition> default -> ...`.
+// Switch-pattern comparison rvalues also contain the word `switch`, so tests
+// that assert branch-based lowering should look for the terminator shape.
+public fn bool MirLacksSwitchTerminator(mut borrow MirCompile compiled)
+{
+    return MirDoesNotContain(compiled, " default ->");
 }
 
 // Number of times `fragment` appears in the rendered MIR text. Used by facts
@@ -1023,6 +1156,21 @@ unsafe fn i32[min max] Run(bool flag)
 // "lower-mir" stop pass and the "mir" textual artifact.
 internal fn MirCompile RunHostMirCompile(ascii id, ascii source)
 {
+    return RunHostMirCompileIn(id, source, "");
+}
+
+internal fn MirCompile RunHostMirCompileIn(ascii id, ascii source, ascii searchDirectory)
+{
+    return RunHostArtifactCompileIn(id, source, searchDirectory, "lower-mir", "mir");
+}
+
+internal fn MirCompile RunHostArtifactCompileIn(
+    ascii id,
+    ascii source,
+    ascii searchDirectory,
+    ascii stopAfterPassId,
+    ascii artifactName)
+{
     unsafe
     {
     stack mut OwnedAscii compilerPath = new();
@@ -1044,9 +1192,9 @@ internal fn MirCompile RunHostMirCompile(ascii id, ascii source)
             compilerPath.View(),
             id,
             source,
-            "lower-mir",
-            "mir",
-            "",
+            stopAfterPassId,
+            artifactName,
+            searchDirectory,
             0,
             HostTimeoutMilliseconds))
         {
@@ -1068,5 +1216,27 @@ internal fn MirCompile RunHostMirCompile(ascii id, ascii source)
     compiled.Ok = ok;
     compiled.Outcome = outcome;
     return compiled;
+    }
+}
+
+internal finite law bool MirMemoryOk(MemoryStatus status)
+{
+    switch (status)
+    {
+        case MemoryStatus.Ok:
+            return true;
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+internal finite law bool MirIOOk(IOStatus status)
+{
+    switch (status)
+    {
+        case IOStatus.Ok:
+            return true;
+        case IOStatus.Err(var error):
+            return false;
     }
 }

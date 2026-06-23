@@ -32,7 +32,7 @@ internal fn bool BenchmarkSourcesCompileImpl()
     // host bridge cannot walk the filesystem, so this is reduced to compiling a
     // representative set of embedded benchmark sources and asserting success
     // plus the same allocator-symbol absence over each rendered module.
-    stack mut LlvmCompile dictionary = CompileLlvmForTarget(
+    stack mut LlvmCompile dictionary = CompileLlvmForTargetUsingStarkPath(
         "benchmark-sources-compile-dictionary-insert",
         raw"""
 import System.Collections
@@ -90,7 +90,7 @@ export unsafe ffi fn i32[min max] main() {
         return false;
     }
 
-    stack mut LlvmCompile constantInteger = CompileLlvmForTarget(
+    stack mut LlvmCompile constantInteger = CompileLlvmForTargetUsingStarkPath(
         "benchmark-sources-compile-constant-integer-formatting",
         raw"""
 import System.Text

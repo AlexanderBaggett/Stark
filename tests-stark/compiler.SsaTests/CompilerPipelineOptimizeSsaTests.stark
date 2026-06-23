@@ -952,7 +952,7 @@ internal fn bool CleanupSsaRemovesSameOperandIntegerComparisonsImpl()
 {
     // PORT-NOTE: original asserts no SsaBinaryRValue comparison operators survive
     // after cleanup-ssa; reduced to a successful compile through cleanup-ssa.
-    stack mut SsaCompile compiled = CompileSsaAfter(
+    stack mut SsaCompile compiled = CompileSsaAfterOptimized(
         "optssa-p2-cleanup-same-operand-cmp",
         raw"""
 module Demo
@@ -978,7 +978,7 @@ internal fn bool ShapeBranchesSimplifiesBooleanReturnDiamondToConditionImpl()
     // PORT-NOTE: original asserts the return value is the SsaValueReference
     // "arg_flag" with no surviving SsaSelectRValue after shape-branches; reduced
     // to a text signal over the rendered ssa text after shape-branches.
-    stack mut SsaCompile compiled = CompileSsaAfter(
+    stack mut SsaCompile compiled = CompileSsaAfterOptimized(
         "optssa-p2-shape-bool-return-diamond",
         raw"""
 module Demo
@@ -1008,7 +1008,7 @@ internal fn bool InlineSsaInlinesSmallDirectCallsAndRerunsConstantPropagationImp
         raw"""
 module Demo
 
-inline finite law i32[min max] AddOne(i32[min max] value)
+public inline finite law i32[min max] AddOne(i32[min max] value)
 {
     return value + 1;
 }
@@ -1754,10 +1754,11 @@ internal fn bool InlineSsaOptimizesThroughSourceBuiltDependencyBoundaryImpl()
 {
     // PORT-NOTE: original writes a Math.stark dependency to a temp directory,
     // imports it via a FileSystemModuleResolver, and asserts the imported
-    // Math.AddOne call is inlined to a constant 42 return. The host bridge cannot
-    // stage a sibling source dependency, so this is reduced to compiling the Demo
-    // consumer (with the import unresolved) and returning the nearest signal.
-    stack mut SsaCompile compiled = CompileSsaAfter(
+    // Math.AddOne call is inlined to a constant 42 return. The SSA host bridge
+    // now stages the sibling source dependency directly, so this checks the same
+    // optimized-SSA signal as the C# oracle: Run folds to 42 and no AddOne call
+    // survives in Run.
+    stack mut SsaCompile compiled = CompileSsaAfterOptimizedWithModule(
         "optssa-p2-inline-source-built-dependency",
         raw"""
 import Math
@@ -1768,8 +1769,18 @@ unsafe fn i32[min max] Run()
     return Math.AddOne(41);
 }
 """,
-        "inline-ssa");
-    return Succeeds(compiled);
+        "inline-ssa",
+        "Math.stark",
+        raw"""
+module Math
+
+public inline finite law i32[min max] AddOne(i32[min max] value)
+{
+    return value + 1;
+}
+""");
+    return OptimizedSsaFunctionContains(compiled, "Run", "return 42")
+        && OptimizedSsaFunctionLacks(compiled, "Run", "AddOne");
 }
 
 // Ported from CompilerPipelineOptimizeSsaTests.InlineSsaInlinesSmallMonomorphizedGenericHelpers.
@@ -3643,7 +3654,7 @@ internal fn bool ConstantTextFormatSpecializationRewritesLargeIntegerAsciiFormat
     // format_const block (memcpy from ascii text data of fixed length 309, store
     // of length 309, bool phi with 3 incomings) with no surviving call; reduced
     // to a text signal that the call is gone and a format_const block appears.
-    stack mut SsaCompile compiled = CompileSsaAfter(
+    stack mut SsaCompile compiled = CompileSsaAfterOptimized(
         "optssa-p4-format-const-large-i1024-ascii",
         raw"""
 module System.Text
@@ -3664,9 +3675,12 @@ public unsafe fn bool Run()
 }
 """,
         "specialize-constant-text-formatting-ssa");
-    return Succeeds(compiled)
-        && !SsaContains(compiled, "TryFormatI1024Ascii")
-        && SsaContains(compiled, "format_const");
+    return OptimizedSsaFunctionLacks(compiled, "Run", "TryFormatI1024Ascii")
+        && OptimizedSsaFunctionContains(compiled, "Run", "format_const")
+        && OptimizedSsaFunctionContains(compiled, "Run", "copy &")
+        && OptimizedSsaFunctionContains(compiled, "Run", ": i8[309]")
+        && OptimizedSsaFunctionContains(compiled, "Run", "store 309 ->")
+        && OptimizedSsaFunctionContains(compiled, "Run", "phi bool [true from");
 }
 
 // Ported from CompilerPipelineOptimizeSsaTests.ConstantTextFormatSpecializationRewritesLargeIntegerUnicodeFormatCallsBeforeAbiLowering.
@@ -3676,7 +3690,7 @@ internal fn bool ConstantTextFormatSpecializationRewritesLargeIntegerUnicodeForm
     // inline memcpy from unicode text data (fixed length 309, 32-bit elements)
     // with no surviving call; reduced to a text signal that the call name is gone
     // after the pass.
-    stack mut SsaCompile compiled = CompileSsaAfter(
+    stack mut SsaCompile compiled = CompileSsaAfterOptimized(
         "optssa-p4-format-const-large-u1024-unicode",
         raw"""
 module System.Text
@@ -3697,7 +3711,10 @@ public unsafe fn bool Run()
 }
 """,
         "specialize-constant-text-formatting-ssa");
-    return Succeeds(compiled) && !SsaContains(compiled, "TryFormatU1024Unicode");
+    return OptimizedSsaFunctionLacks(compiled, "Run", "TryFormatU1024Unicode")
+        && OptimizedSsaFunctionContains(compiled, "Run", "copy &")
+        && OptimizedSsaFunctionContains(compiled, "Run", ": i32[309]")
+        && OptimizedSsaFunctionContains(compiled, "Run", "store 309 ->");
 }
 
 // Ported from CompilerPipelineOptimizeSsaTests.ConstantTextFormatSpecializationKeepsRuntimeIntegerFormatCallsOnStdLibPath.
@@ -3706,7 +3723,7 @@ internal fn bool ConstantTextFormatSpecializationKeepsRuntimeIntegerFormatCallsO
     // PORT-NOTE: original asserts the runtime-valued format call stays on the
     // stdlib path (TryFormatI1024Ascii call survives); reduced to a successful
     // compile that still mentions the call name after the pass.
-    stack mut SsaCompile compiled = CompileSsaAfter(
+    stack mut SsaCompile compiled = CompileSsaAfterOptimized(
         "optssa-p4-format-const-keeps-runtime-i1024",
         raw"""
 module System.Text
@@ -3727,7 +3744,7 @@ public unsafe fn bool Run(i1024[min max] value)
 }
 """,
         "specialize-constant-text-formatting-ssa");
-    return Succeeds(compiled) && SsaContains(compiled, "TryFormatI1024Ascii");
+    return OptimizedSsaFunctionContains(compiled, "Run", "TryFormatI1024Ascii");
 }
 
 // Ported from CompilerPipelineOptimizeSsaTests.ConstantTextFormatSpecializationKeepsReadonlyDestinationIntegerFormatCalls.
@@ -3736,7 +3753,7 @@ internal fn bool ConstantTextFormatSpecializationKeepsReadonlyDestinationInteger
     // PORT-NOTE: original asserts a readonly (rawptr) destination blocks the
     // rewrite so the TryFormatI1024Ascii call survives; reduced to a successful
     // compile that still mentions the call name after the pass.
-    stack mut SsaCompile compiled = CompileSsaAfter(
+    stack mut SsaCompile compiled = CompileSsaAfterOptimized(
         "optssa-p4-format-const-keeps-readonly-destination",
         raw"""
 module System.Text
@@ -3757,7 +3774,7 @@ public unsafe fn bool Run()
 }
 """,
         "specialize-constant-text-formatting-ssa");
-    return Succeeds(compiled) && SsaContains(compiled, "TryFormatI1024Ascii");
+    return OptimizedSsaFunctionContains(compiled, "Run", "TryFormatI1024Ascii");
 }
 
 // Ported from CompilerPipelineOptimizeSsaTests.ConstantTextFormatSpecializationNormalizesOutOfRangeNarrowedIntegerConstants.
@@ -3767,7 +3784,7 @@ internal fn bool ConstantTextFormatSpecializationNormalizesOutOfRangeNarrowedInt
     // normalizes so TryFormatI16Ascii is rewritten (no call survives, stores of
     // ascii digit bytes for "44"); reduced to a text signal that the call name is
     // gone after the pass.
-    stack mut SsaCompile compiled = CompileSsaAfter(
+    stack mut SsaCompile compiled = CompileSsaAfterOptimized(
         "optssa-p4-format-const-normalizes-out-of-range",
         raw"""
 module System.Text
@@ -3788,7 +3805,9 @@ public unsafe fn bool Run()
 }
 """,
         "specialize-constant-text-formatting-ssa");
-    return Succeeds(compiled) && !SsaContains(compiled, "TryFormatI16Ascii");
+    return OptimizedSsaFunctionLacks(compiled, "Run", "TryFormatI16Ascii")
+        && OptimizedSsaFunctionContains(compiled, "Run", "store 2 ->")
+        && OptimizedSsaOccurrences(compiled, "store 52 ->") >= 2;
 }
 
 // Ported from CompilerPipelineOptimizeSsaTests.FactDrivenSwitchPruningRemovesCasesOutsideKnownInputRange.
@@ -4114,7 +4133,7 @@ internal fn bool ScalarReplacementRemovesDeadStackFieldStoresFromSourceImpl()
     // enumerate the typed store-indirect instruction list, so this is reduced to
     // a successful compile through sroa-ssa plus a text signal that the dead
     // "pair.Left" store target no longer appears.
-    stack mut SsaCompile compiled = CompileSsaAfter(
+    stack mut SsaCompile compiled = CompileSsaAfterOptimized(
         "optssa-p5-sroa-remove-dead-stack-field-store",
         raw"""
 module Demo
@@ -4131,7 +4150,7 @@ fn i32[min max] Run(i32[min max] value)
 }
 """,
         "sroa-ssa");
-    return Succeeds(compiled) && !SsaContains(compiled, "pair.Left");
+    return OptimizedSsaFunctionLacks(compiled, "Run", "pair.Left");
 }
 
 // Ported from CompilerPipelineOptimizeSsaTests.AliasAwareMemoryOptimizationUsesFunctionEffectsForPureCallGlobalFacts.

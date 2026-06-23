@@ -674,6 +674,57 @@ public unsafe fn HostResult<HostCompileOutcome> CompileOnceArtifactInUsingStarkP
         true);
 }
 
+// Compiles an on-disk source file through the host compiler while appending
+// STARK_PATH to module/package resolution. Use for stdlib source artifact
+// probes that need the module's own helper definitions rather than a wrapper's
+// imported inline clones.
+public unsafe fn HostResult<HostCompileOutcome> CompileSourcePathArtifactUsingStarkPath(
+    ascii compilerPath,
+    ascii id,
+    ascii sourcePath,
+    ascii artifactName,
+    u32[0 2 ** 31 - 1] timeoutMilliseconds)
+{
+    return CompileSourcePathArtifactUsingStarkPathForTarget(
+        compilerPath,
+        id,
+        sourcePath,
+        artifactName,
+        timeoutMilliseconds,
+        "");
+}
+
+// As CompileSourcePathArtifactUsingStarkPath, but pins an explicit target
+// triple so source-file platform probes keep target/backend facts intact.
+public unsafe fn HostResult<HostCompileOutcome> CompileSourcePathArtifactUsingStarkPathForTarget(
+    ascii compilerPath,
+    ascii id,
+    ascii sourcePath,
+    ascii artifactName,
+    u32[0 2 ** 31 - 1] timeoutMilliseconds,
+    ascii targetTriple)
+{
+    stack mut JsonWriter writer = new();
+    try WriteSourcePathCompileRequestTo(writer, id, sourcePath, artifactName, true, targetTriple);
+    try AppendShutdownLine(writer);
+
+    stack mut ProcessCommand server = try Command(compilerPath);
+    try server.AddArgument("--host-test-server");
+
+    stack ProcessOutput output = try RunCaptureWithInputTimeout(server, writer.View(), timeoutMilliseconds);
+    if (output.WasTimedOut())
+    {
+        return HostResult<HostCompileOutcome>.Err(HostError.ServerTimedOut);
+    }
+
+    if (output.ExitCode != 0)
+    {
+        return HostResult<HostCompileOutcome>.Err(HostError.ServerFailed(output.ExitCode));
+    }
+
+    return ParseFirstResponse(output.StdoutSlice());
+}
+
 // As CompileOnceArtifactIn, but pins an explicit target triple (e.g.
 // "x86_64-unknown-linux-gnu") so target-dependent codegen (allocator lowering,
 // ABI) matches a ported C# oracle that drove the pipeline with that target.
@@ -1011,6 +1062,37 @@ internal unsafe fn HostResult<HostCompileOutcome> CompileOnceArtifactToDirectory
         codeModel,
         importedInlineCloneSeed,
         useStarkPath);
+    try AppendShutdownLine(writer);
+
+    stack mut ProcessCommand server = try Command(compilerPath);
+    try server.AddArgument("--host-test-server");
+
+    stack ProcessOutput output = try RunCaptureWithInputTimeout(server, writer.View(), timeoutMilliseconds);
+    if (output.WasTimedOut())
+    {
+        return HostResult<HostCompileOutcome>.Err(HostError.ServerTimedOut);
+    }
+
+    if (output.ExitCode != 0)
+    {
+        return HostResult<HostCompileOutcome>.Err(HostError.ServerFailed(output.ExitCode));
+    }
+
+    return ParseFirstResponse(output.StdoutSlice());
+}
+
+// Runs a named test-only validator fixture in the host compiler. The request
+// shape is intentionally generic so MIR and package-artifact validator fixtures
+// can use the same transport once their catalogs exist.
+public unsafe fn HostResult<HostCompileOutcome> ValidateCompilerFixture(
+    ascii compilerPath,
+    ascii id,
+    ascii fixtureKind,
+    ascii fixtureName,
+    u32[0 2 ** 31 - 1] timeoutMilliseconds)
+{
+    stack mut JsonWriter writer = new();
+    try WriteValidatorFixtureRequest(writer, id, fixtureKind, fixtureName);
     try AppendShutdownLine(writer);
 
     stack mut ProcessCommand server = try Command(compilerPath);
@@ -1388,6 +1470,53 @@ internal unsafe fn JsonStatus WriteCompileRequestToWithTargetOptions(
     return JsonStatus.Ok;
 }
 
+internal unsafe fn JsonStatus WriteSourcePathCompileRequestTo(
+    mut borrow JsonWriter writer,
+    ascii id,
+    ascii sourcePath,
+    ascii artifactName,
+    bool useStarkPath,
+    ascii targetTriple)
+{
+    try writer.BeginObject();
+    try writer.Key("protocolVersion");
+    try writer.I64Value(1);
+    try writer.Key("request");
+    try writer.BeginObject();
+    try writer.Key("id");
+    try writer.TextValue(id);
+    try writer.Key("sourcePath");
+    try writer.TextValue(sourcePath);
+
+    if (useStarkPath)
+    {
+        try writer.Key("useStarkPath");
+        try writer.BoolValue(true);
+    }
+
+    if (AsciiLength(targetTriple) > 0)
+    {
+        try writer.Key("targetTriple");
+        try writer.TextValue(targetTriple);
+    }
+
+    if (AsciiLength(artifactName) > 0)
+    {
+        try writer.Key("artifacts");
+        try writer.BeginArray();
+        try writer.TextValue(artifactName);
+        try writer.EndArray();
+        try writer.Key("includeArtifactTexts");
+        try writer.BoolValue(true);
+    }
+
+    try writer.Key("includeExecutions");
+    try writer.BoolValue(true);
+    try writer.EndObject();
+    try writer.EndObject();
+    return JsonStatus.Ok;
+}
+
 // Writes one request object ({...}) — the shape that appears both as the
 // document-level `request` and as each element of the batched `requests` array.
 internal unsafe fn JsonStatus WriteRequestBody(
@@ -1570,6 +1699,31 @@ internal unsafe fn JsonStatus WriteRequestBodyWithTargetOptions(
 
     try writer.Key("includeExecutions");
     try writer.BoolValue(true);
+    try writer.EndObject();
+    return JsonStatus.Ok;
+}
+
+internal unsafe fn JsonStatus WriteValidatorFixtureRequest(
+    mut borrow JsonWriter writer,
+    ascii id,
+    ascii fixtureKind,
+    ascii fixtureName)
+{
+    try writer.BeginObject();
+    try writer.Key("protocolVersion");
+    try writer.I64Value(1);
+    try writer.Key("request");
+    try writer.BeginObject();
+    try writer.Key("id");
+    try writer.TextValue(id);
+    try writer.Key("validatorFixture");
+    try writer.BeginObject();
+    try writer.Key("kind");
+    try writer.TextValue(fixtureKind);
+    try writer.Key("name");
+    try writer.TextValue(fixtureName);
+    try writer.EndObject();
+    try writer.EndObject();
     try writer.EndObject();
     return JsonStatus.Ok;
 }

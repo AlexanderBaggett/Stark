@@ -1,20 +1,16 @@
+import System.FileSystem
+import System.IO
+import System.IO.File
+import System.Memory
 import System.Testing
 import System.Testing.HostCompiler
 import System.Text
 module SsaTestSupport
 
-// Trimmed host-compile harness for the ported SSA tests. Compiles a small
-// Stark source program against the current C# host compiler through the host
-// test protocol and exposes the rendered `ssa` / `optimized-ssa` artifact text
-// and the structured diagnostics for assertions. Stark-side port of the
-// source-driven subset of tests/compiler.Tests/SsaLoweringTests.cs and the
-// source-driven parts of SsaOptimizationTests.cs. Requires STARK_HOST_COMPILER
-// to point at the host compiler executable; the original C# tests remain the
-// oracle until cutover.
-//
-// The hand-built-SsaFunction object-model facts in SsaIrValidationTests.cs and
-// most of SsaOptimizationTests.cs are NOT portable through this source-in /
-// artifact-text-out bridge and are intentionally omitted.
+// Trimmed host harness for the ported SSA tests. It compiles source programs
+// through the current C# host compiler and can also run named test-only SSA
+// validator fixtures for source-inexpressible invalid IR. Requires
+// STARK_HOST_COMPILER to point at the host compiler executable.
 
 const HostTimeoutMilliseconds = 180000;
 
@@ -90,6 +86,89 @@ public fn SsaCompile CompileSsaAfterOptimized(ascii id, ascii source, ascii stop
     }
 }
 
+// As CompileSsaAfterOptimized, but stages one source dependency in a temporary
+// search directory. The dependency file name is the resolver-visible path, e.g.
+// "Math.stark" for module Math.
+public fn SsaCompile CompileSsaAfterOptimizedWithModule(
+    ascii id,
+    ascii source,
+    ascii stopAfterPassId,
+    ascii moduleFileName,
+    ascii moduleSource)
+{
+    unsafe
+    {
+        stack mut OwnedAscii root = new();
+        stack mut bool ready = false;
+        // System.Testing also exports CreateTempDirectory, so keep this
+        // qualified to pick the raw filesystem helper used by host staging.
+        switch (System.FileSystem.CreateTempDirectory("stark-ssa-modules-"))
+        {
+            case IOResult<OwnedAscii>.Err(var rootError):
+                ready = false;
+            case IOResult<OwnedAscii>.Ok(var created):
+                root = created;
+                ready = true;
+        }
+
+        stack mut OwnedAscii filePath = new();
+        if (ready)
+        {
+            ready = SsaMemoryOk(filePath.AppendAscii(root.View()));
+        }
+
+        if (ready)
+        {
+            ready = SsaMemoryOk(filePath.AppendByte(47))
+                && SsaMemoryOk(filePath.AppendAscii(moduleFileName));
+        }
+
+        if (ready)
+        {
+            ready = SsaIOOk(WriteAllText(filePath.View(), moduleSource));
+        }
+
+        stack mut SsaCompile compiled = new();
+        if (ready)
+        {
+            compiled = RunHostCompileSsaIn(id, source, stopAfterPassId, "optimized-ssa", root.View());
+            if (compiled.Ok && !compiled.Outcome.CompileSucceeded())
+            {
+                compiled.Ok = false;
+            }
+        }
+
+        if (System.Text.AsciiLength(root.View()) > 0)
+        {
+            stack bool cleaned = SsaIOOk(DeleteTreeIfExists(root.View()));
+        }
+
+        return compiled;
+    }
+}
+
+internal finite law bool SsaMemoryOk(MemoryStatus status)
+{
+    switch (status)
+    {
+        case MemoryStatus.Ok:
+            return true;
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+internal finite law bool SsaIOOk(IOStatus status)
+{
+    switch (status)
+    {
+        case IOStatus.Ok:
+            return true;
+        case IOStatus.Err(var error):
+            return false;
+    }
+}
+
 // Compiles `source` through the full pipeline and requests the textual
 // `optimized-ssa` artifact (the host's `lowering.ssa.optimized` artifact, the
 // same one the C# GetOptimizedSsa helper reads). `Ok` additionally requires the
@@ -115,6 +194,15 @@ public fn bool Succeeds(mut borrow SsaCompile compiled)
     {
         return compiled.Ok && compiled.Outcome.CompileSucceeded();
     }
+}
+
+// True when a named synthetic SSA validator fixture produces its expected
+// diagnostics. For validator-fixture requests, CompileSucceeded means the
+// fixture expectation matched, not that the intentionally invalid IR was clean.
+public fn bool SsaValidatorFixtureMatches(ascii fixtureName)
+{
+    stack mut SsaCompile compiled = RunHostSsaValidatorFixture(fixtureName);
+    return Succeeds(compiled);
 }
 
 // Returns the rendered SSA artifact text of a successful compile, or empty.
@@ -329,6 +417,16 @@ internal fn SsaCompile RunHostCompileSsa(
     ascii stopAfterPassId,
     ascii artifactName)
 {
+    return RunHostCompileSsaIn(id, source, stopAfterPassId, artifactName, "");
+}
+
+internal fn SsaCompile RunHostCompileSsaIn(
+    ascii id,
+    ascii source,
+    ascii stopAfterPassId,
+    ascii artifactName,
+    ascii searchDirectory)
+{
     unsafe
     {
         stack mut OwnedAscii compilerPath = new();
@@ -352,8 +450,55 @@ internal fn SsaCompile RunHostCompileSsa(
                 source,
                 stopAfterPassId,
                 artifactName,
-                "",
+                searchDirectory,
                 0,
+                HostTimeoutMilliseconds))
+            {
+                case HostResult<HostCompileOutcome>.Err(var error):
+                    transportOk = false;
+                case HostResult<HostCompileOutcome>.Ok(var captured):
+                    outcome = captured;
+                    transportOk = true;
+            }
+        }
+
+        stack mut bool ok = false;
+        if (transportOk)
+        {
+            ok = !outcome.HadProtocolError();
+        }
+
+        stack mut SsaCompile compiled = new();
+        compiled.Ok = ok;
+        compiled.Outcome = outcome;
+        return compiled;
+    }
+}
+
+internal fn SsaCompile RunHostSsaValidatorFixture(ascii fixtureName)
+{
+    unsafe
+    {
+        stack mut OwnedAscii compilerPath = new();
+        stack mut bool havePath = false;
+        switch (CompilerPathFromEnvironment())
+        {
+            case HostResult<OwnedAscii>.Err(var pathError):
+                havePath = false;
+            case HostResult<OwnedAscii>.Ok(var path):
+                compilerPath = path;
+                havePath = true;
+        }
+
+        stack mut HostCompileOutcome outcome = new();
+        stack mut bool transportOk = false;
+        if (havePath)
+        {
+            switch (ValidateCompilerFixture(
+                compilerPath.View(),
+                "ssa-validator-fixture",
+                "ssa",
+                fixtureName,
                 HostTimeoutMilliseconds))
             {
                 case HostResult<HostCompileOutcome>.Err(var error):
