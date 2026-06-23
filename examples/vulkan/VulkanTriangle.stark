@@ -1,0 +1,107 @@
+import System.Console
+import Vendor.GLFW
+import Vendor.Vulkan
+module VulkanTriangle
+
+const WindowWidth = 800;
+const WindowHeight = 600;
+
+fn i32[min max] PrintUnavailable()
+{
+    WriteLine("Vulkan triangle unavailable");
+    return 0;
+}
+
+fn i32[min max] PrintFailed()
+{
+    WriteLine("Vulkan triangle failed");
+    return 2;
+}
+
+fn void HoldWindowBriefly(mut borrow Window window)
+{
+    stack mut u8[0 120] frame = 0;
+    while willexit (frame < 120 && !WindowShouldClose(window))
+    {
+        PollEvents();
+        WaitEventsTimeout(0.016);
+        frame += 1;
+    }
+}
+
+fn i32[min max] Run()
+{
+    switch (Initialize())
+    {
+        case LibraryResult.Err(var error):
+            return PrintUnavailable();
+        case LibraryResult.Ok(var library):
+            if (VulkanSupported() != GlfwStatus.Ok)
+            {
+                return PrintUnavailable();
+            }
+
+            DefaultWindowHints();
+            SetClientApiHint(ClientApi.None);
+            switch (CreateWindow(WindowWidth, WindowHeight, "Stark Vulkan Triangle"))
+            {
+                case WindowResult.Err(var error):
+                    return PrintUnavailable();
+                case WindowResult.Ok(var createdWindow):
+                    stack mut Window window = createdWindow;
+                    switch (RequiredVulkanInstanceExtensions())
+                    {
+                        case VulkanInstanceExtensionsResult.Err(var error):
+                            return PrintUnavailable();
+                        case VulkanInstanceExtensionsResult.Ok(var extensions):
+                            switch (CreateInstanceWithExtensionNameToken(
+                                "Stark Vulkan Triangle",
+                                VK_API_VERSION_1_0,
+                                extensions.Count,
+                                extensions.Token()))
+                            {
+                                case VulkanInstanceResult.Err(var error):
+                                    return PrintUnavailable();
+                                case VulkanInstanceResult.Ok(var createdInstance):
+                                    stack mut VkInstance instance = createdInstance;
+                                    switch (CreateVulkanSurface(window, Token(instance)))
+                                    {
+                                        case VulkanSurfaceResult.Err(var error):
+                                            DestroyInstance(instance);
+                                            return PrintUnavailable();
+                                        case VulkanSurfaceResult.Ok(var surface):
+                                            switch (CreateTriangleSession(instance, surface, WindowWidth, WindowHeight))
+                                            {
+                                                case VulkanTriangleSessionResult.Err(var error):
+                                                    DestroySurface(instance, surface);
+                                                    DestroyInstance(instance);
+                                                    return PrintFailed();
+                                                case VulkanTriangleSessionResult.Ok(var createdSession):
+                                                    stack mut VulkanTriangleSession session = createdSession;
+                                                    if (DrawTriangleFrame(session) != VulkanStatus.Ok)
+                                                    {
+                                                        Close(session);
+                                                        DestroySurface(instance, surface);
+                                                        DestroyInstance(instance);
+                                                        return PrintFailed();
+                                                    }
+
+                                                    HoldWindowBriefly(window);
+                                                    Close(session);
+                                                    DestroySurface(instance, surface);
+                                                    DestroyInstance(instance);
+                                            }
+                                    }
+                            }
+                    }
+            }
+    }
+
+    WriteLine("Vulkan triangle rendered");
+    return 0;
+}
+
+export fn i32[min max] main()
+{
+    return Run();
+}

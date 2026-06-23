@@ -1,15 +1,10 @@
 import System.Console
-import System.IO
 import Vendor.SDL3
 module Sdl3WindowAudio
 
 fn i32[min max] PrintUnavailable()
 {
-    if (System.Console.WriteLine("SDL3 unavailable") != System.IO.IOStatus.Ok)
-    {
-        return 1;
-    }
-
+    WriteLine("SDL3 unavailable");
     return 0;
 }
 
@@ -149,11 +144,7 @@ fn i32[min max] RunWithSdl3()
             }
     }
 
-    if (System.Console.WriteLine("SDL3 window/audio ok") != System.IO.IOStatus.Ok)
-    {
-        return 7;
-    }
-
+    WriteLine("SDL3 window/audio ok");
     return 0;
 }
 

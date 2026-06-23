@@ -1,4 +1,5 @@
 import System
+import System.Console
 module BuildYourOwnGitRef
 
 finite law bool BoolValue(System.IO.IOResult<bool> result) {
@@ -37,9 +38,6 @@ export fn i32[min max] main() {
         return 1;
     }
 
-    if (System.Console.WriteLine("Updated main ref") != System.IO.IOStatus.Ok) {
-        return 2;
-    }
-
+    WriteLine("Updated main ref");
     return 0;
 }

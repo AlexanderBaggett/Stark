@@ -49,10 +49,14 @@ for example, imports such as `import Vendor.Raylib`, `import Vendor.SQLite`,
 `import Vendor.GLFW`, `import Vendor.SDL3`, `import Vendor.KbTextShape`, or
 `import Vendor.Vulkan` bring bundled native binding surfaces into scope.
 Project builds discover `Vendor` artifacts beside `System` artifacts: first
-from the active stage, then repo `vendor/dist` package images or `vendor/src`
-source, then an installed compiler bundle. Native-backed vendor packages carry
-their link metadata, so machine-local include/library paths belong in
-`Stark.user.toml` or user config rather than in source.
+from the active stage, then target-specific repo `vendor/dist/<target-triple>`
+package images plus flat `vendor/dist` fallback package images or `vendor/src`
+source, then an installed compiler bundle. User commands can still pass
+`-I vendor/dist`; package-image resolution filters target-named subdirectories
+to the active target so a Linux native payload is not selected for a Windows
+build. Native-backed vendor packages carry their link metadata, so machine-local
+include/library paths belong in `Stark.user.toml` or user config rather than in
+source.
 
 ### 2.1 Comments
 
@@ -130,20 +134,24 @@ The current package author surface is CLI metadata:
 ```bash
 compiler vendor/src/Vendor/Raylib.stark --emit-lib \
   -I vendor/src \
-  -o vendor/dist/libVendorRaylib.a \
-  --package-image-output vendor/dist/libVendorRaylib.starkpkg \
+  -o vendor/dist/x86_64-pc-linux-gnu/libVendorRaylib.a \
+  --package-image-output vendor/dist/x86_64-pc-linux-gnu/libVendorRaylib.starkpkg \
   --native-pkg-config raylib
 ```
 
-The package records those native dependency declarations. A downstream executable that imports the package gathers the package owned native build metadata automatically.
+The package records those native dependency declarations. Native-backed package
+images that bundle platform payloads should be emitted under
+`vendor/dist/<target-triple>/`; downstream executables can import them through
+the broader `-I vendor/dist` search root and gather the package owned native
+build metadata automatically.
 
 When the native dependency is not available through `pkg-config`, the package can use explicit metadata:
 
 ```bash
 compiler vendor/src/Vendor/Raylib.stark --emit-lib \
   -I vendor/src \
-  -o vendor/dist/libVendorRaylib.a \
-  --package-image-output vendor/dist/libVendorRaylib.starkpkg \
+  -o vendor/dist/x86_64-pc-linux-gnu/libVendorRaylib.a \
+  --package-image-output vendor/dist/x86_64-pc-linux-gnu/libVendorRaylib.starkpkg \
   --native-include-dir /path/to/raylib/src \
   --native-library-dir /path/to/raylib/src \
   --native-library raylib

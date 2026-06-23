@@ -1,5 +1,4 @@
 import System.Console
-import System.IO
 import Vendor.Zlib
 module ZlibRoundTrip
 
@@ -174,10 +173,6 @@ export fn i32[min max] main()
         return streamStatus;
     }
 
-    if (System.Console.WriteLine("Zlib round trip ok") != System.IO.IOStatus.Ok)
-    {
-        return 20;
-    }
-
+    WriteLine("Zlib round trip ok");
     return 0;
 }

@@ -1,5 +1,4 @@
 import System.Console
-import System.IO
 import Vendor.STB.Image
 module StbImageResize
 
@@ -62,10 +61,6 @@ export fn i32[min max] main()
             }
     }
 
-    if (System.Console.WriteLine("STB image ok") != System.IO.IOStatus.Ok)
-    {
-        return 7;
-    }
-
+    WriteLine("STB image ok");
     return 0;
 }

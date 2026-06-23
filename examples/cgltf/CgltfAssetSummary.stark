@@ -166,11 +166,7 @@ fn i32[min max] RunCgltfExample(ascii path)
             }
     }
 
-    if (System.Console.WriteLine("cgltf ok") != System.IO.IOStatus.Ok)
-    {
-        return 3;
-    }
-
+    WriteLine("cgltf ok");
     return 0;
 }
 

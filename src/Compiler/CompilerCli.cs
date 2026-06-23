@@ -1172,7 +1172,7 @@ internal static class CompilerCli
             return null;
         }
 
-        IModuleSourceResolver resolver = new FileSystemModuleResolver(resolvedDirectories);
+        IModuleSourceResolver resolver = new FileSystemModuleResolver(resolvedDirectories, targetInfo);
         if (targetInfo is not null)
         {
             resolver = new TargetAwareStdLibModuleResolver(resolver, resolvedDirectories, targetInfo);

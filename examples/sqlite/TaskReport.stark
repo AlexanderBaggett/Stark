@@ -1,5 +1,4 @@
 import System.Console
-import System.IO
 import System.Memory
 import System.Text
 import Vendor.SQLite
@@ -49,7 +48,8 @@ fn bool WriteSummary(i32[min max] total, i32[min max] done, i32[min max] priorit
         return false;
     }
 
-    return System.Console.WriteLine(line) == System.IO.IOStatus.Ok;
+    WriteLine(line);
+    return true;
 }
 
 fn SQLiteStatusResult InsertTask(
@@ -196,31 +196,24 @@ export fn i32[min max] main()
                                         return 16;
                                     }
 
-                                    if (System.Console.WriteLine("Top pending task:") != System.IO.IOStatus.Ok)
-                                    {
-                                        return 17;
-                                    }
-
-                                    if (System.Console.WriteLine(title) != System.IO.IOStatus.Ok)
-                                    {
-                                        return 18;
-                                    }
+                                    WriteLine("Top pending task:");
+                                    WriteLine(title);
                             }
 
                             if (Finalize(top) != SQLiteStatusResult.Ok)
                             {
-                                return 19;
+                                return 17;
                             }
                         case SQLiteStepResult.Done:
-                            return 20;
+                            return 18;
                         case SQLiteStepResult.Err(var error):
-                            return 21;
+                            return 19;
                     }
             }
 
             if (Close(database) != SQLiteStatusResult.Ok)
             {
-                return 22;
+                return 20;
             }
 
             return 0;

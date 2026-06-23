@@ -1,5 +1,4 @@
 import System.Console
-import System.IO
 import Vendor.Miniaudio
 module MiniaudioDecode
 
@@ -79,10 +78,6 @@ export fn i32[min max] main()
             }
     }
 
-    if (System.Console.WriteLine("Miniaudio decode ok") != System.IO.IOStatus.Ok)
-    {
-        return 9;
-    }
-
+    WriteLine("Miniaudio decode ok");
     return 0;
 }

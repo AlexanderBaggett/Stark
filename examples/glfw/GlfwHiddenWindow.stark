@@ -1,15 +1,10 @@
 import System.Console
-import System.IO
 import Vendor.GLFW
 module GlfwHiddenWindow
 
 fn i32[min max] PrintUnavailable()
 {
-    if (System.Console.WriteLine("GLFW unavailable") != System.IO.IOStatus.Ok)
-    {
-        return 1;
-    }
-
+    WriteLine("GLFW unavailable");
     return 0;
 }
 
@@ -118,11 +113,7 @@ fn i32[min max] RunWithGlfw()
             }
     }
 
-    if (System.Console.WriteLine("GLFW hidden window ok") != System.IO.IOStatus.Ok)
-    {
-        return 6;
-    }
-
+    WriteLine("GLFW hidden window ok");
     return 0;
 }
 

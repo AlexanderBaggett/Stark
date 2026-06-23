@@ -7,6 +7,53 @@ namespace compiler.Tests;
 public sealed class PackageImageArchitectureTests
 {
     [Fact]
+    public void FileSystemModuleResolverPrefersActiveTargetPackageImageOverFlatFallback()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-target-filter-");
+
+        try
+        {
+            var distDirectory = Path.Combine(tempDirectory.FullName, "dist");
+            var flatManifestPath = WriteSingleModulePackageImage(distDirectory, "Vendor.Raylib", "FlatRaylib");
+            var linuxManifestPath = WriteSingleModulePackageImage(
+                Path.Combine(distDirectory, "x86_64-pc-linux-gnu"),
+                "Vendor.Raylib",
+                "LinuxRaylib");
+            var windowsManifestPath = WriteSingleModulePackageImage(
+                Path.Combine(distDirectory, "x86_64-pc-windows-msvc"),
+                "Vendor.Raylib",
+                "WindowsRaylib");
+
+            var linuxResolver = new FileSystemModuleResolver(
+                distDirectory,
+                new LlvmTargetInfo("x86_64-pc-linux-gnu", DataLayout: null));
+            Assert.True(linuxResolver.TryResolveModule("Vendor.Raylib", out var linuxModule));
+            Assert.Equal(linuxManifestPath, linuxModule.ManifestPath);
+            Assert.NotEqual(flatManifestPath, linuxModule.ManifestPath);
+            Assert.NotEqual(windowsManifestPath, linuxModule.ManifestPath);
+
+            var windowsResolver = new FileSystemModuleResolver(
+                distDirectory,
+                new LlvmTargetInfo("x86_64-pc-windows-msvc", DataLayout: null));
+            Assert.True(windowsResolver.TryResolveModule("Vendor.Raylib", out var windowsModule));
+            Assert.Equal(windowsManifestPath, windowsModule.ManifestPath);
+            Assert.NotEqual(flatManifestPath, windowsModule.ManifestPath);
+            Assert.NotEqual(linuxManifestPath, windowsModule.ManifestPath);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup.
+            }
+        }
+    }
+
+    [Fact]
     public void PackageImagePreservesBackendOpaqueModuleBoundary()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-backend-opaque-");
@@ -6433,6 +6480,34 @@ public sealed class PackageImageArchitectureTests
             $"/virtual/lib{module.ModuleName}.a",
             new StarkPackageManifest(module.ModuleName, $"lib{module.ModuleName}.a", [module]),
             module);
+    }
+
+    private static string WriteSingleModulePackageImage(string directory, string moduleName, string functionName)
+    {
+        Directory.CreateDirectory(directory);
+        var sourcePath = Path.Combine(directory, $"{functionName}.stark");
+        var libraryPath = Path.Combine(directory, "libVendorRaylib.a");
+        var manifestPath = Path.Combine(directory, "libVendorRaylib.starkpkg");
+
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(
+                $$"""
+                module {{moduleName}}
+
+                public fn i32[min max] {{functionName}}()
+                {
+                    return 1;
+                }
+                """,
+                sourcePath),
+            new CompilerOptions(StopAfterPassId: "lower-abi"));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+        File.WriteAllBytes(libraryPath, Array.Empty<byte>());
+        var manifest = PackageImageBuilder.Create(result, libraryPath);
+        File.WriteAllBytes(manifestPath, PackageImageBinaryFormat.Encode(manifest));
+        return manifestPath;
     }
 
     private static string ExtractDefinitionBody(string llvm, string symbolName)

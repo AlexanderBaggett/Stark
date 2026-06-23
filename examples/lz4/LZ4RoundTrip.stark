@@ -1,5 +1,4 @@
 import System.Console
-import System.IO
 import Vendor.LZ4
 module LZ4RoundTrip
 
@@ -73,10 +72,6 @@ export fn i32[min max] main()
         return 6;
     }
 
-    if (System.Console.WriteLine("LZ4 round trip ok") != System.IO.IOStatus.Ok)
-    {
-        return 7;
-    }
-
+    WriteLine("LZ4 round trip ok");
     return 0;
 }

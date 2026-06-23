@@ -1,0 +1,2212 @@
+import System.Math
+import Vendor.Raylib.Types
+
+module Vendor.Raymath
+
+public const RAYMATH_EPSILON = 0.000001f;
+
+[StructLayout(C)]
+public struct Float3
+{
+    f32[3] V;
+}
+
+[StructLayout(C)]
+public struct Float16
+{
+    f32[16] V;
+}
+
+public struct Vector3Pair
+{
+    Vector3 First;
+    Vector3 Second;
+}
+
+public struct QuaternionAxisAngle
+{
+    Vector3 Axis;
+    f32 Angle;
+}
+
+public struct MatrixDecomposeResult
+{
+    Vector3 Translation;
+    Quaternion Rotation;
+    Vector3 Scale;
+}
+
+internal inline finite law f32 AbsF32(f32 value)
+{
+    return value < 0.0f ? -value : value;
+}
+
+internal inline finite law Float3 DefaultFloat3()
+{
+    return new Float3() { V = { 0.0f, 0.0f, 0.0f } };
+}
+
+internal inline finite law Float16 DefaultFloat16()
+{
+    return new Float16() { V = { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f } };
+}
+
+internal inline finite law Quaternion DefaultQuaternion()
+{
+    return DefaultVector4();
+}
+
+public inline finite law f32 Clamp(f32 value, f32 min, f32 max)
+{
+stack mut f32 result = (value < min)? min : value;
+
+    if (result > max) result = max;
+
+    return result;
+}
+
+public inline finite law f32 Lerp(f32 start, f32 end, f32 amount)
+{
+stack mut f32 result = start + amount*(end - start);
+
+    return result;
+}
+
+public inline finite law f32 Normalize(f32 value, f32 start, f32 end)
+{
+stack mut f32 result = (value - start)/(end - start);
+
+    return result;
+}
+
+public inline finite law f32 Remap(f32 value, f32 inputStart, f32 inputEnd, f32 outputStart, f32 outputEnd)
+{
+stack mut f32 result = (value - inputStart)/(inputEnd - inputStart)*(outputEnd - outputStart) + outputStart;
+
+    return result;
+}
+
+public inline finite law f32 Wrap(f32 value, f32 min, f32 max)
+{
+stack mut f32 result = value - (max - min)*Floor((value - min)/(max - min));
+
+    return result;
+}
+
+public inline finite law bool FloatEquals(f32 x, f32 y)
+{
+stack mut bool result = (AbsF32(x - y)) <= (RAYMATH_EPSILON*Max(1.0f, Max(AbsF32(x), AbsF32(y))));
+
+    return result;
+}
+
+public inline finite law Vector2 Vector2Zero()
+{
+stack mut Vector2 result = new Vector2() { X = 0.0f, Y = 0.0f };
+
+    return result;
+}
+
+public inline finite law Vector2 Vector2One()
+{
+stack mut Vector2 result = new Vector2() { X = 1.0f, Y = 1.0f };
+
+    return result;
+}
+
+public inline finite law Vector2 Vector2Add(Vector2 v1, Vector2 v2)
+{
+stack mut Vector2 result = new Vector2() { X = v1.X + v2.X, Y = v1.Y + v2.Y };
+
+    return result;
+}
+
+public inline finite law Vector2 Vector2AddValue(Vector2 v, f32 add)
+{
+stack mut Vector2 result = new Vector2() { X = v.X + add, Y = v.Y + add };
+
+    return result;
+}
+
+public inline finite law Vector2 Vector2Subtract(Vector2 v1, Vector2 v2)
+{
+stack mut Vector2 result = new Vector2() { X = v1.X - v2.X, Y = v1.Y - v2.Y };
+
+    return result;
+}
+
+public inline finite law Vector2 Vector2SubtractValue(Vector2 v, f32 sub)
+{
+stack mut Vector2 result = new Vector2() { X = v.X - sub, Y = v.Y - sub };
+
+    return result;
+}
+
+public inline finite law f32 Vector2Length(Vector2 v)
+{
+stack mut f32 result = Sqrt((v.X*v.X) + (v.Y*v.Y));
+
+    return result;
+}
+
+public inline finite law f32 Vector2LengthSqr(Vector2 v)
+{
+stack mut f32 result = (v.X*v.X) + (v.Y*v.Y);
+
+    return result;
+}
+
+public inline finite law f32 Vector2DotProduct(Vector2 v1, Vector2 v2)
+{
+stack mut f32 result = (v1.X*v2.X + v1.Y*v2.Y);
+
+    return result;
+}
+
+public inline finite law f32 Vector2CrossProduct(Vector2 v1, Vector2 v2)
+{
+stack mut f32 result = (v1.X*v2.Y - v1.Y*v2.X);
+
+    return result;
+}
+
+public inline finite law f32 Vector2Distance(Vector2 v1, Vector2 v2)
+{
+stack mut f32 result = Sqrt((v1.X - v2.X)*(v1.X - v2.X) + (v1.Y - v2.Y)*(v1.Y - v2.Y));
+
+    return result;
+}
+
+public inline finite law f32 Vector2DistanceSqr(Vector2 v1, Vector2 v2)
+{
+stack mut f32 result = ((v1.X - v2.X)*(v1.X - v2.X) + (v1.Y - v2.Y)*(v1.Y - v2.Y));
+
+    return result;
+}
+
+public inline finite law f32 Vector2Angle(Vector2 v1, Vector2 v2)
+{
+stack mut f32 result = 0.0f;
+
+    stack mut f32 dot = v1.X*v2.X + v1.Y*v2.Y;
+    stack mut f32 det = v1.X*v2.Y - v1.Y*v2.X;
+
+    result = Atan2(det, dot);
+
+    return result;
+}
+
+public inline finite law f32 Vector2LineAngle(Vector2 start, Vector2 end)
+{
+stack mut f32 result = 0.0f;
+
+    
+    result = -Atan2(end.Y - start.Y, end.X - start.X);
+
+    return result;
+}
+
+public inline finite law Vector2 Vector2Scale(Vector2 v, f32 scale)
+{
+stack mut Vector2 result = new Vector2() { X = v.X*scale, Y = v.Y*scale };
+
+    return result;
+}
+
+public inline finite law Vector2 Vector2Multiply(Vector2 v1, Vector2 v2)
+{
+stack mut Vector2 result = new Vector2() { X = v1.X*v2.X, Y = v1.Y*v2.Y };
+
+    return result;
+}
+
+public inline finite law Vector2 Vector2Negate(Vector2 v)
+{
+stack mut Vector2 result = new Vector2() { X = -v.X, Y = -v.Y };
+
+    return result;
+}
+
+public inline finite law Vector2 Vector2Divide(Vector2 v1, Vector2 v2)
+{
+stack mut Vector2 result = new Vector2() { X = v1.X/v2.X, Y = v1.Y/v2.Y };
+
+    return result;
+}
+
+public inline finite law Vector2 Vector2Normalize(Vector2 v)
+{
+stack mut Vector2 result = DefaultVector2();
+    stack mut f32 length = Sqrt((v.X*v.X) + (v.Y*v.Y));
+
+    if (length > 0)
+    {
+        stack mut f32 ilength = 1.0f/length;
+        result.X = v.X*ilength;
+        result.Y = v.Y*ilength;
+    }
+
+    return result;
+}
+
+public inline finite law Vector2 Vector2Transform(Vector2 v, Matrix mat)
+{
+stack mut Vector2 result = DefaultVector2();
+
+    stack mut f32 x = v.X;
+    stack mut f32 y = v.Y;
+    stack mut f32 z = 0;
+
+    result.X = mat.M0*x + mat.M4*y + mat.M8*z + mat.M12;
+    result.Y = mat.M1*x + mat.M5*y + mat.M9*z + mat.M13;
+
+    return result;
+}
+
+public inline finite law Vector2 Vector2Lerp(Vector2 v1, Vector2 v2, f32 amount)
+{
+stack mut Vector2 result = DefaultVector2();
+
+    result.X = v1.X + amount*(v2.X - v1.X);
+    result.Y = v1.Y + amount*(v2.Y - v1.Y);
+
+    return result;
+}
+
+public inline finite law Vector2 Vector2Reflect(Vector2 v, Vector2 normal)
+{
+stack mut Vector2 result = DefaultVector2();
+
+    stack mut f32 dotProduct = (v.X*normal.X + v.Y*normal.Y); 
+
+    result.X = v.X - (2.0f*normal.X)*dotProduct;
+    result.Y = v.Y - (2.0f*normal.Y)*dotProduct;
+
+    return result;
+}
+
+public inline finite law Vector2 Vector2Min(Vector2 v1, Vector2 v2)
+{
+stack mut Vector2 result = DefaultVector2();
+
+    result.X = Min(v1.X, v2.X);
+    result.Y = Min(v1.Y, v2.Y);
+
+    return result;
+}
+
+public inline finite law Vector2 Vector2Max(Vector2 v1, Vector2 v2)
+{
+stack mut Vector2 result = DefaultVector2();
+
+    result.X = Max(v1.X, v2.X);
+    result.Y = Max(v1.Y, v2.Y);
+
+    return result;
+}
+
+public inline finite law Vector2 Vector2Rotate(Vector2 v, f32 angle)
+{
+stack mut Vector2 result = DefaultVector2();
+
+    stack mut f32 cosres = Cos(angle);
+    stack mut f32 sinres = Sin(angle);
+
+    result.X = v.X*cosres - v.Y*sinres;
+    result.Y = v.X*sinres + v.Y*cosres;
+
+    return result;
+}
+
+public inline finite law Vector2 Vector2MoveTowards(Vector2 v, Vector2 target, f32 maxDistance)
+{
+stack mut Vector2 result = DefaultVector2();
+
+    stack mut f32 dx = target.X - v.X;
+    stack mut f32 dy = target.Y - v.Y;
+    stack mut f32 value = (dx*dx) + (dy*dy);
+
+    if ((value == 0) || ((maxDistance >= 0) && (value <= maxDistance*maxDistance))) return target;
+
+    stack mut f32 dist = Sqrt(value);
+
+    result.X = v.X + dx/dist*maxDistance;
+    result.Y = v.Y + dy/dist*maxDistance;
+
+    return result;
+}
+
+public inline finite law Vector2 Vector2Invert(Vector2 v)
+{
+stack mut Vector2 result = new Vector2() { X = 1.0f/v.X, Y = 1.0f/v.Y };
+
+    return result;
+}
+
+public inline finite law Vector2 Vector2Clamp(Vector2 v, Vector2 min, Vector2 max)
+{
+stack mut Vector2 result = DefaultVector2();
+
+    result.X = Min(max.X, Max(min.X, v.X));
+    result.Y = Min(max.Y, Max(min.Y, v.Y));
+
+    return result;
+}
+
+public inline finite law Vector2 Vector2ClampValue(Vector2 v, f32 min, f32 max)
+{
+stack mut Vector2 result = v;
+
+    stack mut f32 length = (v.X*v.X) + (v.Y*v.Y);
+    if (length > 0.0f)
+    {
+        length = Sqrt(length);
+
+        stack mut f32 scale = 1; 
+        if (length < min) scale = min/length;
+        else if (length > max) scale = max/length;
+
+        result.X = v.X*scale;
+        result.Y = v.Y*scale;
+    }
+
+    return result;
+}
+
+public inline finite law bool Vector2Equals(Vector2 p, Vector2 q)
+{
+stack mut bool result = ((AbsF32(p.X - q.X)) <= (RAYMATH_EPSILON*Max(1.0f, Max(AbsF32(p.X), AbsF32(q.X))))) &&
+                  ((AbsF32(p.Y - q.Y)) <= (RAYMATH_EPSILON*Max(1.0f, Max(AbsF32(p.Y), AbsF32(q.Y)))));
+
+    return result;
+}
+
+public inline finite law Vector2 Vector2Refract(Vector2 v, Vector2 n, f32 r)
+{
+    stack mut Vector2 result = DefaultVector2();
+    stack f32 dot = v.X * n.X + v.Y * n.Y;
+    stack mut f32 d = 1.0f - r * r * (1.0f - dot * dot);
+    if (d >= 0.0f)
+    {
+        d = Sqrt(d);
+        result.X = r * v.X - (r * dot + d) * n.X;
+        result.Y = r * v.Y - (r * dot + d) * n.Y;
+    }
+
+    return result;
+}
+
+public inline finite law Vector3 Vector3Zero()
+{
+stack mut Vector3 result = new Vector3() { X = 0.0f, Y = 0.0f, Z = 0.0f };
+
+    return result;
+}
+
+public inline finite law Vector3 Vector3One()
+{
+stack mut Vector3 result = new Vector3() { X = 1.0f, Y = 1.0f, Z = 1.0f };
+
+    return result;
+}
+
+public inline finite law Vector3 Vector3Add(Vector3 v1, Vector3 v2)
+{
+stack mut Vector3 result = new Vector3() { X = v1.X + v2.X, Y = v1.Y + v2.Y, Z = v1.Z + v2.Z };
+
+    return result;
+}
+
+public inline finite law Vector3 Vector3AddValue(Vector3 v, f32 add)
+{
+stack mut Vector3 result = new Vector3() { X = v.X + add, Y = v.Y + add, Z = v.Z + add };
+
+    return result;
+}
+
+public inline finite law Vector3 Vector3Subtract(Vector3 v1, Vector3 v2)
+{
+stack mut Vector3 result = new Vector3() { X = v1.X - v2.X, Y = v1.Y - v2.Y, Z = v1.Z - v2.Z };
+
+    return result;
+}
+
+public inline finite law Vector3 Vector3SubtractValue(Vector3 v, f32 sub)
+{
+stack mut Vector3 result = new Vector3() { X = v.X - sub, Y = v.Y - sub, Z = v.Z - sub };
+
+    return result;
+}
+
+public inline finite law Vector3 Vector3Scale(Vector3 v, f32 scalar)
+{
+stack mut Vector3 result = new Vector3() { X = v.X*scalar, Y = v.Y*scalar, Z = v.Z*scalar };
+
+    return result;
+}
+
+public inline finite law Vector3 Vector3Multiply(Vector3 v1, Vector3 v2)
+{
+stack mut Vector3 result = new Vector3() { X = v1.X*v2.X, Y = v1.Y*v2.Y, Z = v1.Z*v2.Z };
+
+    return result;
+}
+
+public inline finite law Vector3 Vector3CrossProduct(Vector3 v1, Vector3 v2)
+{
+stack mut Vector3 result = new Vector3() { X = v1.Y*v2.Z - v1.Z*v2.Y, Y = v1.Z*v2.X - v1.X*v2.Z, Z = v1.X*v2.Y - v1.Y*v2.X };
+
+    return result;
+}
+
+public inline finite law Vector3 Vector3Perpendicular(Vector3 v)
+{
+stack mut Vector3 result = DefaultVector3();
+
+    stack mut f32 min = AbsF32(v.X);
+    stack mut Vector3 cardinalAxis = new Vector3() { X = 1.0f, Y = 0.0f, Z = 0.0f };
+
+    if (AbsF32(v.Y) < min)
+    {
+        min = AbsF32(v.Y);
+        stack mut Vector3 tmp = new Vector3() { X = 0.0f, Y = 1.0f, Z = 0.0f };
+        cardinalAxis = tmp;
+    }
+
+    if (AbsF32(v.Z) < min)
+    {
+        stack mut Vector3 tmp = new Vector3() { X = 0.0f, Y = 0.0f, Z = 1.0f };
+        cardinalAxis = tmp;
+    }
+
+    
+    result.X = v.Y*cardinalAxis.Z - v.Z*cardinalAxis.Y;
+    result.Y = v.Z*cardinalAxis.X - v.X*cardinalAxis.Z;
+    result.Z = v.X*cardinalAxis.Y - v.Y*cardinalAxis.X;
+
+    return result;
+}
+
+public inline finite law f32 Vector3Length(Vector3 v)
+{
+stack mut f32 result = Sqrt(v.X*v.X + v.Y*v.Y + v.Z*v.Z);
+
+    return result;
+}
+
+public inline finite law f32 Vector3LengthSqr(Vector3 v)
+{
+stack mut f32 result = v.X*v.X + v.Y*v.Y + v.Z*v.Z;
+
+    return result;
+}
+
+public inline finite law f32 Vector3DotProduct(Vector3 v1, Vector3 v2)
+{
+stack mut f32 result = (v1.X*v2.X + v1.Y*v2.Y + v1.Z*v2.Z);
+
+    return result;
+}
+
+public inline finite law f32 Vector3Distance(Vector3 v1, Vector3 v2)
+{
+stack mut f32 result = 0.0f;
+
+    stack mut f32 dx = v2.X - v1.X;
+    stack mut f32 dy = v2.Y - v1.Y;
+    stack mut f32 dz = v2.Z - v1.Z;
+    result = Sqrt(dx*dx + dy*dy + dz*dz);
+
+    return result;
+}
+
+public inline finite law f32 Vector3DistanceSqr(Vector3 v1, Vector3 v2)
+{
+stack mut f32 result = 0.0f;
+
+    stack mut f32 dx = v2.X - v1.X;
+    stack mut f32 dy = v2.Y - v1.Y;
+    stack mut f32 dz = v2.Z - v1.Z;
+    result = dx*dx + dy*dy + dz*dz;
+
+    return result;
+}
+
+public inline finite law f32 Vector3Angle(Vector3 v1, Vector3 v2)
+{
+stack mut f32 result = 0.0f;
+
+    stack mut Vector3 cross = new Vector3() { X = v1.Y*v2.Z - v1.Z*v2.Y, Y = v1.Z*v2.X - v1.X*v2.Z, Z = v1.X*v2.Y - v1.Y*v2.X };
+    stack mut f32 len = Sqrt(cross.X*cross.X + cross.Y*cross.Y + cross.Z*cross.Z);
+    stack mut f32 dot = (v1.X*v2.X + v1.Y*v2.Y + v1.Z*v2.Z);
+    result = Atan2(len, dot);
+
+    return result;
+}
+
+public inline finite law Vector3 Vector3Negate(Vector3 v)
+{
+stack mut Vector3 result = new Vector3() { X = -v.X, Y = -v.Y, Z = -v.Z };
+
+    return result;
+}
+
+public inline finite law Vector3 Vector3Divide(Vector3 v1, Vector3 v2)
+{
+stack mut Vector3 result = new Vector3() { X = v1.X/v2.X, Y = v1.Y/v2.Y, Z = v1.Z/v2.Z };
+
+    return result;
+}
+
+public inline finite law Vector3 Vector3Normalize(Vector3 v)
+{
+stack mut Vector3 result = v;
+
+    stack mut f32 length = Sqrt(v.X*v.X + v.Y*v.Y + v.Z*v.Z);
+    if (length != 0.0f)
+    {
+        stack mut f32 ilength = 1.0f/length;
+
+        result.X *= ilength;
+        result.Y *= ilength;
+        result.Z *= ilength;
+    }
+
+    return result;
+}
+
+public inline finite law Vector3 Vector3Project(Vector3 v1, Vector3 v2)
+{
+stack mut Vector3 result = DefaultVector3();
+
+    stack mut f32 v1dv2 = (v1.X*v2.X + v1.Y*v2.Y + v1.Z*v2.Z);
+    stack mut f32 v2dv2 = (v2.X*v2.X + v2.Y*v2.Y + v2.Z*v2.Z);
+
+    stack mut f32 mag = v1dv2/v2dv2;
+
+    result.X = v2.X*mag;
+    result.Y = v2.Y*mag;
+    result.Z = v2.Z*mag;
+
+    return result;
+}
+
+public inline finite law Vector3 Vector3Reject(Vector3 v1, Vector3 v2)
+{
+stack mut Vector3 result = DefaultVector3();
+
+    stack mut f32 v1dv2 = (v1.X*v2.X + v1.Y*v2.Y + v1.Z*v2.Z);
+    stack mut f32 v2dv2 = (v2.X*v2.X + v2.Y*v2.Y + v2.Z*v2.Z);
+
+    stack mut f32 mag = v1dv2/v2dv2;
+
+    result.X = v1.X - (v2.X*mag);
+    result.Y = v1.Y - (v2.Y*mag);
+    result.Z = v1.Z - (v2.Z*mag);
+
+    return result;
+}
+
+public inline finite law Vector3Pair Vector3OrthoNormalize(Vector3 v1, Vector3 v2)
+{
+    stack mut Vector3 first = Vector3Normalize(v1);
+    stack Vector3 vn1 = Vector3Normalize(Vector3CrossProduct(first, v2));
+    stack Vector3 second = Vector3CrossProduct(vn1, first);
+    return new Vector3Pair() { First = first, Second = second };
+}
+
+public inline finite law Vector3 Vector3Transform(Vector3 v, Matrix mat)
+{
+stack mut Vector3 result = DefaultVector3();
+
+    stack mut f32 x = v.X;
+    stack mut f32 y = v.Y;
+    stack mut f32 z = v.Z;
+
+    result.X = mat.M0*x + mat.M4*y + mat.M8*z + mat.M12;
+    result.Y = mat.M1*x + mat.M5*y + mat.M9*z + mat.M13;
+    result.Z = mat.M2*x + mat.M6*y + mat.M10*z + mat.M14;
+
+    return result;
+}
+
+public inline finite law Vector3 Vector3RotateByQuaternion(Vector3 v, Quaternion q)
+{
+stack mut Vector3 result = DefaultVector3();
+
+    result.X = v.X*(q.X*q.X + q.W*q.W - q.Y*q.Y - q.Z*q.Z) + v.Y*(2*q.X*q.Y - 2*q.W*q.Z) + v.Z*(2*q.X*q.Z + 2*q.W*q.Y);
+    result.Y = v.X*(2*q.W*q.Z + 2*q.X*q.Y) + v.Y*(q.W*q.W - q.X*q.X + q.Y*q.Y - q.Z*q.Z) + v.Z*(-2*q.W*q.X + 2*q.Y*q.Z);
+    result.Z = v.X*(-2*q.W*q.Y + 2*q.X*q.Z) + v.Y*(2*q.W*q.X + 2*q.Y*q.Z)+ v.Z*(q.W*q.W - q.X*q.X - q.Y*q.Y + q.Z*q.Z);
+
+    return result;
+}
+
+public inline finite law Vector3 Vector3RotateByAxisAngle(Vector3 v, Vector3 axis, f32 angle)
+{
+    stack mut Vector3 result = v;
+    stack mut Vector3 normalizedAxis = axis;
+    stack f32 length = Sqrt(axis.X * axis.X + axis.Y * axis.Y + axis.Z * axis.Z);
+    if (length != 0.0f)
+    {
+        stack f32 ilength = 1.0f / length;
+        normalizedAxis.X *= ilength;
+        normalizedAxis.Y *= ilength;
+        normalizedAxis.Z *= ilength;
+    }
+
+    stack f32 halfAngle = angle / 2.0f;
+    stack mut f32 a = Sin(halfAngle);
+    stack f32 b = normalizedAxis.X * a;
+    stack f32 c = normalizedAxis.Y * a;
+    stack f32 d = normalizedAxis.Z * a;
+    a = Cos(halfAngle);
+
+    stack Vector3 w = new Vector3() { X = b, Y = c, Z = d };
+    stack mut Vector3 wv = Vector3CrossProduct(w, v);
+    stack mut Vector3 wwv = Vector3CrossProduct(w, wv);
+    wv = Vector3Scale(wv, 2.0f * a);
+    wwv = Vector3Scale(wwv, 2.0f);
+
+    result.X += wv.X + wwv.X;
+    result.Y += wv.Y + wwv.Y;
+    result.Z += wv.Z + wwv.Z;
+    return result;
+}
+
+public inline finite law Vector3 Vector3MoveTowards(Vector3 v, Vector3 target, f32 maxDistance)
+{
+stack mut Vector3 result = DefaultVector3();
+
+    stack mut f32 dx = target.X - v.X;
+    stack mut f32 dy = target.Y - v.Y;
+    stack mut f32 dz = target.Z - v.Z;
+    stack mut f32 value = (dx*dx) + (dy*dy) + (dz*dz);
+
+    if ((value == 0) || ((maxDistance >= 0) && (value <= maxDistance*maxDistance))) return target;
+
+    stack mut f32 dist = Sqrt(value);
+
+    result.X = v.X + dx/dist*maxDistance;
+    result.Y = v.Y + dy/dist*maxDistance;
+    result.Z = v.Z + dz/dist*maxDistance;
+
+    return result;
+}
+
+public inline finite law Vector3 Vector3Lerp(Vector3 v1, Vector3 v2, f32 amount)
+{
+stack mut Vector3 result = DefaultVector3();
+
+    result.X = v1.X + amount*(v2.X - v1.X);
+    result.Y = v1.Y + amount*(v2.Y - v1.Y);
+    result.Z = v1.Z + amount*(v2.Z - v1.Z);
+
+    return result;
+}
+
+public inline finite law Vector3 Vector3CubicHermite(Vector3 v1, Vector3 tangent1, Vector3 v2, Vector3 tangent2, f32 amount)
+{
+stack mut Vector3 result = DefaultVector3();
+
+    stack mut f32 amountPow2 = amount*amount;
+    stack mut f32 amountPow3 = amount*amount*amount;
+
+    result.X = (2*amountPow3 - 3*amountPow2 + 1)*v1.X + (amountPow3 - 2*amountPow2 + amount)*tangent1.X + (-2*amountPow3 + 3*amountPow2)*v2.X + (amountPow3 - amountPow2)*tangent2.X;
+    result.Y = (2*amountPow3 - 3*amountPow2 + 1)*v1.Y + (amountPow3 - 2*amountPow2 + amount)*tangent1.Y + (-2*amountPow3 + 3*amountPow2)*v2.Y + (amountPow3 - amountPow2)*tangent2.Y;
+    result.Z = (2*amountPow3 - 3*amountPow2 + 1)*v1.Z + (amountPow3 - 2*amountPow2 + amount)*tangent1.Z + (-2*amountPow3 + 3*amountPow2)*v2.Z + (amountPow3 - amountPow2)*tangent2.Z;
+
+    return result;
+}
+
+public inline finite law Vector3 Vector3Reflect(Vector3 v, Vector3 normal)
+{
+stack mut Vector3 result = DefaultVector3();
+
+    
+    
+    
+
+    stack mut f32 dotProduct = (v.X*normal.X + v.Y*normal.Y + v.Z*normal.Z);
+
+    result.X = v.X - (2.0f*normal.X)*dotProduct;
+    result.Y = v.Y - (2.0f*normal.Y)*dotProduct;
+    result.Z = v.Z - (2.0f*normal.Z)*dotProduct;
+
+    return result;
+}
+
+public inline finite law Vector3 Vector3Min(Vector3 v1, Vector3 v2)
+{
+stack mut Vector3 result = DefaultVector3();
+
+    result.X = Min(v1.X, v2.X);
+    result.Y = Min(v1.Y, v2.Y);
+    result.Z = Min(v1.Z, v2.Z);
+
+    return result;
+}
+
+public inline finite law Vector3 Vector3Max(Vector3 v1, Vector3 v2)
+{
+stack mut Vector3 result = DefaultVector3();
+
+    result.X = Max(v1.X, v2.X);
+    result.Y = Max(v1.Y, v2.Y);
+    result.Z = Max(v1.Z, v2.Z);
+
+    return result;
+}
+
+public inline finite law Vector3 Vector3Barycenter(Vector3 p, Vector3 a, Vector3 b, Vector3 c)
+{
+stack mut Vector3 result = DefaultVector3();
+
+    stack mut Vector3 v0 = new Vector3() { X = b.X - a.X, Y = b.Y - a.Y, Z = b.Z - a.Z };   
+    stack mut Vector3 v1 = new Vector3() { X = c.X - a.X, Y = c.Y - a.Y, Z = c.Z - a.Z };   
+    stack mut Vector3 v2 = new Vector3() { X = p.X - a.X, Y = p.Y - a.Y, Z = p.Z - a.Z };   
+    stack mut f32 d00 = (v0.X*v0.X + v0.Y*v0.Y + v0.Z*v0.Z);    
+    stack mut f32 d01 = (v0.X*v1.X + v0.Y*v1.Y + v0.Z*v1.Z);    
+    stack mut f32 d11 = (v1.X*v1.X + v1.Y*v1.Y + v1.Z*v1.Z);    
+    stack mut f32 d20 = (v2.X*v0.X + v2.Y*v0.Y + v2.Z*v0.Z);    
+    stack mut f32 d21 = (v2.X*v1.X + v2.Y*v1.Y + v2.Z*v1.Z);    
+
+    stack mut f32 denom = d00*d11 - d01*d01;
+
+    result.Y = (d11*d20 - d01*d21)/denom;
+    result.Z = (d00*d21 - d01*d20)/denom;
+    result.X = 1.0f - (result.Z + result.Y);
+
+    return result;
+}
+
+public inline finite law Vector3 Vector3Unproject(Vector3 source, Matrix projection, Matrix view)
+{
+stack mut Vector3 result = DefaultVector3();
+
+    
+    stack mut Matrix matViewProj = new Matrix() { M0 = view.M0*projection.M0 + view.M1*projection.M4 + view.M2*projection.M8 + view.M3*projection.M12, M4 = view.M0*projection.M1 + view.M1*projection.M5 + view.M2*projection.M9 + view.M3*projection.M13, M8 = view.M0*projection.M2 + view.M1*projection.M6 + view.M2*projection.M10 + view.M3*projection.M14, M12 = view.M0*projection.M3 + view.M1*projection.M7 + view.M2*projection.M11 + view.M3*projection.M15, M1 = view.M4*projection.M0 + view.M5*projection.M4 + view.M6*projection.M8 + view.M7*projection.M12, M5 = view.M4*projection.M1 + view.M5*projection.M5 + view.M6*projection.M9 + view.M7*projection.M13, M9 = view.M4*projection.M2 + view.M5*projection.M6 + view.M6*projection.M10 + view.M7*projection.M14, M13 = view.M4*projection.M3 + view.M5*projection.M7 + view.M6*projection.M11 + view.M7*projection.M15, M2 = view.M8*projection.M0 + view.M9*projection.M4 + view.M10*projection.M8 + view.M11*projection.M12, M6 = view.M8*projection.M1 + view.M9*projection.M5 + view.M10*projection.M9 + view.M11*projection.M13, M10 = view.M8*projection.M2 + view.M9*projection.M6 + view.M10*projection.M10 + view.M11*projection.M14, M14 = view.M8*projection.M3 + view.M9*projection.M7 + view.M10*projection.M11 + view.M11*projection.M15, M3 = view.M12*projection.M0 + view.M13*projection.M4 + view.M14*projection.M8 + view.M15*projection.M12, M7 = view.M12*projection.M1 + view.M13*projection.M5 + view.M14*projection.M9 + view.M15*projection.M13, M11 = view.M12*projection.M2 + view.M13*projection.M6 + view.M14*projection.M10 + view.M15*projection.M14, M15 = view.M12*projection.M3 + view.M13*projection.M7 + view.M14*projection.M11 + view.M15*projection.M15 };
+
+    
+    
+    stack mut f32 a00 = matViewProj.M0;
+
+    
+    
+    stack mut f32 a01 = matViewProj.M1;
+
+    
+    
+    stack mut f32 a02 = matViewProj.M2;
+
+    
+    
+    stack mut f32 a03 = matViewProj.M3;
+    stack mut f32 a10 = matViewProj.M4;
+    stack mut f32 a11 = matViewProj.M5;
+    stack mut f32 a12 = matViewProj.M6;
+    stack mut f32 a13 = matViewProj.M7;
+    stack mut f32 a20 = matViewProj.M8;
+    stack mut f32 a21 = matViewProj.M9;
+    stack mut f32 a22 = matViewProj.M10;
+    stack mut f32 a23 = matViewProj.M11;
+    stack mut f32 a30 = matViewProj.M12;
+    stack mut f32 a31 = matViewProj.M13;
+    stack mut f32 a32 = matViewProj.M14;
+    stack mut f32 a33 = matViewProj.M15;
+
+    stack mut f32 b00 = a00*a11 - a01*a10;
+    stack mut f32 b01 = a00*a12 - a02*a10;
+    stack mut f32 b02 = a00*a13 - a03*a10;
+    stack mut f32 b03 = a01*a12 - a02*a11;
+    stack mut f32 b04 = a01*a13 - a03*a11;
+    stack mut f32 b05 = a02*a13 - a03*a12;
+    stack mut f32 b06 = a20*a31 - a21*a30;
+    stack mut f32 b07 = a20*a32 - a22*a30;
+    stack mut f32 b08 = a20*a33 - a23*a30;
+    stack mut f32 b09 = a21*a32 - a22*a31;
+    stack mut f32 b10 = a21*a33 - a23*a31;
+    stack mut f32 b11 = a22*a33 - a23*a32;
+
+    
+    stack mut f32 invDet = 1.0f/(b00*b11 - b01*b10 + b02*b09 + b03*b08 - b04*b07 + b05*b06);
+
+    stack mut Matrix matViewProjInv = new Matrix() { M0 = (a11*b11 - a12*b10 + a13*b09)*invDet, M4 = (-a01*b11 + a02*b10 - a03*b09)*invDet, M8 = (a31*b05 - a32*b04 + a33*b03)*invDet, M12 = (-a21*b05 + a22*b04 - a23*b03)*invDet, M1 = (-a10*b11 + a12*b08 - a13*b07)*invDet, M5 = (a00*b11 - a02*b08 + a03*b07)*invDet, M9 = (-a30*b05 + a32*b02 - a33*b01)*invDet, M13 = (a20*b05 - a22*b02 + a23*b01)*invDet, M2 = (a10*b10 - a11*b08 + a13*b06)*invDet, M6 = (-a00*b10 + a01*b08 - a03*b06)*invDet, M10 = (a30*b04 - a31*b02 + a33*b00)*invDet, M14 = (-a20*b04 + a21*b02 - a23*b00)*invDet, M3 = (-a10*b09 + a11*b07 - a12*b06)*invDet, M7 = (a00*b09 - a01*b07 + a02*b06)*invDet, M11 = (-a30*b03 + a31*b01 - a32*b00)*invDet, M15 = (a20*b03 - a21*b01 + a22*b00)*invDet };
+
+    
+    stack mut Quaternion quat = new Quaternion() { X = source.X, Y = source.Y, Z = source.Z, W = 1.0f };
+
+    
+    stack mut Quaternion qtransformed = new Quaternion() { X = matViewProjInv.M0*quat.X + matViewProjInv.M4*quat.Y + matViewProjInv.M8*quat.Z + matViewProjInv.M12*quat.W, Y = matViewProjInv.M1*quat.X + matViewProjInv.M5*quat.Y + matViewProjInv.M9*quat.Z + matViewProjInv.M13*quat.W, Z = matViewProjInv.M2*quat.X + matViewProjInv.M6*quat.Y + matViewProjInv.M10*quat.Z + matViewProjInv.M14*quat.W, W = matViewProjInv.M3*quat.X + matViewProjInv.M7*quat.Y + matViewProjInv.M11*quat.Z + matViewProjInv.M15*quat.W };
+
+    
+    result.X = qtransformed.X/qtransformed.W;
+    result.Y = qtransformed.Y/qtransformed.W;
+    result.Z = qtransformed.Z/qtransformed.W;
+
+    return result;
+}
+
+public inline finite law Float3 Vector3ToFloatV(Vector3 v)
+{
+stack mut Float3 buffer = DefaultFloat3();
+
+    buffer.V[0] = v.X;
+    buffer.V[1] = v.Y;
+    buffer.V[2] = v.Z;
+
+    return buffer;
+}
+
+public inline finite law Vector3 Vector3Invert(Vector3 v)
+{
+stack mut Vector3 result = new Vector3() { X = 1.0f/v.X, Y = 1.0f/v.Y, Z = 1.0f/v.Z };
+
+    return result;
+}
+
+public inline finite law Vector3 Vector3Clamp(Vector3 v, Vector3 min, Vector3 max)
+{
+stack mut Vector3 result = DefaultVector3();
+
+    result.X = Min(max.X, Max(min.X, v.X));
+    result.Y = Min(max.Y, Max(min.Y, v.Y));
+    result.Z = Min(max.Z, Max(min.Z, v.Z));
+
+    return result;
+}
+
+public inline finite law Vector3 Vector3ClampValue(Vector3 v, f32 min, f32 max)
+{
+stack mut Vector3 result = v;
+
+    stack mut f32 length = (v.X*v.X) + (v.Y*v.Y) + (v.Z*v.Z);
+    if (length > 0.0f)
+    {
+        length = Sqrt(length);
+
+        stack mut f32 scale = 1; 
+        if (length < min) scale = min/length;
+        else if (length > max) scale = max/length;
+
+        result.X = v.X*scale;
+        result.Y = v.Y*scale;
+        result.Z = v.Z*scale;
+    }
+
+    return result;
+}
+
+public inline finite law bool Vector3Equals(Vector3 p, Vector3 q)
+{
+stack mut bool result = ((AbsF32(p.X - q.X)) <= (RAYMATH_EPSILON*Max(1.0f, Max(AbsF32(p.X), AbsF32(q.X))))) &&
+                 ((AbsF32(p.Y - q.Y)) <= (RAYMATH_EPSILON*Max(1.0f, Max(AbsF32(p.Y), AbsF32(q.Y))))) &&
+                 ((AbsF32(p.Z - q.Z)) <= (RAYMATH_EPSILON*Max(1.0f, Max(AbsF32(p.Z), AbsF32(q.Z)))));
+
+    return result;
+}
+
+public inline finite law Vector3 Vector3Refract(Vector3 v, Vector3 n, f32 r)
+{
+    stack mut Vector3 result = DefaultVector3();
+    stack f32 dot = v.X * n.X + v.Y * n.Y + v.Z * n.Z;
+    stack mut f32 d = 1.0f - r * r * (1.0f - dot * dot);
+    if (d >= 0.0f)
+    {
+        d = Sqrt(d);
+        result.X = r * v.X - (r * dot + d) * n.X;
+        result.Y = r * v.Y - (r * dot + d) * n.Y;
+        result.Z = r * v.Z - (r * dot + d) * n.Z;
+    }
+
+    return result;
+}
+
+public inline finite law Vector4 Vector4Zero()
+{
+stack mut Vector4 result = new Vector4() { X = 0.0f, Y = 0.0f, Z = 0.0f, W = 0.0f };
+    return result;
+}
+
+public inline finite law Vector4 Vector4One()
+{
+stack mut Vector4 result = new Vector4() { X = 1.0f, Y = 1.0f, Z = 1.0f, W = 1.0f };
+    return result;
+}
+
+public inline finite law Vector4 Vector4Add(Vector4 v1, Vector4 v2)
+{
+stack mut Vector4 result = new Vector4() { X = v1.X + v2.X, Y = v1.Y + v2.Y, Z = v1.Z + v2.Z, W = v1.W + v2.W };
+    return result;
+}
+
+public inline finite law Vector4 Vector4AddValue(Vector4 v, f32 add)
+{
+stack mut Vector4 result = new Vector4() { X = v.X + add, Y = v.Y + add, Z = v.Z + add, W = v.W + add };
+    return result;
+}
+
+public inline finite law Vector4 Vector4Subtract(Vector4 v1, Vector4 v2)
+{
+stack mut Vector4 result = new Vector4() { X = v1.X - v2.X, Y = v1.Y - v2.Y, Z = v1.Z - v2.Z, W = v1.W - v2.W };
+    return result;
+}
+
+public inline finite law Vector4 Vector4SubtractValue(Vector4 v, f32 add)
+{
+stack mut Vector4 result = new Vector4() { X = v.X - add, Y = v.Y - add, Z = v.Z - add, W = v.W - add };
+    return result;
+}
+
+public inline finite law f32 Vector4Length(Vector4 v)
+{
+stack mut f32 result = Sqrt((v.X*v.X) + (v.Y*v.Y) + (v.Z*v.Z) + (v.W*v.W));
+    return result;
+}
+
+public inline finite law f32 Vector4LengthSqr(Vector4 v)
+{
+stack mut f32 result = (v.X*v.X) + (v.Y*v.Y) + (v.Z*v.Z) + (v.W*v.W);
+    return result;
+}
+
+public inline finite law f32 Vector4DotProduct(Vector4 v1, Vector4 v2)
+{
+stack mut f32 result = (v1.X*v2.X + v1.Y*v2.Y + v1.Z*v2.Z + v1.W*v2.W);
+    return result;
+}
+
+public inline finite law f32 Vector4Distance(Vector4 v1, Vector4 v2)
+{
+stack mut f32 result = Sqrt(
+        (v1.X - v2.X)*(v1.X - v2.X) + (v1.Y - v2.Y)*(v1.Y - v2.Y) +
+        (v1.Z - v2.Z)*(v1.Z - v2.Z) + (v1.W - v2.W)*(v1.W - v2.W));
+    return result;
+}
+
+public inline finite law f32 Vector4DistanceSqr(Vector4 v1, Vector4 v2)
+{
+stack mut f32 result = (v1.X - v2.X)*(v1.X - v2.X) + (v1.Y - v2.Y)*(v1.Y - v2.Y) +
+        (v1.Z - v2.Z)*(v1.Z - v2.Z) + (v1.W - v2.W)*(v1.W - v2.W);
+
+    return result;
+}
+
+public inline finite law Vector4 Vector4Scale(Vector4 v, f32 scale)
+{
+stack mut Vector4 result = new Vector4() { X = v.X*scale, Y = v.Y*scale, Z = v.Z*scale, W = v.W*scale };
+    return result;
+}
+
+public inline finite law Vector4 Vector4Multiply(Vector4 v1, Vector4 v2)
+{
+stack mut Vector4 result = new Vector4() { X = v1.X*v2.X, Y = v1.Y*v2.Y, Z = v1.Z*v2.Z, W = v1.W*v2.W };
+    return result;
+}
+
+public inline finite law Vector4 Vector4Negate(Vector4 v)
+{
+stack mut Vector4 result = new Vector4() { X = -v.X, Y = -v.Y, Z = -v.Z, W = -v.W };
+    return result;
+}
+
+public inline finite law Vector4 Vector4Divide(Vector4 v1, Vector4 v2)
+{
+stack mut Vector4 result = new Vector4() { X = v1.X/v2.X, Y = v1.Y/v2.Y, Z = v1.Z/v2.Z, W = v1.W/v2.W };
+    return result;
+}
+
+public inline finite law Vector4 Vector4Normalize(Vector4 v)
+{
+stack mut Vector4 result = DefaultVector4();
+    stack mut f32 length = Sqrt((v.X*v.X) + (v.Y*v.Y) + (v.Z*v.Z) + (v.W*v.W));
+
+    if (length > 0)
+    {
+        stack mut f32 ilength = 1.0f/length;
+        result.X = v.X*ilength;
+        result.Y = v.Y*ilength;
+        result.Z = v.Z*ilength;
+        result.W = v.W*ilength;
+    }
+
+    return result;
+}
+
+public inline finite law Vector4 Vector4Min(Vector4 v1, Vector4 v2)
+{
+stack mut Vector4 result = DefaultVector4();
+
+    result.X = Min(v1.X, v2.X);
+    result.Y = Min(v1.Y, v2.Y);
+    result.Z = Min(v1.Z, v2.Z);
+    result.W = Min(v1.W, v2.W);
+
+    return result;
+}
+
+public inline finite law Vector4 Vector4Max(Vector4 v1, Vector4 v2)
+{
+stack mut Vector4 result = DefaultVector4();
+
+    result.X = Max(v1.X, v2.X);
+    result.Y = Max(v1.Y, v2.Y);
+    result.Z = Max(v1.Z, v2.Z);
+    result.W = Max(v1.W, v2.W);
+
+    return result;
+}
+
+public inline finite law Vector4 Vector4Lerp(Vector4 v1, Vector4 v2, f32 amount)
+{
+stack mut Vector4 result = DefaultVector4();
+
+    result.X = v1.X + amount*(v2.X - v1.X);
+    result.Y = v1.Y + amount*(v2.Y - v1.Y);
+    result.Z = v1.Z + amount*(v2.Z - v1.Z);
+    result.W = v1.W + amount*(v2.W - v1.W);
+
+    return result;
+}
+
+public inline finite law Vector4 Vector4MoveTowards(Vector4 v, Vector4 target, f32 maxDistance)
+{
+stack mut Vector4 result = DefaultVector4();
+
+    stack mut f32 dx = target.X - v.X;
+    stack mut f32 dy = target.Y - v.Y;
+    stack mut f32 dz = target.Z - v.Z;
+    stack mut f32 dw = target.W - v.W;
+    stack mut f32 value = (dx*dx) + (dy*dy) + (dz*dz) + (dw*dw);
+
+    if ((value == 0) || ((maxDistance >= 0) && (value <= maxDistance*maxDistance))) return target;
+
+    stack mut f32 dist = Sqrt(value);
+
+    result.X = v.X + dx/dist*maxDistance;
+    result.Y = v.Y + dy/dist*maxDistance;
+    result.Z = v.Z + dz/dist*maxDistance;
+    result.W = v.W + dw/dist*maxDistance;
+
+    return result;
+}
+
+public inline finite law Vector4 Vector4Invert(Vector4 v)
+{
+stack mut Vector4 result = new Vector4() { X = 1.0f/v.X, Y = 1.0f/v.Y, Z = 1.0f/v.Z, W = 1.0f/v.W };
+    return result;
+}
+
+public inline finite law bool Vector4Equals(Vector4 p, Vector4 q)
+{
+stack mut bool result = ((AbsF32(p.X - q.X)) <= (RAYMATH_EPSILON*Max(1.0f, Max(AbsF32(p.X), AbsF32(q.X))))) &&
+                  ((AbsF32(p.Y - q.Y)) <= (RAYMATH_EPSILON*Max(1.0f, Max(AbsF32(p.Y), AbsF32(q.Y))))) &&
+                  ((AbsF32(p.Z - q.Z)) <= (RAYMATH_EPSILON*Max(1.0f, Max(AbsF32(p.Z), AbsF32(q.Z))))) &&
+                  ((AbsF32(p.W - q.W)) <= (RAYMATH_EPSILON*Max(1.0f, Max(AbsF32(p.W), AbsF32(q.W)))));
+    return result;
+}
+
+public inline finite law f32 MatrixDeterminant(Matrix mat)
+{
+stack mut f32 result = 0.0f;
+
+    
+    
+    
+
+    
+    stack mut f32 m0 = mat.M0;
+
+    
+    
+    
+
+    
+    stack mut f32 m1 = mat.M1;
+
+    
+    
+    
+
+    
+    stack mut f32 m2 = mat.M2;
+
+    
+    
+    
+
+    
+    stack mut f32 m3 = mat.M3;
+    stack mut f32 m4 = mat.M4;
+    stack mut f32 m5 = mat.M5;
+    stack mut f32 m6 = mat.M6;
+    stack mut f32 m7 = mat.M7;
+    stack mut f32 m8 = mat.M8;
+    stack mut f32 m9 = mat.M9;
+    stack mut f32 m10 = mat.M10;
+    stack mut f32 m11 = mat.M11;
+    stack mut f32 m12 = mat.M12;
+    stack mut f32 m13 = mat.M13;
+    stack mut f32 m14 = mat.M14;
+    stack mut f32 m15 = mat.M15;
+
+    result = (m0*((m5*(m10*m15 - m11*m14) - m9*(m6*m15 - m7*m14) + m13*(m6*m11 - m7*m10))) -
+        m4*((m1*(m10*m15 - m11*m14) - m9*(m2*m15 - m3*m14) + m13*(m2*m11 - m3*m10))) +
+        m8*((m1*(m6*m15 - m7*m14) - m5*(m2*m15 - m3*m14) + m13*(m2*m7 - m3*m6))) -
+        m12*((m1*(m6*m11 - m7*m10) - m5*(m2*m11 - m3*m10) + m9*(m2*m7 - m3*m6))));
+
+    return result;
+}
+
+public inline finite law f32 MatrixTrace(Matrix mat)
+{
+stack mut f32 result = (mat.M0 + mat.M5 + mat.M10 + mat.M15);
+
+    return result;
+}
+
+public inline finite law Matrix MatrixTranspose(Matrix mat)
+{
+stack mut Matrix result = DefaultMatrix();
+
+    result.M0 = mat.M0;
+    result.M1 = mat.M4;
+    result.M2 = mat.M8;
+    result.M3 = mat.M12;
+    result.M4 = mat.M1;
+    result.M5 = mat.M5;
+    result.M6 = mat.M9;
+    result.M7 = mat.M13;
+    result.M8 = mat.M2;
+    result.M9 = mat.M6;
+    result.M10 = mat.M10;
+    result.M11 = mat.M14;
+    result.M12 = mat.M3;
+    result.M13 = mat.M7;
+    result.M14 = mat.M11;
+    result.M15 = mat.M15;
+
+    return result;
+}
+
+public inline finite law Matrix MatrixInvert(Matrix mat)
+{
+stack mut Matrix result = DefaultMatrix();
+
+    
+    stack mut f32 a00 = mat.M0;
+
+    
+    stack mut f32 a01 = mat.M1;
+
+    
+    stack mut f32 a02 = mat.M2;
+
+    
+    stack mut f32 a03 = mat.M3;
+    stack mut f32 a10 = mat.M4;
+    stack mut f32 a11 = mat.M5;
+    stack mut f32 a12 = mat.M6;
+    stack mut f32 a13 = mat.M7;
+    stack mut f32 a20 = mat.M8;
+    stack mut f32 a21 = mat.M9;
+    stack mut f32 a22 = mat.M10;
+    stack mut f32 a23 = mat.M11;
+    stack mut f32 a30 = mat.M12;
+    stack mut f32 a31 = mat.M13;
+    stack mut f32 a32 = mat.M14;
+    stack mut f32 a33 = mat.M15;
+
+    stack mut f32 b00 = a00*a11 - a01*a10;
+    stack mut f32 b01 = a00*a12 - a02*a10;
+    stack mut f32 b02 = a00*a13 - a03*a10;
+    stack mut f32 b03 = a01*a12 - a02*a11;
+    stack mut f32 b04 = a01*a13 - a03*a11;
+    stack mut f32 b05 = a02*a13 - a03*a12;
+    stack mut f32 b06 = a20*a31 - a21*a30;
+    stack mut f32 b07 = a20*a32 - a22*a30;
+    stack mut f32 b08 = a20*a33 - a23*a30;
+    stack mut f32 b09 = a21*a32 - a22*a31;
+    stack mut f32 b10 = a21*a33 - a23*a31;
+    stack mut f32 b11 = a22*a33 - a23*a32;
+
+    
+    stack mut f32 invDet = 1.0f/(b00*b11 - b01*b10 + b02*b09 + b03*b08 - b04*b07 + b05*b06);
+
+    result.M0 = (a11*b11 - a12*b10 + a13*b09)*invDet;
+    result.M1 = (-a01*b11 + a02*b10 - a03*b09)*invDet;
+    result.M2 = (a31*b05 - a32*b04 + a33*b03)*invDet;
+    result.M3 = (-a21*b05 + a22*b04 - a23*b03)*invDet;
+    result.M4 = (-a10*b11 + a12*b08 - a13*b07)*invDet;
+    result.M5 = (a00*b11 - a02*b08 + a03*b07)*invDet;
+    result.M6 = (-a30*b05 + a32*b02 - a33*b01)*invDet;
+    result.M7 = (a20*b05 - a22*b02 + a23*b01)*invDet;
+    result.M8 = (a10*b10 - a11*b08 + a13*b06)*invDet;
+    result.M9 = (-a00*b10 + a01*b08 - a03*b06)*invDet;
+    result.M10 = (a30*b04 - a31*b02 + a33*b00)*invDet;
+    result.M11 = (-a20*b04 + a21*b02 - a23*b00)*invDet;
+    result.M12 = (-a10*b09 + a11*b07 - a12*b06)*invDet;
+    result.M13 = (a00*b09 - a01*b07 + a02*b06)*invDet;
+    result.M14 = (-a30*b03 + a31*b01 - a32*b00)*invDet;
+    result.M15 = (a20*b03 - a21*b01 + a22*b00)*invDet;
+
+    return result;
+}
+
+public inline finite law Matrix MatrixIdentity()
+{
+stack mut Matrix result = new Matrix() { M0 = 1.0f, M4 = 0.0f, M8 = 0.0f, M12 = 0.0f, M1 = 0.0f, M5 = 1.0f, M9 = 0.0f, M13 = 0.0f, M2 = 0.0f, M6 = 0.0f, M10 = 1.0f, M14 = 0.0f, M3 = 0.0f, M7 = 0.0f, M11 = 0.0f, M15 = 1.0f };
+
+    return result;
+}
+
+public inline finite law Matrix MatrixAdd(Matrix left, Matrix right)
+{
+stack mut Matrix result = DefaultMatrix();
+
+    result.M0 = left.M0 + right.M0;
+    result.M1 = left.M1 + right.M1;
+    result.M2 = left.M2 + right.M2;
+    result.M3 = left.M3 + right.M3;
+    result.M4 = left.M4 + right.M4;
+    result.M5 = left.M5 + right.M5;
+    result.M6 = left.M6 + right.M6;
+    result.M7 = left.M7 + right.M7;
+    result.M8 = left.M8 + right.M8;
+    result.M9 = left.M9 + right.M9;
+    result.M10 = left.M10 + right.M10;
+    result.M11 = left.M11 + right.M11;
+    result.M12 = left.M12 + right.M12;
+    result.M13 = left.M13 + right.M13;
+    result.M14 = left.M14 + right.M14;
+    result.M15 = left.M15 + right.M15;
+
+    return result;
+}
+
+public inline finite law Matrix MatrixSubtract(Matrix left, Matrix right)
+{
+stack mut Matrix result = DefaultMatrix();
+
+    result.M0 = left.M0 - right.M0;
+    result.M1 = left.M1 - right.M1;
+    result.M2 = left.M2 - right.M2;
+    result.M3 = left.M3 - right.M3;
+    result.M4 = left.M4 - right.M4;
+    result.M5 = left.M5 - right.M5;
+    result.M6 = left.M6 - right.M6;
+    result.M7 = left.M7 - right.M7;
+    result.M8 = left.M8 - right.M8;
+    result.M9 = left.M9 - right.M9;
+    result.M10 = left.M10 - right.M10;
+    result.M11 = left.M11 - right.M11;
+    result.M12 = left.M12 - right.M12;
+    result.M13 = left.M13 - right.M13;
+    result.M14 = left.M14 - right.M14;
+    result.M15 = left.M15 - right.M15;
+
+    return result;
+}
+
+public inline finite law Matrix MatrixMultiply(Matrix left, Matrix right)
+{
+    stack mut Matrix result = DefaultMatrix();
+    result.M0 = left.M0*right.M0 + left.M1*right.M4 + left.M2*right.M8 + left.M3*right.M12;
+    result.M1 = left.M0*right.M1 + left.M1*right.M5 + left.M2*right.M9 + left.M3*right.M13;
+    result.M2 = left.M0*right.M2 + left.M1*right.M6 + left.M2*right.M10 + left.M3*right.M14;
+    result.M3 = left.M0*right.M3 + left.M1*right.M7 + left.M2*right.M11 + left.M3*right.M15;
+    result.M4 = left.M4*right.M0 + left.M5*right.M4 + left.M6*right.M8 + left.M7*right.M12;
+    result.M5 = left.M4*right.M1 + left.M5*right.M5 + left.M6*right.M9 + left.M7*right.M13;
+    result.M6 = left.M4*right.M2 + left.M5*right.M6 + left.M6*right.M10 + left.M7*right.M14;
+    result.M7 = left.M4*right.M3 + left.M5*right.M7 + left.M6*right.M11 + left.M7*right.M15;
+    result.M8 = left.M8*right.M0 + left.M9*right.M4 + left.M10*right.M8 + left.M11*right.M12;
+    result.M9 = left.M8*right.M1 + left.M9*right.M5 + left.M10*right.M9 + left.M11*right.M13;
+    result.M10 = left.M8*right.M2 + left.M9*right.M6 + left.M10*right.M10 + left.M11*right.M14;
+    result.M11 = left.M8*right.M3 + left.M9*right.M7 + left.M10*right.M11 + left.M11*right.M15;
+    result.M12 = left.M12*right.M0 + left.M13*right.M4 + left.M14*right.M8 + left.M15*right.M12;
+    result.M13 = left.M12*right.M1 + left.M13*right.M5 + left.M14*right.M9 + left.M15*right.M13;
+    result.M14 = left.M12*right.M2 + left.M13*right.M6 + left.M14*right.M10 + left.M15*right.M14;
+    result.M15 = left.M12*right.M3 + left.M13*right.M7 + left.M14*right.M11 + left.M15*right.M15;
+    return result;
+}
+
+public inline finite law Matrix MatrixMultiplyValue(Matrix left, f32 value)
+{
+stack mut Matrix result = new Matrix() { M0 = left.M0*value, M4 = left.M4*value, M8 = left.M8*value, M12 = left.M12*value, M1 = left.M1*value, M5 = left.M5*value, M9 = left.M9*value, M13 = left.M13*value, M2 = left.M2*value, M6 = left.M6*value, M10 = left.M10*value, M14 = left.M14*value, M3 = left.M3*value, M7 = left.M7*value, M11 = left.M11*value, M15 = left.M15*value };
+
+    return result;
+}
+
+public inline finite law Matrix MatrixTranslate(f32 x, f32 y, f32 z)
+{
+stack mut Matrix result = new Matrix() { M0 = 1.0f, M4 = 0.0f, M8 = 0.0f, M12 = x, M1 = 0.0f, M5 = 1.0f, M9 = 0.0f, M13 = y, M2 = 0.0f, M6 = 0.0f, M10 = 1.0f, M14 = z, M3 = 0.0f, M7 = 0.0f, M11 = 0.0f, M15 = 1.0f };
+
+    return result;
+}
+
+public inline finite law Matrix MatrixRotate(Vector3 axis, f32 angle)
+{
+stack mut Matrix result = DefaultMatrix();
+
+    stack mut f32 x = axis.X;
+
+    stack mut f32 y = axis.Y;
+
+    stack mut f32 z = axis.Z;
+
+    stack mut f32 lengthSquared = x*x + y*y + z*z;
+
+    if ((lengthSquared != 1.0f) && (lengthSquared != 0.0f))
+    {
+        stack mut f32 ilength = 1.0f/Sqrt(lengthSquared);
+        x *= ilength;
+        y *= ilength;
+        z *= ilength;
+    }
+
+    stack mut f32 sinres = Sin(angle);
+    stack mut f32 cosres = Cos(angle);
+    stack mut f32 t = 1.0f - cosres;
+
+    result.M0 = x*x*t + cosres;
+    result.M1 = y*x*t + z*sinres;
+    result.M2 = z*x*t - y*sinres;
+    result.M3 = 0.0f;
+
+    result.M4 = x*y*t - z*sinres;
+    result.M5 = y*y*t + cosres;
+    result.M6 = z*y*t + x*sinres;
+    result.M7 = 0.0f;
+
+    result.M8 = x*z*t + y*sinres;
+    result.M9 = y*z*t - x*sinres;
+    result.M10 = z*z*t + cosres;
+    result.M11 = 0.0f;
+
+    result.M12 = 0.0f;
+    result.M13 = 0.0f;
+    result.M14 = 0.0f;
+    result.M15 = 1.0f;
+
+    return result;
+}
+
+public inline finite law Matrix MatrixRotateX(f32 angle)
+{
+stack mut Matrix result = new Matrix() { M0 = 1.0f, M4 = 0.0f, M8 = 0.0f, M12 = 0.0f, M1 = 0.0f, M5 = 1.0f, M9 = 0.0f, M13 = 0.0f, M2 = 0.0f, M6 = 0.0f, M10 = 1.0f, M14 = 0.0f, M3 = 0.0f, M7 = 0.0f, M11 = 0.0f, M15 = 1.0f }; 
+
+    stack mut f32 cosres = Cos(angle);
+    stack mut f32 sinres = Sin(angle);
+
+    result.M5 = cosres;
+    result.M6 = sinres;
+    result.M9 = -sinres;
+    result.M10 = cosres;
+
+    return result;
+}
+
+public inline finite law Matrix MatrixRotateY(f32 angle)
+{
+stack mut Matrix result = new Matrix() { M0 = 1.0f, M4 = 0.0f, M8 = 0.0f, M12 = 0.0f, M1 = 0.0f, M5 = 1.0f, M9 = 0.0f, M13 = 0.0f, M2 = 0.0f, M6 = 0.0f, M10 = 1.0f, M14 = 0.0f, M3 = 0.0f, M7 = 0.0f, M11 = 0.0f, M15 = 1.0f }; 
+
+    stack mut f32 cosres = Cos(angle);
+    stack mut f32 sinres = Sin(angle);
+
+    result.M0 = cosres;
+    result.M2 = -sinres;
+    result.M8 = sinres;
+    result.M10 = cosres;
+
+    return result;
+}
+
+public inline finite law Matrix MatrixRotateZ(f32 angle)
+{
+stack mut Matrix result = new Matrix() { M0 = 1.0f, M4 = 0.0f, M8 = 0.0f, M12 = 0.0f, M1 = 0.0f, M5 = 1.0f, M9 = 0.0f, M13 = 0.0f, M2 = 0.0f, M6 = 0.0f, M10 = 1.0f, M14 = 0.0f, M3 = 0.0f, M7 = 0.0f, M11 = 0.0f, M15 = 1.0f }; 
+
+    stack mut f32 cosres = Cos(angle);
+    stack mut f32 sinres = Sin(angle);
+
+    result.M0 = cosres;
+    result.M1 = sinres;
+    result.M4 = -sinres;
+    result.M5 = cosres;
+
+    return result;
+}
+
+public inline finite law Matrix MatrixRotateXYZ(Vector3 angle)
+{
+stack mut Matrix result = new Matrix() { M0 = 1.0f, M4 = 0.0f, M8 = 0.0f, M12 = 0.0f, M1 = 0.0f, M5 = 1.0f, M9 = 0.0f, M13 = 0.0f, M2 = 0.0f, M6 = 0.0f, M10 = 1.0f, M14 = 0.0f, M3 = 0.0f, M7 = 0.0f, M11 = 0.0f, M15 = 1.0f }; 
+
+    stack mut f32 cosz = Cos(-angle.Z);
+    stack mut f32 sinz = Sin(-angle.Z);
+    stack mut f32 cosy = Cos(-angle.Y);
+    stack mut f32 siny = Sin(-angle.Y);
+    stack mut f32 cosx = Cos(-angle.X);
+    stack mut f32 sinx = Sin(-angle.X);
+
+    result.M0 = cosz*cosy;
+    result.M1 = (cosz*siny*sinx) - (sinz*cosx);
+    result.M2 = (cosz*siny*cosx) + (sinz*sinx);
+
+    result.M4 = sinz*cosy;
+    result.M5 = (sinz*siny*sinx) + (cosz*cosx);
+    result.M6 = (sinz*siny*cosx) - (cosz*sinx);
+
+    result.M8 = -siny;
+    result.M9 = cosy*sinx;
+    result.M10= cosy*cosx;
+
+    return result;
+}
+
+public inline finite law Matrix MatrixRotateZYX(Vector3 angle)
+{
+stack mut Matrix result = DefaultMatrix();
+
+    stack mut f32 cz = Cos(angle.Z);
+    stack mut f32 sz = Sin(angle.Z);
+    stack mut f32 cy = Cos(angle.Y);
+    stack mut f32 sy = Sin(angle.Y);
+    stack mut f32 cx = Cos(angle.X);
+    stack mut f32 sx = Sin(angle.X);
+
+    result.M0 = cz*cy;
+    result.M4 = cz*sy*sx - cx*sz;
+    result.M8 = sz*sx + cz*cx*sy;
+    result.M12 = 0;
+
+    result.M1 = cy*sz;
+    result.M5 = cz*cx + sz*sy*sx;
+    result.M9 = cx*sz*sy - cz*sx;
+    result.M13 = 0;
+
+    result.M2 = -sy;
+    result.M6 = cy*sx;
+    result.M10 = cy*cx;
+    result.M14 = 0;
+
+    result.M3 = 0;
+    result.M7 = 0;
+    result.M11 = 0;
+    result.M15 = 1;
+
+    return result;
+}
+
+public inline finite law Matrix MatrixScale(f32 x, f32 y, f32 z)
+{
+stack mut Matrix result = new Matrix() { M0 = x, M4 = 0.0f, M8 = 0.0f, M12 = 0.0f, M1 = 0.0f, M5 = y, M9 = 0.0f, M13 = 0.0f, M2 = 0.0f, M6 = 0.0f, M10 = z, M14 = 0.0f, M3 = 0.0f, M7 = 0.0f, M11 = 0.0f, M15 = 1.0f };
+
+    return result;
+}
+
+public inline finite law Matrix MatrixFrustum(f64 left, f64 right, f64 bottom, f64 top, f64 nearPlane, f64 farPlane)
+{
+stack mut Matrix result = DefaultMatrix();
+
+    stack mut f32 rl = (f32)(right - left);
+    stack mut f32 tb = (f32)(top - bottom);
+    stack mut f32 farNear = (f32)(farPlane - nearPlane);
+
+    result.M0 = ((f32)nearPlane*2.0f)/rl;
+    result.M1 = 0.0f;
+    result.M2 = 0.0f;
+    result.M3 = 0.0f;
+
+    result.M4 = 0.0f;
+    result.M5 = ((f32)nearPlane*2.0f)/tb;
+    result.M6 = 0.0f;
+    result.M7 = 0.0f;
+
+    result.M8 = ((f32)right + (f32)left)/rl;
+    result.M9 = ((f32)top + (f32)bottom)/tb;
+    result.M10 = -((f32)farPlane + (f32)nearPlane)/farNear;
+    result.M11 = -1.0f;
+
+    result.M12 = 0.0f;
+    result.M13 = 0.0f;
+    result.M14 = -((f32)farPlane*(f32)nearPlane*2.0f)/farNear;
+    result.M15 = 0.0f;
+
+    return result;
+}
+
+public inline finite law Matrix MatrixPerspective(f64 fovY, f64 aspect, f64 nearPlane, f64 farPlane)
+{
+stack mut Matrix result = DefaultMatrix();
+
+    stack mut f64 top = nearPlane*Tan(fovY*0.5);
+    stack mut f64 bottom = -top;
+    stack mut f64 right = top*aspect;
+    stack mut f64 left = -right;
+
+    
+    stack mut f32 rl = (f32)(right - left);
+    stack mut f32 tb = (f32)(top - bottom);
+    stack mut f32 farNear = (f32)(farPlane - nearPlane);
+
+    result.M0 = ((f32)nearPlane*2.0f)/rl;
+    result.M5 = ((f32)nearPlane*2.0f)/tb;
+    result.M8 = ((f32)right + (f32)left)/rl;
+    result.M9 = ((f32)top + (f32)bottom)/tb;
+    result.M10 = -((f32)farPlane + (f32)nearPlane)/farNear;
+    result.M11 = -1.0f;
+    result.M14 = -((f32)farPlane*(f32)nearPlane*2.0f)/farNear;
+
+    return result;
+}
+
+public inline finite law Matrix MatrixOrtho(f64 left, f64 right, f64 bottom, f64 top, f64 nearPlane, f64 farPlane)
+{
+stack mut Matrix result = DefaultMatrix();
+
+    stack mut f32 rl = (f32)(right - left);
+    stack mut f32 tb = (f32)(top - bottom);
+    stack mut f32 farNear = (f32)(farPlane - nearPlane);
+
+    result.M0 = 2.0f/rl;
+    result.M1 = 0.0f;
+    result.M2 = 0.0f;
+    result.M3 = 0.0f;
+    result.M4 = 0.0f;
+    result.M5 = 2.0f/tb;
+    result.M6 = 0.0f;
+    result.M7 = 0.0f;
+    result.M8 = 0.0f;
+    result.M9 = 0.0f;
+    result.M10 = -2.0f/farNear;
+    result.M11 = 0.0f;
+    result.M12 = -((f32)left + (f32)right)/rl;
+    result.M13 = -((f32)top + (f32)bottom)/tb;
+    result.M14 = -((f32)farPlane + (f32)nearPlane)/farNear;
+    result.M15 = 1.0f;
+
+    return result;
+}
+
+public inline finite law Matrix MatrixLookAt(Vector3 eye, Vector3 target, Vector3 up)
+{
+stack mut Matrix result = DefaultMatrix();
+
+    stack mut f32 length = 0.0f;
+    stack mut f32 ilength = 0.0f;
+
+    
+    stack mut Vector3 vz = new Vector3() { X = eye.X - target.X, Y = eye.Y - target.Y, Z = eye.Z - target.Z };
+
+    
+    stack mut Vector3 v = vz;
+    length = Sqrt(v.X*v.X + v.Y*v.Y + v.Z*v.Z);
+    if (length == 0.0f) length = 1.0f;
+    ilength = 1.0f/length;
+    vz.X *= ilength;
+    vz.Y *= ilength;
+    vz.Z *= ilength;
+
+    
+    stack mut Vector3 vx = new Vector3() { X = up.Y*vz.Z - up.Z*vz.Y, Y = up.Z*vz.X - up.X*vz.Z, Z = up.X*vz.Y - up.Y*vz.X };
+
+    
+    v = vx;
+    length = Sqrt(v.X*v.X + v.Y*v.Y + v.Z*v.Z);
+    if (length == 0.0f) length = 1.0f;
+    ilength = 1.0f/length;
+    vx.X *= ilength;
+    vx.Y *= ilength;
+    vx.Z *= ilength;
+
+    
+    stack mut Vector3 vy = new Vector3() { X = vz.Y*vx.Z - vz.Z*vx.Y, Y = vz.Z*vx.X - vz.X*vx.Z, Z = vz.X*vx.Y - vz.Y*vx.X };
+
+    result.M0 = vx.X;
+    result.M1 = vy.X;
+    result.M2 = vz.X;
+    result.M3 = 0.0f;
+    result.M4 = vx.Y;
+    result.M5 = vy.Y;
+    result.M6 = vz.Y;
+    result.M7 = 0.0f;
+    result.M8 = vx.Z;
+    result.M9 = vy.Z;
+    result.M10 = vz.Z;
+    result.M11 = 0.0f;
+    result.M12 = -(vx.X*eye.X + vx.Y*eye.Y + vx.Z*eye.Z);   
+    result.M13 = -(vy.X*eye.X + vy.Y*eye.Y + vy.Z*eye.Z);   
+    result.M14 = -(vz.X*eye.X + vz.Y*eye.Y + vz.Z*eye.Z);   
+    result.M15 = 1.0f;
+
+    return result;
+}
+
+public inline finite law Float16 MatrixToFloatV(Matrix mat)
+{
+stack mut Float16 result = DefaultFloat16();
+
+    result.V[0] = mat.M0;
+    result.V[1] = mat.M1;
+    result.V[2] = mat.M2;
+    result.V[3] = mat.M3;
+    result.V[4] = mat.M4;
+    result.V[5] = mat.M5;
+    result.V[6] = mat.M6;
+    result.V[7] = mat.M7;
+    result.V[8] = mat.M8;
+    result.V[9] = mat.M9;
+    result.V[10] = mat.M10;
+    result.V[11] = mat.M11;
+    result.V[12] = mat.M12;
+    result.V[13] = mat.M13;
+    result.V[14] = mat.M14;
+    result.V[15] = mat.M15;
+
+    return result;
+}
+
+public inline finite law Quaternion QuaternionAdd(Quaternion q1, Quaternion q2)
+{
+stack mut Quaternion result = new Quaternion() { X = q1.X + q2.X, Y = q1.Y + q2.Y, Z = q1.Z + q2.Z, W = q1.W + q2.W };
+
+    return result;
+}
+
+public inline finite law Quaternion QuaternionAddValue(Quaternion q, f32 add)
+{
+stack mut Quaternion result = new Quaternion() { X = q.X + add, Y = q.Y + add, Z = q.Z + add, W = q.W + add };
+
+    return result;
+}
+
+public inline finite law Quaternion QuaternionSubtract(Quaternion q1, Quaternion q2)
+{
+stack mut Quaternion result = new Quaternion() { X = q1.X - q2.X, Y = q1.Y - q2.Y, Z = q1.Z - q2.Z, W = q1.W - q2.W };
+
+    return result;
+}
+
+public inline finite law Quaternion QuaternionSubtractValue(Quaternion q, f32 sub)
+{
+stack mut Quaternion result = new Quaternion() { X = q.X - sub, Y = q.Y - sub, Z = q.Z - sub, W = q.W - sub };
+
+    return result;
+}
+
+public inline finite law Quaternion QuaternionIdentity()
+{
+stack mut Quaternion result = new Quaternion() { X = 0.0f, Y = 0.0f, Z = 0.0f, W = 1.0f };
+
+    return result;
+}
+
+public inline finite law f32 QuaternionLength(Quaternion q)
+{
+stack mut f32 result = Sqrt(q.X*q.X + q.Y*q.Y + q.Z*q.Z + q.W*q.W);
+
+    return result;
+}
+
+public inline finite law Quaternion QuaternionNormalize(Quaternion q)
+{
+stack mut Quaternion result = DefaultQuaternion();
+
+    stack mut f32 length = Sqrt(q.X*q.X + q.Y*q.Y + q.Z*q.Z + q.W*q.W);
+    if (length == 0.0f) length = 1.0f;
+    stack mut f32 ilength = 1.0f/length;
+
+    result.X = q.X*ilength;
+    result.Y = q.Y*ilength;
+    result.Z = q.Z*ilength;
+    result.W = q.W*ilength;
+
+    return result;
+}
+
+public inline finite law Quaternion QuaternionInvert(Quaternion q)
+{
+stack mut Quaternion result = q;
+
+    stack mut f32 lengthSq = q.X*q.X + q.Y*q.Y + q.Z*q.Z + q.W*q.W;
+
+    if (lengthSq != 0.0f)
+    {
+        stack mut f32 invLength = 1.0f/lengthSq;
+
+        result.X *= -invLength;
+        result.Y *= -invLength;
+        result.Z *= -invLength;
+        result.W *= invLength;
+    }
+
+    return result;
+}
+
+public inline finite law Quaternion QuaternionMultiply(Quaternion q1, Quaternion q2)
+{
+stack mut Quaternion result = DefaultQuaternion();
+
+    stack mut f32 qax = q1.X;
+
+    stack mut f32 qay = q1.Y;
+
+    stack mut f32 qaz = q1.Z;
+
+    stack mut f32 qaw = q1.W;
+    stack mut f32 qbx = q2.X;
+    stack mut f32 qby = q2.Y;
+    stack mut f32 qbz = q2.Z;
+    stack mut f32 qbw = q2.W;
+
+    result.X = qax*qbw + qaw*qbx + qay*qbz - qaz*qby;
+    result.Y = qay*qbw + qaw*qby + qaz*qbx - qax*qbz;
+    result.Z = qaz*qbw + qaw*qbz + qax*qby - qay*qbx;
+    result.W = qaw*qbw - qax*qbx - qay*qby - qaz*qbz;
+
+    return result;
+}
+
+public inline finite law Quaternion QuaternionScale(Quaternion q, f32 mul)
+{
+stack mut Quaternion result = DefaultQuaternion();
+
+    result.X = q.X*mul;
+    result.Y = q.Y*mul;
+    result.Z = q.Z*mul;
+    result.W = q.W*mul;
+
+    return result;
+}
+
+public inline finite law Quaternion QuaternionDivide(Quaternion q1, Quaternion q2)
+{
+stack mut Quaternion result = new Quaternion() { X = q1.X/q2.X, Y = q1.Y/q2.Y, Z = q1.Z/q2.Z, W = q1.W/q2.W };
+
+    return result;
+}
+
+public inline finite law Quaternion QuaternionLerp(Quaternion q1, Quaternion q2, f32 amount)
+{
+stack mut Quaternion result = DefaultQuaternion();
+
+    result.X = q1.X + amount*(q2.X - q1.X);
+    result.Y = q1.Y + amount*(q2.Y - q1.Y);
+    result.Z = q1.Z + amount*(q2.Z - q1.Z);
+    result.W = q1.W + amount*(q2.W - q1.W);
+
+    return result;
+}
+
+public inline finite law Quaternion QuaternionNlerp(Quaternion q1, Quaternion q2, f32 amount)
+{
+stack mut Quaternion result = DefaultQuaternion();
+
+    
+    result.X = q1.X + amount*(q2.X - q1.X);
+    result.Y = q1.Y + amount*(q2.Y - q1.Y);
+    result.Z = q1.Z + amount*(q2.Z - q1.Z);
+    result.W = q1.W + amount*(q2.W - q1.W);
+
+    
+    stack mut Quaternion q = result;
+    stack mut f32 length = Sqrt(q.X*q.X + q.Y*q.Y + q.Z*q.Z + q.W*q.W);
+    if (length == 0.0f) length = 1.0f;
+    stack mut f32 ilength = 1.0f/length;
+
+    result.X = q.X*ilength;
+    result.Y = q.Y*ilength;
+    result.Z = q.Z*ilength;
+    result.W = q.W*ilength;
+
+    return result;
+}
+
+public inline finite law Quaternion QuaternionSlerp(Quaternion q1, Quaternion q2, f32 amount)
+{
+    stack mut Quaternion result = DefaultQuaternion();
+    stack mut Quaternion target = q2;
+    stack mut f32 cosHalfTheta = q1.X * target.X + q1.Y * target.Y + q1.Z * target.Z + q1.W * target.W;
+    if (cosHalfTheta < 0.0f)
+    {
+        target.X = -target.X;
+        target.Y = -target.Y;
+        target.Z = -target.Z;
+        target.W = -target.W;
+        cosHalfTheta = -cosHalfTheta;
+    }
+
+    if (AbsF32(cosHalfTheta) >= 1.0f)
+    {
+        result = q1;
+    }
+    else if (cosHalfTheta > 0.95f)
+    {
+        result = QuaternionNlerp(q1, target, amount);
+    }
+    else
+    {
+        stack f32 halfTheta = Acos(cosHalfTheta);
+        stack f32 sinHalfTheta = Sqrt(1.0f - cosHalfTheta * cosHalfTheta);
+        if (AbsF32(sinHalfTheta) < RAYMATH_EPSILON)
+        {
+            result.X = q1.X * 0.5f + target.X * 0.5f;
+            result.Y = q1.Y * 0.5f + target.Y * 0.5f;
+            result.Z = q1.Z * 0.5f + target.Z * 0.5f;
+            result.W = q1.W * 0.5f + target.W * 0.5f;
+        }
+        else
+        {
+            stack f32 ratioA = Sin((1.0f - amount) * halfTheta) / sinHalfTheta;
+            stack f32 ratioB = Sin(amount * halfTheta) / sinHalfTheta;
+            result.X = q1.X * ratioA + target.X * ratioB;
+            result.Y = q1.Y * ratioA + target.Y * ratioB;
+            result.Z = q1.Z * ratioA + target.Z * ratioB;
+            result.W = q1.W * ratioA + target.W * ratioB;
+        }
+    }
+
+    return result;
+}
+
+public inline finite law Quaternion QuaternionCubicHermiteSpline(Quaternion q1, Quaternion outTangent1, Quaternion q2, Quaternion inTangent2, f32 t)
+{
+stack mut f32 t2 = t*t;
+    stack mut f32 t3 = t2*t;
+    stack mut f32 h00 = 2*t3 - 3*t2 + 1;
+    stack mut f32 h10 = t3 - 2*t2 + t;
+    stack mut f32 h01 = -2*t3 + 3*t2;
+    stack mut f32 h11 = t3 - t2;
+
+    stack mut Quaternion p0 = QuaternionScale(q1, h00);
+    stack mut Quaternion m0 = QuaternionScale(outTangent1, h10);
+    stack mut Quaternion p1 = QuaternionScale(q2, h01);
+    stack mut Quaternion m1 = QuaternionScale(inTangent2, h11);
+
+    stack mut Quaternion result = DefaultQuaternion();
+
+    result = QuaternionAdd(p0, m0);
+    result = QuaternionAdd(result, p1);
+    result = QuaternionAdd(result, m1);
+    result = QuaternionNormalize(result);
+
+    return result;
+}
+
+public inline finite law Quaternion QuaternionFromVector3ToVector3(Vector3 source, Vector3 target)
+{
+stack mut Quaternion result = DefaultQuaternion();
+
+    stack mut f32 cos2Theta = (source.X*target.X + source.Y*target.Y + source.Z*target.Z); 
+    stack mut Vector3 cross = new Vector3() { X = source.Y*target.Z - source.Z*target.Y, Y = source.Z*target.X - source.X*target.Z, Z = source.X*target.Y - source.Y*target.X }; 
+
+    result.X = cross.X;
+    result.Y = cross.Y;
+    result.Z = cross.Z;
+    result.W = Sqrt(cross.X*cross.X + cross.Y*cross.Y + cross.Z*cross.Z + cos2Theta*cos2Theta) + cos2Theta;
+
+    
+    
+    stack mut Quaternion q = result;
+    stack mut f32 length = Sqrt(q.X*q.X + q.Y*q.Y + q.Z*q.Z + q.W*q.W);
+    if (length == 0.0f) length = 1.0f;
+    stack mut f32 ilength = 1.0f/length;
+
+    result.X = q.X*ilength;
+    result.Y = q.Y*ilength;
+    result.Z = q.Z*ilength;
+    result.W = q.W*ilength;
+
+    return result;
+}
+
+public inline finite law Quaternion QuaternionFromMatrix(Matrix mat)
+{
+stack mut Quaternion result = DefaultQuaternion();
+
+    stack mut f32 fourWSquaredMinus1 = mat.M0  + mat.M5 + mat.M10;
+    stack mut f32 fourXSquaredMinus1 = mat.M0  - mat.M5 - mat.M10;
+    stack mut f32 fourYSquaredMinus1 = mat.M5  - mat.M0 - mat.M10;
+    stack mut f32 fourZSquaredMinus1 = mat.M10 - mat.M0 - mat.M5;
+
+    stack mut i32[min max] biggestIndex = 0;
+    stack mut f32 fourBiggestSquaredMinus1 = fourWSquaredMinus1;
+    if (fourXSquaredMinus1 > fourBiggestSquaredMinus1)
+    {
+        fourBiggestSquaredMinus1 = fourXSquaredMinus1;
+        biggestIndex = 1;
+    }
+
+    if (fourYSquaredMinus1 > fourBiggestSquaredMinus1)
+    {
+        fourBiggestSquaredMinus1 = fourYSquaredMinus1;
+        biggestIndex = 2;
+    }
+
+    if (fourZSquaredMinus1 > fourBiggestSquaredMinus1)
+    {
+        fourBiggestSquaredMinus1 = fourZSquaredMinus1;
+        biggestIndex = 3;
+    }
+
+    stack mut f32 biggestVal = Sqrt(fourBiggestSquaredMinus1 + 1.0f)*0.5f;
+    stack mut f32 mult = 0.25f/biggestVal;
+
+    switch (biggestIndex)
+    {
+        case 0:
+            result.W = biggestVal;
+            result.X = (mat.M6 - mat.M9)*mult;
+            result.Y = (mat.M8 - mat.M2)*mult;
+            result.Z = (mat.M1 - mat.M4)*mult;
+            break;
+        case 1:
+            result.X = biggestVal;
+            result.W = (mat.M6 - mat.M9)*mult;
+            result.Y = (mat.M1 + mat.M4)*mult;
+            result.Z = (mat.M8 + mat.M2)*mult;
+            break;
+        case 2:
+            result.Y = biggestVal;
+            result.W = (mat.M8 - mat.M2)*mult;
+            result.X = (mat.M1 + mat.M4)*mult;
+            result.Z = (mat.M6 + mat.M9)*mult;
+            break;
+        case 3:
+            result.Z = biggestVal;
+            result.W = (mat.M1 - mat.M4)*mult;
+            result.X = (mat.M8 + mat.M2)*mult;
+            result.Y = (mat.M6 + mat.M9)*mult;
+            break;
+        default:
+            break;
+    }
+
+    return result;
+}
+
+public inline finite law Matrix QuaternionToMatrix(Quaternion q)
+{
+stack mut Matrix result = new Matrix() { M0 = 1.0f, M4 = 0.0f, M8 = 0.0f, M12 = 0.0f, M1 = 0.0f, M5 = 1.0f, M9 = 0.0f, M13 = 0.0f, M2 = 0.0f, M6 = 0.0f, M10 = 1.0f, M14 = 0.0f, M3 = 0.0f, M7 = 0.0f, M11 = 0.0f, M15 = 1.0f }; 
+
+    stack mut f32 a2 = q.X*q.X;
+    stack mut f32 b2 = q.Y*q.Y;
+    stack mut f32 c2 = q.Z*q.Z;
+    stack mut f32 ac = q.X*q.Z;
+    stack mut f32 ab = q.X*q.Y;
+    stack mut f32 bc = q.Y*q.Z;
+    stack mut f32 ad = q.W*q.X;
+    stack mut f32 bd = q.W*q.Y;
+    stack mut f32 cd = q.W*q.Z;
+
+    result.M0 = 1 - 2*(b2 + c2);
+    result.M1 = 2*(ab + cd);
+    result.M2 = 2*(ac - bd);
+
+    result.M4 = 2*(ab - cd);
+    result.M5 = 1 - 2*(a2 + c2);
+    result.M6 = 2*(bc + ad);
+
+    result.M8 = 2*(ac + bd);
+    result.M9 = 2*(bc - ad);
+    result.M10 = 1 - 2*(a2 + b2);
+
+    return result;
+}
+
+public inline finite law Quaternion QuaternionFromAxisAngle(Vector3 axis, f32 angle)
+{
+    stack mut Quaternion result = new Quaternion() { X = 0.0f, Y = 0.0f, Z = 0.0f, W = 1.0f };
+    stack f32 length = Sqrt(axis.X * axis.X + axis.Y * axis.Y + axis.Z * axis.Z);
+    if (length != 0.0f)
+    {
+        stack f32 halfAngle = angle * 0.5f;
+        stack f32 ilength = 1.0f / length;
+        stack Vector3 normalizedAxis = new Vector3() { X = axis.X * ilength, Y = axis.Y * ilength, Z = axis.Z * ilength };
+        stack f32 sinres = Sin(halfAngle);
+        stack f32 cosres = Cos(halfAngle);
+        result.X = normalizedAxis.X * sinres;
+        result.Y = normalizedAxis.Y * sinres;
+        result.Z = normalizedAxis.Z * sinres;
+        result.W = cosres;
+        result = QuaternionNormalize(result);
+    }
+
+    return result;
+}
+
+public inline finite law QuaternionAxisAngle QuaternionToAxisAngle(Quaternion q)
+{
+    stack mut Quaternion normalized = q;
+    if (AbsF32(normalized.W) > 1.0f)
+    {
+        normalized = QuaternionNormalize(normalized);
+    }
+
+    stack mut Vector3 axis = Vector3Zero();
+    stack f32 angle = 2.0f * Acos(normalized.W);
+    stack f32 den = Sqrt(1.0f - normalized.W * normalized.W);
+    if (den > RAYMATH_EPSILON)
+    {
+        axis.X = normalized.X / den;
+        axis.Y = normalized.Y / den;
+        axis.Z = normalized.Z / den;
+    }
+    else
+    {
+        axis.X = 1.0f;
+    }
+
+    return new QuaternionAxisAngle() { Axis = axis, Angle = angle };
+}
+
+public inline finite law Quaternion QuaternionFromEuler(f32 pitch, f32 yaw, f32 roll)
+{
+stack mut Quaternion result = DefaultQuaternion();
+
+    stack mut f32 x0 = Cos(pitch*0.5f);
+    stack mut f32 x1 = Sin(pitch*0.5f);
+    stack mut f32 y0 = Cos(yaw*0.5f);
+    stack mut f32 y1 = Sin(yaw*0.5f);
+    stack mut f32 z0 = Cos(roll*0.5f);
+    stack mut f32 z1 = Sin(roll*0.5f);
+
+    result.X = x1*y0*z0 - x0*y1*z1;
+    result.Y = x0*y1*z0 + x1*y0*z1;
+    result.Z = x0*y0*z1 - x1*y1*z0;
+    result.W = x0*y0*z0 + x1*y1*z1;
+
+    return result;
+}
+
+public inline finite law Vector3 QuaternionToEuler(Quaternion q)
+{
+stack mut Vector3 result = DefaultVector3();
+
+    
+    stack mut f32 x0 = 2.0f*(q.W*q.X + q.Y*q.Z);
+    stack mut f32 x1 = 1.0f - 2.0f*(q.X*q.X + q.Y*q.Y);
+    result.X = Atan2(x0, x1);
+
+    
+    stack mut f32 y0 = 2.0f*(q.W*q.Y - q.Z*q.X);
+    y0 = y0 > 1.0f ? 1.0f : y0;
+    y0 = y0 < -1.0f ? -1.0f : y0;
+    result.Y = Asin(y0);
+
+    
+    stack mut f32 z0 = 2.0f*(q.W*q.Z + q.X*q.Y);
+    stack mut f32 z1 = 1.0f - 2.0f*(q.Y*q.Y + q.Z*q.Z);
+    result.Z = Atan2(z0, z1);
+
+    return result;
+}
+
+public inline finite law Quaternion QuaternionTransform(Quaternion q, Matrix mat)
+{
+stack mut Quaternion result = DefaultQuaternion();
+
+    result.X = mat.M0*q.X + mat.M4*q.Y + mat.M8*q.Z + mat.M12*q.W;
+    result.Y = mat.M1*q.X + mat.M5*q.Y + mat.M9*q.Z + mat.M13*q.W;
+    result.Z = mat.M2*q.X + mat.M6*q.Y + mat.M10*q.Z + mat.M14*q.W;
+    result.W = mat.M3*q.X + mat.M7*q.Y + mat.M11*q.Z + mat.M15*q.W;
+
+    return result;
+}
+
+public inline finite law bool QuaternionEquals(Quaternion p, Quaternion q)
+{
+stack mut bool result = (((AbsF32(p.X - q.X)) <= (RAYMATH_EPSILON*Max(1.0f, Max(AbsF32(p.X), AbsF32(q.X))))) &&
+                  ((AbsF32(p.Y - q.Y)) <= (RAYMATH_EPSILON*Max(1.0f, Max(AbsF32(p.Y), AbsF32(q.Y))))) &&
+                  ((AbsF32(p.Z - q.Z)) <= (RAYMATH_EPSILON*Max(1.0f, Max(AbsF32(p.Z), AbsF32(q.Z))))) &&
+                  ((AbsF32(p.W - q.W)) <= (RAYMATH_EPSILON*Max(1.0f, Max(AbsF32(p.W), AbsF32(q.W)))))) ||
+                 (((AbsF32(p.X + q.X)) <= (RAYMATH_EPSILON*Max(1.0f, Max(AbsF32(p.X), AbsF32(q.X))))) &&
+                  ((AbsF32(p.Y + q.Y)) <= (RAYMATH_EPSILON*Max(1.0f, Max(AbsF32(p.Y), AbsF32(q.Y))))) &&
+                  ((AbsF32(p.Z + q.Z)) <= (RAYMATH_EPSILON*Max(1.0f, Max(AbsF32(p.Z), AbsF32(q.Z))))) &&
+                  ((AbsF32(p.W + q.W)) <= (RAYMATH_EPSILON*Max(1.0f, Max(AbsF32(p.W), AbsF32(q.W))))));
+
+    return result;
+}
+
+public inline finite law Matrix MatrixCompose(Vector3 translation, Quaternion rotation, Vector3 scale)
+{
+stack mut Vector3 right = new Vector3() { X = 1.0f, Y = 0.0f, Z = 0.0f };
+    stack mut Vector3 up = new Vector3() { X = 0.0f, Y = 1.0f, Z = 0.0f };
+    stack mut Vector3 forward = new Vector3() { X = 0.0f, Y = 0.0f, Z = 1.0f };
+
+    
+    right = Vector3Scale(right, scale.X);
+    up = Vector3Scale(up, scale.Y);
+    forward = Vector3Scale(forward , scale.Z);
+
+    
+    right = Vector3RotateByQuaternion(right, rotation);
+    up = Vector3RotateByQuaternion(up, rotation);
+    forward = Vector3RotateByQuaternion(forward, rotation);
+
+    
+    stack mut Matrix result = new Matrix() { M0 = right.X, M4 = up.X, M8 = forward.X, M12 = translation.X, M1 = right.Y, M5 = up.Y, M9 = forward.Y, M13 = translation.Y, M2 = right.Z, M6 = up.Z, M10 = forward.Z, M14 = translation.Z, M3 = 0.0f, M7 = 0.0f, M11 = 0.0f, M15 = 1.0f };
+
+    return result;
+}
+
+public inline finite law MatrixDecomposeResult MatrixDecompose(Matrix mat)
+{
+    stack f32 eps = 0.000000001f;
+    stack Vector3 translation = new Vector3() { X = mat.M12, Y = mat.M13, Z = mat.M14 };
+    stack mut Vector3 col0 = new Vector3() { X = mat.M0, Y = mat.M4, Z = mat.M8 };
+    stack mut Vector3 col1 = new Vector3() { X = mat.M1, Y = mat.M5, Z = mat.M9 };
+    stack mut Vector3 col2 = new Vector3() { X = mat.M2, Y = mat.M6, Z = mat.M10 };
+    stack mut Vector3 scale = Vector3Zero();
+    stack mut f32 shear0 = 0.0f;
+    stack mut f32 shear1 = 0.0f;
+    stack mut f32 shear2 = 0.0f;
+
+    stack mut f32 stabilizer = eps;
+    stabilizer = Max(stabilizer, AbsF32(col0.X));
+    stabilizer = Max(stabilizer, AbsF32(col0.Y));
+    stabilizer = Max(stabilizer, AbsF32(col0.Z));
+    stabilizer = Max(stabilizer, AbsF32(col1.X));
+    stabilizer = Max(stabilizer, AbsF32(col1.Y));
+    stabilizer = Max(stabilizer, AbsF32(col1.Z));
+    stabilizer = Max(stabilizer, AbsF32(col2.X));
+    stabilizer = Max(stabilizer, AbsF32(col2.Y));
+    stabilizer = Max(stabilizer, AbsF32(col2.Z));
+
+    col0 = Vector3Scale(col0, 1.0f / stabilizer);
+    col1 = Vector3Scale(col1, 1.0f / stabilizer);
+    col2 = Vector3Scale(col2, 1.0f / stabilizer);
+
+    scale.X = Vector3Length(col0);
+    if (scale.X > eps) { col0 = Vector3Scale(col0, 1.0f / scale.X); }
+    shear0 = Vector3DotProduct(col0, col1);
+    col1 = Vector3Subtract(col1, Vector3Scale(col0, shear0));
+    scale.Y = Vector3Length(col1);
+    if (scale.Y > eps) { col1 = Vector3Scale(col1, 1.0f / scale.Y); shear0 /= scale.Y; }
+    shear1 = Vector3DotProduct(col0, col2);
+    col2 = Vector3Subtract(col2, Vector3Scale(col0, shear1));
+    shear2 = Vector3DotProduct(col1, col2);
+    col2 = Vector3Subtract(col2, Vector3Scale(col1, shear2));
+    scale.Z = Vector3Length(col2);
+    if (scale.Z > eps) { col2 = Vector3Scale(col2, 1.0f / scale.Z); shear1 /= scale.Z; shear2 /= scale.Z; }
+
+    stack f32 det = Vector3DotProduct(col0, Vector3CrossProduct(col1, col2));
+    if (det < 0.0f)
+    {
+        scale.X = -scale.X;
+        scale.Y = -scale.Y;
+        scale.Z = -scale.Z;
+        col0 = Vector3Negate(col0);
+        col1 = Vector3Negate(col1);
+        col2 = Vector3Negate(col2);
+    }
+
+    scale = Vector3Scale(scale, stabilizer);
+    stack Matrix rotationMatrix = new Matrix()
+    {
+        M0 = col0.X, M4 = col0.Y, M8 = col0.Z, M12 = 0.0f,
+        M1 = col1.X, M5 = col1.Y, M9 = col1.Z, M13 = 0.0f,
+        M2 = col2.X, M6 = col2.Y, M10 = col2.Z, M14 = 0.0f,
+        M3 = 0.0f, M7 = 0.0f, M11 = 0.0f, M15 = 1.0f
+    };
+    stack Quaternion rotation = QuaternionFromMatrix(rotationMatrix);
+    return new MatrixDecomposeResult() { Translation = translation, Rotation = rotation, Scale = scale };
+}

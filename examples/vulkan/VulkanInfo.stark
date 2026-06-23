@@ -1,15 +1,10 @@
 import System.Console
-import System.IO
 import Vendor.Vulkan
 module VulkanInfo
 
 fn i32[min max] PrintUnavailable()
 {
-    if (System.Console.WriteLine("Vulkan unavailable") != System.IO.IOStatus.Ok)
-    {
-        return 1;
-    }
-
+    WriteLine("Vulkan unavailable");
     return 0;
 }
 
@@ -80,11 +75,7 @@ fn i32[min max] Run()
             }
     }
 
-    if (System.Console.WriteLine("Vulkan loader ok") != System.IO.IOStatus.Ok)
-    {
-        return 5;
-    }
-
+    WriteLine("Vulkan loader ok");
     return 0;
 }
 
