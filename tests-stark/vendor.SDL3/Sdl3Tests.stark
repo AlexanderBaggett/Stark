@@ -1,0 +1,62 @@
+import Vendor.SDL3
+module Sdl3Tests
+
+[Fact]
+fn bool VersionReportsSupportedMajor()
+{
+    stack Version version = GetVersion();
+    return version.Major >= 3;
+}
+
+[Fact]
+fn bool EventQueueCanRoundTripSyntheticQuit()
+{
+    switch (Initialize(InitEvents))
+    {
+        case LibraryResult.Err(var error):
+            return false;
+        case LibraryResult.Ok(var library):
+            switch (PushQuitEvent())
+            {
+                case SdlStatus.Err(var pushError):
+                    return false;
+                case SdlStatus.Ok:
+                    switch (PollEvent())
+                    {
+                        case EventPollResult.None:
+                            return false;
+                        case EventPollResult.Some(var event):
+                            return event.Kind == SdlEventKind.Quit
+                                && event.Type == EventQuit;
+                    }
+            }
+    }
+}
+
+[Fact]
+fn bool EmptyWindowRendererCreationRejectsInvalidHandle()
+{
+    stack mut Window window = new();
+    switch (CreateDefaultRenderer(window))
+    {
+        case RendererResult.Ok(var renderer):
+            return false;
+        case RendererResult.Err(var error):
+            return error == SdlError.InvalidArgument;
+    }
+}
+
+[Fact]
+fn bool EmptyAudioStreamRejectsNativeCalls()
+{
+    stack mut AudioStream stream = new();
+    stack mut u8[0 max][4] bytes = { 0, 0, 0, 0 };
+    stack u8[0 max][] source = bytes;
+    switch (PutAudioStreamBytes(stream, source))
+    {
+        case SdlStatus.Ok:
+            return false;
+        case SdlStatus.Err(var error):
+            return error == SdlError.InvalidArgument;
+    }
+}

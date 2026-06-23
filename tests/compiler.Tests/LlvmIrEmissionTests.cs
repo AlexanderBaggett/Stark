@@ -168,6 +168,36 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
+    public void RawPointerToFunctionPointerAliasCastEmitsNoOpIndirectCall()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            alias Pfn = fnptr<unsafe ffi(c) fn i32[min max](i32[min max])>;
+
+            unsafe fn i32[min max] Apply(rawptr<i8[min max]> pointer, i32[min max] value)
+            {
+                unsafe
+                {
+                    stack Pfn callback = (Pfn)pointer;
+                    return callback(value);
+                }
+            }
+            """,
+            options: new CompilerOptions());
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+        var body = ExtractDefinitionBody(llvm, "Apply");
+
+        Assert.Contains("call i32 %arg_pointer(i32 %arg_value)", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("ptrtoint", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("inttoptr", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("bitcast", body, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void DynTraitObjectDispatchLoadsVtableSlotAndCallsIndirectly()
     {
         var result = Compile(

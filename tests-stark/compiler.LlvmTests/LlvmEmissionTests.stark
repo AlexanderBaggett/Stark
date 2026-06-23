@@ -1690,6 +1690,13 @@ fn bool RawPointerToRawPointerConversionIsLlvmNoOp()
 
 [Fact]
 [Collection("llvm-emitter-conversion")]
+fn bool RawPointerToFunctionPointerAliasCastEmitsNoOpIndirectCall()
+{
+    return RawPointerToFunctionPointerAliasCastEmitsNoOpIndirectCallImpl();
+}
+
+[Fact]
+[Collection("llvm-emitter-conversion")]
 fn bool SameWidthIntegerConversionIsEmittedAsAlias()
 {
     return SameWidthIntegerConversionIsEmittedAsAliasImpl();

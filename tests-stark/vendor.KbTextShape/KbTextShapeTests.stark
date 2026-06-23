@@ -1,0 +1,122 @@
+import System.IO
+import System.IO.File
+import System.Runtime.Buffer
+import Vendor.KbTextShape
+module KbTextShapeTests
+
+const FixtureFontPath = "../../vendor/native/stb/testdata/Vera.ttf";
+
+fn FontResult LoadFixtureFont()
+{
+    stack mut System.Runtime.Buffer.DynamicByteBuffer fontStorage = new();
+    switch (System.IO.File.ReadAllBytes(FixtureFontPath))
+    {
+        case System.IO.IOResult<System.Runtime.Buffer.DynamicByteBuffer>.Err(var error):
+            return FontResult.Err(TextShapeError.InvalidFont);
+        case System.IO.IOResult<System.Runtime.Buffer.DynamicByteBuffer>.Ok(var bytes):
+            fontStorage = bytes;
+    }
+
+    return CreateFontFromMemory(fontStorage.ReadSlice(), 0);
+}
+
+[Fact]
+fn bool GraphemeSegmenterReturnsUtf8ByteBoundaries()
+{
+    switch (CreateSegmenter(BreakKind.Grapheme))
+    {
+        case SegmenterResult.Err(var error):
+            return false;
+        case SegmenterResult.Ok(var segmenter):
+            stack mut TextBoundary[8] boundaries = { new TextBoundary() };
+            stack mut TextBoundary[] boundaryBuffer = boundaries;
+            switch (SegmentUtf8Into(segmenter, "Aé", boundaryBuffer))
+            {
+                case OutputCountResult.Err(var segmentError):
+                    return false;
+                case OutputCountResult.Ok(var counts):
+                    return counts.Complete()
+                        && counts.Written == 2
+                        && boundaries[0].Start == 0
+                        && boundaries[0].End == 1
+                        && boundaries[1].Start == 1
+                        && boundaries[1].End == 3;
+            }
+    }
+}
+
+[Fact]
+fn bool WordSegmenterWritesRequiredCountForSmallBuffer()
+{
+    switch (CreateSegmenter(BreakKind.Word))
+    {
+        case SegmenterResult.Err(var error):
+            return false;
+        case SegmenterResult.Ok(var segmenter):
+            stack mut TextBoundary[1] boundaries = { new TextBoundary() };
+            stack mut TextBoundary[] boundaryBuffer = boundaries;
+            switch (SegmentUtf8Into(segmenter, "one two", boundaryBuffer))
+            {
+                case OutputCountResult.Err(var segmentError):
+                    return false;
+                case OutputCountResult.Ok(var counts):
+                    return !counts.Complete()
+                        && counts.Written == 1
+                        && counts.Required > counts.Written
+                        && boundaries[0].Start == 0
+                        && boundaries[0].End > boundaries[0].Start;
+            }
+    }
+}
+
+[Fact]
+fn bool FixtureFontShapesAsciiIntoCallerBuffer()
+{
+    switch (LoadFixtureFont())
+    {
+        case FontResult.Err(var error):
+            return false;
+        case FontResult.Ok(var font):
+            if (UnitsPerEm(font) == 0)
+            {
+                return false;
+            }
+
+            stack mut ShapedGlyph[16] glyphs = { new ShapedGlyph() };
+            stack mut ShapedGlyph[] glyphBuffer = glyphs;
+            switch (ShapeUtf8Into(font, "Stark", glyphBuffer))
+            {
+                case OutputCountResult.Err(var shapeError):
+                    return false;
+                case OutputCountResult.Ok(var counts):
+                    return counts.Complete()
+                        && counts.Written > 0
+                        && counts.Required >= counts.Written
+                        && glyphs[0].GlyphId != 0
+                        && glyphs[0].XAdvance > 0;
+            }
+    }
+}
+
+[Fact]
+fn bool ShapeReportsRequiredGlyphsForSmallBuffer()
+{
+    switch (LoadFixtureFont())
+    {
+        case FontResult.Err(var error):
+            return false;
+        case FontResult.Ok(var font):
+            stack mut ShapedGlyph[1] glyphs = { new ShapedGlyph() };
+            stack mut ShapedGlyph[] glyphBuffer = glyphs;
+            switch (ShapeUtf8Into(font, "Stark", glyphBuffer))
+            {
+                case OutputCountResult.Err(var shapeError):
+                    return false;
+                case OutputCountResult.Ok(var counts):
+                    return !counts.Complete()
+                        && counts.Written == 1
+                        && counts.Required > counts.Written
+                        && glyphs[0].GlyphId != 0;
+            }
+    }
+}

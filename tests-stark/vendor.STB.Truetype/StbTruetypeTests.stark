@@ -1,0 +1,189 @@
+import System.IO
+import System.IO.File
+import System.Runtime.Buffer
+import System.Testing
+import Vendor.STB.Truetype
+module StbTruetypeTests
+
+const FixtureFontPath = "../../vendor/native/stb/testdata/Vera.ttf";
+
+fn FontResult LoadFixtureFont()
+{
+    stack mut System.Runtime.Buffer.DynamicByteBuffer fontStorage = new();
+    switch (System.IO.File.ReadAllBytes(FixtureFontPath))
+    {
+        case System.IO.IOResult<System.Runtime.Buffer.DynamicByteBuffer>.Err(var error):
+            return FontResult.Err(TrueTypeError.InvalidFont);
+        case System.IO.IOResult<System.Runtime.Buffer.DynamicByteBuffer>.Ok(var bytes):
+            fontStorage = bytes;
+    }
+
+    return LoadFontFromMemory(fontStorage.ReadSlice(), 0);
+}
+
+fn bool AnyNonZero(borrow u8[0 max][] pixels, u64[0 2 ** 63 - 1] count)
+{
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (pixels[index] != 0)
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+[Fact]
+fn bool LoadFixtureFontReadsMetrics()
+{
+    switch (LoadFixtureFont())
+    {
+        case FontResult.Err(var error):
+            return false;
+        case FontResult.Ok(var font):
+            switch (ScaleForPixelHeight(font, 32.0f))
+            {
+                case ScaleResult.Err(var scaleError):
+                    return false;
+                case ScaleResult.Ok(var scale):
+                    if (scale <= 0.0f)
+                    {
+                        return false;
+                    }
+            }
+
+            switch (FindGlyph(font, 65))
+            {
+                case GlyphLookupResult.Err(var glyphError):
+                    return false;
+                case GlyphLookupResult.Ok(var glyph):
+                    if (glyph.Index() == 0)
+                    {
+                        return false;
+                    }
+            }
+
+            switch (GetVerticalMetrics(font))
+            {
+                case FontVerticalMetricsResult.Err(var metricsError):
+                    return false;
+                case FontVerticalMetricsResult.Ok(var metrics):
+                    return metrics.Ascent > 0 && metrics.Descent < 0;
+            }
+    }
+}
+
+[Fact]
+fn bool RenderGlyphBitmapWritesCallerOwnedBuffer()
+{
+    switch (LoadFixtureFont())
+    {
+        case FontResult.Err(var error):
+            return false;
+        case FontResult.Ok(var font):
+            stack mut f32 scale = 0.0f;
+            switch (ScaleForPixelHeight(font, 32.0f))
+            {
+                case ScaleResult.Err(var scaleError):
+                    return false;
+                case ScaleResult.Ok(var value):
+                    scale = value;
+            }
+
+            stack mut GlyphId glyph = new GlyphId()
+            {
+                Value = 1
+            };
+            switch (FindGlyph(font, 65))
+            {
+                case GlyphLookupResult.Err(var glyphError):
+                    return false;
+                case GlyphLookupResult.Ok(var found):
+                    glyph = found;
+            }
+
+            stack mut GlyphBitmapBox box = new();
+            switch (GetGlyphBitmapBox(font, glyph, scale))
+            {
+                case GlyphBitmapBoxResult.Err(var boxError):
+                    return false;
+                case GlyphBitmapBoxResult.Ok(var value):
+                    box = value;
+            }
+
+            if (box.Width() == 0 || box.Height() == 0 || box.Width() > 64 || box.Height() > 64)
+            {
+                return false;
+            }
+
+            stack mut u8[0 max][4096] bitmap = { 0 };
+            stack mut u8[0 max][] bitmapPixels = bitmap;
+            stack u32[1 max] bitmapWidth = (u32[1 max])box.Width();
+            stack u32[1 max] bitmapHeight = (u32[1 max])box.Height();
+            switch (RenderGlyphBitmap(font, glyph, scale, bitmapPixels, bitmapWidth, bitmapHeight, bitmapWidth))
+            {
+                case TrueTypeStatus.Err(var renderError):
+                    return false;
+                case TrueTypeStatus.Ok:
+                    return AnyNonZero(
+                        bitmapPixels,
+                        (u64[0 2 ** 63 - 1])bitmapWidth * (u64[0 2 ** 63 - 1])bitmapHeight);
+            }
+    }
+}
+
+[Fact]
+fn bool PackGlyphRangeWritesAtlasAndPackedChars()
+{
+    switch (LoadFixtureFont())
+    {
+        case FontResult.Err(var error):
+            return false;
+        case FontResult.Ok(var font):
+            stack mut u8[0 max][4096] atlas = { 0 };
+            stack mut u8[0 max][] atlasPixels = atlas;
+            stack mut PackedChar[4] chars =
+            {
+                new PackedChar(),
+                new PackedChar(),
+                new PackedChar(),
+                new PackedChar()
+            };
+            stack mut PackedChar[] packedChars = chars;
+
+            switch (PackGlyphRange(font, 24.0f, 65, 4, atlasPixels, 64, 64, 64, 1, 1, 1, packedChars))
+            {
+                case TrueTypeStatus.Err(var packError):
+                    return false;
+                case TrueTypeStatus.Ok:
+                    return chars[0].X1 > chars[0].X0 && AnyNonZero(atlasPixels, 4096);
+            }
+    }
+}
+
+[Fact]
+fn bool TooSmallRenderDestinationIsRejectedBeforeNativeWrite()
+{
+    switch (LoadFixtureFont())
+    {
+        case FontResult.Err(var error):
+            return false;
+        case FontResult.Ok(var font):
+            switch (FindGlyph(font, 65))
+            {
+                case GlyphLookupResult.Err(var glyphError):
+                    return false;
+                case GlyphLookupResult.Ok(var glyph):
+                    stack mut u8[0 max][1] tiny = { 0 };
+                    stack mut u8[0 max][] tinyPixels = tiny;
+                    switch (RenderGlyphBitmap(font, glyph, 1.0f, tinyPixels, 8, 8, 8))
+                    {
+                        case TrueTypeStatus.Ok:
+                            return false;
+                        case TrueTypeStatus.Err(var error):
+                            return error == TrueTypeError.DestinationTooSmall;
+                    }
+            }
+    }
+}

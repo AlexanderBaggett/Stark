@@ -2808,6 +2808,54 @@ public finite law bool IsTypeStartToken(TokenKind kind)
             return true;
         case TokenKind.Closure:
             return true;
+        case TokenKind.Rawptr:
+            return true;
+        case TokenKind.Rawmutptr:
+            return true;
+        default:
+            return false;
+    }
+}
+
+finite law bool IsConversionTypeStartToken(TokenKind kind)
+{
+    return IsTypeStartToken(kind);
+}
+
+finite law bool IsUnaryExpressionStartToken(TokenKind kind)
+{
+    switch (kind)
+    {
+        case TokenKind.IntegerLiteral:
+            return true;
+        case TokenKind.FloatLiteral:
+            return true;
+        case TokenKind.True:
+            return true;
+        case TokenKind.False:
+            return true;
+        case TokenKind.Null:
+            return true;
+        case TokenKind.Identifier:
+            return true;
+        case TokenKind.New:
+            return true;
+        case TokenKind.LParen:
+            return true;
+        case TokenKind.Plus:
+            return true;
+        case TokenKind.Minus:
+            return true;
+        case TokenKind.WrapSub:
+            return true;
+        case TokenKind.Bang:
+            return true;
+        case TokenKind.Tilde:
+            return true;
+        case TokenKind.And:
+            return true;
+        case TokenKind.Star:
+            return true;
         default:
             return false;
     }
@@ -3795,6 +3843,9 @@ public enum ExprKind
     NullLiteral,
     Identifier,
     Unary,
+    // `Convert` carries the conversion target's first type token and the
+    // converted operand in `Left`.
+    Convert,
     Binary,
     // Postfix: `Member` carries the member-name token and the receiver in
     // `Left`; `Call` carries the `(` token and the callee in `Left`; `Index`
@@ -4359,12 +4410,72 @@ fn ExprParse ParsePostfixExpr(borrow TokenStream stream, mut borrow ExprTree tre
     return result;
 }
 
-// Parses a unary-prefixed expression (`-`/`!`/`~`) or a postfix expression.
+fn bool TryFindConversionType(borrow TokenStream stream, u32[0 max] pos, out u32[0 max] typeStart, out u32[0 max] closeParen)
+{
+    typeStart = 0;
+    closeParen = pos;
+    if (stream.KindAt((u64[0 2 ** 63 - 1])pos) != TokenKind.LParen)
+    {
+        return false;
+    }
+
+    stack mut u32[0 max] firstTypeToken = (u32[0 max])(pos + 1);
+    stack mut TokenKind firstTypeKind = stream.KindAt((u64[0 2 ** 63 - 1])firstTypeToken);
+    while willexit (firstTypeKind == TokenKind.Borrow
+        || firstTypeKind == TokenKind.Retborrow
+        || firstTypeKind == TokenKind.Storeborrow
+        || firstTypeKind == TokenKind.Frozen
+        || firstTypeKind == TokenKind.Shared
+        || firstTypeKind == TokenKind.Out
+        || firstTypeKind == TokenKind.Init
+        || firstTypeKind == TokenKind.Mut)
+    {
+        firstTypeToken = (u32[0 max])(firstTypeToken + 1);
+        firstTypeKind = stream.KindAt((u64[0 2 ** 63 - 1])firstTypeToken);
+    }
+
+    if (!IsConversionTypeStartToken(firstTypeKind))
+    {
+        return false;
+    }
+
+    stack u32[0 max] close = MatchingBracket(stream, pos);
+    if (close <= pos || stream.KindAt((u64[0 2 ** 63 - 1])close) != TokenKind.RParen)
+    {
+        return false;
+    }
+
+    stack TokenKind operandKind = stream.KindAt((u64[0 2 ** 63 - 1])(close + 1));
+    if (firstTypeKind == TokenKind.Identifier && operandKind == TokenKind.LParen)
+    {
+        return false;
+    }
+
+    if (!IsUnaryExpressionStartToken(operandKind))
+    {
+        return false;
+    }
+
+    typeStart = firstTypeToken;
+    closeParen = close;
+    return true;
+}
+
+// Parses a conversion, unary-prefixed expression, or postfix expression.
 fn ExprParse ParseUnaryExpr(borrow TokenStream stream, mut borrow ExprTree tree, u32[0 max] pos)
 {
     stack mut ExprParse result = new();
     stack TokenKind kind = stream.KindAt((u64[0 2 ** 63 - 1])pos);
-    if (kind == TokenKind.Minus || kind == TokenKind.Bang || kind == TokenKind.Tilde)
+    stack mut u32[0 max] conversionTypeStart = 0;
+    stack mut u32[0 max] conversionClose = 0;
+    if (TryFindConversionType(stream, pos, conversionTypeStart, conversionClose))
+    {
+        stack ExprParse operand = ParseUnaryExpr(stream, tree, (u32[0 max])(conversionClose + 1));
+        result.Node = tree.AddNode(ExprKind.Convert, conversionTypeStart, operand.Node, 0);
+        result.Pos = operand.Pos;
+    }
+    else if (kind == TokenKind.Plus || kind == TokenKind.Minus || kind == TokenKind.WrapSub
+        || kind == TokenKind.Bang || kind == TokenKind.Tilde || kind == TokenKind.And || kind == TokenKind.Star)
     {
         stack ExprParse operand = ParseUnaryExpr(stream, tree, (u32[0 max])(pos + 1));
         result.Node = tree.AddNode(ExprKind.Unary, pos, operand.Node, 0);

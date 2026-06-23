@@ -1,0 +1,588 @@
+import System.C
+module Vendor.Zlib
+
+public const ZlibMaxNativeLength = 4294967295;
+public const ZlibMaxOneShotInputSize = 4293656835;
+
+public const ZLIB_NO_COMPRESSION = 0;
+public const ZLIB_BEST_SPEED = 1;
+public const ZLIB_BEST_COMPRESSION = 9;
+public const ZLIB_DEFAULT_COMPRESSION = -1;
+
+public const ZLIB_NO_FLUSH = 0;
+public const ZLIB_SYNC_FLUSH = 2;
+public const ZLIB_FINISH = 4;
+
+public const ZLIB_OK = 0;
+public const ZLIB_STREAM_END = 1;
+public const ZLIB_NEED_DICT = 2;
+public const ZLIB_ERRNO = -1;
+public const ZLIB_STREAM_ERROR = -2;
+public const ZLIB_DATA_ERROR = -3;
+public const ZLIB_MEM_ERROR = -4;
+public const ZLIB_BUF_ERROR = -5;
+public const ZLIB_VERSION_ERROR = -6;
+
+internal struct ZlibStreamNative
+{
+    i8[min max] Opaque;
+}
+
+public enum CompressionLevel
+{
+    Default,
+    NoCompression,
+    BestSpeed,
+    BestCompression,
+    Level(u8[0 9]),
+}
+
+public enum ZlibFlush
+{
+    NoFlush,
+    SyncFlush,
+    Finish,
+}
+
+public enum ZlibError
+{
+    SourceTooLarge,
+    DestinationTooSmall,
+    NullHandle,
+    NeedDictionary,
+    Io,
+    Stream,
+    Data,
+    Memory,
+    Buffer,
+    Version,
+    Unknown(i32[min max]),
+}
+
+public enum ZlibStatusResult
+{
+    [Ok] Ok,
+    [Err] Err(ZlibError),
+}
+
+public enum ZlibBlockResult
+{
+    [Ok] Ok(u32[0 max]),
+    [Err] Err(ZlibError),
+}
+
+public struct ZlibStreamStep
+{
+    public u32[0 max] Consumed;
+    public u32[0 max] Produced;
+    public bool Finished;
+}
+
+public enum ZlibStreamStepResult
+{
+    [Ok] Ok(ZlibStreamStep),
+    [Err] Err(ZlibError),
+}
+
+public struct DeflateStream
+{
+    internal rawmutptr<ZlibStreamNative> Handle;
+
+    DeflateStream()
+    {
+        self.Handle = null;
+    }
+
+    mut drop
+    {
+        unsafe
+        {
+            if (self.Handle != null)
+            {
+                stark_zlib_deflate_dispose(self.Handle);
+                self.Handle = null;
+            }
+        }
+    }
+}
+
+public struct InflateStream
+{
+    internal rawmutptr<ZlibStreamNative> Handle;
+
+    InflateStream()
+    {
+        self.Handle = null;
+    }
+
+    mut drop
+    {
+        unsafe
+        {
+            if (self.Handle != null)
+            {
+                stark_zlib_inflate_dispose(self.Handle);
+                self.Handle = null;
+            }
+        }
+    }
+}
+
+public enum DeflateStreamResult
+{
+    [Ok] Ok(DeflateStream),
+    [Err] Err(ZlibError),
+}
+
+public enum InflateStreamResult
+{
+    [Ok] Ok(InflateStream),
+    [Err] Err(ZlibError),
+}
+
+internal unsafe ffi(c) fn rawptr<System.C.c_char> zlibVersion();
+internal unsafe ffi(c) fn System.C.c_ulong compressBound(System.C.c_ulong sourceLength);
+internal unsafe ffi(c) fn System.C.c_int compress2(
+    rawmutptr<u8[0 max]> destination,
+    rawmutptr<System.C.c_ulong> destinationLength,
+    rawptr<u8[0 max]> source,
+    System.C.c_ulong sourceLength,
+    System.C.c_int level);
+internal unsafe ffi(c) fn System.C.c_int uncompress(
+    rawmutptr<u8[0 max]> destination,
+    rawmutptr<System.C.c_ulong> destinationLength,
+    rawptr<u8[0 max]> source,
+    System.C.c_ulong sourceLength);
+internal unsafe ffi(c) fn System.C.c_int stark_zlib_deflate_init(
+    rawmutptr<rawmutptr<ZlibStreamNative>> handle,
+    System.C.c_int level);
+internal unsafe ffi(c) fn System.C.c_int stark_zlib_deflate_update(
+    rawmutptr<ZlibStreamNative> handle,
+    rawptr<u8[0 max]> source,
+    System.C.c_uint sourceLength,
+    rawmutptr<u8[0 max]> destination,
+    System.C.c_uint destinationLength,
+    System.C.c_int flush,
+    rawmutptr<System.C.c_uint> consumed,
+    rawmutptr<System.C.c_uint> produced,
+    rawmutptr<System.C.c_int> finished);
+internal unsafe ffi(c) fn System.C.c_int stark_zlib_deflate_dispose(rawmutptr<ZlibStreamNative> handle);
+internal unsafe ffi(c) fn System.C.c_int stark_zlib_inflate_init(rawmutptr<rawmutptr<ZlibStreamNative>> handle);
+internal unsafe ffi(c) fn System.C.c_int stark_zlib_inflate_update(
+    rawmutptr<ZlibStreamNative> handle,
+    rawptr<u8[0 max]> source,
+    System.C.c_uint sourceLength,
+    rawmutptr<u8[0 max]> destination,
+    System.C.c_uint destinationLength,
+    System.C.c_int flush,
+    rawmutptr<System.C.c_uint> consumed,
+    rawmutptr<System.C.c_uint> produced,
+    rawmutptr<System.C.c_int> finished);
+internal unsafe ffi(c) fn System.C.c_int stark_zlib_inflate_dispose(rawmutptr<ZlibStreamNative> handle);
+
+internal finite law System.C.c_int CompressionLevelCode(CompressionLevel level)
+{
+    switch (level)
+    {
+        case CompressionLevel.Default:
+            return ZLIB_DEFAULT_COMPRESSION;
+        case CompressionLevel.NoCompression:
+            return ZLIB_NO_COMPRESSION;
+        case CompressionLevel.BestSpeed:
+            return ZLIB_BEST_SPEED;
+        case CompressionLevel.BestCompression:
+            return ZLIB_BEST_COMPRESSION;
+        case CompressionLevel.Level(var value):
+            return (i32[min max])value;
+    }
+}
+
+internal finite law System.C.c_int FlushCode(ZlibFlush flush)
+{
+    switch (flush)
+    {
+        case ZlibFlush.NoFlush:
+            return ZLIB_NO_FLUSH;
+        case ZlibFlush.SyncFlush:
+            return ZLIB_SYNC_FLUSH;
+        case ZlibFlush.Finish:
+            return ZLIB_FINISH;
+    }
+}
+
+internal finite law ZlibError ErrorFromCode(i32[min max] code)
+{
+    switch (code)
+    {
+        case 2:
+            return ZlibError.NeedDictionary;
+        case -1:
+            return ZlibError.Io;
+        case -2:
+            return ZlibError.Stream;
+        case -3:
+            return ZlibError.Data;
+        case -4:
+            return ZlibError.Memory;
+        case -5:
+            return ZlibError.Buffer;
+        case -6:
+            return ZlibError.Version;
+        default:
+            return ZlibError.Unknown(code);
+    }
+}
+
+internal finite law u32[0 max] ClampChunkCapacity(u64[0 2 ** 63 - 1] length)
+{
+    if (length > ZlibMaxNativeLength)
+    {
+        return (u32[0 max])ZlibMaxNativeLength;
+    }
+
+    return (u32[0 max])length;
+}
+
+internal finite law ZlibBlockResult BlockResultFromCode(
+    System.C.c_int status,
+    System.C.c_ulong written)
+{
+    if (status != ZLIB_OK)
+    {
+        if (status == ZLIB_BUF_ERROR)
+        {
+            return ZlibBlockResult.Err(ZlibError.DestinationTooSmall);
+        }
+
+        return ZlibBlockResult.Err(ErrorFromCode((i32[min max])status));
+    }
+
+    return ZlibBlockResult.Ok((u32[0 max])written);
+}
+
+internal finite law ZlibStatusResult StatusResultFromCode(System.C.c_int status)
+{
+    if (status == ZLIB_OK)
+    {
+        return ZlibStatusResult.Ok;
+    }
+
+    return ZlibStatusResult.Err(ErrorFromCode((i32[min max])status));
+}
+
+internal finite law ZlibStreamStepResult StreamStepFromCode(
+    System.C.c_int status,
+    System.C.c_uint consumed,
+    System.C.c_uint produced,
+    System.C.c_int finished)
+{
+    if (status == ZLIB_OK || status == ZLIB_STREAM_END)
+    {
+        return ZlibStreamStepResult.Ok(new ZlibStreamStep()
+        {
+            Consumed = (u32[0 max])consumed,
+            Produced = (u32[0 max])produced,
+            Finished = finished != 0 || status == ZLIB_STREAM_END
+        });
+    }
+
+    if (status == ZLIB_BUF_ERROR)
+    {
+        return ZlibStreamStepResult.Err(ZlibError.DestinationTooSmall);
+    }
+
+    return ZlibStreamStepResult.Err(ErrorFromCode((i32[min max])status));
+}
+
+public fn bool IsOpen(borrow DeflateStream stream)
+{
+    return stream.Handle != null;
+}
+
+public fn bool IsOpen(borrow InflateStream stream)
+{
+    return stream.Handle != null;
+}
+
+public fn ZlibBlockResult MaxCompressedSize(u64[0 2 ** 63 - 1] sourceLength)
+{
+    if (sourceLength > ZlibMaxOneShotInputSize)
+    {
+        return ZlibBlockResult.Err(ZlibError.SourceTooLarge);
+    }
+
+    unsafe
+    {
+        stack u32[0 max] sourceLength32 = (u32[0 max])sourceLength;
+        stack System.C.c_ulong nativeSourceLength = sourceLength32;
+        stack System.C.c_ulong bound = compressBound(nativeSourceLength);
+        return ZlibBlockResult.Ok((u32[0 max])bound);
+    }
+}
+
+public fn ZlibBlockResult CompressBlock(
+    borrow i8[min max][] source,
+    borrow mut i8[min max][] destination,
+    CompressionLevel level)
+{
+    if (source.Length > ZlibMaxOneShotInputSize)
+    {
+        return ZlibBlockResult.Err(ZlibError.SourceTooLarge);
+    }
+
+    if (destination.Length == 0)
+    {
+        return ZlibBlockResult.Err(ZlibError.DestinationTooSmall);
+    }
+
+    unsafe
+    {
+        stack u32[0 max] sourceLength32 = (u32[0 max])source.Length;
+        stack u32[0 max] destinationCapacity32 = ClampChunkCapacity(destination.Length);
+        stack mut rawptr<u8[0 max]> sourceData = null;
+        if (sourceLength32 != 0)
+        {
+            sourceData = (rawptr<u8[0 max]>)(&source[0]);
+        }
+
+        stack rawmutptr<u8[0 max]> destinationData = (rawmutptr<u8[0 max]>)(&destination[0]);
+        stack System.C.c_ulong nativeSourceLength = sourceLength32;
+        stack mut System.C.c_ulong nativeDestinationLength = destinationCapacity32;
+        stack System.C.c_int status = compress2(
+            destinationData,
+            &nativeDestinationLength,
+            sourceData,
+            nativeSourceLength,
+            CompressionLevelCode(level));
+        return BlockResultFromCode(status, nativeDestinationLength);
+    }
+}
+
+public fn ZlibBlockResult DecompressBlock(
+    borrow i8[min max][] compressed,
+    borrow mut i8[min max][] destination)
+{
+    if (compressed.Length > ZlibMaxNativeLength)
+    {
+        return ZlibBlockResult.Err(ZlibError.SourceTooLarge);
+    }
+
+    return DecompressBlockPrefix(
+        compressed,
+        (u32[0 max])compressed.Length,
+        destination);
+}
+
+public fn ZlibBlockResult DecompressBlockPrefix(
+    borrow i8[min max][] compressed,
+    u32[0 max] compressedLength,
+    borrow mut i8[min max][] destination)
+{
+    if ((u64[0 2 ** 63 - 1])compressedLength > compressed.Length)
+    {
+        return ZlibBlockResult.Err(ZlibError.SourceTooLarge);
+    }
+
+    if (destination.Length == 0)
+    {
+        return ZlibBlockResult.Err(ZlibError.DestinationTooSmall);
+    }
+
+    unsafe
+    {
+        stack mut rawptr<u8[0 max]> sourceData = null;
+        if (compressedLength != 0)
+        {
+            sourceData = (rawptr<u8[0 max]>)(&compressed[0]);
+        }
+
+        stack u32[0 max] destinationCapacity32 = ClampChunkCapacity(destination.Length);
+        stack rawmutptr<u8[0 max]> destinationData = (rawmutptr<u8[0 max]>)(&destination[0]);
+        stack System.C.c_ulong nativeCompressedLength = compressedLength;
+        stack mut System.C.c_ulong nativeDestinationLength = destinationCapacity32;
+        stack System.C.c_int status = uncompress(
+            destinationData,
+            &nativeDestinationLength,
+            sourceData,
+            nativeCompressedLength);
+        return BlockResultFromCode(status, nativeDestinationLength);
+    }
+}
+
+public fn DeflateStreamResult StartDeflate(CompressionLevel level)
+{
+    unsafe
+    {
+        stack mut rawmutptr<ZlibStreamNative> handle = null;
+        stack System.C.c_int status = stark_zlib_deflate_init(&handle, CompressionLevelCode(level));
+        if (status != ZLIB_OK)
+        {
+            return DeflateStreamResult.Err(ErrorFromCode((i32[min max])status));
+        }
+
+        if (handle == null)
+        {
+            return DeflateStreamResult.Err(ZlibError.NullHandle);
+        }
+
+        return DeflateStreamResult.Ok(new DeflateStream()
+        {
+            Handle = handle
+        });
+    }
+}
+
+public fn InflateStreamResult StartInflate()
+{
+    unsafe
+    {
+        stack mut rawmutptr<ZlibStreamNative> handle = null;
+        stack System.C.c_int status = stark_zlib_inflate_init(&handle);
+        if (status != ZLIB_OK)
+        {
+            return InflateStreamResult.Err(ErrorFromCode((i32[min max])status));
+        }
+
+        if (handle == null)
+        {
+            return InflateStreamResult.Err(ZlibError.NullHandle);
+        }
+
+        return InflateStreamResult.Ok(new InflateStream()
+        {
+            Handle = handle
+        });
+    }
+}
+
+public fn ZlibStatusResult CloseDeflate(mut borrow DeflateStream stream)
+{
+    if (stream.Handle == null)
+    {
+        return ZlibStatusResult.Ok;
+    }
+
+    unsafe
+    {
+        stack rawmutptr<ZlibStreamNative> handle = stream.Handle;
+        stream.Handle = null;
+        return StatusResultFromCode(stark_zlib_deflate_dispose(handle));
+    }
+}
+
+public fn ZlibStatusResult CloseInflate(mut borrow InflateStream stream)
+{
+    if (stream.Handle == null)
+    {
+        return ZlibStatusResult.Ok;
+    }
+
+    unsafe
+    {
+        stack rawmutptr<ZlibStreamNative> handle = stream.Handle;
+        stream.Handle = null;
+        return StatusResultFromCode(stark_zlib_inflate_dispose(handle));
+    }
+}
+
+public fn ZlibStreamStepResult DeflateChunk(
+    mut borrow DeflateStream stream,
+    borrow i8[min max][] source,
+    u32[0 max] sourceLength,
+    borrow mut i8[min max][] destination,
+    ZlibFlush flush)
+{
+    if (stream.Handle == null)
+    {
+        return ZlibStreamStepResult.Err(ZlibError.NullHandle);
+    }
+
+    if ((u64[0 2 ** 63 - 1])sourceLength > source.Length)
+    {
+        return ZlibStreamStepResult.Err(ZlibError.SourceTooLarge);
+    }
+
+    if (destination.Length == 0)
+    {
+        return ZlibStreamStepResult.Err(ZlibError.DestinationTooSmall);
+    }
+
+    unsafe
+    {
+        stack mut rawptr<u8[0 max]> sourceData = null;
+        if (sourceLength != 0)
+        {
+            sourceData = (rawptr<u8[0 max]>)(&source[0]);
+        }
+
+        stack u32[0 max] destinationCapacity = ClampChunkCapacity(destination.Length);
+        stack rawmutptr<u8[0 max]> destinationData = (rawmutptr<u8[0 max]>)(&destination[0]);
+        stack System.C.c_uint nativeSourceLength = sourceLength;
+        stack System.C.c_uint nativeDestinationLength = destinationCapacity;
+        stack mut System.C.c_uint consumed = 0;
+        stack mut System.C.c_uint produced = 0;
+        stack mut System.C.c_int finished = 0;
+        stack System.C.c_int status = stark_zlib_deflate_update(
+            stream.Handle,
+            sourceData,
+            nativeSourceLength,
+            destinationData,
+            nativeDestinationLength,
+            FlushCode(flush),
+            &consumed,
+            &produced,
+            &finished);
+        return StreamStepFromCode(status, consumed, produced, finished);
+    }
+}
+
+public fn ZlibStreamStepResult InflateChunk(
+    mut borrow InflateStream stream,
+    borrow i8[min max][] compressed,
+    u32[0 max] compressedLength,
+    borrow mut i8[min max][] destination,
+    ZlibFlush flush)
+{
+    if (stream.Handle == null)
+    {
+        return ZlibStreamStepResult.Err(ZlibError.NullHandle);
+    }
+
+    if ((u64[0 2 ** 63 - 1])compressedLength > compressed.Length)
+    {
+        return ZlibStreamStepResult.Err(ZlibError.SourceTooLarge);
+    }
+
+    if (destination.Length == 0)
+    {
+        return ZlibStreamStepResult.Err(ZlibError.DestinationTooSmall);
+    }
+
+    unsafe
+    {
+        stack mut rawptr<u8[0 max]> sourceData = null;
+        if (compressedLength != 0)
+        {
+            sourceData = (rawptr<u8[0 max]>)(&compressed[0]);
+        }
+
+        stack u32[0 max] destinationCapacity = ClampChunkCapacity(destination.Length);
+        stack rawmutptr<u8[0 max]> destinationData = (rawmutptr<u8[0 max]>)(&destination[0]);
+        stack System.C.c_uint nativeCompressedLength = compressedLength;
+        stack System.C.c_uint nativeDestinationLength = destinationCapacity;
+        stack mut System.C.c_uint consumed = 0;
+        stack mut System.C.c_uint produced = 0;
+        stack mut System.C.c_int finished = 0;
+        stack System.C.c_int status = stark_zlib_inflate_update(
+            stream.Handle,
+            sourceData,
+            nativeCompressedLength,
+            destinationData,
+            nativeDestinationLength,
+            FlushCode(flush),
+            &consumed,
+            &produced,
+            &finished);
+        return StreamStepFromCode(status, consumed, produced, finished);
+    }
+}

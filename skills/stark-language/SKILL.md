@@ -145,6 +145,13 @@ stack fnptr<fn i32[min max](i32[min max])> square =
     (i32[min max] value) => value * value;
 ```
 
+Unsafe native loader symbols can be converted explicitly from raw pointers to
+typed function pointers after the binding has checked non-null and audited the
+ABI/signature: `stack Pfn callback = (Pfn)symbol;`. Keep this inside a small
+`unsafe` block. It lowers as an opaque pointer no-op, not through
+`ptrtoint`/`inttoptr`, so do not add C shims just to turn loader `void*`
+symbols into dispatch-table `fnptr`s.
+
 Capturing lambdas require an explicit capture list and should use a closure type, not `fnptr`:
 
 ```stark
@@ -1194,7 +1201,7 @@ Raw pointers and `storeborrow` fields deny both laws by default. `System.Threadi
 
 Import standard-library modules explicitly when it improves readability. The root `System` module re-exports the common public modules and exposes `System.Option<T>` / `System.Result<T, E>` as aliases over `System.Core`; `System.Text`, `System.Testing`, and `System.Runtime.Buffer` are usually imported directly when needed.
 
-`Vendor.*` is a separate bundled vendor-library root for bindings to established native libraries. Use `import Vendor.Raylib` for the bundled raylib binding. Keep vendor bindings ABI-shaped and low-overhead; use `[LinkName("NativeSymbol")]` for direct native symbol aliases and reserve C shim sources for real ABI adaptation. Native-backed vendor packages should carry package-image native dependency metadata (`pkg-config`, optional native sources, libraries, and user-configured fallback paths) instead of requiring a package manager.
+`Vendor.*` is a separate bundled vendor-library root for bindings to established native libraries. Use imports such as `import Vendor.Raylib`, `import Vendor.SQLite`, `import Vendor.GLFW`, `import Vendor.SDL3`, `import Vendor.KbTextShape`, or `import Vendor.Vulkan` for bundled native bindings. Keep vendor bindings ABI-shaped and low-overhead; use `[LinkName("NativeSymbol")]` for direct native symbol aliases and reserve C shim sources for real ABI adaptation such as callback bridges, lifetime conversion, C union flattening, C `bool` normalization, or native text-engine handle adaptation. Generated direct bindings such as `Vendor.Vulkan` should pin their upstream registry/header input, regenerate Stark ABI carriers, and keep raw loader symbols internal behind safe result enums and handle wrappers. Native-backed vendor packages should carry package-image native dependency metadata (`pkg-config`, optional native sources, libraries, and user-configured fallback paths) instead of requiring a package manager.
 
 Public modules:
 

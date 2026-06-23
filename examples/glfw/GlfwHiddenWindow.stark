@@ -1,0 +1,132 @@
+import System.Console
+import System.IO
+import Vendor.GLFW
+module GlfwHiddenWindow
+
+fn i32[min max] PrintUnavailable()
+{
+    if (System.Console.WriteLine("GLFW unavailable") != System.IO.IOStatus.Ok)
+    {
+        return 1;
+    }
+
+    return 0;
+}
+
+finite law bool IsHeadlessCompatibleError(GlfwError error)
+{
+    switch (error)
+    {
+        case GlfwError.PlatformUnavailable:
+            return true;
+        case GlfwError.PlatformError:
+            return true;
+        case GlfwError.ApiUnavailable:
+            return true;
+        case GlfwError.WindowCreationFailed:
+            return true;
+        default:
+            return false;
+    }
+}
+
+fn bool InspectHiddenWindow(mut borrow Window window)
+{
+    switch (EnableEventBridge(window))
+    {
+        case GlfwStatus.Err(var error):
+            return false;
+        case GlfwStatus.Ok:
+            ClearEvents();
+    }
+
+    stack Size windowSize = GetWindowSize(window);
+    stack Size framebufferSize = GetFramebufferSize(window);
+    if (windowSize.Width <= 0
+        || windowSize.Height <= 0
+        || framebufferSize.Width < 0
+        || framebufferSize.Height < 0)
+    {
+        return false;
+    }
+
+    if (GetKey(window, KeyEscape) != InputAction.Release)
+    {
+        return false;
+    }
+
+    if (GetMouseButton(window, MouseButtonLeft) != InputAction.Release)
+    {
+        return false;
+    }
+
+    stack CursorPosition cursor = GetCursorPosition(window);
+    if (cursor.X < -1000000000.0 || cursor.Y < -1000000000.0)
+    {
+        return false;
+    }
+
+    SetWindowShouldClose(window, true);
+    if (!WindowShouldClose(window))
+    {
+        return false;
+    }
+
+    PostEmptyEvent();
+    PollEvents();
+    DisableEventBridge(window);
+    return DroppedEventCount() == 0;
+}
+
+fn i32[min max] RunWithGlfw()
+{
+    stack Version version = GetVersion();
+    if (version.Major < 3)
+    {
+        return 2;
+    }
+
+    switch (Initialize())
+    {
+        case LibraryResult.Err(var error):
+            if (IsHeadlessCompatibleError(error))
+            {
+                return PrintUnavailable();
+            }
+
+            return 3;
+        case LibraryResult.Ok(var library):
+            DefaultWindowHints();
+            SetClientApiHint(ClientApi.None);
+            SetWindowHintBool(WindowHint.Visible, false);
+            SetWindowHintBool(WindowHint.Resizable, false);
+            switch (CreateWindow(64, 64, "Stark GLFW hidden window"))
+            {
+                case WindowResult.Err(var error):
+                    if (IsHeadlessCompatibleError(error))
+                    {
+                        return PrintUnavailable();
+                    }
+
+                    return 4;
+                case WindowResult.Ok(var window):
+                    stack mut Window ownedWindow = window;
+                    if (!InspectHiddenWindow(ownedWindow))
+                    {
+                        return 5;
+                    }
+            }
+    }
+
+    if (System.Console.WriteLine("GLFW hidden window ok") != System.IO.IOStatus.Ok)
+    {
+        return 6;
+    }
+
+    return 0;
+}
+
+export fn i32[min max] main()
+{
+    return RunWithGlfw();
+}

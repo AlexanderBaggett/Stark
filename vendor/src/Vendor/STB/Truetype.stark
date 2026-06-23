@@ -1,0 +1,529 @@
+import System.C
+module Vendor.STB.Truetype
+
+public const StbTrueTypeMaxNativeLength = 2147483647;
+public const UnicodeMaxCodepoint = 1114111;
+
+internal const STARK_STBTT_OK = 0;
+internal const STARK_STBTT_INVALID_ARGUMENT = -1;
+internal const STARK_STBTT_OUT_OF_MEMORY = -2;
+internal const STARK_STBTT_INVALID_FONT = -3;
+internal const STARK_STBTT_DESTINATION_TOO_SMALL = -4;
+internal const STARK_STBTT_PACK_FAILED = -5;
+
+internal struct TrueTypeFontNative
+{
+    i8[min max] Opaque;
+}
+
+public struct GlyphId
+{
+    u32[1 max] Value;
+
+    public inline finite law u32[1 max] Index(borrow GlyphId self)
+    {
+        return self.Value;
+    }
+}
+
+public struct Font
+{
+    internal rawmutptr<TrueTypeFontNative> Handle;
+
+    Font()
+    {
+        self.Handle = null;
+    }
+
+    public inline finite law bool IsEmpty(borrow Font self)
+    {
+        return self.Handle == null;
+    }
+
+    mut drop
+    {
+        unsafe
+        {
+            if (self.Handle != null)
+            {
+                stark_stbtt_font_destroy(self.Handle);
+                self.Handle = null;
+            }
+        }
+    }
+}
+
+public struct FontVerticalMetrics
+{
+    public i32[min max] Ascent;
+    public i32[min max] Descent;
+    public i32[min max] LineGap;
+}
+
+public struct GlyphHorizontalMetrics
+{
+    public i32[min max] AdvanceWidth;
+    public i32[min max] LeftSideBearing;
+}
+
+public struct GlyphBitmapBox
+{
+    public i32[min max] X0;
+    public i32[min max] Y0;
+    public i32[min max] X1;
+    public i32[min max] Y1;
+
+    public inline finite law u32[0 max] Width(borrow GlyphBitmapBox self)
+    {
+        if (self.X1 <= self.X0)
+        {
+            return 0;
+        }
+
+        return (u32[0 max])(self.X1 - self.X0);
+    }
+
+    public inline finite law u32[0 max] Height(borrow GlyphBitmapBox self)
+    {
+        if (self.Y1 <= self.Y0)
+        {
+            return 0;
+        }
+
+        return (u32[0 max])(self.Y1 - self.Y0);
+    }
+}
+
+[StructLayout(C)]
+public struct PackedChar
+{
+    public u16[0 max] X0;
+    public u16[0 max] Y0;
+    public u16[0 max] X1;
+    public u16[0 max] Y1;
+    public f32 XOffset;
+    public f32 YOffset;
+    public f32 XAdvance;
+    public f32 XOffset2;
+    public f32 YOffset2;
+}
+
+public enum TrueTypeError
+{
+    InvalidArgument,
+    OutOfMemory,
+    InvalidFont,
+    DestinationTooSmall,
+    PackFailed,
+    MissingGlyph,
+    Native(i32[min max]),
+}
+
+public enum TrueTypeStatus
+{
+    [Ok] Ok,
+    [Err] Err(TrueTypeError),
+}
+
+public enum FontResult
+{
+    [Ok] Ok(Font),
+    [Err] Err(TrueTypeError),
+}
+
+public enum ScaleResult
+{
+    [Ok] Ok(f32),
+    [Err] Err(TrueTypeError),
+}
+
+public enum GlyphLookupResult
+{
+    [Ok] Ok(GlyphId),
+    [Err] Err(TrueTypeError),
+}
+
+public enum FontVerticalMetricsResult
+{
+    [Ok] Ok(FontVerticalMetrics),
+    [Err] Err(TrueTypeError),
+}
+
+public enum GlyphHorizontalMetricsResult
+{
+    [Ok] Ok(GlyphHorizontalMetrics),
+    [Err] Err(TrueTypeError),
+}
+
+public enum GlyphBitmapBoxResult
+{
+    [Ok] Ok(GlyphBitmapBox),
+    [Err] Err(TrueTypeError),
+}
+
+internal unsafe ffi(c) fn System.C.c_int stark_stbtt_font_create(
+    rawptr<u8[0 max]> data,
+    System.C.c_int length,
+    System.C.c_int fontIndex,
+    rawmutptr<rawmutptr<TrueTypeFontNative>> font);
+
+internal unsafe ffi(c) fn void stark_stbtt_font_destroy(rawmutptr<TrueTypeFontNative> font);
+
+internal unsafe ffi(c) fn System.C.c_int stark_stbtt_scale_for_pixel_height(
+    rawmutptr<TrueTypeFontNative> font,
+    f32 pixelHeight,
+    rawmutptr<f32> scale);
+
+internal unsafe ffi(c) fn System.C.c_int stark_stbtt_find_glyph(
+    rawmutptr<TrueTypeFontNative> font,
+    System.C.c_int codepoint,
+    rawmutptr<System.C.c_int> glyph);
+
+internal unsafe ffi(c) fn System.C.c_int stark_stbtt_get_font_vmetrics(
+    rawmutptr<TrueTypeFontNative> font,
+    rawmutptr<System.C.c_int> ascent,
+    rawmutptr<System.C.c_int> descent,
+    rawmutptr<System.C.c_int> lineGap);
+
+internal unsafe ffi(c) fn System.C.c_int stark_stbtt_get_glyph_hmetrics(
+    rawmutptr<TrueTypeFontNative> font,
+    System.C.c_int glyph,
+    rawmutptr<System.C.c_int> advanceWidth,
+    rawmutptr<System.C.c_int> leftSideBearing);
+
+internal unsafe ffi(c) fn System.C.c_int stark_stbtt_get_glyph_bitmap_box(
+    rawmutptr<TrueTypeFontNative> font,
+    System.C.c_int glyph,
+    f32 scaleX,
+    f32 scaleY,
+    rawmutptr<System.C.c_int> x0,
+    rawmutptr<System.C.c_int> y0,
+    rawmutptr<System.C.c_int> x1,
+    rawmutptr<System.C.c_int> y1);
+
+internal unsafe ffi(c) fn System.C.c_int stark_stbtt_make_glyph_bitmap(
+    rawmutptr<TrueTypeFontNative> font,
+    rawmutptr<u8[0 max]> output,
+    System.C.c_int outputCapacity,
+    System.C.c_int width,
+    System.C.c_int height,
+    System.C.c_int stride,
+    f32 scaleX,
+    f32 scaleY,
+    System.C.c_int glyph);
+
+internal unsafe ffi(c) fn System.C.c_int stark_stbtt_pack_glyph_range(
+    rawmutptr<TrueTypeFontNative> font,
+    f32 pixelHeight,
+    System.C.c_int firstCodepoint,
+    System.C.c_int glyphCount,
+    rawmutptr<u8[0 max]> pixels,
+    System.C.c_int pixelCapacity,
+    System.C.c_int width,
+    System.C.c_int height,
+    System.C.c_int stride,
+    System.C.c_int padding,
+    System.C.c_uint horizontalOversample,
+    System.C.c_uint verticalOversample,
+    rawmutptr<PackedChar> packedChars,
+    System.C.c_int packedCharCapacity);
+
+internal finite law TrueTypeError ErrorFromNative(i32[min max] code)
+{
+    switch (code)
+    {
+        case -1:
+            return TrueTypeError.InvalidArgument;
+        case -2:
+            return TrueTypeError.OutOfMemory;
+        case -3:
+            return TrueTypeError.InvalidFont;
+        case -4:
+            return TrueTypeError.DestinationTooSmall;
+        case -5:
+            return TrueTypeError.PackFailed;
+        default:
+            return TrueTypeError.Native(code);
+    }
+}
+
+internal finite law TrueTypeStatus StatusFromNative(System.C.c_int code)
+{
+    if (code == STARK_STBTT_OK)
+    {
+        return TrueTypeStatus.Ok;
+    }
+
+    return TrueTypeStatus.Err(ErrorFromNative((i32[min max])code));
+}
+
+internal finite law u64[0 2 ** 63 - 1] RequiredBitmapBytesOrZero(
+    u32[1 max] width,
+    u32[1 max] height,
+    u32[0 max] stride)
+{
+    stack u64[0 2 ** 63 - 1] safeWidth = (u64[0 2 ** 63 - 1])width;
+    stack u64[0 2 ** 63 - 1] safeHeight = (u64[0 2 ** 63 - 1])height;
+    stack mut u64[0 2 ** 63 - 1] safeStride = (u64[0 2 ** 63 - 1])stride;
+    if (safeStride == 0)
+    {
+        safeStride = safeWidth;
+    }
+
+    if (safeStride < safeWidth)
+    {
+        return 0;
+    }
+
+    stack u64[0 2 ** 63 - 1] maxLength = 2 ** 63 - 1;
+    if (safeHeight > maxLength / safeStride)
+    {
+        return 0;
+    }
+
+    return safeHeight * safeStride;
+}
+
+public fn FontResult LoadFontFromMemory(borrow i8[min max][] fontBytes, u32[0 max] fontIndex)
+{
+    if (fontBytes.Length == 0 || fontIndex > StbTrueTypeMaxNativeLength)
+    {
+        return FontResult.Err(TrueTypeError.InvalidArgument);
+    }
+
+    if (fontBytes.Length > StbTrueTypeMaxNativeLength)
+    {
+        return FontResult.Err(TrueTypeError.InvalidArgument);
+    }
+
+    unsafe
+    {
+        stack mut rawmutptr<TrueTypeFontNative> handle = null;
+        stack System.C.c_int status = stark_stbtt_font_create(
+            (rawptr<u8[0 max]>)(&fontBytes[0]),
+            (i32[min max])fontBytes.Length,
+            (i32[min max])fontIndex,
+            &handle);
+        if (status != STARK_STBTT_OK)
+        {
+            return FontResult.Err(ErrorFromNative((i32[min max])status));
+        }
+
+        stack mut Font font = new();
+        font.Handle = handle;
+        return FontResult.Ok(font);
+    }
+}
+
+public fn ScaleResult ScaleForPixelHeight(borrow Font font, f32 pixelHeight)
+{
+    unsafe
+    {
+        stack mut f32 scale = 0.0f;
+        stack System.C.c_int status = stark_stbtt_scale_for_pixel_height(font.Handle, pixelHeight, &scale);
+        if (status != STARK_STBTT_OK)
+        {
+            return ScaleResult.Err(ErrorFromNative((i32[min max])status));
+        }
+
+        return ScaleResult.Ok(scale);
+    }
+}
+
+public fn GlyphLookupResult FindGlyph(borrow Font font, u24[0 1114111] codepoint)
+{
+    unsafe
+    {
+        stack mut System.C.c_int glyph = 0;
+        stack System.C.c_int status = stark_stbtt_find_glyph(
+            font.Handle,
+            (i32[min max])codepoint,
+            &glyph);
+        if (status != STARK_STBTT_OK)
+        {
+            return GlyphLookupResult.Err(ErrorFromNative((i32[min max])status));
+        }
+
+        if (glyph <= 0)
+        {
+            return GlyphLookupResult.Err(TrueTypeError.MissingGlyph);
+        }
+
+        return GlyphLookupResult.Ok(new GlyphId()
+        {
+            Value = (u32[1 max])glyph
+        });
+    }
+}
+
+public fn FontVerticalMetricsResult GetVerticalMetrics(borrow Font font)
+{
+    unsafe
+    {
+        stack mut System.C.c_int ascent = 0;
+        stack mut System.C.c_int descent = 0;
+        stack mut System.C.c_int lineGap = 0;
+        stack System.C.c_int status = stark_stbtt_get_font_vmetrics(
+            font.Handle,
+            &ascent,
+            &descent,
+            &lineGap);
+        if (status != STARK_STBTT_OK)
+        {
+            return FontVerticalMetricsResult.Err(ErrorFromNative((i32[min max])status));
+        }
+
+        return FontVerticalMetricsResult.Ok(new FontVerticalMetrics()
+        {
+            Ascent = ascent,
+            Descent = descent,
+            LineGap = lineGap
+        });
+    }
+}
+
+public fn GlyphHorizontalMetricsResult GetGlyphHorizontalMetrics(borrow Font font, GlyphId glyph)
+{
+    unsafe
+    {
+        stack mut System.C.c_int advanceWidth = 0;
+        stack mut System.C.c_int leftSideBearing = 0;
+        stack System.C.c_int status = stark_stbtt_get_glyph_hmetrics(
+            font.Handle,
+            (i32[min max])glyph.Value,
+            &advanceWidth,
+            &leftSideBearing);
+        if (status != STARK_STBTT_OK)
+        {
+            return GlyphHorizontalMetricsResult.Err(ErrorFromNative((i32[min max])status));
+        }
+
+        return GlyphHorizontalMetricsResult.Ok(new GlyphHorizontalMetrics()
+        {
+            AdvanceWidth = advanceWidth,
+            LeftSideBearing = leftSideBearing
+        });
+    }
+}
+
+public fn GlyphBitmapBoxResult GetGlyphBitmapBox(borrow Font font, GlyphId glyph, f32 scale)
+{
+    unsafe
+    {
+        stack mut System.C.c_int x0 = 0;
+        stack mut System.C.c_int y0 = 0;
+        stack mut System.C.c_int x1 = 0;
+        stack mut System.C.c_int y1 = 0;
+        stack System.C.c_int status = stark_stbtt_get_glyph_bitmap_box(
+            font.Handle,
+            (i32[min max])glyph.Value,
+            scale,
+            scale,
+            &x0,
+            &y0,
+            &x1,
+            &y1);
+        if (status != STARK_STBTT_OK)
+        {
+            return GlyphBitmapBoxResult.Err(ErrorFromNative((i32[min max])status));
+        }
+
+        return GlyphBitmapBoxResult.Ok(new GlyphBitmapBox()
+        {
+            X0 = x0,
+            Y0 = y0,
+            X1 = x1,
+            Y1 = y1
+        });
+    }
+}
+
+public fn TrueTypeStatus RenderGlyphBitmap(
+    borrow Font font,
+    GlyphId glyph,
+    f32 scale,
+    borrow mut u8[0 max][] destination,
+    u32[1 max] width,
+    u32[1 max] height,
+    u32[0 max] stride)
+{
+    stack u64[0 2 ** 63 - 1] required = RequiredBitmapBytesOrZero(width, height, stride);
+    if (required == 0 || required > StbTrueTypeMaxNativeLength)
+    {
+        return TrueTypeStatus.Err(TrueTypeError.InvalidArgument);
+    }
+
+    if (destination.Length < required)
+    {
+        return TrueTypeStatus.Err(TrueTypeError.DestinationTooSmall);
+    }
+
+    unsafe
+    {
+        return StatusFromNative(stark_stbtt_make_glyph_bitmap(
+            font.Handle,
+            &destination[0],
+            (i32[min max])required,
+            (i32[min max])width,
+            (i32[min max])height,
+            (i32[min max])stride,
+            scale,
+            scale,
+            (i32[min max])glyph.Value));
+    }
+}
+
+public fn TrueTypeStatus PackGlyphRange(
+    borrow Font font,
+    f32 pixelHeight,
+    u24[0 1114111] firstCodepoint,
+    u32[1 max] glyphCount,
+    borrow mut u8[0 max][] atlasPixels,
+    u32[1 max] atlasWidth,
+    u32[1 max] atlasHeight,
+    u32[0 max] stride,
+    u32[0 max] padding,
+    u8[1 8] horizontalOversample,
+    u8[1 8] verticalOversample,
+    borrow mut PackedChar[] packedChars)
+{
+    if (glyphCount > StbTrueTypeMaxNativeLength || padding > StbTrueTypeMaxNativeLength)
+    {
+        return TrueTypeStatus.Err(TrueTypeError.InvalidArgument);
+    }
+
+    if ((u64[0 2 ** 63 - 1])glyphCount > packedChars.Length)
+    {
+        return TrueTypeStatus.Err(TrueTypeError.DestinationTooSmall);
+    }
+
+    stack u64[0 2 ** 63 - 1] required = RequiredBitmapBytesOrZero(atlasWidth, atlasHeight, stride);
+    if (required == 0 || required > StbTrueTypeMaxNativeLength)
+    {
+        return TrueTypeStatus.Err(TrueTypeError.InvalidArgument);
+    }
+
+    if (atlasPixels.Length < required)
+    {
+        return TrueTypeStatus.Err(TrueTypeError.DestinationTooSmall);
+    }
+
+    unsafe
+    {
+        return StatusFromNative(stark_stbtt_pack_glyph_range(
+            font.Handle,
+            pixelHeight,
+            (i32[min max])firstCodepoint,
+            (i32[min max])glyphCount,
+            &atlasPixels[0],
+            (i32[min max])required,
+            (i32[min max])atlasWidth,
+            (i32[min max])atlasHeight,
+            (i32[min max])stride,
+            (i32[min max])padding,
+            horizontalOversample,
+            verticalOversample,
+            &packedChars[0],
+            (i32[min max])packedChars.Length));
+    }
+}

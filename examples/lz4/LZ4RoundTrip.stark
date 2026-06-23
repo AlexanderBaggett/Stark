@@ -1,0 +1,82 @@
+import System.Console
+import System.IO
+import Vendor.LZ4
+module LZ4RoundTrip
+
+fn bool SamePrefix(
+    borrow i8[min max][] left,
+    borrow i8[min max][] right,
+    u64[0 2 ** 63 - 1] count)
+{
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (left[index] != right[index])
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+export fn i32[min max] main()
+{
+    stack mut i8[min max][32] source =
+    {
+        83, 116, 97, 114, 107, 45, 76, 90,
+        52, 45, 114, 111, 117, 110, 100, 45,
+        116, 114, 105, 112, 45, 112, 97, 121,
+        108, 111, 97, 100, 33, 33, 33, 10
+    };
+    stack mut i8[min max][80] compressed = { 0 };
+    stack mut i8[min max][32] restored = { 0 };
+    stack i8[min max][] sourceBytes = source;
+    stack mut i8[min max][] compressedBuffer = compressed;
+    stack mut i8[min max][] restoredBuffer = restored;
+
+    stack LZ4BlockResult boundResult = MaxCompressedSize(sourceBytes.Length);
+    switch (boundResult)
+    {
+        case LZ4BlockResult.Err(var error):
+            return 1;
+        case LZ4BlockResult.Ok(var bound):
+            if ((u64[0 2 ** 63 - 1])bound > compressedBuffer.Length)
+            {
+                return 2;
+            }
+    }
+
+    stack LZ4BlockResult compressedResult = CompressBlock(sourceBytes, compressedBuffer);
+    switch (compressedResult)
+    {
+        case LZ4BlockResult.Err(var error):
+            return 3;
+        case LZ4BlockResult.Ok(var compressedLength):
+            stack LZ4BlockResult restoredResult = DecompressBlockPrefix(
+                compressedBuffer,
+                compressedLength,
+                restoredBuffer);
+            switch (restoredResult)
+            {
+                case LZ4BlockResult.Err(var restoreError):
+                    return 4;
+                case LZ4BlockResult.Ok(var restoredLength):
+                    if ((u64[0 2 ** 63 - 1])restoredLength != sourceBytes.Length)
+                    {
+                        return 5;
+                    }
+            }
+    }
+
+    if (!SamePrefix(sourceBytes, restoredBuffer, sourceBytes.Length))
+    {
+        return 6;
+    }
+
+    if (System.Console.WriteLine("LZ4 round trip ok") != System.IO.IOStatus.Ok)
+    {
+        return 7;
+    }
+
+    return 0;
+}

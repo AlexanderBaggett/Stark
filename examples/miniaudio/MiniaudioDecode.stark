@@ -1,0 +1,88 @@
+import System.Console
+import System.IO
+import Vendor.Miniaudio
+module MiniaudioDecode
+
+fn bool SamplesLookRight(borrow f32[] samples)
+{
+    return samples.Length >= 4
+        && samples[0] == 0.0f
+        && samples[1] > 0.9f
+        && samples[2] < -0.9f
+        && samples[3] > 0.45f
+        && samples[3] < 0.55f;
+}
+
+export fn i32[min max] main()
+{
+    stack mut u8[0 max][52] wav =
+    {
+        82, 73, 70, 70, 44, 0, 0, 0,
+        87, 65, 86, 69, 102, 109, 116, 32,
+        16, 0, 0, 0, 1, 0, 1, 0,
+        64, 31, 0, 0, 128, 62, 0, 0,
+        2, 0, 16, 0, 100, 97, 116, 97,
+        8, 0, 0, 0, 0, 0, 255, 127,
+        0, 128, 0, 64
+    };
+    stack u8[0 max][] encoded = wav;
+
+    switch (OpenDecoderFromMemory(encoded, SampleFormat.F32, 1, 8000))
+    {
+        case DecoderResult.Err(var error):
+            return 1;
+        case DecoderResult.Ok(var decoder):
+            switch (GetDecoderInfo(decoder))
+            {
+                case DecoderInfoResult.Err(var infoError):
+                    return 2;
+                case DecoderInfoResult.Ok(var info):
+                    if (info.Format != SampleFormat.F32
+                        || info.Channels != 1
+                        || info.SampleRate != 8000
+                        || info.LengthInPcmFrames != 4)
+                    {
+                        return 3;
+                    }
+            }
+
+            stack mut f32[4] samples = { 0.0f, 0.0f, 0.0f, 0.0f };
+            stack mut f32[] sampleSlice = samples;
+            switch (ReadF32Frames(decoder, sampleSlice, 4))
+            {
+                case ReadFramesResult.Err(var readError):
+                    return 4;
+                case ReadFramesResult.Ok(var framesRead):
+                    if (framesRead != 4 || !SamplesLookRight(sampleSlice))
+                    {
+                        return 5;
+                    }
+            }
+
+            switch (SeekToPcmFrame(decoder, 0))
+            {
+                case MiniAudioStatus.Err(var seekError):
+                    return 6;
+                case MiniAudioStatus.Ok:
+                    stack mut f32[1] first = { 1.0f };
+                    stack mut f32[] firstSlice = first;
+                    switch (ReadF32Frames(decoder, firstSlice, 1))
+                    {
+                        case ReadFramesResult.Err(var secondReadError):
+                            return 7;
+                        case ReadFramesResult.Ok(var secondFramesRead):
+                            if (secondFramesRead != 1 || first[0] != 0.0f)
+                            {
+                                return 8;
+                            }
+                    }
+            }
+    }
+
+    if (System.Console.WriteLine("Miniaudio decode ok") != System.IO.IOStatus.Ok)
+    {
+        return 9;
+    }
+
+    return 0;
+}

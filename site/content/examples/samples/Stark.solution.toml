@@ -21,6 +21,18 @@ members = [
   "data-model",
   "static-library",
   "standard-library-tests",
+  "sqlite",
+  "lz4",
+  "zlib",
+  "curl",
+  "stb-image",
+  "stb-truetype",
+  "miniaudio",
+  "cgltf",
+  "glfw",
+  "sdl3",
+  "kb-text-shape",
+  "vulkan",
 ]
 
 [defaults]
@@ -69,6 +81,18 @@ data-model = "data-model"
 static-library = "static-library"
 standard-library-tests = "standard-library-tests"
 stdlib-tests = "standard-library-tests"
+sqlite = "sqlite"
+lz4 = "lz4"
+zlib = "zlib"
+curl = "curl"
+stb-image = "stb-image"
+stb-truetype = "stb-truetype"
+miniaudio = "miniaudio"
+cgltf = "cgltf"
+glfw = "glfw"
+sdl3 = "sdl3"
+kb-text-shape = "kb-text-shape"
+vulkan = "vulkan"
 
 [profiles.dev]
 opt = 0

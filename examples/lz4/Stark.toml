@@ -1,0 +1,8 @@
+[project]
+name = "lz4"
+version = "0.1.0"
+kind = "executable"
+
+[executable]
+root = "LZ4RoundTrip.stark"
+output = "lz4-round-trip"

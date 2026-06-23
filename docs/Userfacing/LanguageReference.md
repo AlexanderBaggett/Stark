@@ -45,7 +45,9 @@ Rules:
 
 `System.*` modules are Stark's standard library. `Vendor.*` modules are a
 separate bundled vendor library for bindings to established native libraries;
-for example, `import Vendor.Raylib` imports the bundled raylib binding surface.
+for example, imports such as `import Vendor.Raylib`, `import Vendor.SQLite`,
+`import Vendor.GLFW`, `import Vendor.SDL3`, `import Vendor.KbTextShape`, or
+`import Vendor.Vulkan` bring bundled native binding surfaces into scope.
 Project builds discover `Vendor` artifacts beside `System` artifacts: first
 from the active stage, then repo `vendor/dist` package images or `vendor/src`
 source, then an installed compiler bundle. Native-backed vendor packages carry
@@ -598,6 +600,14 @@ a compatible function item or non-capturing lambda; `null` is not assignable to 
 `fnptr`. Struct fields and fixed-array elements that contain function pointers
 must be explicitly initialized when an aggregate initializer would otherwise
 zero-fill them.
+
+Unsafe FFI loader APIs may return symbols as raw pointers. In an unsafe context,
+an explicit cast from `rawptr<T>` or `rawmutptr<T>` to a compatible `fnptr<...>`
+is allowed when the program has already proven the pointer is non-null and names
+a function with that exact ABI and signature. The reverse cast from `fnptr<...>`
+to a raw pointer is also unsafe and explicit. These casts use ordinary Stark cast
+syntax (`(Callback)symbol`) and are intended for native dispatch tables; they do
+not check the foreign signature at runtime.
 
 Function pointer types also carry memory-separation contracts for memory-backed
 parameters. Because `fnptr` parameter lists do not name parameters, contract

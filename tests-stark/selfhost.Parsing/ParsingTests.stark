@@ -1251,6 +1251,53 @@ fn bool ParsesCallAndIndexPostfix()
 }
 
 [Fact]
+fn bool ParsesExplicitConversionExpressions()
+{
+    stack ascii aliasSource = "(Pfn)pointer";
+    stack mut TokenStream aliasStream = new();
+    if (!LexOk(LexText(aliasSource), aliasStream))
+    {
+        return false;
+    }
+
+    stack mut ExprTree aliasTree = ParseExpression(aliasStream, 0);
+    stack u32[0 max] aliasRoot = aliasTree.RootNode();
+    stack ascii aliasTarget = Compiler.Lexing.TokenTextOf(aliasSource, aliasStream, (u64[0 2 ** 63 - 1])aliasTree.TokenAt(aliasRoot));
+    if (aliasTree.NodeKindAt(aliasRoot) != ExprKind.Convert
+        || !System.Text.Equals(aliasTarget, "Pfn")
+        || aliasTree.NodeKindAt(aliasTree.LeftAt(aliasRoot)) != ExprKind.Identifier)
+    {
+        return false;
+    }
+
+    stack mut TokenStream fnptrStream = new();
+    if (!LexOk(LexText("(fnptr<unsafe ffi(c) fn i32(i32)>)(pointer)"), fnptrStream))
+    {
+        return false;
+    }
+
+    stack mut ExprTree fnptrTree = ParseExpression(fnptrStream, 0);
+    stack u32[0 max] fnptrRoot = fnptrTree.RootNode();
+    if (fnptrTree.NodeKindAt(fnptrRoot) != ExprKind.Convert
+        || fnptrStream.KindAt((u64[0 2 ** 63 - 1])fnptrTree.TokenAt(fnptrRoot)) != TokenKind.Fnptr
+        || fnptrTree.NodeKindAt(fnptrTree.LeftAt(fnptrRoot)) != ExprKind.Identifier)
+    {
+        return false;
+    }
+
+    stack mut TokenStream callStream = new();
+    if (!LexOk(LexText("(f)(x)"), callStream))
+    {
+        return false;
+    }
+
+    stack mut ExprTree callTree = ParseExpression(callStream, 0);
+    stack u32[0 max] callRoot = callTree.RootNode();
+    return callTree.NodeKindAt(callRoot) == ExprKind.Call
+        && callTree.NodeKindAt(callTree.LeftAt(callRoot)) == ExprKind.Identifier;
+}
+
+[Fact]
 fn bool ParsesCallArguments()
 {
     stack mut TokenStream stream = new();

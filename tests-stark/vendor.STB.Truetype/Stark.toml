@@ -1,0 +1,20 @@
+[project]
+name = "vendor-stb-truetype-tests"
+version = "0.1.0"
+kind = "test"
+
+[test]
+root = "StbTruetypeTests.stark"
+output = "vendor-stb-truetype-tests"
+
+[dependencies]
+stdlib = { path = "../../stdlib" }
+
+[native]
+sources = ["../../vendor/StbTruetypeImplementation.c"]
+
+[profiles.dev]
+opt = 0
+
+[profiles.release]
+opt = 3

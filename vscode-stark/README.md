@@ -21,6 +21,7 @@ Programming language repository: [github.com/AlexanderBaggett/Stark](https://git
   - unsafe, FFI, `[LinkName("...")]`, C aggregate interop, and assembly function syntax
 - Comment toggling, bracket matching, indentation, and auto-closing pairs
 - Snippets for common Stark declarations and statements
+  - Vendor import snippets such as `Vendor.Vulkan`
 - Standard library autocomplete
   - module imports
   - qualified completions like `System.Console.`

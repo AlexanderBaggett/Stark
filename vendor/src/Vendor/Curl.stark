@@ -1,0 +1,371 @@
+import System.C
+import System.Memory
+module Vendor.Curl
+
+public const CurlMaxBufferLength = 4294967295;
+public const CurlDefaultTimeoutMilliseconds = 5000;
+
+internal const STARK_CURL_BODY_TOO_SMALL = -1000;
+internal const STARK_CURL_HEADERS_TOO_SMALL = -1001;
+internal const STARK_CURL_OUT_OF_MEMORY = -1002;
+internal const STARK_CURL_INVALID_ARGUMENT = -1003;
+
+internal const CURLE_OK = 0;
+internal const CURLE_UNSUPPORTED_PROTOCOL = 1;
+internal const CURLE_URL_MALFORMAT = 3;
+internal const CURLE_COULDNT_RESOLVE_PROXY = 5;
+internal const CURLE_COULDNT_RESOLVE_HOST = 6;
+internal const CURLE_COULDNT_CONNECT = 7;
+internal const CURLE_OPERATION_TIMEDOUT = 28;
+internal const CURLE_WRITE_ERROR = 23;
+internal const CURLE_TOO_MANY_REDIRECTS = 47;
+
+internal struct CurlNativeResponse
+{
+    i8[min max] Opaque;
+}
+
+public enum CurlError
+{
+    CString(System.C.CStringError),
+    Memory(System.Memory.MemoryError),
+    BodyTooSmall,
+    HeadersTooSmall,
+    InvalidArgument,
+    UnsupportedProtocol,
+    MalformedUrl,
+    CouldNotResolveProxy,
+    CouldNotResolveHost,
+    CouldNotConnect,
+    Timeout,
+    Write,
+    TooManyRedirects,
+    Native(i32[min max]),
+}
+
+public enum CurlStatusResult
+{
+    [Ok] Ok,
+    [Err] Err(CurlError),
+}
+
+public struct CurlTransferInfo
+{
+    public i32[min max] StatusCode;
+    public u32[0 max] BodyLength;
+    public u32[0 max] HeaderLength;
+}
+
+public enum CurlTransferResult
+{
+    [Ok] Ok(CurlTransferInfo),
+    [Err] Err(CurlError),
+}
+
+public struct CurlResponse
+{
+    i32[min max] StatusCodeValue;
+    dynamic i8[min max] BodyBytes;
+    dynamic i8[min max] HeaderBytes;
+
+    CurlResponse()
+    {
+        self.StatusCodeValue = 0;
+        self.BodyBytes = new();
+        self.HeaderBytes = new();
+    }
+
+    public inline finite law i32[min max] StatusCode(borrow CurlResponse self)
+    {
+        return self.StatusCodeValue;
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] BodyLength(borrow CurlResponse self)
+    {
+        return self.BodyBytes.Length;
+    }
+
+    public inline finite law u64[0 2 ** 63 - 1] HeaderLength(borrow CurlResponse self)
+    {
+        return self.HeaderBytes.Length;
+    }
+
+    public finite law retborrow i8[min max][] Body(borrow CurlResponse self)
+    {
+        return self.BodyBytes[0, self.BodyBytes.Length];
+    }
+
+    public finite law retborrow i8[min max][] Headers(borrow CurlResponse self)
+    {
+        return self.HeaderBytes[0, self.HeaderBytes.Length];
+    }
+}
+
+public enum CurlResponseResult
+{
+    [Ok] Ok(CurlResponse),
+    [Err] Err(CurlError),
+}
+
+internal unsafe ffi(c) fn System.C.c_int stark_curl_get_into(
+    rawptr<System.C.c_char> url,
+    rawmutptr<i8[min max]> bodyDestination,
+    System.C.c_size_t bodyCapacity,
+    rawmutptr<i8[min max]> headerDestination,
+    System.C.c_size_t headerCapacity,
+    System.C.c_long timeoutMilliseconds,
+    System.C.c_int followRedirects,
+    rawmutptr<System.C.c_long> statusCode,
+    rawmutptr<System.C.c_size_t> bodyLength,
+    rawmutptr<System.C.c_size_t> headerLength);
+
+internal unsafe ffi(c) fn System.C.c_int stark_curl_get_owned(
+    rawptr<System.C.c_char> url,
+    System.C.c_long timeoutMilliseconds,
+    System.C.c_int followRedirects,
+    rawmutptr<rawmutptr<CurlNativeResponse>> response);
+
+internal unsafe ffi(c) fn void stark_curl_response_free(rawmutptr<CurlNativeResponse> response);
+internal unsafe ffi(c) fn System.C.c_long stark_curl_response_status(rawptr<CurlNativeResponse> response);
+internal unsafe ffi(c) fn rawptr<i8[min max]> stark_curl_response_body(rawptr<CurlNativeResponse> response);
+internal unsafe ffi(c) fn System.C.c_size_t stark_curl_response_body_length(rawptr<CurlNativeResponse> response);
+internal unsafe ffi(c) fn rawptr<i8[min max]> stark_curl_response_headers(rawptr<CurlNativeResponse> response);
+internal unsafe ffi(c) fn System.C.c_size_t stark_curl_response_header_length(rawptr<CurlNativeResponse> response);
+
+internal finite law CurlError ErrorFromCString(System.C.CStringError error)
+{
+    return CurlError.CString(error);
+}
+
+internal finite law CurlError ErrorFromMemory(System.Memory.MemoryError error)
+{
+    return CurlError.Memory(error);
+}
+
+internal finite law CurlError ErrorFromNative(i32[min max] code)
+{
+    switch (code)
+    {
+        case -1000:
+            return CurlError.BodyTooSmall;
+        case -1001:
+            return CurlError.HeadersTooSmall;
+        case -1002:
+            return CurlError.Memory(System.Memory.MemoryError.OutOfMemory);
+        case -1003:
+            return CurlError.InvalidArgument;
+        case 1:
+            return CurlError.UnsupportedProtocol;
+        case 3:
+            return CurlError.MalformedUrl;
+        case 5:
+            return CurlError.CouldNotResolveProxy;
+        case 6:
+            return CurlError.CouldNotResolveHost;
+        case 7:
+            return CurlError.CouldNotConnect;
+        case 28:
+            return CurlError.Timeout;
+        case 23:
+            return CurlError.Write;
+        case 47:
+            return CurlError.TooManyRedirects;
+        default:
+            return CurlError.Native(code);
+    }
+}
+
+internal finite law u32[0 max] ClampBufferLength(u64[0 2 ** 63 - 1] length)
+{
+    if (length > CurlMaxBufferLength)
+    {
+        return (u32[0 max])CurlMaxBufferLength;
+    }
+
+    return (u32[0 max])length;
+}
+
+internal fn CurlTransferResult TransferResultFromCode(
+    System.C.c_int code,
+    System.C.c_long statusCode,
+    System.C.c_size_t bodyLength,
+    System.C.c_size_t headerLength)
+{
+    if (code != CURLE_OK)
+    {
+        return CurlTransferResult.Err(ErrorFromNative((i32[min max])code));
+    }
+
+    return CurlTransferResult.Ok(new CurlTransferInfo()
+    {
+        StatusCode = (i32[min max])statusCode,
+        BodyLength = (u32[0 max])bodyLength,
+        HeaderLength = (u32[0 max])headerLength
+    });
+}
+
+internal unsafe fn CurlStatusResult CopyNativeBytes(
+    rawptr<i8[min max]> data,
+    System.C.c_size_t length,
+    mut borrow dynamic i8[min max] destination)
+    where overlap(data[0, length], destination)
+{
+    unsafe
+    {
+        if (length == 0)
+        {
+            return CurlStatusResult.Ok;
+        }
+
+        if (data == null)
+        {
+            return CurlStatusResult.Err(CurlError.InvalidArgument);
+        }
+
+        stack u32[0 max] safeLength = (u32[0 max])length;
+        stack i8[min max][] source = slice(data, safeLength);
+        stack System.Memory.MemoryStatus status = System.Memory.AppendBytes(destination, source, safeLength);
+        switch (status)
+        {
+            case System.Memory.MemoryStatus.Err(var error):
+                return CurlStatusResult.Err(ErrorFromMemory(error));
+            case System.Memory.MemoryStatus.Ok:
+                return CurlStatusResult.Ok;
+        }
+    }
+}
+
+internal unsafe fn CurlResponseResult CopyNativeResponse(rawmutptr<CurlNativeResponse> response)
+{
+    unsafe
+    {
+        if (response == null)
+        {
+            return CurlResponseResult.Err(CurlError.InvalidArgument);
+        }
+
+        stack mut CurlResponse copied = new();
+        copied.StatusCodeValue = (i32[min max])stark_curl_response_status((rawptr<CurlNativeResponse>)response);
+
+        stack CurlStatusResult bodyStatus = CopyNativeBytes(
+            stark_curl_response_body((rawptr<CurlNativeResponse>)response),
+            stark_curl_response_body_length((rawptr<CurlNativeResponse>)response),
+            copied.BodyBytes);
+        switch (bodyStatus)
+        {
+            case CurlStatusResult.Err(var error):
+                stark_curl_response_free(response);
+                return CurlResponseResult.Err(error);
+            case CurlStatusResult.Ok:
+        }
+
+        stack CurlStatusResult headerStatus = CopyNativeBytes(
+            stark_curl_response_headers((rawptr<CurlNativeResponse>)response),
+            stark_curl_response_header_length((rawptr<CurlNativeResponse>)response),
+            copied.HeaderBytes);
+        switch (headerStatus)
+        {
+            case CurlStatusResult.Err(var error):
+                stark_curl_response_free(response);
+                return CurlResponseResult.Err(error);
+            case CurlStatusResult.Ok:
+        }
+
+        stark_curl_response_free(response);
+        return CurlResponseResult.Ok(copied);
+    }
+}
+
+public fn CurlTransferResult GetInto(
+    ascii url,
+    borrow mut i8[min max][] bodyDestination,
+    borrow mut i8[min max][] headerDestination,
+    u24[1 600000] timeoutMilliseconds,
+    bool followRedirects)
+{
+    stack System.C.CStringResult<System.C.OwnedCStr> preparedUrl = System.C.FromAscii(url);
+    switch (preparedUrl)
+    {
+        case System.C.CStringResult<System.C.OwnedCStr>.Err(var error):
+            return CurlTransferResult.Err(ErrorFromCString(error));
+        case System.C.CStringResult<System.C.OwnedCStr>.Ok(var cUrl):
+            if (bodyDestination.Length == 0)
+            {
+                return CurlTransferResult.Err(CurlError.BodyTooSmall);
+            }
+
+            if (headerDestination.Length == 0)
+            {
+                return CurlTransferResult.Err(CurlError.HeadersTooSmall);
+            }
+
+            unsafe
+            {
+                stack u32[0 max] bodyCapacity = ClampBufferLength(bodyDestination.Length);
+                stack u32[0 max] headerCapacity = ClampBufferLength(headerDestination.Length);
+                stack mut System.C.c_long statusCode = 0;
+                stack mut System.C.c_size_t bodyLength = 0;
+                stack mut System.C.c_size_t headerLength = 0;
+                stack mut System.C.c_int follow = 0;
+                if (followRedirects)
+                {
+                    follow = 1;
+                }
+
+                stack System.C.c_int code = stark_curl_get_into(
+                    cUrl.Data(),
+                    &bodyDestination[0],
+                    bodyCapacity,
+                    &headerDestination[0],
+                    headerCapacity,
+                    timeoutMilliseconds,
+                    follow,
+                    &statusCode,
+                    &bodyLength,
+                    &headerLength);
+
+                return TransferResultFromCode(code, statusCode, bodyLength, headerLength);
+            }
+    }
+}
+
+public fn CurlResponseResult GetBytes(
+    ascii url,
+    u24[1 600000] timeoutMilliseconds,
+    bool followRedirects)
+{
+    stack System.C.CStringResult<System.C.OwnedCStr> preparedUrl = System.C.FromAscii(url);
+    switch (preparedUrl)
+    {
+        case System.C.CStringResult<System.C.OwnedCStr>.Err(var error):
+            return CurlResponseResult.Err(ErrorFromCString(error));
+        case System.C.CStringResult<System.C.OwnedCStr>.Ok(var cUrl):
+            unsafe
+            {
+                stack mut rawmutptr<CurlNativeResponse> response = null;
+                stack mut System.C.c_int follow = 0;
+                if (followRedirects)
+                {
+                    follow = 1;
+                }
+
+                stack System.C.c_int code = stark_curl_get_owned(
+                    cUrl.Data(),
+                    timeoutMilliseconds,
+                    follow,
+                    &response);
+
+                if (code != CURLE_OK)
+                {
+                    if (response != null)
+                    {
+                        stark_curl_response_free(response);
+                    }
+
+                    return CurlResponseResult.Err(ErrorFromNative((i32[min max])code));
+                }
+
+                return CopyNativeResponse(response);
+            }
+    }
+}

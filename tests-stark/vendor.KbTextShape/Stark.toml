@@ -1,0 +1,21 @@
+[project]
+name = "vendor-kb-text-shape-tests"
+version = "0.1.0"
+kind = "test"
+
+[test]
+root = "KbTextShapeTests.stark"
+output = "vendor-kb-text-shape-tests"
+
+[dependencies]
+stdlib = { path = "../../stdlib" }
+
+[native]
+sources = ["../../vendor/KbTextShapeBinding.c"]
+pkg-config = ["harfbuzz", "icu-uc", "icu-i18n"]
+
+[profiles.dev]
+opt = 0
+
+[profiles.release]
+opt = 3

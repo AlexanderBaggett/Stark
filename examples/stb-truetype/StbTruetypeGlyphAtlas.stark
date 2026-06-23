@@ -1,0 +1,194 @@
+import System.Console
+import System.IO
+import System.IO.File
+import System.Process
+import System.Runtime.Buffer
+import System.Text
+import Vendor.STB.Truetype
+module StbTruetypeGlyphAtlas
+
+const DefaultFontPathFromExamples = "../vendor/native/stb/testdata/Vera.ttf";
+const DefaultFontPathFromBuildOutput = "../../../../../../../vendor/native/stb/testdata/Vera.ttf";
+
+fn bool FileExists(ascii path)
+{
+    switch (System.IO.File.Exists(path))
+    {
+        case System.IO.IOResult<bool>.Err(var error):
+            return false;
+        case System.IO.IOResult<bool>.Ok(var exists):
+            return exists;
+    }
+}
+
+fn bool AnyNonZero(borrow u8[0 max][] pixels, u64[0 2 ** 63 - 1] count)
+{
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        if (pixels[index] != 0)
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+fn i32[min max] RunTruetypeExample(ascii fontPath)
+{
+    stack mut System.Runtime.Buffer.DynamicByteBuffer fontStorage = new();
+    switch (System.IO.File.ReadAllBytes(fontPath))
+    {
+        case System.IO.IOResult<System.Runtime.Buffer.DynamicByteBuffer>.Err(var error):
+            return 1;
+        case System.IO.IOResult<System.Runtime.Buffer.DynamicByteBuffer>.Ok(var bytes):
+            fontStorage = bytes;
+    }
+
+    stack mut Font font = new();
+    switch (LoadFontFromMemory(fontStorage.ReadSlice(), 0))
+    {
+        case FontResult.Err(var error):
+            return 2;
+        case FontResult.Ok(var loaded):
+            font = loaded;
+    }
+
+    stack mut f32 scale = 0.0f;
+    switch (ScaleForPixelHeight(font, 32.0f))
+    {
+        case ScaleResult.Err(var error):
+            return 3;
+        case ScaleResult.Ok(var value):
+            scale = value;
+    }
+
+    stack mut GlyphId glyph = new GlyphId()
+    {
+        Value = 1
+    };
+    switch (FindGlyph(font, 65))
+    {
+        case GlyphLookupResult.Err(var error):
+            return 4;
+        case GlyphLookupResult.Ok(var found):
+            glyph = found;
+    }
+
+    switch (GetVerticalMetrics(font))
+    {
+        case FontVerticalMetricsResult.Err(var error):
+            return 5;
+        case FontVerticalMetricsResult.Ok(var metrics):
+            if (metrics.Ascent <= 0 || metrics.Descent >= 0)
+            {
+                return 6;
+            }
+    }
+
+    switch (GetGlyphHorizontalMetrics(font, glyph))
+    {
+        case GlyphHorizontalMetricsResult.Err(var error):
+            return 7;
+        case GlyphHorizontalMetricsResult.Ok(var metrics):
+            if (metrics.AdvanceWidth <= 0)
+            {
+                return 8;
+            }
+    }
+
+    stack mut GlyphBitmapBox box = new();
+    switch (GetGlyphBitmapBox(font, glyph, scale))
+    {
+        case GlyphBitmapBoxResult.Err(var error):
+            return 9;
+        case GlyphBitmapBoxResult.Ok(var value):
+            box = value;
+    }
+
+    if (box.Width() == 0 || box.Height() == 0 || box.Width() > 64 || box.Height() > 64)
+    {
+        return 10;
+    }
+
+    stack mut u8[0 max][4096] bitmap = { 0 };
+    stack mut u8[0 max][] bitmapPixels = bitmap;
+    stack u32[1 max] bitmapWidth = (u32[1 max])box.Width();
+    stack u32[1 max] bitmapHeight = (u32[1 max])box.Height();
+    switch (RenderGlyphBitmap(font, glyph, scale, bitmapPixels, bitmapWidth, bitmapHeight, bitmapWidth))
+    {
+        case TrueTypeStatus.Err(var error):
+            return 11;
+        case TrueTypeStatus.Ok:
+            if (!AnyNonZero(bitmapPixels, (u64[0 2 ** 63 - 1])bitmapWidth * (u64[0 2 ** 63 - 1])bitmapHeight))
+            {
+                return 12;
+            }
+    }
+
+    stack mut u8[0 max][4096] atlas = { 0 };
+    stack mut u8[0 max][] atlasPixels = atlas;
+    stack mut PackedChar[4] chars =
+    {
+        new PackedChar(),
+        new PackedChar(),
+        new PackedChar(),
+        new PackedChar()
+    };
+    stack mut PackedChar[] packedChars = chars;
+    switch (PackGlyphRange(font, 24.0f, 65, 4, atlasPixels, 64, 64, 64, 1, 1, 1, packedChars))
+    {
+        case TrueTypeStatus.Err(var error):
+            return 13;
+        case TrueTypeStatus.Ok:
+            if (chars[0].X1 <= chars[0].X0 || !AnyNonZero(atlasPixels, 4096))
+            {
+                return 14;
+            }
+    }
+
+    if (System.Console.WriteLine("STB truetype ok") != System.IO.IOStatus.Ok)
+    {
+        return 15;
+    }
+
+    return 0;
+}
+
+fn i32[min max] RunDefaultTruetypeExample()
+{
+    if (FileExists(DefaultFontPathFromExamples))
+    {
+        return RunTruetypeExample(DefaultFontPathFromExamples);
+    }
+
+    if (FileExists(DefaultFontPathFromBuildOutput))
+    {
+        return RunTruetypeExample(DefaultFontPathFromBuildOutput);
+    }
+
+    return 1;
+}
+
+export unsafe fn i32[min max] main()
+{
+    unsafe
+    {
+        stack System.Process.ProcessResult<System.Process.ProcessOption<System.Text.OwnedAscii>> fontPathResult =
+            System.Process.GetEnvironment("STARK_STB_TRUETYPE_FONT_PATH");
+        switch (fontPathResult)
+        {
+            case System.Process.ProcessResult<System.Process.ProcessOption<System.Text.OwnedAscii>>.Err(var error):
+                return 16;
+            case System.Process.ProcessResult<System.Process.ProcessOption<System.Text.OwnedAscii>>.Ok(var option):
+                switch (option)
+                {
+                    case System.Process.ProcessOption<System.Text.OwnedAscii>.None:
+                        return RunDefaultTruetypeExample();
+                    case System.Process.ProcessOption<System.Text.OwnedAscii>.Some(var pathText):
+                        stack mut System.Text.OwnedAscii path = pathText;
+                        return RunTruetypeExample(path.View());
+                }
+        }
+    }
+}

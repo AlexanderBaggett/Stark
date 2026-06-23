@@ -126,6 +126,37 @@ unsafe fn rawptr<i32[min max]> Run()
         && Contains(llvm, "ret ptr");
 }
 
+// Ported from LlvmIrEmissionTests.RawPointerToFunctionPointerAliasCastEmitsNoOpIndirectCall.
+internal fn bool RawPointerToFunctionPointerAliasCastEmitsNoOpIndirectCallImpl()
+{
+    stack mut LlvmCompile c = CompileLlvm(
+        "llvm-conv-rawptr-to-fnptr-alias-noop-call",
+        raw"""
+module Demo
+
+alias Pfn = fnptr<unsafe ffi(c) fn i32[min max](i32[min max])>;
+
+unsafe fn i32[min max] Apply(rawptr<i8[min max]> pointer, i32[min max] value)
+{
+    unsafe
+    {
+        stack Pfn callback = (Pfn)pointer;
+        return callback(value);
+    }
+}
+""");
+    if (!Succeeds(c))
+    {
+        return false;
+    }
+
+    stack ascii body = LlvmDefinitionBody(Llvm(c), "Apply");
+    return Contains(body, "call i32 %arg_pointer(i32 %arg_value)")
+        && DoesNotContain(body, "ptrtoint")
+        && DoesNotContain(body, "inttoptr")
+        && DoesNotContain(body, "bitcast");
+}
+
 // Ported from LlvmEmitterConversionTests.SameWidthIntegerConversionIsEmittedAsAlias.
 internal fn bool SameWidthIntegerConversionIsEmittedAsAliasImpl()
 {

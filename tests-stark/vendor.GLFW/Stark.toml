@@ -1,0 +1,21 @@
+[project]
+name = "vendor-glfw-tests"
+version = "0.1.0"
+kind = "test"
+
+[test]
+root = "GlfwTests.stark"
+output = "vendor-glfw-tests"
+
+[dependencies]
+stdlib = { path = "../../stdlib" }
+
+[native]
+sources = ["../../vendor/GlfwEventBridge.c"]
+pkg-config = ["glfw3"]
+
+[profiles.dev]
+opt = 0
+
+[profiles.release]
+opt = 3
