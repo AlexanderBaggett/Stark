@@ -81,6 +81,30 @@ stark build raylib --release
 stark build --target x86_64-unknown-linux-gnu --stage stage0
 ```
 
+### Incremental builds
+
+`stark build`, `stark run`, and `stark test` are incremental. Each project's
+outputs are stamped (in a `.stark-build-stamp` file beside them) with a hash of
+everything that can change the result:
+
+* the project's own `*.stark` sources and its manifest
+* the standard-library sources it compiles against
+* every dependency project's own stamp (so a transitive source change propagates)
+* the selected target triple, profile, and `--filter`s
+* the compiler binary itself, so a newer compiler invalidates every stamp
+
+When nothing relevant has changed, the build is skipped and the existing
+executable, library, and package image are reused. When any input changes, that
+project's stale outputs — executable or library, the generated test runner,
+intermediate files, and any emitted package image — are removed before it is
+rebuilt, so a leftover package image can never shadow fresh source. Only the
+projects whose inputs changed are rebuilt; editing one test suite does not
+recompile the standard library.
+
+Because of this, `stark test` reports trustworthy pass/fail counts immediately
+after an edit — there is no need to delete the `build` directory by hand. To
+force a full rebuild anyway, run `stark clean` or remove the `build` directory.
+
 ### `stark run`
 
 * in an executable project directory: builds and runs that project

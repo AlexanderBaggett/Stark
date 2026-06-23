@@ -209,8 +209,10 @@ layout facts, fixed-capacity buffers, table shapes, target facts, explicit value
 arguments, symbolic forwarding with `comptime N`, monomorphization identity,
 package-image/source-bridge preservation, and materializing a specialized value
 parameter as an ordinary scalar expression (for example `return N`). Additional
-compile-time value kinds should be added only when concrete compiler or stdlib
-code needs them.
+compile-time value kinds are post-self-host work and should be added only when
+concrete compiler, stdlib, or vendor-library code needs them. They must remain
+deterministic and package-image-representable; Stark should not default to
+allowing arbitrary runtime-shaped values as generic arguments.
 
 Comptime generic values may be used in compile-time type/value positions where
 their type is valid, such as fixed-array lengths:

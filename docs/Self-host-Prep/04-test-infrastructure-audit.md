@@ -45,6 +45,16 @@ Tool/API usage in tracked tests, excluding build output:
 | TEST-11 | Package image fixture editing and inspection comparison | Binary package-image codec and deterministic JSON/text inspection support missing | Blocks package image tests |
 | TEST-12 | Diagnostic formatting and diff helpers | Minimal output only | Blocks diagnostics/parser/type-checking tests at current fidelity |
 
+## Validator Fixture Policy
+
+Invalid MIR/SSA/package-artifact validator tests remain in scope even when the
+invalid shape cannot be produced from valid Stark source. Add a structured
+test-only invalid-IR fixture path for those tests rather than excluding the
+class wholesale. The fixture API must be for compiler validator/error-path tests
+only; it is not source syntax and is not a user-facing compiler input. Record
+explicit exclusions only for C#-host-internal object-shape tests that do not map
+to a self-hosted IR invariant.
+
 ## Test Category Audit
 
 | Category | Source Files | System.Testing Needs | Harness / Runner Needs | Golden / Snapshot Needs | Portability |

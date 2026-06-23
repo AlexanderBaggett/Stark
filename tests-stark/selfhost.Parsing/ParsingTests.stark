@@ -1604,6 +1604,105 @@ fn bool TailFunctionModifierIsParsedContextually()
 }
 
 [Fact]
+fn bool AsmSpecifierDoesNotHideFunctionDeclaration()
+{
+    stack ascii source = "public unsafe ffi asm(x86_64) fn i64 Syscall2(i64 number, rawptr<i8[min max]> path) in(\"rax\") number, in(\"rdi\") path, out(\"rax\") return, clobber(\"rcx\", \"r11\", \"memory\") { \"syscall\" }\nfn i64 after() { return 0; }\n";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    stack mut DeclarationList decls = new();
+    if (!ParseDeclsFromStream(stream, decls))
+    {
+        return false;
+    }
+
+    if (decls.Count() != 2)
+    {
+        return false;
+    }
+
+    stack DeclItem asmDecl = decls.ItemAt(0);
+    stack DeclItem normalDecl = decls.ItemAt(1);
+    stack ascii asmName = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])asmDecl.NameToken);
+    stack ascii normalName = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])normalDecl.NameToken);
+    return asmDecl.Kind == DeclarationKind.Function
+        && normalDecl.Kind == DeclarationKind.Function
+        && System.Text.Equals(asmName, "Syscall2")
+        && System.Text.Equals(normalName, "after");
+}
+
+[Fact]
+fn bool FunctionSignaturePreservesAsmMetadata()
+{
+    stack ascii source = "public unsafe ffi asm(x86_64) fn i64 Syscall2(i64 number, rawptr<i8[min max]> path) in(\"rax\") number, in(\"rdi\") path, out(\"rax\") return, clobber(\"rcx\", \"r11\", \"memory\") { \"syscall\" }\n";
+    stack mut TokenStream stream = new();
+    if (!LexOk(LexText(source), stream))
+    {
+        return false;
+    }
+
+    stack mut DeclarationList decls = new();
+    if (!ParseDeclsFromStream(stream, decls))
+    {
+        return false;
+    }
+
+    if (decls.Count() != 1)
+    {
+        return false;
+    }
+
+    stack DeclItem only = decls.ItemAt(0);
+    if (only.Kind != DeclarationKind.Function)
+    {
+        return false;
+    }
+
+    switch (ParseFunctionSignature(stream, only.KeywordToken))
+    {
+        case ParseResult<FunctionSignature>.Err(var sigError):
+            return false;
+        case ParseResult<FunctionSignature>.Ok(var signature):
+            stack ascii arch = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])signature.AsmArchitectureToken());
+            stack ascii template = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])signature.AsmTemplateToken());
+            stack ascii input0Register = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])signature.AsmInputRegisterAt(0));
+            stack ascii input0Value = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])signature.AsmInputValueAt(0));
+            stack ascii input1Register = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])signature.AsmInputRegisterAt(1));
+            stack ascii input1Value = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])signature.AsmInputValueAt(1));
+            stack ascii output0Register = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])signature.AsmOutputRegisterAt(0));
+            stack ascii output0Value = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])signature.AsmOutputValueAt(0));
+            stack ascii clobber0 = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])signature.AsmClobberRegisterAt(0));
+            stack ascii clobber1 = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])signature.AsmClobberRegisterAt(1));
+            stack ascii clobber2 = Compiler.Lexing.TokenTextOf(source, stream, (u64[0 2 ** 63 - 1])signature.AsmClobberRegisterAt(2));
+            return signature.HasAsm()
+                && signature.AsmToken() != 0
+                && System.Text.Equals(arch, "x86_64")
+                && signature.ParamCount() == 2
+                && signature.AsmInputCount() == 2
+                && signature.AsmOutputCount() == 1
+                && signature.AsmClobberCount() == 3
+                && System.Text.Equals(input0Register, "\"rax\"")
+                && System.Text.Equals(input0Value, "number")
+                && System.Text.Equals(input1Register, "\"rdi\"")
+                && System.Text.Equals(input1Value, "path")
+                && System.Text.Equals(output0Register, "\"rax\"")
+                && System.Text.Equals(output0Value, "return")
+                && signature.AsmOutputBindsReturnAt(0)
+                && System.Text.Equals(clobber0, "\"rcx\"")
+                && System.Text.Equals(clobber1, "\"r11\"")
+                && System.Text.Equals(clobber2, "\"memory\"")
+                && signature.AsmInputRegisterAt(2) == 0
+                && signature.AsmOutputValueAt(1) == 0
+                && !signature.AsmOutputBindsReturnAt(1)
+                && signature.AsmClobberRegisterAt(3) == 0
+                && System.Text.Equals(template, "\"syscall\"");
+    }
+}
+
+[Fact]
 fn bool TailCallableSignatureFlagsAreParsed()
 {
     stack ascii source = "fn fnptr<tail fn i32()> make(fnptr<tail finite i32(i32)> next, borrow closure<tail law i32(i32)> handler) { return next; }\n";

@@ -106,6 +106,169 @@ public sealed class CompilerPipelineLowerMirTests
     }
 
     [Fact]
+    public void GuardlessEmptySwitchWithPayloadCaptureLowersAsNoOpAfterSubjectEvaluation()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module Demo
+
+                enum MemoryStatus
+                {
+                    [Ok] Ok,
+                    [Err] Err(i32[min max]),
+                }
+
+                fn MemoryStatus MakeStatus(i32[min max] value)
+                {
+                    if (value == 0)
+                    {
+                        return MemoryStatus.Ok;
+                    }
+
+                    return MemoryStatus.Err(value);
+                }
+
+                fn i32[min max] Run(i32[min max] value)
+                {
+                    switch (MakeStatus(value))
+                    {
+                        case MemoryStatus.Ok:
+                        case MemoryStatus.Err(var error):
+                    }
+
+                    return value;
+                }
+                """),
+            new CompilerOptions(StopAfterPassId: "lower-mir"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.MidLevelIr, out MidLevelIrModule? mir));
+        Assert.NotNull(mir);
+
+        var run = Assert.Single(mir.Functions, static function => function.Name == "Run");
+        Assert.True(run.SupportsDirectCodeGeneration);
+        Assert.Contains(DirectCallNames(run), static name => string.Equals(name, "MakeStatus", StringComparison.Ordinal));
+        Assert.DoesNotContain(run.Blocks, static block => block.Label.StartsWith("switch_", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ManifestBackedGenericBodiesLowerGuardlessEmptySwitchAsNoOpWhenBridgeSourceIsCorrupted()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-empty-switch-typed-body-");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+        var facadePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public enum MemoryStatus<T>
+                {
+                    [Ok] Ok,
+                    [Err] Err(T),
+                }
+
+                public fn T Discard<T>(MemoryStatus<T> status, T value)
+                {
+                    switch (status)
+                    {
+                        case MemoryStatus<T>.Ok:
+                        case MemoryStatus<T>.Err(var error):
+                    }
+
+                    return value;
+                }
+                """,
+                facadePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            var facadeModule = WithEffectiveLegacyCompilerSectionCopies(Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade"));
+            var discardTemplate = Assert.Single(facadeModule.GenericTemplates!.Functions, static template => template.QualifiedResolvedName == "Facade.Discard");
+            Assert.NotNull(discardTemplate.TypedBody);
+
+            var corruptedTemplate = discardTemplate with
+            {
+                BodyText = """
+                    {
+                        return this is not valid Stark;
+                    }
+                    """
+            };
+
+            var typedOnlyManifest = manifest with
+            {
+                Modules = manifest.Modules
+                    .Select(module => module.ModuleName == "Facade"
+                        ? module with
+                        {
+                            Functions = [],
+                            Types = [],
+                            Globals = [],
+                            TypeAliases = [],
+                            TypedInterface = facadeModule.TypedInterface,
+                            CompilerFacts = facadeModule.CompilerFacts,
+                            GenericTemplates = new StarkPackageGenericTemplateSection(
+                                module.EffectiveGenericTemplates!.Functions
+                                    .Select(template => template.QualifiedResolvedName == corruptedTemplate.QualifiedResolvedName
+                                        ? corruptedTemplate
+                                        : template)
+                                    .ToArray())
+                        }
+                        : module)
+                    .ToArray()
+            };
+
+            File.WriteAllText(manifestPath, typedOnlyManifest.ToJson());
+            File.Delete(facadePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    fn i32[min max] Run(i32[min max] value)
+                    {
+                        stack Facade.MemoryStatus<i32[min max]> status = Facade.MemoryStatus<i32[min max]>.Err(value);
+                        return Facade.Discard(status, value);
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    StopAfterPassId: "lower-mir",
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.MidLevelIr, out MidLevelIrModule? mir));
+            Assert.NotNull(mir);
+
+            var specialized = Assert.Single(mir.Functions, static function => function.Name == "__stark_mono_fn_Demo__Facade_Discard__i32");
+            Assert.True(specialized.SupportsDirectCodeGeneration);
+            Assert.DoesNotContain(specialized.Blocks, static block => block.Label.StartsWith("typed_switch_", StringComparison.Ordinal));
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
     public void ManifestBackedTypedTemplateBodiesDoNotRequireBridgeBodyTextForImportedGenericSpecialization()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-typed-body-bridge-");
@@ -175,6 +338,131 @@ public sealed class CompilerPipelineLowerMirTests
             Assert.True(identity.HasBody);
             Assert.True(identity.SupportsDirectCodeGeneration);
             Assert.Contains(identity.Locals, static local => local.Name == "copy");
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public void ManifestBackedGenericFieldDropsResolveTransitiveContainerDestructorHelpers()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-generic-field-drop-");
+        var bucketsManifestPath = Path.Combine(tempDirectory.FullName, "libBuckets.starkpkg.json");
+        var facadeManifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+        var bucketsPath = Path.Combine(tempDirectory.FullName, "Buckets.stark");
+        var facadePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var bucketsResult = pipeline.Run(new CompilationInput(
+                """
+                module Buckets
+
+                public struct List<T>
+                {
+                    internal dynamic T Items;
+
+                    List()
+                    {
+                        self.Items = new();
+                    }
+
+                    mut drop
+                    {
+                        self.Clear();
+                    }
+
+                    fn void Clear(mut borrow List<T> self)
+                    {
+                        while willexit (self.Items.Length > 0)
+                        {
+                            stack T value = self.Items.MoveLast();
+                        }
+
+                        return;
+                    }
+                }
+                """,
+                bucketsPath));
+
+            Assert.True(bucketsResult.Succeeded, string.Join(", ", bucketsResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var bucketsManifest = PackageImageBuilder.Create(
+                bucketsResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Buckets.lib" : "libBuckets.a"));
+            File.WriteAllText(bucketsManifestPath, bucketsManifest.ToJson());
+            File.Delete(bucketsPath);
+
+            var facadeResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Buckets
+                    module Facade
+
+                    public struct Owner<T>
+                    {
+                        Buckets.List<T> Items;
+
+                        Owner()
+                        {
+                            self.Items = new();
+                        }
+                    }
+                    """,
+                    facadePath),
+                new CompilerOptions(
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
+
+            Assert.True(facadeResult.Succeeded, string.Join(", ", facadeResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var facadeManifest = PackageImageBuilder.Create(
+                facadeResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            var facadeOnlyManifest = facadeManifest with
+            {
+                Modules = facadeManifest.Modules
+                    .Where(static module => module.ModuleName == "Facade")
+                    .ToArray()
+            };
+            File.WriteAllText(facadeManifestPath, facadeOnlyManifest.ToJson());
+            File.Delete(facadePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    fn i32[min max] Run()
+                    {
+                        stack Facade.Owner<u32[0 max]> owner = new Facade.Owner<u32[0 max]>();
+                        return 0;
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    StopAfterPassId: "lower-mir",
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            Assert.DoesNotContain(consumerResult.Diagnostics, static diagnostic => diagnostic.Code == "STK9999");
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.MidLevelIr, out MidLevelIrModule? mir));
+            Assert.NotNull(mir);
+            Assert.Contains(
+                mir!.Functions.SelectMany(static function => function.Blocks)
+                    .SelectMany(static block => block.Statements)
+                    .Select(static statement => statement.Value),
+                static value => value is MidLevelIrDynamicStorageMoveLastRValue);
         }
         finally
         {

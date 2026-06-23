@@ -21,6 +21,14 @@ Post-self-host `comptime` is where Stark may pursue the broader model:
 This work resumes after the Stark compiler can build itself, unless a concrete
 pre-self-host compiler-port blocker is discovered.
 
+Broad CTFE may support value kinds beyond the current range-typed integer
+`comptime` generic slice after bootstrap, but only demand-driven. Additional
+value kinds must be deterministic, cheap to compare/hash for specialization
+identity, representable in package images, and useful to real compiler, stdlib,
+or vendor-library code. Do not default to "any Stark value can be a generic
+argument." Likely early candidates are `bool`, enum/tag-like constants, and
+possibly small text/name constants when package identity remains clean.
+
 ## Deferred Work Items
 
 - [ ] Rebuild the broad CTFE evaluator in the self-hosted compiler architecture
@@ -35,8 +43,8 @@ pre-self-host compiler-port blocker is discovered.
       helper bodies and structural fact expressions.
 - [ ] Finish the remaining structural fact coverage only after concrete
       self-hosted compiler code asks for those facts.
-- [ ] Decide whether broad CTFE should support additional value kinds beyond
-      the current range-typed integer `comptime` generic slice.
+- [ ] Add post-bootstrap CTFE value kinds beyond range-typed integer generics
+      only when concrete compiler, stdlib, or vendor-library code needs them.
 - [ ] Add broad conformance tests that run against the self-hosted compiler, not
       only the C# host implementation.
 
@@ -48,6 +56,9 @@ pre-self-host compiler-port blocker is discovered.
 - Do not use `comptime` to replace ordinary runtime compiler work such as file
   I/O, package loading, or process execution.
 - Do not treat every useful structural fact as a bootstrap blocker.
+- Do not allow heap objects, process/file/environment-dependent values, runtime
+  reflection objects, hidden metadata, or hidden allocation into CTFE generic
+  identity.
 - Prefer ordinary Stark compiler architecture first; add compile-time machinery
   only where it makes invalid states unrepresentable or removes real generated
   runtime work.

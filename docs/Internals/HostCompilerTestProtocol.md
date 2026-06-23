@@ -98,10 +98,33 @@ Artifact names can be exact compiler artifact keys or one of these aliases:
 
 | Alias | Artifact |
 |---|---|
-| `llvm`, `llvm-text`, `llvm-ir` | `llvm-ir-module` |
+| `llvm`, `llvm-text`, `llvm-ir` | `llvm-ir-module` (raw renderer text) |
+| `llvm-normalized`, `llvm-ir-normalized`, `llvm-norm` | `llvm-ir-module` normalized like the C# `GetLlvm` oracle: `\bnoundef\b` stripped, then whitespace collapsed on `define`/`declare` header lines |
 | `mir`, `mir-text` | `mid-level-ir` |
 | `ssa`, `ssa-text` | `ssa-ir` |
 | `optimized-ssa`, `optimized-ssa-text`, `opt-ssa`, `opt-ssa-text` | `optimized-ssa-ir` |
+
+**Option-flag suffixes on the artifact name.** A requested LLVM artifact name may
+carry `;`-delimited option flags that toggle `CompilerOptions` for that compile
+without adding request fields, e.g. `"llvm-normalized;qualify;internalize"`. The
+base name before the first `;` selects the rendered artifact; recognized flags:
+`qualify` → `QualifyModuleSymbols`, `internalize` → `InternalizeModulePrivate`.
+The full requested string is echoed back as the artifact's `requestedName` (so the
+caller reads it back by the same name). This is how the Stark
+`CompileLlvmNormalizedQualified` / `CompileLlvmInternalized` harness entry points
+express the symbol-qualification / executable-internalization tests.
+
+`targetDataLayout` is a dedicated request field (read by `BuildTargetInfo` next
+to `targetTriple`); the Stark `CompileLlvmForTargetWithDataLayout` harness entry
+sets it so a ported test can assert the emitted `target datalayout = "…"` module
+header. `importedInlineCloneSeedFunctions` is a JSON array of function names that
+seeds `CompilerOptions.ImportedInlineCloneSeedFunctions`: the LLVM emitter keeps
+strong owned definitions only for functions reachable from the seeds and falls
+non-reachable bodies back to weak `weak_odr` definitions (the
+`BuildOwnedFunctionDefinitionFilter` dependency-pruning path). The Stark
+`CompileLlvmWithSeeds(id, source, seed)` harness entry emits this array, so a
+ported LTO/dependency-pruning oracle can assert that a seed narrows the owned
+emission surface.
 
 `availableArtifacts` lists every artifact key produced by the pipeline.
 `artifactTexts` contains rendered text for requested artifacts that have a text
@@ -120,6 +143,29 @@ Artifact file names are stable:
 | `optimized-ssa-ir` | `optimized-ssa-ir.ssa` |
 
 Other renderable artifact keys use a sanitized `<artifact>.txt` name.
+
+**SSA renderer fidelity — `ssa` vs `optimized-ssa`.** The two SSA artifacts render at
+different detail levels, which matters when picking the one an assertion reads:
+
+- `ssa` (`lowering.ssa`) is the **terse, pre-optimization** lowering SSA. It prints each
+  instruction as `vN = <op> @ line:col` — operator and source location only, **without
+  operands or constant coefficients** (e.g. a repeated-add run prints `v0 = + @ 5:5`,
+  `v1 = + @ 5:5`).
+- `optimized-ssa` (`lowering.ssa.optimized`) is where the **optimization passes write**,
+  and it prints fold-*synthesized* instructions with their full operands and coefficients
+  (`v1_mul_1 = arg_value * 3 @ 5:5`, `+ 11`, `arg_value ** 3`, `return 0`). Instructions that
+  a pass leaves untouched still print terse (`vN = +`), so a *preserved* operand (e.g. a
+  trailing `+ 5`) may not be literally renderable.
+
+So an assertion about an operand/coefficient/fold result, or about a pass having removed a
+load/store, must read `optimized-ssa` — and the bridge produces `optimized-ssa` even for an
+**early** `stopAfterPassId` (e.g. stopping after `arithmetic-fold-ssa`, `memory-opt-ssa`,
+`cleanup-ssa`, or `inline-ssa` still fills the optimized artifact with the state after that
+pass). The Stark harness exposes this as `SsaTestSupport.CompileSsaAfterOptimized(id, source,
+stopAfterPassId)` (requests `optimized-ssa` at the stop) alongside `CompileSsaAfter` (terse
+`ssa`). To scope a "no surviving call" check to one function (so a callee's own surviving
+`fn <callee>(` header is not matched), slice with `System.Testing.SsaFunctionBody(ssaText,
+fnName)` — the SSA analogue of `LlvmDefinitionBody` — via `OptimizedSsaFunctionLacks/Contains`.
 
 ## Response Shape
 

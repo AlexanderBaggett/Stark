@@ -7282,7 +7282,8 @@ public sealed class LlvmIrEmissionTests
                 stack Image image = NativeLoad("asset.png");
                 return image.Width;
             }
-            """);
+            """,
+            options: new CompilerOptions(TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null)));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvm(result);
@@ -7321,7 +7322,8 @@ public sealed class LlvmIrEmissionTests
                 NativeDraw(position, position);
                 return 0;
             }
-            """);
+            """,
+            options: new CompilerOptions(TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null)));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvm(result);
@@ -7423,7 +7425,8 @@ public sealed class LlvmIrEmissionTests
                 NativeDraw(rec, color);
                 return 0;
             }
-            """);
+            """,
+            options: new CompilerOptions(TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null)));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvm(result);
@@ -7456,7 +7459,8 @@ public sealed class LlvmIrEmissionTests
                 stack Vector3 position = NativeGet();
                 return 0;
             }
-            """);
+            """,
+            options: new CompilerOptions(TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null)));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvm(result);
@@ -7506,7 +7510,8 @@ public sealed class LlvmIrEmissionTests
                 NativeTake(matrix);
                 return 0;
             }
-            """);
+            """,
+            options: new CompilerOptions(TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null)));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvm(result);
@@ -7545,7 +7550,8 @@ public sealed class LlvmIrEmissionTests
                 NativeTake(pair);
                 return 0;
             }
-            """);
+            """,
+            options: new CompilerOptions(TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null)));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvm(result);

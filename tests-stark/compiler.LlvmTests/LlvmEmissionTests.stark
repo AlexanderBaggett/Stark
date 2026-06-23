@@ -4119,6 +4119,13 @@ fn bool ConfiguredTargetInfoIsEmittedInHeader()
 
 [Fact]
 [Collection("llvm-ir")]
+fn bool ImportedInlineCloneSeedFunctionsNarrowOwnedEmissionSurface()
+{
+    return ImportedInlineCloneSeedFunctionsNarrowOwnedEmissionSurfaceImpl();
+}
+
+[Fact]
+[Collection("llvm-ir")]
 fn bool ShortCircuitAndTernaryEmitBranchesAndPhi()
 {
     return ShortCircuitAndTernaryEmitBranchesAndPhiImpl();

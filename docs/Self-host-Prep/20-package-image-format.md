@@ -121,18 +121,23 @@ debug/test flag then.
 
 ## 7. Compatibility Policy
 
-Binary package images need a small compatibility policy before the host is
-dropped:
+Package images are compiler-version-local build artifacts during self-host prep,
+not a long-term stable interchange format. Keep the policy intentionally small:
 
-- reject unknown required sections
-- ignore unknown optional sections only when the section directory marks them as
-  optional
-- reject incompatible format versions
-- reject incompatible target/profile/layout facts
-- make bootstrap stages choose the package image matching their compiler stage
+- include a magic value and exact format version in the binary header
+- load only the exact package-image format the compiler supports
+- fail clearly on mismatch: rebuild packages with the current compiler
+- rebuild package images per bootstrap stage instead of preserving cross-version
+  compatibility
+- compare deterministic inspection output and clean-build compiler outputs during
+  stage comparison; reserve raw-byte comparison for binary codec determinism
+  tests
+- keep legacy `.starkpkg.json` as a Stage0 migration bridge only; self-hosted
+  stages use the binary package image as the canonical load artifact once the
+  binary path is available
 
-This replaces the current v1.1 assumption that compiler source and package image
-format always evolve together without a durable format marker.
+Do not add major/minor compatibility matrices before a release need makes that
+administrative cost worthwhile.
 
 ## 8. Work Items
 

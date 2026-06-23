@@ -1,3 +1,5 @@
+import System.IO
+import System.Memory
 import System.Process
 import System.Testing
 import System.Testing.HostCompiler
@@ -19,27 +21,412 @@ public struct LlvmCompile
 {
     HostCompileOutcome Outcome;
     bool Ok;
+    // The exact artifact name requested from the host (e.g. "llvm",
+    // "llvm-normalized", "llvm-normalized;qualify;internalize"). `Llvm` reads the
+    // matching artifact back by this name; the `;`-suffixes are host-test option
+    // flags consumed by the bridge's BuildOptions (qualify/internalize), not part
+    // of the rendered artifact.
+    OwnedAscii RequestedArtifact;
 
     LlvmCompile()
     {
         self.Outcome = new();
         self.Ok = false;
+        self.RequestedArtifact = new();
     }
 }
 
-// Compiles the source through the full pipeline with the LLVM artifact
-// requested. `Ok` additionally requires the compile itself to succeed.
-public fn LlvmCompile CompileLlvm(ascii id, ascii source)
+// Core single-source compile. `targetTriple` empty means host default;
+// `normalized` selects the `noundef`-stripped, whitespace-collapsed LLVM artifact
+// (matching the C# `GetLlvm` oracle) instead of the raw text (matching
+// `GetLlvmRaw`). `Ok` additionally requires the compile itself to succeed.
+// Core single-source compile. `artifactName` is the exact host artifact name —
+// "llvm" (raw, matches `GetLlvmRaw`), "llvm-normalized" (matches `GetLlvm`), or
+// with `;qualify`/`;internalize` option-flag suffixes the bridge reads into
+// CompilerOptions. `targetTriple` empty means host default. `Ok` additionally
+// requires the compile itself to succeed.
+internal fn LlvmCompile CompileLlvmCore(ascii id, ascii source, ascii targetTriple, ascii artifactName)
 {
     unsafe
     {
-        stack mut LlvmCompile compiled = RunHostCompile(id, source, "", "llvm");
+        stack mut LlvmCompile compiled = RunHostCompile(id, source, "", artifactName, targetTriple, "");
         if (compiled.Ok && !compiled.Outcome.CompileSucceeded())
         {
             compiled.Ok = false;
         }
 
         return compiled;
+    }
+}
+
+// Compiles the source through the full pipeline, requesting the RAW LLVM
+// artifact (assertions must match the raw `define`/`declare` forms with
+// `noundef`). Mirrors the C# `GetLlvmRaw` oracle.
+public fn LlvmCompile CompileLlvm(ascii id, ascii source)
+{
+    return CompileLlvmCore(id, source, "", "llvm");
+}
+
+// As CompileLlvm, but pins an explicit target triple (e.g.
+// "x86_64-unknown-linux-gnu") — for ported tests whose C# oracle asserts
+// target-specific codegen (allocator lowering, ABI).
+public fn LlvmCompile CompileLlvmForTarget(ascii id, ascii source, ascii targetTriple)
+{
+    return CompileLlvmCore(id, source, targetTriple, "llvm");
+}
+
+// As CompileLlvmForTarget, but also pins a custom target data layout so a ported
+// test can assert the emitted `target datalayout = "…"` module header (PAINPOINTS
+// #10 ConfiguredTargetInfo). The raw `llvm` artifact carries the header verbatim.
+public fn LlvmCompile CompileLlvmForTargetWithDataLayout(ascii id, ascii source, ascii targetTriple, ascii targetDataLayout)
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = RunHostCompile(id, source, "", "llvm", targetTriple, "", targetDataLayout);
+        if (compiled.Ok && !compiled.Outcome.CompileSucceeded())
+        {
+            compiled.Ok = false;
+        }
+
+        return compiled;
+    }
+}
+
+// As CompileLlvm, but requests the NORMALIZED LLVM artifact: assertions match
+// the `noundef`-stripped, whitespace-collapsed `define`/`declare` forms exactly
+// as the C# `GetLlvm` oracle does.
+public fn LlvmCompile CompileLlvmNormalized(ascii id, ascii source)
+{
+    return CompileLlvmCore(id, source, "", "llvm-normalized");
+}
+
+// Normalized compile pinned to an explicit target triple.
+public fn LlvmCompile CompileLlvmForTargetNormalized(ascii id, ascii source, ascii targetTriple)
+{
+    return CompileLlvmCore(id, source, targetTriple, "llvm-normalized");
+}
+
+// Normalized compile with `QualifyModuleSymbols` (the C# oracle's
+// CompilerOptions(QualifyModuleSymbols: true)). The bridge reads the `;qualify`
+// suffix into BuildOptions; rendering still uses the normalized artifact.
+public fn LlvmCompile CompileLlvmNormalizedQualified(ascii id, ascii source)
+{
+    return CompileLlvmCore(id, source, "", "llvm-normalized;qualify");
+}
+
+// Normalized compile with both `QualifyModuleSymbols` and
+// `InternalizeModulePrivate`.
+public fn LlvmCompile CompileLlvmNormalizedQualifiedInternalized(ascii id, ascii source)
+{
+    return CompileLlvmCore(id, source, "", "llvm-normalized;qualify;internalize");
+}
+
+// RAW compile with `InternalizeModulePrivate` (the C# oracle's
+// CompilerOptions(InternalizeModulePrivate: true) read through `GetLlvmRaw`).
+public fn LlvmCompile CompileLlvmInternalized(ascii id, ascii source)
+{
+    return CompileLlvmCore(id, source, "", "llvm;internalize");
+}
+
+// RAW compile seeding the host's imported inline-clone closure with one function
+// name (the C# oracle's CompilerOptions(ImportedInlineCloneSeedFunctions: [...])
+// read through `GetLlvmRaw`). Owned function definitions reachable from `seed`
+// keep strong linkage; non-reachable bodies fall back to weak `weak_odr`
+// definitions — so a ported dependency-pruning oracle can assert the seed
+// narrows the owned emission surface. PAINPOINTS #3.
+public fn LlvmCompile CompileLlvmWithSeeds(ascii id, ascii source, ascii seed)
+{
+    unsafe
+    {
+        stack mut LlvmCompile compiled = RunHostCompileWithSeed(id, source, "llvm", seed);
+        if (compiled.Ok && !compiled.Outcome.CompileSucceeded())
+        {
+            compiled.Ok = false;
+        }
+
+        return compiled;
+    }
+}
+
+// Compiles `source` with a single dependency module made resolvable on disk,
+// mirroring the C# Compile(..., ModuleResolver: InMemoryModuleResolver[...])
+// overload that the Imported*/SourceBacked* IR tests rely on. Writes
+// `depModuleSource` to "<depModuleName>.stark" in a fresh temp directory and
+// passes that directory to the host as a module search directory, so
+// `import <depModuleName>` resolves and the cross-module declaration/call
+// assertions become reproducible through the single-source host bridge. Returns
+// a failed compile (Ok == false) when the fixture cannot be staged, so the test
+// fails loudly rather than silently passing on a missing dependency.
+public fn LlvmCompile CompileLlvmWithModule(
+    ascii id,
+    ascii source,
+    ascii depModuleName,
+    ascii depModuleSource)
+{
+    return CompileLlvmWithModuleCore(id, source, depModuleName, depModuleSource, "", "llvm");
+}
+
+// As CompileLlvmWithModule, but also pins an explicit target triple for ported
+// tests whose oracle asserts target-specific codegen.
+public fn LlvmCompile CompileLlvmWithModuleForTarget(
+    ascii id,
+    ascii source,
+    ascii depModuleName,
+    ascii depModuleSource,
+    ascii targetTriple)
+{
+    return CompileLlvmWithModuleCore(id, source, depModuleName, depModuleSource, targetTriple, "llvm");
+}
+
+// Normalized variant of CompileLlvmWithModule (matches the C# `GetLlvm` oracle).
+public fn LlvmCompile CompileLlvmWithModuleNormalized(
+    ascii id,
+    ascii source,
+    ascii depModuleName,
+    ascii depModuleSource)
+{
+    return CompileLlvmWithModuleCore(id, source, depModuleName, depModuleSource, "", "llvm-normalized");
+}
+
+// Normalized cross-module compile pinned to an explicit target triple.
+public fn LlvmCompile CompileLlvmWithModuleForTargetNormalized(
+    ascii id,
+    ascii source,
+    ascii depModuleName,
+    ascii depModuleSource,
+    ascii targetTriple)
+{
+    return CompileLlvmWithModuleCore(id, source, depModuleName, depModuleSource, targetTriple, "llvm-normalized");
+}
+
+// Normalized cross-module compile with `QualifyModuleSymbols`.
+public fn LlvmCompile CompileLlvmWithModuleNormalizedQualified(
+    ascii id,
+    ascii source,
+    ascii depModuleName,
+    ascii depModuleSource)
+{
+    return CompileLlvmWithModuleCore(id, source, depModuleName, depModuleSource, "", "llvm-normalized;qualify");
+}
+
+// Normalized cross-module compile with `QualifyModuleSymbols` +
+// `InternalizeModulePrivate`.
+public fn LlvmCompile CompileLlvmWithModuleNormalizedQualifiedInternalized(
+    ascii id,
+    ascii source,
+    ascii depModuleName,
+    ascii depModuleSource)
+{
+    return CompileLlvmWithModuleCore(id, source, depModuleName, depModuleSource, "", "llvm-normalized;qualify;internalize");
+}
+
+// RAW cross-module compile with `InternalizeModulePrivate` (matches `GetLlvmRaw`).
+public fn LlvmCompile CompileLlvmWithModuleInternalized(
+    ascii id,
+    ascii source,
+    ascii depModuleName,
+    ascii depModuleSource)
+{
+    return CompileLlvmWithModuleCore(id, source, depModuleName, depModuleSource, "", "llvm;internalize");
+}
+
+// Core cross-module compile: stages `depModuleSource` to "<depModuleName>.stark"
+// in a fresh temp directory, passes that directory to the host as a module search
+// directory, and compiles `source`. `normalized` selects the normalized artifact.
+internal fn LlvmCompile CompileLlvmWithModuleCore(
+    ascii id,
+    ascii source,
+    ascii depModuleName,
+    ascii depModuleSource,
+    ascii targetTriple,
+    ascii artifactName)
+{
+    unsafe
+    {
+        stack mut LlvmCompile failed = new();
+
+        // The file-system module resolver maps module name -> "<name>.stark" under
+        // each search directory, so the dependency file must carry that name.
+        stack mut OwnedAscii fileName = new();
+        switch (fileName.AppendAscii(depModuleName))
+        {
+            case MemoryStatus.Err(_):
+                return failed;
+            case MemoryStatus.Ok:
+        }
+        switch (fileName.AppendConstAscii(".stark"))
+        {
+            case MemoryStatus.Err(_):
+                return failed;
+            case MemoryStatus.Ok:
+        }
+
+        switch (System.Testing.CreateTempDirectory("llvm-host-dep"))
+        {
+            case IOResult<System.Testing.TempDirectory>.Err(_):
+                return failed;
+            case IOResult<System.Testing.TempDirectory>.Ok(var dir):
+                stack mut System.Testing.TempDirectory tempDir = dir;
+                switch (tempDir.WriteText(fileName.View(), depModuleSource))
+                {
+                    case IOStatus.Err(_):
+                        return failed;
+                    case IOStatus.Ok:
+                }
+
+                stack mut LlvmCompile compiled =
+                    RunHostCompile(id, source, "", artifactName, targetTriple, tempDir.View());
+                if (compiled.Ok && !compiled.Outcome.CompileSucceeded())
+                {
+                    compiled.Ok = false;
+                }
+
+                return compiled;
+        }
+    }
+}
+
+// Compiles `source` against a dependency supplied as a built PACKAGE IMAGE,
+// mirroring the C# PackageImageBacked*/ManifestBacked* tests (which build a
+// `.starkpkg` with PackageImageBuilder and consume it through a
+// FileSystemModuleResolver). Writes `libModuleSource` to a temp dir, builds it
+// into `lib<Name>.a` + `lib<Name>.starkpkg{,.json}` via the compiler's
+// `--emit-lib` package path, then compiles `source` with that dir as a search
+// directory — the file-system module resolver discovers the `.starkpkg.json` and
+// imports the library from the package image (no source). Returns a failed
+// compile if the package cannot be staged.
+public fn LlvmCompile CompileLlvmWithPackage(
+    ascii id,
+    ascii source,
+    ascii libModuleName,
+    ascii libModuleSource)
+{
+    return CompileLlvmWithPackageCore(id, source, libModuleName, libModuleSource, "", "llvm");
+}
+
+// Normalized variant of CompileLlvmWithPackage (matches the C# `GetLlvm` oracle).
+public fn LlvmCompile CompileLlvmWithPackageNormalized(
+    ascii id,
+    ascii source,
+    ascii libModuleName,
+    ascii libModuleSource)
+{
+    return CompileLlvmWithPackageCore(id, source, libModuleName, libModuleSource, "", "llvm-normalized");
+}
+
+internal fn LlvmCompile CompileLlvmWithPackageCore(
+    ascii id,
+    ascii source,
+    ascii libModuleName,
+    ascii libModuleSource,
+    ascii targetTriple,
+    ascii artifactName)
+{
+    unsafe
+    {
+        stack mut LlvmCompile failed = new();
+
+        stack mut OwnedAscii compilerPath = new();
+        switch (CompilerPathFromEnvironment())
+        {
+            case HostResult<OwnedAscii>.Err(var pathError):
+                return failed;
+            case HostResult<OwnedAscii>.Ok(var path):
+                compilerPath = path;
+        }
+
+        // Relative names inside the temp dir: <lib>.stark, lib<lib>.a,
+        // lib<lib>.starkpkg. The build runs with the temp dir as its working
+        // directory so these can be relative.
+        stack mut OwnedAscii sourceName = new();
+        switch (sourceName.AppendAscii(libModuleName))
+        {
+            case MemoryStatus.Err(_):
+                return failed;
+            case MemoryStatus.Ok:
+        }
+        switch (sourceName.AppendConstAscii(".stark"))
+        {
+            case MemoryStatus.Err(_):
+                return failed;
+            case MemoryStatus.Ok:
+        }
+
+        stack mut OwnedAscii libraryName = new();
+        switch (libraryName.AppendConstAscii("lib"))
+        {
+            case MemoryStatus.Err(_):
+                return failed;
+            case MemoryStatus.Ok:
+        }
+        switch (libraryName.AppendAscii(libModuleName))
+        {
+            case MemoryStatus.Err(_):
+                return failed;
+            case MemoryStatus.Ok:
+        }
+        switch (libraryName.AppendConstAscii(".a"))
+        {
+            case MemoryStatus.Err(_):
+                return failed;
+            case MemoryStatus.Ok:
+        }
+
+        stack mut OwnedAscii packageName = new();
+        switch (packageName.AppendConstAscii("lib"))
+        {
+            case MemoryStatus.Err(_):
+                return failed;
+            case MemoryStatus.Ok:
+        }
+        switch (packageName.AppendAscii(libModuleName))
+        {
+            case MemoryStatus.Err(_):
+                return failed;
+            case MemoryStatus.Ok:
+        }
+        switch (packageName.AppendConstAscii(".starkpkg"))
+        {
+            case MemoryStatus.Err(_):
+                return failed;
+            case MemoryStatus.Ok:
+        }
+
+        switch (System.Testing.CreateTempDirectory("llvm-host-pkg"))
+        {
+            case IOResult<System.Testing.TempDirectory>.Err(_):
+                return failed;
+            case IOResult<System.Testing.TempDirectory>.Ok(var dir):
+                stack mut System.Testing.TempDirectory tempDir = dir;
+                switch (tempDir.WriteText(sourceName.View(), libModuleSource))
+                {
+                    case IOStatus.Err(_):
+                        return failed;
+                    case IOStatus.Ok:
+                }
+
+                switch (BuildLibraryPackage(
+                    compilerPath.View(),
+                    tempDir.View(),
+                    sourceName.View(),
+                    libraryName.View(),
+                    packageName.View(),
+                    HostTimeoutMilliseconds))
+                {
+                    case HostResult<bool>.Err(var buildError):
+                        return failed;
+                    case HostResult<bool>.Ok(var built):
+                }
+
+                stack mut LlvmCompile compiled =
+                    RunHostCompile(id, source, "", artifactName, targetTriple, tempDir.View());
+                if (compiled.Ok && !compiled.Outcome.CompileSucceeded())
+                {
+                    compiled.Ok = false;
+                }
+
+                return compiled;
+        }
     }
 }
 
@@ -52,19 +439,61 @@ public fn bool Succeeds(mut borrow LlvmCompile compiled)
     }
 }
 
-// Returns the LLVM artifact text of a successful compile, or empty text. This
-// is the RAW renderer output (no `noundef`-stripping or whitespace
-// normalization), so header assertions must match the raw `define`/`declare`
-// forms.
+// Returns the LLVM artifact text of a successful compile, or empty text. For a
+// raw compile this is the RAW renderer output (header assertions must match the
+// raw `define`/`declare` forms, including `noundef`); for a normalized compile
+// it is the `noundef`-stripped, whitespace-collapsed text matching the C#
+// `GetLlvm` oracle.
 public fn ascii Llvm(mut borrow LlvmCompile compiled)
 {
     unsafe
     {
-        return compiled.Outcome.ArtifactText("llvm");
+        return compiled.Outcome.ArtifactText(compiled.RequestedArtifact.View());
     }
 }
 
-internal fn LlvmCompile RunHostCompile(ascii id, ascii source, ascii stopAfterPassId, ascii artifactName)
+// Self-reporting LLVM text assertions (PAINPOINTS #1). On a mismatch they write a
+// focused failure report — the searched-for fragment plus a leading window of the
+// actual LLVM text — to stderr via System.Testing.ContainsReport /
+// DoesNotContainReport, so a failing emitter port explains itself instead of
+// returning a bare `false` that forces re-running the compiler by hand. Prefer
+// these over `Contains(Llvm(c), ...)` / `DoesNotContain(Llvm(c), ...)` in ported
+// golden tests. Returns false (and reports nothing) when the compile itself did
+// not succeed — check Succeeds(c) separately for that case.
+public fn bool LlvmContains(mut borrow LlvmCompile compiled, ascii fragment)
+{
+    unsafe
+    {
+        if (!Succeeds(compiled))
+        {
+            return false;
+        }
+
+        stack ascii text = compiled.Outcome.ArtifactText(compiled.RequestedArtifact.View());
+        return System.Testing.ContainsReport(text, fragment);
+    }
+}
+
+public fn bool LlvmDoesNotContain(mut borrow LlvmCompile compiled, ascii fragment)
+{
+    unsafe
+    {
+        if (!Succeeds(compiled))
+        {
+            return false;
+        }
+
+        stack ascii text = compiled.Outcome.ArtifactText(compiled.RequestedArtifact.View());
+        return System.Testing.DoesNotContainReport(text, fragment);
+    }
+}
+
+internal fn LlvmCompile RunHostCompile(ascii id, ascii source, ascii stopAfterPassId, ascii artifactName, ascii targetTriple, ascii searchDirectory)
+{
+    return RunHostCompile(id, source, stopAfterPassId, artifactName, targetTriple, searchDirectory, "");
+}
+
+internal fn LlvmCompile RunHostCompile(ascii id, ascii source, ascii stopAfterPassId, ascii artifactName, ascii targetTriple, ascii searchDirectory, ascii targetDataLayout)
 {
     unsafe
     {
@@ -83,15 +512,17 @@ internal fn LlvmCompile RunHostCompile(ascii id, ascii source, ascii stopAfterPa
         stack mut bool transportOk = false;
         if (havePath)
         {
-            switch (CompileOnceArtifactIn(
+            switch (CompileOnceArtifactInForTargetWithDataLayout(
                 compilerPath.View(),
                 id,
                 source,
                 stopAfterPassId,
                 artifactName,
-                "",
+                searchDirectory,
                 0,
-                HostTimeoutMilliseconds))
+                HostTimeoutMilliseconds,
+                targetTriple,
+                targetDataLayout))
             {
                 case HostResult<HostCompileOutcome>.Err(var error):
                     transportOk = false;
@@ -110,6 +541,82 @@ internal fn LlvmCompile RunHostCompile(ascii id, ascii source, ascii stopAfterPa
         stack mut LlvmCompile compiled = new();
         compiled.Ok = ok;
         compiled.Outcome = outcome;
+        // Remember the exact requested artifact name so `Llvm` reads the matching
+        // artifact back (the host echoes it as the response `requestedName`). Bind
+        // the append status to a local first — an all-empty-case switch over the
+        // call elided the side-effecting append, leaving the name blank.
+        stack mut OwnedAscii requested = new();
+        stack System.Memory.MemoryStatus appendStatus = requested.AppendAscii(artifactName);
+        switch (appendStatus)
+        {
+            case System.Memory.MemoryStatus.Err(var appendError):
+                compiled.Ok = false;
+            case System.Memory.MemoryStatus.Ok:
+                compiled.RequestedArtifact = requested;
+        }
+        return compiled;
+    }
+}
+
+// As RunHostCompile, but seeds the host's imported inline-clone closure with one
+// function name (PAINPOINTS #3 `importedInlineCloneSeedFunctions`). Routes through
+// CompileOnceArtifactInWithSeed so the request carries the seed array.
+internal fn LlvmCompile RunHostCompileWithSeed(ascii id, ascii source, ascii artifactName, ascii importedInlineCloneSeed)
+{
+    unsafe
+    {
+        stack mut OwnedAscii compilerPath = new();
+        stack mut bool havePath = false;
+        switch (CompilerPathFromEnvironment())
+        {
+            case HostResult<OwnedAscii>.Err(var pathError):
+                havePath = false;
+            case HostResult<OwnedAscii>.Ok(var path):
+                compilerPath = path;
+                havePath = true;
+        }
+
+        stack mut HostCompileOutcome outcome = new();
+        stack mut bool transportOk = false;
+        if (havePath)
+        {
+            switch (CompileOnceArtifactInWithSeed(
+                compilerPath.View(),
+                id,
+                source,
+                "",
+                artifactName,
+                "",
+                0,
+                HostTimeoutMilliseconds,
+                importedInlineCloneSeed))
+            {
+                case HostResult<HostCompileOutcome>.Err(var error):
+                    transportOk = false;
+                case HostResult<HostCompileOutcome>.Ok(var captured):
+                    outcome = captured;
+                    transportOk = true;
+            }
+        }
+
+        stack mut bool ok = false;
+        if (transportOk)
+        {
+            ok = !outcome.HadProtocolError();
+        }
+
+        stack mut LlvmCompile compiled = new();
+        compiled.Ok = ok;
+        compiled.Outcome = outcome;
+        stack mut OwnedAscii requested = new();
+        stack System.Memory.MemoryStatus appendStatus = requested.AppendAscii(artifactName);
+        switch (appendStatus)
+        {
+            case System.Memory.MemoryStatus.Err(var appendError):
+                compiled.Ok = false;
+            case System.Memory.MemoryStatus.Ok:
+                compiled.RequestedArtifact = requested;
+        }
         return compiled;
     }
 }

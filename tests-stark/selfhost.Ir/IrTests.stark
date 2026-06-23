@@ -1,3 +1,4 @@
+import Compiler.AsmFacts
 import Compiler.Ir
 import Compiler.Mir
 import System.Memory
@@ -5,6 +6,7 @@ import System.Text
 import System.Runtime.Buffer
 import System.Testing
 import System.IO
+import System.Console
 [Collection("ir")]
 module IrTests
 
@@ -1489,6 +1491,42 @@ fn bool PackageImageRoundTripsThroughFile()
 }
 
 [Fact]
+fn bool PackageImageInspectsThroughFile()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack MirValueId a = MirConstInt(instrs, 5);
+    stack MirValueId b = MirConstInt(instrs, 6);
+    stack MirValueId s = MirAdd(instrs, a, b);
+    stack mut IrTable<MirBlock> blocks = new();
+    stack MirBlockId blk = MirReturnBlock(blocks, s);
+    stack mut IrTable<MirFunction> funcs = new();
+    stack MirFuncId f = MirDefineFunction(funcs, blk, blk, 1, a, 3);
+    stack mut IrTable<MirGlobal> globals = new();
+    stack u32[0 max] g = MirDefineGlobal(globals, 42);
+    stack mut IrTable<u8[0 max]> image = new();
+    SerializePackageImage(instrs, blocks, funcs, globals, image);
+
+    stack mut OwnedAscii expectedText = new();
+    switch (expectedText.AppendConstAscii("package: 3 instructions, 1 blocks, 1 functions, 1 globals\n"))
+    {
+        case MemoryStatus.Err(var textError):
+            return false;
+        case MemoryStatus.Ok:
+    }
+
+    stack mut OwnedAscii expectedJson = new();
+    switch (expectedJson.AppendConstAscii("{\"format\":\"MIR1\",\"instructions\":3,\"blocks\":1,\"functions\":1,\"globals\":1}\n"))
+    {
+        case MemoryStatus.Err(var jsonError):
+            return false;
+        case MemoryStatus.Ok:
+    }
+
+    return PackageImageIsValid(image)
+        && PackageImageBufferInspectsThroughFile(image, expectedText, expectedJson);
+}
+
+[Fact]
 fn bool PackageImageBridgesToByteBuffer()
 {
     // The image bytes convert to the stdlib DynamicByteBuffer (the exact type the file
@@ -1507,9 +1545,17 @@ fn bool PackageImageBridgesToByteBuffer()
     stack mut IrTable<u8[0 max]> buf = new();
     SerializePackageImage(instrs, blocks, funcs, globals, buf);
     stack mut DynamicByteBuffer dbuf = new();
-    ImageToByteBuffer(buf, dbuf);
+    if (!ImageToByteBuffer(buf, dbuf))
+    {
+        return false;
+    }
+
     stack mut IrTable<u8[0 max]> buf2 = new();
-    ImageFromByteBuffer(dbuf, buf2);
+    if (!ImageFromByteBuffer(dbuf, buf2))
+    {
+        return false;
+    }
+
     stack mut IrTable<MirInstruction> bi = new();
     stack mut IrTable<MirBlock> bb = new();
     stack mut IrTable<MirFunction> bf = new();
@@ -1571,6 +1617,181 @@ fn bool PackageImageRejectsBadMagic()
 }
 
 [Fact]
+fn bool PackageImageRejectsTruncatedHeaderAndInspectionStaysEmpty()
+{
+    // Truncated buffers are malformed package images, not short reads into row 0.
+    stack mut IrTable<u8[0 max]> buf = new();
+    stack mut IrTable<MirInstruction> bi = new();
+    stack mut IrTable<MirBlock> bb = new();
+    stack mut IrTable<MirFunction> bf = new();
+    stack mut IrTable<MirGlobal> bg = new();
+    stack mut OwnedAscii sink = new();
+    stack mut OwnedAscii json = new();
+    switch (InspectPackageImage(buf, sink))
+    {
+        case MemoryStatus.Err(var error):
+            return false;
+        case MemoryStatus.Ok:
+            switch (InspectPackageImageJson(buf, json))
+            {
+                case MemoryStatus.Err(var jsonError):
+                    return false;
+                case MemoryStatus.Ok:
+                    return !DeserializePackageImage(buf, bi, bb, bf, bg)
+                        && LlvmTextEquals(sink, "")
+                        && LlvmTextEquals(json, "")
+                        && bi.Count() == 0
+                        && bb.Count() == 0
+                        && bf.Count() == 0
+                        && bg.Count() == 0;
+            }
+    }
+}
+
+[Fact]
+fn bool MalformedPackageImageFileInspectionFails()
+{
+    stack mut IrTable<u8[0 max]> buf = new();
+    WriteU32(buf, 826757197);
+    return !PackageImageIsValid(buf)
+        && PackageImageBufferInspectionFailsThroughFile(buf, PackageImageInspectionFormat.Text)
+        && PackageImageBufferInspectionFailsThroughFile(buf, PackageImageInspectionFormat.Json);
+}
+
+[Fact]
+fn bool PackageImageValidationReportsFailureKinds()
+{
+    stack mut IrTable<u8[0 max]> empty = new();
+
+    stack mut IrTable<u8[0 max]> badMagic = new();
+    WriteU32(badMagic, 12345);
+
+    stack mut IrTable<u8[0 max]> truncatedSection = new();
+    WriteU32(truncatedSection, 826757197);
+    WriteU32(truncatedSection, 21);
+    WriteU32(truncatedSection, 25);
+    WriteU32(truncatedSection, 29);
+    WriteU32(truncatedSection, 33);
+
+    stack mut IrTable<u8[0 max]> badDirectory = new();
+    WriteU32(badDirectory, 826757197);
+    WriteU32(badDirectory, 22);
+    WriteU32(badDirectory, 26);
+    WriteU32(badDirectory, 30);
+    WriteU32(badDirectory, 34);
+
+    stack mut OwnedAscii statusName = new();
+    switch (statusName.AppendAscii(PackageImageValidationStatusName(PackageImageValidationStatus.MalformedSectionDirectory)))
+    {
+        case MemoryStatus.Err(var statusNameError):
+            return false;
+        case MemoryStatus.Ok:
+    }
+
+    return ValidatePackageImage(empty) == PackageImageValidationStatus.TruncatedHeader
+        && ValidatePackageImage(badMagic) == PackageImageValidationStatus.UnsupportedFormat
+        && ValidatePackageImage(truncatedSection) == PackageImageValidationStatus.TruncatedSection
+        && ValidatePackageImage(badDirectory) == PackageImageValidationStatus.MalformedSectionDirectory
+        && LlvmTextEquals(statusName, "malformed-section-directory");
+}
+
+[Fact]
+fn bool PackageImageRejectsMissingSections()
+{
+    // "MIR1" with valid-looking offsets but no section count bytes must fail before
+    // the fixed-record deserializers touch the image.
+    stack mut IrTable<u8[0 max]> buf = new();
+    WriteU32(buf, 826757197);
+    WriteU32(buf, 21);
+    WriteU32(buf, 25);
+    WriteU32(buf, 29);
+    WriteU32(buf, 33);
+    stack mut IrTable<MirInstruction> bi = new();
+    stack mut IrTable<MirBlock> bb = new();
+    stack mut IrTable<MirFunction> bf = new();
+    stack mut IrTable<MirGlobal> bg = new();
+    stack mut OwnedAscii sink = new();
+    stack mut OwnedAscii json = new();
+    switch (InspectPackageImage(buf, sink))
+    {
+        case MemoryStatus.Err(var error):
+            return false;
+        case MemoryStatus.Ok:
+            switch (InspectPackageImageJson(buf, json))
+            {
+                case MemoryStatus.Err(var jsonError):
+                    return false;
+                case MemoryStatus.Ok:
+                    return !DeserializePackageImage(buf, bi, bb, bf, bg)
+                        && LlvmTextEquals(sink, "")
+                        && LlvmTextEquals(json, "")
+                        && bi.Count() == 0
+                        && bb.Count() == 0
+                        && bf.Count() == 0
+                        && bg.Count() == 0;
+            }
+    }
+}
+
+[Fact]
+fn bool PackageImageWithAsmRejectsMissingAsmSection()
+{
+    // "MIR2" has four empty MIR sections here, but the required asm metadata section
+    // count is absent at byte 41, so validation rejects the image.
+    stack mut IrTable<u8[0 max]> buf = new();
+    WriteU32(buf, 844253517);
+    WriteU32(buf, 25);
+    WriteU32(buf, 29);
+    WriteU32(buf, 33);
+    WriteU32(buf, 37);
+    WriteU32(buf, 41);
+    WriteU32(buf, 0);
+    WriteU32(buf, 0);
+    WriteU32(buf, 0);
+    WriteU32(buf, 0);
+    stack mut IrTable<MirInstruction> bi = new();
+    stack mut IrTable<MirBlock> bb = new();
+    stack mut IrTable<MirFunction> bf = new();
+    stack mut IrTable<MirGlobal> bg = new();
+    stack mut AsmMetadataTable asmMetadata = new();
+    stack mut OwnedAscii sink = new();
+    stack mut OwnedAscii json = new();
+    switch (InspectPackageImage(buf, sink))
+    {
+        case MemoryStatus.Err(var error):
+            return false;
+        case MemoryStatus.Ok:
+            switch (InspectPackageImageJson(buf, json))
+            {
+                case MemoryStatus.Err(var jsonError):
+                    return false;
+                case MemoryStatus.Ok:
+                    return !DeserializePackageImageWithAsm(buf, bi, bb, bf, bg, asmMetadata)
+                        && LlvmTextEquals(sink, "")
+                        && LlvmTextEquals(json, "")
+                        && bi.Count() == 0
+                        && bb.Count() == 0
+                        && bf.Count() == 0
+                        && bg.Count() == 0
+                        && asmMetadata.FunctionCount() == 0;
+            }
+    }
+}
+
+[Fact]
+fn bool AsmMetadataRejectsTruncatedTextPool()
+{
+    stack mut IrTable<u8[0 max]> buf = new();
+    WriteU32(buf, 1);
+    stack mut AsmMetadataTable asmMetadata = new();
+    return !DeserializeAsmMetadata(buf, asmMetadata)
+        && asmMetadata.FunctionCount() == 0
+        && asmMetadata.InputCount() == 0
+        && asmMetadata.OutputCount() == 0
+        && asmMetadata.ClobberCount() == 0;
+}
+
+[Fact]
 fn bool InspectsPackageImage()
 {
     // `inspect-pkg` summarizes the section counts from the header alone.
@@ -1594,6 +1815,325 @@ fn bool InspectsPackageImage()
         case MemoryStatus.Err(var error):
             return false;
     }
+}
+
+[Fact]
+fn bool InspectsPackageImageJson()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack mut IrTable<MirGlobal> globals = new();
+    stack MirValueId a = MirConstInt(instrs, 1);
+    stack MirValueId b = MirConstInt(instrs, 2);
+    stack MirBlockId blk = MirReturnBlock(blocks, a);
+    stack MirFuncId f = MirDefineFunction(funcs, blk, blk, 1, a, 2);
+    stack u32[0 max] g1 = MirDefineGlobal(globals, 5);
+    stack u32[0 max] g2 = MirDefineGlobal(globals, 6);
+    stack mut IrTable<u8[0 max]> buf = new();
+    SerializePackageImage(instrs, blocks, funcs, globals, buf);
+    stack mut OwnedAscii sink = new();
+    switch (InspectPackageImageJson(buf, sink))
+    {
+        case MemoryStatus.Ok:
+            return LlvmTextEquals(sink, "{\"format\":\"MIR1\",\"instructions\":2,\"blocks\":1,\"functions\":1,\"globals\":2}\n");
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+[Fact]
+fn bool AsmSignatureMetadataSurvivesParserBridge()
+{
+    stack mut AsmMetadataTable table = new();
+    stack mut AsmFunctionId asmId = new();
+    stack bool ok = CollectFirstAsmFunctionMetadata(
+        "module Test\ninternal unsafe ffi asm(x86_64) fn i64[min max] Syscall2(i64[min max] number, rawptr<i8[min max]> path) in(\"rax\") number, in(\"rdi\") path, out(\"rax\") return, clobber(\"rcx\", \"r11\") { \"syscall\" }",
+        MirFuncIdOf(7),
+        table,
+        asmId);
+    if (!ok)
+    {
+        return false;
+    }
+
+    stack AsmFunctionMetadata function = table.FunctionAt(asmId);
+    stack MirFuncId mirFunction = function.Function();
+    stack AsmInputOperand in0 = table.InputAt(function.FirstInput());
+    stack AsmInputOperand in1 = table.InputAt(function.FirstInput() + 1);
+    stack AsmOutputOperand out0 = table.OutputAt(function.FirstOutput());
+    stack AsmTextRange clobber0 = table.ClobberAt(function.FirstClobber());
+    stack AsmTextRange clobber1 = table.ClobberAt(function.FirstClobber() + 1);
+    return asmId.Index() == 1
+        && table.FunctionCount() == 1
+        && table.InputCount() == 2
+        && table.OutputCount() == 1
+        && table.ClobberCount() == 2
+        && mirFunction.Equals(MirFuncIdOf(7))
+        && function.Architecture() == StarkAsmArchitecture.X86_64
+        && function.InputCount() == 2
+        && function.OutputCount() == 1
+        && function.ClobberCount() == 2
+        && table.TextRangeEquals(function.Template(), "syscall")
+        && table.TextRangeEquals(in0.Register(), "rax")
+        && table.TextRangeEquals(in0.Value(), "number")
+        && table.TextRangeEquals(in1.Register(), "rdi")
+        && table.TextRangeEquals(in1.Value(), "path")
+        && out0.BindsReturn()
+        && table.TextRangeEquals(out0.Register(), "rax")
+        && table.TextRangeEquals(out0.Value(), "return")
+        && table.TextRangeEquals(clobber0, "rcx")
+        && table.TextRangeEquals(clobber1, "r11");
+}
+
+[Fact]
+fn bool AsmMetadataBinaryRoundTrips()
+{
+    stack mut AsmMetadataTable table = new();
+    stack mut AsmFunctionId asmId = new();
+    if (!CollectFirstAsmFunctionMetadata(
+        "module Test\ninternal unsafe ffi asm(aarch64) fn i64[min max] Syscall0(i64[min max] number) in(\"x8\") number, out(\"x0\") return { \"svc #0\" }",
+        MirFuncIdOf(3),
+        table,
+        asmId))
+    {
+        return false;
+    }
+
+    stack mut IrTable<u8[0 max]> buf = new();
+    SerializeAsmMetadata(table, buf);
+    stack mut AsmMetadataTable restored = new();
+    if (!DeserializeAsmMetadata(buf, restored))
+    {
+        return false;
+    }
+
+    stack AsmFunctionMetadata function = restored.FunctionAt(AsmFunctionIdOf(1));
+    stack MirFuncId mirFunction = function.Function();
+    stack AsmInputOperand input = restored.InputAt(function.FirstInput());
+    stack AsmOutputOperand output = restored.OutputAt(function.FirstOutput());
+    return restored.FunctionCount() == 1
+        && restored.InputCount() == 1
+        && restored.OutputCount() == 1
+        && restored.ClobberCount() == 0
+        && mirFunction.Equals(MirFuncIdOf(3))
+        && function.Architecture() == StarkAsmArchitecture.AArch64
+        && restored.TextRangeEquals(function.Template(), "svc #0")
+        && restored.TextRangeEquals(input.Register(), "x8")
+        && restored.TextRangeEquals(input.Value(), "number")
+        && output.BindsReturn()
+        && restored.TextRangeEquals(output.Register(), "x0")
+        && restored.TextRangeEquals(output.Value(), "return");
+}
+
+[Fact]
+fn bool PackageImageWithAsmRoundTripsMetadata()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack MirValueId value = MirConstInt(instrs, 0);
+    stack mut IrTable<MirBlock> blocks = new();
+    stack MirBlockId block = MirReturnBlock(blocks, value);
+    stack mut IrTable<MirFunction> funcs = new();
+    stack MirFuncId functionId = MirDefineFunction(funcs, block, block, 1, value, 1);
+    stack mut IrTable<MirGlobal> globals = new();
+    stack mut AsmMetadataTable asmMetadata = new();
+    stack mut AsmFunctionId asmId = new();
+    if (!CollectFirstAsmFunctionMetadata(
+        "module Test\ninternal unsafe ffi asm(riscv64) fn i64[min max] Ecall(i64[min max] number) in(\"a7\") number, out(\"a0\") return { \"ecall\" }",
+        functionId,
+        asmMetadata,
+        asmId))
+    {
+        return false;
+    }
+
+    stack mut IrTable<u8[0 max]> buf = new();
+    SerializePackageImageWithAsm(instrs, blocks, funcs, globals, asmMetadata, buf);
+    stack mut IrTable<MirInstruction> bi = new();
+    stack mut IrTable<MirBlock> bb = new();
+    stack mut IrTable<MirFunction> bf = new();
+    stack mut IrTable<MirGlobal> bg = new();
+    stack mut AsmMetadataTable restoredAsm = new();
+    if (!DeserializePackageImageWithAsm(buf, bi, bb, bf, bg, restoredAsm))
+    {
+        return false;
+    }
+
+    stack mut OwnedAscii inspect = new();
+    stack mut OwnedAscii inspectJson = new();
+    switch (InspectPackageImage(buf, inspect))
+    {
+        case MemoryStatus.Err(var error):
+            return false;
+        case MemoryStatus.Ok:
+    }
+
+    switch (InspectPackageImageJson(buf, inspectJson))
+    {
+        case MemoryStatus.Err(var jsonError):
+            return false;
+        case MemoryStatus.Ok:
+    }
+
+    stack AsmFunctionMetadata function = restoredAsm.FunctionAt(AsmFunctionIdOf(1));
+    stack MirFuncId restoredFunction = function.Function();
+    stack AsmInputOperand input = restoredAsm.InputAt(function.FirstInput());
+    stack AsmOutputOperand output = restoredAsm.OutputAt(function.FirstOutput());
+    return bi.Count() == 1
+        && bb.Count() == 1
+        && bf.Count() == 1
+        && bg.Count() == 0
+        && restoredAsm.FunctionCount() == 1
+        && restoredFunction.Equals(functionId)
+        && function.Architecture() == StarkAsmArchitecture.RiscV64
+        && restoredAsm.TextRangeEquals(function.Template(), "ecall")
+        && restoredAsm.TextRangeEquals(input.Register(), "a7")
+        && restoredAsm.TextRangeEquals(output.Register(), "a0")
+        && LlvmTextEquals(inspect, "package: 1 instructions, 1 blocks, 1 functions, 0 globals, 1 asm functions\n")
+        && LlvmTextEquals(inspectJson, "{\"format\":\"MIR2\",\"instructions\":1,\"blocks\":1,\"functions\":1,\"globals\":0,\"asmFunctions\":1}\n");
+}
+
+[Fact]
+fn bool PackageImageWithAsmInspectsThroughFile()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack MirValueId value = MirConstInt(instrs, 0);
+    stack mut IrTable<MirBlock> blocks = new();
+    stack MirBlockId block = MirReturnBlock(blocks, value);
+    stack mut IrTable<MirFunction> funcs = new();
+    stack MirFuncId functionId = MirDefineFunction(funcs, block, block, 1, value, 1);
+    stack mut IrTable<MirGlobal> globals = new();
+    stack mut AsmMetadataTable asmMetadata = new();
+    stack mut AsmFunctionId asmId = new();
+    if (!CollectFirstAsmFunctionMetadata(
+        "module Test\ninternal unsafe ffi asm(riscv64) fn i64[min max] Ecall(i64[min max] number) in(\"a7\") number, out(\"a0\") return { \"ecall\" }",
+        functionId,
+        asmMetadata,
+        asmId))
+    {
+        return false;
+    }
+
+    stack mut IrTable<u8[0 max]> image = new();
+    SerializePackageImageWithAsm(instrs, blocks, funcs, globals, asmMetadata, image);
+
+    stack mut OwnedAscii expectedText = new();
+    switch (expectedText.AppendConstAscii("package: 1 instructions, 1 blocks, 1 functions, 0 globals, 1 asm functions\n"))
+    {
+        case MemoryStatus.Err(var textError):
+            return false;
+        case MemoryStatus.Ok:
+    }
+
+    stack mut OwnedAscii expectedJson = new();
+    switch (expectedJson.AppendConstAscii("{\"format\":\"MIR2\",\"instructions\":1,\"blocks\":1,\"functions\":1,\"globals\":0,\"asmFunctions\":1}\n"))
+    {
+        case MemoryStatus.Err(var jsonError):
+            return false;
+        case MemoryStatus.Ok:
+    }
+
+    return PackageImageIsValid(image)
+        && PackageImageBufferInspectsThroughFile(image, expectedText, expectedJson);
+}
+
+[Fact]
+fn bool PackageImageWithAsmRoundTripsThroughFile()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack MirValueId value = MirConstInt(instrs, 0);
+    stack mut IrTable<MirBlock> blocks = new();
+    stack MirBlockId block = MirReturnBlock(blocks, value);
+    stack mut IrTable<MirFunction> funcs = new();
+    stack MirFuncId functionId = MirDefineFunction(funcs, block, block, 1, value, 1);
+    stack mut IrTable<MirGlobal> globals = new();
+    stack mut AsmMetadataTable asmMetadata = new();
+    stack mut AsmFunctionId asmId = new();
+    if (!CollectFirstAsmFunctionMetadata(
+        "module Test\ninternal unsafe ffi asm(x86_64) fn i64[min max] Syscall1(i64[min max] number) in(\"rax\") number, out(\"rax\") return, clobber(\"rcx\", \"r11\") { \"syscall\" }",
+        functionId,
+        asmMetadata,
+        asmId))
+    {
+        return false;
+    }
+
+    return PackageImageWithAsmFileRoundTrips(instrs, blocks, funcs, globals, asmMetadata);
+}
+
+[Fact]
+fn bool ModulePackageTablesWithAsmPreserveFunctionIdsAndCalls()
+{
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack mut AsmMetadataTable asmMetadata = new();
+    stack bool ok = BuildModulePackageTablesWithAsm(
+        "module Test\ninternal unsafe ffi asm(x86_64) fn i64[min max] Raw(i64[min max] number) in(\"rax\") number, out(\"rax\") return, clobber(\"rcx\") { \"syscall\" }\nfn i64[min max] Call(i64[min max] number) { return Raw(number) }",
+        instrs,
+        blocks,
+        funcs,
+        asmMetadata);
+    if (!ok)
+    {
+        return false;
+    }
+
+    stack AsmFunctionMetadata asmFunction = asmMetadata.FunctionAt(AsmFunctionIdOf(1));
+    stack MirFuncId asmMirFunction = asmFunction.Function();
+    stack AsmInputOperand input = asmMetadata.InputAt(asmFunction.FirstInput());
+    return funcs.Count() == 2
+        && asmMetadata.FunctionCount() == 1
+        && instrs.Count() == 2
+        && blocks.Count() == 1
+        && MirFunctionInstrCount(funcs, MirFuncIdOf(1)) == 0
+        && MirFunctionBlockCount(funcs, MirFuncIdOf(1)) == 0
+        && MirFunctionInstrCount(funcs, MirFuncIdOf(2)) == 2
+        && MirFunctionBlockCount(funcs, MirFuncIdOf(2)) == 1
+        && asmMirFunction.Equals(MirFuncIdOf(1))
+        && asmFunction.Architecture() == StarkAsmArchitecture.X86_64
+        && asmMetadata.TextRangeEquals(input.Register(), "rax")
+        && MirOpcodeOf(instrs, MirValueIdOf(2)) == MirOp.Call
+        && MirCalleeOf(instrs, MirValueIdOf(2)).Equals(MirFuncIdOf(1))
+        && MirOperandAOf(instrs, MirValueIdOf(2)).Equals(MirValueIdOf(1));
+}
+
+[Fact]
+fn bool ModulePackageImageWithAsmBuilderRoundTrips()
+{
+    stack mut IrTable<u8[0 max]> buf = new();
+    if (!BuildModulePackageImageWithAsm(
+        "module Test\ninternal unsafe ffi asm(aarch64) fn i64[min max] Raw(i64[min max] number) in(\"x8\") number, out(\"x0\") return { \"svc #0\" }\nfn i64[min max] Branch(i64[min max] number) { if number < 1 return Raw(number) else return number }",
+        buf))
+    {
+        return false;
+    }
+
+    stack mut IrTable<MirInstruction> instrs = new();
+    stack mut IrTable<MirBlock> blocks = new();
+    stack mut IrTable<MirFunction> funcs = new();
+    stack mut IrTable<MirGlobal> globals = new();
+    stack mut AsmMetadataTable asmMetadata = new();
+    if (!DeserializePackageImageWithAsm(buf, instrs, blocks, funcs, globals, asmMetadata))
+    {
+        return false;
+    }
+
+    stack AsmFunctionMetadata asmFunction = asmMetadata.FunctionAt(AsmFunctionIdOf(1));
+    stack MirFuncId asmMirFunction = asmFunction.Function();
+    stack AsmInputOperand input = asmMetadata.InputAt(asmFunction.FirstInput());
+    stack AsmOutputOperand output = asmMetadata.OutputAt(asmFunction.FirstOutput());
+    return funcs.Count() == 2
+        && globals.Count() == 0
+        && asmMetadata.FunctionCount() == 1
+        && asmMirFunction.Equals(MirFuncIdOf(1))
+        && asmFunction.Architecture() == StarkAsmArchitecture.AArch64
+        && asmMetadata.TextRangeEquals(asmFunction.Template(), "svc #0")
+        && asmMetadata.TextRangeEquals(input.Register(), "x8")
+        && asmMetadata.TextRangeEquals(output.Register(), "x0")
+        && MirFunctionBlockCount(funcs, MirFuncIdOf(1)) == 0
+        && MirFunctionBlockCount(funcs, MirFuncIdOf(2)) == 3
+        && MirFunctionInstrCount(funcs, MirFuncIdOf(2)) > 0;
 }
 
 [Fact]
@@ -2188,14 +2728,115 @@ fn bool CompilesThreeAndFourArgumentTailBecomeFromAst()
     stack bool threeOk = CompileModuleFromAstChecked("tail fn add3(a, b, c) { return a + b + c } tail fn bounce3(a, b, c) { become add3(a, b, c) } fn main() { return bounce3(1, 2, 3) }", three);
     stack mut OwnedAscii four = new();
     stack bool fourOk = CompileModuleFromAstChecked("tail fn add4(a, b, c, d) { return a + b + c + d } tail fn bounce4(a, b, c, d) { become add4(a, b, c, d) } fn main() { return bounce4(1, 2, 3, 4) }", four);
-    return threeOk
-        && System.Text.Contains(three.View(), "musttail call tailcc i64 @f1(i64 %p0, i64 %p1, i64 %p2)\n  ret i64")
-        && System.Text.Contains(three.View(), "call tailcc i64 @f2(i64 %v1, i64 %v2, i64 %v3)")
-        && ClangVerifiesLlvmText(three)
-        && fourOk
-        && System.Text.Contains(four.View(), "musttail call tailcc i64 @f1(i64 %p0, i64 %p1, i64 %p2, i64 %p3)\n  ret i64")
-        && System.Text.Contains(four.View(), "call tailcc i64 @f2(i64 %v1, i64 %v2, i64 %v3, i64 %v4)")
-        && ClangVerifiesLlvmText(four);
+    stack bool threeTail = System.Text.Contains(three.View(), "musttail call tailcc i64 @f1(i64 %p0, i64 %p1, i64 %p2)\n  ret i64");
+    stack bool threeCall = System.Text.Contains(three.View(), "call tailcc i64 @f2(i64 %v1, i64 %v2, i64 %v3)");
+    stack bool fourTail = System.Text.Contains(four.View(), "musttail call tailcc i64 @f1(i64 %p0, i64 %p1, i64 %p2, i64 %p3)\n  ret i64");
+    stack bool fourCall = System.Text.Contains(four.View(), "call tailcc i64 @f2(i64 %v1, i64 %v2, i64 %v3, i64 %v4)");
+    if (!threeOk)
+    {
+        WriteLine("threeOk false");
+        if (ProgramSemanticallyValid("tail fn add3(a, b, c) { return a + b + c } tail fn bounce3(a, b, c) { become add3(a, b, c) } fn main() { return bounce3(1, 2, 3) }"))
+        {
+            WriteLine("three semantic true");
+        }
+        else
+        {
+            WriteLine("three semantic false");
+        }
+
+        if (!ProgramNamesResolve("tail fn add3(a, b, c) { return a + b + c } tail fn bounce3(a, b, c) { become add3(a, b, c) } fn main() { return bounce3(1, 2, 3) }"))
+        {
+            WriteLine("names false");
+        }
+
+        if (!ProgramCallAritiesMatch("tail fn add3(a, b, c) { return a + b + c } tail fn bounce3(a, b, c) { become add3(a, b, c) } fn main() { return bounce3(1, 2, 3) }"))
+        {
+            WriteLine("arity false");
+        }
+
+        if (!ProgramDeclarationsUnique("tail fn add3(a, b, c) { return a + b + c } tail fn bounce3(a, b, c) { become add3(a, b, c) } fn main() { return bounce3(1, 2, 3) }"))
+        {
+            WriteLine("decl unique false");
+        }
+
+        if (!ProgramFunctionNamesUnique("tail fn add3(a, b, c) { return a + b + c } tail fn bounce3(a, b, c) { become add3(a, b, c) } fn main() { return bounce3(1, 2, 3) }"))
+        {
+            WriteLine("function names false");
+        }
+
+        if (!ProgramWhileConditionsAreBoolean("tail fn add3(a, b, c) { return a + b + c } tail fn bounce3(a, b, c) { become add3(a, b, c) } fn main() { return bounce3(1, 2, 3) }"))
+        {
+            WriteLine("while conditions false");
+        }
+
+        if (!ProgramIfConditionsAreBoolean("tail fn add3(a, b, c) { return a + b + c } tail fn bounce3(a, b, c) { become add3(a, b, c) } fn main() { return bounce3(1, 2, 3) }"))
+        {
+            WriteLine("if conditions false");
+        }
+
+        if (!ProgramNoBooleanOperand("tail fn add3(a, b, c) { return a + b + c } tail fn bounce3(a, b, c) { become add3(a, b, c) } fn main() { return bounce3(1, 2, 3) }"))
+        {
+            WriteLine("boolean operand false");
+        }
+
+        return false;
+    }
+
+    if (!threeTail)
+    {
+        WriteLine("threeTail false");
+        WriteLine(three);
+        return false;
+    }
+
+    if (!threeCall)
+    {
+        WriteLine("threeCall false");
+        WriteLine(three);
+        return false;
+    }
+
+    WriteLine("before three clang");
+    stack bool threeClang = ClangVerifiesLlvmText(three);
+    WriteLine("after three clang");
+    if (!threeClang)
+    {
+        WriteLine("threeClang false");
+        WriteLine(three);
+        return false;
+    }
+
+    if (!fourOk)
+    {
+        WriteLine("fourOk false");
+        return false;
+    }
+
+    if (!fourTail)
+    {
+        WriteLine("fourTail false");
+        WriteLine(four);
+        return false;
+    }
+
+    if (!fourCall)
+    {
+        WriteLine("fourCall false");
+        WriteLine(four);
+        return false;
+    }
+
+    WriteLine("before four clang");
+    stack bool fourClang = ClangVerifiesLlvmText(four);
+    WriteLine("after four clang");
+    if (!fourClang)
+    {
+        WriteLine("fourClang false");
+        WriteLine(four);
+        return false;
+    }
+
+    return true;
 }
 
 [Fact]

@@ -788,6 +788,39 @@ public sealed class TypeTypingDiagnosticsTests
     }
 
     [Fact]
+    public void GuardlessEmptySwitchLabelsPermitInconsistentUnusedCaptures()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            enum Token
+            {
+                Number(i32[min max]),
+                End,
+            }
+
+            fn i32[min max] Run(Token token)
+            {
+                switch (token)
+                {
+                    case Token.Number(var value):
+                    case Token.End:
+                }
+
+                return 0;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.DoesNotContain(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3008"
+                && diagnostic.Message.Contains("Switch labels that share a body", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void SwitchPatternsRejectDuplicateCapturesInOneAlternative()
     {
         var result = Compile(

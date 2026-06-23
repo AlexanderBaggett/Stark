@@ -46,6 +46,13 @@ From a solution directory, `stark test` runs `[defaults].test` when present. If
 no default test set is declared, it runs every member whose manifest has
 `kind = "test"`.
 
+`stark test` is incremental. It rebuilds a project only when that project's
+sources — or anything it depends on — actually change, and otherwise reuses the
+test executable it already built. You never have to delete the `build` directory
+to get an accurate run: edit a test, run `stark test` again, and the pass/fail
+counts reflect exactly what you just changed. (To force a full rebuild anyway,
+run `stark clean` or delete `build`.)
+
 A manual test executable has the same basic shape: run explicit checks and
 return a status code.
 

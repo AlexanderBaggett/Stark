@@ -1,0 +1,101 @@
+import Compiler.AsmFacts
+import System.Testing
+import System.Text
+[Collection("asm")]
+module AsmFactsTests
+
+[Fact]
+fn bool ParsesArchitectureAliasesCaseAndWhitespaceInsensitive()
+{
+    stack mut StarkAsmArchitecture arch = StarkAsmArchitecture.Unknown;
+    stack bool x64 = TryParseArchitectureName(" AMD64 ", arch)
+        && arch == StarkAsmArchitecture.X86_64;
+    stack bool arm64 = TryParseArchitectureName("Arm64", arch)
+        && arch == StarkAsmArchitecture.AArch64;
+    stack bool x86 = TryParseArchitectureName("i686", arch)
+        && arch == StarkAsmArchitecture.X86;
+    stack bool arm = TryParseArchitectureName("thumb", arch)
+        && arch == StarkAsmArchitecture.Arm32;
+    stack bool riscv = TryParseArchitectureName("riscv64", arch)
+        && arch == StarkAsmArchitecture.RiscV64;
+    stack bool bad = !TryParseArchitectureName("mips64", arch)
+        && arch == StarkAsmArchitecture.Unknown;
+    return x64 && arm64 && x86 && arm && riscv && bad;
+}
+
+[Fact]
+fn bool ParsesTargetTripleArchitecturePrefix()
+{
+    stack mut StarkAsmArchitecture arch = StarkAsmArchitecture.Unknown;
+    stack bool linux = TryParseTargetTripleArchitecture("x86_64-unknown-linux-gnu", arch)
+        && arch == StarkAsmArchitecture.X86_64;
+    stack bool mac = TryParseTargetTripleArchitecture("aarch64-apple-darwin", arch)
+        && arch == StarkAsmArchitecture.AArch64;
+    stack bool windows = TryParseTargetTripleArchitecture("i686-pc-windows-msvc", arch)
+        && arch == StarkAsmArchitecture.X86;
+    stack bool bare = TryParseTargetTripleArchitecture("riscv64", arch)
+        && arch == StarkAsmArchitecture.RiscV64;
+    return linux && mac && windows && bare;
+}
+
+[Fact]
+fn bool ArchitectureNamesUseCanonicalSpellings()
+{
+    return System.Text.Equals(ArchitectureName(StarkAsmArchitecture.X86_64), "x86_64")
+        && System.Text.Equals(ArchitectureName(StarkAsmArchitecture.AArch64), "aarch64")
+        && System.Text.Equals(ArchitectureName(StarkAsmArchitecture.RiscV64), "riscv64")
+        && System.Text.Equals(ArchitectureName(StarkAsmArchitecture.X86), "x86")
+        && System.Text.Equals(ArchitectureName(StarkAsmArchitecture.Arm32), "arm")
+        && System.Text.Equals(ArchitectureName(StarkAsmArchitecture.Unknown), "unknown");
+}
+
+[Fact]
+fn bool ClassifiesX86FamilyRegisters()
+{
+    stack mut StarkAsmRegisterClass registerClass = StarkAsmRegisterClass.Unknown;
+    stack bool x64Gpr = TryGetRegisterClass(StarkAsmArchitecture.X86_64, " R15 ", registerClass)
+        && registerClass == StarkAsmRegisterClass.GeneralPurpose;
+    stack bool x64Fp = TryGetRegisterClass(StarkAsmArchitecture.X86_64, "XMM15", registerClass)
+        && registerClass == StarkAsmRegisterClass.FloatingPoint;
+    stack bool x64RejectsOutOfRange = !IsValidRegister(StarkAsmArchitecture.X86_64, "xmm16");
+    stack bool x86Gpr = TryGetRegisterClass(StarkAsmArchitecture.X86, "eax", registerClass)
+        && registerClass == StarkAsmRegisterClass.GeneralPurpose;
+    stack bool x86Fp = TryGetRegisterClass(StarkAsmArchitecture.X86, "xmm7", registerClass)
+        && registerClass == StarkAsmRegisterClass.FloatingPoint;
+    stack bool x86RejectsX64Only = !IsValidRegister(StarkAsmArchitecture.X86, "r8");
+    return x64Gpr && x64Fp && x64RejectsOutOfRange && x86Gpr && x86Fp && x86RejectsX64Only;
+}
+
+[Fact]
+fn bool ClassifiesArmAndRiscVRegisters()
+{
+    stack mut StarkAsmRegisterClass registerClass = StarkAsmRegisterClass.Unknown;
+    stack bool aarch64Gpr = TryGetRegisterClass(StarkAsmArchitecture.AArch64, "w30", registerClass)
+        && registerClass == StarkAsmRegisterClass.GeneralPurpose;
+    stack bool aarch64Fp = TryGetRegisterClass(StarkAsmArchitecture.AArch64, "D31", registerClass)
+        && registerClass == StarkAsmRegisterClass.FloatingPoint;
+    stack bool aarch64RejectsTooWide = !IsValidRegister(StarkAsmArchitecture.AArch64, "x31");
+    stack bool riscvGpr = TryGetRegisterClass(StarkAsmArchitecture.RiscV64, "a7", registerClass)
+        && registerClass == StarkAsmRegisterClass.GeneralPurpose;
+    stack bool riscvRejectsFp = !IsValidRegister(StarkAsmArchitecture.RiscV64, "f0");
+    stack bool arm32Gpr = TryGetRegisterClass(StarkAsmArchitecture.Arm32, "pc", registerClass)
+        && registerClass == StarkAsmRegisterClass.GeneralPurpose;
+    stack bool arm32RejectsAliasGap = !IsValidRegister(StarkAsmArchitecture.Arm32, "r13");
+    return aarch64Gpr
+        && aarch64Fp
+        && aarch64RejectsTooWide
+        && riscvGpr
+        && riscvRejectsFp
+        && arm32Gpr
+        && arm32RejectsAliasGap;
+}
+
+[Fact]
+fn bool RegisterNameEqualityMatchesNormalizationPolicy()
+{
+    return RegisterNamesEqual(" RAX ", "rax")
+        && RegisterNamesEqual("XMM0", "xmm0")
+        && RegisterNamesEqual("  ", "")
+        && !RegisterNamesEqual("xmm01", "xmm1")
+        && !RegisterNamesEqual("rax", "rbx");
+}

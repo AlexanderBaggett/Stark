@@ -81,7 +81,7 @@ module Demo
 
 unsafe fn i64[min max] Run()
 {
-    stack rawptr<i32[min max]> value = null;
+    stack rawmutptr<i32[min max]> value = null;
     return (i64[min max]) value;
 }
 """);
