@@ -73,6 +73,8 @@ public sealed class InMemoryModuleResolver : IModuleSourceResolver
 public sealed class FileSystemModuleResolver : IModuleSourceResolver, IModuleDocumentResolver
 {
     private readonly IReadOnlyList<string> _searchDirectories;
+    private readonly string? _targetTriple;
+    private readonly string? _normalizedTargetTriple;
     private readonly object _manifestIndexLock = new();
     private Dictionary<string, ResolvedPackageModule>? _manifestModules;
     private Dictionary<string, Dictionary<string, ResolvedPackageModule>>? _manifestModulesBySearchDirectory;
@@ -83,13 +85,29 @@ public sealed class FileSystemModuleResolver : IModuleSourceResolver, IModuleDoc
     {
     }
 
+    public FileSystemModuleResolver(string baseDirectory, LlvmTargetInfo? targetInfo)
+        : this([baseDirectory], targetInfo)
+    {
+    }
+
     public FileSystemModuleResolver(IEnumerable<string> searchDirectories)
+        : this(searchDirectories, targetInfo: null)
+    {
+    }
+
+    public FileSystemModuleResolver(IEnumerable<string> searchDirectories, LlvmTargetInfo? targetInfo)
     {
         _searchDirectories = searchDirectories
             .Select(Path.GetFullPath)
             .Distinct(StringComparer.Ordinal)
             .DefaultIfEmpty(Environment.CurrentDirectory)
             .ToArray();
+        _targetTriple = string.IsNullOrWhiteSpace(targetInfo?.Triple)
+            ? null
+            : targetInfo.Triple.Trim();
+        _normalizedTargetTriple = _targetTriple is null
+            ? null
+            : NormalizeTargetPathSegment(_targetTriple);
     }
 
     public bool TryResolveModule(string moduleName, out ResolvedModuleReference module)
@@ -237,8 +255,12 @@ public sealed class FileSystemModuleResolver : IModuleSourceResolver, IModuleDoc
                              .Where(static path => PackageImageBinaryFormat.HasBinaryFileName(path))
                              .Concat(Directory.EnumerateFiles(resolvedSearchDirectory, "*.starkpkg.json", SearchOption.AllDirectories))
                              .Where(path => !IsNestedBuildArtifactManifest(resolvedSearchDirectory, path))
-                             .OrderBy(static path => !PackageImageBinaryFormat.HasBinaryFileName(path))
-                             .ThenBy(static path => path, StringComparer.Ordinal))
+                             .Select(path => (Path: path, Priority: GetManifestTargetPriority(resolvedSearchDirectory, path)))
+                             .Where(static entry => entry.Priority >= 0)
+                             .OrderBy(static entry => entry.Priority)
+                             .ThenBy(static entry => !PackageImageBinaryFormat.HasBinaryFileName(entry.Path))
+                             .ThenBy(static entry => entry.Path, StringComparer.Ordinal)
+                             .Select(static entry => entry.Path))
                 {
                     if (!PackageImageLoader.TryLoadManifest(manifestPath, out var manifest))
                     {
@@ -274,6 +296,96 @@ public sealed class FileSystemModuleResolver : IModuleSourceResolver, IModuleDoc
             _manifestModulesByPath = modulesByPath;
             Volatile.Write(ref _manifestModules, allModules);
         }
+    }
+
+    private int GetManifestTargetPriority(string searchDirectory, string manifestPath)
+    {
+        if (string.IsNullOrWhiteSpace(_targetTriple))
+        {
+            return 1;
+        }
+
+        var relativePath = Path.GetRelativePath(searchDirectory, manifestPath);
+        var segments = relativePath.Split(
+            [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
+            StringSplitOptions.RemoveEmptyEntries);
+        if (segments.Length <= 1 || !LooksLikeTargetTripleDirectory(segments[0]))
+        {
+            return 1;
+        }
+
+        return IsActiveTargetDirectory(segments[0])
+            ? 0
+            : -1;
+    }
+
+    private bool IsActiveTargetDirectory(string segment)
+    {
+        return string.Equals(segment, _targetTriple, StringComparison.Ordinal)
+            || string.Equals(segment, _normalizedTargetTriple, StringComparison.Ordinal);
+    }
+
+    private static bool LooksLikeTargetTripleDirectory(string segment)
+    {
+        if (!segment.Contains('-', StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var firstComponentLength = segment.IndexOf('-', StringComparison.Ordinal);
+        var architecture = firstComponentLength <= 0 ? segment : segment[..firstComponentLength];
+        return IsKnownTargetArchitecture(architecture)
+            || segment.Contains("linux", StringComparison.OrdinalIgnoreCase)
+            || segment.Contains("windows", StringComparison.OrdinalIgnoreCase)
+            || segment.Contains("win32", StringComparison.OrdinalIgnoreCase)
+            || segment.Contains("mingw", StringComparison.OrdinalIgnoreCase)
+            || segment.Contains("msvc", StringComparison.OrdinalIgnoreCase)
+            || segment.Contains("darwin", StringComparison.OrdinalIgnoreCase)
+            || segment.Contains("macos", StringComparison.OrdinalIgnoreCase)
+            || segment.Contains("freebsd", StringComparison.OrdinalIgnoreCase)
+            || segment.Contains("netbsd", StringComparison.OrdinalIgnoreCase)
+            || segment.Contains("openbsd", StringComparison.OrdinalIgnoreCase)
+            || segment.Contains("dragonfly", StringComparison.OrdinalIgnoreCase)
+            || segment.Contains("haiku", StringComparison.OrdinalIgnoreCase)
+            || segment.Contains("solaris", StringComparison.OrdinalIgnoreCase)
+            || segment.Contains("illumos", StringComparison.OrdinalIgnoreCase)
+            || segment.Contains("android", StringComparison.OrdinalIgnoreCase)
+            || segment.Contains("ios", StringComparison.OrdinalIgnoreCase)
+            || segment.Contains("wasi", StringComparison.OrdinalIgnoreCase)
+            || segment.Contains("wasm", StringComparison.OrdinalIgnoreCase)
+            || segment.Contains("emscripten", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsKnownTargetArchitecture(string architecture)
+    {
+        return architecture.StartsWith("x86", StringComparison.OrdinalIgnoreCase)
+            || architecture.StartsWith("i386", StringComparison.OrdinalIgnoreCase)
+            || architecture.StartsWith("i486", StringComparison.OrdinalIgnoreCase)
+            || architecture.StartsWith("i586", StringComparison.OrdinalIgnoreCase)
+            || architecture.StartsWith("i686", StringComparison.OrdinalIgnoreCase)
+            || architecture.StartsWith("amd64", StringComparison.OrdinalIgnoreCase)
+            || architecture.StartsWith("arm", StringComparison.OrdinalIgnoreCase)
+            || architecture.StartsWith("aarch64", StringComparison.OrdinalIgnoreCase)
+            || architecture.StartsWith("riscv", StringComparison.OrdinalIgnoreCase)
+            || architecture.StartsWith("mips", StringComparison.OrdinalIgnoreCase)
+            || architecture.StartsWith("powerpc", StringComparison.OrdinalIgnoreCase)
+            || architecture.StartsWith("ppc", StringComparison.OrdinalIgnoreCase)
+            || architecture.StartsWith("s390x", StringComparison.OrdinalIgnoreCase)
+            || architecture.StartsWith("sparc", StringComparison.OrdinalIgnoreCase)
+            || architecture.StartsWith("wasm", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string NormalizeTargetPathSegment(string value)
+    {
+        var builder = new System.Text.StringBuilder(value.Length);
+        foreach (var ch in value.Trim())
+        {
+            builder.Append(char.IsAsciiLetterOrDigit(ch) || ch is '-' or '_' or '.' or '+'
+                ? ch
+                : '_');
+        }
+
+        return builder.Length == 0 ? "_" : builder.ToString();
     }
 
     private static bool IsNestedBuildArtifactManifest(string searchDirectory, string manifestPath)

@@ -1,5 +1,4 @@
 import System.Console
-import System.IO
 import System.Process
 import System.Text
 import Vendor.Curl
@@ -77,11 +76,7 @@ fn i32[min max] RunCurlExample(ascii url)
             }
     }
 
-    if (System.Console.WriteLine("Curl GET ok") != System.IO.IOStatus.Ok)
-    {
-        return 10;
-    }
-
+    WriteLine("Curl GET ok");
     return 0;
 }
 

@@ -10,6 +10,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 VK_XML = REPO_ROOT / "vendor" / "native" / "vulkan" / "vk.xml"
 OUTPUT = REPO_ROOT / "vendor" / "src" / "Vendor" / "Vulkan.stark"
+TRIANGLE_SUPPORT = REPO_ROOT / "vendor" / "tools" / "vulkan-triangle-support.stark"
 
 SELECTED_CONSTANTS = {
     "VK_MAX_EXTENSION_NAME_SIZE",
@@ -281,9 +282,9 @@ def emit_structs(lines: list[str]) -> None:
             "    VkInstanceCreateFlags flags;",
             "    rawptr<VkApplicationInfo> pApplicationInfo;",
             "    u32[0 max] enabledLayerCount;",
-            "    rawptr<rawptr<System.C.c_char>> ppEnabledLayerNames;",
+            "    rawptr<System.C.c_void> ppEnabledLayerNames;",
             "    u32[0 max] enabledExtensionCount;",
-            "    rawptr<rawptr<System.C.c_char>> ppEnabledExtensionNames;",
+            "    rawptr<System.C.c_void> ppEnabledExtensionNames;",
             "}",
             "",
         ]
@@ -935,6 +936,17 @@ def emit_safe_api(lines: list[str]) -> None:
     )
 
 
+def emit_triangle_support(lines: list[str]) -> None:
+    lines.extend(
+        [
+            "",
+            "// Hand-authored supplemental Vulkan ABI and triangle-rendering support.",
+            "// Keep this section in vendor/tools/vulkan-triangle-support.stark.",
+        ]
+    )
+    lines.extend(TRIANGLE_SUPPORT.read_text(encoding="utf-8").splitlines())
+
+
 def main() -> int:
     root = ET.parse(VK_XML).getroot()
     values = parse_numeric_enums(root)
@@ -949,6 +961,7 @@ def main() -> int:
     emit_ffi(lines)
     emit_dispatch_tables(lines)
     emit_safe_api(lines)
+    emit_triangle_support(lines)
 
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT.write_text("\n".join(lines), encoding="utf-8")

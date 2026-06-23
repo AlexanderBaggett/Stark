@@ -6,6 +6,8 @@ namespace compiler.IntegrationTests;
 
 public sealed partial class VendorBindingAuditTests
 {
+    private const string CheckedInRaylibTargetTriple = "x86_64-pc-linux-gnu";
+
     private static readonly VendorBinding[] Bindings =
     [
         new(
@@ -108,7 +110,7 @@ public sealed partial class VendorBindingAuditTests
             "Raylib",
             "vendor/src/Vendor/Raylib.stark",
             "vendor/build-raylib-package.sh",
-            "vendor/dist/libVendorRaylib.starkpkg",
+            $"vendor/dist/{CheckedInRaylibTargetTriple}/libVendorRaylib.starkpkg",
             "examples/breakout/BreakoutRaylib.stark",
             [],
             ["raylib"])
@@ -271,6 +273,191 @@ public sealed partial class VendorBindingAuditTests
         }
     }
 
+    [Fact]
+    public void RaylibRelatedHeaderModulesKeepUnsafeAtInternalEdge()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var raylibRootText = File.ReadAllText(Path.Combine(repositoryRoot, "vendor", "src", "Vendor", "Raylib.stark"));
+        var raymathText = File.ReadAllText(Path.Combine(repositoryRoot, "vendor", "src", "Vendor", "Raymath.stark"));
+        var rlglText = File.ReadAllText(Path.Combine(repositoryRoot, "vendor", "src", "Vendor", "Rlgl.stark"));
+
+        Assert.Contains("import Vendor.Raymath", raylibRootText, StringComparison.Ordinal);
+        Assert.Contains("import Vendor.Rlgl", raylibRootText, StringComparison.Ordinal);
+        Assert.Contains("module Vendor.Raymath", raymathText, StringComparison.Ordinal);
+        Assert.Contains("module Vendor.Rlgl", rlglText, StringComparison.Ordinal);
+
+        foreach (var (name, text) in new[] { ("Raymath", raymathText), ("Rlgl", rlglText) })
+        {
+            Assert.DoesNotContain("System.C", text, StringComparison.Ordinal);
+            Assert.DoesNotContain("public unsafe", text, StringComparison.Ordinal);
+
+            var publicRawLines = text.Split('\n')
+                .Select((line, index) => (Line: line.TrimStart(), Number: index + 1))
+                .Where(entry => PublicRawPointerRegex().IsMatch(entry.Line))
+                .Select(entry => $"{name}:{entry.Number}: {entry.Line}")
+                .ToArray();
+
+            Assert.Empty(publicRawLines);
+        }
+
+        Assert.DoesNotContain("public fn", rlglText.AsSpan(
+            rlglText.IndexOf("rlLoadExtensions", StringComparison.Ordinal),
+            rlglText.IndexOf("rlGetVersion", StringComparison.Ordinal) - rlglText.IndexOf("rlLoadExtensions", StringComparison.Ordinal)).ToString(),
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RaymathCoversRaylib60PublicHelperSurface()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var raymathText = File.ReadAllText(Path.Combine(repositoryRoot, "vendor", "src", "Vendor", "Raymath.stark"));
+        var publicFunctions = ExtractPublicFunctionNames(raymathText);
+        var expectedFunctions = new[]
+        {
+            "Clamp", "Lerp", "Normalize", "Remap", "Wrap", "FloatEquals",
+            "Vector2Zero", "Vector2One", "Vector2Add", "Vector2AddValue", "Vector2Subtract", "Vector2SubtractValue",
+            "Vector2Length", "Vector2LengthSqr", "Vector2DotProduct", "Vector2CrossProduct", "Vector2Distance",
+            "Vector2DistanceSqr", "Vector2Angle", "Vector2LineAngle", "Vector2Scale", "Vector2Multiply",
+            "Vector2Negate", "Vector2Divide", "Vector2Normalize", "Vector2Transform", "Vector2Lerp",
+            "Vector2Reflect", "Vector2Min", "Vector2Max", "Vector2Rotate", "Vector2MoveTowards",
+            "Vector2Invert", "Vector2Clamp", "Vector2ClampValue", "Vector2Equals", "Vector2Refract",
+            "Vector3Zero", "Vector3One", "Vector3Add", "Vector3AddValue", "Vector3Subtract", "Vector3SubtractValue",
+            "Vector3Scale", "Vector3Multiply", "Vector3CrossProduct", "Vector3Perpendicular", "Vector3Length",
+            "Vector3LengthSqr", "Vector3DotProduct", "Vector3Distance", "Vector3DistanceSqr", "Vector3Angle",
+            "Vector3Negate", "Vector3Divide", "Vector3Normalize", "Vector3Project", "Vector3Reject",
+            "Vector3OrthoNormalize", "Vector3Transform", "Vector3RotateByQuaternion", "Vector3RotateByAxisAngle",
+            "Vector3MoveTowards", "Vector3Lerp", "Vector3CubicHermite", "Vector3Reflect", "Vector3Min",
+            "Vector3Max", "Vector3Barycenter", "Vector3Unproject", "Vector3ToFloatV", "Vector3Invert",
+            "Vector3Clamp", "Vector3ClampValue", "Vector3Equals", "Vector3Refract",
+            "Vector4Zero", "Vector4One", "Vector4Add", "Vector4AddValue", "Vector4Subtract", "Vector4SubtractValue",
+            "Vector4Length", "Vector4LengthSqr", "Vector4DotProduct", "Vector4Distance", "Vector4DistanceSqr",
+            "Vector4Scale", "Vector4Multiply", "Vector4Negate", "Vector4Divide", "Vector4Normalize",
+            "Vector4Min", "Vector4Max", "Vector4Lerp", "Vector4MoveTowards", "Vector4Invert", "Vector4Equals",
+            "MatrixDeterminant", "MatrixTrace", "MatrixTranspose", "MatrixInvert", "MatrixIdentity", "MatrixAdd",
+            "MatrixSubtract", "MatrixMultiply", "MatrixMultiplyValue", "MatrixTranslate", "MatrixRotate",
+            "MatrixRotateX", "MatrixRotateY", "MatrixRotateZ", "MatrixRotateXYZ", "MatrixRotateZYX",
+            "MatrixScale", "MatrixFrustum", "MatrixPerspective", "MatrixOrtho", "MatrixLookAt", "MatrixToFloatV",
+            "QuaternionAdd", "QuaternionAddValue", "QuaternionSubtract", "QuaternionSubtractValue", "QuaternionIdentity",
+            "QuaternionLength", "QuaternionNormalize", "QuaternionInvert", "QuaternionMultiply", "QuaternionScale",
+            "QuaternionDivide", "QuaternionLerp", "QuaternionNlerp", "QuaternionSlerp", "QuaternionCubicHermiteSpline",
+            "QuaternionFromVector3ToVector3", "QuaternionFromMatrix", "QuaternionToMatrix", "QuaternionFromAxisAngle",
+            "QuaternionToAxisAngle", "QuaternionFromEuler", "QuaternionToEuler", "QuaternionTransform",
+            "QuaternionEquals", "MatrixCompose", "MatrixDecompose"
+        };
+
+        Assert.Equal(146, expectedFunctions.Length);
+        Assert.Empty(expectedFunctions.Except(publicFunctions, StringComparer.Ordinal).OrderBy(static name => name, StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public void RlglCoversRaylib60NativeEntryPointsWithSafePublicWrappers()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var rlglText = File.ReadAllText(Path.Combine(repositoryRoot, "vendor", "src", "Vendor", "Rlgl.stark"));
+        var linkNames = ExtractRlglLinkNames(rlglText);
+        var publicFunctions = ExtractPublicFunctionNames(rlglText);
+        var expectedNativeFunctions = new[]
+        {
+            "rlMatrixMode", "rlPushMatrix", "rlPopMatrix", "rlLoadIdentity", "rlTranslatef", "rlRotatef", "rlScalef",
+            "rlMultMatrixf", "rlFrustum", "rlOrtho", "rlViewport", "rlSetClipPlanes", "rlGetCullDistanceNear",
+            "rlGetCullDistanceFar", "rlBegin", "rlEnd", "rlVertex2i", "rlVertex2f", "rlVertex3f", "rlTexCoord2f",
+            "rlNormal3f", "rlColor4ub", "rlColor3f", "rlColor4f", "rlEnableVertexArray", "rlDisableVertexArray",
+            "rlEnableVertexBuffer", "rlDisableVertexBuffer", "rlEnableVertexBufferElement", "rlDisableVertexBufferElement",
+            "rlEnableVertexAttribute", "rlDisableVertexAttribute", "rlEnableStatePointer", "rlDisableStatePointer",
+            "rlActiveTextureSlot", "rlEnableTexture", "rlDisableTexture", "rlEnableTextureCubemap",
+            "rlDisableTextureCubemap", "rlTextureParameters", "rlCubemapParameters", "rlEnableShader", "rlDisableShader",
+            "rlEnableFramebuffer", "rlDisableFramebuffer", "rlGetActiveFramebuffer", "rlActiveDrawBuffers",
+            "rlBlitFramebuffer", "rlBindFramebuffer", "rlEnableColorBlend", "rlDisableColorBlend", "rlEnableDepthTest",
+            "rlDisableDepthTest", "rlEnableDepthMask", "rlDisableDepthMask", "rlEnableBackfaceCulling",
+            "rlDisableBackfaceCulling", "rlColorMask", "rlSetCullFace", "rlEnableScissorTest", "rlDisableScissorTest",
+            "rlScissor", "rlEnablePointMode", "rlDisablePointMode", "rlSetPointSize", "rlGetPointSize",
+            "rlEnableWireMode", "rlDisableWireMode", "rlSetLineWidth", "rlGetLineWidth", "rlEnableSmoothLines",
+            "rlDisableSmoothLines", "rlEnableStereoRender", "rlDisableStereoRender", "rlIsStereoRenderEnabled",
+            "rlClearColor", "rlClearScreenBuffers", "rlCheckErrors", "rlSetBlendMode", "rlSetBlendFactors",
+            "rlSetBlendFactorsSeparate", "rlglInit", "rlglClose", "rlLoadExtensions", "rlGetProcAddress", "rlGetVersion",
+            "rlSetFramebufferWidth", "rlGetFramebufferWidth", "rlSetFramebufferHeight", "rlGetFramebufferHeight",
+            "rlGetTextureIdDefault", "rlGetShaderIdDefault", "rlGetShaderLocsDefault", "rlLoadRenderBatch",
+            "rlUnloadRenderBatch", "rlDrawRenderBatch", "rlSetRenderBatchActive", "rlDrawRenderBatchActive",
+            "rlCheckRenderBatchLimit", "rlSetTexture", "rlLoadVertexArray", "rlLoadVertexBuffer",
+            "rlLoadVertexBufferElement", "rlUpdateVertexBuffer", "rlUpdateVertexBufferElements", "rlUnloadVertexArray",
+            "rlUnloadVertexBuffer", "rlSetVertexAttribute", "rlSetVertexAttributeDivisor", "rlSetVertexAttributeDefault",
+            "rlDrawVertexArray", "rlDrawVertexArrayElements", "rlDrawVertexArrayInstanced",
+            "rlDrawVertexArrayElementsInstanced", "rlLoadTexture", "rlLoadTextureDepth", "rlLoadTextureCubemap",
+            "rlUpdateTexture", "rlGetGlTextureFormats", "rlGetPixelFormatName", "rlUnloadTexture",
+            "rlGenTextureMipmaps", "rlReadTexturePixels", "rlReadScreenPixels", "rlLoadFramebuffer",
+            "rlFramebufferAttach", "rlFramebufferComplete", "rlUnloadFramebuffer", "rlCopyFramebuffer",
+            "rlResizeFramebuffer", "rlLoadShader", "rlLoadShaderProgram", "rlLoadShaderProgramEx",
+            "rlLoadShaderProgramCompute", "rlUnloadShader", "rlUnloadShaderProgram", "rlGetLocationUniform",
+            "rlGetLocationAttrib", "rlSetUniform", "rlSetUniformMatrix", "rlSetUniformMatrices", "rlSetUniformSampler",
+            "rlSetShader", "rlComputeShaderDispatch", "rlLoadShaderBuffer", "rlUnloadShaderBuffer",
+            "rlUpdateShaderBuffer", "rlBindShaderBuffer", "rlReadShaderBuffer", "rlCopyShaderBuffer",
+            "rlGetShaderBufferSize", "rlBindImageTexture", "rlGetMatrixModelview", "rlGetMatrixProjection",
+            "rlGetMatrixTransform", "rlGetMatrixProjectionStereo", "rlGetMatrixViewOffsetStereo",
+            "rlSetMatrixProjection", "rlSetMatrixModelview", "rlSetMatrixProjectionStereo",
+            "rlSetMatrixViewOffsetStereo", "rlLoadDrawCube", "rlLoadDrawQuad"
+        };
+
+        Assert.Equal(163, expectedNativeFunctions.Length);
+        Assert.Empty(expectedNativeFunctions.Except(linkNames, StringComparer.Ordinal).OrderBy(static name => name, StringComparer.Ordinal));
+
+        var intentionallyInternalOnly = new[] { "rlLoadExtensions", "rlGetProcAddress" };
+        var expectedSafePublicWrappers = expectedNativeFunctions.Except(intentionallyInternalOnly, StringComparer.Ordinal);
+        Assert.Empty(expectedSafePublicWrappers.Except(publicFunctions, StringComparer.Ordinal).OrderBy(static name => name, StringComparer.Ordinal));
+        Assert.DoesNotContain("public fn", rlglText.AsSpan(
+            rlglText.IndexOf("rlLoadExtensions", StringComparison.Ordinal),
+            rlglText.IndexOf("rlGetVersion", StringComparison.Ordinal) - rlglText.IndexOf("rlLoadExtensions", StringComparison.Ordinal)).ToString(),
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RaylibSixAllocatingTextFunctionsUseOwnedWrappersAndStaleModelPointSymbolsAreGone()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var textBinding = File.ReadAllText(Path.Combine(repositoryRoot, "vendor", "src", "Vendor", "Raylib", "Text.stark"));
+        var modelBinding = File.ReadAllText(Path.Combine(repositoryRoot, "vendor", "src", "Vendor", "Raylib", "Models.stark"));
+
+        foreach (var name in new[] { "TextReplace", "TextInsert", "TextReplaceBetween" })
+        {
+            Assert.Contains($@"[LinkName(""{name}"")]", textBinding, StringComparison.Ordinal);
+            Assert.Contains($"internal unsafe ffi fn rawmutptr<i8[min max]> stark_raylib_{name}", textBinding, StringComparison.Ordinal);
+            Assert.Contains($"public fn RaylibTextResult {name}", textBinding, StringComparison.Ordinal);
+        }
+
+        Assert.Contains("public struct RaylibOwnedText", textBinding, StringComparison.Ordinal);
+        Assert.Contains("mut drop", textBinding, StringComparison.Ordinal);
+        Assert.Contains("stark_raylib_Text_MemFree", textBinding, StringComparison.Ordinal);
+        Assert.DoesNotContain("TextReplaceAlloc", textBinding, StringComparison.Ordinal);
+        Assert.DoesNotContain("TextInsertAlloc", textBinding, StringComparison.Ordinal);
+        Assert.DoesNotContain("TextReplaceBetweenAlloc", textBinding, StringComparison.Ordinal);
+        Assert.DoesNotContain("public fn raw", textBinding, StringComparison.Ordinal);
+        Assert.DoesNotContain("public unsafe ffi fn rawmutptr<i8[min max]> TextReplace", textBinding, StringComparison.Ordinal);
+        Assert.DoesNotContain("public unsafe ffi fn rawmutptr<i8[min max]> TextInsert", textBinding, StringComparison.Ordinal);
+        Assert.DoesNotContain("public unsafe ffi fn rawmutptr<i8[min max]> TextReplaceBetween", textBinding, StringComparison.Ordinal);
+        Assert.DoesNotContain("DrawModelPoints", modelBinding, StringComparison.Ordinal);
+        Assert.DoesNotContain("DrawModelPointsEx", modelBinding, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RaylibPackageBuildIsTargetScopedAndCarriesBundledNativePayload()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var buildScript = File.ReadAllText(Path.Combine(repositoryRoot, "vendor", "build-raylib-package.sh"));
+        var targetPackageRoot = Path.Combine(repositoryRoot, "vendor", "dist", CheckedInRaylibTargetTriple);
+        var targetNativeRoot = Path.Combine(targetPackageRoot, "native", "raylib");
+
+        Assert.Contains("target_dist=\"${vendor_dist}/${target_triple}\"", buildScript, StringComparison.Ordinal);
+        Assert.Contains("packaged_raylib_dir=\"${target_dist}/native/raylib\"", buildScript, StringComparison.Ordinal);
+        Assert.Contains("-o \"${target_dist}/libVendorRaylib.a\"", buildScript, StringComparison.Ordinal);
+        Assert.DoesNotContain("-o \"${vendor_dist}/libVendorRaylib.a\"", buildScript, StringComparison.Ordinal);
+
+        Assert.True(File.Exists(Path.Combine(targetPackageRoot, "libVendorRaylib.starkpkg")));
+        Assert.True(File.Exists(Path.Combine(targetPackageRoot, "libVendorRaylib.a")));
+        Assert.True(File.Exists(Path.Combine(targetNativeRoot, "libraylib.a")));
+        Assert.True(File.Exists(Path.Combine(targetNativeRoot, "raylib.h")));
+        Assert.True(File.Exists(Path.Combine(targetNativeRoot, "raymath.h")));
+        Assert.True(File.Exists(Path.Combine(targetNativeRoot, "rlgl.h")));
+    }
+
     private static async Task<bool> RequiredPkgConfigPackagesExistAsync(IReadOnlyList<string> packageNames)
     {
         if (packageNames.Count == 0)
@@ -336,6 +523,26 @@ public sealed partial class VendorBindingAuditTests
 
     [GeneratedRegex(@"\bpublic\b.*\braw(?:mut)?ptr\s*<", RegexOptions.CultureInvariant)]
     private static partial Regex PublicRawPointerRegex();
+
+    private static HashSet<string> ExtractPublicFunctionNames(string sourceText)
+    {
+        return PublicFunctionNameRegex().Matches(sourceText)
+            .Select(static match => match.Groups[1].Value)
+            .ToHashSet(StringComparer.Ordinal);
+    }
+
+    private static HashSet<string> ExtractRlglLinkNames(string sourceText)
+    {
+        return RlglLinkNameRegex().Matches(sourceText)
+            .Select(static match => match.Groups[1].Value)
+            .ToHashSet(StringComparer.Ordinal);
+    }
+
+    [GeneratedRegex(@"^\s*public\s+(?:inline\s+)?(?:finite\s+law\s+|finite\s+|law\s+|fn\s+)?[^{;\r\n]*?\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(", RegexOptions.Multiline | RegexOptions.CultureInvariant)]
+    private static partial Regex PublicFunctionNameRegex();
+
+    [GeneratedRegex(@"\[LinkName\(""((?:rl|rlgl)[A-Za-z0-9_]*)""\)\]\s*\r?\n\s*internal\s+unsafe\s+ffi\s+fn", RegexOptions.Multiline | RegexOptions.CultureInvariant)]
+    private static partial Regex RlglLinkNameRegex();
 
     private sealed record VendorBinding(
         string Name,

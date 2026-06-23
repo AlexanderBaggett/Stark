@@ -4,5 +4,5 @@ version = "0.1.0"
 kind = "executable"
 
 [executable]
-root = "VulkanInfo.stark"
-output = "vulkan-info"
+root = "VulkanTriangle.stark"
+output = "vulkan-triangle"

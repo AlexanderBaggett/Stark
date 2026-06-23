@@ -7,16 +7,11 @@ code.
 
 ```stark
 import System.Console
-import System.IO
 module Demo.App
 
 export fn i32[min max] main()
 {
-    if (WriteLine("Hello") != IOStatus.Ok)
-    {
-        return 1;
-    }
-
+    WriteLine("Hello");
     return 0;
 }
 ```

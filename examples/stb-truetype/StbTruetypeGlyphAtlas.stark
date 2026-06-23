@@ -147,11 +147,7 @@ fn i32[min max] RunTruetypeExample(ascii fontPath)
             }
     }
 
-    if (System.Console.WriteLine("STB truetype ok") != System.IO.IOStatus.Ok)
-    {
-        return 15;
-    }
-
+    WriteLine("STB truetype ok");
     return 0;
 }
 

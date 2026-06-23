@@ -6,6 +6,37 @@ repo_root="$(cd "${script_dir}/.." && pwd)"
 vendor_dist="${script_dir}/dist"
 compiler_path="${STARK_COMPILER:-${repo_root}/stark}"
 
+detect_default_target_triple() {
+  if command -v clang >/dev/null 2>&1; then
+    clang -dumpmachine
+    return
+  fi
+
+  local machine
+  local system
+  local os
+  machine="$(uname -m)"
+  system="$(uname -s)"
+
+  case "${system}" in
+    Linux)
+      os="pc-linux-gnu"
+      ;;
+    Darwin)
+      os="apple-darwin"
+      ;;
+    MINGW*|MSYS*|CYGWIN*)
+      os="pc-windows-msvc"
+      ;;
+    *)
+      echo "Unable to infer a target triple for ${system}. Set STARK_TARGET." >&2
+      exit 1
+      ;;
+  esac
+
+  printf '%s-%s\n' "${machine}" "${os}"
+}
+
 if [[ -x "${compiler_path}" ]]; then
   compiler_cmd=("${compiler_path}")
 else
@@ -13,7 +44,15 @@ else
 fi
 
 cd "${repo_root}"
-mkdir -p "${vendor_dist}"
+target_triple="${STARK_TARGET:-$(detect_default_target_triple)}"
+target_dist="${vendor_dist}/${target_triple}"
+compiler_target_args=()
+
+if [[ -n "${STARK_TARGET:-}" ]]; then
+  compiler_target_args=(--target "${target_triple}")
+fi
+
+mkdir -p "${target_dist}"
 
 if [[ -n "${RAYLIB_SRC_DIR:-}" ]]; then
   if [[ ! -d "${RAYLIB_SRC_DIR}" ]]; then
@@ -28,9 +67,26 @@ if [[ -n "${RAYLIB_SRC_DIR:-}" ]]; then
     exit 1
   fi
 
+  packaged_raylib_dir="${target_dist}/native/raylib"
+  mkdir -p "${packaged_raylib_dir}"
+
+  if [[ -f "${RAYLIB_SRC_DIR}/libraylib.a" ]]; then
+    cp -f "${RAYLIB_SRC_DIR}/libraylib.a" "${packaged_raylib_dir}/libraylib.a"
+  elif [[ -f "${RAYLIB_SRC_DIR}/libraylib.so" ]]; then
+    cp -f "${RAYLIB_SRC_DIR}/libraylib.so" "${packaged_raylib_dir}/libraylib.so"
+  else
+    echo "RAYLIB_SRC_DIR must contain a built Raylib library (libraylib.a or libraylib.so)." >&2
+    echo "Build Raylib first, then rerun: RAYLIB_SRC_DIR=${RAYLIB_SRC_DIR} bash vendor/build-raylib-package.sh" >&2
+    exit 1
+  fi
+
+  cp -f "${RAYLIB_SRC_DIR}/raylib.h" "${packaged_raylib_dir}/raylib.h"
+  cp -f "${RAYLIB_SRC_DIR}/raymath.h" "${packaged_raylib_dir}/raymath.h"
+  cp -f "${RAYLIB_SRC_DIR}/rlgl.h" "${packaged_raylib_dir}/rlgl.h"
+
   native_args=(
-    --native-include-dir "${RAYLIB_SRC_DIR}"
-    --native-library-dir "${RAYLIB_SRC_DIR}"
+    --native-include-dir "${packaged_raylib_dir}"
+    --native-library-dir "${packaged_raylib_dir}"
     --native-library raylib
     --native-library GL
     --native-library m
@@ -60,8 +116,9 @@ fi
   --emit-lib \
   -I "${script_dir}/src" \
   -I "${repo_root}/stdlib/src" \
-  -o "${vendor_dist}/libVendorRaylib.a" \
+  -o "${target_dist}/libVendorRaylib.a" \
+  "${compiler_target_args[@]}" \
   "${native_args[@]}"
 
-echo "Built ${vendor_dist}/libVendorRaylib.a"
-echo "Built ${vendor_dist}/libVendorRaylib.starkpkg"
+echo "Built ${target_dist}/libVendorRaylib.a"
+echo "Built ${target_dist}/libVendorRaylib.starkpkg"

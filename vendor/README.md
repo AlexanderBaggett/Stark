@@ -345,6 +345,13 @@ Build the package image with:
 bash vendor/build-raylib-package.sh
 ```
 
+The script emits the Raylib package image and bundled native payload under the
+active target triple, for example
+`vendor/dist/x86_64-pc-linux-gnu/libVendorRaylib.starkpkg` and
+`vendor/dist/x86_64-pc-linux-gnu/native/raylib/libraylib.a`. Downstream builds
+can still import through `-I vendor/dist`; the compiler filters target-named
+package directories to the active target.
+
 The script uses `pkg-config raylib` when available. If raylib is not visible to
 `pkg-config`, set `RAYLIB_SRC_DIR` to a local Raylib `src` directory:
 

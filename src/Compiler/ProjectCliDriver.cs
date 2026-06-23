@@ -1548,20 +1548,21 @@ internal static class ProjectCliDriver
             Path.GetFullPath(stageDirectory),
             IncludeInCompilerSearch: true,
             Directory.Exists(stageDirectory) ? "present" : "missing"));
-        AddDevelopmentBundledLibrarySearchPaths(session.BuildRootDirectory, root, paths);
-        AddInstalledBundledLibrarySearchPaths(AppContext.BaseDirectory, root, paths);
+        AddDevelopmentBundledLibrarySearchPaths(session.BuildRootDirectory, root, session.TargetTriple, paths);
+        AddInstalledBundledLibrarySearchPaths(AppContext.BaseDirectory, root, session.TargetTriple, paths);
     }
 
     private static void AddDevelopmentBundledLibrarySearchPaths(
         string buildRootDirectory,
         BundledLibraryRoot root,
+        string targetTriple,
         List<BundledLibrarySearchPath> paths)
     {
         foreach (var rootDirectory in GetDevelopmentBundledLibraryRootCandidates(buildRootDirectory, root))
         {
             if (IsDevelopmentBundledLibraryDirectory(rootDirectory))
             {
-                AddBundledLibrarySearchDirectories(rootDirectory, root, "repo development", paths);
+                AddBundledLibrarySearchDirectories(rootDirectory, root, "repo development", targetTriple, paths);
                 return;
             }
 
@@ -1608,11 +1609,12 @@ internal static class ProjectCliDriver
     private static void AddInstalledBundledLibrarySearchPaths(
         string compilerBaseDirectory,
         BundledLibraryRoot root,
+        string targetTriple,
         List<BundledLibrarySearchPath> paths)
     {
         foreach (var rootDirectory in GetInstalledBundledLibraryRootCandidates(compilerBaseDirectory, root))
         {
-            AddBundledLibrarySearchDirectories(rootDirectory, root, "installed bundle", paths);
+            AddBundledLibrarySearchDirectories(rootDirectory, root, "installed bundle", targetTriple, paths);
         }
     }
 
@@ -1634,6 +1636,7 @@ internal static class ProjectCliDriver
         string rootDirectory,
         BundledLibraryRoot root,
         string tier,
+        string targetTriple,
         List<BundledLibrarySearchPath> paths)
     {
         if (!Directory.Exists(rootDirectory))
@@ -1649,9 +1652,26 @@ internal static class ProjectCliDriver
 
         var includedAny = false;
         var distDirectory = Path.Combine(rootDirectory, "dist");
-        if (ContainsPackageImages(distDirectory))
+
+        var targetDistDirectory = Path.Combine(distDirectory, NormalizeBuildPathSegment(targetTriple));
+        if (ContainsPackageImages(targetDistDirectory))
         {
-            AddDistinctSearchPath(paths, root, tier, distDirectory, "package images");
+            AddDistinctSearchPath(paths, root, tier, targetDistDirectory, "target package images");
+            includedAny = true;
+        }
+        else if (Directory.Exists(targetDistDirectory))
+        {
+            paths.Add(new BundledLibrarySearchPath(
+                root,
+                tier,
+                Path.GetFullPath(targetDistDirectory),
+                IncludeInCompilerSearch: false,
+                "no target package images"));
+        }
+
+        if (ContainsPackageImages(distDirectory, SearchOption.TopDirectoryOnly))
+        {
+            AddDistinctSearchPath(paths, root, tier, distDirectory, includedAny ? "flat fallback package images" : "package images");
             includedAny = true;
         }
         else if (Directory.Exists(distDirectory))

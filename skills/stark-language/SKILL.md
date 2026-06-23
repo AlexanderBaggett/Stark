@@ -13,16 +13,11 @@ A source file has imports, then one module declaration, then declarations:
 
 ```stark
 import System.Console
-import System.IO
 module Demo.App
 
 export fn i32[min max] main()
 {
-    if (WriteLine("Hello") != IOStatus.Ok)
-    {
-        return 1;
-    }
-
+    WriteLine("Hello");
     return 0;
 }
 ```
@@ -34,6 +29,7 @@ Rules:
 - Wildcard imports are forbidden.
 - `export import Some.Module` is the only re-export form.
 - Importing a module makes visible top-level names available by final name; use fully qualified names only for ambiguity or clarity.
+- Do not both import a module and keep qualifying its unambiguous names (`import System.Console` means call `WriteLine(...)`, not `System.Console.WriteLine(...)`).
 - One file is one module; modules are not reopened across files.
 - Comments: `//`, non-nesting `/* */`, and C#-style XML doc forms `///` and `/** */`.
 
@@ -1203,6 +1199,14 @@ Raw pointers and `storeborrow` fields deny both laws by default. `System.Threadi
 Import standard-library modules explicitly when it improves readability. The root `System` module re-exports the common public modules and exposes `System.Option<T>` / `System.Result<T, E>` as aliases over `System.Core`; `System.Text`, `System.Testing`, and `System.Runtime.Buffer` are usually imported directly when needed.
 
 `Vendor.*` is a separate bundled vendor-library root for bindings to established native libraries. Use imports such as `import Vendor.Raylib`, `import Vendor.SQLite`, `import Vendor.GLFW`, `import Vendor.SDL3`, `import Vendor.KbTextShape`, or `import Vendor.Vulkan` for bundled native bindings. Keep vendor bindings ABI-shaped and low-overhead; use `[LinkName("NativeSymbol")]` for direct native symbol aliases and reserve C shim sources for real ABI adaptation such as callback bridges, lifetime conversion, C union flattening, C `bool` normalization, or native text-engine handle adaptation. Generated direct bindings such as `Vendor.Vulkan` should pin their upstream registry/header input, regenerate Stark ABI carriers, and keep raw loader symbols internal behind safe result enums and handle wrappers. Native-backed vendor packages should carry package-image native dependency metadata (`pkg-config`, optional native sources, libraries, and user-configured fallback paths) instead of requiring a package manager.
+
+For examples and simple command-line progress messages, call
+`Write`, `WriteLine`, `WriteError`, and `WriteErrorLine` directly and ignore
+their `IOStatus`; do not wrap every console line in `if (WriteLine(...) !=
+IOStatus.Ok)`. Check console-write results only when failure handling changes
+the program's meaningful behavior, such as a test that asserts I/O, a tool that
+must report broken stdout/stderr distinctly, or a library API that forwards I/O
+failure as data.
 
 Public modules:
 

@@ -106,11 +106,7 @@ fn i32[min max] RunTextShapeExample(ascii fontPath)
         return shapeStatus;
     }
 
-    if (System.Console.WriteLine("KbTextShape ok") != System.IO.IOStatus.Ok)
-    {
-        return 9;
-    }
-
+    WriteLine("KbTextShape ok");
     return 0;
 }
 

@@ -2,6 +2,101 @@ import Vendor.Raylib.Types
 export import Vendor.Raylib.Types
 module Vendor.Raylib.Text
 
+public enum RaylibTextResult
+{
+    [Ok] Ok(RaylibOwnedText),
+    [Err] Err(RaylibStatus),
+}
+
+public struct RaylibOwnedText
+{
+    internal rawmutptr<i8[min max]> Data;
+
+    RaylibOwnedText()
+    {
+        self.Data = null;
+    }
+
+    public fn bool IsEmpty(borrow RaylibOwnedText self)
+    {
+        return self.Length() == 0;
+    }
+
+    public fn u64[0 2 ** 63 - 1] Length(borrow RaylibOwnedText self)
+    {
+        if (self.Data == null)
+        {
+            return 0;
+        }
+
+        unsafe
+        {
+            stack mut u64[0 2 ** 63 - 1] length = 0;
+            while willexit (*(&self.Data[length]) != 0)
+            {
+                length += 1;
+                if (length == (u64[0 2 ** 63 - 1])(2 ** 63 - 1))
+                {
+                    return length;
+                }
+            }
+
+            return length;
+        }
+    }
+
+    public fn RaylibStatus CopyTo(borrow RaylibOwnedText self, borrow mut i8[min max][] destination, out u64[0 2 ** 63 - 1] written)
+    {
+        written = 0;
+        if (self.Data == null)
+        {
+            return RaylibStatus.InvalidArgument;
+        }
+
+        stack u64[0 2 ** 63 - 1] length = self.Length();
+        if (destination.Length < length)
+        {
+            return RaylibStatus.DestinationTooSmall;
+        }
+
+        unsafe
+        {
+            while willexit (written < length)
+            {
+                destination[written] = *(&self.Data[written]);
+                written = (u64[0 2 ** 63 - 1])(written + (u64[0 2 ** 63 - 1])1);
+            }
+        }
+
+        return RaylibStatus.Ok;
+    }
+
+    mut drop
+    {
+        unsafe
+        {
+            if (self.Data != null)
+            {
+                stark_raylib_Text_MemFree(self.Data);
+                self.Data = null;
+            }
+        }
+    }
+}
+
+[LinkName("MemFree")]
+internal unsafe ffi fn void stark_raylib_Text_MemFree(rawmutptr<i8[min max]> ptr);
+
+internal unsafe fn RaylibTextResult OwnedTextFromPointer(rawmutptr<i8[min max]> data)
+{
+    if (data == null)
+    {
+        return RaylibTextResult.Err(RaylibStatus.InvalidArgument);
+    }
+
+    return RaylibTextResult.Ok(new RaylibOwnedText() { Data = data });
+}
+
 [LinkName("GetFontDefault")]
 internal unsafe ffi fn Font stark_raylib_GetFontDefault();
 public fn Font GetFontDefault() {
@@ -219,8 +314,26 @@ public fn u32[0 max] TextLength(ascii text) {
 }
 public ffi varargs unsafe fn rawptr<i8[min max]> TextFormat(ascii text);
 public unsafe ffi fn rawptr<i8[min max]> TextSubtext(ascii text, i32[min max] position, i32[min max] length);
-public unsafe ffi fn rawmutptr<i8[min max]> TextReplace(ascii text, ascii replace, ascii by);
-public unsafe ffi fn rawmutptr<i8[min max]> TextInsert(ascii text, ascii insert, i32[min max] position);
+[LinkName("TextReplace")]
+internal unsafe ffi fn rawmutptr<i8[min max]> stark_raylib_TextReplace(ascii text, ascii search, ascii replacement);
+public fn RaylibTextResult TextReplace(ascii text, ascii search, ascii replacement)
+{
+    unsafe
+    {
+        return OwnedTextFromPointer(stark_raylib_TextReplace(text, search, replacement));
+    }
+}
+
+[LinkName("TextInsert")]
+internal unsafe ffi fn rawmutptr<i8[min max]> stark_raylib_TextInsert(ascii text, ascii insert, i32[min max] position);
+public fn RaylibTextResult TextInsert(ascii text, ascii insert, i32[min max] position)
+{
+    unsafe
+    {
+        return OwnedTextFromPointer(stark_raylib_TextInsert(text, insert, position));
+    }
+}
+
 public unsafe ffi fn rawptr<i8[min max]> TextJoin(rawptr<rawptr<i8[min max]>> textList, i32[min max] count, ascii delimiter);
 public unsafe ffi fn rawptr<rawptr<i8[min max]>> TextSplit(ascii text, i8[min max] delimiter, rawmutptr<i32[min max]> count);
 public unsafe ffi fn void TextAppend(rawmutptr<i8[min max]> text, ascii append, rawmutptr<i32[min max]> position);
@@ -233,7 +346,16 @@ public fn i32[min max] TextFindIndex(ascii text, ascii find) {
 }
 public unsafe ffi fn rawptr<i8[min max]> TextRemoveSpaces(ascii text);
 public unsafe ffi fn rawmutptr<i8[min max]> GetTextBetween(ascii text, ascii begin, ascii end);
-public unsafe ffi fn rawmutptr<i8[min max]> TextReplaceBetween(ascii text, ascii begin, ascii end, ascii replacement);
+[LinkName("TextReplaceBetween")]
+internal unsafe ffi fn rawmutptr<i8[min max]> stark_raylib_TextReplaceBetween(ascii text, ascii begin, ascii end, ascii replacement);
+public fn RaylibTextResult TextReplaceBetween(ascii text, ascii begin, ascii end, ascii replacement)
+{
+    unsafe
+    {
+        return OwnedTextFromPointer(stark_raylib_TextReplaceBetween(text, begin, end, replacement));
+    }
+}
+
 public unsafe ffi fn rawptr<i8[min max]> TextToUpper(ascii text);
 public unsafe ffi fn rawptr<i8[min max]> TextToLower(ascii text);
 public unsafe ffi fn rawptr<i8[min max]> TextToPascal(ascii text);

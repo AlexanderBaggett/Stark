@@ -324,6 +324,7 @@ public enum RaylibStatus {
     Ok,
     TooManyItems,
     InvalidArgument,
+    DestinationTooSmall,
 }
 
 public struct CollisionPointResult {
